@@ -51,15 +51,50 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   trailer. AI-assisted commits carry an `Assisted-by:` trailer.
 - Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`.
 
+## Current state (keep this section current; it is how a new session or machine catches up)
+
+- **Done:** M0 base, M1 asset browser, M2 mesh/material viewer, M3 terrain + world walker
+  (offline). Evidence: the status tables in `docs/ROADMAP.md`.
+- **Next:** M4, characters and animation. It includes the entity-storage decision record
+  (`bevy_ecs` vs our own store, see `docs/decisions/0005-no-full-bevy.md`).
+- **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
+  M3 reference locations, frame-capture questions from M2). These do not block M4.
+- **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
+  (`docs/decisions/0004-server-strategy.md`). Stop and ask the owner.
+
+## Working across machines and sessions
+
+- Git is the only shared state (`docs/decisions/0007-multi-device-workflow.md`). Claude
+  memory, transcripts and scratch dirs do not travel, so record decisions in
+  `docs/decisions/` and progress here or in the roadmap, then commit and push.
+- Setup and hand-off steps: `docs/DEVELOPMENT.md`. Check a machine with `tools/dev-setup.sh`.
+- Continue the roadmap with the saved workflow `.claude/workflows/tessera-milestone.js`
+  (one milestone per run, then review, commit, push). Dirty-room research clones go in
+  `~/.cache/tessera/clones` (`tools/fetch-research-clones.sh`), never inside the repo.
+- Machine-local, git-ignored: `.cargo/config.toml` (build cache location) and
+  `TESSERA_GAME_DIR`. Never commit either.
+
 ## Layout
 
 - `crates/dat` — `.dat`/`.datx` container: header, extent/block layer, B-tree directory, zlib, archive set, DID routing
-- `crates/formats` — record decoders on top of `dat`: primitives, string tables, render surfaces, property dictionary
+- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors
+- `crates/props` — property registry, values, property sets, enum mappers, DID maps
+- `crates/text` — string tables, StringInfo resolution, substitution, markup
+- `crates/assets` — prioritised worker pool, cancellation, decoded-asset cache
+- `crates/material` — materials, surfaces, texture chains, dye, layered icons
+- `crates/mesh` — mesh records → engine-neutral vertex streams, mesh library
+- `crates/wstate` — WLib class library and WState object graph
+- `crates/world` — coordinates, landblock streaming, residency budget, area lookups
+- `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
+- `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
+- `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
 - `crates/net` — transport-agnostic session layer and a local sandbox backend
-- `crates/render` — wgpu renderer
+- `crates/render` — wgpu renderer (mesh/material/terrain pipelines, golden-image tests)
 - `crates/script` — Lua 5.1 plugin host
-- `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, ...)
-- `apps/client` — the game client binary
-- `docs/specs` — clean-room specifications; `docs/` — legal, process, roadmap, tooling
-- `research/` — dirty-room notes and the verified resource catalogue
+- `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
+- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes)
+- `apps/client` — the game client binary (world walker)
+- `docs/specs` — clean-room specifications; `docs/decisions` — decision records;
+  `docs/checklists` — visual/owner checklists; `docs/` — legal, process, roadmap, tooling, development
+- `research/` — dirty-room notes, the verified resource catalogue and `clones.txt`

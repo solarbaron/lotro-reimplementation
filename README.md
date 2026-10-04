@@ -71,6 +71,9 @@ The client additionally needs a GPU driver that wgpu supports (Vulkan on Linux a
 Windows, Metal on macOS, or DX12 on Windows). On Linux, the usual windowing libraries
 (Wayland or X11, and libxkbcommon) must be installed.
 
+Setting up another machine or handing work over between machines: see
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and run `tools/dev-setup.sh`.
+
 ## Running
 
 ### Point Tessera at your install
@@ -189,6 +192,9 @@ audio, UI, input, plugin host); see
 | [docs/LEGAL.md](docs/LEGAL.md) | Legal position, risk tiers, the official-server gate, naming and content rules |
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |
+| [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server gate, Bevy, multi-device workflow) |
+| [docs/checklists/](docs/checklists/) | Visual checklists and items only the owner can observe in the original client |
 | [DISCLAIMER.md](DISCLAIMER.md) | Non-affiliation statement and warranty disclaimer |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, required reading, commit rules |
 | [CLAUDE.md](CLAUDE.md) | Short form of the project rules, also used by AI agents |

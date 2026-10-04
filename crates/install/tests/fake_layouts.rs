@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use common::{FULL_SET, app_manifest, library_folders_vdf, make_install, write_archive};
 use tessera_install::{
-    ArchiveKind, ArchiveStatus, Error, GameInstall, GameType, Ini, ProjectVersion, SearchEnv,
-    SettingsQuery, SettingsSource, Source, SplitSetStatus, ValidationProblem, ValidationWarning,
-    discover_with, validate,
+    ArchiveKind, ArchiveStatus, Error, GameInstall, GameType, Ini, SearchEnv, SettingsQuery,
+    SettingsSource, Source, SplitSetStatus, ValidationProblem, ValidationWarning, discover_with,
+    validate,
 };
 
 fn canon(p: &Path) -> PathBuf {
@@ -181,8 +181,9 @@ fn wine_prefixes_and_home_scan() {
     // A Lutris-style prefix with a custom folder, found by the prefix walk.
     let lutris = home.join("Games/some-game/drive_c/Program Files/Vendor/Game");
     make_install(&lutris, FULL_SET);
-    // A plain copy found only by the home scan.
-    let copy = home.join("games/copy/data");
+    // A plain copy found only by the home scan. It sits in `Games/`, not `games/`: on a
+    // case-insensitive file system (NTFS, APFS) those are the same folder.
+    let copy = home.join("Games/copy/data");
     make_install(&copy, FULL_SET);
     // A backup folder must never be treated as an install.
     make_install(
@@ -221,7 +222,8 @@ fn launcher_config_with_settings_override() {
     fs::write(
         cfg_dir.join("config.toml"),
         format!(
-            "game_directory = \"{}\"\ngame_settings_directory = \"{}\"\ngame_type = \"LOTRO\"\n",
+            // TOML literal strings: a Windows path's backslashes are not escapes.
+            "game_directory = '{}'\ngame_settings_directory = '{}'\ngame_type = \"LOTRO\"\n",
             game.display(),
             settings.display()
         ),
@@ -478,7 +480,10 @@ fn fifos_do_not_hang_discovery() {
         .iter()
         .find(|i| canon(&i.root) == canon(&copy))
         .unwrap();
-    assert_eq!(scanned.project_version, ProjectVersion::Malformed);
+    assert_eq!(
+        scanned.project_version,
+        tessera_install::ProjectVersion::Malformed
+    );
 }
 
 /// A huge library list is de-duplicated in linear time.

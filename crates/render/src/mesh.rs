@@ -578,7 +578,9 @@ pub(crate) fn prepare_with(
             .collect(),
         None => {
             let tris: Vec<[u32; 3]> = indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|t| [t[0], t[1], t[2]])
                 .collect();
             smooth_normals(&positions, &tris)
@@ -650,7 +652,7 @@ pub(crate) fn prepare_with(
         let first_edge = edge_len(&edge_list)?;
         if edges {
             seen.clear();
-            for t in tri.chunks_exact(3) {
+            for t in tri.as_chunks::<3>().0 {
                 for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
                     if a != b && seen.insert((a.min(b), a.max(b))) {
                         edge_list.push(a);

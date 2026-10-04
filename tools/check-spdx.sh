@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
+# REUSE-IgnoreStart
 # SPDX header check (CLAUDE.md: "Every source file starts with
 # `// SPDX-License-Identifier: GPL-3.0-or-later`").
 #
@@ -11,11 +12,12 @@
 #            lines (errors with --strict). Generated or comment-less files (Cargo.lock,
 #            *.json, .gitignore, LICENSES/*) are skipped; REUSE.toml should cover them.
 #
-# The full REUSE 3.x check (`reuse lint`) runs in CI as well, once LICENSES/ and
-# REUSE.toml exist at the repository root.
+# The full REUSE 3.x check (`reuse lint`, using LICENSES/ and REUSE.toml at the
+# repository root) runs in CI as well.
 #
 # Usage: tools/check-spdx.sh [--strict] [--root DIR]
 # Exit status: 0 clean, 1 violations, 2 usage error.
+# REUSE-IgnoreEnd
 
 set -euo pipefail
 
@@ -25,12 +27,13 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --strict) strict=1; shift ;;
         --root) root="$(cd "${2:?--root needs a directory}" && pwd)"; shift 2 ;;
-        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,20p' "$0" | grep -v REUSE-Ignore | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "check-spdx: unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
 cd "$root"
+# REUSE-IgnoreStart (the patterns below are not license expressions)
 want='SPDX-License-Identifier: GPL-3.0-or-later'
 rust_first="// $want"
 
@@ -84,3 +87,4 @@ done < <(list_files)
 
 echo "check-spdx: $checked files checked, $errors error(s), $warnings warning(s)" >&2
 [ "$errors" = 0 ]
+# REUSE-IgnoreEnd

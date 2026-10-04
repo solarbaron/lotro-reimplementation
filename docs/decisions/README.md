@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Decision records
 
 Project decisions that are not obvious from the code. Each record is short and stays in place

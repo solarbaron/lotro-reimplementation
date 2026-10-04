@@ -22,9 +22,9 @@ within ±4 of the reference, or of any reference pixel within 1 px (checked both
 one-pixel line-rasterisation differences between drivers pass but a missing or extra line
 does not); up to 0.25 % of pixels may still be outliers. On a mismatch, and on any inexact
 pass, `actual`, `expected` and `diff` PNGs are written to `<cargo target dir>/tmp/golden/`
-(`$CARGO_TARGET_TMPDIR/golden`; with this repository's `.cargo/config.toml` that is
-`/var/tmp/tessera-target/tmp/golden/`) (diff: red = outlier, yellow = forgiven by the
-neighbourhood search).
+(`$CARGO_TARGET_TMPDIR/golden`: `./target/tmp/golden/` by default, or under the target dir
+a machine-local `.cargo/config.toml` points to) (diff: red = outlier, yellow = forgiven by
+the neighbourhood search).
 
 Regenerate after an intended visual change, then review the new PNGs before committing:
 

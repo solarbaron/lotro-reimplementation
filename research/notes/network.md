@@ -1,6 +1,8 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # LOTRO networking and server side: research notes (verified 2026-10-03)
 
-All repos listed below were cloned into `/tmp/claude-1000/-home-solarbaron-git-lotro-reimplementation/5f7fd9e6-9dcf-4273-b5fe-0179f3226498/scratchpad/clones/` and I read their source. Read-only SOAP and HTTP calls were made to the live public GLS endpoints to confirm the schemas. No credentials were used.
+All repos listed below were cloned into `~/.cache/tessera/clones/` and I read their source. Read-only SOAP and HTTP calls were made to the live public GLS endpoints to confirm the schemas. No credentials were used.
 
 ---
 ## 0. Summary of findings

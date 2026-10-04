@@ -244,7 +244,7 @@ fn ceiling_triangle_census(d: &LandblockData) -> [usize; 3] {
     let mut out = [0usize; 3];
     let Some(c) = &d.ceiling else { return out };
     for l in &c.surface.layers {
-        for t in c.surface.layer_indices(l).unwrap_or(&[]).chunks_exact(3) {
+        for t in c.surface.layer_indices(l).unwrap_or(&[]).as_chunks::<3>().0 {
             let p: Vec<(usize, usize)> = t.iter().map(|&v| vertex_xy(v).unwrap()).collect();
             let i = p.iter().map(|q| q.0).min().unwrap();
             let j = p.iter().map(|q| q.1).min().unwrap();

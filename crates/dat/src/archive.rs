@@ -318,7 +318,9 @@ impl Archive {
         let extents = buf
             .get(ALLOC_HEADER_LEN as usize..need as usize)
             .unwrap_or(&[])
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|p| FreeExtent {
                 size: u32_at(p, 0),
                 offset: u32_at(p, 4),

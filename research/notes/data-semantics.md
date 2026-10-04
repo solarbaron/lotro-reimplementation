@@ -1,7 +1,9 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 
 # LOTRO game-data semantics: what is inside the .dat archives
 
-The scope is what the decoded records mean, not the container. Every fact below comes from reading source code or docs in a scratchpad clone, or from decompiling the LotroCompanion jar. Clones live under `/tmp/claude-1000/-home-solarbaron-git-lotro-reimplementation/5f7fd9e6-9dcf-4273-b5fe-0179f3226498/scratchpad/clones/`. The decompiled `delta-lotro-dat-utils-11.0` sources are in `.../scratchpad/jars/datutils-src/` and its bundled resources in `.../scratchpad/jars/res/`.
+The scope is what the decoded records mean, not the container. Every fact below comes from reading source code or docs in a scratchpad clone, or from decompiling the LotroCompanion jar. Clones live under `~/.cache/tessera/clones/`. The decompiled `delta-lotro-dat-utils-11.0` sources are in `$TESSERA_RE_DIR/jars/datutils-src/` and its bundled resources in `$TESSERA_RE_DIR/jars/res/`.
 
 ## 0. Legal and provenance status of each source
 

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Tessera roadmap
 
 > Status: founding document, written at milestone M0 (2026-10-03). M0, M1 and M2 exit
@@ -173,6 +175,9 @@ and run a sandboxed Lua script.
 - `docs/specs/install-detection.md`: search order, Steam library parsing, prefixes,
   validation, version identification.
 
+(As written, the primitives and render-surface facts live in `records.md` §1 and §5, and
+install detection in `install-layout.md`; see "Specs used" in the status below.)
+
 <a id="m0-re"></a>
 **RE tasks**
 
@@ -210,7 +215,10 @@ and run a sandboxed Lua script.
 
 <a id="m0-status"></a>
 **Status (verified 2026-10-04 against the owner's install, 29 archives, 3,838,957 entries):
-all eight criteria pass. M0 is closed.**
+all eight criteria pass. M0 is closed.** Specs used: `dat-container.md`, `records.md` (§1
+primitives, §2 type table, §5 render surfaces: the planned `primitives.md` and
+`render-surface.md`), `string-table.md`, `property-system.md`, `install-layout.md` (the
+planned `install-detection.md`).
 
 | # | | Evidence |
 |---|---|---|
@@ -220,8 +228,8 @@ all eight criteria pass. M0 is closed.**
 | 4 | ✅ | 282,152 string tables (806,052 strings) decode with 0 errors and 0 trailing bytes; 1,408,052 of 1,408,052 texture records decode (7 formats); property dictionary: 27,547 names, 27,546 definitions, 0 of unknown type. |
 | 5 | ✅ | Windowed client on Wayland/Vulkan (NVIDIA) runs 300/1500 frames and exits 0 with `--no-data` (checkerboard scene) and with `TESSERA_GAME_DIR` (first decodable surface shown); screenshots checked. Headless goldens pass with 0 outliers on NVIDIA Vulkan, Mesa lavapipe (Vulkan, the CI reference) and Mesa llvmpipe (GL). |
 | 6 | ✅ | `crates/script/tests/sandbox.rs`: `string`/`table`/`math` usable; `io`, `os.execute`, `require` (C modules), `load`/`loadstring` of bytecode and a bytecode main package refused; runaway loops stopped by the instruction budget; memory limit enforced. |
-| 7 | ✅ | `tools/fuzz-smoke.sh -t 60`: all 25 targets ran 60 s each with no finding (0.3 M–84 M executions per target). Synthetic tests cover truncation, oversized counts (`resource_limits.rs`, `free_table_count_is_capped`) and extent/node cycles (`detects_cycles_and_bad_nodes`). |
-| 8 | ✅ | Every CI job reproduced locally and green: `cargo fmt --check` (workspace and `fuzz/`), `clippy --workspace --all-targets [--all-features] -D warnings`, `clippy` on `fuzz/`, `cargo test --workspace --locked` on lavapipe with `TESSERA_REQUIRE_GPU=1` (803 passed, 0 failed, 1 ignored machine-specific), `cargo doc -D warnings`, `cargo deny check bans licenses sources` (both manifests), fuzz smoke. `tools/check-content.sh` and its self-test pass (300 files, 0 errors); `tools/check-spdx.sh` 0 errors. The hosted CI run itself has not been observed yet (no remote). |
+| 7 | ✅ | `tools/fuzz-smoke.sh -t 60`: all 25 targets of the time (47 after M3) ran 60 s each with no finding (0.3 M–84 M executions per target). Synthetic tests cover truncation, oversized counts (`resource_limits.rs`, `free_table_count_is_capped`) and extent/node cycles (`detects_cycles_and_bad_nodes`). |
+| 8 | ✅ | Every CI job reproduced locally and green: `cargo fmt --check` (workspace and `fuzz/`), `clippy --workspace --all-targets [--all-features] -D warnings`, `clippy` on `fuzz/`, `cargo test --workspace --locked` on lavapipe with `TESSERA_REQUIRE_GPU=1` (803 passed, 0 failed, 1 ignored machine-specific), `cargo doc -D warnings`, `cargo deny check bans licenses sources` (both manifests), fuzz smoke. `tools/check-content.sh` and its self-test pass (300 files, 0 errors); `tools/check-spdx.sh` 0 errors. The hosted CI run had not been observed at M0 (no remote). A private GitHub remote exists since 2026-10-04; its Actions results have not been recorded here yet (owner: check the runs, the Actions minutes and the lavapipe job, then update this sentence). |
 
 ---
 
@@ -248,7 +256,8 @@ labels. This is also the main RE workbench for later milestones.
   property-set view with names and enum labels, DID-map navigation.
 - `tessera-dattool diff` between two installs or snapshots.
 
-**Specs needed:** `texture-list.md`, `enum-mapper.md`, `did-map.md`,
+**Specs needed:** `texture-list.md`, `enum-mapper.md`, `did-map.md` (both written as
+`records.md` §7–§8),
 `property-system.md` (property sets, StringInfo), `string-table.md` (grammar tags),
 `icon-layers.md`.
 
@@ -692,8 +701,11 @@ a go/no-go decision accepted by the project owner.
 <a id="open"></a>
 ## 4. Open roadmap questions
 
-> **OPEN:** reference machine for performance criteria (CPU, GPU, RAM). Proposal: the
-> owner's Linux workstation, recorded in `docs/perf/reference-machine.md` at M1.
+> **OPEN:** reference machine for performance criteria (CPU, GPU, RAM). A proposal with the
+> primary workstation's hardware is in [`docs/perf/reference-machine.md`](perf/reference-machine.md)
+> (M3's performance evidence was measured there); the owner must confirm it, and decide
+> how results from another machine count, before the M4 performance criterion and the
+> decision 0005 benchmark are measured.
 
 > **OPEN:** whether a self-hosted CI runner with the owner's install should run the gated
 > real-data tests on every change, or nightly. Results must stay pass/fail and counts.

@@ -2,10 +2,13 @@
 //! Headless golden-image tests. Each test skips (with a printed reason) when
 //! no GPU adapter — hardware or software (llvmpipe / lavapipe) — is available.
 
+#[path = "support/gpu.rs"]
+mod gpu;
+
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    Camera, ColorSpace, ContextOptions, Filter, OffscreenFormat, OrbitCamera, OrbitConfig,
-    PassSpace, Quad, RenderError, Renderer, RendererConfig, RgbaImage, TextureUpload, UpAxis, Wrap,
+    Camera, ColorSpace, Filter, OffscreenFormat, OrbitCamera, OrbitConfig, PassSpace, Quad,
+    RenderError, Renderer, RgbaImage, TextureUpload, UpAxis, Wrap,
 };
 
 const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
@@ -43,52 +46,10 @@ fn draw_full(
     r.read_pixels(target)
 }
 
-fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "tessera_render=info".into()),
-        )
-        .with_test_writer()
-        .try_init();
+/// Shared adapter search and GPU lock (`support/gpu.rs`), default clear colour.
+fn renderer() -> Option<gpu::Headless> {
+    gpu::headless_renderer_with(|_| {})
 }
-
-/// Try the env/default backends first, then GL and Vulkan explicitly (so a
-/// software rasteriser is found even when the default pick fails).
-fn renderer() -> Option<Renderer<'static>> {
-    init_tracing();
-    let attempts: [Option<wgpu::Backends>; 3] =
-        [None, Some(wgpu::Backends::GL), Some(wgpu::Backends::VULKAN)];
-    let mut reasons = Vec::new();
-    for backends in attempts {
-        let config = RendererConfig {
-            context: ContextOptions {
-                backends,
-                allow_software: true,
-                ..ContextOptions::default()
-            },
-            ..RendererConfig::default()
-        };
-        match Renderer::new_headless(&config) {
-            Ok(r) => {
-                let info = r.adapter_info();
-                eprintln!(
-                    "using adapter {:?} ({:?}, {:?})",
-                    info.name, info.backend, info.device_type
-                );
-                return Some(r);
-            }
-            Err(e) => {
-                eprintln!("adapter attempt {backends:?} failed: {e}");
-                reasons.push(format!("{backends:?}: {e}"));
-            }
-        }
-    }
-    eprintln!("SKIPPED: no GPU adapter available: {}", reasons.join(" | "));
-    None
-}
-
-use tessera_render::wgpu;
 
 #[test]
 fn solid_quad_64x64() -> Result<(), RenderError> {
@@ -119,8 +80,10 @@ fn solid_quad_64x64() -> Result<(), RenderError> {
     // Exactly the 32x32 block is red.
     let red = img
         .data
-        .chunks_exact(4)
-        .filter(|p| *p == [255, 0, 0, 255])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| **p == [255, 0, 0, 255])
         .count();
     assert_eq!(red, 32 * 32);
     Ok(())

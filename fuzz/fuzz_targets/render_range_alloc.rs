@@ -17,7 +17,7 @@ fuzz_target!(|data: &[u8]| {
     let capacity = u32::from(cap) * 4;
     let mut a = RangeAllocator::new(capacity);
     let mut live: Vec<std::ops::Range<u32>> = Vec::new();
-    for pair in ops.chunks_exact(2).take(4096) {
+    for pair in ops.as_chunks::<2>().0.iter().take(4096) {
         let (op, arg) = (pair[0], pair[1]);
         match op % 4 {
             0 | 1 => {

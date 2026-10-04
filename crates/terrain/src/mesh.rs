@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(tris.len() % 3, 0);
         let mut total = 0;
         let mut directed: Vec<(u16, u16)> = Vec::with_capacity(tris.len());
-        for t in tris.chunks_exact(3) {
+        for t in tris.as_chunks::<3>().0 {
             let a = area2(t);
             assert!(a > 0, "{what}: triangle {t:?} not counter-clockwise ({a})");
             total += a;
@@ -437,7 +437,7 @@ mod tests {
     fn level_zero_mesh_matches_height_queries() {
         let block = block_at(4, 1);
         let m = mesh_of(&block, Lod::FINEST, EdgeLods::NONE);
-        for t in m.indices.chunks_exact(3) {
+        for t in m.indices.as_chunks::<3>().0 {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| m.positions[usize::from(i)]);
             for (wa, wb) in [(0.2, 0.3), (0.6, 0.2), (0.33, 0.33), (0.05, 0.9)] {
                 let wc = 1.0 - wa - wb;
@@ -491,7 +491,7 @@ mod tests {
             };
             let mut verts = BTreeSet::new();
             let mut segs = BTreeSet::new();
-            for t in m.indices.chunks_exact(3) {
+            for t in m.indices.as_chunks::<3>().0 {
                 for k in 0..3 {
                     let (a, b) = (usize::from(t[k]), usize::from(t[(k + 1) % 3]));
                     if on(m.positions[a]) && on(m.positions[b]) {

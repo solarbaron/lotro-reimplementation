@@ -173,7 +173,7 @@ fn item_icons_compose() {
             assert_eq!((img.width, img.height), (bg.width, bg.height));
         }
         *sizes.entry((img.width, img.height)).or_default() += 1;
-        if img.pixels.chunks_exact(4).any(|p| p[3] < 255) {
+        if img.pixels.as_chunks::<4>().0.iter().any(|p| p[3] < 255) {
             translucent_px_icons += 1;
         }
         // Save the first composite of up to three distinct combinations of three or more

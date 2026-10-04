@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-terrain"
 description = "Landblock terrain: heightmap meshing with LODs and stitched seams, seamless normals, height/slope shading, splatting inputs and CPU height queries"

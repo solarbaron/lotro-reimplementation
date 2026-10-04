@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Tessera reliable-datagram transport (TRD v1)
 
 | Field | Value |

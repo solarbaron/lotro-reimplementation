@@ -174,7 +174,9 @@ fn real_surfaces_through_every_mesh_pipeline() -> Result<(), RenderError> {
         let img = r.read_pixels(&target)?;
         let lit = img
             .data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[0] > 8 || p[1] > 8 || p[2] > 8)
             .count();
         assert!(lit > 1000, "{shading:?}: only {lit} non-background pixels");

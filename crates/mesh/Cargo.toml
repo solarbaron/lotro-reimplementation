@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-mesh"
 description = "Mesh records (0x06): vertex formats, engine-neutral vertex streams, index buffers, detail levels, collision data, bounds, validation and a cached mesh library"

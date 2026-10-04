@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-dattool"
 description = "Command-line inspector for .dat/.datx archives of a user's own install (read-only)"

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-dat"
 description = "Read-only reader for the .dat/.datx archive container (see docs/specs/dat-container.md)"

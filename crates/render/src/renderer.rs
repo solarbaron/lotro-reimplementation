@@ -1812,7 +1812,8 @@ impl<'w> Renderer<'w> {
             // Receiver only disappears if read_pixels already returned.
             let _ = tx.send(r);
         });
-        self.ctx.device.poll(wgpu::PollType::wait_indefinitely())?;
+        // Bounded: a stuck driver yields `RenderError::Poll` (timeout) instead of a hang.
+        self.ctx.device.poll(crate::context::bounded_wait())?;
         match rx.recv() {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(RenderError::Readback(e.to_string())),

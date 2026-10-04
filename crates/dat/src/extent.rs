@@ -161,7 +161,9 @@ impl Archive {
             let mut table = vec![0u8; table_len as usize];
             self.read_at(off + size - table_len, &mut table)?;
             fragments = table
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
+                .iter()
                 .map(|p| Fragment {
                     length: u32_at(p, 0),
                     offset: u32_at(p, 4),

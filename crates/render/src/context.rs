@@ -10,6 +10,18 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::{RenderError, Result};
 
+/// Longest time any blocking wait on the GPU may take before it is reported as an error
+/// (a stuck driver must not hang the caller, or a test run, forever).
+pub const GPU_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A device wait for the latest submission, bounded by [`GPU_WAIT_TIMEOUT`].
+pub(crate) fn bounded_wait() -> wgpu::PollType {
+    wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(GPU_WAIT_TIMEOUT),
+    }
+}
+
 /// Environment variable naming the backends to search (`vulkan,gl,...`).
 pub const ENV_BACKEND: &str = "WGPU_BACKEND";
 /// Environment variable holding a case-insensitive adapter-name substring.
@@ -327,9 +339,10 @@ impl GpuContext {
         })
     }
 
-    /// Block until all submitted work is complete.
+    /// Block until all submitted work is complete, or fail with
+    /// [`RenderError::Poll`] after [`GPU_WAIT_TIMEOUT`].
     pub fn wait_idle(&self) -> Result<()> {
-        self.device.poll(wgpu::PollType::wait_indefinitely())?;
+        self.device.poll(bounded_wait())?;
         Ok(())
     }
 }

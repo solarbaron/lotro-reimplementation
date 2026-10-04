@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Re-create the dirty-room research clones listed in research/clones.txt.
-# Shallow clones go OUTSIDE the repo (default ~/.cache/tessera/clones). Existing clones are
+# Shallow clones go OUTSIDE the repo: DEST, else $TESSERA_CLONES_DIR, else
+# ${XDG_CACHE_HOME:-~/.cache}/tessera/clones (about 6 GB). Existing clones are
 # fast-forwarded (--update) or skipped. Only spec writers (dirty room) may read them; see
 # docs/CLEAN_ROOM.md. Never copy anything from them into the repository.
 #
@@ -17,7 +18,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --update) update=1 ;;
     -j) jobs="$2"; shift ;;
-    -h|--help) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) dest="$1" ;;
   esac
   shift
@@ -25,7 +26,7 @@ done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 list="$repo_root/research/clones.txt"
-dest="${dest:-${XDG_CACHE_HOME:-$HOME/.cache}/tessera/clones}"
+dest="${dest:-${TESSERA_CLONES_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tessera/clones}}"
 
 case "$(realpath -m "$dest")/" in
   "$repo_root"/*) echo "refusing to clone inside the repository: $dest" >&2; exit 2 ;;

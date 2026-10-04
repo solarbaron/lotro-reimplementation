@@ -76,7 +76,7 @@ fn screenshot_at_spawn() {
     assert_eq!((info.width, info.height), (320, 180));
     let px = &buf[..info.buffer_size()];
     let first = &px[..4];
-    let distinct = px.chunks_exact(4).filter(|p| *p != first).count();
+    let distinct = px.as_chunks::<4>().0.iter().filter(|p| *p != first).count();
     assert!(distinct > 1000, "image looks blank");
 }
 

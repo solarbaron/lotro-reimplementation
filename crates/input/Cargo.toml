@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-input"
 description = "Windowing-agnostic input: actions, contexts, bindings, Tessera's keymap file, fly and walk controllers"

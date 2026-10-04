@@ -208,7 +208,7 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// Area-weighted face normals for one part (fallback when the format has none).
 fn face_normals(positions: &[[f32; 3]], indices: &[u16]) -> Vec<[f32; 3]> {
     let mut n = vec![[0f32; 3]; positions.len()];
-    for t in indices.chunks_exact(3) {
+    for t in indices.as_chunks::<3>().0 {
         let [a, b, c] = [t[0], t[1], t[2]].map(usize::from);
         let (Some(&pa), Some(&pb), Some(&pc)) =
             (positions.get(a), positions.get(b), positions.get(c))

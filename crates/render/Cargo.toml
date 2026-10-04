@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-render"
 description = "wgpu renderer foundation for the Tessera client"

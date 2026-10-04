@@ -59,15 +59,19 @@ pub(crate) fn pick_ci<'a>(entries: &'a [DirEntry], name: &str) -> Option<&'a Dir
     matches.first().copied()
 }
 
-/// Resolve `name` inside `parent` case-insensitively. Returns `None` when no
-/// entry matches or `parent` cannot be listed.
+/// Resolve `name` inside `parent` case-insensitively, returning the entry's
+/// on-disk spelling (also on case-insensitive file systems such as NTFS and
+/// APFS, where the requested spelling would otherwise be accepted as is).
+/// When `parent` cannot be listed, an exact-case entry is still found.
+/// Returns `None` when no entry matches.
 pub(crate) fn resolve_ci(parent: &Path, name: &str) -> Option<PathBuf> {
-    let exact = parent.join(name);
-    if fs::symlink_metadata(&exact).is_ok() {
-        return Some(exact);
+    if let Ok(entries) = list_dir(parent)
+        && let Some(e) = pick_ci(&entries, name)
+    {
+        return Some(e.path.clone());
     }
-    let entries = list_dir(parent).ok()?;
-    pick_ci(&entries, name).map(|e| e.path.clone())
+    let exact = parent.join(name);
+    fs::symlink_metadata(&exact).is_ok().then_some(exact)
 }
 
 /// Resolve several components below `base`, each case-insensitively.

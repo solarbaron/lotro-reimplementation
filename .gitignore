@@ -7,3 +7,5 @@
 /out
 .env
 /.cargo/config.toml
+# Game-data snapshots (tessera-dattool snapshot): derived from game data, carry by hand
+*.idx

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Contributing to Tessera
 
 Thank you for helping. Tessera is a clean-room project with real legal exposure, so
@@ -64,7 +66,7 @@ Pseudonyms are accepted if you use the same one consistently.
   cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace
   ```
-- Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`.
+- Every source file starts with <!-- REUSE-IgnoreStart -->`// SPDX-License-Identifier: GPL-3.0-or-later`<!-- REUSE-IgnoreEnd -->.
 - Parsers treat input as hostile: no panics, bounded allocations, `thiserror` errors, and a
   fuzz target in `fuzz/`.
 - Library crates log with `tracing`, never `println!`.

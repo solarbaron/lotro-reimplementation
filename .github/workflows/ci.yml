@@ -9,8 +9,17 @@
 #   cargo deny check                         (and --manifest-path fuzz/Cargo.toml)
 #   tools/check-content.sh                   forbidden content and trademark words
 #   tools/check-spdx.sh                      SPDX headers
-#   tools/check-dco.sh origin/main           Signed-off-by and clean-room trailers
+#   tools/check-dco.sh origin/main           Signed-off-by and clean-room trailers (unpushed
+#                                            commits; --all checks the whole history)
+#   (cd fuzz && cargo fmt --all -- --check && cargo clippy --bins --locked -- -D warnings)
 #   tools/fuzz-smoke.sh -t 30                short run of every fuzz target
+#
+# The toolchain is the exact version pinned in rust-toolchain.toml (bump it on purpose);
+# the MSRV job checks rust-version from Cargo.toml (1.90) and apps/explorer (1.95).
+#
+# Cost (private repository: billed minutes, macOS 10x, Windows 2x): pull requests run
+# Linux only and skip fuzzing; pushes to main, the weekly schedule and manual runs add
+# Windows, macOS and the fuzz smoke test. Every job has a timeout.
 #
 # No job has access to a game install: TESSERA_GAME_DIR is never set here, so real-data
 # tests skip themselves. Never add game files, captures or secrets to CI.
@@ -22,18 +31,23 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # weekly full run (all OSes, longer fuzzing)
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Superseded pull-request runs are cancelled; every push to main keeps its own result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
+  # Full debuginfo makes test binaries 350-500 MB each; line tables keep backtraces.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   # ------------------------------------------------------------------------------------
@@ -42,6 +56,7 @@ jobs:
   content:
     name: Forbidden content
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: Self-test the guard
@@ -52,12 +67,12 @@ jobs:
   spdx:
     name: SPDX / REUSE
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - name: SPDX headers on source files
         run: tools/check-spdx.sh
-      # Full REUSE 3.x compliance needs LICENSES/ and REUSE.toml at the root; the step
-      # switches itself on once they exist.
+      # REUSE 3.x compliance: LICENSES/ and REUSE.toml at the root.
       - name: reuse lint
         if: ${{ hashFiles('LICENSES/**') != '' }}
         uses: fsfe/reuse-action@v5
@@ -65,6 +80,7 @@ jobs:
   dco:
     name: DCO sign-off
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000') }}
     steps:
       - uses: actions/checkout@v5
@@ -74,7 +90,13 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        run: tools/check-dco.sh "$BASE" "$HEAD"
+        run: |
+          # After a force-push the old tip may be gone; then check the pushed tip only.
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "::warning::base $BASE is not in the history (force-push?); checking $HEAD only"
+            if git rev-parse -q --verify "$HEAD^" >/dev/null; then BASE="$HEAD^"; else BASE=--all; fi
+          fi
+          if [ "$BASE" = --all ]; then tools/check-dco.sh --all "$HEAD"; else tools/check-dco.sh "$BASE" "$HEAD"; fi
 
   # ------------------------------------------------------------------------------------
   # Rust
@@ -82,11 +104,16 @@ jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
-          components: rustfmt
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - name: fuzz workspace
         working-directory: fuzz
@@ -95,16 +122,22 @@ jobs:
   clippy:
     name: clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
-          components: clippy
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             .
             fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: all features
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -115,14 +148,27 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    # Windows and macOS have not had a green run yet; advisory until they have.
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Pull requests: Linux only. Main, schedule, manual runs: all three.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Read the pinned toolchain
+        id: toolchain
+        shell: bash
+        run: echo "version=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Software Vulkan for headless render tests (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -143,7 +189,7 @@ jobs:
         run: cargo test --workspace --locked -- $SKIP_GOLDEN
       - name: Keep golden-image diffs
         if: failure() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: golden-diffs
           path: target/tmp/golden/
@@ -154,23 +200,33 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --locked
 
-  # Advisory until the dependency tree's MSRV is known to fit rust-version in Cargo.toml.
+  # Workspace MSRV = rust-version in Cargo.toml; apps/explorer declares its own (eframe/egui
+  # need a newer compiler), so it is checked separately on that version.
   msrv:
-    name: MSRV (advisory)
+    name: MSRV
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Read rust-version
         id: msrv
-        run: echo "version=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "workspace=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
+          echo "explorer=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' apps/explorer/Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ steps.msrv.outputs.version }}
-      - name: cargo check on the minimum supported Rust version
+          toolchain: ${{ steps.msrv.outputs.explorer }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.workspace }}
+      - name: cargo check on the workspace MSRV (without the explorer)
         env:
-          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
-        run: cargo check --workspace --all-targets --locked
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.workspace }}
+        run: cargo check --workspace --exclude tessera-explorer --all-targets --locked
+      - name: cargo check the explorer on its own MSRV
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.explorer }}
+        run: cargo check -p tessera-explorer --all-targets --locked
 
   # ------------------------------------------------------------------------------------
   # Supply chain: licences (GPLv3-compatible only), bans, sources, advisories
@@ -178,6 +234,7 @@ jobs:
   deny:
     name: cargo-deny (${{ matrix.checks }}, ${{ matrix.manifest }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -196,12 +253,15 @@ jobs:
           arguments: --all-features
 
   # ------------------------------------------------------------------------------------
-  # Fuzzing smoke test: every target builds with cargo-fuzz and survives 30 s
+  # Fuzzing smoke test: every target builds with cargo-fuzz (AddressSanitizer) and survives
+  # 10 s (60 s on the weekly schedule). Not on pull requests (billed minutes).
   # ------------------------------------------------------------------------------------
   fuzz:
     name: fuzz smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [clippy]
+    if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
@@ -211,14 +271,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fuzz build
         working-directory: fuzz
         run: cargo +nightly fuzz build
-      - name: Run every target for 30 s
-        run: tools/fuzz-smoke.sh -t 30
+      - name: Run every target
+        env:
+          FUZZ_SECS: ${{ github.event_name == 'schedule' && '60' || '10' }}
+        run: tools/fuzz-smoke.sh -t "$FUZZ_SECS" -j 2
       - name: Keep crash inputs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-artifacts
           path: fuzz/artifacts/

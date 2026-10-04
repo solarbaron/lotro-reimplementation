@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-explorer"
 description = "GUI asset browser for the archives of an install: archive tree, DID search, hex, textures, icons, strings, property sets and a 3D mesh and material viewer"

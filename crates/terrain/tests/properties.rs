@@ -48,7 +48,7 @@ proptest! {
         let normals = VertexNormals::compute(&block, &Neighbours::NONE);
         let m = TerrainMesh::build(&block, &normals, &HeightSlopeShading::default(), lod, edges);
         let mut total = 0;
-        for t in m.indices.chunks_exact(3) {
+        for t in m.indices.as_chunks::<3>().0 {
             let a = area2(&m, t);
             prop_assert!(a > 0);
             total += a;
@@ -64,7 +64,7 @@ proptest! {
         let m = TerrainMesh::build(&block, &normals, &HeightSlopeShading::default(), Lod::FINEST, EdgeLods::NONE);
         // The triangle under (x, y), found by a point-in-triangle test on the mesh itself.
         let (x, y) = (f64::from(u) * 160.0, f64::from(v) * 160.0);
-        for t in m.indices.chunks_exact(3) {
+        for t in m.indices.as_chunks::<3>().0 {
             let [a, b, c] = [t[0], t[1], t[2]].map(|k| m.positions[usize::from(k)].map(f64::from));
             let d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
             let wa = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d;

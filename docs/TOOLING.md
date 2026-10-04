@@ -77,7 +77,9 @@ Milestones follow `docs/ROADMAP.md`, which holds the exit criteria for each one.
 
 ### 0.4 Fact status {#fact-status}
 
-**Confirmed** means checked on this workstation or in the user's install on 2026-10-03.
+**Confirmed** means checked on the primary workstation (the owner's Gentoo machine) or in
+the user's install on 2026-10-03. Facts about installed packages and disks (P1, P3, P4,
+P19) describe that machine only; on another machine run `tools/dev-setup.sh` instead.
 **Reported** means taken from the research notes or upstream documentation and not re-checked here.
 
 ---
@@ -87,7 +89,7 @@ Milestones follow `docs/ROADMAP.md`, which holds the exit criteria for each one.
 | # | Fact used in this document | Source(s) | Status |
 |---|----------------------------|-----------|--------|
 | P1 | Rust 1.97.1 is the Gentoo system toolchain (`dev-lang/rust`, USE `clippy rustfmt`, no `rust-analyzer`, no `rust-src`); `rustup` is not installed | `rustc --version`, `/var/db/pkg`, observed 2026-10-03 | Confirmed |
-| P2 | Workspace MSRV is 1.90, edition 2024; `rust-toolchain.toml` pins `stable` + rustfmt + clippy | repo `Cargo.toml`, `rust-toolchain.toml` | Confirmed |
+| P2 | Workspace MSRV is 1.90 (`apps/explorer`: 1.95), edition 2024; `rust-toolchain.toml` pins an exact version (1.99.0 as of 2026-10-04) + rustfmt + clippy, used by CI | repo `Cargo.toml`, `rust-toolchain.toml`, `.github/workflows/ci.yml` | Confirmed |
 | P3 | Ghidra 12.1.3 is installed from `pentoo` at `/usr/share/ghidra`; OpenJDK 21 is the default JVM | `application.properties`, `java -version`, observed 2026-10-03 | Confirmed |
 | P4 | Wireshark/tshark 4.6.7 is installed **without Lua** (`-Lua` in `tshark -v`) but with GnuTLS; 4.6.9 is available in `::gentoo` | `tshark -v`, portage tree, observed 2026-10-03 | Confirmed |
 | P5 | wine-staging 11.19 (selected), gdb 17, `uv`/`uvx` and docker are installed. ImHex, RenderDoc, apitrace, Frida, mdBook, nextest, cargo-fuzz and cargo-deny are **not** installed yet | `command -v`, observed 2026-10-03 | Confirmed |
@@ -104,7 +106,7 @@ Milestones follow `docs/ROADMAP.md`, which holds the exit criteria for each one.
 | P16 | Captures from official servers must stay private; no official login/GLS implementation; no captures in repos or issues | `legal.md` §7 Tier X, §8.C; `network.md` §3 | Reported |
 | P17 | Default dirty-room posture is black-box; binary disassembly only if explicitly authorized, by a lawful licensee, preferably in an EU/UK jurisdiction, confined to interoperability needs | `legal.md` §8.A | Reported |
 | P18 | Prior-art licenses and recommended uses (§9) | `research/resources.json` (all 98 entries `exists: true`, verified 2026-10-03) | Reported |
-| P19 | Disk: `/home` has ~20 GB free (96 % used); `~/nvme` has ~216 GB free and is XFS with reflink | `df -h`, observed 2026-10-03; reflink from `re-tooling.md` §0 | Confirmed (free space) / Reported (reflink) |
+| P19 | *Primary workstation only:* `/home` had ~20 GB free (96 % used) and a second disk (`~/nvme`, XFS with reflink) ~216 GB free. Other machines differ: put `$TESSERA_RE_DIR` (§11) and the build cache on whatever large private disk they have | `df -h`, observed 2026-10-03; reflink from `re-tooling.md` §0 | Confirmed (free space) / Reported (reflink) |
 | P20 | Analogue projects all ship per-format CLI tools early, use schema-driven codegen, gate real-data tests on an env var, and fuzz parsers | `analogues.md` §4 | Reported |
 
 ---
@@ -114,7 +116,7 @@ Milestones follow `docs/ROADMAP.md`, which holds the exit criteria for each one.
 These rules come from `CLAUDE.md` and the legal research. They decide which tools we use and how.
 
 1. **The install is read-only.** No tool may write to, rename, lock or "repair" anything in the
-   game directory. Read tools in place, or copy to `~/nvme/re/snapshots/` first (§11).
+   game directory. Read tools in place, or copy to `$TESSERA_RE_DIR/snapshots/` first (§11).
 2. **Nothing dirty enters the repo.** That includes decompiler output, Ghidra/BinExport/BSim
    databases, symbol or RVA lists, RenderDoc `.rdc` files, DXVK shader dumps, pcaps from official
    servers, extracted assets, and seed corpora built from real `.dat` files.
@@ -205,7 +207,7 @@ specs (§4.3).
 | Python probes | one-off throwaway scripts (stdlib `struct`, `zlib`, `mmap`) that test a hypothesis across a whole archive | dirty | n/a (never committed) | system Python + `uv run` in the session scratchpad | now |
 | `tessera-dattool` (ours, `apps/dattool`) | `info`, `ls`, `stat`, `cat`, `strings`, `extract`, `validate` against the user's install; becomes the oracle that specs are checked against | clean (code) / output on real data is dirty | GPL-3.0-or-later | `cargo run -p tessera-dattool --` | now |
 | `dattool manifest` / `dattool diff` (planned) | per-archive manifest (ID, version, iteration, sizes, flags, hash of decoded bytes) in SQLite; manifest-to-manifest diff by record type | clean (code) | GPL-3.0-or-later | planned subcommands | M1 |
-| reflink snapshots | near-free copies of the archive set before each game patch, so we can diff patch N against N+1 | dirty (data) | n/a | `cp --reflink=always` on `~/nvme` (XFS) | M1 |
+| reflink snapshots | near-free copies of the archive set before each game patch, so we can diff patch N against N+1 | dirty (data) | n/a | `cp --reflink=always` on a reflink-capable file system (XFS, Btrfs) holding `$TESSERA_RE_DIR` | M1 |
 | diffoscope, sqlitebrowser | deep diffs of two snapshots; browsing manifests | dirty (on real data) | GPL-3.0-or-later; MPL-2.0 / GPL-3.0 | `dev-util/diffoscope`, `dev-db/sqlitebrowser` | M1 |
 | Steam News API | labels each snapshot with the public update name ("Update X.Y") | both | n/a (public web API) | `curl` | M1 |
 | LotroCompanion `delta-lotro-dat-utils` jar | **black-box oracle only**: run it on our own install and compare counts/IDs with `dattool`; never decompile, port or ship it | dirty | Apache-2.0 at distribution level (weak, see §9) | upstream zip from SourceForge; system JDK | opt |
@@ -244,7 +246,7 @@ exists.
 > makes contrary contract terms void. Use these tools only for a written, specific
 > interoperability question that data-file study (§4) and black-box observation (§6, §7) could not
 > answer. **Output is prose only.** Ghidra projects, BinExport files, BSim databases and
-> decompiler text never leave `~/nvme/re/`.
+> decompiler text never leave `$TESSERA_RE_DIR/`.
 
 ### 5.1 Table {#c-table}
 
@@ -255,7 +257,7 @@ exists.
 | CERT Kaiju (OOAnalyzer importer, FnHash, GhiHorn) | imports Pharos/OOAnalyzer class-recovery JSON; function hashing across builds | dirty | BSD (SEI custom) | upstream release zip matching the Ghidra version (`260910` targets 12.1.3); File → Install Extensions | gated |
 | Pharos / OOAnalyzer | object-oriented recovery for **32-bit** MSVC code; run it on the 32-bit client that still ships (P8), then carry names to x64 with BSim / Version Tracking | dirty | BSD (SEI custom) | official Docker image | gated, opt |
 | Ghidra-Cpp-Class-Analyzer | older C++ class recovery | — | MIT | **skip**: archived 2023, targets Ghidra 10 | — |
-| BSim + Version Tracking (built-in) | carry analyst annotations across builds and from 32-bit to 64-bit | dirty | Apache-2.0 | built-in; BSim database on `~/nvme` | gated |
+| BSim + Version Tracking (built-in) | carry analyst annotations across builds and from 32-bit to 64-bit | dirty | Apache-2.0 | built-in; BSim database under `$TESSERA_RE_DIR` | gated |
 | BinExport (Ghidra extension) | exports a program to the BinExport2 protobuf for BinDiff | dirty | Apache-2.0 | build from source against the installed Ghidra (`GHIDRA_INSTALL_DIR=/usr/share/ghidra`); the last binary release targets Ghidra 11.0.3 | gated, opt |
 | BinDiff 8 | function matching and patch diffing between client builds (Ghidra support is Tier 4) | dirty | Apache-2.0 | upstream `.deb`, unpacked to `/opt` | gated, opt |
 | ghidriff | command-line patch diff producing Markdown/JSON/HTML; the cheapest way to see what changed in a new client build | dirty | GPL-3.0-only (we only run it) | `uv tool install ghidriff` (needs `GHIDRA_INSTALL_DIR` and a JDK) | gated |
@@ -270,8 +272,8 @@ own reflink snapshot of `x64/` before each patch (§11).
 
 ### 5.2 Static-analysis workflow (once authorized) {#c-workflow}
 
-1. Snapshot the binaries to `~/nvme/re/snapshots/<build>/`. Never open them in place.
-2. Import into a Ghidra project in `~/nvme/re/ghidra/`. Run auto-analysis with the RTTI analyzer
+1. Snapshot the binaries to `$TESSERA_RE_DIR/snapshots/<build>/`. Never open them in place.
+2. Import into a Ghidra project in `$TESSERA_RE_DIR/ghidra/`. Run auto-analysis with the RTTI analyzer
    and the matching MSVC FunctionID databases, then the class-recovery script.
 3. Optionally run OOAnalyzer on the 32-bit build and port results to x64 with BSim.
 4. For each new build, run `ghidriff old new` and BSim/Version Tracking to carry annotations
@@ -324,7 +326,7 @@ There are two kinds of tool here.
 | Client logging switches | the client's own diagnostic and log command-line options; the list itself is a research fact and lives in `research/notes/`, not here | passive | dirty | (client) | built-in | M2 |
 | strace, Wine file tracing | which archives, settings files and folders the client opens, for `docs/specs/install-layout.md` questions | passive | dirty | LGPL-2.1-or-later; (Wine) | `dev-debug/strace`; `WINEDEBUG` file channels | M1 |
 | DXVK | the D3D-to-Vulkan layer Proton already uses to run the client on Linux; its HUD, log-level and shader-dump settings help answer render-spec questions (P14) | passive | dirty | zlib | `app-emulation/dxvk`, or the copy bundled with Proton/umu | M2 |
-| RenderDoc (Vulkan, through DXVK) | frame captures of the **original** client: pass order, render targets, bound textures and shader stages, for `docs/specs/render.md` | passive | dirty (`.rdc` files never leave `~/nvme/re/`) | MIT | `media-gfx/renderdoc` | M2 |
+| RenderDoc (Vulkan, through DXVK) | frame captures of the **original** client: pass order, render targets, bound textures and shader stages, for `docs/specs/render.md` | passive | dirty (`.rdc` files never leave `$TESSERA_RE_DIR/`) | MIT | `media-gfx/renderdoc` | M2 |
 | apitrace | API call traces, for comparing call streams between the original client and Tessera; only through ordinary loader mechanisms, **never** by placing files in the install directory (§2 rule 1) | passive | dirty | MIT | `dev-debug/apitrace` (`~amd64`) | opt |
 | MangoHud / DXVK HUD | frame-time and load-time comparisons between the original client and Tessera | passive | both | MIT; zlib | `games-util/mangohud` | M3 |
 | Windows VM (QEMU/KVM + libvirt) | reference environment for native-D3D captures and for any gated tool that is unreliable under Wine (P13); keeps dirty sessions off the workstation's main prefix | — | dirty | GPL-2.0 | `app-emulation/qemu`, `app-emulation/libvirt`, `app-emulation/virt-manager` | opt |
@@ -343,13 +345,13 @@ There are two kinds of tool here.
 
 ### 6.2 Passive-observation workflow {#d-workflow}
 
-1. Create a **separate** Wine prefix per experiment under `~/nvme/re/prefixes/<name>/`. Point it
+1. Create a **separate** Wine prefix per experiment under `$TESSERA_RE_DIR/prefixes/<name>/`. Point it
    at a reflink snapshot of the install (§11), never at the live Steam copy, so that nothing the
    client or Wine writes can change the user's install.
 2. Write down the one question the session answers ("which archives are opened at start-up",
    "what passes make up the login-screen frame").
 3. Capture with the passive tools above. Keep raw output (`.rdc`, logs, traces) under
-   `~/nvme/re/captures/<date>-<question>/`.
+   `$TESSERA_RE_DIR/captures/<date>-<question>/`.
 4. Reduce the result to functional facts in a spec section, with a provenance row that names the
    tool and the capture date. Raw captures are never committed, attached to issues or pasted into
    a clean session.
@@ -419,7 +421,7 @@ the safe path the default one.
    `research/` and any `clones/` directory (a second line of defence behind the deny rules), and a
    pre-commit hook that runs `tools/check-content.sh` and `tools/check-spdx.sh`.
 6. **Scratchpads.** Throwaway probes, extracted records and captures go into the session
-   scratchpad or `~/nvme/re/`, never into the repository. Output produced from real archives is
+   scratchpad or `$TESSERA_RE_DIR/`, never into the repository. Output produced from real archives is
    dirty material even when the code that produced it is clean.
 7. **Parallel agents.** When several agents work at once, each owns specific crates or files.
    Workspace-level files (root `Cargo.toml`, `Cargo.lock` policy, CI) belong to the lead session.
@@ -507,21 +509,23 @@ a decision record authorises it.
 
 ## 11. Disk and directory layout for research artefacts
 
-`/home` is nearly full (P19), so bulky and dirty artefacts live on `~/nvme`, outside the
-repository:
+Bulky and dirty artefacts live under one **dirty-room data root**, `$TESSERA_RE_DIR`,
+outside the repository. It defaults to `~/.cache/tessera/re`; point it at any large private
+disk (on the primary workstation that is `~/nvme/re`, P19). Each machine sets it in its own
+shell profile; it is never committed.
 
 | Path | Contents | Zone |
 |---|---|---|
-| `~/nvme/re/snapshots/<build>/` | reflink copies of the archive set and `x64/` before each game patch (`cp --reflink=always`) | dirty |
-| `~/nvme/re/manifests/` | per-snapshot manifests and their diffs (§4.1) | dirty |
-| `~/nvme/re/prefixes/<name>/` | one Wine prefix per experiment (§6.2) | dirty |
-| `~/nvme/re/captures/` | RenderDoc `.rdc`, traces, logs, any packet capture | dirty |
-| `~/nvme/re/ghidra/` | Ghidra projects, BSim databases, exports (gated, §5) | dirty |
-| `~/nvme/re/corpora/` | fuzz seeds harvested from real archives (never committed; `fuzz/corpus/` is git-ignored as well) | dirty |
-| `~/nvme/re/.mcp.json` | MCP configuration for dirty sessions (§8) | dirty |
-| `<repo>/target`, `<repo>/fuzz/target` | build output; move with `CARGO_TARGET_DIR` if `/home` runs short | clean |
+| `$TESSERA_RE_DIR/snapshots/<build>/` | reflink copies of the archive set and `x64/` before each game patch (`cp --reflink=always`) | dirty |
+| `$TESSERA_RE_DIR/manifests/` | per-snapshot manifests and their diffs (§4.1) | dirty |
+| `$TESSERA_RE_DIR/prefixes/<name>/` | one Wine prefix per experiment (§6.2) | dirty |
+| `$TESSERA_RE_DIR/captures/` | RenderDoc `.rdc`, traces, logs, any packet capture | dirty |
+| `$TESSERA_RE_DIR/ghidra/` | Ghidra projects, BSim databases, exports (gated, §5) | dirty |
+| `$TESSERA_RE_DIR/corpora/` | fuzz seeds harvested from real archives (never committed; `fuzz/corpus/` is git-ignored as well) | dirty |
+| `$TESSERA_RE_DIR/.mcp.json` | MCP configuration for dirty sessions (§8) | dirty |
+| `<repo>/target`, `<repo>/fuzz/target` | build output; move with a machine-local `.cargo/config.toml` (`TESSERA_TARGET_DIR=... tools/dev-setup.sh --fix`) when the repo's disk is small | clean |
 
-Nothing under `~/nvme/re/` is ever pushed, attached to an issue, or opened in a clean session.
+Nothing under `$TESSERA_RE_DIR/` is ever pushed, attached to an issue, or opened in a clean session.
 
 ---
 

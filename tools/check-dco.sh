@@ -13,28 +13,51 @@
 #            (only some such commits need one, so this is a reminder, not a failure)
 #
 # Usage: tools/check-dco.sh <base> [<head>]
-#   Checks the commits in <base>..<head> (<head> defaults to HEAD).
-#   Example: tools/check-dco.sh origin/main
+#        tools/check-dco.sh --all [<head>]
+#   <base> [<head>]  checks the commits in <base>..<head> (<head> defaults to HEAD). With
+#                    `origin/main` or `@{push}` as <base> that is the UNPUSHED commits only;
+#                    right after a clone or pull it checks nothing.
+#   --all            checks every commit reachable from <head>, root commit included.
+# Commits up to and including the baseline below were written before the trailer rules were
+# enforced. They are still checked for Signed-off-by, but their trailer warnings are not
+# reported. History is never rewritten to add trailers (docs/DEVELOPMENT.md §2).
 # Exit status: 0 clean, 1 violations, 2 usage error.
 
 set -euo pipefail
 
 if [ $# -lt 1 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
     [ $# -ge 1 ] && exit 0 || exit 2
 fi
-base="$1"
-head="${2:-HEAD}"
 
-if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    echo "check-dco: unknown base revision: $base" >&2
+# Last commit made before Clean-Room-Role/Spec-Ref trailers were enforced ("Multi-machine
+# setup", 2026-10-04). Its ancestors only get the Signed-off-by check.
+baseline=eb01347d726d2baa1cbdb16ceee5e0df7906825a
+
+if [ "$1" = "--all" ]; then
+    base=""
+    head="${2:-HEAD}"
+    range="$head"
+else
+    base="$1"
+    head="${2:-HEAD}"
+    if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+        echo "check-dco: unknown base revision: $base" >&2
+        exit 2
+    fi
+    range="$base..$head"
+fi
+if ! git rev-parse --verify --quiet "$head^{commit}" >/dev/null; then
+    echo "check-dco: unknown head revision: $head" >&2
     exit 2
 fi
+have_baseline=0
+git cat-file -e "$baseline^{commit}" 2>/dev/null && have_baseline=1
 
 errors=0
 warnings=0
 count=0
-for c in $(git rev-list --no-merges --reverse "$base..$head"); do
+for c in $(git rev-list --no-merges --reverse "$range"); do
     count=$((count + 1))
     short="$(git rev-parse --short "$c")"
     subject="$(git log -1 --format=%s "$c")"
@@ -50,7 +73,11 @@ for c in $(git rev-list --no-merges --reverse "$base..$head"); do
         errors=$((errors + 1))
     fi
 
-    files="$(git diff-tree --no-commit-id --name-only -r "$c")"
+    if [ "$have_baseline" = 1 ] && git merge-base --is-ancestor "$c" "$baseline"; then
+        continue
+    fi
+
+    files="$(git diff-tree --no-commit-id --root --name-only -r "$c")"
     if printf '%s\n' "$files" | grep -qE '^(crates|apps|fuzz|tools|docs/specs)/'; then
         role="$(printf '%s\n' "$trailers" | sed -n 's/^Clean-Room-Role: *//Ip' | head -n 1)"
         case "$role" in

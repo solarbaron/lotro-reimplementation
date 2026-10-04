@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Install layout: locating, validating and identifying a game install
 
 | | |

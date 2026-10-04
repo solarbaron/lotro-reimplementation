@@ -12,12 +12,16 @@
 #   -t SECONDS  run time per target (default 30)
 #   -j JOBS     targets run at the same time (default 1)
 #   --stable    force the stable-toolchain path even if cargo-fuzz is installed
-#   TARGET...   targets to run (default: all, from `[[bin]]` entries in fuzz/Cargo.toml)
+#   TARGET...   targets to run (default: all, from `[[bin]]` entries in fuzz/Cargo.toml);
+#               only the named targets are built
 # A libFuzzer dictionary at fuzz/dict/<target>.dict is used when present (syntax tokens
-# only, never strings taken from game data). Corpora go to fuzz/corpus/<target>, crashes to
-# fuzz/artifacts/<target>/ and logs to fuzz/target/smoke-logs/<target>.log (all
-# git-ignored). A summary table (time, executions, result per target) is printed at the
-# end. Never seed a corpus that will be committed with real game data.
+# only, never strings taken from game data). Corpora go to fuzz/corpus/<target> and crashes
+# to fuzz/artifacts/<target>/ (both git-ignored). Builds and logs go under the cargo target
+# dir configured for fuzz/ (a machine-local .cargo/config.toml target-dir, CARGO_TARGET_DIR,
+# else fuzz/target): stable builds in <target-dir>/fuzz-stable-smoke, logs in
+# <target-dir>/fuzz-smoke-logs/<target>.log. A summary table (time, executions, result per
+# target) is printed at the end. Never seed a corpus that will be committed with real game
+# data.
 # Exit status: 0 no crash, 1 a target crashed, 2 usage or build error.
 
 set -euo pipefail
@@ -33,36 +37,52 @@ while [ $# -gt 0 ]; do
         -t) secs="${2:?-t needs seconds}"; shift 2 ;;
         -j) jobs="${2:?-j needs a job count}"; shift 2 ;;
         --stable) force_stable=1; shift ;;
-        -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "fuzz-smoke: unknown option $1" >&2; exit 2 ;;
         *) targets+=("$1"); shift ;;
     esac
 done
 case "$secs" in ''|*[!0-9]*) echo "fuzz-smoke: -t needs a whole number" >&2; exit 2 ;; esac
 case "$jobs" in ''|0|*[!0-9]*) echo "fuzz-smoke: -j needs a positive number" >&2; exit 2 ;; esac
-if [ ${#targets[@]} -eq 0 ]; then
+named=${#targets[@]}
+if [ "$named" -eq 0 ]; then
     while IFS= read -r t; do targets+=("$t"); done < <(
         awk '/^\[\[bin\]\]/{b=1;next} b&&/^name *=/{gsub(/.*= *"|".*/,"");print;b=0}' "$fuzz/Cargo.toml")
 fi
 
 limits=(-rss_limit_mb=2048 -malloc_limit_mb=1024)
-logs="$fuzz/target/smoke-logs"
+# Honour the configured target dir instead of hard-coding one inside the checkout.
+base="$(cd "$fuzz" && cargo metadata --format-version 1 --no-deps 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' 2>/dev/null)" \
+    || base=""
+base="${base:-$fuzz/target}"
+logs="$base/fuzz-smoke-logs"
 mkdir -p "$logs"
+bin_args=()
+if [ "$named" -gt 0 ]; then
+    for t in "${targets[@]}"; do bin_args+=(--bin "$t"); done
+else
+    bin_args=(--bins)
+fi
 
 if [ "$force_stable" = 0 ] && command -v cargo-fuzz >/dev/null 2>&1 \
     && cargo +nightly --version >/dev/null 2>&1; then
     mode="cargo-fuzz"
-    (cd "$fuzz" && cargo +nightly fuzz build) || exit 2
+    if [ "$named" -gt 0 ]; then
+        for t in "${targets[@]}"; do (cd "$fuzz" && cargo +nightly fuzz build "$t") || exit 2; done
+    else
+        (cd "$fuzz" && cargo +nightly fuzz build) || exit 2
+    fi
 else
     mode="stable libFuzzer"
     host="$(rustc -vV | sed -n 's/^host: //p')"
-    export CARGO_TARGET_DIR="$fuzz/target/stable-smoke"
+    export CARGO_TARGET_DIR="$base/fuzz-stable-smoke"
     export RUSTFLAGS="-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
 -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table \
 -Cllvm-args=-sanitizer-coverage-trace-compares --cfg fuzzing -Cdebug-assertions -Coverflow-checks"
     echo "fuzz-smoke: cargo-fuzz/nightly not found, building instrumented targets on stable ($host)"
     # --target keeps RUSTFLAGS away from build scripts.
-    (cd "$fuzz" && cargo build --release --bins --target "$host") || exit 2
+    (cd "$fuzz" && cargo build --release "${bin_args[@]}" --target "$host") || exit 2
 fi
 
 # Run one target to completion; its output goes to its log and its exit status to
@@ -71,9 +91,19 @@ run_one() {
     local t="$1" log="$logs/$1.log" start end rc=0 extra=()
     mkdir -p "$fuzz/corpus/$t" "$fuzz/artifacts/$t"
     if [ -f "$fuzz/dict/$t.dict" ]; then extra+=(-dict="$fuzz/dict/$t.dict"); fi
+    # mlua makes one-time allocations while a plugin loads that LeakSanitizer cannot trace
+    # back to the long-lived plugin manager (fuzz_targets/script_pattern.rs). Only matters
+    # with cargo-fuzz (AddressSanitizer); the stable path has no leak checker.
+    local asan="${ASAN_OPTIONS:-}"
+    case "$t" in
+        script_pattern)
+            extra+=(-detect_leaks=0)
+            asan="${asan:+$asan:}detect_leaks=0" ;; # also the at-exit check
+    esac
     start=$(date +%s)
     if [ "$mode" = "cargo-fuzz" ]; then
-        (cd "$fuzz" && cargo +nightly fuzz run "$t" -- -max_total_time="$secs" "${limits[@]}" \
+        (cd "$fuzz" && { [ -z "$asan" ] || export ASAN_OPTIONS="$asan"; } \
+            && cargo +nightly fuzz run "$t" -- -max_total_time="$secs" "${limits[@]}" \
             -print_final_stats=1 "${extra[@]}") >"$log" 2>&1 || rc=$?
     else
         "$CARGO_TARGET_DIR/$host/release/$t" "$fuzz/corpus/$t" \

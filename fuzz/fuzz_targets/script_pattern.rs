@@ -9,7 +9,10 @@
 //! budget stops runaway backtracking), and results must stay within the subject.
 //!
 //! One plugin manager with one trivial plugin lives for the whole run, in a temporary
-//! folder this target creates. Input layout: byte 0 selects the operation, then the
+//! folder this target creates. It is built in the `init` block, before the first input.
+//! LeakSanitizer still reports small allocations made inside mlua while plugins load (16
+//! bytes per cloned function or table reference, not traceable to the manager), so
+//! `tools/fuzz-smoke.sh` runs this target with `-detect_leaks=0` under cargo-fuzz. Input layout: byte 0 selects the operation, then the
 //! subject, pattern and replacement separated by 0xFF bytes (0xFF never needs to appear
 //! inside them for coverage: the matcher treats it like any other byte).
 
@@ -118,33 +121,38 @@ fn run(lua: &Lua, op: u8, s: &[u8], p: &[u8], r: &[u8], n: i8) -> bool {
     call().unwrap_or(true)
 }
 
-fuzz_target!(|data: &[u8]| {
-    let Some((&sel, rest)) = data.split_first() else {
-        return;
-    };
-    let mut m = manager().lock().unwrap_or_else(|e| e.into_inner());
+fuzz_target!(
+    init: {
+        drop(manager().lock());
+    },
+    |data: &[u8]| {
+        let Some((&sel, rest)) = data.split_first() else {
+            return;
+        };
+        let mut m = manager().lock().unwrap_or_else(|e| e.into_inner());
 
-    if sel >= 0xF0 {
-        // A chat command line. `/plugins unload` may remove our apartment; reload it.
-        let line = String::from_utf8_lossy(rest);
-        let _ = m.execute_command(&line);
-        m.pump();
-        if m.with_lua(APARTMENT, |_| ()).is_none() {
-            let _ = m.load_plugin("FuzzPlugin");
+        if sel >= 0xF0 {
+            // A chat command line. `/plugins unload` may remove our apartment; reload it.
+            let line = String::from_utf8_lossy(rest);
+            let _ = m.execute_command(&line);
+            m.pump();
+            if m.with_lua(APARTMENT, |_| ()).is_none() {
+                let _ = m.load_plugin("FuzzPlugin");
+            }
+            return;
         }
-        return;
-    }
 
-    let mut parts = rest.splitn(4, |&b| b == 0xFF);
-    let s = parts.next().unwrap_or_default();
-    let p = parts.next().unwrap_or_default();
-    let r = parts.next().unwrap_or_default();
-    let n = parts
-        .next()
-        .and_then(|t| t.first())
-        .map_or(i8::MIN, |&b| b as i8);
-    let ok = m
-        .with_lua(APARTMENT, |lua| run(lua, sel % 7, s, p, r, n))
-        .unwrap_or(true);
-    assert!(ok, "pattern op {} returned an out-of-range result", sel % 7);
-});
+        let mut parts = rest.splitn(4, |&b| b == 0xFF);
+        let s = parts.next().unwrap_or_default();
+        let p = parts.next().unwrap_or_default();
+        let r = parts.next().unwrap_or_default();
+        let n = parts
+            .next()
+            .and_then(|t| t.first())
+            .map_or(i8::MIN, |&b| b as i8);
+        let ok = m
+            .with_lua(APARTMENT, |lua| run(lua, sel % 7, s, p, r, n))
+            .unwrap_or(true);
+        assert!(ok, "pattern op {} returned an out-of-range result", sel % 7);
+    }
+);

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 0002 — Rust + wgpu, GPL-3.0-or-later
 
 **Status:** Accepted, 2026-10-03 (chosen by the owner over C++20/Vulkan and C#/Silk.NET)

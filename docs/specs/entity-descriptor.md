@@ -9,7 +9,7 @@
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | none yet |
 | **Implements into** | `crates/formats` (static entity descriptor decoder, inside the landblock-info decoder), `crates/world` (placement transform, streaming of static entities, draw filter), `crates/net` sandbox backend ("serve static world entities"), `apps/client` (world walker), `apps/explorer` (landblock view) |
-| **Companion specs** | `landblock.md` (in preparation; normative for the landblock-info record that contains the descriptors, for cells, block maps and the terrain height scale). `coordinates.md` (in preparation; map coordinates). `setup.md` §3–§7 (the 0x47 physics-object record and its chain to meshes). `property-system.md` §4.6 (Position), §5 (embedded property sets), §8 (DID maps, `CONTENT_LAYER`). `records.md` §1 (VLE, TSize, Pascal string), §2.2 (landblock DIDs). `mesh.md` §11 (axes, units, handedness). `wstate.md` (0x70 objects named by weenie entities). |
+| **Companion specs** | [`landblock.md`](landblock.md) (normative for the landblock-info record that contains the descriptors, for cells, block maps and the terrain height scale). [`coordinates.md`](coordinates.md) (map coordinates). `setup.md` §3–§7 (the 0x47 physics-object record and its chain to meshes). `property-system.md` §4.6 (Position), §5 (embedded property sets), §8 (DID maps, `CONTENT_LAYER`). `records.md` §1 (VLE, TSize, Pascal string), §2.2 (landblock DIDs). `mesh.md` §11 (axes, units, handedness). `wstate.md` (0x70 objects named by weenie entities). |
 
 ---
 

@@ -1,9 +1,11 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 
 # Legal framework for a clean-room LOTRO client reimplementation (research notes, 2026-10-03)
 
 NOT LEGAL ADVICE. This is engineering-oriented research. Get a real IP lawyer before going public, especially before any networked or server component ships.
 
-Raw sources I downloaded are in the scratchpad: `/tmp/claude-1000/-home-solarbaron-git-lotro-reimplementation/5f7fd9e6-9dcf-4273-b5fe-0179f3226498/scratchpad/legal/`. Files: `dbg_eula.txt`, `dbg_tos.txt` (current Daybreak EULA/ToS as text), `thj66.txt` (THJ preliminary-injunction order), `thj104.txt` (THJ consent judgment), `p99.txt` (Project 1999 letter agreement), `bnetd.txt` (8th Cir. opinion), `eu_a5/a6/a8.html` (Directive 2009/24 articles), `uk_50B/50BA/296A.html`, `mer_inv.txt` (MER LOTRO protocol notes). The GitHub DMCA repo clone is in `scratchpad/clones/dmca`.
+Raw sources I downloaded are in the scratchpad: `$TESSERA_RE_DIR/legal/`. Files: `dbg_eula.txt`, `dbg_tos.txt` (current Daybreak EULA/ToS as text), `thj66.txt` (THJ preliminary-injunction order), `thj104.txt` (THJ consent judgment), `p99.txt` (Project 1999 letter agreement), `bnetd.txt` (8th Cir. opinion), `eu_a5/a6/a8.html` (Directive 2009/24 articles), `uk_50B/50BA/296A.html`, `mer_inv.txt` (MER LOTRO protocol notes). The GitHub DMCA repo clone is in `~/.cache/tessera/clones/dmca`.
 
 ## 0. Bottom line
 

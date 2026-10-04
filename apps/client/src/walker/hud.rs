@@ -169,8 +169,8 @@ mod tests {
         assert_eq!(p.width, (2 * 8 + 8) * 2);
         assert_eq!(p.height, (2 * 10 + 8) * 2);
         assert_eq!(p.rgba.len(), (p.width * p.height * 4) as usize);
-        assert!(p.rgba.chunks_exact(4).any(|px| px == [255, 0, 0, 255]));
-        assert!(p.rgba.chunks_exact(4).any(|px| px == [0, 255, 0, 255]));
+        assert!(p.rgba.as_chunks::<4>().0.contains(&[255, 0, 0, 255]));
+        assert!(p.rgba.as_chunks::<4>().0.contains(&[0, 255, 0, 255]));
         let empty = rasterize(&[], 9);
         assert_eq!((empty.width, empty.height), (32, 32));
         let many: Vec<(String, [u8; 3])> = (0..100).map(|_| ("x".repeat(500), [1, 2, 3])).collect();

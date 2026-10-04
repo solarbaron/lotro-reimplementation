@@ -23,6 +23,9 @@ stable without libFuzzer.
 | `formats_landblock_info` | `LandblockInfo::parse` with a stamp byte and a total synthetic schema: cells, static entity descriptors, links, weenies, trailer rule | `landblock.md` §4, `entity-descriptor.md` §3, §10 |
 | `formats_block_map` | `BlockMap`, `BlockMapDescriptor` (total schema), `RegionDescriptor`; resolution of one half of the input against the other | `landblock.md` §5, `environment.md` §3.1 |
 | `formats_landblock_properties` | `LandblockProperties` with synthetic minimap PIDs, kind-5 `LandblockGroupRecord` framing | `landblock.md` §6, §7 |
+| `formats_setup` | setup-family decoders: entity descriptors (0x47, header alone and with a total synthetic schema), visual templates (0x1F) and setups (0x04); encode/decode round trip, bounds and links | `docs/specs/setup.md` §4–§6 |
+| `formats_setup_chain` | chain resolution over an in-memory store of up to eight fuzzed records: termination, hop limit, `resolve_setup_did` vs `resolve_setup`, injected fetch errors | `setup.md` §3.1 |
+| `formats_appearance` | appearance records (0x20): decode, byte-exact re-encode, unique entry keys | `setup.md` §8 |
 | `props_set` | `PropertyRegistry::parse`, `PropertySet::parse_record`/`parse_record_prefix`/`parse_embedded`/`parse_embedded_prefix` with a registry decoded from the same input | `property-system.md` §3-§6 |
 | `text_render` | message grammar and rendering, markup, tag lists and selector options, `${NAME}` format strings and templates, a string-table record rendered through `Strings` | `docs/specs/string-table.md` |
 | `material_icon` | `decode_layer_with_limit` on a surface payload, `compose_images_with_limit` over decoded and synthetic layers | `docs/specs/icon-layers.md` §3 |
@@ -44,10 +47,14 @@ stable without libFuzzer.
 | `render_range_alloc` | the mesh arena's first-fit `RangeAllocator` under alloc / free / bogus-free sequences, checked against a model | `render.md` §2.2 |
 | `mesh_decode` | `Mesh::decode` (stamp rule and look-ahead fallback), `MeshHeader::parse`, `validate`, `level_geometry` under limits, lossless re-encoding; raw records and damaged synthetic meshes | `docs/specs/mesh.md` §3–§14 |
 | `explorer_mesh_scene` | the explorer's mesh-viewer conversions (`apps/explorer/src/geometry.rs`, included by path): a decoded level into renderer streams and `MeshData::prepare`; base-colour/opacity composition, alpha masks, thumbnails, grid cells on consistent and inconsistent images | `mesh.md` §11, `material.md` §11.2, §12.2, `render.md` §2.1 |
+| `terrain_mesh` | `tessera-terrain` meshing, normals, shading, height queries, LOD selection and splat-layer conversion with hostile heights, split flags, neighbours, palettes, query points and surface chunks | `docs/specs/terrain.md` |
+| `wstate_library` | `ClassLibrary::parse`: chunk walk, class table, attribute lists, parent map (cycle check), singleton list; ancestor/is-a/attribute queries | `docs/specs/wlib.md` |
+| `wstate_object` | `ObjectState::parse`: header, imports, bundle (labels, classes, items, native codecs), links, available properties, with or without a synthetic class library and property schema; graph queries | `docs/specs/wstate.md` |
 | `input_keymap` | keymap binding strings (`Chord::parse` + display round trip), `Keymap::parse_lenient`/`parse` agreement, serialize/parse round trip, overlay/diff, compiling against the built-in registry | `docs/specs/keymap.md` §5–§7 |
 | `input_runtime` | `InputMapper` under arbitrary event/context/frame streams with the built-in keymap, feeding `IntentLatch`, `FixedTimestep`, `FlyController` and `WalkController` over a hostile height field (NaN/inf/huge heights, teleports) | `keymap.md` §7, §9 |
 | `world_bundle` | `BundleFrame::parse` and `build_bundle` against a synthetic world context: raw frames, and frames with a valid landblock-data record plus fuzzed block map, landblock info and properties; cancellation polls; draw-rule and height invariants | `docs/specs/landblock.md` §8, `entity-descriptor.md` §9 |
 | `world_text` | map-coordinate (`12.3S, 45.6W`) and `/loc` token parsers with format/parse round trips; region-global ↔ block-local ↔ landcell conversions and heading helpers on arbitrary f64s | `docs/specs/coordinates.md` §4, §5, §8, §9, §11 |
+| `client_walker_text` | the world walker's pure input handling (`apps/client/src/walker/parse.rs`, `geometry.rs`, included by path): `--fly-path` and path points, place-name matching, HUD line sanitising, static-object part conversion, texture composition and downscale | `coordinates.md`, `mesh.md`, `material.md` |
 
 ## Running
 
@@ -70,7 +77,9 @@ tools/fuzz-smoke.sh -t 600 dat_node  # one target
 ```
 
 `-j N` runs N targets at once; a summary table with each target's run time, executions and
-result is printed at the end, and full logs go to `fuzz/target/smoke-logs/`.
+result is printed at the end, and full logs go to `<target-dir>/fuzz-smoke-logs/` (the
+cargo target dir configured for `fuzz/`, else `fuzz/target`). Named targets are the only
+ones built.
 
 `cargo check` in this directory type-checks the targets on stable.
 

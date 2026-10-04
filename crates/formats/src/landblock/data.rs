@@ -112,8 +112,8 @@ impl HeightGrid {
         let raw = r.bytes(2 * GRID_SAMPLES)?;
         r.charge(2 * GRID_SAMPLES)?;
         let mut g = Self::flat(0);
-        for (dst, src) in g.0.iter_mut().zip(raw.chunks_exact(2)) {
-            *dst = u16::from_le_bytes([src[0], src[1]]);
+        for (dst, src) in g.0.iter_mut().zip(raw.as_chunks::<2>().0) {
+            *dst = u16::from_le_bytes(*src);
         }
         Ok(g)
     }
@@ -337,7 +337,7 @@ impl SurfaceChunk {
                 offset: index_at,
                 limit: r.budget(),
             })?;
-        for (k, c) in raw.chunks_exact(2).enumerate() {
+        for (k, c) in raw.as_chunks::<2>().0.iter().enumerate() {
             let v = u16::from_le_bytes([c[0], c[1]]);
             if usize::from(v) >= GRID_SAMPLES {
                 return Err(FormatError::IndexOutOfRange {
@@ -357,8 +357,8 @@ impl SurfaceChunk {
                 let raw = r.bytes(2 * QUAD_COUNT)?;
                 r.charge(2 * QUAD_COUNT)?;
                 let mut grid = Box::new([0u16; QUAD_COUNT]);
-                for (dst, c) in grid.iter_mut().zip(raw.chunks_exact(2)) {
-                    *dst = u16::from_le_bytes([c[0], c[1]]);
+                for (dst, c) in grid.iter_mut().zip(raw.as_chunks::<2>().0) {
+                    *dst = u16::from_le_bytes(*c);
                 }
                 Some(grid)
             }
@@ -431,7 +431,7 @@ impl SurfaceChunk {
             if tris.iter().any(|&v| !(lo..hi).contains(&usize::from(v))) {
                 return Some("layer vertex outside its vertex window (HM5)");
             }
-            for t in tris.chunks_exact(3) {
+            for t in tris.as_chunks::<3>().0 {
                 if let Some(why) = triangle_unusual([t[0], t[1], t[2]], flags, terrain) {
                     return Some(why);
                 }
@@ -703,8 +703,8 @@ impl LandblockData {
         let raw = r.bytes(4 * COARSE_SAMPLES)?;
         r.charge(4 * COARSE_SAMPLES)?;
         let mut coarse = Box::new([0u32; COARSE_SAMPLES]);
-        for (dst, c) in coarse.iter_mut().zip(raw.chunks_exact(4)) {
-            *dst = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        for (dst, c) in coarse.iter_mut().zip(raw.as_chunks::<4>().0) {
+            *dst = u32::from_le_bytes(*c);
         }
         let terrain = SurfaceChunk::read(r)?;
         let ceiling = match ceiling_parts {

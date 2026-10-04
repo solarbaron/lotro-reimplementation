@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 0004 — Server strategy
 
 **Status:** Accepted, 2026-10-03

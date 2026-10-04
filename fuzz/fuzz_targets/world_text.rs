@@ -39,8 +39,8 @@ fuzz_target!(|input: &[u8]| {
         }
     }
     let mut f = [0f64; 4];
-    for (i, c) in input.chunks_exact(8).take(4).enumerate() {
-        f[i] = f64::from_le_bytes(c.try_into().expect("8 bytes"));
+    for (i, c) in input.as_chunks::<8>().0.iter().take(4).enumerate() {
+        f[i] = f64::from_le_bytes(*c);
     }
     let region = input.first().map_or(1, |b| b % 17);
     let p = WorldPos::new(region, f[0], f[1], f[2]);

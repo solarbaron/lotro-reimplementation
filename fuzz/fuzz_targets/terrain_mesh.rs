@@ -95,7 +95,7 @@ fn check_mesh(m: &TerrainMesh) {
             .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
     );
     let mut area = 0i64;
-    for t in m.indices.chunks_exact(3) {
+    for t in m.indices.as_chunks::<3>().0 {
         let p = |k: u16| {
             let q = m.positions[usize::from(k)];
             ((q[0] / 5.0) as i64, (q[1] / 5.0) as i64)

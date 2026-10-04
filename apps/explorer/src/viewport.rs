@@ -859,7 +859,9 @@ fn render(
     let (w, h) = (img.width as usize, img.height as usize);
     let pixels: Vec<Color32> = img
         .data
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
         .collect();
     if pixels.len() != w * h {

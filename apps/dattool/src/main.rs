@@ -100,6 +100,10 @@ struct DetectArgs {
     /// Skip reading the housekeeping records (content fingerprint, split-set check).
     #[arg(long)]
     schema_only: bool,
+    /// Print only the default install's directory (for
+    /// `export TESSERA_GAME_DIR="$(tessera-dattool detect --path)"`); exit 1 if none.
+    #[arg(long, conflicts_with = "schema_only")]
+    path: bool,
 }
 
 #[derive(Debug, Args)]
@@ -313,6 +317,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         json: cli.json,
     };
     let code = match cli.cmd {
+        Cmd::Detect(a) if a.path => detect::run_path(&mut out, &ctx)?,
         Cmd::Detect(a) => detect::run(&mut out, &ctx, !a.schema_only)?,
         Cmd::Info(a) => info::info(&mut out, &ctx, &a.target)?,
         Cmd::Ls(a) => ls::run(&mut out, &ctx, &a.archive, a.prefix, a.from, a.limit)?,

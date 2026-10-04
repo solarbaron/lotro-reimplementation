@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-text"
 description = "String tables, StringInfo resolution, message grammar, substitution, markup and locale selection"

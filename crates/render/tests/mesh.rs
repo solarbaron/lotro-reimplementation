@@ -10,35 +10,24 @@ use std::f32::consts::PI;
 
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    AlphaMode, Camera, ColorSpace, ContextOptions, Dye, DyeMask, Filter, Frame, Lighting, Material,
-    MeshConfig, MeshData, MeshDebug, MeshDraw, MeshId, MeshLimits, MeshShading, NormalLines,
-    OffscreenFormat, PassSpace, RenderError, Renderer, RendererConfig, RgbaImage, TextureUpload,
-    Wrap,
+    AlphaMode, Camera, ColorSpace, Dye, DyeMask, Filter, Frame, Lighting, Material, MeshConfig,
+    MeshData, MeshDebug, MeshDraw, MeshId, MeshLimits, MeshShading, NormalLines, OffscreenFormat,
+    PassSpace, RenderError, Renderer, RgbaImage, TextureUpload, Wrap,
 };
 
 const BG: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const SIZE: u32 = 64;
 
-fn renderer() -> Option<Renderer<'static>> {
+fn renderer() -> Option<gpu::Headless> {
     gpu::headless_renderer(BG)
 }
 
 /// Renderer with a custom mesh configuration (same adapter search as `gpu.rs`).
-fn renderer_with(meshes: MeshConfig) -> Option<Renderer<'static>> {
-    let first = gpu::headless_renderer(BG)?;
-    let backend = first.adapter_info().backend;
-    drop(first);
-    Renderer::new_headless(&RendererConfig {
-        context: ContextOptions {
-            backends: Some(backend.into()),
-            allow_software: true,
-            ..ContextOptions::default()
-        },
-        clear_color: BG,
-        meshes,
-        ..RendererConfig::default()
+fn renderer_with(meshes: MeshConfig) -> Option<gpu::Headless> {
+    gpu::headless_renderer_with(|c| {
+        c.clear_color = BG;
+        c.meshes = meshes;
     })
-    .ok()
 }
 
 /// Camera on +Z looking at the origin; a unit plane at the origin fills the middle.
@@ -369,8 +358,10 @@ fn mirrored_cube_matches_unmirrored() -> Result<(), RenderError> {
     )?;
     let differing = plain
         .data
-        .chunks_exact(4)
-        .zip(mirrored.data.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(mirrored.data.as_chunks::<4>().0)
         .filter(|(a, b)| a.iter().zip(*b).any(|(x, y)| x.abs_diff(*y) > 3))
         .count();
     assert!(differing <= 8, "{differing} pixels differ");
@@ -581,7 +572,13 @@ fn debug_views_and_overlays() -> Result<(), RenderError> {
             normals: None,
         },
     )?;
-    let green = w.data.chunks_exact(4).filter(|p| p[1] > 200).count();
+    let green = w
+        .data
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[1] > 200)
+        .count();
     assert!(green > 4 * 20 && green < 400, "{green} wire pixels");
     assert_eq!(w.pixel(SIZE / 2 - 8, SIZE / 2 + 8), Some([0, 0, 0, 255]));
     // UV checker: two neighbouring cells differ.
@@ -610,7 +607,9 @@ fn debug_views_and_overlays() -> Result<(), RenderError> {
     )?;
     let magenta = lines
         .data
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| p[0] > 200 && p[2] > 200)
         .count();
     assert!(magenta >= 4, "{magenta} normal-line pixels");
@@ -639,7 +638,13 @@ fn wireframe_without_edges_is_skipped() -> Result<(), RenderError> {
             })
             .mesh(MeshDraw::new(plane, Mat4::IDENTITY, Material::default()));
     })?;
-    assert!(img.data.chunks_exact(4).all(|p| p == [0, 0, 0, 255]));
+    assert!(
+        img.data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p == [0, 0, 0, 255])
+    );
     Ok(())
 }
 

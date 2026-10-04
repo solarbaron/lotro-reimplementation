@@ -104,10 +104,13 @@ pub fn draw_over(dst: &mut RgbaImage, src: &RgbaImage, x: i64, y: i64) -> Result
         ) else {
             continue;
         };
-        for (dp, sp) in drow.chunks_exact_mut(4).zip(srow.chunks_exact(4)) {
-            let d = [dp[0], dp[1], dp[2], dp[3]];
-            let s = [sp[0], sp[1], sp[2], sp[3]];
-            dp.copy_from_slice(&source_over(d, s));
+        for (dp, sp) in drow
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(srow.as_chunks::<4>().0)
+        {
+            *dp = source_over(*dp, *sp);
         }
     }
     Ok(())
@@ -123,7 +126,7 @@ pub fn draw_centred(dst: &mut RgbaImage, src: &RgbaImage) -> Result<()> {
 /// Whether every pixel of `image` has alpha 0 (a layer that cannot change a composite).
 #[must_use]
 pub fn is_fully_transparent(image: &RgbaImage) -> bool {
-    image.pixels.chunks_exact(4).all(|p| p[3] == 0)
+    image.pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 0)
 }
 
 #[cfg(test)]
@@ -245,7 +248,9 @@ mod tests {
         }
         let red: Vec<usize> = dst
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, p)| p[0] == 255)
             .map(|(i, _)| i)

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-formats"
 description = "Record decoders for subfile payloads: primitives, string tables, render surfaces, property dictionary"

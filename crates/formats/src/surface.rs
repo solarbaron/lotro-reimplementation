@@ -366,12 +366,16 @@ impl Surface<'_> {
         let pixels = match self.format {
             SurfaceFormat::R8G8B8 => self
                 .data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .flat_map(|p| [p[2], p[1], p[0], 255])
                 .collect(),
             SurfaceFormat::A8R8G8B8 => self
                 .data
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| [p[2], p[1], p[0], p[3]])
                 .collect(),
             SurfaceFormat::A8 => self.data.iter().flat_map(|&a| [255, 255, 255, a]).collect(),

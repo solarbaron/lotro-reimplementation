@@ -9,7 +9,7 @@
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | none yet |
 | **Implements into** | Later: `crates/formats` (region descriptor and environment records), `crates/world` (per-landblock sky selection), `crates/render` (sky, fog, time-of-day lighting, water). For M3 only §8's "what to do meanwhile" applies. |
-| **Companion specs** | `records.md` §2.1 (prefix table this spec refines), §7 (enum mappers). `property-system.md` §8 (DID maps), §9 (DB-object-type codes). `landblock.md` (in preparation; block maps, which carry the per-landblock sky key). `entity-descriptor.md` (static entities: lights, time-of-day overrides, water meshes). `material.md` §8.7 (water and other effect parameters). |
+| **Companion specs** | `records.md` §2.1 (prefix table this spec refines), §7 (enum mappers). `property-system.md` §8 (DID maps), §9 (DB-object-type codes). [`landblock.md`](landblock.md) (block maps, which carry the per-landblock sky key). `entity-descriptor.md` (static entities: lights, time-of-day overrides, water meshes). `material.md` §8.7 (water and other effect parameters). |
 
 ---
 

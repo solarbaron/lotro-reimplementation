@@ -9,7 +9,7 @@
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | none yet |
 | **Implements into** | `crates/wstate` (`ObjectState`, `GameObject`, area/region/dungeon resolution); `apps/dattool` / `apps/explorer` object views; `crates/world` and `apps/client` consume §11 |
-| **Companion specs** | `docs/specs/wlib.md` (the class library every record is decoded with); `docs/specs/records.md` [§1](records.md#s1) (VLE, TSize and bucket order, strings, name hash), [§4](records.md#s4) (StringInfo layout); `docs/specs/property-system.md` [§4](property-system.md#s4) (value encodings, position §4.6), [§5](property-system.md#s5) (property sets), [§6.2](property-system.md#s6-2) (the +0x09000000 rule), [§8](property-system.md#s8) (DID maps), [§9](property-system.md#s9) (DB-object-type codes); `docs/specs/string-table.md` [§9](string-table.md#s9) (rendering a StringInfo); `landblock.md` and `coordinates.md` (M3, in preparation: block maps, landblock info, map coordinates). This spec starts with a fully reassembled, decompressed record payload. |
+| **Companion specs** | `docs/specs/wlib.md` (the class library every record is decoded with); `docs/specs/records.md` [§1](records.md#s1) (VLE, TSize and bucket order, strings, name hash), [§4](records.md#s4) (StringInfo layout); `docs/specs/property-system.md` [§4](property-system.md#s4) (value encodings, position §4.6), [§5](property-system.md#s5) (property sets), [§6.2](property-system.md#s6-2) (the +0x09000000 rule), [§8](property-system.md#s8) (DID maps), [§9](property-system.md#s9) (DB-object-type codes); `docs/specs/string-table.md` [§9](string-table.md#s9) (rendering a StringInfo); [`landblock.md`](landblock.md) and [`coordinates.md`](coordinates.md) (M3: block maps, landblock info, map coordinates). This spec starts with a fully reassembled, decompressed record payload. |
 
 ---
 
@@ -787,11 +787,12 @@ are records of root class 1398 (quests or deeds, Reported LC). Not needed for M3
 >   bounds counts with 34.
 
 > **OPEN (implementation, 2026-10-04):** §15 asks the real-data test to resolve "every
-> block-map `Area_DID`". No clean-room spec for the block-map descriptors (0x18) or block
-> maps exists yet (`landblock.md` is in preparation), so the `tessera-wstate` real-data
-> test resolves **every area record** found by its property signature (§11.1) instead,
-> which includes every area a block map can name. Switch to the block-map list once
-> `landblock.md` lands.
+> block-map `Area_DID`". When this test was written no clean-room spec for the block-map
+> descriptors (0x18) or block maps existed, so the `tessera-wstate` real-data test
+> resolves **every area record** found by its property signature (§11.1) instead, which
+> includes every area a block map can name. `landblock.md` has since landed (M3), and
+> the walker's `reference_locations` test resolves block-map `Area_DID`s; switching this
+> test to the block-map list is still to do.
 
 ---
 

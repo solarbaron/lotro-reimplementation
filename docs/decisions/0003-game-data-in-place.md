@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 0003 — Read the user's install in place, read-only; no game data in the repo
 
 **Status:** Accepted, 2026-10-03

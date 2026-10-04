@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 
 # Toolchain for a legal, clean-room LOTRO client reimplementation on Gentoo
 
@@ -111,7 +113,7 @@ The ReactOS IP policy is a good template. The person who disassembles writes an 
 3. **`lotro-client`** (public, clean)
    - The Rust implementation. It may read only `lotro-specs`.
    - Claude Code enforcement in this repo's `.claude/settings.json`:
-     - `permissions.deny`: `Read(/home/solarbaron/…/lotro-re-lab/**)`, plus `Bash(ghidra*)`, `Bash(analyzeHeadless*)`, `Bash(frida*)`.
+     - `permissions.deny`: `Read(<local RE lab dir>/**)`, plus `Bash(ghidra*)`, `Bash(analyzeHeadless*)`, `Bash(frida*)`.
      - No Ghidra or Frida MCP in its `.mcp.json`.
    - Use separate Claude sessions or subagents per role: an "RE analyst" agent in the lab and an "implementer" agent in the client repo. A shared Claude session would leak dirty context into clean code.
    - Keep a dated `docs/knowledge-base/` log of settled empirical findings. koniecdev/LotroKoniecDev does this well, with a `dat-format-expert` subagent and `/spec` and `/adr` commands.
@@ -297,7 +299,7 @@ Workflow:
   - Optional debugger bridge through `GHIDRA_DEBUGGER_URL` (that server moved to a game-specific repo; the project grew out of Diablo 2 RE).
   - Install: `python -m tools.setup preflight|ensure-prereqs|build|deploy --ghidra-path /usr/share/ghidra`. Because `/usr/share` is root-owned, install the extension into the user profile.
 - **clearbluejar/pyghidra-mcp** (headless-first, PyPI).
-  - Start: `uvx pyghidra-mcp --transport streamable-http --project-path ~/nvme/re/ghidra-projects /path/bin`.
+  - Start: `uvx pyghidra-mcp --transport streamable-http --project-path $TESSERA_RE_DIR/ghidra-projects /path/bin`.
   - Register: `claude mcp add --transport http pyghidra-mcp http://127.0.0.1:8000/mcp`.
   - A `.mcp.json` entry needs `"type":"http"`.
 - LaurieWired/GhidraMCP: the original; last commit 2025-06, so probably stale for 12.x.

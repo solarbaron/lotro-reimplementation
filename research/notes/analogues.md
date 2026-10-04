@@ -1,7 +1,9 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 
 # Analogous open-source engine reimplementations: lessons for a clean-room LOTRO client
 
-Scope: architecture, tooling, legal posture and stack choice, drawn from projects that reimplement or port other game engines. I shallow-cloned and read the source of most repos listed below. All clones are in `/tmp/claude-1000/-home-solarbaron-git-lotro-reimplementation/5f7fd9e6-9dcf-4273-b5fe-0179f3226498/scratchpad/clones/` (that directory is shared with other agents). The GitHub API rate limit ran out partway through, so some of the later metadata comes from `git ls-remote`, raw.githubusercontent or web search.
+Scope: architecture, tooling, legal posture and stack choice, drawn from projects that reimplement or port other game engines. I shallow-cloned and read the source of most repos listed below. All clones are in `~/.cache/tessera/clones/` (that directory is shared with other agents). The GitHub API rate limit ran out partway through, so some of the later metadata comes from `git ls-remote`, raw.githubusercontent or web search.
 
 ---------------------------------------------------------------------
 ## 1. Asheron's Call lineage (same developer, Turbine; HIGHEST PRIORITY)

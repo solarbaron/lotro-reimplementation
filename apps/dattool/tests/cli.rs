@@ -844,6 +844,15 @@ fn detect_reports_a_synthetic_install() {
         ])
         .assert()
         .success();
+    let p = tool()
+        .args(["--game-dir", s(&f.game), "detect", "--path"])
+        .assert()
+        .success();
+    let printed = String::from_utf8(p.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(printed.trim_end()).unwrap(),
+        std::fs::canonicalize(&f.game).unwrap()
+    );
     let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
     assert_eq!(v["installs"].as_array().unwrap().len(), 1);
     assert!(v["installs"][0]["content_fingerprint"].is_null());

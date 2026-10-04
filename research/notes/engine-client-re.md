@@ -1,8 +1,10 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # LOTRO client engine internals & client-side RE — research notes (2026-10-03)
 
 ## 0. Environment warning for the orchestrator
 - **The root filesystem `/` was 100% full (500G/500G) while I worked.** `/tmp` is on `/`, and the shared scratchpad holds about 4.7 GB of clones from all agents. I freed about 500 MB by deleting only my own redundant clones (`digero_maestro`, `mer-lotro-analyzer`). Later agents may get ENOSPC errors.
-- Clones I used are in `/tmp/claude-1000/-home-solarbaron-git-lotro-reimplementation/5f7fd9e6-9dcf-4273-b5fe-0179f3226498/scratchpad/clones/`:
+- Clones I used are in `~/.cache/tessera/clones/`:
   - `NeuralFoundry_lotro-freecam-toolkit`
   - `mklinik_lotro-fov`
   - `lunarwtr_vscode-lotro-api`
@@ -14,7 +16,7 @@
   - `mer-RevengeBlog`
   - `Felix-Helleckes_MithrilUI`
   - `Chorizite` (Asheron's Call symbol map)
-- Wiki page text I pulled through the Wayback Machine (lotro-wiki.com itself sits behind a bot challenge) is in `scratchpad/web/*.txt`: Music, Commands, Emotes, Lua_Plugins, Lua_Scripting, Mac_Client, coords.
+- Wiki page text I pulled through the Wayback Machine (lotro-wiki.com itself sits behind a bot challenge) is in `$TESSERA_RE_DIR/web/*.txt`: Music, Commands, Emotes, Lua_Plugins, Lua_Scripting, Mac_Client, coords.
 
 ## 1. Executables, bitness, graphics APIs (verified)
 - **Client binaries.**

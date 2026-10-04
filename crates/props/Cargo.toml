@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-props"
 description = "Property system: registry, typed values, property sets, enum labels, DID-map navigation"

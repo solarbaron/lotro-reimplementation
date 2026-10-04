@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Clean-room process
 
 Status: adopted 2026-10-03. This process is **binding** for every contributor, human or AI.

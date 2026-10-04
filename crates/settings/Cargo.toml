@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-settings"
 description = "Tessera's own persistent settings file (TOML in the platform config dir)"

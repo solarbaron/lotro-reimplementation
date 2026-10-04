@@ -157,7 +157,7 @@ pub fn linear_to_srgb8(v: f32) -> u8 {
 pub fn write_ppm(path: &Path, image: &RgbaImage) -> std::io::Result<()> {
     let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
     write!(f, "P6\n{} {}\n255\n", image.width, image.height)?;
-    for px in image.data.chunks_exact(4) {
+    for px in image.data.as_chunks::<4>().0 {
         f.write_all(&px[..3])?;
     }
     f.flush()

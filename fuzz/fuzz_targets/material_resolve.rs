@@ -132,7 +132,9 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let codes: Vec<f32> = rest
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .take(16)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();

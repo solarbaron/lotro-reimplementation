@@ -442,7 +442,11 @@ impl IndexBuffer {
 
     /// The triangles.
     pub fn triangles(&self) -> impl Iterator<Item = [u16; 3]> + '_ {
-        self.indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]])
+        self.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| [t[0], t[1], t[2]])
     }
 }
 
@@ -955,7 +959,7 @@ fn read_index_buffer(c: &mut Cursor<'_>, buffer: u32, vertex_count: u32) -> Resu
     }
     let raw = c.take("index buffer", u64::from(n) * 2)?;
     let mut indices = Vec::with_capacity(n as usize);
-    for (position, b) in raw.chunks_exact(2).enumerate() {
+    for (position, b) in raw.as_chunks::<2>().0.iter().enumerate() {
         let value = u16::from_le_bytes([b[0], b[1]]);
         if u32::from(value) >= vertex_count {
             return Err(MeshError::IndexOutOfRange {
@@ -1081,7 +1085,9 @@ fn read_collision(
     let raw = c.take("collision vertices", u64::from(cv) * 3)?;
     if keep {
         mesh.vertices = raw
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|b| CollisionVertex {
                 draw: b[0],
                 vertex: u16::from_le_bytes([b[1], b[2]]),
@@ -1093,7 +1099,9 @@ fn read_collision(
     let raw = c.take("collision triangles", u64::from(ct) * 12)?;
     if keep {
         mesh.triangles = raw
-            .chunks_exact(12)
+            .as_chunks::<12>()
+            .0
+            .iter()
             .map(|b| CollisionTriangle {
                 vertices: [u16s(b, 0), u16s(b, 2), u16s(b, 4)],
                 edges: [u16s(b, 1), u16s(b, 3), u16s(b, 5)],
@@ -1104,7 +1112,9 @@ fn read_collision(
     let raw = c.take("collision edges", u64::from(ce) * 8)?;
     if keep {
         mesh.edges = raw
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|b| CollisionEdge {
                 vertices: [u16s(b, 0), u16s(b, 2)],
                 faces: [u16s(b, 1), u16s(b, 3)],

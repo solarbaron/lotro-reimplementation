@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# REUSE 3.x metadata (https://reuse.software). Every source file also carries its own
+# `SPDX-License-Identifier` header (tools/check-spdx.sh); this annotation adds the copyright
+# notice and covers files that cannot hold a comment (Cargo.lock, golden PNGs, JSON).
+# Third-party material must never be committed (docs/CLEAN_ROOM.md, CLAUDE.md "Content
+# rules"); if an original CC0 asset is ever added, give it its own annotation here.
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "The Tessera contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"

@@ -164,7 +164,7 @@ pub fn base_texture(base: Option<&RgbaImage>, alpha: AlphaSource<'_>) -> Option<
     let Some(base) = base else {
         let a = alpha_img?;
         let mut out = a.clone();
-        for px in out.pixels.chunks_exact_mut(4) {
+        for px in out.pixels.as_chunks_mut::<4>().0 {
             px[0] = 255;
             px[1] = 255;
             px[2] = 255;
@@ -208,7 +208,7 @@ pub fn alpha_mask(src: &RgbaImage, invert: bool) -> Option<RgbaImage> {
         return None;
     }
     let mut out = src.clone();
-    for px in out.pixels.chunks_exact_mut(4) {
+    for px in out.pixels.as_chunks_mut::<4>().0 {
         let v = if invert { 255 - px[3] } else { px[3] };
         px[0] = v;
         px[1] = v;

@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-04 |
 | **Author role** | Spec writer (dirty room) |
 | **Serves** | [ROADMAP M3](../ROADMAP.md#m3) exit criterion 4 (terrain height and object placement at 20 reference locations) and criterion 5 (area name and map coordinates agree with the original client at the same locations) |
-| **Companion specs** | `entity-descriptor.md` §4.4 (SED frame), §5 (placement transform), §7 (scale), §8 (height scale); `wstate.md` §11.2 (area DID → name); `landblock.md` and `coordinates.md` (both in preparation, normative once they land) |
+| **Companion specs** | `entity-descriptor.md` §4.4 (SED frame), §5 (placement transform), §7 (scale), §8 (height scale); `wstate.md` §11.2 (area DID → name); [`landblock.md`](../specs/landblock.md) and [`coordinates.md`](../specs/coordinates.md) (normative) |
 | **Owner list** | Every row's empty columns are an item of [`owner-observations.md`](owner-observations.md#o1) |
 
 Twenty places in five regions where the data predicts exact facts: a terrain height, the
@@ -158,9 +158,9 @@ the SED *z*. Exact map value = the unrounded R5 latitude and longitude of the st
 <a id="s3"></a>
 ## 3. Open points this checklist is meant to close
 
-> **OPEN:** `coordinates.md` was not yet written when these values were computed; the map
-> coordinates and `/loc` fields follow R5 and R6 (research notes). When `coordinates.md`
-> lands, recompute both columns with it and note any change here.
+> **Resolved (walker side, 2026-10-04):** these values were computed from R5 and R6 before
+> `coordinates.md` existed. Recomputed with `coordinates.md` §8.3 and §9 (§4.3): no change
+> in the `/loc` column; the map-coordinate rounding rule is the next item.
 
 > **OPEN:** Map-coordinate rounding. Twelve rows give different strings for rounding and
 > truncation; the owner's readings of those rows decide the rule. Record the exact string

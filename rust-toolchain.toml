@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Exact toolchain for development and CI (rustup reads this file; CI installs the same
+# version). Pinned so a new stable release cannot break `clippy -D warnings` overnight: bump
+# it on purpose, fix the new lints in the same commit. The MSRV is separate:
+# `rust-version` in Cargo.toml (1.90; 1.95 for apps/explorer). Without rustup (a distro
+# rustc) this file is ignored; tools/dev-setup.sh warns when the versions differ.
 [toolchain]
-channel = "stable"
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]

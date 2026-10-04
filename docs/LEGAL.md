@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Legal position and project policy
 
 > **NOT LEGAL ADVICE.** This document is engineering research written by
@@ -416,7 +418,7 @@ has substantial uses that do not depend on game data.
 ## 12. Distribution and money
 
 - Licence: **GPL-3.0-or-later**; every source file carries
-  `SPDX-License-Identifier: GPL-3.0-or-later`. Third-party code may be imported only if its
+  <!-- REUSE-IgnoreStart -->`SPDX-License-Identifier: GPL-3.0-or-later`<!-- REUSE-IgnoreEnd -->. Third-party code may be imported only if its
   licence is compatible and its provenance is clean. Most published LOTRO tools are
   unlicensed (all rights reserved) and must not be copied; AGPL code is not imported.
 - Free of charge. No paid tiers, perks, ads, or sales. Donations, if any, cover

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Record encodings inside subfile payloads
 
 | | |
@@ -214,9 +216,9 @@ Status codes:
 
 | Prefix | Archive (count, 2026-10-03) | Meaning | Status |
 |---|---|---|---|
-| 0x01 | general (1,057) | Setup / model assembly records | R |
+| 0x01 | general (1,057) | Stand-alone collision geometry, **not** setups (corrected by [`setup.md`](setup.md) §2.2, S2) | C (setup.md) |
 | 0x02 | general (3,402) | Unknown | OPEN |
-| 0x04 | general (28,555) | Skeletons (Havok skeleton data). A DID-map label ending in "_Setup" points into this range. | R, L |
+| 0x04 | general (28,555) | Setups: embedded Havok skeleton tagfile, body with attachment lists, collision volumes, part list ([`setup.md`](setup.md) §6, S1/S6, 28,555 of 28,555 decoded). A DID-map label ending in "_Setup" points into this range. | C (setup.md), L |
 | 0x05 | anim (25,395) | Animation clips | R |
 | 0x06 | mesh (37,484), mesh_aux_1 (10,079) | Meshes (GfxObj) | R |
 | 0x07 | gamelogic (7,526) | Script tables (VFX/sound/animation event graphs) | R |

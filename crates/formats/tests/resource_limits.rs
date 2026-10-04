@@ -623,7 +623,9 @@ mod jpeg {
             if color == ExtendedColorType::L8 {
                 assert!(
                     img.pixels
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .all(|p| p[0] == p[1] && p[1] == p[2] && p[3] == 255)
                 );
             }

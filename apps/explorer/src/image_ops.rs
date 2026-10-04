@@ -163,7 +163,7 @@ impl ChannelStats {
         let mut min = [u8::MAX; 4];
         let mut max = [0u8; 4];
         let mut any = false;
-        for p in img.pixels.chunks_exact(4) {
+        for p in img.pixels.as_chunks::<4>().0 {
             any = true;
             for c in 0..4 {
                 min[c] = min[c].min(p[c]);

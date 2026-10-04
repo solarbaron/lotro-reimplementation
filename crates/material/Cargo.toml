@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-material"
 description = "Materials and images built from render surfaces: surface/material/shader records, effective parameters, feature flags, dyes, layered icon composition, mip-chain helpers"

@@ -22,7 +22,8 @@ conflicts with it, `CLAUDE.md` wins.
 
 - `research/` (not even with `ls`, `grep -r` from the repository root, `cat`, `git log -p`
   or `git show` on its files). Scope searches to `crates/ apps/ fuzz/ tools/ docs/`.
-- Any `clones/` directory, third-party LOTRO / DDO / Asheron's Call source or tools,
+- Any `clones/` directory (including `~/.cache/tessera/clones`), dirty scratch dirs
+  (`~/.cache/tessera/scratch/*/dirty`), third-party LOTRO / DDO / Asheron's Call source or tools,
   decompiler or disassembler output, packet captures.
 - Game files examined byte by byte. You may run **our own** code (tests, `dattool`) against
   the user's install read-only to check that it works, and report pass/fail and counts. Do
@@ -43,7 +44,7 @@ the spec's implementer-notes section.
 
 ## Engineering rules (CLAUDE.md)
 
-- Every source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`.
+- Every source file starts with <!-- REUSE-IgnoreStart -->`// SPDX-License-Identifier: GPL-3.0-or-later`<!-- REUSE-IgnoreEnd -->.
 - Parsers treat all input as hostile: no panics (no `unwrap`/`expect`/indexing on data-
   derived values), bounded allocations (check counts against remaining input before
   allocating), `Result` with one `thiserror` error type per crate.
@@ -96,6 +97,7 @@ session is started. Do all three:
          "Read(./research/**)",
          "Edit(./research/**)",
          "Read(**/clones/**)",
+         "Read(**/scratch/*/dirty/**)",
          "WebFetch",
          "WebSearch"
        ]

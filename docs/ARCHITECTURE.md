@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Tessera architecture
 
 > Status: founding document, written at milestone M0 (2026-10-03). Update this file in the
@@ -340,7 +342,7 @@ nodes. A full DID → (archive, entry) index built by walking every tree is opti
 - A shared `Reader` cursor provides bounded little-endian reads and the primitive
   encodings: the variable-length integer, sized lists (one hint byte then a variable-length
   count), Latin-1 Pascal strings, length-prefixed UTF-16 strings, booleans that must be 0
-  or 1. Spec: `docs/specs/primitives.md`.
+  or 1. Spec: `docs/specs/records.md` §1 (primitive encodings).
 - Every decoder checks that a record's leading DID matches the requested DID when the
   format carries one (Reported: most decoded records start with their own DID).
 - Decoders report trailing unread bytes as a warning value, not an error, so tools can
@@ -353,21 +355,22 @@ nodes. A full DID → (archive, entry) index built by walking every tree is opti
 
 | DID type | Record | Module | Milestone | Spec |
 |---|---|---|---|---|
-| — | primitives | `reader` | M0 | `primitives.md` |
+| — | primitives | `reader` | M0 | `records.md` §1 |
 | 0x25–0x26 | string tables | `string_table` | M0 | `string-table.md` |
-| 0x41 | render surface (texture, icon) | `render_surface` | M0 | `render-surface.md` |
+| 0x41 | render surface (texture, icon) | `render_surface` | M0 | `records.md` §5 |
 | 0x34000000 | property dictionary | `property_dictionary` | M0 | `property-system.md` |
-| 0x23 | enum mapper | `enum_mapper` | M1 | `enum-mapper.md` |
-| 0x28 | DID map / directory | `did_map` | M1 | `did-map.md` |
+| 0x23 | enum mapper | `enum_mapper` | M1 | `records.md` §7 |
+| 0x28 | DID map / directory | `did_map` | M1 | `records.md` §8 |
 | 0x78–0x7F | property sets | `property_set` | M1 | `property-system.md` |
 | 0x40 | texture list (mip chain) | `texture_list` | M1 | `texture-list.md` |
 | 0x06 | mesh (GfxObj) | `mesh` | M2 | `mesh.md` |
 | 0x30, 0x31 | material, surface | `material` | M2 | `material.md` |
 | 0x20 | appearance (wardrobe) | `appearance` | M4 | `appearance.md` |
-| 0x01, 0x1F, 0x47 | setup, held-item template, entity record | `setup` | M2/M4 | `setup.md` |
+| 0x04, 0x1F, 0x47 | setup (with an embedded Havok skeleton tagfile), visual template, entity descriptor | `setup` | M2/M4 | `setup.md` |
+| 0x01 | stand-alone collision geometry (not a setup; layout open) | — | M3+ | `setup.md` §2.2 |
 | 0x800R/0x802R/0x804R, 0x801R | landblock data, info, properties; block map | `landblock` | M3 | `landblock.md` |
 | 0x18 | block-map descriptors | `block_map` | M3 | `landblock.md` |
-| 0x04, 0x05 | skeleton, animation clip | `tessera-havok` | M4 | `havok-data.md` |
+| — (inside 0x04), 0x05 | skeleton (the Havok tagfile slice of a 0x04 setup, handed over by `setup`), animation clip | `tessera-havok` | M4 | `havok-data.md` |
 | 0x56000000 | class library (WLib) | `wlib` | M3 | `wlib.md` |
 | 0x70–0x77 | object state (WState) | `wstate` | M3 | `wstate.md` |
 | 0x22 | UI layout | `ui_layout` | M5 | `ui-layout.md` |
@@ -426,7 +429,7 @@ game concept.
 | String table (0x25/0x26) | `text::table` | Token → text pieces and variable slots. |
 | StringInfo | `text::info` | Literal UTF-16 or (token, table DID), plus substitution arguments. `text::render` resolves it to a `String` in the active locale. |
 | Grammar tags | `text::grammar` | Selection among variant spellings by tags (gender, plural, race, class, vowel); spec in `string-table.md`. |
-| Name hash | `text::hash` | The 28-bit name hash used for variable names and class attribute names (Reported); spec in `primitives.md`. |
+| Name hash | `text::hash` | The 28-bit name hash used for variable names and class attribute names; spec in `records.md` §1.5. |
 
 <a id="wstate"></a>
 ### 7.4 Scripted objects (`tessera-wstate`)
@@ -881,8 +884,10 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
 10. Render: cull, sort, encode, submit, present.
 
 > **OPEN:** entity storage. A plain arena with typed component vectors is enough through
-> M3. Whether to adopt an ECS library (for example a standalone `bevy_ecs` or `hecs`) is
-> an ADR for M4, when characters and animation multiply the component count.
+> M3. [Decision 0005](decisions/0005-no-full-bevy.md) narrows the M4 question: an M4
+> decision record benchmarks a standalone `bevy_ecs` against a plain project-owned store
+> (50 animated characters plus streamed landblocks; frame time, code clarity, build cost,
+> upgrade churn) and adopts `bevy_ecs` only if it clearly wins. No full Bevy engine.
 
 ---
 

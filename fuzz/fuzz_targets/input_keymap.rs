@@ -17,7 +17,7 @@ use tessera_input::{
 /// Build bindings straight from bytes, bypassing the parser.
 fn constructed(data: &[u8]) {
     let mut k = Keymap::new();
-    for (i, c) in data.chunks_exact(11).take(32).enumerate() {
+    for (i, c) in data.as_chunks::<11>().0.iter().take(32).enumerate() {
         let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
         let spec = if c[0] & 1 == 0 {
             let axis = AnalogAxis::ALL[usize::from(c[1]) % AnalogAxis::ALL.len()];

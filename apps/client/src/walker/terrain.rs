@@ -1020,7 +1020,7 @@ mod tests {
         );
         let img = overview_tile(&block, &HeightSlopeShading::default());
         assert_eq!(img.len(), 33 * 33 * 4);
-        assert!(img.chunks_exact(4).all(|p| p[3] == 255));
+        assert!(img.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
     }
 
     #[test]

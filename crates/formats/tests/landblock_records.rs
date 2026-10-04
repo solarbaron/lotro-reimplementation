@@ -91,7 +91,7 @@ fn full_data(build: Option<u8>) -> LandblockData {
     d.terrain = chunk_for_quad0(true);
     let mut ceiling_chunk = chunk_for_quad0(true);
     // Ceilings face down: clockwise from above.
-    for t in ceiling_chunk.indices.chunks_exact_mut(3) {
+    for t in ceiling_chunk.indices.as_chunks_mut::<3>().0 {
         t.swap(1, 2);
     }
     d.ceiling = Some(Ceiling {

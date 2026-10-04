@@ -143,7 +143,7 @@ fn edge_of(
     };
     let mut verts = BTreeSet::new();
     let mut segs = BTreeSet::new();
-    for t in m.indices.chunks_exact(3) {
+    for t in m.indices.as_chunks::<3>().0 {
         for k in 0..3 {
             let (a, b) = (usize::from(t[k]), usize::from(t[(k + 1) % 3]));
             if on(m.positions[a]) && on(m.positions[b]) {
@@ -343,11 +343,13 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
                 .unwrap_or_else(|e| panic!("{:#010x}: {e}", data_did(region, x, y)));
             if !layers.is_empty() {
                 let tris: HashSet<[u16; 3]> = triangulate(block, Lod::FINEST, EdgeLods::NONE)
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|t| canon([t[0], t[1], t[2]]))
                     .collect();
                 for l in &layers {
-                    for t in l.indices.chunks_exact(3) {
+                    for t in l.indices.as_chunks::<3>().0 {
                         assert!(
                             tris.contains(&canon([t[0], t[1], t[2]])),
                             "{:#010x}: layer {} triangle {t:?} is not a mesh triangle",
@@ -373,7 +375,9 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
             let m = TerrainMesh::build(block, &normals, &shading, lod, e);
             let total: i64 = m
                 .indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|t| {
                     let a = area2(&m, t);
                     assert!(

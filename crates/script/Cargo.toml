@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-script"
 description = "Embedded Lua 5.1 plugin host (sandboxed apartments, plugin descriptors, plugin data)"

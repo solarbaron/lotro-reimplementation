@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Renderer integration notes (`crates/render`)
 
 Status: **M2 design** (meshes, materials and shared buffers in §2). The clean-room implementer of
@@ -133,4 +135,4 @@ the PNGs).
 > the renderer's channel convention (§2.3 "Mask channels").
 
 > **OPEN:** Skinned meshes: bone indices/weights streams are not part of `MeshData` yet; they
-> will be added with the skeleton spec (M5). Bind-pose meshes render as static meshes.
+> will be added with the skeleton spec (M4, `havok-data.md`). Bind-pose meshes render as static meshes.

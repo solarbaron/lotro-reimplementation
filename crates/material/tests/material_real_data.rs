@@ -386,7 +386,9 @@ fn all_material_records() {
                     let low = t
                         .image
                         .pixels
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .filter(|p| p[3] < 128)
                         .count();
                     low * 4 >= t.image.pixels.len() / 4

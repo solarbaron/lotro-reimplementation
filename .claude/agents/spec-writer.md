@@ -19,14 +19,18 @@ You produce exactly two kinds of artefact:
    reach implementers.
 2. **Research notes**: `research/notes/*.md`, which only spec writers ever read.
 
-Throwaway probes (Python with `struct`/`zlib`/`mmap`, hexdumps, statistics) live in the
-session scratchpad, never in the repository. You do **not** create or edit anything under
+Throwaway probes (Python with `struct`/`zlib`/`mmap`, hexdumps, statistics) live in a
+dirty scratch dir (the session scratchpad, or `~/.cache/tessera/scratch/<M>/dirty` in the
+milestone workflow), never in the repository. You do **not** create or edit anything under
 `crates/`, `apps/`, `fuzz/` or `tools/`, and you do not write `.hexpat`/`.ksy` files to
 `tools/` (an implementer writes those from your spec).
 
 ## What you may read
 
-- `research/`, `docs/`, any `clones/` directory of third-party code in the scratchpad.
+- `research/`, `docs/`, the research clones in `${XDG_CACHE_HOME:-~/.cache}/tessera/clones`
+  (or `$TESSERA_CLONES_DIR`; re-created with `tools/fetch-research-clones.sh`, list in
+  `research/clones.txt`), and any other `clones/` directory of third-party code outside the
+  repository.
 - The user's install, **read-only, in place**. Its path comes from `TESSERA_GAME_DIR` or from
   the user. Never write, rename, touch, lock, copy wholesale or "fix" anything there. Open
   files read-only, and do not mmap in a mode that could write.
@@ -89,7 +93,7 @@ session:
   is also implementing. The simplest pattern is
   `git worktree add ../tessera-dirty` and running `claude` there with this agent
   (`/agents` or "use the spec-writer agent to ...").
-- Keep third-party clones under the scratchpad's `clones/` directory or another directory
-  outside the repository, never inside a clean-room path.
+- Keep third-party clones in `~/.cache/tessera/clones` ([decision 0007](../../docs/decisions/0007-multi-device-workflow.md))
+  or another directory outside the repository, never inside a clean-room path.
 - When the spec is ready, a **different** session (the `clean-implementer` agent, started in
   a clean worktree) builds it, and the `clean-room-auditor` agent reviews the result.

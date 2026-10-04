@@ -134,8 +134,10 @@ pub fn compare(
     let width = expected.width.max(1);
     for (i, (e, a)) in expected
         .data
-        .chunks_exact(4)
-        .zip(actual.data.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(actual.data.as_chunks::<4>().0)
         .enumerate()
     {
         let (x, y) = (i as u32 % width, i as u32 / width);

@@ -74,7 +74,8 @@ mod texture;
 pub use arena::{ArenaStats, MeshConfig, MeshId, RangeAllocator};
 pub use camera::{Camera, OrbitCamera, OrbitConfig, Perspective, UpAxis};
 pub use context::{
-    ContextOptions, ENV_ADAPTER_NAME, ENV_BACKEND, ENV_POWER_PREF, GpuContext, rank_adapter,
+    ContextOptions, ENV_ADAPTER_NAME, ENV_BACKEND, ENV_POWER_PREF, GPU_WAIT_TIMEOUT, GpuContext,
+    rank_adapter,
 };
 pub use error::{RenderError, Result};
 pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};

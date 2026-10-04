@@ -91,7 +91,9 @@ fuzz_target!(|data: &[u8]| {
     let h = name_hash(data);
     assert!(h < 0x1000_0000);
     let units: Vec<u16> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     let _ = name_hash_utf16(&units);

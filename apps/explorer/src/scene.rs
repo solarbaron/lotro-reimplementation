@@ -1784,7 +1784,9 @@ fn blank_thumb() -> RgbaImage {
 fn thumb_image(th: &RgbaImage, alpha: bool) -> RgbaImage {
     let pixels = th
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| {
             if alpha {
                 [p[3], p[3], p[3], 255]

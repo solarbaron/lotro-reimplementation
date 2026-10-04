@@ -475,7 +475,7 @@ fn random_mutations_never_panic() {
     let built = b.build();
     let len = built.bytes.len();
     let positions = noise(77, 6 * 600);
-    for (k, chunk) in positions.chunks_exact(6).enumerate() {
+    for (k, chunk) in positions.as_chunks::<6>().0.iter().enumerate() {
         let mut x = built.bytes.clone();
         // Mutate 1-4 bytes, biased towards the header and the node area.
         let span = if k % 3 == 0 { 0x400 + 8 * 2460 } else { len };

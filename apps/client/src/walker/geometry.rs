@@ -251,7 +251,7 @@ pub fn compose_texture(base: Option<&RgbaImage>, alpha: AlphaFrom<'_>) -> Option
     let Some(base) = base else {
         let a = mask?;
         let mut out = a.clone();
-        for px in out.pixels.chunks_exact_mut(4) {
+        for px in out.pixels.as_chunks_mut::<4>().0 {
             px[0] = 255;
             px[1] = 255;
             px[2] = 255;

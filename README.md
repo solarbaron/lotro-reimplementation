@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Tessera
 
 **A clean-room, from-scratch game client compatible with the data files of
@@ -59,8 +61,10 @@ The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/RO
 
 ## Building
 
-You need a Rust toolchain from [rustup](https://rustup.rs/). The repository pins the
-channel and components in `rust-toolchain.toml` (stable, edition 2024, MSRV 1.90).
+You need a Rust toolchain from [rustup](https://rustup.rs/). The repository pins the exact
+toolchain version and components in `rust-toolchain.toml` (edition 2024); rustup installs it
+on first use. The minimum supported Rust version is 1.90 (`rust-version` in `Cargo.toml`),
+except `apps/explorer`, which needs 1.95 for its GUI toolkit.
 
 ```sh
 cargo build --workspace
@@ -80,9 +84,9 @@ Setting up another machine or handing work over between machines: see
 
 Tessera looks for your game directory in this order:
 
-1. the `TESSERA_GAME_DIR` environment variable;
-2. a `--game-dir <path>` option, where a binary supports it;
-3. the path saved in Tessera's settings;
+1. a `--game-dir <path>` option, where a binary supports it;
+2. the `TESSERA_GAME_DIR` environment variable;
+3. the path saved in Tessera's settings (explorer);
 4. automatic detection: Steam libraries (native, Flatpak, Proton) and common Wine/Proton
    prefixes.
 
@@ -91,7 +95,11 @@ that is typically:
 
 ```sh
 export TESSERA_GAME_DIR="$HOME/.local/share/Steam/steamapps/common/Lord of the Rings Online"
+# or let detection find it:
+export TESSERA_GAME_DIR="$(cargo run -q -p tessera-dattool -- detect --path)"
 ```
+
+Tests read only `TESSERA_GAME_DIR` (see [Tests against real data](#tests-against-real-data)).
 
 Tessera opens these files read-only and never writes, renames, locks or patches anything
 in that directory. Everything it writes (settings, logs, caches, plugin data) goes to its
@@ -114,11 +122,25 @@ decompress every record). Run
 ### Run the client
 
 ```sh
-cargo run -p tessera-client
+cargo run --release -p tessera-client
 ```
 
-At M0 the client opens a window, reports the install it found, and renders a test scene.
-It also runs without any game data, so you can try it before installing the game.
+With an install, the client is the M3 **world walker**: it streams landblocks with terrain
+and static objects around you, shows the area name, map coordinates, `/loc` and a minimap,
+and lets you walk or fly (Ctrl+F toggles free-fly; Shift is faster). Choose where to start
+with `--spawn R,X,Y[,x,y[,z]]` (a landblock) or `--place "<area name, map coordinates or a
+pasted /loc line>"` (with `--region N`), and `--fly` to start flying. Headless forms, for
+scripts and machines without a display:
+
+```sh
+cargo run --release -p tessera-client -- --screenshot /tmp/walker.png   # render the spawn, save, exit
+cargo run --release -p tessera-client -- --fly-path 100:100,140:100 --frame-log /tmp/frames.csv
+cargo run --release -p tessera-client -- --smoke                         # test scene, offscreen
+```
+
+Without an install (or with `--no-data`), and with `--showcase`, it renders an original
+test scene instead, so you can try it before installing the game. `--help` lists every
+option.
 
 ### Browse the archives
 
@@ -128,8 +150,10 @@ cargo run --release -p tessera-explorer
 
 The explorer shows the archive tree, DID search, a hex view, textures (mip levels,
 channels, alpha), layered icons, string tables with their variables, and property sets
-with names and enum labels. It remembers the game directory in Tessera's own settings
-file.
+with names and enum labels. Since M2 it also has a 3D view for meshes, setups and objects
+(orbit camera, wireframe, normals, UV checker, material inspector, dye preview). It
+remembers the game directory in Tessera's own settings file. Headless:
+`xvfb-run -a cargo run --release -p tessera-explorer -- --screenshot /tmp/explorer.png`.
 
 ### Logging
 
@@ -142,7 +166,8 @@ RUST_LOG=info,tessera_dat=debug cargo run -p tessera-dattool -- info "$TESSERA_G
 ### Tests against real data
 
 Most tests use synthetic archives and records that our own code generates. Tests that need
-real game data read `TESSERA_GAME_DIR` and **skip** when it is not set:
+real game data read only `TESSERA_GAME_DIR` (not auto-detection) and **skip**, reporting
+"passed", when it is not set:
 
 ```sh
 TESSERA_GAME_DIR=/path/to/install cargo test --workspace
@@ -158,7 +183,7 @@ from game data is ever written into the repository.
 | Path | Contents |
 |---|---|
 | `crates/dat` | Archive container: header, extents, B-tree directory, zlib, archive set, DID routing |
-| `crates/formats` | Record decoders: primitives, string tables, textures, property dictionary |
+| `crates/formats` | Record decoders: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors |
 | `crates/install` | Install detection and version identification |
 | `crates/render` | wgpu renderer |
 | `crates/script` | Sandboxed Lua 5.1 host |
@@ -166,18 +191,23 @@ from game data is ever written into the repository.
 | `crates/props` | Property registry, property sets, enum labels, DID maps |
 | `crates/text` | String tables, variable substitution, grammar tags, locale selection |
 | `crates/assets` | Asset worker pool with priorities, cancellation and a decoded cache |
-| `crates/material` | Layered icon composition and texture helpers |
+| `crates/material` | Surface/material/shader records, effective parameters, feature flags, dyes, layered icon composition, mip-chain helpers |
+| `crates/mesh` | Mesh records: vertex formats, engine-neutral vertex streams, detail levels, collision data, bounds, a cached mesh library |
+| `crates/wstate` | Script class library (WLib) and object-state (WState) records; area/region/dungeon resolution |
+| `crates/world` | Coordinates and map coordinates, landblock IDs, streaming rings, landblock bundles, block-map lookups, area names, minimap tiles |
+| `crates/terrain` | Heightmap meshing with LODs and stitched seams, seamless normals, shading, splatting inputs, CPU height queries |
+| `crates/input` | Actions, contexts, bindings, Tessera's keymap file, fly and walk controllers |
 | `crates/settings` | Tessera's own settings file |
 | `apps/dattool` | `tessera-dattool` inspection CLI |
-| `apps/client` | `tessera-client`, the game client |
+| `apps/client` | `tessera-client`, the game client (currently the offline world walker) |
 | `apps/explorer` | `tessera-explorer`, the GUI asset browser |
 | `fuzz/` | Fuzz targets, one per parser |
-| `tools/` | ImHex patterns and Kaitai schemas written from our specs |
+| `tools/` | Machine setup (`dev-setup.sh`), checks run by CI (`check-content.sh`, `check-spdx.sh`, `check-dco.sh`, `fuzz-smoke.sh`), research-clone fetcher, ImHex patterns and Kaitai schemas written from our specs ([tools/README.md](tools/README.md)) |
 | `docs/` | Architecture, roadmap, legal, clean-room process, tooling, specs |
 | `research/` | Dirty-room notes. **Implementers must not open this directory.** |
 
-More crates arrive with later milestones (world streaming, terrain, meshes, animation,
-audio, UI, input, plugin host); see
+More crates arrive with later milestones (animation and skeletons, audio, UI layouts, the
+plugin host on top of `crates/script`); see
 [docs/ARCHITECTURE.md §3](docs/ARCHITECTURE.md#layers).
 
 ---

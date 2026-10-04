@@ -3,32 +3,50 @@
 #
 # Check (and optionally prepare) a development machine for Tessera. Safe to re-run.
 #
-# Usage: tools/dev-setup.sh [--fix]
-#   (no args)  report what is present/missing; exit 1 if a REQUIRED item is missing
-#   --fix      also do the safe local steps: create .cargo/config.toml if you pass
-#              TESSERA_TARGET_DIR, and fetch research
-#              clones into ~/.cache/tessera/clones
-# Environment: TESSERA_GAME_DIR (game install), TESSERA_TARGET_DIR (cargo build cache dir).
-# See docs/DEVELOPMENT.md.
+# Usage: tools/dev-setup.sh [--fix] [--fetch-research]
+#   (no args)         report what is present/missing; exit 1 if a REQUIRED item is missing
+#   --fix             write the machine-local .cargo/config.toml (build cache location) from
+#                     TESSERA_TARGET_DIR. Nothing else; never downloads anything.
+#   --fetch-research  download the dirty-room research clones (about 6 GB; spec writers
+#                     only) into $TESSERA_CLONES_DIR or ${XDG_CACHE_HOME:-~/.cache}/tessera/clones
+# Environment: TESSERA_GAME_DIR (game install), TESSERA_TARGET_DIR (cargo build cache dir),
+# TESSERA_CLONES_DIR (research clones). See docs/DEVELOPMENT.md.
 
 set -uo pipefail
 
 fix=0
-[[ "${1:-}" == "--fix" ]] && fix=1
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+fetch=0
+for a in "$@"; do
+  case "$a" in
+    --fix) fix=1 ;;
+    --fetch-research) fetch=1 ;;
+    -h|--help) sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "dev-setup: unknown argument $a (see --help)" >&2; exit 2 ;;
+  esac
+done
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root" || exit 2
 
 missing_required=0
-ok()   { printf '  \033[32mok\033[0m       %s\n' "$*"; }
-warn() { printf '  \033[33moptional\033[0m %s\n' "$*"; }
-bad()  { printf '  \033[31mMISSING\033[0m  %s\n' "$*"; missing_required=1; }
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then g=$'\033[32m' y=$'\033[33m' r=$'\033[31m' n=$'\033[0m'; else g='' y='' r='' n=''; fi
+ok()   { printf '  %sok%s       %s\n' "$g" "$n" "$*"; }
+warn() { printf '  %soptional%s %s\n' "$y" "$n" "$*"; }
+bad()  { printf '  %sMISSING%s  %s\n' "$r" "$n" "$*"; missing_required=1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 echo "== Required"
 if have cargo && have rustc; then
   ok "rust: $(rustc --version)"
+  pin="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml 2>/dev/null | head -n 1)"
+  have_ver="$(rustc --version | awk '{print $2}')"
+  if [[ -n "$pin" && "$pin" =~ ^[0-9] && "$have_ver" != "$pin" ]]; then
+    if have rustup; then
+      warn "rustc $have_ver differs from the pinned $pin (rust-toolchain.toml); in the repo rustup should switch to it automatically"
+    else
+      warn "rustc $have_ver differs from the pinned $pin (rust-toolchain.toml is ignored without rustup); CI uses $pin, so newer clippy lints may fail there"
+    fi
+  fi
   for c in rustfmt clippy-driver; do
     have "$c" && ok "$c" || bad "$c (install the rustfmt/clippy components)"
   done
@@ -44,7 +62,7 @@ echo "== Game data (real-data tests, visual checks)"
 if [[ -n "${TESSERA_GAME_DIR:-}" ]]; then
   if [[ -f "$TESSERA_GAME_DIR/client_general.dat" ]]; then ok "TESSERA_GAME_DIR=$TESSERA_GAME_DIR"; else bad "TESSERA_GAME_DIR set but client_general.dat not found there"; fi
 else
-  warn "TESSERA_GAME_DIR unset — real-data tests will be skipped (auto-detect: cargo run -p tessera-dattool -- detect)"
+  warn "TESSERA_GAME_DIR unset — real-data tests will be SKIPPED (reported as passed). Export it: export TESSERA_GAME_DIR=\"\$(cargo run -q -p tessera-dattool -- detect --path)\""
 fi
 
 echo "== Build cache"
@@ -59,8 +77,17 @@ else
     warn "no .cargo/config.toml: builds go to ./target (needs ~20 GB). Set TESSERA_TARGET_DIR and run --fix to relocate"
   fi
 fi
-avail_kb=$(df -Pk . | awk 'NR==2{print $4}')
-(( avail_kb > 30*1024*1024 )) && ok "free space here: $((avail_kb/1024/1024)) GB" || warn "low free space here: $((avail_kb/1024/1024)) GB (builds need ~20 GB)"
+# Measure the disk the build cache will actually use.
+cache_dir="$(sed -n 's/^[[:space:]]*target-dir[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' .cargo/config.toml 2>/dev/null | head -n 1)"
+cache_dir="${CARGO_TARGET_DIR:-${cache_dir:-$root/target}}"
+probe="$cache_dir"
+while [[ ! -e "$probe" && "$probe" != "/" ]]; do probe="$(dirname "$probe")"; done
+avail_kb=$(df -Pk "$probe" | awk 'NR==2{print $4}')
+if (( avail_kb > 30*1024*1024 )); then
+  ok "build cache $cache_dir: $((avail_kb/1024/1024)) GB free"
+else
+  warn "build cache $cache_dir: only $((avail_kb/1024/1024)) GB free (debug builds need ~20 GB, ~30 GB with release builds and fuzzing)"
+fi
 
 echo "== Quality tooling"
 have cargo-deny && ok "cargo-deny" || warn "cargo-deny (cargo install cargo-deny --locked)"
@@ -77,13 +104,13 @@ else
 fi
 
 echo "== Dirty-room research (spec writers only)"
-clones="${XDG_CACHE_HOME:-$HOME/.cache}/tessera/clones"
-if [[ -d "$clones" ]] && [[ -n "$(ls -A "$clones" 2>/dev/null)" ]]; then
-  ok "research clones: $(ls "$clones" | wc -l) in $clones"
-elif [[ "$fix" == 1 ]]; then
+clones="${TESSERA_CLONES_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tessera/clones}"
+if [[ "$fetch" == 1 ]]; then
   tools/fetch-research-clones.sh "$clones" | tail -1
+elif [[ -d "$clones" ]] && [[ -n "$(ls -A "$clones" 2>/dev/null)" ]]; then
+  ok "research clones: $(ls "$clones" | wc -l) in $clones"
 else
-  warn "research clones absent — tools/fetch-research-clones.sh (≈6 GB; only needed for spec writing)"
+  warn "research clones absent from $clones — only needed for spec writing (≈6 GB): tools/dev-setup.sh --fetch-research"
 fi
 
 echo "== Claude Code"

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # Lua plugin API (compatible plugin surface)
 
 | Field | Value |
@@ -7,7 +9,7 @@
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | — (unreviewed) |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
-| Related specs | dat container spec (block header, DID routing), `render-surface.md` (0x41 images), `ui-layout.md` (native panels), `enum-mapper.md` |
+| Related specs | dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), `ui-layout.md` (native panels), `records.md` §7 (enum mappers) |
 
 > **Naming note (interoperability).** The namespace, class, method, event, field and enum
 > member names in this document are the identifiers that existing third-party plugins call.
@@ -869,7 +871,7 @@ events `CheckedChanged`, `EnabledChanged`.
 
 - `SetBackground(v)`: `v` is either a **path** string relative to `Plugins/` (TGA or JPG;
   §4.4) or a **number** that is the DID of a client image (render surface `0x41xxxxxx`, P13;
-  see `render-surface.md`). `nil` clears.
+  see `records.md` §5). `nil` clears.
 - `Turbine.UI.Graphic`: `Graphic()` empty, `Graphic(did)` or `Graphic(path)` (S2 overloads);
   accepted wherever a background is.
 - Stretch modes (S3 stubs, community-observed, Reported): 0 = no scaling, image cropped or
@@ -1007,7 +1009,7 @@ member list is in §16; the main entry points:
 
 Enum values used here (`Class`, `Race`, `Alignment`, `Equipment` slots, `ItemCategory`, …)
 are in Appendix A. > **OPEN:** whether these numbers equal the game-data enum-mapper values
-(see `enum-mapper.md`); the `Class` values (23 = Guardian, 24 = Captain, …) look like them.
+(see `records.md` §7 (enum mappers)); the `Class` values (23 = Guardian, 24 = Captain, …) look like them.
 
 Notes from the live dump (S3) that differ from S2:
 

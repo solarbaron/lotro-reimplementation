@@ -158,6 +158,26 @@ fn stamp_text(s: &InstallWideStamp) -> String {
     }
 }
 
+/// Runs discovery and prints only the default install's root directory (JSON: `{"root":
+/// ...}`), so a shell can export it as `TESSERA_GAME_DIR`.
+pub fn run_path(out: &mut Out, ctx: &Ctx) -> Result<ExitCode> {
+    let env = SearchEnv::from_process();
+    let disc = discover_with(&env, ctx.game_dir.as_deref())?;
+    let Some(inst) = disc.default_install() else {
+        eprintln!(
+            "No usable install found. Pass --game-dir or set {}.",
+            tessera_install::GAME_DIR_ENV
+        );
+        return Ok(ExitCode::FAILURE);
+    };
+    if out.json {
+        out.json(&json!({ "root": inst.root }))?;
+    } else {
+        writeln!(out.w, "{}", inst.root.display())?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Runs discovery and prints every install.
 pub fn run(out: &mut Out, ctx: &Ctx, with_content: bool) -> Result<ExitCode> {
     let env = SearchEnv::from_process();

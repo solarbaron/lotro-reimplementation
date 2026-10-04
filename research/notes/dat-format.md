@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 
 # Turbine .dat container format (LOTRO / DDO, compared with AC / AC2): research notes
 

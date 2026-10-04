@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # 0005 — No Bevy engine; `bevy_ecs` alone only if it wins the M4 benchmark
 
 **Status:** Accepted, 2026-10-04 (owner decision)

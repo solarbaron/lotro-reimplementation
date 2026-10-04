@@ -1,0 +1,20 @@
+[package]
+name = "tessera-text"
+description = "String tables, StringInfo resolution, message grammar, substitution, markup and locale selection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+tessera-dat.workspace = true
+tessera-formats.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

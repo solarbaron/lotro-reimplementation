@@ -491,6 +491,12 @@ is 2018-10. Metadata records (§7) use 1 or 2.
 > **OPEN:** Meaning of `stamp`. It behaves like "data-format generation when the record was
 > written". The container does not need it to read data. It may be needed by record decoders.
 
+> **OPEN:** Whether a patch that rewrites a record's payload *always* increases `iteration`
+> (and whether `time`/`stamp` can change while `iteration` stays the same). `tessera-dattool
+> diff` therefore counts a record as changed only when `iteration` or `length` differ, or,
+> with `--content`, when a hash of the inflated payload differs; `time`/`stamp`-only changes
+> are not reported. Diffing two real patch levels with `--content` would settle this.
+
 <a id="s5-3"></a>
 ### 5.3 Flags
 

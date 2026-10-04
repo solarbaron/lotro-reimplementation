@@ -106,18 +106,23 @@ fn property_dictionary_invariants() {
             "definition {:#x} without a name",
             def.pid
         );
-        // MP5: the data field matches the type.
+        // MP5 (`property-system.md` §2.5, corrected): the data field matches the type.
         let prefix = def.data.prefix();
         match def.ty {
             PropertyType::Enum => assert!(prefix == 0x23 || prefix == 0x28, "{def:?}"),
             PropertyType::Bitfield64 | PropertyType::Bitfield32 | PropertyType::BitfieldAny => {
                 assert_eq!(prefix, 0x23, "{def:?}");
             }
-            PropertyType::PropertyId => assert_eq!(prefix, 0x34, "{def:?}"),
-            // MP5 says `data` = 0 for every other type, but type-20 definitions carry a
-            // small non-DID value there (spec §13 OPEN); only its range is checked.
-            PropertyType::DidRef => assert_eq!(prefix, 0, "{def:?}"),
-            _ => assert!(def.data.is_null(), "{def:?}"),
+            PropertyType::PropertyId => assert_eq!(def.data.0, 0x3400_0000, "{def:?}"),
+            // A DB-object-type code (§9): non-zero and below 0x100.
+            PropertyType::DidRef => {
+                assert!(0 < def.data.0 && def.data.0 < 0x100, "{def:?}");
+                assert_eq!(def.dbo_type().map(u32::from), Some(def.data.0), "{def:?}");
+            }
+            _ => {
+                assert!(def.data.is_null(), "{def:?}");
+                assert_eq!(def.dbo_type(), None);
+            }
         }
         assert!(!matches!(def.ty, PropertyType::Unknown(_)), "{def:?}");
         // Subset PIDs are children.

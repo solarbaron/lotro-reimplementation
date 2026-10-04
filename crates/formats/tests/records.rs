@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use common::B;
 use tessera_formats::property::{FLAG_HAS_DEFAULT, FLAG_HAS_MAX, FLAG_HAS_MIN, Waveform};
 use tessera_formats::string_info::{STRING_INFO_MAX_DEPTH, StringArgValue, StringSource};
+use tessera_formats::{BitfieldAny, MessagePart, Position, StringTableIssue, decode_string_table};
 use tessera_formats::{
     DataIdMap, Did, EnumMapper, FormatError, PropertyDictionary, PropertyType, PropertyValue,
     Reader, Record, StringInfo, StringTable, name_hash,
@@ -99,6 +100,63 @@ fn string_table_checks_did_and_trailing_bytes() {
         StringTable::parse(&data),
         Err(FormatError::WrongRecordType { .. })
     ));
+}
+
+#[test]
+fn string_table_message_parts_and_invariants() {
+    let who = name_hash(b"who");
+    // Hint 0 (11 buckets): tokens 1, 2, 14 (bucket 3) are in bucket order.
+    let b = B::new().u32(0x2500_0001).u32(0).tsize(0, 3);
+    let b = entry(b, 1, &[""], &[], None);
+    let b = entry(b, 2, &["", " waves."], &[who], Some(&["who"]));
+    let b = entry(b, 14, &["a", "b", "c"], &[who, who], None);
+    let t = StringTable::parse(&b.build()).unwrap();
+    assert_eq!(t.flag, 0, "table flag 0 is accepted");
+    assert_eq!(t.is_bucket_ordered(), Some(true));
+    assert!(t.issues().is_empty(), "{:?}", t.issues());
+    assert!(t.get(1).unwrap().is_empty_text());
+
+    let parts: Vec<MessagePart<'_>> = t.get(14).unwrap().parts().collect();
+    let shape: Vec<String> = parts
+        .iter()
+        .map(|p| match p {
+            MessagePart::Piece(s) => s.to_string_lossy(),
+            MessagePart::Slot(id) => format!("<{id:x}>"),
+        })
+        .collect();
+    let slot = format!("<{who:x}>");
+    assert_eq!(shape, vec!["a", &slot, "b", &slot, "c"]);
+    assert_eq!(t.get(14).unwrap().slot_count(), 2);
+
+    // Violations: wrong slot count, bad names, token_high, duplicate, bucket order.
+    let b = B::new().u32(0x2500_0002).u32(1).tsize(0, 3);
+    let b = entry(b, 5, &["x"], &[who], Some(&["nobody"]));
+    let b = b.u32(5).u32(1).u32(0).u32(0).u8(0);
+    let b = entry(b, 2, &[], &[], None);
+    let t = StringTable::parse(&b.build()).unwrap();
+    let issues = t.issues();
+    assert!(issues.contains(&StringTableIssue::SlotCount {
+        token: 5,
+        pieces: 1,
+        args: 1
+    }));
+    assert!(issues.contains(&StringTableIssue::ArgNames { token: 5 }));
+    assert!(issues.contains(&StringTableIssue::TokenHigh { token: 5 }));
+    assert!(issues.contains(&StringTableIssue::DuplicateToken { token: 5 }));
+    assert!(issues.contains(&StringTableIssue::BucketOrder));
+    // The extra argument of the violating entry follows the last piece.
+    let parts: Vec<_> = t.get(5).unwrap().parts().collect();
+    assert_eq!(parts.len(), 2);
+    assert!(matches!(parts[1], MessagePart::Slot(id) if id == who));
+    // Two name groups are a count of 2, not a flag.
+    let b = B::new().u32(0x2500_0003).u32(1).tsize(0, 1);
+    let b = b.u32(1).u32(0).u32(1).utf16("t").u32(0).u8(2).u32(0).u32(0);
+    let t = decode_string_table(&b.build()).unwrap();
+    assert_eq!(t.get(1).unwrap().arg_name_groups.len(), 2);
+    assert!(t.issues().contains(&StringTableIssue::NameGroupCount {
+        token: 1,
+        groups: 2
+    }));
 }
 
 #[test]
@@ -269,11 +327,11 @@ fn value_cases() -> Vec<ValueCase> {
         (
             3,
             |b| b.u32(1).f32(0.5),
-            PropertyValue::Waveform(Waveform {
+            PropertyValue::Waveform(Box::new(Waveform {
                 subtype: 1,
                 values: vec![0.5],
                 extra: None,
-            }),
+            })),
         ),
         (4, |b| b.f64(1e9), PropertyValue::Timestamp(1e9)),
         (5, |b| b.u8(2), PropertyValue::TriState(2)),
@@ -300,6 +358,11 @@ fn value_cases() -> Vec<ValueCase> {
             |b| b.bytes(&[1, 2, 3, 4]),
             PropertyValue::Colour([1, 2, 3, 4]),
         ),
+        (
+            17,
+            |b| b.u8(0x89).u8(1).u16(0),
+            PropertyValue::Position(Position::new(0x89).with_region(1).with_cell(0)),
+        ),
         (18, |b| b.u32(0x10), PropertyValue::Bitfield32(0x10)),
         (19, |b| b.u64(-9i64 as u64), PropertyValue::Int64(-9)),
         (
@@ -311,10 +374,10 @@ fn value_cases() -> Vec<ValueCase> {
         (
             22,
             |b| b.vle(10).bytes(&[0xFF, 0x03]),
-            PropertyValue::BitfieldAny {
+            PropertyValue::BitfieldAny(BitfieldAny {
                 bits: 10,
                 bytes: vec![0xFF, 0x03],
-            },
+            }),
         ),
     ]
 }
@@ -355,11 +418,11 @@ fn property_waveform_subtypes() {
     let v = PropertyValue::read(&mut r, PropertyType::Waveform).unwrap();
     assert_eq!(
         v,
-        PropertyValue::Waveform(Waveform {
+        PropertyValue::Waveform(Box::new(Waveform {
             subtype: 0,
             values: vec![],
             extra: None
-        })
+        }))
     );
 
     let mut b = B::new().u32(10);
@@ -451,6 +514,39 @@ fn property_dictionary_layout_lookups_and_children() {
     assert!(d.definition(0).is_none());
 }
 
+/// Type-20 definitions carry a DB-object-type code in `data` (MP5, §9); name lookups
+/// return the first PID stored under a shared name.
+#[test]
+fn property_dictionary_dbo_type_and_shared_names() {
+    let data = dictionary(
+        |b| {
+            let b = def(b, 0x1000_0001, 20, 0x45, 0, |b| b);
+            let b = def(b, 0x1000_0002, 20, 0, 0, |b| b);
+            let b = def(b, 0x1000_0003, 20, 0x2300_0001, 0, |b| b);
+            def(b, 0x1000_0004, 8, 0x2300_0001, 0, |b| b)
+        },
+        4,
+        &[
+            (0x1000_0003, "Same"),
+            (0x1000_0001, "Zeta"),
+            (0x1000_0002, "Same"),
+            (0x1000_0004, "Alpha"),
+        ],
+    );
+    let d = PropertyDictionary::parse(&data).unwrap();
+    assert_eq!(d.definition(0x1000_0001).unwrap().dbo_type(), Some(0x45));
+    // 0 and values of 0x100 or more are not codes; other types have none.
+    assert_eq!(d.definition(0x1000_0002).unwrap().dbo_type(), None);
+    assert_eq!(d.definition(0x1000_0003).unwrap().dbo_type(), None);
+    assert_eq!(d.definition(0x1000_0004).unwrap().dbo_type(), None);
+    assert_eq!(d.pid("Same"), Some(0x1000_0003));
+    assert_eq!(d.pid("Zeta"), Some(0x1000_0001));
+    assert_eq!(d.pid("Alpha"), Some(0x1000_0004));
+    assert_eq!(d.pid("Missing"), None);
+    assert_eq!(d.pid(""), None);
+    assert_eq!(d.pid("Zz"), None);
+}
+
 #[test]
 fn property_dictionary_rejects_bad_marker_echo_and_unsupported_type() {
     let names = [(0x1000_0001, "P")];
@@ -484,14 +580,15 @@ fn property_dictionary_rejects_bad_marker_echo_and_unsupported_type() {
         Err(FormatError::Malformed { .. })
     ));
 
-    let position = dictionary(
-        |b| def(b, 0x1000_0001, 17, 0, FLAG_HAS_DEFAULT, |b| b.u32(0)),
+    // A type code outside 1–22 with a stored default cannot be skipped.
+    let unknown_type = dictionary(
+        |b| def(b, 0x1000_0001, 23, 0, FLAG_HAS_DEFAULT, |b| b.u32(0)),
         1,
         &names,
     );
     assert_eq!(
-        PropertyDictionary::parse(&position).unwrap_err(),
-        FormatError::UnsupportedPropertyType { code: 17 }
+        PropertyDictionary::parse(&unknown_type).unwrap_err(),
+        FormatError::UnsupportedPropertyType { code: 23 }
     );
 }
 

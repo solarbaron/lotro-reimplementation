@@ -41,9 +41,12 @@ pub fn run(
     let mut n = 0usize;
     let mut bytes = 0u64;
     let mut walk_error = None;
+    let mut truncated = false;
     if lo <= hi {
         for e in a.entries_range(lo..=hi) {
             if n >= limit {
+                // Cut off only if this really was another entry.
+                truncated = e.is_ok();
                 break;
             }
             let e = match e {
@@ -95,7 +98,7 @@ pub fn run(
         writeln!(
             w,
             "-- {n} entries, {bytes} stored bytes ({label}){}",
-            if n == limit { ", limit reached" } else { "" }
+            if truncated { ", limit reached" } else { "" }
         )?;
     }
     if let Some(e) = walk_error {

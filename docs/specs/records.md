@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Review |
-| **Last updated** | 2026-10-03 |
+| **Last updated** | 2026-10-04 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | none yet |
 | **Companion spec** | `docs/specs/dat-container.md` (archive header, block/extent layer, B-tree directory, zlib, DID routing). This spec starts where that one ends: with a fully reassembled and, if needed, decompressed subfile payload. |
@@ -16,7 +16,7 @@ This spec gives an implementer of the `formats` crate what they need to decode t
 - what the high byte of a DID means (§2);
 - localized string tables, DID prefix 0x25 (§3), and the StringInfo value that points into them (§4);
 - render surfaces (textures and icons), DID prefix 0x41 (§5);
-- the master property dictionary, DID 0x34000000 (§6);
+- the master property dictionary, DID 0x34000000 (§6, now a pointer to `property-system.md`);
 - enum mappers, prefix 0x23 (§7), and DID maps, prefix 0x28 (§8);
 - sniffing the audio inside sound records, prefix 0x0A (§9).
 
@@ -61,8 +61,8 @@ Source abbreviations:
 | R2 | Format codes 20, 21, 28, 500, DXT1, DXT3, DXT5 | LC, JT, D3D; OBS | Confirmed. These are the only codes present. |
 | R3 | Pixel byte order and row order of 20 and 21; DXT blocks are standard S3TC | JT, D3D; OBS (rendered, colours and orientation checked by eye) | Confirmed |
 | R4 | Embedded JPEG has width = height = 0 in the header | OBS | Confirmed (all 65,706) |
-| M1 | 0x34000000 layout (§6) | LC, MER; OBS (2,534,594 bytes decoded to the last byte) | Confirmed |
-| M2 | Property type codes 1–22 and their value encodings | LC; OBS (all 22 codes present; every default/min/max value decoded) | Confirmed for the codes present in definitions; see §6.4 |
+| M1 | 0x34000000 layout (moved to `property-system.md` §2) | LC, MER; OBS (2,534,594 bytes decoded to the last byte) | Confirmed |
+| M2 | Property type codes 1–22 and their value encodings | LC; OBS (all 22 codes present; every default/min/max value decoded) | Confirmed; see `property-system.md` §3–§4 |
 | E1 | EnumMapper layout (§7) | LC; OBS (735 records, zero leftover bytes) | Confirmed |
 | E2 | DataIdMap layout (§8) | LC; OBS (24 records, zero leftover bytes) | Confirmed |
 | A1 | Sound record envelope: DID, size, audio, u32, f32 | LC; OBS (all 44,337 records) | Confirmed |
@@ -264,6 +264,8 @@ Status codes:
 | 0x80 | cell_R, map_R | Landblock family (§2.2) | R |
 | 0xFF | every archive (2–5 each: 0xFFFF0001, 3, 4, 5, 8) | Archive metadata records; see `dat-container.md` | OPEN here |
 
+> **OPEN:** The status column predates `texture-list.md` and `property-system.md` §5, which decode 0x40 texture lists (81,136 records clean) and 0x78/0x79 property sets (384,950 records clean) completely. The `formats` implementation reports all three as decoded. Please change their status to C.
+
 The one 0x0E record in local is 0x0EBADA55, a text filter list. It is mentioned only so that a census does not flag it as an anomaly.
 
 <a id="s2-2"></a>
@@ -354,7 +356,7 @@ Observed population: 282,152 tables (0x25000000–0x2505B8B2, sparse) and 806,05
 <a id="s4"></a>
 ## 4. StringInfo (localizable text value)
 
-StringInfo is the value encoding for "a piece of user-visible text". It appears in enum mappers (§7), in property values of type 13 (§6.4), and in other records. It is recursive.
+StringInfo is the value encoding for "a piece of user-visible text". It appears in enum mappers (§7), in property values of type 13 (`property-system.md` §4.8), and in other records. It is recursive.
 
 <a id="s4-1"></a>
 ### 4.1 Layout (Confirmed)
@@ -390,7 +392,7 @@ Invariants **SI1** (Confirmed over 6,352 enum values and 626 property defaults, 
 
 > **OPEN:** The meaning of the three Pascal strings in the argument block, and of the terminator bytes.
 
-> **OPEN:** Only 4 of the 6,352 enum display values were literals. Argument blocks were not seen in enum mappers, so the argument path (§4.2) is Reported (LC) rather than exercised.
+> **OPEN:** Only 4 of the 6,352 enum display values were literals. Argument blocks were not seen in enum mappers, so the argument path (§4.2) is Reported (LC) rather than exercised. (2026-10-04: none of the 1,110,502 StringInfo values in property sets has an argument block either; see `property-system.md` §4.8.)
 
 ---
 
@@ -486,125 +488,20 @@ Observed values: 0, 1, 2, 4, 5, 6, 8, 10, 11, 13, 14, 15. 0 is the most common.
 ---
 
 <a id="s6"></a>
-## 6. Master property dictionary (DID 0x34000000, gamelogic)
+## 6. Master property dictionary (moved)
 
-This record lists every property ID (PID) with its name, value type and constraints. Every generic property-set decoder needs it. In this install it is stored **uncompressed** and is 2,534,594 bytes long.
+The master property dictionary (DID 0x34000000), the property type codes and their value encodings now live in **`docs/specs/property-system.md`**, together with property-set records, the +0x09000000 rule and the root DID map. The old anchors map as follows:
 
-<a id="s6-1"></a>
-### 6.1 Record layout (Confirmed)
+| Old section | New location |
+|---|---|
+| §6.1 Record layout | `property-system.md` §2.1 |
+| §6.2 Definition layout | `property-system.md` §2.2–§2.4 |
+| §6.3 Property type codes | `property-system.md` §3 |
+| §6.4 Value encodings | `property-system.md` §4 |
+| §6.5 Invariants MP1–MP5 | `property-system.md` §2.5. MP5 is corrected there: type-20 definitions carry a DB-object-type code. |
 
-| Order | Field | Type | Meaning |
-|---|---|---|---|
-| 1 | did | DID | 0x34000000 |
-| 2 | reserved | 8 bytes | All zero (observed) |
-| 3 | name_count *n* | TSize | Observed *n* = 27,547, hint 11 |
-| 4 | names | (u32 pid, Pascal string name) × *n* | PID → name, in bucket order |
-| 5 | separator | 2 bytes | Observed `00 00` |
-| 6 | def_count *d* | TSize | Observed *d* = 27,546, hint 12 |
-| 7 | definitions | (u32 pid, definition) × *d* | §6.2, in bucket order by pid |
-| 8 | *(end)* | | Observed: zero leftover bytes |
-
-> **OPEN:** The meaning of the 8 reserved bytes and of the 2-byte separator.
-
-<a id="s6-2"></a>
-### 6.2 Definition layout (Confirmed)
-
-| Field | Size | Type | Meaning |
-|---|---|---|---|
-| pid_echo | 4 | u32 | Equals the pid that precedes the definition |
-| type | 4 | u32 | Property type code 1–22 (§6.3) |
-| field_a | 4 | u32 | Unknown. Often a value with bit 28 set that is also a defined PID, but the named properties do not look related. |
-| field_b | 4 | u32 | Unknown. Small values (3, 4, 6, 7, 8, 9); 4 is by far the most common. |
-| data | 4 | u32 | Type-dependent reference (§6.3), else 0 |
-| field_c | 4 | u32 | 0, or 16 (19 definitions) |
-| flags | 4 | u32 | Bit 0x800: default value present. Bit 0x1000: minimum present. Bit 0x2000: maximum present. Other bits seen: 0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80, 0x200, 0x400, 0x4000, 0x8000. |
-| default | var | value | If flags & 0x800 and type ∉ {10, 11, 12} |
-| minimum | var | value | If flags & 0x1000 and type ∉ {10, 11, 12} |
-| maximum | var | value | If flags & 0x2000 and type ∉ {10, 11, 12} |
-| marker | 4 | u32 | Always 0x3FC00000 (the bit pattern of f32 1.5) |
-| field_d | 5 | bytes | Unknown. The most common pattern is `02 02 04 00 01`. |
-| child_count *c* | 1–5 | VLE | Observed max 95 |
-| children | 8·*c* | (u32, u32) × *c* | Child PID written twice. Both copies are equal. |
-| subset_count *s* | 4 | u32 | |
-| subset | 4·*s* | u32 × *s* | PIDs. Each one is also in `children` (Confirmed). |
-| terminator | 4 | u32 | Always 0 |
-
-Values are encoded per §6.4 using the definition's own type. LC skips the value for types 10, 11 and 12. This install has no definition of those types with flag bits 0x800, 0x1000 or 0x2000 set, so that rule is Reported only.
-
-Children appear mainly on type 12 (array: one child, the element property) and type 11 (struct: several children, the fields). A few definitions of types 9, 20 and 21 also carry children.
-
-> **OPEN:** The meanings of field_a, field_b, field_c, field_d, the flag bits other than 0x800, 0x1000 and 0x2000, and the subset list.
-
-<a id="s6-3"></a>
-### 6.3 Property type codes (Confirmed present; names are descriptive)
-
-| Code | Kind | `data` field holds | Defs observed |
-|---|---|---|---|
-| 1 | string | 0 | 280 |
-| 2 | string token | 0 | 4 |
-| 3 | waveform (animated scalar) | 0 | 78 |
-| 4 | timestamp | 0 | 133 |
-| 5 | tri-state | 0 | 5 |
-| 6 | vector3 | 0 | 126 |
-| 7 | instance ID (64-bit) | 0 | 496 |
-| 8 | enum value | Enum DID: 0x23… (2,452) or DID map 0x28… (19) | 2,471 |
-| 9 | float | 0 | 5,203 |
-| 10 | property ID | 0x34… (the dictionary itself) | 428 |
-| 11 | struct | 0 | 1,155 |
-| 12 | array | 0 | 2,709 |
-| 13 | StringInfo | 0 | 626 |
-| 14 | bitfield 64 | Enum DID 0x23… (labels the bits) | 56 |
-| 15 | int | 0 | 6,321 |
-| 16 | colour | 0 | 109 |
-| 17 | position | 0 | 46 |
-| 18 | bitfield 32 | Enum DID 0x23… | 261 |
-| 19 | int64 | 0 | 262 |
-| 20 | DID reference | 0 | 1,849 |
-| 21 | boolean | 0 | 4,860 |
-| 22 | bitfield, any width | Enum DID 0x23… | 68 |
-
-These codes apply to LOTRO data. LC also lists a different code numbering for another game; that numbering is out of scope.
-
-<a id="s6-4"></a>
-### 6.4 Value encodings (stored form)
-
-The "Status" column records whether a default, minimum or maximum of that type was decoded in 0x34000000. "Yes" means Confirmed. "Not in defaults" means Reported (LC).
-
-| Code | Stored encoding | Status |
-|---|---|---|
-| 1 | Pascal string | Yes (31) |
-| 2 | u32 token | Not in defaults |
-| 3 | u32 subtype, then: if subtype = 10: 10 × f32, f32, bool8, u32 *k*, 2*k* × f32. If subtype = 1: 1 × f32. If subtype > 1 and ≠ 10: 10 × f32. If subtype = 0: nothing more. | Yes (44). Branches seen in defaults: Confirmed; the others Reported. |
-| 4 | f64 | Yes (4) |
-| 5 | u8 | Yes (4) |
-| 6 | 3 × f32 (x, y, z) | Yes (69) |
-| 7 | u64 | Yes (14) |
-| 8 | u32 | Yes (734) |
-| 9 | f32 | Yes (4,749) |
-| 10 | u32 PID | Not in defaults |
-| 11 | u8 (ignored), then u8 field count | Not in defaults |
-| 12 | u32 | Not in defaults |
-| 13 | StringInfo (§4) | Yes (1) |
-| 14 | u64 | Yes (21) |
-| 15 | u32 (signed int32) | Yes (4,544) |
-| 16 | 4 × u8 | Yes (64) |
-| 17 | Position (flagged structure; to be specified in a geography spec) | Not in defaults |
-| 18 | u32 | Yes (131) |
-| 19 | u64 | Yes (10) |
-| 20 | u32 DID | Yes (350) |
-| 21 | u8 (0/1) | Yes (2,003) |
-| 22 | VLE bit count *b*, then ⌈*b*/8⌉ bytes; bit *i* is in byte *i*/8, LSB first | Yes (5) |
-
-> **OPEN:** The colour channel order of type 16 (RGBA vs BGRA). The struct and array encodings inside property sets belong to a future property-set spec. Here they matter only because defaults of those types are never stored.
-
-<a id="s6-5"></a>
-### 6.5 Invariants (Confirmed)
-
-- **MP1**: the record is consumed exactly.
-- **MP2**: every definition's `pid_echo` equals its key, `marker` = 0x3FC00000, and `terminator` = 0.
-- **MP3**: every PID with a definition also has a name. Exactly one named PID has no definition: PID 0, whose name means "invalid".
-- **MP4**: PIDs fall in two families: < 0x10000000 (2,402 names) and 0x1000xxxx (25,145 names).
-- **MP5**: a type-8 definition's `data` has high byte 0x23 or 0x28. A type 14/18/22 definition's `data` has high byte 0x23. A type-10 definition's `data` has high byte 0x34. For every other type, `data` = 0.
+<a id="s6-1"></a><a id="s6-2"></a><a id="s6-3"></a><a id="s6-4"></a><a id="s6-5"></a>
+These anchors are kept so that existing `Spec-Ref` trailers and code comments that cite `records.md` §6 still resolve. New work should cite `property-system.md`.
 
 ---
 
@@ -744,7 +641,7 @@ These were found against `research/notes/dat-format.md` (DF) and `research/notes
 | X3 | DF §7 string table: "u64 token", then "u8 nArgStringGroups, each {u32 n; …}". DS §4.5: "bool hasNames" | The byte is 0 or 1. The token's upper u32 is always 0. | The two readings agree on all data; §3.3 adopts "count" |
 | X4 | DF/DS: TSize hint is a "bucket-count hint" with unknown meaning | Hint indexes a prime bucket table; elements are stored in bucket order | New fact (§1.3) |
 | X5 | DS §4.1: 0x34000000 is "skip 8, TSize names, skip 2, TSize defs" | Exactly right; consumes the whole record | Confirmed. The skipped bytes are zero in this install. |
-| X6 | DS §4.1: the definition's `data` is "enum DID / bitfield enum DID" | Also 0x28 (DID map) for type 8, and 0x34000000 for type 10 | Extended (§6.3) |
+| X6 | DS §4.1: the definition's `data` is "enum DID / bitfield enum DID" | Also 0x28 (DID map) for type 8, and 0x34000000 for type 10 | Extended (`property-system.md` §3) |
 | X7 | DS §6: "a region has 256 × 256 landblocks" | 255 × 255 (X, Y ∈ 0..254) | Corrected (L1) |
 | X8 | DS §1: 0x2701/0x2702 cell DIDs are an old-client artefact | 0x27RR… DIDs are present in today's cell_1..5 and cell_14 | Corrected; meaning OPEN |
 | X9 | DS/DF list cell/map regions 1–5, 14 | cell_15 and map_15 archives also exist, holding only metadata | Noted |
@@ -766,7 +663,7 @@ These were found against `research/notes/dat-format.md` (DF) and `research/notes
 4. String-table flag at +4 (§3.1).
 5. StringInfo auxiliary strings and terminator meaning; argument path is unexercised (§4).
 6. Surface category field (§5.4); A8 semantics; BC1 1-bit alpha (§5.3).
-7. 0x34000000 reserved and separator bytes; definition fields a/b/c/d; flag bits; subset list; colour channel order (§6).
+7. 0x34000000 reserved and separator bytes; definition fields a/b/c/d; flag bits; subset list; colour channel order (moved to `property-system.md` §13).
 8. DID-map second group (§8.1).
 9. Sound trailer fields; where the sound-info records live (§9.1).
 10. Meanings of prefixes 0x02, 0x08, 0x11–0x19 family, 0x1A, 0x21, 0x27, 0x2A, 0x2D, 0x32, 0x35, 0x39, 0x43, 0x44, 0x58, 0x66, and landblock K = 5 (§2).
@@ -795,13 +692,21 @@ These came up while implementing `crates/formats` from this spec alone. Each rec
 > **OPEN:** A8 (code 28) to RGBA conversion. Until §5.3's A8 question is answered, `Surface::to_rgba8` maps A8 to `(255, 255, 255, a)` and leaves the raw channel available to callers.
 
 > **OPEN:** Property type 21 values are read as `bool8` (0 or 1 only, §1.1), so any other byte is a parse error. §6.4 says "u8 (0/1)", which may mean other values are possible but unobserved. Please confirm whether readers should reject them.
+>
+> **Resolved (2026-10-04):** only 0 and 1 occur, in 6,258,467 set values and 2,003 dictionary values. Strict `bool8` is safe. See `property-system.md` §4.5.
 
 > **OPEN:** §6.2 says the two child-PID copies are always equal, but not what a reader should do when they differ. The implementation keeps the first copy and logs at debug level.
+>
+> **Resolved (2026-10-04):** keeping the first copy is the specified behaviour; copies never differ in observed data. See `property-system.md` §2.2.
 
 > **OPEN:** §4.1 has a 2-byte terminator only when `has_args` = 0. The implementation reads nothing after the argument values when `has_args` = 1. Because that path has not been exercised on data (§4 OPEN), please confirm that no terminator follows the argument block.
 
 > **OPEN:** Property type 17 (Position) has no stored encoding in §6.4. A definition of type 17 with a default, minimum or maximum flag set makes the dictionary decoder fail with "unsupported property type", since it cannot skip a value of unknown length. Observed data has no such definition.
+>
+> **Resolved (2026-10-04):** the position encoding is now specified in `property-system.md` §4.6.
 
 > **OPEN:** A 0x41 JPEG surface (code 500) whose header width or height is non-zero is accepted. The implementation logs it and takes the dimensions from the JPEG stream. §5.1 does not say whether this should be an error.
 
 > **OPEN:** MP5 (§6.5) does not hold for type 20 (DID reference). Every type-20 definition in this install (1,849 of 1,849) has a non-zero `data` field below 0x01000000. Example: PID 16 has `data` = 0x45. These values look like a code for the expected DID type (perhaps a DID-type index, but not the §2 high-byte prefix itself), not a zero. Found by `crates/formats/tests/real_data.rs` on 2026-10-04. The spec writer should determine what this value means and correct MP5 and the §6.3 table.
+>
+> **Resolved (2026-10-04):** the value is a DB-object-type code, labelled by the enum mapper that the EMAPPER DID map names "DBOType". 0x45 is the game-object (WState) type, whose references point at 0x70 DIDs. MP5 is corrected in `property-system.md` §2.5, and the code table is in §9.

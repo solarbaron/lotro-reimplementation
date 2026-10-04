@@ -17,7 +17,9 @@ fn hex_digits(s: &str) -> String {
 }
 
 /// Parses a 32-bit DID written in hex, with or without `0x` (`0x41000001`, `41000001`,
-/// `4100_0001`).
+/// `4100_0001`). Bare digits are always hex here, so a DID copied from any `dattool`
+/// output reads back unchanged. (`tessera-settings` reads bare digits as decimal; the two
+/// conventions are not shared yet.)
 pub fn parse_did(s: &str) -> Result<u32, String> {
     let d = hex_digits(s);
     if d.is_empty() || d.len() > 8 {

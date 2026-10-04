@@ -3,7 +3,7 @@
 
 use crate::did::Did;
 use crate::error::{FormatError, Result};
-use crate::reader::{Reader, Utf16String};
+use crate::reader::{PREALLOC_CAP, Reader, Utf16String};
 
 /// Maximum nesting depth of StringInfo arguments (spec §4.2 suggests 16).
 pub const STRING_INFO_MAX_DEPTH: usize = 16;
@@ -82,13 +82,14 @@ impl StringInfo {
             StringSource::Table { token, table }
         };
         let args = if r.bool8()? {
+            r.charge(std::mem::size_of::<StringArgs>())?;
             let labels = [r.pascal_string()?, r.pascal_string()?, r.pascal_string()?];
             let count = r.vle()?;
             // Smallest argument is kind + var_id + marker + 1-byte VLE = 7 bytes.
-            let cap = r.ensure_elements(count, 7)?;
-            let mut values = Vec::with_capacity(cap);
+            let mut values = r.alloc_vec(count, 7, PREALLOC_CAP)?;
             for _ in 0..count {
-                values.push(read_arg(r, depth)?);
+                let arg = read_arg(r, depth)?;
+                r.push(&mut values, arg, count)?;
             }
             Some(Box::new(StringArgs { labels, values }))
         } else {
@@ -120,6 +121,7 @@ fn read_arg(r: &mut Reader<'_>, depth: usize) -> Result<StringArg> {
     let kind = r.u8()?;
     let var_id = r.u32()?;
     if kind == 1 {
+        r.charge(std::mem::size_of::<StringInfo>())?;
         let nested = StringInfo::read_depth(r, depth + 1)?;
         return Ok(StringArg {
             var_id,

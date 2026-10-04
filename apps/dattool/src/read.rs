@@ -2,9 +2,8 @@
 //! Record-level commands: `cat`, `extract` and `strings`.
 
 use std::borrow::Cow;
-use std::fs::{self, File, OpenOptions};
 use std::io::{IsTerminal, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -13,6 +12,7 @@ use tessera_formats::{AnyRecord, Did, DidKind, Record, StringTable, StringTableE
 
 use crate::Out;
 use crate::input::{Ctx, Found, Input};
+use crate::output::{check_output_path, protected_dirs, write_output};
 use crate::util::{did_hex, format_time, hex_bytes, hexdump, human_bytes};
 
 /// Options of `cat`.
@@ -184,56 +184,6 @@ pub fn cat(out: &mut Out, ctx: &Ctx, o: &CatOpts) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Resolves `p` to an absolute path with symlinks of its existing part resolved, so that
-/// it can be compared against a protected directory.
-fn resolve_for_compare(p: &Path) -> Result<PathBuf> {
-    let abs = std::path::absolute(p).with_context(|| format!("bad path {}", p.display()))?;
-    let mut existing = abs.as_path();
-    let mut rest: Vec<Component<'_>> = Vec::new();
-    loop {
-        if existing.exists() {
-            break;
-        }
-        match (existing.parent(), existing.components().next_back()) {
-            (Some(parent), Some(last)) => {
-                rest.push(last);
-                existing = parent;
-            }
-            _ => break,
-        }
-    }
-    let mut out = fs::canonicalize(existing).unwrap_or_else(|_| existing.to_owned());
-    for c in rest.into_iter().rev() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    Ok(out)
-}
-
-/// Fails if `output` would land inside any of `protected`.
-pub fn check_output_path(output: &Path, protected: &[PathBuf]) -> Result<()> {
-    let target = resolve_for_compare(output)?;
-    for dir in protected {
-        let Ok(dir) = fs::canonicalize(dir) else {
-            continue;
-        };
-        if target.starts_with(&dir) {
-            bail!(
-                "refusing to write {}: it is inside the game directory {} (the install is \
-                 only ever read)",
-                output.display(),
-                dir.display()
-            );
-        }
-    }
-    Ok(())
-}
-
 fn surface_png(did: u32, payload: &[u8]) -> Result<Vec<u8>> {
     let s = Surface::parse_expecting(payload, did).context("not a decodable render surface")?;
     let img = s
@@ -268,10 +218,13 @@ pub fn entry_text(e: &StringTableEntry) -> String {
     })
 }
 
+/// Escapes text for one `token<TAB>text` line: backslash, newline, carriage return and tab
+/// become `\\`, `\n`, `\r` and `\t`, so the line can be unescaped losslessly.
 fn escape_line(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
+            '\\' => o.push_str("\\\\"),
             '\n' => o.push_str("\\n"),
             '\r' => o.push_str("\\r"),
             '\t' => o.push_str("\\t"),
@@ -314,13 +267,8 @@ pub fn extract(out: &mut Out, ctx: &Ctx, o: &ExtractOpts) -> Result<ExitCode> {
         _ => {}
     }
     let input = Input::open(&o.target, ctx)?;
-    let mut protected: Vec<PathBuf> = input.home_dir().into_iter().collect();
-    protected.extend(ctx.game_dir.clone());
-    // Every install discovery knows about is off limits too, not just the one being read.
-    match tessera_install::discover() {
-        Ok(d) => protected.extend(d.installs.into_iter().map(|i| i.root)),
-        Err(e) => tracing::debug!(error = %e, "install discovery failed"),
-    }
+    let protected = protected_dirs(ctx, &input);
+    // Refuse before reading anything; write_output checks again before writing.
     check_output_path(&o.output, &protected)?;
 
     let found = input.require(o.did)?;
@@ -336,32 +284,7 @@ pub fn extract(out: &mut Out, ctx: &Ctx, o: &ExtractOpts) -> Result<ExitCode> {
         }
     };
 
-    if let Some(parent) = o.output.parent().filter(|p| !p.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("cannot create {}", parent.display()))?;
-    }
-    let mut file: File = if o.force {
-        File::create(&o.output)
-    } else {
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&o.output)
-    }
-    .with_context(|| {
-        format!(
-            "cannot create {}{}",
-            o.output.display(),
-            if o.force {
-                ""
-            } else {
-                " (use --force to overwrite)"
-            }
-        )
-    })?;
-    file.write_all(&bytes)
-        .and_then(|()| file.flush())
-        .with_context(|| format!("cannot write {}", o.output.display()))?;
+    write_output(&o.output, &bytes, o.force, &protected)?;
 
     let what = match o.mode {
         ExtractMode::Payload => "payload",
@@ -451,21 +374,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn output_inside_protected_dir_is_refused() {
-        let base = std::env::temp_dir().join(format!("dattool-guard-{}", std::process::id()));
-        let game = base.join("game");
-        fs::create_dir_all(&game).unwrap();
-        let prot = vec![game.clone()];
-        assert!(check_output_path(&game.join("x.bin"), &prot).is_err());
-        assert!(check_output_path(&game.join("new/dir/x.bin"), &prot).is_err());
-        assert!(check_output_path(&base.join("out/../game/x.bin"), &prot).is_err());
-        assert!(check_output_path(&base.join("out/x.bin"), &prot).is_ok());
-        assert!(check_output_path(&base.join("gamex.bin"), &prot).is_ok());
-        let _ = fs::remove_dir_all(&base);
-    }
-
-    #[test]
     fn lines_escape() {
-        assert_eq!(escape_line("a\nb\tc\\"), "a\\nb\\tc\\");
+        assert_eq!(escape_line("a\nb\tc\r"), "a\\nb\\tc\\r");
+        // A literal backslash-n stays distinguishable from an escaped newline.
+        assert_eq!(escape_line("x\\ny"), "x\\\\ny");
+        assert_ne!(escape_line("x\\ny"), escape_line("x\ny"));
+        assert_eq!(escape_line("\\qtree\\q"), "\\\\qtree\\\\q");
     }
 }

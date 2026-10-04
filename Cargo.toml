@@ -7,8 +7,14 @@ members = [
     "crates/net",
     "crates/render",
     "crates/script",
+    "crates/props",
+    "crates/text",
+    "crates/assets",
+    "crates/material",
+    "crates/settings",
     "apps/dattool",
     "apps/client",
+    "apps/explorer",
 ]
 
 [workspace.package]
@@ -26,6 +32,11 @@ tessera-install = { path = "crates/install" }
 tessera-net = { path = "crates/net" }
 tessera-render = { path = "crates/render" }
 tessera-script = { path = "crates/script" }
+tessera-props = { path = "crates/props" }
+tessera-text = { path = "crates/text" }
+tessera-assets = { path = "crates/assets" }
+tessera-material = { path = "crates/material" }
+tessera-settings = { path = "crates/settings" }
 
 anyhow = "1"
 bitflags = "2"

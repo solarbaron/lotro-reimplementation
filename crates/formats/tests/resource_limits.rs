@@ -15,9 +15,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::B;
+use tessera_formats::reader::{DECODE_BUDGET_SLACK, MAX_DECODE_AMPLIFICATION};
 use tessera_formats::{
     AnyRecord, DataIdMap, Did, DidKind, EnumMapper, Evidence, FormatError, PropertyDictionary,
-    Record, StringTable, is_catalogued_prefix,
+    PropertySetRecord, PropertyType, Record, StringTable, is_catalogued_prefix,
+    is_property_set_did, object_property_set_did,
 };
 
 struct Counting;
@@ -134,6 +136,219 @@ fn property_dictionary_count_does_not_preallocate() {
         peak < MIB,
         "peak {peak} bytes for a failing 8 MiB dictionary"
     );
+}
+
+/// Nested property arrays that each claim every remaining byte, followed by garbage: no
+/// level may reserve memory for its claimed count up front.
+#[test]
+fn property_set_nested_counts_do_not_preallocate() {
+    let _serial = serial();
+    let size = 8 * MIB;
+    let array = |pid: u32| (pid == 0x10).then_some(PropertyType::Array);
+    let mut b = B::new().u32(0x7800_0001).tsize(0, 1).u32(0x10).u32(0x10);
+    for _ in 0..20 {
+        // Below the absolute array cap, and within the remaining bytes at 4 bytes each.
+        b = b.u32(900_000).u32(0x10);
+    }
+    let mut data = b.build();
+    data.resize(size, 0xFF);
+    let (r, peak) = peak_during(|| PropertySetRecord::parse(&data, &array));
+    assert!(r.is_err());
+    assert!(
+        peak < MIB,
+        "peak {peak} bytes for a failing 8 MiB property set"
+    );
+}
+
+/// Peak heap bytes the crate documents for decoding `input` bytes: the reader's budget
+/// (16 × input + 64 KiB slack), plus up to half again while a growing collection briefly
+/// holds its old and new buffers.
+fn documented_peak(input: usize) -> usize {
+    (input * MAX_DECODE_AMPLIFICATION + DECODE_BUDGET_SLACK) * 3 / 2
+}
+
+/// Asserts that a decode either succeeded or hit the memory budget, within the documented
+/// peak. Returns whether it succeeded.
+fn assert_bounded<T: std::fmt::Debug>(
+    what: &str,
+    input: usize,
+    r: &Result<T, FormatError>,
+    peak: usize,
+) -> bool {
+    assert!(
+        peak <= documented_peak(input),
+        "{what}: peak {peak} bytes ({:.1}x) for {input} input bytes",
+        peak as f64 / input as f64
+    );
+    match r {
+        Ok(_) => true,
+        Err(e) if matches!(e.root_cause(), FormatError::MemoryLimit { .. }) => false,
+        Err(e) => panic!("{what}: unexpected error {e}"),
+    }
+}
+
+/// One top-level array of `n` elements of PID 0x11, each encoded by `element`.
+fn dense_array(n: u32, element: impl Fn(B) -> B) -> Vec<u8> {
+    let mut b = B::new()
+        .u32(0x7800_0001)
+        .tsize(0, 1)
+        .u32(0x10)
+        .u32(0x10)
+        .u32(n);
+    for _ in 0..n {
+        b = element(b.u32(0x11));
+    }
+    b.build()
+}
+
+/// The densest valid property sets, one per value type with its smallest encoding (Bool,
+/// position with flags 0, waveform subtype 0, empty struct, StringInfo with an empty
+/// argument block, ...): each decodes within the documented bound or fails with
+/// `MemoryLimit`.
+#[test]
+fn property_set_dense_input_is_bounded() {
+    let _serial = serial();
+    let n = 200_000u32;
+    type Element = fn(B) -> B;
+    let cases: [(PropertyType, Element, bool); 14] = [
+        (PropertyType::Bool, |b| b.u8(1), true),
+        (PropertyType::TriState, |b| b.u8(2), true),
+        (PropertyType::Position, |b| b.u8(0), true),
+        (PropertyType::String, |b| b.vle(0), true),
+        (PropertyType::BitfieldAny, |b| b.vle(0), true),
+        (PropertyType::Struct, |b| b.tsize(0, 0), true),
+        (PropertyType::Array, |b| b.u32(0), true),
+        (PropertyType::Enum, |b| b.u32(3), true),
+        (PropertyType::Waveform, |b| b.u32(0), true),
+        (PropertyType::Waveform, |b| b.u32(1).f32(0.5), true),
+        // Empty literal, no arguments: 5 bytes.
+        (
+            PropertyType::StringInfo,
+            |b| b.u8(1).vle(0).u8(0).u8(1).u8(0),
+            true,
+        ),
+        // Empty literal with an empty argument block: 7 bytes, 3 heap objects.
+        (
+            PropertyType::StringInfo,
+            |b| b.u8(1).vle(0).u8(1).vle(0).vle(0).vle(0).vle(0),
+            false,
+        ),
+        (
+            PropertyType::Vector3,
+            |b| b.f32(0.0).f32(0.0).f32(0.0),
+            true,
+        ),
+        (PropertyType::Colour, |b| b.u32(0), true),
+    ];
+    for (ty, element, must_fit) in cases {
+        let schema = move |pid: u32| match pid {
+            0x10 => Some(PropertyType::Array),
+            0x11 => Some(ty),
+            _ => None,
+        };
+        let data = dense_array(n, element);
+        let (r, peak) = peak_during(|| PropertySetRecord::parse(&data, &schema));
+        let ok = assert_bounded(&format!("{ty:?}"), data.len(), &r, peak);
+        if must_fit {
+            assert!(ok, "{ty:?}: {r:?}");
+            assert_eq!(r.unwrap().set.value_count(), n as usize + 1);
+        }
+    }
+}
+
+/// A string-table entry made of millions of empty one-byte pieces would decode to 24
+/// bytes per input byte (plus Vec doubling); the budget stops it.
+#[test]
+fn string_table_empty_pieces_hit_the_budget() {
+    let _serial = serial();
+    let pieces = (1u32 << 22) + 1;
+    let mut b = B::new()
+        .u32(0x2500_0001)
+        .u32(1)
+        .tsize(0, 1)
+        .u32(7)
+        .u32(0)
+        .u32(pieces);
+    let mut data = std::mem::take(&mut b).build();
+    data.resize(data.len() + pieces as usize, 0);
+    data.extend_from_slice(&B::new().u32(0).u8(0).build());
+    let (r, peak) = peak_during(|| StringTable::parse(&data));
+    assert!(
+        matches!(r, Err(FormatError::MemoryLimit { .. })),
+        "{:?}",
+        r.map(|t| t.len())
+    );
+    assert!(peak <= documented_peak(data.len()), "peak {peak}");
+}
+
+/// Dense but plausible tables decode: many empty-text entries, and entries with a few
+/// empty pieces.
+#[test]
+fn string_table_dense_valid_input_is_bounded() {
+    let _serial = serial();
+    let n = 100_000u32;
+    for pieces in [0u32, 1, 3] {
+        let mut b = B::new().u32(0x2500_0001).u32(1).tsize(0, n);
+        for t in 0..n {
+            b = b.u32(t).u32(0).u32(pieces);
+            for _ in 0..pieces {
+                b = b.vle(0);
+            }
+            let args = pieces.saturating_sub(1);
+            b = b.u32(args);
+            for _ in 0..args {
+                b = b.u32(0);
+            }
+            b = b.u8(0);
+        }
+        let data = b.build();
+        let (r, peak) = peak_during(|| StringTable::parse(&data));
+        assert!(assert_bounded("string table", data.len(), &r, peak));
+        assert_eq!(r.unwrap().len(), n as usize);
+    }
+}
+
+/// Enum mappers whose displays carry empty argument blocks, dictionaries with empty
+/// names, and deeply nested StringInfo arguments: all within the documented bound.
+#[test]
+fn other_decoders_dense_input_is_bounded() {
+    let _serial = serial();
+    let n = 500_000u32;
+
+    let mut b = B::new().u32(0x2300_0001).u32(0).tsize(0, 0).tsize(0, n);
+    for k in 0..n {
+        b = b.u32(k).u8(1).vle(0).u8(1).vle(0).vle(0).vle(0).vle(0);
+    }
+    let em = b.build();
+    let (r, peak) = peak_during(|| EnumMapper::parse(&em));
+    assert_bounded("enum mapper displays", em.len(), &r, peak);
+
+    let mut b = B::new().u32(0x2300_0001).u32(0).tsize(0, n);
+    for k in 0..n {
+        b = b.u32(k).vle(0);
+    }
+    let em = b.tsize(0, 0).build();
+    let (r, peak) = peak_during(|| EnumMapper::parse(&em));
+    assert!(assert_bounded("enum mapper names", em.len(), &r, peak));
+
+    let mut b = B::new().u32(0x3400_0000).bytes(&[0; 8]).tsize(0, n);
+    for pid in 0..n {
+        b = b.u32(pid).vle(0);
+    }
+    let dict = b.bytes(&[0, 0]).tsize(0, 0).build();
+    let (r, peak) = peak_during(|| PropertyDictionary::parse(&dict));
+    assert!(assert_bounded("dictionary names", dict.len(), &r, peak));
+    let d = r.unwrap();
+    assert_eq!(d.pid(""), Some(0), "first PID with the empty name");
+
+    // StringInfo with one argument holding a nested StringInfo, repeated: 12 bytes each.
+    let mut b = B::new().u8(1).vle(0).u8(1).vle(0).vle(0).vle(0).vle(n);
+    for _ in 0..n {
+        b = b.u8(1).u32(9).u8(1).vle(0).u8(0).u8(1).u8(0);
+    }
+    let si = b.build();
+    let (r, peak) = peak_during(|| tessera_formats::StringInfo::parse(&si));
+    assert_bounded("StringInfo nested args", si.len(), &r, peak);
 }
 
 /// Enum mapper and DID map headers with maximal counts, followed by garbage.
@@ -355,6 +570,32 @@ mod jpeg {
         }
     }
 
+    /// A progressive frame needs coefficient buffers for the whole image on top of the
+    /// RGBA output. An 8192x4096 colour frame whose stream is large enough for the pixel
+    /// budget passes as baseline but is rejected as progressive, before decoding.
+    #[test]
+    fn progressive_frame_counts_coefficient_memory() {
+        let _serial = serial();
+        let mut jpeg = encode(16, 16, ExtendedColorType::Rgb8);
+        patch_sof(&mut jpeg, 8192, 4096);
+        // Pad with comment segments so the stream passes the input-proportional budget.
+        let mut padded = jpeg[..2].to_vec();
+        padded.extend_from_slice(&[0xFF, 0xFE, 0xFF, 0xFF]);
+        padded.resize(padded.len() + 0xFFFD, b' ');
+        padded.extend_from_slice(&jpeg[2..]);
+        assert!(8192 * 4096 <= jpeg_pixel_budget(padded.len()));
+        let sof = padded
+            .windows(2)
+            .position(|m| m == [0xFF, 0xC0])
+            .expect("SOF0 marker");
+        padded[sof + 1] = 0xC2;
+        let data = surface(&padded);
+        let s = Surface::parse(&data).unwrap();
+        let (r, peak) = peak_during(|| s.to_rgba8());
+        assert!(matches!(r, Err(FormatError::ImageTooLarge { .. })), "{r:?}");
+        assert!(peak < MIB, "peak {peak}");
+    }
+
     #[test]
     fn dimension_limit_applies_even_with_budget() {
         let _serial = serial();
@@ -454,7 +695,81 @@ fn unlabelled_did_map_keys_log_once() {
     assert!(all <= 1, "{all} events");
 }
 
+/// Every struct value has its own TSize header; unknown hints are logged once per record,
+/// not once per header.
+#[test]
+fn unknown_struct_hints_log_once_per_record() {
+    let _serial = serial();
+    let n = 100_000u32;
+    let schema = |pid: u32| match pid {
+        0x10 => Some(PropertyType::Array),
+        0x11 => Some(PropertyType::Struct),
+        _ => None,
+    };
+    let data = dense_array(n, |b| b.tsize(0xFF, 0));
+    let (_, all) = count_events(|| {
+        let rec = PropertySetRecord::parse(&data, &schema).expect("valid set");
+        assert_eq!(rec.set.value_count(), n as usize + 1);
+    });
+    assert!(all <= 1, "{all} events for one record");
+}
+
 // ---------------------------------------------------------------- DID prefixes and API
+
+/// Every kind `AnyRecord` decodes, and the property-set kinds `PropertySetRecord` decodes,
+/// report `Evidence::Decoded`.
+#[test]
+fn decodable_kinds_report_decoded_evidence() {
+    let _serial = serial();
+    for prefix in 0..=0xFFu32 {
+        let did = Did(prefix << 24 | 1);
+        if AnyRecord::is_decodable(did) {
+            assert_eq!(did.kind().evidence(), Evidence::Decoded, "{did}");
+        }
+    }
+    assert_eq!(Did(0x4000_0001).kind().evidence(), Evidence::Decoded);
+    assert_eq!(Did(0x7800_0001).kind().evidence(), Evidence::Decoded);
+    assert_eq!(Did(0x7900_0001).kind().evidence(), Evidence::Decoded);
+}
+
+/// The +0x09000000 rule only produces property-set DIDs; 0x7A–0x7F targets are accepted
+/// as property-set DIDs but classified as unknown, as documented.
+#[test]
+fn object_rule_targets_are_property_set_dids() {
+    let _serial = serial();
+    assert_eq!(object_property_set_did(0x7701_0203u32), None);
+    let t = object_property_set_did(0x7600_0001u32).expect("0x76 maps to 0x7F");
+    assert!(is_property_set_did(t));
+    assert_eq!(t.kind(), DidKind::Unknown(0x7F));
+    assert!(!is_catalogued_prefix(0x7F));
+}
+
+/// Iterating an entry's parts and issues allocates nothing.
+#[test]
+fn string_entry_iterators_do_not_allocate() {
+    let _serial = serial();
+    let data = B::new()
+        .u32(0x2500_0001)
+        .u32(1)
+        .tsize(0, 1)
+        .u32(7)
+        .u32(1) // token_high: one issue
+        .u32(3)
+        .utf16("a")
+        .utf16("b")
+        .utf16("c")
+        .u32(3) // one argument too many
+        .u32(1)
+        .u32(2)
+        .u32(3)
+        .u8(0)
+        .build();
+    let t = StringTable::parse(&data).unwrap();
+    let e = t.get(7).unwrap();
+    let ((parts, issues), peak) = peak_during(|| (e.parts().count(), e.issues().count()));
+    assert_eq!((parts, issues), (6, 2));
+    assert_eq!(peak, 0);
+}
 
 #[test]
 fn prefix_0x26_is_reported_only() {

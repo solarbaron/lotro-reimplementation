@@ -10,8 +10,12 @@ use crate::record::Record;
 use crate::sound::SoundRecord;
 use crate::string_table::StringTable;
 use crate::surface::Surface;
+use crate::texture_list::TextureList;
 
 /// Any record this crate can decode, selected by the DID's type prefix (spec §2.1).
+///
+/// Property sets (0x78–0x7F) are not included: they need the property dictionary as a
+/// schema; see [`crate::PropertySetRecord`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AnyRecord<'a> {
@@ -25,6 +29,8 @@ pub enum AnyRecord<'a> {
     PropertyDictionary(PropertyDictionary),
     /// 0x41: render surface.
     Surface(Surface<'a>),
+    /// 0x40: texture list.
+    TextureList(TextureList),
     /// 0x0A: sound record.
     Sound(SoundRecord<'a>),
 }
@@ -44,6 +50,7 @@ impl<'a> AnyRecord<'a> {
                 Self::PropertyDictionary(PropertyDictionary::parse_expecting(payload, did)?)
             }
             DidKind::RenderSurface => Self::Surface(Surface::parse_expecting(payload, did)?),
+            DidKind::TextureList => Self::TextureList(TextureList::parse_expecting(payload, did)?),
             DidKind::Sound => Self::Sound(SoundRecord::parse_expecting(payload, did)?),
             _ => return Ok(None),
         }))
@@ -59,6 +66,7 @@ impl<'a> AnyRecord<'a> {
                 | DidKind::DataIdMap
                 | DidKind::PropertyDictionary
                 | DidKind::RenderSurface
+                | DidKind::TextureList
                 | DidKind::Sound
         )
     }
@@ -72,6 +80,7 @@ impl<'a> AnyRecord<'a> {
             Self::DataIdMap(r) => r.did(),
             Self::PropertyDictionary(r) => r.did(),
             Self::Surface(r) => r.did(),
+            Self::TextureList(r) => r.did(),
             Self::Sound(r) => r.did(),
         }
     }
@@ -85,6 +94,7 @@ impl<'a> AnyRecord<'a> {
             Self::DataIdMap(_) => DataIdMap::NAME,
             Self::PropertyDictionary(_) => PropertyDictionary::NAME,
             Self::Surface(_) => Surface::NAME,
+            Self::TextureList(_) => TextureList::NAME,
             Self::Sound(_) => SoundRecord::NAME,
         }
     }

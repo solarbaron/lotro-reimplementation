@@ -18,7 +18,14 @@ cargo-fuzz = true
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 tessera-dat = { path = "../crates/dat" }
 tessera-formats = { path = "../crates/formats" }
+tessera-install = { path = "../crates/install" }
 tessera-net = { path = "../crates/net" }
+tessera-script = { path = "../crates/script" }
+tessera-props = { path = "../crates/props" }
+tessera-text = { path = "../crates/text" }
+tessera-material = { path = "../crates/material" }
+tessera-settings = { path = "../crates/settings" }
+tessera-dattool = { path = "../apps/dattool" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -87,6 +94,27 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "formats_property_set"
+path = "fuzz_targets/formats_property_set.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_texture_list"
+path = "fuzz_targets/formats_texture_list.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_string_table"
+path = "fuzz_targets/formats_string_table.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-net (docs/specs/transport-design.md) ---
 
 [[bin]]
@@ -99,6 +127,96 @@ bench = false
 [[bin]]
 name = "net_endpoint"
 path = "fuzz_targets/net_endpoint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_session"
+path = "fuzz_targets/net_session.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-install (docs/specs/install-layout.md) ---
+
+[[bin]]
+name = "install_vdf"
+path = "fuzz_targets/install_vdf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "install_config"
+path = "fuzz_targets/install_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "install_records"
+path = "fuzz_targets/install_records.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-script (docs/specs/lua-plugin-api.md) ---
+
+[[bin]]
+name = "script_descriptor"
+path = "fuzz_targets/script_descriptor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_plugindata"
+path = "fuzz_targets/script_plugindata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_pattern"
+path = "fuzz_targets/script_pattern.rs"
+test = false
+doc = false
+bench = false
+
+# --- M1 crates: tessera-props, tessera-text, tessera-material, tessera-settings, tessera-dattool ---
+
+[[bin]]
+name = "props_set"
+path = "fuzz_targets/props_set.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_render"
+path = "fuzz_targets/text_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "material_icon"
+path = "fuzz_targets/material_icon.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settings_file"
+path = "fuzz_targets/settings_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dattool_snapshot"
+path = "fuzz_targets/dattool_snapshot.rs"
 test = false
 doc = false
 bench = false

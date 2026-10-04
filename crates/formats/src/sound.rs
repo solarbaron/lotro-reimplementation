@@ -140,9 +140,14 @@ impl fmt::Debug for WaveInfo<'_> {
     }
 }
 
+/// Bytes of the `fmt ` chunk fields [`WaveInfo`] reads.
+const FMT_CHUNK_MIN: usize = 16;
+
 impl<'a> WaveInfo<'a> {
     /// Walks the chunks of a RIFF WAVE stream to find `fmt ` and `data`. Unknown chunks
-    /// (`JUNK`, `bext`, …) are skipped; chunk sizes are padded to even lengths.
+    /// (`JUNK`, `bext`, …) are skipped; chunk sizes are padded to even lengths. Error
+    /// offsets are relative to the start of `audio`; a `fmt ` chunk shorter than 16 bytes
+    /// is reported as truncated at the chunk body's offset.
     pub fn parse(audio: &'a [u8]) -> Result<Self> {
         const WHAT: &str = "RIFF WAVE";
         let mut r = Reader::new(audio);
@@ -153,11 +158,13 @@ impl<'a> WaveInfo<'a> {
         if r.bytes(4)? != b"WAVE" {
             return Err(FormatError::malformed(WHAT, 8, "form type is not WAVE"));
         }
-        let mut fmt_chunk: Option<&'a [u8]> = None;
+        // The fmt chunk body and its offset in `audio`, so errors report absolute offsets.
+        let mut fmt_chunk: Option<(usize, &'a [u8])> = None;
         let mut data_chunk: Option<&'a [u8]> = None;
         while r.remaining() >= 8 && (fmt_chunk.is_none() || data_chunk.is_none()) {
             let id = r.array::<4>()?;
             let size = usize::try_from(r.u32()?).unwrap_or(usize::MAX);
+            let body_at = r.position();
             let body = if &id == b"data" {
                 // Tolerate a data chunk that claims more bytes than remain.
                 let take = size.min(r.remaining());
@@ -169,13 +176,21 @@ impl<'a> WaveInfo<'a> {
                 r.skip(1)?;
             }
             match &id {
-                b"fmt " => fmt_chunk = fmt_chunk.or(Some(body)),
+                b"fmt " => fmt_chunk = fmt_chunk.or(Some((body_at, body))),
                 b"data" => data_chunk = data_chunk.or(Some(body)),
                 _ => {}
             }
         }
-        let fmt_body = fmt_chunk.ok_or_else(|| FormatError::malformed(WHAT, 12, "no fmt chunk"))?;
+        let (fmt_at, fmt_body) =
+            fmt_chunk.ok_or_else(|| FormatError::malformed(WHAT, 12, "no fmt chunk"))?;
         let data = data_chunk.ok_or_else(|| FormatError::malformed(WHAT, 12, "no data chunk"))?;
+        if fmt_body.len() < FMT_CHUNK_MIN {
+            return Err(FormatError::Truncated {
+                offset: fmt_at,
+                needed: FMT_CHUNK_MIN,
+                available: fmt_body.len(),
+            });
+        }
         let mut f = Reader::new(fmt_body);
         Ok(Self {
             format_tag: f.u16()?,

@@ -6,3 +6,4 @@
 *.datx
 /out
 .env
+/.cargo/config.toml

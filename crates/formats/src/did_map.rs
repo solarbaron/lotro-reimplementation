@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::did::{Did, DidKind};
 use crate::error::{FormatError, Result};
-use crate::reader::{Reader, TSize};
+use crate::reader::{PREALLOC_CAP, Reader, TSize, hash_index_bytes, index_u32};
 use crate::record::{Record, read_prologue};
 
 /// Largest number of groups accepted in one DID map.
@@ -52,8 +52,8 @@ pub struct DataIdMap {
     pub did: Did,
     groups: Vec<DataIdGroup>,
     entries: Vec<DataIdEntry>,
-    by_label: HashMap<Arc<str>, usize>,
-    by_key: HashMap<u32, usize>,
+    by_label: HashMap<Arc<str>, u32>,
+    by_key: HashMap<u32, u32>,
 }
 
 impl DataIdMap {
@@ -62,14 +62,16 @@ impl DataIdMap {
     pub fn by_label(&self, label: &str) -> Option<Did> {
         self.by_label
             .get(label)
-            .and_then(|&i| self.entries.get(i))
+            .and_then(|&i| self.entries.get(i as usize))
             .map(|e| e.value)
     }
 
     /// Entry for a key.
     #[must_use]
     pub fn get(&self, key: u32) -> Option<&DataIdEntry> {
-        self.by_key.get(&key).and_then(|&i| self.entries.get(i))
+        self.by_key
+            .get(&key)
+            .and_then(|&i| self.entries.get(i as usize))
     }
 
     /// Raw groups in stored order.
@@ -123,10 +125,10 @@ impl fmt::Debug for DataIdMap {
 
 fn read_group(r: &mut Reader<'_>) -> Result<DataIdGroup> {
     let map_size = r.tsize()?;
-    let cap = r.ensure_elements(map_size.count, 8)?;
-    let mut map = Vec::with_capacity(cap);
+    let mut map = r.alloc_vec(map_size.count, 8, PREALLOC_CAP)?;
     for _ in 0..map_size.count {
-        map.push((r.u32()?, r.did()?));
+        let pair = (r.u32()?, r.did()?);
+        r.push(&mut map, pair, map_size.count)?;
     }
     let labels_at = r.position();
     let labels_size = r.tsize()?;
@@ -140,10 +142,13 @@ fn read_group(r: &mut Reader<'_>) -> Result<DataIdGroup> {
             ),
         ));
     }
-    let cap = r.ensure_elements(labels_size.count, 5)?;
-    let mut labels = Vec::with_capacity(cap);
+    let mut labels = r.alloc_vec(labels_size.count, 5, PREALLOC_CAP)?;
     for _ in 0..labels_size.count {
-        labels.push((r.u32()?, Arc::from(r.short_string()?)));
+        let key = r.u32()?;
+        let text = r.short_string()?;
+        // The shared label adds two reference counts to the string's bytes.
+        r.charge(2 * std::mem::size_of::<usize>())?;
+        r.push(&mut labels, (key, Arc::from(text)), labels_size.count)?;
     }
     Ok(DataIdGroup {
         map_size,
@@ -177,30 +182,48 @@ impl Record<'_> for DataIdMap {
                 break;
             }
         }
+        let total = groups.iter().map(|g| g.map.len()).sum::<usize>();
+        let total = u32::try_from(total).unwrap_or(u32::MAX);
         let mut entries = Vec::new();
-        let mut by_label: HashMap<Arc<str>, usize> = HashMap::new();
-        let mut by_key = HashMap::new();
         let mut unlabelled = 0usize;
         for (gi, group) in groups.iter().enumerate() {
-            let labels: HashMap<u32, &Arc<str>> =
-                group.labels.iter().map(|(k, l)| (*k, l)).collect();
+            // Transient per-group join table; charged although it is freed again.
+            r.charge(hash_index_bytes::<u32, &Arc<str>>(group.labels.len()))?;
+            let mut labels: HashMap<u32, &Arc<str>> = HashMap::with_capacity(group.labels.len());
+            for (k, l) in &group.labels {
+                labels.insert(*k, l);
+            }
             for &(key, value) in &group.map {
                 let Some(&label) = labels.get(&key) else {
                     unlabelled += 1;
                     continue;
                 };
-                let i = entries.len();
-                if !by_label.contains_key(&**label) {
-                    by_label.insert(Arc::clone(label), i);
-                }
-                by_key.entry(key).or_insert(i);
-                entries.push(DataIdEntry {
+                let entry = DataIdEntry {
                     key,
                     value,
                     label: Arc::clone(label),
                     group: gi,
-                });
+                };
+                r.push(&mut entries, entry, total)?;
             }
+        }
+        r.log_unknown_hints(Self::NAME);
+        // Indexes are built once at their final size, so they never grow by doubling.
+        r.charge(
+            hash_index_bytes::<Arc<str>, u32>(entries.len()).saturating_add(hash_index_bytes::<
+                u32,
+                u32,
+            >(
+                entries.len()
+            )),
+        )?;
+        let mut by_label: HashMap<Arc<str>, u32> = HashMap::with_capacity(entries.len());
+        let mut by_key = HashMap::with_capacity(entries.len());
+        for (i, e) in entries.iter().enumerate() {
+            if !by_label.contains_key(&*e.label) {
+                by_label.insert(Arc::clone(&e.label), index_u32(i));
+            }
+            by_key.entry(e.key).or_insert(index_u32(i));
         }
         if unlabelled != 0 {
             tracing::debug!(%did, count = unlabelled, "DID-map keys without label skipped");

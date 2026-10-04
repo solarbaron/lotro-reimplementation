@@ -27,17 +27,22 @@ for the project's legal position.
 
 ## Status
 
-**Milestone M0 (base) is in progress.** Nothing here is playable yet.
+**Milestones M0 (base) and M1 (asset browser) are complete** (exit criteria verified
+2026-10-04 against a real install; see [ROADMAP M0 status](docs/ROADMAP.md#m0-status) and
+[M1 status](docs/ROADMAP.md#m1-status)). **M2 (mesh and material viewer) is next.** Nothing
+here is playable yet.
 
 | Area | State |
 |---|---|
-| Archive reader (`.dat`/`.datx` container, directory, compression, DID routing) | in progress (M0) |
-| Record primitives, string tables, textures, property dictionary | in progress (M0) |
-| Install detection (`TESSERA_GAME_DIR`, Steam libraries, Wine/Proton prefixes) | in progress (M0) |
-| `tessera-dattool` inspection CLI | in progress (M0) |
-| Window and wgpu renderer with a test scene | in progress (M0) |
-| Sandboxed Lua 5.1 host skeleton | in progress (M0) |
-| Asset browser, mesh viewer, offline world walker, characters, UI and plugins, audio, own test server | planned (M1–M7) |
+| Archive reader (`.dat`/`.datx` container, directory, compression, DID routing) | done (M0): all 29 archives, 3.8 M entries validated and inflated with 0 errors |
+| Record primitives, string tables, textures, property dictionary | done (M0) |
+| Install detection (`TESSERA_GAME_DIR`, Steam libraries, Wine/Proton prefixes) | done (M0) |
+| `tessera-dattool` inspection CLI, including `diff` and `snapshot` between installs | done (M0, M1) |
+| Window and wgpu renderer with a test scene, headless golden images | done (M0) |
+| Sandboxed Lua 5.1 host skeleton | done (M0) |
+| Property sets with names and enum labels, string rendering with grammar tags, layered icons, asset worker pool, settings | done (M1): 100 % of texture, string-table and property-set records decode |
+| `tessera-explorer` GUI asset browser | done (M1) |
+| Mesh viewer, offline world walker, characters, UI and plugins, audio, own test server | planned (M2–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -104,6 +109,17 @@ cargo run -p tessera-client
 At M0 the client opens a window, reports the install it found, and renders a test scene.
 It also runs without any game data, so you can try it before installing the game.
 
+### Browse the archives
+
+```sh
+cargo run --release -p tessera-explorer
+```
+
+The explorer shows the archive tree, DID search, a hex view, textures (mip levels,
+channels, alpha), layered icons, string tables with their variables, and property sets
+with names and enum labels. It remembers the game directory in Tessera's own settings
+file.
+
 ### Logging
 
 Library crates log through `tracing`. Set `RUST_LOG` to control the output, for example:
@@ -136,15 +152,21 @@ from game data is ever written into the repository.
 | `crates/render` | wgpu renderer |
 | `crates/script` | Sandboxed Lua 5.1 host |
 | `crates/net` | Transport-agnostic session layer with a local sandbox backend |
+| `crates/props` | Property registry, property sets, enum labels, DID maps |
+| `crates/text` | String tables, variable substitution, grammar tags, locale selection |
+| `crates/assets` | Asset worker pool with priorities, cancellation and a decoded cache |
+| `crates/material` | Layered icon composition and texture helpers |
+| `crates/settings` | Tessera's own settings file |
 | `apps/dattool` | `tessera-dattool` inspection CLI |
 | `apps/client` | `tessera-client`, the game client |
+| `apps/explorer` | `tessera-explorer`, the GUI asset browser |
 | `fuzz/` | Fuzz targets, one per parser |
 | `tools/` | ImHex patterns and Kaitai schemas written from our specs |
 | `docs/` | Architecture, roadmap, legal, clean-room process, tooling, specs |
 | `research/` | Dirty-room notes. **Implementers must not open this directory.** |
 
-More crates arrive with later milestones (assets, world streaming, terrain, meshes,
-animation, materials, audio, UI, input, settings, plugin host); see
+More crates arrive with later milestones (world streaming, terrain, meshes, animation,
+audio, UI, input, plugin host); see
 [docs/ARCHITECTURE.md §3](docs/ARCHITECTURE.md#layers).
 
 ---

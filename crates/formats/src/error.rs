@@ -83,6 +83,17 @@ pub enum FormatError {
         limit: usize,
     },
 
+    /// The decoded data would exceed the reader's memory budget
+    /// ([`crate::reader::MAX_DECODE_AMPLIFICATION`] × input length plus a fixed slack).
+    /// Only hostile inputs built from many tiny elements reach it.
+    #[error("decoded data at offset {offset} would exceed the memory budget of {limit} bytes")]
+    MemoryLimit {
+        /// Offset at which the budget ran out.
+        offset: usize,
+        /// The reader's whole budget in bytes.
+        limit: usize,
+    },
+
     /// A render surface uses a format code this crate does not know. Not corruption.
     #[error("unsupported surface format code {code:#x}")]
     UnsupportedSurfaceFormat {
@@ -114,6 +125,30 @@ pub enum FormatError {
         code: u32,
     },
 
+    /// A property set names a PID the schema does not define, so its value length is
+    /// unknown and decoding cannot continue (`property-system.md` §5.3 step 2.3).
+    #[error("unknown property ID {pid:#x} at offset {offset}")]
+    UnknownProperty {
+        /// The property ID.
+        pid: u32,
+        /// Offset of the entry's PID.
+        offset: usize,
+    },
+
+    /// Decoding the value of one property failed. Wraps the innermost failure once, so a
+    /// census can attribute it to a property ID and type (`property-system.md` §11).
+    #[error("property {pid:#x} (type {type_code}) at offset {offset}: {source}")]
+    PropertyValue {
+        /// The property whose value failed to decode.
+        pid: u32,
+        /// Its type code from the schema.
+        type_code: u32,
+        /// Offset of the value's first byte.
+        offset: usize,
+        /// The underlying failure.
+        source: Box<FormatError>,
+    },
+
     /// An embedded image (JPEG) declares more pixels than the decoder will allocate for it.
     #[error("embedded image {width}x{height} exceeds the decode budget of {budget} pixels")]
     ImageTooLarge {
@@ -135,6 +170,16 @@ pub enum FormatError {
 }
 
 impl FormatError {
+    /// The innermost error, looking through [`FormatError::PropertyValue`] wrappers.
+    #[must_use]
+    pub fn root_cause(&self) -> &FormatError {
+        let mut e = self;
+        while let Self::PropertyValue { source, .. } = e {
+            e = source;
+        }
+        e
+    }
+
     pub(crate) fn malformed(
         what: &'static str,
         offset: usize,

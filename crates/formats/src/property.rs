@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Master property dictionary, DID 0x34000000 (spec §6).
+//! Master property dictionary (DID 0x34000000), property types and the raw property value
+//! tree.
+//!
+//! Spec: `docs/specs/property-system.md` §2 (dictionary), §3 (type codes), §4 (value
+//! encodings). Property-set records are in [`crate::property_set`].
 
 use std::collections::HashMap;
 use std::fmt;
 
 use crate::did::{Did, DidKind};
 use crate::error::{FormatError, Result};
-use crate::reader::{Reader, TSize};
+use crate::reader::{
+    PREALLOC_CAP, Reader, TSize, hash_index_bytes, index_u32, keys_in_bucket_order,
+};
 use crate::record::{Record, read_prologue};
 use crate::string_info::StringInfo;
 
@@ -20,7 +26,7 @@ pub const FLAG_HAS_MIN: u32 = 0x1000;
 /// Flag bit: a maximum value is stored.
 pub const FLAG_HAS_MAX: u32 = 0x2000;
 
-/// Property value type (spec §6.3). Names are descriptive.
+/// Property value type (`property-system.md` §3). Names are descriptive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PropertyType {
     /// 1
@@ -133,10 +139,75 @@ impl PropertyType {
     }
 
     /// Whether definitions of this type never store default/min/max values
-    /// (types 10, 11, 12; spec §6.2).
+    /// (types 10, 11, 12; `property-system.md` §2.2).
     #[must_use]
     pub fn skips_definition_values(self) -> bool {
         matches!(self, Self::PropertyId | Self::Struct | Self::Array)
+    }
+}
+
+/// Deepest nesting level a property value may sit at: top-level values are depth 0, a
+/// struct field or array element of a depth-*d* value is depth *d* + 1, and a value at
+/// depth `PROPERTY_MAX_DEPTH` or deeper is rejected. Observed data reaches depth 9
+/// (`property-system.md` §5.3 suggests 32).
+pub const PROPERTY_MAX_DEPTH: usize = 32;
+
+/// Largest array element count accepted, whatever the remaining input
+/// (`property-system.md` §5.3; the largest observed array has 5,211 elements).
+pub const PROPERTY_MAX_ARRAY_LEN: u32 = 1_000_000;
+
+/// Smallest encoding of one property entry: a null entry is a bare zero PID
+/// (`property-system.md` §5.2). Used to bound counts read from the data.
+const MIN_ENTRY_SIZE: usize = 4;
+
+/// Largest initial capacity of a struct's or array's entry list (observed structs have at
+/// most 62 fields; most arrays have 1–3 elements). Larger lists grow as entries decode, in
+/// charged steps that never take the capacity past the stored count.
+const NESTED_PREALLOC_CAP: usize = 64;
+
+/// Type information a property-set decoder needs: the value type of each PID.
+///
+/// Decoding is dictionary-driven (`property-system.md` §1): a value cannot be skipped
+/// without knowing its type. [`PropertyDictionary`] implements this trait; so do hash and
+/// B-tree maps from PID to [`PropertyType`], closures `Fn(u32) -> Option<PropertyType>`
+/// (handy for fuzzing and tests) and [`NoSchema`].
+pub trait PropertySchema {
+    /// The value type of `pid`, or `None` if the PID is not defined.
+    fn property_type(&self, pid: u32) -> Option<PropertyType>;
+}
+
+impl PropertySchema for PropertyDictionary {
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self.definition(pid).map(|d| d.ty)
+    }
+}
+
+impl<S: std::hash::BuildHasher> PropertySchema for HashMap<u32, PropertyType, S> {
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self.get(&pid).copied()
+    }
+}
+
+impl PropertySchema for std::collections::BTreeMap<u32, PropertyType> {
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self.get(&pid).copied()
+    }
+}
+
+impl<F: Fn(u32) -> Option<PropertyType>> PropertySchema for F {
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self(pid)
+    }
+}
+
+/// A schema that defines no PID. Scalars decode with it; a non-empty struct or array
+/// fails with [`FormatError::UnknownProperty`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoSchema;
+
+impl PropertySchema for NoSchema {
+    fn property_type(&self, _pid: u32) -> Option<PropertyType> {
+        None
     }
 }
 
@@ -151,122 +222,588 @@ pub struct WaveformExtra {
     pub pairs: Vec<(f32, f32)>,
 }
 
-/// An animated scalar (type 3).
+/// An animated scalar (type 3, `property-system.md` §4.2). Subtype meanings are OPEN.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Waveform {
     /// Subtype selecting the layout.
     pub subtype: u32,
-    /// Base values: 0, 1 or 10 floats depending on the subtype.
+    /// Base values: 0 (subtype 0), 1 (subtype 1) or 10 floats (any other subtype).
     pub values: Vec<f32>,
     /// Extra data, present only for subtype 10.
     pub extra: Option<WaveformExtra>,
 }
 
-/// A decoded property value (spec §6.4).
+/// A position value (type 17, `property-system.md` §4.6).
+///
+/// Each payload bit of `flags` adds one field, in ascending bit order. Bits 0x40 and 0x80
+/// carry no payload; their meaning is OPEN, so they are kept only in [`Position::flags`].
+///
+/// Stored inline in [`PropertyValue`] (36 bytes): absent fields are kept as zero and the
+/// accessors return `None` for them, so a dense array of positions costs no extra heap
+/// allocation per element.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Position {
+    offset: [f32; 3],
+    orientation: [f32; 4],
+    instance: u16,
+    cell: u16,
+    landblock: [u8; 2],
+    region: u8,
+    flags: u8,
+}
+
+impl Position {
+    /// Flag bit: region present.
+    pub const REGION: u8 = 0x01;
+    /// Flag bit: landblock X, Y present.
+    pub const LANDBLOCK: u8 = 0x02;
+    /// Flag bit: instance present.
+    pub const INSTANCE: u8 = 0x04;
+    /// Flag bit: cell present.
+    pub const CELL: u8 = 0x08;
+    /// Flag bit: x, y, z present.
+    pub const OFFSET: u8 = 0x10;
+    /// Flag bit: orientation present.
+    pub const ORIENTATION: u8 = 0x20;
+
+    /// A position with the given flag byte and every payload field zero. Use the `with_*`
+    /// methods to fill in fields.
+    #[must_use]
+    pub fn new(flags: u8) -> Self {
+        Self {
+            flags,
+            ..Self::default()
+        }
+    }
+
+    /// Sets the region and its flag bit.
+    #[must_use]
+    pub fn with_region(mut self, region: u8) -> Self {
+        self.flags |= Self::REGION;
+        self.region = region;
+        self
+    }
+
+    /// Sets the landblock X, Y and its flag bit.
+    #[must_use]
+    pub fn with_landblock(mut self, x: u8, y: u8) -> Self {
+        self.flags |= Self::LANDBLOCK;
+        self.landblock = [x, y];
+        self
+    }
+
+    /// Sets the instance and its flag bit.
+    #[must_use]
+    pub fn with_instance(mut self, instance: u16) -> Self {
+        self.flags |= Self::INSTANCE;
+        self.instance = instance;
+        self
+    }
+
+    /// Sets the cell and its flag bit.
+    #[must_use]
+    pub fn with_cell(mut self, cell: u16) -> Self {
+        self.flags |= Self::CELL;
+        self.cell = cell;
+        self
+    }
+
+    /// Sets x, y, z and its flag bit.
+    #[must_use]
+    pub fn with_offset(mut self, offset: [f32; 3]) -> Self {
+        self.flags |= Self::OFFSET;
+        self.offset = offset;
+        self
+    }
+
+    /// Sets the orientation and its flag bit.
+    #[must_use]
+    pub fn with_orientation(mut self, orientation: [f32; 4]) -> Self {
+        self.flags |= Self::ORIENTATION;
+        self.orientation = orientation;
+        self
+    }
+
+    /// The stored flag byte, all bits included.
+    #[must_use]
+    pub fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    fn has(&self, bit: u8) -> bool {
+        self.flags & bit != 0
+    }
+
+    /// Bit 0x01: region.
+    #[must_use]
+    pub fn region(&self) -> Option<u8> {
+        self.has(Self::REGION).then_some(self.region)
+    }
+
+    /// Bit 0x02: landblock X and Y.
+    #[must_use]
+    pub fn landblock(&self) -> Option<(u8, u8)> {
+        self.has(Self::LANDBLOCK)
+            .then_some((self.landblock[0], self.landblock[1]))
+    }
+
+    /// Bit 0x04: instance (Reported only; never observed).
+    #[must_use]
+    pub fn instance(&self) -> Option<u16> {
+        self.has(Self::INSTANCE).then_some(self.instance)
+    }
+
+    /// Bit 0x08: cell (0 = outdoors in observed data).
+    #[must_use]
+    pub fn cell(&self) -> Option<u16> {
+        self.has(Self::CELL).then_some(self.cell)
+    }
+
+    /// Bit 0x10: x, y, z (units OPEN).
+    #[must_use]
+    pub fn offset(&self) -> Option<[f32; 3]> {
+        self.has(Self::OFFSET).then_some(self.offset)
+    }
+
+    /// Bit 0x20: orientation quaternion in stored order (component order OPEN).
+    #[must_use]
+    pub fn orientation(&self) -> Option<[f32; 4]> {
+        self.has(Self::ORIENTATION).then_some(self.orientation)
+    }
+
+    /// Decodes a position at the reader's position.
+    pub fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let mut p = Self::new(r.u8()?);
+        if p.has(Self::REGION) {
+            p.region = r.u8()?;
+        }
+        if p.has(Self::LANDBLOCK) {
+            p.landblock = [r.u8()?, r.u8()?];
+        }
+        if p.has(Self::INSTANCE) {
+            p.instance = r.u16()?;
+        }
+        if p.has(Self::CELL) {
+            p.cell = r.u16()?;
+        }
+        if p.has(Self::OFFSET) {
+            p.offset = [r.f32()?, r.f32()?, r.f32()?];
+        }
+        if p.has(Self::ORIENTATION) {
+            p.orientation = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
+        }
+        Ok(p)
+    }
+}
+
+/// One (PID, value) pair of a property set, struct or array (`property-system.md` §5.2).
 #[derive(Debug, Clone, PartialEq)]
+pub struct PropertyEntry {
+    /// Property ID (never 0; null entries are only counted).
+    pub pid: u32,
+    /// The decoded value, of the type the schema gives for `pid`.
+    pub value: PropertyValue,
+}
+
+/// A struct value (type 11, `property-system.md` §4.10).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PropertyStruct {
+    /// Header: bucket-count hint and field count (null entries included).
+    pub size: TSize,
+    /// Fields in stored (bucket) order. Each PID occurs at most once.
+    pub fields: Vec<PropertyEntry>,
+}
+
+impl PropertyStruct {
+    /// The value of field `pid`, if present.
+    #[must_use]
+    pub fn get(&self, pid: u32) -> Option<&PropertyValue> {
+        self.fields.iter().find(|e| e.pid == pid).map(|e| &e.value)
+    }
+
+    /// Number of null (PID 0) entries the header counted.
+    #[must_use]
+    pub fn null_entries(&self) -> usize {
+        (self.size.count as usize).saturating_sub(self.fields.len())
+    }
+
+    /// Whether the fields are in bucket order for the header's hint (PS-O2); `None` for a
+    /// hint with no known bucket count.
+    #[must_use]
+    pub fn is_bucket_ordered(&self) -> Option<bool> {
+        keys_in_bucket_order(self.size.hint, self.fields.iter().map(|e| e.pid))
+    }
+}
+
+/// An array value (type 12, `property-system.md` §4.11).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PropertyArray {
+    /// Stored element count (null entries included).
+    pub count: u32,
+    /// Elements in stored order. Each carries its own PID; PIDs may repeat and differ.
+    pub elements: Vec<PropertyEntry>,
+}
+
+impl PropertyArray {
+    /// Number of null (PID 0) elements the count included.
+    #[must_use]
+    pub fn null_entries(&self) -> usize {
+        (self.count as usize).saturating_sub(self.elements.len())
+    }
+}
+
+/// A variable-width bitfield (type 22, `property-system.md` §4.4).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BitfieldAny {
+    /// Number of bits.
+    pub bits: u32,
+    /// `ceil(bits / 8)` bytes; bit `i` is bit `i % 8` of byte `i / 8`.
+    pub bytes: Vec<u8>,
+}
+
+impl BitfieldAny {
+    /// Whether bit `i` is set. Bits at or past `bits` read as unset.
+    #[must_use]
+    pub fn bit(&self, i: u32) -> bool {
+        i < self.bits
+            && self
+                .bytes
+                .get((i / 8) as usize)
+                .is_some_and(|b| b & (1 << (i % 8)) != 0)
+    }
+
+    /// Indices of the set bits, in ascending order (unused high bits ignored).
+    pub fn set_bits(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..self.bits).filter(|&i| self.bit(i))
+    }
+}
+
+/// A decoded property value (`property-system.md` §4): a raw typed tree with no names.
+///
+/// Struct and array values contain further entries, so a value is a tree. Names, enum
+/// labels and StringInfo text are resolved by higher layers.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PropertyValue {
     /// 1: Latin-1 Pascal string.
     String(String),
     /// 2: string token.
     StringToken(u32),
     /// 3: waveform.
-    Waveform(Waveform),
-    /// 4: timestamp (f64).
+    Waveform(Box<Waveform>),
+    /// 4: timestamp (f64; epoch and unit OPEN).
     Timestamp(f64),
-    /// 5: tri-state byte.
+    /// 5: tri-state byte (meaning OPEN).
     TriState(u8),
     /// 6: x, y, z.
     Vector3([f32; 3]),
     /// 7: 64-bit instance ID.
     InstanceId(u64),
-    /// 8: enum value.
+    /// 8: enum key.
     Enum(u32),
     /// 9: float.
     Float(f32),
     /// 10: property ID.
     PropertyId(u32),
-    /// 11: struct header (ignored byte, field count).
-    Struct {
-        /// The ignored leading byte.
-        ignored: u8,
-        /// Field count.
-        field_count: u8,
-    },
-    /// 12: array (u32).
-    Array(u32),
+    /// 11: struct.
+    Struct(PropertyStruct),
+    /// 12: array.
+    Array(PropertyArray),
     /// 13: StringInfo.
     StringInfo(Box<StringInfo>),
     /// 14: 64-bit bitfield.
     Bitfield64(u64),
     /// 15: signed 32-bit integer.
     Int(i32),
-    /// 16: four colour bytes in stored order (channel order OPEN).
+    /// 16: four colour bytes in stored order (fourth is alpha; RGB order OPEN).
     Colour([u8; 4]),
+    /// 17: position (stored inline).
+    Position(Position),
     /// 18: 32-bit bitfield.
     Bitfield32(u32),
     /// 19: signed 64-bit integer.
     Int64(i64),
-    /// 20: DID reference.
+    /// 20: DID reference; 0 means "none".
     DidRef(Did),
     /// 21: boolean.
     Bool(bool),
-    /// 22: bitfield of any width; bit `i` is in `bytes[i / 8]`, LSB first.
-    BitfieldAny {
-        /// Number of bits.
-        bits: u32,
-        /// `ceil(bits / 8)` bytes.
-        bytes: Vec<u8>,
-    },
+    /// 22: bitfield of any width.
+    BitfieldAny(BitfieldAny),
 }
 
 impl PropertyValue {
-    /// Decodes a value of type `ty` at the reader's position.
+    /// The type of this value.
+    #[must_use]
+    pub fn property_type(&self) -> PropertyType {
+        match self {
+            Self::String(_) => PropertyType::String,
+            Self::StringToken(_) => PropertyType::StringToken,
+            Self::Waveform(_) => PropertyType::Waveform,
+            Self::Timestamp(_) => PropertyType::Timestamp,
+            Self::TriState(_) => PropertyType::TriState,
+            Self::Vector3(_) => PropertyType::Vector3,
+            Self::InstanceId(_) => PropertyType::InstanceId,
+            Self::Enum(_) => PropertyType::Enum,
+            Self::Float(_) => PropertyType::Float,
+            Self::PropertyId(_) => PropertyType::PropertyId,
+            Self::Struct(_) => PropertyType::Struct,
+            Self::Array(_) => PropertyType::Array,
+            Self::StringInfo(_) => PropertyType::StringInfo,
+            Self::Bitfield64(_) => PropertyType::Bitfield64,
+            Self::Int(_) => PropertyType::Int,
+            Self::Colour(_) => PropertyType::Colour,
+            Self::Position(_) => PropertyType::Position,
+            Self::Bitfield32(_) => PropertyType::Bitfield32,
+            Self::Int64(_) => PropertyType::Int64,
+            Self::DidRef(_) => PropertyType::DidRef,
+            Self::Bool(_) => PropertyType::Bool,
+            Self::BitfieldAny(_) => PropertyType::BitfieldAny,
+        }
+    }
+
+    /// Decodes a value of type `ty` with no schema (for dictionary defaults and scalars).
+    ///
+    /// A struct or array with at least one non-null entry fails with
+    /// [`FormatError::UnknownProperty`]; use [`PropertyValue::read_with`] for those.
     pub fn read(r: &mut Reader<'_>, ty: PropertyType) -> Result<Self> {
-        Ok(match ty {
-            PropertyType::String => Self::String(r.pascal_string()?),
-            PropertyType::StringToken => Self::StringToken(r.u32()?),
-            PropertyType::Waveform => Self::Waveform(read_waveform(r)?),
-            PropertyType::Timestamp => Self::Timestamp(r.f64()?),
-            PropertyType::TriState => Self::TriState(r.u8()?),
-            PropertyType::Vector3 => Self::Vector3([r.f32()?, r.f32()?, r.f32()?]),
-            PropertyType::InstanceId => Self::InstanceId(r.u64()?),
-            PropertyType::Enum => Self::Enum(r.u32()?),
-            PropertyType::Float => Self::Float(r.f32()?),
-            PropertyType::PropertyId => Self::PropertyId(r.u32()?),
-            PropertyType::Struct => Self::Struct {
-                ignored: r.u8()?,
-                field_count: r.u8()?,
+        Self::read_with(r, ty, &NoSchema)
+    }
+
+    /// Decodes a value of type `ty`, looking up the types of nested struct fields and array
+    /// elements in `schema`.
+    pub fn read_with<S: PropertySchema + ?Sized>(
+        r: &mut Reader<'_>,
+        ty: PropertyType,
+        schema: &S,
+    ) -> Result<Self> {
+        let mut d = ValueDecoder::new(schema);
+        d.value(r, ty, 0)
+    }
+
+    /// Decodes a buffer holding exactly one value of type `ty`.
+    pub fn parse<S: PropertySchema + ?Sized>(
+        data: &[u8],
+        ty: PropertyType,
+        schema: &S,
+    ) -> Result<Self> {
+        let mut r = Reader::new(data);
+        let v = Self::read_with(&mut r, ty, schema)?;
+        r.expect_end("property value")?;
+        Ok(v)
+    }
+
+    /// The struct, if this is a struct value.
+    #[must_use]
+    pub fn as_struct(&self) -> Option<&PropertyStruct> {
+        match self {
+            Self::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The array, if this is an array value.
+    #[must_use]
+    pub fn as_array(&self) -> Option<&PropertyArray> {
+        match self {
+            Self::Array(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// Nested entries of a struct (fields) or array (elements); empty for scalars.
+    #[must_use]
+    pub fn children(&self) -> &[PropertyEntry] {
+        match self {
+            Self::Struct(s) => &s.fields,
+            Self::Array(a) => &a.elements,
+            _ => &[],
+        }
+    }
+}
+
+/// Recursive dictionary-driven decoder shared by values and property sets.
+pub(crate) struct ValueDecoder<'s, S: ?Sized> {
+    schema: &'s S,
+    /// Reused buffer for duplicate-PID checks.
+    scratch: Vec<u32>,
+}
+
+impl<'s, S: PropertySchema + ?Sized> ValueDecoder<'s, S> {
+    pub(crate) fn new(schema: &'s S) -> Self {
+        Self {
+            schema,
+            scratch: Vec::new(),
+        }
+    }
+
+    /// Reads `count` entries; `echo` selects the top-level/struct form (PID, echo, value)
+    /// over the array form (PID, value). `depth` is the depth of the entries' values.
+    pub(crate) fn entries(
+        &mut self,
+        r: &mut Reader<'_>,
+        count: u32,
+        echo: bool,
+        depth: usize,
+    ) -> Result<Vec<PropertyEntry>> {
+        // Nested containers reserve less up front: every level checks its count against the
+        // same remaining bytes, so a full reservation per level would multiply with depth.
+        let cap_limit = if depth == 0 {
+            usize::MAX
+        } else {
+            NESTED_PREALLOC_CAP
+        };
+        let mut out = r.alloc_vec(count, MIN_ENTRY_SIZE, cap_limit)?;
+        for _ in 0..count {
+            if let Some(e) = self.entry(r, echo, depth)? {
+                r.push(&mut out, e, count)?;
+            }
+        }
+        if echo {
+            self.check_unique(&out, r.position())?;
+        }
+        Ok(out)
+    }
+
+    fn entry(
+        &mut self,
+        r: &mut Reader<'_>,
+        echo: bool,
+        depth: usize,
+    ) -> Result<Option<PropertyEntry>> {
+        let pid_at = r.position();
+        let pid = r.u32()?;
+        if pid == 0 {
+            // Null entry: no echo, no value (Reported; never observed).
+            return Ok(None);
+        }
+        if echo {
+            let echo_at = r.position();
+            let e = r.u32()?;
+            if e != pid {
+                return Err(FormatError::malformed(
+                    "property entry",
+                    echo_at,
+                    format!("PID echo {e:#x} differs from PID {pid:#x}"),
+                ));
+            }
+        }
+        let ty = self
+            .schema
+            .property_type(pid)
+            .ok_or(FormatError::UnknownProperty {
+                pid,
+                offset: pid_at,
+            })?;
+        let value_at = r.position();
+        let value = self.value(r, ty, depth).map_err(|e| match e {
+            e @ FormatError::PropertyValue { .. } => e,
+            e => FormatError::PropertyValue {
+                pid,
+                type_code: ty.code(),
+                offset: value_at,
+                source: Box::new(e),
             },
-            PropertyType::Array => Self::Array(r.u32()?),
-            PropertyType::StringInfo => Self::StringInfo(Box::new(StringInfo::read(r)?)),
-            PropertyType::Bitfield64 => Self::Bitfield64(r.u64()?),
-            PropertyType::Int => Self::Int(r.i32()?),
-            PropertyType::Colour => Self::Colour(r.array()?),
-            PropertyType::Bitfield32 => Self::Bitfield32(r.u32()?),
-            PropertyType::Int64 => Self::Int64(r.i64()?),
-            PropertyType::DidRef => Self::DidRef(r.did()?),
-            PropertyType::Bool => Self::Bool(r.bool8()?),
+        })?;
+        Ok(Some(PropertyEntry { pid, value }))
+    }
+
+    fn check_unique(&mut self, entries: &[PropertyEntry], offset: usize) -> Result<()> {
+        if entries.len() < 2 {
+            return Ok(());
+        }
+        self.scratch.clear();
+        self.scratch.extend(entries.iter().map(|e| e.pid));
+        self.scratch.sort_unstable();
+        if let Some(w) = self.scratch.windows(2).find(|w| w[0] == w[1]) {
+            return Err(FormatError::malformed(
+                "property set",
+                offset,
+                format!("PID {:#x} occurs more than once", w[0]),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn value(
+        &mut self,
+        r: &mut Reader<'_>,
+        ty: PropertyType,
+        depth: usize,
+    ) -> Result<PropertyValue> {
+        if depth >= PROPERTY_MAX_DEPTH {
+            return Err(FormatError::DepthLimit {
+                offset: r.position(),
+                limit: PROPERTY_MAX_DEPTH,
+            });
+        }
+        Ok(match ty {
+            PropertyType::String => PropertyValue::String(r.pascal_string()?),
+            PropertyType::StringToken => PropertyValue::StringToken(r.u32()?),
+            PropertyType::Waveform => {
+                r.charge(std::mem::size_of::<Waveform>())?;
+                PropertyValue::Waveform(Box::new(read_waveform(r)?))
+            }
+            PropertyType::Timestamp => PropertyValue::Timestamp(r.f64()?),
+            PropertyType::TriState => PropertyValue::TriState(r.u8()?),
+            PropertyType::Vector3 => PropertyValue::Vector3([r.f32()?, r.f32()?, r.f32()?]),
+            PropertyType::InstanceId => PropertyValue::InstanceId(r.u64()?),
+            PropertyType::Enum => PropertyValue::Enum(r.u32()?),
+            PropertyType::Float => PropertyValue::Float(r.f32()?),
+            PropertyType::PropertyId => PropertyValue::PropertyId(r.u32()?),
+            PropertyType::Struct => {
+                // A TSize: hint byte, then the count as a VLE (spec §4.10 OPEN: the VLE
+                // reading is byte-identical for counts below 128).
+                let size = r.tsize()?;
+                let fields = self.entries(r, size.count, true, depth + 1)?;
+                PropertyValue::Struct(PropertyStruct { size, fields })
+            }
+            PropertyType::Array => {
+                let count_at = r.position();
+                let count = r.u32()?;
+                if count > PROPERTY_MAX_ARRAY_LEN {
+                    return Err(FormatError::malformed(
+                        "property array",
+                        count_at,
+                        format!("element count {count} exceeds {PROPERTY_MAX_ARRAY_LEN}"),
+                    ));
+                }
+                let elements = self.entries(r, count, false, depth + 1)?;
+                PropertyValue::Array(PropertyArray { count, elements })
+            }
+            PropertyType::StringInfo => {
+                r.charge(std::mem::size_of::<StringInfo>())?;
+                PropertyValue::StringInfo(Box::new(StringInfo::read(r)?))
+            }
+            PropertyType::Bitfield64 => PropertyValue::Bitfield64(r.u64()?),
+            PropertyType::Int => PropertyValue::Int(r.i32()?),
+            PropertyType::Colour => PropertyValue::Colour(r.array()?),
+            PropertyType::Position => PropertyValue::Position(Position::read(r)?),
+            PropertyType::Bitfield32 => PropertyValue::Bitfield32(r.u32()?),
+            PropertyType::Int64 => PropertyValue::Int64(r.i64()?),
+            PropertyType::DidRef => PropertyValue::DidRef(r.did()?),
+            PropertyType::Bool => PropertyValue::Bool(r.bool8()?),
             PropertyType::BitfieldAny => {
                 let bits = r.vle()?;
-                let n = bits.div_ceil(8);
-                let n = usize::try_from(n).unwrap_or(usize::MAX);
-                Self::BitfieldAny {
+                let n = usize::try_from(bits.div_ceil(8)).unwrap_or(usize::MAX);
+                let bytes = r.bytes(n)?;
+                r.charge(n)?;
+                PropertyValue::BitfieldAny(BitfieldAny {
                     bits,
-                    bytes: r.bytes(n)?.to_vec(),
-                }
+                    bytes: bytes.to_vec(),
+                })
             }
-            PropertyType::Position | PropertyType::Unknown(_) => {
-                return Err(FormatError::UnsupportedPropertyType { code: ty.code() });
+            PropertyType::Unknown(code) => {
+                return Err(FormatError::UnsupportedPropertyType { code });
             }
         })
     }
 }
 
 fn read_floats(r: &mut Reader<'_>, n: u32) -> Result<Vec<f32>> {
-    let cap = r.ensure_elements(n, 4)?;
-    let mut v = Vec::with_capacity(cap);
+    let mut v = r.alloc_vec(n, 4, PREALLOC_CAP)?;
     for _ in 0..n {
-        v.push(r.f32()?);
+        let f = r.f32()?;
+        r.push(&mut v, f, n)?;
     }
     Ok(v)
 }
@@ -281,10 +818,10 @@ fn read_waveform(r: &mut Reader<'_>) -> Result<Waveform> {
             let scalar = r.f32()?;
             let flag = r.bool8()?;
             let k = r.u32()?;
-            let cap = r.ensure_elements(k, 8)?;
-            let mut pairs = Vec::with_capacity(cap);
+            let mut pairs = r.alloc_vec(k, 8, PREALLOC_CAP)?;
             for _ in 0..k {
-                pairs.push((r.f32()?, r.f32()?));
+                let pair = (r.f32()?, r.f32()?);
+                r.push(&mut pairs, pair, k)?;
             }
             (
                 values,
@@ -304,7 +841,7 @@ fn read_waveform(r: &mut Reader<'_>) -> Result<Waveform> {
     })
 }
 
-/// One property definition (spec §6.2).
+/// One property definition (`property-system.md` §2.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropertyDefinition {
     /// Property ID.
@@ -315,7 +852,11 @@ pub struct PropertyDefinition {
     pub field_a: u32,
     /// Unknown field (OPEN).
     pub field_b: u32,
-    /// Type-dependent reference: enum DID, DID map or the dictionary itself; else 0.
+    /// Type-dependent field (`property-system.md` §2.5, MP5): the enum mapper or DID map
+    /// for type 8, the enum mapper for bitfields (14, 18, 22), the dictionary itself
+    /// (0x34000000) for type 10, a DB-object-type code below 0x100 for type 20 (§9; see
+    /// [`PropertyDefinition::dbo_type`]), and 0 for every other type. Kept as a [`Did`]
+    /// even when it holds a code.
     pub data: Did,
     /// Unknown field (OPEN).
     pub field_c: u32,
@@ -336,6 +877,17 @@ pub struct PropertyDefinition {
 }
 
 impl PropertyDefinition {
+    /// For a DID-reference definition (type 20), the DB-object-type code its values refer
+    /// to (`property-system.md` §2.5 MP5, §9); `None` for other types or a code outside
+    /// 1..0x100. The code's label lives in the "DBOType" enum mapper.
+    #[must_use]
+    pub fn dbo_type(&self) -> Option<u8> {
+        if self.ty != PropertyType::DidRef {
+            return None;
+        }
+        u8::try_from(self.data.0).ok().filter(|&c| c != 0)
+    }
+
     fn read(r: &mut Reader<'_>, pid: u32) -> Result<Self> {
         const WHAT: &str = "property definition";
         let echo_at = r.position();
@@ -374,8 +926,7 @@ impl PropertyDefinition {
         }
         let field_d = r.array()?;
         let child_count = r.vle()?;
-        let cap = r.ensure_elements(child_count, 8)?;
-        let mut children = Vec::with_capacity(cap);
+        let mut children = r.alloc_vec(child_count, 8, PREALLOC_CAP)?;
         let mut mismatched = 0usize;
         for _ in 0..child_count {
             let a = r.u32()?;
@@ -383,17 +934,17 @@ impl PropertyDefinition {
             if a != b {
                 mismatched += 1;
             }
-            children.push(a);
+            r.push(&mut children, a, child_count)?;
         }
         if mismatched != 0 {
             // One event per definition, not per child (spec §13: the first copy is kept).
             tracing::debug!(pid, count = mismatched, "property child PID copies differ");
         }
         let subset_count = r.u32()?;
-        let cap = r.ensure_elements(subset_count, 4)?;
-        let mut subset = Vec::with_capacity(cap);
+        let mut subset = r.alloc_vec(subset_count, 4, PREALLOC_CAP)?;
         for _ in 0..subset_count {
-            subset.push(r.u32()?);
+            let pid = r.u32()?;
+            r.push(&mut subset, pid, subset_count)?;
         }
         let term_at = r.position();
         let term = r.u32()?;
@@ -422,7 +973,7 @@ impl PropertyDefinition {
     }
 }
 
-/// The master property dictionary (spec §6.1).
+/// The master property dictionary (`property-system.md` §2.1).
 ///
 /// The decoded lists are read-only so that the lookup indexes always agree with them.
 #[derive(Clone, PartialEq)]
@@ -439,10 +990,12 @@ pub struct PropertyDictionary {
     pub definitions_size: TSize,
     names: Vec<(u32, String)>,
     definitions: Vec<PropertyDefinition>,
-    name_index: HashMap<u32, usize>,
-    /// Name → position in `names` of the first PID with that name.
-    pid_by_name: HashMap<String, usize>,
-    def_index: HashMap<u32, usize>,
+    /// PID → position in `names` of its first name.
+    name_index: HashMap<u32, u32>,
+    /// Positions in `names`, sorted by name; among equal names the first stored comes
+    /// first. Borrowing the names keeps the index at 4 bytes per name.
+    by_name: Vec<u32>,
+    def_index: HashMap<u32, u32>,
 }
 
 impl fmt::Debug for PropertyDictionary {
@@ -477,16 +1030,19 @@ impl PropertyDictionary {
     pub fn name(&self, pid: u32) -> Option<&str> {
         self.name_index
             .get(&pid)
-            .and_then(|&i| self.names.get(i))
+            .and_then(|&i| self.names.get(i as usize))
             .map(|(_, n)| n.as_str())
     }
 
-    /// PID with the given name.
+    /// PID with the given name (the first stored one if several PIDs share it).
     #[must_use]
     pub fn pid(&self, name: &str) -> Option<u32> {
-        self.pid_by_name
-            .get(name)
-            .and_then(|&i| self.names.get(i))
+        let name_at = |i: u32| self.names.get(i as usize).map_or("", |(_, n)| n.as_str());
+        let at = self.by_name.partition_point(|&i| name_at(i) < name);
+        let &i = self.by_name.get(at)?;
+        self.names
+            .get(i as usize)
+            .filter(|(_, n)| n == name)
             .map(|(pid, _)| *pid)
     }
 
@@ -495,7 +1051,7 @@ impl PropertyDictionary {
     pub fn definition(&self, pid: u32) -> Option<&PropertyDefinition> {
         self.def_index
             .get(&pid)
-            .and_then(|&i| self.definitions.get(i))
+            .and_then(|&i| self.definitions.get(i as usize))
     }
 }
 
@@ -511,32 +1067,47 @@ impl Record<'_> for PropertyDictionary {
         let did = read_prologue(&mut r, Self::NAME, |k| k == DidKind::PropertyDictionary)?;
         let reserved = r.array()?;
         let names_size = r.tsize()?;
-        let cap = r.ensure_elements(names_size.count, 5)?;
-        let mut names = Vec::with_capacity(cap);
-        let mut name_index = HashMap::with_capacity(cap);
-        let mut pid_by_name = HashMap::with_capacity(cap);
-        for i in 0..names_size.count as usize {
+        let mut names = r.alloc_vec(names_size.count, 5, PREALLOC_CAP)?;
+        for _ in 0..names_size.count {
             let pid = r.u32()?;
             let name = r.pascal_string()?;
-            name_index.entry(pid).or_insert(i);
-            if !pid_by_name.contains_key(&name) {
-                pid_by_name.insert(name.clone(), i);
-            }
-            names.push((pid, name));
+            r.push(&mut names, (pid, name), names_size.count)?;
         }
         let separator = r.array()?;
         let definitions_size = r.tsize()?;
         // Smallest definition: key + 7 u32 + marker + 5 + 1-byte VLE + subset count + term.
-        let cap = r.ensure_elements(definitions_size.count, 4 + 28 + 4 + 5 + 1 + 4 + 4)?;
-        let mut definitions = Vec::with_capacity(cap);
-        let mut def_index = HashMap::with_capacity(cap);
-        for i in 0..definitions_size.count as usize {
+        let mut definitions = r.alloc_vec(
+            definitions_size.count,
+            4 + 28 + 4 + 5 + 1 + 4 + 4,
+            PREALLOC_CAP,
+        )?;
+        for _ in 0..definitions_size.count {
             let pid = r.u32()?;
             let def = PropertyDefinition::read(&mut r, pid)?;
-            def_index.entry(pid).or_insert(i);
-            definitions.push(def);
+            r.push(&mut definitions, def, definitions_size.count)?;
         }
         r.expect_end(Self::NAME)?;
+        r.log_unknown_hints(Self::NAME);
+        // Indexes are built once at their final size, so they never grow by doubling.
+        r.charge(
+            hash_index_bytes::<u32, u32>(names.len())
+                .saturating_add(hash_index_bytes::<u32, u32>(definitions.len()))
+                .saturating_add(names.len().saturating_mul(4)),
+        )?;
+        let mut name_index = HashMap::with_capacity(names.len());
+        for (i, (pid, _)) in names.iter().enumerate() {
+            name_index.entry(*pid).or_insert(index_u32(i));
+        }
+        let mut def_index = HashMap::with_capacity(definitions.len());
+        for (i, def) in definitions.iter().enumerate() {
+            def_index.entry(def.pid).or_insert(index_u32(i));
+        }
+        let mut by_name: Vec<u32> = (0..names.len()).map(index_u32).collect();
+        // Stable: equal names keep their stored order, so `pid` finds the first one.
+        by_name.sort_by(|&a, &b| {
+            let name = |i: u32| names.get(i as usize).map_or("", |(_, n)| n.as_str());
+            name(a).cmp(name(b))
+        });
         Ok(Self {
             did,
             reserved,
@@ -546,7 +1117,7 @@ impl Record<'_> for PropertyDictionary {
             definitions_size,
             definitions,
             name_index,
-            pid_by_name,
+            by_name,
             def_index,
         })
     }

@@ -6,14 +6,17 @@
 //! intended for personal inspection of data you own.
 
 mod detect;
+mod diff;
 mod info;
 mod input;
 mod ls;
+mod output;
 mod read;
+mod snapshot;
 mod util;
 mod validate;
 
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -29,11 +32,18 @@ use crate::util::{parse_did, parse_prefix};
     version,
     about = "Inspect the .dat/.datx archives of your own game install (read-only)",
     long_about = "Inspect the .dat/.datx archives of a game install you own, in place and \
-                  read-only.\n\nDIDs and DID prefixes are hexadecimal, with or without 0x. \
-                  An <archive> is a file path or a short name such as `general`, \
-                  `surface_aux_1` or `client_cell_2.dat`, looked up in --game-dir, \
-                  $TESSERA_GAME_DIR or the auto-detected install. A <dir> is an install \
-                  directory; every archive in it is opened as one set."
+                  read-only.\n\nDIDs and DID prefixes are always hexadecimal, with or \
+                  without 0x (`41000001` is 0x41000001). An <archive> is a file path or a \
+                  short name such as `general`, `surface_aux_1` or `client_cell_2.dat`, \
+                  looked up in --game-dir, $TESSERA_GAME_DIR or the auto-detected install. A \
+                  <dir> is an install directory; every archive in it is opened as one set.\n\n\
+                  Output files (extract, snapshot) are never written inside the directory \
+                  holding the input archives, --game-dir, $TESSERA_GAME_DIR or any detected \
+                  install, and never through a symlink or hard link into one.\n\n\
+                  Exit status: 0 success; 1 a check failed (validate found errors, a \
+                  directory walk stopped early in info, stat or snapshot, or diff \
+                  --exit-code found differences); 2 error (bad arguments, unreadable input, \
+                  or a diff whose inputs could not be read completely)."
 )]
 struct Cli {
     /// Print machine-readable JSON instead of tables.
@@ -77,6 +87,12 @@ enum Cmd {
     Validate(ValidateArgs),
     /// Print the messages of a string table (DID prefix 0x25).
     Strings(StringsArgs),
+    /// Compare two installs, archives or snapshots: added, removed and changed DIDs per
+    /// archive, with a summary by DID type.
+    Diff(DiffArgs),
+    /// Write a compact index (DID, archive, iteration, size, time, optional content hash)
+    /// that `diff` accepts in place of an install.
+    Snapshot(SnapshotArgs),
 }
 
 #[derive(Debug, Args)]
@@ -147,19 +163,22 @@ struct ExtractArgs {
     /// Record DID (hex).
     #[arg(value_parser = parse_did, value_name = "DID")]
     did: u32,
-    /// Output file. Must not be inside the game directory.
+    /// Output file. Refused inside the directory holding the input archive(s), the game
+    /// directory or any detected install.
     #[arg(short, long, value_name = "PATH")]
     output: PathBuf,
     /// Convert a render surface (0x41) to PNG.
     #[arg(long, conflicts_with_all = ["text", "stored"])]
     png: bool,
-    /// Dump a string table (0x25) as `token<TAB>text` lines (newlines and tabs escaped).
+    /// Dump a string table (0x25) as `token<TAB>text` lines (backslash, newline, CR and tab
+    /// escaped as \\, \n, \r and \t).
     #[arg(long, conflicts_with_all = ["png", "stored"])]
     text: bool,
     /// Write the stored on-disk bytes instead of the inflated payload.
     #[arg(long)]
     stored: bool,
-    /// Overwrite an existing output file.
+    /// Replace an existing output file (by renaming a new file over it; a symlink or hard
+    /// link at that path is replaced, never written through).
     #[arg(short, long)]
     force: bool,
 }
@@ -191,6 +210,53 @@ struct StringsArgs {
     /// Only print this token (hex).
     #[arg(long, value_parser = parse_did, value_name = "TOKEN")]
     token: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+struct DiffArgs {
+    /// Older side: install directory, archive, or snapshot file.
+    #[arg(value_name = "A")]
+    a: String,
+    /// Newer side: install directory, archive, or snapshot file.
+    #[arg(value_name = "B")]
+    b: String,
+    /// Also read, inflate and hash the payloads of live inputs that can be paired with the
+    /// other side (only under --prefix, if given), and count a differing hash as a change
+    /// (slow). Two snapshots taken with --content are compared by hash without this flag.
+    #[arg(long)]
+    content: bool,
+    /// Only DIDs whose high byte is this (hex, e.g. 0x41).
+    #[arg(long, value_parser = parse_prefix, value_name = "0xHH")]
+    prefix: Option<u8>,
+    /// List at most N DIDs per archive and category in text output (0 = none).
+    #[arg(long, default_value_t = 20, value_name = "N")]
+    max_list: usize,
+    /// Only print counts, no DID lists (also shortens --json output).
+    #[arg(long)]
+    summary: bool,
+    /// Exit with status 1 when differences are found (0 when none). Errors, and a
+    /// comparison left incomplete by a directory walk that stopped early, exit with 2
+    /// whether or not this is given.
+    #[arg(long)]
+    exit_code: bool,
+}
+
+#[derive(Debug, Args)]
+struct SnapshotArgs {
+    /// Install directory or archive.
+    #[arg(value_name = "DIR|ARCHIVE")]
+    target: String,
+    /// Snapshot file to write. Refused inside the directory holding the input archive(s),
+    /// the game directory or any detected install.
+    #[arg(short, long, value_name = "PATH")]
+    output: PathBuf,
+    /// Store a content hash of every inflated payload (reads every record; slow).
+    #[arg(long)]
+    content: bool,
+    /// Replace an existing output file (by renaming a new file over it; a symlink or hard
+    /// link at that path is replaced, never written through).
+    #[arg(short, long)]
+    force: bool,
 }
 
 /// Output sink and format shared by the subcommands.
@@ -233,6 +299,7 @@ fn init_logging(verbose: u8, quiet: bool) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(io::stderr)
+        .with_ansi(io::stderr().is_terminal())
         .with_target(false)
         .try_init();
 }
@@ -291,6 +358,29 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             },
         )?,
         Cmd::Strings(a) => read::strings(&mut out, &ctx, &a.target, a.did, a.token)?,
+        Cmd::Diff(a) => diff::run(
+            &mut out,
+            &ctx,
+            &diff::Opts {
+                a: a.a,
+                b: a.b,
+                content: a.content,
+                prefix: a.prefix,
+                max_list: a.max_list,
+                summary: a.summary,
+                exit_code: a.exit_code,
+            },
+        )?,
+        Cmd::Snapshot(a) => snapshot::run(
+            &mut out,
+            &ctx,
+            &snapshot::Opts {
+                target: a.target,
+                output: a.output,
+                content: a.content,
+                force: a.force,
+            },
+        )?,
     };
     out.w.flush()?;
     Ok(code)
@@ -306,6 +396,10 @@ fn is_broken_pipe(e: &anyhow::Error) -> bool {
     })
 }
 
+/// Exit status of every error (the same as clap's usage errors), kept apart from status 1,
+/// which means "a check failed" or, for `diff --exit-code`, "differences found".
+const EXIT_ERROR: u8 = 2;
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     init_logging(cli.verbose, cli.quiet);
@@ -314,7 +408,7 @@ fn main() -> ExitCode {
         Err(e) if is_broken_pipe(&e) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
-            ExitCode::FAILURE
+            ExitCode::from(EXIT_ERROR)
         }
     }
 }
@@ -353,5 +447,18 @@ mod tests {
             Cli::try_parse_from(["t", "extract", "/x", "1", "-o", "f", "--png", "--text"]).is_err()
         );
         assert!(Cli::try_parse_from(["t", "extract", "/x", "1"]).is_err());
+        let c =
+            Cli::try_parse_from(["t", "diff", "a", "b", "--content", "--prefix", "41"]).unwrap();
+        assert!(matches!(
+            c.cmd,
+            Cmd::Diff(DiffArgs {
+                content: true,
+                prefix: Some(0x41),
+                max_list: 20,
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["t", "snapshot", "/x"]).is_err());
+        assert!(Cli::try_parse_from(["t", "snapshot", "/x", "-o", "f", "--content"]).is_ok());
     }
 }

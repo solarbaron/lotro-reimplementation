@@ -139,10 +139,22 @@ fn help_lists_every_subcommand() {
     let a = tool().arg("--help").assert().success();
     let out = String::from_utf8(a.get_output().stdout.clone()).unwrap();
     for cmd in [
-        "detect", "info", "ls", "stat", "cat", "extract", "validate", "strings",
+        "detect", "info", "ls", "stat", "cat", "extract", "validate", "strings", "diff", "snapshot",
     ] {
         assert!(out.contains(cmd), "missing {cmd} in help");
     }
+    let a = tool().arg("--help").assert().success();
+    let long = String::from_utf8(a.get_output().stdout.clone()).unwrap();
+    assert!(long.contains("Exit status"), "{long}");
+}
+
+#[test]
+fn runtime_errors_exit_with_status_2() {
+    tool()
+        .args(["cat", "/nonexistent/client_general.dat", "41000001"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("error:"));
 }
 
 #[test]
@@ -163,7 +175,11 @@ fn info_on_dir_and_file() {
         .success()
         .stdout(predicate::str::contains("general"))
         .stdout(predicate::str::contains("surface"))
-        .stdout(predicate::str::contains("total (2)"));
+        .stdout(predicate::str::contains("total (2)"))
+        .stdout(
+            predicate::str::is_match(r"ARCHIVE +KIND +REGION +BLOCK +ENG +DATA +MINOR +ENTRIES")
+                .unwrap(),
+        );
     tool()
         .args(["info", s(&f.game.join("client_general.dat"))])
         .assert()
@@ -175,9 +191,70 @@ fn info_on_dir_and_file() {
         .assert()
         .success();
     let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
-    assert_eq!(v["stats"]["entries"], 3);
-    assert_eq!(v["stats"]["compressed"], 1);
-    assert_eq!(v["header"]["dataset"], 0x0109_0000);
+    // The same {dir, archives} shape as for a directory.
+    let rows = v["archives"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(v["dir"].is_string());
+    let r = &rows[0];
+    assert_eq!(r["stats"]["entries"], 3);
+    assert_eq!(r["stats"]["compressed"], 1);
+    assert_eq!(r["header"]["dataset"], 0x0109_0000);
+    assert_eq!(r["identity"]["kind"], "surface");
+    assert!(r["identity"]["region"].is_null());
+    assert!(r["header"]["block_size"].as_u64().unwrap() > 0);
+    assert!(r["header"].get("min_alloc").is_none());
+    assert_eq!(r["membership"]["part_count"], 1);
+    // Directory rows carry membership too.
+    let a = tool()
+        .args(["--json", "info", s(&f.game)])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let surf = v["archives"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["archive"] == "surface")
+        .unwrap();
+    assert_eq!(surf["membership"]["part_count"], 1);
+}
+
+#[test]
+fn info_reports_kind_and_region_of_cell_archives() {
+    let dir = tempfile::tempdir().unwrap();
+    for (file, subset) in [("client_cell_3.dat", 3), ("client_map_14.dat", 7)] {
+        let mut b = Builder::new();
+        b.dataset = if file.contains("cell") {
+            0x0203_0000
+        } else {
+            0x020A_0000
+        };
+        b.subset = subset;
+        b.stored(0x0100_0001, common::payload(0x0100_0001, 32));
+        std::fs::write(dir.path().join(file), b.build().bytes).unwrap();
+    }
+    let a = tool()
+        .args(["--json", "info", s(dir.path())])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let rows = v["archives"].as_array().unwrap();
+    let cell = rows.iter().find(|r| r["archive"] == "cell_3").unwrap();
+    assert_eq!(cell["identity"]["kind"], "cell");
+    assert_eq!(cell["identity"]["region"], 3);
+    assert_eq!(cell["identity"]["region_mismatch"], false);
+    let map = rows.iter().find(|r| r["archive"] == "map_14").unwrap();
+    assert_eq!(map["identity"]["kind"], "map");
+    // The header word wins; the disagreement with the file name is flagged.
+    assert_eq!(map["identity"]["region"], 7);
+    assert_eq!(map["identity"]["region_mismatch"], true);
+    tool()
+        .args(["info", s(dir.path())])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "map_14: header region (0x150) differs",
+        ));
 }
 
 #[test]
@@ -217,6 +294,82 @@ fn ls_filters_and_resolves_names() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("no archive of that name"));
+}
+
+#[test]
+fn ls_says_limit_reached_only_when_entries_were_cut_off() {
+    let f = fixture();
+    let general = f.game.join("client_general.dat");
+    // 22 entries: 20 + the string table + the set-membership record.
+    tool()
+        .args(["ls", s(&general), "-n", "22"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-- 22 entries"))
+        .stdout(predicate::str::contains("limit reached").not());
+    tool()
+        .args(["ls", s(&general), "-n", "21"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("-- 21 entries"))
+        .stdout(predicate::str::contains("limit reached"));
+}
+
+/// A copy of `general` whose root's first child pointer lies past the end of the file, so
+/// every directory walk stops at once.
+fn broken_walk(f: &Fixture) -> PathBuf {
+    let mut corrupt = f.general.clone();
+    let (root_off, _) = corrupt.root();
+    corrupt.put_u32(Built::child_ptr_pos(root_off, 0), 0x7FFF_FF00);
+    let bad = f.root.join("badwalk");
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::write(bad.join("client_general.dat"), &corrupt.bytes).unwrap();
+    bad
+}
+
+#[test]
+fn a_broken_directory_walk_fails_every_command() {
+    let f = fixture();
+    let bad = broken_walk(&f);
+    let file = bad.join("client_general.dat");
+    for target in [&file, &bad] {
+        tool()
+            .args(["info", s(target)])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("stop").or(predicate::str::contains("WALK ERROR")));
+        tool().args(["--json", "info", s(target)]).assert().code(1);
+        tool()
+            .args(["stat", s(target)])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("directory walk stopped"));
+        tool()
+            .args(["stat", "--totals", s(target)])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("directory walk stopped"));
+    }
+    tool()
+        .args(["info", s(&file)])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("WALK ERROR"));
+    tool().args(["ls", s(&file)]).assert().code(2);
+    tool()
+        .args(["snapshot", s(&file), "-o", s(&f.out.join("bad.snap"))])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("stopped early"));
+    // Log lines on a redirected stderr carry no colour codes.
+    let a = tool()
+        .env("RUST_LOG", "warn")
+        .args(["snapshot", s(&file), "-o", s(&f.out.join("bad2.snap"))])
+        .assert()
+        .code(1);
+    let err = String::from_utf8(a.get_output().stderr.clone()).unwrap();
+    assert!(err.contains("directory walk stopped early"), "{err}");
+    assert!(!err.contains('\u{1b}'), "{err:?}");
 }
 
 #[test]
@@ -268,6 +421,21 @@ fn cat_hexdumps_and_raw_writes_bytes() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("not found"));
+    // --stored gives the on-disk (zlib) bytes of a compressed record.
+    let a = tool()
+        .args(["cat", s(&f.game), "0x41000002", "--raw", "--stored"])
+        .assert()
+        .success();
+    // Exactly what the writer stored: the record's compressed framing, not the payload.
+    assert_eq!(
+        a.get_output().stdout,
+        common::zlib(&surface(SURFACE_Z_DID), Compression::default())
+    );
+    tool()
+        .args(["cat", s(&f.game), "0x41000002", "--stored"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("decoded:").not());
 }
 
 #[test]
@@ -314,6 +482,23 @@ fn extract_png_text_and_payload() {
         .args(["extract", s(&f.game), "41000001", "-o", s(&bin), "--force"])
         .assert()
         .success();
+    // --stored writes the on-disk bytes; for an uncompressed record they equal the payload.
+    let st = f.out.join("stored.bin");
+    tool()
+        .args(["extract", s(&f.game), "41000002", "-o", s(&st), "--stored"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stored bytes"));
+    assert_eq!(
+        std::fs::read(&st).unwrap(),
+        common::zlib(&surface(SURFACE_Z_DID), Compression::default())
+    );
+    let st1 = f.out.join("stored1.bin");
+    tool()
+        .args(["extract", s(&f.game), "41000001", "-o", s(&st1), "--stored"])
+        .assert()
+        .success();
+    assert_eq!(std::fs::read(&st1).unwrap(), surface(SURFACE_DID));
     // Wrong record type for the conversion.
     tool()
         .args(["extract", s(&f.game), "25000007", "-o", s(&png), "--png"])
@@ -352,6 +537,179 @@ fn extract_never_writes_into_the_game_dir() {
     assert_eq!(before, count());
     assert!(!f.game.join("sub").exists());
     assert!(f.root.join("out").exists());
+    // The message names the directory accurately for a single-archive input.
+    tool()
+        .args([
+            "extract",
+            s(&f.game.join("client_surface.dat")),
+            "41000001",
+            "-o",
+            s(&f.game.join("y.bin")),
+        ])
+        .assert()
+        .stderr(predicate::str::contains(
+            "the directory holding the input archive",
+        ));
+}
+
+#[cfg(unix)]
+mod links {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn game_files(f: &Fixture) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(&f.game)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn dangling_symlink_into_the_game_dir_is_refused_with_force() {
+        let f = fixture();
+        let before = game_files(&f);
+        let link = f.out.join("link.bin");
+        symlink(f.game.join("planted.bin"), &link).unwrap();
+        let slink = f.out.join("link.snap");
+        symlink(f.game.join("planted.snap"), &slink).unwrap();
+        let archive = f.game.join("client_surface.dat");
+        for force in [false, true] {
+            let mut c = tool();
+            c.args(["extract", s(&archive), "41000001", "-o", s(&link)]);
+            if force {
+                c.arg("--force");
+            }
+            c.assert()
+                .code(2)
+                .stderr(predicate::str::contains("refusing"));
+            let mut c = tool();
+            c.args(["snapshot", s(&f.game), "-o", s(&slink)]);
+            if force {
+                c.arg("--force");
+            }
+            c.assert()
+                .code(2)
+                .stderr(predicate::str::contains("refusing"));
+        }
+        assert_eq!(before, game_files(&f));
+    }
+
+    #[test]
+    fn symlink_reached_through_missing_dir_and_dotdot_is_refused() {
+        let f = fixture();
+        let before = game_files(&f);
+        symlink(&f.game, f.out.join("gamelink")).unwrap();
+        let archive = f.game.join("client_surface.dat");
+        for target in [
+            "gamelink/a.bin",
+            "nope/../gamelink/b.bin",
+            "nope/../gamelink/newdir/x",
+        ] {
+            tool()
+                .args([
+                    "extract",
+                    s(&archive),
+                    "41000001",
+                    "-o",
+                    s(&f.out.join(target)),
+                ])
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains("refusing"));
+            tool()
+                .args(["snapshot", s(&archive), "-o", s(&f.out.join(target))])
+                .assert()
+                .code(2);
+        }
+        assert_eq!(before, game_files(&f));
+        assert!(!f.out.join("nope").exists());
+    }
+
+    #[test]
+    fn force_does_not_truncate_a_hard_linked_archive() {
+        let f = fixture();
+        let archive = f.game.join("client_surface.dat");
+        let original = std::fs::read(&archive).unwrap();
+        let hard = f.out.join("h.bin");
+        std::fs::hard_link(&archive, &hard).unwrap();
+        tool()
+            .args(["extract", s(&archive), "41000001", "-o", s(&hard)])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("--force"));
+        tool()
+            .args([
+                "extract",
+                s(&archive),
+                "41000001",
+                "-o",
+                s(&hard),
+                "--force",
+            ])
+            .assert()
+            .success();
+        assert_eq!(std::fs::read(&archive).unwrap(), original);
+        assert_eq!(std::fs::read(&hard).unwrap(), surface(SURFACE_DID));
+    }
+
+    #[test]
+    fn the_real_directory_of_a_symlinked_archive_is_protected() {
+        let f = fixture();
+        let link_dir = f.root.join("linkdir");
+        std::fs::create_dir_all(&link_dir).unwrap();
+        symlink(
+            f.game.join("client_surface.dat"),
+            link_dir.join("client_surface.dat"),
+        )
+        .unwrap();
+        let before = game_files(&f);
+        tool()
+            .args([
+                "extract",
+                s(&link_dir.join("client_surface.dat")),
+                "41000001",
+                "-o",
+                s(&f.game.join("x.bin")),
+            ])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("refusing"));
+        // A set made of symlinked archives protects their real directory too.
+        tool()
+            .args(["snapshot", s(&link_dir), "-o", s(&f.game.join("x.snap"))])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("refusing"));
+        assert_eq!(before, game_files(&f));
+    }
+}
+
+#[test]
+fn the_env_game_dir_is_protected_even_when_discovery_rejects_it() {
+    let f = fixture();
+    // A directory discovery rejects (too few archives), named by the environment.
+    let env_game = f.root.join("envgame");
+    std::fs::create_dir_all(&env_game).unwrap();
+    std::fs::copy(
+        f.game.join("client_surface.dat"),
+        env_game.join("client_surface.dat"),
+    )
+    .unwrap();
+    tool()
+        .env("TESSERA_GAME_DIR", &env_game)
+        .args([
+            "extract",
+            s(&f.game.join("client_general.dat")),
+            "25000007",
+            "-o",
+            s(&env_game.join("x.bin")),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("TESSERA_GAME_DIR"));
+    assert!(!env_game.join("x.bin").exists());
 }
 
 #[test]
@@ -401,6 +759,48 @@ fn validate_passes_clean_and_fails_corrupt() {
     let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
     assert_eq!(v["ok"], false);
     assert!(v["errors"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn validate_inflate_and_no_tiling() {
+    let f = fixture();
+    // --inflate inflates the compressed surface; a clean set stays clean.
+    tool()
+        .args(["validate", "--inflate", s(&f.game)])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 errors"));
+    tool()
+        .args(["validate", "--no-tiling", s(&f.game)])
+        .assert()
+        .success();
+    // A compressed record whose zlib stream is broken passes the structural checks and is
+    // caught only when inflated.
+    let mut b = Builder::new();
+    b.compressed(
+        SURFACE_Z_DID,
+        &surface(SURFACE_Z_DID),
+        Compression::default(),
+    );
+    let mut built = b.build();
+    let len = built.bytes.len();
+    let (root_off, _) = built.root();
+    let data_off = built.get_u32(Built::entry_pos(root_off, 0) + 8) as usize;
+    // Corrupt the deflate data a few bytes into the payload (past the length prefix and
+    // zlib header).
+    for k in 8..16 {
+        if data_off + k < len {
+            built.bytes[data_off + k] ^= 0xFF;
+        }
+    }
+    let z = f.root.join("zbad");
+    std::fs::create_dir_all(&z).unwrap();
+    std::fs::write(z.join("client_surface.dat"), &built.bytes).unwrap();
+    tool().args(["validate", s(&z)]).assert().success();
+    tool()
+        .args(["validate", "--inflate", s(&z)])
+        .assert()
+        .failure();
 }
 
 #[test]

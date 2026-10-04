@@ -1,0 +1,24 @@
+[package]
+name = "tessera-material"
+description = "Materials and images built from render surfaces: layered icon composition, mip-chain helpers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tessera-formats.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+# Real-data tests only (tests/real_data.rs): archive access and property sets by name.
+tessera-dat.workspace = true
+tessera-props.workspace = true
+# PNG output of sample composites in the real-data test (zlib stream).
+flate2.workspace = true
+
+[lints]
+workspace = true

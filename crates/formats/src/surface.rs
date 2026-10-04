@@ -38,6 +38,76 @@ pub fn jpeg_pixel_budget(input_len: usize) -> u64 {
         .min(MAX_JPEG_PIXELS)
 }
 
+/// Largest number of heap bytes an embedded JPEG decode may need, as estimated by
+/// [`jpeg_decode_bytes`]: the RGBA8 output plus, for progressive streams, the decoder's
+/// coefficient buffers. A baseline frame of [`MAX_JPEG_PIXELS`] needs 128 MiB.
+pub const MAX_JPEG_DECODE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Estimated heap bytes needed to decode a `width` × `height` JPEG frame with `components`
+/// colour components: 4 bytes per pixel of RGBA8 output, plus, for a progressive frame
+/// (whose scans refine the whole image), 2 bytes per coefficient for every component at
+/// full resolution with the frame padded to 16-pixel MCUs. The coefficient term ignores
+/// chroma subsampling, so it overestimates subsampled frames.
+#[must_use]
+pub fn jpeg_decode_bytes(width: u32, height: u32, components: u8, progressive: bool) -> u64 {
+    let output = u64::from(width)
+        .saturating_mul(u64::from(height))
+        .saturating_mul(4);
+    if !progressive {
+        return output;
+    }
+    let padded =
+        (u64::from(width.div_ceil(16)) * 16).saturating_mul(u64::from(height.div_ceil(16)) * 16);
+    output.saturating_add(padded.saturating_mul(u64::from(components) * 2))
+}
+
+/// Frame-type facts read from a JPEG's start-of-frame marker.
+#[cfg(feature = "jpeg")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct JpegFrame {
+    /// SOF2, SOF6, SOF10 or SOF14: the scans refine the whole image progressively.
+    progressive: bool,
+    /// Number of colour components in the frame.
+    components: u8,
+}
+
+/// Walks the marker segments of a JPEG stream up to its start-of-frame marker. `None` if
+/// the stream ends, a segment is malformed, or a scan starts before any frame header.
+#[cfg(feature = "jpeg")]
+fn jpeg_frame(data: &[u8]) -> Option<JpegFrame> {
+    let mut pos = 2usize; // after FF D8
+    while pos < data.len() {
+        if data[pos] != 0xFF {
+            return None;
+        }
+        // Fill bytes: any number of FF before the marker code.
+        while data.get(pos) == Some(&0xFF) {
+            pos += 1;
+        }
+        let marker = *data.get(pos)?;
+        pos += 1;
+        if matches!(marker, 0x01 | 0xD0..=0xD7) {
+            continue; // stand-alone markers carry no length
+        }
+        let len = usize::from(u16::from_be_bytes([*data.get(pos)?, *data.get(pos + 1)?]));
+        if len < 2 {
+            return None;
+        }
+        let segment = data.get(pos + 2..pos.checked_add(len)?)?;
+        match marker {
+            0xC0..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => {
+                return Some(JpegFrame {
+                    progressive: matches!(marker, 0xC2 | 0xC6 | 0xCA | 0xCE),
+                    components: *segment.get(5)?,
+                });
+            }
+            0xDA | 0xD9 => return None,
+            _ => pos += len,
+        }
+    }
+    None
+}
+
 /// Pixel format of a render surface (spec §5.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SurfaceFormat {
@@ -271,9 +341,12 @@ impl Surface<'_> {
     /// - JPEG is decoded with the `image` crate (feature `jpeg`). The stream must start with
     ///   `FF D8 FF` and end with the `FF D9` end-of-image marker (spec §5.3: the data is a
     ///   complete JFIF stream). Its frame dimensions are checked against
-    ///   [`MAX_JPEG_DIMENSION`] and [`jpeg_pixel_budget`] before any pixel buffer is
-    ///   allocated, and the image is decoded straight into the RGBA8 output buffer, so peak
-    ///   memory is about one RGBA8 image plus the decoder's own working state.
+    ///   [`MAX_JPEG_DIMENSION`] and [`jpeg_pixel_budget`], and its estimated decode memory
+    ///   ([`jpeg_decode_bytes`], which counts progressive coefficient buffers) against
+    ///   [`MAX_JPEG_DECODE_BYTES`], before any pixel buffer is allocated. The image is
+    ///   decoded straight into the RGBA8 output buffer, so peak memory is about one RGBA8
+    ///   image plus the decoder's working state (for progressive streams, up to 2 bytes
+    ///   per sample of every component).
     pub fn to_rgba8(&self) -> Result<RgbaImage> {
         let (width, height) = (self.width, self.height);
         if self.format != SurfaceFormat::Jpeg {
@@ -361,10 +434,30 @@ fn decode_jpeg(data: &[u8]) -> Result<RgbaImage> {
             "JPEG frame has zero size ({width}x{height})"
         )));
     }
+    // Progressive streams keep coefficient buffers for the whole image while they decode,
+    // outside the decoder's allocation limit, so the total is checked here up front.
+    let frame = jpeg_frame(data)
+        .ok_or_else(|| FormatError::malformed(SURFACE, 24, "JPEG frame header not found"))?;
+    let need = jpeg_decode_bytes(width, height, frame.components, frame.progressive);
+    if need > MAX_JPEG_DECODE_BYTES {
+        // Pixels this frame type could have had within the byte budget.
+        let per_pixel = if frame.progressive {
+            4 + 2 * u64::from(frame.components)
+        } else {
+            4
+        };
+        return Err(FormatError::ImageTooLarge {
+            width,
+            height,
+            budget: MAX_JPEG_DECODE_BYTES / per_pixel,
+        });
+    }
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_JPEG_DIMENSION);
     limits.max_image_height = Some(MAX_JPEG_DIMENSION);
-    limits.max_alloc = Some(MAX_JPEG_PIXELS * 4);
+    // Advisory only: the decoder does not count every buffer against it (progressive
+    // coefficient storage in particular). The checks above bound the real total.
+    limits.max_alloc = Some(MAX_JPEG_DECODE_BYTES);
     decoder.set_limits(limits).map_err(image_err)?;
     let channels: usize = match decoder.color_type() {
         ColorType::L8 => 1,
@@ -458,6 +551,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A minimal JPEG header: SOI, an APP0 segment, then a frame header with `marker`.
+    fn header(marker: u8, components: u8) -> Vec<u8> {
+        let mut v = vec![
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0xAA, 0xBB, 0xFF, 0xFF, marker,
+        ];
+        let len = 8 + 3 * u16::from(components);
+        v.extend_from_slice(&len.to_be_bytes());
+        v.extend_from_slice(&[8, 0x10, 0x00, 0x20, 0x00, components]);
+        for c in 0..components {
+            v.extend_from_slice(&[c + 1, 0x11, 0]);
+        }
+        v
+    }
+
+    #[test]
+    fn frame_type_is_read_from_sof() {
+        for (marker, progressive) in [(0xC0, false), (0xC1, false), (0xC2, true), (0xCA, true)] {
+            assert_eq!(
+                jpeg_frame(&header(marker, 3)),
+                Some(JpegFrame {
+                    progressive,
+                    components: 3
+                }),
+                "{marker:#x}"
+            );
+        }
+        // DHT (C4) is not a frame header; a scan before any frame header is rejected.
+        let mut dht = header(0xC4, 1);
+        dht.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+        assert_eq!(jpeg_frame(&dht), None);
+        // Truncated and garbage inputs give up without panicking.
+        let full = header(0xC2, 3);
+        for cut in 0..full.len() {
+            let _ = jpeg_frame(&full[..cut]);
+        }
+        assert_eq!(jpeg_frame(&[0xFF, 0xD8, 0x00]), None);
+        assert_eq!(jpeg_frame(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01]), None);
+    }
+
+    #[test]
+    fn progressive_decode_bytes_count_coefficients() {
+        assert_eq!(jpeg_decode_bytes(8192, 4096, 3, false), 128 * 1024 * 1024);
+        // 8192x4096 colour progressive: 128 MiB output + 192 MiB coefficients.
+        assert_eq!(jpeg_decode_bytes(8192, 4096, 3, true), 320 * 1024 * 1024);
+        assert!(jpeg_decode_bytes(8192, 4096, 3, true) > MAX_JPEG_DECODE_BYTES);
+        // The largest observed surface (4800x4800) fits even if it were progressive.
+        assert!(jpeg_decode_bytes(4800, 4800, 3, true) <= MAX_JPEG_DECODE_BYTES);
+        // Every baseline frame within the pixel cap fits.
+        assert!(jpeg_decode_bytes(8192, 4096, 4, false) <= MAX_JPEG_DECODE_BYTES);
+        assert_eq!(jpeg_decode_bytes(u32::MAX, u32::MAX, 255, true), u64::MAX);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use tessera_dat::{Archive, Header};
+use tessera_dat::{Archive, ArchiveId, Header};
 use tessera_formats::{Did, DidKind};
 
 use crate::Out;
@@ -98,7 +98,7 @@ fn walk(a: &Archive) -> Walk {
     w
 }
 
-fn kind_name(prefix: u8) -> &'static str {
+pub(crate) fn kind_name(prefix: u8) -> &'static str {
     match prefix {
         0xFF => "archive metadata",
         0x80 => "landblock family",
@@ -106,10 +106,59 @@ fn kind_name(prefix: u8) -> &'static str {
     }
 }
 
+/// Identity of an archive as the criteria name it: kind (from the file name), part number,
+/// and region (cell/map archives; header 0x150, `docs/specs/dat-container.md` §3.4).
+#[derive(Debug, Clone)]
+struct Identity {
+    kind: String,
+    part: Option<u32>,
+    region: Option<u32>,
+    /// The file name's region disagrees with the header's subset word.
+    region_mismatch: bool,
+}
+
+fn identity(a: &Archive) -> Identity {
+    let h = a.header();
+    let id = a
+        .path()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .and_then(|n| {
+            ArchiveId::from_file_name(&n)
+                .or_else(|| ArchiveId::from_file_name(&n.to_ascii_lowercase()))
+        });
+    let kind = match &id {
+        Some(id) => match id.kind.tag() {
+            Some(tag) => tag.name().to_owned(),
+            None => id.kind.to_string(),
+        },
+        None => "?".to_owned(),
+    };
+    // Dataset type 2 is the cell/map family, whose subset word is the region
+    // (docs/specs/dat-container.md §3.4).
+    let header_region = (h.dataset_type() == 2).then_some(h.subset);
+    let name_region = id.as_ref().and_then(|id| id.kind.region());
+    Identity {
+        kind,
+        part: id.as_ref().map(|id| id.part),
+        region: header_region.or(name_region),
+        region_mismatch: matches!((header_region, name_region), (Some(a), Some(b)) if a != b),
+    }
+}
+
+fn identity_json(i: &Identity) -> Value {
+    json!({
+        "kind": i.kind,
+        "part": i.part,
+        "region": i.region,
+        "region_mismatch": i.region_mismatch,
+    })
+}
+
 fn header_json(h: &Header) -> Value {
     json!({
         "version": h.version,
-        "min_alloc": h.min_alloc,
+        "block_size": h.min_alloc,
         "file_size": h.file_size,
         "dataset": h.dataset,
         "dataset_type": h.dataset_type(),
@@ -157,24 +206,35 @@ fn pct(part: u64, whole: u64) -> String {
     }
 }
 
-fn info_one(out: &mut Out, label: &str, a: &Archive) -> Result<()> {
-    let h = a.header();
-    let w = walk(a);
-    let membership = a.membership().ok().flatten();
-    if out.json {
-        return out.json(&json!({
-            "archive": label,
-            "path": a.path(),
-            "file_len": a.file_len(),
-            "header": header_json(h),
-            "membership": membership.map(|m| json!({
-                "set_id": hex_bytes(&m.set_id),
-                "part_index": m.part_index,
-                "part_count": m.part_count,
-            })),
-            "stats": walk_json(&w),
-        }));
+fn region_text(i: &Identity) -> String {
+    match (i.region, i.region_mismatch) {
+        (Some(r), false) => r.to_string(),
+        (Some(r), true) => format!("{r}!"),
+        (None, _) => "-".to_owned(),
     }
+}
+
+/// The JSON object of one archive; the same shape for a single archive and a directory.
+fn archive_json(label: &str, a: &Archive, w: &Walk) -> Value {
+    json!({
+        "archive": label,
+        "identity": identity_json(&identity(a)),
+        "path": a.path(),
+        "file_len": a.file_len(),
+        "header": header_json(a.header()),
+        "membership": a.membership().ok().flatten().map(|m| json!({
+            "set_id": hex_bytes(&m.set_id),
+            "part_index": m.part_index,
+            "part_count": m.part_count,
+        })),
+        "stats": walk_json(w),
+    })
+}
+
+fn info_one(out: &mut Out, label: &str, a: &Archive, w: &Walk) -> Result<()> {
+    let h = a.header();
+    let membership = a.membership().ok().flatten();
+    let ident = identity(a);
     let o = &mut out.w;
     writeln!(
         o,
@@ -183,6 +243,18 @@ fn info_one(out: &mut Out, label: &str, a: &Archive) -> Result<()> {
             .map_or("<memory>".into(), |p| p.display().to_string())
     )?;
     let mut kv = |k: &str, v: String| writeln!(o, "  {k:<22} {v}");
+    kv(
+        "kind",
+        match ident.part {
+            Some(p) if p > 0 => format!("{} (aux part {p})", ident.kind),
+            _ => ident.kind.clone(),
+        },
+    )?;
+    kv("region", region_text(&ident))?;
+    kv(
+        "block size",
+        format!("{} (minimum allocation, header 0x144)", h.min_alloc),
+    )?;
     kv(
         "file size",
         format!("{} ({} bytes)", human_bytes(a.file_len()), a.file_len()),
@@ -218,7 +290,6 @@ fn info_one(out: &mut Out, label: &str, a: &Archive) -> Result<()> {
     if h.master_map_did != 0 {
         kv("master map DID", did_hex(h.master_map_did))?;
     }
-    kv("min allocation", h.min_alloc.to_string())?;
     kv(
         "layout sizes",
         format!(
@@ -294,48 +365,57 @@ fn info_one(out: &mut Out, label: &str, a: &Archive) -> Result<()> {
     Ok(())
 }
 
-/// `info <archive|dir>`.
+/// Failure when any directory walk stopped early (the statistics are then partial).
+fn walk_status(walks: &[Walk]) -> ExitCode {
+    if walks.iter().any(|w| w.error.is_some()) {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// `info <archive|dir>`. JSON is `{dir, archives: [...]}` for a single archive too.
 pub fn info(out: &mut Out, ctx: &Ctx, target: &str) -> Result<ExitCode> {
     let input = Input::open(target, ctx)?;
     let archives = input.archives();
-    if let Input::Archive { label, archive } = &input {
-        info_one(out, label, archive)?;
-        return Ok(ExitCode::SUCCESS);
-    }
     let walks = par_map(&archives, |(_, a)| walk(a));
     if out.json {
         let v: Vec<Value> = archives
             .iter()
             .zip(&walks)
-            .map(|((label, a), w)| {
-                json!({
-                    "archive": label,
-                    "path": a.path(),
-                    "file_len": a.file_len(),
-                    "header": header_json(a.header()),
-                    "stats": walk_json(w),
-                })
-            })
+            .map(|((label, a), w)| archive_json(label, a, w))
             .collect();
         out.json(&json!({ "dir": input.home_dir(), "archives": v }))?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(walk_status(&walks));
+    }
+    if let (Input::Archive { label, archive }, Some(w)) = (&input, walks.first()) {
+        info_one(out, label, archive, w)?;
+        return Ok(walk_status(&walks));
     }
     let mut t = Table::new(&[
         ("ARCHIVE", Align::Left),
-        ("FILE", Align::Right),
+        ("KIND", Align::Left),
+        ("REGION", Align::Right),
+        ("BLOCK", Align::Right),
+        ("ENG", Align::Right),
+        ("DATA", Align::Right),
+        ("MINOR", Align::Right),
         ("ENTRIES", Align::Right),
         ("COMPR", Align::Right),
+        ("FILE", Align::Right),
         ("STORED", Align::Right),
         ("MAX REC", Align::Right),
         ("DATASET", Align::Left),
-        ("SUB", Align::Right),
-        ("ENG", Align::Right),
-        ("DATA VER", Align::Right),
         ("NEWEST (UTC)", Align::Left),
     ]);
     let (mut tf, mut te, mut ts) = (0u64, 0u64, 0u64);
+    let mut mismatched = Vec::new();
     for ((label, a), w) in archives.iter().zip(&walks) {
         let h = a.header();
+        let ident = identity(a);
+        if ident.region_mismatch {
+            mismatched.push(label.as_str());
+        }
         tf += a.file_len();
         te += w.entries;
         ts += w.stored;
@@ -345,23 +425,32 @@ pub fn info(out: &mut Out, ctx: &Ctx, target: &str) -> Result<ExitCode> {
             } else {
                 label.clone()
             },
-            human_bytes(a.file_len()),
+            ident.kind.clone(),
+            region_text(&ident),
+            h.min_alloc.to_string(),
+            h.engine_version.to_string(),
+            h.game_data_version.to_string(),
+            h.minor_version.to_string(),
             w.entries.to_string(),
             pct(w.compressed, w.entries),
+            human_bytes(a.file_len()),
             human_bytes(w.stored),
             human_bytes(u64::from(w.max)),
             format!("{:#010x}", h.dataset),
-            h.subset.to_string(),
-            h.engine_version.to_string(),
-            h.game_data_version.to_string(),
             format_time(w.newest),
         ]);
     }
     t.row(vec![
         format!("total ({})", archives.len()),
-        human_bytes(tf),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
         te.to_string(),
         String::new(),
+        human_bytes(tf),
         human_bytes(ts),
     ]);
     if let Some(d) = input.home_dir() {
@@ -373,7 +462,13 @@ pub fn info(out: &mut Out, ctx: &Ctx, target: &str) -> Result<ExitCode> {
             writeln!(out.w, "(!) {label}: directory walk stopped: {e}")?;
         }
     }
-    Ok(ExitCode::SUCCESS)
+    for label in mismatched {
+        writeln!(
+            out.w,
+            "(!) {label}: header region (0x150) differs from the file name"
+        )?;
+    }
+    Ok(walk_status(&walks))
 }
 
 fn hist_table(hist: &[Bucket], total: u64) -> Table {
@@ -451,7 +546,7 @@ pub fn stat(out: &mut Out, ctx: &Ctx, target: &str, totals_only: bool) -> Result
             "totals": hist_json(&total),
             "entries": grand,
         }))?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(walk_status(&walks));
     }
     if !totals_only {
         for ((label, _), w) in archives.iter().zip(&walks) {
@@ -500,5 +595,12 @@ pub fn stat(out: &mut Out, ctx: &Ctx, target: &str, totals_only: bool) -> Result
         }
         t.write(&mut out.w)?;
     }
-    Ok(ExitCode::SUCCESS)
+    if totals_only {
+        for ((label, _), w) in archives.iter().zip(&walks) {
+            if let Some(e) = &w.error {
+                writeln!(out.w, "(!) {label}: directory walk stopped: {e}")?;
+            }
+        }
+    }
+    Ok(walk_status(&walks))
 }

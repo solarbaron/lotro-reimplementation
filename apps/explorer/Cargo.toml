@@ -1,0 +1,53 @@
+[package]
+name = "tessera-explorer"
+description = "GUI asset browser for the archives of an install: archive tree, DID search, hex, textures, icons, strings and property sets"
+version.workspace = true
+edition.workspace = true
+# eframe/egui 0.36 need Rust 1.95; the explorer is a tool, so it may require a newer
+# compiler than the library crates (workspace MSRV).
+rust-version = "1.95"
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "tessera_explorer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tessera-explorer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tessera-dat.workspace = true
+tessera-formats.workspace = true
+tessera-install.workspace = true
+tessera-props.workspace = true
+tessera-text.workspace = true
+tessera-assets.workspace = true
+tessera-material.workspace = true
+tessera-settings.workspace = true
+# No "default_fonts": egui's bundled fonts are OFL-1.1 / Ubuntu Font Licence, outside the
+# licence allow list (deny.toml). UI fonts come from the system at run time (src/fonts.rs).
+eframe = { version = "0.36", default-features = false, features = [
+    "wgpu",
+    "wayland",
+    "x11",
+] }
+# PNG output of `--screenshot` (MIT/Apache-2.0).
+png = "0.18"
+# Checks system font files before egui loads them (egui aborts on a font it cannot
+# parse). Already in the tree through egui's text layer (MIT OR Apache-2.0).
+skrifa = { version = "0.44", default-features = false, features = ["std", "autohint_shaping"] }
+
+[dev-dependencies]
+# The synthetic archive writer of `tessera-dat`'s own tests is reused (included by path)
+# to build in-memory archives; it needs flate2.
+flate2.workspace = true
+
+[lints]
+workspace = true

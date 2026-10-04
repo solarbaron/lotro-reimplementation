@@ -306,3 +306,35 @@ fn sound_truncated_and_trailing() {
         Err(FormatError::WrongRecordType { .. })
     ));
 }
+
+/// A short `fmt ` chunk is reported at its offset in the audio buffer, not relative to the
+/// chunk body.
+#[test]
+fn short_fmt_chunk_reports_absolute_offset() {
+    let body = B::new()
+        .bytes(b"WAVE")
+        .bytes(b"JUNK")
+        .u32(100)
+        .bytes(&[0; 100])
+        .bytes(b"fmt ")
+        .u32(4)
+        .u16(1)
+        .u16(2)
+        .bytes(b"data")
+        .u32(0)
+        .build();
+    let audio = B::new()
+        .bytes(b"RIFF")
+        .u32(body.len() as u32)
+        .bytes(&body)
+        .build();
+    // RIFF header 12 + JUNK header 8 + 100 + fmt header 8: the body starts at 128.
+    assert_eq!(
+        WaveInfo::parse(&audio),
+        Err(FormatError::Truncated {
+            offset: 128,
+            needed: 16,
+            available: 4,
+        })
+    );
+}

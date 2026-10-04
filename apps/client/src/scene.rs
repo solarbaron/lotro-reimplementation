@@ -65,6 +65,13 @@ pub fn checkerboard(size: u32, cell: u32) -> Vec<u8> {
     out
 }
 
+/// Ground-grid half extent in cells (1 m each). Kept short of the horizon: with the
+/// level default camera, a 20-cell grid packs dozens of 1-px lines into the last few rows
+/// above the horizon, where line rasterisation is implementation-defined; Mesa lavapipe
+/// (the CI golden-image reference) then fills a solid block there that hardware drivers
+/// do not draw, and the golden comparison fails.
+pub const GRID_HALF_CELLS: u32 = 10;
+
 /// The default camera: Z-up (the world model's convention), looking at the quad centre.
 #[must_use]
 pub fn default_camera() -> OrbitCamera {
@@ -174,7 +181,7 @@ impl Scene {
                 Vec3::X,
                 Vec3::Y,
                 1.0,
-                20,
+                GRID_HALF_CELLS,
                 [0.18, 0.2, 0.24, 1.0],
             )
             .axes(Vec3::new(0.0, 0.0, 0.01), 1.0)

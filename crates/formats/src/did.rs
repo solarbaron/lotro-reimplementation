@@ -80,7 +80,8 @@ impl fmt::UpperHex for Did {
 /// How well the meaning of a DID prefix is established (spec §2 status column).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Evidence {
-    /// Record content is decoded by this crate.
+    /// Record content is decoded by this crate: by [`crate::AnyRecord`], or, for property
+    /// sets (which need the dictionary as a schema), by [`crate::PropertySetRecord`].
     Decoded,
     /// Meaning confirmed by a DID-map label.
     Labelled,
@@ -296,7 +297,10 @@ impl DidKind {
             | Self::StringTable
             | Self::DataIdMap
             | Self::PropertyDictionary
-            | Self::RenderSurface => Evidence::Decoded,
+            | Self::RenderSurface
+            | Self::TextureList
+            | Self::PropertySet
+            | Self::ObjectPropertySet => Evidence::Decoded,
             Self::Skeleton
             | Self::SingletonTable
             | Self::RegionDescriptor
@@ -306,8 +310,7 @@ impl DidKind {
             | Self::Font
             | Self::ActionMap
             | Self::ScriptLibrary
-            | Self::ScriptStateObject
-            | Self::PropertySet => Evidence::Labelled,
+            | Self::ScriptStateObject => Evidence::Labelled,
             Self::Unknown(_) | Self::Landblock(LandblockKind::Other(_)) | Self::ArchiveMetadata => {
                 Evidence::Unknown
             }

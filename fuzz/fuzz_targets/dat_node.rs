@@ -68,18 +68,37 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let mut prev = None;
+    let mut complete = true;
+    let mut seen = Vec::new();
     for e in a.entries().take(4096) {
-        let Ok(e) = e else { break };
+        let Ok(e) = e else {
+            complete = false;
+            break;
+        };
         if let Some(p) = prev {
             assert!(e.did > p, "in-order traversal is strictly ascending");
         }
         prev = Some(e.did);
-        // Whatever traversal yields, lookup must find again.
-        if let Ok(found) = a.lookup(e.did) {
-            assert_eq!(found.map(|f| f.did), Some(e.did));
-        }
+        seen.push(e.did);
         let _ = a.layout(&e);
         let _ = a.read_entry(&e);
+    }
+    if seen.len() == 4096 {
+        complete = false; // not walked to the end
+    }
+    // When the whole traversal succeeded the tree is a valid search tree, so lookup must
+    // find every entry it yielded. (Entries yielded before the iterator detects an
+    // out-of-order DID may sit in the wrong subtree, where a lookup rightly misses them.)
+    if complete {
+        for did in seen {
+            if let Ok(found) = a.lookup(did) {
+                assert_eq!(
+                    found.map(|f| f.did),
+                    Some(did),
+                    "lookup finds a traversed DID"
+                );
+            }
+        }
     }
     for did in [0, 1, 0x0100_0000, 0x7FFF_FFFF, 0xFFFF_0005, u32::MAX] {
         let _ = a.lookup(did);

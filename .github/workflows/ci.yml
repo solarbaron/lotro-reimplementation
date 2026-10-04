@@ -5,7 +5,7 @@
 #
 #   cargo fmt --all -- --check
 #   cargo clippy --workspace --all-targets -- -D warnings
-#   cargo test --workspace
+#   cargo test --workspace                   (TESSERA_BLESS=1 regenerates golden images)
 #   cargo deny check                         (and --manifest-path fuzz/Cargo.toml)
 #   tools/check-content.sh                   forbidden content and trademark words
 #   tools/check-spdx.sh                      SPDX headers
@@ -130,8 +130,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
       - name: Build
         run: cargo build --workspace --all-targets --locked
+      # Golden images (crates/render/tests/golden/, apps/client/tests/golden/) are the
+      # M0 headless-render gate. On Linux they must run on lavapipe: TESSERA_REQUIRE_GPU
+      # turns "no adapter, skipping" into a failure. Other runners' software adapters
+      # (WARP, the macOS paravirtual GPU) are not the reference, so the golden comparisons
+      # are skipped there; every other render test still runs.
       - name: Test
-        run: cargo test --workspace --locked
+        shell: bash
+        env:
+          TESSERA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
+          SKIP_GOLDEN: ${{ runner.os != 'Linux' && '--skip matches_golden' || '' }}
+        run: cargo test --workspace --locked -- $SKIP_GOLDEN
+      - name: Keep golden-image diffs
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-diffs
+          path: target/tmp/golden/
+          if-no-files-found: ignore
       - name: Docs build (warnings are errors)
         if: runner.os == 'Linux'
         env:

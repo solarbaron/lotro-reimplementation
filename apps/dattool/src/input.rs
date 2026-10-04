@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use tessera_dat::{Archive, ArchiveId, ArchiveSet, Did, Entry, SetOptions};
 
+use crate::output::Protected;
+
 /// Options shared by every subcommand.
 #[derive(Debug, Clone, Default)]
 pub struct Ctx {
@@ -214,6 +216,41 @@ impl Input {
                 .map(Path::to_owned),
             Self::Set(set) => Some(set.dir().to_owned()),
         }
+    }
+
+    /// The directories this input lives in, all of which output must stay out of: the
+    /// directory as given and, for archives reached through symlinks, the directory each
+    /// archive file really lives in.
+    pub fn protected_dirs(&self) -> Vec<Protected> {
+        let real_parent = |p: &Path| {
+            std::fs::canonicalize(p)
+                .ok()
+                .and_then(|c| c.parent().map(Path::to_owned))
+        };
+        let mut v = Vec::new();
+        match self {
+            Self::Archive { archive, .. } => {
+                let why = "the directory holding the input archive";
+                v.extend(self.home_dir().map(|d| Protected::new(d, why)));
+                v.extend(
+                    archive
+                        .path()
+                        .and_then(real_parent)
+                        .map(|d| Protected::new(d, why)),
+                );
+            }
+            Self::Set(set) => {
+                v.push(Protected::new(set.dir(), "the game directory"));
+                for m in set.members() {
+                    if let Some(d) = real_parent(&m.path)
+                        && !v.iter().any(|p| p.path == d)
+                    {
+                        v.push(Protected::new(d, "the directory holding an input archive"));
+                    }
+                }
+            }
+        }
+        v
     }
 
     /// Finds `did`.

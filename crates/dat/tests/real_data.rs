@@ -219,3 +219,159 @@ fn validate_whole_set() {
     assert!(r.is_ok());
     assert_eq!(r.duplicate_dids, 0);
 }
+
+/// M0 exit criterion 3: every DID of every archive is found **through routing** in the same
+/// archive the directory walk found it in, and reading it through the set succeeds.
+///
+/// Every non-metadata entry of every archive is located (metadata DIDs ≥ 0xFFFF0000 exist
+/// once per archive and are not routable by design, spec §8). Reading every record would
+/// move ~37 GiB, so reads through the set cover a sample per archive: the first and last
+/// entry plus every `READ_STRIDE`-th one. Set `TESSERA_FULL=1` to read every record too.
+///
+/// Archives are checked in parallel; `--release` takes ~1 s, a debug build ~30 s.
+#[test]
+fn routing_resolves_every_entry_to_its_listing_archive() {
+    const READ_STRIDE: usize = 997;
+    let Some(set) = open_set() else { return };
+    let full = std::env::var_os("TESSERA_FULL").is_some_and(|v| v == "1");
+    let t = Instant::now();
+
+    #[derive(Default)]
+    struct Tally {
+        listed: u64,
+        metadata: u64,
+        located: u64,
+        unrouted: Vec<u32>,
+        elsewhere: Vec<(u32, usize)>,
+        missing: Vec<u32>,
+        read: u64,
+        read_bytes: u64,
+        read_errors: Vec<(u32, String)>,
+    }
+
+    let members = set.members();
+    let tallies: Vec<Tally> = std::thread::scope(|s| {
+        let handles: Vec<_> = members
+            .iter()
+            .enumerate()
+            .map(|(idx, m)| {
+                let set = &set;
+                s.spawn(move || {
+                    let mut t = Tally::default();
+                    let entries: Vec<_> = m
+                        .archive
+                        .entries()
+                        .collect::<Result<_, _>>()
+                        .unwrap_or_else(|e| panic!("{}: directory walk: {e}", m.id));
+                    let last = entries.len().saturating_sub(1);
+                    for (i, e) in entries.iter().enumerate() {
+                        t.listed += 1;
+                        if e.did >= METADATA_DID_BASE {
+                            t.metadata += 1;
+                            continue;
+                        }
+                        let located = match set.locate(e.did) {
+                            Ok(Some(l)) => l,
+                            Ok(None) => {
+                                t.missing.push(e.did);
+                                continue;
+                            }
+                            Err(err) => {
+                                t.read_errors.push((e.did, format!("locate: {err}")));
+                                continue;
+                            }
+                        };
+                        t.located += 1;
+                        if !located.routed {
+                            t.unrouted.push(e.did);
+                        }
+                        if located.member != idx {
+                            t.elsewhere.push((e.did, located.member));
+                            continue;
+                        }
+                        assert_eq!(located.entry, *e, "{}: {:#010x}", m.id, e.did);
+                        if full || i == 0 || i == last || i % READ_STRIDE == 0 {
+                            match set.read_with_entry(e.did) {
+                                Ok((l, bytes)) => {
+                                    assert_eq!(l.member, idx);
+                                    if !e.is_compressed() {
+                                        assert_eq!(bytes.len() as u64, u64::from(e.length));
+                                    }
+                                    t.read += 1;
+                                    t.read_bytes += bytes.len() as u64;
+                                }
+                                Err(err) => t.read_errors.push((e.did, err.to_string())),
+                            }
+                        }
+                    }
+                    t
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("worker panicked"))
+            .collect()
+    });
+
+    let mut total = Tally::default();
+    for (m, t) in members.iter().zip(&tallies) {
+        eprintln!(
+            "  {:<14} listed {:>7}, metadata {:>2}, routed+same archive {:>7}, read via set {:>4} ({} bytes)",
+            m.id.to_string(),
+            t.listed,
+            t.metadata,
+            t.located - t.elsewhere.len() as u64 - t.unrouted.len() as u64,
+            t.read,
+            t.read_bytes
+        );
+        for d in t.unrouted.iter().take(5) {
+            eprintln!("    {d:#010x}: found only by the fallback search");
+        }
+        for (d, other) in t.elsewhere.iter().take(5) {
+            eprintln!(
+                "    {d:#010x}: routing answered from {}",
+                members[*other].id
+            );
+        }
+        for d in t.missing.iter().take(5) {
+            eprintln!("    {d:#010x}: not found through the set");
+        }
+        for (d, err) in t.read_errors.iter().take(5) {
+            eprintln!("    {d:#010x}: {err}");
+        }
+        total.listed += t.listed;
+        total.metadata += t.metadata;
+        total.located += t.located;
+        total.read += t.read;
+        total.read_bytes += t.read_bytes;
+        total.unrouted.extend(&t.unrouted);
+        total.elsewhere.extend(&t.elsewhere);
+        total.missing.extend(&t.missing);
+        total.read_errors.extend(t.read_errors.iter().cloned());
+    }
+    eprintln!(
+        "criterion 3: {} archives, {} entries listed ({} metadata skipped), {} located; \
+         {} unrouted, {} answered by another archive, {} missing; {} read via the set \
+         ({} bytes), {} errors; {:?}",
+        members.len(),
+        total.listed,
+        total.metadata,
+        total.located,
+        total.unrouted.len(),
+        total.elsewhere.len(),
+        total.missing.len(),
+        total.read,
+        total.read_bytes,
+        total.read_errors.len(),
+        t.elapsed()
+    );
+    assert!(total.missing.is_empty(), "DIDs not found through the set");
+    assert!(total.read_errors.is_empty(), "locate/read errors");
+    assert!(
+        total.elsewhere.is_empty(),
+        "routing answered from a different archive"
+    );
+    assert!(total.unrouted.is_empty(), "DIDs found only by fallback");
+    assert_eq!(total.located, total.listed - total.metadata);
+}

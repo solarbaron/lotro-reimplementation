@@ -1,0 +1,17 @@
+[package]
+name = "tessera-props"
+description = "Property system: registry, typed values, property sets, enum labels, DID-map navigation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tessera-dat.workspace = true
+tessera-formats.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

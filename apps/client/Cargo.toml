@@ -29,6 +29,7 @@ tracing-subscriber.workspace = true
 winit = "0.30"
 
 [dev-dependencies]
+png = "0.18"
 tempfile = "3"
 
 [lints]

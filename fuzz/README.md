@@ -16,8 +16,23 @@ stable without libFuzzer.
 | `formats_primitives` | `Reader` primitives, VLE round trip, `StringInfo::read`, `PropertyValue::read` for every type, DID helpers | `docs/specs/records.md` §1, §2, §4, §6 |
 | `formats_records` | every record decoder and `AnyRecord::decode` | `records.md` |
 | `formats_surface` | `Surface::parse` + `to_rgba8`, embedded JPEG, DXT/BCn | `records.md` §5 |
+| `formats_property_set` | `decode_property_set`, `PropertySetRecord::parse`/`parse_prefix`, embedded sets, single values, with a total and a small synthetic schema | `docs/specs/property-system.md` §4-§5 |
+| `formats_texture_list` | texture-list decoding and level selection | `docs/specs/texture-list.md` §2-§5 |
+| `formats_string_table` | string-table message model: pieces, slots, invariant report | `records.md` §3 |
+| `props_set` | `PropertyRegistry::parse`, `PropertySet::parse_record`/`parse_record_prefix`/`parse_embedded`/`parse_embedded_prefix` with a registry decoded from the same input | `property-system.md` §3-§6 |
+| `text_render` | message grammar and rendering, markup, tag lists and selector options, `${NAME}` format strings and templates, a string-table record rendered through `Strings` | `docs/specs/string-table.md` |
+| `material_icon` | `decode_layer_with_limit` on a surface payload, `compose_images_with_limit` over decoded and synthetic layers | `docs/specs/icon-layers.md` §3 |
+| `settings_file` | settings file: `Settings::parse_lenient`, `from_toml_str`, serialize/parse round trip, `parse_did` | `tessera-settings` |
+| `dattool_snapshot` | `tessera-dattool` snapshot decoder, encode/decode round trip | `apps/dattool/src/snapfile.rs` |
 | `net_packet_decode` | datagram decode/encode round trip | `docs/specs/transport-design.md` |
 | `net_endpoint` | reliable endpoint state machine under hostile datagrams | `transport-design.md` |
+| `net_session` | `Session` state machine over the sandbox backend: arbitrary config, invalid commands, stale clocks; event-order invariants | `tessera-net` `session`, `sandbox` |
+| `install_vdf` | Steam text VDF reader (`parse`, `parse_bytes`), `parse_library_folders`, `parse_app_manifest` | `docs/specs/install-layout.md` §5.3 |
+| `install_config` | `Ini` reader and typed getters, launcher-config `appSettings` reader, third-party launcher TOML subset, `translate_windows_path` | `install-layout.md` §5.6.2, §6, §8.3 |
+| `install_records` | archive-name grammar (canonical round trip), header prefix, 0xFFFF0001/0003/0005 records, `verify_split_set`, schema and content fingerprints | `install-layout.md` §3.1, §3.4, §9 |
+| `script_descriptor` | `.plugin` descriptor parser, package/resource-path/plugin-data-key validation, `sanitize_folder_name` | `docs/specs/lua-plugin-api.md` §4.4, §5, §10.2 |
+| `script_plugindata` | `.plugindata` reader with limits, serialize/parse stability, `format_number` round trip, `EngineDate` | `lua-plugin-api.md` §10.4, §10.5, §12 |
+| `script_pattern` | the bounded Lua pattern engine (`string.find`/`match`/`gmatch`/`gsub`) and chat-command parsing inside a real apartment | `lua-plugin-api.md` §3.1, §3.3, §6.4 |
 
 ## Running
 
@@ -39,7 +54,17 @@ tools/fuzz-smoke.sh -t 60            # all targets, 60 s each
 tools/fuzz-smoke.sh -t 600 dat_node  # one target
 ```
 
+`-j N` runs N targets at once; a summary table with each target's run time, executions and
+result is printed at the end, and full logs go to `fuzz/target/smoke-logs/`.
+
 `cargo check` in this directory type-checks the targets on stable.
+
+## Dictionaries
+
+`dict/<target>.dict` (libFuzzer `-dict` format) holds the syntax tokens of a text format,
+so the fuzzer reaches the inner branches of a grammar quickly. `tools/fuzz-smoke.sh` passes
+it automatically; with cargo-fuzz add `-- -dict=dict/<target>.dict`. Dictionaries contain
+only format syntax written by hand, never strings taken from game data.
 
 ## Rules
 

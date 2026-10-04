@@ -1,8 +1,10 @@
 # Tessera roadmap
 
-> Status: founding document, written at milestone M0 (2026-10-03). Milestones are ordered
-> by dependency and by legal risk: each one builds on the previous one, and the risk tier
-> (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
+> Status: founding document, written at milestone M0 (2026-10-03). M0 and M1 exit criteria
+> were verified and closed on 2026-10-04 ([M0 status](#m0-status), [M1 status](#m1-status));
+> M2 is next. Milestones are ordered by dependency and by legal risk: each one builds on the
+> previous one, and the risk tier (T0–T4, see `docs/LEGAL.md` §8) only rises when the
+> earlier, safer tiers are solid.
 
 <a id="purpose"></a>
 ## 0. Purpose
@@ -204,6 +206,21 @@ and run a sandboxed Lua script.
    cover truncation, oversized counts and extent cycles.
 8. CI is green; the repo contains no game data (content guard passes).
 
+<a id="m0-status"></a>
+**Status (verified 2026-10-04 against the owner's install, 29 archives, 3,838,957 entries):
+all eight criteria pass. M0 is closed.**
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `tessera-dattool info` lists all 29 `client_*` archives (kind, region, block size, engine/data/minor version words, entries, compression, dataset, newest record); total 3,838,957 entries, 42.7 GiB. |
+| 2 | ✅ | `validate --inflate` on the install: 29 archives, 3,838,957 entries, 1,740,958 compressed records all inflated to their stated size, 0 errors, 0 warnings, 0 duplicate DIDs, 20.8 s. |
+| 3 | ✅ | Real-data test: 3,838,840 non-metadata DIDs located through routing alone, 0 unrouted, 0 answered by another archive, 0 missing; CLI check `ls` → `cat <dir>` on 140 DIDs from 27 archives, all `routed` to the listing archive. |
+| 4 | ✅ | 282,152 string tables (806,052 strings) decode with 0 errors and 0 trailing bytes; 1,408,052 of 1,408,052 texture records decode (7 formats); property dictionary: 27,547 names, 27,546 definitions, 0 of unknown type. |
+| 5 | ✅ | Windowed client on Wayland/Vulkan (NVIDIA) runs 300/1500 frames and exits 0 with `--no-data` (checkerboard scene) and with `TESSERA_GAME_DIR` (first decodable surface shown); screenshots checked. Headless goldens pass with 0 outliers on NVIDIA Vulkan, Mesa lavapipe (Vulkan, the CI reference) and Mesa llvmpipe (GL). |
+| 6 | ✅ | `crates/script/tests/sandbox.rs`: `string`/`table`/`math` usable; `io`, `os.execute`, `require` (C modules), `load`/`loadstring` of bytecode and a bytecode main package refused; runaway loops stopped by the instruction budget; memory limit enforced. |
+| 7 | ✅ | `tools/fuzz-smoke.sh -t 60`: all 25 targets ran 60 s each with no finding (0.3 M–84 M executions per target). Synthetic tests cover truncation, oversized counts (`resource_limits.rs`, `free_table_count_is_capped`) and extent/node cycles (`detects_cycles_and_bad_nodes`). |
+| 8 | ✅ | Every CI job reproduced locally and green: `cargo fmt --check` (workspace and `fuzz/`), `clippy --workspace --all-targets [--all-features] -D warnings`, `clippy` on `fuzz/`, `cargo test --workspace --locked` on lavapipe with `TESSERA_REQUIRE_GPU=1` (803 passed, 0 failed, 1 ignored machine-specific), `cargo doc -D warnings`, `cargo deny check bans licenses sources` (both manifests), fuzz smoke. `tools/check-content.sh` and its self-test pass (300 files, 0 errors); `tools/check-spdx.sh` 0 errors. The hosted CI run itself has not been observed yet (no remote). |
+
 ---
 
 <a id="m1"></a>
@@ -257,6 +274,21 @@ labels. This is also the main RE workbench for later milestones.
 4. The explorer stays responsive (no frame over 50 ms) while browsing a texture archive
    with tens of thousands of entries; decoding runs on workers.
 5. Fuzz targets for every new decoder.
+
+<a id="m1-status"></a>
+**Status (verified 2026-10-04 against the owner's install): all five criteria pass. M1 is
+closed.** Specs used: `texture-list.md`, `property-system.md`, `string-table.md`,
+`icon-layers.md`; enum mappers and DID maps are specified in `records.md` §7-§8 rather than
+separate files. Their `> **OPEN:**` items are questions about unused fields and meanings,
+none of which blocks a criterion below.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | 1,408,052 of 1,408,052 render surfaces decode to RGBA8; unsupported format codes: none (A8 659,208, DXT1 346,604, DXT3 206,910, JPEG 65,706, DXT5 60,676, A8R8G8B8 49,243, R8G8B8 19,705). 81,136 texture lists decode, 0 errors. Visual check in the explorer, one sample per format: A8, A8R8G8B8, DXT1, DXT3, DXT5, JPEG, R8G8B8 all pass (7/7), plus a composed item icon. |
+| 2 | ✅ | 282,152 of 282,152 string tables in the English locale; 806,052 of 806,052 entries render (plain and explorer mode), 0 not clean, 0 leftover selectors. |
+| 3 | ✅ | 384,950 of 384,950 property-set records (100.000 %) decode with 0 trailing bytes and 0 failures (47,680,867 values); no OPEN list needed. Registry: 27,546 definitions, all named; sampled objects resolve 100 % of names, enum labels and bit labels. |
+| 4 | ✅ | Explorer `--browse` with frame statistics: 3,000 rows of `surface` (443,694 entries) → 3,022 frames, 0 over 50 ms, worst 18.4 ms; 8,000 rows of `surface_aux_1` (545,622 entries) → 8,022 frames, 0 over 50 ms, worst 15.0 ms. Decoding runs on the 22-worker asset pool. |
+| 5 | ✅ | Fuzz targets for every M1 decoder: `formats_texture_list`, `formats_property_set`, `formats_string_table`, `formats_records` (enum mapper, DID map), `props_set`, `text_render`, `material_icon`, `settings_file`, `dattool_snapshot`; each ran 60 s with no finding. |
 
 ---
 

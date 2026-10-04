@@ -16,6 +16,7 @@ tracing.workspace = true
 wgpu = "30"
 
 [dev-dependencies]
+png = "0.18"
 tracing-subscriber.workspace = true
 
 [lints]

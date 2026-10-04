@@ -1,0 +1,209 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Continuous integration. Every job must pass before merge, except the ones marked
+# "advisory" below. The same checks run locally:
+#
+#   cargo fmt --all -- --check
+#   cargo clippy --workspace --all-targets -- -D warnings
+#   cargo test --workspace
+#   cargo deny check                         (and --manifest-path fuzz/Cargo.toml)
+#   tools/check-content.sh                   forbidden content and trademark words
+#   tools/check-spdx.sh                      SPDX headers
+#   tools/check-dco.sh origin/main           Signed-off-by and clean-room trailers
+#   tools/fuzz-smoke.sh -t 30                short run of every fuzz target
+#
+# No job has access to a game install: TESSERA_GAME_DIR is never set here, so real-data
+# tests skip themselves. Never add game files, captures or secrets to CI.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  # ------------------------------------------------------------------------------------
+  # Repository hygiene (no Rust build needed)
+  # ------------------------------------------------------------------------------------
+  content:
+    name: Forbidden content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Self-test the guard
+        run: tools/check-content.sh --self-test
+      - name: Scan the tree
+        run: tools/check-content.sh
+
+  spdx:
+    name: SPDX / REUSE
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: SPDX headers on source files
+        run: tools/check-spdx.sh
+      # Full REUSE 3.x compliance needs LICENSES/ and REUSE.toml at the root; the step
+      # switches itself on once they exist.
+      - name: reuse lint
+        if: ${{ hashFiles('LICENSES/**') != '' }}
+        uses: fsfe/reuse-action@v5
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000') }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check Signed-off-by and clean-room trailers
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: tools/check-dco.sh "$BASE" "$HEAD"
+
+  # ------------------------------------------------------------------------------------
+  # Rust
+  # ------------------------------------------------------------------------------------
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+      - name: fuzz workspace
+        working-directory: fuzz
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            fuzz
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: all features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: fuzz workspace (stable type-check)
+        working-directory: fuzz
+        run: cargo clippy --bins --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Software Vulkan for headless render tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+      - name: Build
+        run: cargo build --workspace --all-targets --locked
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Docs build (warnings are errors)
+        if: runner.os == 'Linux'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+
+  # Advisory until the dependency tree's MSRV is known to fit rust-version in Cargo.toml.
+  msrv:
+    name: MSRV (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: cargo check on the minimum supported Rust version
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: cargo check --workspace --all-targets --locked
+
+  # ------------------------------------------------------------------------------------
+  # Supply chain: licences (GPLv3-compatible only), bans, sources, advisories
+  # ------------------------------------------------------------------------------------
+  deny:
+    name: cargo-deny (${{ matrix.checks }}, ${{ matrix.manifest }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest: [Cargo.toml, fuzz/Cargo.toml]
+        checks: [advisories, bans licenses sources]
+    # A newly published advisory must not block unrelated pull requests; it is still
+    # reported in the job summary and must be triaged.
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ${{ matrix.manifest }}
+          command: check ${{ matrix.checks }}
+          # deny.toml at the repository root also applies to fuzz/ (found by walking up).
+          arguments: --all-features
+
+  # ------------------------------------------------------------------------------------
+  # Fuzzing smoke test: every target builds with cargo-fuzz and survives 30 s
+  # ------------------------------------------------------------------------------------
+  fuzz:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    needs: [clippy]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: cargo fuzz build
+        working-directory: fuzz
+        run: cargo +nightly fuzz build
+      - name: Run every target for 30 s
+        run: tools/fuzz-smoke.sh -t 30
+      - name: Keep crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

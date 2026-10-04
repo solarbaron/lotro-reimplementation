@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Formatting for the whole repository, including the separate fuzz/ workspace.
+# Only options that are stable on the toolchain in rust-toolchain.toml belong here, so
+# `cargo fmt --all -- --check` gives the same answer locally and in CI. Everything not
+# listed uses rustfmt's defaults (100 columns, 4-space indents).
+
+edition = "2024"
+style_edition = "2024"
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# Nightly-only options we would like once they stabilise (do not enable on stable, or
+# `cargo fmt` prints a warning on every run):
+# imports_granularity = "Module"
+# group_imports = "StdExternalCrate"
+# wrap_comments = true
+# comment_width = 100
+# format_code_in_doc_comments = true

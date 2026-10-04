@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Exceptions for tools/check-content.sh. One per line:
+#
+#   <check> <path-glob> <word|*>  # reason (required)
+#
+# <check> is ext, magic, size, lfs, mark or autoname. <path-glob> is matched against the
+# repository-relative path with fnmatch ("*" also matches "/"). <word> is the matched
+# trademark word or decompiler name, or "*" for any. Keep this list short: every entry
+# is a reviewed decision, and a reviewer should be able to agree with the reason alone.
+
+# The plugin API's native package is called `Turbine` (`Turbine.UI`, `Turbine.Gameplay`,
+# `Turbine.UI.Lotro`); existing third-party plugins call it by that name, so the host has
+# to build and refer to it. Interoperability use, not a product name
+# (docs/specs/lua-plugin-api.md, LEGAL.md §10).
+mark crates/script/* turbine  # Lua plugin API namespace required for plugin compatibility

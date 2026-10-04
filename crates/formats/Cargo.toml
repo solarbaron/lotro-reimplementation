@@ -1,0 +1,26 @@
+[package]
+name = "tessera-formats"
+description = "Record decoders for subfile payloads: primitives, string tables, render surfaces, property dictionary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["jpeg"]
+# Decode embedded JPEG surfaces (format 500) to RGBA8 via the `image` crate (MIT/Apache-2.0).
+jpeg = ["dep:image"]
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+# Real-data tests only (tests/real_data.rs); the library itself stays decoupled from the container.
+tessera-dat = { path = "../dat" }
+
+[lints]
+workspace = true

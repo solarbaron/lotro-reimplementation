@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/), schema v2.
+#
+#   cargo deny check                                   # root workspace
+#   cargo deny --manifest-path fuzz/Cargo.toml check   # fuzz workspace (same rules)
+#
+# Tessera is GPL-3.0-or-later. Every dependency that ends up in a binary we could
+# distribute must be under a licence the FSF lists as compatible with GPLv3, so the
+# combined work can be released under GPL-3.0-or-later. Anything else fails the build and
+# needs a recorded decision in docs/decisions/ before it is added here.
+
+[graph]
+# Check every feature combination's dependencies, not just the defaults
+# (e.g. tessera-formats' optional `jpeg` feature).
+all-features = true
+# Platforms we ship for. Dependencies only reachable on other targets are ignored.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------------------
+# Security advisories (RustSec)
+# ---------------------------------------------------------------------------------------
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Vulnerabilities and unsound crates always fail. Unmaintained crates fail only when
+# we depend on them directly; transitive ones are reported by the RustSec job but do
+# not block (they are frequently deep in the wgpu/winit tree and outside our control).
+unmaintained = "workspace"
+yanked = "deny"
+ignore = [
+    # Each ignore needs an issue link and an expiry review date.
+    # { id = "RUSTSEC-0000-0000", reason = "..." },
+]
+
+# ---------------------------------------------------------------------------------------
+# Licences: GPLv3-compatible only
+# ---------------------------------------------------------------------------------------
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# The allow list names licences we accept in future, not only those in use today.
+unused-allowed-license = "allow"
+allow = [
+    # Our own licence.
+    "GPL-3.0-or-later",
+    # Lax permissive licences (FSF: GPL-compatible).
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",                      # compatible with GPLv3 (not with GPLv2-only)
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "NCSA",                            # libFuzzer runtime, fuzz workspace only
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    # Public-domain dedications.
+    "CC0-1.0",
+    "Unlicense",
+    # Weak copyleft licences that may be combined into a GPLv3 work.
+    "MPL-2.0",                         # §3.3 "Secondary License" clause
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+    "LGPL-3.0-only",
+]
+# Not allowed, on purpose (each is GPL-incompatible or changes our terms):
+#   GPL-2.0-only, LGPL-2.1-only used as a library we modify, AGPL-3.0-* (network clause
+#   would change what users of the client must do), EPL-*, CDDL-*, OpenSSL, SSPL-*,
+#   BUSL-*, CC-BY-NC-*, "proprietary", any crate without licence metadata.
+# GPL-3.0-only is compatible but would remove the "or later" option for the whole
+# binary; add it only after a recorded decision.
+
+# Licence texts that the SPDX matcher cannot read on its own go here.
+# [[licenses.clarify]]
+# crate = "example"
+# expression = "MIT AND ISC"
+# license-files = [{ path = "LICENSE", hash = 0x00000000 }]
+
+[licenses.private]
+# Our unpublished workspace crates (publish = false) are still checked: they must say
+# GPL-3.0-or-later, which is in the allow list.
+ignore = false
+
+# ---------------------------------------------------------------------------------------
+# Banned and duplicate crates
+# ---------------------------------------------------------------------------------------
+[bans]
+# wgpu/winit pull several majors of the same crate; report, do not fail.
+multiple-versions = "warn"
+# `version = "*"` is never acceptable; path dependencies inside the workspace are fine.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+deny = [
+    # TLS goes through rustls when we need it, which keeps OpenSSL's licence history and
+    # a C toolchain dependency out of the client.
+    { crate = "openssl", reason = "use rustls" },
+    { crate = "openssl-sys", reason = "use rustls" },
+]
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------------------
+# Where crates may come from
+# ---------------------------------------------------------------------------------------
+[sources]
+# Only crates.io. A git dependency needs review (provenance matters for a clean-room
+# project) and an explicit entry below.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

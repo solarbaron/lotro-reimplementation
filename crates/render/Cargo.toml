@@ -1,0 +1,22 @@
+[package]
+name = "tessera-render"
+description = "wgpu renderer foundation for the Tessera client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytemuck = { version = "1.25", features = ["derive"] }
+glam = { version = "0.33", features = ["bytemuck"] }
+pollster.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wgpu = "30"
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

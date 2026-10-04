@@ -1,0 +1,104 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Fuzz targets for every parser of untrusted input (CLAUDE.md). Run with
+# `cargo +nightly fuzz run <target>` (needs cargo-fuzz and a nightly toolchain); see
+# fuzz/README.md. This is its own workspace so the main workspace builds on stable
+# without it.
+
+[package]
+name = "tessera-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+tessera-dat = { path = "../crates/dat" }
+tessera-formats = { path = "../crates/formats" }
+tessera-net = { path = "../crates/net" }
+
+# Not a member of the root workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+# --- tessera-dat (docs/specs/dat-container.md) ---
+
+[[bin]]
+name = "dat_header"
+path = "fuzz_targets/dat_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dat_node"
+path = "fuzz_targets/dat_node.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dat_archive"
+path = "fuzz_targets/dat_archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dat_inflate"
+path = "fuzz_targets/dat_inflate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dat_routing"
+path = "fuzz_targets/dat_routing.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats (docs/specs/records.md) ---
+
+[[bin]]
+name = "formats_primitives"
+path = "fuzz_targets/formats_primitives.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_records"
+path = "fuzz_targets/formats_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_surface"
+path = "fuzz_targets/formats_surface.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-net (docs/specs/transport-design.md) ---
+
+[[bin]]
+name = "net_packet_decode"
+path = "fuzz_targets/net_packet_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_endpoint"
+path = "fuzz_targets/net_endpoint.rs"
+test = false
+doc = false
+bench = false

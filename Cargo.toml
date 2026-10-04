@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/dat",
+    "crates/formats",
+    "crates/install",
+    "crates/net",
+    "crates/render",
+    "crates/script",
+    "apps/dattool",
+    "apps/client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://example.invalid/tessera"
+publish = false
+
+[workspace.dependencies]
+tessera-dat = { path = "crates/dat" }
+tessera-formats = { path = "crates/formats" }
+tessera-install = { path = "crates/install" }
+tessera-net = { path = "crates/net" }
+tessera-render = { path = "crates/render" }
+tessera-script = { path = "crates/script" }
+
+anyhow = "1"
+bitflags = "2"
+clap = { version = "4", features = ["derive"] }
+flate2 = "1"
+memmap2 = "0.9"
+pollster = "1"
+proptest = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+debug = "line-tables-only"

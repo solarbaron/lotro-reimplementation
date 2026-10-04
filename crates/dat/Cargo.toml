@@ -1,0 +1,16 @@
+[package]
+name = "tessera-dat"
+description = "Read-only reader for the .dat/.datx archive container (see docs/specs/dat-container.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

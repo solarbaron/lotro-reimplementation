@@ -27,35 +27,41 @@ pub enum MaterialError {
         did: Did,
     },
 
-    /// No archive holds the surface.
+    /// No archive holds the render surface (prefix 0x41: an icon layer or a texture
+    /// level). A missing surface record (0x31) is [`MaterialError::RecordMissing`].
     #[error("surface {did} not found")]
     Missing {
-        /// The surface DID.
+        /// The render surface DID.
         did: Did,
     },
 
-    /// The record source failed while reading the surface.
+    /// The record source failed while reading the render surface (prefix 0x41). Failures
+    /// reading records of the material chain are [`MaterialError::RecordSource`].
     #[error("reading surface {did} failed: {source}")]
     Source {
-        /// The surface DID.
+        /// The render surface DID.
         did: Did,
         /// The source's own error.
         #[source]
         source: SourceFailure,
     },
 
-    /// The surface record did not decode.
+    /// The render surface (prefix 0x41) did not decode, or a JPEG surface's frame header
+    /// could not be read. A surface record (0x31) that does not decode is
+    /// [`MaterialError::RecordDecode`].
     #[error("surface {did} does not decode: {source}")]
     Decode {
-        /// The surface DID.
+        /// The render surface DID.
         did: Did,
         /// The decoder's error.
         #[source]
         source: FormatError,
     },
 
-    /// The image is larger than the layer size limit on a side
-    /// ([`crate::icon::MAX_LAYER_DIMENSION`] unless a caller chose another).
+    /// The image is larger than the size limit on a side: an icon layer's
+    /// ([`crate::icon::MAX_LAYER_DIMENSION`] unless a caller chose another) or a
+    /// [`crate::MaterialLibrary`]'s texture limit
+    /// ([`crate::LibraryConfig::max_texture_dimension`]).
     #[error("image {width}×{height} exceeds the {limit} px limit per side")]
     TooLarge {
         /// Image width.
@@ -88,6 +94,68 @@ pub enum MaterialError {
         len: usize,
         /// Bytes it should hold.
         expected: u64,
+    },
+
+    /// A DID of the wrong record type was given where `expected` was needed (for example
+    /// a surface record naming a shader DID without prefix 0x2B).
+    #[error("{did} is not a {expected} DID")]
+    WrongKind {
+        /// The DID that was given.
+        did: Did,
+        /// The record type that was needed.
+        expected: &'static str,
+    },
+
+    /// No archive holds a record of the material chain (surface record, material, shader
+    /// record or texture list).
+    #[error("{what} {did} not found")]
+    RecordMissing {
+        /// The DID.
+        did: Did,
+        /// The record type.
+        what: &'static str,
+    },
+
+    /// The record source failed while reading a record of the material chain.
+    #[error("reading {what} {did} failed: {source}")]
+    RecordSource {
+        /// The DID.
+        did: Did,
+        /// The record type.
+        what: &'static str,
+        /// The source's own error.
+        #[source]
+        source: SourceFailure,
+    },
+
+    /// A record of the material chain did not decode.
+    #[error("{what} {did} does not decode: {source}")]
+    RecordDecode {
+        /// The DID.
+        did: Did,
+        /// The record type.
+        what: &'static str,
+        /// The decoder's error.
+        #[source]
+        source: FormatError,
+    },
+
+    /// No level of a texture list resolves (`texture-list.md` §5.2 step 4): a lookup
+    /// miss, not corruption.
+    #[error("texture list {did} has no level that resolves")]
+    TextureUnavailable {
+        /// The texture-list DID.
+        did: Did,
+    },
+
+    /// A resolution was asked to apply more distinct materials than
+    /// [`crate::library::MAX_RESOLVE_MATERIALS`] (observed lists have 0–3).
+    #[error("{count} distinct materials given, more than the limit of {limit}")]
+    TooManyMaterials {
+        /// Distinct materials given.
+        count: usize,
+        /// The limit.
+        limit: usize,
     },
 
     /// More layers than [`crate::icon::MAX_STACK_LAYERS`] were given.

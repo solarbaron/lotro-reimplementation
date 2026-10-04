@@ -5,6 +5,7 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::material::{Lighting, MeshDebug, MeshDraw};
 use crate::pipelines::LineVertex;
 use crate::texture::TextureId;
 
@@ -14,7 +15,10 @@ pub type Rgba = [f32; 4];
 /// Coordinate space of a pass.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PassSpace {
-    /// 3D world pass with a depth buffer. `view_proj` maps world → clip.
+    /// 3D world pass with a depth buffer. `view_proj` maps world → clip
+    /// with **reversed depth** (near plane → `z = 1`, far plane → `z = 0`),
+    /// as [`crate::Camera::view_proj`] produces; the depth buffer is cleared
+    /// to [`crate::DEPTH_CLEAR`] and tested with [`crate::DEPTH_COMPARE`].
     ///
     /// All world passes of a frame share one depth buffer. The first world
     /// pass starts from a cleared depth buffer; later ones keep testing
@@ -99,6 +103,10 @@ pub struct Pass {
     pub(crate) clear_depth: bool,
     pub(crate) quads: Vec<Quad>,
     pub(crate) lines: Vec<LineVertex>,
+    pub(crate) meshes: Vec<MeshDraw>,
+    pub(crate) lighting: Lighting,
+    pub(crate) mesh_debug: MeshDebug,
+    pub(crate) eye: Option<Vec3>,
 }
 
 impl Pass {
@@ -110,6 +118,10 @@ impl Pass {
             clear_depth: false,
             quads: Vec::new(),
             lines: Vec::new(),
+            meshes: Vec::new(),
+            lighting: Lighting::default(),
+            mesh_debug: MeshDebug::default(),
+            eye: None,
         }
     }
 
@@ -150,6 +162,43 @@ impl Pass {
     /// Queue a quad. Quads are drawn in submission order.
     pub fn quad(&mut self, quad: Quad) -> &mut Self {
         self.quads.push(quad);
+        self
+    }
+
+    /// Queue a mesh draw (world passes only; screen passes ignore meshes).
+    ///
+    /// Within a world pass, opaque and alpha-tested meshes are drawn first
+    /// (in submission order), then quads, lines and debug overlays, then
+    /// alpha-blended meshes sorted back to front.
+    pub fn mesh(&mut self, draw: MeshDraw) -> &mut Self {
+        self.meshes.push(draw);
+        self
+    }
+
+    /// Mesh draws queued so far.
+    #[must_use]
+    pub fn meshes(&self) -> &[MeshDraw] {
+        &self.meshes
+    }
+
+    /// Set the directional + ambient light used by this pass's meshes.
+    pub fn lighting(&mut self, lighting: Lighting) -> &mut Self {
+        self.lighting = lighting;
+        self
+    }
+
+    /// Set the debug view of this pass's meshes.
+    pub fn mesh_debug(&mut self, debug: MeshDebug) -> &mut Self {
+        self.mesh_debug = debug;
+        self
+    }
+
+    /// Set the camera position used for specular highlights. Passes made
+    /// with [`Frame::world_pass`] set it from the camera; for a raw
+    /// [`PassSpace::World`] pass without it, the centre of the near plane
+    /// (derived from `view_proj`) is used.
+    pub fn eye(&mut self, eye: Vec3) -> &mut Self {
+        self.eye = Some(eye);
         self
     }
 
@@ -297,6 +346,7 @@ impl Frame {
                 view_proj: camera.view_proj(aspect),
             },
         )
+        .eye(camera.eye)
     }
 
     /// Passes recorded so far.

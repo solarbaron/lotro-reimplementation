@@ -11,7 +11,7 @@
 //! | Item | Purpose | Spec |
 //! |---|---|---|
 //! | [`IconStack`] | Which surfaces make up an icon, in draw order, from a `name → DID` lookup | §2, §3.2, §5 |
-//! | [`IconComposer`] | Reads, decodes and caches layer surfaces from a record source, then composes | §3.1 |
+//! | [`IconComposer`], [`composer_over`] | Reads, decodes and caches layer surfaces from a closure or a [`crate::RecordSource`], then composes | §3.1 |
 //! | [`compose_images`], [`compose_images_with_limit`] | Composes already decoded layers: canvas rule, centring, clipping | §3.3, §3.4 |
 //! | [`decode_layer`], [`decode_layer_with_limit`] | One surface record → straight-alpha RGBA8, with a size limit | §2.3, §3.1 |
 //! | [`source_over`], [`draw_over`], [`draw_centred`] | The blend operator and placement | §3.3, §3.4 |
@@ -37,12 +37,15 @@
 mod blend;
 mod stack;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use tessera_formats::{Did, FormatError, Record, RgbaImage, Surface};
 
+use crate::cache::BoundedCache;
+#[cfg(test)]
+use crate::dims::jpeg_frame_size;
 use crate::error::{MaterialError, Result, SourceFailure};
+use crate::source::RecordSource;
 
 pub use blend::{
     centre_offset, draw_centred, draw_over, is_fully_transparent, source_over, validate_image,
@@ -92,47 +95,6 @@ fn check_image_dims(width: u32, height: u32, limit: u32) -> Result<()> {
     check_dims(width, height, limit)
 }
 
-/// The frame size `(width, height)` declared by a JPEG stream's start-of-frame marker,
-/// read without decoding anything. `None` when the stream does not start with a JPEG
-/// start-of-image marker, a segment is malformed or truncated, or a scan starts before
-/// any frame header; the decoder then reports its own error.
-fn jpeg_frame_size(data: &[u8]) -> Option<(u32, u32)> {
-    if !data.starts_with(&[0xFF, 0xD8]) {
-        return None;
-    }
-    let mut pos = 2usize;
-    loop {
-        if *data.get(pos)? != 0xFF {
-            return None;
-        }
-        // Fill bytes: any number of FF before the marker code.
-        while data.get(pos) == Some(&0xFF) {
-            pos += 1;
-        }
-        let marker = *data.get(pos)?;
-        pos += 1;
-        if matches!(marker, 0x01 | 0xD0..=0xD7) {
-            continue; // stand-alone markers carry no length
-        }
-        let len = usize::from(u16::from_be_bytes([*data.get(pos)?, *data.get(pos + 1)?]));
-        if len < 2 {
-            return None;
-        }
-        let segment = data.get(pos + 2..pos.checked_add(len)?)?;
-        match marker {
-            // Start of frame (every SOFn; C4, C8 and CC are other markers). The segment
-            // holds the sample precision, then the height and width, big-endian.
-            0xC0..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => {
-                let height = u16::from_be_bytes([*segment.get(1)?, *segment.get(2)?]);
-                let width = u16::from_be_bytes([*segment.get(3)?, *segment.get(4)?]);
-                return Some((u32::from(width), u32::from(height)));
-            }
-            0xDA | 0xD9 => return None,
-            _ => pos += len,
-        }
-    }
-}
-
 /// Decodes one surface record payload to straight-alpha RGBA8 (`icon-layers.md` §3.1,
 /// `records.md` §5.3: R8G8B8 gets alpha 255, A8R8G8B8 keeps its alpha), with the default
 /// size limit [`MAX_LAYER_DIMENSION`]. See [`decode_layer_with_limit`].
@@ -155,12 +117,10 @@ pub fn decode_layer_with_limit(did: Did, payload: &[u8], max_dimension: u32) -> 
     }
     let surface = Surface::parse_expecting(payload, did)
         .map_err(|source| MaterialError::Decode { did, source })?;
-    if surface.is_jpeg() {
-        if let Some((width, height)) = jpeg_frame_size(surface.data) {
-            check_dims(width, height, limit)?;
-        }
-    } else {
-        check_dims(surface.width, surface.height, limit)?;
+    // For a JPEG surface whose frame header cannot be read, the decoder reports its
+    // own error.
+    if let Some((width, height)) = crate::dims::surface_dims(&surface) {
+        check_dims(width, height, limit)?;
     }
     let image = surface
         .to_rgba8()
@@ -366,17 +326,12 @@ impl CachedFailure {
     }
 }
 
-#[derive(Debug, Default)]
-struct LayerCache {
-    map: HashMap<Did, Arc<CachedLayer>>,
-    bytes: usize,
-    failures: HashMap<Did, CachedFailure>,
-}
-
 /// Reads, decodes, caches and composes icon layers.
 ///
 /// `source` returns a surface record's payload by DID: `Ok(Some(bytes))`, `Ok(None)`
-/// when no archive holds it, or an error. Decoded layers are cached by DID (backgrounds
+/// when no archive holds it, or an error. Any closure of that shape works; for a
+/// [`RecordSource`] (an [`tessera_dat::ArchiveSet`], an `Arc<dyn RecordSource>`, …) use
+/// [`composer_over`]. Decoded layers are cached by DID (backgrounds
 /// and the transparent placeholder are shared by many icons) within an entry count and
 /// byte budget; when either would be exceeded the cache is emptied, and a layer larger
 /// than the whole byte budget is never cached. Decode failures and size refusals are
@@ -385,10 +340,37 @@ struct LayerCache {
 /// is, so one instance can serve several worker threads.
 pub struct IconComposer<F> {
     source: F,
-    cache: Mutex<LayerCache>,
+    /// Decoded layers by DID (the same policy as every cache of the crate: emptied when
+    /// full).
+    layers: BoundedCache<Did, Arc<CachedLayer>>,
+    /// Repeatable failures by DID, up to `max_entries`.
+    failures: BoundedCache<Did, CachedFailure>,
     max_entries: usize,
     max_bytes: usize,
     max_dimension: u32,
+}
+
+/// An [`IconComposer`] over a [`RecordSource`] (for example an
+/// [`tessera_dat::ArchiveSet`] or an `Arc<dyn RecordSource>`), with the default limits.
+pub fn composer_over<S: RecordSource>(
+    source: S,
+) -> IconComposer<impl Fn(Did) -> std::result::Result<Option<Vec<u8>>, SourceFailure> + Send + Sync>
+{
+    IconComposer::new(move |did: Did| source.read_record(did))
+}
+
+/// The two caches of a composer for the given limits. Failures carry no byte cost.
+fn layer_caches(
+    max_entries: usize,
+    max_bytes: usize,
+) -> (
+    BoundedCache<Did, Arc<CachedLayer>>,
+    BoundedCache<Did, CachedFailure>,
+) {
+    (
+        BoundedCache::new(max_entries, max_bytes),
+        BoundedCache::new(max_entries, usize::MAX),
+    )
 }
 
 impl<F> std::fmt::Debug for IconComposer<F> {
@@ -414,9 +396,11 @@ where
     /// ([`DEFAULT_CACHE_ENTRIES`], [`DEFAULT_CACHE_BYTES`]) and layer size limit
     /// ([`MAX_LAYER_DIMENSION`]).
     pub fn new(source: F) -> Self {
+        let (layers, failures) = layer_caches(DEFAULT_CACHE_ENTRIES, DEFAULT_CACHE_BYTES);
         Self {
             source,
-            cache: Mutex::new(LayerCache::default()),
+            layers,
+            failures,
             max_entries: DEFAULT_CACHE_ENTRIES,
             max_bytes: DEFAULT_CACHE_BYTES,
             max_dimension: MAX_LAYER_DIMENSION,
@@ -428,6 +412,7 @@ where
     pub fn with_cache_limits(mut self, max_entries: usize, max_bytes: usize) -> Self {
         self.max_entries = max_entries;
         self.max_bytes = max_bytes;
+        (self.layers, self.failures) = layer_caches(max_entries, max_bytes);
         self
     }
 
@@ -453,14 +438,11 @@ where
         if did.prefix() != 0x41 {
             return Err(MaterialError::NotSurface { did });
         }
-        {
-            let cache = self.lock();
-            if let Some(hit) = cache.map.get(&did) {
-                return Ok(Arc::clone(hit));
-            }
-            if let Some(failure) = cache.failures.get(&did) {
-                return Err(failure.to_error(did));
-            }
+        if let Some(hit) = self.layers.get(&did) {
+            return Ok(hit);
+        }
+        if let Some(failure) = self.failures.get(&did) {
+            return Err(failure.to_error(did));
         }
         let bytes = (self.source)(did)
             .map_err(|e| MaterialError::Source {
@@ -472,7 +454,7 @@ where
             Ok(image) => image,
             Err(e) => {
                 if let Some(failure) = CachedFailure::from_error(&e) {
-                    self.remember_failure(did, failure);
+                    self.failures.insert(did, failure, 0);
                 }
                 return Err(e);
             }
@@ -481,31 +463,9 @@ where
             transparent: is_fully_transparent(&image),
             image: Arc::new(image),
         });
-        let size = layer.image.pixels.len();
-        if self.max_entries > 0 && size <= self.max_bytes {
-            let mut cache = self.lock();
-            if cache.map.len() >= self.max_entries
-                || cache.bytes.saturating_add(size) > self.max_bytes
-            {
-                cache.map.clear();
-                cache.bytes = 0;
-            }
-            if cache.map.insert(did, Arc::clone(&layer)).is_none() {
-                cache.bytes += size;
-            }
-        }
+        self.layers
+            .insert(did, Arc::clone(&layer), layer.image.pixels.len());
         Ok(layer)
-    }
-
-    fn remember_failure(&self, did: Did, failure: CachedFailure) {
-        if self.max_entries == 0 {
-            return;
-        }
-        let mut cache = self.lock();
-        if cache.failures.len() >= self.max_entries {
-            cache.failures.clear();
-        }
-        cache.failures.insert(did, failure);
     }
 
     /// Reads one stack entry's layer, falling back on the entry's
@@ -585,14 +545,13 @@ impl<F> IconComposer<F> {
     /// Number of cached layers and their RGBA8 bytes.
     #[must_use]
     pub fn cache_usage(&self) -> (usize, usize) {
-        let cache = self.lock();
-        (cache.map.len(), cache.bytes)
+        self.layers.usage()
     }
 
     /// Number of remembered layer failures (decode errors and size refusals).
     #[must_use]
     pub fn cached_failures(&self) -> usize {
-        self.lock().failures.len()
+        self.failures.usage().0
     }
 
     /// The largest accepted layer width or height.
@@ -603,15 +562,8 @@ impl<F> IconComposer<F> {
 
     /// Empties the decoded-layer cache and the remembered failures.
     pub fn clear_cache(&self) {
-        let mut cache = self.lock();
-        cache.map.clear();
-        cache.bytes = 0;
-        cache.failures.clear();
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, LayerCache> {
-        // The cache holds only finished entries, so a poisoned lock is still consistent.
-        self.cache.lock().unwrap_or_else(PoisonError::into_inner)
+        self.layers.clear();
+        self.failures.clear();
     }
 }
 

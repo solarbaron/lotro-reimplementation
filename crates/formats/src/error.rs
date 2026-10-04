@@ -164,17 +164,72 @@ pub enum FormatError {
     #[error("embedded image decode failed: {0}")]
     Image(String),
 
+    /// A field holds a value this decoder does not support: an unknown flag bit or section
+    /// type, or a constant whose other values might change the layout. Not necessarily
+    /// corruption; the data may come from a newer client.
+    #[error("unsupported {what} {value:#x} at offset {offset}")]
+    Unsupported {
+        /// What was being decoded.
+        what: &'static str,
+        /// Offset of the field.
+        offset: usize,
+        /// The value found.
+        value: u32,
+    },
+
+    /// A count that the format stores twice disagrees with its other copy.
+    #[error("count mismatch in {what} at offset {offset}: expected {expected}, found {found}")]
+    CountMismatch {
+        /// What was being decoded.
+        what: &'static str,
+        /// Offset of the second copy.
+        offset: usize,
+        /// The first copy.
+        expected: u32,
+        /// The second copy.
+        found: u32,
+    },
+
+    /// A record named by another record does not exist (reference resolvers only).
+    #[error("record {from:#010x} names {to:#010x}, which does not exist")]
+    DanglingReference {
+        /// The referring record.
+        from: u32,
+        /// The missing record.
+        to: u32,
+    },
+
+    /// A chain of references cannot be followed: a reference to an unexpected record type,
+    /// a cycle, a chain longer than the resolver's limit, or a link with no continuation.
+    #[error("reference chain broken at {did:#010x}: {reason}")]
+    ReferenceChain {
+        /// The record where the chain broke.
+        did: u32,
+        /// Why.
+        reason: Cow<'static, str>,
+    },
+
+    /// Decoding record `did` failed while following references.
+    #[error("record {did:#010x}: {source}")]
+    InRecord {
+        /// The record that failed to decode.
+        did: u32,
+        /// The underlying failure.
+        source: Box<FormatError>,
+    },
+
     /// The operation needs a cargo feature that was not enabled.
     #[error("feature `{0}` is not enabled")]
     FeatureDisabled(&'static str),
 }
 
 impl FormatError {
-    /// The innermost error, looking through [`FormatError::PropertyValue`] wrappers.
+    /// The innermost error, looking through [`FormatError::PropertyValue`] and
+    /// [`FormatError::InRecord`] wrappers.
     #[must_use]
     pub fn root_cause(&self) -> &FormatError {
         let mut e = self;
-        while let Self::PropertyValue { source, .. } = e {
+        while let Self::PropertyValue { source, .. } | Self::InRecord { source, .. } = e {
             e = source;
         }
         e

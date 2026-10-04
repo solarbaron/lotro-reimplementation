@@ -12,6 +12,7 @@ members = [
     "crates/assets",
     "crates/material",
     "crates/settings",
+    "crates/mesh",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -37,6 +38,7 @@ tessera-text = { path = "crates/text" }
 tessera-assets = { path = "crates/assets" }
 tessera-material = { path = "crates/material" }
 tessera-settings = { path = "crates/settings" }
+tessera-mesh = { path = "crates/mesh" }
 
 anyhow = "1"
 bitflags = "2"

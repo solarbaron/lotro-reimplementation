@@ -8,12 +8,14 @@
 //!
 //! [`FormatError`]: crate::FormatError
 
+use crate::appearance::AppearanceRecord;
 use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::error::Result;
 use crate::property::{PropertyDictionary, PropertySchema, PropertyType, PropertyValue};
 use crate::property_set::{PropertySet, PropertySetRecord};
 use crate::record::Record;
+use crate::setup::{EntityDescriptor, EntityHeader, Setup, VisualTemplate};
 use crate::sound::SoundRecord;
 use crate::string_info::StringInfo;
 use crate::string_table::StringTable;
@@ -87,4 +89,34 @@ pub fn decode_property_value<S: PropertySchema + ?Sized>(
     schema: &S,
 ) -> Result<PropertyValue> {
     PropertyValue::parse(data, ty, schema)
+}
+
+/// Decodes an entity descriptor (prefix 0x47; `setup.md` §4) with `schema` supplying the
+/// embedded property set's types.
+pub fn decode_entity_descriptor<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    schema: &S,
+) -> Result<EntityDescriptor> {
+    EntityDescriptor::parse(data, schema)
+}
+
+/// Decodes the schema-independent header of an entity descriptor (prefix 0x47;
+/// `setup.md` §4.1 fields 1–5). The rest of the payload is not examined.
+pub fn decode_entity_header(data: &[u8]) -> Result<EntityHeader> {
+    EntityHeader::parse(data)
+}
+
+/// Decodes a visual template (prefix 0x1F; `setup.md` §5).
+pub fn decode_visual_template(data: &[u8]) -> Result<VisualTemplate> {
+    VisualTemplate::parse(data)
+}
+
+/// Decodes a setup (prefix 0x04; `setup.md` §6).
+pub fn decode_setup(data: &[u8]) -> Result<Setup> {
+    Setup::parse(data)
+}
+
+/// Decodes an appearance record (prefix 0x20; `setup.md` §8).
+pub fn decode_appearance(data: &[u8]) -> Result<AppearanceRecord> {
+    AppearanceRecord::parse(data)
 }

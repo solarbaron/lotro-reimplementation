@@ -1,6 +1,6 @@
 [package]
 name = "tessera-material"
-description = "Materials and images built from render surfaces: layered icon composition, mip-chain helpers"
+description = "Materials and images built from render surfaces: surface/material/shader records, effective parameters, feature flags, dyes, layered icon composition, mip-chain helpers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,14 +8,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+tessera-dat.workspace = true
 tessera-formats.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-# Real-data tests only (tests/real_data.rs): archive access and property sets by name.
-tessera-dat.workspace = true
+# Real-data tests only (tests/real_data.rs): property sets by name.
 tessera-props.workspace = true
 # PNG output of sample composites in the real-data test (zlib stream).
 flate2.workspace = true

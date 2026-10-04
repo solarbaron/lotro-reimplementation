@@ -351,6 +351,66 @@ fn other_decoders_dense_input_is_bounded() {
     assert_bounded("StringInfo nested args", si.len(), &r, peak);
 }
 
+/// The densest setup-family records (`setup.md`): appearance records made of empty
+/// entries or empty blocks, visual templates with many empty setup-section elements, and
+/// setups with dense attachment maps. All within the documented bound.
+#[test]
+fn setup_family_dense_input_is_bounded() {
+    use tessera_formats::{AppearanceRecord, Setup, VisualTemplate};
+    let _serial = serial();
+    let n = 200_000u32;
+
+    let mut b = B::new().u32(0x2000_0001).u32(0).u8(0).vle(n);
+    for k in 0..n {
+        b = b.u32(k).u32(0);
+    }
+    b = b.u8(1).vle(n);
+    for k in 0..n {
+        b = b.u32(k).u32(0);
+    }
+    let a = b.build();
+    let (r, peak) = peak_during(|| AppearanceRecord::parse(&a));
+    assert!(assert_bounded(
+        "appearance empty entries",
+        a.len(),
+        &r,
+        peak
+    ));
+
+    let mut b = B::new().u32(0x2000_0001).u32(0).u8(0).vle(1).u32(7).u32(n);
+    for _ in 0..n {
+        b = b.f32(1.0).u32(0).f32(0.0).u32(0).u32(0).u32(0);
+    }
+    let a = b.u8(1).vle(1).u32(7).u32(0).build();
+    let (r, peak) = peak_during(|| AppearanceRecord::parse(&a));
+    assert!(assert_bounded("appearance empty blocks", a.len(), &r, peak));
+
+    let mut b = B::new().u32(0x201).u32(0x1F00_0001).tsize(0, n);
+    for _ in 0..n {
+        b = b.u32(1).u32(9).u32(0);
+    }
+    let t = b.build();
+    let (r, peak) = peak_during(|| VisualTemplate::parse(&t));
+    assert!(assert_bounded("template empty elements", t.len(), &r, peak));
+
+    let mut b = B::new().u32(0x0400_0001).u32(0).tsize(0, n);
+    for k in 0..n {
+        b = b.u32(k).u32(k);
+    }
+    let s = b
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .bytes(&[0; 3])
+        .u32(0)
+        .u8(0)
+        .bytes(&[0; 32])
+        .u8(0)
+        .build();
+    let (r, peak) = peak_during(|| Setup::parse(&s));
+    assert!(assert_bounded("setup attach map", s.len(), &r, peak));
+}
+
 /// Enum mapper and DID map headers with maximal counts, followed by garbage.
 #[test]
 fn mapper_and_did_map_counts_do_not_preallocate() {

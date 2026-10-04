@@ -2,14 +2,24 @@
 //! The [`Renderer`]: owns the GPU context, optional presentation surface,
 //! built-in pipelines, textures and per-frame streaming buffers.
 
+use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use glam::{Mat4, Vec3, Vec4};
+
+use crate::arena::{ArenaStats, MeshArena, MeshConfig, MeshId};
 use crate::context::{ContextOptions, GpuContext};
 use crate::error::{RenderError, Result};
-use crate::frame::{Frame, FrameTarget, PassSpace, Rgba, screen_projection, texture_runs};
+use crate::frame::{Frame, FrameTarget, Pass, PassSpace, Rgba, screen_projection, texture_runs};
+use crate::material::{AlphaMode, DyeMask, MeshShading};
+use crate::mesh::{MeshData, MeshInfo, PreparedMesh};
+use crate::mesh_pipelines::{
+    Cull, DrawContext, DrawUniform, Kind, MeshKey, MeshLayouts, MeshPipelineCache, is_mirrored,
+};
 use crate::pipelines::{
-    DEPTH_FORMAT, Globals, LineVertex, PipelineCache, QuadInstance, SharedLayouts,
+    DEPTH_CLEAR, DEPTH_FORMAT, Globals, LineVertex, PipelineCache, QuadInstance, SharedLayouts,
 };
 use crate::texture::{Filter, Samplers, TextureId, TextureStore, TextureUpload, Wrap};
 
@@ -30,6 +40,8 @@ pub struct RendererConfig {
     pub present_mode: wgpu::PresentMode,
     /// Colour the first pass clears to when it does not set its own.
     pub clear_color: Rgba,
+    /// Mesh arena sizes and per-mesh limits.
+    pub meshes: MeshConfig,
 }
 
 impl Default for RendererConfig {
@@ -38,6 +50,7 @@ impl Default for RendererConfig {
             context: ContextOptions::default(),
             present_mode: wgpu::PresentMode::Fifo,
             clear_color: [0.0, 0.0, 0.0, 1.0],
+            meshes: MeshConfig::default(),
         }
     }
 }
@@ -132,6 +145,11 @@ pub struct FrameStats {
     pub lines: u32,
     /// Draw calls issued.
     pub draw_calls: u32,
+    /// Mesh surface draws (one per submesh and face side; overlays not
+    /// included).
+    pub mesh_draws: u32,
+    /// Triangles submitted by mesh surface draws.
+    pub triangles: u64,
 }
 
 struct SurfaceState<'w> {
@@ -265,6 +283,17 @@ pub struct Renderer<'w> {
     uniform_stride: u64,
     instances: StreamBuffer,
     lines: StreamBuffer,
+    mesh_layouts: MeshLayouts,
+    mesh_pipelines: MeshPipelineCache,
+    arena: MeshArena,
+    draw_uniforms: StreamBuffer,
+    draw_bg: wgpu::BindGroup,
+    draw_stride: u64,
+    /// Mesh material bind groups keyed by the four resolved textures, with
+    /// the index of the frame that last used them.
+    material_bgs: HashMap<[TextureId; 4], (wgpu::BindGroup, u64)>,
+    /// Size at which `material_bgs` evicts entries not used this frame.
+    material_bg_cap: usize,
     clear_color: wgpu::Color,
     frame_index: u64,
     /// Cloned into every surface [`Frame`]; strong count > 1 means a surface
@@ -273,6 +302,110 @@ pub struct Renderer<'w> {
 }
 
 const MAX_DEPTH_CACHE: usize = 4;
+/// Material bind groups kept before entries unused in the current frame are
+/// evicted. A frame that alone uses more raises the threshold to twice its
+/// working set, so a large scene never re-creates its bind groups every
+/// frame and eviction stays amortised O(1) per insert.
+const MAX_MATERIAL_BIND_GROUPS: usize = 1024;
+
+/// Run `f` inside wgpu error scopes (validation, out-of-memory, internal)
+/// and return its result together with the first GPU error it caused.
+/// Errors raised by `f` are attributed to it instead of reaching the shared
+/// [`crate::context`] error sink, where an unrelated later call would
+/// report them.
+fn with_error_scope<T>(device: &wgpu::Device, f: impl FnOnce() -> T) -> (T, Option<String>) {
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let out = f();
+    // Scopes pop in reverse order of pushing; on native the futures are
+    // ready immediately.
+    let v = pollster::block_on(validation.pop());
+    let i = pollster::block_on(internal.pop());
+    let o = pollster::block_on(oom.pop());
+    (out, v.or(i).or(o).map(|e| e.to_string()))
+}
+
+/// One mesh surface draw, resolved during the gather phase of a frame.
+#[derive(Debug, Clone)]
+struct MeshItem {
+    key: MeshKey,
+    page: usize,
+    indices: Range<u32>,
+    uniform_offset: u32,
+    /// Index into the frame's material bind group list.
+    material: usize,
+    /// NDC depth of the submesh's bounding-sphere centre (blend sorting).
+    depth: f32,
+}
+
+#[derive(Debug, Clone)]
+enum OverlayDraw {
+    /// Line-list edge indices.
+    Wire(Range<u32>),
+    /// Mesh vertices drawn as instances.
+    Normals(Range<u32>),
+}
+
+#[derive(Debug, Clone)]
+struct OverlayItem {
+    key: MeshKey,
+    page: usize,
+    uniform_offset: u32,
+    draw: OverlayDraw,
+}
+
+/// Every mesh draw of one pass, in drawing order per bucket.
+#[derive(Debug, Default)]
+struct PassMeshes {
+    /// Opaque, then alpha-tested.
+    surfaces: Vec<MeshItem>,
+    overlays: Vec<OverlayItem>,
+    /// Sorted back to front.
+    blended: Vec<MeshItem>,
+}
+
+impl PassMeshes {
+    fn is_empty(&self) -> bool {
+        self.surfaces.is_empty() && self.overlays.is_empty() && self.blended.is_empty()
+    }
+}
+
+/// Warn-once flags for one frame.
+#[derive(Debug, Default)]
+struct FrameWarnings {
+    texture: bool,
+    mesh: bool,
+    submesh: bool,
+    wire: bool,
+    screen_mesh: bool,
+}
+
+/// Camera position for a world pass: the explicit eye, else the centre of
+/// the near plane (NDC depth 1 under reversed depth) recovered from
+/// `view_proj`.
+fn pass_eye(pass: &Pass, view_proj: Mat4) -> Vec3 {
+    if let Some(e) = pass.eye
+        && e.is_finite()
+    {
+        return e;
+    }
+    let p = view_proj.inverse() * Vec4::new(0.0, 0.0, 1.0, 1.0);
+    let e = p.truncate() / p.w;
+    if e.is_finite() { e } else { Vec3::ZERO }
+}
+
+/// Sort key of blended draws (larger = farther): the negated NDC depth,
+/// since world passes use reversed depth (near = 1, far = 0). Points behind
+/// the camera sort first.
+fn sort_depth(view_proj: Mat4, point: Vec3) -> f32 {
+    let clip = view_proj * point.extend(1.0);
+    if clip.w > 1e-6 {
+        -(clip.z / clip.w)
+    } else {
+        f32::INFINITY
+    }
+}
 
 fn align_up(v: u64, a: u64) -> u64 {
     if a <= 1 { v } else { v.div_ceil(a) * a }
@@ -393,6 +526,14 @@ impl<'w> Renderer<'w> {
         let instances =
             StreamBuffer::new(device, "tessera-quad-instances", wgpu::BufferUsages::VERTEX);
         let lines = StreamBuffer::new(device, "tessera-lines", wgpu::BufferUsages::VERTEX);
+        let mesh_layouts = MeshLayouts::new(device, &shared);
+        let draw_stride = align_up(
+            size_of::<DrawUniform>() as u64,
+            u64::from(device.limits().min_uniform_buffer_offset_alignment),
+        );
+        let draw_uniforms =
+            StreamBuffer::new(device, "tessera-mesh-draws", wgpu::BufferUsages::UNIFORM);
+        let draw_bg = Self::make_draw_bg(device, &mesh_layouts, &draw_uniforms.buffer);
         let [r, g, b, a] = config.clear_color.map(f64::from);
         let mut renderer = Self {
             owner,
@@ -410,6 +551,14 @@ impl<'w> Renderer<'w> {
             uniform_stride,
             instances,
             lines,
+            mesh_layouts,
+            mesh_pipelines: MeshPipelineCache::default(),
+            arena: MeshArena::new(owner, config.meshes),
+            draw_uniforms,
+            draw_bg,
+            draw_stride,
+            material_bgs: HashMap::new(),
+            material_bg_cap: MAX_MATERIAL_BIND_GROUPS,
             clear_color: wgpu::Color { r, g, b, a },
             frame_index: 0,
             frame_token: Arc::new(()),
@@ -433,6 +582,25 @@ impl<'w> Renderer<'w> {
                     buffer,
                     offset: 0,
                     size: wgpu::BufferSize::new(size_of::<Globals>() as u64),
+                }),
+            }],
+        })
+    }
+
+    fn make_draw_bg(
+        device: &wgpu::Device,
+        layouts: &MeshLayouts,
+        buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tessera-mesh-draws"),
+            layout: &layouts.draw,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
                 }),
             }],
         })
@@ -527,14 +695,27 @@ impl<'w> Renderer<'w> {
     }
 
     /// Upload an RGBA8 texture.
+    ///
+    /// A GPU error raised by the upload itself (e.g. out of memory) is
+    /// returned as [`RenderError::Gpu`] and nothing is kept.
     pub fn upload_texture(&mut self, desc: &TextureUpload<'_>) -> Result<TextureId> {
-        self.textures.upload(
-            &self.ctx.device,
-            &self.ctx.queue,
-            &self.shared.texture,
-            &self.samplers,
-            desc,
-        )
+        let (result, gpu_error) = with_error_scope(&self.ctx.device, || {
+            self.textures.upload(
+                &self.ctx.device,
+                &self.ctx.queue,
+                &self.shared.texture,
+                &self.samplers,
+                desc,
+            )
+        });
+        match (result, gpu_error) {
+            (result, None) => result,
+            (Ok(id), Some(e)) => {
+                self.textures.remove(id);
+                Err(RenderError::Gpu(e))
+            }
+            (Err(_), Some(e)) => Err(RenderError::Gpu(e)),
+        }
     }
 
     /// Overwrite all texels of an existing texture (same size).
@@ -556,7 +737,403 @@ impl<'w> Renderer<'w> {
         if id == self.white {
             return false;
         }
+        self.material_bgs.retain(|key, _| !key.contains(&id));
         self.textures.remove(id)
+    }
+
+    /// Validate `data` and copy it into the shared mesh buffers.
+    ///
+    /// Fails with [`RenderError::InvalidMesh`] for inconsistent streams,
+    /// [`RenderError::LimitExceeded`] when a [`crate::MeshLimits`] bound or
+    /// the arena's byte cap ([`MeshConfig::max_total_bytes`]) would be
+    /// exceeded, and [`RenderError::Gpu`] when the GPU rejects the copy.
+    /// Nothing is kept on failure.
+    ///
+    /// The CPU part (validation, packing, normals, edges, bounds) runs on
+    /// the calling thread; to keep it off the render thread, call
+    /// [`MeshData::prepare`] elsewhere and pass the result to
+    /// [`Self::upload_prepared`].
+    pub fn upload_mesh(&mut self, data: &MeshData) -> Result<MeshId> {
+        let prepared = data.prepare(self.arena.config())?;
+        let id = self.upload_prepared(prepared)?;
+        tracing::trace!(?id, label = data.label.as_deref(), "uploaded mesh");
+        Ok(id)
+    }
+
+    /// Copy a mesh prepared with [`MeshData::prepare`] (possibly on another
+    /// thread) into the shared mesh buffers.
+    ///
+    /// The mesh's counts are re-checked against this renderer's
+    /// [`MeshConfig::limits`] (it may have been prepared under a different
+    /// configuration). Its wireframe edges are dropped when this renderer's
+    /// [`MeshConfig::wireframe_edges`] is off; a mesh prepared without edges
+    /// uploads normally but shows no wireframe. Errors and cleanup as for
+    /// [`Self::upload_mesh`].
+    pub fn upload_prepared(&mut self, mut prepared: PreparedMesh) -> Result<MeshId> {
+        let config = *self.arena.config();
+        let info = prepared.info();
+        let limits = config.limits;
+        for (what, requested, max) in [
+            ("mesh vertices", info.vertex_count, limits.max_vertices),
+            ("mesh indices", info.index_count, limits.max_indices),
+            (
+                "mesh submeshes",
+                u32::try_from(info.submeshes.len()).unwrap_or(u32::MAX),
+                // The implicit whole-mesh submesh is always allowed.
+                limits.max_submeshes.max(1),
+            ),
+        ] {
+            if requested > max {
+                return Err(RenderError::LimitExceeded {
+                    what,
+                    requested: u64::from(requested),
+                    max: u64::from(max),
+                });
+            }
+        }
+        if !config.wireframe_edges && info.edge_index_count > 0 {
+            prepared.strip_edges();
+        }
+        let (result, gpu_error) = with_error_scope(&self.ctx.device, || {
+            self.arena
+                .insert(&self.ctx.device, &self.ctx.queue, prepared)
+        });
+        match (result, gpu_error) {
+            (result, None) => result,
+            (Ok(id), Some(e)) => {
+                // Also releases a page created for this mesh.
+                self.arena.discard(id);
+                Err(RenderError::Gpu(e))
+            }
+            (Err(_), Some(e)) => Err(RenderError::Gpu(e)),
+        }
+    }
+
+    /// Free a mesh's buffer space. Returns `false` for stale or foreign
+    /// handles. Draws of a destroyed mesh are skipped (with a warning).
+    pub fn destroy_mesh(&mut self, id: MeshId) -> bool {
+        self.arena.remove(id)
+    }
+
+    /// Bounds and stream summary of a live mesh.
+    #[must_use]
+    pub fn mesh_info(&self, id: MeshId) -> Option<&MeshInfo> {
+        self.arena.get(id).map(|m| &m.info)
+    }
+
+    /// Memory use of the shared mesh buffers.
+    #[must_use]
+    pub fn mesh_stats(&self) -> ArenaStats {
+        self.arena.stats()
+    }
+
+    /// Resolve an optional material texture for a frame rendering into
+    /// `view`: `None` when absent, stale, foreign or the frame's own target.
+    fn resolve_texture(
+        &self,
+        id: Option<TextureId>,
+        view: &wgpu::TextureView,
+        warnings: &mut FrameWarnings,
+    ) -> Option<TextureId> {
+        let id = id?;
+        match self.textures.get(id) {
+            Some(t) if t.target_view.as_ref() != Some(view) => Some(id),
+            found => {
+                if !warnings.texture {
+                    let reason = if found.is_some() {
+                        "texture is this frame's own render target"
+                    } else {
+                        "unknown texture"
+                    };
+                    tracing::warn!(?id, reason, "mesh material texture ignored");
+                    warnings.texture = true;
+                }
+                None
+            }
+        }
+    }
+
+    /// Bind group for four resolved textures (cached across frames).
+    fn material_bind_group(&mut self, key: [TextureId; 4]) -> Option<wgpu::BindGroup> {
+        let frame = self.frame_index;
+        if let Some((bg, used)) = self.material_bgs.get_mut(&key) {
+            *used = frame;
+            return Some(bg.clone());
+        }
+        let texs: Vec<_> = key.iter().filter_map(|&id| self.textures.get(id)).collect();
+        let [base, normal, dye, spec] = texs.as_slice() else {
+            return None;
+        };
+        let bg = self
+            .ctx
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("tessera-mesh-material"),
+                layout: &self.mesh_layouts.material,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&base.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&normal.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&dye.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&spec.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Sampler(&base.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&normal.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::Sampler(&dye.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::Sampler(&spec.sampler),
+                    },
+                ],
+            });
+        if self.material_bgs.len() >= self.material_bg_cap {
+            // Evict what this frame has not used; keep the working set.
+            self.material_bgs.retain(|_, (_, used)| *used == frame);
+            self.material_bg_cap = MAX_MATERIAL_BIND_GROUPS.max(self.material_bgs.len() * 2);
+        }
+        self.material_bgs.insert(key, (bg.clone(), frame));
+        Some(bg)
+    }
+
+    /// Resolve one pass's mesh draws: append their uniforms to `uniforms`,
+    /// their material bind groups to `bind_groups`, build the pipelines
+    /// they need and return them bucketed in drawing order.
+    #[allow(clippy::too_many_arguments)]
+    fn plan_meshes(
+        &mut self,
+        pass: &Pass,
+        view_proj: Mat4,
+        format: wgpu::TextureFormat,
+        view: &wgpu::TextureView,
+        uniforms: &mut Vec<u8>,
+        bind_groups: &mut Vec<wgpu::BindGroup>,
+        bind_group_index: &mut HashMap<[TextureId; 4], usize>,
+        warnings: &mut FrameWarnings,
+    ) -> Result<PassMeshes> {
+        let mut out = PassMeshes::default();
+        if pass.meshes.is_empty() {
+            return Ok(out);
+        }
+        let debug = pass.mesh_debug;
+        let shading = debug.shading;
+        for draw in &pass.meshes {
+            let Some(mesh) = self.arena.get(draw.mesh) else {
+                if !warnings.mesh {
+                    tracing::warn!(mesh = ?draw.mesh, "unknown or destroyed mesh skipped");
+                    warnings.mesh = true;
+                }
+                continue;
+            };
+            let page = mesh.page;
+            let has_tangents = mesh.info.has_tangents;
+            let vertex_range = mesh.vertex_range.clone();
+            // Indices into `mesh.submeshes` (the mesh is looked up again
+            // below, after the material borrows `self` mutably).
+            let submesh_range = match draw.submesh {
+                None => 0..mesh.submeshes.len(),
+                Some(i) if (i as usize) < mesh.submeshes.len() => i as usize..i as usize + 1,
+                Some(i) => {
+                    if !warnings.submesh {
+                        tracing::warn!(mesh = ?draw.mesh, submesh = i, "no such submesh");
+                        warnings.submesh = true;
+                    }
+                    continue;
+                }
+            };
+
+            let m = &draw.material;
+            let white = self.white;
+            let base = self.resolve_texture(m.base_texture, view, warnings);
+            let normal = self.resolve_texture(m.normal_texture, view, warnings);
+            let dye_mask = match m.dye.map(|d| d.mask) {
+                Some(DyeMask::Texture(id)) => self.resolve_texture(Some(id), view, warnings),
+                _ => None,
+            };
+            let spec = self.resolve_texture(m.specular.and_then(|s| s.texture), view, warnings);
+            let key = [
+                base.unwrap_or(white),
+                normal.unwrap_or(white),
+                dye_mask.unwrap_or(white),
+                spec.unwrap_or(white),
+            ];
+            let material = match bind_group_index.get(&key) {
+                Some(&i) => i,
+                None => {
+                    let Some(bg) = self.material_bind_group(key) else {
+                        continue;
+                    };
+                    bind_groups.push(bg);
+                    bind_group_index.insert(key, bind_groups.len() - 1);
+                    bind_groups.len() - 1
+                }
+            };
+
+            let (overlay_color, normal_length) = (
+                debug.wireframe.unwrap_or([1.0; 4]),
+                debug.normals.map_or(0.0, |n| n.length),
+            );
+            let uniform = DrawUniform::new(
+                draw.transform,
+                m,
+                &DrawContext {
+                    shading,
+                    normal_map: has_tangents && normal.is_some(),
+                    dye_mask: dye_mask.is_some(),
+                    specular_tex: spec.is_some(),
+                    overlay_color,
+                    normal_length,
+                },
+            );
+            let offset = uniforms.len() as u64;
+            let uniform_offset = u32::try_from(offset).map_err(|_| RenderError::LimitExceeded {
+                what: "mesh draw uniform bytes per frame",
+                requested: offset,
+                max: u64::from(u32::MAX),
+            })?;
+            uniforms.extend_from_slice(bytemuck::bytes_of(&uniform));
+            uniforms.resize(
+                usize::try_from(offset + self.draw_stride).unwrap_or(usize::MAX),
+                0,
+            );
+
+            let Some(mesh) = self.arena.get(draw.mesh) else {
+                continue;
+            };
+            let submeshes = mesh.submeshes.get(submesh_range).unwrap_or(&[]);
+
+            // Surfaces.
+            if shading != MeshShading::Hidden {
+                let lit = shading == MeshShading::Lit;
+                let kind = match m.alpha {
+                    AlphaMode::Opaque => Kind::Opaque,
+                    AlphaMode::Mask { .. } => Kind::Mask,
+                    AlphaMode::Blend if lit => Kind::Blend,
+                    AlphaMode::Blend => Kind::Opaque,
+                };
+                let mirrored = is_mirrored(draw.transform);
+                let (back, front) = if mirrored {
+                    (Cull::Front, Cull::Back)
+                } else {
+                    (Cull::Back, Cull::Front)
+                };
+                // Two-sided blending draws back faces first, then front faces.
+                let culls: &[Cull] = match (m.two_sided, kind) {
+                    (true, Kind::Blend) => &[front, back],
+                    (true, _) => &[Cull::None],
+                    (false, _) => &[back],
+                };
+                for s in submeshes {
+                    let tris = mesh.triangles(s);
+                    if tris.is_empty() {
+                        continue;
+                    }
+                    let depth = if kind == Kind::Blend {
+                        sort_depth(view_proj, s.sphere.transformed(draw.transform).center)
+                    } else {
+                        0.0
+                    };
+                    for &cull in culls {
+                        let item = MeshItem {
+                            key: MeshKey { format, kind, cull },
+                            page,
+                            indices: tris.clone(),
+                            uniform_offset,
+                            material,
+                            depth,
+                        };
+                        if kind == Kind::Blend {
+                            out.blended.push(item);
+                        } else {
+                            out.surfaces.push(item);
+                        }
+                    }
+                }
+            }
+
+            // Overlays.
+            if debug.wireframe.is_some() {
+                let mut any = false;
+                for s in submeshes {
+                    let edges = mesh.edges(s);
+                    if edges.is_empty() {
+                        continue;
+                    }
+                    any = true;
+                    out.overlays.push(OverlayItem {
+                        key: MeshKey {
+                            format,
+                            kind: Kind::Wire,
+                            cull: Cull::None,
+                        },
+                        page,
+                        uniform_offset,
+                        draw: OverlayDraw::Wire(edges),
+                    });
+                }
+                if !any && !warnings.wire {
+                    tracing::warn!(
+                        "wireframe requested but the mesh has no edge list \
+                         (MeshConfig::wireframe_edges is off)"
+                    );
+                    warnings.wire = true;
+                }
+            }
+            if debug.normals.is_some() {
+                out.overlays.push(OverlayItem {
+                    key: MeshKey {
+                        format,
+                        kind: Kind::NormalLines,
+                        cull: Cull::None,
+                    },
+                    page,
+                    uniform_offset,
+                    draw: OverlayDraw::Normals(vertex_range),
+                });
+            }
+        }
+        // Opaque first, then alpha-tested; within each, grouped by pipeline,
+        // material and page so state changes are minimal (stable: submission
+        // order among equal keys).
+        out.surfaces.sort_by_key(|item| {
+            (
+                item.key.kind == Kind::Mask,
+                item.key.cull,
+                item.material,
+                item.page,
+            )
+        });
+        // Back to front; stable, so two-sided pairs stay back-faces-first.
+        out.blended.sort_by(|a, b| b.depth.total_cmp(&a.depth));
+        let device = &self.ctx.device;
+        for key in out
+            .surfaces
+            .iter()
+            .chain(&out.blended)
+            .map(|i| i.key)
+            .chain(out.overlays.iter().map(|o| o.key))
+        {
+            self.mesh_pipelines.ensure(device, &self.mesh_layouts, key);
+        }
+        Ok(out)
     }
 
     /// Make an offscreen target drawable as a texture (render-to-texture:
@@ -612,22 +1189,27 @@ impl<'w> Renderer<'w> {
             )));
         }
         let format = format.wgpu();
-        let texture = self.ctx.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("tessera-offscreen"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
+        let (texture, gpu_error) = with_error_scope(&self.ctx.device, || {
+            self.ctx.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("tessera-offscreen"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
         });
+        if let Some(e) = gpu_error {
+            return Err(RenderError::Gpu(e));
+        }
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Ok(OffscreenTarget {
             owner: self.owner,
@@ -780,8 +1362,14 @@ impl<'w> Renderer<'w> {
         let mut line_base = Vec::with_capacity(passes.len());
         let mut needs_depth = false;
         let mut needs_flat = false;
+        let mut mesh_uniforms: Vec<u8> = Vec::new();
+        let mut material_groups: Vec<wgpu::BindGroup> = Vec::new();
+        let mut material_index: HashMap<[TextureId; 4], usize> = HashMap::new();
+        let mut warnings = FrameWarnings::default();
+        let mut pass_meshes: Vec<PassMeshes> = Vec::with_capacity(passes.len());
 
         for (i, pass) in passes.iter().enumerate() {
+            let is_world = matches!(pass.space, PassSpace::World { .. });
             let view_proj = match pass.space {
                 PassSpace::World { view_proj } => {
                     needs_depth = true;
@@ -792,9 +1380,41 @@ impl<'w> Renderer<'w> {
                     screen_projection(width, height)
                 }
             };
+            let light = &pass.lighting;
+            let eye = if is_world {
+                pass_eye(pass, view_proj)
+            } else {
+                Vec3::ZERO
+            };
+            let rgb = |c: [f32; 3]| {
+                let f = |v: f32| if v.is_finite() { v } else { 0.0 };
+                [f(c[0]), f(c[1]), f(c[2]), 1.0]
+            };
             let globals = Globals {
                 view_proj: view_proj.to_cols_array_2d(),
+                eye: eye.extend(1.0).to_array(),
+                light_dir: light.direction_normalized().extend(0.0).to_array(),
+                light_color: rgb(light.color),
+                ambient: rgb(light.ambient),
             };
+            if is_world {
+                pass_meshes.push(self.plan_meshes(
+                    pass,
+                    view_proj,
+                    format,
+                    &view,
+                    &mut mesh_uniforms,
+                    &mut material_groups,
+                    &mut material_index,
+                    &mut warnings,
+                )?);
+            } else {
+                if !pass.meshes.is_empty() && !warnings.screen_mesh {
+                    tracing::warn!(pass = %pass.label, "meshes in a screen pass are ignored");
+                    warnings.screen_mesh = true;
+                }
+                pass_meshes.push(PassMeshes::default());
+            }
             let off = i * stride as usize;
             if let Some(dst) = uniform_data.get_mut(off..off + size_of::<Globals>()) {
                 dst.copy_from_slice(bytemuck::bytes_of(&globals));
@@ -819,8 +1439,18 @@ impl<'w> Renderer<'w> {
         let line_bytes: &[u8] = bytemuck::cast_slice(&line_data);
         self.instances.reserve(device, inst_bytes.len() as u64)?;
         self.lines.reserve(device, line_bytes.len() as u64)?;
+        if self
+            .draw_uniforms
+            .reserve(device, mesh_uniforms.len() as u64)?
+        {
+            self.draw_bg =
+                Self::make_draw_bg(device, &self.mesh_layouts, &self.draw_uniforms.buffer);
+        }
         let queue = &self.ctx.queue;
         queue.write_buffer(&self.uniforms.buffer, 0, &uniform_data);
+        if !mesh_uniforms.is_empty() {
+            queue.write_buffer(&self.draw_uniforms.buffer, 0, &mesh_uniforms);
+        }
         if !inst_bytes.is_empty() {
             queue.write_buffer(&self.instances.buffer, 0, inst_bytes);
         }
@@ -865,7 +1495,7 @@ impl<'w> Renderer<'w> {
                     let depth_load = if depth_cleared && !pass.clear_depth {
                         wgpu::LoadOp::Load
                     } else {
-                        wgpu::LoadOp::Clear(1.0)
+                        wgpu::LoadOp::Clear(DEPTH_CLEAR)
                     };
                     depth_cleared = true;
                     Some(wgpu::RenderPassDepthStencilAttachment {
@@ -896,16 +1526,29 @@ impl<'w> Renderer<'w> {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if pass.quads.is_empty() && pass.lines.len() < 2 {
+            let meshes = pass_meshes.get(i);
+            let has_meshes = meshes.is_some_and(|m| !m.is_empty());
+            if pass.quads.is_empty() && pass.lines.len() < 2 && !has_meshes {
                 continue;
             }
-            let Some(set) = self.pipelines.lookup(format, is_world) else {
-                continue;
-            };
             let uniform_offset = u32::try_from(i as u64 * stride).unwrap_or(0);
             rp.set_bind_group(0, &self.globals_bg, &[uniform_offset]);
 
-            if !pass.quads.is_empty() {
+            let mut bound_page = None;
+            if let Some(m) = meshes {
+                self.draw_mesh_items(
+                    &mut rp,
+                    &m.surfaces,
+                    &material_groups,
+                    &mut bound_page,
+                    &mut stats,
+                );
+            }
+
+            let set = self.pipelines.lookup(format, is_world);
+            if let Some(set) = set
+                && !pass.quads.is_empty()
+            {
                 rp.set_pipeline(&set.quad);
                 let base = instance_base.get(i).copied().unwrap_or(0);
                 for (tex, range) in texture_runs(&pass.quads) {
@@ -934,13 +1577,15 @@ impl<'w> Renderer<'w> {
                     let end = (base + range.end as usize) as u64 * size_of::<QuadInstance>() as u64;
                     rp.set_vertex_buffer(0, self.instances.buffer.slice(start..end));
                     rp.draw(0..4, 0..(range.end - range.start));
-                    stats.draw_calls += 1;
-                    stats.quads += range.end - range.start;
+                    stats.draw_calls = stats.draw_calls.saturating_add(1);
+                    stats.quads = stats.quads.saturating_add(range.end - range.start);
                 }
             }
 
             let line_vertices = pass.lines.len() & !1;
-            if line_vertices > 0 {
+            if let Some(set) = set
+                && line_vertices > 0
+            {
                 rp.set_pipeline(&set.line);
                 let base = line_base.get(i).copied().unwrap_or(0);
                 let vsize = size_of::<LineVertex>() as u64;
@@ -949,8 +1594,21 @@ impl<'w> Renderer<'w> {
                 rp.set_vertex_buffer(0, self.lines.buffer.slice(start..end));
                 let n = u32::try_from(line_vertices).unwrap_or(u32::MAX);
                 rp.draw(0..n, 0..1);
-                stats.draw_calls += 1;
-                stats.lines += n / 2;
+                stats.draw_calls = stats.draw_calls.saturating_add(1);
+                stats.lines = stats.lines.saturating_add(n / 2);
+            }
+
+            if let Some(m) = meshes {
+                // Quads/lines replaced the vertex buffer binding.
+                bound_page = None;
+                self.draw_overlays(&mut rp, &m.overlays, &mut bound_page, &mut stats);
+                self.draw_mesh_items(
+                    &mut rp,
+                    &m.blended,
+                    &material_groups,
+                    &mut bound_page,
+                    &mut stats,
+                );
             }
         }
 
@@ -969,10 +1627,111 @@ impl<'w> Renderer<'w> {
         Ok(stats)
     }
 
+    fn bind_page(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        page: usize,
+        bound: &mut Option<usize>,
+    ) -> bool {
+        if *bound == Some(page) {
+            return true;
+        }
+        let Some(p) = self.arena.page(page) else {
+            return false;
+        };
+        rp.set_vertex_buffer(0, p.vertex_buffer.slice(..));
+        rp.set_index_buffer(p.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        *bound = Some(page);
+        true
+    }
+
+    fn draw_mesh_items(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        items: &[MeshItem],
+        materials: &[wgpu::BindGroup],
+        bound_page: &mut Option<usize>,
+        stats: &mut FrameStats,
+    ) {
+        let mut current_key = None;
+        let mut current_material = None;
+        for item in items {
+            let Some(pipeline) = self.mesh_pipelines.lookup(item.key) else {
+                continue;
+            };
+            let Some(material) = materials.get(item.material) else {
+                continue;
+            };
+            if !self.bind_page(rp, item.page, bound_page) {
+                continue;
+            }
+            if current_key != Some(item.key) {
+                rp.set_pipeline(pipeline);
+                current_key = Some(item.key);
+            }
+            if current_material != Some(item.material) {
+                rp.set_bind_group(2, material, &[]);
+                current_material = Some(item.material);
+            }
+            rp.set_bind_group(1, &self.draw_bg, &[item.uniform_offset]);
+            rp.draw_indexed(item.indices.clone(), 0, 0..1);
+            stats.draw_calls = stats.draw_calls.saturating_add(1);
+            stats.mesh_draws = stats.mesh_draws.saturating_add(1);
+            stats.triangles = stats.triangles.saturating_add(u64::from(
+                item.indices.end.saturating_sub(item.indices.start) / 3,
+            ));
+        }
+    }
+
+    fn draw_overlays(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        items: &[OverlayItem],
+        bound_page: &mut Option<usize>,
+        stats: &mut FrameStats,
+    ) {
+        let mut current_key = None;
+        for item in items {
+            let Some(pipeline) = self.mesh_pipelines.lookup(item.key) else {
+                continue;
+            };
+            if current_key != Some(item.key) {
+                rp.set_pipeline(pipeline);
+                current_key = Some(item.key);
+            }
+            rp.set_bind_group(1, &self.draw_bg, &[item.uniform_offset]);
+            match &item.draw {
+                OverlayDraw::Wire(range) => {
+                    if !self.bind_page(rp, item.page, bound_page) {
+                        continue;
+                    }
+                    rp.draw_indexed(range.clone(), 0, 0..1);
+                }
+                OverlayDraw::Normals(range) => {
+                    let Some(p) = self.arena.page(item.page) else {
+                        continue;
+                    };
+                    // Instance-stepped view of just this mesh's vertices.
+                    let size = size_of::<crate::mesh::GpuVertex>() as u64;
+                    let start = u64::from(range.start) * size;
+                    let end = u64::from(range.end) * size;
+                    rp.set_vertex_buffer(0, p.vertex_buffer.slice(start..end));
+                    *bound_page = None;
+                    rp.draw(0..2, 0..range.end.saturating_sub(range.start));
+                }
+            }
+            stats.draw_calls = stats.draw_calls.saturating_add(1);
+        }
+    }
+
     /// Copy an offscreen target back to the CPU (blocks until the GPU is done).
     ///
     /// Fails with [`RenderError::ForeignHandle`] when `target` was created
-    /// by a different renderer.
+    /// by a different renderer, with [`RenderError::LimitExceeded`] when the
+    /// readback buffer (rows padded to 256 bytes) would exceed the device's
+    /// `max_buffer_size` (targets larger than about 8192 × 8192 on the
+    /// default limits), and with [`RenderError::Gpu`] for a GPU error raised
+    /// by the readback itself.
     pub fn read_pixels(&self, target: &OffscreenTarget) -> Result<RgbaImage> {
         self.check_target(target)?;
         let (w, h) = (target.width, target.height);
@@ -981,8 +1740,39 @@ impl<'w> Renderer<'w> {
         let size = padded
             .checked_mul(u64::from(h))
             .ok_or_else(|| RenderError::Readback("size overflow".into()))?;
+        let max = self.ctx.device.limits().max_buffer_size;
+        if size > max {
+            return Err(RenderError::LimitExceeded {
+                what: "readback buffer bytes",
+                requested: size,
+                max,
+            });
+        }
         let padded_u32 =
             u32::try_from(padded).map_err(|_| RenderError::Readback("row too wide".into()))?;
+        let (result, gpu_error) = with_error_scope(&self.ctx.device, || {
+            self.read_pixels_scoped(target, size, padded, padded_u32)
+        });
+        if let Some(e) = gpu_error {
+            return Err(RenderError::Gpu(e));
+        }
+        let data = result?;
+        Ok(RgbaImage {
+            width: w,
+            height: h,
+            data,
+        })
+    }
+
+    /// GPU part of [`Self::read_pixels`] (runs inside an error scope).
+    fn read_pixels_scoped(
+        &self,
+        target: &OffscreenTarget,
+        size: u64,
+        padded: u64,
+        padded_u32: u32,
+    ) -> Result<Vec<u8>> {
+        let (w, h) = (target.width, target.height);
         let device = &self.ctx.device;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tessera-readback"),
@@ -1035,13 +1825,7 @@ impl<'w> Renderer<'w> {
             unpad_rows(&mapped, w, h, padded)
         };
         buffer.unmap();
-        self.ctx.errors.check()?;
-        let data = data.ok_or_else(|| RenderError::Readback("short buffer".into()))?;
-        Ok(RgbaImage {
-            width: w,
-            height: h,
-            data,
-        })
+        data.ok_or_else(|| RenderError::Readback("short buffer".into()))
     }
 }
 

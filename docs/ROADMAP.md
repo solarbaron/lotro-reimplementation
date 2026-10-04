@@ -1,10 +1,10 @@
 # Tessera roadmap
 
-> Status: founding document, written at milestone M0 (2026-10-03). M0 and M1 exit criteria
-> were verified and closed on 2026-10-04 ([M0 status](#m0-status), [M1 status](#m1-status));
-> M2 is next. Milestones are ordered by dependency and by legal risk: each one builds on the
-> previous one, and the risk tier (T0–T4, see `docs/LEGAL.md` §8) only rises when the
-> earlier, safer tiers are solid.
+> Status: founding document, written at milestone M0 (2026-10-03). M0, M1 and M2 exit
+> criteria were verified and closed on 2026-10-04 ([M0 status](#m0-status),
+> [M1 status](#m1-status), [M2 status](#m2-status)); M3 is next. Milestones are ordered by
+> dependency and by legal risk: each one builds on the previous one, and the risk tier
+> (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
 <a id="purpose"></a>
 ## 0. Purpose
@@ -333,6 +333,27 @@ classification), `setup.md` (first part).
    correct dye regions. Recorded as pass/fail per item, not as images.
 3. Synthetic golden images for each material pipeline pass on the software adapter.
 4. Fuzz targets for mesh and material decoders.
+
+<a id="m2-status"></a>
+**Status (verified 2026-10-04 against the owner's install): all four criteria are met. M2 is
+closed.** Specs used: `mesh.md`, `material.md`, `setup.md` (part 1), `render.md`. Their
+`> **OPEN:**` items are about meanings the viewer does not need (influence list, scalar,
+vertex-colour and diffuse-colour use, exact dye blend, level switch distances) or are
+recorded with a viewer decision; none blocks a criterion below. One visual-checklist item
+fails on such a question (criterion 2).
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `crates/mesh/tests/real_data.rs`: 47,563 of 47,563 mesh records decode (100 %), strict mode included, 0 trailing bytes, lossless re-encoding 47,563 / 47,563, every level flattens to renderer streams; 112,910 submeshes, 89.6 M vertices, 95.4 M triangles, 27 vertex formats. Failure categories are listed in `mesh.md` §15/§18 (none observed; the only invariant finding is MI10 `CollisionIndexOverflow` in 105 records, a data-quality check that does not stop decoding). Materials (`crates/material/tests/material_real_data.rs`): 510 / 510 shader records, 24,094 / 24,094 materials, 13,781 / 13,781 surfaces decode and resolve; 1,192 / 1,192 sampled diffuse textures decode. |
+| 2 | ✅ | [`docs/checklists/m2-visual.md`](checklists/m2-visual.md): 74 checks on 72 objects with `tessera-explorer --screenshot`, each image viewed: 15 weapons and shields, 13 armour (worn, bind pose, 2 dye previews), 15 creatures and NPCs (skinned, bind pose), 9 vegetation, 9 buildings, 13 props. **73 pass** (no slivers, UVs correct, alpha-tested foliage/feathers/fringes cut cleanly, dye confined to the mask). **1 fail**: a one-triangle placeholder part of a creature setup draws as a white triangle (decoded correctly; whether the original skips such parts is `setup.md` §8.5 OPEN). |
+| 3 | ✅ | `crates/render/tests/mesh_golden.rs` (opaque, alpha test, alpha blend + order independence, two-sided, dye, normal map, debug views): 8 / 8 pass on Mesa lavapipe (Vulkan, Mesa 25.2.6) with `TESSERA_REQUIRE_GPU=1`, and 8 / 8 on Mesa llvmpipe (GL, Mesa 26.1.8); at most 2 (lavapipe) and 7 (llvmpipe) outliers of 40,960 pixels against a budget of 102. `render_test_scene` passes on lavapipe too. |
+| 4 | ✅ | `tools/fuzz-smoke.sh -t 60`: `mesh_decode`, `material_records`, `material_resolve`, `formats_surface`, `formats_setup`, `formats_setup_chain`, `formats_appearance`, `render_mesh_data`, `explorer_mesh_scene` each ran 60 s with no finding (0.23 M–8.4 M executions per target). |
+
+Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets -D warnings`, `cargo test --workspace` with
+`TESSERA_GAME_DIR` set (1,049 passed, 0 failed, 1 ignored), `cargo doc -D warnings`,
+`tools/check-content.sh` and its self-test, `tools/check-spdx.sh` (0 errors) and the
+relative links and anchors of the Markdown docs all pass.
 
 ---
 

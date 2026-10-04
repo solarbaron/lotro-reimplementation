@@ -4,16 +4,33 @@
 use bytemuck::{Pod, Zeroable};
 
 /// Depth buffer format used by world passes.
+///
+/// World passes use **reversed depth** (near plane at 1, far plane at 0;
+/// see [`crate::Perspective::matrix`]): the buffer is cleared to
+/// [`DEPTH_CLEAR`] and fragments pass with [`DEPTH_COMPARE`].
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Depth clear value of world passes (the far plane under reversed depth).
+pub const DEPTH_CLEAR: f32 = 0.0;
+
+/// Depth test of world passes (reversed depth: nearer is greater).
+pub const DEPTH_COMPARE: wgpu::CompareFunction = wgpu::CompareFunction::GreaterEqual;
 
 const QUAD_WGSL: &str = include_str!("shaders/quad.wgsl");
 const LINE_WGSL: &str = include_str!("shaders/line.wgsl");
 
-/// Per-pass uniform block (must match `Globals` in the shaders).
+/// Per-pass uniform block. `quad.wgsl` and `line.wgsl` declare only the
+/// leading `view_proj`; `mesh.wgsl` declares all of it.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub(crate) struct Globals {
     pub view_proj: [[f32; 4]; 4],
+    /// xyz = camera position.
+    pub eye: [f32; 4],
+    /// xyz = normalised direction towards the light.
+    pub light_dir: [f32; 4],
+    pub light_color: [f32; 4],
+    pub ambient: [f32; 4],
 }
 
 /// Per-instance quad data (must match `InstanceIn` in `quad.wgsl`).
@@ -59,7 +76,7 @@ impl SharedLayouts {
             label: Some("tessera-globals-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
@@ -167,7 +184,7 @@ fn depth_state(depth: bool) -> Option<wgpu::DepthStencilState> {
     depth.then(|| wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
         depth_write_enabled: Some(true),
-        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        depth_compare: Some(DEPTH_COMPARE),
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     })
@@ -266,6 +283,6 @@ mod tests {
     fn instance_layouts_match_shader_expectations() {
         assert_eq!(size_of::<QuadInstance>(), 96);
         assert_eq!(size_of::<LineVertex>(), 28);
-        assert_eq!(size_of::<Globals>(), 64);
+        assert_eq!(size_of::<Globals>(), 128);
     }
 }

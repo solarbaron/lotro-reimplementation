@@ -22,6 +22,8 @@ stable without libFuzzer.
 | `props_set` | `PropertyRegistry::parse`, `PropertySet::parse_record`/`parse_record_prefix`/`parse_embedded`/`parse_embedded_prefix` with a registry decoded from the same input | `property-system.md` §3-§6 |
 | `text_render` | message grammar and rendering, markup, tag lists and selector options, `${NAME}` format strings and templates, a string-table record rendered through `Strings` | `docs/specs/string-table.md` |
 | `material_icon` | `decode_layer_with_limit` on a surface payload, `compose_images_with_limit` over decoded and synthetic layers | `docs/specs/icon-layers.md` §3 |
+| `material_records` | Surface record (0x31), material (0x30) and shader record (0x2B) decoders; shader interface analysis and resolution over an accepted shader record | `docs/specs/material.md` §4–§11 |
+| `material_resolve` | `MaterialLibrary` over an in-memory source built from the input: surface → shader + materials → texture list → surface, texture decoding under a size limit, dye preview; `apply_dye` and `select_dye_block` | `docs/specs/material.md` §9–§12, `texture-list.md` §5.2 |
 | `settings_file` | settings file: `Settings::parse_lenient`, `from_toml_str`, serialize/parse round trip, `parse_did` | `tessera-settings` |
 | `dattool_snapshot` | `tessera-dattool` snapshot decoder, encode/decode round trip | `apps/dattool/src/snapfile.rs` |
 | `net_packet_decode` | datagram decode/encode round trip | `docs/specs/transport-design.md` |
@@ -33,6 +35,10 @@ stable without libFuzzer.
 | `script_descriptor` | `.plugin` descriptor parser, package/resource-path/plugin-data-key validation, `sanitize_folder_name` | `docs/specs/lua-plugin-api.md` §4.4, §5, §10.2 |
 | `script_plugindata` | `.plugindata` reader with limits, serialize/parse stability, `format_number` round trip, `EngineDate` | `lua-plugin-api.md` §10.4, §10.5, §12 |
 | `script_pattern` | the bounded Lua pattern engine (`string.find`/`match`/`gmatch`/`gsub`) and chat-command parsing inside a real apartment | `lua-plugin-api.md` §3.1, §3.3, §6.4 |
+| `render_mesh_data` | `MeshData::validate` on hostile streams (length mismatches, out-of-range indices, bad submesh ranges, NaN/inf attributes), `compute_normals`, `compute_tangents`, `flip_winding`, shape builders | `docs/specs/render.md` §2.1 |
+| `render_range_alloc` | the mesh arena's first-fit `RangeAllocator` under alloc / free / bogus-free sequences, checked against a model | `render.md` §2.2 |
+| `mesh_decode` | `Mesh::decode` (stamp rule and look-ahead fallback), `MeshHeader::parse`, `validate`, `level_geometry` under limits, lossless re-encoding; raw records and damaged synthetic meshes | `docs/specs/mesh.md` §3–§14 |
+| `explorer_mesh_scene` | the explorer's mesh-viewer conversions (`apps/explorer/src/geometry.rs`, included by path): a decoded level into renderer streams and `MeshData::prepare`; base-colour/opacity composition, alpha masks, thumbnails, grid cells on consistent and inconsistent images | `mesh.md` §11, `material.md` §11.2, §12.2, `render.md` §2.1 |
 
 ## Running
 

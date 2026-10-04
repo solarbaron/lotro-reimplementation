@@ -186,6 +186,7 @@ fn world_pass_depth_and_lines() -> Result<(), RenderError> {
     let camera = Camera {
         eye: Vec3::new(0.0, 0.0, 5.0),
         target: Vec3::ZERO,
+        up: Vec3::Y,
         ..Camera::default()
     };
     let mut frame = r.begin_offscreen_frame(&target)?;
@@ -259,7 +260,14 @@ fn empty_frame_clears_and_targets_validate() -> Result<(), RenderError> {
     // Many quads force the instance buffer to grow.
     let target = r.create_offscreen_target(64, 64, OffscreenFormat::Rgba8Srgb)?;
     let mut frame = r.begin_offscreen_frame(&target)?;
-    let pass = frame.world_pass("many", &Camera::default());
+    let pass = frame.world_pass(
+        "many",
+        &Camera {
+            eye: Vec3::new(0.0, 0.0, 5.0),
+            up: Vec3::Y,
+            ..Camera::default()
+        },
+    );
     for i in 0..10_000 {
         pass.quad(Quad::new(Mat4::from_translation(Vec3::new(
             i as f32, 0.0, -100.0,
@@ -281,6 +289,7 @@ fn multiple_world_passes_and_depth_clearing() -> Result<(), RenderError> {
     let camera = Camera {
         eye: Vec3::new(0.0, 0.0, 5.0),
         target: Vec3::ZERO,
+        up: Vec3::Y,
         ..Camera::default()
     };
     let near_green = Quad::new(Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0))).with_color(GREEN);

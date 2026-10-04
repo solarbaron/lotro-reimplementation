@@ -22,7 +22,7 @@ use crate::richtext::{Palette, layout_job};
 
 /// Something a view asks the app to do after drawing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Action {
+pub(crate) enum Action {
     Open(u32),
     Go(Nav),
     View(ViewKind),
@@ -31,7 +31,7 @@ enum Action {
 }
 
 /// Requests `key` from `store` into `slot` unless the slot already holds that key.
-fn ensure<D: Decoder>(
+pub(crate) fn ensure<D: Decoder>(
     slot: &mut Option<Handle<D::Output>>,
     store: &AssetStore<ContextSource, D>,
     key: AssetKey,
@@ -73,6 +73,21 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
     let checker = app.checker(ui.ctx());
     let mut actions = Vec::new();
     let mut cur = app.current.take();
+    let mut settings = app.mesh_settings;
+    let wants_viewport = cur.as_ref().is_some_and(|c| c.nav.view == ViewKind::Mesh);
+    if wants_viewport && app.viewport.is_none() {
+        let ctx = ui.ctx().clone();
+        app.viewport = Some(crate::viewport::Viewport::spawn(move || {
+            ctx.request_repaint()
+        }));
+    }
+    if !wants_viewport && let Some(vp) = &mut app.viewport {
+        // Another view (or no install): the render thread releases the scene's GPU
+        // meshes and textures and its reference to the scene, which is outside the asset
+        // cache's budget.
+        vp.clear_scene();
+    }
+    let mut viewport = app.viewport.take();
     let bookmarked = cur
         .as_ref()
         .is_some_and(|c| app.persist.is_bookmarked(c.nav.did));
@@ -101,9 +116,25 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
             ViewKind::Props => props_view(ui, l, cur, &mut actions),
             ViewKind::Icon => icon_view(ui, l, cur, &checker, &mut actions),
             ViewKind::Record => record_view(ui, l, cur, &mut actions),
+            ViewKind::Mesh => match viewport.as_mut() {
+                Some(vp) => crate::mesh_view::mesh_view(
+                    ui,
+                    l,
+                    cur,
+                    &mut settings,
+                    vp,
+                    &checker,
+                    &mut actions,
+                ),
+                None => {
+                    ui.label("the render thread is not running");
+                }
+            },
         }
     });
     app.current = cur;
+    app.viewport = viewport;
+    app.mesh_settings = settings;
     for a in actions {
         match a {
             Action::Open(did) => app.open_did(did),

@@ -15,6 +15,18 @@ pub struct TextureId {
     generation: u32,
 }
 
+impl TextureId {
+    /// A handle no renderer ever issues (owner 0).
+    #[cfg(test)]
+    pub(crate) fn dangling() -> Self {
+        Self {
+            owner: 0,
+            index: u32::MAX,
+            generation: u32::MAX,
+        }
+    }
+}
+
 /// How texel values are interpreted when sampled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorSpace {
@@ -109,6 +121,10 @@ pub(crate) fn validate_rgba8(width: u32, height: u32, len: usize, max_dim: u32) 
 pub(crate) struct GpuTexture {
     pub texture: wgpu::Texture,
     pub bind_group: wgpu::BindGroup,
+    /// View and sampler, for bind groups that combine several textures
+    /// (mesh materials).
+    pub view: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
     pub width: u32,
     pub height: u32,
     /// `Some(view)` when this entry samples an offscreen render target (it
@@ -160,7 +176,7 @@ impl Samplers {
         }
     }
 
-    fn get(&self, filter: Filter, wrap: Wrap) -> &wgpu::Sampler {
+    pub(crate) fn get(&self, filter: Filter, wrap: Wrap) -> &wgpu::Sampler {
         let i = match (filter, wrap) {
             (Filter::Nearest, Wrap::Repeat) => 0,
             (Filter::Nearest, Wrap::Clamp) => 1,
@@ -302,16 +318,13 @@ impl TextureStore<GpuTexture> {
         });
         write_rgba8(queue, &texture, desc.width, desc.height, desc.rgba);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = Self::bind_group(
-            device,
-            layout,
-            desc.label,
-            &view,
-            samplers.get(desc.filter, desc.wrap),
-        );
+        let sampler = samplers.get(desc.filter, desc.wrap).clone();
+        let bind_group = Self::bind_group(device, layout, desc.label, &view, &sampler);
         let id = self.insert(GpuTexture {
             texture,
             bind_group,
+            view,
+            sampler,
             width: desc.width,
             height: desc.height,
             target_view: None,
@@ -332,16 +345,19 @@ impl TextureStore<GpuTexture> {
         filter: Filter,
         wrap: Wrap,
     ) -> Result<TextureId> {
+        let sampler = samplers.get(filter, wrap).clone();
         let bind_group = Self::bind_group(
             device,
             layout,
             Some("tessera-target-texture"),
             view,
-            samplers.get(filter, wrap),
+            &sampler,
         );
         self.insert(GpuTexture {
             texture: texture.clone(),
             bind_group,
+            view: view.clone(),
+            sampler,
             width: texture.width(),
             height: texture.height(),
             target_view: Some(view.clone()),

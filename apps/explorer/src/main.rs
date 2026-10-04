@@ -18,9 +18,14 @@ fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let args = Args::parse();
+    let size = match (args.width, args.height) {
+        (Some(w), Some(h)) => Some([w.max(320.0), h.max(240.0)]),
+        _ => None,
+    };
     let screenshot = args.screenshot.clone().map(|path| ScreenshotPlan {
         path,
         timeout: Duration::from_secs(args.screenshot_timeout.max(1)),
+        size,
     });
     let persist = if args.no_persist || screenshot.is_some() {
         // Still read the saved game directory, but never write.
@@ -31,10 +36,6 @@ fn main() -> anyhow::Result<()> {
     } else {
         Persist::load_default()
     };
-    let size = match (args.width, args.height) {
-        (Some(w), Some(h)) => Some([w.max(320.0), h.max(240.0)]),
-        _ => None,
-    };
     let config = AppConfig {
         game_dir: args.game_dir,
         language: args.language,
@@ -44,6 +45,18 @@ fn main() -> anyhow::Result<()> {
         browse: args.browse,
         search: args.search,
         font: args.font,
+        mesh: tessera_explorer::mesh_view::MeshOptions {
+            shading: args.mesh_shading,
+            wireframe: args.mesh_wireframe,
+            normals: args.mesh_normals,
+            vertex_colors: args.mesh_vertex_colors,
+            diffuse_tint: args.mesh_diffuse_tint,
+            lod: args.mesh_lod,
+            choice: args.mesh_choice,
+            dye: args.dye,
+            angles: args.mesh_angle,
+            select: args.mesh_select.map(|[p, d]| (p as usize, d)),
+        },
     };
     let code = tessera_explorer::run(config, persist, size)?;
     if code != 0 {

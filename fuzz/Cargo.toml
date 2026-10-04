@@ -26,6 +26,8 @@ tessera-text = { path = "../crates/text" }
 tessera-material = { path = "../crates/material" }
 tessera-settings = { path = "../crates/settings" }
 tessera-dattool = { path = "../apps/dattool" }
+tessera-render = { path = "../crates/render" }
+tessera-mesh = { path = "../crates/mesh" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -207,6 +209,22 @@ test = false
 doc = false
 bench = false
 
+# --- M2: tessera-material records and resolution (docs/specs/material.md) ---
+
+[[bin]]
+name = "material_records"
+path = "fuzz_targets/material_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "material_resolve"
+path = "fuzz_targets/material_resolve.rs"
+test = false
+doc = false
+bench = false
+
 [[bin]]
 name = "settings_file"
 path = "fuzz_targets/settings_file.rs"
@@ -217,6 +235,63 @@ bench = false
 [[bin]]
 name = "dattool_snapshot"
 path = "fuzz_targets/dattool_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-render (docs/specs/render.md) ---
+
+[[bin]]
+name = "render_mesh_data"
+path = "fuzz_targets/render_mesh_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "render_range_alloc"
+path = "fuzz_targets/render_range_alloc.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-mesh (docs/specs/mesh.md) ---
+
+[[bin]]
+name = "mesh_decode"
+path = "fuzz_targets/mesh_decode.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats setup family (docs/specs/setup.md) ---
+
+[[bin]]
+name = "formats_setup"
+path = "fuzz_targets/formats_setup.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_appearance"
+path = "fuzz_targets/formats_appearance.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_setup_chain"
+path = "fuzz_targets/formats_setup_chain.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-explorer mesh viewer (apps/explorer/src/geometry.rs, included by path) ---
+
+[[bin]]
+name = "explorer_mesh_scene"
+path = "fuzz_targets/explorer_mesh_scene.rs"
 test = false
 doc = false
 bench = false

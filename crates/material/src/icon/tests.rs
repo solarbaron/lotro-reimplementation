@@ -728,6 +728,23 @@ fn cache_byte_budget() {
 }
 
 #[test]
+fn composer_over_a_record_source() {
+    let mut src = Source::new();
+    src.insert(BG, rgb(BG, 1, 1, &[[1, 2, 3]]));
+    let source: Arc<dyn RecordSource> = Arc::new(crate::FnSource(move |d: Did| {
+        Ok::<_, std::io::Error>(src.get(&d.0).cloned())
+    }));
+    let comp = composer_over(source);
+    let c = comp.compose(&IconStack::single(Did(BG)));
+    assert_eq!(c.image.unwrap().pixels, [1, 2, 3, 255]);
+    assert_eq!(comp.cache_usage(), (1, 4));
+    assert!(matches!(
+        comp.layer(Did(0x4100_7777)),
+        Err(MaterialError::Missing { .. })
+    ));
+}
+
+#[test]
 fn composer_is_send_and_sync_for_a_sync_source() {
     fn assert_send_sync<T: Send + Sync>() {}
     type FnSource = fn(Did) -> std::result::Result<Option<Vec<u8>>, std::io::Error>;

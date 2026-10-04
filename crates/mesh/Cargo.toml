@@ -1,0 +1,24 @@
+[package]
+name = "tessera-mesh"
+description = "Mesh records (0x06): vertex formats, engine-neutral vertex streams, index buffers, detail levels, collision data, bounds, validation and a cached mesh library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tessera-dat.workspace = true
+tessera-formats.workspace = true
+tessera-assets.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+# The synthetic archive writer of `tessera-dat`'s own tests is reused (included by path)
+# to build in-memory and on-disk archives; it needs flate2.
+flate2.workspace = true
+
+[lints]
+workspace = true

@@ -31,9 +31,9 @@
 //!   most [`surface::MAX_JPEG_DECODE_BYTES`]. The image is decoded straight into its RGBA8
 //!   output buffer.
 //!
-//! [`AnyRecord::decode`] picks the decoder for a DID's type prefix. Property sets need the
-//! property dictionary as a schema, so they are decoded with [`PropertySetRecord::parse`]
-//! instead. The [`decode`] module has one `decode_*(&[u8])` function per decoder, for fuzz
+//! [`AnyRecord::decode`] picks the decoder for a DID's type prefix. Property sets and entity
+//! descriptors need the property dictionary as a schema, so they are decoded with
+//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. The [`decode`] module has one `decode_*(&[u8])` function per decoder, for fuzz
 //! targets and tools. The [`prelude`] brings the [`Record`] trait and the common types
 //! into scope.
 //!
@@ -52,8 +52,11 @@
 //! | [`enum_mapper`] | enum mappers (0x23) | §7 |
 //! | [`did_map`] | DID maps (0x28) | §8 |
 //! | [`sound`] | sound records (0x0A) and container sniffing | §9 |
+//! | [`setup`] | entity descriptors (0x47), visual templates (0x1F), setups (0x04), chain resolution | `setup.md` §2–§7 |
+//! | [`appearance`] | appearance records (0x20) | `setup.md` §8 |
 
 mod any;
+pub mod appearance;
 pub mod bcn;
 pub mod decode;
 pub mod did;
@@ -64,6 +67,7 @@ pub mod property;
 pub mod property_set;
 pub mod reader;
 mod record;
+pub mod setup;
 pub mod sound;
 pub mod string_info;
 pub mod string_table;
@@ -71,11 +75,16 @@ pub mod surface;
 pub mod texture_list;
 
 pub use any::AnyRecord;
+pub use appearance::{
+    AppearanceBlock, AppearanceEntry, AppearanceExtra, AppearancePart, AppearanceRecord,
+    MaterialGroup,
+};
 pub use bcn::{BcFormat, decode_bcn};
 pub use decode::{
-    decode_did_map, decode_embedded_property_set, decode_enum_mapper, decode_property_dictionary,
-    decode_property_set, decode_property_value, decode_sound, decode_string_info,
-    decode_string_table, decode_surface, decode_texture_list,
+    decode_appearance, decode_did_map, decode_embedded_property_set, decode_entity_descriptor,
+    decode_entity_header, decode_enum_mapper, decode_property_dictionary, decode_property_set,
+    decode_property_value, decode_setup, decode_sound, decode_string_info, decode_string_table,
+    decode_surface, decode_texture_list, decode_visual_template,
 };
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
@@ -95,6 +104,12 @@ pub use property_set::{
 };
 pub use reader::{Reader, TSize, Utf16String};
 pub use record::Record;
+// Record types and resolvers only; the setup family's field types (frames, collision
+// volumes, `Aabb`, ...) stay under `setup::`.
+pub use setup::{
+    EntityDescriptor, EntityHeader, ResolveError, Setup, SetupChain, VisualTemplate, resolve_setup,
+    resolve_setup_did,
+};
 pub use sound::{AudioContainer, SoundRecord, WaveInfo};
 pub use string_info::{StringArg, StringArgValue, StringArgs, StringInfo, StringSource};
 pub use string_table::{
@@ -106,8 +121,9 @@ pub use texture_list::{ChainLevel, TextureList, TextureListKind, cap_chain_resol
 /// The [`Record`] trait plus the record types, for `use tessera_formats::prelude::*`.
 pub mod prelude {
     pub use crate::{
-        AnyRecord, DataIdMap, Did, DidKind, EnumMapper, FormatError, PropertyDictionary,
-        PropertySchema, PropertySet, PropertySetRecord, PropertyValue, Record, SoundRecord,
-        StringInfo, StringTable, Surface, SurfaceFormat, TextureList, WaveInfo,
+        AnyRecord, AppearanceRecord, DataIdMap, Did, DidKind, EntityDescriptor, EntityHeader,
+        EnumMapper, FormatError, PropertyDictionary, PropertySchema, PropertySet,
+        PropertySetRecord, PropertyValue, Record, Setup, SoundRecord, StringInfo, StringTable,
+        Surface, SurfaceFormat, TextureList, VisualTemplate, WaveInfo,
     };
 }

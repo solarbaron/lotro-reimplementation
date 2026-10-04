@@ -1,6 +1,6 @@
 [package]
 name = "tessera-explorer"
-description = "GUI asset browser for the archives of an install: archive tree, DID search, hex, textures, icons, strings and property sets"
+description = "GUI asset browser for the archives of an install: archive tree, DID search, hex, textures, icons, strings, property sets and a 3D mesh and material viewer"
 version.workspace = true
 edition.workspace = true
 # eframe/egui 0.36 need Rust 1.95; the explorer is a tool, so it may require a newer
@@ -31,6 +31,8 @@ tessera-text.workspace = true
 tessera-assets.workspace = true
 tessera-material.workspace = true
 tessera-settings.workspace = true
+tessera-mesh.workspace = true
+tessera-render.workspace = true
 # No "default_fonts": egui's bundled fonts are OFL-1.1 / Ubuntu Font Licence, outside the
 # licence allow list (deny.toml). UI fonts come from the system at run time (src/fonts.rs).
 eframe = { version = "0.36", default-features = false, features = [
@@ -43,6 +45,11 @@ png = "0.18"
 # Checks system font files before egui loads them (egui aborts on a font it cannot
 # parse). Already in the tree through egui's text layer (MIT OR Apache-2.0).
 skrifa = { version = "0.44", default-features = false, features = ["std", "autohint_shaping"] }
+
+# Screenshot mode selects X11 (`EventLoopBuilderExtX11`) so headless runs are not
+# placed by a Wayland compositor; already in the tree through eframe (Apache-2.0).
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }
 
 [dev-dependencies]
 # The synthetic archive writer of `tessera-dat`'s own tests is reused (included by path)

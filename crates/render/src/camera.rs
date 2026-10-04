@@ -5,17 +5,28 @@
 //! comfortable over-the-shoulder MMO camera. They are *not* values taken from
 //! any other client and are expected to be adjusted from user settings.
 //!
-//! Depth convention: right-handed view space, wgpu clip space (`z` in `0..=1`).
+//! World convention: `+Z` up by default ([`UpAxis::Z`], the engine-wide
+//! decision in `docs/ARCHITECTURE.md` §11.1); `+Y` up is available for
+//! callers whose data is Y-up.
+//!
+//! Depth convention: right-handed view space, wgpu clip space with
+//! **reversed depth**: the near plane maps to `z = 1` and the far plane to
+//! `z = 0` (a floating-point depth buffer then keeps nearly constant
+//! relative precision over the whole range). The renderer clears depth to 0
+//! and keeps fragments with greater-or-equal depth; a hand-made
+//! `PassSpace::World` matrix must follow the same convention.
 
 use glam::{Mat4, Vec3};
+
+use crate::mesh::BoundingSphere;
 
 /// Which world axis points "up".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UpAxis {
     /// `+Y` up, ground plane is XZ.
-    #[default]
     Y,
-    /// `+Z` up, ground plane is XY.
+    /// `+Z` up, ground plane is XY (the engine's world convention).
+    #[default]
     Z,
 }
 
@@ -60,7 +71,8 @@ impl Perspective {
     /// beyond this anyway).
     pub const MAX_DEPTH_RATIO: f32 = 1e7;
 
-    /// Projection matrix. Degenerate inputs (NaN, infinities, zero aspect,
+    /// Projection matrix with reversed depth (near plane → `z = 1`, far
+    /// plane → `z = 0`; see the module docs). Degenerate inputs (NaN, infinities, zero aspect,
     /// inverted planes, absurd magnitudes) are sanitised: `near` is clamped
     /// to [`Self::MIN_NEAR`]`..=`[`Self::MAX_NEAR`], `far` to
     /// `near * 1.001 ..= near * MAX_DEPTH_RATIO`. The result is always finite.
@@ -88,12 +100,13 @@ impl Perspective {
         } else {
             near * 1000.0
         };
-        let m = glam::camera::rh::proj::directx::perspective(fov, aspect, near, far);
+        // Reversed depth: the planes are passed swapped.
+        let m = glam::camera::rh::proj::directx::perspective(fov, aspect, far, near);
         if m.is_finite() {
             m
         } else {
             let d = Self::default();
-            glam::camera::rh::proj::directx::perspective(d.fov_y, 1.0, d.near, d.far)
+            glam::camera::rh::proj::directx::perspective(d.fov_y, 1.0, d.far, d.near)
         }
     }
 }
@@ -125,11 +138,12 @@ pub struct Camera {
 }
 
 impl Default for Camera {
+    /// Z-up camera on the `-Y` side of the origin, looking at it.
     fn default() -> Self {
         Self {
-            eye: Vec3::new(0.0, 0.0, 5.0),
+            eye: Vec3::new(0.0, -5.0, 0.0),
             target: Vec3::ZERO,
-            up: Vec3::Y,
+            up: Vec3::Z,
             projection: Perspective::default(),
         }
     }
@@ -170,10 +184,23 @@ impl Camera {
         self.projection.matrix(aspect)
     }
 
-    /// `projection * view`.
+    /// `projection * view`. When the product overflows (eye coordinates
+    /// near the `f32` limit), the same orientation placed at the origin is
+    /// used, so the result is always finite.
     #[must_use]
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        self.projection(aspect) * self.view()
+        let proj = self.projection(aspect);
+        let m = proj * self.view();
+        if m.is_finite() {
+            m
+        } else {
+            proj * Camera {
+                eye: Vec3::ZERO,
+                target: self.target - self.eye,
+                ..*self
+            }
+            .view()
+        }
     }
 }
 
@@ -213,7 +240,7 @@ pub struct OrbitConfig {
 impl Default for OrbitConfig {
     fn default() -> Self {
         Self {
-            up: UpAxis::Y,
+            up: UpAxis::Z,
             pivot_height: 1.6,
             distance: 6.0,
             min_distance: 0.5,
@@ -268,8 +295,11 @@ impl OrbitCamera {
     }
 
     fn distance_bounds(&self) -> (f32, f32) {
-        let lo = if self.config.min_distance.is_finite() {
-            self.config.min_distance.max(0.01)
+        // A positive configured minimum is honoured down to MIN_DISTANCE (so
+        // `frame_sphere` can frame tiny meshes); zero, negative or
+        // non-finite minimums fall back to 0.01.
+        let lo = if self.config.min_distance.is_finite() && self.config.min_distance > 0.0 {
+            self.config.min_distance.max(Self::MIN_DISTANCE)
         } else {
             0.01
         };
@@ -409,6 +439,76 @@ impl OrbitCamera {
             UpAxis::Y => Vec3::NEG_Z,
             UpAxis::Z => Vec3::Y,
         })
+    }
+
+    /// Largest sphere radius [`Self::frame_sphere`] accepts (larger radii
+    /// are clamped so the derived distances and clip planes stay finite).
+    pub const MAX_FRAMED_RADIUS: f32 = 1e12;
+
+    /// Smallest sphere radius [`Self::frame_sphere`] frames exactly; smaller
+    /// spheres are framed as if they had this radius, because the near
+    /// plane cannot come closer than [`Perspective::MIN_NEAR`].
+    pub const MIN_FRAMED_RADIUS: f32 = 1e-4;
+
+    /// Smallest orbit distance honoured for a positive
+    /// [`OrbitConfig::min_distance`].
+    pub const MIN_DISTANCE: f32 = 1e-6;
+
+    /// Distance at which a sphere of `radius` fills the smaller of the two
+    /// fields of view of a `projection` with `aspect`, plus a 10 % margin.
+    #[must_use]
+    pub fn fit_distance(projection: &Perspective, radius: f32, aspect: f32) -> f32 {
+        let fov_y = if projection.fov_y.is_finite() {
+            projection
+                .fov_y
+                .clamp(1f32.to_radians(), 179f32.to_radians())
+        } else {
+            Perspective::default().fov_y
+        };
+        let aspect = if aspect.is_finite() && aspect > 1e-6 {
+            aspect.min(1e6)
+        } else {
+            1.0
+        };
+        let half_v = fov_y * 0.5;
+        let half_h = (half_v.tan() * aspect).atan();
+        let half = half_v.min(half_h).max(1e-4);
+        radius / half.sin() * 1.1
+    }
+
+    /// Frame `sphere` for a viewport of `aspect` (width / height): the
+    /// pivot moves to the sphere's centre (pivot height becomes 0), the
+    /// distance becomes [`Self::fit_distance`], the zoom range becomes
+    /// `0.05 r ..= 10 × fit`, and the clip planes are set to
+    /// `near = 0.01 r` and `far = 1.5 × (10 × fit + r)`. Yaw and pitch are
+    /// kept. Degenerate spheres are sanitised (non-finite centre → origin,
+    /// non-finite or non-positive radius → 1, radius clamped to
+    /// [`Self::MIN_FRAMED_RADIUS`]`..=`[`Self::MAX_FRAMED_RADIUS`]).
+    pub fn frame_sphere(&mut self, sphere: BoundingSphere, aspect: f32) {
+        let center = if sphere.center.is_finite() {
+            sphere.center
+        } else {
+            Vec3::ZERO
+        };
+        let r = if sphere.radius.is_finite() && sphere.radius > 0.0 {
+            sphere
+                .radius
+                .clamp(Self::MIN_FRAMED_RADIUS, Self::MAX_FRAMED_RADIUS)
+        } else {
+            1.0
+        };
+        let fit = Self::fit_distance(&self.config.projection, r, aspect);
+        let c = &mut self.config;
+        c.pivot_height = 0.0;
+        c.min_distance = r * 0.05;
+        c.max_distance = fit * 10.0;
+        c.distance = fit;
+        c.projection.near = r * 0.01;
+        c.projection.far = (fit * 10.0 + r) * 1.5;
+        self.target = center;
+        self.distance = fit;
+        self.target_distance = fit;
+        self.sanitize();
     }
 
     /// Snapshot as a plain [`Camera`].
@@ -602,6 +702,72 @@ mod tests {
     }
 
     #[test]
+    fn frame_sphere_keeps_the_sphere_in_view() {
+        for (up, aspect) in [(UpAxis::Y, 1.0), (UpAxis::Z, 0.5), (UpAxis::Y, 2.5)] {
+            let mut cam = OrbitCamera::new(OrbitConfig {
+                up,
+                ..OrbitConfig::default()
+            });
+            cam.yaw = 0.7;
+            cam.pitch = 0.4;
+            let sphere = BoundingSphere {
+                center: Vec3::new(10.0, -3.0, 7.0),
+                radius: 2.5,
+            };
+            cam.frame_sphere(sphere, aspect);
+            let c = cam.camera();
+            assert_eq!(c.target, sphere.center);
+            let vp = c.view_proj(aspect);
+            // Points on the sphere along every axis project inside the view.
+            for d in [Vec3::X, Vec3::Y, Vec3::Z, -Vec3::X, -Vec3::Y, -Vec3::Z] {
+                let clip = vp * (sphere.center + d * sphere.radius).extend(1.0);
+                let ndc = clip.truncate() / clip.w;
+                assert!(clip.w > 0.0, "{up:?} {d:?}");
+                assert!(
+                    ndc.x.abs() < 1.0 && ndc.y.abs() < 1.0,
+                    "{up:?} {d:?} {ndc:?}"
+                );
+                assert!((0.0..1.0).contains(&ndc.z), "{up:?} {d:?} {ndc:?}");
+            }
+            // The fit is tight: 10 % margin on the limiting axis.
+            let fit = OrbitCamera::fit_distance(&c.projection, sphere.radius, aspect);
+            assert!((cam.distance - fit).abs() < 1e-4);
+            // Zooming stays within the new range and keeps the view finite.
+            cam.zoom(100.0);
+            cam.update(10.0);
+            assert!(cam.distance >= cam.config.min_distance - 1e-5);
+            assert!(cam.camera().view_proj(aspect).is_finite());
+        }
+    }
+
+    #[test]
+    fn frame_sphere_sanitises_garbage() {
+        for sphere in [
+            BoundingSphere {
+                center: Vec3::NAN,
+                radius: f32::NAN,
+            },
+            BoundingSphere {
+                center: Vec3::splat(f32::MAX),
+                radius: f32::INFINITY,
+            },
+            BoundingSphere {
+                center: Vec3::ZERO,
+                radius: 0.0,
+            },
+            BoundingSphere {
+                center: Vec3::ONE,
+                radius: f32::MAX,
+            },
+        ] {
+            let mut cam = OrbitCamera::default();
+            cam.frame_sphere(sphere, f32::NAN);
+            assert!(cam.eye().is_finite(), "{sphere:?}");
+            assert!(cam.camera().view_proj(1.0).is_finite(), "{sphere:?}");
+        }
+    }
+
+    #[test]
     fn orbit_default_pose_is_behind_and_above() {
         for up in [UpAxis::Y, UpAxis::Z] {
             let cam = OrbitCamera::new(OrbitConfig {
@@ -617,5 +783,98 @@ mod tests {
             assert!((clip.x / clip.w).abs() < 1e-5 && (clip.y / clip.w).abs() < 1e-5);
             assert!(cam.forward_flat().dot(up.vector()).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn defaults_are_z_up() {
+        // ARCHITECTURE §11.1: the engine's world space is Z-up.
+        assert_eq!(UpAxis::default(), UpAxis::Z);
+        assert_eq!(OrbitConfig::default().up, UpAxis::Z);
+        let cam = OrbitCamera::default();
+        assert!(
+            cam.eye().z > cam.target.z,
+            "default pose looks down onto the XY plane"
+        );
+        let c = Camera::default();
+        assert_eq!(c.up, Vec3::Z);
+        assert!(c.view().is_finite());
+        // +X is on the right and +Z at the top of the default camera's image.
+        let vp = c.view_proj(1.0);
+        let ndc = |p: Vec3| {
+            let clip = vp * p.extend(1.0);
+            clip.truncate() / clip.w
+        };
+        assert!(ndc(Vec3::X).x > 0.0 && ndc(Vec3::Z).y > 0.0);
+    }
+
+    #[test]
+    fn depth_is_reversed() {
+        let p = Perspective {
+            fov_y: 1.0,
+            near: 0.5,
+            far: 100.0,
+        };
+        let m = p.matrix(1.0);
+        let depth = |dist: f32| {
+            let clip = m * Vec4::new(0.0, 0.0, -dist, 1.0);
+            clip.z / clip.w
+        };
+        assert!((depth(0.5) - 1.0).abs() < 1e-6, "near plane at 1");
+        assert!(depth(100.0).abs() < 1e-6, "far plane at 0");
+        assert!(depth(1.0) > depth(10.0), "nearer is larger");
+        // Precision at 1 km with a 0.1 near plane: neighbouring metres get
+        // distinct f32 depth values (standard depth could not tell them apart).
+        let m = Perspective::default().matrix(1.0);
+        let at = |dist: f32| {
+            let clip = m * Vec4::new(0.0, 0.0, -dist, 1.0);
+            clip.z / clip.w
+        };
+        assert!(at(1000.0) > at(1000.5) && at(1000.5) > at(1001.0));
+        assert!(at(4000.0) > at(4002.0));
+    }
+
+    #[test]
+    fn frame_sphere_fits_tiny_spheres() {
+        // Regression: the orbit distance used to be floored at 0.01, so
+        // spheres under ~5 mm were framed too far away.
+        for r in [0.001f32, 0.003, 0.01, 1.0] {
+            let mut cam = OrbitCamera::default();
+            cam.frame_sphere(
+                BoundingSphere {
+                    center: Vec3::ZERO,
+                    radius: r,
+                },
+                1.0,
+            );
+            let fit = OrbitCamera::fit_distance(&cam.config.projection, r, 1.0);
+            assert!(
+                (cam.distance - fit).abs() <= fit * 1e-5,
+                "r = {r}: {} vs {fit}",
+                cam.distance
+            );
+            assert!((cam.config.min_distance - r * 0.05).abs() <= r * 1e-6);
+            // The near plane is in front of the sphere.
+            let near = cam.config.projection.near.max(Perspective::MIN_NEAR);
+            assert!(near < cam.distance - r, "r = {r}");
+        }
+        // Below MIN_FRAMED_RADIUS the sphere is framed at that radius.
+        let mut cam = OrbitCamera::default();
+        cam.frame_sphere(
+            BoundingSphere {
+                center: Vec3::ZERO,
+                radius: 1e-7,
+            },
+            1.0,
+        );
+        let fit =
+            OrbitCamera::fit_distance(&cam.config.projection, OrbitCamera::MIN_FRAMED_RADIUS, 1.0);
+        assert!((cam.distance - fit).abs() <= fit * 1e-5);
+        // Non-positive minimums still fall back to 0.01.
+        let zero = OrbitCamera::new(OrbitConfig {
+            min_distance: 0.0,
+            distance: 0.0,
+            ..OrbitConfig::default()
+        });
+        assert!((zero.distance - 0.01).abs() < 1e-7);
     }
 }

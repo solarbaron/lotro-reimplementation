@@ -18,6 +18,9 @@ wgpu = "30"
 [dev-dependencies]
 png = "0.18"
 tracing-subscriber.workspace = true
+# Real-data test only (tests/real_data.rs): real surfaces through every mesh pipeline.
+tessera-dat.workspace = true
+tessera-formats.workspace = true
 
 [lints]
 workspace = true

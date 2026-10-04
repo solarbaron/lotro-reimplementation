@@ -27,10 +27,11 @@ for the project's legal position.
 
 ## Status
 
-**Milestones M0 (base) and M1 (asset browser) are complete** (exit criteria verified
-2026-10-04 against a real install; see [ROADMAP M0 status](docs/ROADMAP.md#m0-status) and
-[M1 status](docs/ROADMAP.md#m1-status)). **M2 (mesh and material viewer) is next.** Nothing
-here is playable yet.
+**Milestones M0 (base), M1 (asset browser) and M2 (mesh and material viewer) are
+complete** (exit criteria verified 2026-10-04 against a real install; see
+[ROADMAP M0 status](docs/ROADMAP.md#m0-status), [M1 status](docs/ROADMAP.md#m1-status) and
+[M2 status](docs/ROADMAP.md#m2-status)). **M3 (terrain and offline world walker) is next.**
+Nothing here is playable yet.
 
 | Area | State |
 |---|---|
@@ -42,7 +43,9 @@ here is playable yet.
 | Sandboxed Lua 5.1 host skeleton | done (M0) |
 | Property sets with names and enum labels, string rendering with grammar tags, layered icons, asset worker pool, settings | done (M1): 100 % of texture, string-table and property-set records decode |
 | `tessera-explorer` GUI asset browser | done (M1) |
-| Mesh viewer, offline world walker, characters, UI and plugins, audio, own test server | planned (M2–M7) |
+| Mesh records (static and skinned in bind pose), materials (surface → material → textures, feature flags, dye), setup records, mesh pipelines (opaque, alpha-test, alpha-blend, dyeable) | done (M2): 100 % of mesh, material and surface records decode; visual checklist of 74 items in [docs/checklists/m2-visual.md](docs/checklists/m2-visual.md) |
+| `tessera-explorer` 3D view: meshes, setups, objects, wireframe, normals, UV checker, material inspector, dye preview | done (M2) |
+| Offline world walker, characters, UI and plugins, audio, own test server | planned (M3–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

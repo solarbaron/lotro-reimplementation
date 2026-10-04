@@ -12,6 +12,7 @@ use std::sync::mpsc::{self, Receiver};
 
 use tessera_dat::{ArchiveKind, ArchiveSet, SetOptions};
 use tessera_formats::Did;
+use tessera_material::MaterialLibrary;
 use tessera_material::icon::IconComposer;
 use tessera_props::GameData;
 use tessera_text::{
@@ -78,6 +79,9 @@ pub struct DataContext {
     pub local_member: Option<usize>,
     /// Layered icon composition with a decoded-layer cache.
     pub composer: IconComposer<SurfaceReader>,
+    /// Surface records, materials, shader records and textures for the mesh viewer
+    /// (`material.md`), with caches shared by every worker.
+    pub materials: MaterialLibrary<Arc<ArchiveSet>>,
     /// Largest texture side the GPU accepts (set by the UI after start-up).
     pub max_texture_side: AtomicUsize,
 }
@@ -142,6 +146,7 @@ impl DataContext {
                 .with_locale(locale)
                 .with_named_tables(named)
         });
+        let materials = MaterialLibrary::new(Arc::clone(&set));
         let reader_set = Arc::clone(&set);
         let reader: SurfaceReader = Box::new(move |did: Did| match reader_set.locate(did.0)? {
             Some(l) => Ok(Some(reader_set.read_located(&l)?)),
@@ -154,6 +159,7 @@ impl DataContext {
             strings,
             local_member,
             composer: IconComposer::new(reader),
+            materials,
             max_texture_side: AtomicUsize::new(DEFAULT_MAX_TEXTURE_SIDE),
         }
     }

@@ -40,6 +40,11 @@ pub enum RenderError {
     /// A texture upload was rejected before reaching the GPU.
     #[error("invalid texture upload: {0}")]
     InvalidTexture(String),
+    /// Mesh streams were rejected before reaching the GPU (inconsistent
+    /// lengths, out-of-range indices, bad submesh ranges, non-finite
+    /// positions).
+    #[error("invalid mesh: {0}")]
+    InvalidMesh(String),
     /// A texture handle is stale or was never issued by this renderer.
     #[error("unknown or destroyed texture {0:?}")]
     UnknownTexture(TextureId),

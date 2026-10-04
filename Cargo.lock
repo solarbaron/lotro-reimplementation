@@ -2946,12 +2946,15 @@ dependencies = [
  "tessera-formats",
  "tessera-install",
  "tessera-material",
+ "tessera-mesh",
  "tessera-props",
+ "tessera-render",
  "tessera-settings",
  "tessera-text",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
+ "winit",
 ]
 
 [[package]]
@@ -2991,6 +2994,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-mesh"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "proptest",
+ "tessera-assets",
+ "tessera-dat",
+ "tessera-formats",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "tessera-net"
 version = "0.1.0"
 dependencies = [
@@ -3017,6 +3033,8 @@ dependencies = [
  "glam",
  "png",
  "pollster",
+ "tessera-dat",
+ "tessera-formats",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",

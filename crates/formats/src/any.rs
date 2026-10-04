@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Dispatch from a DID's type prefix to the matching decoder.
 
+use crate::appearance::AppearanceRecord;
 use crate::did::{Did, DidKind};
 use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::error::Result;
 use crate::property::PropertyDictionary;
 use crate::record::Record;
+use crate::setup::{Setup, VisualTemplate};
 use crate::sound::SoundRecord;
 use crate::string_table::StringTable;
 use crate::surface::Surface;
@@ -14,8 +16,9 @@ use crate::texture_list::TextureList;
 
 /// Any record this crate can decode, selected by the DID's type prefix (spec §2.1).
 ///
-/// Property sets (0x78–0x7F) are not included: they need the property dictionary as a
-/// schema; see [`crate::PropertySetRecord`].
+/// Property sets (0x78–0x7F) and entity descriptors (0x47) are not included: they need the
+/// property dictionary as a schema; see [`crate::PropertySetRecord`] and
+/// [`crate::EntityDescriptor`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AnyRecord<'a> {
@@ -33,6 +36,12 @@ pub enum AnyRecord<'a> {
     TextureList(TextureList),
     /// 0x0A: sound record.
     Sound(SoundRecord<'a>),
+    /// 0x1F: visual template.
+    VisualTemplate(VisualTemplate),
+    /// 0x04: setup.
+    Setup(Setup),
+    /// 0x20: appearance record.
+    Appearance(AppearanceRecord),
 }
 
 impl<'a> AnyRecord<'a> {
@@ -52,6 +61,13 @@ impl<'a> AnyRecord<'a> {
             DidKind::RenderSurface => Self::Surface(Surface::parse_expecting(payload, did)?),
             DidKind::TextureList => Self::TextureList(TextureList::parse_expecting(payload, did)?),
             DidKind::Sound => Self::Sound(SoundRecord::parse_expecting(payload, did)?),
+            DidKind::VisualTemplate => {
+                Self::VisualTemplate(VisualTemplate::parse_expecting(payload, did)?)
+            }
+            DidKind::Setup => Self::Setup(Setup::parse_expecting(payload, did)?),
+            DidKind::Appearance => {
+                Self::Appearance(AppearanceRecord::parse_expecting(payload, did)?)
+            }
             _ => return Ok(None),
         }))
     }
@@ -68,6 +84,9 @@ impl<'a> AnyRecord<'a> {
                 | DidKind::RenderSurface
                 | DidKind::TextureList
                 | DidKind::Sound
+                | DidKind::VisualTemplate
+                | DidKind::Setup
+                | DidKind::Appearance
         )
     }
 
@@ -82,6 +101,9 @@ impl<'a> AnyRecord<'a> {
             Self::Surface(r) => r.did(),
             Self::TextureList(r) => r.did(),
             Self::Sound(r) => r.did(),
+            Self::VisualTemplate(r) => r.did(),
+            Self::Setup(r) => r.did(),
+            Self::Appearance(r) => r.did(),
         }
     }
 
@@ -96,6 +118,9 @@ impl<'a> AnyRecord<'a> {
             Self::Surface(_) => Surface::NAME,
             Self::TextureList(_) => TextureList::NAME,
             Self::Sound(_) => SoundRecord::NAME,
+            Self::VisualTemplate(_) => VisualTemplate::NAME,
+            Self::Setup(_) => Setup::NAME,
+            Self::Appearance(_) => AppearanceRecord::NAME,
         }
     }
 }

@@ -24,9 +24,12 @@ use crate::hex::{human_bytes, thousands};
 use crate::history::History;
 use crate::image_ops::{ChannelMask, checkerboard};
 use crate::index::{ArchiveIndex, Indexer};
+use crate::mesh_view::{MeshOptions, MeshSettings, MeshState};
 use crate::persist::{Persist, WINDOW_KEY};
 use crate::query::{DidQuery, parse_query};
+use crate::scene::{SceneDecoder, SceneRequest};
 use crate::search::{Search, SearchResults};
+use crate::viewport::Viewport;
 
 /// What `--screenshot` asks for.
 #[derive(Debug, Clone)]
@@ -35,6 +38,9 @@ pub struct ScreenshotPlan {
     pub path: PathBuf,
     /// Longest wait for the selection before the screenshot is taken anyway.
     pub timeout: Duration,
+    /// The window size asked for (logical pixels); a capture of another size is
+    /// reported as a warning.
+    pub size: Option<[f32; 2]>,
 }
 
 /// Start-up configuration of the explorer.
@@ -57,6 +63,8 @@ pub struct AppConfig {
     pub search: Option<String>,
     /// UI font file (see [`crate::fonts::find_fonts`]).
     pub font: Option<PathBuf>,
+    /// Start-up options of the mesh view.
+    pub mesh: MeshOptions,
 }
 
 /// Exit code when the screenshot timed out waiting for the selection.
@@ -76,6 +84,40 @@ pub fn screenshot_exit_code(saved: bool, open_failed: bool, timed_out: bool) -> 
         (true, false, true) => EXIT_TIMEOUT,
         (true, false, false) => 0,
     }
+}
+
+/// The event-loop set-up of `--screenshot` runs: X11 whenever an X display is set, so a
+/// headless run under `xvfb-run` gets the requested window size even in a Wayland
+/// session (winit prefers Wayland when `WAYLAND_DISPLAY` is set, and the compositor
+/// then chooses the size on the user's desktop).
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+fn screenshot_event_loop() -> Option<eframe::EventLoopBuilderHook> {
+    use winit::platform::x11::EventLoopBuilderExtX11 as _;
+    if std::env::var_os("DISPLAY").is_none_or(|d| d.is_empty()) {
+        return None;
+    }
+    tracing::info!("screenshot mode: using X11 (DISPLAY is set)");
+    Some(Box::new(|b| {
+        b.with_x11();
+    }))
+}
+
+#[cfg(not(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+)))]
+fn screenshot_event_loop() -> Option<eframe::EventLoopBuilderHook> {
+    None
+}
+
+/// Whether a captured image of `captured` physical pixels matches a window asked to be
+/// `requested` logical pixels at `ppp` pixels per point (within a pixel per side).
+#[must_use]
+pub fn capture_matches(captured: [usize; 2], requested: [f32; 2], ppp: f32) -> bool {
+    (0..2).all(|i| ((captured[i] as f32) - requested[i] * ppp).abs() <= 1.5)
 }
 
 /// Frames rendered after the selection is ready before the screenshot is requested.
@@ -114,11 +156,14 @@ pub fn run(config: AppConfig, persist: Persist, size: Option<[f32; 2]>) -> anyho
     {
         viewport = viewport.with_maximized(true);
     }
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
         ..eframe::NativeOptions::default()
     };
+    if config.screenshot.is_some() {
+        options.event_loop_builder = screenshot_event_loop();
+    }
     let exit = Arc::new(AtomicI32::new(0));
     let exit_app = Arc::clone(&exit);
     eframe::run_native(
@@ -159,6 +204,7 @@ pub(crate) struct Stores {
     pub icon: AssetStore<ContextSource, IconDecoder>,
     pub record: AssetStore<ContextSource, RecordDecoder>,
     pub names: AssetStore<ContextSource, NameIndexDecoder>,
+    pub scene: AssetStore<ContextSource, SceneDecoder>,
 }
 
 impl Stores {
@@ -210,6 +256,15 @@ impl Stores {
                 cfg.clone(),
             ),
             names: AssetStore::new(&pool, ContextSource, NameIndexDecoder(Arc::clone(ctx)), cfg),
+            scene: AssetStore::new(
+                &pool,
+                ContextSource,
+                SceneDecoder(Arc::clone(ctx)),
+                StoreConfig {
+                    cache_budget: 768 << 20,
+                    ..StoreConfig::default()
+                },
+            ),
             pool,
         }
     }
@@ -223,6 +278,7 @@ impl Stores {
             + self.icon.poll_completions(256).len()
             + self.record.poll_completions(256).len()
             + self.names.poll_completions(256).len()
+            + self.scene.poll_completions(256).len()
     }
 }
 
@@ -276,10 +332,12 @@ pub(crate) struct Current {
     pub props_filter: String,
     pub record_filter: String,
     pub record_filtered: Option<(String, Vec<usize>)>,
+    /// The mesh view's state.
+    pub mesh: MeshState,
 }
 
 impl Current {
-    fn new(nav: Nav, mask: ChannelMask) -> Self {
+    fn new(nav: Nav, mask: ChannelMask, mesh: MeshState) -> Self {
         Self {
             nav,
             raw: None,
@@ -306,6 +364,7 @@ impl Current {
             props_filter: String::new(),
             record_filter: String::new(),
             record_filtered: None,
+            mesh,
         }
     }
 
@@ -328,6 +387,7 @@ impl Current {
         if let Some(h) = &self.record {
             h.cancel();
         }
+        self.mesh.cancel();
     }
 }
 
@@ -387,6 +447,12 @@ pub struct ExplorerApp {
     pub(crate) last_frame_start: Option<Instant>,
     /// Archive whose tree node should be opened (once).
     pub(crate) tree_open: Option<usize>,
+    /// The mesh view's render thread (started on first use).
+    pub(crate) viewport: Option<Viewport>,
+    /// The mesh view's display settings.
+    pub(crate) mesh_settings: MeshSettings,
+    /// The mesh state of the first selection (from the command line).
+    pub(crate) mesh_start: Option<MeshState>,
 }
 
 impl std::fmt::Debug for ExplorerApp {
@@ -431,6 +497,8 @@ impl ExplorerApp {
             member: None,
             view: config.view.unwrap_or_else(|| ViewKind::default_for(did)),
         });
+        let mesh_settings = config.mesh.settings();
+        let mesh_start = Some(config.mesh.start());
         let mut app = Self {
             egui_ctx,
             config,
@@ -457,6 +525,9 @@ impl ExplorerApp {
             status: None,
             last_frame_start: None,
             tree_open: None,
+            viewport: None,
+            mesh_settings,
+            mesh_start,
         };
         match dir {
             Some(d) => {
@@ -486,6 +557,10 @@ impl ExplorerApp {
     /// (whose entries name archives by their position in that install's set).
     pub(crate) fn open_install(&mut self, dir: PathBuf) {
         self.current = None;
+        if let Some(vp) = &mut self.viewport {
+            // The previous install's scene leaves the render thread too.
+            vp.clear_scene();
+        }
         self.list = ListSource::None;
         self.list_selected = None;
         self.list_scroll_to = None;
@@ -603,7 +678,11 @@ impl ExplorerApp {
         if let Some(old) = self.current.take() {
             old.cancel_all();
         }
-        self.current = Some(Current::new(nav, ChannelMask::RGBA));
+        let mesh = self
+            .mesh_start
+            .take()
+            .unwrap_or_else(|| MeshState::new(SceneRequest::default()));
+        self.current = Some(Current::new(nav, ChannelMask::RGBA, mesh));
     }
 
     pub(crate) fn go_back(&mut self) {
@@ -670,6 +749,9 @@ impl ExplorerApp {
             }
             l.stores.drain();
         }
+        if let Some(v) = &mut self.viewport {
+            v.poll(&self.egui_ctx);
+        }
         if let Some(s) = &self.search
             && let Some(r) = s.poll()
         {
@@ -709,6 +791,7 @@ impl ExplorerApp {
             || self.search.is_some()
             || self.discovering.is_some()
             || self.persist.is_dirty()
+            || self.viewport.as_ref().is_some_and(Viewport::waiting)
             || self.screenshot.as_ref().is_some_and(|s| !s.done)
     }
 
@@ -1346,6 +1429,20 @@ impl ExplorerApp {
         });
         if let Some(image) = shot {
             st.done = true;
+            if let Some(size) = st.plan.size
+                && !capture_matches(image.size, size, ctx.pixels_per_point())
+            {
+                tracing::warn!(
+                    captured_w = image.size[0],
+                    captured_h = image.size[1],
+                    requested_w = size[0],
+                    requested_h = size[1],
+                    ppp = ctx.pixels_per_point(),
+                    "screenshot: the window does not have the requested size (a window \
+                     manager or Wayland compositor chose another; for headless runs use \
+                     xvfb-run with an X display)"
+                );
+            }
             let (path, timed_out) = (st.plan.path.clone(), st.timed_out);
             let exit = Arc::clone(&self.exit_code);
             // Encode off the UI thread; `on_exit` waits for it.
@@ -1427,6 +1524,7 @@ impl ExplorerApp {
             ViewKind::Props => fin(&cur.props),
             ViewKind::Icon => fin(&cur.icon),
             ViewKind::Record => fin(&cur.record),
+            ViewKind::Mesh => crate::mesh_view::mesh_ready(cur, self.viewport.as_ref()),
         }
     }
 
@@ -1776,6 +1874,7 @@ mod tests {
             screenshot: Some(ScreenshotPlan {
                 path: std::env::temp_dir().join("unused.png"),
                 timeout: Duration::from_secs(600),
+                size: None,
             }),
             browse,
             ..AppConfig::default()
@@ -1927,6 +2026,13 @@ mod tests {
         assert!(a.install_guards().contains(&dir));
         assert!(a.capture_ready());
         assert!(!a.browse_step());
+    }
+
+    #[test]
+    fn capture_size_check() {
+        assert!(capture_matches([1600, 900], [1600.0, 900.0], 1.0));
+        assert!(capture_matches([3200, 1800], [1600.0, 900.0], 2.0));
+        assert!(!capture_matches([1007, 691], [1600.0, 900.0], 1.0));
     }
 
     #[test]

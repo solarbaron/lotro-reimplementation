@@ -81,7 +81,8 @@ impl fmt::UpperHex for Did {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Evidence {
     /// Record content is decoded by this crate: by [`crate::AnyRecord`], or, for property
-    /// sets (which need the dictionary as a schema), by [`crate::PropertySetRecord`].
+    /// sets and entity descriptors (which need the dictionary as a schema), by
+    /// [`crate::PropertySetRecord`] and [`crate::EntityDescriptor`].
     Decoded,
     /// Meaning confirmed by a DID-map label.
     Labelled,
@@ -167,10 +168,12 @@ impl LandblockId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DidKind {
-    /// 0x01: setup / model assembly records.
+    /// 0x01: stand-alone collision geometry. Earlier notes called these setups; `setup.md`
+    /// §2.2 shows they are not. Not decoded.
+    CollisionGeometry,
+    /// 0x04: setups (part assemblies with a skeleton tagfile, collision volumes and the part
+    /// list; `setup.md` §6), decoded by [`crate::Setup`].
     Setup,
-    /// 0x04: skeletons.
-    Skeleton,
     /// 0x05: animation clips.
     Animation,
     /// 0x06: meshes.
@@ -189,9 +192,10 @@ pub enum DidKind {
     BlockMapProperties,
     /// 0x1D: key maps.
     KeyMap,
-    /// 0x1F: held-item visual templates.
-    HeldItemTemplate,
-    /// 0x20: appearance / wardrobe records.
+    /// 0x1F: visual templates (`setup.md` §5), decoded by [`crate::VisualTemplate`].
+    VisualTemplate,
+    /// 0x20: appearance / wardrobe records (`setup.md` §8), decoded by
+    /// [`crate::AppearanceRecord`].
     Appearance,
     /// 0x22: UI layouts.
     UiLayout,
@@ -220,8 +224,8 @@ pub enum DidKind {
     RenderSurface,
     /// 0x42: fonts.
     Font,
-    /// 0x47: physics/entity descriptors.
-    PhysicsDescriptor,
+    /// 0x47: entity descriptors (`setup.md` §4), decoded by [`crate::EntityDescriptor`].
+    EntityDescriptor,
     /// 0x51: action maps.
     ActionMap,
     /// 0x56: compiled script library.
@@ -242,13 +246,29 @@ pub enum DidKind {
     Unknown(u8),
 }
 
+/// Former variant names, kept as deprecated aliases so that code written against them
+/// fails with a pointer to the new name. The former `DidKind::Setup` meant 0x01; that name
+/// now means 0x04 (`setup.md` §2.2).
+#[allow(non_upper_case_globals)]
+impl DidKind {
+    /// Former name of [`DidKind::Setup`] (0x04).
+    #[deprecated(note = "renamed to `DidKind::Setup` (0x04 setups)")]
+    pub const Skeleton: Self = Self::Setup;
+    /// Former name of [`DidKind::VisualTemplate`] (0x1F).
+    #[deprecated(note = "renamed to `DidKind::VisualTemplate`")]
+    pub const HeldItemTemplate: Self = Self::VisualTemplate;
+    /// Former name of [`DidKind::EntityDescriptor`] (0x47).
+    #[deprecated(note = "renamed to `DidKind::EntityDescriptor`")]
+    pub const PhysicsDescriptor: Self = Self::EntityDescriptor;
+}
+
 impl DidKind {
     /// Classifies a DID by its high byte.
     #[must_use]
     pub fn of(did: Did) -> Self {
         match did.prefix() {
-            0x01 => Self::Setup,
-            0x04 => Self::Skeleton,
+            0x01 => Self::CollisionGeometry,
+            0x04 => Self::Setup,
             0x05 => Self::Animation,
             0x06 => Self::Mesh,
             0x07 => Self::ScriptTable,
@@ -258,7 +278,7 @@ impl DidKind {
             0x0F => Self::RegionDescriptor,
             0x18 => Self::BlockMapProperties,
             0x1D => Self::KeyMap,
-            0x1F => Self::HeldItemTemplate,
+            0x1F => Self::VisualTemplate,
             0x20 => Self::Appearance,
             0x22 => Self::UiLayout,
             0x23 => Self::EnumMapper,
@@ -273,7 +293,7 @@ impl DidKind {
             0x40 => Self::TextureList,
             0x41 => Self::RenderSurface,
             0x42 => Self::Font,
-            0x47 => Self::PhysicsDescriptor,
+            0x47 => Self::EntityDescriptor,
             0x51 => Self::ActionMap,
             0x56 => Self::ScriptLibrary,
             0x70 => Self::ScriptStateObject,
@@ -300,9 +320,12 @@ impl DidKind {
             | Self::RenderSurface
             | Self::TextureList
             | Self::PropertySet
-            | Self::ObjectPropertySet => Evidence::Decoded,
-            Self::Skeleton
-            | Self::SingletonTable
+            | Self::ObjectPropertySet
+            | Self::Setup
+            | Self::VisualTemplate
+            | Self::Appearance
+            | Self::EntityDescriptor => Evidence::Decoded,
+            Self::SingletonTable
             | Self::RegionDescriptor
             | Self::KeyMap
             | Self::ShaderProgram
@@ -322,8 +345,8 @@ impl DidKind {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
+            Self::CollisionGeometry => "collision geometry",
             Self::Setup => "setup",
-            Self::Skeleton => "skeleton",
             Self::Animation => "animation",
             Self::Mesh => "mesh",
             Self::ScriptTable => "script table",
@@ -333,7 +356,7 @@ impl DidKind {
             Self::RegionDescriptor => "region descriptor",
             Self::BlockMapProperties => "block-map properties",
             Self::KeyMap => "key map",
-            Self::HeldItemTemplate => "held-item template",
+            Self::VisualTemplate => "visual template",
             Self::Appearance => "appearance",
             Self::UiLayout => "UI layout",
             Self::EnumMapper => "enum mapper",
@@ -348,7 +371,7 @@ impl DidKind {
             Self::TextureList => "texture list",
             Self::RenderSurface => "render surface",
             Self::Font => "font",
-            Self::PhysicsDescriptor => "physics descriptor",
+            Self::EntityDescriptor => "entity descriptor",
             Self::ActionMap => "action map",
             Self::ScriptLibrary => "script library",
             Self::ScriptStateObject => "script-state object",

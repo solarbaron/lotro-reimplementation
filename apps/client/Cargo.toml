@@ -1,6 +1,6 @@
 [package]
 name = "tessera-client"
-description = "The Tessera game client: window, frame loop and subsystem wiring"
+description = "The Tessera game client: window, frame loop, subsystem wiring and the offline world walker"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,18 +18,28 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+tessera-assets.workspace = true
 tessera-dat.workspace = true
 tessera-formats.workspace = true
+tessera-input = { workspace = true, features = ["winit"] }
 tessera-install.workspace = true
+tessera-material.workspace = true
+tessera-mesh.workspace = true
 tessera-net.workspace = true
 tessera-render.workspace = true
 tessera-script.workspace = true
+tessera-terrain.workspace = true
+tessera-world.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 winit = "0.30"
+# Public-domain 8 × 8 bitmap glyphs (MIT-licensed crate) for the walker HUD.
+font8x8 = { version = "0.3", default-features = false }
+# Screenshots (`--screenshot`).
+png = "0.18"
 
 [dev-dependencies]
-png = "0.18"
 tempfile = "3"
 
 [lints]

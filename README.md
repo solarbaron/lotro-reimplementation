@@ -30,8 +30,11 @@ for the project's legal position.
 **Milestones M0 (base), M1 (asset browser) and M2 (mesh and material viewer) are
 complete** (exit criteria verified 2026-10-04 against a real install; see
 [ROADMAP M0 status](docs/ROADMAP.md#m0-status), [M1 status](docs/ROADMAP.md#m1-status) and
-[M2 status](docs/ROADMAP.md#m2-status)). **M3 (terrain and offline world walker) is next.**
-Nothing here is playable yet.
+[M2 status](docs/ROADMAP.md#m2-status)). **M3 (terrain and offline world walker) is done on
+Tessera's side** ([M3 status](docs/ROADMAP.md#m3-status)): every criterion passes against
+the data; the comparison with the original client at 20 reference locations awaits the
+owner's in-game readings. **M4 (characters and animation) is next.** Nothing here is
+playable yet: the walker flies and walks over the world offline.
 
 | Area | State |
 |---|---|
@@ -45,7 +48,9 @@ Nothing here is playable yet.
 | `tessera-explorer` GUI asset browser | done (M1) |
 | Mesh records (static and skinned in bind pose), materials (surface → material → textures, feature flags, dye), setup records, mesh pipelines (opaque, alpha-test, alpha-blend, dyeable) | done (M2): 100 % of mesh, material and surface records decode; visual checklist of 74 items in [docs/checklists/m2-visual.md](docs/checklists/m2-visual.md) |
 | `tessera-explorer` 3D view: meshes, setups, objects, wireframe, normals, UV checker, material inspector, dye preview | done (M2) |
-| Offline world walker, characters, UI and plugins, audio, own test server | planned (M3–M7) |
+| Landblock records (heights, block maps, landblock info and static entities, properties and minimap tiles), coordinates and map coordinates, world state (areas, regions) | done (M3): 100 % of 923,545 landblock records decode |
+| Terrain meshing with LODs and seamless normals; `tessera-client` offline world walker (streaming, static objects, area name, map coordinates, `/loc`, minimap, keymap, fly and walk) | done (M3): full-region flight with no frame over 50 ms; crack-free seams over all 390,150 blocks; 20 reference locations match the data (owner's in-game readings pending) |
+| Characters, UI and plugins, audio, own test server | planned (M4–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

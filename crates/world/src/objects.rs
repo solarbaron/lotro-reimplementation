@@ -1,0 +1,352 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Resolving what a static entity places to its setup and part meshes
+//! (`entity-descriptor.md` §4.3, §9; `setup.md` §3.1).
+//!
+//! - A **0x47** physics object is followed through the chain
+//!   0x47 → (0x47)* → 0x1F → (0x1F)* → 0x04 setup → 0x06 parts with
+//!   [`tessera_formats::resolve_setup`] (hop limit and cycle detection included).
+//! - A **0x70** game object (weenie placements) is first mapped to its `PhysObj` 0x47 DID
+//!   through its property set at DID + 0x09000000 (`property-system.md` §6.2).
+//! - The draw-suppression booleans `Render_Draw`, `Render_DrawMeshes` and
+//!   `Render_NeverAddToScene` are looked up on every 0x47 record of the chain; the first
+//!   value found wins (`entity-descriptor.md` §9).
+//!
+//! Results are cached per object DID, so a landblock with thousands of placements of a
+//! few hundred objects reads each chain once. The cache is bounded by entry count and is
+//! shared by every worker.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use tessera_formats::landblock::LandblockPids;
+use tessera_formats::setup::{ENTITY_PREFIX, SETUP_PREFIX, TEMPLATE_PREFIX};
+use tessera_formats::{
+    Did, EntityDescriptor, PropertySchema, PropertySet, PropertySetRecord, PropertyValue,
+    object_property_set_did, resolve_setup,
+};
+
+use crate::source::WorldSource;
+
+/// Default bound of the resolver cache (the install names about 28,000 distinct objects).
+pub const DEFAULT_OBJECT_CACHE_ENTRIES: usize = 65_536;
+
+/// The property IDs the world needs, looked up by name in the property dictionary at run
+/// time.
+#[derive(Debug, Clone, Default)]
+pub struct WorldPids {
+    /// The landblock-family PIDs of `tessera-formats`.
+    pub landblock: LandblockPids,
+    /// `PhysObj`: the 0x47 physics object of a 0x70 game object (§4.3).
+    pub phys_obj: Option<u32>,
+}
+
+impl WorldPids {
+    /// Looks every PID up with `pid_of(name)`.
+    #[must_use]
+    pub fn from_names(pid_of: impl Fn(&str) -> Option<u32>) -> Self {
+        Self {
+            landblock: LandblockPids::from_names(&pid_of),
+            phys_obj: pid_of("PhysObj"),
+        }
+    }
+}
+
+/// An integer-like property value: enum key, int, DID, 32-bit bitfield or boolean.
+#[must_use]
+pub fn value_as_u32(v: &PropertyValue) -> Option<u32> {
+    match v {
+        PropertyValue::Enum(k) | PropertyValue::Bitfield32(k) => Some(*k),
+        PropertyValue::Int(i) => Some(*i as u32),
+        PropertyValue::DidRef(d) => Some(d.0),
+        PropertyValue::Bool(b) => Some(u32::from(*b)),
+        PropertyValue::Int64(i) => u32::try_from(*i).ok(),
+        _ => None,
+    }
+}
+
+/// A boolean-like property value (boolean, or a non-zero integer).
+#[must_use]
+pub fn value_as_bool(v: &PropertyValue) -> Option<bool> {
+    match v {
+        PropertyValue::Bool(b) => Some(*b),
+        PropertyValue::Int(i) => Some(*i != 0),
+        PropertyValue::Enum(k) => Some(*k != 0),
+        _ => None,
+    }
+}
+
+/// A non-null DID reference.
+#[must_use]
+pub fn value_as_did(v: &PropertyValue) -> Option<Did> {
+    match v {
+        PropertyValue::DidRef(d) if !d.is_null() => Some(*d),
+        _ => None,
+    }
+}
+
+/// The draw-suppression properties of `entity-descriptor.md` §9 as found on an entity or
+/// along an object's chain (`None` = not present).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DrawFlags {
+    /// `Render_Draw` (false suppresses).
+    pub render_draw: Option<bool>,
+    /// `Render_DrawMeshes` (false suppresses).
+    pub render_draw_meshes: Option<bool>,
+    /// `Render_NeverAddToScene` (true suppresses).
+    pub never_add_to_scene: Option<bool>,
+}
+
+impl DrawFlags {
+    /// Reads the three properties from a set.
+    #[must_use]
+    pub fn from_set(set: &PropertySet, pids: &LandblockPids) -> Self {
+        let get = |pid: Option<u32>| pid.and_then(|p| set.get(p)).and_then(value_as_bool);
+        Self {
+            render_draw: get(pids.render_draw),
+            render_draw_meshes: get(pids.render_draw_meshes),
+            never_add_to_scene: get(pids.render_never_add_to_scene),
+        }
+    }
+
+    /// Fills the fields still `None` from `other` (first value found wins).
+    #[must_use]
+    pub fn or(self, other: Self) -> Self {
+        Self {
+            render_draw: self.render_draw.or(other.render_draw),
+            render_draw_meshes: self.render_draw_meshes.or(other.render_draw_meshes),
+            never_add_to_scene: self.never_add_to_scene.or(other.never_add_to_scene),
+        }
+    }
+
+    /// Whether these values suppress drawing.
+    #[must_use]
+    pub fn suppressed(&self) -> bool {
+        self.render_draw == Some(false)
+            || self.render_draw_meshes == Some(false)
+            || self.never_add_to_scene == Some(true)
+    }
+}
+
+/// What an object DID resolves to.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ResolvedObject {
+    /// The DID the placement names (0x47, or 0x70 for weenies).
+    pub object: Did,
+    /// The physics object the chain starts at (the object itself, or a 0x70's `PhysObj`).
+    pub physics: Option<Did>,
+    /// Records visited, physics object first, setup last.
+    pub chain: Vec<Did>,
+    /// The 0x04 setup.
+    pub setup: Option<Did>,
+    /// The 0x06 part meshes, drawn in the setup's own frame (`setup.md` §7).
+    pub parts: Arc<[Did]>,
+    /// Draw-suppression values along the chain.
+    pub draw: DrawFlags,
+    /// Why resolution stopped, if it did.
+    pub error: Option<String>,
+}
+
+impl ResolvedObject {
+    /// Whether the object resolved to a setup with at least one part.
+    #[must_use]
+    pub fn has_geometry(&self) -> bool {
+        self.setup.is_some() && !self.parts.is_empty()
+    }
+
+    fn failed(object: Did, physics: Option<Did>, error: String) -> Self {
+        Self {
+            object,
+            physics,
+            error: Some(error),
+            ..Self::default()
+        }
+    }
+
+    /// Approximate heap bytes.
+    #[must_use]
+    pub fn heap_size(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + 4 * (self.chain.capacity() + self.parts.len())
+            + self.error.as_ref().map_or(0, String::capacity)
+    }
+}
+
+/// Counters of an [`ObjectResolver`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ObjectStats {
+    /// Lookups answered from the cache.
+    pub hits: u64,
+    /// Chains resolved.
+    pub resolved: u64,
+    /// Chains that failed.
+    pub failed: u64,
+    /// Entries currently cached.
+    pub cached: usize,
+}
+
+/// Resolves and caches object chains (module docs). `Send + Sync`.
+pub struct ObjectResolver {
+    source: Arc<dyn WorldSource>,
+    schema: Arc<dyn PropertySchema + Send + Sync>,
+    pids: WorldPids,
+    cache: Mutex<HashMap<Did, Arc<ResolvedObject>>>,
+    max_entries: usize,
+    hits: AtomicU64,
+    resolved: AtomicU64,
+    failed: AtomicU64,
+}
+
+impl std::fmt::Debug for ObjectResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectResolver")
+            .field("stats", &self.stats())
+            .field("max_entries", &self.max_entries)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ObjectResolver {
+    /// A resolver reading from `source`, decoding property sets with `schema`.
+    #[must_use]
+    pub fn new(
+        source: Arc<dyn WorldSource>,
+        schema: Arc<dyn PropertySchema + Send + Sync>,
+        pids: WorldPids,
+        max_entries: usize,
+    ) -> Self {
+        Self {
+            source,
+            schema,
+            pids,
+            cache: Mutex::new(HashMap::new()),
+            max_entries: max_entries.max(1),
+            hits: AtomicU64::new(0),
+            resolved: AtomicU64::new(0),
+            failed: AtomicU64::new(0),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<Did, Arc<ResolvedObject>>> {
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Counters.
+    #[must_use]
+    pub fn stats(&self) -> ObjectStats {
+        ObjectStats {
+            hits: self.hits.load(Ordering::Relaxed),
+            resolved: self.resolved.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+            cached: self.lock().len(),
+        }
+    }
+
+    /// Drops every cached result.
+    pub fn clear(&self) {
+        self.lock().clear();
+    }
+
+    /// The cached result for `object`, if any. Never reads.
+    #[must_use]
+    pub fn cached(&self, object: Did) -> Option<Arc<ResolvedObject>> {
+        self.lock().get(&object).cloned()
+    }
+
+    /// Resolves `object` (cached). Never fails: problems are reported in
+    /// [`ResolvedObject::error`].
+    pub fn resolve(&self, object: Did) -> Arc<ResolvedObject> {
+        if let Some(hit) = self.lock().get(&object) {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Arc::clone(hit);
+        }
+        let r = Arc::new(self.resolve_uncached(object));
+        if r.error.is_some() {
+            self.failed.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!(object = %format_args!("{:#010x}", object.0), error = r.error.as_deref().unwrap_or(""), "object did not resolve");
+        } else {
+            self.resolved.fetch_add(1, Ordering::Relaxed);
+        }
+        let mut cache = self.lock();
+        if cache.len() >= self.max_entries {
+            cache.clear();
+        }
+        cache.insert(object, Arc::clone(&r));
+        r
+    }
+
+    fn resolve_uncached(&self, object: Did) -> ResolvedObject {
+        let physics = match object.prefix() {
+            ENTITY_PREFIX | TEMPLATE_PREFIX | SETUP_PREFIX => object,
+            0x70..=0x77 => match self.phys_obj_of(object) {
+                Ok(p) => p,
+                Err(e) => return ResolvedObject::failed(object, None, e),
+            },
+            _ => {
+                return ResolvedObject::failed(
+                    object,
+                    None,
+                    format!("unsupported object prefix {:#04x}", object.prefix()),
+                );
+            }
+        };
+        // Keep the entity-descriptor payloads seen on the way for the draw flags.
+        let mut entities: Vec<(Did, Vec<u8>)> = Vec::new();
+        let fetch = |did: Did| -> Result<Option<Vec<u8>>, tessera_assets::AssetError> {
+            let bytes = self.source.read(did)?;
+            if let Some(b) = &bytes
+                && did.prefix() == ENTITY_PREFIX
+                && entities.len() < tessera_formats::setup::MAX_CHAIN_HOPS + 1
+            {
+                entities.push((did, b.clone()));
+            }
+            Ok(bytes)
+        };
+        let chain = match resolve_setup(physics, fetch) {
+            Ok(c) => c,
+            Err(e) => return ResolvedObject::failed(object, Some(physics), e.to_string()),
+        };
+        let mut draw = DrawFlags::default();
+        for (did, bytes) in &entities {
+            match EntityDescriptor::parse_expecting(bytes, *did, &*self.schema) {
+                Ok(d) => draw = draw.or(DrawFlags::from_set(&d.properties, &self.pids.landblock)),
+                Err(e) => {
+                    tracing::debug!(did = %format_args!("{:#010x}", did.0), error = %e, "entity descriptor properties unreadable");
+                }
+            }
+        }
+        let setup = chain.path.last().copied();
+        ResolvedObject {
+            object,
+            physics: Some(physics),
+            parts: chain.setup.parts.clone().into(),
+            chain: chain.path,
+            setup,
+            draw,
+            error: None,
+        }
+    }
+
+    /// The `PhysObj` of a game object, from its property set at DID + 0x09000000.
+    fn phys_obj_of(&self, object: Did) -> Result<Did, String> {
+        let pid = self
+            .pids
+            .phys_obj
+            .ok_or_else(|| "the dictionary has no PhysObj property".to_owned())?;
+        let set_did = object_property_set_did(object)
+            .ok_or_else(|| "no property-set DID for this object".to_owned())?;
+        let bytes = self
+            .source
+            .read(set_did)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("property set {:#010x} is missing", set_did.0))?;
+        let rec = PropertySetRecord::parse_expecting(&bytes, set_did, &*self.schema)
+            .map_err(|e| e.to_string())?;
+        rec.set
+            .get(pid)
+            .and_then(value_as_did)
+            .ok_or_else(|| "the object has no PhysObj".to_owned())
+    }
+}

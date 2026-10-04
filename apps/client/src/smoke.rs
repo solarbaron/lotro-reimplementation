@@ -55,7 +55,8 @@ pub fn run(args: &Args) -> anyhow::Result<SmokeReport> {
     let mut scene = Scene::new(&mut renderer)?;
 
     // Wait (bounded) for the showcase texture so the run exercises the real-data path.
-    let deadline = Instant::now() + Duration::from_secs(args.data_timeout);
+    let deadline =
+        crate::runtime::deadline_after(Instant::now(), Duration::from_secs(args.data_timeout));
     while !rt.texture_settled() {
         let now = Instant::now();
         if now >= deadline {
@@ -89,17 +90,7 @@ pub fn run(args: &Args) -> anyhow::Result<SmokeReport> {
     let clear_srgb = CLEAR_COLOR.map(linear_to_srgb8);
     let quad_visible = center[..3] != clear_srgb[..3];
     if let Some(path) = &args.smoke_out {
-        let mut installs: Vec<std::path::PathBuf> = args.game_dir.iter().cloned().collect();
-        installs.extend(std::env::var_os(tessera_install::GAME_DIR_ENV).map(Into::into));
-        if let DataStatus::Ready { root, .. } = &rt.status {
-            installs.push(root.clone());
-        }
-        if installs.iter().any(|root| is_inside(path, root)) {
-            bail!(
-                "refusing to write {} inside the game install",
-                path.display()
-            );
-        }
+        crate::runtime::refuse_install_path(args, Some(&rt.status), path)?;
         write_ppm(path, &image).with_context(|| format!("writing {}", path.display()))?;
         tracing::info!(path = %path.display(), "smoke image written");
     }
@@ -160,17 +151,6 @@ pub fn linear_to_srgb8(v: f32) -> u8 {
         1.055 * v.powf(1.0 / 2.4) - 0.055
     };
     (s * 255.0).round().clamp(0.0, 255.0) as u8
-}
-
-/// Whether `path` (which may not exist yet) lies inside `dir`.
-#[must_use]
-pub fn is_inside(path: &Path, dir: &Path) -> bool {
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    canon(parent).starts_with(canon(dir))
 }
 
 /// Binary PPM (P6), alpha dropped. Our own output; never written into the install.

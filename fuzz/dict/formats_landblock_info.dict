@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Format tokens of landblock info and static entity descriptors (docs/specs/landblock.md §4,
+# entity-descriptor.md §3); no game data.
+"\x01\x01\x21\x80"
+"\x9e\x01\x00\x00"
+"\x9e\x05\x00\x00"
+"\xde\x01\x00\x00"
+"\x07\x00\x00\x00"
+"\x3b"
+"\x2c\x00\x00\x00"
+"\x00\x00\x80\x3f"
+"\x00\x00"

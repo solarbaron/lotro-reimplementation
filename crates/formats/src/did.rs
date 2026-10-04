@@ -82,7 +82,9 @@ impl fmt::UpperHex for Did {
 pub enum Evidence {
     /// Record content is decoded by this crate: by [`crate::AnyRecord`], or, for property
     /// sets and entity descriptors (which need the dictionary as a schema), by
-    /// [`crate::PropertySetRecord`] and [`crate::EntityDescriptor`].
+    /// [`crate::PropertySetRecord`] and [`crate::EntityDescriptor`], or, for the landblock
+    /// family and its per-region tables (which need the directory stamp or the dictionary),
+    /// by the [`crate::landblock`] decoders.
     Decoded,
     /// Meaning confirmed by a DID-map label.
     Labelled,
@@ -95,15 +97,17 @@ pub enum Evidence {
 /// Sub-type of a landblock-family DID (prefix 0x80), the K nibble (spec §2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LandblockKind {
-    /// K = 0: terrain heightmap block.
+    /// K = 0: landblock data (heights, terrain surface), decoded by
+    /// [`crate::LandblockData`].
     Heightmap,
-    /// K = 1: block-map indices.
+    /// K = 1: block-map indices, decoded by [`crate::BlockMap`].
     BlockMap,
-    /// K = 2: landblock info (cells, entities, links).
+    /// K = 2: landblock info (cells, entities, links), decoded by [`crate::LandblockInfo`].
     Info,
-    /// K = 4: landblock properties (minimap).
+    /// K = 4: landblock properties (minimap), decoded by [`crate::LandblockProperties`].
     Properties,
-    /// Any other K nibble (5 is observed, meaning unknown).
+    /// Any other K nibble (5 is observed, meaning unknown; its framing is decoded by
+    /// [`crate::LandblockGroupRecord`]).
     Other(u8),
 }
 
@@ -186,9 +190,9 @@ pub enum DidKind {
     EntityData,
     /// 0x0E: singleton tables.
     SingletonTable,
-    /// 0x0F: region descriptors.
+    /// 0x0F: region descriptors, decoded by [`crate::RegionDescriptor`].
     RegionDescriptor,
-    /// 0x18: block-map property descriptors.
+    /// 0x18: block-map property descriptors, decoded by [`crate::BlockMapDescriptor`].
     BlockMapProperties,
     /// 0x1D: key maps.
     KeyMap,
@@ -324,9 +328,16 @@ impl DidKind {
             | Self::Setup
             | Self::VisualTemplate
             | Self::Appearance
-            | Self::EntityDescriptor => Evidence::Decoded,
-            Self::SingletonTable
+            | Self::EntityDescriptor
             | Self::RegionDescriptor
+            | Self::BlockMapProperties
+            | Self::Landblock(
+                LandblockKind::Heightmap
+                | LandblockKind::BlockMap
+                | LandblockKind::Info
+                | LandblockKind::Properties,
+            ) => Evidence::Decoded,
+            Self::SingletonTable
             | Self::KeyMap
             | Self::ShaderProgram
             | Self::Compositor

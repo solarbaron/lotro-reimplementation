@@ -953,6 +953,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "font8x8"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
+
+[[package]]
 name = "foreign-types"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2888,14 +2894,22 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "font8x8",
  "png",
  "tempfile",
+ "tessera-assets",
  "tessera-dat",
  "tessera-formats",
+ "tessera-input",
  "tessera-install",
+ "tessera-material",
+ "tessera-mesh",
  "tessera-net",
  "tessera-render",
  "tessera-script",
+ "tessera-terrain",
+ "tessera-world",
+ "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "winit",
@@ -2966,6 +2980,21 @@ dependencies = [
  "tessera-dat",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "tessera-input"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "glam",
+ "libc",
+ "tempfile",
+ "tessera-settings",
+ "thiserror 2.0.21",
+ "toml",
+ "tracing",
+ "winit",
 ]
 
 [[package]]
@@ -3065,12 +3094,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-terrain"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "proptest",
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-render",
+ "thiserror 2.0.21",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tessera-text"
 version = "0.1.0"
 dependencies = [
  "proptest",
  "tessera-dat",
  "tessera-formats",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-world"
+version = "0.1.0"
+dependencies = [
+ "tessera-assets",
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-props",
+ "tessera-text",
+ "tessera-wstate",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tessera-wstate"
+version = "0.1.0"
+dependencies = [
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-props",
+ "tessera-text",
  "thiserror 2.0.21",
  "tracing",
 ]

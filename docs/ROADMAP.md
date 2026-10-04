@@ -2,7 +2,9 @@
 
 > Status: founding document, written at milestone M0 (2026-10-03). M0, M1 and M2 exit
 > criteria were verified and closed on 2026-10-04 ([M0 status](#m0-status),
-> [M1 status](#m1-status), [M2 status](#m2-status)); M3 is next. Milestones are ordered by
+> [M1 status](#m1-status), [M2 status](#m2-status)). M3 was verified on 2026-10-04
+> ([M3 status](#m3-status)): every criterion passes on Tessera's side; criteria 4 and 5
+> wait only for the owner's readings in the original client. M4 is next. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -409,6 +411,39 @@ provides the avatar.
 5. Area name and map coordinates shown by the walker agree with the original client at
    the same 20 locations.
 6. Synthetic golden image of a generated terrain patch passes.
+
+<a id="m3-status"></a>
+**Status (verified 2026-10-04 against the owner's install, GTX 1070 Ti / Vulkan, release
+builds): criteria 1, 2, 3 and 6 pass; criteria 4 and 5 are data-side ✅, owner observation
+pending.** M3 is complete on Tessera's side and closes when the owner records the original
+client's readings at the 20 reference locations (item
+[O1](checklists/owner-observations.md#o1)). Specs used: `landblock.md`, `coordinates.md`,
+`entity-descriptor.md`, `wlib.md`, `wstate.md`, `keymap.md`, `terrain.md`, `walker.md`;
+none has a blocking `> **OPEN:**` item (water, sky, splat materials, draw distances and the
+map-coordinate rounding rule remain open and are recorded with Tessera's choice).
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-formats --test landblock_real_data` (every record, each with its directory stamp): landblock data 390,150 / 390,150, block maps 390,150 / 390,150, landblock info 49,636 / 49,636 (3,253,862 static entities, 104,271 cells), landblock properties 60,450 / 60,450, kind-5 records 33,159 / 33,159, 5 block-map descriptors and 7 region descriptors decode; 0 failures in any `landblock.md` §9 category, 0 unusual; data and block maps re-encode byte for byte; HM7 0 of 359,949 neighbour pairs differ. |
+| 2 | ✅ | `tessera-client --fly-path … --frame-log` on the GTX 1070 Ti, frame logs re-checked independently: windowed 1920 × 1080 (vsync) across all of region 1 (row 118, 40.6 km at 1,000 m/s): 2,439 frames, longest 21.2 ms, p99 18.0 ms, 0 over 50 ms, peak 386 landblocks / 86.8 MiB bundles (budget 512 MiB), 793 MiB GPU, 716 MiB RSS, no near-ring holes; region 2 diagonal at 3,000 m/s: longest 21.0 ms, peak 118.2 MiB; region 4 row 128 at 2,000 m/s with a 48 MiB budget: longest 21.7 ms, peak 11.6 MiB; headless 1920 × 1080 region 5 diagonal at 2,000 m/s: longest 19.4 ms, peak 57.4 MiB. A binding 32 MiB budget held at 34.9 MiB peak (the always-admitted near ring, `landblock.md` §8.1), still 0 frames over 50 ms. `walker_real_data::flight_across_a_region` (release, full region) and `tessera-world` `stream_straight_line_across_region` (5,355 bundles, 0 failed, update max 0.31 ms, peak 87.5 MiB) pass. Archives were in the page cache. |
+| 3 | ✅ | `cargo test --release -p tessera-terrain` with the install: all 390,150 blocks meshed; every one of the 129,540 east/north neighbour pairs per region (382,536 seams with relief) compared at pseudo-random levels on each side, 0 mismatches in edge vertices, normals or segments; 390,150 stitched covers valid. Synthetic: property tests (`shared_edges_are_identical`, `meshes_cover_the_block`), `neighbour_seams_are_identical_across_lod_transitions`, the walker's `layer_tracks_bundles` seam-signature check. Seven walker screenshots from low grazing angles (eye 2–40 m, pitch −1° to −6°) along and across landblock boundaries and over mixed-LOD mountains in regions 1, 2, 3 and 5 viewed: no cracks or sky-coloured slivers. |
+| 4 | ✅ data-side, owner pending | `cargo test --release -p tessera-client --test reference_locations`: at all 20 locations of [`m3-reference-locations.md`](checklists/m3-reference-locations.md#s4-3) the terrain height (±0.05 m) and the anchor object's SED, scale, yaw, placed bottom corner, bottom and top (±0.1 m) match. One checklist value (M3-10 mesh bottom) was computed over all detail levels; with `mesh.md` §6.1's level-0 bound it is 225.09 m and passes (erratum in the checklist). Two locations viewed in the walker with `--place`. |
+| 5 | ✅ data-side, owner pending | Same test: the map-coordinate string equals the expected value at 20 of 20 (always the round-half-away form), the `/loc` tokens equal the expected ones and parse back to the stand point, and the block map's `Area_DID` is the expected area with a resolved name at 20 of 20. Agreement with the original client needs the owner's readings (O1). |
+| 6 | ✅ | `crates/terrain/tests/golden.rs` (`terrain_patch`, `terrain_lod_wireframe`, 3 × 3 blocks at levels 0–4 with stitched edges): pass on Mesa lavapipe (llvmpipe Vulkan CPU adapter, Mesa 25.2.6) with `TESSERA_REQUIRE_GPU=1` (0 outliers in both images) and on the NVIDIA adapter (0 outliers). |
+
+Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets [--all-features] --locked -D warnings` and on `fuzz/`
+(one `manual_is_multiple_of` lint in `fuzz_targets/formats_landblock_data.rs` fixed),
+`cargo test --workspace` with `TESSERA_GAME_DIR` set (1,435 passed, 0 failed, 2 ignored:
+one machine-specific, one doc example), `cargo doc --workspace --no-deps -D warnings`
+(ten links from public walker docs to private items fixed), `cargo deny check bans licenses
+sources` (both manifests), `tools/fuzz-smoke.sh -t 60` on the 13 M3 targets
+(`formats_block_map`, `formats_landblock_data`, `formats_landblock_info`,
+`formats_landblock_properties`, `terrain_mesh`, `world_bundle`, `world_text`,
+`wstate_library`, `wstate_object`, `input_keymap`, `input_runtime`, `net_sandbox_world`,
+`client_walker_text`; stable libFuzzer, 0.17 M–8.7 M executions each, no finding),
+`tools/check-content.sh` and its self-test, `tools/check-spdx.sh` (0 errors) and the
+relative links and anchors of the Markdown docs all pass.
 
 ---
 

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Syntax tokens of the class library (docs/specs/wlib.md): chunk marker, chunk types,
+# versions, the "no parent" value and value type codes. No game data.
+chunk_marker="\x34\x12\xdc\xfe"
+chunk_class_table="\x10\x00\x00\x00"
+chunk_singletons="\x40\x00\x00\x00"
+chunk_attributes="\x00\x02\x00\x00"
+chunk_parents="\x00\x04\x00\x00"
+version_38="\x26\x00\x00\x00"
+version_30="\x1e\x00\x00\x00"
+no_parent="\xff\xff\xff\xff"
+type_int64="\x82\x00\x00\x00"
+type_double="\xc3\x00\x00\x00"

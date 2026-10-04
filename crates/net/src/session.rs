@@ -33,8 +33,9 @@ use std::time::Instant;
 
 use crate::NetError;
 use crate::model::{
-    CharacterSummary, ChatChannel, DisconnectReason, EntityId, EntityKind, MAX_CHAT_LEN, Transform,
-    Vec3, is_valid_name,
+    Anchor, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason, EntityId,
+    EntityKind, Location, LocationCause, MAX_CHAT_LEN, MAX_NAME_LEN, Placement, Transform, Vec3,
+    is_valid_name, sanitize_text,
 };
 
 /// Something that happened in the world, reported by a backend.
@@ -52,7 +53,8 @@ pub enum Event {
         player: EntityId,
         /// Name of the character that entered.
         name: String,
-        /// Where the player appears.
+        /// Where the player appears (`f32`; backends that know regions follow
+        /// with an [`Event::LocationReport`] carrying the precise position).
         transform: Transform,
     },
     /// An entity came into view.
@@ -67,7 +69,9 @@ pub enum Event {
         transform: Transform,
     },
     /// An entity moved. Also sent for the player when the world source
-    /// corrects the client's position.
+    /// corrects the client's position (backends that know regions follow it
+    /// with an [`Event::LocationReport`] of cause
+    /// [`Corrected`](LocationCause::Corrected) carrying the precise position).
     EntityMoved {
         /// The entity that moved.
         id: EntityId,
@@ -75,6 +79,49 @@ pub enum Event {
         transform: Transform,
         /// Its velocity in metres per second, for extrapolation.
         velocity: Vec3,
+    },
+    /// A static object came into view: scenery placed by the world data
+    /// (buildings, rocks, props), which never moves. Removed again with
+    /// [`Event::EntityDespawned`].
+    StaticSpawned {
+        /// Session-local identifier.
+        id: EntityId,
+        /// The data record that describes the object (a DID), for the client
+        /// to resolve to geometry.
+        object: DataId,
+        /// Where and how it is placed. Always in the player's current region.
+        placement: Placement,
+        /// An opaque value from the world source that lets the client match
+        /// this object with its own copy of the data (for the sandbox, what
+        /// the client's [`WorldSource`](crate::sandbox::world::WorldSource)
+        /// put in [`StaticEntity::tag`](crate::sandbox::world::StaticEntity::tag)).
+        tag: u64,
+    },
+    /// Every static object spawned so far ([`Event::StaticSpawned`]) is gone,
+    /// as if each had been sent an [`Event::EntityDespawned`]. Sent instead of
+    /// one despawn per object when the whole streamed neighbourhood is dropped
+    /// at once (a region change, a far teleport, leaving the grid). Dynamic
+    /// entities are not affected.
+    StaticsCleared,
+    /// The precise, region-qualified position of an entity (so far only the
+    /// player). Sent right after [`Event::WorldEntered`] by backends that know
+    /// regions, after a teleport (followed by an [`Event::EntityMoved`] with
+    /// the same position) and in answer to [`Command::QueryLocation`]. A
+    /// change of region means every [`Transform`] from now on is in the new
+    /// region's frame.
+    LocationReport {
+        /// The entity.
+        id: EntityId,
+        /// Where it is.
+        location: Location,
+        /// Facing in radians.
+        heading: f32,
+        /// The landblock (and cell) that owns the position when its
+        /// coordinates alone do not say (an interior), `None` for an outdoor
+        /// position, which belongs to the block that contains it.
+        anchor: Option<Anchor>,
+        /// Why the report was sent.
+        cause: LocationCause,
     },
     /// An entity left view.
     EntityDespawned {
@@ -110,12 +157,34 @@ pub enum Command {
         character: String,
     },
     /// Report the player's movement.
+    ///
+    /// The position is precise (`f64`) and must be in the player's current
+    /// region (the one of the latest [`Event::LocationReport`]; [`Session`]
+    /// rejects anything else, use [`Command::Teleport`] to change regions).
+    /// After a teleport, the world source ignores moves the client sent
+    /// before it received the [`Event::LocationReport`] of that teleport.
     Move {
-        /// New transform.
-        transform: Transform,
+        /// New position.
+        location: Location,
+        /// New facing in radians (model convention).
+        heading: f32,
         /// Current velocity in metres per second.
         velocity: Vec3,
     },
+    /// Ask to be moved to another place. The world source answers every
+    /// request exactly once: with [`Event::LocationReport`] (cause
+    /// [`Teleported`](LocationCause::Teleported)) or, if it refuses, with a
+    /// system chat line. A request sent while an earlier one is still being
+    /// resolved supersedes it; the earlier one is answered with a system chat
+    /// line saying it was cancelled.
+    Teleport {
+        /// Where to go.
+        destination: Destination,
+    },
+    /// Ask where the player is. Answered with [`Event::LocationReport`]
+    /// (cause [`Requested`](LocationCause::Requested)) and possibly a system
+    /// chat line describing the place.
+    QueryLocation,
     /// Say something.
     Chat {
         /// Channel to use.
@@ -136,6 +205,8 @@ impl Command {
             Self::Connect => "Connect",
             Self::EnterWorld { .. } => "EnterWorld",
             Self::Move { .. } => "Move",
+            Self::Teleport { .. } => "Teleport",
+            Self::QueryLocation => "QueryLocation",
             Self::Chat { .. } => "Chat",
             Self::Disconnect => "Disconnect",
         }
@@ -155,6 +226,14 @@ impl Command {
 pub trait Backend: Send + std::fmt::Debug {
     /// Short human-readable backend name, e.g. `"sandbox"`.
     fn name(&self) -> &str;
+
+    /// The backend as [`Any`](std::any::Any), so [`Session::backend`] can
+    /// hand out its concrete type for diagnostics (streaming counters, test
+    /// doubles). Backends that offer nothing beyond the trait keep the
+    /// default, `None`.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 
     /// Accepts a command. Its effects become visible through later
     /// [`poll`](Backend::poll) calls.
@@ -201,6 +280,10 @@ pub struct Session {
     /// State before `Disconnect` moved the session to `Closing`.
     closing_from: SessionState,
     player: Option<EntityId>,
+    /// The player's last known precise location and heading.
+    player_location: Option<(Location, f32)>,
+    /// The anchor of the player's last known location.
+    player_anchor: Option<Anchor>,
     /// Latest `now` handed to the backend.
     last_now: Option<Instant>,
     scratch: Vec<Event>,
@@ -230,6 +313,8 @@ impl Session {
             state: SessionState::Idle,
             closing_from: SessionState::Idle,
             player: None,
+            player_location: None,
+            player_anchor: None,
             last_now: None,
             scratch: Vec::new(),
         }
@@ -248,10 +333,43 @@ impl Session {
         self.player
     }
 
+    /// The player's last known region-qualified location and heading.
+    ///
+    /// Set by [`Event::LocationReport`] for the player and then kept current
+    /// from accepted [`Command::Move`]s (precise) and [`Event::EntityMoved`]
+    /// corrections for the player (which keep the region; a correction that
+    /// merely repeats the current position keeps its full precision). `None`
+    /// until the backend sent a report (backends without regions may never
+    /// send one) and after [`Event::Disconnected`].
+    #[must_use]
+    pub fn player_location(&self) -> Option<(Location, f32)> {
+        self.player_location
+    }
+
+    /// The anchor (owning landblock and cell) of
+    /// [`player_location`](Self::player_location), from the latest
+    /// [`Event::LocationReport`] for the player. Dropped when the player
+    /// moves to a position the anchor no longer [owns](Anchor::owns), the
+    /// same rule the sandbox applies.
+    #[must_use]
+    pub fn player_anchor(&self) -> Option<Anchor> {
+        self.player_anchor
+    }
+
     /// The wrapped backend's name.
     #[must_use]
     pub fn backend_name(&self) -> &str {
         self.backend.name()
+    }
+
+    /// The wrapped backend as its concrete type `T`, for diagnostics (for
+    /// example [`SandboxBackend::static_stats`](crate::sandbox::SandboxBackend::static_stats)).
+    /// `None` if the backend is not a `T` or does not expose itself through
+    /// [`Backend::as_any`]. Read-only: commands still go through
+    /// [`send`](Self::send).
+    #[must_use]
+    pub fn backend<T: Backend + 'static>(&self) -> Option<&T> {
+        self.backend.as_any()?.downcast_ref::<T>()
     }
 
     /// Validates `command` against the current state and forwards it.
@@ -267,7 +385,10 @@ impl Session {
         let allowed = match &command {
             Command::Connect => self.state == S::Idle,
             Command::EnterWorld { .. } => self.state == S::Connected,
-            Command::Move { .. } | Command::Chat { .. } => self.state == S::InWorld,
+            Command::Move { .. }
+            | Command::Chat { .. }
+            | Command::Teleport { .. }
+            | Command::QueryLocation => self.state == S::InWorld,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
         };
         if !allowed {
@@ -277,14 +398,31 @@ impl Session {
             });
         }
         validate(&command)?;
+        if let (Command::Move { location, .. }, Some((current, _))) =
+            (&command, &self.player_location)
+            && location.region != current.region
+        {
+            return Err(NetError::InvalidCommand(
+                "move into another region; use Teleport",
+            ));
+        }
 
         let next = match &command {
             Command::Connect => S::Connecting,
             Command::EnterWorld { .. } => S::EnteringWorld,
             Command::Disconnect => S::Closing,
-            Command::Move { .. } | Command::Chat { .. } => self.state,
+            _ => self.state,
+        };
+        let moved_to = match &command {
+            Command::Move {
+                location, heading, ..
+            } => Some((*location, *heading)),
+            _ => None,
         };
         self.backend.submit(now, command)?;
+        if let Some((location, heading)) = moved_to {
+            self.track_player(location, heading);
+        }
         if next == S::Closing {
             self.closing_from = self.state;
         }
@@ -315,8 +453,15 @@ impl Session {
     /// ```
     ///
     /// Events that make no sense in the current state, or carry non-finite
-    /// transforms (a backend bug), are dropped with a warning, so consumers
-    /// can trust the ordering and the values.
+    /// transforms or invalid placements (a backend bug), are dropped with a
+    /// warning, so consumers can trust the ordering and the values. Inbound
+    /// text is cleaned the same way outbound text is checked: chat text and
+    /// disconnect reasons are cut to [`MAX_CHAT_LEN`] bytes and names (chat
+    /// senders, tell peers, entity and player names) to [`MAX_NAME_LEN`]
+    /// bytes, with control characters replaced by spaces; characters in
+    /// [`Event::Connected`] whose names fail
+    /// [`is_valid_name`] are dropped from the
+    /// list (which may be empty).
     pub fn poll_into(&mut self, now: Instant, out: &mut Vec<Event>) {
         let now = self.monotonic(now);
         if self.state == SessionState::Closed {
@@ -325,8 +470,14 @@ impl Session {
         let mut raw = std::mem::take(&mut self.scratch);
         raw.clear();
         self.backend.poll(now, &mut raw);
-        for event in raw.drain(..) {
+        for mut event in raw.drain(..) {
             if self.accept(&event) {
+                if clean_text(&mut event) {
+                    tracing::warn!(
+                        backend = self.backend.name(),
+                        "cleaned oversized or control-character text from backend"
+                    );
+                }
                 out.push(event);
             }
         }
@@ -346,6 +497,35 @@ impl Session {
         let now = self.last_now.map_or(now, |last| last.max(now));
         self.last_now = Some(now);
         now
+    }
+
+    /// Moves the tracked player location (keeping its region) and drops an
+    /// anchor that no longer owns it.
+    fn track_player(&mut self, to: Location, to_heading: f32) {
+        if let Some((location, heading)) = &mut self.player_location {
+            *location = Location {
+                region: location.region,
+                ..to
+            };
+            *heading = to_heading;
+            if self.player_anchor.is_some_and(|a| !a.owns(location)) {
+                self.player_anchor = None;
+            }
+        }
+    }
+
+    /// Applies an `f32` correction for the player, keeping full precision
+    /// when it only repeats the current position.
+    fn correct_player(&mut self, transform: Transform) {
+        let Some((location, _)) = self.player_location else {
+            return;
+        };
+        let to = if location.position() == transform.position {
+            location
+        } else {
+            Location::from_position(location.region, transform.position)
+        };
+        self.track_player(to, transform.heading);
     }
 
     /// Entity events are meaningful only once the world was entered.
@@ -396,8 +576,43 @@ impl Session {
             } if !transform.is_finite() || !velocity.is_finite() => {
                 Verdict::Invalid("non-finite transform or velocity")
             }
+            Event::StaticSpawned { placement, .. } if !placement.is_valid() => {
+                Verdict::Invalid("invalid static placement")
+            }
+            Event::LocationReport {
+                location, heading, ..
+            } if !location.is_valid() || !heading.is_finite() => {
+                Verdict::Invalid("invalid location report")
+            }
+            Event::LocationReport {
+                anchor: Some(anchor),
+                location,
+                ..
+            } if !anchor.owns(location) => Verdict::Invalid("anchor does not own the location"),
+            Event::LocationReport {
+                id,
+                location,
+                heading,
+                anchor,
+                ..
+            } => {
+                let verdict = self.world_verdict();
+                if matches!(verdict, Verdict::Surface) && Some(*id) == self.player {
+                    self.player_location = Some((*location, *heading));
+                    self.player_anchor = *anchor;
+                }
+                verdict
+            }
+            Event::EntityMoved { id, transform, .. } => {
+                let verdict = self.world_verdict();
+                if matches!(verdict, Verdict::Surface) && Some(*id) == self.player {
+                    self.correct_player(*transform);
+                }
+                verdict
+            }
             Event::EntitySpawned { .. }
-            | Event::EntityMoved { .. }
+            | Event::StaticSpawned { .. }
+            | Event::StaticsCleared
             | Event::EntityDespawned { .. } => self.world_verdict(),
             Event::ChatMessage { .. } => match self.state {
                 S::Connected | S::EnteringWorld | S::InWorld => Verdict::Surface,
@@ -413,6 +628,8 @@ impl Session {
                 let ok = self.state != S::Closed;
                 self.state = S::Closed;
                 self.player = None;
+                self.player_location = None;
+                self.player_anchor = None;
                 if ok {
                     Verdict::Surface
                 } else {
@@ -454,11 +671,14 @@ fn validate(command: &Command) -> Result<(), NetError> {
             }
         }
         Command::Move {
-            transform,
+            location,
+            heading,
             velocity,
         } => {
-            if !transform.is_finite() || !velocity.is_finite() {
-                return Err(NetError::InvalidCommand("non-finite movement"));
+            if !location.is_valid() || !heading.is_finite() || !velocity.is_finite() {
+                return Err(NetError::InvalidCommand(
+                    "movement not finite or out of range",
+                ));
             }
         }
         Command::Chat { channel, text } => {
@@ -484,7 +704,58 @@ fn validate(command: &Command) -> Result<(), NetError> {
                 _ => {}
             }
         }
-        Command::Connect | Command::Disconnect => {}
+        Command::Teleport { destination } => {
+            if !destination.is_valid() {
+                return Err(NetError::InvalidCommand(
+                    "teleport destination out of range or place name invalid",
+                ));
+            }
+        }
+        Command::Connect | Command::Disconnect | Command::QueryLocation => {}
     }
     Ok(())
+}
+
+/// Replaces `text` with its [`sanitize_text`] form; returns whether it changed.
+fn clean(text: &mut String, max_len: usize) -> bool {
+    match sanitize_text(text, max_len) {
+        std::borrow::Cow::Borrowed(_) => false,
+        std::borrow::Cow::Owned(cleaned) => {
+            *text = cleaned;
+            true
+        }
+    }
+}
+
+/// Cleans every inbound string of `event` (see [`Session::poll_into`]);
+/// returns whether anything changed.
+fn clean_text(event: &mut Event) -> bool {
+    match event {
+        Event::Connected { characters } => {
+            let before = characters.len();
+            characters.retain(|c| is_valid_name(&c.name));
+            characters.len() != before
+        }
+        Event::WorldEntered { name, .. } | Event::EntitySpawned { name, .. } => {
+            clean(name, MAX_NAME_LEN)
+        }
+        Event::ChatMessage {
+            channel,
+            sender,
+            text,
+        } => {
+            let mut changed = clean(text, MAX_CHAT_LEN);
+            if let Some(sender) = sender {
+                changed |= clean(sender, MAX_NAME_LEN);
+            }
+            if let ChatChannel::Tell { peer } = channel {
+                changed |= clean(peer, MAX_NAME_LEN);
+            }
+            changed
+        }
+        Event::Disconnected {
+            reason: DisconnectReason::ServerClosed(why) | DisconnectReason::TransportFailed(why),
+        } => clean(why, MAX_CHAT_LEN),
+        _ => false,
+    }
 }

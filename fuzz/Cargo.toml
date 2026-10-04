@@ -28,6 +28,10 @@ tessera-settings = { path = "../crates/settings" }
 tessera-dattool = { path = "../apps/dattool" }
 tessera-render = { path = "../crates/render" }
 tessera-mesh = { path = "../crates/mesh" }
+tessera-input = { path = "../crates/input" }
+tessera-wstate = { path = "../crates/wstate" }
+tessera-world = { path = "../crates/world" }
+tessera-terrain = { path = "../crates/terrain" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -136,6 +140,13 @@ bench = false
 [[bin]]
 name = "net_session"
 path = "fuzz_targets/net_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_sandbox_world"
+path = "fuzz_targets/net_sandbox_world.rs"
 test = false
 doc = false
 bench = false
@@ -292,6 +303,102 @@ bench = false
 [[bin]]
 name = "explorer_mesh_scene"
 path = "fuzz_targets/explorer_mesh_scene.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-input (docs/specs/keymap.md) ---
+
+[[bin]]
+name = "input_keymap"
+path = "fuzz_targets/input_keymap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "input_runtime"
+path = "fuzz_targets/input_runtime.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-wstate (docs/specs/wlib.md, docs/specs/wstate.md) ---
+
+[[bin]]
+name = "wstate_library"
+path = "fuzz_targets/wstate_library.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_object"
+path = "fuzz_targets/wstate_object.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats landblock family (docs/specs/landblock.md, entity-descriptor.md) ---
+
+[[bin]]
+name = "formats_landblock_data"
+path = "fuzz_targets/formats_landblock_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_landblock_info"
+path = "fuzz_targets/formats_landblock_info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_block_map"
+path = "fuzz_targets/formats_block_map.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_landblock_properties"
+path = "fuzz_targets/formats_landblock_properties.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-terrain (docs/specs/terrain.md) ---
+
+[[bin]]
+name = "terrain_mesh"
+path = "fuzz_targets/terrain_mesh.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-world (docs/specs/coordinates.md, landblock.md §8) ---
+
+[[bin]]
+name = "world_bundle"
+path = "fuzz_targets/world_bundle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_text"
+path = "fuzz_targets/world_text.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-client world walker (apps/client/src/walker/{parse,geometry}.rs, included by path) ---
+
+[[bin]]
+name = "client_walker_text"
+path = "fuzz_targets/client_walker_text.rs"
 test = false
 doc = false
 bench = false

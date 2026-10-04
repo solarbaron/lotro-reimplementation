@@ -1429,6 +1429,7 @@ dependencies = [
  "tessera-dat",
  "tessera-dattool",
  "tessera-formats",
+ "tessera-input",
  "tessera-install",
  "tessera-material",
  "tessera-mesh",
@@ -1437,7 +1438,23 @@ dependencies = [
  "tessera-render",
  "tessera-script",
  "tessera-settings",
+ "tessera-terrain",
  "tessera-text",
+ "tessera-world",
+ "tessera-wstate",
+]
+
+[[package]]
+name = "tessera-input"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "glam",
+ "libc",
+ "tessera-settings",
+ "thiserror",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -1523,11 +1540,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-terrain"
+version = "0.1.0"
+dependencies = [
+ "tessera-formats",
+ "thiserror",
+]
+
+[[package]]
 name = "tessera-text"
 version = "0.1.0"
 dependencies = [
  "tessera-dat",
  "tessera-formats",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-world"
+version = "0.1.0"
+dependencies = [
+ "tessera-assets",
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-props",
+ "tessera-text",
+ "tessera-wstate",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-wstate"
+version = "0.1.0"
+dependencies = [
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-props",
+ "tessera-text",
  "thiserror",
  "tracing",
 ]

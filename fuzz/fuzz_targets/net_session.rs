@@ -16,7 +16,10 @@ use std::time::{Duration, Instant};
 use libfuzzer_sys::arbitrary::{self, Arbitrary};
 use libfuzzer_sys::fuzz_target;
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
-use tessera_net::{ChatChannel, Command, Event, Session, SessionState, Transform, Vec3};
+use tessera_net::{
+    ChatChannel, Command, Destination, Event, Location, RegionId, Session, SessionState, Transform,
+    Vec3,
+};
 
 const MAX_OPS: usize = 256;
 
@@ -47,7 +50,8 @@ enum Op {
     Connect,
     EnterWorld(String),
     Move {
-        pos: [f32; 3],
+        pos: [f64; 3],
+        region: u16,
         heading: f32,
         vel: [f32; 3],
     },
@@ -56,6 +60,13 @@ enum Op {
         text: String,
     },
     Disconnect,
+    QueryLocation,
+    Teleport {
+        pos: [f64; 3],
+        heading: f32,
+        region: u16,
+    },
+    TeleportNamed(String),
     Poll {
         advance_ms: u16,
     },
@@ -85,6 +96,7 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
         latency: Duration::from_millis(u64::from(cfg.latency_ms)),
         echo_chat: cfg.echo_chat,
         max_player_speed: cfg.max_player_speed,
+        ..SandboxConfig::default()
     };
     let Ok(backend) = SandboxBackend::new(config) else {
         return;
@@ -99,8 +111,14 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
         let command = match op {
             Op::Connect => Some(Command::Connect),
             Op::EnterWorld(character) => Some(Command::EnterWorld { character }),
-            Op::Move { pos, heading, vel } => Some(Command::Move {
-                transform: Transform::new(v3(pos), heading),
+            Op::Move {
+                pos,
+                region,
+                heading,
+                vel,
+            } => Some(Command::Move {
+                location: Location::new(RegionId(region % 4), pos[0], pos[1], pos[2]),
+                heading,
                 velocity: v3(vel),
             }),
             Op::Chat { chan, text } => Some(Command::Chat {
@@ -114,6 +132,20 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
                 text,
             }),
             Op::Disconnect => Some(Command::Disconnect),
+            Op::QueryLocation => Some(Command::QueryLocation),
+            Op::Teleport {
+                pos,
+                heading,
+                region,
+            } => Some(Command::Teleport {
+                destination: Destination::Location {
+                    location: Location::new(RegionId(region), pos[0], pos[1], pos[2]),
+                    heading,
+                },
+            }),
+            Op::TeleportNamed(name) => Some(Command::Teleport {
+                destination: Destination::Named(name),
+            }),
             Op::Poll { advance_ms } => {
                 now += Duration::from_millis(u64::from(advance_ms));
                 session.poll_into(now, &mut events);
@@ -133,6 +165,9 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
             match e {
                 Event::WorldEntered { .. } => entered = true,
                 Event::EntitySpawned { .. }
+                | Event::StaticSpawned { .. }
+                | Event::StaticsCleared
+                | Event::LocationReport { .. }
                 | Event::EntityMoved { .. }
                 | Event::EntityDespawned { .. } => {
                     assert!(entered, "entity event before WorldEntered: {e:?}");

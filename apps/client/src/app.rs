@@ -8,7 +8,9 @@ use anyhow::Context as _;
 use tessera_render::{RenderError, Renderer, RendererConfig, wgpu};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{
+    DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -17,6 +19,8 @@ use crate::cli::Args;
 use crate::input::{CameraAction, CameraInput};
 use crate::runtime::{DataStatus, Runtime};
 use crate::scene::{CLEAR_COLOR, Scene, default_camera};
+use crate::walker::hud::TextPanel;
+use crate::walker_host::{WalkerHost, capture, save_png};
 
 /// Pixels of trackpad scrolling that count as one wheel notch.
 const PIXELS_PER_NOTCH: f64 = 40.0;
@@ -56,6 +60,10 @@ struct App {
     frames_since_title: u32,
     frames_total: u64,
     error: Option<anyhow::Error>,
+    /// The world walker (walker mode only).
+    host: Option<WalkerHost>,
+    /// Loading/status text while the walker is not running.
+    status_panel: TextPanel,
 }
 
 fn key_action(code: KeyCode) -> Option<CameraAction> {
@@ -76,12 +84,21 @@ fn key_action(code: KeyCode) -> Option<CameraAction> {
 
 impl App {
     fn new(args: Args) -> anyhow::Result<Self> {
+        if let Some(path) = &args.frame_log {
+            crate::runtime::refuse_install_path(&args, None, path)?;
+        }
         let now = Instant::now();
         let runtime = Runtime::start(&args, now)?;
-        tracing::info!(
-            "controls: drag with left/right mouse or WASD/arrows to orbit, wheel or Q/E to zoom, \
-             R reset, T say hello, P list plugins, Esc quit"
-        );
+        let host = runtime
+            .walker_shared
+            .clone()
+            .map(|shared| WalkerHost::new(&args, shared));
+        if host.is_none() {
+            tracing::info!(
+                "controls: drag with left/right mouse or WASD/arrows to orbit, wheel or Q/E to zoom, \
+                 R reset, T say hello, P list plugins, Esc quit"
+            );
+        }
         Ok(Self {
             args,
             runtime: Some(runtime),
@@ -92,6 +109,8 @@ impl App {
             frames_since_title: 0,
             frames_total: 0,
             error: None,
+            host,
+            status_panel: TextPanel::default(),
         })
     }
 
@@ -113,13 +132,25 @@ impl App {
                 .context("creating the window")?,
         );
         let size = window.inner_size();
+        let walker = self.host.is_some();
         let config = RendererConfig {
             present_mode: if self.args.no_vsync {
                 wgpu::PresentMode::AutoNoVsync
             } else {
                 wgpu::PresentMode::Fifo
             },
-            clear_color: CLEAR_COLOR,
+            clear_color: if walker {
+                crate::walker::SKY
+            } else {
+                CLEAR_COLOR
+            },
+            meshes: if walker {
+                crate::walker::mesh_config(crate::walker::arena_bytes(
+                    &crate::walker_host::walker_config(&self.args),
+                ))
+            } else {
+                tessera_render::MeshConfig::default()
+            },
             ..RendererConfig::default()
         };
         let mut renderer = Renderer::new_windowed(
@@ -143,6 +174,10 @@ impl App {
         let now = Instant::now();
         let dt = now.saturating_duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
+        if self.host.is_some() {
+            self.redraw_walker(event_loop, now, dt);
+            return;
+        }
         let (Some(rt), Some(gfx)) = (self.runtime.as_mut(), self.gfx.as_mut()) else {
             return;
         };
@@ -219,6 +254,150 @@ impl App {
         gfx.window.request_redraw();
     }
 
+    /// One frame of the world walker (or its loading screen).
+    fn redraw_walker(&mut self, event_loop: &ActiveEventLoop, now: Instant, dt: f32) {
+        let (Some(rt), Some(gfx), Some(host)) =
+            (self.runtime.as_mut(), self.gfx.as_mut(), self.host.as_mut())
+        else {
+            return;
+        };
+        let _ = rt.poll_loader();
+        rt.tick(now);
+        let had_walker = host.walker.is_some();
+        host.poll(rt, &mut gfx.renderer);
+        let size = gfx.window.inner_size();
+        let notices = rt.take_notices();
+        let mut quit = false;
+        let mut shot = false;
+        let mut flight_done = false;
+        if let Some(walker) = host.walker.as_mut() {
+            if !had_walker {
+                walker.set_viewport(size.width, size.height);
+                self.status_panel.release(&mut gfx.renderer);
+            }
+            for n in notices {
+                tracing::info!("world: {n}");
+                walker.notice(n);
+            }
+            let ev = walker.update(
+                &mut gfx.renderer,
+                rt.world
+                    .as_mut()
+                    .map(|w| w as &mut dyn crate::walker::WalkerSession),
+                now,
+                dt,
+            );
+            quit = ev.quit;
+            shot = ev.screenshot;
+            flight_done = ev.flight_done;
+        } else {
+            let text = match (&host.failed, &rt.status) {
+                (Some(reason), _) => format!("World walker unavailable: {reason}"),
+                (None, DataStatus::Loading) => "Opening the archives...".to_owned(),
+                (None, _) => "Loading the world...".to_owned(),
+            };
+            self.status_panel
+                .set(&mut gfx.renderer, vec![(text, [240, 240, 235])], 2);
+        }
+        let result = match gfx.renderer.begin_frame() {
+            Ok(Some(mut frame)) => {
+                match host.walker.as_mut() {
+                    Some(walker) => walker.draw(&gfx.renderer, &mut frame),
+                    None => {
+                        frame
+                            .world_pass("loading", &tessera_render::Camera::default())
+                            .clear(crate::walker::SKY);
+                        let pass = frame.pass("loading", tessera_render::PassSpace::Screen);
+                        self.status_panel.draw(pass, 20.0, 20.0);
+                    }
+                }
+                gfx.renderer.end_frame(frame).map(|_| true)
+            }
+            Ok(None) => Ok(false),
+            Err(RenderError::SurfaceLost) => {
+                tracing::warn!("surface lost; recreating it");
+                gfx.renderer
+                    .replace_surface(
+                        Arc::clone(&gfx.window),
+                        size.width.max(1),
+                        size.height.max(1),
+                    )
+                    .map(|()| false)
+            }
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(p) => self.frames_total += u64::from(p),
+            Err(e) => {
+                self.fail(
+                    event_loop,
+                    anyhow::Error::new(e).context("rendering a frame"),
+                );
+                return;
+            }
+        }
+        if shot && let Some(walker) = host.walker.as_mut() {
+            let dir = crate::runtime::data_root(&self.args).join("screenshots");
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let path = dir.join(format!("walker-{stamp}.png"));
+            // The read-back waits for the GPU; encoding and writing go to a thread.
+            if let Err(e) = crate::runtime::refuse_install_path(&self.args, Some(&rt.status), &path)
+            {
+                tracing::warn!("screenshot not saved: {e:#}");
+                walker.notice("screenshot not saved: the data folder is inside the install");
+            } else {
+                match capture(
+                    &mut gfx.renderer,
+                    walker,
+                    (size.width.max(1), size.height.max(1)),
+                ) {
+                    Ok(img) => {
+                        walker.notice(format!("saving screenshot {}", path.display()));
+                        let spawned = std::thread::Builder::new()
+                            .name("tessera-screenshot".into())
+                            .spawn(move || match save_png(&path, &img) {
+                                Ok(()) => {
+                                    tracing::info!(path = %path.display(), "screenshot saved")
+                                }
+                                Err(e) => tracing::warn!("screenshot failed: {e:#}"),
+                            });
+                        if let Err(e) = spawned {
+                            tracing::warn!("screenshot thread: {e}");
+                        }
+                    }
+                    Err(e) => tracing::warn!("screenshot failed: {e:#}"),
+                }
+            }
+        }
+        if quit
+            || flight_done
+            || self
+                .args
+                .exit_after_frames
+                .is_some_and(|n| self.frames_total >= n)
+        {
+            event_loop.exit();
+            return;
+        }
+        let elapsed = now.saturating_duration_since(self.title_at);
+        self.frames_since_title += 1;
+        if elapsed >= TITLE_INTERVAL {
+            let fps = f64::from(self.frames_since_title) / elapsed.as_secs_f64();
+            let place = host
+                .walker
+                .as_ref()
+                .and_then(|w| w.describe())
+                .unwrap_or_else(|| "loading".into());
+            gfx.window
+                .set_title(&format!("Tessera walker - {place} - {fps:.0} fps"));
+            self.title_at = now;
+            self.frames_since_title = 0;
+        }
+        gfx.window.request_redraw();
+    }
+
     fn on_key(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
         let PhysicalKey::Code(code) = event.physical_key else {
             return;
@@ -254,6 +433,23 @@ impl App {
 
     /// Idempotent orderly shutdown.
     fn shutdown(&mut self) {
+        if let (Some(host), Some(gfx)) = (self.host.as_mut(), self.gfx.as_mut())
+            && let Some(mut walker) = host.walker.take()
+        {
+            if let Some(log) = walker.frame_log() {
+                tracing::info!("frame summary: {}", log.summary());
+                let status = self.runtime.as_ref().map(|rt| &rt.status);
+                if let Some(path) = &self.args.frame_log {
+                    match crate::runtime::refuse_install_path(&self.args, status, path)
+                        .and_then(|()| log.write_csv(path).map_err(anyhow::Error::from))
+                    {
+                        Ok(()) => tracing::info!(path = %path.display(), "frame log written"),
+                        Err(e) => tracing::warn!(path = %path.display(), "frame log: {e:#}"),
+                    }
+                }
+            }
+            walker.shutdown(&mut gfx.renderer);
+        }
         if let Some(mut rt) = self.runtime.take() {
             rt.shutdown();
         }
@@ -283,6 +479,33 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let Some(host) = &mut self.host {
+            if let Some(walker) = host.walker.as_mut() {
+                tessera_input::winit_adapter::window_event(&event, |e| walker.input(&e));
+            }
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::Resized(size) => {
+                    if let Some(gfx) = &mut self.gfx {
+                        gfx.renderer.resize(size.width, size.height);
+                        gfx.window.request_redraw();
+                    }
+                    if let Some(w) = host.walker.as_mut() {
+                        w.set_viewport(size.width, size.height);
+                    }
+                }
+                WindowEvent::RedrawRequested => self.redraw(event_loop),
+                WindowEvent::KeyboardInput { event, .. }
+                    if host.walker.is_none()
+                        && event.state == ElementState::Pressed
+                        && event.physical_key == PhysicalKey::Code(KeyCode::Escape) =>
+                {
+                    event_loop.exit();
+                }
+                _ => {}
+            }
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -311,6 +534,12 @@ impl ApplicationHandler for App {
                 self.input.wheel(notches);
             }
             _ => {}
+        }
+    }
+
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let Some(walker) = self.host.as_mut().and_then(|h| h.walker.as_mut()) {
+            tessera_input::winit_adapter::device_event(&event, |e| walker.input(&e));
         }
     }
 

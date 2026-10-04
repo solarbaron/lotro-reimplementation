@@ -33,7 +33,9 @@
 //!
 //! [`AnyRecord::decode`] picks the decoder for a DID's type prefix. Property sets and entity
 //! descriptors need the property dictionary as a schema, so they are decoded with
-//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. The [`decode`] module has one `decode_*(&[u8])` function per decoder, for fuzz
+//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. Landblock records
+//! (prefix 0x80) depend on their directory stamp, and some on the dictionary, so they are
+//! decoded through the [`landblock`] module, not [`AnyRecord`]. The [`decode`] module has one `decode_*(&[u8])` function per decoder, for fuzz
 //! targets and tools. The [`prelude`] brings the [`Record`] trait and the common types
 //! into scope.
 //!
@@ -54,6 +56,7 @@
 //! | [`sound`] | sound records (0x0A) and container sniffing | §9 |
 //! | [`setup`] | entity descriptors (0x47), visual templates (0x1F), setups (0x04), chain resolution | `setup.md` §2–§7 |
 //! | [`appearance`] | appearance records (0x20) | `setup.md` §8 |
+//! | [`landblock`] | landblock data, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties, region descriptors (0x0F) | `landblock.md`, `entity-descriptor.md`, `coordinates.md` |
 
 mod any;
 pub mod appearance;
@@ -63,6 +66,7 @@ pub mod did;
 pub mod did_map;
 pub mod enum_mapper;
 mod error;
+pub mod landblock;
 pub mod property;
 pub mod property_set;
 pub mod reader;
@@ -81,10 +85,13 @@ pub use appearance::{
 };
 pub use bcn::{BcFormat, decode_bcn};
 pub use decode::{
-    decode_appearance, decode_did_map, decode_embedded_property_set, decode_entity_descriptor,
-    decode_entity_header, decode_enum_mapper, decode_property_dictionary, decode_property_set,
-    decode_property_value, decode_setup, decode_sound, decode_string_info, decode_string_table,
-    decode_surface, decode_texture_list, decode_visual_template,
+    decode_appearance, decode_block_map, decode_block_map_descriptor, decode_did_map,
+    decode_embedded_property_set, decode_entity_descriptor, decode_entity_header,
+    decode_enum_mapper, decode_landblock_data, decode_landblock_group, decode_landblock_info,
+    decode_landblock_properties, decode_property_dictionary, decode_property_set,
+    decode_property_value, decode_region_descriptor, decode_setup, decode_sound,
+    decode_string_info, decode_string_table, decode_surface, decode_texture_list,
+    decode_visual_template,
 };
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
@@ -93,6 +100,10 @@ pub use did::{
 pub use did_map::{DataIdEntry, DataIdGroup, DataIdMap};
 pub use enum_mapper::EnumMapper;
 pub use error::{FormatError, Result};
+pub use landblock::{
+    BlockMap, BlockMapDescriptor, LandblockData, LandblockGroupRecord, LandblockInfo,
+    LandblockProperties, RegionDescriptor, StaticEntity,
+};
 pub use property::{
     BitfieldAny, NoSchema, Position, PropertyArray, PropertyDefinition, PropertyDictionary,
     PropertyEntry, PropertySchema, PropertyStruct, PropertyType, PropertyValue, Waveform,
@@ -121,9 +132,10 @@ pub use texture_list::{ChainLevel, TextureList, TextureListKind, cap_chain_resol
 /// The [`Record`] trait plus the record types, for `use tessera_formats::prelude::*`.
 pub mod prelude {
     pub use crate::{
-        AnyRecord, AppearanceRecord, DataIdMap, Did, DidKind, EntityDescriptor, EntityHeader,
-        EnumMapper, FormatError, PropertyDictionary, PropertySchema, PropertySet,
-        PropertySetRecord, PropertyValue, Record, Setup, SoundRecord, StringInfo, StringTable,
+        AnyRecord, AppearanceRecord, BlockMap, BlockMapDescriptor, DataIdMap, Did, DidKind,
+        EntityDescriptor, EntityHeader, EnumMapper, FormatError, LandblockData, LandblockInfo,
+        LandblockProperties, PropertyDictionary, PropertySchema, PropertySet, PropertySetRecord,
+        PropertyValue, Record, RegionDescriptor, Setup, SoundRecord, StringInfo, StringTable,
         Surface, SurfaceFormat, TextureList, VisualTemplate, WaveInfo,
     };
 }

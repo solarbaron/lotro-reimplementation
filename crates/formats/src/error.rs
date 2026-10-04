@@ -190,6 +190,47 @@ pub enum FormatError {
         found: u32,
     },
 
+    /// An index or window stored in the record points outside the structure it indexes
+    /// (for example a terrain layer's triangle window outside its chunk's index list, or a
+    /// grid vertex number ≥ 1,089; `landblock.md` §9 `IndexOutOfRange`).
+    #[error("{what} {index} at offset {offset} is out of range (limit {limit})")]
+    IndexOutOfRange {
+        /// What was being decoded.
+        what: &'static str,
+        /// Offset of the offending field.
+        offset: usize,
+        /// The index (or window end) found.
+        index: u64,
+        /// The exclusive upper bound it had to stay below (or at, for window ends).
+        limit: u64,
+    },
+
+    /// A stored count exceeds an absolute decoder cap (not the remaining-bytes bound, which
+    /// is [`FormatError::Truncated`]); for example the static-entity count above
+    /// [`crate::landblock::MAX_STATIC_ENTITIES`] (`landblock.md` §9 `Limit`).
+    #[error("{what} {count} at offset {offset} exceeds the limit of {limit}")]
+    CountLimit {
+        /// What was being counted.
+        what: &'static str,
+        /// Offset of the count field.
+        offset: usize,
+        /// The stored count.
+        count: u64,
+        /// The decoder's cap.
+        limit: u64,
+    },
+
+    /// Decoding a property set embedded in a larger record failed (`landblock.md` §9
+    /// `PropertySet`). Wraps every failure inside the set once, so census code classifies
+    /// it by structure rather than by the innermost error.
+    #[error("embedded property set at offset {offset}: {source}")]
+    InPropertySet {
+        /// Offset of the set's first byte (its TSize header).
+        offset: usize,
+        /// The underlying failure.
+        source: Box<FormatError>,
+    },
+
     /// A record named by another record does not exist (reference resolvers only).
     #[error("record {from:#010x} names {to:#010x}, which does not exist")]
     DanglingReference {
@@ -224,12 +265,15 @@ pub enum FormatError {
 }
 
 impl FormatError {
-    /// The innermost error, looking through [`FormatError::PropertyValue`] and
-    /// [`FormatError::InRecord`] wrappers.
+    /// The innermost error, looking through [`FormatError::PropertyValue`],
+    /// [`FormatError::InPropertySet`] and [`FormatError::InRecord`] wrappers.
     #[must_use]
     pub fn root_cause(&self) -> &FormatError {
         let mut e = self;
-        while let Self::PropertyValue { source, .. } | Self::InRecord { source, .. } = e {
+        while let Self::PropertyValue { source, .. }
+        | Self::InPropertySet { source, .. }
+        | Self::InRecord { source, .. } = e
+        {
             e = source;
         }
         e

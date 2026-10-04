@@ -39,6 +39,9 @@ pub struct LoaderConfig {
     pub surface: Option<u32>,
     /// Walk every directory tree to count entries.
     pub count_entries: bool,
+    /// Decode the showcase texture (the M0 view). The world walker does not show it, so
+    /// it leaves this off and the loader stops right after opening the archives.
+    pub showcase: bool,
 }
 
 /// A surface decoded to RGBA8, ready for upload.
@@ -279,10 +282,25 @@ fn run(config: &LoaderConfig, ctx: &Ctx) {
         stats,
     });
 
-    // Texture first so the picture appears before the (slower) entry count.
+    if config.showcase {
+        // Texture first so the picture appears before the (slower) entry count.
+        showcase_texture(config, &set, ctx);
+    }
+    if config.count_entries && !ctx.cancelled() {
+        if let Some(n) = log_member_stats(&set, ctx) {
+            ctx.send(LoaderEvent::EntriesCounted(n));
+        }
+    } else {
+        for m in set.members() {
+            log_member(m, None);
+        }
+    }
+}
+
+fn showcase_texture(config: &LoaderConfig, set: &ArchiveSet, ctx: &Ctx) {
     let texture = match config.surface {
-        Some(did) => decode_did(&set, did),
-        None => find_first_surface(&set, ctx),
+        Some(did) => decode_did(set, did),
+        None => find_first_surface(set, ctx),
     };
     match texture {
         Ok(t) => {
@@ -298,16 +316,6 @@ fn run(config: &LoaderConfig, ctx: &Ctx) {
         Err(reason) => {
             tracing::warn!("no showcase texture: {reason}");
             ctx.send(LoaderEvent::NoTexture { reason });
-        }
-    }
-
-    if config.count_entries && !ctx.cancelled() {
-        if let Some(n) = log_member_stats(&set, ctx) {
-            ctx.send(LoaderEvent::EntriesCounted(n));
-        }
-    } else {
-        for m in set.members() {
-            log_member(m, None);
         }
     }
 }
@@ -490,6 +498,7 @@ mod tests {
     fn no_data_mode_reports_and_finishes() {
         let mut loader = DataLoader::spawn(LoaderConfig {
             no_data: true,
+            showcase: true,
             ..LoaderConfig::default()
         })
         .expect("spawn");
@@ -518,5 +527,37 @@ mod tests {
             matches!(first, Some(LoaderEvent::NoData { .. })),
             "{first:?}"
         );
+    }
+
+    /// Walker mode (no showcase, no entry count) against the real install: the loader
+    /// opens the archives and finishes without decoding a texture.
+    #[test]
+    fn walker_mode_only_opens_the_archives() {
+        let Some(dir) = std::env::var_os(tessera_install::GAME_DIR_ENV).filter(|d| !d.is_empty())
+        else {
+            eprintln!("TESSERA_GAME_DIR not set; skipping");
+            return;
+        };
+        let mut loader = DataLoader::spawn(LoaderConfig {
+            game_dir: Some(dir.into()),
+            ..LoaderConfig::default()
+        })
+        .expect("spawn");
+        let mut events = Vec::new();
+        while let Some(ev) = loader.next_timeout(Duration::from_secs(60)) {
+            let done = matches!(ev, LoaderEvent::Finished);
+            events.push(match ev {
+                LoaderEvent::Opened { .. } => "opened",
+                LoaderEvent::NoData { .. } => "no data",
+                LoaderEvent::EntriesCounted(_) => "entries",
+                LoaderEvent::Texture(_) => "texture",
+                LoaderEvent::NoTexture { .. } => "no texture",
+                LoaderEvent::Finished => "finished",
+            });
+            if done {
+                break;
+            }
+        }
+        assert_eq!(events, ["opened", "finished"]);
     }
 }

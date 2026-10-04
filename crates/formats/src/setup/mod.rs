@@ -156,6 +156,83 @@ impl Quaternion {
         std::array::from_fn(|i| (w * w - uu) * v[i] + 2.0 * uv * u[i] + 2.0 * w * c[i])
     }
 
+    /// A pure turn by `yaw` radians about +Z, counter-clockwise seen from above
+    /// (`coordinates.md` §11.3): (cos(ψ/2), 0, 0, sin(ψ/2)).
+    #[must_use]
+    pub fn from_yaw(yaw: f32) -> Self {
+        let (s, c) = (yaw * 0.5).sin_cos();
+        Self {
+            w: c,
+            x: 0.0,
+            y: 0.0,
+            z: s,
+        }
+    }
+
+    /// Euclidean length of the four components (1 for a stored rotation).
+    #[must_use]
+    pub fn length(self) -> f32 {
+        let q = self.to_wxyz();
+        #[allow(clippy::cast_possible_truncation)]
+        let len = q.iter().map(|c| f64::from(*c).powi(2)).sum::<f64>().sqrt() as f32;
+        len
+    }
+
+    /// Whether every component is finite.
+    #[must_use]
+    pub fn is_finite(self) -> bool {
+        self.to_wxyz().iter().all(|c| c.is_finite())
+    }
+
+    /// The active rotation matrix `M` with `M · v = q v q*`, as three rows
+    /// (`coordinates.md` §11.2). Assumes unit length, like [`Quaternion::rotate`].
+    #[must_use]
+    pub fn to_rows(self) -> [[f32; 3]; 3] {
+        let Self { w, x, y, z } = self;
+        [
+            [
+                1.0 - 2.0 * (y * y + z * z),
+                2.0 * (x * y - w * z),
+                2.0 * (x * z + w * y),
+            ],
+            [
+                2.0 * (x * y + w * z),
+                1.0 - 2.0 * (x * x + z * z),
+                2.0 * (y * z - w * x),
+            ],
+            [
+                2.0 * (x * z - w * y),
+                2.0 * (y * z + w * x),
+                1.0 - 2.0 * (x * x + y * y),
+            ],
+        ]
+    }
+
+    /// Whether this is a pure turn about +Z: |x| and |y| at most `eps` (`entity-descriptor.md`
+    /// §4.4 uses 1e-4).
+    #[must_use]
+    pub fn is_pure_yaw(self, eps: f32) -> bool {
+        self.x.abs() <= eps && self.y.abs() <= eps
+    }
+
+    /// Yaw ψ in radians, counter-clockwise seen from above, in (−π, π]: the angle by which
+    /// model +X turns towards +Y, measured on the rotated +X axis projected onto the
+    /// ground plane. For a pure turn this equals 2 · atan2(z, w) (`coordinates.md` §11.3).
+    #[must_use]
+    pub fn yaw(self) -> f32 {
+        let [rx, ry, _] = self.rotate([1.0, 0.0, 0.0]);
+        ry.atan2(rx)
+    }
+
+    /// Compass heading of model +Y in degrees, clockwise from north, in [0, 360):
+    /// (360° − ψ) mod 360° (`coordinates.md` §11.4; the clockwise sense is OPEN there).
+    #[must_use]
+    pub fn heading_degrees(self) -> f32 {
+        let h = (360.0 - self.yaw().to_degrees()).rem_euclid(360.0);
+        // rem_euclid can round up to exactly 360.0 for tiny negative inputs.
+        if h >= 360.0 { 0.0 } else { h }
+    }
+
     pub(crate) fn read(r: &mut Reader<'_>) -> Result<Self> {
         Ok(Self {
             w: r.f32()?,

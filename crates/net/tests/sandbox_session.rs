@@ -5,17 +5,26 @@ use std::time::{Duration, Instant};
 
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::{
-    Backend, ChatChannel, Command, DisconnectReason, EntityId, EntityKind, Event, NetError,
-    Session, SessionState, Transform, Vec3,
+    Backend, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, EntityKind, Event,
+    Location, NetError, RegionId, Session, SessionState, Transform, Vec3,
 };
 
 fn spawn() -> Transform {
     Transform::new(Vec3::new(100.0, -50.0, 12.5), 1.0)
 }
 
+/// A move to `t` in the sandbox's default region.
+fn mv(t: Transform, velocity: Vec3) -> Command {
+    Command::Move {
+        location: Location::from_position(RegionId(0), t.position),
+        heading: t.heading,
+        velocity,
+    }
+}
+
 fn config() -> SandboxConfig {
     SandboxConfig {
-        characters: vec!["Alda".into(), "Bree".into()],
+        characters: vec!["Alda".into(), "Brenna".into()],
         spawn: spawn(),
         wanderers: 3,
         ..SandboxConfig::default()
@@ -33,7 +42,7 @@ fn in_world(t0: Instant) -> (Session, Vec<Event>) {
     s.send(
         t0,
         Command::EnterWorld {
-            character: "Bree".into(),
+            character: "Brenna".into(),
         },
     )
     .unwrap();
@@ -55,13 +64,13 @@ fn full_session_flow() {
         panic!("expected Connected, got {ev:?}");
     };
     let names: Vec<_> = characters.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, ["Alda", "Bree"]);
+    assert_eq!(names, ["Alda", "Brenna"]);
     assert_eq!(s.state(), SessionState::Connected);
 
     s.send(
         t0,
         Command::EnterWorld {
-            character: "Bree".into(),
+            character: "Brenna".into(),
         },
     )
     .unwrap();
@@ -74,7 +83,7 @@ fn full_session_flow() {
     else {
         panic!("expected WorldEntered, got {ev:?}");
     };
-    assert_eq!(name, "Bree");
+    assert_eq!(name, "Brenna");
     assert_eq!(*transform, spawn());
     assert_eq!(s.player(), Some(*player));
     assert_eq!(s.state(), SessionState::InWorld);
@@ -138,7 +147,7 @@ fn full_session_flow() {
         ev,
         vec![Event::ChatMessage {
             channel: ChatChannel::Say,
-            sender: Some("Bree".into()),
+            sender: Some("Brenna".into()),
             text: "hello".into(),
         }]
     );
@@ -163,14 +172,7 @@ fn full_session_flow() {
     // Plausible movement is accepted silently.
     let t3 = t2 + Duration::from_secs(1);
     let step = Transform::new(spawn().position + Vec3::new(5.0, 0.0, 0.0), 0.0);
-    s.send(
-        t3,
-        Command::Move {
-            transform: step,
-            velocity: Vec3::new(5.0, 0.0, 0.0),
-        },
-    )
-    .unwrap();
+    s.send(t3, mv(step, Vec3::new(5.0, 0.0, 0.0))).unwrap();
     let me = s.player();
     assert!(
         s.poll(t3)
@@ -180,14 +182,7 @@ fn full_session_flow() {
 
     // A teleport is corrected back to the last accepted position.
     let tele = Transform::new(Vec3::new(1.0e5, 0.0, 0.0), 0.0);
-    s.send(
-        t3,
-        Command::Move {
-            transform: tele,
-            velocity: Vec3::ZERO,
-        },
-    )
-    .unwrap();
+    s.send(t3, mv(tele, Vec3::ZERO)).unwrap();
     let player = s.player().unwrap();
     let ev: Vec<_> = s.poll(t3);
     assert!(ev.iter().any(|e| matches!(
@@ -217,12 +212,9 @@ fn full_session_flow() {
 fn commands_are_validated() {
     let t0 = Instant::now();
     let mut s = session();
-    let mv = Command::Move {
-        transform: spawn(),
-        velocity: Vec3::ZERO,
-    };
+    let good = mv(spawn(), Vec3::ZERO);
     assert!(matches!(
-        s.send(t0, mv.clone()),
+        s.send(t0, good.clone()),
         Err(NetError::InvalidState {
             command: "Move",
             state: SessionState::Idle
@@ -251,13 +243,22 @@ fn commands_are_validated() {
             channel: ChatChannel::System,
             text: "spoof".into(),
         },
+        mv(
+            Transform::new(Vec3::new(f32::NAN, 0.0, 0.0), 0.0),
+            Vec3::ZERO,
+        ),
+        mv(spawn(), Vec3::new(0.0, f32::INFINITY, 0.0)),
+        mv(Transform::new(Vec3::ZERO, f32::NAN), Vec3::ZERO),
         Command::Move {
-            transform: Transform::new(Vec3::new(f32::NAN, 0.0, 0.0), 0.0),
+            location: Location::new(RegionId(0), 1.0e300, 0.0, 0.0),
+            heading: 0.0,
             velocity: Vec3::ZERO,
         },
+        // The player is in region 0; regions change only by teleport.
         Command::Move {
-            transform: spawn(),
-            velocity: Vec3::new(0.0, f32::INFINITY, 0.0),
+            location: Location::new(RegionId(7), 0.0, 0.0, 0.0),
+            heading: 0.0,
+            velocity: Vec3::ZERO,
         },
         Command::Chat {
             channel: ChatChannel::Tell {
@@ -282,13 +283,13 @@ fn commands_are_validated() {
         s.send(t0, Command::Connect),
         Err(NetError::InvalidState { .. })
     ));
-    s.send(t0, mv).unwrap();
+    s.send(t0, good).unwrap();
 
     // Character names get the same checks as tell recipients.
     let mut s = session();
     s.send(t0, Command::Connect).unwrap();
     let _ = s.poll(t0);
-    for name in ["", "Br\u{0}ee", "a\nb", &"x".repeat(65)] {
+    for name in ["", "Bre\u{0}nna", "a\nb", &"x".repeat(65)] {
         let cmd = Command::EnterWorld {
             character: name.into(),
         };
@@ -445,7 +446,7 @@ fn enter_world_events(s: &mut Session, t: Instant) {
     s.send(
         t,
         Command::EnterWorld {
-            character: "Bree".into(),
+            character: "Brenna".into(),
         },
     )
     .unwrap();
@@ -687,4 +688,135 @@ fn backend_never_sees_time_go_backwards() {
         *nows.lock().unwrap(),
         [t1, t1, t1, t1 + Duration::from_millis(1)]
     );
+}
+
+/// Regression: inbound strings were surfaced unchecked (a hostile server
+/// could push huge lines with line breaks or terminal escapes), and names in
+/// the character list were not checked like outbound names.
+#[test]
+fn session_cleans_inbound_text() {
+    use tessera_net::model::{MAX_CHAT_LEN, MAX_NAME_LEN, is_valid_name};
+    let t0 = Instant::now();
+    let summary = |name: &str| CharacterSummary { name: name.into() };
+    let backend = Scripted {
+        batches: [
+            vec![Event::Connected {
+                characters: vec![
+                    summary("Alda"),
+                    summary("Evil\nName"),
+                    summary(""),
+                    summary(&"n".repeat(MAX_NAME_LEN + 1)),
+                ],
+            }],
+            vec![
+                Event::WorldEntered {
+                    player: EntityId(1),
+                    name: "Al\u{1b}[2Jda".into(),
+                    transform: Transform::default(),
+                },
+                Event::EntitySpawned {
+                    id: EntityId(2),
+                    kind: EntityKind::NonPlayer,
+                    name: "é".repeat(MAX_NAME_LEN),
+                    transform: Transform::default(),
+                },
+                Event::ChatMessage {
+                    channel: ChatChannel::Tell {
+                        peer: "Pe\u{7}er".into(),
+                    },
+                    sender: Some("Se\r\nnder".into()),
+                    text: format!("line1\nline2\u{1b}]0;title\u{7}{}", "x".repeat(300_000)),
+                },
+                Event::ChatMessage {
+                    channel: ChatChannel::Say,
+                    sender: None,
+                    text: "clean".into(),
+                },
+                Event::Disconnected {
+                    reason: DisconnectReason::ServerClosed("bye\n".repeat(1000)),
+                },
+            ],
+        ]
+        .into(),
+        ..Scripted::default()
+    };
+    let mut s = Session::new(backend);
+    s.send(t0, Command::Connect).unwrap();
+    let ev = s.poll(t0);
+    assert_eq!(
+        ev,
+        [Event::Connected {
+            characters: vec![summary("Alda")]
+        }]
+    );
+    s.send(
+        t0,
+        Command::EnterWorld {
+            character: "Alda".into(),
+        },
+    )
+    .unwrap();
+    let ev = s.poll(t0);
+    assert_eq!(ev.len(), 5);
+    let no_control = |t: &str| !t.chars().any(char::is_control);
+    for e in &ev {
+        match e {
+            Event::WorldEntered { name, .. } => assert_eq!(name, "Al [2Jda"),
+            Event::EntitySpawned { name, .. } => {
+                assert!(name.len() <= MAX_NAME_LEN && name.chars().all(|c| c == 'é'));
+            }
+            Event::ChatMessage {
+                channel: ChatChannel::Tell { peer },
+                sender,
+                text,
+            } => {
+                assert!(is_valid_name(peer));
+                assert_eq!(sender.as_deref(), Some("Se  nder"));
+                assert!(text.len() <= MAX_CHAT_LEN && no_control(text));
+                assert!(text.starts_with("line1 line2 ]0;title "));
+            }
+            Event::ChatMessage { text, .. } => assert_eq!(text, "clean"),
+            Event::Disconnected {
+                reason: DisconnectReason::ServerClosed(why),
+            } => assert!(why.len() <= MAX_CHAT_LEN && no_control(why)),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+/// A new account has no characters: the list may be empty and must not be
+/// indexed (the doc examples used `characters[0]`).
+#[test]
+fn empty_character_list_is_surfaced() {
+    let t0 = Instant::now();
+    let backend = Scripted {
+        batches: [vec![Event::Connected { characters: vec![] }]].into(),
+        ..Scripted::default()
+    };
+    let mut s = Session::new(backend);
+    s.send(t0, Command::Connect).unwrap();
+    let mut events = Vec::new();
+    s.poll_into(t0, &mut events);
+    for event in events.drain(..) {
+        if let Event::Connected { characters } = event
+            && let Some(first) = characters.first()
+        {
+            panic!("no characters expected, got {first:?}");
+        }
+    }
+    assert_eq!(s.state(), SessionState::Connected);
+}
+
+/// Regression: a wrapped backend was unreachable, so diagnostics such as the
+/// sandbox's streaming counters needed the backend driven directly.
+#[test]
+fn session_exposes_its_backend_read_only() {
+    let s = session();
+    let sandbox = s.backend::<SandboxBackend>().expect("a sandbox");
+    assert_eq!(sandbox.queued_events(), 0);
+    assert!(sandbox.world_source().is_none());
+    assert!(s.backend::<Chaotic>().is_none());
+    // Backends that keep the default `as_any` are opaque.
+    let s = Session::new(Chaotic);
+    assert!(s.backend::<Chaotic>().is_none());
 }

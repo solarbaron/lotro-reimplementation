@@ -365,10 +365,24 @@ impl Position {
         self.has(Self::OFFSET).then_some(self.offset)
     }
 
-    /// Bit 0x20: orientation quaternion in stored order (component order OPEN).
+    /// Bit 0x20: the orientation's four floats in stored order, which is **(w, x, y, z)**,
+    /// scalar first (`coordinates.md` §11.1). Prefer [`Position::rotation`]: passing this
+    /// array to a math library that expects (x, y, z, w), such as glam's
+    /// `Quat::from_array`, mis-rotates.
     #[must_use]
     pub fn orientation(&self) -> Option<[f32; 4]> {
         self.has(Self::ORIENTATION).then_some(self.orientation)
+    }
+
+    /// Bit 0x20: the orientation as a typed rotation, read in the stored (w, x, y, z) order
+    /// (`coordinates.md` §11.1) and applied as an active rotation from the object's (or
+    /// cell's) frame into the landblock frame (§11.2). The components are returned as
+    /// stored; call [`crate::setup::Quaternion::normalized`] before rotating with a value
+    /// that may not be unit length.
+    #[must_use]
+    pub fn rotation(&self) -> Option<crate::setup::Quaternion> {
+        self.orientation()
+            .map(|[w, x, y, z]| crate::setup::Quaternion { w, x, y, z })
     }
 
     /// Decodes a position at the reader's position.

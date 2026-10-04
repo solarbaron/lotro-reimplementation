@@ -882,3 +882,145 @@ fn any_record_dispatches_by_prefix() {
     // parse_expecting accepts a raw u32 as well as a Did.
     assert!(StringTable::parse_expecting(&table, 0x2500_0009u32).is_ok());
 }
+
+/// The densest landblock records: many minimal static entities, cells, neighbours, links,
+/// weenies, header indices, surface layers, boxes and palette values. Each decodes within
+/// the documented bound or fails with `MemoryLimit`.
+#[test]
+fn landblock_dense_input_is_bounded() {
+    use tessera_formats::landblock::{HeightGrid, LandblockBox, MAX_STATIC_ENTITIES, SurfaceLayer};
+    use tessera_formats::{BlockMapDescriptor, LandblockData, LandblockInfo};
+    let _serial = serial();
+    const INFO: u32 = 0x8021_0101;
+    let schema = |pid: u32| (pid == 0x10).then_some(PropertyType::Bool);
+
+    // Header up to the SED count, with optional cross links / header indices / cells.
+    let info = |flags: u32,
+                parts: &dyn Fn(B) -> B,
+                seds: u32,
+                sed: &dyn Fn(B) -> B,
+                tail: &dyn Fn(B) -> B| {
+        let mut b = parts(B::new().u32(INFO).u32(flags).u32(0)).u32(0).u32(seds);
+        for _ in 0..seds {
+            b = sed(b);
+        }
+        tail(b).build()
+    };
+    let no_tail = |b: B| b.u32(0).tsize(0, 0).u32(0).tsize(0, 0);
+    let n = 200_000u32;
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        (
+            "minimal SEDs",
+            info(0, &|b| b, MAX_STATIC_ENTITIES, &|b| b.u32(0), &no_tail),
+        ),
+        (
+            "SEDs with empty property sets",
+            info(
+                0,
+                &|b| b,
+                MAX_STATIC_ENTITIES,
+                &|b| b.u32(0x80).tsize(0, 0),
+                &no_tail,
+            ),
+        ),
+        (
+            "minimal cells",
+            info(
+                1,
+                &|b| {
+                    let mut b = b.tsize(0, n);
+                    for k in 0..n {
+                        b = b.u16(k as u16).u8(0).u32(0).u32(0).u32(0).u32(0).u32(0);
+                    }
+                    b
+                },
+                0,
+                &|b| b,
+                &no_tail,
+            ),
+        ),
+        (
+            "dense neighbours",
+            info(
+                1,
+                &|b| {
+                    let mut b = b.tsize(0, 1).u16(1).u8(0).u32(0).u32(0).u32(n);
+                    for _ in 0..n {
+                        b = b.u32(0).u16(0).u16(0).u16(0).u16(0).u16(0).u8(0);
+                    }
+                    b.u32(0).u32(0)
+                },
+                0,
+                &|b| b,
+                &no_tail,
+            ),
+        ),
+        (
+            "header indices",
+            info(
+                4,
+                &|b| {
+                    let mut b = b.tsize(0, n);
+                    for _ in 0..n {
+                        b = b.u16(0).u32(0);
+                    }
+                    b
+                },
+                0,
+                &|b| b,
+                &no_tail,
+            ),
+        ),
+        (
+            "minimal links",
+            info(0, &|b| b, 0, &|b| b, &|b| {
+                let mut b = b.u32(n);
+                for _ in 0..n {
+                    b = b.vle(0).u64(0).u64(0).u64(0).u32(0).tsize(0, 0).u8(0);
+                }
+                b.tsize(0, 0).u32(0).tsize(0, 0)
+            }),
+        ),
+        (
+            "minimal weenies",
+            info(0, &|b| b, 0, &|b| b, &|b| {
+                let mut b = b.u32(0).tsize(0, 0).u32(0).tsize(0, n);
+                for _ in 0..n {
+                    b = b.u64(0).tsize(0, 0);
+                }
+                b
+            }),
+        ),
+    ];
+    for (what, data) in cases {
+        let (r, peak) = peak_during(|| LandblockInfo::parse(&data, None, &schema));
+        assert_bounded(what, data.len(), &r, peak);
+    }
+
+    let mut d = LandblockData::from_heights(Did(0x8001_0101), HeightGrid::flat(0));
+    d.terrain.layers = vec![SurfaceLayer::default(); n as usize];
+    d.vertex_flags = Default::default();
+    let mut c = d.clone();
+    c.terrain.layers.clear();
+    c.boxes = Some(vec![LandblockBox::default(); n as usize]);
+    for (what, data) in [("surface layers", d.to_bytes()), ("boxes", c.to_bytes())] {
+        let (r, peak) = peak_during(|| LandblockData::parse(&data, None));
+        assert!(assert_bounded(what, data.len(), &r, peak), "{what}");
+    }
+
+    let mut b = B::new()
+        .u32(0x1800_0000)
+        .u32(0)
+        .tsize(0, 1)
+        .u32(0x10)
+        .u32(0x10)
+        .u32(1)
+        .u8(1)
+        .u32(n);
+    for _ in 0..n {
+        b = b.u32(0x10).u8(1);
+    }
+    let data = b.build();
+    let (r, peak) = peak_during(|| BlockMapDescriptor::parse(&data, &schema));
+    assert_bounded("palette", data.len(), &r, peak);
+}

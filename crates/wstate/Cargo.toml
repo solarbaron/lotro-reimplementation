@@ -1,0 +1,19 @@
+[package]
+name = "tessera-wstate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Script class library (WLib) and object-state (WState) records: decoding, object graphs, area/region/dungeon resolution."
+
+[dependencies]
+tessera-dat.workspace = true
+tessera-formats.workspace = true
+tessera-props.workspace = true
+tessera-text.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

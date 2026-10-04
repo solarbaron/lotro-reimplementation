@@ -27,7 +27,34 @@ fn small_bytes() -> impl Strategy<Value = Vec<u8>> {
     proptest::collection::vec(prop_oneof![0u8..4, any::<u8>()], 0..512)
 }
 
+/// Every PID has a type, so random property sets reach the value decoders.
+fn total(pid: u32) -> Option<PropertyType> {
+    Some(PropertyType::from_code(pid % 24))
+}
+
+fn landblock_decoders(data: &[u8]) {
+    use tessera_formats::{
+        BlockMap, BlockMapDescriptor, LandblockData, LandblockGroupRecord, LandblockInfo,
+        LandblockProperties, RegionDescriptor,
+    };
+    for stamp in [None, Some(20), Some(35), Some(39)] {
+        if let Ok(d) = LandblockData::parse(data, stamp) {
+            let _ = d.first_unusual_field();
+            let _ = d.terrain_height(80.0, 80.0);
+        }
+        if let Ok(i) = LandblockInfo::parse(data, stamp, &total) {
+            let _ = i.first_unusual_field();
+        }
+    }
+    let _ = BlockMap::parse(data).map(|m| m.first_unusual_field());
+    let _ = BlockMapDescriptor::parse(data, &total).map(|d| d.first_unusual_field());
+    let _ = LandblockProperties::parse(data, &total);
+    let _ = LandblockGroupRecord::parse(data).map(|g| g.first_unusual_field());
+    let _ = RegionDescriptor::parse(data).map(|r| r.first_unusual_field());
+}
+
 fn all_decoders(data: &[u8]) {
+    landblock_decoders(data);
     let _ = StringTable::parse(data);
     let _ = StringInfo::parse(data);
     let _ = PropertyDictionary::parse(data);
@@ -68,6 +95,11 @@ proptest! {
     #[test]
     fn small_valued_bytes_never_panic(data in small_bytes()) {
         all_decoders(&data);
+    }
+
+    #[test]
+    fn landblock_tail_never_panics(data in with_prefix(0x80)) {
+        landblock_decoders(&data);
     }
 
     #[test]

@@ -5,11 +5,16 @@
 //! - [`session`]: the [`Backend`] trait and the [`Session`] state machine.
 //!   Poll-based, async-free: call [`Session::poll_into`] once per frame.
 //! - [`model`]: Tessera's neutral world data model (entities, transforms,
-//!   chat), independent of any wire format.
-//! - [`sandbox`]: an in-process fake world for offline development.
+//!   region-qualified locations, static placements, chat), independent of
+//!   any wire format.
+//! - [`sandbox`]: an in-process fake world for offline development. With a
+//!   [`sandbox::WorldSource`] supplied by the client it spawns the player at
+//!   a landblock or named place and serves the static objects around them.
 //! - [`transport`]: a generic reliable-datagram transport of our own design
 //!   (sequence numbers, acks, RTO retransmission, fragmentation) over a
-//!   pluggable [`transport::Datagram`].
+//!   pluggable [`transport::Datagram`]. Like the session it is poll-driven on
+//!   the caller's thread: it spawns no thread and runs no async runtime (the
+//!   threading model of the M7 test-server backend is still to be decided).
 //! - [`compat`]: documentation-only placeholder for a future, legally
 //!   reviewed server-compatibility adapter.
 //!
@@ -27,9 +32,12 @@
 //!     session.poll_into(now, &mut events);
 //!     for event in events.drain(..) {
 //!         match event {
+//!             // The list may be empty (a new account): never index it.
 //!             Event::Connected { characters } => {
-//!                 let character = characters[0].name.clone();
-//!                 session.send(now, Command::EnterWorld { character })?;
+//!                 if let Some(first) = characters.first() {
+//!                     let character = first.name.clone();
+//!                     session.send(now, Command::EnterWorld { character })?;
+//!                 }
 //!             }
 //!             Event::WorldEntered { name, .. } => assert_eq!(name, "Wanderer"),
 //!             _ => {}
@@ -50,6 +58,7 @@ pub mod transport;
 
 pub use error::NetError;
 pub use model::{
-    CharacterSummary, ChatChannel, DisconnectReason, EntityId, EntityKind, Transform, Vec3,
+    Anchor, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason, EntityId,
+    EntityKind, Landblock, Location, LocationCause, Placement, RegionId, Rotation, Transform, Vec3,
 };
 pub use session::{Backend, Command, Event, Session, SessionState};

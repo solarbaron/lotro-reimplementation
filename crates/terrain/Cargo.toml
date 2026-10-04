@@ -1,0 +1,25 @@
+[package]
+name = "tessera-terrain"
+description = "Landblock terrain: heightmap meshing with LODs and stitched seams, seamless normals, height/slope shading, splatting inputs and CPU height queries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tessera-formats.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+# Golden-image test only (tests/golden.rs): renders a synthetic patch through tessera-render.
+# The library itself stays renderer-free (ARCH §3: terrain is L3, render is L4).
+tessera-render.workspace = true
+png = "0.18"
+tracing-subscriber.workspace = true
+# Real-data test only (tests/real_data.rs).
+tessera-dat.workspace = true
+
+[lints]
+workspace = true

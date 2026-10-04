@@ -19,6 +19,10 @@ stable without libFuzzer.
 | `formats_property_set` | `decode_property_set`, `PropertySetRecord::parse`/`parse_prefix`, embedded sets, single values, with a total and a small synthetic schema | `docs/specs/property-system.md` §4-§5 |
 | `formats_texture_list` | texture-list decoding and level selection | `docs/specs/texture-list.md` §2-§5 |
 | `formats_string_table` | string-table message model: pieces, slots, invariant report | `records.md` §3 |
+| `formats_landblock_data` | `LandblockData::parse` with a stamp byte (or none: fallbacks), raw and spliced behind a valid synthetic frame; canonical re-encoding, layer windows, height lookup | `docs/specs/landblock.md` §3 |
+| `formats_landblock_info` | `LandblockInfo::parse` with a stamp byte and a total synthetic schema: cells, static entity descriptors, links, weenies, trailer rule | `landblock.md` §4, `entity-descriptor.md` §3, §10 |
+| `formats_block_map` | `BlockMap`, `BlockMapDescriptor` (total schema), `RegionDescriptor`; resolution of one half of the input against the other | `landblock.md` §5, `environment.md` §3.1 |
+| `formats_landblock_properties` | `LandblockProperties` with synthetic minimap PIDs, kind-5 `LandblockGroupRecord` framing | `landblock.md` §6, §7 |
 | `props_set` | `PropertyRegistry::parse`, `PropertySet::parse_record`/`parse_record_prefix`/`parse_embedded`/`parse_embedded_prefix` with a registry decoded from the same input | `property-system.md` §3-§6 |
 | `text_render` | message grammar and rendering, markup, tag lists and selector options, `${NAME}` format strings and templates, a string-table record rendered through `Strings` | `docs/specs/string-table.md` |
 | `material_icon` | `decode_layer_with_limit` on a surface payload, `compose_images_with_limit` over decoded and synthetic layers | `docs/specs/icon-layers.md` §3 |
@@ -29,6 +33,7 @@ stable without libFuzzer.
 | `net_packet_decode` | datagram decode/encode round trip | `docs/specs/transport-design.md` |
 | `net_endpoint` | reliable endpoint state machine under hostile datagrams | `transport-design.md` |
 | `net_session` | `Session` state machine over the sandbox backend: arbitrary config, invalid commands, stale clocks; event-order invariants | `tessera-net` `session`, `sandbox` |
+| `net_sandbox_world` | Sandbox with a hostile `WorldSource`: arbitrary spawn text, place/height/static answers (non-finite, wrong region, floods), moves, teleports, queries; placement validity and resident-budget invariants | `tessera-net` `sandbox::world` |
 | `install_vdf` | Steam text VDF reader (`parse`, `parse_bytes`), `parse_library_folders`, `parse_app_manifest` | `docs/specs/install-layout.md` §5.3 |
 | `install_config` | `Ini` reader and typed getters, launcher-config `appSettings` reader, third-party launcher TOML subset, `translate_windows_path` | `install-layout.md` §5.6.2, §6, §8.3 |
 | `install_records` | archive-name grammar (canonical round trip), header prefix, 0xFFFF0001/0003/0005 records, `verify_split_set`, schema and content fingerprints | `install-layout.md` §3.1, §3.4, §9 |
@@ -39,6 +44,10 @@ stable without libFuzzer.
 | `render_range_alloc` | the mesh arena's first-fit `RangeAllocator` under alloc / free / bogus-free sequences, checked against a model | `render.md` §2.2 |
 | `mesh_decode` | `Mesh::decode` (stamp rule and look-ahead fallback), `MeshHeader::parse`, `validate`, `level_geometry` under limits, lossless re-encoding; raw records and damaged synthetic meshes | `docs/specs/mesh.md` §3–§14 |
 | `explorer_mesh_scene` | the explorer's mesh-viewer conversions (`apps/explorer/src/geometry.rs`, included by path): a decoded level into renderer streams and `MeshData::prepare`; base-colour/opacity composition, alpha masks, thumbnails, grid cells on consistent and inconsistent images | `mesh.md` §11, `material.md` §11.2, §12.2, `render.md` §2.1 |
+| `input_keymap` | keymap binding strings (`Chord::parse` + display round trip), `Keymap::parse_lenient`/`parse` agreement, serialize/parse round trip, overlay/diff, compiling against the built-in registry | `docs/specs/keymap.md` §5–§7 |
+| `input_runtime` | `InputMapper` under arbitrary event/context/frame streams with the built-in keymap, feeding `IntentLatch`, `FixedTimestep`, `FlyController` and `WalkController` over a hostile height field (NaN/inf/huge heights, teleports) | `keymap.md` §7, §9 |
+| `world_bundle` | `BundleFrame::parse` and `build_bundle` against a synthetic world context: raw frames, and frames with a valid landblock-data record plus fuzzed block map, landblock info and properties; cancellation polls; draw-rule and height invariants | `docs/specs/landblock.md` §8, `entity-descriptor.md` §9 |
+| `world_text` | map-coordinate (`12.3S, 45.6W`) and `/loc` token parsers with format/parse round trips; region-global ↔ block-local ↔ landcell conversions and heading helpers on arbitrary f64s | `docs/specs/coordinates.md` §4, §5, §8, §9, §11 |
 
 ## Running
 

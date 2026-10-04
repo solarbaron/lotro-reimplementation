@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Format tokens of landblock data (docs/specs/landblock.md §3); no game data.
+"\x41\x04\x00\x00"
+"\x21\x01\x00\x00"
+"\x84\x00"
+"\x01\x01\x01\x80"
+"\x01\x01\x21\x80"
+"\x00\x00\x00\x00"
+"\x01"
+"\x28"

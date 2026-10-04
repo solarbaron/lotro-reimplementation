@@ -13,6 +13,10 @@ members = [
     "crates/material",
     "crates/settings",
     "crates/mesh",
+    "crates/world",
+    "crates/terrain",
+    "crates/wstate",
+    "crates/input",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -39,6 +43,10 @@ tessera-assets = { path = "crates/assets" }
 tessera-material = { path = "crates/material" }
 tessera-settings = { path = "crates/settings" }
 tessera-mesh = { path = "crates/mesh" }
+tessera-world = { path = "crates/world" }
+tessera-terrain = { path = "crates/terrain" }
+tessera-wstate = { path = "crates/wstate" }
+tessera-input = { path = "crates/input" }
 
 anyhow = "1"
 bitflags = "2"

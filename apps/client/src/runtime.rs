@@ -2,9 +2,9 @@
 //! Everything the client runs besides presentation: the data loader, the world session and
 //! the plugin host. Shared by the windowed client and `--smoke`.
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Instant;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tessera_dat::ArchiveSet;
 use tessera_install::SearchEnv;
@@ -14,6 +14,7 @@ use crate::data::{ArchiveStats, DataLoader, DecodedTexture, LoaderConfig, Loader
 use crate::net::World;
 use crate::plugins::Plugins;
 use crate::scene::Scene;
+use crate::walker::source::{SourceShared, WalkerSource};
 use tessera_render::Frame;
 
 /// Where the data side currently is.
@@ -44,6 +45,10 @@ pub struct Runtime {
     pub world: Option<World>,
     /// Plugin host.
     pub plugins: Plugins,
+    /// State shared between the world walker and the sandbox (walker sessions only).
+    pub walker_shared: Option<Arc<Mutex<SourceShared>>>,
+    /// System chat lines (sender empty) since the last [`Runtime::take_notices`].
+    notices: Vec<String>,
     character: Option<String>,
     texture_settled: bool,
 }
@@ -60,16 +65,119 @@ pub fn data_root(args: &Args) -> PathBuf {
         .map_or_else(|| PathBuf::from("tessera-data"), |d| d.join("tessera"))
 }
 
+/// `now + wait`, or a far-off instant when that overflows (never panics).
+#[must_use]
+pub fn deadline_after(now: Instant, wait: Duration) -> Instant {
+    now.checked_add(wait)
+        .or_else(|| now.checked_add(Duration::from_secs(100 * 365 * 86_400)))
+        .unwrap_or(now)
+}
+
+/// `path` made absolute, with its deepest existing ancestor resolved (symbolic links,
+/// `..`) and the not-yet-existing rest appended.
+fn resolve_path(path: &Path) -> PathBuf {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().map_or_else(|_| path.to_path_buf(), |d| d.join(path))
+    };
+    let mut rest: Vec<Component<'_>> = Vec::new();
+    let mut cur: &Path = &abs;
+    loop {
+        if let Ok(c) = std::fs::canonicalize(cur) {
+            let mut out = c;
+            for comp in rest.iter().rev() {
+                match comp {
+                    Component::ParentDir => {
+                        out.pop();
+                    }
+                    Component::CurDir => {}
+                    other => out.push(other.as_os_str()),
+                }
+            }
+            return out;
+        }
+        let Some(parent) = cur.parent() else {
+            return abs;
+        };
+        if let Some(c) = cur.components().next_back() {
+            rest.push(c);
+        }
+        cur = parent;
+    }
+}
+
+/// Whether `path` (which may not exist yet) lies inside `dir`.
+#[must_use]
+pub fn is_inside(path: &Path, dir: &Path) -> bool {
+    resolve_path(path).starts_with(resolve_path(dir))
+}
+
+/// Install directories the client must never write into: `--game-dir`,
+/// `TESSERA_GAME_DIR` and, once known, the opened install.
+#[must_use]
+pub fn install_roots(args: &Args, status: Option<&DataStatus>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = args.game_dir.iter().cloned().collect();
+    roots.extend(
+        std::env::var_os(tessera_install::GAME_DIR_ENV)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from),
+    );
+    if let Some(DataStatus::Ready { root, .. }) = status {
+        roots.push(root.clone());
+    }
+    roots
+}
+
+/// Refuses an output path inside the game install (ARCH §1: the install is read-only).
+///
+/// # Errors
+///
+/// When `path` lies inside one of [`install_roots`].
+pub fn refuse_install_path(
+    args: &Args,
+    status: Option<&DataStatus>,
+    path: &Path,
+) -> anyhow::Result<()> {
+    if install_roots(args, status)
+        .iter()
+        .any(|root| is_inside(path, root))
+    {
+        anyhow::bail!(
+            "refusing to write {} inside the game install",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 impl Runtime {
     /// Start the loader thread, the world session and the plugin host.
     pub fn start(args: &Args, now: Instant) -> anyhow::Result<Self> {
+        // The walker shows no showcase texture and needs the disk for streaming: no
+        // texture search and no directory walk then.
+        let walker = args.walker();
         let loader = DataLoader::spawn(LoaderConfig {
             game_dir: args.game_dir.clone(),
             no_data: args.no_data,
             surface: args.surface,
-            count_entries: !args.no_entry_count,
+            count_entries: !args.no_entry_count && !walker,
+            showcase: !walker,
         })?;
-        let world = match World::sandbox(now) {
+        let walker_shared = args.walker().then(|| {
+            Arc::new(Mutex::new(SourceShared {
+                default_region: args.region,
+                ..SourceShared::default()
+            }))
+        });
+        let session = match &walker_shared {
+            Some(shared) => crate::walker_host::sandbox_config(args).and_then(|config| {
+                World::sandbox_with_world(now, config, WalkerSource::new(Arc::clone(shared)))
+                    .map_err(anyhow::Error::from)
+            }),
+            None => World::sandbox(now).map_err(anyhow::Error::from),
+        };
+        let world = match session {
             Ok(w) => Some(w),
             Err(e) => {
                 tracing::error!("world session unavailable: {e}");
@@ -92,6 +200,8 @@ impl Runtime {
             archives: None,
             world,
             plugins,
+            walker_shared,
+            notices: Vec::new(),
             character: None,
             texture_settled: false,
         })
@@ -157,6 +267,9 @@ impl Runtime {
         if let Some(world) = &mut self.world {
             world.update(now);
             for line in world.take_chat() {
+                if line.sender.is_empty() && self.notices.len() < 64 {
+                    self.notices.push(line.text.clone());
+                }
                 self.plugins.chat(&line.sender, &line.text);
             }
             let name = world
@@ -169,6 +282,11 @@ impl Runtime {
             }
         }
         self.plugins.pump();
+    }
+
+    /// System messages from the world session since the last call.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     /// Record the scene plus the world's entities into `frame`.
@@ -196,5 +314,58 @@ impl Runtime {
         }
         self.loader.shutdown();
         tracing::info!("runtime shut down");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    #[test]
+    fn install_paths_are_refused() {
+        let install = tempfile::tempdir().expect("tempdir");
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        let root = install.path().to_str().expect("utf-8");
+        let args = Args::try_parse_from(["t", "--game-dir", root]).expect("args");
+        // Existing and not-yet-existing paths inside, also through `..` and a symlink.
+        for p in [
+            install.path().join("x.png"),
+            install.path().join("new/dir/x.png"),
+            elsewhere.path().join("../").join(
+                install
+                    .path()
+                    .file_name()
+                    .expect("name")
+                    .to_str()
+                    .expect("utf-8"),
+            ),
+        ] {
+            assert!(refuse_install_path(&args, None, &p).is_err(), "{p:?}");
+        }
+        #[cfg(unix)]
+        {
+            let link = elsewhere.path().join("link");
+            std::os::unix::fs::symlink(install.path(), &link).expect("symlink");
+            assert!(refuse_install_path(&args, None, &link.join("y.csv")).is_err());
+        }
+        assert!(refuse_install_path(&args, None, &elsewhere.path().join("x.png")).is_ok());
+        // The discovered install counts too.
+        let plain = Args::try_parse_from(["t"]).expect("args");
+        let status = DataStatus::Ready {
+            root: install.path().to_owned(),
+            stats: crate::data::ArchiveStats::default(),
+        };
+        assert!(refuse_install_path(&plain, Some(&status), &install.path().join("a")).is_err());
+    }
+
+    #[test]
+    fn deadlines_never_overflow() {
+        let now = Instant::now();
+        assert_eq!(
+            deadline_after(now, Duration::from_secs(5)),
+            now + Duration::from_secs(5)
+        );
+        assert!(deadline_after(now, Duration::MAX) > now);
     }
 }

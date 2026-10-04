@@ -12,6 +12,10 @@ use crate::appearance::AppearanceRecord;
 use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::error::Result;
+use crate::landblock::{
+    BlockMap, BlockMapDescriptor, LandblockData, LandblockGroupRecord, LandblockInfo,
+    LandblockProperties, RegionDescriptor,
+};
 use crate::property::{PropertyDictionary, PropertySchema, PropertyType, PropertyValue};
 use crate::property_set::{PropertySet, PropertySetRecord};
 use crate::record::Record;
@@ -119,4 +123,52 @@ pub fn decode_setup(data: &[u8]) -> Result<Setup> {
 /// Decodes an appearance record (prefix 0x20; `setup.md` §8).
 pub fn decode_appearance(data: &[u8]) -> Result<AppearanceRecord> {
     AppearanceRecord::parse(data)
+}
+
+/// Decodes a landblock-data record (`0x800RXXYY`; `landblock.md` §3). `stamp` is the
+/// record's directory stamp; `None` uses the §3.9 fallback.
+pub fn decode_landblock_data(data: &[u8], stamp: Option<u16>) -> Result<LandblockData> {
+    LandblockData::parse(data, stamp)
+}
+
+/// Decodes a landblock-info record (`0x802RXXYY`; `landblock.md` §4) with `schema`
+/// supplying the embedded property sets' types. `stamp` as for [`decode_landblock_data`].
+pub fn decode_landblock_info<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    stamp: Option<u16>,
+    schema: &S,
+) -> Result<LandblockInfo> {
+    LandblockInfo::parse(data, stamp, schema)
+}
+
+/// Decodes a block map (`0x801RXXYY`; `landblock.md` §5.3).
+pub fn decode_block_map(data: &[u8]) -> Result<BlockMap> {
+    BlockMap::parse(data)
+}
+
+/// Decodes a block-map descriptor (prefix 0x18; `landblock.md` §5.2) with `schema`
+/// supplying the palette values' types.
+pub fn decode_block_map_descriptor<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    schema: &S,
+) -> Result<BlockMapDescriptor> {
+    BlockMapDescriptor::parse(data, schema)
+}
+
+/// Decodes a landblock-properties record (`0x804RXXYY`; `landblock.md` §6).
+pub fn decode_landblock_properties<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    schema: &S,
+) -> Result<LandblockProperties> {
+    LandblockProperties::parse(data, schema)
+}
+
+/// Decodes the framing of a kind-5 landblock record (`0x805RXXYY`; `landblock.md` §7).
+pub fn decode_landblock_group(data: &[u8]) -> Result<LandblockGroupRecord> {
+    LandblockGroupRecord::parse(data)
+}
+
+/// Decodes a region descriptor (prefix 0x0F; `environment.md` §3.1).
+pub fn decode_region_descriptor(data: &[u8]) -> Result<RegionDescriptor> {
+    RegionDescriptor::parse(data)
 }

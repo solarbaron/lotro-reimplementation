@@ -111,6 +111,9 @@ pub struct ValidationStats {
     pub largest_stored: u32,
     /// Compressed records fully inflated (only with `inflate_compressed`).
     pub inflated: u64,
+    /// Compressed records not inflated because their stored bytes overlap bytes already
+    /// inflated for another record (only with `inflate_compressed`; see I-20).
+    pub inflate_skipped: u64,
     /// Free extents listed in the free-space table.
     pub free_extents: u64,
     /// Σ (free extent size − 8).
@@ -159,13 +162,15 @@ impl ValidationReport {
         self.counts.get(&invariant).is_some_and(|c| c.0 + c.1 > 0)
     }
 
+    /// Counts one issue and records it while under `cap` per invariant. The message is
+    /// built only when it is recorded, so suppressed issues cost a counter update.
     pub(crate) fn push(
         &mut self,
         cap: usize,
         invariant: u8,
         severity: Severity,
         offset: Option<u64>,
-        message: String,
+        message: impl FnOnce() -> String,
     ) {
         let c = self.counts.entry(invariant).or_default();
         match severity {
@@ -180,7 +185,7 @@ impl ValidationReport {
             invariant,
             severity,
             offset,
-            message,
+            message: message(),
         });
     }
 }
@@ -205,6 +210,11 @@ struct Walk<'a> {
     ranges_overflow: bool,
     /// Set once `dids` reached [`ValidateOptions::max_tracked`].
     dids_overflow: bool,
+    /// Disjoint byte ranges `start → end` of records already inflated (I-23).
+    inflated: BTreeMap<u64, u64>,
+    /// Set once `inflated` would exceed [`ValidateOptions::max_tracked`]; no further
+    /// records are inflated.
+    inflate_overflow: bool,
     last_did: Option<Did>,
     leaf_depth: Option<usize>,
     dids: Option<&'a mut Vec<Did>>,
@@ -212,6 +222,18 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     fn issue(&mut self, inv: u8, sev: Severity, offset: Option<u64>, msg: String) {
+        self.issue_with(inv, sev, offset, || msg);
+    }
+
+    /// Like [`Walk::issue`], but formats the message only if it is kept. Used on the
+    /// per-entry paths, which hostile input can hit millions of times.
+    fn issue_with(
+        &mut self,
+        inv: u8,
+        sev: Severity,
+        offset: Option<u64>,
+        msg: impl FnOnce() -> String,
+    ) {
         let cap = self.opts.max_issues_per_invariant;
         self.report.push(cap, inv, sev, offset, msg);
     }
@@ -332,7 +354,8 @@ impl Walk<'_> {
         let leaf = raw.children.first().is_none_or(ChildPtr::is_null);
         if n == 0 {
             // Only an empty leaf root (an archive without records) is readable; the reader
-            // rejects every other empty node (spec §14 note on the empty root).
+            // rejects every other empty node, interior or leaf (spec §5.4, §14 note on the
+            // empty root).
             let (sev, what) = match (is_root, leaf) {
                 (true, true) => (
                     Severity::Warning,
@@ -412,6 +435,7 @@ impl Walk<'_> {
 
     fn entry(&mut self, e: &Entry) {
         let at = Some(u64::from(e.offset));
+        let did = e.did;
         {
             let s = &mut self.report.stats;
             s.entries += 1;
@@ -436,49 +460,34 @@ impl Walk<'_> {
         if let Some(last) = self.last_did
             && e.did <= last
         {
-            self.issue(
-                15,
-                Severity::Error,
-                at,
-                format!("DID {:#010x} after {last:#010x}", e.did),
-            );
+            self.issue_with(15, Severity::Error, at, || {
+                format!("DID {did:#010x} after {last:#010x}")
+            });
         }
         self.last_did = Some(e.did);
         if e.reserved != 0 {
-            self.issue(
-                16,
-                Severity::Warning,
-                at,
-                format!("DID {:#010x}: reserved field {:#x}", e.did, e.reserved),
-            );
+            let reserved = e.reserved;
+            self.issue_with(16, Severity::Warning, at, || {
+                format!("DID {did:#010x}: reserved field {reserved:#x}")
+            });
         }
-        if e.flags & !3 != 0 {
-            self.issue(
-                17,
-                Severity::Error,
-                at,
-                format!("DID {:#010x}: unknown flag bits {:#06x}", e.did, e.flags),
-            );
-        } else if e.flags != 2 && e.flags != 3 {
-            self.issue(
-                17,
-                Severity::Warning,
-                at,
-                format!("DID {:#010x}: flags {}", e.did, e.flags),
-            );
+        let flags = e.flags;
+        if flags & !3 != 0 {
+            self.issue_with(17, Severity::Error, at, || {
+                format!("DID {did:#010x}: unknown flag bits {flags:#06x}")
+            });
+        } else if flags != 2 && flags != 3 {
+            self.issue_with(17, Severity::Warning, at, || {
+                format!("DID {did:#010x}: flags {flags}")
+            });
         }
         let len = self.a.file_len();
         let start = u64::from(e.offset);
         if start < HEADER_LEN || start + u64::from(e.alloc_size) > len {
-            self.issue(
-                18,
-                Severity::Error,
-                at,
-                format!(
-                    "DID {:#010x}: first extent {:#x}+{:#x} out of range",
-                    e.did, e.offset, e.alloc_size
-                ),
-            );
+            let (offset, alloc) = (e.offset, e.alloc_size);
+            self.issue_with(18, Severity::Error, at, || {
+                format!("DID {did:#010x}: first extent {offset:#x}+{alloc:#x} out of range")
+            });
             return;
         }
         let fresh = if self.records_seen.len() < cap {
@@ -491,31 +500,23 @@ impl Walk<'_> {
             // the (possibly large) fragment table again. Re-walking it for every entry would
             // make validation cost entries × fragments on hostile input.
             self.report.stats.tiling_overlaps += 1;
-            self.issue(
-                20,
-                Severity::Error,
-                at,
-                format!(
-                    "DID {:#010x}: first extent {:#x} is shared with another record",
-                    e.did, e.offset
-                ),
-            );
+            let offset = e.offset;
+            self.issue_with(20, Severity::Error, at, || {
+                format!("DID {did:#010x}: first extent {offset:#x} is shared with another record")
+            });
             return;
         }
         let (layout, hdr) = match self.a.layout_and_header(e.offset, e.alloc_size) {
             Ok(x) => x,
             Err(err) => {
-                let what = if matches!(err, Error::UnsupportedLegacyLayout { .. }) {
-                    "legacy chained layout (disabled)".to_string()
-                } else {
-                    err.to_string()
-                };
-                self.issue(
-                    18,
-                    Severity::Error,
-                    at,
-                    format!("DID {:#010x}: {what}", e.did),
-                );
+                self.issue_with(18, Severity::Error, at, || {
+                    let what = if matches!(err, Error::UnsupportedLegacyLayout { .. }) {
+                        "legacy chained layout (disabled)".to_string()
+                    } else {
+                        err.to_string()
+                    };
+                    format!("DID {did:#010x}: {what}")
+                });
                 // Account for the first extent so tiling does not report a spurious gap.
                 self.range(start, u64::from(e.alloc_size), RangeKind::Record);
                 return;
@@ -524,26 +525,20 @@ impl Walk<'_> {
         match &layout {
             RecordLayout::Legacy { .. } => {
                 self.report.stats.legacy += 1;
-                self.issue(
-                    18,
-                    Severity::Warning,
-                    at,
-                    format!("DID {:#010x}: legacy chained layout {hdr:?}", e.did),
-                );
+                self.issue_with(18, Severity::Warning, at, || {
+                    format!("DID {did:#010x}: legacy chained layout {hdr:?}")
+                });
             }
             RecordLayout::Modern { fragments, .. } => {
                 let f = fragments.len();
                 if f == 0 {
                     if u64::from(e.alloc_size) < u64::from(e.length) + 8 {
-                        self.issue(
-                            18,
-                            Severity::Error,
-                            at,
+                        let (alloc, length) = (e.alloc_size, e.length);
+                        self.issue_with(18, Severity::Error, at, || {
                             format!(
-                                "DID {:#010x}: allocation {} too small for length {}",
-                                e.did, e.alloc_size, e.length
-                            ),
-                        );
+                                "DID {did:#010x}: allocation {alloc} too small for length {length}"
+                            )
+                        });
                     } else {
                         let rule = u64::from(self.a.header().min_alloc)
                             .max((u64::from(e.length) + 8).div_ceil(4) * 4);
@@ -555,43 +550,99 @@ impl Walk<'_> {
                     let s = &mut self.report.stats;
                     s.fragmented += 1;
                     s.max_fragments = s.max_fragments.max(f);
+                    // One I-19 issue per record, however many fragments are out of range:
+                    // a record may list thousands of them.
+                    let mut bad = 0usize;
+                    let mut first_bad = None;
                     for (i, fr) in fragments.iter().enumerate() {
                         let o = u64::from(fr.offset);
                         if o < HEADER_LEN || o + u64::from(fr.length) > len {
-                            self.issue(
-                                19,
-                                Severity::Error,
-                                at,
-                                format!("DID {:#010x}: fragment {i} out of range", e.did),
-                            );
+                            bad += 1;
+                            first_bad.get_or_insert(i);
                         }
+                    }
+                    if let Some(i) = first_bad {
+                        self.issue_with(19, Severity::Error, at, || {
+                            format!(
+                                "DID {did:#010x}: {bad} of {f} fragments out of range (first: \
+                                 fragment {i})"
+                            )
+                        });
                     }
                 }
             }
         }
         if layout.capacity() < u64::from(e.length) {
-            self.issue(
-                19,
-                Severity::Error,
-                at,
-                format!(
-                    "DID {:#010x}: extents hold {} bytes, length is {}",
-                    e.did,
-                    layout.capacity(),
-                    e.length
-                ),
-            );
+            let (capacity, length) = (layout.capacity(), e.length);
+            self.issue_with(19, Severity::Error, at, || {
+                format!("DID {did:#010x}: extents hold {capacity} bytes, length is {length}")
+            });
         }
-        for (o, l) in layout.extents() {
+        let extents = layout.extents();
+        for &(o, l) in &extents {
             if o >= HEADER_LEN && o + l <= len {
                 self.range(o, l, RangeKind::Record);
             }
         }
         if self.opts.inflate_compressed && e.is_compressed() {
-            match self.a.read_entry(e) {
-                Ok(_) => self.report.stats.inflated += 1,
-                Err(err) => self.issue(23, Severity::Error, at, err.to_string()),
-            }
+            self.inflate(e, &extents);
+        }
+    }
+
+    /// I-23: inflates one compressed record, unless its stored bytes overlap bytes that
+    /// were already inflated for another record (or for itself).
+    ///
+    /// Without this check a hostile archive could point many small entries at one large
+    /// stream and make the validator inflate it once per entry. Overlap is an I-20 error
+    /// in its own right (spec §4.6); the skipped record gets an I-23 warning. Inflation
+    /// work is so bounded by the compression ratio times the file length.
+    fn inflate(&mut self, e: &Entry, extents: &[(u64, u64)]) {
+        let at = Some(u64::from(e.offset));
+        let did = e.did;
+        if self.inflate_overflow {
+            return;
+        }
+        let mut own: Vec<(u64, u64)> = extents
+            .iter()
+            .filter(|&&(_, l)| l > 0)
+            .map(|&(o, l)| (o, o.saturating_add(l)))
+            .collect();
+        own.sort_unstable();
+        let self_overlap = own.windows(2).any(|w| match w {
+            [a, b] => b.0 < a.1,
+            _ => false,
+        });
+        let shared = self_overlap
+            || own.iter().any(|&(s, end)| {
+                self.inflated
+                    .range(..end)
+                    .next_back()
+                    .is_some_and(|(_, &prev_end)| prev_end > s)
+            });
+        if shared {
+            self.report.stats.inflate_skipped += 1;
+            self.issue_with(23, Severity::Warning, at, || {
+                format!(
+                    "DID {did:#010x}: not inflated, its stored bytes overlap bytes already \
+                     inflated (see I-20)"
+                )
+            });
+            return;
+        }
+        if self.inflated.len().saturating_add(own.len()) > self.opts.max_tracked {
+            self.inflate_overflow = true;
+            let max = self.opts.max_tracked;
+            self.issue_with(23, Severity::Warning, None, || {
+                format!("inflate check stopped: more than {max} inflated extents tracked")
+            });
+            return;
+        }
+        for (s, end) in own {
+            self.inflated.insert(s, end);
+        }
+        match self.a.read_entry(e) {
+            Ok(_) => self.report.stats.inflated += 1,
+            Err(err) => self.issue_with(23, Severity::Error, at, || err.to_string()),
         }
     }
 
@@ -797,6 +848,8 @@ impl Archive {
             ranges: Vec::new(),
             ranges_overflow: false,
             dids_overflow: false,
+            inflated: BTreeMap::new(),
+            inflate_overflow: false,
             last_did: None,
             leaf_depth: None,
             dids,

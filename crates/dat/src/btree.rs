@@ -133,6 +133,12 @@ impl Archive {
             if used.iter().any(|c| !c.is_null()) {
                 return Err(Error::corrupt(at, "leaf node has non-zero child pointers"));
             }
+            // Spec §5.4 / §14: only the root of an archive without records may be empty.
+            // A non-root leaf with n = 0 has lost its count; reading it as empty would
+            // silently hide every DID it held.
+            if n == 0 && ptr != self.root() {
+                return Err(Error::corrupt(at, "non-root node has no entries"));
+            }
             return Ok(Node {
                 entries: raw.entries,
                 children: Vec::new(),

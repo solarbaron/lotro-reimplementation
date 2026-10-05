@@ -20,6 +20,13 @@ use crate::{
     SET_MEMBERSHIP_DID,
 };
 
+/// Length of the set-membership record 0xFFFF0005 (spec §7.2).
+const MEMBERSHIP_LEN: usize = 24;
+
+/// Largest stored or inflated set-membership record accepted (implementation choice,
+/// spec §14 implementer notes). The record is 24 bytes in every observed archive.
+const MEMBERSHIP_MAX_LEN: u64 = 1024;
+
 /// Limits and switches for reading an archive.
 ///
 /// The defaults are safe for hostile input and comfortably above everything observed in a
@@ -77,7 +84,8 @@ pub struct FreeTable {
     pub header: [u32; 2],
     /// The first `count` pairs, in table order.
     pub extents: Vec<FreeExtent>,
-    /// The `u32` directly after the last pair, if it lies inside the table (0 observed).
+    /// The first `u32` of the terminating pair after the last listed pair (0 observed).
+    /// Always `Some` from [`Archive::free_table`], which requires the pair to fit (§4.5).
     pub terminator: Option<u32>,
 }
 
@@ -161,11 +169,13 @@ impl Archive {
         let header = Header::parse(&buf)?;
         if header.min_alloc == 0 {
             return Err(Error::BadHeader {
+                invariant: 4,
                 reason: "minimum allocation size (0x144) is 0".into(),
             });
         }
         if header.entry_size != ENTRY_LEN as u32 {
             return Err(Error::BadHeader {
+                invariant: 6,
                 reason: format!(
                     "directory entry size (0x194) is {}, only 32 is supported",
                     header.entry_size
@@ -178,6 +188,7 @@ impl Archive {
             || root_end > file_len
         {
             return Err(Error::BadHeader {
+                invariant: 8,
                 reason: format!(
                     "root node {:#x}+{:#x} is out of range for a {file_len:#x}-byte file",
                     header.root_offset, header.root_size
@@ -256,6 +267,13 @@ impl Archive {
     }
 
     /// Reads the record described by `entry` and inflates it if its flag bit 0 is set.
+    ///
+    /// Only per-record caps apply ([`ArchiveOptions::max_record_len`],
+    /// [`ArchiveOptions::max_inflated_len`], spec §9). The reader does not check that
+    /// records occupy disjoint bytes: in a hostile archive many entries can name the same
+    /// stored bytes, so a caller that reads every record (a snapshot, an export) should
+    /// budget the aggregate it reads, or run the validator first, which reports such
+    /// overlap (I-20) and inflates shared bytes only once.
     pub fn read_entry(&self, entry: &Entry) -> Result<Vec<u8>> {
         let stored = self.read_raw(entry)?;
         if !entry.is_compressed() {
@@ -289,13 +307,9 @@ impl Archive {
             u64::from(h.free_table_size),
             u64::from(h.free_count),
         );
-        if size == 0 && count == 0 {
-            return Ok(FreeTable {
-                header: [0, 0],
-                extents: Vec::new(),
-                terminator: None,
-            });
-        }
+        // No shortcut for a zero-sized table: every version-112 archive has one (§4.5,
+        // §4.6), so a missing table fails the size check below and the validator reports
+        // it as I-21.
         self.check_range("free-space table", off, size)?;
         let max = self.options.max_free_extents;
         if count > max {
@@ -306,13 +320,17 @@ impl Archive {
             });
         }
         let need = ALLOC_HEADER_LEN + 8 * count;
-        if need > size {
+        // Spec §4.5: the 8-byte header, `count` pairs and the terminating pair must fit,
+        // `16 + 8 × count ≤ size` (I-21).
+        if need + 8 > size {
             return Err(Error::corrupt(
                 off,
-                format!("{count} free extents do not fit a {size}-byte table"),
+                format!(
+                    "{count} free extents and the terminating pair do not fit a {size}-byte table"
+                ),
             ));
         }
-        let with_term = (need + 4).min(size);
+        let with_term = need + 4;
         let mut buf = vec![0u8; with_term as usize];
         self.read_at(off, &mut buf)?;
         let extents = buf
@@ -329,7 +347,7 @@ impl Archive {
         Ok(FreeTable {
             header: [u32_at(&buf, 0), u32_at(&buf, 4)],
             extents,
-            terminator: (with_term >= need + 4).then(|| u32_at(&buf, need as usize)),
+            terminator: Some(u32_at(&buf, need as usize)),
         })
     }
 
@@ -338,13 +356,38 @@ impl Archive {
         let Some(entry) = self.lookup(SET_MEMBERSHIP_DID)? else {
             return Ok(None);
         };
-        if entry.length < 24 {
+        let at = u64::from(entry.offset);
+        // The record is 24 bytes (spec §7.2) and stored uncompressed in every observed
+        // archive (§7.1). A compressed one is still decoded, but both the stored and the
+        // inflated size are capped far below the general record caps, so a hostile
+        // 0xFFFF0005 cannot make every set open read or inflate megabytes.
+        if u64::from(entry.length) > MEMBERSHIP_MAX_LEN {
+            return Err(Error::TooLarge {
+                what: "set-membership record",
+                len: u64::from(entry.length),
+                limit: MEMBERSHIP_MAX_LEN,
+            });
+        }
+        let stored = self.read_raw(&entry)?;
+        let b = if entry.is_compressed() {
+            inflate_record(&stored, MEMBERSHIP_MAX_LEN).map_err(|e| match e {
+                Error::Decompress { reason, .. } => Error::Decompress {
+                    did: entry.did,
+                    reason,
+                },
+                other => other,
+            })?
+        } else {
+            stored
+        };
+        // Check the decoded length, not the stored one: for a compressed record the stored
+        // length includes the prefix and the zlib stream.
+        if b.len() < MEMBERSHIP_LEN {
             return Err(Error::corrupt(
-                u64::from(entry.offset),
-                format!("set-membership record is only {} bytes", entry.length),
+                at,
+                format!("set-membership record is only {} bytes", b.len()),
             ));
         }
-        let b = self.read_entry(&entry)?;
         Ok(Some(SetMembership {
             set_id: array_at(&b, 0),
             part_index: u32_at(&b, 16),

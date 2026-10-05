@@ -50,9 +50,11 @@ pub enum Error {
         found: u32,
     },
 
-    /// The header describes something this reader cannot use.
-    #[error("unusable header: {reason}")]
+    /// The header describes something this reader cannot use (invariants I-4, I-6, I-8).
+    #[error("unusable header (I-{invariant}): {reason}")]
     BadHeader {
+        /// Number `n` of the violated invariant "I-n" (spec §10).
+        invariant: u8,
         /// Human-readable reason.
         reason: String,
     },

@@ -627,12 +627,27 @@ fn archive_set_routing_and_problems() {
     assert!(strict.locate(0x0500_0001).unwrap().is_none());
     assert!(matches!(set.read(0x0999_0000), Err(Error::NotFound { .. })));
 
-    // Set validation: all archives clean, membership problems as I-24 warnings, no duplicates.
+    // Set validation: all archives clean, no duplicates. The missing mesh part is a set
+    // error (spec §2.3); the file without a magic is only a warning (§2.1).
     let r = set.validate(&full_validate());
-    assert!(r.is_ok(), "{r:#?}");
+    assert!(r.archives.iter().all(|(_, a)| a.is_ok()), "{r:#?}");
     assert_eq!(r.archives.len(), 7);
     assert_eq!(r.duplicate_dids, 0);
-    assert!(r.issues.iter().any(|i| i.invariant == 24));
+    let errors: Vec<_> = r
+        .issues
+        .iter()
+        .filter(|i| i.severity == tessera_dat::Severity::Error)
+        .collect();
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert_eq!(errors[0].invariant, 24);
+    assert!(errors[0].message.contains("missing part 2"));
+    assert!(!r.is_ok());
+    assert!(
+        r.issues
+            .iter()
+            .any(|i| i.message.contains("client_broken.dat")
+                && i.severity == tessera_dat::Severity::Warning)
+    );
 }
 
 #[test]

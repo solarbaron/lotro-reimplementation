@@ -19,6 +19,7 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0009](0009-script-table-disassembly.md) | Incident: unauthorised client disassembly for script tables; owner authorises M4 retroactively for that one question (EU) | Accepted | 2026-10-05 |
 | [0010](0010-reference-machine-laptop.md) | Reference machine: the owner's laptop (i9-10885H, RTX 2070 Super Max-Q); M3 re-baselined there | Accepted | 2026-10-05 |
 | [0011](0011-standing-m4-authorisation.md) | Standing M4 (disassembly/decompilation) authorisation for the offline client; network, login and anti-tamper excluded | Accepted | 2026-10-05 |
+| [0012](0012-numeric-constants.md) | Numeric algorithm constants from the client may be used in specs and code (keys, hostnames, network and bulk data tables stay forbidden) | Accepted | 2026-10-05 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next
 number, add a row here.

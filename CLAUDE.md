@@ -35,8 +35,10 @@ The repo has two zones:
   tests) and skip themselves, reporting "passed", when it is unset. Export it
   (`export TESSERA_GAME_DIR="$(cargo run -q -p tessera-dattool -- detect --path)"`) before
   claiming real-data results. They must never write to the install directory.
-- Never hard-code Daybreak/SSG hostnames, keys, or tables extracted from the client binary.
-  Anything of that kind must be loaded at runtime from the user's install.
+- Never hard-code Daybreak/SSG hostnames, keys, or bulk data tables extracted from the client
+  binary. Anything of that kind must be loaded at runtime from the user's install. Numeric
+  constants that define an algorithm (hash multipliers, salts, thresholds, unit scales) are
+  allowed when a spec records them with `BIN` provenance (`docs/decisions/0012-numeric-constants.md`).
 
 ## Naming
 

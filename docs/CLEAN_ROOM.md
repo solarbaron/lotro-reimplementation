@@ -120,7 +120,9 @@ What a spec must **not** contain: code in any language; pseudo-code mirroring a 
 structure; third-party comments or prose; identifier names copied from a third-party
 source unless they are needed for interoperability (and then say so); game strings, text
 or other expressive content beyond the minimum needed to identify a format; keys,
-hostnames or tables extracted from the client binary; captures of official traffic.
+hostnames or bulk data tables extracted from the client binary (numeric algorithm constants
+are functional facts, [decision 0012](decisions/0012-numeric-constants.md)); captures of
+official traffic.
 
 ### 5.2 States
 
@@ -248,11 +250,14 @@ contributing.
 >    software, whether leaked, under NDA, through employment or contract, or reconstructed
 >    by decompilation, **or** I have disclosed such exposure to the maintainers and I am not
 >    contributing to any component it affects.
-> 2. My contribution is not derived from decompiler or disassembler output, and does not
->    copy code, comments or prose from any source whose licence does not allow it, including
->    unlicensed third-party tools for this game.
+> 2. My contribution does not copy, translate or paraphrase decompiler or disassembler output,
+>    and does not copy code, comments or prose from any source whose licence does not allow
+>    it, including unlicensed third-party tools for this game. (Functional facts learned under
+>    an authorised method M4, [decision 0011](decisions/0011-standing-m4-authorisation.md),
+>    and stated in a spec in our own words are not such output.)
 > 3. My contribution contains no game assets, extracted game data, client binaries, keys,
->    hostnames or tables extracted from the client, or captures of official-server traffic.
+>    hostnames or bulk data tables extracted from the client, or captures of official-server
+>    traffic.
 > 4. I acted in the role stated in my commit (`spec`, `review` or `implementation`). If I
 >    acted as an implementer, I worked only from `docs/specs/` and general knowledge, and I did
 >    not consult dirty-room material for the subsystem concerned.

@@ -256,9 +256,11 @@ These follow from §3–§6 and are binding project policy:
 2. User data files are read **in place, read-only**. No installer, tool or feature copies,
    repacks, patches, "fixes" or modifies them.
 3. The repository and releases contain **no game content** ([§11](#11-content-rules)).
-4. No Daybreak/SSG hostnames, keys or tables extracted from the client binary are
+4. No Daybreak/SSG hostnames, keys or bulk data tables extracted from the client binary are
    hard-coded or committed. Anything of that kind is loaded at runtime from the user's own
-   install, and only where a passed gate allows it.
+   install, and only where a passed gate allows it. Numeric constants that define an
+   algorithm may be used when a spec records them
+   ([decision 0012](decisions/0012-numeric-constants.md)).
 5. Never modify, redirect, inject into or wrap the official client.
 6. Never help piracy: documentation points only to official download channels.
 7. Free and non-commercial ([§12](#12-distribution-and-money)).
@@ -396,7 +398,9 @@ The repository, its issue tracker, CI artefacts and releases must never contain:
   sounds, music, fonts, UI art, strings, quest or dialogue text, maps, item/quest/deed
   databases, or Lua UI files;
 - client or launcher binaries, DLLs, patches, or links to unofficial copies of any of these;
-- keys, certificates, hostnames or tables extracted from the client binary;
+- keys, certificates, hostnames or bulk data tables extracted from the client binary
+  (numeric algorithm constants recorded in a spec are allowed,
+  [decision 0012](decisions/0012-numeric-constants.md));
 - packet captures or logs of traffic with official servers;
 - decompiler or disassembler output, symbol maps, shader bytecode.
 

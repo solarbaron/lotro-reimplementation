@@ -62,6 +62,53 @@ return function(f, ...) return after(pcall(f, ...)) end,
   function(co, ...) return after(resume(co, ...)) end
 ";
 
+/// Replacement for `newproxy` (§3.1, §3.3). Lua 5.1 runs `__gc` metamethods with debug
+/// hooks disabled, so a finalizer written by a plugin would run outside the instruction
+/// budget, and a looping one would hang the host thread (also at `lua_close`, when the
+/// apartment closes). Proxies made by `newproxy(true)` therefore hide their real metatable
+/// behind `__metatable`: the plugin sees and edits a view whose writes are copied to the
+/// real metatable, except `__gc`, which becomes a fixed dispatcher. The dispatcher runs the
+/// plugin's finalizer in a fresh coroutine, where the count hook works again, and re-raises
+/// its error as Lua 5.1 does for an error in a finalizer.
+const PROXY_SOURCE: &str = "local newproxy, getmetatable, setmetatable, rawset, pcall, create, resume, error, type, find = ...
+local function wrap(f)
+  return function(...) return f(...) end
+end
+return function(arg)
+  if arg ~= true then
+    local ok, p = pcall(newproxy, arg)
+    if ok then return p end
+    if type(p) ~= 'string' or not find(p, 'proxy expected', 1, true) then error(p, 0) end
+    error(\"bad argument #1 to 'newproxy' (boolean or proxy expected)\", 2)
+  end
+  local p = newproxy(true)
+  local real = getmetatable(p)
+  local shadow, view = {}, {}
+  local function gc(u)
+    local f = shadow.__gc
+    if f == nil then return end
+    local ok, e = resume(create(wrap(f)), u)
+    if not ok then error(e, 0) end
+  end
+  setmetatable(view, {
+    __index = shadow,
+    __newindex = function(_, k, v)
+      rawset(shadow, k, v)
+      if k == '__gc' then
+        if v == nil then rawset(real, k, nil) else rawset(real, k, gc) end
+      elseif k == '__metatable' then
+        if v == nil then rawset(real, k, view) else rawset(real, k, v) end
+      else
+        rawset(real, k, v)
+      end
+    end,
+    __metatable = false,
+  })
+  rawset(real, '__metatable', view)
+  return p
+end
+";
+
 /// `__index` of a package environment (§7.2 step 5): the namespace first, then globals.
 const ENV_INDEX_SOURCE: &str = "local ns, g = ...
 return function(_, k)
@@ -500,6 +547,14 @@ impl std::fmt::Debug for Apartment {
     }
 }
 
+impl Drop for Apartment {
+    /// Closing the state runs the finalizers of every proxy still alive; they get one fresh
+    /// budget between them (§3.3), so closing an apartment always terminates.
+    fn drop(&mut self) {
+        self.enter();
+    }
+}
+
 impl Apartment {
     /// Create a state with the §3.2 libraries, `import`, and the native packages (§6.2 step 3).
     pub(crate) fn new(
@@ -831,10 +886,30 @@ fn install_sandbox(lua: &Lua, ctx: &Arc<ApartmentCtx>) -> mlua::Result<()> {
     })?;
     g.raw_set("print", print)?;
 
+    // Plugin finalizers run metered (§3.3); see [`PROXY_SOURCE`]. Installed before
+    // `pcall` and `coroutine.resume` are replaced, so it captures the stock functions.
+    let coroutine: Table = g.raw_get("coroutine")?;
+    let newproxy: Function = lua
+        .load(PROXY_SOURCE)
+        .set_name("=tessera")
+        .set_mode(ChunkMode::Text)
+        .call((
+            g.raw_get::<Function>("newproxy")?,
+            g.raw_get::<Function>("getmetatable")?,
+            g.raw_get::<Function>("setmetatable")?,
+            g.raw_get::<Function>("rawset")?,
+            g.raw_get::<Function>("pcall")?,
+            coroutine.raw_get::<Function>("create")?,
+            coroutine.raw_get::<Function>("resume")?,
+            g.raw_get::<Function>("error")?,
+            g.raw_get::<Function>("type")?,
+            g.raw_get::<Table>("string")?.raw_get::<Function>("find")?,
+        ))?;
+    g.raw_set("newproxy", newproxy)?;
+
     // Budget errors cannot be swallowed by protected calls (§3.3).
     let budget = Arc::clone(&ctx.budget);
     let exhausted = lua.create_function(move |_, ()| Ok(budget.exhausted()))?;
-    let coroutine: Table = g.raw_get("coroutine")?;
     let (pcall, xpcall, resume): (Function, Function, Function) = lua
         .load(GUARD_SOURCE)
         .set_name("=tessera")

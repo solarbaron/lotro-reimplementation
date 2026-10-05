@@ -295,3 +295,129 @@ fn memory_limit_is_enforced() {
     assert!(parts[1].contains("memory"), "{lines:?}");
     assert_eq!(parts[2], "true", "memory not recovered: {lines:?}");
 }
+
+/// Run `f` on a helper thread and fail the test if it does not return within `secs`
+/// (a hang here means a script escaped its instruction budget).
+fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(Duration::from_secs(secs))
+        .expect("call did not return in time: the instruction budget was bypassed")
+}
+
+#[test]
+fn finalizers_cannot_escape_the_instruction_budget() {
+    // Lua runs `__gc` metamethods with debug hooks disabled, so a plugin finalizer must not
+    // run as a raw finalizer (§3.3: the budget covers every host-to-Lua call).
+    let fx = Fixture::new();
+    fx.plugin(
+        "GcSpin",
+        "local p = newproxy(true)\n\
+         getmetatable(p).__gc = function() while true do end end\n\
+         p = nil\ncollectgarbage()\nTurbine.Shell.WriteLine('escaped')\n",
+    );
+    fx.plugin(
+        "GcCall",
+        "local p = newproxy(true)\n\
+         getmetatable(p).__gc = setmetatable({}, { __call = function() while true do end end })\n\
+         p = nil\ncollectgarbage()\nTurbine.Shell.WriteLine('escaped')\n",
+    );
+    // No explicit collection: the allocation loop triggers the collector itself.
+    fx.plugin(
+        "GcAuto",
+        "local p = newproxy(true)\n\
+         getmetatable(p).__gc = function() while true do end end\n\
+         p = nil\nfor i = 1, 1e7 do local t = { i } end\nTurbine.Shell.WriteLine('escaped')\n",
+    );
+    // Kept alive: the finalizer runs when the apartment closes.
+    fx.plugin(
+        "GcKeep",
+        "keep = newproxy(true)\n\
+         getmetatable(keep).__gc = function() while true do end end\n\
+         Turbine.Shell.WriteLine('kept')\n",
+    );
+    let fx = within(60, move || {
+        let mut m = fx.manager(small_limits());
+        for name in ["GcSpin", "GcCall", "GcAuto"] {
+            let r = m.load_plugin(name);
+            assert!(
+                matches!(r, Err(ScriptError::LoadFailed { .. })),
+                "{name}: {r:?}"
+            );
+            let msgs = fx.error_messages();
+            assert!(
+                msgs.last()
+                    .is_some_and(|m| m.contains("instruction budget")),
+                "{name}: {msgs:?}"
+            );
+        }
+        m.load_plugin("GcKeep").unwrap();
+        m.unload_all();
+        drop(m);
+        // Closing at drop as well (logout, exit).
+        let mut m = fx.manager(small_limits());
+        m.load_plugin("GcKeep").unwrap();
+        drop(m);
+        fx
+    });
+    assert_eq!(fx.lines(), ["kept", "kept"]);
+}
+
+#[test]
+fn newproxy_metatables_behave_as_in_lua_5_1() {
+    let fx = Fixture::new();
+    fx.plugin(
+        "Proxy",
+        r#"
+local out = {}
+local function say(s) out[#out + 1] = tostring(s) end
+local p = newproxy(true)
+local mt = getmetatable(p)
+say(type(p))
+say(type(mt))
+mt.__index = function(_, k) return k .. "!" end
+mt.__len = function() return 42 end
+mt.__tostring = function() return "proxy" end
+mt.__gc = function(u) say("gc " .. type(u) .. " " .. tostring(u)) end
+say(p.x)
+say(#p)
+say(tostring(p))
+say(mt.__gc ~= nil)
+local q = newproxy(p)
+say(getmetatable(q) == mt)
+say(getmetatable(newproxy(false)))
+say(getmetatable(newproxy()))
+say(pcall(newproxy, 1))
+p, q = nil, nil
+collectgarbage()
+collectgarbage()
+-- A proxy whose finalizer was removed again is not finalized.
+local r = newproxy(true)
+getmetatable(r).__gc = function() say("gc r") end
+getmetatable(r).__gc = nil
+r = nil
+collectgarbage()
+-- __metatable still protects the metatable.
+local s = newproxy(true)
+getmetatable(s).__metatable = "locked"
+say(getmetatable(s))
+-- Errors in finalizers propagate to the code that triggered the collection, as in 5.1.
+local e = newproxy(true)
+getmetatable(e).__gc = function() error("boom", 0) end
+e = nil
+say(pcall(collectgarbage))
+Turbine.Shell.WriteLine(table.concat(out, "|"))
+"#,
+    );
+    let mut m = fx.manager(small_limits());
+    m.load_plugin("Proxy").unwrap();
+    assert_eq!(
+        fx.lines(),
+        ["userdata|table|x!|42|proxy|true|true|nil|nil|false|\
+             gc userdata proxy|gc userdata proxy|locked|false"],
+        "{:?}",
+        fx.error_messages()
+    );
+}

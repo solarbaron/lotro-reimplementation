@@ -437,9 +437,11 @@ fn resolve_builds_only_used_arguments_once() {
     let r = strings.resolve(&info, &Values::new(), &RenderOptions::default());
     assert_eq!(r.plain_text(), "Wren Hollow acorns for Wren Hollow.");
     let after = strings.cache_stats();
+    // One cache access in all: the call keeps the table of its last lookup, and the
+    // nested entry is in the same table as the top one.
     assert_eq!(
         (after.hits + after.misses) - (before.hits + before.misses),
-        2
+        1
     );
 }
 

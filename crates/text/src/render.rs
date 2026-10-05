@@ -17,6 +17,10 @@ use crate::value::{NameDictionary, Value, Values, format_float};
 pub const DEFAULT_MAX_DEPTH: usize = 16;
 /// Default cap on the rendered size of one message, in bytes.
 pub const DEFAULT_MAX_OUTPUT: usize = 1 << 20;
+/// Default work budget of one render ([`RenderOptions::max_work`]). An ordinary nested
+/// message costs a few hundred units; the budget lets a render expand about 130,000 slots
+/// (with their pieces) or 4 MiB of piece text in nested messages.
+pub const DEFAULT_MAX_WORK: usize = 1 << 22;
 /// Maximum number of diagnostics kept per render.
 const MAX_DIAGNOSTICS: usize = 64;
 
@@ -46,6 +50,12 @@ pub struct RenderOptions<'a> {
     /// [`Diagnostic::OutputLimit`]. Guards against exponential growth when one nested
     /// value fills several slots at every level.
     pub max_output: usize,
+    /// Work budget across all nesting levels: every nested message rendered costs a fixed
+    /// amount per slot, piece and segment plus one unit per byte of piece text, also when it
+    /// produces no output. A nested message that does not fit in what is left renders as
+    /// absent with [`Diagnostic::WorkLimit`]. The outermost message is always rendered.
+    /// Guards against hostile data where many values share one wide entry.
+    pub max_work: usize,
 }
 
 impl Default for RenderOptions<'_> {
@@ -55,6 +65,7 @@ impl Default for RenderOptions<'_> {
             names: None,
             max_depth: DEFAULT_MAX_DEPTH,
             max_output: DEFAULT_MAX_OUTPUT,
+            max_work: DEFAULT_MAX_WORK,
         }
     }
 }
@@ -139,6 +150,13 @@ pub enum Diagnostic {
     /// A StringInfo reference (outermost or nested) did not resolve.
     #[error("{0}")]
     Miss(Miss),
+    /// The work budget of one render or resolve call ([`RenderOptions::max_work`]) was
+    /// spent; nested messages past it rendered as absent.
+    #[error("work limit {limit} reached; nested values rendered as absent")]
+    WorkLimit {
+        /// The limit in effect.
+        limit: usize,
+    },
 }
 
 /// The result of rendering.
@@ -188,8 +206,9 @@ enum Display {
     Raw(String),
     /// A nested message, already rendered (each of its values decoded separately).
     Rich(RichText),
-    /// An absent value: empty (plain) or the `${name}` placeholder (explorer).
-    Absent(String),
+    /// An absent value: empty (plain) or the `${name}` placeholder (explorer), which is
+    /// built when the slot is output (and charged to the output budget there).
+    Absent,
 }
 
 /// A value prepared for one or more slots (spec §7 step 2).
@@ -203,12 +222,12 @@ struct Prepared {
 
 impl Prepared {
     fn is_absent(&self) -> bool {
-        matches!(self.display, Display::Absent(_))
+        matches!(self.display, Display::Absent)
     }
 }
 
 /// The prepared values of one message: one entry per distinct present argument ID (shared
-/// by every slot with that ID) plus one per absent slot.
+/// by every slot with that ID) plus at most one absent value shared by every absent slot.
 #[derive(Debug, Default)]
 struct Slots {
     prepared: Vec<Prepared>,
@@ -241,6 +260,8 @@ enum Item<'m> {
 pub(crate) struct Renderer<'o> {
     opts: &'o RenderOptions<'o>,
     budget: usize,
+    /// What is left of [`RenderOptions::max_work`].
+    work: usize,
     diags: Vec<Diagnostic>,
     top_tags: Option<String>,
 }
@@ -250,6 +271,7 @@ impl<'o> Renderer<'o> {
         Self {
             opts,
             budget: opts.max_output,
+            work: opts.max_work,
             diags: Vec::new(),
             top_tags: None,
         }
@@ -274,6 +296,9 @@ impl<'o> Renderer<'o> {
         match &d {
             Diagnostic::DepthLimit { limit } => {
                 tracing::warn!(limit, "message nesting limit reached");
+            }
+            Diagnostic::WorkLimit { limit } => {
+                tracing::warn!(limit, "render work limit reached");
             }
             Diagnostic::Miss(m) => tracing::debug!(
                 table = format_args!("{:#010x}", m.table),
@@ -322,13 +347,17 @@ impl<'o> Renderer<'o> {
         format!("#{id:07X}")
     }
 
-    fn absent(&self, msg: &Message, slot: usize) -> Prepared {
-        let display = match self.opts.mode {
+    /// The placeholder text of an absent slot: empty (plain) or `${name}` (explorer).
+    fn absent_text(&self, msg: &Message, slot: usize) -> String {
+        match self.opts.mode {
             RenderMode::Plain => String::new(),
             RenderMode::Explorer => format!("${{{}}}", self.placeholder_name(msg, slot)),
-        };
+        }
+    }
+
+    fn absent() -> Prepared {
         Prepared {
-            display: Display::Absent(display),
+            display: Display::Absent,
             tags: TagSet::absent(),
             blank: true,
         }
@@ -345,15 +374,9 @@ impl<'o> Renderer<'o> {
         }
     }
 
-    fn prepare(
-        &mut self,
-        msg: &Message,
-        slot: usize,
-        value: Option<&Value>,
-        depth: usize,
-    ) -> Prepared {
+    fn prepare(&mut self, value: Option<&Value>, depth: usize) -> Prepared {
         match value {
-            None => self.absent(msg, slot),
+            None => Self::absent(),
             Some(Value::Text(raw)) => Self::prepare_text(raw),
             Some(Value::Integer(n)) => Prepared {
                 display: Display::Raw(n.to_string()),
@@ -367,14 +390,23 @@ impl<'o> Renderer<'o> {
             },
             Some(Value::Unresolved(d)) => {
                 self.report(d.clone());
-                self.absent(msg, slot)
+                Self::absent()
             }
             Some(Value::Message(mv)) => {
                 if depth + 1 > self.opts.max_depth {
                     self.report(Diagnostic::DepthLimit {
                         limit: self.opts.max_depth,
                     });
-                    return self.absent(msg, slot);
+                    return Self::absent();
+                }
+                // Charged up front, so a nested message is either rendered whole or not at
+                // all, and the total work of one render stays within max_work.
+                if mv.message.render_cost() > self.work {
+                    self.work = 0;
+                    self.report(Diagnostic::WorkLimit {
+                        limit: self.opts.max_work,
+                    });
+                    return Self::absent();
                 }
                 let (rich, group) = self.render_message(&mv.message, &mv.values, depth + 1, false);
                 // Selection state is what plain mode would see: explorer placeholders
@@ -390,29 +422,34 @@ impl<'o> Renderer<'o> {
         }
     }
 
-    /// Prepares every slot. A present value is prepared once per argument ID and shared by
-    /// every slot with that ID; absent slots get their own (small) placeholder, and an ID
-    /// whose value turned out absent is not prepared again.
+    /// Prepares every slot. A value is prepared once per argument ID and shared by every
+    /// slot with that ID; all absent slots share one absent value (their explorer
+    /// placeholders are built when they are output).
     fn prepare_all(&mut self, msg: &Message, values: &Values, depth: usize) -> Slots {
-        let mut by_id: HashMap<u32, Option<usize>> = HashMap::new();
+        let mut by_id: HashMap<u32, usize> = HashMap::new();
         let mut slots = Slots {
             prepared: Vec::new(),
             map: Vec::with_capacity(msg.slots().len()),
         };
-        for (i, slot) in msg.slots().iter().enumerate() {
+        let mut absent: Option<usize> = None;
+        let mut shared_absent =
+            |slots: &mut Slots| *absent.get_or_insert_with(|| slots.add(Self::absent()));
+        for slot in msg.slots() {
             let j = match slot.arg_id {
                 Some(id) => match by_id.get(&id).copied() {
-                    Some(Some(j)) => j,
-                    Some(None) => slots.add(self.absent(msg, i)),
+                    Some(j) => j,
                     None => {
-                        let p = self.prepare(msg, i, values.get(id), depth);
-                        let absent = p.is_absent();
-                        let j = slots.add(p);
-                        by_id.insert(id, (!absent).then_some(j));
+                        let p = self.prepare(values.get(id), depth);
+                        let j = if p.is_absent() {
+                            shared_absent(&mut slots)
+                        } else {
+                            slots.add(p)
+                        };
+                        by_id.insert(id, j);
                         j
                     }
                 },
-                None => slots.add(self.absent(msg, i)),
+                None => shared_absent(&mut slots),
             };
             slots.map.push(j);
         }
@@ -476,6 +513,7 @@ impl<'o> Renderer<'o> {
         depth: usize,
         top: bool,
     ) -> (RichText, Option<String>) {
+        self.work = self.work.saturating_sub(msg.render_cost());
         let slots = self.prepare_all(msg, values, depth);
         let mut items = Self::evaluate(msg, &slots);
         let tags = strip_trailing_group(&mut items, &slots);
@@ -500,12 +538,12 @@ impl<'o> Renderer<'o> {
                     let outer = state.style(&base);
                     match slots.get(*i).map(|p| &p.display) {
                         None => {}
-                        Some(Display::Absent(s)) => {
+                        Some(Display::Absent) => {
                             let style = Style {
                                 placeholder: true,
                                 ..outer
                             };
-                            tmp.push_str(s, &style);
+                            tmp.push_str(&self.absent_text(msg, *i), &style);
                         }
                         // Value markup is scoped to the value (spec §7 step 6).
                         Some(Display::Raw(s)) => {
@@ -650,7 +688,7 @@ impl LinkBuilder {
             return;
         }
         match &p.display {
-            Display::Absent(_) => {}
+            Display::Absent => {}
             Display::Raw(s) => {
                 let mut cut = s.len().min(self.room.saturating_mul(2));
                 while !s.is_char_boundary(cut) {
@@ -900,6 +938,48 @@ mod tests {
         // No slots: literal.
         let m = msg(&["a {b[f]} c"], &[]);
         assert_eq!(render_plain(&m, &Values::new()), "a {b[f]} c");
+    }
+
+    #[test]
+    fn selector_body_runs_to_first_close_brace() {
+        // Regression (string-table.md §4.3 rules 1 and 4): inside a selector '{' is
+        // ordinary text and the body ends at the first '}'.
+        let m = msg(&["#1:", " #1:{a{b|c[f]}"], &[A]);
+        let v = vals(&[(A, "Wren[f]".into())]);
+        assert_eq!(render_plain(&m, &v), "Wren c");
+        let v = vals(&[(A, "Tobin[m]".into())]);
+        assert_eq!(render_plain(&m, &v), "Tobin a{b");
+        let m = msg(&["", " {x{her[f]|him[m]}"], &[A]);
+        let v = vals(&[(A, "Wren[f]".into())]);
+        assert_eq!(render_plain(&m, &v), "Wren x{her");
+    }
+
+    #[test]
+    fn work_limit_bounds_nested_messages() {
+        // Regression: many nested values sharing one wide message, with no output.
+        let s = 2000usize;
+        let ids: Vec<u32> = (1..=s as u32).collect();
+        let wide = Arc::new(Message::new(vec![String::new(); s + 1], ids.clone(), None));
+        let mut v = Values::new();
+        for &id in &ids {
+            v.insert(id, Value::shared_message(Arc::clone(&wide), Values::new()));
+        }
+        let opts = RenderOptions {
+            max_work: 1 << 20,
+            ..RenderOptions::default()
+        };
+        let mut r = Renderer::new(&opts);
+        let text = r.render_top(&wide, &v);
+        assert!(text.is_empty());
+        assert!(r.work == 0);
+        let out = r.finish(text);
+        assert!(
+            out.diagnostics
+                .contains(&Diagnostic::WorkLimit { limit: 1 << 20 })
+        );
+        // Ordinary nesting stays within the default budget.
+        let top = msg(&["", ""], &[A]);
+        assert!(render(&top, &vals(&[(A, chain(15))]), &RenderOptions::default()).is_clean());
     }
 
     #[test]
@@ -1181,11 +1261,16 @@ mod tests {
         assert_eq!(slots.prepared.len(), 1);
         let out = render(&m, &v, &opts);
         assert_eq!(out.text.len(), 4096);
-        // Absent values: one small placeholder per slot, the value is looked at once.
+        // Absent values: every absent slot shares one prepared value.
         let mut r = Renderer::new(&opts);
         let slots = r.prepare_all(&m, &Values::new(), 1);
-        assert_eq!(slots.prepared.len(), n);
+        assert_eq!(slots.prepared.len(), 1);
         assert!(slots.prepared.iter().all(Prepared::is_absent));
+        let m = Message::new(vec![String::new()], (0..n as u32).collect(), None);
+        let mut r = Renderer::new(&opts);
+        let slots = r.prepare_all(&m, &vals(&[(A, "x".into())]), 1);
+        assert_eq!(slots.map.len(), n);
+        assert_eq!(slots.prepared.len(), 1);
     }
 
     #[test]

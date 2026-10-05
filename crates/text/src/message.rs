@@ -118,7 +118,13 @@ pub struct Message {
     bindings: HashMap<i64, usize>,
     keep_spaces: bool,
     issues: Vec<GrammarIssue>,
+    /// Rendering cost in work units (see [`Message::render_cost`]).
+    cost: usize,
 }
+
+/// Work units charged per slot, piece and segment by [`Message::render_cost`]; a text byte
+/// counts as one unit.
+const COST_PER_PART: usize = 16;
 
 fn push_issue(issues: &mut Vec<GrammarIssue>, issue: GrammarIssue) {
     if issues.len() < MAX_ISSUES && !issues.contains(&issue) {
@@ -178,6 +184,42 @@ fn strip_label(text: &str) -> Option<(&str, Label)> {
     Some((&rest[..hash], Label { number, caret }))
 }
 
+/// Finds the next occurrence of one byte at or after a position, remembering the last
+/// answer. Queries made left to right scan each byte at most once, so tokenising stays
+/// linear in the piece length however many selector openers it has.
+struct NextByte<'a> {
+    text: &'a [u8],
+    byte: u8,
+    /// The last query position and its answer.
+    last: Option<(usize, Option<usize>)>,
+}
+
+impl<'a> NextByte<'a> {
+    fn new(text: &'a str, byte: u8) -> Self {
+        Self {
+            text: text.as_bytes(),
+            byte,
+            last: None,
+        }
+    }
+
+    fn at_or_after(&mut self, pos: usize) -> Option<usize> {
+        if let Some((from, at)) = self.last
+            && from <= pos
+            && at.is_none_or(|a| a >= pos)
+        {
+            return at;
+        }
+        let at = self
+            .text
+            .get(pos..)
+            .and_then(|t| t.iter().position(|&c| c == self.byte))
+            .map(|r| pos + r);
+        self.last = Some((pos, at));
+        at
+    }
+}
+
 /// Splits a piece (label already removed) into segments (spec §7 step 3). Works on raw
 /// text: escapes are not interpreted here.
 fn tokenize(text: &str, issues: &mut Vec<GrammarIssue>) -> Vec<Segment> {
@@ -188,6 +230,12 @@ fn tokenize(text: &str, issues: &mut Vec<GrammarIssue>) -> Vec<Segment> {
             segs.push(Segment::Text(std::mem::take(lit)));
         }
     };
+    // A selector body runs to the first '}' (string-table.md §4.3: inside a selector only
+    // '|' and '}' are grammar, '{' is ordinary text, selectors never nest). These find the
+    // body end, and whether the body has a '[' or a '{', in linear total time.
+    let mut close = NextByte::new(text, b'}');
+    let mut open = NextByte::new(text, b'{');
+    let mut bracket = NextByte::new(text, b'[');
     let mut i = 0;
     while let Some(c) = text[i..].chars().next() {
         let rest = &text[i..];
@@ -199,23 +247,24 @@ fn tokenize(text: &str, issues: &mut Vec<GrammarIssue>) -> Vec<Segment> {
                 if let Some((number, len)) = parse_label_number(rest)
                     && rest[len..].starts_with(':')
                 {
-                    let after = &rest[len + 1..];
-                    if let Some(body_rest) = after.strip_prefix('{') {
-                        // The body ends at the first '}'. Stopping at '{' keeps hostile
-                        // input linear; observed bodies never contain '{' (SG5).
-                        match body_rest.find(['{', '}']) {
-                            Some(end) if body_rest.as_bytes()[end] == b'}' => {
+                    if rest[len + 1..].starts_with('{') {
+                        let body_start = i + len + 2;
+                        match close.at_or_after(body_start) {
+                            Some(end) => {
+                                if open.at_or_after(body_start).is_some_and(|o| o < end) {
+                                    // SG5: observed bodies never contain '{'.
+                                    push_issue(issues, GrammarIssue::UnterminatedSelector);
+                                }
                                 flush(&mut lit, &mut segs);
-                                let total = len + 2 + end + 1;
                                 segs.push(Segment::Selector(Selector {
                                     label: Some(number),
-                                    options: parse_options(&body_rest[..end]),
-                                    raw: rest[..total].to_owned(),
+                                    options: parse_options(&text[body_start..end]),
+                                    raw: text[i..=end].to_owned(),
                                 }));
-                                i += total;
+                                i = end + 1;
                                 continue;
                             }
-                            _ => push_issue(issues, GrammarIssue::UnterminatedSelector),
+                            None => push_issue(issues, GrammarIssue::UnterminatedSelector),
                         }
                     } else {
                         push_issue(issues, GrammarIssue::StrayLabel);
@@ -243,20 +292,19 @@ fn tokenize(text: &str, issues: &mut Vec<GrammarIssue>) -> Vec<Segment> {
                         i += total;
                         continue;
                     }
-                } else if let Some(end) = rest[1..].find(['{', '}'])
-                    && rest.as_bytes()[1 + end] == b'}'
-                {
-                    let body = &rest[1..1 + end];
+                } else if let Some(end) = close.at_or_after(i + 1) {
                     // A bare selector needs a tag list; other braces are literal (§4.4).
-                    if body.contains('[') {
+                    if bracket.at_or_after(i + 1).is_some_and(|b| b < end) {
+                        if open.at_or_after(i + 1).is_some_and(|o| o < end) {
+                            push_issue(issues, GrammarIssue::UnterminatedSelector);
+                        }
                         flush(&mut lit, &mut segs);
-                        let total = end + 2;
                         segs.push(Segment::Selector(Selector {
                             label: None,
-                            options: parse_options(body),
-                            raw: rest[..total].to_owned(),
+                            options: parse_options(&text[i + 1..end]),
+                            raw: text[i..=end].to_owned(),
                         }));
-                        i += total;
+                        i = end + 1;
                         continue;
                     }
                 }
@@ -346,12 +394,21 @@ impl Message {
                 segments,
             });
         }
+        let parts = parsed.iter().map(|p| p.segments.len()).fold(
+            parsed.len().saturating_add(slots.len()),
+            usize::saturating_add,
+        );
+        let bytes = parsed
+            .iter()
+            .map(|p| p.raw.len())
+            .fold(0, usize::saturating_add);
         let msg = Self {
             pieces: parsed,
             slots,
             bindings,
             keep_spaces,
             issues,
+            cost: parts.saturating_mul(COST_PER_PART).saturating_add(bytes),
         };
         msg.finish_issues()
     }
@@ -443,6 +500,14 @@ impl Message {
     #[must_use]
     pub fn issues(&self) -> &[GrammarIssue] {
         &self.issues
+    }
+
+    /// The work units one render of this message costs, beyond the text it outputs: a
+    /// fixed amount per slot, piece and segment plus one per byte of piece text. Charged
+    /// against [`crate::RenderOptions::max_work`] each time the message is rendered.
+    #[must_use]
+    pub(crate) fn render_cost(&self) -> usize {
+        self.cost
     }
 
     /// Distinct argument IDs used by the message, in slot order.
@@ -551,6 +616,43 @@ mod tests {
         );
         let m = msg(&["{{", ""], &[1]);
         assert_eq!(m.pieces()[0].segments, vec![Segment::Text("{{".into())]);
+    }
+
+    #[test]
+    fn selector_body_with_open_brace() {
+        // string-table.md §4.3: the body is everything up to the first '}'.
+        let m = msg(&["#1:", " #1:{a{b|c[f]}"], &[1]);
+        let segs = &m.pieces()[1].segments;
+        assert_eq!(segs.len(), 2);
+        let Segment::Selector(sel) = &segs[1] else {
+            panic!("{segs:?}")
+        };
+        assert_eq!(sel.raw, "#1:{a{b|c[f]}");
+        assert_eq!(sel.options.len(), 2);
+        assert_eq!(sel.options[0].text, "a{b");
+        assert!(m.issues().contains(&GrammarIssue::UnterminatedSelector));
+        let m = msg(&["{x{y[f]}z", ""], &[1]);
+        let segs = &m.pieces()[0].segments;
+        assert!(matches!(&segs[0], Segment::Selector(s) if s.raw == "{x{y[f]}"));
+        assert_eq!(segs[1], Segment::Text("z".into()));
+    }
+
+    #[test]
+    fn many_selector_openers_tokenise_fast() {
+        // Openers whose bodies all run to one far '}' (or to none) stay linear.
+        for tail in ["", "[f]}", "}"] {
+            for unit in ["#1:{", "{a", "{{"] {
+                let piece = unit.repeat(200_000) + tail;
+                let start = std::time::Instant::now();
+                let m = msg(&[&piece, ""], &[1]);
+                assert!(!m.pieces()[0].segments.is_empty());
+                assert!(
+                    start.elapsed().as_secs() < 10,
+                    "{unit:?}{tail:?} took {:?}",
+                    start.elapsed()
+                );
+            }
+        }
     }
 
     #[test]

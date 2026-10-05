@@ -56,8 +56,8 @@ pub use markup::{
 };
 pub use message::{GrammarIssue, Label, Message, Part, Piece, Segment, Selector, Slot};
 pub use render::{
-    DEFAULT_MAX_DEPTH, DEFAULT_MAX_OUTPUT, Diagnostic, Miss, MissReason, RenderMode, RenderOptions,
-    Rendered, display_text, render, render_plain,
+    DEFAULT_MAX_DEPTH, DEFAULT_MAX_OUTPUT, DEFAULT_MAX_WORK, Diagnostic, Miss, MissReason,
+    RenderMode, RenderOptions, Rendered, display_text, render, render_plain,
 };
 pub use source::{
     CacheLimits, CacheStats, MemorySource, STRING_TABLE_DIDS, TableCache, TableSource,

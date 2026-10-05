@@ -157,6 +157,10 @@ struct CacheInner {
 /// remembered too, and so are read and decode failures: a broken record is loaded once,
 /// later lookups return [`TextError::CachedFailure`] until [`TableCache::clear`] (hostile
 /// references to one large corrupt record must not force a full re-read each time).
+///
+/// A table whose payload alone exceeds [`CacheLimits::max_bytes`] is returned but not
+/// cached, so loading it never flushes the other tables; a newly loaded table is never the
+/// one its own insertion evicts.
 #[derive(Debug, Default)]
 pub struct TableCache {
     inner: Mutex<CacheInner>,
@@ -173,6 +177,12 @@ impl TableCache {
         }
     }
 
+    /// The limits in effect.
+    #[must_use]
+    pub fn limits(&self) -> CacheLimits {
+        self.limits
+    }
+
     fn lock(&self) -> MutexGuard<'_, CacheInner> {
         // A panic while holding the lock cannot leave the map inconsistent in a way that
         // matters for a cache, so a poisoned lock is simply reused.
@@ -187,21 +197,36 @@ impl TableCache {
         did: u32,
         source: &dyn TableSource,
     ) -> Result<Option<Arc<StringTable>>> {
-        {
-            let mut g = self.lock();
-            g.tick += 1;
-            let tick = g.tick;
-            if let Some(c) = g.map.get_mut(&did) {
-                c.last_used = tick;
-                let t = c.table.clone();
-                g.hits += 1;
-                return t.map_err(|reason| TextError::CachedFailure {
-                    did,
-                    reason: reason.to_string(),
-                });
-            }
-            g.misses += 1;
+        self.get_or_load_counted(did, source).0
+    }
+
+    /// The cached entry for `did` without loading anything: `None` if it is not cached.
+    /// A found entry counts as a hit.
+    pub(crate) fn get_cached(&self, did: u32) -> Option<Result<Option<Arc<StringTable>>>> {
+        let mut g = self.lock();
+        g.tick += 1;
+        let tick = g.tick;
+        let c = g.map.get_mut(&did)?;
+        c.last_used = tick;
+        let t = c.table.clone();
+        g.hits += 1;
+        Some(t.map_err(|reason| TextError::CachedFailure {
+            did,
+            reason: reason.to_string(),
+        }))
+    }
+
+    /// [`TableCache::get_or_load`], also returning the number of payload bytes read from
+    /// `source` (0 when the cache answered).
+    pub(crate) fn get_or_load_counted(
+        &self,
+        did: u32,
+        source: &dyn TableSource,
+    ) -> (Result<Option<Arc<StringTable>>>, usize) {
+        if let Some(t) = self.get_cached(did) {
+            return (t, 0);
         }
+        self.lock().misses += 1;
         // Load outside the lock so other threads are not blocked on I/O.
         let loaded = source.read_table(did).and_then(|payload| match payload {
             None => Ok((None, 0)),
@@ -218,6 +243,16 @@ impl TableCache {
                 (Err(Arc::from(e.to_string())), 0, Err(e))
             }
         };
+        if bytes > self.limits.max_bytes || self.limits.max_tables == 0 {
+            // Caching it would evict every other table and then this one too.
+            tracing::debug!(
+                did = format_args!("{did:#010x}"),
+                bytes,
+                limit = self.limits.max_bytes,
+                "string table larger than the cache; not cached"
+            );
+            return (result, bytes);
+        }
         let mut g = self.lock();
         g.tick += 1;
         let tick = g.tick;
@@ -232,17 +267,22 @@ impl TableCache {
             g.bytes -= old.bytes;
         }
         g.bytes += bytes;
-        self.evict(&mut g);
-        result
+        self.evict(&mut g, did);
+        (result, bytes)
     }
 
-    /// Evicts least recently used tables until the cache is at or below half of each
-    /// limit, so eviction cost is amortised.
-    fn evict(&self, g: &mut CacheInner) {
+    /// Evicts least recently used tables, never `keep` (the table just inserted), until the
+    /// cache is at or below half of each limit, so eviction cost is amortised.
+    fn evict(&self, g: &mut CacheInner, keep: u32) {
         if g.map.len() <= self.limits.max_tables && g.bytes <= self.limits.max_bytes {
             return;
         }
-        let mut order: Vec<(u64, u32)> = g.map.iter().map(|(&d, c)| (c.last_used, d)).collect();
+        let mut order: Vec<(u64, u32)> = g
+            .map
+            .iter()
+            .filter(|&(&d, _)| d != keep)
+            .map(|(&d, c)| (c.last_used, d))
+            .collect();
         order.sort_unstable();
         let target_tables = self.limits.max_tables / 2;
         let target_bytes = self.limits.max_bytes / 2;

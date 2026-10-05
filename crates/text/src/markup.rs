@@ -506,10 +506,10 @@ pub(crate) fn interpret(raw: &str, state: &mut MarkupState, base: &Style, out: &
             '\\' => {
                 let (s, extra, len) = decode_escape(&raw[i..]);
                 buf.push_str(s);
-                if let Some(e) = extra {
-                    buf.push(e);
-                }
-                i += len;
+                // An unknown escape keeps its backslash and the next character is processed
+                // normally (string-table.md §4.6); markup is read after escapes are decoded
+                // (§7.7, §7.8), so a `<` after the backslash can still open a tag.
+                i += if extra.is_some() { 1 } else { len };
             }
             '<' => {
                 if let Some((tag, len)) = parse_tag(&raw[i..]) {
@@ -555,6 +555,20 @@ mod tests {
         assert_eq!(decode_escapes(r"a\ b"), "a\\ b");
         assert_eq!(decode_escapes(r"end\"), "end\\");
         assert_eq!(decode_escapes("\\é"), "\\é");
+    }
+
+    #[test]
+    fn unknown_escape_does_not_hide_markup() {
+        // Regression: `\<` is an unknown escape; the backslash stays and `<b>` is a tag.
+        let rt = parse_markup(r"\<b>x</b>y");
+        assert_eq!(rt.plain_text(), "\\xy");
+        let spans = rt.spans();
+        assert!(spans.iter().any(|s| s.style.bold && s.text == "x"));
+        assert!(spans.iter().all(|s| !s.text.contains('<')));
+        assert!(!spans.last().expect("span").style.bold);
+        // Other unknown escapes are unchanged.
+        assert_eq!(parse_markup(r"a\zb\").plain_text(), "a\\zb\\");
+        assert_eq!(parse_markup("\\é").plain_text(), "\\é");
     }
 
     #[test]

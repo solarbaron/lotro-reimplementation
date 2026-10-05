@@ -208,19 +208,15 @@ impl Strings {
         token: u32,
         f: impl FnOnce(&StringTableEntry) -> T,
     ) -> Result<T, Miss> {
-        let miss = |reason| Miss {
-            table,
-            token,
-            reason,
-        };
         if !is_string_table_did(table) {
-            return Err(miss(MissReason::NotStringTable));
+            return Err(Miss {
+                table,
+                token,
+                reason: MissReason::NotStringTable,
+            });
         }
-        match self.table(table) {
-            Err(e) => Err(miss(MissReason::Unreadable(e.to_string()))),
-            Ok(None) => Err(miss(MissReason::NoTable)),
-            Ok(Some(t)) => t.get(token).map(f).ok_or_else(|| miss(MissReason::NoToken)),
-        }
+        let loaded = self.table(table).map_err(|e| e.to_string());
+        entry_in(table, token, &loaded, f)
     }
 
     /// Renders the entry (table, token) with `values`. A miss renders as empty text
@@ -259,13 +255,13 @@ impl Strings {
     ) -> Rendered {
         let mut r = Renderer::new(opts);
         let mut b = ArgBuilder::new(self, opts.max_depth);
-        let msg = match b.message(&info.source) {
+        let built = match b.top(&info.source) {
             Ok(m) => m,
             Err(miss) => return miss_rendered(r, opts, miss),
         };
         let mut merged = values.clone();
-        b.add_args(info, &msg, &mut merged, 1);
-        let text = r.render_top(&msg, &merged);
+        b.add_args(info, &built, &mut merged, 1);
+        let text = r.render_top(&built.message, &merged);
         r.finish(text)
     }
 
@@ -275,20 +271,74 @@ impl Strings {
     /// renders as absent and reports the miss in every render that uses it.
     pub fn to_value(&self, info: &StringInfo) -> Result<Value, Miss> {
         let mut b = ArgBuilder::new(self, DEFAULT_MAX_DEPTH);
-        let msg = b.message(&info.source)?;
+        let built = b.top(&info.source)?;
         let mut values = Values::new();
-        b.add_args(info, &msg, &mut values, 1);
-        Ok(Value::shared_message(msg, values))
+        b.add_args(info, &built, &mut values, 1);
+        Ok(Value::shared_message(Arc::clone(&built.message), values))
+    }
+}
+
+/// A table lookup result: the table, `None` if the locale has none, or why it could not be
+/// read.
+type TableLookup = std::result::Result<Option<Arc<StringTable>>, String>;
+
+/// Runs `f` on the entry `token` of an already looked-up table, or reports the miss.
+fn entry_in<T>(
+    table: u32,
+    token: u32,
+    loaded: &TableLookup,
+    f: impl FnOnce(&StringTableEntry) -> T,
+) -> Result<T, Miss> {
+    let miss = |reason| Miss {
+        table,
+        token,
+        reason,
+    };
+    match loaded {
+        Err(e) => Err(miss(MissReason::Unreadable(e.clone()))),
+        Ok(None) => Err(miss(MissReason::NoTable)),
+        Ok(Some(t)) => t.get(token).map(f).ok_or_else(|| miss(MissReason::NoToken)),
+    }
+}
+
+/// Maximum number of nested argument values one [`Strings::resolve`] /
+/// [`Strings::to_value`] call builds; past it, nested values are unresolved with
+/// [`Diagnostic::WorkLimit`]. Real StringInfos nest a handful.
+const MAX_NESTED_VALUES: usize = 1 << 16;
+
+/// A resolved message and the set of argument IDs it uses, built once per entry per call.
+struct Built {
+    message: Arc<Message>,
+    used: HashSet<u32>,
+}
+
+impl Built {
+    fn new(message: Message) -> Arc<Self> {
+        let used = message.arg_ids().into_iter().collect();
+        Arc::new(Self {
+            message: Arc::new(message),
+            used,
+        })
     }
 }
 
 /// Builds StringInfo argument values for one [`Strings::resolve`] / [`Strings::to_value`]
 /// call. Lookups are memoised per (table, token), misses included, so a StringInfo whose
-/// arguments all name one entry parses it once.
+/// arguments all name one entry parses it once, and the entry's used-ID set is built once.
+///
+/// The table of the last lookup is held for the whole call, so consecutive lookups in one
+/// table load it once even when the cache does not keep it (a table larger than the
+/// cache). Table bytes read from the source per call are bounded by the cache's byte
+/// limit (the first load is always allowed); past it, only cached tables are used and
+/// other lookups become [`Diagnostic::WorkLimit`].
 struct ArgBuilder<'s> {
     strings: &'s Strings,
     max_depth: usize,
-    memo: HashMap<(u32, u32), Result<Arc<Message>, Miss>>,
+    memo: HashMap<(u32, u32), Result<Arc<Built>, Diagnostic>>,
+    last_table: Option<(u32, TableLookup)>,
+    loaded: usize,
+    load_limit: usize,
+    nested: usize,
 }
 
 impl<'s> ArgBuilder<'s> {
@@ -297,31 +347,106 @@ impl<'s> ArgBuilder<'s> {
             strings,
             max_depth,
             memo: HashMap::new(),
+            last_table: None,
+            loaded: 0,
+            load_limit: strings.cache.limits().max_bytes,
+            nested: 0,
         }
     }
 
-    fn message(&mut self, source: &StringSource) -> Result<Arc<Message>, Miss> {
+    /// The outermost message of a call (never limited by the per-call budgets, which are
+    /// still unspent).
+    fn top(&mut self, source: &StringSource) -> Result<Arc<Built>, Miss> {
+        self.lookup(source).map_err(|d| match d {
+            Diagnostic::Miss(m) => m,
+            other => {
+                let (table, token) = match source {
+                    StringSource::Table { token, table } => (table.raw(), *token),
+                    StringSource::Literal(_) => (0, 0),
+                };
+                Miss {
+                    table,
+                    token,
+                    reason: MissReason::Unreadable(other.to_string()),
+                }
+            }
+        })
+    }
+
+    fn lookup(&mut self, source: &StringSource) -> Result<Arc<Built>, Diagnostic> {
         match source {
-            StringSource::Literal(text) => Ok(Arc::new(Message::literal(&text.to_string_lossy()))),
+            StringSource::Literal(text) => {
+                Ok(Built::new(Message::literal(&text.to_string_lossy())))
+            }
+            // property-system.md §4.8 (and §7.5): a (table 0, token 0) StringInfo means "no
+            // text". It resolves to the empty message without a diagnostic, also as a
+            // nested argument. (string-table.md §9.0 step 2 lists it under reason 1; see
+            // the implementer OPEN there.)
+            StringSource::Table { token: 0, table } if table.raw() == 0 => {
+                Ok(Built::new(Message::literal("")))
+            }
             StringSource::Table { token, table } => {
-                let strings = self.strings;
-                self.memo
-                    .entry((table.raw(), *token))
-                    .or_insert_with(|| strings.message(table.raw(), *token).map(Arc::new))
-                    .clone()
+                let key = (table.raw(), *token);
+                if let Some(r) = self.memo.get(&key) {
+                    return r.clone();
+                }
+                let r = self.lookup_entry(key.0, key.1);
+                self.memo.insert(key, r.clone());
+                r
             }
         }
     }
 
-    /// Adds the arguments of `info` that `msg` uses (spec §9 step 3) to `values`. `depth`
-    /// is the level of `msg` (the outermost is 1). For repeated `var_id`s the last
+    fn lookup_entry(&mut self, table: u32, token: u32) -> Result<Arc<Built>, Diagnostic> {
+        if !is_string_table_did(table) {
+            return Err(Diagnostic::Miss(Miss {
+                table,
+                token,
+                reason: MissReason::NotStringTable,
+            }));
+        }
+        let loaded = self.table(table)?;
+        entry_in(table, token, &loaded, Message::from_entry)
+            .map(Built::new)
+            .map_err(Diagnostic::Miss)
+    }
+
+    fn table(&mut self, did: u32) -> Result<TableLookup, Diagnostic> {
+        if let Some((d, t)) = &self.last_table
+            && *d == did
+        {
+            return Ok(t.clone());
+        }
+        let cache = &self.strings.cache;
+        let t = if self.loaded < self.load_limit || self.loaded == 0 {
+            let (t, n) = cache.get_or_load_counted(did, self.strings.source.as_ref());
+            self.loaded = self.loaded.saturating_add(n);
+            t
+        } else if let Some(t) = cache.get_cached(did) {
+            t
+        } else {
+            tracing::debug!(
+                did = format_args!("{did:#010x}"),
+                limit = self.load_limit,
+                "per-call string table load limit reached"
+            );
+            return Err(Diagnostic::WorkLimit {
+                limit: self.load_limit,
+            });
+        };
+        let t = t.map_err(|e| e.to_string());
+        self.last_table = Some((did, t.clone()));
+        Ok(t)
+    }
+
+    /// Adds the arguments of `info` that `built` uses (spec §9 step 3) to `values`. `depth`
+    /// is the level of `built` (the outermost is 1). For repeated `var_id`s the last
     /// argument wins.
-    fn add_args(&mut self, info: &StringInfo, msg: &Message, values: &mut Values, depth: usize) {
+    fn add_args(&mut self, info: &StringInfo, built: &Built, values: &mut Values, depth: usize) {
         let Some(args) = &info.args else { return };
-        let used: HashSet<u32> = msg.arg_ids().into_iter().collect();
         let mut done: HashSet<u32> = HashSet::new();
         for arg in args.values.iter().rev() {
-            if !used.contains(&arg.var_id) || !done.insert(arg.var_id) {
+            if !built.used.contains(&arg.var_id) || !done.insert(arg.var_id) {
                 continue;
             }
             let value = match &arg.value {
@@ -339,12 +464,18 @@ impl<'s> ArgBuilder<'s> {
                 limit: self.max_depth,
             });
         }
-        match self.message(&info.source) {
-            Err(miss) => Value::Unresolved(Diagnostic::Miss(miss)),
-            Ok(msg) => {
+        if self.nested >= MAX_NESTED_VALUES {
+            return Value::Unresolved(Diagnostic::WorkLimit {
+                limit: MAX_NESTED_VALUES,
+            });
+        }
+        self.nested += 1;
+        match self.lookup(&info.source) {
+            Err(d) => Value::Unresolved(d),
+            Ok(built) => {
                 let mut values = Values::new();
-                self.add_args(info, &msg, &mut values, depth);
-                Value::shared_message(msg, values)
+                self.add_args(info, &built, &mut values, depth);
+                Value::shared_message(Arc::clone(&built.message), values)
             }
         }
     }

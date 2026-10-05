@@ -35,13 +35,13 @@ marks the item **done** here.
 
 | ID | Question | Spec | Needs | Status |
 |---|---|---|---|---|
-| [O1](#o1) | `/loc`, map coordinates and area at 20 reference locations | `docs/checklists/m3-reference-locations.md` | In-game `/loc` | open |
-| [O2](#o2) | Compass bearing of a placed object versus `/loc` heading | `entity-descriptor.md` §4.4 | In-game `/loc` | open |
-| [O3](#o3) | Which content layer the world shows by default | `entity-descriptor.md` §4.5.1 | In-game look | open (spot to be supplied) |
-| [O4](#o4) | Are one-triangle placeholder parts drawn? | `setup.md` §8.5 | Look, or frame capture | open |
+| [O1](#o1) | `/loc`, map coordinates and area at 20 reference locations | `docs/checklists/m3-reference-locations.md` | In-game `/loc` | answered from the client (`coordinates.md` §8–§9, §14); optional confirmation: avatar origin height, area names, block edges |
+| [O2](#o2) | Compass bearing of a placed object versus `/loc` heading | `entity-descriptor.md` §4.4 | In-game `/loc` | answered from the client (`coordinates.md` §11.3–§11.4: h = (360° − yaw) mod 360, bearing of model +Y); optional confirmation |
+| [O3](#o3) | Which content layer the world shows by default | `entity-descriptor.md` §4.5.1 | In-game look | answered from the client (`entity-descriptor.md` §4.5.1: layers 1 and 2 are both shown; only named layers depend on story progress); optional confirmation spot: region 1, block 0xA15B |
+| [O4](#o4) | Are one-triangle placeholder parts drawn? | `setup.md` §8.5 | Look, or frame capture | answered from the client (`setup.md`: never drawn in objects with more than one part); no observation needed |
 | [O5](#o5) | Exact dye blend | `material.md` §12.3 | Look, or frame capture | open |
 | [O6](#o6) | Other material and render-state questions | `material.md` §17 and §19 | Frame capture | open |
-| [O7](#o7) | Command-line option leniency | `install-layout.md` §10 | Launch test | open, low priority |
+| [O7](#o7) | Command-line option leniency | `install-layout.md` §10 | Launch test | answered from the client (`install-layout.md` §10.1); no observation needed |
 | [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | open (M4; informal look at Tessera fine, 2026-10-05) |
 | [O9](#o9) | Height slider and facial bone sliders in character creation | `appearance.md` §6.2, §6.3 | Character-creation screen | open (M4) |
 | [O10](#o10) | Worn-item layering and equal-priority ties | `appearance.md` §4.6, §4.7 | Look (wardrobe preview) | open (M4) |
@@ -49,7 +49,7 @@ marks the item **done** here.
 | [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | open (M4) |
 | [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | open (M4) |
 | [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | Look, `/loc`, short videos | open (M4) |
-| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3 | Frame capture | open (M4, low priority) |
+| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3 | Frame capture | open (M4, low priority); colour byte order settled (`property-system.md`: B, G, R, A) |
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §16 | Look, explorer side by side | open (M4) |
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7 | In-game `/loc`, look | open (M4; informal look at Tessera fine, 2026-10-05) |
 

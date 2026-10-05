@@ -11,8 +11,11 @@ pub const QUANT_8BIT: u8 = 0;
 pub const QUANT_16BIT: u8 = 1;
 /// Rotation quantisation code: the 40-bit quaternion (every track observed, §5.6).
 pub const ROT_QUANT_40BIT: u8 = 1;
-/// Largest degree a curve can declare (the degree is a u8; 1 and 3 occur).
-pub const MAX_DEGREE: usize = 255;
+/// Largest curve degree Tessera accepts (1 and 3 occur, HV11). A resource limit, like the
+/// tagfile's: evaluation costs O(*p*²) per channel, so the u8 degree's full range would let a
+/// small record make every sample thousands of times slower. A parsed curve of higher degree
+/// is `spline.bad_curve` (§9.3); [`Curve::new`] and [`basis_functions`] refuse it too.
+pub const MAX_DEGREE: usize = 7;
 
 /// 1 / (2047 × √2), the 40-bit field scale (§5.6).
 const QUAT40_SCALE: f32 = 1.0 / (2047.0 * std::f32::consts::SQRT_2);
@@ -60,7 +63,7 @@ pub fn decode_quat40(b: [u8; 5]) -> [f32; 4] {
 ///
 /// `knots` must hold `n + p + 2` values; with fewer, the result is clamped into range.
 pub fn find_span(knots: &[u8], n: usize, p: usize, u: f32) -> usize {
-    if n + 1 >= knots.len() || p > n {
+    if n.checked_add(1).is_none_or(|e| e >= knots.len()) || p > n {
         return p.min(n);
     }
     if u >= f32::from(knots[n + 1]) {
@@ -77,7 +80,11 @@ pub fn find_span(knots: &[u8], n: usize, p: usize, u: f32) -> usize {
 /// `span` must satisfy `p ≤ span` and `span + p < knots.len()`. Returns `false` (and
 /// leaves `out` unspecified) if these do not hold.
 pub fn basis_functions(knots: &[u8], span: usize, p: usize, u: f32, out: &mut [f32]) -> bool {
-    if p > MAX_DEGREE || out.len() <= p || span < p || span + p >= knots.len() {
+    if p > MAX_DEGREE
+        || out.len() <= p
+        || span < p
+        || span.checked_add(p).is_none_or(|e| e >= knots.len())
+    {
         return false;
     }
     let mut left = [0.0f32; MAX_DEGREE + 1];
@@ -371,6 +378,9 @@ impl BlockParser<'_> {
         if p == 0 || u16::from(p) > n {
             return Err(self.curve_err(channel, "degree outside 1..n"));
         }
+        if usize::from(p) > MAX_DEGREE {
+            return Err(self.curve_err(channel, "degree above Tessera's limit"));
+        }
         if u32::from(n) + 1 > self.frames {
             return Err(self.curve_err(channel, "more control points than block frames"));
         }
@@ -391,6 +401,21 @@ impl BlockParser<'_> {
             .all(|&k| k > 0 && u32::from(k) < last);
         if !(head_ok && tail_ok && interior_ok) {
             return Err(self.curve_err(channel, "knot vector not clamped"));
+        }
+        // §5.4 / HV11: interior knots repeat at most p times, so the curve is continuous.
+        // Interior knots lie strictly inside (0, last), so their runs never touch the clamped
+        // ends.
+        let interior = &knots[p + 1..count - p - 1];
+        let mut run = 0usize;
+        for (i, &k) in interior.iter().enumerate() {
+            run = if i > 0 && interior[i - 1] == k {
+                run + 1
+            } else {
+                1
+            };
+            if run > p {
+                return Err(self.curve_err(channel, "interior knot multiplicity above degree"));
+            }
         }
         let start = self.knots.len() as u32;
         self.knots.extend_from_slice(knots);

@@ -5,7 +5,7 @@
 //! and values are decoded by their declared type. [`Tagfile`] borrows the input; strings and
 //! byte arrays are slices of it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::error::{HavokError, Result};
@@ -25,6 +25,11 @@ pub const MAX_FULL_MEMBERS: usize = 1024;
 pub const MAX_INHERITANCE_DEPTH: usize = 64;
 /// Most objects one tagfile may hold (2 occur; resource limit).
 pub const MAX_OBJECTS: usize = 1 << 16;
+/// Most decoded values one tagfile may hold: present object members plus stored struct-array
+/// columns (fewer than 100 occur; resource limit). A present member can cost a single bit of
+/// input, so without this cap a small record could decode to a model hundreds of times its
+/// size.
+pub const MAX_VALUES: usize = 1 << 20;
 
 /// Tag numbers of §3.3.
 mod tag {
@@ -203,7 +208,8 @@ pub struct StructArray<'a> {
     pub class: u32,
     /// Number of elements.
     pub len: usize,
-    /// Present columns as (full member index of the element class, column values).
+    /// Present columns as (full member index of the element class, column values). Columns
+    /// of an empty array are read but not kept (each equals its default, §3.10).
     pub columns: Vec<(usize, Value<'a>)>,
 }
 
@@ -326,6 +332,17 @@ struct Parser<'a> {
     /// classes resolve by name at read time (§3.5); the index keeps that lookup O(1) so parse
     /// time stays linear in the input however many classes are declared.
     class_by_name: HashMap<&'a [u8], u32>,
+    /// Pool strings already entered in `class_by_name` as a class name. A pool string can be
+    /// as long as the input and named by any number of 1-byte references, so its bytes are
+    /// hashed once per pool entry, not once per declaration.
+    named: HashSet<StrId>,
+    /// Struct-class resolutions made so far, by the pool string of the member's class name.
+    /// A resolution never changes (the first declaration wins and a failed one ends the
+    /// parse), so each pool string's bytes are hashed at most once however many struct-array
+    /// values name it.
+    struct_classes: HashMap<StrId, u32>,
+    /// Decoded values stored so far (checked against [`MAX_VALUES`]).
+    values: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -415,7 +432,7 @@ impl<'a> Parser<'a> {
         }
         let index = self.classes.len() as u32;
         let name_bytes = self.strings[name.0 as usize];
-        if !name_bytes.is_empty() {
+        if !name_bytes.is_empty() && self.named.insert(name) {
             // The first declaration wins, as a front-to-back scan would find it.
             self.class_by_name.entry(name_bytes).or_insert(index);
         }
@@ -443,6 +460,18 @@ impl<'a> Parser<'a> {
         n
     }
 
+    /// Accounts for one more stored value ([`MAX_VALUES`]).
+    fn count_value(&mut self, at: usize) -> Result<()> {
+        if self.values >= MAX_VALUES {
+            return Err(HavokError::UnsupportedForm {
+                offset: at,
+                what: "too many values",
+            });
+        }
+        self.values += 1;
+        Ok(())
+    }
+
     fn bitmap(&mut self, members: usize) -> Result<&'a [u8]> {
         self.rd.bytes(members.div_ceil(8), "presence bitmap")
     }
@@ -460,6 +489,7 @@ impl<'a> Parser<'a> {
             for m in 0..count {
                 if bitmap[index / 8] & (1 << (index % 8)) != 0 {
                     let member = self.classes[c as usize].members[m].clone();
+                    self.count_value(self.rd.pos)?;
                     let v = self.value(&member)?;
                     values.push((index, v));
                 }
@@ -470,14 +500,17 @@ impl<'a> Parser<'a> {
     }
 
     /// Resolves a struct class name to a class index, by name (§3.5).
-    fn struct_class(&self, member: &Member, at: usize) -> Result<u32> {
-        let Some(name) = member.class_name else {
+    fn struct_class(&mut self, member: &Member, at: usize) -> Result<u32> {
+        let Some(id) = member.class_name else {
             return Err(HavokError::UnsupportedForm {
                 offset: at,
                 what: "struct without class name",
             });
         };
-        let name = self.strings[name.0 as usize];
+        if let Some(&class) = self.struct_classes.get(&id) {
+            return Ok(class);
+        }
+        let name = self.strings[id.0 as usize];
         if name.is_empty() {
             return Err(HavokError::UnsupportedForm {
                 offset: at,
@@ -485,14 +518,17 @@ impl<'a> Parser<'a> {
             });
         }
         // Class 0 has the empty name and is never indexed.
-        self.class_by_name
+        let class = self
+            .class_by_name
             .get(name)
             .copied()
             .ok_or(HavokError::BadClassIndex {
                 offset: at,
                 index: -1,
                 what: "struct class name",
-            })
+            })?;
+        self.struct_classes.insert(id, class);
+        Ok(class)
     }
 
     fn value(&mut self, m: &Member) -> Result<Value<'a>> {
@@ -681,8 +717,14 @@ impl<'a> Parser<'a> {
                             what: "void member present",
                         });
                     }
+                    // The column is read (and its prefix checked) in every case, but an empty
+                    // column is not stored: it equals the absent member's default, the empty
+                    // array (§3.10), and storing it would cost a value per presence bit.
                     let v = self.column(ty.kind(), n, col_at)?;
-                    columns.push((index, v));
+                    if n > 0 {
+                        self.count_value(col_at)?;
+                        columns.push((index, v));
+                    }
                 }
                 index += 1;
             }
@@ -749,6 +791,9 @@ impl<'a> Tagfile<'a> {
             objects: Vec::new(),
             refs: Vec::new(),
             class_by_name: HashMap::new(),
+            named: HashSet::new(),
+            struct_classes: HashMap::new(),
+            values: 0,
         };
         let t_at = p.rd.pos;
         let first = p.rd.varint("tag")?;

@@ -292,3 +292,215 @@ fn short_reference_frames_hold_their_last_sample_on_the_clip_grid() {
     };
     assert_eq!(empty.sample_on_grid(1.0, 5, 4.0), [0.0; 4]);
 }
+
+/// Objects of class `s`, each with `members` struct-array members all present as an empty
+/// array whose element class has `element_members` members, all present (column bitmap of
+/// all ones; empty byte columns take no bytes).
+fn empty_struct_array_objects(
+    s: usize,
+    members: usize,
+    element_members: usize,
+    objects: usize,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    for _ in 0..objects {
+        write_varint(&mut body, 4);
+        write_varint(&mut body, s as i32);
+        body.extend(std::iter::repeat_n(0xFF, members.div_ceil(8)));
+        for _ in 0..members {
+            body.push(0); // count 0
+            body.extend(std::iter::repeat_n(0xFF, element_members.div_ceil(8)));
+        }
+    }
+    body
+}
+
+#[test]
+fn struct_class_lookup_is_independent_of_the_class_name_length() {
+    // A 64 KiB element class name named by 200,000 one-byte struct-array values: resolving
+    // it by its bytes each time hashed 13 GB.
+    let mut w = TagfileWriter::new();
+    let long = "T".repeat(64 * 1024);
+    let t = w.class(&long, 0, 0, &[]);
+    let members: Vec<_> = (0..1000)
+        .map(|i| MemberDef::class(&format!("m{i}"), 25, &long))
+        .collect();
+    let s = w.class("S", 0, 0, &members);
+    w.raw(&empty_struct_array_objects(s, 1000, 0, 200));
+    let bytes = w.finish();
+    assert!(bytes.len() < 400_000, "input is {} bytes", bytes.len());
+    let start = Instant::now();
+    let tf = Tagfile::parse(&bytes).expect("parses");
+    let took = start.elapsed();
+    assert_eq!(tf.objects().len(), 200);
+    let Some((_, tessera_havok::tagfile::Value::StructArray(sa))) =
+        tf.root().unwrap().values.first()
+    else {
+        panic!("struct array expected")
+    };
+    assert_eq!(sa.class as usize, t);
+    assert!(took < BUDGET, "parse took {took:?}");
+}
+
+#[test]
+fn class_declarations_sharing_one_long_name_hash_it_once() {
+    // 4,000 metadata entries whose names all refer to one 1 MiB pool string (pool index 2,
+    // the first string written).
+    let mut w = TagfileWriter::new();
+    let long = "C".repeat(1 << 20);
+    let first = w.class(&long, 0, 0, &[]);
+    let mut body = Vec::new();
+    for _ in 0..4000 {
+        for v in [2, -2, 0, 0, 0] {
+            write_varint(&mut body, v);
+        }
+    }
+    w.raw(&body);
+    let bytes = w.finish();
+    let start = Instant::now();
+    let tf = Tagfile::parse(&bytes).expect("parses");
+    let took = start.elapsed();
+    assert_eq!(tf.classes().len(), first + 4001);
+    assert!(took < BUDGET, "parse took {took:?}");
+}
+
+#[test]
+fn empty_struct_array_columns_are_not_stored() {
+    // Every column of a count-0 struct array is present but empty: none is kept (each equals
+    // the absent member's default, §3.10), so presence bits cost no memory.
+    let mut w = TagfileWriter::new();
+    let element: Vec<_> = (0..1024)
+        .map(|i| MemberDef::new(&format!("e{i}"), 1))
+        .collect();
+    let e = w.class("E", 0, 0, &element);
+    let members: Vec<_> = (0..1024)
+        .map(|i| MemberDef::class(&format!("m{i}"), 25, "E"))
+        .collect();
+    let s = w.class("S", 0, 0, &members);
+    w.raw(&empty_struct_array_objects(s, 1024, 1024, 4));
+    let bytes = w.finish();
+    let tf = Tagfile::parse(&bytes).expect("parses");
+    assert_eq!(tf.objects().len(), 4);
+    for o in tf.objects() {
+        assert_eq!(o.values.len(), 1024);
+        for (_, v) in &o.values {
+            let tessera_havok::tagfile::Value::StructArray(sa) = v else {
+                panic!("struct array expected")
+            };
+            assert_eq!((sa.class as usize, sa.len), (e, 0));
+            assert!(sa.columns.is_empty());
+        }
+    }
+
+    // Prefixed columns are still read and checked when empty: a vec4 column of a count-0
+    // array with component count 9 is unsupported.
+    let mut w = TagfileWriter::new();
+    let v = w.class("V", 0, 0, &[MemberDef::new("v", 4)]);
+    let h = w.class("H", 0, 0, &[MemberDef::class("a", 25, "V")]);
+    let mut body = Vec::new();
+    write_varint(&mut body, 4);
+    write_varint(&mut body, h as i32);
+    body.extend([0x01, 0x00, 0x01]); // bitmap, count 0, column bitmap
+    write_varint(&mut body, 9);
+    w.raw(&body);
+    let bytes = w.finish();
+    assert!(v > 0);
+    let e = Tagfile::parse(&bytes).unwrap_err();
+    assert_eq!(
+        e.category(),
+        tessera_havok::FailureCategory::TagfileUnsupportedForm
+    );
+}
+
+#[test]
+fn decoded_values_are_capped() {
+    // Present byte members cost one input byte each but decode to a much larger value; the
+    // total is capped at MAX_VALUES.
+    let mut w = TagfileWriter::new();
+    let members: Vec<_> = (0..1024)
+        .map(|i| MemberDef::new(&format!("b{i}"), 1))
+        .collect();
+    let c = w.class("B", 0, 0, &members);
+    let objects = tessera_havok::tagfile::MAX_VALUES / 1024 + 1;
+    let mut body = Vec::new();
+    for _ in 0..objects {
+        write_varint(&mut body, 4);
+        write_varint(&mut body, c as i32);
+        body.extend(std::iter::repeat_n(0xFF, 128));
+        body.extend(std::iter::repeat_n(7, 1024));
+    }
+    w.raw(&body);
+    let bytes = w.finish();
+    let e = Tagfile::parse(&bytes).unwrap_err();
+    assert_eq!(
+        e.category(),
+        tessera_havok::FailureCategory::TagfileUnsupportedForm
+    );
+}
+
+#[test]
+fn interleaved_blends_of_extreme_finite_frames_stay_finite() {
+    // §7.8 blends a + α(b − a); b − a overflows here although both frames are finite.
+    let frame = |x: f32, s: f32| Transform {
+        translation: [x, 0.0, 0.0],
+        scale: [s; 3],
+        ..Transform::IDENTITY
+    };
+    let spec = InterleavedClipSpec {
+        duration: 1.0,
+        tracks: 1,
+        transforms: vec![frame(-2e38, 2e38), frame(2e38, -2e38), frame(2e38, 2e38)],
+    };
+    let rec =
+        ClipRecordSpec::new(AnimationSpec::new(AnimationKindSpec::Interleaved(spec))).to_bytes();
+    let c = classify_clip_record(&rec, &mut Vec::new());
+    assert!(c.is_ok(), "{:?}", c.error);
+    let clip = Clip::parse(&rec).expect("decodes");
+    let mut out = [Transform::IDENTITY];
+    for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        assert_eq!(clip.sample(t, &mut out), 1);
+        assert!(out[0].is_finite(), "t = {t}: {:?}", out[0]);
+        let one = clip.animation.sample_track(0, t).unwrap();
+        assert!(one.is_finite(), "t = {t}: {one:?}");
+    }
+    // Frame times give the frames exactly.
+    clip.sample(0.0, &mut out);
+    assert_eq!(out[0].translation[0], -2e38);
+    clip.sample(0.5, &mut out);
+    assert_eq!((out[0].translation[0], out[0].scale[0]), (2e38, -2e38));
+
+    let rf = ReferenceFrame {
+        up: [0.0, 0.0, 1.0, 0.0],
+        forward: [1.0, 0.0, 0.0, 0.0],
+        duration: 1.0,
+        components: 4,
+        samples: vec![[-3e38; 4], [3e38; 4]],
+    };
+    for t in [0.0, 0.5, 1.0] {
+        assert!(rf.sample(t).iter().all(|v| v.is_finite()));
+        assert!(rf.sample_on_grid(t, 2, 1.0).iter().all(|v| v.is_finite()));
+    }
+}
+
+#[test]
+fn spline_helpers_reject_overflowing_arguments() {
+    // Documented: a too-short knot vector clamps the span; bad arguments return false.
+    assert_eq!(tessera_havok::find_span(&[0, 1], usize::MAX, 0, 0.0), 0);
+    assert_eq!(tessera_havok::find_span(&[0, 1], usize::MAX, 3, 0.0), 3);
+    let mut out = [0.0f32; 2];
+    assert!(!tessera_havok::basis_functions(
+        &[0, 0, 1, 1],
+        usize::MAX,
+        1,
+        0.0,
+        &mut out
+    ));
+    assert!(tessera_havok::basis_functions(
+        &[0, 0, 1, 1],
+        1,
+        1,
+        0.5,
+        &mut out
+    ));
+    assert_eq!(out, [0.5, 0.5]);
+}

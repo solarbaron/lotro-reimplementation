@@ -3,9 +3,10 @@
 //! decoder reports the right one.
 
 use tessera_havok::testkit::{
-    AnimationKindSpec, AnimationSpec, ClipRecordSpec, MemberDef, SkeletonSpec, TagfileWriter,
-    WValue, declare_base_classes, example_interleaved_12_6, example_rich_record,
-    example_skeleton_12_1, example_spline_12_3,
+    AnimationKindSpec, AnimationSpec, BlockSpec, ClipRecordSpec, MemberDef, RotationSpec,
+    SkeletonSpec, SplineClipSpec, TagfileWriter, TrackSpec, VectorSpec, WValue,
+    declare_base_classes, example_interleaved_12_6, example_rich_record, example_skeleton_12_1,
+    example_spline_12_3,
 };
 use tessera_havok::{
     BlockParams, Clip, FailureCategory as C, ReferenceFrame, Skeleton, SplineBlock, Tagfile,
@@ -460,6 +461,98 @@ fn spline_categories() {
     )
     .unwrap_err();
     assert_eq!(e.category(), C::SplineBlockOverrun);
+}
+
+/// A one-block, one-track spline clip of `frames` frames.
+fn one_track_clip(frames: u32, track: TrackSpec) -> Vec<u8> {
+    let spec = SplineClipSpec {
+        duration: (frames - 1) as f32 / 30.0,
+        num_frames: frames,
+        max_frames_per_block: 256,
+        blocks: vec![BlockSpec {
+            tracks: vec![track],
+        }],
+    };
+    ClipRecordSpec::new(AnimationSpec::new(AnimationKindSpec::Spline(spec))).to_bytes()
+}
+
+fn rotation_curve(degree: u8, knots: Vec<u8>) -> TrackSpec {
+    let points = knots.len() - usize::from(degree) - 1;
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    let points = (0..points)
+        .map(|k| {
+            if k % 2 == 0 {
+                [0.0, 0.0, 0.0, 1.0]
+            } else {
+                [0.0, 0.0, h, h]
+            }
+        })
+        .collect();
+    TrackSpec::new(
+        VectorSpec::DEFAULT,
+        RotationSpec::Dynamic {
+            degree,
+            knots,
+            points,
+        },
+        VectorSpec::DEFAULT,
+    )
+}
+
+fn position_curve(degree: u8, knots: Vec<u8>) -> TrackSpec {
+    let points: Vec<[f32; 3]> = (0..knots.len() - usize::from(degree) - 1)
+        .map(|k| [k as f32, 0.0, 0.0])
+        .collect();
+    TrackSpec::new(
+        VectorSpec::spline(degree, knots, &points, 0b001, [None; 3]),
+        RotationSpec::Identity,
+        VectorSpec::DEFAULT,
+    )
+}
+
+#[test]
+fn interior_knot_multiplicity_above_the_degree_is_a_bad_curve() {
+    // §5.4 / HV11: interior knots repeat at most p times. Degree 1, knot 2 twice: the
+    // rotation would jump at frame 2.
+    let rec = one_track_clip(5, rotation_curve(1, vec![0, 0, 2, 2, 4, 4]));
+    assert_eq!(clip_cat(&rec), Some(C::SplineBadCurve));
+    // Degree 3, knot 2 four times.
+    let rec = one_track_clip(
+        8,
+        position_curve(3, vec![0, 0, 0, 0, 2, 2, 2, 2, 7, 7, 7, 7]),
+    );
+    assert_eq!(clip_cat(&rec), Some(C::SplineBadCurve));
+    // At most p repeats is fine: degree 1 with distinct interior knots, degree 3 with a
+    // triple interior knot.
+    let rec = one_track_clip(5, rotation_curve(1, vec![0, 0, 2, 3, 4, 4]));
+    assert_eq!(clip_cat(&rec), None);
+    let rec = one_track_clip(8, position_curve(3, vec![0, 0, 0, 0, 2, 2, 2, 7, 7, 7, 7]));
+    assert_eq!(clip_cat(&rec), None);
+}
+
+#[test]
+fn degrees_above_the_resource_limit_are_a_bad_curve() {
+    let max = tessera_havok::MAX_DEGREE;
+    assert!(max < 15, "the limit is below the 16-frame block used here");
+    let (max, above) = (max as u8, (max + 1) as u8);
+    let clamped = |p: u8, last: u8| {
+        let mut k = vec![0; usize::from(p) + 1];
+        k.extend(std::iter::repeat_n(last, usize::from(p) + 1));
+        k
+    };
+    // Degree MAX_DEGREE with n = p control points - 1: accepted.
+    let rec = one_track_clip(16, rotation_curve(max, clamped(max, 15)));
+    assert_eq!(clip_cat(&rec), None);
+    let rec = one_track_clip(16, position_curve(max, clamped(max, 15)));
+    assert_eq!(clip_cat(&rec), None);
+    // One more: rejected before control points are read.
+    let rec = one_track_clip(16, rotation_curve(above, clamped(above, 15)));
+    assert_eq!(clip_cat(&rec), Some(C::SplineBadCurve));
+    let rec = one_track_clip(16, position_curve(above, clamped(above, 15)));
+    assert_eq!(clip_cat(&rec), Some(C::SplineBadCurve));
+    // The u8 maximum, 255 (256 control points over a 256-frame block).
+    let rec = one_track_clip(256, rotation_curve(255, clamped(255, 255)));
+    assert_eq!(clip_cat(&rec), Some(C::SplineBadCurve));
 }
 
 #[test]

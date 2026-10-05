@@ -41,11 +41,14 @@
 //!
 //! Decoders never panic on malformed data and report a [`HavokError`] whose
 //! [`HavokError::category`] is one of the spec's failure categories (§9.3). Every count is
-//! checked against the bytes left before anything is allocated; class, member, inheritance
-//! and object counts are capped ([`tagfile::MAX_CLASSES`], [`tagfile::MAX_FULL_MEMBERS`],
-//! [`tagfile::MAX_INHERITANCE_DEPTH`], [`tagfile::MAX_OBJECTS`]). Work and memory follow
-//! the input's size, not the counts stored in it: struct classes resolve through a name
-//! index, pool strings named many times are copied once and shared, annotation tracks stop
+//! checked against the bytes left before anything is allocated; class, member, inheritance,
+//! object and decoded-value counts and the curve degree are capped
+//! ([`tagfile::MAX_CLASSES`], [`tagfile::MAX_FULL_MEMBERS`],
+//! [`tagfile::MAX_INHERITANCE_DEPTH`], [`tagfile::MAX_OBJECTS`], [`tagfile::MAX_VALUES`],
+//! [`MAX_DEGREE`]). Work and memory follow the input's size, not the counts stored in it:
+//! struct classes resolve through a name index whose keys are hashed once per pool string,
+//! empty struct-array columns are not stored, pool strings named many times are copied once
+//! and shared, annotation tracks stop
 //! at the transform track count, and [`Animation::check_samples_finite`] samples a block
 //! without curves once (any block with curves has at most 256 frames, its knots being
 //! bytes). Sampling clamps every time and frame and uses checked arithmetic, so hand-built

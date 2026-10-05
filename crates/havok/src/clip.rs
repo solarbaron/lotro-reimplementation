@@ -228,7 +228,7 @@ impl ReferenceFrame {
                 let (f, alpha) = frame_and_alpha(t, self.duration, n);
                 let a = self.samples[f];
                 let b = self.samples[f + 1];
-                std::array::from_fn(|i| a[i] + (b[i] - a[i]) * alpha)
+                std::array::from_fn(|i| lerp(a[i], b[i], alpha))
             }
         }
     }
@@ -250,8 +250,17 @@ impl ReferenceFrame {
         let last = self.samples.len() - 1;
         let a = self.samples[f.min(last)];
         let b = self.samples[(f + 1).min(last)];
-        std::array::from_fn(|i| a[i] + (b[i] - a[i]) * alpha)
+        std::array::from_fn(|i| lerp(a[i], b[i], alpha))
     }
+}
+
+/// The linear blend *a* + α × (*b* − *a*) of §7.8, evaluated as (1 − α) × *a* + α × *b*.
+/// Both forms are equal in exact arithmetic, but *b* − *a* overflows `f32` for finite
+/// endpoints of opposite sign near the range limit, which turned a sample of finite frames
+/// into NaN or infinity. This form is finite for finite endpoints and α in 0 … 1, and gives
+/// *a* exactly at α = 0 and *b* exactly at α = 1.
+fn lerp(a: f32, b: f32, alpha: f32) -> f32 {
+    a * (1.0 - alpha) + b * alpha
 }
 
 /// Frame index `f ≤ n − 2` and blend factor for time `t` on an `n`-frame grid over
@@ -305,10 +314,10 @@ impl InterleavedAnimation {
         for ((o, x), y) in out.iter_mut().zip(a).zip(b) {
             *o = Transform {
                 translation: std::array::from_fn(|i| {
-                    x.translation[i] + (y.translation[i] - x.translation[i]) * alpha
+                    lerp(x.translation[i], y.translation[i], alpha)
                 }),
                 rotation: quat_nlerp(x.rotation, y.rotation, alpha),
-                scale: std::array::from_fn(|i| x.scale[i] + (y.scale[i] - x.scale[i]) * alpha),
+                scale: std::array::from_fn(|i| lerp(x.scale[i], y.scale[i], alpha)),
             };
         }
         n
@@ -519,10 +528,10 @@ impl Animation {
                 let y = frame_slice(&i.transforms, f + 1, i.tracks)?.get(track)?;
                 Some(Transform {
                     translation: std::array::from_fn(|k| {
-                        x.translation[k] + (y.translation[k] - x.translation[k]) * alpha
+                        lerp(x.translation[k], y.translation[k], alpha)
                     }),
                     rotation: quat_nlerp(x.rotation, y.rotation, alpha),
-                    scale: std::array::from_fn(|k| x.scale[k] + (y.scale[k] - x.scale[k]) * alpha),
+                    scale: std::array::from_fn(|k| lerp(x.scale[k], y.scale[k], alpha)),
                 })
             }
         }
@@ -583,10 +592,16 @@ impl Animation {
                 }
             }
             AnimationData::Interleaved(i) => {
-                // Frames past the stored transforms read as nothing; stop at the data.
+                // Frames past the stored transforms read as nothing; stop at the data. Each
+                // frame is checked as stored and as playback samples it, at its own time
+                // f × D / (N − 1) through `InterleavedAnimation::sample` (§7.8), so the check
+                // of §9.2 runs the same arithmetic as playback.
                 let stored = i.transforms.len() / i.tracks.max(1);
+                let last = i.frames.saturating_sub(1).max(1) as f32;
                 for f in 0..i.frames.min(stored) {
                     let n = i.sample_frame(f, scratch);
+                    check(&scratch[..n])?;
+                    let n = i.sample(f as f32 * i.duration / last, scratch);
                     check(&scratch[..n])?;
                 }
             }

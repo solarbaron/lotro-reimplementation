@@ -6,7 +6,7 @@
 //! Spec-Ref: docs/specs/install-layout.md#37-game-type-identification
 //! Spec-Ref: docs/specs/install-layout.md#7-projectversion
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -496,11 +496,8 @@ fn detect_game_type_in(dir: &Path, entries: &[DirEntry]) -> GameType {
     GameType::Unknown
 }
 
-/// Validate a candidate install directory (§4). Never fails: every problem is
-/// recorded in the report. Reads only directory listings, the first bytes of
-/// each archive and `ProjectVersion`.
-pub fn validate(dir: &Path) -> ValidationReport {
-    let mut report = ValidationReport {
+fn empty_report(dir: &Path) -> ValidationReport {
+    ValidationReport {
         root: dir.to_path_buf(),
         core_ok: false,
         usable: false,
@@ -515,7 +512,14 @@ pub fn validate(dir: &Path) -> ValidationReport {
         project_version: ProjectVersion::Missing,
         problems: Vec::new(),
         warnings: Vec::new(),
-    };
+    }
+}
+
+/// Validate a candidate install directory (§4). Never fails: every problem is
+/// recorded in the report. Reads only directory listings, the first bytes of
+/// each archive and `ProjectVersion`.
+pub fn validate(dir: &Path) -> ValidationReport {
+    let mut report = empty_report(dir);
     if !fsutil::is_dir(dir) {
         report.problems.push(ValidationProblem::NotADirectory);
         return report;
@@ -681,13 +685,25 @@ fn check_core(report: &mut ValidationReport) {
     report.core_ok = ok;
 }
 
+/// Positions in `archives` by kind and aux index, so lookups stay O(1) however many
+/// archive-named entries a (possibly hostile) directory holds. `collect_archives`
+/// keeps one archive per file name, hence per key; the first one wins regardless.
+fn archive_index(archives: &[ArchiveFile]) -> HashMap<(&ArchiveKind, u32), usize> {
+    let mut index = HashMap::with_capacity(archives.len());
+    for (i, a) in archives.iter().enumerate() {
+        index.entry((&a.kind, a.aux_index)).or_insert(i);
+    }
+    index
+}
+
 fn check_content(report: &mut ValidationReport) {
-    let has = |k: &ArchiveKind| {
-        report
-            .archives
-            .iter()
-            .any(|a| &a.kind == k && a.aux_index == 0)
-    };
+    let bases: HashSet<&ArchiveKind> = report
+        .archives
+        .iter()
+        .filter(|a| a.aux_index == 0)
+        .map(|a| &a.kind)
+        .collect();
+    let has = |k: &ArchiveKind| bases.contains(k);
     let missing: Vec<String> = [
         ArchiveKind::Mesh,
         ArchiveKind::Surface,
@@ -734,50 +750,52 @@ fn check_content(report: &mut ValidationReport) {
 }
 
 fn build_split_sets(report: &mut ValidationReport) {
-    let bases: Vec<ArchiveKind> = report
+    let index = archive_index(&report.archives);
+    let mut sets = Vec::new();
+    // Members of each set are 0, 1, … consecutively, so "reached" is "below the
+    // set's member count".
+    let mut reach: HashMap<&ArchiveKind, u32> = HashMap::new();
+    for a in report
         .archives
         .iter()
         .filter(|a| a.aux_index == 0 && a.kind.may_have_aux())
-        .map(|a| a.kind.clone())
-        .collect();
-    let mut sets = Vec::new();
-    for kind in bases {
+    {
         let mut members = vec![0u32];
         for n in 1..=MAX_AUX_INDEX {
-            if report
-                .archives
-                .iter()
-                .any(|a| a.kind == kind && a.aux_index == n)
-            {
+            if index.contains_key(&(&a.kind, n)) {
                 members.push(n);
             } else {
                 break;
             }
         }
+        let count = u32::try_from(members.len()).unwrap_or(u32::MAX);
+        let r = reach.entry(&a.kind).or_insert(0);
+        *r = (*r).max(count);
         sets.push(SplitSet {
-            kind,
+            kind: a.kind.clone(),
             members,
             status: SplitSetStatus::Unverified,
             stale: Vec::new(),
         });
     }
     // Aux files that were not reached by the consecutive probe.
+    let mut warnings = Vec::new();
     for a in report.archives.iter().filter(|a| a.aux_index > 0) {
-        let reached = sets
-            .iter()
-            .any(|s| s.kind == a.kind && s.members.contains(&a.aux_index));
+        let reached = reach.get(&a.kind).is_some_and(|&n| a.aux_index < n);
         if !reached {
-            report.warnings.push(ValidationWarning::AuxNotConsecutive {
+            warnings.push(ValidationWarning::AuxNotConsecutive {
                 file: a.file_name(),
             });
         }
     }
+    report.warnings.extend(warnings);
     report.split_sets = sets;
 }
 
 /// Header invariants that can be checked without the archive directory
 /// (§9.6 items 2–4 and the observed kind words of §3.2). Warnings only.
 fn check_invariants(report: &mut ValidationReport) {
+    let index = archive_index(&report.archives);
     let mut warnings = Vec::new();
     for a in &report.archives {
         let Some(h) = &a.header else { continue };
@@ -815,10 +833,9 @@ fn check_invariants(report: &mut ValidationReport) {
             });
         }
         if a.aux_index > 0 {
-            let base = report
-                .archives
-                .iter()
-                .find(|b| b.kind == a.kind && b.aux_index == 0)
+            let base = index
+                .get(&(&a.kind, 0))
+                .and_then(|&i| report.archives.get(i))
                 .and_then(|b| b.header.as_ref());
             if let Some(b) = base
                 && (b.kind_word, b.sub_code, b.block_size)
@@ -834,6 +851,81 @@ fn check_invariants(report: &mut ValidationReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::archive::ArchiveHeader;
+
+    /// Regression: the per-archive checks look archives up in an index instead of
+    /// scanning the whole list for each one, so a directory holding tens of thousands
+    /// of archive-named entries costs linear, not quadratic, time.
+    #[test]
+    fn archive_checks_are_linear_in_the_archive_count() {
+        let header = ArchiveHeader {
+            version_area_empty: true,
+            marker_100: [0; 4],
+            magic: 0,
+            block_size: 1024,
+            file_length: 0,
+            kind_word: 1,
+            sub_code: 0,
+            root_node_offset: 0,
+            field_170: 0,
+            field_174: 112,
+            field_178: 1,
+            identifier_17c: [0; 16],
+            field_18c: 0,
+            field_190: [0; 3],
+            field_19c: 0,
+        };
+        let file = |kind: ArchiveKind, aux_index: u32| ArchiveFile {
+            path: PathBuf::from(format!("client_{}_{aux_index}.dat", kind.key())),
+            kind,
+            aux_index,
+            size: 0,
+            header: Some(header.clone()),
+            status: ArchiveStatus::Ok,
+        };
+        let word = |mut i: u32| {
+            let mut w = String::from("x");
+            loop {
+                w.push(char::from(b'a' + (i % 26) as u8));
+                i /= 26;
+                if i == 0 {
+                    break w;
+                }
+            }
+        };
+        const N: u32 = 30_000;
+        let mut report = empty_report(Path::new("/nonexistent"));
+        for i in 0..N {
+            let kind = ArchiveKind::Other(word(i));
+            report.archives.push(file(kind.clone(), 0));
+            report.archives.push(file(kind.clone(), 1));
+            // Not reached by the consecutive probe (2 is missing).
+            report.archives.push(file(kind, 3));
+            report.archives.push(file(ArchiveKind::Cell(i), 0));
+        }
+        let start = std::time::Instant::now();
+        check_content(&mut report);
+        build_split_sets(&mut report);
+        check_invariants(&mut report);
+        let took = start.elapsed();
+        // The quadratic version needed minutes for this in a debug build.
+        assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
+        assert_eq!(report.split_sets.len(), N as usize);
+        assert!(report.split_sets.iter().all(|s| s.members == [0, 1]));
+        assert_eq!(report.unpaired_regions.len(), N as usize);
+        let not_consecutive = report
+            .warnings
+            .iter()
+            .filter(|w| matches!(w, ValidationWarning::AuxNotConsecutive { .. }))
+            .count();
+        assert_eq!(not_consecutive, N as usize);
+        let aux_differs = report
+            .warnings
+            .iter()
+            .filter(|w| matches!(w, ValidationWarning::AuxHeaderDiffers { .. }))
+            .count();
+        assert_eq!(aux_differs, 0);
+    }
 
     fn m(stamp: u8, index: u32, count: u32) -> Option<SetMembership> {
         Some(SetMembership {

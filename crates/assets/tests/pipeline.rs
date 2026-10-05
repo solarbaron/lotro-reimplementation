@@ -321,6 +321,8 @@ fn eviction_is_lru_by_bytes_and_weak_refs_revive() {
     assert!(Arc::ptr_eq(&load(1), &a)); // touch 1: 2 becomes LRU
     drop(load(3)); // evicts 2
     assert!(store.contains(1) && store.contains(3) && !store.contains(2));
+    // The eviction counter is updated just after the waiters are woken.
+    wait_until(|| store.stats().evictions == 1);
     let s = store.stats();
     assert_eq!((s.evictions, s.cache_bytes), (1, 80));
     // 1 is still held by `a`: evicted later, it comes back without decoding.
@@ -462,7 +464,11 @@ fn completion_queue_is_bounded() {
     for h in &hs {
         h.wait(T);
     }
-    wait_until(|| store.stats().completed == 20);
+    // Completions are posted just after the job is counted and its waiters woken.
+    wait_until(|| {
+        let s = store.stats();
+        s.completed == 20 && s.pending_completions as u64 + s.dropped_completions == 20
+    });
     let s = store.stats();
     assert_eq!(s.pending_completions, 4);
     assert_eq!(s.dropped_completions, 16);
@@ -709,9 +715,14 @@ fn oversized_product_is_revived_while_held() {
     let s = store.stats();
     assert_eq!((s.hits, s.misses, s.uncacheable), (1, 1, 1));
     assert!(!store.contains(1));
-    // Once nobody holds it, it is decoded again.
+    // Once nobody holds it, it is decoded again. The worker drops its reference to
+    // the finished job just after settling it, so wait for that.
+    let weak = Arc::downgrade(&first);
     drop((first, again));
+    // The job's completion is posted just after its waiters are woken.
+    wait_until(|| store.pending_completions() == 1);
     drop(store.poll_completions(usize::MAX));
+    wait_until(|| weak.strong_count() == 0);
     assert!(matches!(
         store.request(1, Priority::Visible).wait(T),
         AssetState::Ready(_)
@@ -798,8 +809,9 @@ fn completion_queue_is_bounded_by_bytes() {
         weak.push(Arc::downgrade(&v));
     }
     wait_until(|| store.stats().completed == 10);
-    let alive = weak.iter().filter(|w| w.strong_count() > 0).count();
-    assert!(alive <= 2, "{alive} products kept alive");
+    // A worker drops its reference to a finished job just after settling it, so allow
+    // that moment to pass before counting.
+    wait_until(|| weak.iter().filter(|w| w.strong_count() > 0).count() <= 2);
     let s = store.stats();
     assert!(s.pending_completions <= 2);
     assert_eq!(s.dropped_completions as usize + s.pending_completions, 10);

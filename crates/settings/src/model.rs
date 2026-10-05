@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{LoadWarning, Result, SettingsError};
 use crate::migrate::{self, SCHEMA_VERSION, SCHEMA_VERSION_KEY};
+use crate::nesting::{self, MAX_NESTING_DEPTH};
 
 /// Maximum number of remembered game directories.
 pub const MAX_GAME_DIRS: usize = 16;
@@ -411,8 +412,13 @@ impl Settings {
     ///
     /// # Errors
     ///
-    /// [`SettingsError::Serialize`] if a value cannot be represented in TOML.
+    /// [`SettingsError::Serialize`] if a value cannot be represented in TOML,
+    /// or if an `extra` value nests deeper than [`MAX_NESTING_DEPTH`] in the
+    /// document (only possible for values built in memory: loading rejects
+    /// such documents).
     pub fn to_toml_string(&self) -> Result<String> {
+        // Checked before anything is cloned or serialized, which both recurse.
+        self.check_extra_depth()?;
         let mut s = self.clone();
         s.sanitize();
         let mut root = s.extra.clone();
@@ -438,6 +444,39 @@ impl Settings {
         Ok(format!("{FILE_HEADER}{body}"))
     }
 
+    /// Fail when an `extra` table would nest deeper than
+    /// [`MAX_NESTING_DEPTH`] once placed in the document, measured as the
+    /// loader measures it (`crate::nesting::parse_bounded`). The limits account
+    /// for the tables above each `extra`: `[game]` and `[explorer]` are level
+    /// 2, `[windows.<key>]` level 3 and each bookmark level 4.
+    fn check_extra_depth(&self) -> Result<()> {
+        let max = MAX_NESTING_DEPTH;
+        let deep = [
+            (&self.extra, max),
+            (&self.game.extra, max.saturating_sub(1)),
+            (&self.explorer.extra, max.saturating_sub(1)),
+        ]
+        .into_iter()
+        .chain(
+            self.explorer
+                .bookmarks
+                .iter()
+                .map(|b| (&b.extra, max.saturating_sub(3))),
+        )
+        .chain(
+            self.windows
+                .values()
+                .map(|w| (&w.extra, max.saturating_sub(2))),
+        )
+        .any(|(t, limit)| nesting::table_exceeds(t, limit));
+        if deep {
+            return Err(SettingsError::Serialize(format!(
+                "an unknown value nests deeper than {max} levels"
+            )));
+        }
+        Ok(())
+    }
+
     /// Strictly parse a settings document: any syntax error, malformed
     /// section or value (including a single bad list entry, bookmark field,
     /// window field or `last_did`), newer schema or failed migration is an
@@ -451,8 +490,11 @@ impl Settings {
     ///
     /// See [`SettingsError`].
     pub fn from_toml_str(text: &str) -> Result<Self> {
-        let mut table: toml::Table =
-            toml::from_str(text).map_err(|e| SettingsError::Parse(one_line(&e.to_string())))?;
+        // Bound the depth before the parser builds (and later code clones,
+        // serializes and drops) a tree, with the same measure as
+        // `check_extra_depth`: see `crate::nesting`.
+        let mut table =
+            nesting::parse_bounded(text).map_err(|e| SettingsError::Parse(one_line(&e)))?;
         let version = take_schema_version(&mut table)?;
         migrate::migrate(&mut table, version)?;
         let (settings, diag) = from_table(table);
@@ -468,11 +510,16 @@ impl Settings {
     /// all defaults, and each problem is reported in [`Parsed::warnings`].
     pub fn parse_lenient(text: &str) -> Parsed {
         let mut warnings = Vec::new();
-        let mut table: toml::Table = match toml::from_str(text) {
+        // A document nested deeper than `MAX_NESTING_DEPTH` is rejected
+        // like a syntax error, with the same measure as `check_extra_depth`
+        // so that what loads cleanly re-loads after a save (see
+        // `crate::nesting`).
+        let parsed = nesting::parse_bounded(text);
+        let mut table: toml::Table = match parsed {
             Ok(t) => t,
-            Err(e) => {
+            Err(message) => {
                 warnings.push(LoadWarning::Syntax {
-                    message: one_line(&e.to_string()),
+                    message: one_line(&message),
                 });
                 return Parsed {
                     settings: Settings::default(),

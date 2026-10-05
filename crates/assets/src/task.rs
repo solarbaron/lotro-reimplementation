@@ -186,21 +186,32 @@ impl TaskHandle {
 
     /// Blocks until the task finished or `timeout` passed; returns the status then.
     /// Meant for tests and tools, never for the frame loop.
+    ///
+    /// A timeout too large to represent as a deadline (for example [`Duration::MAX`])
+    /// waits without one, as [`Handle::wait`](crate::Handle::wait) does.
     #[must_use]
     pub fn wait(&self, timeout: Duration) -> TaskStatus {
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now().checked_add(timeout);
         let mut s = lock(&self.job.status);
         while !s.is_finished() {
-            let now = Instant::now();
-            if now >= deadline {
-                break;
-            }
-            s = self
-                .job
-                .cond
-                .wait_timeout(s, deadline - now)
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .0;
+            s = match deadline {
+                None => self
+                    .job
+                    .cond
+                    .wait(s)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    self.job
+                        .cond
+                        .wait_timeout(s, deadline - now)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .0
+                }
+            };
         }
         s.clone()
     }

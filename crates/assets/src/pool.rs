@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The worker pool and its priority queue.
 
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -14,21 +14,31 @@ use crate::{AssetError, Priority, lock};
 /// Upper bound on [`PoolConfig::workers`]; larger values are clamped to it.
 pub const MAX_WORKERS: usize = 256;
 
-/// Scheduling state of one job: 0 = not in the queue (running, finished or never
-/// queued), otherwise `priority.to_cell()` of the one heap entry that is valid.
+/// Scheduling state of one job: its priority cell (0 = not in the queue: running,
+/// finished or never queued; otherwise `priority.to_cell()` of the heap entries that are
+/// valid) and the queue id it was given when it was last queued.
 ///
 /// Only touched with the queue lock held, so plain loads and stores suffice; it is atomic
 /// so that jobs stay `Sync`.
 #[derive(Debug, Default)]
-pub(crate) struct SchedCell(AtomicU8);
+pub(crate) struct SchedCell {
+    prio: AtomicU8,
+    id: AtomicU64,
+}
 
 impl SchedCell {
     fn get(&self) -> Option<Priority> {
-        Priority::from_cell(self.0.load(Ordering::Relaxed))
+        Priority::from_cell(self.prio.load(Ordering::Relaxed))
     }
     fn set(&self, p: Option<Priority>) {
-        self.0
+        self.prio
             .store(p.map_or(0, Priority::to_cell), Ordering::Relaxed);
+    }
+    fn id(&self) -> u64 {
+        self.id.load(Ordering::Relaxed)
+    }
+    fn set_id(&self, id: u64) {
+        self.id.store(id, Ordering::Relaxed);
     }
 }
 
@@ -53,10 +63,13 @@ pub(crate) trait Job: Send + Sync {
     fn reap(&self);
 }
 
+/// One heap entry. It names its job by queue id and holds no reference to it, so a stale
+/// entry (left behind by re-prioritisation or withdrawal) neither keeps a finished job and
+/// its product alive nor ever releases one while the queue lock is held.
 struct Entry {
     priority: Priority,
     seq: u64,
-    job: Arc<dyn Job>,
+    id: u64,
 }
 
 impl PartialEq for Entry {
@@ -79,40 +92,81 @@ impl Ord for Entry {
     }
 }
 
-impl Entry {
-    fn is_valid(&self) -> bool {
-        self.job.sched().get() == Some(self.priority)
-    }
-}
-
 #[derive(Default)]
 struct QueueState {
     heap: BinaryHeap<Entry>,
-    /// Jobs with a valid heap entry (the heap may also hold stale entries left behind by
-    /// re-prioritisation; they are skipped when popped).
-    live: usize,
+    /// The queued jobs, by queue id: the queue's only strong references. Each has at least
+    /// one valid heap entry (the heap may also hold stale entries left behind by
+    /// re-prioritisation or withdrawal; they are skipped when popped).
+    ///
+    /// A reference taken out of this map while the lock is held must be released only
+    /// after the lock is: dropping a job can drop a product, and a product's `Drop` may
+    /// call back into the pool.
+    queued: HashMap<u64, Arc<dyn Job>>,
     seq: u64,
+    /// Last queue id handed out. Ids are never reused, so an entry left from an earlier
+    /// stay in the queue never matches a job queued again.
+    next_id: u64,
     shutdown: bool,
     /// [`cancel_epoch`] at the last complete sweep for abandoned jobs.
     swept_epoch: u64,
 }
 
 impl QueueState {
-    fn push(&mut self, job: Arc<dyn Job>, priority: Priority) {
+    /// Jobs with a valid heap entry.
+    fn live(&self) -> usize {
+        self.queued.len()
+    }
+
+    fn is_valid(&self, e: &Entry) -> bool {
+        self.queued
+            .get(&e.id)
+            .is_some_and(|j| j.sched().id() == e.id && j.sched().get() == Some(e.priority))
+    }
+
+    fn push_entry(&mut self, id: u64, priority: Priority) {
         self.seq += 1;
         self.heap.push(Entry {
             priority,
             seq: self.seq,
-            job,
+            id,
         });
     }
 
+    /// Queues a job that is not queued under a fresh id. Returns a reference the caller
+    /// must release after unlocking: the job's previous queue reference if it was (against
+    /// the contract) still queued.
+    fn insert(&mut self, job: Arc<dyn Job>, priority: Priority) -> Option<Arc<dyn Job>> {
+        let previous = if job.sched().get().is_some() {
+            self.queued.remove(&job.sched().id())
+        } else {
+            None
+        };
+        self.next_id += 1;
+        let id = self.next_id;
+        job.sched().set_id(id);
+        job.sched().set(Some(priority));
+        self.queued.insert(id, job);
+        self.push_entry(id, priority);
+        previous
+    }
+
+    /// Takes the queued job behind `sched` out of the queue (its heap entries go stale).
+    /// The caller releases the returned reference after unlocking.
+    fn remove(&mut self, sched: &SchedCell) -> Option<Arc<dyn Job>> {
+        sched.set(None);
+        let job = self.queued.remove(&sched.id());
+        self.maybe_compact();
+        job
+    }
+
     /// Drops stale entries once they outnumber live ones, so re-prioritising cannot grow
-    /// the heap without bound.
+    /// the heap without bound. Entries hold no job references, so this never releases one.
     fn maybe_compact(&mut self) {
-        if self.heap.len() > 2 * self.live + 64 {
-            let heap = std::mem::take(&mut self.heap);
-            self.heap = heap.into_iter().filter(Entry::is_valid).collect();
+        if self.heap.len() > 2 * self.live() + 64 {
+            let mut heap = std::mem::take(&mut self.heap);
+            heap.retain(|e| self.is_valid(e));
+            self.heap = heap;
         }
     }
 
@@ -125,22 +179,22 @@ impl QueueState {
             return;
         }
         let mut complete = true;
-        let mut removed = 0usize;
-        for e in &self.heap {
-            if !e.is_valid() {
-                continue;
-            }
-            match e.job.abandoned() {
-                Some(true) => {
-                    e.job.sched().set(None);
-                    removed += 1;
-                    out.push(Arc::clone(&e.job));
-                }
+        let mut ids = Vec::new();
+        for (&id, job) in &self.queued {
+            match job.abandoned() {
+                Some(true) => ids.push(id),
                 Some(false) => {}
                 None => complete = false,
             }
         }
-        self.live -= removed;
+        let removed = ids.len();
+        for id in ids {
+            if let Some(job) = self.queued.remove(&id) {
+                job.sched().set(None);
+                // Handed to the caller, which reaps it with no lock held.
+                out.push(job);
+            }
+        }
         if complete {
             self.swept_epoch = epoch;
         }
@@ -150,12 +204,15 @@ impl QueueState {
         }
     }
 
+    /// Takes the highest-priority queued job out of the queue, discarding the stale
+    /// entries above it (they hold no references, so nothing is released here).
     fn pop_valid(&mut self) -> Option<Arc<dyn Job>> {
         while let Some(e) = self.heap.pop() {
-            if e.is_valid() {
-                e.job.sched().set(None);
-                self.live -= 1;
-                return Some(e.job);
+            if self.is_valid(&e)
+                && let Some(job) = self.queued.remove(&e.id)
+            {
+                job.sched().set(None);
+                return Some(job);
             }
         }
         None
@@ -189,21 +246,20 @@ impl PoolShared {
         if q.shutdown {
             return Err(AssetError::Shutdown);
         }
-        if q.live >= self.max_queued {
+        if q.live() >= self.max_queued {
             if let Some(out) = reaped {
                 q.sweep_abandoned(out);
             }
-            if q.live >= self.max_queued {
+            if q.live() >= self.max_queued {
                 return Err(AssetError::QueueFull {
                     capacity: self.max_queued,
                 });
             }
         }
-        job.sched().set(Some(priority));
-        q.push(job, priority);
-        q.live += 1;
-        let len = q.live;
+        let previous = q.insert(job, priority);
+        let len = q.live();
         drop(q);
+        drop(previous);
         self.cond.notify_one();
         tracing::trace!(queue_len = len, %priority, "asset job queued");
         Ok(())
@@ -216,7 +272,7 @@ impl PoolShared {
         match job.sched().get() {
             Some(current) if current != priority => {
                 job.sched().set(Some(priority));
-                q.push(Arc::clone(job), priority);
+                q.push_entry(job.sched().id(), priority);
                 q.maybe_compact();
                 drop(q);
                 // The job count is unchanged; a sleeping worker has nothing new to do.
@@ -236,14 +292,15 @@ impl PoolShared {
         if sched.get().is_none() {
             return false;
         }
-        sched.set(None);
-        q.live -= 1;
-        q.maybe_compact();
+        let job = q.remove(sched);
+        drop(q);
+        // Released with no lock of the pool held.
+        drop(job);
         true
     }
 
     fn queued(&self) -> usize {
-        lock(&self.queue).live
+        lock(&self.queue).live()
     }
 }
 
@@ -340,6 +397,8 @@ impl Drop for PoolHandle {
                 out.push(job);
             }
             q.heap.clear();
+            // Every queued job has a valid entry, so this is empty; released below anyway.
+            out.extend(q.queued.drain().map(|(_, j)| j));
             out
         };
         if !pending.is_empty() {
@@ -511,18 +570,16 @@ mod tests {
             Priority::Prefetch,
             Priority::Immediate,
         ]) {
-            j.sched().set(Some(p));
-            q.push(Arc::clone(j), p);
-            q.live += 1;
+            assert!(q.insert(Arc::clone(j), p).is_none());
         }
         // Re-prioritise job 2 (Prefetch → Immediate): its old entry becomes stale.
         jobs[2].sched().set(Some(Priority::Immediate));
-        q.push(Arc::clone(&jobs[2]), Priority::Immediate);
+        q.push_entry(jobs[2].sched().id(), Priority::Immediate);
         let order: Vec<usize> = std::iter::from_fn(|| q.pop_valid())
             .map(|j| jobs.iter().position(|x| Arc::ptr_eq(x, &j)).unwrap())
             .collect();
         assert_eq!(order, vec![3, 2, 1, 0]);
-        assert_eq!(q.live, 0);
+        assert_eq!(q.live(), 0);
     }
 
     #[test]
@@ -580,8 +637,8 @@ mod tests {
         }
         assert!(!shared.reprioritize(&j, Priority::Prefetch));
         let q = lock(&shared.queue);
-        assert!(q.heap.len() <= 2 * q.live + 65, "heap {}", q.heap.len());
-        assert_eq!(q.live, 1);
+        assert!(q.heap.len() <= 2 * q.live() + 65, "heap {}", q.heap.len());
+        assert_eq!(q.live(), 1);
     }
 
     /// Regression: withdrawing a queued job frees its queue slot at once.
@@ -604,7 +661,45 @@ mod tests {
             .unwrap();
         let mut q = lock(&shared.queue);
         assert_eq!(std::iter::from_fn(|| q.pop_valid()).count(), 2);
-        assert_eq!(q.live, 0);
+        assert_eq!(q.live(), 0);
+    }
+
+    /// Regression: stale heap entries hold no reference to their job, so a job that was
+    /// re-prioritised, withdrawn or run is owned only by its other holders afterwards.
+    #[test]
+    fn stale_entries_hold_no_references() {
+        let (tx, _rx) = mpsc::channel();
+        let shared = bare(10);
+        let a = probe(1, &tx);
+        let b = probe(2, &tx);
+        shared
+            .submit(Arc::clone(&a), Priority::Prefetch, None)
+            .unwrap();
+        shared
+            .submit(Arc::clone(&b), Priority::Prefetch, None)
+            .unwrap();
+        assert!(shared.reprioritize(&a, Priority::Immediate));
+        assert!(shared.reprioritize(&b, Priority::Visible));
+        assert_eq!(Arc::strong_count(&a), 2);
+        assert!(shared.withdraw(b.sched()));
+        assert_eq!(Arc::strong_count(&b), 1);
+        let popped = lock(&shared.queue).pop_valid().unwrap();
+        assert!(Arc::ptr_eq(&popped, &a));
+        drop(popped);
+        assert_eq!(Arc::strong_count(&a), 1);
+        let mut q = lock(&shared.queue);
+        assert!(q.heap.len() >= 2, "stale entries are still queued");
+        assert!(q.pop_valid().is_none());
+        assert_eq!(q.live(), 0);
+        drop(q);
+        // Queued again, the job gets a fresh id: old entries never match it.
+        shared
+            .submit(Arc::clone(&a), Priority::Prefetch, None)
+            .unwrap();
+        assert_eq!(shared.queued(), 1);
+        let mut q = lock(&shared.queue);
+        assert!(q.pop_valid().is_some());
+        assert!(q.pop_valid().is_none());
     }
 
     /// Regression: a full queue of abandoned jobs (cancelled through a token only) is swept

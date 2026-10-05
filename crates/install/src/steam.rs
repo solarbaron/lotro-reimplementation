@@ -5,7 +5,7 @@
 //! Spec-Ref: docs/specs/install-layout.md#54-steam-on-windows
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::discover::SearchEnv;
 use crate::error::{Error, Result};
@@ -191,8 +191,46 @@ pub fn parse_app_manifest(doc: &VdfBlock) -> Option<AppManifest> {
     })
 }
 
+/// Whether `s` names exactly one folder directly under `steamapps/common/` on every
+/// platform (`docs/specs/install-layout.md` §5.3: `installdir` is a folder name there).
+///
+/// Besides separators and NUL this rejects what Windows would read as something else:
+/// `:` (`C:` and `C:x` are drive-relative paths that replace the base when joined),
+/// names ending in `.` or a space (Windows drops those, so `.. ` becomes `..`), control
+/// characters, and reserved device names such as `CON` or `nul.txt`. A Steam folder
+/// name never needs any of them, so they are refused on every platform.
 fn is_single_component(s: &str) -> bool {
-    !s.is_empty() && s != "." && s != ".." && !s.contains(['/', '\\', '\0'])
+    if s.is_empty()
+        || s.contains(['/', '\\', ':'])
+        || s.chars().any(char::is_control)
+        || s.ends_with(['.', ' '])
+        || is_windows_device_name(s)
+    {
+        return false;
+    }
+    let mut parts = Path::new(s).components();
+    matches!(
+        (parts.next(), parts.next()),
+        (Some(Component::Normal(c)), None) if c == std::ffi::OsStr::new(s)
+    )
+}
+
+/// Windows device names, which name a device in every directory, with or without an
+/// extension (`NUL`, `com1.txt`, `LPT²`).
+fn is_windows_device_name(s: &str) -> bool {
+    let stem = s.split('.').next().unwrap_or(s).trim_end_matches(' ');
+    let upper = stem.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let mut chars = upper.chars();
+    let prefix: String = chars.by_ref().take(3).collect();
+    let digit: Vec<char> = chars.collect();
+    (prefix == "COM" || prefix == "LPT")
+        && matches!(digit[..], [d] if d.is_ascii_digit() || matches!(d, '\u{b9}' | '\u{b2}' | '\u{b3}'))
 }
 
 /// Look for the game in one library.
@@ -347,5 +385,60 @@ mod tests {
         let doc =
             vdf::parse(r#""AppState" { "appid" "212500" "installdir" "../../etc" }"#).unwrap();
         assert_eq!(parse_app_manifest(&doc).unwrap().installdir, None);
+    }
+
+    /// Regression: `installdir` values that Windows reads as a drive-relative path, a
+    /// device or a name it rewrites are refused on every platform.
+    #[test]
+    fn installdir_must_be_one_plain_folder_name() {
+        for ok in [
+            "Game Dir",
+            "Some Game Online",
+            "a.b",
+            "x",
+            "CONSOLE",
+            "COM10",
+        ] {
+            assert!(is_single_component(ok), "{ok:?}");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            "...",
+            ".. ",
+            "x.",
+            "x ",
+            "C:",
+            "C:foo",
+            "c:\\x",
+            "a/b",
+            "a\\b",
+            "a\0b",
+            "a\nb",
+            "CON",
+            "con",
+            "nul.txt",
+            "Aux .log",
+            "COM1",
+            "lpt9.x",
+            "COM\u{b9}",
+            "CONIN$",
+            "\\\\?\\x",
+            "/abs",
+        ] {
+            assert!(!is_single_component(bad), "{bad:?}");
+            let doc = vdf::parse(&format!(
+                r#""AppState" {{ "appid" "212500" "installdir" "{}" }}"#,
+                bad.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
+            if let Ok(doc) = doc {
+                assert_eq!(
+                    parse_app_manifest(&doc).unwrap().installdir,
+                    None,
+                    "{bad:?}"
+                );
+            }
+        }
     }
 }

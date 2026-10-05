@@ -51,7 +51,8 @@
 //!   and each `[windows.<key>]` table), so files written by a newer Tessera
 //!   survive a round trip through an older one.
 //!
-//! All reads are bounded by [`MAX_FILE_SIZE`], every list by its `MAX_*`
+//! All reads are bounded by [`MAX_FILE_SIZE`], the structural depth of a
+//! document by [`MAX_NESTING_DEPTH`], every list by its `MAX_*`
 //! constant, and the reported warnings by [`MAX_WARNINGS_PER_SECTION`] per
 //! section. The bounds are chosen so that any settings the helpers accept
 //! serialize well below [`MAX_FILE_SIZE`] (unknown keys carried over from a
@@ -63,6 +64,7 @@ pub use toml;
 mod error;
 mod migrate;
 mod model;
+mod nesting;
 mod store;
 
 pub use error::{LoadWarning, Result, SettingsError};
@@ -75,6 +77,7 @@ pub use model::{
     MAX_WINDOW_POS, MAX_WINDOWS, MIN_WINDOW_DIM, Parsed, Settings, WindowGeometry, format_did,
     parse_did,
 };
+pub use nesting::MAX_NESTING_DEPTH;
 pub use store::{
     APP_DIR_NAME, FILE_NAME, LoadStatus, Loaded, MAX_BACKUPS, MAX_FILE_SIZE, SETTINGS_FILE_ENV,
     SettingsStore, check_not_inside_game_dirs, default_path,

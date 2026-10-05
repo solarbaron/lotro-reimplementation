@@ -21,7 +21,9 @@
 //! directories are created. After the parent directory is created it is
 //! canonicalized and checked again, so the check always applies to the
 //! directory that is actually written. Any failure to resolve refuses the
-//! write.
+//! write. The lock file is the one exception to following symlinks: it is
+//! never opened through one (a symlink there is an error), so the checked
+//! path is the path written.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -165,8 +167,14 @@ impl SettingsStore {
     /// module docs); a refused or failed backup is reported as
     /// [`LoadWarning::BackupFailed`].
     pub fn load(&self) -> Loaded {
+        self.load_from(read_bounded(&self.path))
+    }
+
+    /// The tolerant part of [`SettingsStore::load`], given the result of
+    /// reading the file.
+    fn load_from(&self, read: std::result::Result<Option<Vec<u8>>, ReadError>) -> Loaded {
         let mut warnings = Vec::new();
-        let bytes = match read_bounded(&self.path) {
+        let bytes = match read {
             Ok(Some(b)) => b,
             Ok(None) => {
                 return Loaded {
@@ -180,6 +188,12 @@ impl SettingsStore {
             Err(ReadError::Io(e)) => {
                 warnings.push(LoadWarning::Unreadable {
                     message: e.to_string(),
+                });
+                return self.finish_defaults(warnings, None, None);
+            }
+            Err(ReadError::NotRegular) => {
+                warnings.push(LoadWarning::Unreadable {
+                    message: NOT_REGULAR.to_owned(),
                 });
                 return self.finish_defaults(warnings, None, None);
             }
@@ -303,6 +317,13 @@ impl SettingsStore {
                     source,
                 });
             }
+            Err(ReadError::NotRegular) => {
+                return Err(SettingsError::Io {
+                    op: "read",
+                    path: self.path.clone(),
+                    source: io::Error::other(NOT_REGULAR),
+                });
+            }
             Err(ReadError::TooLarge) => {
                 return Err(SettingsError::TooLarge {
                     size: MAX_FILE_SIZE + 1,
@@ -370,7 +391,12 @@ impl SettingsStore {
     /// # Errors
     ///
     /// Everything [`SettingsStore::save`] returns, plus
-    /// [`SettingsError::Io`] when the lock cannot be created or taken.
+    /// [`SettingsError::Io`] when the lock cannot be created or taken (the
+    /// lock path is never followed when it is a symbolic link), or when an
+    /// existing settings file cannot be read: `update` never replaces a file
+    /// it could not read with defaults. A file that is damaged, too large or
+    /// not a regular file is handled as by [`SettingsStore::load`] and
+    /// [`SettingsStore::save`] (backed up and replaced, or refused).
     pub fn update(&self, f: impl FnOnce(&mut Settings)) -> Result<Settings> {
         let target = resolve_for_write(&self.path)?;
         let peeked = self.peek_game_dirs();
@@ -382,7 +408,20 @@ impl SettingsStore {
         guard(&lock_path, &peeked, &self.path)?;
         let lock = open_lock_file(&lock_path).map_err(io_err("open lock", &lock_path))?;
         lock.lock().map_err(io_err("lock", &lock_path))?;
-        let mut loaded = self.load();
+        let read = match read_bounded(&self.path) {
+            // The file exists but reading it failed (permissions, I/O
+            // error): its content is unknown, so saving defaults over it
+            // would lose it.
+            Err(ReadError::Io(source)) => {
+                return Err(SettingsError::Io {
+                    op: "read",
+                    path: self.path.clone(),
+                    source,
+                });
+            }
+            other => other,
+        };
+        let mut loaded = self.load_from(read);
         f(&mut loaded.settings);
         let result = self.save(&loaded.settings);
         // Dropping the handle releases the lock; unlock explicitly anyway so
@@ -557,9 +596,14 @@ fn refuse_foreign(target: &Path) -> Result<()> {
 }
 
 enum ReadError {
+    /// The file exists but could not be read.
     Io(io::Error),
+    /// Something other than a regular file is at the path.
+    NotRegular,
     TooLarge,
 }
+
+const NOT_REGULAR: &str = "not a regular file";
 
 /// Open for reading without ever blocking on a FIFO.
 fn open_nonblocking(path: &Path) -> io::Result<File> {
@@ -573,13 +617,29 @@ fn open_nonblocking(path: &Path) -> io::Result<File> {
     opts.open(path)
 }
 
+/// Open (creating if needed) the lock file. The final component is never
+/// followed when it is a symbolic link: a planted link would otherwise make
+/// the open create or open (read-write) a file anywhere, for example inside
+/// a game install, past the guard that checked the link's own path.
 fn open_lock_file(path: &Path) -> io::Result<File> {
+    let symlink = || io::Error::other("lock path is a symbolic link");
+    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(symlink());
+    }
     let mut opts = OpenOptions::new();
     opts.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NONBLOCK);
+        // O_NOFOLLOW closes the race with the check above (ELOOP).
+        opts.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT: open a link itself, never its target.
+        // A link opened this way is not a regular file and is refused below.
+        opts.custom_flags(0x0020_0000);
     }
     let f = opts.open(path)?;
     if !f.metadata()?.is_file() {
@@ -592,9 +652,8 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
 /// The type is checked before opening, and the file is opened non-blocking
 /// and checked again, so a FIFO or device is rejected without blocking.
 fn read_bounded(path: &Path) -> std::result::Result<Option<Vec<u8>>, ReadError> {
-    let not_regular = || ReadError::Io(io::Error::other("not a regular file"));
     match fs::metadata(path) {
-        Ok(m) if !m.is_file() => return Err(not_regular()),
+        Ok(m) if !m.is_file() => return Err(ReadError::NotRegular),
         Ok(m) if m.len() > MAX_FILE_SIZE => return Err(ReadError::TooLarge),
         Ok(_) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -607,7 +666,7 @@ fn read_bounded(path: &Path) -> std::result::Result<Option<Vec<u8>>, ReadError> 
     };
     let meta = file.metadata().map_err(ReadError::Io)?;
     if !meta.is_file() {
-        return Err(not_regular());
+        return Err(ReadError::NotRegular);
     }
     if meta.len() > MAX_FILE_SIZE {
         return Err(ReadError::TooLarge);

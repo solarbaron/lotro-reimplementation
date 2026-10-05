@@ -17,7 +17,9 @@
 
 use libfuzzer_sys::fuzz_target;
 use tessera_mesh::synth::{LevelSpec, MeshSpec, SubmeshSpec, TreeSpec};
-use tessera_mesh::{DecodeOptions, GeometryLimits, LevelKind, Mesh, MeshError, MeshHeader};
+use tessera_mesh::{
+    DecodeOptions, GeometryLimits, IssueClass, LevelKind, Mesh, MeshError, MeshHeader,
+};
 
 const FORMATS: [u32; 12] = [
     0x0000_0112,
@@ -61,7 +63,15 @@ fn exercise(bytes: &[u8], stamp: Option<u16>) {
     assert_eq!(header.as_ref().ok(), Some(&mesh.header()));
     assert_eq!(mesh.to_bytes().expect("lossless mesh encodes"), bytes);
     let report = mesh.validate();
-    assert!(report.issues.len() <= tessera_mesh::validate::MAX_ISSUES);
+    // Quality issues are capped; structural ones are never dropped.
+    assert!(
+        report
+            .issues
+            .iter()
+            .filter(|i| i.kind.class() == IssueClass::Quality)
+            .count()
+            <= tessera_mesh::validate::MAX_ISSUES
+    );
     let limits = GeometryLimits {
         max_vertices: 1 << 18,
         max_indices: 1 << 20,
@@ -134,12 +144,12 @@ fn edited(mesh: &Mesh, bytes: &[u8]) {
     if !changed {
         return;
     }
-    assert!(
-        m.validate()
-            .issues
-            .iter()
-            .any(|i| i.kind == tessera_mesh::IssueKind::StreamLength)
-    );
+    // StreamLength is structural, so the quality-issue cap never drops it however many
+    // issues earlier submeshes produce.
+    assert!(m.submeshes[which].check_streams(which as u32).is_err());
+    assert!(m.validate().issues.iter().any(|i| {
+        i.kind == tessera_mesh::IssueKind::StreamLength && i.submesh == Some(which as u32)
+    }));
     for (l, level) in m.levels.iter().enumerate() {
         let r = m.level_geometry(l, &GeometryLimits::default());
         // Stream lengths are checked while resolving draws, before any other data check

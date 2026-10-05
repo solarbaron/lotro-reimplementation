@@ -202,7 +202,9 @@ impl Skin {
     ///
     /// With more than four influences (never observed) the four largest weights are kept
     /// (in the total order of `f32`; the earlier slot wins a tie) and renormalised to
-    /// their original sum. Allocates nothing; cost is linear in *K*. If the joint and
+    /// their original sum, unless the scale factor or a scaled finite weight would not
+    /// be finite: then they are kept as stored. A zero weight stays zero, so a slot's
+    /// weight is non-zero only if the stored one is. Allocates nothing; cost is linear in *K*. If the joint and
     /// weight slices of `v` differ in length (only possible on a hand-built skin), only
     /// the slots both have are used.
     #[must_use]
@@ -237,11 +239,23 @@ impl Skin {
         }
         let total: f32 = w.iter().filter(|x| x.is_finite()).sum();
         let kept: f32 = top.iter().map(|&i| w[i]).filter(|x| x.is_finite()).sum();
-        let scale = if kept > 0.0 && total.is_finite() {
+        let mut scale = if kept > 0.0 && total.is_finite() {
             total / kept
         } else {
             1.0
         };
+        // Hostile weights (a tiny kept sum, a huge dropped one) can overflow the scale or a
+        // scaled weight to ±inf, and 0 × inf would turn an unused slot into NaN, i.e. a
+        // non-zero weight on a bone the skin does not use. Renormalising is only a GPU
+        // convenience (`mesh.md` §17, OPEN on K > 4; observed data needs none, §5.7), so
+        // such a vertex keeps its four weights as stored instead.
+        if !scale.is_finite()
+            || top
+                .iter()
+                .any(|&i| w[i].is_finite() && !(w[i] * scale).is_finite())
+        {
+            scale = 1.0;
+        }
         for (slot, &i) in top.iter().enumerate() {
             joints[slot] = j[i];
             weights[slot] = w[i] * scale;

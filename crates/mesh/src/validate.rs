@@ -21,7 +21,13 @@ pub const NORMAL_TOLERANCE: f64 = 1e-3;
 /// looser so that summation order cannot matter).
 pub const WEIGHT_SUM_TOLERANCE: f64 = 1e-3;
 
-/// Most issues kept in one report; further ones are only counted.
+/// Most [`IssueClass::Quality`] issues kept in one report; further ones are only counted
+/// in [`ValidationReport::dropped`].
+///
+/// Structural issues are never dropped: strict decoding and
+/// [`ValidationReport::has_structural`] must see every one (`mesh.md` §14, §18). Their
+/// number is bounded by the record itself (at most two per submesh, four per level and
+/// one for the DID), so keeping them all stays linear in the mesh size.
 pub const MAX_ISSUES: usize = 1024;
 
 /// Whether an issue means the decoder and the data disagree, or only that the data is
@@ -213,10 +219,13 @@ impl fmt::Display for Issue {
 /// The result of [`Mesh::validate`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ValidationReport {
-    /// Issues, at most [`MAX_ISSUES`], in check order.
+    /// Issues in check order: every structural issue, and the first [`MAX_ISSUES`]
+    /// quality issues.
     pub issues: Vec<Issue>,
-    /// Issues found beyond [`MAX_ISSUES`].
+    /// Quality issues found beyond [`MAX_ISSUES`] (structural issues are never dropped).
     pub dropped: u64,
+    /// Quality issues kept in `issues`.
+    quality_kept: usize,
 }
 
 impl ValidationReport {
@@ -238,16 +247,19 @@ impl ValidationReport {
         if count == 0 {
             return;
         }
-        if self.issues.len() >= MAX_ISSUES {
-            self.dropped += 1;
-        } else {
-            self.issues.push(Issue {
-                kind,
-                submesh,
-                level,
-                count,
-            });
+        if kind.class() == IssueClass::Quality {
+            if self.quality_kept >= MAX_ISSUES {
+                self.dropped += 1;
+                return;
+            }
+            self.quality_kept += 1;
         }
+        self.issues.push(Issue {
+            kind,
+            submesh,
+            level,
+            count,
+        });
     }
 }
 

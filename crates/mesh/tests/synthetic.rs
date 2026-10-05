@@ -1075,11 +1075,19 @@ fn four_reference(j: &[u8], w: &[f32]) -> ([u8; 4], [f32; 4]) {
         .map(|&i| w[i])
         .filter(|x| x.is_finite())
         .sum();
-    let scale = if kept > 0.0 && total.is_finite() {
+    let mut scale = if kept > 0.0 && total.is_finite() {
         total / kept
     } else {
         1.0
     };
+    // An overflowing renormalisation keeps the stored weights.
+    if !scale.is_finite()
+        || order[..4]
+            .iter()
+            .any(|&i| w[i].is_finite() && !(w[i] * scale).is_finite())
+    {
+        scale = 1.0;
+    }
     for (slot, &i) in order[..4].iter().enumerate() {
         joints[slot] = j[i];
         weights[slot] = w[i] * scale;
@@ -1378,16 +1386,37 @@ fn validation_caps_the_issue_list() {
         m.index_buffers.push(one.index_buffers[0].clone());
         m.surfaces.push(one.surfaces[0]);
     }
-    // Only submesh 0 is drawn: 1,100 SubmeshNotDrawn issues.
+    // Only submesh 0 is drawn: 1,100 SubmeshNotDrawn issues, structural, so none is
+    // dropped.
     let r = m.validate();
-    assert_eq!(r.issues.len(), MAX_ISSUES);
-    assert_eq!(r.dropped, 1100 - MAX_ISSUES as u64);
+    assert_eq!(r.issues.len(), 1100);
+    assert_eq!(r.dropped, 0);
     assert!(!r.is_clean());
     assert!(
         r.issues
             .iter()
             .all(|i| i.kind == IssueKind::SubmeshNotDrawn)
     );
+    // Quality issues are capped: 1,100 drawn copies with a broken stored box.
+    let mut m = one.clone();
+    let draw = one.levels[0].draws[0];
+    for i in 1..=1100u32 {
+        let mut sm = one.submeshes[0].clone();
+        sm.stored_aabb.max[0] += 1.0;
+        m.submeshes.push(sm);
+        m.index_buffers.push(one.index_buffers[0].clone());
+        m.surfaces.push(one.surfaces[0]);
+        m.levels[0].draws.push(tessera_mesh::Draw {
+            vertex_block: i,
+            index_buffer: i,
+            surface: i,
+            ..draw
+        });
+    }
+    let r = m.validate();
+    assert_eq!(r.issues.len(), MAX_ISSUES);
+    assert_eq!(r.dropped, 1100 - MAX_ISSUES as u64);
+    assert!(r.issues.iter().all(|i| i.kind == IssueKind::AabbMismatch));
 }
 
 #[test]

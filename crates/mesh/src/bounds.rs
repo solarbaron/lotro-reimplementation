@@ -45,9 +45,13 @@ impl Aabb {
     }
 
     /// Centre point.
+    ///
+    /// Computed in f64, so a box of finite corners has a finite centre even when
+    /// `min + max` exceeds the f32 range (the result is otherwise the same as the f32
+    /// midpoint: the f64 sum is rounded once more to f32).
     #[must_use]
     pub fn center(&self) -> [f32; 3] {
-        [0, 1, 2].map(|i| (self.min[i] + self.max[i]) * 0.5)
+        [0, 1, 2].map(|i| ((f64::from(self.min[i]) + f64::from(self.max[i])) * 0.5) as f32)
     }
 
     /// Edge lengths.
@@ -87,7 +91,8 @@ pub struct BoundingSphere {
 impl BoundingSphere {
     /// A sphere around `points` centred on `aabb`'s centre, with the largest distance from
     /// it as radius (rounded up slightly so every point is inside despite f32 rounding).
-    /// Non-finite points are skipped.
+    /// Non-finite points are skipped. The radius saturates at `f32::MAX` (only reachable
+    /// for points near the ends of the f32 range); it is never infinite.
     #[must_use]
     pub fn around<'a>(aabb: &Aabb, points: impl IntoIterator<Item = &'a [f32; 3]>) -> Self {
         let c = aabb.center().map(f64::from);
@@ -98,10 +103,10 @@ impl BoundingSphere {
                 r2 = r2.max(d);
             }
         }
-        let r = r2.sqrt();
+        let r = (r2.sqrt() * (1.0 + 1e-6) + 1e-6).min(f64::from(f32::MAX));
         Self {
             center: aabb.center(),
-            radius: (r * (1.0 + 1e-6) + 1e-6) as f32,
+            radius: r as f32,
         }
     }
 }

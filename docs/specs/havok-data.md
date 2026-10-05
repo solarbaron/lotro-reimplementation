@@ -4,10 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
+| **Status** | Accepted |
 | **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Claude review session (spec-writer agent) |
+| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (§12.2 row 2 *i*, encoding tie-break, undefined tag ARCH, crop-amount OPEN). Re-review 2026-10-05: **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise and non-blocking). Re-review spot checks: all four §12.2 rows and the alternative `FF F7 7F FE 3F` re-encoded and decoded with an independent encoder following the stated tie-break; DS §8 supports the §2.4 remark; independent re-run over all 25,395 clip records: envelope flag 25,285 / 110, VLE forms 25,355 / 40, weights 18,460 empty / 6,935 full, 21 duration mismatches, 24,800 spline / 595 interleaved, `maxFramesPerBlock` 256, 31,294 blocks ending at `floatBlockOffsets`, quantisation byte 0x45 on 1,645,618 masks, degree counts as in §8. Non-blocking note: in §2.3 the sentences after the crop-amount OPEN ("Sampling also uses the tagfile values ...") continue inside the callout; they are normative and could move out of it. |
 | **Implements into** | `crates/havok` (container reader, skeleton and clip models, spline decoder), `crates/anim` (sampling, §7.4–§7.8), `fuzz/` (one target per structure kind, §11), `apps/dattool` / `apps/explorer` (clip and skeleton inspection) |
 | **Companion specs** | `setup.md` §6.1 (the 0x04 record that carries the skeleton tagfile; this spec starts at its field 3). `records.md` §1.2 (VLE, used once in the 0x05 envelope). `mesh.md` §5.7 (mesh bone indices address the skeleton bone array of this spec). `skeleton-anim.md` (M4: track-to-bone mapping, attach points, root motion; it consumes §4 and §7 of this spec). |
 
@@ -54,6 +55,8 @@ Legend:
   dirty-room scratchpad. A Confirmed fact states what was decoded and how much of it.
 - **Reported**: comes only from third-party material and was not, or could not be, checked
   against data (usually because the case never occurs in this install).
+- **BIN**: rests on the client's code alone (method M4, decision 0011); removed if that
+  authorisation is withdrawn.
 
 | Tag | Source |
 |---|---|
@@ -64,6 +67,9 @@ Legend:
 | DS | `research/notes/data-semantics.md` §1 (0x04 row) and §8. |
 | NB | Public B-spline mathematics (Piegl and Tiller, *The NURBS Book*, knot-span search and Cox–de Boor basis recurrence). General reference. |
 | SET | `setup.md` §6.1 (0x04 outer layout). |
+| SA | `skeleton-anim.md` (§3 binding, §6.6 track weights, §7.3 extracted motion; its BIN session and census of 2026-10-05). |
+| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05: the clip record reader, the clip player's use of a clip's length, and the animation middleware's own routines inside the client for sampling interleaved clips and reference frames. **Questions:** which duration governs playback when the envelope and the tagfile disagree (§2.3); how frames of interleaved clips are interpolated (§7.8); how reference-frame samples map to time (§4.5, §7.8). **Why M1–M3 were not enough:** the data hold two durations and no rule; interpolation and sample timing are code, not data; no published source states them for this client; observing the running client (M3) cannot tell a 1-frame shift from a stretched sample array. Only offline animation code was read. |
+| CNS2 | Recount of 2026-10-05 with the repository's `tessera-havok` as a tool: roots per skeleton and non-unit reference scales over all 28,555 skeletons. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -82,7 +88,12 @@ Legend:
 | H13 | Knots are u8 frame numbers local to the block; blocks share their boundary frame; clamped knot vectors (§5.4, §7.4) | HL; OBS (all knot vectors; seams continuous in 99.8 % of channels to 1e-3, the rest to 1e-2) | Confirmed |
 | H14 | Control points of a vector channel are interleaved per point, components in x, y, z order (§5.4) | HL; OBS (block-seam test: 22,817 for, 0 against) | Confirmed |
 | H15 | Interleaved clips store `numFrames × tracks` transforms, frame-major (§6) | OBS (505 for, 0 against, 90 static clips undecidable) | Confirmed |
-| H16 | Tracks map to bones by position (§4.4) | MV, DS | Reported; consistent with 975 of 5,602 annotated clips (§4.4). Owned by `skeleton-anim.md`. |
+| H16 | Tracks map to bones by position: track *j* drives bone *j*, and a clip fits a skeleton exactly when its track count equals the bone count (§4.4) | MV, DS; SA §3 (frame-0 pose agreement on 24,839 clips, reversed-order control, 1,908 name-matched clips) | Confirmed (by SA, 2026-10-05). Owned by `skeleton-anim.md` §3. |
+| H17 | The envelope `track_weights` are per-track opacities of layered playback (§2.3) | SA §6.6 (pattern census; layer rule BIN) | Confirmed (by SA) |
+| H18 | The clip player takes a clip's playable length from the tagfile `duration` (§2.3) | BIN | BIN |
+| H19 | Interleaved clips interpolate translation and scale linearly and rotation by sign-aligned normalised linear interpolation; the frame index is *t* × (*N* − 1) / `duration` (§7.8) | BIN | BIN |
+| H20 | Reference-frame samples are spread over the duration by their own count and interpolated linearly in all four components; the rotation is the angle *w* about `up` (§4.5, §7.8) | BIN; SA §7.3 (meaning of *w*) | BIN |
+| H21 | Roots per skeleton 1, 2, 3, 4 (§4.2) | CNS2 | Confirmed (recount) |
 
 ---
 
@@ -133,14 +144,26 @@ All values little-endian.
 The record ends exactly after field 8. Record sizes range from 618 bytes to 1,972,742
 bytes (median 11,765).
 
-> **OPEN:** The meaning of `track_weights`. They behave like per-track (per-bone) blend
-> weights for layered or partial-body playback, with "absent" meaning 1.0 for every track,
-> but nothing in the data proves it. `skeleton-anim.md` or a later blending spec must decide;
-> the decoder only exposes the array.
+**`track_weights` (answered by `skeleton-anim.md` §6.6, 2026-10-05):** they are per-track
+**opacities** for layered playback. A clip whose animation node has `UseBoneOpacity` = 1 and
+that carries the array weights each bone's contribution by its track's value; an absent array
+means 1 on every track. The dominant pattern on player skeletons is "upper body only" (legs
+0.01, arms and head 1.0). The layer rule that uses them is normative in `skeleton-anim.md`
+§6.6. The decoder only exposes the array.
 
-> **OPEN:** Which duration the original uses when field 1 and the tagfile disagree (21
-> records, §8.4). Sampling must use the tagfile values, because the spline block layout is
-> tied to them (§7.4); the envelope value should be exposed separately.
+**Which duration (BIN, 2026-10-05):** the client's record reader stores the envelope `duration`
+next to the decoded animation, but its clip player computes a clip's playable length from the
+**tagfile** `duration`, minus a start and an end crop amount that the player keeps for the
+playing clip (0 unless set). No use of the envelope value was found.
+
+> **OPEN:** where the clip player's start and end crop amounts come from (no record field of
+> §2.3 or §4.3 feeds them; they may be set by the animation graph or by scripts,
+> `skeleton-anim.md`). **Tessera default:** both 0, so a clip plays for its full tagfile
+> `duration`. Sampling also uses the tagfile values, because the spline block layout is tied to them
+(§7.4). Decoders keep exposing the envelope value separately.
+
+> **OPEN:** whether anything outside the clip player reads the envelope `duration` (21 records
+> differ, §8.4). Tessera uses the tagfile value everywhere.
 
 <a id="s2-4"></a>
 ### 2.4 Container kind and version (Confirmed)
@@ -153,8 +176,8 @@ bytes (median 11,765).
 
 Version 3 tagfiles carry no SDK version string (HX: version 4 would add one). Class versions
 stored in the metadata (§3.5) are 3 for `hkaSkeleton` and `hkaAnimation` and 0 for every
-other class; this fits the Havok 6.x era reported in ARCH §11.2 (Reported, not needed for
-decoding).
+other class; this fits the Havok 6.x era reported in DS (`research/notes/data-semantics.md`
+§8, a 2008 licence of the version 6 middleware; Reported, not needed for decoding).
 
 ---
 
@@ -447,7 +470,7 @@ columns are never present together in this install.
 | 0–2 | translation x, y, z |
 | 3 | 0.0 (all 53,370 bones) |
 | 4–7 | rotation quaternion x, y, z, w (w last; identity is 0, 0, 0, 1). Unit length within 1.3e-7 on every bone. |
-| 8–10 | scale x, y, z (1, 1, 1 on 53,146 bones; 82 other distinct values on the remaining 224) |
+| 8–10 | scale x, y, z. Within 1e-3 of (1, 1, 1) on 53,146 bones; 82 other distinct values on the remaining 224 (in 181 skeletons). Bit-exactly (1, 1, 1) on 52,572 bones: 574 more carry rounding noise below 1e-3 (CNS2). |
 | 11 | 0.0 |
 
 The transform of a bone relative to its parent applies scale, then rotation, then translation
@@ -457,7 +480,8 @@ belong to `skeleton-anim.md`). Floats 3 and 11 are padding; a reader ignores the
 **Bones**: count = `parentIndices` length = `referencePose` length = `bones` length in
 28,555 of 28,555. Bone *i*'s parent is −1 or an index **less than** *i* (parents always
 precede children; 33,753 roots, 19,617 child links). Skeletons have 1 root (23,365), 2 roots
-(5,183) or 3 roots (7).
+(5,183), 3 roots (6) or 4 roots (1) (recounted 2026-10-05, CNS2; the earlier "3 roots (7)"
+merged the last two).
 
 **Bone names** (by pattern only): 16,787 skeletons have ASCII identifier names (a rig-family
 prefix, an underscore and a lowercase bone token); 7,110 have the decimal strings of their
@@ -502,10 +526,14 @@ Matched case-insensitively against the bone-name lists of all 0x04 skeletons, th
 name list of 975 clips equals some skeleton's bone list **in the same order**, which supports
 positional binding (H16). The other 4,627 match no 0x04 skeleton, not even as a set.
 
-> **OPEN** (for `skeleton-anim.md`): which skeleton a clip without a matching named skeleton
-> (and every clip without annotation tracks, 19,793) binds to, and whether the 7,110
-> index-named skeletons are their targets. Animation events (footsteps, sounds, effects) are
-> not in the Havok data; they must come from script tables (`script-table.md`).
+**Binding (answered by `skeleton-anim.md` §3, 2026-10-05; H16).** No clip names its skeleton.
+Track *j* drives bone *j* of whatever skeleton the playing object has; a clip is compatible
+exactly when its track count equals the bone count, and an incompatible clip is not played.
+Bone and track names are never needed (they are a diagnostic only, `skeleton-anim.md` §3.5);
+clips aimed at the 7,110 index-named and the 4,658 unnamed skeletons bind by count like every
+other clip. Which clip an object plays comes from its script tables (`script-table.md`), not
+from the clip. Animation events (footsteps, sounds, effects) are not in the Havok data either;
+they come from the script tables.
 
 The decoder exposes the annotation tracks as a list of (track name, list of (time, text)),
 which is a list of names with empty event lists for every clip of this install.
@@ -535,13 +563,26 @@ Samples: count = clip frame count in 211 of 214 (one leading frame is 1 short, t
 short). Each sample is a vec4 with component count 4 (177 objects) or 3 (37 objects, the
 fourth component then defaults to 0). Components x, y, z are a translation of the character's
 reference frame (the first sample is all zero in 175 objects); w ranges from −2.36 to π and is
-monotonic in 53 of the 88 four-component leading objects, which fits an accumulated rotation angle in
-radians about `up` (Reported meaning, HL). The sample at frame *k* belongs to time
-*k* × `duration` / (frames − 1).
+monotonic in 53 of the 88 four-component leading objects.
 
-> **OPEN** (for `skeleton-anim.md`, root motion): confirm the meaning of w, which of the two
-> copies wins when both exist (they never differ here), and what a short sample array means
-> for the last frames (recommendation: hold the last sample).
+**Meaning (`skeleton-anim.md` §7.3, Confirmed there):** *w* is an accumulated yaw angle in
+radians about `up`; x, y, z an accumulated translation; the two copies of a record are
+identical whenever both exist (102 of 102), so either may be used.
+
+**Sampling (BIN, 2026-10-05, H20).** The animation middleware inside the client samples this
+object as follows. With *S* the object's own sample count and *D* its `duration`:
+
+1. *t* ≥ *D*: the last sample. *t* < 0: the first sample.
+2. Otherwise the fractional sample index is *t* × (*S* − 1) / *D*; take its integer part *i*,
+   limited to *S* − 2 (the fraction then measured from that *i*), and interpolate samples *i*
+   and *i* + 1 linearly in all four components.
+3. The result is a transform with translation (x, y, z), rotation by the angle *w* about the
+   `up` axis, and unit scale.
+
+So a short array is **spread over the whole duration** by its own count; it is not placed on
+the clip's frame grid. (`skeleton-anim.md` §7.3 says "hold its last sample"; see §15.)
+Whether the client's player always reaches extracted motion through this routine was not
+traced; it is the object's own sampler and Tessera follows it.
 
 <a id="s4-6"></a>
 ### 4.6 Classes that do not occur (Confirmed)
@@ -881,28 +922,30 @@ Two clips contain extreme but finite translation values (one track above 10⁴ m
 10¹⁰ m); the decoder returns them unchanged and `tessera-anim` may treat them as broken.
 
 <a id="s7-8"></a>
-### 7.8 Sampling an interleaved clip and a reference frame
+### 7.8 Sampling an interleaved clip and a reference frame (BIN, H19–H20)
 
-With *N* frames and Δ = `duration` / (*N* − 1): clamp *t* as in §7.4, let *x* = *t* / Δ,
-*f* = ⌊*x*⌋ limited to *N* − 2, and α = *x* − *f* (limited to 0 … 1). Interpolate frames *f*
-and *f* + 1 of each track: translation and scale linearly; rotation by normalised linear
-interpolation after aligning the second quaternion's sign to the first (or by spherical
-interpolation; both are acceptable here because neighbouring frames are close). *N* = 1
-(never observed) means a constant pose.
+The animation middleware inside the client samples an interleaved clip as follows (BIN). With
+*N* frames (`transforms` length / tracks) and *D* = `duration`:
 
-Reference-frame samples use the same frame grid (with *N* = sample count when it differs
-from the clip's frame count), interpolating x, y, z and w linearly.
+1. *t* ≥ *D*: every track takes its last frame exactly.
+2. Otherwise *x* = *t* × (*N* − 1) / *D*; *f* = the integer part of *x*. When *f* > *N* − 2,
+   use *f* = *N* − 2 and α = 1; else α = *x* − *f*, limited to 0 … 1.
+3. Per track: translation and scale are *a* + α × (*b* − *a*) of frames *f* and *f* + 1;
+   rotation is the **normalised linear interpolation** (1 − α) × *q_a* + α′ × *q_b*, where α′ =
+   α when the dot product of *q_a* and *q_b* is ≥ 0 and −α when it is negative, followed by
+   normalisation (the client uses one Newton step of a reciprocal square root; an exact
+   normalisation is equivalent within floating-point error).
 
-> **OPEN:** This paragraph conflicts with §4.5 ("the sample at frame *k* belongs to time
-> *k* × `duration` / (frames − 1)", recommendation: hold the last sample) and with
-> `skeleton-anim.md` §7.3 ("hold its last sample") for the 3 objects whose sample count is
-> smaller than the clip's frame count: *N* = sample count stretches the short array over the
-> whole clip, the other two put it on the clip's frame grid. `tessera-havok` offers both
-> (`ReferenceFrame::sample` follows this paragraph, `ReferenceFrame::sample_on_grid` follows
-> §4.5 and §7.3); the spec writer should state which one is meant.
+The client's routine has no separate branch for *t* < 0: for −1 < *x* < 0 it returns frame 0
+(α limited to 0), and for *x* ≤ −1 its index test treats the negative index as too large and
+returns the **last** frame. Tessera clamps *t* to [0, *D*] first, as §7.4 does, and never
+relies on that quirk. *N* = 1 (never observed) means a constant pose.
 
-> **OPEN:** The interpolation the original uses between interleaved frames. Havok-era
-> runtimes commonly use linear plus spherical or normalised-linear interpolation (Reported).
+Reference frames (§4.5) are sampled with their **own** sample count *S* in place of *N*, over
+their own `duration`, interpolating x, y, z and w linearly; *w* then becomes a rotation about
+`up`. A short sample array is therefore stretched over the whole duration.
+`tessera-havok`'s `ReferenceFrame::sample` follows this rule; `ReferenceFrame::sample_on_grid`
+(clip frame grid, last sample held) does not match the client.
 
 ---
 
@@ -938,10 +981,10 @@ animation plus embedded reference frame); leading reference-frame tagfiles 1, 2 
 | Bones min / median / max | 1 / 1 / 248 |
 | Most common counts | 1 (22,434), 2 (5,344), 3 (110), 4 (79), 36 (68) |
 | 30 or more bones | 293 skeletons (median 37; 36 ×68, 37 ×20, 89 ×11) |
-| Roots per skeleton | 1 (23,365), 2 (5,183), 3 (7) |
+| Roots per skeleton | 1 (23,365), 2 (5,183), 3 (6), 4 (1) (recounted 2026-10-05) |
 | Name kinds | identifiers 16,787, index strings 7,110, absent 4,658 |
 | `lockTranslation` column | 564 skeletons (1,344 bones, all 1) |
-| Non-unit scale in reference pose | 224 bones |
+| Non-unit scale in reference pose | 224 bones beyond 1e-3 (181 skeletons); 798 not bit-exactly 1 |
 | Decode completely | 28,555 of 28,555 |
 
 <a id="s8-3"></a>
@@ -1044,6 +1087,14 @@ A decoder reports exactly one category per failed record. Counts are for this in
 | `interleaved.bad_shape` | transform count not a positive multiple of the track count | 0 |
 | `sample.non_finite` | a sampled value is NaN or infinite | 0 |
 
+Assignments settled with the implementation (2026-10-05, §14): a negative count is
+`tagfile.bad_varint`; a count beyond the bytes left (also of a column-less struct array) is
+`tagfile.truncated`; Tessera's resource limits, vec4 component counts outside 1–4, object
+arrays and object columns are `tagfile.unsupported_form`; a struct-array element class with no
+declared name is `tagfile.bad_class_index`; the pose checks of §9.1, an `extractedMotion` of
+another class, a spline clip with 0 tracks, negative track counts, `maxFramesPerBlock` < 2,
+`numFrames` < 1 and a non-zero `endian` are `object.inconsistent`.
+
 ---
 
 <a id="s10"></a>
@@ -1142,12 +1193,19 @@ Byte stream (hex), annotated:
 | Quaternion (x, y, z, w) | Bytes | Fields *a₀*, *a₁*, *a₂* | *i* | *s* | Decoded |
 |---|---|---|---|---|---|
 | (0, 0, 0, 1) | `FF F7 7F FF 37` | 2047, 2047, 2047 | 3 | 0 | (0, 0, 0, 1) |
-| (0, 0, √½, √½) | `FF F7 7F FE 2F` | 2047, 2047, 4094 | 3 | 0 | (0, 0, 0.707107, 0.707107) |
+| (0, 0, √½, √½) | `FF F7 7F FE 2F` | 2047, 2047, 4094 | 2 | 0 | (0, 0, 0.707107, 0.707107) |
 | (0.2, −0.4, 0.1, −0.888819) | `42 9A 37 20 79` | 2626, 889, 2336 | 3 | 1 | (0.200007, −0.400014, 0.099831, −0.888830) |
 | (0.1, −0.9, 0.3, 0.3) | `20 39 B6 63 5B` | 2336, 2915, 2915 | 1 | 1 | (0.099831, −0.900127, 0.299838, 0.299838) |
 
-Encoding (for test writers): drop the component of largest magnitude, store its index and
-sign, quantise each remaining component *c* to round(*c* × 2047 × √2) + 2047.
+Encoding (for test writers): drop the component of largest magnitude; **on equal magnitudes,
+drop the one with the lowest index** (x before y before z before w). Store its index and sign
+(*s* = 1 when it is negative), and quantise each remaining component *c*, in ascending index
+order, to round(*c* × 2047 × √2) + 2047. In row 2, z and w have equal magnitude, so z
+(*i* = 2) is dropped and w is stored in *a₂*; that gives byte 4 = 0x2F. Dropping w instead
+(*i* = 3, z stored in *a₂*) would give `FF F7 7F FE 3F`, which decodes to the same quaternion:
+a decoder must accept both (§5.6 reconstructs any *i*), but tests that compare encoder output
+byte by byte expect the tie-break above. The data of this install never shows which
+tie-break the original encoder used.
 
 <a id="s12-3"></a>
 ### 12.3 Spline clip: one track, one block
@@ -1256,88 +1314,100 @@ a u32 length plus the reference-frame tagfile precede the clip tagfile's length.
 <a id="s14"></a>
 ## 14. Open questions
 
-> **OPEN:** Meaning of the envelope `track_weights` (§2.3).
+> **Resolved (2026-10-05):** meaning of the envelope `track_weights`: per-track opacities of
+> layered playback (§2.3; `skeleton-anim.md` §6.6).
 
-> **OPEN:** Which duration governs playback when the envelope and the tagfile disagree
-> (21 records, §2.3, §8.4).
+> **Resolved in part (2026-10-05, BIN):** the clip player uses the tagfile `duration` (§2.3).
+> **OPEN:** whether anything else reads the envelope value (21 records differ, §8.4).
+> **OPEN:** where the player's start and end crop amounts come from (§2.3; Tessera default
+> 0).
 
-> **OPEN:** Binding of clips without annotation tracks, or whose names match no 0x04
-> skeleton, to a skeleton (§4.4; owned by `skeleton-anim.md`).
+> **Resolved (2026-10-05, `skeleton-anim.md` §3):** binding is positional by track count for
+> every clip, named or not (§4.4, H16).
 
-> **OPEN:** Meaning of the reference-frame w component, and short sample arrays (§4.5; root
-> motion in `skeleton-anim.md`).
+> **Resolved (2026-10-05):** the reference-frame *w* is a yaw angle about `up`
+> (`skeleton-anim.md` §7.3); short sample arrays are stretched over the duration by their own
+> sample count (§4.5, §7.8, BIN).
 
-> **OPEN:** Whether the original aligns quaternion signs before blending spline control
-> points (§7.6).
+> **OPEN:** whether the original aligns quaternion signs before blending spline control
+> points (§7.6). The client's spline decompressor is vectorised and was not traced to a
+> conclusion in this session; the interleaved sampler does align signs (§7.8). Keep the
+> recommendation of §7.6.
 
-> **OPEN:** Interpolation between frames of interleaved clips in the original (§7.8).
+> **Resolved (2026-10-05, BIN):** interpolation between interleaved frames: linear for
+> translation and scale, sign-aligned normalised linear for rotation (§7.8).
 
 None of these blocks decoding; they affect playback choices in `tessera-anim`.
 
 Raised by the clean-room implementation (`tessera-havok`, 2026-10-05). The real-data run
 decoded 28,555 of 28,555 skeleton records and 25,395 of 25,395 clip records, every
-failure category at 0, and reproduced §5.5, §8.3 and §8.4 exactly; the items below are
-the only differences found and the places where the spec leaves a choice open. The
-implementation's choice is stated; the spec writer should confirm or correct.
+failure category at 0, and reproduced §5.5, §8.3 and §8.4 exactly. Answers of the spec
+writer, 2026-10-05 (the implementation's choices are confirmed unless stated otherwise):
 
-> **OPEN:** Roots per skeleton (§4.2, §8.2): the implementation counts 1 root in 23,365
-> skeletons, 2 in 5,183, **3 in 6 and 4 in 1**; the spec says "3 roots (7)" and no 4.
+> **Answered:** roots per skeleton are 1 (23,365), 2 (5,183), 3 (6) and 4 (1), as the
+> implementation counted; §4.2 and §8.2 are corrected (CNS2).
+> Original note: the spec said "3 roots (7)" and no 4.
 
-> **OPEN:** Non-unit reference-pose scale (§4.2, §8.2): 798 bones have a scale that is not
-> bit-exactly (1, 1, 1); 224 (the spec's count) differ from 1 by more than 1e-3 in some
-> component. Please state the tolerance behind "224" and "53,146".
+> **Answered:** "224" and "53,146" use a tolerance of 1e-3 on the largest component
+> difference from 1; 798 bones are not bit-exactly (1, 1, 1) (§4.2, CNS2).
 
-> **OPEN:** §9.3 has no category for a **negative count** varint; the implementation
-> reports `tagfile.bad_varint` ("out of range"). A count larger than the bytes left is
-> `tagfile.truncated`. This includes a struct array with no present columns, whose count
-> is bounded by the bytes left like any other count (§3.8), so a column-less bone array
-> longer than the rest of the tagfile is `tagfile.truncated`, not `object.inconsistent`.
+> **Answered:** a negative count is `tagfile.bad_varint`; a count larger than the bytes left is
+> `tagfile.truncated`, also for a struct array with no present columns. Both are now part of
+> §9.3's reading.
 
-> **OPEN:** §9.3 has no category for **resource limits**; the implementation reports
-> `tagfile.unsupported_form` for more than 4,096 classes, a full member list longer than
-> 1,024, inheritance deeper than 64, and more than 65,536 objects (observed: 8, 21, 3, 2).
+> **Answered:** resource limits (more than 4,096 classes, a full member list longer than
+> 1,024, inheritance deeper than 64, more than 65,536 objects; observed 8, 21, 3, 2) are
+> `tagfile.unsupported_form`. The limits are Tessera's own hostile-input bounds.
 
-> **OPEN:** A vec4 array (or column) **component count outside 1–4** (§3.8) is reported as
-> `tagfile.unsupported_form`. **Object arrays** (type 24) and **object columns** in struct
-> arrays have no stated encoding; both are `tagfile.unsupported_form` (never observed).
-> Struct-array element classes that resolve to no declared class name are
-> `tagfile.bad_class_index`.
+> **Answered:** a vec4 component count outside 1–4, object arrays (type 24) and object columns
+> are `tagfile.unsupported_form`; a struct-array element class with no declared name is
+> `tagfile.bad_class_index`. None occurs.
 
-> **OPEN:** Rotation quantisation codes 0 and 2–5 (§5.3) have names but no layout in this
-> spec, so the implementation supports only code 1 (40-bit) for rotations, and codes 0
-> (8-bit) and 1 (16-bit) for position and scale; every other code is
-> `spline.unsupported_quantisation`. The code of a channel is checked only when the
-> channel stores data (identity rotations and constant vectors ignore it).
+> **Answered:** only rotation code 1 (40-bit) and vector codes 0 and 1 are supported; every
+> other code is `spline.unsupported_quantisation`, checked only when the channel stores data.
+> None of the other codes occurs; their layouts stay unspecified here.
 
-> **OPEN:** Skeleton pose checks of §9.1 (finite floats, quaternion length within 1e-3)
-> have no category of their own; the implementation reports `object.inconsistent`. Also
-> `object.inconsistent`: `extractedMotion` referencing an object that is not an
-> `hkaDefaultAnimatedReferenceFrame`, a spline clip with 0 transform tracks, a negative
-> track count, `maxFramesPerBlock` < 2, `numFrames` < 1, and a present non-zero `endian`
-> (the spec only says it is absent).
+> **Answered:** the pose checks of §9.1, `extractedMotion` pointing at another class, a spline
+> clip with 0 tracks, a negative track count, `maxFramesPerBlock` < 2, `numFrames` < 1 and a
+> present non-zero `endian` are `object.inconsistent`.
 
-> **OPEN:** The 40-bit quaternion (§5.6) is unit length "by construction" only when
-> *c₀*² + *c₁*² + *c₂*² ≤ 1. Arbitrary bytes can exceed that (up to 1.5); the
-> implementation then sets the dropped component to 0 as step 2 says and does not
-> renormalise, so a hostile static rotation may be up to √1.5 long. Curves are normalised
-> after blending (§7.6) as specified.
+> **Answered:** a 40-bit value whose three stored components square-sum above 1 yields a dropped
+> component of 0 and is not renormalised by the decoder (it never occurs; HV12). Consumers that
+> need unit rotations normalise, as curve evaluation already does.
 
-> **OPEN:** §7.4 step 1 maps every non-finite *t* to 0, including +∞ (which a reader might
-> expect to clamp to `duration`). The implementation follows the text literally.
+> **Answered:** every non-finite *t* (NaN, +∞, −∞) samples *t* = 0, as §7.4 says. (The
+> client's interleaved sampler has quirks for negative *t*, §7.8; nothing depends on them.)
 
-> **OPEN:** Annotation track count (§4.4): the array length equals
-> `numberOfTransformTracks` in every clip, but §10 does not make a difference an error.
-> Since a column-less struct-array element costs no bytes, the implementation keeps only
-> the first `numberOfTransformTracks` annotation tracks (track *i* belongs to transform
-> track *i*; later elements belong to no track) and accepts the record; a shorter array is
-> kept whole. Should a difference be `object.inconsistent` instead?
+> **Answered:** an annotation-track count that differs from `numberOfTransformTracks` is
+> accepted: the first `numberOfTransformTracks` names belong to the tracks, a shorter array is
+> kept whole (never observed).
 
-> **OPEN:** `maxFramesPerBlock` (§5.1) is 256 in every clip, but only *F* ≥ 2 is enforced.
-> Since knots are bytes and the last knot equals *F_b* − 1 (§5.4), a block with more than 256
-> frames can hold no curve; the implementation accepts such blocks (sampling them once when
-> checking finiteness, §9.2) rather than rejecting *F* > 256. Should *F* > 256 be
-> `object.inconsistent`?
+> **Answered:** `maxFramesPerBlock` > 256 is accepted as the implementation does (never
+> observed); such a block can only hold constant channels.
 
-> **OPEN:** Order of envelope checks (§2.3): the implementation reports
-> `envelope.weight_count` before checking that the weight bytes are present
-> (`envelope.truncated`), and checks every envelope field before decoding any tagfile.
+> **Answered:** the order of envelope checks is the implementation's choice; each failed record
+> still reports exactly one category.
+
+---
+
+<a id="s15"></a>
+## 15. Corrections to other specs
+
+Recorded here instead of editing specs owned by other writers.
+
+| Spec | Statement | Correction |
+|---|---|---|
+| `skeleton-anim.md` §7.3 | "When the reference frame has fewer samples than the clip has frames (3 cases), hold its last sample." | The middleware's own sampler (BIN, §4.5 and §7.8 here) spreads the samples over the whole `duration` by their own count; a short array is stretched, not held. Its implementation OPEN on extracted motion over loops uses `sample_on_grid`, which therefore differs from the client for those 3 objects. |
+| `skeleton-anim.md` §6.1 | Duration mismatch "OPEN there" (`havok-data.md` §8.4) | The clip player uses the tagfile `duration` (§2.3 here, BIN). |
+| `docs/ARCHITECTURE.md` §11.2 | "Tracks map to bones by position" (Reported) | Confirmed (`skeleton-anim.md` §3; H16 here). |
+
+---
+
+<a id="s16"></a>
+## 16. Change log
+
+| Date | Sections | Change | Role |
+|---|---|---|---|
+| 2026-10-04 | all | First complete version (Review). | Spec writer (dirty room) |
+| 2026-10-05 | §1 (SA, BIN, CNS2; legend; H16 Confirmed, H17–H21), §2.3, §4.2, §4.4, §4.5, §7.8 rewritten, §8.2, §9.3, §14, new §15, §16 | Answers from `skeleton-anim.md` folded in (binding, track weights, meaning of *w*); M4 (decision 0011): the clip player's duration, interleaved interpolation and reference-frame sampling; roots and scale tolerance recounted; every implementation OPEN of §14 answered. | Spec writer (dirty room) |
+| 2026-10-05 | header, §2.3, §2.4, §12.2, §14, §16 | Review changes: §12.2 row 2 *i* corrected from 3 to 2 (its bytes `…2F` were right); tie-break for the test encoding (on equal magnitudes drop the lowest index); the Havok-version remark cites DS (`research/notes/data-semantics.md` §8) instead of the undefined tag ARCH; OPEN callout with Tessera default 0 for the clip player's crop amounts. | Spec writer (dirty room) |

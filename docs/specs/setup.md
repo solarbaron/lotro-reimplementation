@@ -4,10 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review. Complete (parts 1 and 2) apart from the OPENs listed in §10 and §14 |
+| **Status** | Accepted |
 | **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Claude review session (spec-writer agent) |
+| **Review record** | Claude review session (spec-writer agent), 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise and non-blocking; spot checks against the install with independent probes: all 28,555 0x04 records parse per §6.1 with zero trailing bytes; part-count split 2 / 28,407 / 146; `collision_mesh` set in 16,822, no collision in 8,117 with all-zero bounds; `attach_map` / list A / B / C in 378 / 2,737 / 42 / 50 setups; §8.5 stub census 258 stubs, 234 skinned, 31 `Default`, slot counts as stated; 149 setups with 309 references to 192 distinct stubs, 97 multi-part, 52 single-part with 27 distinct stubs; parts of 0x04000110; box-only split 990 (864 unrotated within tolerance, 825 bit-exact identity)) |
 | **Implements into** | `crates/formats` (entity descriptor 0x47, visual template 0x1F, setup 0x04, appearance 0x20 decoders), `crates/mesh` / `crates/assets` (resolving an object to meshes), `crates/anim` (attach tables, §11–§13), `apps/explorer`, `apps/client` |
 | **Companion specs** | `mesh.md` (the 0x06 parts). This spec holds the full 0x20 grammar (§8) that `material.md` §9.3 refers to as a future appearance spec. `property-system.md` §5 (property sets embedded in 0x47; item property sets 0x79), §8 (DID maps). `records.md` §1 (VLE, TSize). `material.md` (0x30 materials, 0x2B shaders named by appearance records). `havok-data.md` (the skeleton tagfile of field 3, §6.1). `skeleton-anim.md` (bone mapping, skinning, conventions, attach-point semantics; part 2 here refers to it). `appearance.md` (M4: species and body assembly, worn-part replacement rules, bone sliders). |
 | **Part 2 (M4)** | §11 skeleton inside setups, §12 character setups versus static ones, §13 held items on bones, §14 part 2 invariants and open questions. Part 2 also settles §6.2 and §6.3. |
@@ -55,11 +56,14 @@ by throwaway probes in the dirty-room scratchpad.
 | MV | Mirarkitty `lotro_mesh_viewer` docs: `weapons.md` (held-item chain 0x47 → 0x1F → 0x04 → 0x06), `wardrobe.md` (0x20 grammar), `properties.md`. Facts only. |
 | DS | `research/notes/data-semantics.md` §6.4 (entity descriptors in landblocks), §7.1 (item → geometry chains), §7.2 (0x20 grammar), §8 (Havok tagfile magic). |
 | PS | `property-system.md` (embedded property-set form, TSize). |
+| APP, COL, MESH | `appearance.md` (§2.1, §4.1–§4.11, §5.1, §6.1, §7.4: slot priorities, block fields, key table, worn versus held, template scale, template appearance sections); `collision.md` (§4 the 0x66 layout, §5 the 0x01 cell geometry, §15 corrections to this spec); `mesh.md` §8.5–§8.10 (LOD classes, one-triangle meshes). Same install. |
+| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05. **Question:** does the client draw the one-triangle placeholder parts of figures (owner item O4)? **Why M1–M3 were not enough:** the parts are ordinary mesh records with no marker; whether something is left out is decided by code; no published source describes it; a frame capture (M3) of the original was not available to this session. Only the mesh loader and the part list of drawn objects were read (with `mesh.md` BIN). |
+| CNS | Census of 2026-10-05 by throwaway probes (repository decoders used as tools): stub parts of all 28,555 setups; surfaces and materials of all 258 stub meshes. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
 | S1 | Prefix roles: 0x47 entity descriptor, 0x1F visual template, 0x04 setup (Havok tagfile + body + part list), 0x06 part mesh (§2) | MV, DS; OBS | Confirmed |
-| S2 | 0x01 records are **not** setups; they are stand-alone collision geometry (§2.2) | OBS | Confirmed (correction of `records.md` §2.1 and DS §1) |
+| S2 | 0x01 records are **not** setups; they are cell geometry (interior spaces) (§2.2) | OBS; COL §5 | Confirmed (correction of `records.md` §2.1 and DS §1; kind from COL) |
 | S3 | Item `PhysObj` property → 0x47 → (0x47)* → 0x1F → (0x1F)* → 0x04 → 0x06 parts (§3.1) | MV; OBS (195,930 of 195,930 item references resolve) | Confirmed |
 | S4 | 0x47 layout: flags, DID, a u32, template DID, optional 28-byte block, embedded property set, optional 0x78 list (§4) | MV (first four words); PS; OBS (40,643 of 40,643) | Confirmed |
 | S5 | 0x1F layout: flags-driven optional fields, appearance section, setup section (§5) | MV ("last u32 is a 0x04"); OBS (29,134 of 29,134) | Confirmed |
@@ -71,6 +75,10 @@ by throwaway probes in the dirty-room scratchpad.
 | S11 | Frame list A = `HoldingLocation` key → (bone or −1, bone-local frame); list C keyed by `UIViewport_Type` (§6.3) | OBS2 (2,737 and 50 setups) | Confirmed (part 2); list B meaning OPEN |
 | S12 | Parts of a skinned setup are drawn with identity part transforms and skinned to the setup's skeleton; part meshes carry their `MeshTypeID` slot in their `flags` (§12) | OBS2, SA §4, §9 | Confirmed |
 | S13 | Held items: the item's setup origin is placed at a holding-location frame of the wearer's list A (§13) | MV (bones); OBS2 | Confirmed for the geometry; location choice partly OPEN |
+| S14 | One-triangle meshes are not drawn when they are one of several parts of an object; as the only part they are drawn (§8.5) | BIN; CNS (258 meshes; 97 multi-part setups, 52 single-part setups) | BIN (rule); Confirmed (census) |
+| S15 | Worn-appearance block fields: the float before each group is the group's priority, part floats are part priorities, `a` is a `MeshTypeID` slot; the key-table value counts blocks with `variant` < 0.5; per slot the highest priority wins (§8.3–§8.5, §12.2) | APP §4.3, §4.4, §4.8 | Confirmed (by APP) |
+| S16 | 0x01 records are cell geometry, named by landblock-info cells; 0x66 is decoded (§2.2, §6.5) | COL §4–§5 | Confirmed (by COL) |
+| S17 | An item with a worn appearance for the wearer is worn, never drawn through `PhysObj` (§13.3) | MV; APP §4.1, §5.1 | Confirmed (by APP) |
 
 ---
 
@@ -86,10 +94,10 @@ by throwaway probes in the dirty-room scratchpad.
 | 0x1F | general (29,134) | Visual template: scale, appearance link, setup link (§5) | **no** (flags word first, DID second) |
 | 0x04 | general (28,555) | Setup: skeleton, attachment frames, collision volumes, part list (§6) | yes |
 | 0x06 | mesh, mesh_aux_1 (47,563) | Part mesh (`mesh.md`) | yes |
-| 0x66 | general (16,819) | Collision mesh named by setups (§6.5). Not decoded here. | **no** (begins with a small count) |
+| 0x66 | general (16,819) | Collision mesh named by setups (§6.5); decoded in `collision.md` §4 | **no** (begins with a small count) |
 | 0x20 | general (4,201) | Worn-appearance (wardrobe) record (§8) | yes |
 | 0x78 | gamelogic (1,616), local (2) | Stand-alone property sets named by some 0x47 records (§4.4) | yes (`property-system.md`) |
-| 0x01 | general (1,057) | Stand-alone collision geometry (§2.2). Not part of the object chain. | yes |
+| 0x01 | general (1,057) | Cell geometry (§2.2; `collision.md` §5). Not part of the object chain. | yes |
 
 <a id="s2-2"></a>
 ### 2.2 0x01 records are not setups (Confirmed)
@@ -102,9 +110,13 @@ list. No 0x1F or 0x04 field can hold a 0x01 DID (§5, §6), and none of the 383,
 property sets or the 40,643 entity property sets contains a 0x01 DID value. Setups are the 0x04 records (a DID-map label
 ending in "_Setup" also points into 0x04, `records.md` §2.1).
 
-> **OPEN:** Which records reference 0x01 (landblock or cell data is the likely user, M3), and
-> their exact layout. `records.md` §2.1 should be updated by its owner: 0x01 = collision
-> geometry, 0x04 = setups.
+**Resolved (2026-10-05, COL):** 0x01 records are the client's **cell geometry** (record type
+`CELLMESH`, `records.md` §2.1): interior spaces, each placed by a landblock-info cell
+(`landblock.md` §4.4–§4.5, `collision.md` §5.8). The leading byte described above is the
+presence flag of an optional physics mesh (0 in 47 records); the record goes on with the cell
+volume, portals, wall polygons, hull vertices, a property set and an embedded render mesh
+(`collision.md` §5.1). Their render meshes take part in the detail-level choice of
+`mesh.md` §8.5 (interior cell geometry).
 
 ---
 
@@ -157,8 +169,8 @@ not contain. Species values seen: 23, 65, 73, 81, 114, 117, 120, 125.
 |---|---|---|
 | `Item_WornAppearance` (0x20), inside the map list | 634,655 | §3.2 |
 | `PhysObj` (0x47) | 195,930 | §3.1 |
-| `ExternalAppearanceID` (0x20) | 138,503 | Not geometry: MV found these to be material-only appearance records |
-| `Appearance_AprFile` (0x20), nested | 67,099 | Appearance instances; character customisation (part 2) |
+| `ExternalAppearanceID` (0x20) | 138,503 | Not geometry: 138,469 of them name the null appearance 0x20000004, a record with one entry, one block, one group and no parts (`appearance.md` §2.1); MV found the others to be material-only records |
+| `Appearance_AprFile` (0x20), nested | 67,099 | Elements of appearance lists (`appearance.md` §3.2) |
 | 16 other properties naming 0x47 (cosmetic inventory slots, mounted and channelling cosmetics, collection display entities, cosmetic weapon forwards, race-select and shapeshift entities, NPC cosmetic items) | 8,075 in total | Alternative entities; resolve as §3.1 |
 | `Trait_Appearance_APR`, `Trait_Appearance_ColorAPR` (0x20) | 3,068 | Part 2 |
 | `CloakingAppearanceID`, `MeshFXScript_AppearanceID`, `RaceTable_GenderNullAppearance` (0x20) | 115 | Part 2 |
@@ -225,8 +237,11 @@ unsupported (none occur).
   `Entity_Clearance_BoxList` (21,211), `Entity_ClassScriptTable` (11,334),
   `Appearance_ClassList` (9,336), `Render_NeverSelectable` (6,363), `Translucent` (2,823),
   `Render_Opacity` (1,563), `Render_LODCrossFade` (1,365), `Render_AdjustableScale` (1,309),
-  `Render_ImposterName` (1,072). None of them names a mesh. Rendering-relevant semantics are
-  OPEN (`material.md` and the M2 renderer decide which ones to honour).
+  `Render_ImposterName` (1,072). None of them names a mesh. Known semantics (2026-10-05):
+  `Render_LODClass` selects the object's draw distance, detail range and shadow distance,
+  and `Render_LODCrossFade` its level cross-fade (`mesh.md` §8.5–§8.8, BIN);
+  `Render_AdjustableScale` is a whole-body scale (`appearance.md` §6.1). The others stay
+  OPEN for the renderer.
 
 ---
 
@@ -278,10 +293,14 @@ River-hobbit female templates and the Dwarf template, 0.65 on both Hobbit templa
 `value_b` = 0.85 on both Hobbit templates only. The Hobbit setups already have small
 skeletons and bodies (1.16 m), so `value_a` and `value_b` are not plain geometry scales.
 
-> **OPEN:** Meaning of `vec3`, `value_a` and `value_b` (`vec3` as a uniform model scale is
-> likely; owner observation: an Elf male stands about 3 % taller than a Human male). Their
-> stream order when both 0x040 and 0x400 are set (34 records) is assumed to follow bit order;
-> the two orders cannot be told apart from the data.
+`appearance.md` §6.1 (2026-10-05) treats `vec3` as a uniform whole-body scale that combines
+with the entity's `Render_AdjustableScale`, and finds that `value_a` and `value_b` are not
+scales; assembly ignores them.
+
+> **OPEN:** Meaning of `value_a` and `value_b`; whether `vec3` multiplies the entity scale or
+> replaces it (owner observation O8, `appearance.md` §6.1). Their stream order when both 0x040
+> and 0x400 are set (34 records) is assumed to follow bit order; the two orders cannot be told
+> apart from the data.
 
 <a id="s5-3"></a>
 ### 5.3 Setup section (Confirmed)
@@ -300,7 +319,7 @@ A TSize (`records.md` §1.3) map with *n* = 1 in every record, whose element is:
 first DID.
 
 <a id="s5-4"></a>
-### 5.4 Appearance section (Confirmed layout, meaning OPEN)
+### 5.4 Appearance section (Confirmed layout; meaning from `appearance.md`)
 
 | Order | Field | Type | Meaning |
 |---|---|---|---|
@@ -308,9 +327,11 @@ first DID.
 | 2 | `appearance` | DID | 0x20 record (577 of 577 exist) |
 | 3 | modifiers | TSize map, element = u32 key, f32 value | *n* = 1 (571), 2 (4), 46 (2). Key 0x10000034 in 575 sections. |
 
-These templates attach an appearance (`Appearance_…` style key/value pairs) to a parent
-template's geometry. For static viewing they are ignored; part 2 covers appearance
-modifiers.
+These templates attach an appearance to a parent template's geometry. The section is a
+one-record appearance list (`appearance.md` §7.4 step 2): the modifier map's keys are
+`AppearanceKey` values (`ClothingColor` 0x10000034 in 575 sections, `Worn` in 3) and its
+values are the modifiers that select a block of that key's entry. Mostly it dyes the parent's
+geometry; 60 such templates sit on skinned setups.
 
 ---
 
@@ -483,8 +504,10 @@ the identity, so the bind-pose display with identity transforms is exact (`skele
 §4.4, §9.1). An unskinned part never follows a bone: no setup mixes skinned and unskinned
 parts (§12.1).
 
-Scale and the 0x47 `block` (§4.4) or 0x1F scale-like fields (§5.2) are OPEN; a viewer draws
-unscaled.
+Whole-body scale: `appearance.md` §6.1 (template `vec3` × entity `Render_AdjustableScale`,
+composition OPEN, applied at the object origin before the world placement). The 0x47 `block`
+(§4.4) and the 0x1F `value_a` / `value_b` (§5.2) stay OPEN; a viewer ignores them. A part
+whose mesh holds a single triangle is left out when the setup has several parts (§8.5).
 
 ---
 
@@ -517,16 +540,16 @@ unscaled.
 49,383 entries, 74,839 blocks in total (entry count recounted 2026-10-05, §10.1).
 
 <a id="s8-3"></a>
-### 8.3 Block (Confirmed framing; field attribution partly OPEN)
+### 8.3 Block (Confirmed framing; field attribution corrected by `appearance.md` §4.3)
 
 | Order | Field | Type | Meaning |
 |---|---|---|---|
 | 1 | `variant` | f32 | Block selector. 1.0 (45,126 blocks) is the base look; 0.00, 0.01, 0.02 … are dye variants (DS §7.5). Ascending within every entry. |
 | 2 | `group_count` | u32 | |
-| 3 | `group_param` | f32 | 0 (41,884), 1, 5, 3, 10 … Meaning OPEN. |
-| 4 | groups | × `group_count`, 20 bytes each | u32 `shader` (0x2B DID or 0), u32 `material` (0x30 DID or 0), u32 `a`, u32 `b` (binding key matched against the parts' surface records, `material.md` §9.3), f32 `g` |
+| 3 | `group_param` | f32 | 0 (41,884), 1, 5, 3, 10 … The **priority of the first group**; 0.0 in every block without groups (`appearance.md` §4.3). |
+| 4 | groups | × `group_count`, 20 bytes each | u32 `shader` (0x2B DID or 0), u32 `material` (0x30 DID or 0), u32 `a` (a `MeshTypeID` slot, or 2 `All`), u32 `b` (binding key matched against the parts' surface records, `material.md` §9.3), f32 `g` (the **priority of the next group**; after the last group it is 0.0 in every block) |
 | 5 | `part_count` | u32 | |
-| 6 | parts | × `part_count`, 12 bytes each | f32 `part_param`, u32 `slot` (0x1000xxxx), u32 `mesh` (0x06 DID) |
+| 6 | parts | × `part_count`, 12 bytes each | f32 `part_param` (the part's **priority**, §8.5), u32 `slot` (0x1000xxxx), u32 `mesh` (0x06 DID) |
 | 7 | `extra_count` | u32 | 0 in 74,837 blocks, 1 in 2 |
 | 8 | extras | × `extra_count`, 12 bytes each | u32 `type` (9), u32 `slot`, u32 DID (0x04 setup) |
 | 9 | `end` | u32 | 0 in every block |
@@ -551,48 +574,75 @@ u32 mesh, f32 lod)`, ending with the last part's float, and reports 11 unparsed 
 blocks in 0x200028ED and 0x20002900 settle it: the u32 after the parts is a count, followed by one (9, slot, 0x04 DID) element, and the
 float belongs **before** each part's slot. A decoder must use the layout above.
 
-> **OPEN:** Meaning of `part_param` (a level-of-detail or draw-priority value is likely), of
-> `group_param`, `a` and `g`, and the split of floats between groups: like the part
-> list, the per-group float might belong to the start of the next group rather than the end
-> of the current one; the framing is the same either way.
+**Field attribution (resolved by `appearance.md` §4.3, 2026-10-05).** The framing above stays.
+Read as `appearance.md` does, the float **before** each group is that group's priority
+(`group_param` for the first group, the previous group's `g` for the others) and the float
+after the last group is a terminator, 0.0 in all 67,166 blocks that have groups; `a` holds a
+`MeshTypeID` key in all 84,261 groups (2 `All` in most); `part_param` is the part's priority.
+Group priorities: 0 (34,598), 1 (26,876), 5 (9,409), 10, 3, … ; part priorities: 1 (43,821),
+10 (17,736), 15 (6,281), 4 (5,230), … ; all whole numbers from 0 to 100.
+
+> **OPEN** (owned by `appearance.md` §4.10): how group priorities combine when several layers
+> set the same material parameter.
 
 <a id="s8-4"></a>
-### 8.4 Key table (Confirmed layout, meaning OPEN)
+### 8.4 Key table (Confirmed layout and meaning)
 
 Same keys as the entries (same order in 3,835 records, same set in the other 366). Values:
 0 (45,088), 1, 2, 3, 4, other.
 
-> **OPEN:** Meaning of the table values.
+**Meaning (resolved by `appearance.md` §4.8, 2026-10-05):** the value stored for a key is the
+number of blocks of that entry whose `variant` is below 0.5, in all 49,383 entries: 0 for a
+single base block (`variant` 1.0), the block count for style lists, 46 for a 53-block dye table.
+It is derived data; a decoder may check it (`appearance.md` AI2), assembly does not need it.
 
 <a id="s8-5"></a>
-### 8.5 Choosing parts for display (Reported, MV)
+### 8.5 Choosing parts for display; one-triangle parts (rules Confirmed by APP; drawing BIN)
 
-For a base look take the block with `variant` = 1.0 (or the only block). Draw every part of
-that block; each part's mesh uses the material bound by the group whose slot matches (MV:
-selection by family-specific slot keys; very small meshes are placeholder stubs). Dye blocks
-replace materials only. The full material and dye rules belong to `material.md` and part 2.
+**Choosing parts** (normative in `appearance.md` §4.4 and §3.2.1). Worn items use the block
+with `variant` 1.0 (every entry an item reaches has one); style lists and dye tables choose
+their block by a modifier or dye code. Each part is a candidate for its own `slot`; per
+`MeshTypeID` slot the candidate with the **highest priority** (`part_param`) wins over the
+setup's default part and over other candidates. Hiding is expressed only by placeholder parts
+(below) winning a slot; no flag or property hides anything. Material groups and dye blocks
+change materials only (`material.md` §9.3, §12; `appearance.md` §4.9–§4.10).
 
-> **OPEN:** (found by the M2 visual checklist, 2026-10-04, `docs/checklists/m2-visual.md`
-> row C6.) Whether, and by what rule, the original skips one-triangle placeholder parts.
-> Census of the install (clean-room decoder, counts only): 259 of 47,563 mesh records draw
-> exactly one triangle at level 0, none of them degenerate (bound diagonals 0.02–0.55 m);
-> 151 of them reference surface 0x310000E5 (a plain white diffuse, diffuse colour 2000 =
-> (1, 1, 1, 0)), the rest 15 other surfaces. They appear as extra parts of creature setups
-> (for example setup 0x04000110, parts 1 and 2: meshes 0x06003A8E and 0x060068B9, mesh
-> `flags` 0x10000005 and 0x1000000A), and Tessera's viewer draws the larger ones as a white
-> triangle near the feet. Candidate readings to check against the original (frame capture,
-> `material.md` §19): attachment or reference markers that are never drawn (the low `flags`
-> bits of `mesh.md` §3.3 might then be a bone or slot number), or drawn with a material
-> that is invisible in practice (diffuse colour alpha 0). Until resolved, viewers draw every
-> part.
->
-> Part 2 evidence (2026-10-05): the mesh `flags` low bits are not a bone number but the
-> part's `MeshTypeID` slot (§12.2). 242 three-vertex skinned stub meshes carry body or
-> equipment slots (`Accessory1` 32, `Crest` 28, `Shoulder`, `Head`, `UpperBody`, `Helmet` 17
-> each, `Cape` 16 …); the two examples above are `Shoulder` and `Helmet`. That fits **slot
-> placeholders** (a slot that is present but empty until a worn item fills it, like the
-> "none" style of MV's character-creation records) better than visible geometry. Whether the
-> original draws them stays an owner observation; `appearance.md` owns the slot rules.
+**One-triangle placeholder parts.** 258 mesh records have three vertices and one triangle
+(stubs; 234 of them skinned), none degenerate (bound diagonals 0.011 – 150 m). One further
+record, 0x0600C113, has a single triangle in its detail level 0 but 24 in each of its two
+other levels; it is no stub (`mesh.md` §8.10). 227 stubs carry a body, equipment, mount or
+war-machine slot in their `flags` (`Accessory1` 33, `Crest` 28, `Helmet` and `Head` 17 each,
+`Cape` and `Shoulder` 16 each, `LowerBody` 13, `UpperBody` and `WarMachine_Armor` 12 each,
+`Hands` 10 …; §12.2) and 31 carry `Default`: they are **slot placeholders**, used as
+default parts of character and creature setups for slots that stay empty until something
+fills them, and in worn items to hide the slot they win (`appearance.md` §4.4).
+
+**What the client draws (BIN, `mesh.md` §8.10; answers owner item O4):**
+
+1. When the client loads a mesh it counts the triangles of all its detail levels; a mesh with
+   exactly one triangle is flagged. On this install the flagged meshes are exactly the 258
+   stubs.
+2. When it builds the draw list of an object whose model has **more than one part**, flagged
+   parts are left out. A placeholder part of a figure or a multi-part setup is therefore
+   **never drawn**, whatever its material and whichever slot it fills.
+3. A model whose **only** part is a flagged mesh draws it.
+
+Census of the setups (CNS): 149 setups list stub parts (309 references to 192 distinct
+stubs). In 97 of them the setup has several parts, so the stubs are not drawn; the example of
+the M2 checklist (setup 0x04000110, parts 1 and 2: meshes 0x06003A8E and 0x060068B9, slots
+`Shoulder` and `Helmet`) is one. The other 52 setups have a stub as their only part and draw
+it: 22 of their 27 distinct stub meshes use surfaces whose material colour 2000 has alpha 0
+(0x310000E5 and four others: `lighting.md` §5.12 makes such a surface invisible), and 5 use
+ordinary opaque surfaces (single large triangles, 2 – 150 m across, flags `Default`).
+
+Stub surfaces over all 258 stubs: 0x310000E5 (151; material colour (1, 1, 1, 0)), 0x31001E41
+(47; alpha 0), 0x3100003D (7) and 0x3100000C (5) (alpha 0), 0x3100000D (2; (0, 0, 0, 0)),
+0x31000482 (29), 0x3100008F (6), 0x31007D29 (3), 0x3100589E (2) and six surfaces used once (no
+colour override, so opaque). Even where a placeholder would be drawn, the alpha-0 materials
+keep 212 of the 258 stubs invisible; the rule of step 2 does not depend on them.
+
+Renderers: leave flagged meshes out of multi-part objects (Tessera's `MeshSummary` stub test,
+at most three vertices, selects the same 258 records; `mesh.md` MI14).
 
 ---
 
@@ -628,18 +678,21 @@ install.
 
 > **OPEN:** 0x47 `kind`, `block`, the 63 missing 0x78 sets (§4.3, §4.4).
 
-> **OPEN:** 0x1F scale-like fields and their order (§5.2); the appearance section's three
-> constants (§5.4).
+> **OPEN:** 0x1F `value_a`, `value_b` and the order of the floats (§5.2); whether `vec3`
+> multiplies or replaces the entity scale (O8, `appearance.md` §6.1); the appearance
+> section's three constants (§5.4).
 
-> **OPEN:** 0x04 frame list B (§6.3); the 0x66 collision-mesh layout (§6.5). (`attach_map`,
-> lists A and C and the tagfile contents are resolved by part 2: §6.2, §6.3, §11.)
+> **OPEN:** 0x04 frame list B (§6.3). (`attach_map`, lists A and C and the tagfile contents
+> are resolved by part 2: §6.2, §6.3, §11; the 0x66 layout by `collision.md` §4.)
 
-> **OPEN:** 0x20 `section`, group fields, `part_param`, key-table values (§8).
+> **OPEN:** 0x20 `section` (§8.1, `appearance.md` §4.2). (Group fields, `part_param` and the
+> key-table values are resolved by `appearance.md` §4.3, §4.8: §8.3–§8.4.)
 
-> **OPEN** (owner observation): one-triangle placeholder parts: skipped or drawn by the
-> original (§8.5; part 2 evidence says slot placeholders).
+> **Resolved (2026-10-05, BIN; owner item O4):** one-triangle placeholder parts are not drawn
+> as one of several parts of an object (§8.5, `mesh.md` §8.10).
 
-> **OPEN:** Who references 0x01 collision geometry (§2.2).
+> **Resolved (2026-10-05, COL):** 0x01 records are cell geometry placed by landblock-info cells
+> (§2.2).
 
 <a id="s10-1"></a>
 ### 10.1 Implementation feedback (clean room, 2026-10-04)
@@ -686,7 +739,11 @@ or capsule-only setups, 0 differ). Points for the spec owner:
 > entries and 81,098 parts (blocks agree at 74,839, groups at 84,261). Either a counting
 > difference or a data update; please recount.
 
-> **OPEN** (owned by `appearance.md`): 3,102 entries have several blocks and none with `variant` = 1.0, so §8.5's base
+> **Resolved (2026-10-05, `appearance.md` §4.11):** the 3,102 entries are selection tables
+> (dye tables, NPC and style records, head, hair, beard and ear styles). Their block is always
+> chosen by a modifier (`appearance.md` §3.2.1) or a dye code (§4.9 there); a viewer without
+> one shows the first block. Worn-item structs never land on them.
+> Original note: 3,102 entries have several blocks and none with `variant` = 1.0, so §8.5's base
 > look ("the block with variant 1.0, or the only block") is undefined for them.
 > `AppearanceEntry::base_block` returns nothing there; which block a viewer should draw is
 > open.
@@ -712,8 +769,9 @@ template, 401st entity, 41st appearance record and 3,001st object property set) 
 setup, template and entity chain resolved to drawable parts. Points for the spec owner:
 
 > **OPEN** (answered in part, 2026-10-05): held items use `PhysObj` unless the item has a worn
-> appearance for the wearer, in which case it is worn (§13.3); the ground and display cases
-> stay open.
+> appearance for the wearer, in which case it is worn (§13.3; confirmed by `appearance.md`
+> §4.1, §5.1: every worn item also has a `PhysObj`, its look on the ground); the display case
+> and items lying on the ground stay open.
 > Original note: Objects name geometry in more than one way. The viewer offers every top-level
 > property whose value is a 0x47, 0x1F or 0x04 DID (`PhysObj` and the alternatives of
 > §3.3) plus every `Item_WornAppearanceMapList` element as a choice. Which one the client
@@ -729,7 +787,11 @@ setup, template and entity chain resolved to drawable parts. Points for the spec
 > static multi-part setups the viewer adds an "explode" slider of its own to separate
 > parts, which is not a format fact.
 
-> **OPEN** (owned by `appearance.md`): Appearance entries whose first entry is material-only: 63 of 103 sampled
+> **Answered in part (2026-10-05, `appearance.md` §4.11):** material-only entries are the dye
+> tables of the same record or selection tables of NPC pieces; they apply only together with
+> parts that the same record contributes. How a dye element pairs with pieces of another
+> record stays OPEN in `appearance.md` §15.
+> Original note: Appearance entries whose first entry is material-only: 63 of 103 sampled
 > 0x20 records have no part meshes in entry 0 (the viewer lists every entry as a choice).
 > When a record mixes geometry entries and material-only entries, which material-only
 > entry applies to which geometry entry is not stated (see `material.md` §19).
@@ -810,8 +872,10 @@ records (§8.3) the part's `slot` equals its mesh's `flags` for 80,974 of 81,098
 A character setup's part list is its **default body**: one part per slot. The 89-bone male
 avatar setups, for example, list one mesh each for `UpperBody`, `LowerBody`, `Hands`, `Feet`,
 `Head`, `Ears`, `Crest`, `Beard`, `Shoulder`, `Helmet`, `Cape` and `Satchel` (several of them
-three-vertex stubs, §8.5). A worn item's parts replace the body part of the same slot; the
-rules for which slots an item hides or keeps belong to `appearance.md`.
+three-vertex stubs, §8.5). Worn items, style lists and NPC pieces offer parts for slots, and
+per slot the part with the highest priority wins over the default part (`appearance.md` §4.4,
+normative there); a winning stub leaves the slot empty, because one-triangle parts of a
+multi-part object are not drawn (§8.5).
 
 <a id="s12-3"></a>
 ### 12.3 Playable characters (Confirmed)
@@ -865,12 +929,15 @@ cosmetic props. The full table and a viewer rule are in `skeleton-anim.md` §8.5
 > equipment slot, and when and where weapons are stowed (the sheath locations of §12.3).
 
 <a id="s13-3"></a>
-### 13.3 Worn versus held (Reported, MV)
+### 13.3 Worn versus held (Confirmed by `appearance.md` §4.1, §5.1)
 
-Some class items (satchels, instruments) carry an `Item_WornAppearanceMapList` as well as a
-`PhysObj`; for them the worn appearance (§3.2) is what the wearer shows, and the `PhysObj`
-chain leads to a generic ground model. Rule: an item with a worn-appearance entry for the
-wearer's species and sex is worn; otherwise it is held.
+Every worn item carries an `Item_WornAppearanceMapList` as well as a `PhysObj`; the worn
+appearance (§3.2) is what the wearer shows, and the `PhysObj` chain leads to its look on the
+ground. Rule: an item with a worn-appearance entry for the wearer's species and sex (after the
+wardrobe fallbacks of `appearance.md` §2.3) is worn and never drawn through `PhysObj`;
+otherwise it is held. Among the items with both, the `Weapon_Primary` battle gauntlets (200,
+drawn as `Hands` parts) and the `Class` satchels (120, in the `Satchel` slot) are the ones that
+might look like held items (`appearance.md` §5.1).
 
 ---
 
@@ -899,9 +966,11 @@ A decoder reports SI7, SI8 and SI10 violations as data-quality issues; none occu
 > **OPEN** (for `script-table.md`, and owner observation): holding-location choice in the
 > world, and stowing (§13.2).
 
-> **OPEN** (owner observation): one-triangle slot placeholder parts (§8.5).
+> **Resolved (2026-10-05, BIN):** one-triangle slot placeholder parts are not drawn when the
+> object has several parts (§8.5; owner item O4).
 
-> **OPEN:** the 0x1F scale-like fields (§5.2), with the part 2 evidence there.
+> **OPEN:** the 0x1F `value_a` and `value_b`, and how `vec3` combines with the entity scale
+> (§5.2; `appearance.md` §6.1, owner item O8).
 
 
 <a id="s14-1"></a>
@@ -919,3 +988,27 @@ A bones ≥ −1) in every setup; the largest bone index any setup names is 200.
 > the tagfile (`havok-data.md`). The formats crate keeps the tagfile opaque, so it checks
 > them only when a caller passes the bone count (`Setup::bone_issue`); the full check
 > belongs to a test that also decodes skeletons.
+
+---
+
+<a id="s15"></a>
+## 15. Corrections to other specs
+
+Recorded here instead of editing specs owned by other writers.
+
+| Spec | Statement | Correction |
+|---|---|---|
+| `appearance.md` §4.4 step 3, §8 step 8, §13 | Whether the original draws a winning stub's triangle is owner item O4; "stubs per the O4 policy (draw or skip)" | Answered by BIN (§8.5 here, `mesh.md` §8.10): one-triangle meshes are left out of the draw list of any object with more than one part, so a stub in a figure is never drawn. |
+| `skeleton-anim.md` §9.2, `setup.md` §8.5 (before 2026-10-05) | "242 three-vertex skinned stub meshes … (`Accessory1` 32, `Crest` 28, `Shoulder`, `Head`, `UpperBody`, `Helmet` 17 each, `Cape` 16 …)" | 258 three-vertex stubs, 234 of them skinned; slots `Accessory1` 33, `Crest` 28, `Helmet` 17, `Head` 17, `Cape` 16, `Shoulder` 16, `LowerBody` 13, `UpperBody` 12, …, `Default` 31 (census of all mesh records, 2026-10-05; §8.5). |
+| `docs/checklists/m2-visual.md` row C6, owner item O4 | Open: is the white triangle drawn by the original? | Not drawn (BIN, §8.5); the owner observation is no longer needed, a frame capture could still confirm it. |
+
+---
+
+<a id="s16"></a>
+## 16. Change log
+
+| Date | Sections | Change | Role |
+|---|---|---|---|
+| 2026-10-04 | §0–§10 | Part 1: object chains, 0x47, 0x1F, 0x04 and 0x20 layouts (Review). | Spec writer (dirty room) |
+| 2026-10-05 | §6.2, §6.3, §7, §11–§14 | Part 2 (M4): skeleton, attach map, holding locations, character setups, held items. | Spec writer (dirty room) |
+| 2026-10-05 | §1 (APP/COL/MESH, BIN, CNS; S2, S14–S17), §2.1, §2.2, §3.3, §4.4, §5.2, §5.4, §7, §8.3, §8.4, §8.5 rewritten, §10, §10.1, §10.2, §12.2, §13.3, §14, new §15, §16 | Owner item O4 answered by BIN: one-triangle parts are left out of multi-part objects (with the stub census of setups and surfaces); corrections of `appearance.md` folded in (group and part priorities, key-table values, slot rule, selection tables, worn versus held, template scale, template appearance sections, null appearance); corrections of `collision.md` folded in (0x01 cell geometry, 0x66 decoded); LOD-class semantics pointed to `mesh.md` §8.5–§8.8. | Spec writer (dirty room) |

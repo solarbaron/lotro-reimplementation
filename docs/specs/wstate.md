@@ -4,10 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-04 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Claude review session (spec-writer agent) |
+| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (blocking: §10 network-form bullet under the `docs/LEGAL.md` §9.3 gate; wrong item, embedded-object, root-reference and small-set counts; minor: unscoped counts, an unknown without OPEN in §10, the class-134 ordering field). Claude review session (spec-writer agent), re-review 2026-10-05 after the repair round: **passed, Accepted**. Network-form content withdrawn (row X1 narrowed, §10 states stored form only); counts corrected and scoped; bundle-version OPEN added; class-134 ordering answered by N8. Re-review spot checks on the install with an independent decoder over all 383,343 records (all decode exactly): items 5,832,867, embedded objects 5,789,528, script objects 2,817,016; root referenced in 139 records and unreferenced in 383,204; small sets 90,232 / 930 / 674 (91,836) with header byte 2 = 0 in all and class-18 hints 0: 85,225, 1: 4,857, 2–8: 150, hint 1 in all 105 and 134 sets; class-18 sets in bucket order by value mod B (8,096 of 8,096); class-105 sets by whole value mod B (108 of 108; low/high half alone break 56/60); bucket fields of 131/134/138 all < B (792 + 43 + 9,213) and ascending in all 677 collections; 43 of 43 (134) and 383 of 792 (131) bucket fields equal a label; labels contiguous in 381,901, non-ascending in 9; import hint 2 in 383,341; value and reference counts of §5.2 and §8.1. First-round checks still stand. Remaining OPENs (§3.2, §5.4, §6, §7, §10, §14) are precise and non-blocking. |
 | **Implements into** | `crates/wstate` (`ObjectState`, `GameObject`, area/region/dungeon resolution); `apps/dattool` / `apps/explorer` object views; `crates/world` and `apps/client` consume §11 |
 | **Companion specs** | `docs/specs/wlib.md` (the class library every record is decoded with); `docs/specs/records.md` [§1](records.md#s1) (VLE, TSize and bucket order, strings, name hash), [§4](records.md#s4) (StringInfo layout); `docs/specs/property-system.md` [§4](property-system.md#s4) (value encodings, position §4.6), [§5](property-system.md#s5) (property sets), [§6.2](property-system.md#s6-2) (the +0x09000000 rule), [§8](property-system.md#s8) (DID maps), [§9](property-system.md#s9) (DB-object-type codes); `docs/specs/string-table.md` [§9](string-table.md#s9) (rendering a StringInfo); [`landblock.md`](landblock.md) and [`coordinates.md`](coordinates.md) (M3: block maps, landblock info, map coordinates). This spec starts with a fully reassembled, decompressed record payload. |
 
@@ -31,9 +32,10 @@ engine containers. This spec gives an implementer of `tessera-wstate` what they 
 - for M3: identify area, territory, region and dungeon records and resolve them **by name**,
   including the dungeon map positions and the region-number table (§11).
 
-§9 reports the whole-install decode run, §10 summarizes other encodings (Reported only),
-§12 gives implementation guidance, §13 lists disagreements, §14 the open questions and §15
-test guidance with a worked synthetic example.
+§9 reports the whole-install decode run, §10 notes an older file form (Reported only) and
+the versioned bundle reader, §12 gives implementation guidance, §13 lists disagreements, §14 the open questions, §15
+test guidance with a worked synthetic example, §16 corrections to other specs and §17 the
+change log.
 
 <a id="provenance"></a>
 ## Provenance
@@ -44,6 +46,8 @@ How sources are marked:
   the dirty-room scratchpad. Each Confirmed fact says what was decoded and how much.
 - **Reported**: comes only from published third-party material and was not, or could not
   be, checked against data.
+- **BIN**: read from the client executable under method M4 (decision 0011); "BIN only"
+  marks facts the data cannot show.
 
 | Key | Source |
 |---|---|
@@ -52,26 +56,41 @@ How sources are marked:
 | MK | Mirarkitty `lotro_extractor` documentation (Apache-2.0). Facts only. |
 | DS | `research/notes/data-semantics.md` §5.2, §6.7. |
 | ER | `research/notes/engine-client-re.md` §9 (client memory observations). |
+| OBS2 | Observed in the same install on 2026-10-05 with new throwaway probes: every object record decoded again (383,343 of 383,343 exactly, with the codec of §5.4 for class 3053), the per-record class tables checked against item order, the import lists checked against the records they name, and the reference census of §8 repeated with the two reference-bearing classes found under BIN. |
+| LC2 | The class-index constants of three released builds of the LC library (11.0, 11.4, 11.6; dated 2023-11, 2024-08, 2025-05), facts only. |
+| OBS3 | Observed in the same install on 2026-10-05 (repair pass): a new, independent throwaway decoder written from this spec and `property-system.md` decoded **all** 383,343 object records exactly, and re-counted every figure this repair changes: items, markers, labels, attribute values, references, root references, small sets and the bucket fields of classes 131, 134 and 138. Unless a count says otherwise, it covers all 383,343 records. |
+| BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, compiled 2026-09-27), disassembled on 2026-10-05 in the dirty room, address ranges only: the object-state record's load routine, the dependency-list reader, the bundle header, class-table and item readers, the native-class registration table and the per-class serializers and reference visitors, and the post-load reference check. **Questions:** what the reserved header fields and the import flags are; how the per-record class table is read; which native classes exist, which of them hold references, and how classes 3053, 72, 192 and 1980 are laid out; how the cases left open by the implementation are treated. **Why M1–M3 were not enough:** class 3053 occurs in one record only and its layout could not be inferred safely from one instance; whether a container holds references is a property of the client's code that coincidental integer values in the data cannot settle; reserved fields that are always 0 cannot be explained by data; no published source covers these (M2) and the running client does not expose them (M3). Nothing from network, login, launcher or anti-tamper code was read. **Repair pass (same build, 2026-10-05):** the serializers of the small sets (classes 18, 105, 134) and the shared serializer of the reference-keyed maps (131, 138), with its element routine, were read. **Questions:** how the small-set header is built; which field orders a class-134 set; what the second u32 of a 131, 134 or 138 element is. **Why M1–M3 were not enough:** in the data the third header byte is always 0, and in class 134 both u32 fields happen to be in bucket order in all five sets with more than one element, so the data cannot decide; no published source covers them. The search for where the bundle version number comes from was stopped before it reached code that may serve network traffic (§10). |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
-| H1 | Record header and section order (§3) | LC, DS; OBS (383,342 records exact) | Confirmed |
-| H2 | Offset-4 class index = class of the root item (§3.1) | LC, DS; OBS (383,342 of 383,342) | Confirmed |
-| H3 | Import list = dependency list of (DB-object type, DID, flags); flag 16 marks DIDs that appear as DID items (§3.2) | LC (layout); OBS (counts match exactly) | Layout Confirmed; meaning of flag 16 Confirmed; flag 0 partly OPEN |
+| H1 | Record header and section order (§3) | LC, DS; OBS, OBS3 (383,343 records exact) | Confirmed |
+| H2 | Offset-4 class index = class of the root item (§3.1) | LC, DS; OBS, OBS3 (383,343 of 383,343) | Confirmed |
+| H3 | Import list = dependency list of (DB-object type, DID, flags); flag 16 marks DIDs that appear as DID items (§3.2) | LC (layout); OBS (counts match exactly); BIN (flags field is a VLE) | Layout Confirmed; meaning of flag 16 Confirmed; flag 0 mostly explained (H4) |
+| H4 | 17,473 of the 18,368 flag-0 imports whose DID occurs nowhere in the record are class-wide dependencies on two well-known objects named in the WEENIECONTENT map (§3.2) | OBS2 | Confirmed |
+| H5 | Reserved fields: two VLEs that belong to the dependency list, then a boolean (0/1) (§3.1) | BIN; OBS | Confirmed (BIN + OBS) for layout; meaning OPEN |
 | B1 | Bundle layout: labels, class table, items (§4) | LC, DS; OBS | Confirmed |
-| B2 | The per-record class table repeats the library's attribute list exactly (§4.2) | OBS (1,381,854 of 1,381,854) | Confirmed. Derived by this spec writer. |
+| B2 | The per-record class table repeats the library's attribute list exactly (§4.2) | OBS, OBS3 (1,381,857 of 1,381,857 entries in all records) | Confirmed. Derived by this spec writer. |
+| B3 | Class-table contents = script classes instantiated in the bundle plus the root class of every DID item's target; order = hash-bucket order (11 buckets, more for large tables), newest first within a bucket (§4.2) | OBS2 (contents 383,343 of 383,343; order 383,341 of 383,343 directly and the other 2 with the growth rule) | Confirmed. Derived by this spec writer. |
+| B4 | On a duplicate class-table entry the first one wins (§4.2) | BIN | BIN only |
 | I1 | Item markers 0 (embedded object) and 0x20000000 (DID) (§5.1) | LC; OBS | Confirmed. Markers 0x10000000 and 0x08000000 are Reported (never observed). |
 | I2 | Script-object body = attribute values in library-list order (§5.2) | LC; OBS | Confirmed |
-| I3 | Reference value 0xFFFFFFFF = null; otherwise a label of the same bundle (§5.2, §8) | OBS (7,293,936 reference attributes: no other value occurs) | Confirmed. Derived by this spec writer. |
+| I3 | Reference value 0xFFFFFFFF = null; otherwise a label of the same bundle (§5.2, §8) | OBS, OBS3 (7,294,111 reference attributes in all records: no other value occurs) | Confirmed. Derived by this spec writer. |
+| R2 | Keys of class 131 and the first field of class 134 elements are references; with them every non-root item of every record is referenced (§8.1, §8.3) | BIN (reference visitors); OBS2 (792 + 43 values, all labels; 835 of 835 previously unreferenced items resolved) | Confirmed (BIN + OBS) |
 | N1 | Native codecs for classes 11, 13, 17, 18, 23, 25, 35, 37, 39, 57, 97, 104, 105, 117, 134, 138, 160, 161, 166, 175, 199, 225, 415, 2479 (§5.3) | LC; OBS | Confirmed (per-class counts in §5.3) |
 | N2 | Native codecs for classes 72, 111, 131, 192, 427, 1942, 1980 (§5.3, §5.4) | OBS | Confirmed sizes and layouts; field meanings mostly OPEN. Derived by this spec writer; neither LC nor MK decodes them. |
-| N3 | Native codecs for classes 101, 407, 2567, 3103, 3461, 3740 | LC | Reported (never observed) |
-| N4 | The u16 after the count of a 32-bit set is a bucket hint in its high byte (§5.3) | OBS | Confirmed. Derived by this spec writer. |
+| N3 | Native codecs for classes 407, 2567, 3103, 3461, 3740 | LC | Reported (never observed). Class 101 is not a native class of this build (N6). |
+| N4 | Small-set header: one u32 whose low 24 bits are the count and whose high 8 bits are a TSize-style bucket hint; elements of 18 and 105 in bucket order by value (§5.3) | OBS, OBS3 (91,836 sets); BIN (repair pass: the 24-bit count and the 64-bit remainder for 105) | Confirmed (BIN + OBS); counts of 65,536 or more are BIN only |
+| N8 | The second u32 of each element of classes 131, 134 and 138 is the element's **bucket number** in the writer's hash table, and elements are stored in ascending bucket number; the following byte is a flag (§5.3, §8.1) | BIN (repair pass); OBS3 (792 + 43 + 9,213 elements, all below the bucket count; all 677 collections ascending) | Confirmed (BIN + OBS). Corrects the first reading as a plain value (§13). |
+| N5 | Native class 3053 layout (§5.4) | BIN; OBS2 (13 of 13 instances decode exactly; the record then ends exactly) | Confirmed (BIN + OBS) |
+| N6 | The client registers 258 native classes, all undefined in the library; which of them hold references and where (§5.3, §8.1) | BIN | BIN only for unobserved classes; Confirmed (BIN + OBS) for 131 and 134 (R2) |
+| N7 | Layouts of 72 (3 + 4 floats), 192 (optional typed object), 1980 (three hashed collections) and the 2479 filter (eight optional fields) (§5.4) | BIN; OBS | Confirmed (BIN + OBS) for the observed bytes |
 | L1 | Link-section layout (§6) | LC; OBS (580,922 links) | Layout Confirmed; meaning OPEN |
 | P1 | Available-property section layout (§7) | LC; OBS | Layout Confirmed; meaning OPEN |
 | G1 | Area / territory / region / dungeon kinds, their properties and their links (§11) | LC (`lotro-tools`), DS §6.7; OBS (all records of each kind) | Confirmed |
 | G2 | Dungeon map position stored in the dungeon's object state (§11.4) | LC (`lotro-tools`); OBS (1,303 dungeons) | Confirmed |
-| X1 | Network and pre-live encodings (§10) | LC | Reported |
+| G3 | Region number 6 has an entry in the REGION DID map and a region record (0x0F prefix), but no cell or map archive is shipped (§11.3) | OBS2 | Confirmed |
+| G4 | The well-known root classes kept their indices across LC builds 2023-11 … 2025-05 (§11.1) | LC2; OBS | Reported (stability); Confirmed for this install |
+| X1 | Pre-live file encoding (§10). *(The network-form part of this row was withdrawn on 2026-10-05: out of scope until the `docs/LEGAL.md` §9.3 gate.)* | LC | Reported |
 
 ---
 
@@ -112,26 +131,29 @@ use two of them).
 ## 3. Record layout
 
 <a id="s3-1"></a>
-### 3.1 Header and sections (Confirmed, 383,342 records)
+### 3.1 Header and sections (Confirmed, all 383,343 records)
 
 | Order | Field | Type | Meaning / observed |
 |---|---|---|---|
 | 1 | did | DID | Equals the DID looked up (all) |
 | 2 | root_class | u32 | Class index of the root item (§4.3). Always < the library's class count. |
 | 3 | imports | TSize + import × *n* | Dependency list (§3.2) |
-| 4 | reserved_a | VLE | Always 0 |
-| 5 | reserved_b | VLE | Always 0 |
-| 6 | reserved_flag | bool8 | Always 1 |
-| 7 | bundle_size | u32 | Byte length of the bundle. Never 0 in this install. |
+| 4 | reserved_a | VLE | Always 0. Part of the dependency list (H5). |
+| 5 | reserved_b | VLE | Always 0. Part of the dependency list (H5). |
+| 6 | reserved_flag | bool8 | Always 1. The client fails the load on 2 or more (H5). |
+| 7 | bundle_size | u32 | Byte length of the bundle. Never 0 in this install. The client fails the load when it exceeds the bytes left. |
 | 8 | bundle | *bundle_size* bytes | §4 |
 | 9 | has_links | bool8 | 1 in 192,723 records |
 | 10 | links | u32 count + link × count | Present only when `has_links` = 1 (§6) |
 | 11 | has_available | bool8 | 1 in 199,295 records |
 | 12 | available | TSize + (u32 pid, u32 pid echo) × *n* | Present only when `has_available` = 1 (§7) |
-| — | *(end)* | | Zero leftover bytes in all 383,342 decoded records |
+| — | *(end)* | | Zero leftover bytes in all 383,343 records (OBS2, OBS3) |
 
-LC names fields 4–6 "always 0", "always 0" and an unnamed boolean; their meaning is OPEN.
-A reader should accept other values and warn.
+LC names fields 4–6 "always 0", "always 0" and an unnamed boolean. BIN: the client reads
+fields 3–5 as one structure, the dependency list (a hashed table of imports followed by two
+VLE counters), and field 6 as a boolean of the object record. It keeps the bundle as raw
+bytes after reading it and decodes it on demand, which is the model §12 recommends. Their
+meaning is OPEN. A reader accepts any VLE values (and warns), and rejects a boolean ≥ 2.
 
 When `bundle_size` is 0, LC skips the bundle and the record has no items; this does not
 occur here, but readers must accept it (the object then has no state, only a class).
@@ -139,13 +161,13 @@ occur here, but readers must accept it (the object then has no state, only a cla
 <a id="s3-2"></a>
 ### 3.2 Import list (Confirmed layout)
 
-A TSize count *n*, then *n* entries of 9 bytes:
+A TSize count *n*, then *n* entries (9 bytes each for every observed entry):
 
 | Field | Type | Meaning |
 |---|---|---|
 | dbo_type | u32 | DB-object-type code (`property-system.md` §9) of the referenced record |
 | did | DID | The referenced record |
-| flags | u8 | 16 or 0 |
+| flags | VLE | 16 or 0 observed. The client reads a VLE (BIN); both observed values are one byte long, so the bytes equal the earlier u8 reading. |
 
 Observed (99,863 records have a non-empty list; *n* up to 1,767):
 
@@ -158,7 +180,7 @@ Observed (99,863 records have a non-empty list; *n* up to 1,767):
 
 Facts:
 
-- The TSize hint is 2 in 383,340 records (6 and 7 in the two records with the longest
+- The TSize hint is 2 in 383,341 records (6 and 7 in the two records with the longest
   lists), and the entries are in **bucket order by DID** (`records.md` §1.3.1) in all
   99,863 non-empty lists.
 - The flag-16 entries and the DID items correspond one to one: 43,339 of each, and each
@@ -168,9 +190,24 @@ Facts:
 The import list is not needed to decode the bundle. It is useful as a **prefetch list**: the
 records an object depends on.
 
-> **OPEN:** What a flag-0 game-object import refers to when its DID occurs nowhere in the
-> record or the property set (§3.2 table), and whether flag 16 means "embedded DID
-> item" in general or something wider.
+Flag-0 game-object imports whose DID occurs nowhere else in the record (18,368 entries,
+OBS2):
+
+- 17,473 of them are **class-wide dependencies**: every record of a given root class imports
+  the same DID, and the DID is one of two well-known objects named in the WEENIECONTENT map
+  (0x2800000E, `property-system.md` §8.1; 0x70000214 and 0x7000EAA6 here). For example every
+  record of root class 734 (14,475 records) imports 0x70000214. Neither DID occurs in the
+  importing records, their property sets or the class library's bytes; the dependency
+  follows from the object's class, not from anything stored in the record.
+- The other 895 come from three records: 0x7000025B (root class 1486) imports 395 records
+  (all of one class), 0x7001A638 (root class 2534) imports 498 records (497 of one class),
+  and 0x70034C39 (root class 3720) imports 2. Those DIDs occur nowhere in the importing
+  records or their property sets, and the targets do not name the importing records.
+
+Flag 16 marks exactly the DIDs of the bundle's DID items (above); nothing else carries it.
+
+> **OPEN:** Why the three records of the last bullet import 895 records that they never
+> name. Not needed to decode; a prefetching reader simply loads them.
 
 ---
 
@@ -193,7 +230,7 @@ Class entry:
 
 | Field | Type | Meaning |
 |---|---|---|
-| class_index | u16 | A script class |
+| class_index | u16 | A script class (the client reads it as signed 16-bit) |
 | attribute_count *a* | u16 | |
 | attributes | (u32 name hash, u8 type code) × *a* | |
 
@@ -203,14 +240,39 @@ Class entry:
 - It lists each **script** class whose instances occur in the bundle, once (no duplicates
   in any record). Native classes never appear in it.
 - Each entry's attribute list equals the class library's attribute list for that class
-  (`wlib.md` §8), with the same hashes and types **in the same order** (1,381,854 entries,
-  no exception). Classes without attributes appear with *a* = 0.
+  (`wlib.md` §8), with the same hashes and types **in the same order** (1,381,857 entries
+  in all records, no exception). Classes without attributes appear with *a* = 0.
 - In 38,413 records the table also lists script classes that have no instance in the
   bundle (38,612 such entries; 38,486 of them are classes with attributes, 126 without).
-  Readers ignore such entries.
-- Every instantiated script class is listed (383,342 of 383,342 records), and every listed
-  class is defined in the library (1,381,854 of 1,381,854).
-- The order of entries is neither ascending nor first-use order.
+  **Each of them is the root class of a record named by one of the bundle's DID items**
+  (B3). Readers ignore such entries for decoding.
+- Every instantiated script class is listed (383,343 of 383,343 records), and every listed
+  class is defined in the library (1,381,857 of 1,381,857).
+
+**Contents rule (B3, Confirmed in 383,343 of 383,343 records).** The set of classes in the
+table is exactly: the class of every embedded script object, plus the root class (offset 4)
+of the target of every DID item.
+
+**Order rule (B3).** The table is written from a hash table keyed by class index:
+
+1. Walk the items in stored order. Each embedded script object contributes its class, each
+   DID item the root class of its target; a class is inserted the first time it is met.
+2. The table has *B* buckets, with *B* taken from the TSize bucket-count table
+   (`records.md` §1.3): it starts at 11. When an insertion would make the count exceed
+   2 × *B*, *B* becomes the next value of that table and the existing entries are
+   redistributed, each new bucket keeping the relative order its entries had in the written
+   sequence.
+3. A new class goes to the **front** of bucket (class index mod *B*).
+4. The table is written bucket by bucket in ascending bucket number, each bucket front to
+   back.
+
+So the class indices modulo *B* never decrease, and within a bucket the most recently
+first-met class comes first. This reproduces the stored order in 383,341 records with
+*B* = 11 (all tables of at most 22 classes); the two larger tables (32 classes with *B* = 23,
+110 classes with *B* = 89) are reproduced by step 2. Only byte-exact writers need it.
+
+**Duplicates (B4, BIN only).** If a class occurs twice, the client keeps the first entry
+and discards the later one. No record has a duplicate.
 
 Consequences for a reader:
 
@@ -220,17 +282,20 @@ Consequences for a reader:
   come from different builds.
 - If a script object's class is missing from the table, use the library's list (and warn).
 
-> **OPEN:** The rule that orders the class table and the reason for the extra entries.
+Reported (LC) and BIN: older bundle encodings store each attribute **name** as a string
+instead of the u32 hash; the client hashes such names with the name hash of `records.md`
+§1.5 (with the result 0xFFFFFFFF replaced by 0xFFFFFFFE). The current files use the hash
+form only (§10).
 
 <a id="s4-3"></a>
 ### 4.3 Labels (Confirmed)
 
 - Labels are unique within a record; the first label is always **0**.
-- Labels are ascending in all but 9 records, and contiguous 0 … *n* − 1 in 381,900
-  records. In 1,442 records some numbers are skipped. Labels are therefore **names**, not
+- Labels are ascending in all but 9 records, and contiguous 0 … *n* − 1 in 381,901
+  records. In the other 1,442 records some numbers are skipped (all 383,343 records, OBS3). Labels are therefore **names**, not
   positions: a reader maps label → item index.
 - Item 0 (label 0) is the **root item**. It is always an embedded script object whose class
-  equals `root_class` (§3.1) (383,342 of 383,342).
+  equals `root_class` (§3.1) (383,343 of 383,343).
 
 ---
 
@@ -244,7 +309,7 @@ Each item starts with a u32 marker:
 
 | Marker | Item | Then | Observed |
 |---|---|---|---|
-| 0x00000000 | Embedded object | u16 class index, then the body (§5.2 if the class is defined in the library, else §5.3) | 5,780,393 |
+| 0x00000000 | Embedded object | u16 class index, then the body (§5.2 if the class is defined in the library, else §5.3) | 5,789,528 (all records) |
 | 0x20000000 | DID item | DID of another object record | 43,339 (all prefix 0x70 or 0x76, all existing) |
 | 0x10000000 | Embedded object (as for 0) | | Reported (LC); never observed. ER reports this bit as the in-memory "native" flag. |
 | 0x08000000 | Instance ID | u64 | Reported (LC); never observed |
@@ -268,10 +333,10 @@ For each attribute of the class, **in the order of the class's attribute list**
 
 There is no padding and no per-value tag. A class with no attributes has an empty body.
 
-Observed attribute values (383,342 records): 7,882,705 integers, 7,293,936 references,
-1,221,626 floats (no NaN), 1,051,396 64-bit integers, 340,986 code-195 doubles, no code-131
-values. Of the references, 4,455,856 are null and 2,838,080 are labels present in the same
-bundle. **No reference attribute holds a DID or any other value.** Links to other records
+Observed attribute values (all 383,343 records, OBS3): 7,882,705 integers, 7,294,111
+references, 1,221,626 floats (no NaN), 1,051,396 64-bit integers, 340,986 code-195 doubles, no
+code-131 values. Of the references, 4,455,856 are null and 2,838,255 are labels present in
+the same bundle. **No reference attribute holds a DID or any other value.** Links to other records
 go through DID items (§5.1), which a reference can point at.
 
 <a id="s5-3"></a>
@@ -281,60 +346,120 @@ The class index of a native object selects its codec. These indices are engine c
 they are undefined in the class library (`wlib.md` §6.3) and LC has used the same numbers
 across many client builds (Reported). Codec names are Tessera's own.
 
+The client registers **258** native classes in this build (N6, BIN), every one an undefined
+library entry; 34 of them occur in the data (this table). The registry is not reproduced
+here; a class index that is undefined in the library and has no codec in this table is
+handled by §5.5 whether or not the client knows it. Class 101 (a Reported LC codec) is
+**not** registered in this build.
+
 Common layouts used in the table:
 
 - **hashed list** = TSize count *n* (`records.md` §1.3) followed by *n* elements; the
   elements are in bucket order by key where checked.
 - **counted list** = u32 count *n* followed by *n* elements, in stored order.
-- **small set** = u16 count *n*, one byte that is 0, one byte that is a TSize-style bucket
-  hint, then *n* elements in bucket order by element (N4: hint byte observed 0–8 and the
-  other byte 0 in all 91,835 sets; bucket order held in 1,442 of 1,442 sampled non-empty
-  sets).
+- **small set** = a u32 header, then *n* elements. The header's low 24 bits are the count
+  *n* and its high 8 bits are a TSize-style bucket hint *h* (`records.md` §1.3); in the
+  stored bytes the count fills bytes 0–2 (little-endian) and the hint is byte 3 (N4, BIN).
+  The elements are in ascending order of their bucket number, which the table gives per
+  class. Observed (OBS3, all 91,836 sets: 90,232 of class 18, 930 of 105 and 674 of 134):
+  byte 2 is 0 in every set (no count reaches 65,536); the hint is 0–8 in class 18
+  (0: 85,225; 1: 4,857; 2 to 8: 150) and 1 in every set of 105 and 134; bucket order holds
+  in every set with two or more elements (8,096 of class 18, 108 of 105, 5 of 134). The
+  client clamps a hint beyond its bucket-count table to the table's last entry (BIN); a
+  reader needs only *n*.
 
 | Class | Codec | Body | Values are references? | Instances (records) | Mark |
 |---|---|---|---|---|---|
-| 11 | `map_u32` | hashed list of (u32 key, u32 value) | no | 155,033 (53,271) | Confirmed; bucket order by key in all |
+| 11 | `map_u32` | hashed list of (u32 key, u32 value) | no | 155,041 (53,272) | Confirmed; bucket order by key in all |
 | 13 | `multimap_u32` | as 11; keys may repeat | no | 115,685 (115,685) | Confirmed; bucket order in all |
-| 35 | `refmap_u32` | as 11 | **yes** (64 null) | 269,159 (164,927) | Confirmed; bucket order in all |
+| 35 | `refmap_u32` | as 11 | **yes** (64 null) | 269,163 (164,928) | Confirmed; bucket order in all |
 | 37 | `refmultimap_u32` | as 13 | **yes** | 20,808 (20,808) | Confirmed; bucket order in all |
-| 17, 25 | `array_u32` | counted list of u32 | no (integers, DIDs, float bit patterns) | 137,832 / 387,414 | Confirmed |
-| 176, 182 | `refarray` | counted list of u32 | **yes** (176: 5,173 null) | 150,030 / 314,721 | Confirmed |
-| 18 | `set_u32` | small set of u32 | no | 90,231 (31,360) | Confirmed |
-| 105 | `set_u64` | small set of u64 | no | 930 (263) | Confirmed |
-| 134 | `set_triple` | small set of (u32, u32, u8); the u8 was 0 in all sampled | no | 674 (184) | Confirmed layout |
+| 17, 25 | `array_u32` | counted list of u32 | no (integers, DIDs, float bit patterns) | 137,960 (62,125) / 387,414 (54,497) | Confirmed |
+| 176, 182 | `refarray` | counted list of u32 | **yes** (176: 5,173 null) | 150,107 (58,593) / 314,721 (169,254) | Confirmed |
+| 18 | `set_u32` | small set of u32; bucket = value mod *B* | no | 90,232 (31,361) | Confirmed |
+| 105 | `set_u64` | small set of u64; bucket = the whole 64-bit value mod *B* (BIN; either 32-bit half alone breaks the stored order in 56 or 60 of the 108 sets with two or more elements) | no | 930 (263) | Confirmed |
+| 134 | `ref_set_triple` (formerly `set_triple`) | small set of (u32 reference, u32 bucket, u8 flag); bucket = the second field (§5.4, N8); the flag was 0 in all 43 elements | **yes, first field** (R2) | 674 (184) | Confirmed (BIN + OBS) |
 | 23 | `map_u32_u64` | hashed list of (u32 key, u64 value) | no | 148 (147) | Confirmed |
 | 97 | `map_u64_u32` | hashed list of (u64 key, u32 value) | no (floats, PIDs, DIDs) | 7 (5) | Confirmed |
 | 117 | `refmap_u64` | hashed list of (u64 key, u32 value); bucket order by the u64 key | **yes** | 725 (169) | Confirmed |
-| 138 | `refpair_map` | hashed list of (u32 ref, u32 value, bool8 = 0, u32 ref) | **yes, first and last field** | 2 (2) | Confirmed (9,213 elements) |
-| 131 | `map_u32_tagged` | hashed list of (u32 key, u32 value, bool8 = 0, u32 DID) | no (last field is a 0x70 DID) | 1 (1) | Confirmed (792 elements); new |
+| 138 | `refpair_map` | hashed list of (u32 key reference, u32 bucket, bool8 flag = 0, u32 value reference); ascending by bucket (§5.4, N8) | **yes, first and last field** | 2 (2) | Confirmed (9,213 elements) |
+| 131 | `refkey_map_tagged` (formerly `map_u32_tagged`) | hashed list of (u32 key reference, u32 bucket, bool8 flag = 0, u32 value); ascending by bucket (§5.4, N8) | **yes, the key** (R2); the value (last field) is a 0x70 DID in all 792 elements | 1 (1) | Confirmed (792 elements, BIN + OBS) |
 | 104 | `array_u64` | counted list of u64 | no | 2,252 (2,252) | Confirmed |
-| 111 | `array_u64` | counted list of u64 | no | 2 (2) | Confirmed; new |
-| 101 | `multimap_u64_u32` | counted list of (u64 key, u32 value) | no | 0 | Reported (LC) |
-| 39 | `property` | one property entry **without** echo: u32 PID then the value (`property-system.md` §5.2, array-element form) | no | 862,882 (35,408) | Confirmed |
+| 111 | `array_u64` | counted list of u64 | no | 2 (2) | Confirmed |
+| 39 | `property` | one property entry **without** echo: u32 PID then the value (`property-system.md` §5.2, array-element form). PID 0 = null entry with no value (BIN). | no | 862,882 (35,408) | Confirmed |
 | 166 | `property_set` | a property set without the leading DID: TSize, then entries with echo (`property-system.md` §5) | no | 292,684 (151,744) | Confirmed |
 | 57 | `bitset` | VLE bit count *b*, then ⌈*b*/8⌉ bytes; bit *i* is bit (*i* mod 8) of byte ⌊*i*/8⌋ | no | 381 (144) | Confirmed |
-| 160, 161 | `position` | a position value (`property-system.md` §4.6) | no | 15,629 / 4,628 | Confirmed (§5.4) |
-| 175 | `weighted_table` | counted list of (u32 value, u32 weight, u32 unknown), then u32 that is 0 | no | 8,110 (8,110) | Confirmed; trailing u32 = 0 in all |
-| 199 | `string_info` | StringInfo (`records.md` §4) | no | 79,402 (36,286) | Confirmed: 71,210 table references, 8,192 literals, no argument blocks |
+| 160, 161 | `position` | a position value (`property-system.md` §4.6) | no | 15,629 (9,670) / 4,628 (1,487) | Confirmed (§5.4) |
+| 175 | `weighted_table` | counted list of (u32 value, u32 weight, u32 unknown), then u32 that is 0 | no | 8,131 (8,111) | Confirmed; trailing u32 = 0 in all |
+| 199 | `string_info` | StringInfo (`records.md` §4) | no | 88,199 (36,287) | Confirmed; no argument blocks |
 | 225 | `string` | UTF-16 string (`records.md` §1.4) | no | 10,094 (90) | Confirmed |
-| 72 | `frame` | 7 × f32 (§5.4) | no | 92 (20) | Confirmed size; new |
-| 192 | `sphere` | 33 bytes (§5.4) | no | 380 (380) | Confirmed size; new |
-| 427 | `scene_info` | variable (§5.4) | no | 1,172 (1,172) | Confirmed; new |
-| 1942 | `barter_entry` | 49 bytes (§5.4) | no | 42,214 (3,449) | Confirmed size; new |
-| 1980 | `opaque6` | 6 bytes (§5.4) | no | 2 (2) | Confirmed size only; new |
+| 72 | `frame` | 3 × f32, then 4 × f32 (§5.4) | no | 92 (20) | Confirmed (BIN + OBS) |
+| 192 | `typed_object` (formerly `sphere`) | optional object with a 16-byte type identifier (§5.4) | no | 380 (380) | Confirmed (BIN + OBS) |
+| 427 | `scene_info` | variable (§5.4) | no | 1,172 (1,172) | Confirmed |
+| 1942 | `barter_entry` | 49 bytes (§5.4) | no | 42,214 (3,449) | Confirmed size |
+| 1980 | `triple_table` (formerly `opaque6`) | three hashed collections (§5.4) | no | 2 (2) | Confirmed (BIN + OBS) for the observed, empty form |
 | 415 | `options_profile` | variable (§5.4) | no | 138 (138) | Confirmed for the observed form |
 | 2479 | `quest_target_locations` | variable (§5.4) | no | 1 (1) | Confirmed |
-| 3053 | (unknown) | not decoded (§5.5) | ? | 1 (1) | OPEN |
+| 3053 | `nested_string_table` | variable (§5.4) | no | 13 (1) | Confirmed (BIN + OBS) |
 | 407 | `compressed_bitset` | u32 size, then that many bytes: u32 0, u32 unpacked size, zlib stream of a bitset | no | 0 | Reported (LC) |
 | 2567 | `vault_item` | u64 instance ID, property set (as 166), one property (as 39) | no | 0 | Reported (LC) |
 | 3103 | `vault` | hashed list of (u32 id, UTF-16 string), then u32 capacity, u32 used | no | 0 | Reported (LC) |
 | 3461 | `triple_u32` | 3 × u32 | no | 0 | Reported (LC) |
 | 3740 | `u32` | 1 × u32 | no | 0 | Reported (LC) |
 
-Instance counts include the 9,121 items read from the one partially decoded record (§9).
+Instance counts (and record counts in parentheses) cover all 383,343 records (OBS2),
+including record 0x70022DBA, which now decodes completely (§9); the first version of this
+table excluded that record. The StringInfo split of the first version (71,210 table
+references, 8,192 literals) counted the records without it.
+
+Class 101 (`multimap_u64_u32`, counted list of (u64 key, u32 value), Reported LC) was removed
+from the table: this client does not register it. A reader may keep the codec for older
+data.
+
+**Reference-bearing native classes that do not occur in this install (N6, BIN only).** The
+client also visits references in these registered classes; their layouts are unknown, so
+§5.5 applies if one ever occurs:
+
+| Where the reference sits | Classes |
+|---|---|
+| The first u32 of the body (a single reference) | 12, 14, 19, 24, 26, 29, 36, 38, 98, 100, 106, 110, 112, 114, 118, 120, 132, 135, 137, 139, 141, 183, 3262 |
+| The value of each map element (like 35) | 119 |
+| The first field of each element (like 131 and 134) | 136, 3261 |
+| The first and last field of each element (like 138) | 140 |
+| The second u32 of each 8-byte element of a list | 2238, 3891 |
+| The third u32 of each 16-byte element of a list | 3309 |
 
 <a id="s5-4"></a>
 ### 5.4 Details of the less regular codecs
+
+**Reference-keyed collections (131, 134, 138; N8).** These three classes are hash
+collections whose key is a reference to another item of the bundle, hashed by the
+**content** of the referenced item (a string, a position, ...) rather than by the label. So
+that a reader does not have to recompute that hash, every key is stored with its bucket:
+
+| Field | Type | Meaning |
+|---|---|---|
+| key | u32 | Reference (§8.1): a label of this bundle |
+| bucket | u32 | The key's bucket number in the writer's table: 0 ≤ bucket < *B*, where *B* is the bucket count of the collection's hint (`records.md` §1.3) |
+| flag | u8 | 0 in every stored element. The client fails the load on 2 or more (BIN). |
+| value | u32 | 131: a plain u32 (a 0x70 DID in all 792 elements); 138: a reference. Class 134 is a set and has no value field. |
+
+Facts (BIN, repair pass; OBS3):
+
+- Elements are stored in **ascending bucket number** (1 of 1 collection of class 131, 674 of
+  674 sets of 134, 2 of 2 collections of 138), and every bucket number is below *B*
+  (792 + 43 + 9,213 elements). A run of elements with the same bucket keeps its stored order.
+- On load the client places each element in the bucket given by the stored field; it does not
+  recompute the hash and does not compare the field with *B*.
+- Because the bucket numbers are small, they often equal some label of the bundle (all 43
+  bucket fields of class 134 and 383 of the 792 of class 131 do). They are **not**
+  references.
+
+Reader rule: keep the bucket field for byte-exact rewriting and do not interpret it. A bucket
+number ≥ *B*, or a bucket sequence that decreases, is reported as a warning; decoding
+continues, since the field is not needed to read the collection. The hash of item content
+that produces the bucket is not specified (§14), so a writer can only keep existing
+elements, not add new ones.
 
 **Position (160, 161).** Same encoding as the property value (`property-system.md` §4.6),
 including the flag rules found there, which hold here too: bit 0x40 is set exactly when
@@ -343,15 +468,32 @@ bit 0x80 exactly when the cell field is present and equals 0 (18,306 of 18,306).
 flag bytes: 0x9B, 0x8B, 0xBB, 0xCB, 0xDB, 0xFB, 0x3B, 0x1B, 0x03, 0x7B, 0x43, 0x5B, 0x0B. A
 zero flag byte (no position) did not occur.
 
-**Frame (72), 28 bytes.** Seven f32: three that vary (observed x ∈ {0, ±2.5, 2, ...},
-y ∈ {−4.5, −7, 0, −9.5, ...}, z ∈ {0, 0.05}) and four that were (1, 0, −0, 0) in all 92.
-A plausible reading is a position followed by a unit quaternion with the scalar first; this
-is this spec writer's interpretation, not Confirmed (the constant (1, 0, 0, 0) is consistent
-with it).
+**Frame (72), 28 bytes.** The client writes a three-float vector, then a four-float group,
+with two separate routines (BIN). Observed: the three vary (x ∈ {0, ±2.5, 2, ...},
+y ∈ {−4.5, −7, 0, −9.5, ...}, z ∈ {0, 0.05}); the four were (1, 0, −0, 0) in all 92. A
+position followed by a unit quaternion with the scalar first fits both; the quaternion
+reading is this spec writer's interpretation.
 
-**Sphere (192), 33 bytes.** u8 (1 in all 380), 16 bytes (identical in all 380), 3 × f32
-(0 in all 380), f32 (15 distinct positive values). Read as: flag, 16-byte identifier,
-centre offset, radius. Only the sizes and the constancy are Confirmed.
+**Typed object (192).** An optional, polymorphic object (BIN):
+
+| Field | Type | Meaning |
+|---|---|---|
+| present | bool8 | 0 = no object, nothing follows; 1 = an object follows; 2 or more is malformed |
+| type_id | 16 bytes | Present when `present` = 1. Identifier of the object's type (a GUID-style class identifier) |
+| body | per type | Present when `present` = 1. The object's own serialization |
+
+All 380 instances are present and carry the same type identifier; for that type the body is
+16 bytes: three f32 (0 in all 380) and one f32 (15 distinct positive values), 33 bytes in
+all. A centre offset and a radius fit; that reading is not confirmed. The body length of
+other types is not known. Reader rule: when `present` = 1, keep the identifier and read a
+16-byte body; if the record then fails to decode exactly, report "unsupported type in
+class 192" (the identifier tells which), as for an unknown native class (§5.5). Readers
+must not rely on the identifier's value, which this spec does not reproduce.
+
+**Triple table (1980), formerly "opaque6".** Three TSize-prefixed hashed collections in a
+row (BIN). Both instances are `01 00` three times: three empty collections with hint 1. The
+element layouts of the three collections are not determined, since no element occurs; a
+non-empty collection is handled like an unknown native class (§5.5).
 
 **Scene info (427).**
 
@@ -381,8 +523,6 @@ StringInfo, u32, u32, bool8 (0 in 7,026 entries, 1 in 1). With a plain StringInf
 
 Field meanings are OPEN.
 
-**Opaque6 (1980), 6 bytes.** Two instances, both `01 00 01 00 01 00`. OPEN.
-
 **Options profile (415), observed form.** u32 (320 in all), u32 (0), u32 set count *s* (6
 in all); then *s* × (u32 84, then 84 slot records); then u8 *t1*, u8 *t2*; then, because
 *t1* = 1 and *t2* = 2 in all 138, 24 bytes. A slot record is u32 kind followed by: nothing
@@ -402,10 +542,28 @@ layout:
 4. hashed list of (u32 quest DID, hashed list of (u32 objective index, u32 condition count,
    per condition: u32 entry count, per entry: u32 DID, position, f32 radius, Pascal string,
    u32 *g*, *g* × filter, Pascal string)) — 20,012 quests. A filter is a flag byte followed
-   by one u32 for each of its set bits 0x01 … 0x40 (bit 0x80 never set).
+   by one u32 for each of its set bits, in ascending bit order from 0x01 to **0x80** (BIN:
+   the client reads a u32 for bit 0x80 too; the data never set it).
 
 LC uses this item as the table of world positions of NPCs and quest targets (Reported). It
 is not needed for M3.
+
+**Nested string table (3053).** 13 instances, all in record 0x70022DBA (items 9,121 to
+9,133). Layout (N5, BIN; all 13 decode exactly):
+
+| Order | Field | Type | Meaning |
+|---|---|---|---|
+| 1 | outer | TSize + outer element × *n* | Hashed by key (observed hint 1, *n* 1–3) |
+| 2 | list_a | u32 count + u32 × count | Observed values are keys of the outer table |
+| 3 | list_b | u32 count + u32 × count | Likewise |
+
+Outer element: u32 key, u32 count *m*, then *m* × (UTF-16 string, inner table).
+
+Inner table: TSize + inner element × *k* (observed hint 1, *k* 1–3). Inner element: u32 key,
+u32 count *c*, then *c* × three UTF-16 strings.
+
+Observed strings are zero to five characters long. Field meanings are OPEN; nothing in M3
+or M4 needs them.
 
 <a id="s5-5"></a>
 ### 5.5 Unknown native classes
@@ -423,6 +581,10 @@ bundle** undecodable. The reader then:
 This replaces ARCHITECTURE §7.4's "decode unknown native classes as opaque byte ranges",
 which is not possible without a length.
 
+No record of this install needs this path any more (§9). It remains the rule for future
+data, for classes the table of §5.3 does not cover, and for the open cases of class 192
+and 1980 (§5.4).
+
 ---
 
 <a id="s6"></a>
@@ -433,12 +595,12 @@ up to 9 links each; 580,922 links in total).
 
 | Field | Type | Observed |
 |---|---|---|
-| direction | u8 | 0 (419,091) or 1 (161,831) |
+| direction | bool8 | 0 (419,091) or 1 (161,831); the client fails the load on 2 or more (BIN) |
 | link_type | u32 | 8, 12, 13, 2, 1, 19, 11, 7, and 0x10000007 … 0x10000019 (table below) |
 | limit | u32 | 1, 99, 250, 100, 4, 25, 20, 3, 0, 200, 999, 10, 5, 275, 350, 150 |
 | flag | u32 | 0 (560,618) or 1 (20,304) |
-| pids | TSize + (u32 pid, u32 pid echo) × *m* | *m* = 0, 1, 2 or 3; echo equals pid in all 206,924 pairs; every PID is defined in the dictionary |
-| terminator | u8 | 0 when link_type = 13 (120,606 of 120,606), else 3 |
+| pids | TSize + (u32 pid, u32 pid echo) × *m* | *m* = 0, 1, 2 or 3; echo equals pid in all 206,924 pairs; every PID is defined in the dictionary. Same structure as the §7 list (the client uses one reader for both, BIN). |
+| terminator | u8 | 0 when link_type = 13 (120,606 of 120,606), else 3. The client stores it as a plain byte without a range check (BIN). |
 
 | link_type | Count |
 |---|---|
@@ -471,7 +633,8 @@ properties a link of that kind carries.
 Present when `has_available` = 1 (199,295 records): a TSize count *n* (0–57; hint 1 in all
 2,619 sampled lists) followed by *n* pairs (u32 pid, u32 pid echo). The echo equals the pid
 in every pair (about 7 million), every PID is defined in the dictionary, and pairs are in
-bucket order by PID. LC rejects a pair whose echo differs.
+bucket order by PID. LC rejects a pair whose echo differs; the client stores both words
+without comparing them (BIN). A reader should warn on a mismatch.
 
 In a 3,145-record sample, the listed PIDs overlap the object's own property set in 3,041
 records, are a subset of it in 14 and disjoint from it in 90.
@@ -492,15 +655,25 @@ records, are a subset of it in 14 and disjoint from it in 90.
 | Script object | Attributes of type 1 |
 | `refmap_u32` (35), `refmultimap_u32` (37), `refmap_u64` (117) | Map values (not keys) |
 | `refarray` (176, 182) | Elements |
-| `refpair_map` (138) | First and last field of each element |
+| `refpair_map` (138) | Key (first field) and value (last field) of each element |
+| `refkey_map_tagged` (131) | Keys (first field; not the bucket field and not the value) |
+| `ref_set_triple` (134) | First field of each element (not the bucket field) |
 
-A reference is either **0xFFFFFFFF (null)** or a label of the same bundle. Observed:
-attributes 2,838,080 labels / 4,455,856 null; 176 elements 1,087,874 / 5,173; 182
-elements 581,959 / 0; 35 values 996,945 / 64; 37 values 82,291 / 0; 117 values 518 / 0; 138
-fields 18,426 / 0. No reference anywhere held an absent label.
+The list follows the client's own reference visitors (N6, BIN), which also name the
+unobserved classes of §5.3.
 
-Plain containers (11, 13, 17, 25, 97, ...) hold integers, PIDs, DIDs or float bit patterns.
-Their values sometimes equal a label by coincidence; they are **not** references.
+A reference is either **0xFFFFFFFF (null)** or a label of the same bundle. Observed in all
+383,343 records (OBS3; labels / null): attributes 2,838,255 / 4,455,856; 176 elements
+1,096,735 / 5,173; 182 elements 581,959 / 0; 35 values 997,043 / 64; 37 values 82,291 / 0;
+117 values 518 / 0; 138 fields 18,426 / 0; 131 keys 792 / 0 (every one a string item, class
+225); 134 first fields 43 / 0 (positions, class 160, and strings). No reference anywhere held
+an absent label. (The first version gave the counts of the 383,342 records without
+0x70022DBA; the differences are exactly that record's references.)
+
+Plain containers (11, 13, 17, 25, 97, ...) and the non-reference fields above hold integers,
+PIDs, DIDs, float bit patterns or bucket numbers. Their values sometimes equal a label by
+coincidence (all 43 bucket fields of class 134 and 383 of the 792 bucket fields of class 131
+do, §5.4); they are **not** references.
 
 <a id="s8-2"></a>
 ### 8.2 Resolution algorithm (in words)
@@ -509,23 +682,24 @@ Their values sometimes equal a label by coincidence; they are **not** references
 2. A reference value resolves to the item with that label; 0xFFFFFFFF resolves to "none".
 3. An item that is a DID item stands for **another object record**. Resolving through it
    loads that record (lazily). DID items always point at existing 0x70/0x76 records here.
-4. The graph may contain cycles: in 140 records some item refers back to the root.
+4. The graph may contain cycles: in 139 records some item refers back to the root (OBS3,
+   counting exactly the references of §8.1).
    Resolution must be lazy or keep a visited set; it must never expand references
    recursively without one.
 
 <a id="s8-3"></a>
 ### 8.3 Shape of the graph (Confirmed)
 
-- In 383,172 records every item except the root is referenced at least once, and the root
-  is referenced by none, so the root is the only entry point.
-- In 140 records the root is referenced too (cycles, above).
-- In 30 records, 835 further items are referenced by nothing found by §8.1 (814 strings
-  of class 225 and 21 positions of class 160).
+- With the references of §8.1, **every** non-root item of every record is referenced at
+  least once (383,343 of 383,343 records; OBS2, OBS3). The 835 items that the first version
+  of this spec found unreferenced (814 strings of class 225 and 21 positions of class 160, in
+  30 records) are the targets of 131 keys and 134 first fields.
+- The root is referenced by no item in 383,204 records, so there it is the only entry point.
+- In the other 139 records the root is referenced too (cycles, above). The first version's
+  count of 140 included record 0x7001A638 only because three class-131 bucket fields equal
+  to 0 (the root's label) were counted as references; they are not (§5.4).
 - An item can be referenced many times (up to 324 times in one record); shared sub-objects
   are normal.
-
-> **OPEN:** Who refers to the 835 unreferenced items of §8.3 (perhaps a plain container
-> whose values are references after all, or script code).
 
 ---
 
@@ -535,14 +709,13 @@ Their values sometimes equal a label by coincidence; they are **not** references
 | Measure | Value |
 |---|---|
 | Object records | 383,343 (0x70: 383,332; 0x76: 11) |
-| Decoded exactly (record and bundle consumed to the last byte) | **383,342 (99.9997%)** |
+| Decoded exactly (record and bundle consumed to the last byte) | **383,343 (100%)** with the 3053 codec of §5.4 (OBS2). Without it, 383,342; record 0x70022DBA (root class 3044) then stops at item 9,121 of 9,135. Its last item (9,134) is a `set_u32`, after which the bundle and the record end exactly. |
 | Records with trailing bytes | 0 |
-| Partially decoded | 1: record 0x70022DBA (root class 3044), stops at item 9,121 of 9,135 on native class 3053 |
 | Decoded with only the native codecs published by LC | 378,316 (98.69%). The other 5,027 fail on native classes 1942 (3,449 records), 427 (1,172), 192 (380), 72 (20), 1980 (2), 111 (2), 131 (1) and 3053 (1). |
-| Items | 5,823,732 (5,780,393 embedded objects, 43,339 DID items) |
-| Distinct root classes | 869 in 0x70, 11 in 0x76 |
+| Items | 5,832,867 in all records (sum of every `item_count`, OBS3): 5,789,528 embedded objects (2,817,016 of them script objects, the rest the native instances of §5.3) and 43,339 DID items. Without record 0x70022DBA (9,135 items): 5,823,732. |
+| Distinct root classes | 869 in 0x70 and 11 in 0x76; 877 in all, because classes 1547, 1556 and 1603 occur in both (`wlib.md` §7) |
 | Distinct script classes instantiated | 1,169 |
-| Distinct native classes instantiated | 33 |
+| Distinct native classes instantiated | 34 (the 33 of the first version plus 3053) |
 
 Record payload sizes: 243,441 records are below 1,000 bytes and 117,397 between 1,000 and
 1,999; the largest is 29,944,338 bytes. Bundles: 302,607 are below 1,000 bytes; the largest
@@ -568,19 +741,32 @@ For M3, §11 lists the classes that matter and how to find them without hard-cod
 ---
 
 <a id="s10"></a>
-## 10. Other encodings (Reported only, LC)
+## 10. Other encodings (older file forms)
 
 These forms are **not** used by the files of the current client. They are recorded so the
-model stays general; none was checked.
+model stays general; none was checked against data. This spec describes the stored form in
+the archives only.
 
-- **Network form** (object state received from a server): each script-attribute value is
-  followed by a u32 type code (64-bit values as two value + code pairs), attributes are
-  read in slot order rather than list order, positions and property sets use their network
-  forms (`property-system.md` §10). Relevant to M7 only.
-- **Pre-live form** (older clients): no import list, no reserved fields, no link and
-  available-property flags (both sections always present); the bundle starts with a u32
-  label count and items are flag words that carry a package ID, a native type and a slot
-  count, with each slot as (u32 value, u32 type code). Tessera does not support it.
+- *Withdrawn (2026-10-05):* a bullet that described how object state is encoded in the
+  official game protocol. That is out of scope until the `docs/LEGAL.md` §9.3 gate is passed
+  (decision 0004), and no maintainer approval for it as T2 design input is recorded, as for
+  `property-system.md` §10. Tessera's own protocol (M7) defines its own encoding.
+- **Pre-live form** (older clients; Reported, LC): no import list, no reserved fields, no
+  link and available-property flags (both sections always present); the bundle starts with
+  a u32 label count and items are flag words that carry a package ID, a native type and a
+  slot count, with each slot as (u32 value, u32 type code). Tessera does not support it.
+- **Versioned bundle reader** (BIN): before bundle version 5 the class table names
+  attributes by string (hashed on load, §4.2); before version 4 an embedded object's class
+  index is followed by a second field, both u16 (versions 2–3) or both u32 (earlier);
+  versions 2 and later read the per-record class table. The version is not stored in the
+  record: it is a property of the reading context. The current files decode exactly with the
+  newest form (version 5 or later) and Tessera reads only that form.
+
+> **OPEN:** Where the reading context takes the bundle version from, and its value when
+> object records are loaded from the archives. Not needed to decode the current files, which
+> all decode with the newest form. The repair-pass search stopped at a registration routine
+> with many callers that may also serve network traffic (decision 0004); a further M4 look
+> must stay within file loading.
 
 ---
 
@@ -597,7 +783,9 @@ turns those DIDs into names and hierarchy.
 
 Each kind is identified by the **properties** of its property set (property names come
 from the dictionary in the user's data, `property-system.md` §2). The class index is an
-observation for this install, useful as a fast hint, and must not be hard-coded.
+observation for this install, useful as a fast hint, and must not be hard-coded. (Indices of
+other well-known kinds did not change across LC builds from 2023-11 to 2025-05, G4, so a
+change is unlikely but possible.)
 
 | Kind | Identifying properties (top level of the 0x79 set) | Root class here | Records | Object state |
 |---|---|---|---|---|
@@ -666,8 +854,12 @@ same StringInfo; for region 4 they differ (different tokens). A reader that need
 a landblock region number should use the region-control table, which covers every region
 number that has landblocks.
 
-> **OPEN:** What region number 6 (one region record, one dungeon position, no landblocks
-> in any archive) stands for.
+Region number 6 (G3): the REGION DID map (0x28000008, `property-system.md` §8.1) has a key 6
+with its own label and a region-description record (prefix 0x0F; 0x0F000009 here), like
+regions 1–5 and 14. One region record (`Area_RegionID` 6) and one dungeon position use it.
+The install ships no cell or map archive for region 6, so no landblock carries it. A reader
+treats region 6 as a valid region number without terrain. (The REGION map also has a key
+15 whose 0x0F record is missing, while small region-15 archives exist.)
 
 <a id="s11-4"></a>
 ### 11.4 Dungeons (Confirmed)
@@ -716,8 +908,14 @@ are records of root class 1398 (quests or deeds, Reported LC). Not needed for M3
   (warning), reference to an absent label, trailing bytes, truncated input.
 - **Library mismatch.** If the per-record class table disagrees with the library, decode
   with the per-record table (it describes the bytes) and warn.
+- **Reference typing.** The client checks a reference's target class only when the library
+  has chunk 128 (`wlib.md` §4.3); this install has none, so the client loads references
+  without a type check and a Tessera reader needs none either.
 - **Writers.** A byte-exact writer must keep every TSize hint (imports, maps, sets,
-  available properties), the label numbers, the class-table order and its extra entries.
+  available properties), the small-set header, the bucket fields of classes 131, 134 and
+  138 (§5.4), the label numbers, the class-table order and its extra entries.
+- **Small-set bounds.** The count of a small set is 24 bits wide (§5.3); check it against
+  the bytes left (4 bytes per element for 18, 8 for 105, 9 for 134) before allocating.
 
 ---
 
@@ -732,67 +930,77 @@ are records of root class 1398 (quests or deeds, Reported LC). Not needed for M3
 | LC | Reference attributes that hold values ≥ 0x70000000 are DIDs. | No reference attribute holds a DID in this install; DID links go through DID items (§5.1). The threshold rule is harmless but unused. |
 | LC, DS §5.2 | Native codec list (32 class indices). | Seven more native classes occur (72, 111, 131, 192, 427, 1942, 1980) and one remains undecoded (3053). |
 | DS §5.2 | Imports have dboType 69 → 0x70/0x76 and 78 → 0x20. | Confirmed; these are the DB-object-type codes 0x45 and 0x4E of `property-system.md` §9. |
+| LC | The import flags field is a byte. | It is a VLE (BIN); all observed values encode as one byte (§3.2). |
+| LC | Class 134 is a set and class 131 a map of plain values. | Their first field and key are references (§8.1). |
+| LC; first version of this spec | The second u32 of a 131, 134 or 138 element is a value. | It is the element's bucket number (§5.4, N8). The value of 131 is the last field. |
+| LC; first version of this spec | A small set starts with a u16 count, a zero byte and a hint byte. | The first three bytes are one 24-bit count (§5.3, N4); the bytes agree for every count below 65,536. |
+| LC | Native class 101 exists. | Not registered by this client (§5.3). |
+| LC | A 2479 filter has at most seven optional fields. | Eight: bit 0x80 also carries a u32 (§5.4). |
 
 ---
 
 <a id="s14"></a>
 ## 14. Open questions
 
-> **OPEN:** Meaning of the reserved header fields (§3.1) and of flag-0 game-object imports
-> (§3.2).
+Closed on 2026-10-05 (kept here so earlier references still resolve):
 
-> **OPEN:** Order and extra entries of the per-record class table (§4.2).
+- *Order and extra entries of the per-record class table* — §4.2 contents and order rules.
+- *Native class 3053* — layout in §5.4; every record now decodes. (The first version said
+  "one instance"; there are 13 items in that one record.)
+- *The 835 unreferenced items* — referenced by 131 keys and 134 first fields (§8.1, §8.3).
+- *Region number 6* — a defined region without shipped terrain (§11.3).
+- *Flag-0 imports* — mostly class-wide dependencies (§3.2); a narrow OPEN remains there.
+- *Area class-index stability* — Reported stable (G4); discovery by data stays the rule.
 
-> **OPEN:** Native class 3053 (one instance, in 0x70022DBA). Its body begins with two
-> bytes 1, a u32 2, a u32 9 and then many one- and two-character UTF-16 strings; the
-> layout was not worked out. Not needed for M3.
+Still open:
 
-> **OPEN:** Field meanings inside `frame` (72), `sphere` (192), `scene_info` (427),
-> `barter_entry` (1942) and `opaque6` (1980) (§5.4).
+> **OPEN:** Meaning of the reserved header fields (§3.1): two VLE counters of the
+> dependency list and a boolean. Always 0, 0, 1 here.
+
+> **OPEN:** Why records 0x7000025B, 0x7001A638 and 0x70034C39 import 895 records that they
+> never name (§3.2).
+
+> **OPEN:** Field meanings inside `frame` (72), `typed_object` (192, beyond the layout),
+> `scene_info` (427), `barter_entry` (1942), `triple_table` (1980, element layouts) and
+> `nested_string_table` (3053) (§5.4).
 
 > **OPEN:** Semantics of the link section (§6) and of the available-property section (§7).
 
-> **OPEN:** The 835 unreferenced items (§8.3).
+> **OPEN:** The content hash that gives a key of class 131, 134 or 138 its bucket number
+> (§5.4). The client computes it from the referenced item's own data with a per-class routine
+> that this spec does not describe. Only a writer that adds new elements needs it; readers and
+> byte-exact rewriters keep the stored bucket.
 
-> **OPEN:** Region number 6 (§11.3).
+> **OPEN:** Where the bundle version comes from (§10). Not needed for current files.
 
-> **OPEN:** Whether the five area-related class indices of §11.1 change between client
-> builds (use the data-driven discovery of §11.1 either way).
+Answers to the implementation OPEN of 2026-10-04 (choices `tessera-wstate` made where the
+spec was silent):
 
-> **OPEN (implementation, 2026-10-04):** Choices `tessera-wstate` made where this spec is
-> silent; please confirm or correct:
-> - `property` (39) with PID 0 is read as a null entry with no value (the array-element
->   form of `property-system.md` §5.2); a PID missing from the dictionary fails the record.
-> - `options_profile` (415), Reported form: the u16 and the six u32 are read **once, after
->   all** *t2* groups (§5.4 can also be read as "after each group"). *t1* > 1 with any
->   *t2*, and slot kinds other than 0, 2, 6, 7, 9, are rejected (the record fails, since
->   the body length is then unknown).
-> - `quest_target_locations` (2479): a filter flag byte with bit 0x80 is rejected. The
->   count before the seven part-2 tables is read as a count (7 observed).
-> - A class listed twice in a per-record class table: the first entry describes the bytes.
-> - A reference to an absent label fails the record (§12 lists it as an error case);
->   references are checked against the label list, so a partial record (§5.5) can still
->   refer to labels of items that were not decoded.
-> - A bad item marker fails the record (no partial result), unlike an unknown native class.
+| Choice | Answer |
+|---|---|
+| `property` (39) with PID 0 is a null entry with no value; an unknown PID fails the record | **Confirmed (BIN).** The client treats PID 0 exactly so and fails the load on a PID it cannot resolve. PID 0 does not occur in the data. |
+| `options_profile` (415), Reported form: u16 and six u32 once after all groups; *t1* > 1 and unknown slot kinds rejected | **Accepted as Tessera's rule.** Only the observed form occurs (138 of 138); the alternative form stays Reported and was not checked against the client. |
+| 2479 filter flag with bit 0x80 rejected | **Change it:** bit 0x80 carries a u32 like the other seven bits (§5.4, BIN). The part-2 count is a count, as implemented. |
+| Class listed twice in a per-record class table: the first entry wins | **Confirmed (BIN, B4).** |
+| A reference to an absent label fails the record; partial records may refer to labels of undecoded items | **Accepted as Tessera's rule.** No record has such a reference. |
+| A bad item marker fails the record | **Accepted.** |
 
-> **OPEN (implementation review, 2026-10-04):** Counts to reconcile (spec writer):
-> - §5.3 says its instance counts include the 9,121 items of the partially decoded record
->   0x70022DBA, and §9 gives 5,823,732 items. The `tessera-wstate` census, which counts
->   those items, finds 5,832,853 items (for example class 199: 88,199; 17: 137,960;
->   176: 150,107), so the §5.3 and §9 figures appear to **exclude** that record.
-> - §9 "869 in 0x70, 11 in 0x76" root classes: the census finds 877 distinct root classes
->   in all, so the two sets appear to overlap by 3 classes.
-> - §5.4 gives 41 bytes for a scene-info entry "with a plain StringInfo". With a literal
->   StringInfo (`records.md` §4.1) the smallest entry is 34 bytes; the implementation
->   bounds counts with 34.
+Answers to the count reconciliation of 2026-10-04 (all confirmed by OBS2):
 
-> **OPEN (implementation, 2026-10-04):** §15 asks the real-data test to resolve "every
-> block-map `Area_DID`". When this test was written no clean-room spec for the block-map
-> descriptors (0x18) or block maps existed, so the `tessera-wstate` real-data test
-> resolves **every area record** found by its property signature (§11.1) instead, which
-> includes every area a block map can name. `landblock.md` has since landed (M3), and
-> the walker's `reference_locations` test resolves block-map `Area_DID`s; switching this
-> test to the block-map list is still to do.
+- The old §5.3 and §9 figures **excluded** record 0x70022DBA. Both now cover all records:
+  class 199: 88,199; 17: 137,960; 176: 150,107. *Corrected 2026-10-05 (OBS3):* the item total
+  is **5,832,867** (5,789,528 embedded objects), not 5,832,853; the earlier figure counted
+  only the 9,121 items of 0x70022DBA that decoded before the 3053 codec existed, not its
+  9,135.
+- 877 distinct root classes in all: classes 1547, 1556 and 1603 root both a 0x76 singleton
+  and ordinary 0x70 records (§9).
+- A scene-info entry is 41 bytes with a table-reference StringInfo; with a literal
+  StringInfo of an empty string it is 34 bytes. Bounding counts with 34 is right.
+
+Answer to the real-data-test note of 2026-10-04: resolving every area record found by its
+property signature covers every area a block map can name, so it satisfies §15. A test that
+reads the block-map `Area_DID`s through `landblock.md` is preferred when convenient; both
+are acceptable.
 
 ---
 
@@ -806,6 +1014,17 @@ Synthetic fixtures (generated by our own code; no game data):
 - one fixture per codec of §5.3 with 0, 1 and several elements, including null references
   in `refarray` and `refmap_u32`, a `small set` whose elements are in bucket order for its
   hint, and a position for each flag bit;
+- a `nested_string_table` (3053) with two outer keys, one of them with an inner table of two
+  keys; a `typed_object` (192) that is absent (one byte 0) and one that is present; a
+  `triple_table` (1980) with three empty collections; a 2479 filter with bit 0x80 set;
+- a `refkey_map_tagged` (131) whose key points at a string item and a `ref_set_triple`
+  (134) whose first field points at a position: both targets count as referenced; a 131
+  element whose bucket field equals the root's label: the root must **not** count as
+  referenced; a 134 set with a bucket field ≥ *B* and one whose bucket fields decrease: both
+  decode, with a warning (§5.4);
+- small-set headers (§15.2): a set of class 18 in bucket order for hint 1; a header whose
+  count needs the third byte (for example 70,000 elements claimed with too few bytes left
+  must fail as "count larger than the remaining bytes", not be read as 4,464);
 - a record with a DID item and a matching flag-16 import; a record whose root references
   itself (cycle); a record whose class table lists an extra class;
 - malformed variants: bad marker; unknown native class at item 2 (expect a partial result
@@ -817,8 +1036,13 @@ Synthetic fixtures (generated by our own code; no game data):
 Real-data tests (skipped without `TESSERA_GAME_DIR`):
 
 - decode every 0x70 and 0x76 record; assert zero trailing bytes for every fully decoded
-  record and that the only partial decodes are unknown-native-class cases; print the
-  counts of §9 (do not assert them);
+  record and that the only partial decodes are unknown-native-class cases (with the 3053
+  codec there are none in this install); print the counts of §9 (do not assert them);
+- for every record, rebuild the class-table set from the items (§4.2 contents rule) and
+  assert it matches; report how many stored orders the order rule reproduces (do not
+  assert the count);
+- assert that every non-root item of every fully decoded record is referenced (§8.3),
+  counting the references of §8.1;
 - for every block-map `Area_DID`, resolve area → territory → region names; assert each step
   finds the identifying properties of §11.1 and each name StringInfo resolves;
 - for every dungeon record, check the position attribute is null or a position.
@@ -848,3 +1072,52 @@ string item "Hi" (class 225), with no imports, links or available properties. 60
 Decoding gives a root object whose attribute 0x0ABCDEF0 resolves to the string "Hi". If the
 attribute were `FF FF FF FF` instead, it would be null and item 1 would be an unreferenced
 item (§8.3).
+
+<a id="s15-2"></a>
+### 15.2 Worked synthetic example: small sets
+
+A class-18 set (`set_u32`) with hint 1 (*B* = 23) holding 5, 30 and 47. Buckets: 5 mod 23 = 5,
+30 mod 23 = 7, 47 mod 23 = 1, so the stored order is 47, 5, 30. 16 bytes:
+
+| Bytes | Meaning |
+|---|---|
+| `03 00 00 01` | header u32 0x01000003: count 3 (low 24 bits), hint 1 (high byte) |
+| `2F 00 00 00` | 47 (bucket 1) |
+| `05 00 00 00` | 5 (bucket 5) |
+| `1E 00 00 00` | 30 (bucket 7) |
+
+A class-134 set (`ref_set_triple`) with hint 0 (*B* = 11) holding references to labels 3 and
+1, whose writer placed them in buckets 4 and 9. 22 bytes:
+
+| Bytes | Meaning |
+|---|---|
+| `02 00 00 00` | header: count 2, hint 0 |
+| `03 00 00 00` `04 00 00 00` `00` | reference to label 3, bucket 4, flag 0 |
+| `01 00 00 00` `09 00 00 00` `00` | reference to label 1, bucket 9, flag 0 |
+
+Labels 3 and 1 count as referenced; the bucket values 4 and 9 do not refer to anything, even if
+the bundle has items with those labels. A header `70 11 01 02` claims 70,000 elements
+(0x011170) with hint 2.
+
+---
+
+<a id="s16"></a>
+## 16. Corrections to other specs
+
+Recorded here instead of editing those specs:
+
+| Spec | Section | Note |
+|---|---|---|
+| `records.md` | §1.3.1 OPEN (order within a bucket) | In the per-record class tables of object state (a hash table with the same bucket counts as TSize), entries that share a bucket are written **newest first** (reverse order of insertion), and the table grows to the next bucket count when an insertion would exceed twice the bucket count (§4.2). Whether every TSize collection follows the same rule was not checked. |
+| `property-system.md` | §8.3 (dangling REGION entry) | The dangling REGION entry is key 15; key 6 resolves to an existing 0x0F record (§11.3). For information; nothing there is wrong. |
+
+---
+
+<a id="s17"></a>
+## 17. Change log
+
+| Date | Change |
+|---|---|
+| 2026-10-04 | First version (Review). |
+| 2026-10-05 | OBS2 and M4 pass (BIN row). §3.1: reserved fields belong to the dependency list (two VLEs) plus a boolean. §3.2: import flags are a VLE; flag-0 imports explained (class-wide dependencies), narrow OPEN left. §4.2: contents and order rules of the per-record class table; duplicate rule; older attribute-name form. §5.3: counts cover all records; 131 and 134 hold references (renamed); 101 removed; 72, 192 (renamed `typed_object`), 1980 (renamed `triple_table`) and 3053 (`nested_string_table`) decoded; list of reference-bearing unobserved natives. §5.4: layouts for 72, 192, 1980, 3053; 2479 filter bit 0x80. §6, §7: client checks. §8: 131 keys and 134 first fields are references; no unreferenced items remain. §9: every record decodes exactly; counts reconciled. §10: versioned bundle reader. §11.1, §11.3: index stability, region 6. §12: reference typing. §13, §14 updated; implementation OPENs answered. §15: new tests. New §16, §17. Section numbers 1–15 unchanged. |
+| 2026-10-05 | Repair after review (changes requested), with a new independent whole-install decode (OBS3) and an M4 repair pass (BIN row). **§10 network bullet withdrawn** (out of scope until the `docs/LEGAL.md` §9.3 gate, as in `property-system.md` §10); row X1 narrowed to the pre-live file form; Purpose updated; the bundle-version unknown is now an OPEN (§10, §14). **Counts corrected:** items 5,832,867 and embedded objects 5,789,528 (§9, §5.1, §14); root referenced in 139 records, not 140, and unreferenced in 383,204 (§8.2, §8.3); 91,836 small sets (N4, §5.3). **Scopes fixed:** §3.1 heading and end row, §3.2 import hint (383,341), §4.2 and B2 (1,381,857 entries), §4.3 (381,901 contiguous, 383,343 roots), H1, H2, I3, §5.2 and §8.1 now count all 383,343 records. **New facts (BIN + OBS):** the small-set header is one u32 with a 24-bit count and the hint in the high byte (N4); class 18 and 105 sets are ordered by value mod *B* (105 on the whole 64-bit value); the second u32 of a 131, 134 or 138 element is its bucket number and elements are stored in ascending bucket (new row N8, new paragraph in §5.4, rows of §5.3 and §8.1 reworded; this answers which field orders a 134 set). §3.2: a speculative remark replaced by the observed fact. §12: writer and bounds notes. §13: two rows. §14: two OPENs added. §15: new tests; new §15.2 worked example. No section renumbered. |

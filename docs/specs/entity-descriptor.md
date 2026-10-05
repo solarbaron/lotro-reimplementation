@@ -4,12 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-04 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
-| **Implements into** | `crates/formats` (static entity descriptor decoder, inside the landblock-info decoder), `crates/world` (placement transform, streaming of static entities, draw filter), `crates/net` sandbox backend ("serve static world entities"), `apps/client` (world walker), `apps/explorer` (landblock view) |
-| **Companion specs** | [`landblock.md`](landblock.md) (normative for the landblock-info record that contains the descriptors, for cells, block maps and the terrain height scale). [`coordinates.md`](coordinates.md) (map coordinates). `setup.md` §3–§7 (the 0x47 physics-object record and its chain to meshes). `property-system.md` §4.6 (Position), §5 (embedded property sets), §8 (DID maps, `CONTENT_LAYER`). `records.md` §1 (VLE, TSize, Pascal string), §2.2 (landblock DIDs). `mesh.md` §11 (axes, units, handedness). `wstate.md` (0x70 objects named by weenie entities). |
+| **Reviewer** | Claude review session (spec-writer agent) |
+| **Review record** | Re-review: Claude review session (spec-writer agent), 2026-10-05, **passed** (every §5.3 item true; the remaining OPENs are precise and non-blocking). All four earlier items are fixed. Spot checks against the install that matched: §2.2 records with SEDs per region (8,655 / 7,874 / 4,674 / 5,998 / 5,058 / 748); §4.4 ±1 table at all four tolerances; §7 6,458 distinct f32 scales, 1,925 with f64 rounding and 1,935 with f32 rounding; §9.1 draw census (854,615 / 186,921 / 740,551 / 1,027,172 by type; 28,151 chain levels with no multi-level property; Physics SED values 329/138 and 245/83, the same in the instance sets and nowhere else; the 12 disagreeing SEDs by index, object and height, #649 failing the layer test; no `Render_ServerDraw`); §9.2 counts 287,392 suppressed, 2,041,837 / 2,093,307 drawn, and both alternatives (2,041,826 / 2,093,295; 2,042,327 / 2,093,847); §4.8 split 6 / 936 / 4,052; ED7. Previous review: Claude review session (spec-writer agent), 2026-10-05, changes requested; every item is addressed in the repair revision of the same date (§15). Items: (1) E11 / §9: "first value along the chain wins" and "the SED value wins over the object's" are marked "Reported by analogy", which is neither Confirmed nor Reported (no published source); they drive the normative draw rule and the §9/§12 drawn counts, so they need a `> **OPEN:**` callout or an explicit Tessera decision. (2) §4.5.1: "the path that builds Physics SEDs was not traced to its call site" is an unknown without an OPEN callout (it decides Physics SEDs in instanced copies and under named layers). (3) §2.2: the per-region SED column is empty (install values: region 1 805,097; 2 903,981; 3 515,800; 4 561,529; 5 430,541; 14 36,914). (4) Minor: §7 "1,925 distinct (to 3 decimals)" gives 1,935 when rounded to 3 decimals, state the method; §4.4 the ±1 counts (833,084; 178,174) hold at tolerance 1e-5, state it. Spot checks that matched: 49,636 records decoded with all §2.1 flag counts and 16,629 without SEDs, §3.2 flag census (11 values), §4.1 type counts, §4.2 kind bytes and kind-4 split, IID bits 36–55 and 24–35 (ED3), 3,253,853 distinct IIDs with 9 duplicates, §4.3 object families, §4.5.1 layer census incl. Physics and Light columns and list lengths, DID map 0x28000012 (1,661 entries; keys 0–2 labels), §4.5.2 3,768,840 instance sets (514,987 non-SED split, 354,496 equal lists), §4.6 word values, §4.7 names, 27 frameless SEDs (24/2/1), §4.8 interior counts, ED5, ED6. |
+| **Implements into** | `crates/formats` (static entity descriptor decoder, inside the landblock-info decoder), `crates/world` (placement transform, streaming of static entities, content-layer and draw filters), `crates/net` sandbox backend ("serve static world entities"), `apps/client` (world walker), `apps/explorer` (landblock view) |
+| **Companion specs** | [`landblock.md`](landblock.md) (normative for the landblock-info record that contains the descriptors, for cells, block maps and the terrain height scale). [`coordinates.md`](coordinates.md) (frames, map coordinates, `/loc`, the heading rule §11.3–§11.4). `setup.md` §3–§7 (the 0x47 physics-object record and its chain to meshes). [`appearance.md`](appearance.md) §7 (what the weenie objects are; NPC-like figures). `property-system.md` §4.6 (Position), §5 (embedded property sets), §8 (DID maps, `CONTENT_LAYER`). `records.md` §1 (VLE, TSize, Pascal string), §2.2 (landblock DIDs). `mesh.md` §11 (axes, units, handedness). `wstate.md` (0x70 objects named by weenie entities). [`lighting.md`](lighting.md) (light entities). |
 
 ---
 
@@ -21,13 +22,14 @@ Every landblock that holds placed scenery has a **landblock-info** record (DID
 per placed object (a house, a tree, a fence segment, a lamp, a spawn point, a patrol point …).
 This spec gives:
 
-- the descriptor's byte layout, decoded over **all** records (§3);
+- the descriptor's byte layout, decoded over **all** records, with the values of absent
+  fields (§3);
 - what each field means: entity type, instance ID, the object it names, position, rotation,
-  scale, properties, name, flags (§4);
+  scale, properties, content layers, name, flags (§4);
 - the placement transform from object space to world space, in words (§5), with the evidence
   for the rotation order and direction (§6) and for scale (§7);
 - a validation of placements against terrain heights (§8);
-- which descriptors a world walker should draw (§9);
+- which descriptors a world walker shows, including the content-layer rule (§9);
 - the decoding algorithm, invariants and statistics (§10–§12).
 
 **Terminology.** `setup.md` calls the 0x47 records in `client_gamelogic.dat` "entity
@@ -40,12 +42,17 @@ describes. A SED names a physics object; the physics object leads to a setup and
 <a id="s1"></a>
 ## 1. Provenance
 
-Legend as in `mesh.md` §1: **Confirmed** = decoded on the user's own install on 2026-10-04 by
-throwaway probes in the dirty-room scratchpad; **Reported** = third-party material only.
+Legend as in `mesh.md` §1: **Confirmed** = decoded on the user's own install (2026-10-04, and
+the re-checks of 2026-10-05 named below) by throwaway probes in the dirty-room scratchpad;
+**BIN** = read from the client executable (method M4, [decision
+0011](../decisions/0011-standing-m4-authorisation.md)); facts that rest on BIN alone say so;
+**Reported** = third-party material only.
 
 | Tag | Source |
 |---|---|
-| OBS | Observed in user install 2026-10-04. **All 49,636** landblock-info records of regions 1–5 and 14 decoded to the last byte; **all 3,253,862** SEDs read. All 27,962 distinct 0x47 records they name resolved through `setup.md` §3.1 to setups and mesh bounds. All 775 distinct 0x70 objects they name opened. Terrain heights read from the 0x800RXXYY records for the validation in §8. |
+| OBS | Observed in user install 2026-10-04. **All 49,636** landblock-info records of regions 1–5 and 14 decoded to the last byte; **all 3,253,862** SEDs read. All 27,962 distinct 0x47 records they name resolved through `setup.md` §3.1 to setups and mesh bounds. All 775 distinct 0x70 objects they name opened. Terrain heights read from the 0x800RXXYY records for the validation in §8. Re-checked 2026-10-05 with the repository's decoders as tools: the `Entity_ContentLayers` list of every SED and of every landblock instance property set (3,768,840), the IID bits 24–35 of all of them, the 27 SEDs without a frame and the mesh bounds of their objects, the CONTENT_LAYER DID map 0x28000012 (all 1,661 entries). Repair re-check 2026-10-05 (all SEDs again): SEDs and records with SEDs per region; framed SEDs by cell presence of their landblock and by the interior flag; first and last rotation components against ±1 at tolerances 0, 10⁻⁶, 10⁻⁵ and 10⁻⁴; distinct scale values under several rounding methods; and for every Physics SED the three draw properties on the SED, on its instance property set, on every level of its 0x47 chain (27,571 objects, 28,151 chain levels) and in every 0x78 extra set those levels name (17,484, all parsed), plus `Render_ServerDraw` on all of them. |
+| BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room on 2026-10-05 for facts only. Questions: (1) which content layer the world shows and how a SED's layer list is tested (owner item O3); (2) the heading of a placed frame as `/loc` reports it (O2); (3) the SED reader: order of the rarely used fields, the values of absent fields, the meaning of bits 0x01, 0x20, 0x200 and 0x400; (4) how instance IDs carry an instance number. Why M1–M3 were not enough: the data hold the layer lists and the DID map labels but not the rule that combines them; the reported fields (bits 0x01, 0x20, 0x200) never occur in this install, so their place and meaning cannot be observed; the owner observations O2 and O3 are pending and could only sample one spot each. Only the SED reader and writer, the landblock entity enumeration, the content-layer test, the instance-ID helpers and the position formatting were read; no network, login, launcher or anti-tamper code. **Second use, 2026-10-05 (repair session, same build, same method, address ranges only):** (5) which properties decide whether a render node is hidden, and in which order (§9); (6) on which path, and with which *L* and *I*, the client evaluates the content-layer test for Physics SEDs (§4.5.1). **Why M1–M3 were not enough:** the data hold the property values but not the rule that combines them, and no published source gives one; on this install the SED-versus-object order changes the result for 12 SEDs only, too few and too scattered for an owner observation (M3) to establish a rule; the content-layer path leaves no trace in data. Read: the render node's property-change handler and its visibility test, the generic property getter it calls (only far enough to see that the lookup is dispatched to the owning object), the landblock loader's pass over Weenie, Physics and PatrolPoint SEDs, the clearance-volume builder it calls, and the content-layer test with its membership routine. |
+| AP | [`appearance.md`](appearance.md) §7.1–§7.4 (same install, 2026-10-05): what the 775 weenie objects are, the landblock weenie list as per-instance property sets, NPC-like figures on Physics SEDs. Folded in here as corrections (§14). |
 | LC | LotroCompanion `delta-lotro-dat-utils` (Apache-2.0 distribution; decompiled class `EntityDescLoader`, data class `EntityDescriptor`) and `lotro-tools` (`LandblockInfoLoader`, readable source). Field order and flag bits. Facts only; no code taken. |
 | DS | `research/notes/data-semantics.md` §6.1 (positions, 160 m landblocks), §6.3 (landblock info), §6.4 (entity descriptor bits). |
 | ER | `research/notes/engine-client-re.md` §4 (coordinate systems, `/loc` output) and §3 (cache type names). |
@@ -55,16 +62,27 @@ throwaway probes in the dirty-room scratchpad; **Reported** = third-party materi
 | # | Fact | Sources | Mark |
 |---|---|---|---|
 | E1 | SEDs are a u32-counted list inside landblock info, after the cells (§2) | LC, DS; OBS (49,636 records, zero trailing bytes) | Confirmed |
-| E2 | Layout: u32 flags, then optional fields in a fixed order; the property set precedes the 0x40 word (§3) | LC, DS; OBS (3,253,862 descriptors) | Confirmed |
-| E3 | Flag 0x400 carries no payload and marks interior entities (§3.3, §4.8) | OBS | Confirmed (layout); meaning Confirmed statistically |
-| E4 | Flag bits 0x01, 0x20, 0x200 add a DID, a vector and a DID list | LC | Reported (never set in this install) |
+| E2 | Layout: u32 flags, then optional fields in a fixed order; the property set precedes the 0x200 list, which precedes the 0x40 word; the name is last (§3) | LC, DS; OBS (3,253,862 descriptors); BIN (place of 0x200) | Confirmed for the observed bits; BIN for 0x200 |
+| E3 | Flag 0x400 carries no payload and marks interior entities (§3.3, §4.8) | OBS; BIN (stored as a boolean) | Confirmed (layout); meaning Confirmed statistically |
+| E4 | Bit 0x001 adds a DID, bit 0x020 a legacy scale vector, bit 0x200 a VLE-counted list of u32 (§3.1, §3.4, §7) | LC; BIN | BIN (never set in this install) |
 | E5 | Entity type is an enum value labelled by enum mapper 0x23000091 (§4.1) | LC; OBS | Confirmed |
-| E6 | The 64-bit instance ID encodes region and landblock (§4.2) | OBS (100 %) | Confirmed |
+| E6 | The 64-bit instance ID encodes region and landblock; bits 24–35 receive the instance number of an instanced copy (§4.2) | OBS (100 %); BIN | Confirmed (layout); BIN (bits 24–35) |
 | E7 | The physics-object field names a 0x47 record, or a 0x70 object for weenies (§4.3) | LC; OBS | Confirmed |
 | E8 | Position is landblock-local x, y in metres from the landblock's south-west corner, z absolute height (§4.4) | DS, ER; OBS (§8) | Confirmed |
-| E9 | Rotation is a unit quaternion stored (w, x, y, z), applied as an active rotation (§4.4, §6) | LC (field names); OBS (§6) | Confirmed |
+| E9 | Rotation is a unit quaternion stored (w, x, y, z), applied as an active rotation; the client reads it into the same frame type as every position (§4.4, §6) | LC (field names); OBS (§6); BIN | Confirmed |
 | E10 | Scale is the uniform vector property `Render_AdjustableScale` (equal to `Physics_AdjustableScale`) on every SED (§7) | OBS | Confirmed |
-| E11 | Draw suppression comes from the physics object's properties (§9) | OBS | Confirmed census; client behaviour Reported by analogy |
+| E11 | Census of the draw properties on SEDs, instance sets, 0x47 chains and their 0x78 extra sets; no object holds any of them at more than one chain level or in an extra set; SED and object disagree for 12 Physics SEDs only (§9.1) | OBS | Confirmed |
+| E12 | A SED without bit 0x010 is placed at the owning landblock's origin with the identity rotation (§3.4, §4.4) | BIN; OBS (27 SEDs; mesh bounds) | BIN, consistent with data |
+| E13 | The client's writer sets each flag bit exactly when its field differs from the default (§3.4) | BIN | BIN |
+| E14 | Content layers: labels 0 `Undef`, 1 `InstanceZero`, 2 `All`; membership rule; the shared world shows lists naming 1 or 2 (§4.5.1) | OBS (DID map 0x28000012, census); BIN (rule; its use for decals, lights, weenies and Physics clearance volumes) | BIN, census Confirmed; its use for the drawn objects of Physics SEDs OPEN (§4.5.1) |
+| E15 | The `/loc` heading of a SED's frame is h = (360° − ψ) mod 360°, the bearing of its model +Y axis for a pure turn (§4.4) | BIN (`coordinates.md` §11.3–§11.4) | BIN |
+| E16 | The 775 weenie objects are housing hooks (744), distant-battle units (29), one door and one monster; none is an NPC (§4.1, §4.3) | AP; OBS | Confirmed |
+| E17 | The landblock weenie list holds one instance property set per SED IID (plus server objects); a SED's layer list is repeated there unchanged (§4.5.2) | AP; OBS | Confirmed |
+| E18 | Static NPC-like figures are Physics SEDs whose object is a humanoid rig and whose instance set dresses and animates them (§4.1, §9) | AP | Confirmed |
+| E19 | The client turns Decal and Light SEDs into decal and light objects after the content-layer test (§4.1, §9) | BIN | BIN |
+| E20 | A render node is hidden when its effective draw value is false: `Render_ServerDraw` if found, else `Render_Draw` if found, else drawn; both re-evaluated when either property changes (§9.2) | BIN (question 5); OBS (dictionary defaults: both true) | BIN |
+| E21 | The landblock loader evaluates the content-layer test for Weenie, Physics and PatrolPoint SEDs with *I* = the instance number of the landblock copy and *L* handed in by the loader's caller, and stores the result with the SED's clearance volumes, which it builds whether the test passes or not (§4.5.1) | BIN (question 6) | BIN (render consequence OPEN) |
+| E22 | The draw rule of §9.2 (which properties suppress, and that the SED value wins over the object's, the first value along the chain winning) | Tessera | **Decision** (Tessera), not a client fact; the client's order is OPEN (§9.2) |
 
 ---
 
@@ -91,21 +109,23 @@ after the last field). Only the parts needed to reach the SED list are summarise
 | 10 | links | u32 count, link elements | `landblock.md` |
 | 11 | properties | embedded property set | `property-system.md` §5 |
 | 12 | `reserved` | u32 | 0 in every record |
-| 13 | weenies | TSize count, elements u64 IID + embedded property set | `landblock.md` |
+| 13 | weenies | TSize count, elements u64 IID + embedded property set | **Per-instance property sets** keyed by IID: one for every SED IID plus 514,987 for server objects (§4.5.2; AP). `landblock.md` |
 | 14 | trailer | u32, optional | Present in 42,530 records, absent in 7,106 |
 
 <a id="s2-2"></a>
 ### 2.2 Population (Confirmed)
 
-| Region | Landblock-info records | SEDs |
-|---|---|---|
-| 1 | 9,701 | |
-| 2 | 11,508 | |
-| 3 | 8,846 | |
-| 4 | 11,479 | |
-| 5 | 5,837 | |
-| 14 | 2,265 | |
-| **All** | **49,636** (33,007 with ≥ 1 SED) | **3,253,862** |
+| Region | Landblock-info records | Of them with ≥ 1 SED | SEDs |
+|---|---|---|---|
+| 1 | 9,701 | 8,655 | 805,097 |
+| 2 | 11,508 | 7,874 | 903,981 |
+| 3 | 8,846 | 4,674 | 515,800 |
+| 4 | 11,479 | 5,998 | 561,529 |
+| 5 | 5,837 | 5,058 | 430,541 |
+| 14 | 2,265 | 748 | 36,914 |
+| **All** | **49,636** | **33,007** | **3,253,862** |
+
+Counted by the region digit of the landblock-info DID (`0x802RXXYY`); re-checked 2026-10-05.
 
 No other record type was found to embed SEDs. LC also decodes the same structure from
 network messages (a "from network" variant whose embedded property set uses the network
@@ -117,28 +137,30 @@ form, `property-system.md` §10); that is M7 material.
 ## 3. SED layout
 
 <a id="s3-1"></a>
-### 3.1 Fields in stream order (Confirmed)
+### 3.1 Fields in stream order (Confirmed; BIN for the bits never set)
 
 | Order | Bit | Field | Type | Present in (of 3,253,862) |
 |---|---|---|---|---|
 | 1 | — | `flags` | u32 | all |
-| 2 | 0x001 | `did` | DID | 0 (Reported, LC) |
+| 2 | 0x001 | `did` | DID (§3.4) | 0 |
 | 3 | 0x002 | `type` | u32 enum (§4.1) | all |
 | 4 | 0x004 | `iid` | u64 (§4.2) | all |
 | 5 | 0x008 | `object` | DID (§4.3) | 3,244,086 |
 | 6 | 0x010 | `position` | f32 × 3 (§4.4) | 3,253,835 |
 | 6 | 0x010 | `rotation` | f32 × 4, (w, x, y, z) (§4.4) | (with `position`) |
-| 7 | 0x020 | `vector` | f32 × 3 | 0 (Reported, LC; meaning unknown) |
+| 7 | 0x020 | `vector` | f32 × 3, a legacy scale (§7) | 0 |
 | 8 | 0x080 | `properties` | embedded property set (`property-system.md` §5: TSize count, entries with PID echo) | all |
-| 9 | 0x040 | `word` | u32 (§4.6) | 94,335 |
-| 10 | 0x100 | `name` | Pascal string (`records.md` §1.4) | 3,242,259 |
-| 11 | 0x200 | `dids` | VLE count, then that many DIDs | 0 (Reported, LC) |
+| 9 | 0x200 | `dids` | VLE count *k* (`records.md` §1.2), then *k* × u32 (DIDs per LC) | 0 |
+| 10 | 0x040 | `word` | u32 (§4.6) | 94,335 |
+| 11 | 0x100 | `name` | Pascal string (`records.md` §1.4) | 3,242,259 |
 | — | 0x400 | *(no payload)* | flag only (§4.8) | 963,922 |
 
-**Order is not bit order** for bits 0x40 and 0x80: the property set (bit 0x80) comes
-**before** the 0x40 word. Confirmed: every descriptor with bit 0x40 also has bit 0x80, and
-reading the word first breaks the decode of every such record, while the order above decodes
-all records exactly.
+**Order is not bit order** for bits 0x040, 0x080 and 0x200: the property set (bit 0x080)
+comes first, then the 0x200 list, then the 0x040 word, then the name. Confirmed for 0x080
+before 0x040: every descriptor with bit 0x040 also has bit 0x080, reading the word first
+breaks the decode of every such record, and the order above decodes all records exactly.
+The place of the 0x200 list is BIN (the client's reader and writer); it was given after the
+name in the earlier version of this spec, which would misframe a record that uses it.
 
 <a id="s3-2"></a>
 ### 3.2 Observed `flags` values (Confirmed census)
@@ -154,8 +176,8 @@ all records exactly.
 | 0x0000009E | 4,364 | object, position+rotation (no name) |
 | 0x00000596 | 3,148 | position+rotation, name, interior flag (no object) |
 | 0x000000DE | 31 | object, position+rotation, word (no name) |
-| 0x0000018E | 18 | object, name (no position) |
-| 0x0000058E | 9 | object, name, interior flag (no position) |
+| 0x0000018E | 18 | object, name (no frame: placed at the origin, §4.4) |
+| 0x0000058E | 9 | object, name, interior flag (no frame) |
 
 Bits 0x002, 0x004 and 0x080 are set in every SED. Bits 0x001, 0x020, 0x200 and every bit
 ≥ 0x800 are never set.
@@ -163,10 +185,37 @@ Bits 0x002, 0x004 and 0x080 are set in every SED. Bits 0x001, 0x020, 0x200 and e
 <a id="s3-3"></a>
 ### 3.3 Unsupported bits
 
-A decoder supports the Reported bits 0x001, 0x020 and 0x200 with the sizes in §3.1 (they
-cost nothing and keep network and older data readable), but rejects any bit ≥ 0x800 as
+A decoder supports bits 0x001, 0x020 and 0x200 with the sizes and order of §3.1 (they cost
+nothing and keep network and older data readable), but rejects any bit ≥ 0x800 as
 unsupported: an unknown bit may carry a payload of unknown size, so continuing would
-misframe the rest of the landblock-info record.
+misframe the rest of the landblock-info record. The client's own reader knows no bit above
+0x400 (BIN).
+
+<a id="s3-4"></a>
+### 3.4 Absent fields and how the flags are chosen (BIN)
+
+The client's writer derives every flag bit from the field's content, and its reader leaves a
+field at its default when the bit is clear. A decoder therefore gives an absent field the
+default below, and an encoder that wants the client's byte stream sets a bit exactly in the
+case in the last column.
+
+| Bit | Field | Value when the bit is clear | The client's writer sets the bit when |
+|---|---|---|---|
+| 0x001 | `did` | none (invalid DID) | the descriptor's own DID is valid |
+| 0x002 | `type` | 0 (`Invalid`) | type ≠ 0 |
+| 0x004 | `iid` | none (invalid IID) | the IID is valid |
+| 0x008 | `object` | none (invalid DID) | the object DID is valid |
+| 0x010 | `position`, `rotation` | position (0, 0, 0), rotation (1, 0, 0, 0) | any of the seven components differs from that default by more than 0.0002 |
+| 0x020 | `vector` | (1, 1, 1) | never: the writer does not emit it (§7) |
+| 0x080 | `properties` | an empty set | the set has at least one entry |
+| 0x200 | `dids` | an empty list | the list is not empty |
+| 0x040 | `word` | 0 | word ≠ 0 |
+| 0x100 | `name` | empty | the name is not empty |
+| 0x400 | interior flag | false | the entity is an interior entity |
+
+Bit 0x001's DID is read into the field every client database object carries for its own
+DID; nothing in the SED handling was seen to use it. The 0x200 list holds u32 values; LC
+reports them as DIDs; their use was not traced.
 
 ---
 
@@ -181,13 +230,13 @@ The labels are internal identifiers read at run time from enum mapper 0x23000091
 
 | Value | Label | SEDs | `object` | Role |
 |---|---|---|---|---|
-| 7 | Physics | 2,380,699 | 0x47 (27,571 distinct) | Placed scenery and props. The only type with real geometry to draw (§9). |
+| 7 | Physics | 2,380,699 | 0x47 (27,571 distinct) | Placed scenery and props: the only type with real geometry to draw (§9). Also the **static NPC-like figures**: a 0x47 whose setup is a humanoid rig, dressed, animated and given held props by the SED's instance property set (§4.5.2; `appearance.md` §7.2–§7.4). |
 | 3 | GeneratorPoint | 415,238 | 0x47 (239 distinct; 1 m editor markers) | Spawn point |
 | 23 | PatrolPoint | 268,896 | 0x47 (8 distinct markers) | AI patrol waypoint |
-| 9 | Light | 73,711 | 0x47 (2 distinct markers) in 72,880; none in 831 | Light source; parameters in properties (`LightDiffuse`, `LightRange`, `LightFalloff`, day/night variants) |
+| 9 | Light | 73,711 | 0x47 (2 distinct markers) in 72,880; none in 831 | Light source; parameters in properties (`LightDiffuse`, `LightRange`, `LightFalloff`, day/night variants). The client creates a light object from it (BIN, §9; `lighting.md`). |
 | 19 | SegmentNode | 55,645 | 0x47 (1 marker) | Path segment node |
-| 6 | Weenie | 33,676 | **0x70** (775 distinct) | Server-side object placement (NPC, interactive object) |
-| 2 | Decal | 16,511 | 0x47 (140 distinct small markers) | Projected decal; parameters in properties (`DecalVolume_*`) |
+| 6 | Weenie | 33,676 | **0x70** (775 distinct) | Server-side objects, **not NPCs**: 744 housing hooks (32,338 SEDs), 29 distant-battle unit groups (1,335 SEDs), one door (1 SED) and one monster (2 SEDs) (AP; §4.3) |
+| 2 | Decal | 16,511 | 0x47 (140 distinct small markers) | Projected decal; parameters in properties (`DecalVolume_*`). The client creates a decal object from it (BIN, §9). |
 | 16 | TeleportDestination | 8,945 | none | Arrival point |
 | 31 | LBIOnly | 541 | 0x47 (1 marker) | Unknown |
 
@@ -197,7 +246,7 @@ Landblock 18, KynMapSeedPoint 21, Cell 22, Export 24, Particle 25, DBObj 26, Cam
 WorldBuilderOnly 32). A decoder keeps unknown values as numbers.
 
 <a id="s4-2"></a>
-### 4.2 `iid`: instance ID (Confirmed, 100 % of SEDs)
+### 4.2 `iid`: instance ID (Confirmed, 100 % of SEDs; bits 24–35 BIN)
 
 The 64-bit instance ID is structured:
 
@@ -207,15 +256,25 @@ The 64-bit instance ID is structured:
 | 52–55 | Region *R* of the owning landblock |
 | 44–51 | Landblock X of the owning landblock |
 | 36–43 | Landblock Y of the owning landblock |
-| 32–35 | 0 in every SED |
-| 0–31 | Serial within the landblock (starts at 1; usually contiguous) |
+| 24–35 | **Instance number** of an instanced copy of the landblock (BIN); 0 in every SED and every landblock instance set (3,253,862 and 3,768,840) |
+| 0–23 | Serial within the landblock (starts at 1; usually contiguous) |
 
-Bits 32–55 equal the owning landblock-info DID's region, X and Y in every SED. 3,253,853
-distinct IIDs; 9 IIDs occur twice (in different landblocks). Links and weenies refer to
-entities by IID (`landblock.md`), so a world model indexes SEDs by IID and must tolerate a
-duplicate (keep both; resolve a link to the one in the same landblock first).
+Bits 36–55 equal the owning landblock-info DID's region, X and Y in every SED. When the
+client builds the entities of an instanced copy of a landblock (instance number *I*, 1 ≤ *I*
+< 4,096), it writes *I* into bits 24–35 of the IIDs it builds for that copy (entities and
+the references between them), so the copies do not collide (BIN; it does so for kind bytes 1, 4, 5, 9, 10, 0x82 and 0x83,
+refuses *I* ≥ 4,096 and leaves other kinds unchanged). The stored data always describe the
+shared copy (*I* = 0).
 
-> **OPEN:** Meaning of the kind byte (1 versus 4).
+3,253,853 distinct IIDs; 9 IIDs occur twice (in different landblocks). Links and weenies
+refer to entities by IID (`landblock.md`), so a world model indexes SEDs by IID and must
+tolerate a duplicate (keep both; resolve a link to the one in the same landblock first).
+
+Weenie SEDs are kind 4 except 71 (kind 1). The instance property sets (§4.5.2) of IIDs that
+no SED places are kind 1 (103,833) or kind 4 (411,154).
+
+> **OPEN:** Meaning of the kind byte (1 versus 4). The client treats both alike for
+> instancing (above); no other use was traced.
 
 <a id="s4-3"></a>
 ### 4.3 `object`: what is placed (Confirmed)
@@ -227,8 +286,12 @@ duplicate (keep both; resolve a link to the one in the same landblock first).
   (0x47001031, 0x47003E76; 20 SEDs) end at setups without parts.
 - **0x70 game object** (33,676 SEDs, all of type Weenie; 775 distinct DIDs, all exist). The
   object's property set (DID + 0x09000000, `property-system.md` §6.2) carries `PhysObj`, a
-  0x47 DID, in all 775; resolve that as above. Object classes (`wstate.md`): class index
-  1989 (744 objects), 3725 (29), 1722 (1), 1723 (1).
+  0x47 DID, in all 775; resolve that as above. What they are (AP, from their `WeenieType`):
+  744 housing hooks (`Entity`, class index 1989, small one-part marker setups), 29
+  distant-battle unit groups (`DistantBattleUnit`, class index 3725, one marker entity
+  0x47006915), one door (`Door`, 0x4700C408) and one monster (`Monster`, a humanoid rig with a
+  random-appearance type; landblock 0x80253E07). None is an NPC with species, worn or held
+  items; `appearance.md` §7.1 gives the details and `walker.md` §10.2 what the walker draws.
 - **Absent** (9,776 SEDs: all 8,945 TeleportDestination and 831 Light). Nothing to resolve.
 
 Meshes are never named directly by a SED; geometry always comes through the physics object.
@@ -252,28 +315,47 @@ this against terrain.
 the landblock square, between six landblock widths below and five above (about −960 to
 +960 m). 772,963 of those (99.9 %) carry the interior flag (§4.8): they are interior and
 dungeon contents placed in the owning landblock's frame, not outdoor objects spilling into a
-neighbour (only about 190 of them sit within 2 m of the neighbour's terrain). A loader must not clamp or
-re-home such positions.
+neighbour (only about 190 of them sit within 2 m of the neighbour's terrain). A loader must
+not clamp or re-home such positions. By landblock: in landblocks whose landblock-info record
+has cells, 768,911 of 1,001,648 framed SEDs are out of the square and all of them carry the
+interior flag; in landblocks without cells, 4,960 of 2,252,187 are, 4,052 with the flag and
+908 without. The 908 out-of-square SEDs without the flag (886 Physics, 22 Light) are all in
+landblocks without cells (`coordinates.md` §7, CO2).
 
 **Rotation.** Four f32 forming a unit quaternion (all 3,253,835 within 0.001 of length 1),
 stored **w first**: (w, x, y, z), the same order as `setup.md` §6.7. It rotates object space
 into the landblock frame as an **active** rotation (§6 gives the evidence and §5 the
-transform).
+transform). The client reads the position and the four values, in stored order, into the
+same frame type it uses for every position; its identity is (1, 0, 0, 0) (BIN).
 
 - 3,115,694 rotations (95.8 %) are pure turns about +Z (x = y = 0 within 1e-4). The rest
   tilt the object (rocks, debris, leaning props).
 - For a pure turn the yaw angle ψ = 2 · atan2(z, w) is counter-clockwise seen from above.
   An object's local +Y axis (the forward direction of characters, `mesh.md` §11.1) then
   points at compass bearing (360° − ψ) mod 360°, measured clockwise from north.
-- The identity is (1, 0, 0, 0) (first component ±1 in 833,084 SEDs; last component ±1 in
-  178,174, which are genuine 180° turns).
+- **This is the client's heading rule** (BIN, answers owner item O2): the heading the
+  client prints for a frame (`/loc` `h`) is minus its yaw, in degrees, reduced to
+  0 ≤ h < 360 (`coordinates.md` §11.3–§11.4). An avatar facing exactly along a SED's model
+  +Y axis therefore reports the SED's bearing. For a tilted rotation the client's yaw is the
+  z-y-x yaw of `coordinates.md` §11.3, which can differ from the bearing of the projected +Y
+  axis.
+- The identity is (1, 0, 0, 0). Counts of SEDs whose first component w, or whose last
+  component z, is ±1, by the tolerance allowed on |component| − 1:
 
-**No position** (27 SEDs; flags 0x18E and 0x58E: 24 Physics, 2 Light, 1 PatrolPoint). A
-renderer skips them.
+  | Tolerance | w = ±1 | z = ±1 (genuine 180° turns) |
+  |---|---|---|
+  | exact | 824,440 | 170,728 |
+  | 10⁻⁶ | 828,104 | 173,093 |
+  | 10⁻⁵ | 833,084 | 178,174 |
+  | 10⁻⁴ | 849,744 | 192,157 |
 
-> **OPEN:** The bearing formula above is derived, not yet checked against the original's
-> `/loc` heading `h` (ER §4) for a placed object. One observation at a known statue or door
-> would close it.
+**No frame** (27 SEDs; flags 0x18E and 0x58E: 24 Physics, 2 Light, 1 PatrolPoint). The
+bit is clear because the frame equals the default: the SED stands at the owning landblock's
+**origin** (0, 0, 0) with the **identity rotation** (BIN, §3.4). A renderer places it there;
+it does not skip it. Five of the 24 Physics SEDs (landblocks 0x8024D05B, 0x8024D05C,
+0x8024D15C) name meshes whose vertices already lie in and just around the block square (x
+and y between about −19 and 171 m) at heights of 447–769 m: geometry authored in the
+landblock frame, which only the origin placement puts in the right spot. None of the 24 is draw-suppressed (§9).
 
 <a id="s4-5"></a>
 ### 4.5 `properties` (Confirmed census)
@@ -304,32 +386,133 @@ the master dictionary. Every SED has one, with 2 to 26 entries (2: 1,171,086 SED
 | `Render_Draw`, `Render_DrawMeshes` | boolean | 467, 328 | Per-instance draw override (§9) |
 
 <a id="s4-5-1"></a>
-#### 4.5.1 Content layers (Confirmed values, semantics OPEN)
+#### 4.5.1 Content layers (Confirmed values; rule BIN; answers owner item O3)
 
 `Entity_ContentLayers` is an array whose elements are `Entity_ContentLayer` enum values. The
 enum's data field names DID map 0x28000012, the `CONTENT_LAYER` map of `property-system.md`
-§8.1, whose entries point at 0x78 property sets. Most common element lists: [1] (161,029
-SEDs), [2] (111,046), then lists of 0x1000xxxx layer keys (single keys and lists of up to
-four). 859 SEDs carry an empty list.
+§8.1 (root key 9). Its keys are the layer values; their labels, read at run time, are
+interoperability identifiers:
 
-> **OPEN:** Which layers are active in an offline walker by default. Working assumption:
-> SEDs without the property always exist; SEDs with layer lists exist only when one of their
-> layers is active; layers 1 and 2 are the two most common alternatives and need
-> observation before a default is chosen. Until then the walker draws SEDs without layers
-> plus those that list layer 1, and offers a debug toggle.
+| Key | Label | Meaning (BIN) |
+|---|---|---|
+| 0 | `Undef` | no layer |
+| 1 | `InstanceZero` | the shared, non-instanced world |
+| 2 | `All` | every layer and every instance |
+| 0x1000xxxx (1,658 keys) | named layers | phases and private encounters, made active by the server |
 
-> **OPEN (implementation choice):** `tessera-world` treats an **empty**
-> `Entity_ContentLayers` list (859 SEDs) like an absent one, i.e. the SED is drawn. Whether
-> the original hides such SEDs is unobserved. The active layer list is a bundle option
-> (default `[1]`).
+**Census** (all 3,253,862 SEDs, their own property set):
+
+| List | SEDs | Of them Physics |
+|---|---|---|
+| no `Entity_ContentLayers` | 2,899,365 | 2,253,509 |
+| empty list | 859 | 818 |
+| names 2 (`All`) | 111,047 | 3,894 |
+| names 1 (`InstanceZero`), not 2 | 166,263 | 59,956 |
+| names 0 | 0 | 0 |
+| names only 0x1000xxxx layers | 76,328 | 62,522 |
+
+List lengths: 0 (859), 1 (320,090), 2 (28,764), 3 (2,762), 4 (2,018), 5 (4). 5,234 lists
+combine 1 with named layers (for example [1, named] 2,279 and [named, 1] 1,635); one list
+combines 2 with a named layer. 966 distinct named layers occur; the most common are
+0x100002A8 (21,103 SEDs) and 0x100002A7 (20,875). By type, the lists naming 2 are mostly on
+PatrolPoint SEDs (106,898). The SED's instance property set (§4.5.2) carries the same list
+in 354,496 of the 354,497 SEDs that have one.
+
+**The test** (BIN). Inputs: the SED's property set, the active content layer *L* (one
+value) and the instance number *I* of the copy being built. The SED **exists** when
+
+1. the property is absent, or its value is not an array, or the array is empty; or
+2. some element *e* of the array satisfies one of:
+   - *e* = 2;
+   - *e* = 1 and (*I* = 0 or *L* = 1);
+   - *e* = *L* (this also covers *e* = 0 when *L* = 0, and a named layer when it is active).
+
+Where *L* and *I* come from in the client: *L* is the world's current content layer, which
+the client stores together with the player's position whenever that position is set (in
+the original an input from the server; 0 until it is first set); *I* is the instance number
+of the landblock copy or of the player's position (0 for the shared world). Decal and light
+objects are tested with the landblock copy's own instance number. When the client
+enumerates a landblock's weenie SEDs for a given layer, it treats layer 1 as the shared
+world and every other layer as an instanced copy (*I* ≠ 0), so a list naming only 1 then
+fails unless *L* = 1.
+
+Physics SEDs (E21, BIN): when the client loads a landblock copy, one pass handles the
+Weenie, Physics and PatrolPoint SEDs. For each one that passes the loader's own validity
+checks (SEDs that fail them are reported as entities with errors) it builds the SED's
+clearance-volume
+object (from `Entity_Clearance_BoxList` and `Entity_Clearance_CylinderList`), evaluates the
+test with *I* = the instance number of the landblock copy being loaded and *L* = a value
+handed in by the loader's caller (a virtual method of the owning object on three of the
+four call paths, a value read from the global world object on the fourth; it is *L*
+because the test uses it as *L*, its source was not traced further), and stores the result
+in that clearance object. The clearance object is built whether the test passes or not.
+Every path traced (decals, lights, weenie enumeration, this clearance pass) gives the answer
+of the rule above.
+
+> **OPEN:** whether, and on which path, the **render** object of a Physics SED is subject to
+> the test, and what a failed test does to it (skipped, hidden, or kept). Only the clearance
+> side of Physics SEDs was traced; the pass that creates their drawn objects was not found.
+> This matters in three cases: (a) in the shared world (*L* = 1, *I* = 0), whether the
+> 62,522 Physics SEDs whose lists name only named layers are really absent, which every
+> traced path implies but no traced path shows for the drawn object; (b) in an instanced copy
+> (*I* ≠ 0), for lists naming only 1; (c) under an active named layer (*L* ≠ 1). The
+> confirmation spot below (owner item O3) settles (a). Until settled, Tessera applies the
+> test to Physics SEDs exactly as written above, with the copy's *I* and the active *L*, and
+> does not create a SED that fails it (Decision).
+
+**What the open world shows** (answers O3). In the shared world with the shared-world layer
+(*L* = 1, *I* = 0) the client shows SEDs with no list, with an empty list, and with a list
+naming 1 **or** 2, and hides lists that name only other layers (for the drawn objects of
+Physics SEDs this rests on the traced paths, OPEN above). Layers 1 and 2 are therefore
+not alternatives: both sets are present together. A list naming 2 is present in every layer
+and every instance; a list naming only 1 disappears in instanced copies (and, for weenies,
+whenever another layer is active); named layers appear only when the server makes one of
+them active, which is what depends on a character's progress.
+
+**Tessera default** (offline, no server): *L* = 1, *I* = 0, which reproduces the shared
+world. An option that makes named layers active for inspection applies the test once per
+active layer and shows the union (Tessera convention).
+
+> **Correction:** the earlier working assumption "draw SEDs without layers plus those that
+> list layer 1" hid the lists naming only 2: 111,047 SEDs, 3,894 of them Physics (3,256
+> not draw-suppressed). The original shows them everywhere. Empty lists: confirmed to count
+> as "no list" (shown), as `tessera-world` already does.
+
+**Confirmation spot** (optional, for O3): region 1, landblock 0xA15B (info 0x8021A15B),
+map coordinates about 51.4S, 17.7W. SED #41 is a large group of trees (about 20 × 21 ×
+28 m; physics object 0x4700379C) at (55.07, 32.04, 346.13) and SED #36 a ruined wall corner
+at (75.55, 39.42, 348.57); both list only layer 2 and are present for every character.
+SEDs #32–#35, #37, #38 and #43 nearby (rubble and rock outcrops, for example #37 at
+(86.90, 42.07, 345.36)) list only the named layer 0x1000008D and are absent unless the
+server activates that layer.
+
+<a id="s4-5-2"></a>
+#### 4.5.2 Per-instance property sets (Confirmed; folded in from `appearance.md` §7.2)
+
+The landblock-info record's weenie list (§2.1 row 13) is an **instance-property table**:
+3,768,840 (IID, property set) pairs. 3,253,853 carry the IID of a SED of the same landblock
+(every distinct SED IID once), so every SED has one instance property set; it holds at least
+`Render_AdjustableScale` and `Physics_AdjustableScale` (all 3,768,840 do) and repeats the
+SED's `Entity_ContentLayers`. The other 514,987 belong to IIDs no SED places (server-spawned
+objects and generators; `Generator_ProfileDID` in 33,902).
+
+On Physics SEDs the instance sets carry what makes a static figure: `Appearance_InstanceList`
+(379,660), `NPC_StartingIdleAnimation` with `NPC_PlayingStartingIdle` (51,113),
+`NPC_Cosmetic_Inventory_Item1` (18,009) and `Appearance_RandomAppearanceType` (about
+43,000); `appearance.md` §7.2–§7.4 says how to dress them. Precedence: an instance property
+replaces the property of the same name on the SED's object (a Decision of
+`appearance.md` §7.4 step 4, not traced in the client).
 
 <a id="s4-6"></a>
-### 4.6 `word` (bit 0x40; Confirmed values, meaning OPEN)
+### 4.6 `word` (bit 0x040; Confirmed values, meaning OPEN)
 
 Physics SEDs: value 1 in all 60,659 that have it. Weenie SEDs (all 33,676 have it): 1
 (26,810), 2 (5,066), 3 (1,145), 4 (459), 5 (105), 6 (65), 7 (22), 9 (2), 8 (1), 11 (1).
+An absent word is 0 (the client's writer omits a zero word, §3.4; BIN). The value shows no
+relation to the number of links that name the SED (census of 2026-10-05).
 
-> **OPEN:** Meaning (a spawn count or a version are candidates for weenies).
+> **OPEN:** Meaning (a spawn count or a version are candidates for weenies). The client
+> stores it as a plain u32; its users were not traced.
 
 <a id="s4-7"></a>
 ### 4.7 `name` (Confirmed)
@@ -349,9 +532,14 @@ moved into the landblock frame, contains 642,918 SED positions with the bit set 
 without. Of SEDs with the bit, only 51 lie within 2 m of the terrain surface. 963,922 SEDs
 (29.6 %) have the bit; 958,925 of those with a position are in landblocks with cells.
 
+The client keeps the bit as a boolean (BIN). When it builds decal and light objects from
+SEDs (§9) it gives them the cell number 1, the first interior cell value, when the bit is
+set and 0 (outdoors) otherwise; the SED itself names no particular cell.
+
 > **OPEN:** How a SED is attached to a particular cell (no cell index is stored in the SED;
-> containment in the cell volume works as a fallback). 4,988 SEDs with the bit live in
-> landblocks without cells.
+> containment in the cell volume works as a fallback). 4,994 SEDs with the bit live in
+> landblocks without cells: 6 without a frame, 936 with a frame inside the square and 4,052
+> outside it (`coordinates.md` §7); which cells, if any, they belong to is not known.
 
 ---
 
@@ -364,7 +552,8 @@ To place one part vertex *v* (object space, `setup.md` §7) of a SED owned by la
 1. Multiply *v* by the uniform scale *s* (§7).
 2. Rotate the result by the SED quaternion *q* = (w, x, y, z) as an active rotation
    (rotation of a vector by *q* followed by the conjugate of *q*).
-3. Add the SED position (*x*, *y*, *z*).
+3. Add the SED position (*x*, *y*, *z*); a SED without a frame uses (0, 0, 0) and the
+   identity (§4.4).
 4. Add the landblock origin (160 · *X*, 160 · *Y*, 0) to obtain region coordinates. A
    renderer subtracts a camera-relative origin before converting to f32 (ER §4: rendering
    is camera-relative), because region coordinates reach about 40,800 m.
@@ -400,7 +589,8 @@ apart (32,118 pairs).
 
 The remaining pairs are neighbours that are not end-to-end (corners, parallel rows). Only the
 first reading explains the chains, so the order is (w, x, y, z) and the rotation is active
-(object space to landblock frame).
+(object space to landblock frame). The client's reader stores the values in this order and
+its identity is (1, 0, 0, 0) (BIN, §4.4).
 
 ---
 
@@ -409,8 +599,12 @@ first reading explains the chains, so the order is (w, x, y, z) and the rotation
 
 - Every SED carries both `Render_AdjustableScale` and `Physics_AdjustableScale` (vector
   properties). In all 3,253,862 SEDs they are equal and uniform (x = y = z).
-- Values: 1,925 distinct (to 3 decimals) from 0.01 to 100; 1.0 in 2,292,193 SEDs (70.4 %);
-  then 1.5, 0.5, 0.85, 0.75, 2.0, 0.8 ….
+- Values: from 0.01 to 100. 6,458 distinct f32 values; 1,925 distinct after rounding to 3
+  decimals, where each f32 is widened to f64, multiplied by 1,000 and rounded half away
+  from zero to an integer (formatting each value with three decimals gives the same 1,925).
+  Doing the multiplication in f32 instead gives 1,935, because some values lie within f32
+  rounding of a half-thousandth. 1.0 exactly in 2,275,093 SEDs (69.9 %), and 1.000 to 3
+  decimals in 2,292,193 (70.4 %); then 1.5, 0.5, 0.85, 0.75, 2.0, 0.8 ….
 - Evidence that it applies: in the chain test of §6 restricted to SEDs with *s* ≠ 1, aligned
   nearest neighbours sit at the scaled extent *L*·*s* in 6,013 cases and at the unscaled *L*
   in 1,198 (the rest are not end-to-end).
@@ -422,6 +616,13 @@ the three components ever differ, it applies them per axis before the rotation (
 observed); normals then take the inverse transpose of the scale (divide by it per axis,
 rotate, renormalise) rather than the rotation alone. The physics scale is for collision
 and is applied the same way.
+
+**Legacy scale vector (bit 0x020; BIN, never set in this install).** Its three f32 default
+to (1, 1, 1). After reading a SED, when the vector was present and any component differs
+from 1 by more than 0.0002, the client stores it as **both** `Physics_AdjustableScale` and
+`Render_AdjustableScale` in the SED's property set, replacing values already there. The
+client's writer never emits the bit, so re-encoded data carries the scale only as
+properties.
 
 > **OPEN:** Whether the SED scale replaces or multiplies a scale stored on the physics object
 > (indistinguishable here, since every SED has its own).
@@ -512,37 +713,112 @@ once the same spots are checked in the original client.
 ---
 
 <a id="s9"></a>
-## 9. What a world walker draws
+## 9. What a world walker shows
 
 Static geometry comes from **Physics** SEDs only. The other types name editor marker
 objects (one-metre boxes, light bulbs, arrows; §4.1) that the original does not show in play.
+The original does, however, **realise Decal and Light SEDs**: after the content-layer test
+it builds a decal object, or a light object, at the SED's frame, with the cell chosen by the
+interior flag (§4.8) (BIN). Their markers are not drawn. Lights are specified in
+`lighting.md`; decals by a later spec.
 
-Within Physics SEDs, the physics object's own property set can suppress drawing. Resolve the
-0x47 chain (`setup.md` §3.1) and look up these booleans, the first value found along the
-chain wins (Confirmed census; precedence along the chain Reported by analogy with property
-inheritance):
+<a id="s9-1"></a>
+### 9.1 Draw properties: census (Confirmed)
 
-| Property | Value meaning "do not draw" | SEDs naming such an object (all types) |
+Three boolean properties look like draw switches by name. Their definitions in the property
+dictionary (`property-system.md` §2.2) carry the defaults `Render_Draw` true,
+`Render_DrawMeshes` true and `Render_NeverAddToScene` false (and `Render_ServerDraw`, §9.2,
+true). On the physics objects named
+by SEDs (looked up along the 0x47 chain, `setup.md` §3.1):
+
+| Property | Value meaning "do not draw" (§9.2) | SEDs naming such an object (all types) |
 |---|---|---|
 | `Render_Draw` | 0 | 854,615 |
 | `Render_DrawMeshes` | 0 | 186,921 |
 | `Render_NeverAddToScene` | 1 | 740,551 |
 | any of the three (579 of the 27,962 named objects) | | 1,027,172 |
 
-By type, the suppressed SEDs are: all GeneratorPoint, PatrolPoint, SegmentNode and LBIOnly
-SEDs, and 286,852 of 2,380,699 Physics SEDs (invisible walls, ground-cover removal volumes,
-entity-group markers, sound emitters, occluders). Light (9) and Decal (2) markers are not
-flagged but are markers (§4.1). The SED's own properties may override: `Render_Draw` occurs
-on 467 Physics SEDs (0: 329, 1: 138) and `Render_DrawMeshes` on 328 (0: 245, 1: 83); the SED
-value wins over the object's.
+By type, the SEDs naming such an object are: all GeneratorPoint, PatrolPoint, SegmentNode
+and LBIOnly SEDs, and 286,852 of the 2,380,699 Physics SEDs (invisible walls, ground-cover
+removal volumes, entity-group markers, sound emitters, occluders). Light (9) and Decal (2)
+markers are not flagged but are markers (§4.1).
 
-Draw rule for M3: draw a SED if its type is Physics, it has a position, it passes the
-content-layer filter (§4.5.1), and the effective `Render_Draw`, `Render_DrawMeshes` and
-`Render_NeverAddToScene` do not suppress it. That leaves about 2,093,800 SEDs.
+Where the values sit, for the 27,571 objects named by Physics SEDs:
 
-> **OPEN:** Whether lights and decals (types 9 and 2) should be realised from their
-> properties in M3 (light parameters, decal volumes); whether weenies (type 6) are shown by
-> the sandbox as static stand-ins (their `PhysObj` resolves to geometry, §4.3).
+- **Along the chain:** no object has any of the three properties on more than one level of
+  its 0x47 chain (28,151 levels in all), and none of the 17,484 0x78 extra sets those
+  levels name (`setup.md` §4.4) contains any of them. So the order in which a chain is
+  searched cannot change any result on this install.
+- **On the SED:** `Render_Draw` occurs on 467 Physics SEDs (0: 329, 1: 138) and
+  `Render_DrawMeshes` on 328 (0: 245, 1: 83); `Render_NeverAddToScene` on none. The SED's
+  instance property set (§4.5.2) carries the same property with the same value in every
+  one of these cases, and nowhere else.
+- **SED against object:** the two disagree for **12** Physics SEDs only: the SED says
+  `Render_Draw` = 1 while its object says 0. In the other 455 SEDs with `Render_Draw` the
+  object has no value (448) or the same value (7); every SED with `Render_DrawMeshes` names
+  an object without it.
+- `Render_ServerDraw` (§9.2) occurs on no SED, no instance property set and no object named
+  by a Physics SED.
+
+<a id="s9-2"></a>
+### 9.2 Draw rule
+
+**What the client is known to do (E20, BIN).** A render node keeps a "hidden" flag that it
+re-evaluates whenever `Render_Draw` or `Render_ServerDraw` changes on it. The node is drawn
+unless the effective value is false, where the effective value is `Render_ServerDraw` if the
+node's property lookup finds it, otherwise `Render_Draw` if found, otherwise true. The
+lookup is dispatched to the object that owns the node; how that object orders the SED's
+own set, its instance property set and the physics object's chain was not traced. How
+`Render_DrawMeshes` and `Render_NeverAddToScene` are consumed was not traced either.
+
+> **OPEN:** the client's precedence between the SED's (and instance set's) value and the
+> physics object's value, and along the 0x47 chain, for the three draw properties; and the
+> client's use of `Render_DrawMeshes` and `Render_NeverAddToScene`. On this install the
+> chain order cannot matter (§9.1), and the SED-versus-object order decides 12 Physics SEDs
+> (11 of them in the shared world). They are SEDs #1594, #1598, #1600, #1785, #1786, #1791,
+> #1793, #1796, #1799 and #1802 of landblock info 0x8023FCDB (all naming 0x47000DD1),
+> #1695 of 0x8021FCF3 (0x47006D6D) and #649 of 0x8022FAD2 (0x47000C82; its layer list fails
+> the shared-world test), all at heights between −229 and −154 units, inside interior
+> spaces. An owner visit to the interior of 0x8023FCDB, comparing what stands at those
+> positions with what the object 0x47000DD1 looks like, would settle it.
+
+**Tessera's rule (E22, Decision).** Until the OPEN above is settled, Tessera uses this rule;
+it is a project decision, not a client fact:
+
+1. For each of `Render_Draw`, `Render_DrawMeshes` and `Render_NeverAddToScene`, the
+   effective value is the first one found in this order: the SED's instance property set,
+   the SED's own property set, then the 0x47 chain from the named object towards its
+   parents (first value found wins), then the dictionary default (§9.1). The instance set
+   and the SED never disagree on this install, so their order is immaterial here; it
+   follows `appearance.md` §7.4 step 4.
+2. `Render_ServerDraw` is looked up the same way; if found, it replaces the effective
+   `Render_Draw` (as in the client's node test above). It occurs nowhere on this install.
+3. A SED is **suppressed** when the effective `Render_Draw` is false, the effective
+   `Render_DrawMeshes` is false, or the effective `Render_NeverAddToScene` is true.
+
+Draw a SED if its type is Physics, it passes the content-layer test of §4.5.1 (Tessera
+default *L* = 1, *I* = 0), and it is not suppressed. A SED without a frame is drawn at the
+landblock origin with the identity rotation (§4.4).
+
+Counts under this rule (Confirmed census): 287,392 of the 2,380,699 Physics SEDs are
+suppressed (the 286,852 that name a suppressing object, minus the 12 the SED un-suppresses,
+plus 552 that only the SED's own value suppresses). 2,041,837 Physics SEDs are drawn in the
+shared world (2,093,307 if content layers were ignored). Compared with the M3 rule (lists had
+to name 1; frameless SEDs skipped) this adds 3,256 Physics SEDs whose lists name 2 and 24
+frameless Physics SEDs, none of them suppressed: 2,041,837 instead of 2,038,557 (the "about
+2,093,800" of the first version counted without the layer filter). If the client instead
+let the object's value win, 11 fewer SEDs would be drawn in the shared world (2,041,826;
+2,093,295 without layers); if it ignored the SED's value entirely, 490 more (2,042,327;
+2,093,847 without layers).
+
+Static NPC-like figures are among these Physics SEDs: their object resolves to a humanoid rig
+and their instance property set dresses and animates them (§4.5.2; `appearance.md` §7.2–§7.4).
+Weenie SEDs are housing hooks, distant-battle units, a door and a monster (§4.3); what
+Tessera shows for them is `walker.md` §10.2.
+
+> **OPEN (roadmap, not format):** when Tessera realises decals and lights from their
+> properties (the original does, above). The light parameters are in `lighting.md`; decal
+> volumes (`DecalVolume_*`) have no spec yet.
 
 ---
 
@@ -555,19 +831,22 @@ For each SED, with the landblock-info cursor positioned after the SED count:
    whole record.
 2. If bit 0x001: read a DID. If bit 0x002: read the u32 type. If bit 0x004: read the u64
    IID. If bit 0x008: read the object DID.
-3. If bit 0x010: read three f32 (position) and four f32 (rotation, w first).
-4. If bit 0x020: read three f32 (vector).
+3. If bit 0x010: read three f32 (position) and four f32 (rotation, w first); otherwise the
+   position is (0, 0, 0) and the rotation (1, 0, 0, 0).
+4. If bit 0x020: read three f32 (legacy scale, §7).
 5. If bit 0x080: read an embedded property set (`property-system.md` §5.3), with the
    dictionary.
-6. If bit 0x040: read a u32.
-7. If bit 0x100: read a Pascal string.
-8. If bit 0x200: read a VLE count *k*, then *k* DIDs.
+6. If bit 0x200: read a VLE count *k*, then *k* u32 values.
+7. If bit 0x040: read a u32 (otherwise the word is 0).
+8. If bit 0x100: read a Pascal string.
 9. Bit 0x400: nothing to read; record it.
+10. If step 4 read a vector that differs from (1, 1, 1) by more than 0.0002 in any
+    component, store it as both scale properties (§7).
 
 Defensive limits: bound the SED count by the remaining bytes divided by 4 (a SED is at
 least its flags word), and apply an absolute cap (the
 largest observed count is 7,801; a cap of 65,536 is ample). Bound the name length by the
-remaining bytes (observed ≤ 116) and the DID-list count by remaining / 4. Reject a
+remaining bytes (observed ≤ 116) and the list count by remaining / 4. Reject a
 non-finite position or rotation component as malformed; renormalise a rotation whose length
 differs from 1 by more than 0.01 and report it (never observed).
 
@@ -587,13 +866,15 @@ differs from 1 by more than 0.01 and report it (never observed).
 
 | ID | Invariant |
 |---|---|
-| **ED1** | `flags` ⊆ {0x002, 0x004, 0x008, 0x010, 0x040, 0x080, 0x100, 0x400}, with 0x002, 0x004 and 0x080 always set (plus the Reported 0x001, 0x020, 0x200, never observed). |
+| **ED1** | `flags` ⊆ {0x002, 0x004, 0x008, 0x010, 0x040, 0x080, 0x100, 0x400}, with 0x002, 0x004 and 0x080 always set (plus the BIN-defined 0x001, 0x020, 0x200, never observed). |
 | **ED2** | Every landblock-info record decodes to its last byte with the SED layout of §3 (49,636 / 49,636). |
-| **ED3** | Bits 32–55 of every IID equal the owning landblock's region, X and Y; bits 32–35 are 0. |
+| **ED3** | Bits 36–55 of every IID equal the owning landblock's region, X and Y; bits 24–35 are 0 (every SED and every instance property set). |
 | **ED4** | Type 6 (Weenie) SEDs name 0x70 objects; every other SED with an object names a 0x47 record. Every named record exists. |
 | **ED5** | Rotations have unit length (±0.001). |
 | **ED6** | `Render_AdjustableScale` and `Physics_AdjustableScale` are present, uniform and equal, with values in [0.01, 100]. |
-| **ED7** | An SED whose position lies outside the 160 m square has the interior flag 0x400 (772,963 of 773,871; the exceptions are a census item, not an error). |
+| **ED7** | An SED whose position lies outside the 160 m square has the interior flag 0x400 (772,963 of 773,871; the exceptions are a census item, not an error). Every exception is in a landblock whose landblock-info record has no cells (908 of 908); in landblocks with cells the rule has no exception (768,911 of 768,911). |
+| **ED8** | No `Entity_ContentLayers` list names layer 0; every SED IID has an instance property set in the same landblock-info record, whose layer list (when present) equals the SED's (354,496 of 354,497). |
+| **ED9** | A SED without bit 0x010 decodes to position (0, 0, 0) and rotation (1, 0, 0, 0) (27 SEDs). |
 
 ---
 
@@ -606,7 +887,8 @@ differs from 1 by more than 0.01 and report it (never observed).
 | SEDs | 3,253,862 |
 | Distinct 0x47 objects named / resolved to meshes | 27,962 / 27,960 (2 part-less setups) |
 | Distinct 0x70 objects named / with `PhysObj` | 775 / 775 |
-| SEDs drawn by the §9 rule (approx.) | 2,093,800 |
+| SEDs with a content-layer list / of them shown in the shared world (§4.5.1) | 354,497 / 278,169 |
+| Physics SEDs drawn by Tessera's §9.2 rule (shared world) | 2,041,837 (M3 rule: 2,038,557; content layers ignored: 2,093,307; object value winning: 2,041,826) |
 
 Failure categories a decoder distinguishes: truncated SED, unsupported flag bit, property-set
 failure (unknown PID or bad echo, `property-system.md` §5.3), count over limit, non-finite
@@ -625,11 +907,7 @@ renormalises a rotation more than 0.01 from unit length and flags the SED as unu
 <a id="s13"></a>
 ## 13. Open questions
 
-> **OPEN:** Bearing of objects versus the original's `/loc` heading (§4.4).
-
 > **OPEN:** IID kind byte 1 versus 4 (§4.2).
-
-> **OPEN:** Content-layer defaults for an offline walker (§4.5.1).
 
 > **OPEN:** Meaning of the 0x40 word (§4.6).
 
@@ -638,7 +916,44 @@ renormalises a rotation more than 0.01 from unit length and flags the SED as unu
 
 > **OPEN:** Template-level scale fields and the 0x47 `block` versus the SED scale (§5, §7).
 
-> **OPEN:** Realising lights, decals and weenies (§9).
+> **OPEN (roadmap):** when Tessera realises decals and lights (§9).
 
-> **OPEN:** The meaning of the `vector` (0x020), `did` (0x001) and `dids` (0x200) fields,
-> Reported only.
+> **OPEN:** The use of the `did` (0x001) and `dids` (0x200) fields, never set in this
+> install (§3.4).
+
+> **OPEN:** The client's precedence for the draw properties between SED, instance set and
+> physics object, and its use of `Render_DrawMeshes` and `Render_NeverAddToScene` (§9.2;
+> 12 SEDs depend on it; Tessera's rule is a Decision).
+
+> **OPEN:** What a failed content-layer test does to a Physics SED's render object in an
+> instanced copy or under a named layer (§4.5.1; the shared world is settled).
+
+Answered in this revision: the bearing of placed objects against the `/loc` heading (§4.4,
+owner item O2); the content-layer defaults and the empty-list case (§4.5.1, owner item O3);
+the meaning of the `vector` field (§7); SEDs without a frame (§4.4).
+
+---
+
+<a id="s14"></a>
+## 14. Corrections to other specs (not edited here)
+
+| Spec | Statement there | Finding (this spec) |
+|---|---|---|
+| `walker.md` §1 (`--content-layers`), §10.2 table N4/N6 note; `tessera-world` layer filter | Active layers default `[1]`; a SED passes when its list names an active layer | Use the test of §4.5.1: lists naming 2 always pass, lists naming 1 pass in the shared world (*I* = 0), named layers only when active. The current filter rejects all 111,047 SEDs whose lists name 2; 3,256 of them are drawable Physics SEDs that the original shows (most of the rest are markers). |
+| `walker.md` §4 (static objects); `tessera-world` placement | SEDs without a frame are skipped (from the earlier §4.4) | Place them at the landblock origin with the identity rotation (§4.4; 24 drawable Physics SEDs). |
+| `landblock.md` §4.8 | Landblock weenies are server-side templates | Per-instance property sets, one per SED IID plus server objects (already corrected by `appearance.md` §7.2; §4.5.2 here); they repeat the SED's content-layer list. |
+| `landblock.md` §6.3 (`UI_Map_ContentLayer`) | Value 1 in 1,873 elements, otherwise named layers | Value 1 is the `InstanceZero` layer label of §4.5.1 (labels only; how the minimap chooses a variant tile was not traced). |
+| `lighting.md` (point lights from Light SEDs) | Light SEDs as placed | The client creates a light object per Light SED only when the SED passes the content-layer test of §4.5.1 (Light SEDs: 73,143 without a list, 16 naming 1, 5 naming 2, 547 named only); the light's cell is 1 (interior) or 0 by the interior flag (§4.8). |
+| `docs/checklists/owner-observations.md` O2, O3, O17 | Observations needed | O2 is answered by BIN (§4.4); a reading is a confirmation only. O3 is answered by BIN for decals, lights, weenie enumeration and the clearance volumes of Physics SEDs (§4.5.1); for the **drawn** objects of Physics SEDs a reading at the confirmation spot of §4.5.1 settles the OPEN there (case a). For O17, figures N4 (layer 0x10000019) and N6 (layer 0x10000536) are Physics SEDs whose lists name only named layers, so they are absent for a character who is not in that phase if that OPEN resolves as the traced paths imply; the O17 reading confirms it. |
+| `appearance.md` §7.1–§7.2 | Corrections to this spec's §4.1 and to `landblock.md` §4.8 | Folded in (§4.1, §4.3, §4.5.2, §9). |
+
+---
+
+<a id="s15"></a>
+## 15. Change log
+
+| Date | Sections | Change | Role |
+|---|---|---|---|
+| 2026-10-04 | all | First version (Review). | Spec writer (dirty room) |
+| 2026-10-05 | header, §0, §1 (BIN and AP sources, E2–E4, E6, E9, E12–E19), §2.1, §3.1–§3.2, new §3.4, §4.1–§4.6, new §4.5.2, §4.8, §5, §6, §7, §9, §10, §11 (ED1, ED3, new ED8–ED9), §12, §13, new §14–§15 | Content-layer labels and test from the client (BIN): layer 2 `All` always shown, layer 1 `InstanceZero` shown in the shared world, named layers only when active (answers O3). Heading rule of placed frames (answers O2). SED reader: place of the 0x200 list (after the property set), defaults of absent fields, SEDs without a frame at the origin, the legacy scale vector, IID bits 24–35 as the instance number. Folded in `appearance.md`'s corrections: what the weenie objects are, per-instance property sets, NPC-like figures. | Spec writer (dirty room) |
+| 2026-10-05 | header, §1 (OBS re-check, BIN second use with questions 5–6, E11 split, new E20–E22), §2.2, §4.4, §4.5.1, §4.8, §7, §9 (new §9.1–§9.2), §11 (ED7), §12, §13 | Repair after review. The draw-suppression precedence, formerly "Reported by analogy", is now a labelled Tessera Decision (E22, §9.2) with an OPEN for the client's rule; the census behind it is extended (no chain or extra-set conflicts; SED and object disagree for 12 SEDs, which are listed) and the drawn counts under the alternative rules are given. New BIN facts: the render node's visibility test (`Render_ServerDraw`, then `Render_Draw`, then drawn; E20) and the content-layer path for Weenie, Physics and PatrolPoint SEDs during landblock loading (E21), with an OPEN for the render side of Physics SEDs and a Decision until then. §2.2 per-region SED counts and records with SEDs filled in. §7 states how the 1,925 distinct scales are counted (f64 rounding; f32 rounding gives 1,935). §4.4 gives the ±1 counts per tolerance (833,084 and 178,174 at 10⁻⁵) and the out-of-square split by cell presence; ED7 states that all 908 exceptions are in landblocks without cells. | Spec writer (dirty room) |

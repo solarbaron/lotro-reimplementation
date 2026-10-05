@@ -64,20 +64,21 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 
 - **Done:** M0 base, M1 asset browser, M2 mesh/material viewer, M3 terrain + world walker
   (offline). M4 characters and animation is verified on Tessera's side (2026-10-05):
-  criteria 1, 3, 5 pass; entity storage decided (`docs/decisions/0008-entity-storage.md`,
+  criteria 1, 3, 4, 5 pass; entity storage decided (`docs/decisions/0008-entity-storage.md`,
   own store). Evidence: the status tables in `docs/ROADMAP.md`.
-- **M4 still open:** criterion 4 (50 animated characters at 60 fps) passed only on a
-  non-reference laptop (RTX 2070 Super Max-Q, 202 fps headless). The owner confirmed the
-  reference machine on 2026-10-05: the GTX 1070 Ti workstation (`docs/perf/reference-machine.md`).
-  It is not available at the moment; run `--crowd 50` there when it is. Criterion 2 fails
-  only the River-hobbit foot height (rows B37–B42 of `docs/checklists/m4-visual.md`), which
-  waits on the leg-slider question in `appearance.md` §6.3 (O9). The owner's informal look on
-  the laptop (2026-10-05) found character positions and heights fine.
+- **Reference machine** (decision 0010): the owner's laptop, i9-10885H with an RTX 2070
+  Super Max-Q. Its M3 baseline and M4 crowd numbers are in `docs/perf/reference-machine.md`.
+  The GTX 1070 Ti workstation is no longer the reference.
+- **M4 still open:** criterion 2 fails only the River-hobbit foot height (rows B37–B42 of
+  `docs/checklists/m4-visual.md`), which waits on the leg-slider question in
+  `appearance.md` §6.3 (O9). The owner looked at it by eye (2026-10-05) and found characters,
+  including the River-hobbit avatar, fine. The client draws figures without bone sliders;
+  only the explorer applies them.
 - **Next:** M5 (UI layouts, skins and Lua plugins), unless the owner wants the open M4 items
   closed first.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
-  M3 reference locations, frame-capture questions from M2, M4 items O8–O17), the
-  reference-machine CPU model. These do not block M5.
+  M3 reference locations, frame-capture questions from M2, M4 items O8–O17). These do not
+  block M5.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review

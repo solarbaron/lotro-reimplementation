@@ -168,3 +168,5 @@ above.
   the owner). The decision rests on a relative comparison, both stores measured on the same
   machine in alternating rounds, so it stands; under the reference-machine rules the absolute
   numbers are indicative, and the same run on the reference machine is still pending.
+  **Update 2026-10-05:** [decision 0010](0010-reference-machine-laptop.md) made this laptop
+  the reference machine, so the numbers above are reference numbers.

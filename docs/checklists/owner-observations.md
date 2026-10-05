@@ -55,9 +55,8 @@ marks the item **done** here.
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O14, O16; criterion 3 (worn and held
-items): O10, O13; the sandbox's static NPCs: O12, O17. The criterion 4 performance run
-on the reference machine is not an observation in the original client; it is listed in the
-M4 status.
+items): O10, O13; the sandbox's static NPCs: O12, O17. Criterion 4 (performance) passed
+on the reference machine and needs no observation.
 
 ---
 

@@ -38,9 +38,9 @@ the data; the comparison with the original client at 20 reference locations awai
 owner's in-game readings. **M4 (characters and animation) is done on Tessera's side for
 most criteria** ([M4 status](docs/ROADMAP.md#m4-status)): every skeleton and clip decodes,
 characters of all 14 playable bodies assemble with worn and held items and play idle, walk
-and run with GPU skinning; still open are the 50-character performance run on the
-reference machine, a spec question about the River-hobbit leg sliders, and the owner's
-comparisons with the original client. Nothing here is playable yet: the walker flies and
+and run with GPU skinning, and 50 of them animate at over 250 fps on the reference machine.
+Still open are a spec question about the River-hobbit leg sliders and the owner's comparisons
+with the original client. Nothing here is playable yet: the walker flies and
 walks over the world offline, with an animated avatar and the NPCs the data places.
 
 | Area | State |
@@ -59,7 +59,7 @@ walks over the world offline, with an animated avatar and the NPCs the data plac
 | Terrain meshing with LODs and seamless normals; `tessera-client` offline world walker (streaming, static objects, area name, map coordinates, `/loc`, minimap, keymap, fly and walk) | done (M3): full-region flight with no frame over 50 ms; crack-free seams over all 390,150 blocks; 20 reference locations match the data (owner's in-game readings pending) |
 | Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
 | Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run; a 48-item worn/held checklist matches; River-hobbit foot height pending a spec question |
-| `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 202 fps (p99 6.8 ms) on a non-reference laptop; reference-machine run pending |
+| `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 257 fps headless (p99 6.6 ms) on the reference machine |
 | UI and plugins, audio, own test server | planned (M5–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 

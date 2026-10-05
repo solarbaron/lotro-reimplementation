@@ -174,8 +174,9 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 
 Machine: Intel i9-10885H (8 cores, 16 threads; 14 asset workers), NVIDIA GeForce RTX 2070
 Super with Max-Q Design (driver 615.71.09), Vulkan, Hyprland (Wayland), release build,
-archives in the page cache. **This is not the GTX 1070 Ti reference machine named for
-ROADMAP M4 exit criterion 4**; the runs below are this machine's. (The M3 rows above name a
+archives in the page cache. This laptop became the reference machine on 2026-10-05
+([decision 0010](../decisions/0010-reference-machine-laptop.md)); the runs below were made
+before that and are superseded by the ones in `docs/perf/reference-machine.md`. (The M3 rows above name a
 GTX 1070 Ti; whether that run was on another machine is not recorded here.)
 
 **Exit criterion 4** (50 animated characters on screen at 60 fps with sampling on
@@ -260,9 +261,12 @@ N5, N6 (a formation of soldiers animated as rig figures, §10.2) and deleted.
 > locomotion playback rate is scaled by ground speed over natural speed (§10.5); whether the
 > original does so is unobserved.
 
-> **OPEN:** M4 exit criterion 4 was measured on an i9-10885H with an RTX 2070 Super Max-Q
-> (§8.1), not on the GTX 1070 Ti reference machine; a run there (`--no-vsync --duration 60
-> --crowd 50`) is still to do.
+M4 exit criterion 4: resolved 2026-10-05. The i9-10885H / RTX 2070 Super Max-Q laptop of
+§8.1 is the reference machine from that date
+([decision 0010](../decisions/0010-reference-machine-laptop.md)). The criterion was re-run
+there on a 1.99.0 release build and passes. The M3 flights were also re-run there as the new
+baseline. Numbers for both are in
+[`docs/perf/reference-machine.md`](../perf/reference-machine.md).
 
 > **OPEN:** Main-thread spikes during the M3 flight: on 2026-10-05 the M3 build itself
 > (commit 65b1b3f) took frames of up to 40 ms on this machine, inside texture uploads of the

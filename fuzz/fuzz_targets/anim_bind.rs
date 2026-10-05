@@ -25,9 +25,9 @@ use std::sync::Arc;
 use libfuzzer_sys::fuzz_target;
 use tessera_anim::glam::Mat4;
 use tessera_anim::{
-    Animator, BakedClip, BoneSliders, BoundClip, CrossFade, EvalScratch, MAX_LAYER_CLIPS, Playback,
-    RootMotionMode, Skeleton, SliderChannels, Source, SpeedBlend, Wrap, evaluate, motion_between,
-    skinning_matrices,
+    Animator, BakedClip, BindDeformation, BoneSliders, BoundClip, CrossFade, DeformClip,
+    EvalScratch, MAX_LAYER_CLIPS, Playback, RootMotionMode, Skeleton, SliderChannels, Source,
+    SpeedBlend, Wrap, evaluate, motion_between, skinning_matrices,
 };
 use tessera_havok::testkit::{
     AnimationKindSpec, AnimationSpec, BoneSpec, ByteSource, ClipRecordSpec, ReferenceFrameSpec,
@@ -138,11 +138,26 @@ fn play(skeleton: Skeleton, clip: Clip, src: &mut ByteSource<'_>) {
                 &targets,
             );
         }
-        for op in sliders.ops() {
-            assert!(usize::from(op.bone) < n, "slider bones are validated");
+        for e in sliders.entries() {
+            assert!(usize::from(e.bone) < n, "slider bones are validated");
         }
         sliders.apply(&mut local).expect("sized buffer");
         let _ = skeleton.compose(&local, &mut model);
+        // Held playback and the bind-space deformation (appearance.md §6.4).
+        let held = Playback::held(bound.clone(), src.f32());
+        assert!(held.clip_time().is_finite());
+        let deform = [DeformClip {
+            clip: bound.clone(),
+            fraction: src.f32(),
+            use_bone_weights: src.u8() & 1 == 1,
+        }];
+        if let Ok(d) = BindDeformation::new(&skeleton, &deform, Some(&sliders)) {
+            let mut pos = [[src.f32(), src.f32(), src.f32()]; 2];
+            let mut nrm = [[src.f32(), src.f32(), src.f32()]; 2];
+            let joints = [[src.u8(), src.u8(), 0, 0], [src.u8(), 0, 0, 0]];
+            let weights = [[src.f32(), src.f32(), 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
+            d.deform(&mut pos, Some(&mut nrm), None, &joints, &weights);
+        }
     }
 }
 

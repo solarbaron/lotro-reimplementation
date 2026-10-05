@@ -7,10 +7,10 @@
 > [M1 status](#m1-status), [M2 status](#m2-status)). M3 was verified on 2026-10-04
 > ([M3 status](#m3-status)): every criterion passes on Tessera's side; criteria 4 and 5
 > wait only for the owner's readings in the original client. M4 was verified on 2026-10-05
-> ([M4 status](#m4-status)): criteria 1, 3, 4 and 5 pass on Tessera's side (criterion 4 on
-> the reference machine, the owner's laptop, [decision 0010](decisions/0010-reference-machine-laptop.md));
-> criterion 2 waits on a spec question for the two River-hobbit bodies. M5 is next; the
-> remaining M4 items are listed in its status. Milestones are ordered by
+> ([M4 status](#m4-status)): every criterion passes on Tessera's side (criterion 4 on
+> the reference machine, the owner's laptop, [decision 0010](decisions/0010-reference-machine-laptop.md);
+> criterion 2 since the River-hobbit fix of the same day); the remaining owner comparisons
+> are listed in its status. M5 is next. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -512,17 +512,16 @@ motion), `appearance.md`, `setup.md` (complete), `script-table.md` (animation no
 **Status (verified 2026-10-05 against the owner's install, release builds, on the owner's
 laptop with an i9-10885H and an RTX 2070 Super Max-Q / Vulkan, which is the reference
 machine from 2026-10-05, [decision 0010](decisions/0010-reference-machine-laptop.md)):
-criteria 1, 3 (data side), 4 and 5 pass. Criterion 2 passes for 12 of 14 bodies; the two
-River-hobbit bodies wait on a spec question.** Every deliverable exists: `tessera-havok`,
+criteria 1, 3 (data side), 4 and 5 pass. Criterion 2 passes for all 14 bodies since the
+River-hobbit fix of 2026-10-05 (below).** Every deliverable exists: `tessera-havok`,
 `tessera-anim`, the `tessera-formats` appearance, item, avatar and script-table decoders
 with the clip resolver, `tessera-mesh::assembly`, GPU skinning in `tessera-render`, the
 explorer's character viewer and animation browser, the walker's animated avatar, placed
 NPCs and `--crowd`, and decision [0008](decisions/0008-entity-storage.md) (own entity store,
 `bevy_ecs` not adopted). Specs used: `havok-data.md`, `skeleton-anim.md`, `appearance.md`,
 `setup.md` (parts 1 and 2), `script-table.md`, plus `mesh.md` §6.2, `render.md` §2.4 and
-`walker.md` §10. No `> **OPEN:**` item blocks a criterion except the River-hobbit leg
-sliders (below); the others carry a Tessera Decision or wait on owner observations
-O8–O17 in [owner-observations.md](checklists/owner-observations.md). The four new M4 specs
+`walker.md` §10. No `> **OPEN:**` item blocks a criterion; each carries a Tessera
+Decision or waits on owner observations O8–O17 in [owner-observations.md](checklists/owner-observations.md). The four new M4 specs
 (`havok-data.md`, `skeleton-anim.md`, `appearance.md`, `script-table.md`) are still in
 Review: no spec review is recorded for them yet. `script-table.md`'s `BIN` facts come from a
 disassembly of the client's script-table node classes, which the owner authorised
@@ -532,7 +531,7 @@ under `docs/CLEAN_ROOM.md` §10, limited to that question and client build).
 | # | | Evidence |
 |---|---|---|
 | 1 | ✅ | `cargo test --release -p tessera-havok --test real_data`: skeleton records (setups 0x04) 28,555 / 28,555 decode (53,370 bones, at most 248); clip records 25,395 / 25,395 decode (100.000 %; 24,800 spline-compressed, 595 interleaved, 31,294 blocks; 5,602 with annotation tracks, 110 leading and 104 embedded reference frames), every clip sampled with a largest quaternion length error of 1.19 × 10⁻⁷; 0 in each of the 27 failure categories of `havok-data.md` §9.3. `tessera-anim` `real_data`: all 28,555 skeletons build; 25,393 clips bind and sample (the other 2 have no skeleton with their track count, `skeleton-anim.md` §3.3), 0 non-finite matrices; reference-pose skinning of all 2,625 skinned setup submeshes (2.5 M vertices) reproduces the stored vertices (largest error 4.4 mm from the stored weight sums, 3.1 × 10⁻⁵ m with weights renormalised; 0 bone-index or influence-list violations). |
-| 2 | ⚠️ 36 / 42 rows; data-side done, owner observation pending | Rows B1–B42 of [m4-visual.md](checklists/m4-visual.md): all 14 bodies (11 setups) assemble, and their idle, walk and run clips (chosen by the script tables, equal to `script-table.md` §8.3 for all 14, `script_table_real_data`) play through `tessera-anim` on the workers and GPU skinning. The 42 sheets (`tessera-explorer --sheet … --character <body> --clip idle\|walk\|run`, 4 play times × 2 angles each) were re-rendered and viewed in this verification: no stretched, exploding or detached geometry, seams closed, no part left in the bind pose. The 6 River-hobbit rows (B37–B42) fail only the checklist's foot-contact check: with the two hidden leg-scale sliders applied as the `appearance.md` §6.3 Decision says, the feet float about 0.09 m (lowest bone 0.104 m against 0.015–0.03 m on the other bodies; skinning itself is clean). How those sliders apply is an open spec question (checklist note 1, O9). Owner look, 2026-10-05 (laptop, by eye, no measurements): character positions and heights look fine ([m4-visual.md](checklists/m4-visual.md) note 7). Comparison with the original: O8, O9, O14, O16. |
+| 2 | ✅ data-side, owner observation pending | Rows B1–B42 of [m4-visual.md](checklists/m4-visual.md): all 14 bodies (11 setups) assemble, and their idle, walk and run clips (chosen by the script tables, equal to `script-table.md` §8.3 for all 14, `script_table_real_data`) play through `tessera-anim` on the workers and GPU skinning. The 42 sheets (`tessera-explorer --sheet … --character <body> --clip idle\|walk\|run`, 4 play times × 2 angles each) were re-rendered and viewed in this verification: no stretched, exploding or detached geometry, seams closed, no part left in the bind pose. **42 / 42 rows pass.** The 6 River-hobbit rows (B37–B42) first failed on foot contact (feet about 0.09 m up). The owner then saw the River-hobbit idle in the client pulse taller and shorter in a loop (2026-10-05): the layer-110 `scale_blend` clip was played looping. Fixed the same day by the shared client and explorer figure path (`bind_shape`/`figure_shape`): that clip is held at the fraction `AC_Avatar_Height`, the body-shape deformer clip at `AC_BoneScale_Test` (bind-space deformation), and slider bytes follow `appearance.md` §6.3 (checklist note 1). Verified on the real install (release, `TESSERA_GAME_DIR` set): `figure_shape_real_data` 5 / 5 pass (client path, 33.3 s of idle at 0.05 s steps): River-hobbit M idle changes 0.0032 m on the root chain and 0.0062 m on the held-clip bones (0.0715 m looped as before), F 0.0032 / 0.0071 m (0.0712 m); idle lowest bone 0.011 m (M) and 0.008–0.009 m (F), like the other bodies (0.015–0.03 m, `other_bodies_are_unchanged` passes); standing heights at the ends and middle of each height control match the `appearance.md` §6.5 table exactly (M 1.231–1.300 m, F 1.200–1.245 m, lowest vertex within 0.01 m of the ground); explorer side-view sheets viewed, no pulsing (head-top row changes ≤ 1 px), feet flat, skinning clean. Not blocking: River-hobbit M's lowest skinned vertex reaches −0.055 m while walking (about −0.02 m on the other bodies; `appearance.md` §6.5 OPEN). Owner look, 2026-10-05 (laptop, by eye, no measurements): character positions and heights look fine ([m4-visual.md](checklists/m4-visual.md) note 7). Comparison with the original: O8, O9, O14, O16. |
 | 3 | ✅ data-side, owner observation pending | `cargo test --release -p tessera-mesh --test assembly_real_data`: 48 distinct items over 27 worn, 9 layered, 27 held and 25 stowed rows on the checklist's bodies, every expected winner, hidden slot, priority, holding location and bone matches; the 7 static NPC spots and all 775 placed weenie objects assemble. Every W, L and H row was re-rendered and viewed (worn parts replace and hide the expected slots, held items sit at their location's bone and follow it; stowed one-handed weapons at the hip, two-handed weapons, bows and shields on the back). This verification fixed `ItemVisual::equipment_category`, which dropped category bits above 31, so the medium shield (H21) now stows on the back like the other shields. The grip axis of in-hand items (checklist note 3) and the in-world rest positions are open; comparison with the original: O10, O13. |
 | 4 | ✅ | On the reference machine ([decision 0010](decisions/0010-reference-machine-laptop.md)), release build of `a47af81` with rustc 1.99.0, 2026-10-05, frame logs re-computed independently: `tessera-client --headless --unpaced --duration 60 --crowd 50 --heading 30 --size 1280x720` gave 51 animated characters (the crowd of all 14 bodies standing, walking and running, plus the avatar), all 51 drawn in every frame, 15,412 frames in 60 s, 256.8 fps mean, p50 3.7 ms, p99 6.6 ms, longest frame 12.0 ms, none over 16.7 ms; animation main thread 0.246 ms per frame, 82.2 % of the animation work on the asset workers. Windowed with vsync off (`--no-vsync --crowd-spacing 2 --crowd-ahead 20`, surface 1430 × 790): 350.5 fps mean, p99 4.2 ms, longest 9.6 ms, 82.8 % on workers. Details and the M3 re-baseline on this machine: [reference-machine.md](perf/reference-machine.md). |
 | 5 | ✅ | `docs/specs/havok-data.md` §11 kinds K1–K13 map to the four Havok targets (`havok_tagfile` K1–K5, `havok_skeleton` K6, `havok_clip_record` K7, K8, K10–K13, `havok_spline_block` K9, K10; table in `crates/havok/src/lib.rs`); `crates/havok/tests/categories.rs` produces each of the 27 failure categories from synthetic input. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer) on all 15 new M4 targets plus `world_bundle`, `net_sandbox_world` and `mesh_decode`: no finding; Havok targets 0.09 M (`havok_clip_record`) to 3.9 M (`havok_spline_block`) executions, the others 0.15 M–11.0 M. |
@@ -555,8 +554,12 @@ against the surface instead of falling back to `Fifo` (the client's `--no-vsync`
 432-figure spot did not settle within 60 s in a debug build); `fuzz/README.md` rows for the
 M4 targets; ARCHITECTURE §11 brought up to the M4 specs.
 
-Remaining for M4 to close: the River-hobbit leg slider question (rows B37–B42); owner
-observations O8–O17.
+Fixed after this verification (2026-10-05, on the owner's report that the River-hobbit idle
+pulsed in the client): River-hobbit height and body shape through held clips and bind-space
+deformation, one figure path for the client and the explorer (criterion 2, rows B37–B42).
+
+Remaining for M4 to close: owner observations O8–O17 (for criterion 2: O8, O9, O14, O16,
+and the River-hobbit M walking toe dip of `appearance.md` §6.5 OPEN).
 
 ---
 

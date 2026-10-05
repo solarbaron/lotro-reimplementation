@@ -11,6 +11,10 @@ publish.workspace = true
 [dependencies]
 tessera-havok.workspace = true
 tessera-assets.workspace = true
+# A figure's shape inputs (held clips, body shape, sliders) come from the assembly
+# (`figure` module, shared by the client and the explorer).
+tessera-formats.workspace = true
+tessera-mesh.workspace = true
 glam = "0.33"
 thiserror.workspace = true
 tracing.workspace = true
@@ -19,8 +23,6 @@ tracing.workspace = true
 proptest.workspace = true
 # Real-data tests (gated on TESSERA_GAME_DIR) read setups, clips and meshes of the install.
 tessera-dat.workspace = true
-tessera-formats.workspace = true
-tessera-mesh.workspace = true
 
 [[example]]
 name = "anim_bench"

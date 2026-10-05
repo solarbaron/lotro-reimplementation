@@ -9,10 +9,10 @@ use std::time::Duration;
 use common::*;
 use glam::{Quat, Vec3};
 use tessera_anim::{
-    AnimError, AnimationScheduler, Animator, BakeCache, BakedClip, BoneSliders, BoundClip,
-    CrossFade, EvalScratch, MAX_LAYER_CLIPS, Playback, RootMotionMode, SchedulerConfig,
-    SliderChannels, Source, SpeedBlend, SubmitError, Submitted, Wrap, evaluate, motion_at,
-    motion_between,
+    AnimError, AnimationScheduler, Animator, BakeCache, BakedClip, BindDeformation, BoneSliders,
+    BoundClip, CrossFade, EvalScratch, MAX_LAYER_CLIPS, MIN_BONE_WEIGHT, Playback, RootMotionMode,
+    SchedulerConfig, SliderChannels, Source, SpeedBlend, SubmitError, Submitted, Wrap, evaluate,
+    motion_at, motion_between, quantise_weight,
 };
 use tessera_assets::{CancelToken, PoolConfig, Priority, WorkerPool};
 use tessera_havok::Transform;
@@ -209,7 +209,8 @@ fn interrupted_fade_is_continuous() {
 
 /// A fade chain whose oldest source contributes nothing (a speed blend with a NaN
 /// parameter) scaled later fades by the first fade's weight, and the layer popped to full
-/// weight when the newest fade completed.
+/// weight when the newest fade completed. Weights follow the layered-weight rule of
+/// `skeleton-anim.md` §6.6.
 #[test]
 fn fade_over_empty_source_keeps_later_weights() {
     let (s, [_, b, c]) = fade_clips();
@@ -233,8 +234,15 @@ fn fade_over_empty_source_keeps_later_weights() {
         anim.set_source(0, Source::CrossFade(outer)).unwrap();
         bone1_angle(&anim)
     };
-    // (1 - w2) * (0.9 * reference + 0.1 * 1 rad) + w2 * 2 rad, up to nlerp error.
-    let expect = |w2: f32| (1.0 - w2) * (0.9 * reference + 0.1) + w2 * 2.0;
+    // The chain gives b (1 rad) weight 0.1 (1 − w2) and c (2 rad) weight w2; with nothing
+    // below, the layered-weight rule (`skeleton-anim.md` §6.6) quantises them and fills a
+    // total below 0.1 with the reference pose. Up to nlerp error.
+    let expect = |w2: f32| {
+        let wb = quantise_weight(0.1 * (1.0 - w2));
+        let wc = quantise_weight(w2);
+        let fill = (MIN_BONE_WEIGHT - wb - wc).max(0.0);
+        (wb + 2.0 * wc + fill * reference) / (wb + wc + fill)
+    };
     for w2 in [0.0f32, 0.5, 0.9, 0.999] {
         let got = state(w2);
         assert!(
@@ -373,9 +381,11 @@ fn pool_refusals_are_counted_separately() {
     assert_eq!(sched.stats().refused, 6);
 }
 
-/// Finding 11: bone sliders apply between sampling and composing on the workers.
+/// Finding 11, revised (`appearance.md` §6.4, `skeleton-anim.md` §10 step 3): bone sliders
+/// never touch the animated pose; they shape the deformation pose of the bind-space
+/// deformation instead.
 #[test]
-fn scheduler_applies_bone_sliders() {
+fn sliders_deform_in_bind_space_not_the_animated_pose() {
     let pool = WorkerPool::new(PoolConfig {
         workers: 2,
         ..PoolConfig::default()
@@ -397,9 +407,6 @@ fn scheduler_applies_bone_sliders() {
             &[(12, true), (13, false)],
         )
         .unwrap();
-    sched
-        .set_bone_sliders(id, Some(Arc::new(sliders.clone())))
-        .unwrap();
     let clip = bind(&spline_clip(11, 16, 10.0, cyclic(&s, 11, 0.2)), &s);
     let mut anim = Animator::new(s.clone());
     anim.play(0, Playback::new(clip, Wrap::Loop), 0.0, false)
@@ -412,29 +419,25 @@ fn scheduler_applies_bone_sliders() {
 
     let mut snap = Vec::new();
     anim.snapshot(&mut snap);
-    let mut expect = s.reference_pose();
-    evaluate(&s, &snap, &mut EvalScratch::new(), &mut expect).unwrap();
-    let plain = expect.clone();
-    sliders.apply(&mut expect).unwrap();
-    let (dt, dr, ds) = pose_diff(&pose.local, &expect);
+    let mut plain = s.reference_pose();
+    evaluate(&s, &snap, &mut EvalScratch::new(), &mut plain).unwrap();
+    let (dt, dr, ds) = pose_diff(&pose.local, &plain);
     assert!(dt < 1e-6 && dr < 1e-5 && ds < 1e-6, "{dt} {dr} {ds}");
-    for k in 0..3 {
-        assert!((pose.local[7].scale[k] - plain[7].scale[k] * 1.1).abs() < 1e-6);
-    }
-    assert!((pose.local[12].translation[0] - (plain[12].translation[0] - 0.003)).abs() < 1e-6);
-    assert!((pose.local[13].translation[0] - (plain[13].translation[0] + 0.003)).abs() < 1e-6);
 
-    // Sliders of another rig are refused; clearing them restores the plain pose.
+    // The deformation pose carries the sliders.
+    let d = BindDeformation::new(&s, &[], Some(&sliders)).unwrap();
+    let mut expect = s.reference_pose();
+    sliders.apply(&mut expect).unwrap();
+    assert_eq!(d.local_pose(), expect.as_slice());
+    for k in 0..3 {
+        assert!((d.local_pose()[7].scale[k] - 1.1).abs() < 1e-6);
+    }
+    // Sliders of another rig are refused.
     let other = skeleton(&tree_spec(17));
     assert!(matches!(
-        sched.set_bone_sliders(id, Some(Arc::new(BoneSliders::new(&other)))),
+        BindDeformation::new(&s, &[], Some(&BoneSliders::new(&other))),
         Err(AnimError::Mismatch { .. })
     ));
-    sched.set_bone_sliders(id, None).unwrap();
-    sched.submit(id, &anim, 2).unwrap();
-    sched.collect_all(WAIT);
-    let (dt, dr, ds) = pose_diff(&sched.pose(id).unwrap().local, &plain);
-    assert!(dt < 1e-6 && dr < 1e-5 && ds < 1e-6);
 }
 
 /// Finding 7: after the budget shrank below the per-clip limit, a clip between the two was

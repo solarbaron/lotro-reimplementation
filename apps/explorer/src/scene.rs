@@ -1958,7 +1958,7 @@ pub(crate) fn build_mesh_part(
     req: SceneRequest,
     budget: &mut GeometryBudget,
 ) -> ScenePart {
-    build_part(ctx, did, req, budget, None)
+    build_part(ctx, did, req, budget, None, None)
 }
 
 /// [`build_mesh_part`], skinned when `skin_bones` is the bone count of the figure's
@@ -1973,6 +1973,7 @@ pub(crate) fn build_part(
     req: SceneRequest,
     budget: &mut GeometryBudget,
     skin_bones: Option<usize>,
+    deform: Option<&tessera_anim::BindDeformation>,
 ) -> ScenePart {
     let mut part = ScenePart {
         mesh: did.0,
@@ -2083,7 +2084,7 @@ pub(crate) fn build_part(
         vertex_colors: req.vertex_colors,
         uv_set: 0,
     };
-    let data = level_mesh_data(&geo, &options, format!("{did} level {}", part.level));
+    let mut data = level_mesh_data(&geo, &options, format!("{did} level {}", part.level));
     let skin = skin_bones.and_then(|bones| {
         if !geo.parts.iter().any(|p| p.skinned) {
             return None;
@@ -2106,7 +2107,43 @@ pub(crate) fn build_part(
             }
         }
     });
+    let ranges: Vec<(usize, usize)> = geo
+        .parts
+        .iter()
+        .map(|p| (p.base_vertex as usize, p.vertex_count as usize))
+        .collect();
     drop(geo);
+    // The figure's bind-space deformation (`appearance.md` §6.4 step 4), shared with the
+    // client: skinned vertices are deformed once, then animated as usual.
+    if let (Some(d), Some(sk)) = (deform, &skin) {
+        d.deform(
+            &mut data.positions,
+            data.normals.as_deref_mut(),
+            data.tangents.as_deref_mut(),
+            &sk.joints,
+            &sk.weights,
+        );
+        // The stored boxes describe the undeformed mesh: the scene's bounds (framing, the
+        // sheet's bind-pose top) come from the deformed vertices.
+        for (s, &(first, count)) in part.submeshes.iter_mut().zip(&ranges) {
+            let verts = data
+                .positions
+                .get(first..first.saturating_add(count))
+                .unwrap_or(&[]);
+            if let Some(b) = positions_aabb(verts) {
+                s.aabb = Some(b);
+            }
+        }
+        if let Some((lo, hi)) = positions_aabb(&data.positions) {
+            let c = [0, 1, 2].map(|i| (lo[i] + hi[i]) * 0.5);
+            let r = (0..3)
+                .map(|i| (hi[i] - lo[i]) * 0.5)
+                .map(|h| h * h)
+                .sum::<f32>()
+                .sqrt();
+            part.sphere = Some((c, r));
+        }
+    }
     let prepared = match &skin {
         Some(sk) => data.prepare_skinned(sk, &MeshConfig::default()),
         None => data.prepare(&MeshConfig::default()),
@@ -2119,6 +2156,19 @@ pub(crate) fn build_part(
         Err(e) => part.error = Some(format!("renderer refused the level: {e}")),
     }
     part
+}
+
+/// The box of finite `positions` (`None` without one).
+fn positions_aabb(positions: &[[f32; 3]]) -> Option<([f32; 3], [f32; 3])> {
+    let mut out: Option<([f32; 3], [f32; 3])> = None;
+    for p in positions.iter().filter(|p| p.iter().all(|v| v.is_finite())) {
+        let b = out.get_or_insert((*p, *p));
+        for (i, &v) in p.iter().enumerate() {
+            b.0[i] = b.0[i].min(v);
+            b.1[i] = b.1[i].max(v);
+        }
+    }
+    out
 }
 
 /// A built mesh part placed in the scene as `spec`: its caption, and each draw's

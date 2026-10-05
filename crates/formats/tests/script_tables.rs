@@ -1934,3 +1934,268 @@ fn unusual_field_check_is_linear_in_the_record_size() {
         Some("property-set key without a script")
     );
 }
+
+// --- held clips and deformers (§6.7–§6.9) ---
+
+const PID_MANUAL_UPDATE: u32 = 0x1000_0300;
+const PID_MANUAL_TIME: u32 = 0x1000_0301;
+const PID_HEIGHT: u32 = 0x1000_0302;
+const PID_BONE_SCALE: u32 = 0x1000_0303;
+const PID_DEFORM_TIME: u32 = 0x1000_0304;
+const PID_SLIDER_VALUES: u32 = 0x1000_0305;
+const PID_SLIDER_ARRAY: u32 = 0x1000_0306;
+
+fn shape_schema(pid: u32) -> Option<PropertyType> {
+    match pid {
+        PID_MANUAL_TIME | PID_HEIGHT | PID_BONE_SCALE | PID_DEFORM_TIME => {
+            Some(PropertyType::Float)
+        }
+        PID_MANUAL_UPDATE => Some(PropertyType::Bool),
+        PID_SLIDER_VALUES | PID_SLIDER_ARRAY => Some(PropertyType::String),
+        p => schema(p),
+    }
+}
+
+/// A held animation node (`ManualUpdate` 1) on layer 110, `LoopForever` as given.
+fn held_anim(id: u32, clip: u32, loop_forever: bool, manual_time: f32) -> Vec<u8> {
+    let data = B::new()
+        .u32(clip)
+        .u8(u8::from(loop_forever))
+        .u32(1)
+        .f32(0.1)
+        .f32(0.1)
+        .u32(110)
+        .u8(1)
+        .u8(1) // ManualUpdate
+        .f32(manual_time)
+        .f32(0.0)
+        .f32(1.0)
+        .u8(0)
+        .f32(1.0)
+        .f32(1.0)
+        .f32(0.0)
+        .f32(0.0)
+        .f32(0.0)
+        .u8(0)
+        .u8(1)
+        .u8(0);
+    node(
+        36,
+        data,
+        base_full(id, 1.0, &[(PID_MANUAL_TIME, PID_HEIGHT)]),
+        &[],
+    )
+}
+
+fn shape_world() -> HashMap<Did, Vec<u8>> {
+    let mesh_deformer = node(
+        18,
+        B::new().u32(0x0500_0E43).f32(0.0).u8(1),
+        base_full(20, 1.0, &[(PID_DEFORM_TIME, PID_BONE_SCALE)]),
+        &[],
+    );
+    let slider_deformer = node(
+        81,
+        B::new().pascal("8000").u32(0x7800_0001),
+        base_full(21, 1.0, &[(PID_SLIDER_VALUES, PID_SLIDER_ARRAY)]),
+        &[],
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![
+                    anim(1, CLIP_IDLE, 10, 0.0, &[]),
+                    held_anim(2, 0x0500_8E76, true, 0.0),
+                    mesh_deformer,
+                    slider_deformer,
+                ],
+            )],
+        ),
+    );
+    m
+}
+
+fn shape_vocab() -> ScriptVocabulary {
+    let mut v = vocab();
+    v.animation.manual_update = Some(PID_MANUAL_UPDATE);
+    v.animation.manual_time = Some(PID_MANUAL_TIME);
+    v.slider_values = Some(PID_SLIDER_VALUES);
+    v
+}
+
+#[test]
+fn held_clips_and_deformers_take_driven_values() {
+    use tessera_formats::script_table::resolve::DeformerCandidate;
+    let m = shape_world();
+    let mut r = ClipResolver::new(&shape_schema, shape_vocab(), fetch(&m));
+    let mut e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    e.properties.set(PID_HEIGHT, PropertyValue::Float(0.3));
+    e.properties.set(PID_BONE_SCALE, PropertyValue::Float(0.85));
+    e.properties
+        .set(PID_SLIDER_ARRAY, PropertyValue::String("80ff".into()));
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    let held = res.held();
+    assert_eq!(held.len(), 1);
+    let h = held[0];
+    assert_eq!((h.clip, h.layer), (Did(0x0500_8E76), 110));
+    assert!(h.is_held() && h.loops());
+    assert!((h.manual_time - 0.3).abs() < 1e-6);
+    assert_eq!(h.manual_time_source, Some(PID_HEIGHT));
+    assert!((h.held_fraction() - 0.3).abs() < 1e-6);
+    // The idle clip is not held.
+    assert!(
+        res.candidates
+            .iter()
+            .any(|c| c.clip == Did(CLIP_IDLE) && !c.is_held())
+    );
+    assert_eq!(res.deformers.len(), 2);
+    match &res.deformers[0] {
+        DeformerCandidate::Mesh {
+            clip,
+            time,
+            time_source,
+            use_bone_weights,
+            ..
+        } => {
+            assert_eq!(*clip, Did(0x0500_0E43));
+            assert!((time - 0.85).abs() < 1e-6);
+            assert_eq!(*time_source, Some(PID_BONE_SCALE));
+            assert!(use_bone_weights);
+        }
+        d => panic!("{d:?}"),
+    }
+    match &res.deformers[1] {
+        DeformerCandidate::Slider {
+            definitions,
+            values,
+            values_source,
+            ..
+        } => {
+            assert_eq!(*definitions, Did(0x7800_0001));
+            assert_eq!(values.as_deref(), Some("80ff"));
+            assert_eq!(*values_source, Some(PID_SLIDER_ARRAY));
+        }
+        d => panic!("{d:?}"),
+    }
+    // Without the driving properties: the node's own time, no value string (the caller's
+    // Decision for an absent property applies, appearance.md §6.3).
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let res = r.resolve(&e, MotionState::Walk).unwrap();
+    assert_eq!(res.held()[0].held_fraction(), 0.0);
+    assert!(matches!(
+        &res.deformers[1],
+        DeformerCandidate::Slider { values: None, .. }
+    ));
+}
+
+/// `script-table.md` §6.7 worked example: clip time = fraction × 2.0 s.
+#[test]
+fn held_fraction_example_6_7() {
+    use tessera_formats::script_table::resolve::held_fraction;
+    let rows: [(f32, f32, f32, f32); 5] = [
+        (0.25, 0.5, 0.5, 0.5),
+        (0.95, 1.9, 1.9, 1.9),
+        (1.0, 0.0, 2.0, 0.0),
+        (1.3, 0.6, 2.0, 0.6),
+        (-0.2, 1.6, 0.0, 0.0),
+    ];
+    for (v, looping, once, twice) in rows {
+        let t = |lf: bool, count: i32| held_fraction(v, lf, count) * 2.0;
+        assert!(
+            (t(true, 1) - looping).abs() < 1e-5,
+            "{v} looping: {}",
+            t(true, 1)
+        );
+        assert!(
+            (t(false, 1) - once).abs() < 1e-5,
+            "{v} once: {}",
+            t(false, 1)
+        );
+        assert!(
+            (t(false, 2) - twice).abs() < 1e-5,
+            "{v} twice: {}",
+            t(false, 2)
+        );
+    }
+    assert_eq!(held_fraction(f32::NAN, true, 1), 0.0);
+    assert_eq!(held_fraction(f32::INFINITY, false, 1), 0.0);
+    assert!(held_fraction(-1e-9, true, 1) < 1.0);
+}
+
+/// Hostile input: many SliderMeshDeformer nodes with long value strings. Every candidate
+/// keeps its own copy of the string, so the copies are charged to the work budget
+/// ([`ResolveLimits::max_work`]): what the candidates hold stays within it.
+#[test]
+fn slider_strings_are_charged_to_the_budget() {
+    use tessera_formats::script_table::resolve::DeformerCandidate;
+    let long = "8".repeat(20_000);
+    let stored = |id: u32| {
+        node(
+            81,
+            B::new().pascal(&long).u32(0x7800_0001),
+            base_full(id, 1.0, &[]),
+            &[],
+        )
+    };
+    let driven = |id: u32| {
+        node(
+            81,
+            B::new().pascal("80").u32(0x7800_0001),
+            base_full(id, 1.0, &[(PID_SLIDER_VALUES, PID_SLIDER_ARRAY)]),
+            &[],
+        )
+    };
+    let held_bytes = |res: &tessera_formats::script_table::resolve::ClipResolution| -> usize {
+        res.deformers
+            .iter()
+            .map(|d| match d {
+                DeformerCandidate::Slider { values, .. } => values.as_ref().map_or(0, String::len),
+                _ => 0,
+            })
+            .sum()
+    };
+    let budget = 1_000_000u64;
+    for nodes in [
+        (0..200).map(stored).collect::<Vec<_>>(),
+        (0..200).map(driven).collect::<Vec<_>>(),
+    ] {
+        let mut m = HashMap::new();
+        m.insert(Did(CLASS), table(2, &[], &[(STARTUP, nodes)]));
+        let mut e = EntityScripts {
+            class_table: Some(Did(CLASS)),
+            ..EntityScripts::default()
+        };
+        e.properties
+            .set(PID_SLIDER_ARRAY, PropertyValue::String(long.clone()));
+        let mut r =
+            ClipResolver::new(&shape_schema, shape_vocab(), fetch(&m)).with_limits(ResolveLimits {
+                max_work: budget,
+                ..ResolveLimits::default()
+            });
+        let res = r.resolve(&e, MotionState::Idle).unwrap();
+        assert!(res.issues.contains(&ResolveIssue::Limit("max_work")));
+        let held = held_bytes(&res);
+        assert!(held as u64 <= budget, "{held}");
+        assert!(res.deformers.len() < 50, "{}", res.deformers.len());
+        // An unlimited budget registers them all.
+        let mut r =
+            ClipResolver::new(&shape_schema, shape_vocab(), fetch(&m)).with_limits(ResolveLimits {
+                max_work: u64::MAX,
+                ..ResolveLimits::default()
+            });
+        let res = r.resolve(&e, MotionState::Idle).unwrap();
+        assert_eq!(res.deformers.len(), 200);
+        assert_eq!(held_bytes(&res), 200 * 20_000);
+    }
+}

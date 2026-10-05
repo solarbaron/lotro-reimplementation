@@ -4,9 +4,9 @@
 //!
 //! Each frame the main thread first [`collects`](AnimationScheduler::collect) whatever
 //! sampling jobs finished (never blocking), then [`submits`](AnimationScheduler::submit)
-//! one job per animated instance. A job evaluates the instance's layer snapshot, applies
-//! the instance's bone sliders ([`BoneSliders`], `appearance.md` §6.3) to the local pose,
-//! composes model transforms, computes the skinning matrices and the holding-location
+//! one job per animated instance. A job evaluates the instance's layer snapshot, composes
+//! model transforms (bone sliders and body shape are not applied here: they deform the
+//! meshes in bind space, [`crate::BindDeformation`], `appearance.md` §6.4), computes the skinning matrices and the holding-location
 //! transforms, and hands its buffers back through a channel.
 //!
 //! Every instance owns two buffer sets (double buffering): the **front** set holds the
@@ -34,7 +34,6 @@ use crate::error::{AnimError, Result};
 use crate::player::{Animator, EvalScratch, LayerSnapshot, evaluate};
 use crate::skeleton::Skeleton;
 use crate::skin::skinning_matrices;
-use crate::slider::BoneSliders;
 
 /// Identifies an animated instance registered with an [`AnimationScheduler`]. Never
 /// reused within one scheduler.
@@ -97,7 +96,6 @@ enum Msg {
 struct JobInputs {
     skeleton: Arc<Skeleton>,
     attach: Option<Arc<AttachTable>>,
-    sliders: Option<Arc<BoneSliders>>,
 }
 
 /// Owns a job's buffers; sends them back exactly once, as completed or as dropped. The
@@ -152,12 +150,6 @@ fn sample_pose(inputs: &JobInputs, b: &mut Buffers) {
             SampleReport::default()
         }
     };
-    // Sliders shape the figure, so they apply to the fallback reference pose too.
-    if let Some(s) = &inputs.sliders
-        && let Err(e) = s.apply(&mut out.local)
-    {
-        out.error.get_or_insert(e);
-    }
     let composed = skeleton
         .compose(&out.local, &mut out.model)
         .and_then(|()| skinning_matrices(skeleton, &out.model, &mut out.skin));
@@ -185,7 +177,6 @@ impl Drop for JobGuard {
 struct Slot {
     skeleton: Arc<Skeleton>,
     attach: Option<Arc<AttachTable>>,
-    sliders: Option<Arc<BoneSliders>>,
     /// The pool refused the last job; its buffers come back as a dropped message that is
     /// not a cancellation.
     refused_pending: bool,
@@ -333,7 +324,6 @@ impl AnimationScheduler {
             Slot {
                 skeleton,
                 attach,
-                sliders: None,
                 refused_pending: false,
                 front,
                 has_result: false,
@@ -358,32 +348,6 @@ impl AnimationScheduler {
             }
             None => false,
         }
-    }
-
-    /// Sets (or with `None` clears) the bone sliders applied to the instance's local pose
-    /// on every job from the next submit on (`appearance.md` §6.3).
-    ///
-    /// # Errors
-    ///
-    /// [`AnimError::UnknownInstance`] for an unknown id, [`AnimError::Mismatch`] when the
-    /// sliders were built for a different skeleton rig.
-    pub fn set_bone_sliders(
-        &mut self,
-        id: InstanceId,
-        sliders: Option<Arc<BoneSliders>>,
-    ) -> Result<()> {
-        let Some(slot) = self.slots.get_mut(&id) else {
-            return Err(AnimError::UnknownInstance { id: id.0 });
-        };
-        if let Some(s) = &sliders
-            && !s.fits(&slot.skeleton)
-        {
-            return Err(AnimError::Mismatch {
-                what: "bone sliders",
-            });
-        }
-        slot.sliders = sliders.filter(|s| !s.is_empty());
-        Ok(())
     }
 
     /// Number of registered instances.
@@ -469,7 +433,6 @@ impl AnimationScheduler {
             inputs: JobInputs {
                 skeleton: Arc::clone(&slot.skeleton),
                 attach: slot.attach.clone(),
-                sliders: slot.sliders.clone(),
             },
         };
         match self
@@ -632,7 +595,6 @@ mod tests {
             inputs: JobInputs {
                 skeleton,
                 attach: None,
-                sliders: None,
             },
         };
         (g, rx)

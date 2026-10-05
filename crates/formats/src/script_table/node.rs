@@ -491,14 +491,21 @@ pub enum NodeData {
         /// `…_Persistent`.
         persistent: bool,
     },
-    /// MeshDeformer (18).
+    /// MeshDeformer (18): a body-shape deformer (§6.9).
     MeshDeformer {
         /// `…_AnimationAsset`: a clip.
         clip: Did,
-        /// `…_AnimationTime`.
+        /// `…_AnimationTime`: a fraction of the clip, limited to [0, 1] (§6.9).
         time: f32,
         /// `…_UseBoneWeights`.
         use_bone_weights: bool,
+    },
+    /// SliderMeshDeformer (81): the bone sliders of a figure (§6.9).
+    SliderMeshDeformer {
+        /// `BoneSlider_ValueArray_String`: the slider value string as stored.
+        values: String,
+        /// `BoneSlider_SliderDefinitionsFile`: the 0x78 definitions record.
+        definitions: Did,
     },
     /// Any other kind: the data was walked and skipped. `offset` and `len` locate it in the
     /// record payload.
@@ -1034,6 +1041,10 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 let parameters = self.property_set(r)?;
                 NodeData::Scriptlet { file, parameters }
             }
+            81 => NodeData::SliderMeshDeformer {
+                values: r.pascal_string()?,
+                definitions: r.did()?,
+            },
             22 => NodeData::ScriptletParameter {
                 name: r.pascal_string()?,
             },

@@ -34,15 +34,22 @@ fn skeleton_round_trip_through_setup_record() {
     for (m, inv) in s.reference_model().iter().zip(s.inverse_bind()) {
         assert!((*m * *inv).abs_diff_eq(Mat4::IDENTITY, 1e-4));
     }
-    // Model transforms follow W_b = W_parent · L_b, built here independently.
+    // Model transforms follow the triple rule of §5.4, built here independently.
     for i in 0..40 {
         let expect = independent_model(&s, s.reference_local(), i);
         assert!(s.reference_model()[i].abs_diff_eq(expect, 1e-4), "bone {i}");
     }
 }
 
-/// W_b by recursion with an explicit quaternion-to-matrix formula (not glam's TRS builder).
+/// W_b by recursion with an explicit quaternion-to-matrix formula (not glam's TRS builder),
+/// composing (translation, rotation, scale) triples by the rule of `skeleton-anim.md` §5.4:
+/// t_b = t_p + R_p · t_local, R_b = R_p · R_local, s_b = s_p × s_local; W_b = T · R · S.
 fn independent_model(s: &Skeleton, local: &[Transform], b: usize) -> Mat4 {
+    let (t, r, sc) = independent_triple(s, local, b);
+    Mat4::from_translation(t) * r * Mat4::from_scale(sc)
+}
+
+fn independent_triple(s: &Skeleton, local: &[Transform], b: usize) -> (Vec3, Mat4, Vec3) {
     let t = local[b];
     let [x, y, z, w] = t.rotation;
     let r = Mat4::from_cols(
@@ -66,12 +73,14 @@ fn independent_model(s: &Skeleton, local: &[Transform], b: usize) -> Mat4 {
         ),
         Vec4::W,
     );
-    let l = Mat4::from_translation(Vec3::from_array(t.translation))
-        * r
-        * Mat4::from_scale(Vec3::from_array(t.scale));
+    let lt = Vec3::from_array(t.translation);
+    let ls = Vec3::from_array(t.scale);
     match s.parent(b) {
-        Some(p) => independent_model(s, local, p) * l,
-        None => l,
+        Some(p) => {
+            let (pt, pr, ps) = independent_triple(s, local, p);
+            (pt + pr.transform_vector3(lt), pr * r, ps * ls)
+        }
+        None => (lt, r, ls),
     }
 }
 
@@ -317,8 +326,10 @@ fn blending_weights() {
     anim.set_source(0, Source::Speed(sb)).unwrap();
     anim.snapshot(&mut snap);
     evaluate(&s, &snap, &mut scratch, &mut out).unwrap();
+    // Weights 0.75 and 0.25, truncated to 191/255 and 63/255 (§6.6 step 3).
+    let expect = 2.0 * 63.0 / (191.0 + 63.0);
     assert!(
-        (out[3].translation[0] - 0.5).abs() < 1e-3,
+        (out[3].translation[0] - expect).abs() < 1e-3,
         "{}",
         out[3].translation[0]
     );
@@ -374,18 +385,21 @@ fn partial_layer_with_track_weights() {
         (r.inverse() * q).to_axis_angle().1.to_degrees()
     };
     let rel = |j: usize| rel_of(&out, j);
-    // §14.6 with a reference-pose base: tracks 0, 1 full, track 3 half, track 2 1 %.
+    // §14.6 with a reference-pose base: tracks 0, 1 full, track 3 half (127/255 each),
+    // track 2 2/255 against 252/255: 0.639°.
     assert!((rel(0) - 90.0).abs() < 0.1);
-    assert!((rel(3) - 45.0).abs() < 0.5, "{}", rel(3));
-    assert!(rel(2) < 1.5, "{}", rel(2));
-    // Played alone the weighted clip gives its full pose.
+    assert!((rel(3) - 45.0).abs() < 0.1, "{}", rel(3));
+    assert!((rel(2) - 0.639).abs() < 0.05, "{}", rel(2));
+    // Played alone, track 2 gets 2/255 and the reference pose fills 0.1 − 2/255 (§14.6):
+    // 0.0784 of the way, 6.5° after normalisation.
     let mut solo = Animator::new(s.clone());
     solo.play(0, Playback::new(layer, Wrap::Loop), 0.0, false)
         .unwrap();
     solo.layer_mut(0).unwrap().use_track_weights = true;
     solo.snapshot(&mut snap);
     evaluate(&s, &snap, &mut EvalScratch::new(), &mut out).unwrap();
-    assert!((rel_of(&out, 2) - 90.0).abs() < 0.1);
+    assert!((rel_of(&out, 2) - 6.495).abs() < 0.1, "{}", rel_of(&out, 2));
+    assert!((rel_of(&out, 0) - 90.0).abs() < 0.1);
     // Layer weight ramps.
     let l = anim.layer_mut(1).unwrap();
     l.fade_to(0.0, 0.5);

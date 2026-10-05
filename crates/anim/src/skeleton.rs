@@ -25,6 +25,57 @@ pub fn local_matrix(t: &Transform) -> Mat4 {
     )
 }
 
+/// A (translation, rotation, per-axis scale) triple in glam types: the form in which the
+/// client composes bone transforms (`skeleton-anim.md` §5.4, K17).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Qs {
+    pub(crate) t: Vec3,
+    pub(crate) q: Quat,
+    pub(crate) s: Vec3,
+}
+
+impl Qs {
+    pub(crate) const IDENTITY: Self = Self {
+        t: Vec3::ZERO,
+        q: Quat::IDENTITY,
+        s: Vec3::ONE,
+    };
+
+    /// The triple of a local transform (rotation normalised, identity if it cannot be).
+    pub(crate) fn of(t: &Transform) -> Self {
+        Self {
+            t: Vec3::from_array(t.translation),
+            q: quat_of(t.rotation),
+            s: Vec3::from_array(t.scale),
+        }
+    }
+
+    /// The child's model triple from this (the parent's model triple) and the child's
+    /// local triple (§5.4): translation *t*_p + *q*_p · *t*_local (the parent's scale does
+    /// **not** move the child's joint), rotation *q*_p · *q*_local, scale *s*_p × *s*_local
+    /// per axis.
+    pub(crate) fn then(self, local: Self) -> Self {
+        Self {
+            t: self.t + self.q * local.t,
+            q: self.q * local.q,
+            s: self.s * local.s,
+        }
+    }
+
+    /// The matrix T(*t*) · R(*q*) · S(*s*) (§5.3 order).
+    pub(crate) fn matrix(self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.s, self.q, self.t)
+    }
+
+    pub(crate) fn transform(self) -> Transform {
+        Transform {
+            translation: self.t.to_array(),
+            rotation: self.q.to_array(),
+            scale: self.s.to_array(),
+        }
+    }
+}
+
 /// A (x, y, z, w) quaternion as a normalised [`Quat`]; identity if it cannot be normalised.
 #[must_use]
 pub fn quat_of(q: [f32; 4]) -> Quat {
@@ -49,6 +100,7 @@ pub fn quat_of(q: [f32; 4]) -> Quat {
 pub struct Skeleton {
     parents: Vec<Option<u16>>,
     reference: Vec<Transform>,
+    reference_triples: Vec<Transform>,
     reference_model: Vec<Mat4>,
     inverse_bind: Vec<Mat4>,
     names: Vec<Option<Arc<[u8]>>>,
@@ -155,20 +207,24 @@ impl Skeleton {
                 ..*t
             });
         }
+        // Model triples by the composition rule of §5.4 (K17).
+        let mut triples: Vec<Qs> = Vec::with_capacity(n);
         let mut model: Vec<Mat4> = Vec::with_capacity(n);
         for (i, t) in refs.iter().enumerate() {
-            let l = local_matrix(t);
+            let l = Qs::of(t);
             let m = match ps[i] {
-                Some(p) => model[usize::from(p)] * l,
+                Some(p) => triples[usize::from(p)].then(l),
                 None => l,
             };
-            if !m.is_finite() {
+            let mat = m.matrix();
+            if !mat.is_finite() || !m.q.is_finite() {
                 return Err(AnimError::BadReference {
                     bone: i,
                     what: "model transform overflows",
                 });
             }
-            model.push(m);
+            triples.push(m);
+            model.push(mat);
         }
         let mut inverse = Vec::with_capacity(n);
         for (i, m) in model.iter().enumerate() {
@@ -186,6 +242,7 @@ impl Skeleton {
         Ok(Skeleton {
             parents: ps,
             reference: refs,
+            reference_triples: triples.iter().map(|q| q.transform()).collect(),
             reference_model: model,
             inverse_bind: inverse,
             names,
@@ -235,13 +292,28 @@ impl Skeleton {
         &self.reference
     }
 
-    /// Model-space reference transforms **B**_b (§4.4).
+    /// Model-space reference transforms **B**_b (§4.4): the matrices T · R · S of the
+    /// reference model triples ([`Skeleton::reference_triples`]).
     #[must_use]
     pub fn reference_model(&self) -> &[Mat4] {
         &self.reference_model
     }
 
-    /// Inverse-bind matrices **B**_b⁻¹ (§4.4).
+    /// Model-space reference triples (translation, rotation, per-axis scale), composed from
+    /// the reference pose by the rule of §5.4.
+    #[must_use]
+    pub fn reference_triples(&self) -> &[Transform] {
+        &self.reference_triples
+    }
+
+    /// Inverse-bind matrices **B**_b⁻¹ (§4.4): the exact inverses of
+    /// [`Skeleton::reference_model`].
+    ///
+    /// Tessera Decision (`skeleton-anim.md` §5.4 OPEN filed by the implementation): the
+    /// spec's inverse reference triple *X*_b, taken as the matrix T · R · S, equals this
+    /// inverse whenever the reference scale is uniform or the reference rotation is the
+    /// identity (every player-skeleton bone has scale 1); for the rare other bones the exact
+    /// inverse keeps skinning at the reference pose the identity (§4.4, KI8).
     #[must_use]
     pub fn inverse_bind(&self) -> &[Mat4] {
         &self.inverse_bind
@@ -293,8 +365,11 @@ impl Skeleton {
                 }))
     }
 
-    /// Composes local transforms into model transforms in one parent-to-child pass:
-    /// **W**_b = **W**_parent · **L**_b, a root's **W**_b = **L**_b (§5.3).
+    /// Composes local transforms into model transforms in one parent-to-child pass by the
+    /// triple rule of §5.4 (K17): the parent's scale never moves a child's joint, scales
+    /// multiply per axis down the chain, and `model[b]` is the matrix T · R · S of bone
+    /// *b*'s model triple. With every scale 1 this is **W**_b = **W**_parent · **L**_b
+    /// (§5.3, KI8).
     ///
     /// `local` and `model` must hold at least [`Skeleton::bone_count`] entries; extra
     /// entries are left alone.
@@ -306,12 +381,36 @@ impl Skeleton {
         let n = self.bone_count();
         check_len("local pose", n, local.len())?;
         check_len("model pose", n, model.len())?;
+        let mut triples = [Qs::IDENTITY; MAX_BONES];
         for i in 0..n {
-            let l = local_matrix(&local[i]);
-            model[i] = match self.parents[i] {
-                Some(p) => model[usize::from(p)] * l,
+            let l = Qs::of(&local[i]);
+            let m = match self.parents[i] {
+                Some(p) => triples[usize::from(p)].then(l),
                 None => l,
             };
+            triples[i] = m;
+            model[i] = m.matrix();
+        }
+        Ok(())
+    }
+
+    /// Composes local transforms into model **triples** (translation, rotation, per-axis
+    /// scale; §5.4), the form [`Skeleton::compose`] turns into matrices.
+    ///
+    /// # Errors
+    ///
+    /// [`AnimError::BufferTooSmall`] if either slice is too short.
+    pub fn compose_triples(&self, local: &[Transform], model: &mut [Transform]) -> Result<()> {
+        let n = self.bone_count();
+        check_len("local pose", n, local.len())?;
+        check_len("model pose", n, model.len())?;
+        for i in 0..n {
+            let l = Qs::of(&local[i]);
+            let m = match self.parents[i] {
+                Some(p) => Qs::of(&model[usize::from(p)]).then(l),
+                None => l,
+            };
+            model[i] = m.transform();
         }
         Ok(())
     }
@@ -424,6 +523,41 @@ mod tests {
         for (b, inv) in m.iter().zip(s.inverse_bind()) {
             assert!((*b * *inv).abs_diff_eq(Mat4::IDENTITY, 1e-5));
         }
+    }
+
+    /// `skeleton-anim.md` §14.7: scale composition and skinning by the triple rule.
+    #[test]
+    fn scale_composition_example_14_7() {
+        let s = Skeleton::from_parts(
+            &[-1, 0, 1],
+            &[
+                t([0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]),
+                t([0.0, 0.0, -0.45], [0.0, 0.0, 0.0, 1.0]),
+                t([0.0, 0.0, -0.41], [0.0, 0.0, 0.0, 1.0]),
+            ],
+        )
+        .unwrap();
+        let mut local = s.reference_pose();
+        local[0].scale = [1.0, 1.0, 0.8];
+        local[1].scale = [1.0, 1.0, 1.15];
+        let mut model = vec![Mat4::IDENTITY; 3];
+        s.compose(&local, &mut model).unwrap();
+        for (b, z) in [(0, 1.0), (1, 0.55), (2, 0.14)] {
+            assert!((model[b].w_axis.z - z).abs() < 1e-6, "joint {b}");
+        }
+        let mut triples = vec![Transform::IDENTITY; 3];
+        s.compose_triples(&local, &mut triples).unwrap();
+        for (b, sz) in [(0, 0.8), (1, 0.92), (2, 0.92)] {
+            assert!((triples[b].scale[2] - sz).abs() < 1e-6, "scale {b}");
+        }
+        let mut skin = vec![Mat4::IDENTITY; 3];
+        crate::skin::skinning_matrices(&s, &model, &mut skin).unwrap();
+        let z = |b: u8, v: f32| {
+            crate::skin::skin_position(&skin, &[b], &[1.0], Vec3::new(0.0, 0.0, v)).z
+        };
+        assert!((z(0, 0.775) - 0.82).abs() < 1e-5);
+        assert!((z(1, 0.345) - 0.3614).abs() < 1e-5);
+        assert!((z(2, 0.0) - 0.0112).abs() < 1e-5, "{}", z(2, 0.0));
     }
 
     #[test]

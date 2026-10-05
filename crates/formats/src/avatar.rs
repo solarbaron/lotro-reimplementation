@@ -649,23 +649,48 @@ pub fn parse_slider_values(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Pairs each slider with its byte: visible sliders take the next byte of `values` (0x80,
-/// the default, when the string is short); hidden sliders take none and use their fixed
-/// value (§6.3).
+/// The position of a slider that the value string gives no byte (§6.3, A16).
+pub const SLIDER_DEFAULT_POSITION: f32 = 0.5;
+
+/// Bytes of the value string used when an avatar entity carries no
+/// `AC_BoneSlider_Value_Array` (§6.3 Decision while the driven value of an absent property
+/// is OPEN): 35 × `80`, the value every other slider avatar carries.
+pub const ABSENT_SLIDER_BYTES: [u8; 35] = [0x80; 35];
+
+/// Reads a slider value string as the client does (§6.3, A16): byte pairs from the start,
+/// each pair read as a base-16 number, so a pair that is not hexadecimal reads 0. Tessera
+/// Decisions (OPEN in the spec): a pair is hexadecimal only when both characters are hex
+/// digits (a pair such as `8z` reads 0); a trailing single character is no pair. At most
+/// [`MAX_SLIDER_BYTES`] pairs are read.
 #[must_use]
-pub fn slider_bytes<'a>(
-    defs: &'a [BoneSliderDefinition],
-    values: &[u8],
-) -> Vec<(&'a BoneSliderDefinition, u8)> {
-    let mut it = values.iter().copied();
-    defs.iter()
-        .map(|d| {
-            let byte = if d.visible {
-                it.next().unwrap_or(0x80)
-            } else {
-                0x80
-            };
-            (d, byte)
+pub fn slider_value_pairs(s: &str) -> Vec<u8> {
+    s.as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .take(MAX_SLIDER_BYTES)
+        .map(|&[hi, lo]| {
+            let d = |c: u8| char::from(c).to_digit(16);
+            match (d(hi), d(lo)) {
+                // Both digits are below 16, so the value fits a byte.
+                (Some(h), Some(l)) => u8::try_from(h * 16 + l).unwrap_or(0),
+                _ => 0,
+            }
+        })
+        .collect()
+}
+
+/// The positions *t* of `count` sliders in definition order for value bytes `values`
+/// (§6.3, A16): the *k*-th byte goes to the *k*-th slider **of the definition array,
+/// hidden ones included**, as byte / 255; every slider left without a byte gets
+/// [`SLIDER_DEFAULT_POSITION`]. The one implementation of the rule (assembly, both apps).
+#[must_use]
+pub fn slider_positions(count: usize, values: &[u8]) -> Vec<f32> {
+    (0..count)
+        .map(|k| {
+            values
+                .get(k)
+                .map_or(SLIDER_DEFAULT_POSITION, |&b| f32::from(b) / 255.0)
         })
         .collect()
 }
@@ -697,8 +722,20 @@ mod tests {
             ..BoneSliderDefinition::default()
         };
         assert_eq!(fixed.value_for(0x17), [1.0, 1.0, 0.8]);
-        let defs = [s.clone(), fixed.clone(), s];
-        let b: Vec<u8> = slider_bytes(&defs, &[0x10]).iter().map(|x| x.1).collect();
-        assert_eq!(b, vec![0x10, 0x80, 0x80]);
+        // A16: pairs go to the definitions in order, hidden ones included; the rest 0.5.
+        assert_eq!(slider_positions(3, &[0xFF, 0x00]), vec![1.0, 0.0, 0.5]);
+        assert_eq!(
+            slider_positions(2, &[0x80, 0x00, 0xFF]),
+            vec![128.0 / 255.0, 0.0]
+        );
+        assert_eq!(slider_positions(0, &[0x80]), Vec::<f32>::new());
+        assert_eq!(slider_value_pairs("80ff00"), vec![0x80, 0xFF, 0]);
+        assert_eq!(slider_value_pairs("zz80"), vec![0, 0x80]);
+        assert_eq!(slider_value_pairs("8z1"), vec![0]);
+        assert_eq!(slider_value_pairs(""), Vec::<u8>::new());
+        assert_eq!(
+            slider_value_pairs(&"80".repeat(MAX_SLIDER_BYTES + 3)).len(),
+            MAX_SLIDER_BYTES
+        );
     }
 }

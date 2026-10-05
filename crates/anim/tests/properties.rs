@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::*;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use proptest::prelude::*;
 use tessera_anim::{
     BoundClip, ClipDecoder, Skeleton, SkeletonDecoder, blend_transform, skin_position,
@@ -68,9 +68,26 @@ proptest! {
         let local: Vec<Transform> = pose_seed[..n].to_vec();
         let mut model = vec![Mat4::IDENTITY; n];
         s.compose(&local, &mut model).unwrap();
+        // The triple rule of §5.4: t_b = t_p + q_p · t_local, q_b = q_p · q_local,
+        // s_b = s_p × s_local; the matrix is T · R · S of the triple.
+        let mut triples = vec![Transform::IDENTITY; n];
+        s.compose_triples(&local, &mut triples).unwrap();
         for b in 0..n {
-            let l = tessera_anim::local_matrix(&local[b]);
-            let expect = match s.parent(b) { Some(p) => model[p] * l, None => l };
+            let l = &local[b];
+            let lq = tessera_anim::quat_of(l.rotation);
+            let (t, q, sc) = match s.parent(b) {
+                Some(p) => {
+                    let pt = &triples[p];
+                    let pq = Quat::from_array(pt.rotation);
+                    (
+                        Vec3::from_array(pt.translation) + pq * Vec3::from_array(l.translation),
+                        pq * lq,
+                        Vec3::from_array(pt.scale) * Vec3::from_array(l.scale),
+                    )
+                }
+                None => (Vec3::from_array(l.translation), lq, Vec3::from_array(l.scale)),
+            };
+            let expect = Mat4::from_scale_rotation_translation(sc, q, t);
             prop_assert!(model[b].abs_diff_eq(expect, 1e-3));
         }
         let mut skin = vec![Mat4::IDENTITY; n];
@@ -81,6 +98,24 @@ proptest! {
             let p = skin_position(&skin, &[b as u8], &[1.0], v);
             let expect = m.transform_point3(inv.transform_point3(v));
             prop_assert!(p.abs_diff_eq(expect, 1e-2 * (1.0 + expect.length())));
+        }
+    }
+
+    /// KI8: with every scale 1 the triple rule equals the matrix product of §5.3.
+    #[test]
+    fn unit_scales_compose_as_matrices((parents, reference) in arb_skeleton(),
+                                       pose_seed in prop::collection::vec(arb_transform(), 40)) {
+        let unit = |t: &Transform| Transform { scale: [1.0; 3], ..*t };
+        let reference: Vec<Transform> = reference.iter().map(unit).collect();
+        let s = Skeleton::from_parts(&parents, &reference).unwrap();
+        let n = s.bone_count();
+        let local: Vec<Transform> = pose_seed[..n].iter().map(unit).collect();
+        let mut model = vec![Mat4::IDENTITY; n];
+        s.compose(&local, &mut model).unwrap();
+        for b in 0..n {
+            let l = tessera_anim::local_matrix(&local[b]);
+            let expect = match s.parent(b) { Some(p) => model[p] * l, None => l };
+            prop_assert!(model[b].abs_diff_eq(expect, 1e-3));
         }
     }
 

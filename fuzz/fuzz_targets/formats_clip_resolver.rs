@@ -114,7 +114,11 @@ fuzz_target!(|data: &[u8]| {
             assert!(!c.clip.is_null());
             let _ = c.natural_speed(1.0);
             let _ = c.playback_rate();
+            let f = c.held_fraction();
+            assert!((0.0..=1.0).contains(&f), "held fractions stay in range");
         }
+        assert!(res.deformers.len() <= limits.max_candidates);
+        assert!(res.held().len() <= res.candidates.len());
         assert_issues_unique(&res);
         let _ = res.primary(10);
         let _ = res.clips();

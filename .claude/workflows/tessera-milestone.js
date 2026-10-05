@@ -23,7 +23,7 @@
 export const meta = {
   name: 'tessera-milestone',
   description: 'Run one Tessera roadmap milestone: plan, dirty-room specs, clean-room build with review/fix, exit check',
-  whenToUse: 'Continuing the roadmap (docs/ROADMAP.md) one milestone at a time; pass args.milestone like "M4"',
+  whenToUse: 'Continuing the roadmap (docs/ROADMAP.md) one milestone at a time; pass args.milestone like "M4" or "M4.5"',
   phases: [
     { title: 'Plan', detail: 'read the roadmap milestone, create skeleton crates, emit task graph' },
     { title: 'Specs', detail: 'dirty-room specs confirmed on real data' },
@@ -41,8 +41,8 @@ const M = String(args.milestone).trim().toUpperCase()
 if (/^M8\b/.test(M)) {
   throw new Error('M8 is gated (docs/decisions/0004-server-strategy.md): record the legal review as a new decision and ask the owner first; this workflow will not run it')
 }
-if (!/^M[0-7]$/.test(M)) {
-  throw new Error(`args.milestone must be one of M0..M7 (got "${args.milestone}")`)
+if (!/^M(?:[0-7]|4\.5)$/.test(M)) {
+  throw new Error(`args.milestone must be one of M0..M7 or M4.5 (got "${args.milestone}")`)
 }
 const REPO = args.repo
 const GAME = args.game || null

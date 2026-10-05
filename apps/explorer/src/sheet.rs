@@ -176,7 +176,8 @@ pub fn run_sheet(plan: &SheetPlan) -> Result<SheetReport, ExplorerError> {
     }
     if let Some((_, hi)) = product.scene.aabb {
         report.lines.push(format!(
-            "  bind-pose top {:.3} m × scale {:.4} = standing height {:.3} m",
+            "  bind-pose top (deformed in bind space, unposed) {:.3} m × scale {:.4} = {:.3} m; \
+             the pose and held clips change the standing height",
             hi[2],
             product.model_scale,
             hi[2] * product.model_scale
@@ -270,6 +271,7 @@ pub fn run_sheet(plan: &SheetPlan) -> Result<SheetReport, ExplorerError> {
         report.clip = Some((c.info.did, c.info.duration, rate));
     }
     let bound = clip.as_ref().and_then(|c| c.bound.clone());
+    let state_clip = matches!(choice, ClipChoice::State(_));
 
     // Poses on the workers.
     let pool = WorkerPool::new(PoolConfig {
@@ -290,26 +292,17 @@ pub fn run_sheet(plan: &SheetPlan) -> Result<SheetReport, ExplorerError> {
             let id = sched
                 .add(Arc::clone(sk), product.attach.clone())
                 .map_err(worker)?;
-            let bytes = plan
-                .args
-                .sliders
-                .clone()
-                .unwrap_or_else(|| product.sliders.values.clone());
-            let (sliders, problems) = product.sliders.build(sk, &bytes);
-            for p in problems {
-                report.lines.push(format!("  slider problem {p}"));
-            }
-            if !sliders.is_empty() {
-                sched
-                    .set_bone_sliders(id, Some(Arc::new(sliders)))
-                    .map_err(worker)?;
-            }
+            // Sliders and body shape are in the figure's meshes (bind-space deformation,
+            // `appearance.md` §6.4); the pose carries the held proportion clips.
             let mut anim = Animator::new(Arc::clone(sk));
             if let Some(b) = &bound {
                 let mut p = Playback::new(Arc::clone(b), Wrap::Loop);
                 p.time = t;
                 p.rate = rate;
                 anim.play(0, p, 0.0, false).map_err(worker)?;
+            }
+            if state_clip {
+                crate::character::add_held_layers(&mut anim, &product, 1);
             }
             sched.submit(id, &anim, 1).map_err(worker)?;
             sched.collect_all(Duration::from_secs(30));

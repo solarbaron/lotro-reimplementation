@@ -22,7 +22,7 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::appearance::{AppearanceListPids, SlotTable};
 use tessera_formats::avatar::{
     AvatarPids, BoneSliderDefinition, BoneSliderPids, RacePids, RaceTable, parse_slider_values,
-    resolve_avatar_body, slider_bytes,
+    resolve_avatar_body, slider_positions, slider_value_pairs,
 };
 use tessera_formats::item::{
     HoldingRule, ItemPids, ItemVisual, WardrobeFallbacks, npc_cosmetic_inventory_visible,
@@ -114,13 +114,17 @@ fuzz_target!(|data: &[u8]| {
                 let _ = d.value_for(0x80);
                 let _ = d.channel_bits();
             }
-            let _ = slider_bytes(&defs, &[0x10, 0x20]);
+            assert_eq!(
+                slider_positions(defs.len(), &[0x10, 0x20]).len(),
+                defs.len()
+            );
         }
     }
-    if let Ok(s) = std::str::from_utf8(data)
-        && let Some(b) = parse_slider_values(s)
-    {
-        assert_eq!(b.len() * 2, s.len());
+    if let Ok(s) = std::str::from_utf8(data) {
+        if let Some(b) = parse_slider_values(s) {
+            assert_eq!(b.len() * 2, s.len());
+        }
+        assert!(slider_value_pairs(s).len() <= s.len() / 2);
     }
     // Every DID serves the input: the walks must stop on cycles, limits and bad records.
     let fetch = |_: Did| Ok::<_, Infallible>(Some(data.to_vec()));

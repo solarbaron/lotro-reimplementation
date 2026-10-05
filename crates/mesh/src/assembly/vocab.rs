@@ -148,6 +148,9 @@ pub struct AssemblyVocabulary {
     pub bone_scale: Option<u32>,
     /// `AC_Avatar_Height` (§6.2).
     pub avatar_height: Option<u32>,
+    /// `AC_BoneSlider_Value_Array` (§6.3): the property whose value the figure's slider
+    /// bytes replace when it drives a SliderMeshDeformer node's string.
+    pub slider_values: Option<u32>,
 }
 
 impl AssemblyVocabulary {
@@ -213,6 +216,7 @@ impl AssemblyVocabulary {
             render_scale: names.pid_of("Render_AdjustableScale"),
             bone_scale: names.pid_of("AC_BoneScale_Test"),
             avatar_height: names.pid_of("AC_Avatar_Height"),
+            slider_values: names.pid_of("AC_BoneSlider_Value_Array"),
         }
     }
 

@@ -66,16 +66,20 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 
 - **Done:** M0 base, M1 asset browser, M2 mesh/material viewer, M3 terrain + world walker
   (offline). M4 characters and animation is verified on Tessera's side (2026-10-05):
-  criteria 1, 3, 4, 5 pass; entity storage decided (`docs/decisions/0008-entity-storage.md`,
+  all five criteria pass; entity storage decided (`docs/decisions/0008-entity-storage.md`,
   own store). Evidence: the status tables in `docs/ROADMAP.md`.
 - **Reference machine** (decision 0010): the owner's laptop, i9-10885H with an RTX 2070
   Super Max-Q. Its M3 baseline and M4 crowd numbers are in `docs/perf/reference-machine.md`.
   The GTX 1070 Ti workstation is no longer the reference.
-- **M4 still open:** criterion 2 fails only the River-hobbit foot height (rows B37–B42 of
-  `docs/checklists/m4-visual.md`), which waits on the leg-slider question in
-  `appearance.md` §6.3 (O9). The owner looked at it by eye (2026-10-05) and found characters,
-  including the River-hobbit avatar, fine. The client draws figures without bone sliders;
-  only the explorer applies them.
+- **River-hobbit fix (2026-10-05):** the owner saw the River-hobbit idle in the client pulse
+  taller and shorter in a loop. Now the layer-110 `scale_blend` clip is held at
+  `AC_Avatar_Height`, the body-shape clip at `AC_BoneScale_Test` (bind-space deformation),
+  and slider bytes follow `appearance.md` §6.3, through one figure path shared by the client
+  and the explorer. Rows B37–B42 of `docs/checklists/m4-visual.md` pass (42 / 42), heights
+  match `appearance.md` §6.5. Open, not blocking: River-hobbit M toe reaches −0.055 m while
+  walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
+  without sliders (minor UI gaps).
+- **M4 still open:** only owner comparisons with the original client (O8–O17).
 - **Next:** M5 (UI layouts, skins and Lua plugins), unless the owner wants the open M4 items
   closed first.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

@@ -10,16 +10,19 @@
 //! | Item | Purpose | Spec |
 //! |---|---|---|
 //! | [`Skeleton`] | Validated hierarchy (parents precede children), reference pose, model-space reference transforms, inverse-bind matrices | §2, §4.4, §5 |
-//! | [`Skeleton::compose`] | Local → model transforms, **W**_b = **W**_parent · T · R · S | §5.3 |
+//! | [`Skeleton::compose`] | Local → model transforms by the triple rule (a parent's scale never moves a child joint) | §5.3, §5.4 |
 //! | [`BoundClip`] | Positional clip-to-skeleton binding (track *j* → bone *j*, track count = bone count) and sampling | §3.2, §3.4 |
 //! | [`clip_time`], [`Wrap`] | Looping (τ mod duration) and one-shot clamping | §6.3 |
-//! | [`blend_poses`], [`layer_over`], [`scalar_blend_weights`] | Two-pose blends, partial layers with track weights, scalar-blend weights | §6.5, §6.6 |
-//! | [`Playback`], [`CrossFade`], [`SpeedBlend`], [`Animator`] | Playback state: rate, cross-fades, speed-parameter blends (idle ↔ walk ↔ run), layers | §6, `script-table.md` §6–§8 |
+//! | [`evaluate`] | Layered-weight combination of every playing clip (remaining weight per layer, 1/255 steps, reference fill) | §6.6 |
+//! | [`blend_poses`], [`layer_over`], [`scalar_blend_weights`] | Two-pose blends, two-pose partial blends, scalar-blend weights | §6.5 |
+//! | [`Playback`], [`CrossFade`], [`SpeedBlend`], [`Animator`] | Playback state: rate, cross-fades, speed-parameter blends (idle ↔ walk ↔ run), held clips, layers | §6, `script-table.md` §6–§8 |
 //! | [`motion_between`], [`RootMotionMode`], [`MotionDelta`] | Root motion: in place, or translate by the extracted-motion reference frame | §7 |
 //! | [`AttachTable`], [`BoneMap`] | Holding locations (list A) and the `BoneType` bone map from plain data | §8 |
 //! | [`skinning_matrices`], [`write_palette_mat4`], [`write_palette_rows3x4`], [`CompactPalette`] | Palettes indexed by bone index; optional per-submesh compact palettes | §4 |
 //! | [`skin_position`], [`influence_list`] | CPU reference skinning; influence-list recomputation | §4.2, §4.7 |
-//! | [`BoneSliders`] | Per-instance bone-slider operations on the local pose, between sampling and composing | `appearance.md` §6.3 |
+//! | [`BoneSliders`] | Per-bone slider entries (written in definition order, later ones replace earlier ones) | `appearance.md` §6.3 |
+//! | [`BindDeformation`] | Body-shape deformer clips and sliders as a bind-space deformation of skinned vertices | `appearance.md` §6.4 |
+//! | [`bind_shape`], [`BoundShape`] | A figure's shape inputs (`tessera-mesh`) bound to its skeleton: held clips and the deformation, shared by the client and the explorer | `appearance.md` §6.2–§6.4, `script-table.md` §6.7–§6.9 |
 //! | [`ClipDecoder`], [`SkeletonDecoder`], [`BakeCache`] | Per-clip caches: decoded clips in an asset store, baked frames, both byte-bounded | ARCH §11.2 |
 //! | [`AnimationScheduler`] | One sampling job per instance per frame on the asset workers, double-buffered | ARCH §20.3, §21 |
 //!
@@ -28,8 +31,8 @@
 //! Z up, metres, right-handed, characters face +Y (§5.1). Quaternions from Havok data are
 //! (x, y, z, w); setup frames are (w, x, y, z) ([`AttachFrame`]). Rotations are active.
 //! A local transform is T · R · S on column vectors, and model = parent model · local
-//! (§5.3); full matrix composition is used for scale (the spec's choice while scale
-//! inheritance is OPEN, §5.4). Matrices are [`glam::Mat4`], column-major.
+//! (§5.3), composed as (translation, rotation, scale) triples so that a parent's scale never
+//! moves a child joint (§5.4, K17). Matrices are [`glam::Mat4`], column-major.
 //!
 //! # Example
 //!
@@ -81,7 +84,9 @@ mod attach;
 mod blend;
 mod cache;
 mod clip;
+mod deform;
 mod error;
+mod figure;
 mod motion;
 mod player;
 mod scheduler;
@@ -98,11 +103,13 @@ pub use cache::{BakeCache, BakeStats, ClipDecoder, SkeletonDecoder};
 pub use clip::{
     BROKEN_TRANSLATION, BakedClip, BoundClip, SampleReport, Wrap, clip_heap_size, clip_time,
 };
+pub use deform::{BindDeformation, DeformClip};
 pub use error::{AnimError, Result};
+pub use figure::{BoundHeldClip, BoundShape, MAX_HELD_CLIPS, bind_shape};
 pub use motion::{MotionDelta, RootMotionMode, motion_at, motion_between};
 pub use player::{
-    Animator, ClipSample, CrossFade, EvalScratch, Layer, LayerSnapshot, MAX_LAYER_CLIPS, Playback,
-    Source, SpeedBlend, evaluate,
+    Animator, ClipSample, CrossFade, EvalScratch, Layer, LayerSnapshot, MAX_LAYER_CLIPS,
+    MIN_BONE_WEIGHT, Playback, Source, SpeedBlend, evaluate, quantise_weight,
 };
 pub use scheduler::{
     AnimationScheduler, Collected, InstanceId, PoseOutput, SchedulerConfig, SchedulerStats,
@@ -114,6 +121,6 @@ pub use skin::{
     skin_position, skinning_matrices, write_palette_mat4, write_palette_rows3x4,
 };
 
-pub use slider::{BoneSliders, SliderChannels, SliderOp};
+pub use slider::{BoneSliders, SliderChannels, SliderEntry};
 
 pub use glam;

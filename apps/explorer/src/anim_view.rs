@@ -313,9 +313,6 @@ struct Instance {
     wanted: u64,
     /// The clip bound in the animator.
     clip: Option<Arc<ClipProduct>>,
-    /// Slider bytes applied.
-    sliders: Vec<u8>,
-    slider_problems: Vec<String>,
 }
 
 impl std::fmt::Debug for Instance {
@@ -342,12 +339,15 @@ pub struct CharacterState {
     pub items: Vec<ItemArg>,
     /// An item previewed from the selection.
     pub preview: Option<ItemArg>,
-    /// Slider bytes chosen in the view (`None`: the avatar's). Applied to the animated
-    /// instance only; changing them does not rebuild the figure.
+    /// Slider bytes chosen in the view (`None`: the avatar's). They deform the figure's
+    /// meshes in bind space (`appearance.md` §6.4), so a change rebuilds the figure.
     pub sliders: Option<Vec<u8>>,
-    /// `AC_BoneScale_Test` chosen in the view (neutral in M4, `appearance.md` §6.2
-    /// Decision; not applied and not part of the figure's request).
+    /// `AC_BoneScale_Test` chosen in the view (the body-shape deformer, `appearance.md`
+    /// §6.2, §6.4; rebuilds the figure).
     pub bone_scale: Option<f32>,
+    /// `AC_Avatar_Height` chosen in the view (the River-hobbit layer-110 clip,
+    /// `appearance.md` §6.2; rebuilds the figure).
+    pub avatar_height: Option<f32>,
     /// Detail level.
     pub lod: u8,
     job: Option<(CharacterRequest, Job<CharacterProduct>)>,
@@ -417,6 +417,7 @@ impl CharacterState {
             preview: None,
             sliders: args.sliders.clone(),
             bone_scale: None,
+            avatar_height: None,
             lod: 0,
             job: None,
             shown: None,
@@ -529,10 +530,9 @@ impl CharacterState {
     /// The figure's request, once the catalogue is known; `None` (with
     /// [`CharacterState::figure_error`] set) when there is no figure to build.
     ///
-    /// The request is the rebuild key: slider bytes and the height control are not in it.
-    /// The figure is assembled with the avatar's own sliders, and the view's bytes are
-    /// applied to the animated instance ([`apply_sliders`]), so dragging a slider never
-    /// re-assembles or re-uploads the figure.
+    /// The request is the rebuild key. Slider bytes and the height controls are in it:
+    /// they deform the meshes in bind space and hold the proportion clips
+    /// (`appearance.md` §6.2–§6.4), exactly as the client builds its figures.
     fn request(&mut self, catalog: &Catalog) -> Option<CharacterRequest> {
         let arg = match &self.figure {
             Some(f) => f.clone(),
@@ -560,6 +560,9 @@ impl CharacterState {
                     req.items.push(p);
                 }
                 req.lod = self.lod;
+                req.sliders.clone_from(&self.sliders);
+                req.bone_scale = self.bone_scale;
+                req.avatar_height = self.avatar_height;
                 Some(req)
             }
             Err(e) => {
@@ -726,18 +729,8 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
                 submitted: 0,
                 wanted: 1,
                 clip: keep_clip,
-                sliders: Vec::new(),
-                slider_problems: Vec::new(),
             })
         });
-        if let Some(i) = &mut st.instance {
-            // Sliders: the view's bytes, else the avatar's.
-            let bytes = st
-                .sliders
-                .clone()
-                .unwrap_or_else(|| product.sliders.values.clone());
-            apply_sliders(i, &bytes);
-        }
     }
 
     // The clip.
@@ -826,6 +819,17 @@ pub(crate) fn update(st: &mut CharacterState, l: &Loaded, egui_ctx: &egui::Conte
             p.rate = rate;
             p.root_motion = RootMotionMode::InPlace;
             let _ = i.animator.play(0, p, 0.0, false);
+            // A motion state shows the figure's held proportion clips above its clip, as
+            // the client does (script-table.md §6.8); a clip chosen by DID plays alone.
+            if matches!(st.clip, ClipChoice::State(_)) {
+                crate::character::add_held_layers(&mut i.animator, &product, 1);
+            } else {
+                for k in 1..5 {
+                    if let Some(l) = i.animator.layer_mut(k) {
+                        l.source = None;
+                    }
+                }
+            }
             if before != st.play.time || i.submitted == 0 {
                 i.wanted = i.wanted.max(i.submitted + 1);
             }
@@ -901,19 +905,6 @@ fn is_item(ctx: &crate::data::DataContext, did: u32) -> Result<bool, crate::Expl
     let pids = tessera_formats::item::ItemPids::from_names(registry.dictionary())?;
     let v = tessera_formats::item::ItemVisual::from_property_set(&set, &pids);
     Ok(!v.worn.is_empty() || (v.phys_obj.is_some() && v.default_slot.is_some()))
-}
-
-fn apply_sliders(i: &mut Instance, bytes: &[u8]) {
-    let Some(sk) = i.product.skeleton.as_ref() else {
-        return;
-    };
-    let (sliders, problems) = i.product.sliders.build(sk, bytes);
-    i.slider_problems = problems;
-    i.sliders = bytes.to_vec();
-    let s = (!sliders.is_empty()).then(|| Arc::new(sliders));
-    if i.scheduler.set_bone_sliders(i.id, s).is_ok() {
-        i.wanted = i.wanted.max(i.submitted) + 1;
-    }
 }
 
 /// The pose to draw: the last finished sample with overlays, and whether it is a fresh
@@ -1735,20 +1726,14 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
                 .color(Color32::from_rgb(0xE0, 0xB0, 0x60)),
         );
     }
-    if let Some(i) = &st.instance {
-        for n in &i.slider_problems {
-            ui.label(RichText::new(n).small().weak());
-        }
-    }
-    let visible = p.sliders.visible();
+    // The k-th byte belongs to the k-th definition, hidden ones included (A16); a
+    // definition without a byte sits at 0.5.
     let mut bytes = st
         .sliders
         .clone()
         .unwrap_or_else(|| p.sliders.values.clone());
-    bytes.resize(visible, 0x80);
     let mut changed = false;
-    let mut k = 0usize;
-    for d in &p.sliders.defs {
+    for (k, d) in p.sliders.defs.iter().enumerate() {
         if !d.visible {
             ui.label(
                 RichText::new(format!("{} ({}): fixed, always applied", d.name, d.group))
@@ -1756,6 +1741,9 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
                     .weak(),
             );
             continue;
+        }
+        if bytes.len() <= k {
+            bytes.resize(k + 1, 0x80);
         }
         if let Some(b) = bytes.get_mut(k) {
             let mut v = i32::from(*b);
@@ -1767,32 +1755,40 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
                 changed = true;
             }
         }
-        k += 1;
     }
     if ui.button("Defaults").clicked() {
         st.sliders = None;
-        if let Some(i) = &mut st.instance {
-            let b = p.sliders.values.clone();
-            apply_sliders(i, &b);
-        }
+        st.bone_scale = None;
+        st.avatar_height = None;
     }
     if changed {
-        st.sliders = Some(bytes.clone());
-        if let Some(i) = &mut st.instance {
-            apply_sliders(i, &bytes);
-        }
+        st.sliders = Some(bytes);
     }
     ui.separator();
     let mut h = st.bone_scale.unwrap_or(0.5);
     if ui
-        .add(egui::Slider::new(&mut h, 0.0..=1.0).text("height (AC_BoneScale_Test)"))
-        .on_hover_text(
-            "Neutral in M4: nothing in the data says which bones it scales \
-             (appearance.md §6.2 Decision, OPEN O9)",
-        )
+        .add(egui::Slider::new(&mut h, 0.0..=1.0).text("body shape (AC_BoneScale_Test)"))
+        .on_hover_text("The body-shape deformer's fraction (appearance.md §6.2, §6.4)")
         .changed()
     {
         st.bone_scale = Some(h);
+    }
+    // Only for a figure whose held clip is driven by AC_Avatar_Height, with its sex's range
+    // (appearance.md §6.2).
+    if let Some(range) = crate::character::avatar_height_range(
+        &p.request.figure,
+        p.held_clips.iter().map(|h| h.held.driver),
+    ) {
+        let mut a = st.avatar_height.unwrap_or(0.0);
+        if ui
+            .add(egui::Slider::new(&mut a, range).text("height (AC_Avatar_Height)"))
+            .on_hover_text(
+                "Holds the layer-110 proportion clip (appearance.md §6.2; 0 is the shortest)",
+            )
+            .changed()
+        {
+            st.avatar_height = Some(a);
+        }
     }
 }
 
@@ -2079,18 +2075,21 @@ mod tests {
     }
 
     #[test]
-    fn sliders_do_not_rebuild_the_figure() {
-        // Regression: slider bytes and the height control were part of the rebuild key,
-        // so every slider tick re-assembled and re-uploaded the figure.
+    fn sliders_and_heights_rebuild_the_figure() {
+        // Sliders and the height controls deform the meshes in bind space and hold the
+        // proportion clips (appearance.md §6.4), so they are part of the rebuild key.
         let cat = catalog_with_human();
         let mut st = CharacterState::new(CharacterArgs::default(), false);
         let a = st.request(&cat).unwrap();
         st.sliders = Some(vec![0x10, 0x20]);
         st.bone_scale = Some(0.9);
+        st.avatar_height = Some(0.5);
         let b = st.request(&cat).unwrap();
-        assert_eq!(a, b);
-        assert_eq!((b.sliders, b.bone_scale), (None, None));
-        // Items and the detail level still rebuild.
+        assert_ne!(a, b);
+        assert_eq!(
+            (b.sliders, b.bone_scale, b.avatar_height),
+            (Some(vec![0x10, 0x20]), Some(0.9), Some(0.5))
+        );
         st.lod = 1;
         assert_ne!(st.request(&cat).unwrap(), a);
     }

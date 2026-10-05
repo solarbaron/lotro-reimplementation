@@ -870,6 +870,8 @@ impl CharacterLayer {
                 .and_then(|i| i.instance.as_ref())
                 .and(actor.tag),
             static_only: matches!(role, Some(WeenieRole::Door | WeenieRole::Marker)),
+            avatar_height: None,
+            bone_scale: None,
         };
         let slot = (!hidden && matches!(req.body, Body::Character { .. } | Body::Object(_)))
             .then(|| self.acquire(req));

@@ -233,6 +233,7 @@ fn vocab() -> AssemblyVocabulary {
         render_scale: Some(22),
         bone_scale: None,
         avatar_height: None,
+        slider_values: None,
     }
 }
 

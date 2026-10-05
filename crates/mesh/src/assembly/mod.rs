@@ -44,6 +44,7 @@
 //! one large record cost no more than one ([`AssemblyLimits::max_total_layers`]).
 
 mod resolve;
+pub mod shape;
 mod source;
 mod vocab;
 
@@ -196,9 +197,11 @@ pub struct CharacterSpec {
     pub styles: Vec<StyleChoice>,
     /// The slider byte string (`AC_BoneSlider_Value_Array`); `None` keeps the avatar's.
     pub slider_values: Option<String>,
-    /// `AC_BoneScale_Test`; `None` keeps the avatar's (neutral in M4, §6.2 Decision).
+    /// `AC_BoneScale_Test`; `None` keeps the avatar's. It holds the body-shape deformer
+    /// (`appearance.md` §6.2, §6.4).
     pub bone_scale: Option<f32>,
-    /// `AC_Avatar_Height`; `None` keeps the avatar's (neutral in M4, §6.2 Decision).
+    /// `AC_Avatar_Height`; `None` keeps the avatar's. It holds the River-hobbit layer-110
+    /// clip (`appearance.md` §6.2, `script-table.md` §6.8).
     pub avatar_height: Option<f32>,
     /// Worn and held items; each item decides worn versus held itself (`setup.md` §13.3).
     pub items: Vec<EquippedItem>,
@@ -443,9 +446,12 @@ impl ModelScale {
 /// passed through; applying them is the animation system's job.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SliderInputs {
-    /// The bone-slider definition record (0x78) the avatar names.
+    /// The bone-slider definition record (0x78) the avatar's UI names (the figure uses the
+    /// record its SliderMeshDeformer node names, `appearance.md` §6.3; the contents agree).
     pub definitions: Option<Did>,
-    /// One byte per visible slider (empty: every slider at its default 0x80).
+    /// The value string's bytes (`appearance.md` §6.3, A16): the *k*-th byte belongs to the
+    /// *k*-th slider of the definition array; sliders without a byte sit at 0.5. Empty when
+    /// the avatar carries no value string.
     pub values: Vec<u8>,
     /// `AC_BoneScale_Test`.
     pub bone_scale: Option<f32>,
@@ -517,7 +523,8 @@ pub enum DiagnosticCategory {
     /// The figure has a random-appearance type: drawn with its default parts and held
     /// props, its appearance lists skipped (§7.4 Decision, O12).
     RandomAppearance,
-    /// The slider byte string is not valid hex: sliders stay at their defaults.
+    /// The slider byte string is not clean hex: pairs that are not hexadecimal read 0
+    /// (`appearance.md` §6.3).
     SliderValuesInvalid,
     /// A bound of [`AssemblyLimits`] cut the input.
     LimitExceeded,

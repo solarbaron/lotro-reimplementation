@@ -70,6 +70,10 @@ pub struct AnimationFieldPids {
     pub layer: Option<u32>,
     /// `AnimationScript_UseBoneOpacity`.
     pub use_bone_opacity: Option<u32>,
+    /// `AnimationScript_ManualUpdate` (§6.7).
+    pub manual_update: Option<u32>,
+    /// `AnimationScript_ManualUpdateTime` (§6.7).
+    pub manual_time: Option<u32>,
     /// `AnimationScript_StartTime`.
     pub start_time: Option<u32>,
     /// `AnimationScript_EndTime`.
@@ -130,6 +134,10 @@ pub struct ScriptVocabulary {
     pub chargen_stage: Option<u32>,
     /// Animation-node field PIDs.
     pub animation: AnimationFieldPids,
+    /// `BoneSlider_ValueArray_String`: the SliderMeshDeformer's value-string field (§6.9).
+    pub slider_values: Option<u32>,
+    /// `BoneSlider_SliderDefinitionsFile`: the SliderMeshDeformer's definitions field.
+    pub slider_definitions: Option<u32>,
 }
 
 /// Looks `label` up in the enum mapper that `pid`'s definition names, following base
@@ -200,6 +208,8 @@ impl ScriptVocabulary {
             combat_violent: opt("Combat_Violent"),
             chargen_stage: opt("CharGen_Stage"),
             animation: AnimationFieldPids::from_names(dict),
+            slider_values: opt("BoneSlider_ValueArray_String"),
+            slider_definitions: opt("BoneSlider_SliderDefinitionsFile"),
         })
     }
 }
@@ -217,6 +227,8 @@ impl AnimationFieldPids {
             ramp_out: p("AnimationScript_RampOut"),
             layer: p("AnimationScript_Layer"),
             use_bone_opacity: p("AnimationScript_UseBoneOpacity"),
+            manual_update: p("AnimationScript_ManualUpdate"),
+            manual_time: p("AnimationScript_ManualUpdateTime"),
             start_time: p("AnimationScript_StartTime"),
             end_time: p("AnimationScript_EndTime"),
             randomize_start_time: p("AnimationScript_RandomizeStartTime"),
@@ -744,6 +756,74 @@ pub struct TableClosure {
     pub issues: Vec<ResolveIssue>,
 }
 
+/// The held fraction of a held animation node (§6.7 step 1) for the value `v` of its
+/// `ManualTime`: with *n* the integer part of *v* (toward zero) and *g* = *v* − *n*:
+///
+/// - looping (`loop_forever`): *g*, plus 1 when *g* is negative (1.0 gives 0, 1.3 gives 0.3,
+///   −0.2 gives 0.8);
+/// - otherwise: 0 when *n* < 0, *g* when 0 ≤ *n* < `loop_count`, 1 when *n* ≥ `loop_count`,
+///   then limited to [0, 1].
+///
+/// The clip time is the fraction × the clip's duration (§6.7 step 2; Tessera Decision for
+/// the OPEN on `StartTime`/`EndTime` other than 0 and 1, which no held node of the install
+/// uses: the range is not cropped). A non-finite value gives 0.
+#[must_use]
+pub fn held_fraction(v: f32, loop_forever: bool, loop_count: i32) -> f32 {
+    if !v.is_finite() {
+        return 0.0;
+    }
+    let n = v.trunc();
+    let g = v - n;
+    let f = if loop_forever {
+        if g < 0.0 { g + 1.0 } else { g }
+    } else if n < 0.0 {
+        0.0
+    } else if n < loop_count as f32 {
+        g
+    } else {
+        1.0
+    };
+    // g + 1 can round to exactly 1 for a tiny negative g; a looping fraction stays below 1.
+    if loop_forever && f >= 1.0 {
+        0.0
+    } else {
+        f.clamp(0.0, 1.0)
+    }
+}
+
+/// A bind-space deformer an entity registers (§6.9, `appearance.md` §6.4), after the
+/// driven-property substitution.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum DeformerCandidate {
+    /// A MeshDeformer (18): a body-shape clip held at a fraction.
+    Mesh {
+        /// `…_AnimationAsset`: the clip.
+        clip: Did,
+        /// `…_AnimationTime`: a fraction of the clip (the caller limits it to [0, 1]).
+        time: f32,
+        /// The entity property that drives `time`, if any (`AC_BoneScale_Test`).
+        time_source: Option<u32>,
+        /// `…_UseBoneWeights`.
+        use_bone_weights: bool,
+        /// The table whose script registered it.
+        table: Did,
+    },
+    /// A SliderMeshDeformer (81): the bone sliders.
+    Slider {
+        /// `BoneSlider_SliderDefinitionsFile`: the definitions record.
+        definitions: Did,
+        /// The value string: the driving property's value, else the node's stored string
+        /// when the field is not driven.
+        values: Option<String>,
+        /// The entity property that drives the value string, if any
+        /// (`AC_BoneSlider_Value_Array`).
+        values_source: Option<u32>,
+        /// The table whose script registered it.
+        table: Did,
+    },
+}
+
 /// One clip an entity would start, with the fields that control playback (§6.1) after
 /// scriptlet parameters and driven properties were applied.
 #[derive(Debug, Clone, PartialEq)]
@@ -779,6 +859,13 @@ pub struct ClipCandidate {
     pub synchronize_timing: bool,
     /// Use per-bone opacity (§6.5).
     pub use_bone_opacity: bool,
+    /// `ManualUpdate`: the clip is **held** at `manual_time`, never played (§6.7).
+    pub manual_update: bool,
+    /// `ManualTime` after the driven-property substitution: the held value (§6.7).
+    pub manual_time: f32,
+    /// The entity property that drives `manual_time`, if any (`AC_Avatar_Height`,
+    /// `AC_BoneScale_Test`; §6.8).
+    pub manual_time_source: Option<u32>,
     /// Product of the ScalarBlend weights above the node (1 outside blends; §7.3).
     pub blend_weight: f32,
     /// Product of Random shares and node probabilities above it (1 when certain; §7.4).
@@ -803,10 +890,30 @@ impl ClipCandidate {
         self.speed * self.speed_multiplier
     }
 
-    /// Whether the clip loops (forever or more than once).
+    /// Whether the clip loops (forever or more than once). A held clip
+    /// ([`ClipCandidate::is_held`]) may carry the loop flag, but it never plays.
     #[must_use]
     pub fn loops(&self) -> bool {
         self.loop_forever || self.loop_count > 1
+    }
+
+    /// Whether the clip is held at a fixed fraction instead of played (`ManualUpdate` = 1,
+    /// §6.7): its rate is 0 whatever `Speed` says.
+    #[must_use]
+    pub fn is_held(&self) -> bool {
+        self.manual_update
+    }
+
+    /// The held fraction of a held clip for its current `manual_time` ([`held_fraction`]).
+    #[must_use]
+    pub fn held_fraction(&self) -> f32 {
+        held_fraction(self.manual_time, self.loop_forever, self.loop_count)
+    }
+
+    /// The held fraction for another value of the driving property ([`held_fraction`]).
+    #[must_use]
+    pub fn held_fraction_at(&self, value: f32) -> f32 {
+        held_fraction(value, self.loop_forever, self.loop_count)
     }
 
     /// Natural ground speed in m/s for a clip of `duration` seconds: |displacement| /
@@ -829,6 +936,8 @@ pub struct ClipResolution {
     pub closure: TableClosure,
     /// Every animation that would start, in evaluation order.
     pub candidates: Vec<ClipCandidate>,
+    /// Every bind-space deformer registered (§6.9), in evaluation order.
+    pub deformers: Vec<DeformerCandidate>,
     /// Problems met while evaluating (closure problems are in `closure.issues`).
     pub issues: Vec<ResolveIssue>,
     /// Nodes visited.
@@ -865,6 +974,23 @@ impl ClipResolution {
             }
         }
         best
+    }
+
+    /// The held candidates (`ManualUpdate` = 1, §6.7): the most likely one per layer, in
+    /// layer order. These are part of the figure's look in every motion state (§6.8).
+    #[must_use]
+    pub fn held(&self) -> Vec<&ClipCandidate> {
+        let mut out: Vec<&ClipCandidate> = Vec::new();
+        for c in self.candidates.iter().filter(|c| c.is_held()) {
+            let w = c.blend_weight * c.chance;
+            match out.iter_mut().find(|p| p.layer == c.layer) {
+                Some(p) if w > p.blend_weight * p.chance => *p = c,
+                Some(_) => {}
+                None => out.push(c),
+            }
+        }
+        out.sort_by_key(|c| c.layer);
+        out
     }
 
     /// Whether any closure or evaluation issue was recorded.
@@ -1213,6 +1339,7 @@ where
             tables,
             index,
             out: Vec::new(),
+            deformers: Vec::new(),
             issues: Vec::new(),
             reported: HashSet::new(),
             visits: 0,
@@ -1262,6 +1389,7 @@ where
         }
         let Eval {
             out,
+            deformers,
             issues,
             visits,
             ..
@@ -1269,6 +1397,7 @@ where
         Ok(ClipResolution {
             closure,
             candidates: out,
+            deformers,
             issues,
             nodes_visited: visits,
         })
@@ -1357,6 +1486,7 @@ struct Eval<'r, 's, S: ?Sized, F, B, E> {
     /// Script key → (index in `tables`, index in its `scripts`).
     index: HashMap<u32, (usize, usize)>,
     out: Vec<ClipCandidate>,
+    deformers: Vec<DeformerCandidate>,
     issues: Vec<ResolveIssue>,
     /// Issues already in `issues`.
     reported: HashSet<IssueKey>,
@@ -1513,6 +1643,21 @@ where
                 property, value, ..
             } => {
                 self.set_property(n, *property, value.as_deref());
+                Ok(())
+            }
+            NodeData::MeshDeformer {
+                clip,
+                time,
+                use_bone_weights,
+            } => {
+                self.mesh_deformer(n, *clip, *time, *use_bone_weights);
+                Ok(())
+            }
+            NodeData::SliderMeshDeformer {
+                values,
+                definitions,
+            } => {
+                self.slider_deformer(n, values, *definitions);
                 Ok(())
             }
             // Containers whose children all start: Collection, Label, Sequence, Timer.
@@ -1840,6 +1985,102 @@ where
         }
     }
 
+    /// Registers a MeshDeformer (§6.9) with its driven fields. The field names are given
+    /// in the spec only by their endings (`…_AnimationAsset`, `…_AnimationTime`,
+    /// `…_UseBoneWeights`), so a driven field is recognised by its dictionary type, which
+    /// differs for the three fields (DID, float, bool; §5.1 layout).
+    fn mesh_deformer(&mut self, n: &Node, clip: Did, time: f32, use_bone_weights: bool) {
+        if self.deformers.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        if !self.charge(n.base.driven.len()) {
+            return;
+        }
+        use crate::property::PropertyType as T;
+        let (mut clip, mut time, mut use_bone_weights) = (clip, time, use_bone_weights);
+        let mut time_source = None;
+        for &(field, source) in &n.base.driven {
+            match self.r.schema.property_type(field) {
+                Some(T::Float) => {
+                    time_source = Some(source);
+                    #[allow(clippy::cast_possible_truncation)]
+                    if let Some(v) = self.state.number(source) {
+                        time = v as f32;
+                    }
+                }
+                Some(T::DidRef) => {
+                    if let Some(d) = self.state.get(source).and_then(PropertyValue::as_did) {
+                        clip = d;
+                    }
+                }
+                Some(T::Bool) => {
+                    if let Some(v) = self.state.number(source) {
+                        use_bone_weights = v != 0.0;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !clip.is_null() {
+            self.deformers.push(DeformerCandidate::Mesh {
+                clip,
+                time,
+                time_source,
+                use_bone_weights,
+                table: self.table,
+            });
+        }
+    }
+
+    /// Registers a SliderMeshDeformer (§6.9) with its driven value string.
+    fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did) {
+        if self.deformers.len() >= self.r.limits.max_candidates {
+            self.limit("max_candidates");
+            return;
+        }
+        let vocab = &self.r.vocab;
+        let values_source = vocab.slider_values.and_then(|p| n.base.driven_source(p));
+        let driven_defs = vocab
+            .slider_definitions
+            .and_then(|p| n.base.driven_source(p))
+            .and_then(|src| self.state.get(src))
+            .and_then(PropertyValue::as_did);
+        fn text<'a>(
+            state: &'a PropertyState,
+            source: Option<u32>,
+            stored: &'a str,
+        ) -> Option<&'a str> {
+            match source {
+                Some(src) => match state.get(src) {
+                    Some(PropertyValue::String(v)) => Some(v.as_str()),
+                    _ => None,
+                },
+                None => Some(stored),
+            }
+        }
+        // The candidate keeps its own copy of the value string, and a script can be run
+        // again and again: charge the copy's bytes (with the driven-pair scan) before making
+        // it, so the work budget also bounds what the deformer candidates hold
+        // ([`ResolveLimits::max_work`]).
+        let cost = n
+            .base
+            .driven
+            .len()
+            .saturating_add(1)
+            .saturating_add(text(&self.state, values_source, values).map_or(0, str::len));
+        if !self.charge(cost) {
+            return;
+        }
+        let values = text(&self.state, values_source, values).map(str::to_owned);
+        self.deformers.push(DeformerCandidate::Slider {
+            definitions: driven_defs.unwrap_or(definitions),
+            values,
+            values_source,
+            table: self.table,
+        });
+    }
+
     fn emit(&mut self, n: &Node, a: &AnimationNode, scope: &Scope<'_>, ctx: Ctx) {
         if self.out.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -1853,11 +2094,17 @@ where
         // the active invocation records.
         let driven = n.base.driven.len();
         let speed_scan = if pids.speed.is_some() { driven } else { 0 };
+        let manual_scan = if pids.manual_time.is_some() {
+            driven
+        } else {
+            0
+        };
         let cost = n
             .ports
             .len()
             .saturating_add(driven)
             .saturating_add(speed_scan)
+            .saturating_add(manual_scan)
             .saturating_add(self.calls.len());
         if !self.charge(cost) {
             return;
@@ -1896,6 +2143,9 @@ where
             randomize_start_time: a.randomize_start_time,
             synchronize_timing: a.synchronize_timing,
             use_bone_opacity: a.use_bone_opacity,
+            manual_update: a.manual_update,
+            manual_time: a.manual_time,
+            manual_time_source: pids.manual_time.and_then(|p| n.base.driven_source(p)),
             blend_weight: ctx.weight,
             chance: ctx.chance,
             table: self.table,
@@ -1939,6 +2189,8 @@ impl AnimationFieldPids {
             self.ramp_out,
             self.layer,
             self.use_bone_opacity,
+            self.manual_update,
+            self.manual_time,
             self.start_time,
             self.end_time,
             self.randomize_start_time,
@@ -1978,6 +2230,10 @@ fn apply_field(c: &mut ClipCandidate, pids: &AnimationFieldPids, pid: u32, v: &P
         }
     } else if is(pids.use_bone_opacity) {
         c.use_bone_opacity = flag().unwrap_or(c.use_bone_opacity);
+    } else if is(pids.manual_update) {
+        c.manual_update = flag().unwrap_or(c.manual_update);
+    } else if is(pids.manual_time) {
+        c.manual_time = float().unwrap_or(c.manual_time);
     } else if is(pids.start_time) {
         c.start_time = float().unwrap_or(c.start_time);
     } else if is(pids.end_time) {

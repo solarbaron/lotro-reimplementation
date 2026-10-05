@@ -6,6 +6,9 @@
 //! by bone, weighted by their per-track weights where the node asks for them):
 //!
 //! - the looping idle clips the script tables chose, one per data layer;
+//! - the held proportion clips (`script-table.md` §6.7, §6.8: the River-hobbit and
+//!   DwarfStoutAxe layer-110 `scale_blend` clips), shown at their held fraction with rate 0
+//!   and never faded: they shape the figure in every motion state;
 //! - the locomotion layer (at the walk clip's data layer): the walk and run clips as a
 //!   phase-synchronised speed blend with the clips' natural ground speeds as anchors (one
 //!   clip when only one is known). Its weight fades to 1 over [`FADE`] seconds when the
@@ -14,6 +17,9 @@
 //!   switches walk and run as separate branches with a 0.2 s cross-fade
 //!   (`script-table.md` §8.5); blending them by speed is the smooth equivalent for
 //!   characters whose speed varies continuously.
+//!
+//! Layers combine by the layered-weight rule (`skeleton-anim.md` §6.6), applied by
+//! [`tessera_anim::evaluate`].
 //!
 //! The blend's playback rate is scaled by speed / natural speed (the clip's anchors
 //! clamp the natural speed), within [`MIN_RATE`]..[`MAX_RATE`], so the feet match the
@@ -110,38 +116,66 @@ pub fn make_animator(
         .flatten()
         .cloned()
         .collect();
-    // Animator layer order: the data's layer keys (idle layers, then locomotion on ties).
+    // Animator layer order: the data's layer keys (idle and held layers, then locomotion
+    // on ties).
+    #[derive(Clone, Copy, PartialEq)]
+    enum Entry {
+        Idle(usize),
+        Held(usize),
+        Move,
+    }
     let move_key = moves.first().map(|m| m.layer);
-    let mut order: Vec<(u32, Option<usize>)> = clips
+    let mut order: Vec<(u32, Entry)> = clips
         .idle
         .iter()
         .enumerate()
-        .map(|(i, c)| (c.layer, Some(i)))
+        .map(|(i, c)| (c.layer, Entry::Idle(i)))
+        .chain(
+            clips
+                .held
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.layer, Entry::Held(i))),
+        )
         .collect();
     if let Some(k) = move_key {
-        order.push((k, None));
+        order.push((k, Entry::Move));
     }
-    order.sort_by_key(|(k, i)| (*k, i.is_none()));
+    order.sort_by_key(|(k, e)| (*k, *e == Entry::Move));
     let mut loco = Locomotion {
         walk_speed: 0.0,
         run_speed: 0.0,
         base_rate: 1.0,
         moving: false,
         has_move: false,
-        move_index: order.iter().position(|(_, i)| i.is_none()).unwrap_or(0),
+        move_index: order
+            .iter()
+            .position(|(_, e)| *e == Entry::Move)
+            .unwrap_or(0),
         above: Vec::new(),
     };
-    for (index, (key, idle)) in order.iter().enumerate() {
-        let Some(i) = idle else { continue };
-        let idle = &clips.idle[*i];
-        let mut p = Playback::new(Arc::clone(&idle.clip), Wrap::Loop);
-        p.rate = idle.rate;
+    for (index, (key, entry)) in order.iter().enumerate() {
+        let (play, p) = match *entry {
+            Entry::Idle(i) => {
+                let idle = &clips.idle[i];
+                let mut p = Playback::new(Arc::clone(&idle.clip), Wrap::Loop);
+                p.rate = idle.rate;
+                (idle, p)
+            }
+            // Held (script-table.md §6.7): rate 0 at the held fraction, whatever the time.
+            Entry::Held(i) => {
+                let held = &clips.held[i];
+                let p = Playback::held(Arc::clone(&held.clip), held.held.unwrap_or(0.0));
+                (held, p)
+            }
+            Entry::Move => continue,
+        };
         if a.play(index, p, 0.0, false).is_ok() {
             any = true;
             if let Some(l) = a.layer_mut(index) {
-                l.use_track_weights = idle.track_weights;
+                l.use_track_weights = play.track_weights;
             }
-            if move_key.is_some_and(|m| *key > m) {
+            if matches!(entry, Entry::Idle(_)) && move_key.is_some_and(|m| *key > m) {
                 loco.above.push(index);
             }
         }
@@ -281,6 +315,7 @@ mod tests {
             speed,
             layer,
             track_weights: layer == 30,
+            held: None,
         }
     }
 
@@ -291,6 +326,7 @@ mod tests {
             idle: vec![play(&skel, 10, 0.0), play(&skel, 30, 0.0)],
             walk: Some(play(&skel, 20, 2.0)),
             run: Some(play(&skel, 20, 6.0)),
+            held: Vec::new(),
         };
         let (a, loco) = make_animator(&skel, &clips, 0.5).expect("animator");
         // Idle 10, locomotion 20, idle 30 (faded out while moving).
@@ -309,6 +345,7 @@ mod tests {
             idle: vec![play(&skel, 20, 0.0)],
             walk: Some(play(&skel, 20, 2.0)),
             run: None,
+            held: Vec::new(),
         };
         let (a, loco) = make_animator(&skel, &clips, 0.0).expect("animator");
         assert_eq!(loco.move_index, 1);
@@ -321,11 +358,42 @@ mod tests {
             idle: vec![play(&skel, 10, 0.0)],
             walk: None,
             run: None,
+            held: Vec::new(),
         };
         let (_, loco) = make_animator(&skel, &clips, f32::NAN).expect("animator");
         assert!(!loco.has_move);
 
         assert!(make_animator(&skel, &FigureClips::default(), 0.0).is_none());
+    }
+
+    /// `script-table.md` §6.7: a held clip sits above locomotion at its fraction, rate 0,
+    /// and is never faded out while moving.
+    #[test]
+    fn held_clips_are_held_and_never_faded() {
+        let skel = skeleton();
+        let mut held = play(&skel, 110, 0.0);
+        held.held = Some(0.25);
+        held.track_weights = true;
+        let clips = FigureClips {
+            idle: vec![play(&skel, 10, 0.0)],
+            walk: Some(play(&skel, 20, 2.0)),
+            run: Some(play(&skel, 20, 6.0)),
+            held: vec![held],
+        };
+        let (mut a, mut loco) = make_animator(&skel, &clips, 3.7).expect("animator");
+        assert_eq!(loco.move_index, 1);
+        assert!(loco.above.is_empty(), "held layers are not faded");
+        let time = |a: &Animator| match &a.layers()[2].source {
+            Some(Source::Clip(p)) => (p.rate, p.clip_time()),
+            _ => panic!("held layer"),
+        };
+        assert_eq!(time(&a), (0.0, 0.25));
+        assert!(a.layers()[2].use_track_weights);
+        for speed in [0.0, 5.0, 5.0, 0.0] {
+            drive(&mut a, &mut loco, speed, 0.4);
+            assert_eq!(time(&a), (0.0, 0.25));
+            assert_eq!(a.layers()[2].weight, 1.0);
+        }
     }
 
     fn loco() -> Locomotion {

@@ -22,17 +22,18 @@ use std::time::Instant;
 
 use tessera_anim::glam::{Mat4, Vec3};
 use tessera_anim::{
-    AttachFrame, AttachPointDesc, AttachTable, BoneSliders, BoundClip, MotionDelta, Skeleton,
-    SliderChannels, motion_at,
+    Animator, AttachFrame, AttachPointDesc, AttachTable, BoundClip, BoundHeldClip, MotionDelta,
+    Playback, Skeleton, SliderChannels, bind_shape, motion_at,
 };
 use tessera_assets::{CancelToken, JobContext, Priority, WorkerPool};
-use tessera_formats::avatar::{BoneSliderDefinition, BoneSliderPids, RacePids, RaceTable};
+use tessera_formats::avatar::{RacePids, RaceTable};
 use tessera_formats::script_table::resolve::{
     ClipCandidate, ClipResolver, MotionState, ScriptVocabulary, collect_entity_scripts,
 };
 use tessera_formats::setup::Anchor;
-use tessera_formats::{Did, EnumMapper, PropertySetRecord};
+use tessera_formats::{Did, EnumMapper};
 use tessera_havok::{AnimationData, Clip, Envelope, Tagfile, Transform};
+use tessera_mesh::assembly::shape::{FigureShape, FigureSliders, ShapeDriver, figure_shape};
 use tessera_mesh::assembly::{
     AssembledCharacter, AssemblySource, AssemblyVocabulary, CharacterAssembler, CharacterSpec,
     EquippedItem, GameDataSource, Lookup, PartOrigin, RigKind, WieldState,
@@ -535,8 +536,10 @@ pub struct CharacterRequest {
     pub items: Vec<ItemArg>,
     /// Slider bytes replacing the avatar's (`AC_BoneSlider_Value_Array`).
     pub sliders: Option<Vec<u8>>,
-    /// `AC_BoneScale_Test` (neutral in M4, `appearance.md` §6.2 Decision).
+    /// `AC_BoneScale_Test`: the body-shape deformer's fraction (`appearance.md` §6.2).
     pub bone_scale: Option<f32>,
+    /// `AC_Avatar_Height`: the River-hobbit layer-110 fraction (`appearance.md` §6.2).
+    pub avatar_height: Option<f32>,
     /// Detail level of every part.
     pub lod: u8,
 }
@@ -550,6 +553,7 @@ impl CharacterRequest {
             items: Vec::new(),
             sliders: None,
             bone_scale: None,
+            avatar_height: None,
             lod: 0,
         }
     }
@@ -613,7 +617,7 @@ pub struct HeldInfo {
     pub parts: usize,
 }
 
-/// One selectable bone slider.
+/// One bone slider of the figure's definitions record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SliderDef {
     /// `BoneSlider_Name` label.
@@ -632,47 +636,22 @@ pub struct SliderDef {
     pub bones: Vec<(i64, bool)>,
 }
 
-/// The figure's bone sliders (`appearance.md` §6.3).
+/// The figure's bone sliders (`appearance.md` §6.3): the definitions record its
+/// SliderMeshDeformer node names and the value bytes in use.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SliderSet {
     /// The definition record.
     pub record: Option<Did>,
     /// Sliders in definition order.
     pub defs: Vec<SliderDef>,
-    /// One byte per visible slider (the avatar's or the request's).
+    /// The value bytes in use: the *k*-th byte belongs to the *k*-th definition, hidden
+    /// ones included (A16).
     pub values: Vec<u8>,
     /// Problems (missing labels, unreadable record).
     pub notes: Vec<String>,
 }
 
 impl SliderSet {
-    /// The per-bone operations for `values` (one byte per visible slider; short strings
-    /// use 0x80), for `skeleton`. Sliders that do not fit the skeleton are skipped and
-    /// reported.
-    #[must_use]
-    pub fn build(&self, skeleton: &Skeleton, values: &[u8]) -> (BoneSliders, Vec<String>) {
-        let mut out = BoneSliders::new(skeleton);
-        let mut problems = Vec::new();
-        let mut it = values.iter().copied();
-        for d in &self.defs {
-            let byte = if d.visible {
-                it.next().unwrap_or(0x80)
-            } else {
-                0x80
-            };
-            if d.channels == SliderChannels::NONE {
-                continue;
-            }
-            let t = f32::from(byte) / 255.0;
-            if let Err(e) = out.add_slider(d.channels, d.min, d.max, t, &d.bones)
-                && problems.len() < 8
-            {
-                problems.push(format!("slider {}: {e}", d.name));
-            }
-        }
-        (out, problems)
-    }
-
     /// Number of visible sliders.
     #[must_use]
     pub fn visible(&self) -> usize {
@@ -752,6 +731,46 @@ impl ClipSelection {
     }
 }
 
+/// Plays the figure's held clips on animator layers `first ..`, in data-layer order, held
+/// at their fractions with their track opacities (`script-table.md` §6.7, §6.8;
+/// `skeleton-anim.md` §6.6). Layers past them are cleared up to `first + 4`.
+pub fn add_held_layers(animator: &mut Animator, product: &CharacterProduct, first: usize) {
+    let mut n = 0;
+    for h in &product.held_clips {
+        let p = Playback::held(Arc::clone(&h.clip), h.held.fraction);
+        if animator.play(first + n, p, 0.0, false).is_ok() {
+            if let Some(l) = animator.layer_mut(first + n) {
+                l.use_track_weights = h.held.use_bone_opacity;
+                l.fade_to(1.0, 0.0);
+            }
+            n += 1;
+        }
+    }
+    for i in first + n..first + 4 {
+        if let Some(l) = animator.layer_mut(i) {
+            l.source = None;
+        }
+    }
+}
+
+/// The range of the figure's `AC_Avatar_Height` control (`appearance.md` §6.2 table): only
+/// when one of its held clips is driven by that property (`drivers`: the held clips'
+/// [`tessera_mesh::assembly::shape::HeldClip::driver`]; the River-hobbit layer-110 clips);
+/// 0 to 0.95 for a male body, 0 to 0.6 otherwise (the River-hobbit F range).
+#[must_use]
+pub fn avatar_height_range(
+    figure: &Figure,
+    drivers: impl IntoIterator<Item = Option<ShapeDriver>>,
+) -> Option<std::ops::RangeInclusive<f32>> {
+    drivers
+        .into_iter()
+        .any(|d| d == Some(ShapeDriver::AvatarHeight))
+        .then_some(match figure {
+            Figure::Playable { sex, .. } if *sex == crate::charspec::SEX_MALE => 0.0..=0.95,
+            _ => 0.0..=0.6,
+        })
+}
+
 /// An assembled figure ready to draw and animate.
 #[derive(Debug)]
 pub struct CharacterProduct {
@@ -772,6 +791,12 @@ pub struct CharacterProduct {
     pub held: Vec<HeldInfo>,
     /// Bone sliders.
     pub sliders: SliderSet,
+    /// Held proportion clips (`script-table.md` §6.7, §6.8), played above any motion
+    /// state's clip ([`add_held_layers`]).
+    pub held_clips: Vec<BoundHeldClip>,
+    /// Whether the skinned parts were deformed in bind space by the body shape and the
+    /// sliders (`appearance.md` §6.4).
+    pub deformed: bool,
     /// Whole-body scale (`appearance.md` §6.1).
     pub model_scale: f32,
     /// Clip selection for idle, walk and run.
@@ -837,6 +862,7 @@ pub fn build_character(
     let mut locations = Labels::of_property(data, "Inventory_ParentingLocation");
     let bone_types = Labels::of_mapper(data, data.lookup_path(&["EMAPPER", "BoneType"])?);
     let vocab = AssemblyVocabulary::from_game_data(data)?;
+    let asm_vocab = vocab.clone();
     let mut asm = CharacterAssembler::new(GameDataSource::new(data)?, vocab);
     cancelled(job)?;
 
@@ -872,6 +898,7 @@ pub fn build_character(
                     .as_ref()
                     .map(|b| b.iter().map(|x| format!("{x:02x}")).collect());
                 spec.bone_scale = req.bone_scale;
+                spec.avatar_height = req.avatar_height;
                 let title = catalog.body(species, sex).map_or_else(
                     || format!("species {species:#x} {}", sex_label(sex)),
                     BodyEntry::title,
@@ -931,7 +958,32 @@ pub fn build_character(
     };
     let bones = skeleton.as_ref().map_or(0, |s| s.bone_count());
 
-    // 3. Parts.
+    // 3. Clip selection (script-table.md §11.3) and the figure's shape: held clips, body
+    //    shape and sliders (appearance.md §6.2–§6.4; shared with the client).
+    let (clips, shape) = match &assembled {
+        Some(c) => select_clips(data, dict, catalog, c, &asm_vocab),
+        None => (
+            ClipSelection {
+                error: Some("a bare setup has no script tables".into()),
+                ..ClipSelection::default()
+            },
+            FigureShape::default(),
+        ),
+    };
+    notes.extend(shape.notes.iter().take(4).cloned());
+    let sliders = slider_set(data, shape.sliders.as_ref());
+    // Held clips and the bind-space deformation, by the path the client shares.
+    let mut held_clips = Vec::new();
+    let mut deformation = None;
+    if let Some(sk) = &skeleton {
+        let bound = bind_shape(&shape, sk, |d| bind_clip(ctx, d, sk));
+        notes.extend(bound.notes.into_iter().take(4));
+        held_clips = bound.held;
+        deformation = bound.deformation;
+    }
+    cancelled(job)?;
+
+    // 4. Parts.
     let request = SceneRequest {
         lod: req.lod,
         choice: 0,
@@ -958,6 +1010,7 @@ pub fn build_character(
                     request,
                     budget,
                     skin.then_some(bones).filter(|b| *b > 0),
+                    deformation.as_ref(),
                 )
             })
             .clone();
@@ -1159,20 +1212,6 @@ pub fn build_character(
     facts.push(("model scale".into(), format!("{model_scale:.4}")));
     cancelled(job)?;
 
-    // 4. Sliders.
-    let sliders = match &assembled {
-        Some(c) => slider_set(data, c, req.sliders.as_deref()),
-        None => SliderSet::default(),
-    };
-
-    // 5. Clip selection (script-table.md §11.3).
-    let clips = match &assembled {
-        Some(c) => select_clips(data, dict, catalog, c),
-        None => ClipSelection {
-            error: Some("a bare setup has no script tables".into()),
-            ..ClipSelection::default()
-        },
-    };
     cancelled(job)?;
 
     let scene = finish_product(
@@ -1200,6 +1239,8 @@ pub fn build_character(
         attach,
         held,
         sliders,
+        held_clips,
+        deformed: deformation.is_some(),
         model_scale,
         clips,
         facts,
@@ -1208,124 +1249,56 @@ pub fn build_character(
     })
 }
 
-/// The slider channel of a `BoneSlider_BoneTranformMaskArray` label: the labels of the
-/// install's mask mapper (key = bit + 1), as `appearance.md` §6.3 names them.
-fn channel_of(label: &str) -> Option<SliderChannels> {
-    Some(match label {
-        "TranslateX" => SliderChannels::TRANSLATE_X,
-        "TranslateY" => SliderChannels::TRANSLATE_Y,
-        "TranslateZ" => SliderChannels::TRANSLATE_Z,
-        "RotateX" => SliderChannels::ROTATE_X,
-        "RotateY" => SliderChannels::ROTATE_Y,
-        "RotateZ" => SliderChannels::ROTATE_Z,
-        "ScaleX" => SliderChannels::SCALE_X,
-        "ScaleY" => SliderChannels::SCALE_Y,
-        "ScaleZ" => SliderChannels::SCALE_Z,
-        _ => return None,
-    })
-}
-
-/// The figure's slider definitions (`appearance.md` §6.3) with labels and channels.
+/// The figure's slider definitions with labels (`appearance.md` §6.3), from the shared
+/// shape inputs (the record the SliderMeshDeformer node names).
 fn slider_set<S: tessera_props::RecordSource>(
     data: &GameData<S>,
-    c: &AssembledCharacter,
-    values: Option<&[u8]>,
+    sliders: Option<&FigureSliders>,
 ) -> SliderSet {
+    let Some(f) = sliders else {
+        return SliderSet::default();
+    };
+    let mut names = Labels::of_property(data, "BoneSlider_Name");
+    let mut groups = Labels::of_property(data, "BoneSlider_SliderGroup");
     let mut out = SliderSet {
-        record: c.sliders.definitions,
-        values: values.map_or_else(|| c.sliders.values.clone(), <[u8]>::to_vec),
+        record: Some(f.table.record),
+        values: f.bytes.clone(),
         ..SliderSet::default()
     };
-    let Some(record) = c.sliders.definitions else {
-        return out;
-    };
-    let Ok(registry) = data.registry() else {
-        return out;
-    };
-    let dict = registry.dictionary();
-    let pids = match BoneSliderPids::from_names(dict) {
-        Ok(p) => p,
-        Err(e) => {
-            out.notes.push(format!("slider properties: {e}"));
-            return out;
-        }
-    };
-    let set = match data.read(record) {
-        Ok(Some(b)) => match PropertySetRecord::parse_expecting(&b, record, registry.as_ref()) {
-            Ok(r) => r.set,
-            Err(e) => {
-                out.notes.push(format!("slider record {record}: {e}"));
-                return out;
-            }
-        },
-        Ok(None) => {
-            out.notes.push(format!("slider record {record} is missing"));
-            return out;
-        }
-        Err(e) => {
-            out.notes.push(format!("slider record {record}: {e}"));
-            return out;
-        }
-    };
-    let defs = BoneSliderDefinition::read_all(&set, &pids);
-    // The channel labels: the mapper of the mask array's element (or of the array).
-    let mask_mapper = pids.masks.and_then(|m| {
-        registry
-            .children(m)
-            .iter()
-            .chain(std::iter::once(&m))
-            .find_map(|&p| match registry.enum_source(p)? {
-                EnumSource::Mapper(d) => Some(d),
-                EnumSource::DidMap(_) => None,
-            })
-    });
-    let mut channel_labels = Labels::of_mapper(data, mask_mapper);
-    let mut names = Labels::of_mapper(
-        data,
-        pids.name.and_then(|p| match registry.enum_source(p)? {
-            EnumSource::Mapper(d) => Some(d),
-            EnumSource::DidMap(_) => None,
-        }),
-    );
-    let mut groups = Labels::of_mapper(
-        data,
-        pids.group.and_then(|p| match registry.enum_source(p)? {
-            EnumSource::Mapper(d) => Some(d),
-            EnumSource::DidMap(_) => None,
-        }),
-    );
-    let mut unknown_channels = 0usize;
-    for d in defs.iter().take(512) {
-        let bits = d.channel_bits();
-        let mut channels = SliderChannels::NONE;
-        for b in 0..64u32 {
-            if bits & (1u64 << b) != 0 {
-                match channel_of(&channel_labels.get(b + 1)) {
-                    Some(c) => channels = channels | c,
-                    None => unknown_channels += 1,
-                }
-            }
-        }
+    if f.table.unknown_channel_bits > 0 {
+        out.notes.push(format!(
+            "{} slider channel bits have no known label; they are ignored",
+            f.table.unknown_channel_bits
+        ));
+    }
+    for d in &f.table.sliders {
         out.defs.push(SliderDef {
             name: names.get(d.name),
             group: groups.get(d.group),
             visible: d.visible,
-            channels,
-            min: d.limit_min,
-            max: d.limit_max,
-            bones: d
-                .bones
-                .iter()
-                .map(|b| (i64::from(b.index), b.reverse))
-                .collect(),
+            channels: SliderChannels::from_bits(d.channels),
+            min: d.min,
+            max: d.max,
+            bones: d.bones.clone(),
         });
     }
-    if unknown_channels > 0 {
-        out.notes.push(format!(
-            "{unknown_channels} slider channel bits have no known label; they are ignored"
-        ));
-    }
     out
+}
+
+/// Decodes clip `did` and binds it to `skeleton`.
+fn bind_clip(
+    ctx: &DataContext,
+    did: Did,
+    skeleton: &Arc<Skeleton>,
+) -> Result<Arc<BoundClip>, String> {
+    let bytes = ctx
+        .set
+        .read(did.0)
+        .map_err(|e| format!("clip {did}: {e}"))?;
+    let clip = Clip::parse(&bytes).map_err(|e| format!("clip {did}: {e}"))?;
+    BoundClip::bind(Arc::new(clip), Arc::clone(skeleton))
+        .map(Arc::new)
+        .map_err(|e| format!("clip {did}: {e}"))
 }
 
 /// Runs clip selection for idle, walk and run.
@@ -1334,22 +1307,24 @@ fn select_clips<S: tessera_props::RecordSource>(
     dict: &tessera_formats::PropertyDictionary,
     catalog: &Catalog,
     c: &AssembledCharacter,
-) -> ClipSelection {
+    asm_vocab: &AssemblyVocabulary,
+) -> (ClipSelection, FigureShape) {
     let mut out = ClipSelection::default();
+    let mut shape = FigureShape::default();
     let vocab = match ScriptVocabulary::from_data(dict, |d| {
         data.enum_mapper(d).ok().flatten().map(|m| (*m).clone())
     }) {
         Ok(v) => v,
         Err(e) => {
             out.error = Some(format!("script vocabulary: {e}"));
-            return out;
+            return (out, shape);
         }
     };
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             out.error = Some(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return out;
+            return (out, shape);
         }
     };
     let mut scripts = chain.scripts;
@@ -1383,6 +1358,7 @@ fn select_clips<S: tessera_props::RecordSource>(
             None => r
                 .candidates
                 .iter()
+                .filter(|c| !c.is_held())
                 .filter(|c| state == StateArg::Idle || !idle_clips.contains(&c.clip))
                 .max_by(|a, b| {
                     (a.blend_weight * a.chance)
@@ -1392,6 +1368,7 @@ fn select_clips<S: tessera_props::RecordSource>(
         };
         if state == StateArg::Idle {
             idle_clips = r.clips();
+            shape = figure_shape(data, asm_vocab, c, &r);
         }
         let mut label = |k: u32| layer_labels.get(k);
         out.states.push(StateClips {
@@ -1406,7 +1383,7 @@ fn select_clips<S: tessera_props::RecordSource>(
             issues: r.issues.len() + r.closure.issues.len(),
         });
     }
-    out
+    (out, shape)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1893,48 +1870,46 @@ mod tests {
         assert_eq!(cat.bodies[0].title(), "Human M");
     }
 
+    /// The height control only for a held clip driven by `AC_Avatar_Height`, with the
+    /// range of the body's sex (appearance.md §6.2).
     #[test]
-    fn slider_sets_skip_what_does_not_fit() {
-        let sk = chain(3);
+    fn height_control_follows_the_held_clip_driver() {
+        let m = Figure::Playable {
+            species: 1,
+            sex: crate::charspec::SEX_MALE,
+        };
+        let f = Figure::Playable {
+            species: 1,
+            sex: crate::charspec::SEX_FEMALE,
+        };
+        let h = Some(ShapeDriver::AvatarHeight);
+        assert_eq!(avatar_height_range(&m, [h]), Some(0.0..=0.95));
+        assert_eq!(avatar_height_range(&f, [None, h]), Some(0.0..=0.6));
+        // DwarfStoutAxe: its held clip follows the body-shape value; no height control.
+        assert_eq!(
+            avatar_height_range(&m, [Some(ShapeDriver::BoneScale)]),
+            None
+        );
+        assert_eq!(avatar_height_range(&m, []), None);
+    }
+
+    #[test]
+    fn slider_sets_count_visible_sliders() {
+        let def = |visible| SliderDef {
+            name: "a".into(),
+            group: "g".into(),
+            visible,
+            channels: SliderChannels::SCALE_X,
+            min: [0.5; 3],
+            max: [1.5; 3],
+            bones: vec![(1, false)],
+        };
         let set = SliderSet {
-            defs: vec![
-                SliderDef {
-                    name: "a".into(),
-                    group: "g".into(),
-                    visible: true,
-                    channels: SliderChannels::SCALE_X,
-                    min: [0.5; 3],
-                    max: [1.5; 3],
-                    bones: vec![(1, false)],
-                },
-                SliderDef {
-                    name: "bad bone".into(),
-                    group: "g".into(),
-                    visible: false,
-                    channels: SliderChannels::TRANSLATE_Z,
-                    min: [0.0; 3],
-                    max: [0.0; 3],
-                    bones: vec![(99, false)],
-                },
-                SliderDef {
-                    name: "no channel".into(),
-                    group: "g".into(),
-                    visible: true,
-                    channels: SliderChannels::NONE,
-                    min: [0.0; 3],
-                    max: [1.0; 3],
-                    bones: vec![(0, false)],
-                },
-            ],
+            defs: vec![def(true), def(false), def(true)],
             values: vec![0xFF, 0x00],
             ..SliderSet::default()
         };
         assert_eq!(set.visible(), 2);
-        let (s, problems) = set.build(&sk, &set.values);
-        assert_eq!(s.ops().len(), 1);
-        assert_eq!(problems.len(), 1);
-        assert_eq!(channel_of("ScaleZ"), Some(SliderChannels::SCALE_Z));
-        assert_eq!(channel_of("Bend"), None);
     }
 
     #[test]

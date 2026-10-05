@@ -1381,7 +1381,9 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "tessera-assets",
+ "tessera-formats",
  "tessera-havok",
+ "tessera-mesh",
  "thiserror",
  "tracing",
 ]

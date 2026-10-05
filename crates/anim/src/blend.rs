@@ -57,10 +57,14 @@ pub fn blend_poses(
     Ok(())
 }
 
-/// Layers `layer` over `base` in place (§6.6): each track becomes
-/// base + *w_j* · (layer − base) with *w_j* = `weight` × the track's weight (1 when
-/// `track_weights` is `None` or too short), using the rotation blend of §6.5. With weight 1
-/// and no track weights the result is the layer pose.
+/// Layers `layer` over `base` in place: each track becomes base + *w_j* · (layer − base)
+/// with *w_j* = `weight` × the track's weight (1 when `track_weights` is `None` or too
+/// short), using the rotation blend of §6.5. With weight 1 and no track weights the result
+/// is the layer pose.
+///
+/// A two-pose tool (previews, tests). It is **not** the client's layer combination, which
+/// quantises weights and fills weak bones with the reference pose (§6.6, K18):
+/// [`crate::evaluate`] implements that.
 ///
 /// # Errors
 ///
@@ -146,9 +150,9 @@ mod tests {
         (2.0 * q[2].atan2(q[3])).to_degrees()
     }
 
-    /// `skeleton-anim.md` §14.6.
+    /// The two-pose blend with track weights (without the quantisation of §6.6).
     #[test]
-    fn partial_clip_example_14_6() {
+    fn layer_over_track_weights() {
         let mut base = vec![Transform::IDENTITY; 4];
         let mut layer = vec![Transform::IDENTITY; 4];
         layer[2].rotation = rot_z(90.0);

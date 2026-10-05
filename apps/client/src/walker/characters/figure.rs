@@ -10,16 +10,23 @@
 //!    worn and held items, or a placed object (weenie game object or 0x47 entity) with its
 //!    instance set.
 //! 2. **Skeleton** from the setup's tagfile (`skeleton-anim.md` §2.1).
-//! 3. **Parts**: every visible body part decoded, flattened at its display level and
-//!    prepared for the GPU, skinned to the skeleton where the mesh is skinned; materials
+//! 3. **Clips and shape**: the script tables choose idle, walk and run
+//!    ([`ClipResolver`], `script-table.md` §11.3; every looping idle layer, walk and run
+//!    on `movement`), the held proportion clips (`script-table.md` §6.7, §6.8) and the
+//!    species table's body-shape deformer and bone sliders (`appearance.md` §6.4,
+//!    [`figure_shape`]); the clips are decoded once per DID ([`ClipStore`]), baked for
+//!    sampling ([`BakeCache`]) and bound to the skeleton (track count = bone count,
+//!    `skeleton-anim.md` §3.4). The body shape and sliders become a [`BindDeformation`].
+//! 4. **Parts**: every visible body part decoded, flattened at its display level and
+//!    prepared for the GPU, skinned to the skeleton where the mesh is skinned, its skinned
+//!    vertices deformed once in bind space by the figure's deformation; materials
 //!    resolved with the part's appearance layers (`material.md` §9.3) into the walker's
 //!    material plans; held items' parts prepared rigid, keyed by holding location, with an
 //!    attach table of the wearer's locations (`skeleton-anim.md` §8.4).
-//! 4. **Clips**: the script tables choose idle, walk and run
-//!    ([`ClipResolver`], `script-table.md` §11.3; every looping idle layer, walk and run
-//!    on `movement`); the clips are decoded once per DID ([`ClipStore`]), baked for sampling
-//!    ([`BakeCache`]) and bound to the skeleton (track count = bone count,
-//!    `skeleton-anim.md` §3.4).
+//!
+//! The figure's height and slider values are the avatar entity's (`AC_Avatar_Height` 0 is
+//! the shortest River-hobbit, `appearance.md` §6.2): the session model carries no
+//! per-character values yet.
 //!
 //! A figure without a usable skeleton, or with no skinned part, is **static**: its parts
 //! are drawn rigid in the setup frame, unanimated. Every failure short of "no body" is a
@@ -31,7 +38,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use tessera_anim::{
-    AttachFrame, AttachPointDesc, AttachTable, BakeCache, BoundClip, Skeleton as AnimSkeleton,
+    AttachFrame, AttachPointDesc, AttachTable, BakeCache, BindDeformation, BoundClip,
+    Skeleton as AnimSkeleton, bind_shape,
 };
 use tessera_dat::ArchiveSet;
 use tessera_formats::script_table::resolve::{
@@ -41,6 +49,7 @@ use tessera_formats::setup::Anchor;
 use tessera_formats::{Did, PropertySet};
 use tessera_havok::Clip;
 use tessera_material::{Layering, LibraryConfig, MaterialLibrary};
+use tessera_mesh::assembly::shape::{FigureShape, figure_shape};
 use tessera_mesh::assembly::{
     AssembledCharacter, CharacterAssembler, CharacterSpec, EquippedItem, GameDataSource,
     MaterialLayer, WieldState,
@@ -99,6 +108,13 @@ pub struct FigureRequest {
     pub instance_key: Option<u64>,
     /// Draw rigid and unanimated even when the body could be animated.
     pub static_only: bool,
+    /// `AC_Avatar_Height` of a playable body (`appearance.md` §6.2); `None` keeps the
+    /// avatar entity's (0 for the River-hobbit: the shortest). The session model carries
+    /// no per-character value yet, so the walker leaves it `None`.
+    pub avatar_height: Option<f32>,
+    /// `AC_BoneScale_Test` of a playable body (`appearance.md` §6.2, §6.4); `None` keeps the
+    /// avatar entity's.
+    pub bone_scale: Option<f32>,
 }
 
 impl FigureRequest {
@@ -121,6 +137,10 @@ impl FigureRequest {
                 .collect(),
             instance: self.instance_key,
             static_only: self.static_only,
+            shape: [
+                self.avatar_height.map_or(u32::MAX, f32::to_bits),
+                self.bone_scale.map_or(u32::MAX, f32::to_bits),
+            ],
         }
     }
 }
@@ -132,6 +152,7 @@ pub struct FigureKey {
     items: Vec<(u32, u32, u32, bool)>,
     instance: Option<u64>,
     static_only: bool,
+    shape: [u32; 2],
 }
 
 /// One part ready for upload.
@@ -164,6 +185,9 @@ pub struct ClipPlay {
     pub layer: u32,
     /// The node asks for per-track weights (`UseBoneOpacity`, `script-table.md` §6.5).
     pub track_weights: bool,
+    /// For a held clip (`ManualUpdate`, `script-table.md` §6.7): the fraction of the clip
+    /// it shows; it never advances.
+    pub held: Option<f32>,
 }
 
 /// The clips of idle, walk and run.
@@ -176,6 +200,9 @@ pub struct FigureClips {
     pub walk: Option<ClipPlay>,
     /// Run forward.
     pub run: Option<ClipPlay>,
+    /// Held proportion clips (`script-table.md` §6.8), one per data layer, lowest first:
+    /// shown in every motion state.
+    pub held: Vec<ClipPlay>,
 }
 
 /// Most idle layers a figure plays.
@@ -192,6 +219,11 @@ pub struct FigureAsset {
     pub attach: Option<Arc<AttachTable>>,
     /// Clips (empty for a static figure).
     pub clips: FigureClips,
+    /// The bind-space deformation the skinned parts were built with (`appearance.md`
+    /// §6.4); `None` when the figure has none or it changes nothing.
+    pub deformation: Option<Arc<BindDeformation>>,
+    /// The shape inputs it was built from (held clips, body shape, slider bytes).
+    pub shape: FigureShape,
     /// Whole-body scale (`appearance.md` §6.1).
     pub model_scale: f32,
     /// Problems, for the log.
@@ -348,6 +380,8 @@ pub fn build_figure(
     let c = match req.body {
         Body::Character { species, sex } => {
             let mut spec = CharacterSpec::new(species, sex);
+            spec.avatar_height = req.avatar_height;
+            spec.bone_scale = req.bone_scale;
             for e in req.equipment.iter().take(super::MAX_EQUIPMENT) {
                 let mut item = EquippedItem::new(Did(e.item.0)).with_state(if e.stowed {
                     WieldState::Sheathed
@@ -391,6 +425,34 @@ pub fn build_figure(
         }
     };
     let bones = skeleton.as_ref().map(|s| s.bone_count());
+    let (clips, shape) = match &skeleton {
+        Some(s) => select_clips(ctx, &c, s, &mut notes),
+        None => (FigureClips::default(), FigureShape::default()),
+    };
+    notes.extend(shape.notes.iter().take(4).cloned());
+    // Held clips and the bind-space deformation (`appearance.md` §6.4, `script-table.md`
+    // §6.7, §6.8), by the path the explorer shares.
+    let mut clips = clips;
+    let mut deformation = None;
+    if let Some(s) = &skeleton {
+        let bound = bind_shape(&shape, s, |d| ctx.clips.bind(&ctx.set, d.0, s));
+        notes.extend(bound.notes);
+        deformation = bound.deformation;
+        // Kept in every motion state, never faded (script-table.md §6.8).
+        clips.held = bound
+            .held
+            .into_iter()
+            .map(|h| ClipPlay {
+                did: h.held.clip.0,
+                clip: h.clip,
+                rate: 0.0,
+                speed: 0.0,
+                layer: h.held.layer,
+                track_weights: h.held.use_bone_opacity,
+                held: Some(h.held.fraction),
+            })
+            .collect();
+    }
 
     let mut parts = Vec::new();
     for p in c.parts.iter().filter(|p| !p.hidden) {
@@ -401,7 +463,13 @@ pub fn build_figure(
         if cancelled() {
             return Err(FigureError::Cancelled);
         }
-        match build_part(ctx, p.mesh, bones.filter(|_| p.skinned), &p.materials) {
+        match build_part(
+            ctx,
+            p.mesh,
+            bones.filter(|_| p.skinned),
+            &p.materials,
+            deformation.as_ref(),
+        ) {
             Ok(mut part) => {
                 part.held = None;
                 parts.push(part);
@@ -421,7 +489,7 @@ pub fn build_figure(
                 if cancelled() {
                     return Err(FigureError::Cancelled);
                 }
-                match build_part(ctx, mesh, None, &[]) {
+                match build_part(ctx, mesh, None, &[], None) {
                     Ok(mut part) => {
                         part.held = Some(h.location);
                         parts.push(part);
@@ -463,10 +531,6 @@ pub fn build_figure(
         }
         _ => None,
     };
-    let clips = match &skeleton {
-        Some(s) => select_clips(ctx, &c, s, &mut notes),
-        None => FigureClips::default(),
-    };
     let model_scale = c.model_scale();
     let model_scale = if model_scale.is_finite() && model_scale > 0.0 && model_scale < 100.0 {
         model_scale
@@ -479,18 +543,22 @@ pub fn build_figure(
         parts,
         attach,
         clips,
+        deformation: deformation.map(Arc::new),
+        shape,
         model_scale,
         notes,
         build_ms: started.elapsed().as_secs_f64() * 1e3,
     })
 }
 
-/// Decodes, flattens and prepares one part mesh; skinned when `bones` is given.
+/// Decodes, flattens and prepares one part mesh; skinned when `bones` is given, its
+/// skinned vertices deformed in bind space by `deform` (`appearance.md` §6.4 step 4).
 fn build_part(
     ctx: &FigureContext,
     mesh_did: Did,
     bones: Option<usize>,
     layers: &[MaterialLayer],
+    deform: Option<&BindDeformation>,
 ) -> Result<PartAsset, String> {
     let (located, bytes) = ctx
         .set
@@ -529,10 +597,19 @@ fn build_part(
                 .map_or(MaterialPlan::FALLBACK, |s| plan_for(ctx, s, layers))
         })
         .collect();
-    let data = level_mesh_data(&geo, format!("figure part {mesh_did}"));
+    let mut data = level_mesh_data(&geo, format!("figure part {mesh_did}"));
     let prepared = match (skinned, bones) {
         (true, Some(b)) => {
             let (skin, _rigid) = mesh_skin(&geo, b)?;
+            if let Some(d) = deform {
+                d.deform(
+                    &mut data.positions,
+                    data.normals.as_deref_mut(),
+                    data.tangents.as_deref_mut(),
+                    &skin.joints,
+                    &skin.weights,
+                );
+            }
             data.prepare_skinned(&skin, &ctx.mesh_config)
         }
         _ => data.prepare(&ctx.mesh_config),
@@ -578,29 +655,31 @@ fn plan_for(ctx: &FigureContext, surface: Did, layers: &[MaterialLayer]) -> Mate
 /// idle is a reference stance shows its stance from a higher layer); without a looping one
 /// the most likely candidate of the `idle` layer, else of any layer. Walk and run: the
 /// most likely candidate on the `movement` layer, else of any layer that is not an idle
-/// clip.
+/// clip. Held clips (`ManualUpdate`, §6.7) are never idle, walk or run clips: they are
+/// returned apart, with the figure's other shape inputs ([`figure_shape`]).
 fn select_clips(
     ctx: &FigureContext,
     c: &AssembledCharacter,
     skeleton: &Arc<AnimSkeleton>,
     notes: &mut Vec<String>,
-) -> FigureClips {
+) -> (FigureClips, FigureShape) {
     let cat = &ctx.catalog;
     let data = &cat.data;
     let mut out = FigureClips::default();
+    let mut shape = FigureShape::default();
     let Some(vocab) = cat.scripts.clone() else {
         notes.push("no script vocabulary; not animated".into());
-        return out;
+        return (out, shape);
     };
     let Ok(registry) = data.registry() else {
-        return out;
+        return (out, shape);
     };
     let dict = registry.dictionary();
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             notes.push(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return out;
+            return (out, shape);
         }
     };
     let mut scripts = chain.scripts;
@@ -619,7 +698,7 @@ fn select_clips(
                 continue;
             }
         };
-        let usable = |c: &&ClipCandidate| !c.clip.is_null();
+        let usable = |c: &&ClipCandidate| !c.clip.is_null() && !c.is_held();
         let best = |it: &mut dyn Iterator<Item = &ClipCandidate>| -> Option<ClipCandidate> {
             let mut best: Option<&ClipCandidate> = None;
             for c in it.filter(usable) {
@@ -631,6 +710,9 @@ fn select_clips(
         };
         let chosen: Vec<ClipCandidate> = if state == MotionState::Idle {
             idle_clips = r.clips();
+            if let Some(asm) = &cat.assembly {
+                shape = figure_shape(data, asm, c, &r);
+            }
             if tracing::enabled!(tracing::Level::TRACE) {
                 for c in r.candidates.iter().take(16) {
                     tracing::trace!(
@@ -711,6 +793,7 @@ fn select_clips(
                     .unwrap_or(fallback),
                 layer: cand.layer,
                 track_weights: cand.use_bone_opacity,
+                held: None,
             };
             match state {
                 MotionState::Idle => out.idle.push(play(0.0)),
@@ -726,5 +809,5 @@ fn select_clips(
     {
         out.run = None;
     }
-    out
+    (out, shape)
 }

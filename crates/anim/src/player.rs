@@ -13,15 +13,18 @@
 //! - [`SpeedBlend`]: clips at parameter anchors weighted like a scalar blend
 //!   (`script-table.md` §7.3), phase-synchronised, e.g. idle at 0, walk at 2 m/s and run at
 //!   6 m/s driven by the ground speed;
-//! - [`Layer`] and [`Animator`]: layers from low to high priority, each overriding the ones
-//!   below bone by bone, weighted by the layer weight and optionally the clip's track
-//!   weights (§6.6; `script-table.md` §6.2 and §6.5).
+//! - [`Layer`] and [`Animator`]: layers from low to high priority, combined bone by bone by
+//!   the layered-weight rule of §6.6 (K18): higher layers take their weight first, lower
+//!   layers get what remains (`script-table.md` §6.2 and §6.5);
+//! - held clips ([`Playback::held`]): a clip that never advances, shown at a fraction of its
+//!   duration (`script-table.md` §6.7).
 
 use std::sync::Arc;
 
+use glam::{Vec3, Vec4};
 use tessera_havok::Transform;
 
-use crate::blend::{layer_over, scalar_blend_weights};
+use crate::blend::scalar_blend_weights;
 use crate::clip::{BoundClip, SampleReport, Wrap, clip_time};
 use crate::error::{AnimError, Result};
 use crate::motion::{MotionDelta, RootMotionMode, motion_between};
@@ -57,6 +60,30 @@ impl Playback {
             wrap,
             root_motion: RootMotionMode::InPlace,
         }
+    }
+
+    /// A **held** clip (`script-table.md` §6.7): playback rate 0, one-shot wrap, play time
+    /// `fraction` × duration, so the pose never changes with elapsed time. `fraction` is the
+    /// held fraction the script node's rule gives (already wrapped or limited to `0 ..= 1`;
+    /// it is clamped here, and a non-finite one reads 0).
+    #[must_use]
+    pub fn held(clip: Arc<BoundClip>, fraction: f32) -> Self {
+        let mut p = Self::new(clip, Wrap::Once);
+        p.rate = 0.0;
+        p.set_held_fraction(fraction);
+        p
+    }
+
+    /// Moves a held clip to `fraction` of its duration at once (a changed driving
+    /// property, `script-table.md` §6.7 step 3). Unlike [`Playback::set_phase`] the
+    /// fraction 1 is kept as the clip's last pose.
+    pub fn set_held_fraction(&mut self, fraction: f32) {
+        let d = self.clip.duration();
+        self.time = if d > 0.0 && d.is_finite() {
+            finite_or_zero(fraction).clamp(0.0, 1.0) * d
+        } else {
+            0.0
+        };
     }
 
     /// The clip time to sample (§6.3).
@@ -459,9 +486,8 @@ pub struct Layer {
     pub source: Option<Source>,
     /// Current weight, `0 ..= 1`.
     pub weight: f32,
-    /// Whether the clips' per-track weights multiply the layer weight (§6.6). They are
-    /// never applied to the lowest contributing layer, which plays the full clip pose
-    /// ("a weighted clip played alone uses the full clip pose").
+    /// Whether the clips' per-track weights are their track opacities (§6.6,
+    /// `UseBoneOpacity`, `script-table.md` §6.5): on every layer, the lowest included.
     pub use_track_weights: bool,
     target: f32,
     ramp_rate: f32,
@@ -798,8 +824,9 @@ impl Animator {
 #[derive(Debug, Clone, Default)]
 pub struct EvalScratch {
     a: Vec<Transform>,
-    b: Vec<Transform>,
-    w: Vec<f32>,
+    acc: Vec<Accum>,
+    remaining: Vec<f32>,
+    layer_sum: Vec<f32>,
 }
 
 impl EvalScratch {
@@ -810,11 +837,104 @@ impl EvalScratch {
     }
 }
 
-/// Evaluates layer snapshots into a local pose (`skeleton-anim.md` §10 steps 2–3): start
-/// from the reference pose (bones no clip drives keep it), then for each layer sample its
-/// clips (each further clip of the chain blended over the first by its factor) and layer
-/// the result over the pose with the layer weight, times the clips' track weights where
-/// the layer asks for them and a layer lies below.
+/// Weighted sums of one bone's contributions (§6.6 step 5).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Accum {
+    t: Vec3,
+    s: Vec3,
+    q: Vec4,
+    w: f32,
+}
+
+impl Accum {
+    /// Adds a contribution of weight `w`. The quaternion is negated first when it points
+    /// away from the sum so far (shortest path, §6.5). Tessera Decision: the reference for
+    /// that test is the running weighted sum (`skeleton-anim.md` §6.5 reports the exact
+    /// reference as not traced); the first contribution is taken as it is.
+    pub(crate) fn add(&mut self, t: &Transform, w: f32) {
+        if w <= 0.0 || !w.is_finite() {
+            return;
+        }
+        let q = Vec4::from_array(t.rotation);
+        let q = if self.q.dot(q) < 0.0 { -q } else { q };
+        self.t += Vec3::from_array(t.translation) * w;
+        self.s += Vec3::from_array(t.scale) * w;
+        self.q += q * w;
+        self.w += w;
+    }
+
+    /// Step 4 of §6.6: a total below [`MIN_BONE_WEIGHT`] is filled with `reference`.
+    pub(crate) fn fill(&mut self, reference: &Transform) {
+        if self.w < MIN_BONE_WEIGHT {
+            let fill = MIN_BONE_WEIGHT - self.w;
+            self.add(reference, fill);
+        }
+    }
+
+    /// The weighted average; `fallback` where it cannot be formed.
+    pub(crate) fn result(&self, fallback: &Transform) -> Transform {
+        if !(self.w > 0.0 && self.w.is_finite()) {
+            return *fallback;
+        }
+        let inv = 1.0 / self.w;
+        let t = self.t * inv;
+        let s = self.s * inv;
+        let len = self.q.length();
+        let rotation = if len.is_finite() && len > 1e-6 {
+            (self.q / len).to_array()
+        } else {
+            fallback.rotation
+        };
+        Transform {
+            translation: if t.is_finite() {
+                t.to_array()
+            } else {
+                fallback.translation
+            },
+            rotation,
+            scale: if s.is_finite() {
+                s.to_array()
+            } else {
+                fallback.scale
+            },
+        }
+    }
+}
+
+/// Minimum total weight of a bone; below it the reference pose fills the rest (§6.6 step 4).
+pub const MIN_BONE_WEIGHT: f32 = 0.1;
+
+/// A weight truncated to whole 1/255 steps (§6.6 step 3). Tessera Decision: 10⁻⁴ of a
+/// step is added before truncating, so that weights such as 1 − 0.5 that floating point
+/// computes a hair below a whole step keep that step.
+#[must_use]
+pub fn quantise_weight(w: f32) -> f32 {
+    if !w.is_finite() || w <= 0.0 {
+        return 0.0;
+    }
+    (255.0 * w.min(1.0) + 1e-4).floor() / 255.0
+}
+
+/// The blend factor of a chain entry, limited to `0 ..= 1` (NaN reads 0).
+fn factor(x: f32) -> f32 {
+    if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) }
+}
+
+/// Evaluates layer snapshots into a local pose (`skeleton-anim.md` §10 steps 2–3) by the
+/// layered-weight rule of §6.6 (K18):
+///
+/// 1. every clip *i* gets an overall weight *c_i*: its layer's weight times its share of the
+///    layer's chain (a cross-fade's incoming clip its fade factor, the clips it fades out
+///    the rest);
+/// 2. per bone *j*, layers are visited from the **last snapshot to the first** (highest
+///    priority first) with a remaining weight *r* = 1; each clip gets *w_ij* = *c_i* × *r* ×
+///    *o_ij*, where the opacity *o_ij* is the clip's track weight *j* when the layer uses
+///    track weights and the clip has them, else 1; clips of one layer share *r*, and after
+///    the layer *r* drops by the layer's total (never below 0);
+/// 3. every weight is truncated to whole 1/255 steps ([`quantise_weight`]);
+/// 4. a bone whose total weight is below [`MIN_BONE_WEIGHT`] gets the reference transform
+///    with weight 0.1 − total;
+/// 5. the bone's local transform is the normalised weighted average of the contributions.
 ///
 /// # Errors
 ///
@@ -828,21 +948,7 @@ pub fn evaluate(
 ) -> Result<SampleReport> {
     let n = skeleton.bone_count();
     check_len("local pose", n, out.len())?;
-    let out = &mut out[..n];
-    out.copy_from_slice(skeleton.reference_local());
-    scratch.a.resize(n, Transform::IDENTITY);
-    scratch.b.resize(n, Transform::IDENTITY);
-    let mut report = SampleReport::default();
-    let mut below = false;
     for l in layers {
-        let weight = if l.weight.is_nan() {
-            0.0
-        } else {
-            l.weight.clamp(0.0, 1.0)
-        };
-        if weight == 0.0 {
-            continue;
-        }
         for (c, _) in l.clips() {
             if c.clip.track_count() != n {
                 return Err(AnimError::TrackCountMismatch {
@@ -851,41 +957,90 @@ pub fn evaluate(
                 });
             }
         }
-        report.replaced += l.a.clip.sample(l.a.time, &mut scratch.a)?.replaced;
-        for (c, alpha) in l.clips().skip(1) {
-            report.replaced += c.clip.sample(c.time, &mut scratch.b)?.replaced;
-            layer_over(&mut scratch.a, &scratch.b, alpha, None)?;
+    }
+    let out = &mut out[..n];
+    let reference = skeleton.reference_local();
+    scratch.a.resize(n, Transform::IDENTITY);
+    scratch.acc.clear();
+    scratch.acc.resize(n, Accum::default());
+    scratch.remaining.clear();
+    scratch.remaining.resize(n, 1.0);
+    scratch.layer_sum.resize(n, 0.0);
+    let mut report = SampleReport::default();
+    for l in layers.iter().rev() {
+        let lw = factor(l.weight);
+        if lw == 0.0 {
+            continue;
         }
-        let tw = if l.use_track_weights
-            && below
-            && l.clips().any(|(c, _)| c.clip.track_weights().is_some())
-        {
-            // The clips' track weights blended like their poses.
-            scratch.w.clear();
-            scratch.w.extend((0..n).map(|j| {
-                l.clips()
-                    .fold(None, |w: Option<f32>, (c, alpha)| {
-                        let y = c.clip.track_weight(j);
-                        Some(match w {
-                            None => y,
-                            Some(x) => {
-                                let alpha = if alpha.is_nan() {
-                                    0.0
-                                } else {
-                                    alpha.clamp(0.0, 1.0)
-                                };
-                                x + (y - x) * alpha
-                            }
-                        })
-                    })
-                    .unwrap_or(1.0)
-            }));
-            Some(&scratch.w[..])
-        } else {
-            None
-        };
-        layer_over(out, &scratch.a, weight, tw)?;
-        below = true;
+        // Shares of the chain: clip k keeps its factor times (1 − factor) of every later
+        // entry ([`LayerSnapshot::clips`] gives the first entry factor 1).
+        let mut clips: [Option<(&ClipSample, f32)>; MAX_LAYER_CLIPS] = Default::default();
+        for (slot, (c, x)) in clips.iter_mut().zip(l.clips()) {
+            *slot = Some((c, factor(x)));
+        }
+        let mut later = 1.0f32;
+        for slot in clips.iter_mut().rev().flatten() {
+            let x = slot.1;
+            slot.1 = x * later;
+            later *= 1.0 - x;
+        }
+        scratch.layer_sum.iter_mut().for_each(|x| *x = 0.0);
+        for (c, share) in clips.iter().flatten() {
+            let ci = lw * share;
+            if ci.is_nan() || ci <= 0.0 {
+                continue;
+            }
+            report.replaced += c.clip.sample(c.time, &mut scratch.a)?.replaced;
+            let opacity = l.use_track_weights && c.clip.track_weights().is_some();
+            for j in 0..n {
+                let o = if opacity {
+                    factor(c.clip.track_weight(j))
+                } else {
+                    1.0
+                };
+                let w = ci * scratch.remaining[j] * o;
+                scratch.layer_sum[j] += w;
+                scratch.acc[j].add(&scratch.a[j], quantise_weight(w));
+            }
+        }
+        for (r, s) in scratch.remaining.iter_mut().zip(&scratch.layer_sum) {
+            *r = (*r - s).max(0.0);
+        }
+    }
+    for ((o, acc), r) in out.iter_mut().zip(&mut scratch.acc).zip(reference) {
+        acc.fill(r);
+        *o = acc.result(r);
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantisation_truncates_to_steps() {
+        assert_eq!(quantise_weight(1.0), 1.0);
+        assert_eq!(quantise_weight(0.01), 2.0 / 255.0);
+        assert_eq!(quantise_weight(0.99), 252.0 / 255.0);
+        assert_eq!(quantise_weight(0.5), 127.0 / 255.0);
+        assert_eq!(quantise_weight(1.0 - 0.5), 127.0 / 255.0);
+        assert_eq!(quantise_weight(-1.0), 0.0);
+        assert_eq!(quantise_weight(f32::NAN), 0.0);
+        assert_eq!(quantise_weight(7.0), 1.0);
+    }
+
+    #[test]
+    fn accumulation_aligns_signs() {
+        let mut a = Accum::default();
+        let id = Transform::IDENTITY;
+        let neg = Transform {
+            rotation: [0.0, 0.0, 0.0, -1.0],
+            ..id
+        };
+        a.add(&id, 0.5);
+        a.add(&neg, 0.5);
+        let r = a.result(&id);
+        assert!((r.rotation[3].abs() - 1.0).abs() < 1e-6);
+    }
 }

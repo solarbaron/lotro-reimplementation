@@ -52,7 +52,7 @@ stayed in the clean scratch directory and were deleted.
 
 | Group | Checks | Pass | Fail |
 |---|---|---|---|
-| B: bodies × idle, walk, run | 42 | 36 | 6 |
+| B: bodies × idle, walk, run | 42 | 42 | 0 |
 | W: single worn items | 22 | 22 | 0 |
 | L: layering combinations | 8 | 8 | 0 |
 | H: held items | 25 | 25 | 0 |
@@ -60,30 +60,44 @@ stayed in the clean scratch directory and were deleted.
 
 Notes:
 
-1. **B37–B42 (River-hobbit) fail only on "feet on the ground plane"**: skinning is clean,
-   but with the two hidden `Femur_Scale` sliders applied as the `appearance.md` §6.3
-   Decision says (local scale Z 0.8 on `lfemur`/`rfemur`, 1.15 on `lknee`/`rknee`, children
-   inheriting the scale by full matrix composition, `skeleton-anim.md` §5.4) the legs get
-   shorter while the pelvis height stays, so the feet float about 0.09 m above the ground
-   (lowest bone 0.10 m at scale 0.7; 0.015 m without the sliders, like the other bodies).
-   **OPEN** (O9, reported to the spec owner): the slider application frame and how a scaled
-   bone's children and the root height follow. Everything else of these rows passes.
-   A second unexplained input to these rows: the River-hobbit script tables also start a
-   looping clip on layer 110 `scale_blend`, 0x05008E76 (a candidate of idle, walk and run
-   for `riverhobbit,m`, weight 1; Human M and Elf F have none; `script-table.md` §8.3 OPEN
-   already notes that River-hobbit bodies reach a layer-110 clip). The viewer does not play
-   it. It has 89 tracks over 1.666 s, track weights 0.01 on the root, femur, knee, ankle,
-   eye and finger bones and 0 elsewhere; its root translation runs from z −12.5 m at t = 0
-   to −0.058 m at the end, its knee and ankle translations from +5.55 m to −0.42 m. Played
-   alone it pulls the figure apart (lowest bone −8.52 m on `riverhobbit,m`, −12.17 m on
-   `human,m` at t = 0, `--sheet … --clip 0x05008E76`, re-measured 2026-10-05). Layered over
-   idle with the `skeleton-anim.md` §6.6 weighted rule (base + w·(layer − base)) it moves
-   the lowest bone only from 0.104 m to 0.088–0.104 m at scale 0.7, so it does not explain
-   the 0.09 m float (candidates, weights, ranges and the layered figures measured in review
-   with a since-deleted test). **OPEN** (reported with O9, for `script-table.md` §6.2 or
-   `appearance.md` §6.2/§6.3): what drives the `scale_blend` clip's time (perhaps
-   `AC_Avatar_Height`, which only River-hobbit entities carry) and how that layer combines
-   with the others.
+1. **B37–B42 (River-hobbit) pass since the fix of 2026-10-05.** They first failed on
+   "feet on the ground plane" (feet about 0.09 m up, lowest bone 0.10 m at scale 0.7 with the
+   hidden `Femur_Scale` sliders applied alone). The trigger for the fix was the owner's
+   observation of 2026-10-05: in the client the River-hobbit idle pulsed taller and shorter
+   in a loop, because the layer-110 `scale_blend` clip (M 0x05008E76, F 0x05008E75) was
+   played as a looping clip. The fix follows the spec answers to the two OPENs this note
+   carried (`appearance.md` §6.2–§6.5, `script-table.md` §6.7–§6.9, `skeleton-anim.md`
+   §6.6): the layer-110 clip is **held** at the fraction `AC_Avatar_Height` (default 0)
+   and never played over time or faded; the body-shape deformer clip is held at
+   `AC_BoneScale_Test` and reshapes the body in bind space (§6.4); slider bytes come from
+   the entity only where `AC_BoneSlider_Value_Array` drives the string, otherwise from the
+   stored string (35 × `80` for a driven value the entity lacks). The client and the
+   explorer share this one path, so the client now draws the River-hobbit with its sliders
+   too. Verified on the real install (release build, `TESSERA_GAME_DIR` set):
+   `apps/client/tests/figure_shape_real_data.rs` (5 tests, client figure build and animator
+   driven for 33.3 s of idle at 0.05 s steps) and explorer side-view sheets at 0–1.6 s.
+   - **Idle, no pulsing:** River-hobbit M root chain changes 0.0032 m, the bones the held
+     clip moves 0.0062 m, the head 0.0025 m (0.0715 m with the clip looped as before);
+     River-hobbit F 0.0032 m, 0.0071 m and 0.0024 m (0.0712 m looped). The head-top pixel
+     row of the five idle tiles changes by 1 px or less.
+   - **Feet on the ground:** idle lowest bone 0.011 m (M) and 0.008–0.009 m (F), in the
+     range of the other bodies (Human M 0.0215, Dwarf 0.030, Elf F 0.0147, Hobbit M 0.0156,
+     Beorning 0.0221, HighElf 0.0231 m; `other_bodies_are_unchanged` passes). Walk and run
+     lowest bone: M −0.0086 to 0.0138 and −0.0024 to 0.1136 m, F −0.0021 to 0.0069 and
+     0.0026 to 0.0346 m.
+   - **Standing heights** at height 0 / middle / maximum match the `appearance.md` §6.5
+     table exactly (M 1.231 / 1.266 / 1.300 m, F 1.200 / 1.215 / 1.245 m; lowest vertex
+     −0.008 to −0.001 m), as do Human M 1.806, Dwarf 1.345 and DwarfStoutAxe 1.434 m. The
+     §6.1 figures 1.27 / 1.24 m are the undeformed bind top × 0.7; the bind-space top with
+     the body shape applied is 1.293 / 1.262 m, so the River-hobbit rows now differ from
+     §6.1 by about 2 cm (note 2), and §6.5 is the figure that counts.
+   - **Viewed:** the River-hobbit M idle, walk and run sheets and the River-hobbit F idle,
+     walk and run sheets: feet flat on the grid at idle, the same height in every frame,
+     no stretched or torn vertices, natural walk and run poses. Images deleted.
+   - **Still open, not blocking:** while walking, River-hobbit M's lowest skinned vertex
+     reaches −0.055 m (about −0.02 m on Human M, Hobbit M and River-hobbit F); the toe dips
+     slightly into the ground at toe-off. This is the owner OPEN of `appearance.md` §6.5.
+     The heights at the ends of each control still await the owner's comparison (O9).
 2. **Standing heights** (bind-pose top × model scale) agree with `appearance.md` §2.2/§6.1
    within 1 cm for every body except DwarfStoutAxe (1.42 m against 1.36 m): its
    appearance list gives it another head, hair and beard than the Dwarf default body the
@@ -159,12 +173,12 @@ Body numbers are `appearance.md` §2.2. Scale = template `vec3` × entity scale 
 | B34 | P12 DwarfStoutAxe (0x78) | 0x4700979A | 0x04000557 | 1.0 | idle | 0x05007A13 | pass | one body for both race-table entries; standing height 1.420 m (its appearance-list head, hair 0x0600BAC9 and beard stand taller than the bind height of §2.2; scale 1.0 as expected); assembly reports unpaired-dye ClassList(3) 0x20003092; feet on the ground (lowest bone 0.030–0.031 m); `tessera-explorer --sheet B34.png --character dwarfstoutaxe,m --clip idle --times 0,3.7,7.4,11.1 --angles "160,10;70,5;340,10" --tile 300x440` |
 | B35 | P12 DwarfStoutAxe (0x78) | 0x4700979A | 0x04000557 | 1.0 | walk | 0x05007A0D | pass | standing height 1.420 m; `tessera-explorer --sheet B35.png --character dwarfstoutaxe,m --clip walk --times 0,0.3,0.6,0.9 --angles "160,10;70,5;340,10" --tile 300x440` |
 | B36 | P12 DwarfStoutAxe (0x78) | 0x4700979A | 0x04000557 | 1.0 | run | 0x05007A14 | pass | standing height 1.420 m; `tessera-explorer --sheet B36.png --character dwarfstoutaxe,m --clip run --times 0,0.2,0.4,0.6 --angles "160,10;70,5;340,10" --tile 300x440` |
-| B37 | P13 RiverHobbit (0x7D) M | 0x4700CEA3 | 0x0400772B | 0.7 | idle | 0x05008EE8 | fail | hidden thigh/knee sliders active (§6.3); skinning itself clean (no stretched or detached parts, seams closed), but the feet float about 0.09 m above the ground plane: the hidden `Femur_Scale` sliders, applied as the §6.3 Decision says, shorten the legs (lowest bone 0.104 m at scale 0.7; 0.015 m without the sliders); OPEN O9 (`appearance.md` §6.3 application frame) and `skeleton-anim.md` §5.4 (scale inheritance); standing height 1.259 m; `tessera-explorer --sheet B37.png --character riverhobbit,m --clip idle --times 0,3.7,7.4,11.1 --angles "160,10;70,5;340,10" --tile 300x440` |
-| B38 | P13 RiverHobbit (0x7D) M | 0x4700CEA3 | 0x0400772B | 0.7 | walk | 0x05008EA9 | fail | skinning itself clean (no stretched or detached parts, seams closed), but the feet float about 0.09 m above the ground plane: the hidden `Femur_Scale` sliders, applied as the §6.3 Decision says, shorten the legs (lowest bone 0.104 m at scale 0.7; 0.015 m without the sliders); OPEN O9 (`appearance.md` §6.3 application frame) and `skeleton-anim.md` §5.4 (scale inheritance); standing height 1.259 m; `tessera-explorer --sheet B38.png --character riverhobbit,m --clip walk --times 0,0.3,0.6,0.9 --angles "160,10;70,5;340,10" --tile 300x440` |
-| B39 | P13 RiverHobbit (0x7D) M | 0x4700CEA3 | 0x0400772B | 0.7 | run | 0x05008EA1 | fail | skinning itself clean (no stretched or detached parts, seams closed), but the feet float about 0.09 m above the ground plane: the hidden `Femur_Scale` sliders, applied as the §6.3 Decision says, shorten the legs (lowest bone 0.106 m at scale 0.7; 0.015 m without the sliders); OPEN O9 (`appearance.md` §6.3 application frame) and `skeleton-anim.md` §5.4 (scale inheritance); standing height 1.259 m; `tessera-explorer --sheet B39.png --character riverhobbit,m --clip run --times 0,0.2,0.4,0.6 --angles "160,10;70,5;340,10" --tile 300x440` |
-| B40 | P14 RiverHobbit (0x7D) F | 0x4700CEA4 | 0x0400772A | 0.7 | idle | 0x05008EE7 | fail | hidden thigh/knee sliders active (§6.3); skinning itself clean (no stretched or detached parts, seams closed), but the feet float about 0.09 m above the ground plane: the hidden `Femur_Scale` sliders, applied as the §6.3 Decision says, shorten the legs (lowest bone 0.103 m at scale 0.7; 0.015 m without the sliders); OPEN O9 (`appearance.md` §6.3 application frame) and `skeleton-anim.md` §5.4 (scale inheritance); standing height 1.230 m; `tessera-explorer --sheet B40.png --character riverhobbit,f --clip idle --times 0,3.7,7.4,11.1 --angles "160,10;70,5;340,10" --tile 300x440` |
-| B41 | P14 RiverHobbit (0x7D) F | 0x4700CEA4 | 0x0400772A | 0.7 | walk | 0x05008EB6 | fail | skinning itself clean (no stretched or detached parts, seams closed), but the feet float about 0.09 m above the ground plane: the hidden `Femur_Scale` sliders, applied as the §6.3 Decision says, shorten the legs (lowest bone 0.098 m at scale 0.7; 0.015 m without the sliders); OPEN O9 (`appearance.md` §6.3 application frame) and `skeleton-anim.md` §5.4 (scale inheritance); standing height 1.230 m; `tessera-explorer --sheet B41.png --character riverhobbit,f --clip walk --times 0,0.3,0.6,0.9 --angles "160,10;70,5;340,10" --tile 300x440` |
-| B42 | P14 RiverHobbit (0x7D) F | 0x4700CEA4 | 0x0400772A | 0.7 | run | 0x05008EAD | fail | skinning itself clean (no stretched or detached parts, seams closed), but the feet float about 0.09 m above the ground plane: the hidden `Femur_Scale` sliders, applied as the §6.3 Decision says, shorten the legs (lowest bone 0.098 m at scale 0.7; 0.015 m without the sliders); OPEN O9 (`appearance.md` §6.3 application frame) and `skeleton-anim.md` §5.4 (scale inheritance); standing height 1.230 m; `tessera-explorer --sheet B42.png --character riverhobbit,f --clip run --times 0,0.2,0.4,0.6 --angles "160,10;70,5;340,10" --tile 300x440` |
+| B37 | P13 RiverHobbit (0x7D) M | 0x4700CEA3 | 0x0400772B | 0.7 | idle | 0x05008EE8 | pass | height control `AC_Avatar_Height` 0 (default); feet on the ground (lowest bone 0.011 m in all five side-view columns at 0–1.6 s; 0.0109–0.0117 m over 33.3 s on the client path); no pulsing: top bone 1.1195–1.1287 m, mean bone height changes 0.004 m, head 0.0025 m, head-top pixel row 159–160 (0.0715 m swing with the clip looped as before the fix); skinning clean (no stretched or torn vertices, seams closed); held layer-110 clip, bind-space body shape and slider bytes applied as `appearance.md` §6.2–§6.4 say (note 1); standing height 1.231 m posed (§6.5 table: 1.231 / 1.266 / 1.300 m at height 0 / 0.5 / 0.95, lowest vertex −0.005 / −0.003 / −0.001 m), bind-space top 1.847 × 0.7 = 1.293 m; re-run after the fix 2026-10-05 (side view 70°, five play times); `tessera-explorer --sheet B37.png --character riverhobbit,m --clip idle --times 0,3.7,7.4,11.1 --angles "160,10;70,5;340,10" --tile 300x440` |
+| B38 | P13 RiverHobbit (0x7D) M | 0x4700CEA3 | 0x0400772B | 0.7 | walk | 0x05008EA9 | pass | lowest bone −0.009 to 0.014 m (client path); skinning clean (no stretched or torn vertices, seams closed); held layer-110 clip, bind-space body shape and slider bytes applied as `appearance.md` §6.2–§6.4 say (note 1); lowest skinned vertex −0.055 m, the toe dips slightly into the ground at toe-off (against about −0.02 m on Human M, Hobbit M and River-hobbit F; `appearance.md` §6.5 OPEN, owner observation); standing height 1.231 m; re-run after the fix 2026-10-05 (side view 70°, five play times); `tessera-explorer --sheet B38.png --character riverhobbit,m --clip walk --times 0,0.3,0.6,0.9 --angles "160,10;70,5;340,10" --tile 300x440` |
+| B39 | P13 RiverHobbit (0x7D) M | 0x4700CEA3 | 0x0400772B | 0.7 | run | 0x05008EA1 | pass | lowest bone −0.002 to 0.114 m (client path); skinning clean (no stretched or torn vertices, seams closed); held layer-110 clip, bind-space body shape and slider bytes applied as `appearance.md` §6.2–§6.4 say (note 1); lowest skinned vertex −0.037 m (Human M −0.036 m); standing height 1.231 m; re-run after the fix 2026-10-05 (side view 70°, five play times); `tessera-explorer --sheet B39.png --character riverhobbit,m --clip run --times 0,0.2,0.4,0.6 --angles "160,10;70,5;340,10" --tile 300x440` |
+| B40 | P14 RiverHobbit (0x7D) F | 0x4700CEA4 | 0x0400772A | 0.7 | idle | 0x05008EE7 | pass | height control `AC_Avatar_Height` 0 (default); feet on the ground (lowest bone 0.008–0.009 m in the five side-view columns; 0.0084–0.0089 m over 33.3 s on the client path); no pulsing: mean bone height changes 0.0041 m, head 0.0024 m, head-top pixel row 164–165 (0.0712 m swing looped as before the fix); skinning clean (no stretched or torn vertices, seams closed); held layer-110 clip, bind-space body shape and slider bytes applied as `appearance.md` §6.2–§6.4 say (note 1); standing height 1.200 m posed (§6.5 table: 1.200 / 1.215 / 1.245 m at height 0 / 0.3 / 0.6, lowest vertex −0.008 / −0.008 / −0.007 m), bind-space top 1.262 m; re-run after the fix 2026-10-05 (side view 70°, five play times); `tessera-explorer --sheet B40.png --character riverhobbit,f --clip idle --times 0,3.7,7.4,11.1 --angles "160,10;70,5;340,10" --tile 300x440` |
+| B41 | P14 RiverHobbit (0x7D) F | 0x4700CEA4 | 0x0400772A | 0.7 | walk | 0x05008EB6 | pass | lowest bone −0.002 to 0.007 m (client path), 0.003–0.006 m in the five sheet columns at 0–0.8 s; skinning clean (no stretched or torn vertices, seams closed); held layer-110 clip, bind-space body shape and slider bytes applied as `appearance.md` §6.2–§6.4 say (note 1); lowest skinned vertex −0.018 m; standing height 1.200 m; re-run after the fix 2026-10-05 (side view 70°, five play times); `tessera-explorer --sheet B41.png --character riverhobbit,f --clip walk --times 0,0.3,0.6,0.9 --angles "160,10;70,5;340,10" --tile 300x440` |
+| B42 | P14 RiverHobbit (0x7D) F | 0x4700CEA4 | 0x0400772A | 0.7 | run | 0x05008EAD | pass | lowest bone 0.003 to 0.035 m (client path), 0.003–0.034 m in the five sheet columns at 0–0.8 s; skinning clean (no stretched or torn vertices, seams closed); held layer-110 clip, bind-space body shape and slider bytes applied as `appearance.md` §6.2–§6.4 say (note 1); lowest skinned vertex −0.014 m; standing height 1.200 m; re-run after the fix 2026-10-05 (side view 70°, five play times); `tessera-explorer --sheet B42.png --character riverhobbit,f --clip run --times 0,0.2,0.4,0.6 --angles "160,10;70,5;340,10" --tile 300x440` |
 
 ## W. Worn items, one at a time (criterion 3)
 

@@ -129,6 +129,7 @@ fn vocab() -> AssemblyVocabulary {
         render_scale: Some(P_SCALE),
         bone_scale: None,
         avatar_height: None,
+        slider_values: None,
     }
 }
 
@@ -743,7 +744,8 @@ fn unresolved_links_are_diagnostics() {
         "missing mesh: default kept"
     );
     assert_eq!(c.part_in(HANDS).unwrap().mesh, Did(K));
-    assert!(c.sliders.values.is_empty());
+    // `appearance.md` §6.3 (A16): a pair that is not hexadecimal reads 0 (still noted).
+    assert_eq!(c.sliders.values, vec![0]);
     assert!(c.held.is_empty());
     // A body that does not exist and one whose setup is missing are errors.
     let mut s = world();

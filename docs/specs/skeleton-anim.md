@@ -65,6 +65,8 @@ Legend:
 | MV | Mirarkitty `lotro_mesh_viewer`, `docs/animation.md` and `docs/weapons.md`: positional binding by track count, player rig bone counts, attach bones and hand-tuned held-item offsets, gait-based identification of walk clips. Facts only. |
 | ARCH | `docs/ARCHITECTURE.md` §11.2 ("tracks map to bones by position, Reported"). |
 | PS | `property-system.md` §7 (enum labels), §8 (DID maps), §9 (DB-object types). |
+| BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room for facts only (method M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md)), 2026-10-05. Questions: (1) how a bone's scale reaches its children and the skinned vertices (§5.4); (2) how clips playing at the same time on different layers combine per bone (§6.6). Why M1–M3 were not enough: the data hold no composition or blend rule; the §5.4 test on 86 clips could not tell the candidate rules apart; no published source states them; and observing the running client (M3) can show that River-hobbit feet do not float, but not which rule makes them so. Only offline-client code was read (pose evaluation, animation playback, mesh deformation); nothing of the network, login or anti-tamper code. |
+| RH | Dirty-room probe of 2026-10-05 that runs the BIN rules of §5.4, §6.6 and `appearance.md` §6.4 on the real setups, clips and meshes of the River-hobbit, Human, Dwarf and DwarfStoutAxe bodies (all vertices of the default parts) and compares lowest vertex, lowest bone and top vertex with the earlier matrix rule. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -75,7 +77,7 @@ Legend:
 | K5 | The per-submesh influence list is redundant: per vertex in reverse order, the vertex's first bone index, once per non-zero weight (§4.2) | OBS (43,059 of 43,059) | Confirmed. Corrects MV ("palette that does not parse reliably"). |
 | K6 | Inverse-bind matrices come from the skeleton reference pose; mesh vertices are stored in the reference-pose model space (§4.4–§4.5) | MV; OBS (692 setups, rigid-vertex proximity with control; skinning tests) | Confirmed |
 | K7 | Skeleton space = mesh space: Z up, metres, right-handed, characters face +Y; no axis conversion (§5.1) | OBS | Confirmed |
-| K8 | Reference-pose and clip quaternions are stored (x, y, z, w) and rotate actively; local = translate · rotate · scale; world = parent world · local (§5.2–§5.3) | HD (layout); OBS (arm/foot test, skinning tests, box bounds of `setup.md`) | Confirmed. Scale inheritance OPEN (§5.4). |
+| K8 | Reference-pose and clip quaternions are stored (x, y, z, w) and rotate actively; local = translate · rotate · scale; world = parent world · local (§5.2–§5.3) | HD (layout); OBS (arm/foot test, skinning tests, box bounds of `setup.md`) | Confirmed for unit scale. Scale: K17. |
 | K9 | Clips carry no loop flag; 56 % of clips end on their first pose (§6.3) | OBS | Confirmed (statistic); looping choice belongs to `script-table.md` |
 | K10 | The envelope weight array marks partial (layered) clips, typically upper-body only; no additive clips exist (§6.6) | HD (array); OBS (pattern census) | Confirmed by pattern, meaning partly Reported |
 | K11 | Bone tracks are in place in 84 % of clips; locomotion cycles are treadmill clips; 112 clips carry extracted motion whose w is a yaw angle (§7) | HD; OBS | Confirmed |
@@ -84,6 +86,9 @@ Legend:
 | K14 | Frame list C is keyed by `UIViewport_Type` (§8.7) | OBS (54 elements) | Confirmed (key); use Reported |
 | K15 | Held items are placed with their setup origin at the holding-location frame; weapons are modelled grip at origin, long axis +Y (§8.4) | MV; OBS (1,591 weapon setups) | Confirmed |
 | K16 | Mesh `flags` (mesh.md §3.3) is a `MeshTypeID` enum value: the body or equipment slot of the part (§9.2) | OBS (47,563 of 47,563 records; 80,974 of 81,098 worn parts) | Confirmed |
+| K17 | Bone transforms compose as (translation, rotation, scale) triples: a parent's scale never moves a child joint, scales multiply per axis down the chain, and the skinning transform scales a vertex's offset from its own joint (§5.4) | BIN (pose composition and skinning-palette code); RH (River-hobbit feet stay within 1 cm of the ground with it, float 8.5–8.8 cm with matrix composition) | Confirmed 2026-10-05 (BIN-derived rule, checked against real data by RH). Replaces the matrix Decision of §5.4. |
+| K18 | Simultaneous clips combine per bone by layer priority with a remaining-weight budget, weights quantised to 1/255, then a normalised weighted average with a reference-pose fill below a total of 0.1 (§6.6) | BIN (animation player and pose-sampling code) | Confirmed 2026-10-05 (BIN only) |
+| K19 | Skinned parts of figures with body-shape deformers or bone sliders are drawn from vertices deformed once in bind space (`appearance.md` §6.4); the animated pose itself carries no slider | BIN; RH | Confirmed 2026-10-05 (BIN-derived, checked by RH) |
 
 ---
 
@@ -159,8 +164,10 @@ Observations:
   in the original must come from outside the setup (template fields, `setup.md` §5.2, or
   appearance scaling, `appearance.md`).
 
-> **OPEN** (owner observation): whether a River-hobbit avatar in the original is drawn at
-> the bind-pose height of its setup (about 1.8 m) or scaled down, and by which factor. A
+> **OPEN** (owner observation, confirmation only): the data and BIN predict that a
+> River-hobbit avatar is drawn at entity scale 0.7, further lowered by the `scale_blend`
+> layer and reshaped by its body-shape deformer and fixed leg sliders, for a standing height
+> of 1.23 m (male) and 1.20 m (female) at the default height value (`appearance.md` §6.5). A
 > `/loc`-free check: stand a River-hobbit and a Human character side by side and compare
 > heights in a screenshot.
 
@@ -361,6 +368,11 @@ Skinning at the reference pose is therefore the identity: recomposing and applyi
 matrices reproduces the stored vertices of all player setups' skinned parts within
 5.3 × 10⁻⁵ m (floating-point error only).
 
+The product **P_b** · **B_b**⁻¹ is exact while every scale is 1. With non-unit scales (a clip
+track, a body-shape deformer or a bone slider) the client forms the skinning transform from
+(translation, rotation, scale) triples instead, by the rule of §5.4 (K17); the two agree
+whenever all scales are 1.
+
 <a id="s4-5"></a>
 ### 4.5 The mesh bind pose is the skeleton reference pose (Confirmed)
 
@@ -457,7 +469,8 @@ when the axis points at the viewer). Evidence:
   as 4 × 4 matrices acting on column vectors.
 - **Model transform**: **W**_b = **W**_{parent(b)} · **L**_b; a root bone (parent −1) has
   **W**_b = **L**_b. Parents precede children in the arrays (`havok-data.md` §4.2), so one
-  forward pass suffices.
+  forward pass suffices. This matrix form is exact when every scale is 1; with scale the
+  client composes triples as §5.4 states, which differs from the matrix product.
 - Composing in the other order (**L**_b · **W**_{parent}) breaks the mirror symmetry of the
   89-bone skeletons (13 cm error) and tears posed meshes as badly as a shuffled track order
   (99th-percentile edge stretch 25 – 43 times the rest length).
@@ -465,20 +478,49 @@ when the axis points at the viewer). Evidence:
   applied after the skeleton: world = object placement · **W**_b.
 
 <a id="s5-4"></a>
-### 5.4 Scale (Confirmed occurrence, inheritance OPEN)
+### 5.4 Scale (Confirmed occurrence; composition rule BIN, K17)
 
 Non-unit scale is rare: 224 reference-pose bones in 182 setups (137 uniform), and at frame 0
 non-unit scale on some track of 1,217 clips (1,047 of them non-uniform); in 296 of those clips
 a scaled bone has a child with a non-zero translation, so inheritance matters there. Tests
-on 86 such clips with skinned meshes could not tell full matrix inheritance (§5.3, the
-parent's scale also scales the child's translation and shape) from a "rigid parent, own
-scale only" rule: the edge-stretch medians are equal (17 clips favour one, 18 the other,
-51 tie).
+on 86 such clips with skinned meshes could not tell the candidate rules apart (edge-stretch
+medians equal). The client's code settles it (BIN). Character bodies use scale heavily
+through body-shape deformers and bone sliders (`appearance.md` §6.3–§6.4) and the
+River-hobbit `scale_blend` layer (`script-table.md` §6.8).
 
-> **OPEN** (owner observation): whether a parent bone's scale propagates to its children.
-> Until resolved, `tessera-anim` uses the full matrix composition of §5.3, which is exact for
-> all observed reference poses. A visible check: a creature clip that inflates or shrinks a
-> limb (non-unit scale on a bone with children) shows whether the children grow with it.
+**Composition rule.** Every local and model transform is a triple (translation *t*,
+rotation *q*, per-axis scale *s*). For a bone *b* with parent *p*:
+
+| Model component | Rule |
+|---|---|
+| translation | *t*_b = *t*_p + *q*_p applied to the local translation. The parent's scale is **not** applied: scaling a bone never moves its children's joints. |
+| rotation | *q*_b = *q*_p · local rotation (as §5.2–§5.3). |
+| scale | *s*_b = *s*_p × local scale, component by component (x with x, y with y, z with z), whatever the rotations in between. |
+
+A root bone's model triple is its local triple. With all scales 1 this is exactly §5.3.
+
+**Inverse reference triple.** From the reference pose composed by the same rule, bone *b*'s
+reference model triple (*t*_r, *q*_r, *s*_r) inverts to *X*_b = (translation
+−(1/*s*_r) × (*q*_r⁻¹ applied to *t*_r), rotation *q*_r⁻¹, scale 1/*s*_r), with per-axis
+products and reciprocals.
+
+**Skinning transform.** For a pose with model triple (*t*, *q*, *s*) of bone *b*, the
+skinning triple is (translation *t* + *q* applied to (*s* × *X*_b's translation), rotation
+*q* · *X*_b's rotation, scale *s* × *X*_b's scale); the skinning matrix is T · R · S of that
+triple (§5.3 order). For a bone whose reference scale is 1 (all player-skeleton bones) a
+bind-space vertex *v* therefore lands at *t* + *q* applied to (*s* × (*q*_r⁻¹ applied to
+(*v* − *t*_r))): its offset from the bone's reference joint, taken in the bone's reference
+frame, is scaled per axis by the bone's **model** scale, then rotated and moved to the posed
+joint. So a scaled bone shrinks or grows the vertices bound to it and to its descendants
+(whose model scale inherits the factor), around each bone's own joint, while every joint
+stays where the translations and rotations put it.
+
+Evidence and consequences (RH, K17): with this rule the River-hobbit bodies, whose thighs and
+knees carry fixed scales (`appearance.md` §6.3), keep their lowest vertex within 1 cm of
+the ground at every height value; with matrix composition on the animated pose the feet float
+8.5 cm (male) and 8.8 cm (female) at model scale 0.7, which is the float the M4 viewer showed
+(`docs/checklists/m4-visual.md` note 1). Tessera's earlier choice of full matrix
+composition is withdrawn.
 
 <a id="s5-5"></a>
 ### 5.5 Quaternion sign
@@ -541,14 +583,16 @@ than 1 come from the playing system (`script-table.md`, locomotion matching §7.
 
 - Every sampled rotation is normalised (spline evaluation already does this,
   `havok-data.md` §7.6).
-- **Blending two poses** (cross-fade between clips, or a partial clip over a base clip):
-  per track, translation and scale blend linearly; rotation blends by normalised linear
-  interpolation after negating the second quaternion when its dot product with the first is
-  negative (shortest path). Spherical interpolation is an acceptable alternative.
+- **Blending poses**: the original never interpolates two poses directly; every clip that
+  is playing contributes to a per-bone weighted average (§6.6, K18). Translations and scales
+  average linearly; rotations are summed as weighted quaternions and normalised (a
+  normalised linear blend), each quaternion first negated when it points away from the
+  others (shortest path; the exact reference quaternion for that test is Reported, not
+  traced). Cross-fades are the same average while one clip's ramp weight falls and the
+  other's rises (ramp times: `script-table.md` §6.1).
 
-> **OPEN** (owner observation): the original's blend method and cross-fade times between
-> clips. Recommendation above; cross-fade durations belong to `script-table.md` if the data
-> has them.
+> **OPEN** (owner observation): whether cross-fade durations other than the nodes' `RampIn`
+> / `RampOut` and the switch-case transition times exist.
 
 <a id="s6-6"></a>
 ### 6.6 Partial and additive clips (Confirmed patterns)
@@ -567,18 +611,45 @@ than 1 come from the playing system (`script-table.md`, locomotion matching §7.
 
   Value census over all arrays: 1.0 (325,452 values), 0.01 (51,257), 0.0 (49,748), 0.5
   (12,878), then 0.05, 0.8, 0.3 and others.
-- **Recommended use** (Reported analogy, the original's exact blend is OPEN): a weighted
-  clip layered over a base pose blends each track as base + *w_j* · (layer − base), with the
-  rotation blend of §6.5 and *w_j* the track's weight times the layer's overall weight. A
-  weighted clip played alone uses the full clip pose.
+- **Combination rule (BIN, K18).** Every playing clip *i* has an overall weight *c_i*
+  (its ramp envelope: rising from 0 to the node's intensity, normally 1, over `RampIn`,
+  falling over `RampOut`; `script-table.md` §6.1) and a per-track **opacity** *o_ij*: the
+  clip's track weight *j* when its animation node has `UseBoneOpacity` = 1 and the clip has a
+  weight array, otherwise 1 (`script-table.md` §6.5). For each bone *j* separately:
+  1. Set the remaining weight *r* = 1.
+  2. Visit the layers (`script-table.md` §6.2) from the **highest number to the lowest**.
+     Every clip *i* on the current layer gets *w_ij* = *c_i* × *r* × *o_ij*; all clips of one
+     layer use the same *r*. After the layer, *r* = max(0, *r* − the sum of that layer's
+     *w_ij*). Lower layers therefore only get what higher layers leave.
+  3. Quantise every weight: *w_ij* becomes ⌊255 × *w_ij*⌋ / 255 (truncation; the
+     unquantised values were used in step 2).
+  4. If the bone's total *W* = Σ *w_ij* is below **0.1**, add the bone's reference transform
+     with weight 0.1 − *W*.
+  5. The bone's local transform is the weighted average of the contributions: Σ *w* ·
+     translation / Σ *w*, the same for scale, and the normalised weighted quaternion sum
+     (§6.5).
+
+  Consequences: a full-body clip on a higher layer with *c* = 1 replaces lower layers
+  completely; an upper-body clip (legs 0.01) over a walk leaves the legs walking, because the
+  walk gets 0.99 of the leg weight; a partial clip with **nothing below it** is pulled
+  towards the reference pose on its weak tracks (track weight 0.01 → weight 2/255 plus
+  0.0922 of reference pose). A layered weight of 0.01 over a full base is effectively
+  2 / (2 + 252) = 0.00787, not 0.01 (worked example §14.6, §14.8).
 - **Additive clips do not exist**: no clip has near-zero translations and identity rotations
   on its tracks (3 clips come close, and they bind to skeletons whose own reference
   translations are zero), and no blend-mode datum exists (`havok-data.md` §4.6). Every clip
   is an absolute pose clip.
 
-> **OPEN** (owner observation): confirm that weighted clips are layered over a base
-> (for example an upper-body attack over legs that keep walking). Visible check: attack while
-> running.
+> **OPEN** (owner observation, confirmation only): the rule above predicts that an upper-body
+> attack played while running leaves the legs running. Visible check: attack while running.
+
+The `UseBoneOpacity` flag can change while a clip plays (it is driven by
+`ScriptSystem_CurrentlyMoving` in 7,722 nodes): the player then moves a mixing factor *m*
+between 0 (opacity used) and 1 (opacity ignored) and uses *o_ij* + *m* × (1 − *o_ij*) as the
+track's opacity while *m* < 0.9998.
+
+> **OPEN:** the duration of that change of *m* (BIN shows a linear change between two stored
+> times; where those times come from was not traced). Until known, switch *m* immediately.
 
 ---
 
@@ -885,17 +956,22 @@ For one animated object per frame:
 1. **Skeleton**: from the object's setup (§2). Precompute the reference model transforms
    **B**_b and their inverses (§4.4) once per distinct skeleton.
 2. **Clips**: for each clip layer chosen by the playing system, check compatibility (§3.4),
-   compute the clip time (§6.3, §6.4) and sample every track (`havok-data.md` §7.7–§7.8) into
-   local (translation, rotation, scale) per bone.
-3. **Blend** layers per bone (§6.5, §6.6). Bones no clip drives keep their reference local
-   transform.
+   compute the clip time (§6.3, §6.4; held clips take their time from a value instead,
+   `script-table.md` §6.7) and sample every track (`havok-data.md` §7.7–§7.8) into local
+   (translation, rotation, scale) per bone.
+3. **Blend** all playing clips per bone by the layered-weight rule (§6.6). Bones with a
+   total weight below 0.1 are pulled to (or, with no weight, keep) their reference local
+   transform. No bone slider is applied here (`appearance.md` §6.4).
 4. **Root motion**: if a clip has an extracted-motion reference frame, apply its change to the
    object's placement (§7.3); bone tracks are used as sampled.
-5. **Model transforms**: one pass from root to leaves (§5.3).
-6. **Palette**: for each bone, model transform times inverse reference transform (§4.4); upload
-   up to 256 matrices (§4.3).
+5. **Model transforms**: one pass from root to leaves (§5.3, with scale by §5.4).
+6. **Palette**: for each bone, the skinning transform of §5.4 (equal to model transform times
+   inverse reference transform when all scales are 1, §4.4); upload up to 256 matrices
+   (§4.3).
 7. **Draw** every part in the setup's model space with the object's world placement; skinned
-   submeshes use the palette, unskinned parts are rigid (§9.1).
+   submeshes use the palette, unskinned parts are rigid (§9.1). Figures with body-shape
+   deformers or bone sliders draw their skinned parts from bind-space-deformed vertices,
+   computed once when those inputs change (`appearance.md` §6.4).
 8. **Attached items**: for each held item, the location's model transform (§8.2) times the
    object's world placement is the item's world placement (§8.4); its own parts are drawn
    in its object space.
@@ -917,9 +993,10 @@ results are plain arrays.
 | **KI5** | Every clip's track count equals the bone count of at least one setup, except 2 clips (55 and 99 tracks). |
 | **KI6** | Bone 0 of the player skeletons is static and equal to its reference in every compatible clip. |
 | **KI7** | Mesh `flags` ∈ `MeshTypeID` keys for every mesh record. |
+| **KI8** | With every scale equal to 1, the triple composition and skinning of §5.4 give the same model transforms and skinned positions as the matrix form of §4.4 and §5.3 (a property test on synthetic skeletons; real reference poses differ only where a reference scale is not 1). |
 
 KI1–KI4 and KI7 are checks a decoder or loader may run and report; KI5 and KI6 are census
-facts that tests may assert on real data.
+facts that tests may assert on real data; KI8 is a property test.
 
 ---
 
@@ -951,6 +1028,8 @@ facts that tests may assert on real data.
 | `attach_map` "probably slot → bone", list A "probably attachment points", lists B and C unknown | `setup.md` §6.2–§6.3 | `BoneType` → bone; `HoldingLocation` → (bone, frame); C keyed by `UIViewport_Type`; B still open (§8). |
 | Low 16 bits of skinned mesh `flags` unexplained | `mesh.md` §3.3 | The whole `flags` word is a `MeshTypeID` slot value (§9.2). |
 | Cape and skirt bones may need runtime cloth simulation | MV | Clips animate them: cape bone rotations are animated in 90 – 96 % of compatible clips, skirt bones in 48 – 61 % (whether the original adds simulation on top stays open). |
+| Decision: full matrix composition for scale until scale inheritance is observed | this spec §5.4 (before 2026-10-05) | The client composes (translation, rotation, scale) triples: parent scale never moves child joints; skinning scales a vertex's offset from its own joint (§5.4, BIN). |
+| Recommended layering "base + w · (layer − base)"; a weighted clip alone plays its full pose | this spec §6.6 (before 2026-10-05) | Remaining-weight budget from the highest layer down, 1/255 truncation, normalised average, reference fill below 0.1 (§6.6, BIN). |
 
 ---
 
@@ -1015,23 +1094,58 @@ Played once: 2.25 s samples *t* = 1.0.
 <a id="s14-6"></a>
 ### 14.6 Partial clip
 
-A 4-track base pose with track rotations all identity and a layer whose track 3 is 90° about
-z and whose track 2 is also 90° about z, track weights (1, 1, 0.01, 0.5), layer weight 1:
-track 3 blends to 45° about z (the normalised linear blend of identity and 90° gives exactly
-45° at weight 0.5); track 2 blends to about 0.8° about z (normalised linear blend at weight
-0.01); tracks 0 and 1 take the layer's values.
+A 4-track base pose (layer 10, overall weight 1, no opacity) with every rotation identity,
+and a layer-40 clip whose tracks 2 and 3 are 90° about z, with track weights
+(1, 1, 0.01, 0.5), `UseBoneOpacity` 1, overall weight 1 (§6.6):
+
+| Track | Layer weight → quantised | Remaining for the base → quantised | Result |
+|---|---|---|---|
+| 0, 1 | 1 → 255/255 | 0 → 0 | the layer's values |
+| 2 | 0.01 → 2/255 | 0.99 → 252/255 | 0.639° about z (normalised sum of identity × 252 and 90° × 2) |
+| 3 | 0.5 → 127/255 | 0.5 → 127/255 | exactly 45° about z (equal weights) |
+
+The same layer clip with **no base playing**: track 2 gets 2/255 and the reference pose fills
+0.1 − 2/255 = 0.0922, so its share is 0.0784 of the way to the layer's value.
+
+<a id="s14-7"></a>
+### 14.7 Scale composition and skinning (§5.4)
+
+Three bones, reference rotations identity and scales 1: bone 0 (root) at (0, 0, 1); bone 1
+(parent 0) local translation (0, 0, −0.45); bone 2 (parent 1) local (0, 0, −0.41). Reference
+joints: 1.0, 0.55, 0.14 in z. Pose: reference translations, bone 0 local scale (1, 1, 0.8),
+bone 1 local scale (1, 1, 1.15).
+
+| | Rule of §5.4 | Matrix composition (wrong) |
+|---|---|---|
+| Joint heights (bones 0, 1, 2) | 1.0, 0.55, 0.14 (unchanged) | 1.0, 0.64, 0.2628 |
+| Model scale z (bones 0, 1, 2) | 0.8, 0.92, 0.92 | — |
+| Vertex at z 0.775 on bone 0 | 1.0 + 0.8 × (−0.225) = 0.82 | 0.82 |
+| Vertex at z 0.345 on bone 1 | 0.55 + 0.92 × (−0.205) = 0.3614 | 0.4514 |
+| Vertex at z 0.0 on bone 2 (the sole) | 0.14 + 0.92 × (−0.14) = 0.0112 | 0.1340 (floats 12 cm) |
+
+<a id="s14-8"></a>
+### 14.8 Three layers on one bone
+
+One bone; clips on layers 110 (overall weight 1, opacity 0.01), 18 (overall 1, opacity 0)
+and 10 (overall 1, opacity 1), sampled translations z = −10, 5 and 0. Layer 110: *w* = 0.01,
+*r* becomes 0.99. Layer 18: *w* = 0, *r* stays 0.99. Layer 10: *w* = 0.99. Quantised: 2/255
+and 252/255. Result z = (2 × −10 + 252 × 0) / 254 = −0.07874.
 
 ---
 
 <a id="s15"></a>
 ## 15. Open questions
 
-> **OPEN** (owner observation): River-hobbit avatar size relative to its setup (§2.2).
+> **OPEN** (owner observation, confirmation only): River-hobbit avatar size relative to its
+> setup (§2.2). The data and BIN now predict it (`appearance.md` §6.5); only a visual check
+> remains.
 
-> **OPEN** (owner observation): scale inheritance from parent to child bones (§5.4).
+> **Resolved** (2026-10-05, BIN): scale inheritance (§5.4) and the combination of layered
+> clips (§6.6).
 
-> **OPEN** (owner observation): the original's pose blending method and cross-fade times
-> (§6.5); confirmation that weighted clips layer over a base (§6.6).
+> **OPEN** (owner observation): cross-fade durations beyond the nodes' ramp times (§6.5);
+> the duration of a `UseBoneOpacity` change (§6.6); visual confirmation that an attack while
+> running keeps the legs running.
 
 > **OPEN** (owner observation): the sign of the extracted-motion yaw (§7.3).
 
@@ -1092,14 +1206,45 @@ are stated; the spec writer should confirm or correct.
 > exceeds 10⁴ m in some component by the bone's reference transform; on this install that
 > affects 2 clips (0x05002819 and 0x05009355). Please confirm the threshold.
 
-> **OPEN:** Track weights on the lowest layer (§6.6, `script-table.md` §6.5). "A weighted
-> clip played alone uses the full clip pose" is implemented as: track weights never apply
-> to the lowest layer that contributes, only to layers above it, and a layer of two
-> cross-fading clips uses the blend of their weights. The spec does not cover a partial
-> clip on a higher layer whose lower layers have weight 0 (it then plays over the reference
-> pose with its weights).
+> **Answered** (2026-10-05, spec writer; was: track weights on the lowest layer, §6.6). The
+> sentence "a weighted clip played alone uses the full clip pose" is withdrawn. Track
+> weights (opacities) apply on every layer, the lowest included, whenever the node has
+> `UseBoneOpacity` = 1 and the clip has weights; a bone whose total weight stays below 0.1
+> is filled with the reference pose (§6.6 step 4). Two cross-fading clips of one layer each
+> get their own weight from the same remaining budget (§6.6 step 2). A partial clip whose
+> lower layers have weight 0 therefore plays over the reference pose, as the implementation
+> already does, but with the 0.1 fill and the 1/255 quantisation of §6.6.
 
 > **OPEN:** Play times outside a cycle (§6.3). Negative play times (negative playback
 > rates) wrap backwards for looping clips (*t* = τ mod `duration` with the Euclidean
 > remainder) and clamp to 0 for one-shot clips; non-finite play times sample *t* = 0. The
 > spec only states τ ≥ 0.
+
+> **OPEN** (implementation, River-hobbit height fix, §5.4 skinning transform): the two
+> statements of §5.4 differ for a bone whose reference rotation is not the identity and
+> whose model scale is not uniform. "The skinning matrix is T · R · S of that triple"
+> applies the model scale along the axes of the bind (model) frame, *t'* + *q*·*q*_r⁻¹ ·
+> (*s* × *v*); the following sentence ("lands at *t* + *q* applied to (*s* × (*q*_r⁻¹
+> applied to (*v* − *t*_r)))") applies it along the bone's reference axes. Tessera Decision:
+> the second, which is the matrix product T·R·S(model triple) · (T·R·S(reference triple))⁻¹
+> = **P**_b · **B**_b⁻¹ with **P**_b composed by the triple rule; it reproduces every number of
+> `appearance.md` §6.5. The inverse reference is the exact matrix inverse (equal to *X*_b
+> whenever the reference scale is uniform or the reference rotation is the identity), so
+> skinning at the reference pose stays the identity. Which form does the client use?
+
+> **OPEN** (implementation, §6.6): Tessera Decisions where the rule is silent: (1) the
+> truncation adds 10⁻⁴ of a step before rounding down, so that weights such as 1 − 0.5 that
+> floating point computes a hair below a whole step keep it; (2) the shortest-path test of
+> §6.5 compares each quaternion with the running weighted sum of the bone's contributions so
+> far (the first is taken as it is; the reference-pose fill is tested the same way); (3)
+> the weight of a clip inside a cross-fade chain is its fade factor times (1 − factor) of
+> every later entry of the chain, times the layer's ramp weight.
+
+---
+
+<a id="s16"></a>
+## 16. Change log
+
+| Date | Sections | Change | Role |
+|---|---|---|---|
+| 2026-10-05 | §1 (BIN, RH, K8, K17–K19), §4.4, §5.3, §5.4, §6.5, §6.6, §10, §11 (KI8), §13, §14.6–§14.8, §15, §2.2 OPEN | Scale composition and layer combination from the client (BIN, decision 0011): triple composition replaces the matrix Decision; the layered-weight rule replaces the "base + w · (layer − base)" recommendation; bind-space deformation noted in the pipeline; River-hobbit size OPEN reduced to a visual check; implementation OPEN on track weights of the lowest layer answered. | Spec writer (dirty room) |

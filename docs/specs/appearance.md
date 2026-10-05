@@ -60,6 +60,9 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | ED, LB | `entity-descriptor.md` §4.1–§4.3; `landblock.md` §4.8. |
 | MV | Mirarkitty `lotro_mesh_viewer` docs `wardrobe.md`, `hair-face.md`, `outfit-composer.md`, `weapons.md` (MIT docs). Facts only. |
 | DS | `research/notes/data-semantics.md` §7.1 (chargen chain, live appearance properties, species codes). |
+| BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room for facts only on 2026-10-05 (method M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md)). Questions: how the height controls act (§6.2); how bone sliders are parsed, combined and applied, in which frame, and how scaled bones affect children and feet (§6.3–§6.4). Why M1–M3 were not enough: the data name the properties, nodes and limits but no rule (the earlier Decisions were guesses that made River-hobbit feet float 9 cm); no published source covers them; observing the client (M3) can confirm a look but not a rule. Only offline animation and mesh-deformation code was read. |
+| ST, SA2 | `script-table.md` §6.7–§6.9 (held clips, layer 110, deformer nodes) and `skeleton-anim.md` §5.4, §6.6 (scale composition, layer combination), written from the same BIN session. |
+| RH | Dirty-room probe of 2026-10-05: the rules of §6.2–§6.4 run on the real River-hobbit, DwarfStoutAxe, Dwarf and Human setups, clips and every vertex of their default parts; lowest vertex, lowest bone and top vertex measured (§6.5). |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -72,11 +75,15 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A7 | The 0x20 key table value of an entry equals the number of its blocks whose `variant` is below 0.5 (§4.8) | OBS (49,383 of 49,383 entries) | Confirmed. Resolves SET §8.4. |
 | A8 | An item's default dye code is `Item_ClothingColor`; it selects a block of the `ClothingColor` entry of the same wardrobe record (§4.9) | MAT §12; OBS (21,843 of 21,999 items) | Confirmed. Answers MAT §12.4 OPEN. |
 | A9 | Whole-body scale of a playable body: template `vec3` and entity `Render_AdjustableScale`; River-hobbit entities carry 0.7 (§6.1) | SET §5.2; OBS (14 avatars) | Confirmed values; composition OPEN |
-| A10 | Bone sliders: definition records name bone indices, transform channels and limits; the character stores one byte per slider (§6.3) | DS (byte string, 0x80 default); OBS (4 definition records, 2 preset records) | Confirmed layout; value mapping OPEN |
+| A10 | Bone sliders: definition records name bone indices, transform channels and limits; the character stores one byte per slider (§6.3) | DS (byte string, 0x80 default); OBS (4 definition records, 2 preset records) | Confirmed layout; value mapping and application: A16, A17 |
 | A11 | The 775 weenie objects placed by SEDs are housing hooks (744), distant-battle units (29), one door and one monster; none is an NPC (§7.1) | ED §4.1 ("NPC, interactive object"); OBS (775 of 775) | Confirmed. Corrects ED §4.1. |
 | A12 | The landblock weenie list holds per-instance property sets keyed by IID: one for every SED IID plus 514,987 for IIDs without a SED (§7.2) | LB §4.8 ("server-side templates"); OBS (3,768,840 entries) | Confirmed. Corrects LB §4.8. |
 | A13 | Static NPC-like figures are Physics SEDs whose object resolves to a humanoid rig and whose instance property set adds appearance lists, a random-appearance type, an idle animation and held items (§7.2–§7.4) | OBS | Confirmed |
 | A14 | No client record maps `Appearance_RandomAppearanceType` to an outfit (§7.4) | OBS (property sets of all prefixes holding property sets; raw search of the PID) | Confirmed absence in the scanned records; OPEN |
+| A15 | `AC_Avatar_Height` is the held time (as a fraction) of the River-hobbit layer-110 `scale_blend` clip; `AC_BoneScale_Test` is the held fraction of every avatar's body-shape deformer clip and of the DwarfStoutAxe layer-110 clip (§6.2) | OBS (the 7 driven nodes, the 14 species tables); BIN (§6.7 of ST) | Confirmed 2026-10-05 |
+| A16 | Bone sliders: one value per slider *t* = byte / 255 in definition order, 0.5 for sliders past the end of the string; channel = min + *t* × (max − min), negated per reversed bone; later sliders overwrite earlier ones per bone and channel (§6.3) | BIN; OBS (definition records, node strings) | Confirmed 2026-10-05 (BIN only for the rule). Replaces the §6.3 value Decision. |
+| A17 | Sliders and body-shape deformers are not applied to the animated pose: they deform the skinned meshes once in bind space, using the scale composition of SA2 (§6.4) | BIN; RH (feet within 1 cm of the ground for River-hobbit M and F at every height value) | Confirmed 2026-10-05. Replaces the §6.3 application Decision. |
+| A18 | Expected standing heights with all mechanisms applied (§6.5) | RH | Confirmed 2026-10-05 as a computation on real data; not yet compared with the original client by eye |
 
 ---
 
@@ -673,29 +680,52 @@ The template floats `value_a` and `value_b` (`setup.md` §5.2) are not scales (t
 setups are already hobbit-sized); assembly ignores them.
 
 <a id="s6-2"></a>
-### 6.2 Height controls (Confirmed storage, mapping OPEN)
+### 6.2 Height controls (Confirmed storage and effect; A15)
 
-| Property | Range in the control | Default on the entity | Present on |
-|---|---|---|---|
-| `AC_BoneScale_Test` (float) | 0 to 1 (`AppearanceUI_BoneScalingControl`); RiverHobbit M: 0 to 0.6 | 0.5 | all 14 avatar entities; presets use 0.5 and 0.85 |
-| `AC_Avatar_Height` (float) | RiverHobbit M 0 to 0.95, F 0 to 0.6 | 0 | RiverHobbit entities only |
+| Property | Range in the control | Default on the entity | Present on | What it drives |
+|---|---|---|---|---|
+| `AC_BoneScale_Test` (float) | 0 to 1 (`AppearanceUI_BoneScalingControl`); RiverHobbit M: 0 to 0.6 | 0.5 | all 14 avatar entities; presets use 0.5 and 0.85 | the held fraction of the avatar's **body-shape deformer** clip (§6.4), and on DwarfStoutAxe also of its layer-110 `scale_blend` clip |
+| `AC_Avatar_Height` (float) | RiverHobbit M 0 to 0.95, F 0 to 0.6 | 0 | RiverHobbit entities only | the held fraction of the River-hobbit layer-110 `scale_blend` clip |
 
-Nothing in the data says which bones these scale or by how much; `Character_TestScale` (0 or
-1 on the avatars) and `GRSEvent_AppearanceMod_BoneScale` are related names without a
-mapping.
+Both act through script nodes of the avatar's **species table** (`script-table.md` §6.8,
+§6.9), whose fields are driven by these properties (`script-table.md` §4.2):
 
-> **Decision:** M4 treats both as neutral (no effect) at their defaults and ignores them
-> otherwise. **OPEN** (owner observation O9): the height range in character creation (the
-> shortest and tallest character at the slider ends, per species).
+- **`AC_Avatar_Height`** sets `ManualTime` of the held layer-110 node (River-hobbit M clip
+  0x05008E76, 1.666 s; F clip 0x05008E75, 0.416 s). The clip is held at
+  fraction = value (looping node: the fractional part, so 1.0 would wrap to 0; the ranges stop
+  short of 1), never played over time, and blended by the layer rule
+  (`skeleton-anim.md` §6.6). At the default 0 the pelvis is about 0.098 m lower and the legs
+  as much shorter than at fraction 1 (before the entity scale 0.7); higher values make the
+  character taller; the feet stay on the ground at every value. **The default 0 is the
+  shortest River-hobbit.**
+- **`AC_BoneScale_Test`** sets the time fraction (limited to [0, 1], no wrap) of the
+  species table's MeshDeformer node, whose clip reshapes the body in bind space (§6.4). On
+  the Hobbit, Human, Elf, HighElf, Dwarf and Beorning bodies the clips change girth (x and y
+  scales of the torso, hips and limbs) and leave the height unchanged at every value; on the
+  River-hobbit bodies the clip also gives the hobbit head, face and feet (§6.4) at every
+  value. On DwarfStoutAxe it also sets `ManualTime` of the held, non-looping layer-110 clip
+  0x050079DF, which makes the body about 0.10 m taller on longer legs at every value and
+  widens the shoulders more as the value rises.
+
+No script node of any table or scriptlet reads `Character_TestScale` or
+`GRSEvent_AppearanceMod_BoneScale` (Confirmed, all records); Tessera ignores them.
+
+> **OPEN** (owner observation O9, confirmation only): the shortest and tallest character at
+> the two ends of each control, compared with §6.5.
 
 <a id="s6-3"></a>
-### 6.3 Bone sliders (Confirmed layout and limits; application partly OPEN)
+### 6.3 Bone sliders (Confirmed layout and limits; value rule BIN, A16)
 
-**Where.** The avatar entity's `AppearanceUI_BoneSliderControl` names a definition record
-(0x78 property set) in `AppearanceUI_BoneSliderDefinitionsFile`; the character's values are
-`AC_BoneSlider_Value_Array`. Only the 89-bone avatars have sliders: Human M/F 0x7800A9F1;
-Elf M/F and HighElf M/F 0x7800BEAB; RiverHobbit M 0x7800A9F3, F 0x7800A9F4. Hobbit, Dwarf,
-DwarfStoutAxe and Beorning avatars have none.
+**Where.** The character-creation UI finds the definitions through the avatar entity's
+`AppearanceUI_BoneSliderControl` (`AppearanceUI_BoneSliderDefinitionsFile`): Human M/F
+0x7800A9F1; Elf M/F and HighElf M/F 0x7800BEAB; RiverHobbit M 0x7800A9F3, F 0x7800A9F4. The
+**figure** gets its sliders from the SliderMeshDeformer node (kind 81) in the `Startup` script
+of its species table (`script-table.md` §6.9): the node names its own definitions record
+(Human M, Elf M and HighElf M 0x7800A9F1; Human F 0x7800A9F2; Elf F and HighElf F
+0x7800BEAB; River-hobbit as above; 0x7800A9F1, 0x7800A9F2 and 0x7800BEAB have identical
+content) and its value string is driven by the character's `AC_BoneSlider_Value_Array`. Use
+the node's record. Only the Human, Elf, HighElf and River-hobbit avatars have sliders; Hobbit, Dwarf, DwarfStoutAxe and
+Beorning avatars have none.
 
 **Definition record.** `BoneSliderDeformer_SliderDefinitionArray` of
 `BoneSlider_DefinitionStruct`, in slider order:
@@ -734,25 +764,134 @@ sideways sliders and the eye rotation.
 (`BoneSlider_UI_Visible` false, group `Body`, both named `Femur_Scale`) whose minimum equals
 their maximum: Scale Z 0.8 on bones 4 and 8 (`Lfemur`, `Rfemur`) and Scale Z 1.15 on bones 5
 and 9 (`Lknee`, `Rknee`). They change the River-hobbit leg proportions regardless of any
-value.
+value: in the bind-space deformation of §6.4 the thigh vertices shrink to 0.8 of their
+height about the hip joints and the shin and foot vertices to 0.8 × 1.15 = 0.92 about the
+knee and ankle joints, while no joint moves (`skeleton-anim.md` §5.4).
 
-**Values.** `AC_BoneSlider_Value_Array` is a string of hexadecimal byte pairs, one byte per
-**visible** slider in definition order (70 characters for 35 sliders on all slider avatars;
-hidden sliders take no byte). Default 0x80 for every byte. Preset values span 0x17 to 0xFF.
+**Values (BIN, A16).** The value string holds hexadecimal byte pairs. The client reads
+it pair by pair from the start (each pair read as a base-16 number, so a pair that is not
+hexadecimal reads 0) and gives the *k*-th pair to the *k*-th slider **of the definition
+array, hidden ones included**, as *t* = byte / 255; it stops when every slider has a value or
+the string ends; every slider left without a value gets *t* = **0.5** exactly. With the
+35-pair strings of this install, the hidden River-hobbit sliders (definitions 36 and 37) get
+0.5, which changes nothing because their minimum equals their maximum. The avatar entities'
+strings are 35 × `80` (*t* = 128 / 255 = 0.50196, so for example a 0.7–1.3 scale slider gives
+1.00118, not exactly 1). The SliderMeshDeformer node's own stored string is 34 × `80` with
+`00` at slider 24 (`Eye_Rotation`).
 
-> **Decision** (value mapping): *t* = byte / 255; channel value = min + *t* × (max − min); a
-> slider with min = max always applies that value. **OPEN** (owner observation O9): the exact
-> mapping (byte 0x80 then gives scale 1.00012 rather than exactly 1; a centred mapping is
-> equally plausible).
+> **OPEN** (driven value of an absent property): the Elf and HighElf avatar entities carry no
+> `AC_BoneSlider_Value_Array`. Whether the driven field then keeps the node's stored string
+> (eye rotation at its minimum, −0.1) or receives the property's dictionary default was not
+> traced. **Decision** (until known): use 35 × `80`, the value every other slider avatar
+> carries.
 
-> **Decision** (application): after clips are sampled and before model transforms are
-> composed (`skeleton-anim.md` §10 step 3–5), for every slider and every listed bone:
-> translations add the channel value (negated on the masked X component for a reversed
-> bone) to the bone's local translation; rotations post-multiply the bone's local rotation
-> by a rotation of the channel value about the bone's local axis (negated for a reversed
-> bone); scales multiply the bone's local scale per axis. **OPEN** (owner observation O9):
-> whether the original applies sliders in the bone's local frame, and how a scaled bone's
-> children inherit (`skeleton-anim.md` §5.4).
+**Per-bone entries (BIN).** The sliders are turned into one entry per bone, in definition
+order, starting from translation (0, 0, 0), angles (0, 0, 0), scale (1, 1, 1) and an empty
+mask:
+
+1. For slider *i* with value *t*: channel vector *c* = `BoneSlider_LimitMin` + *t* ×
+   (`BoneSlider_LimitMax` − `BoneSlider_LimitMin`), per component.
+2. For every bone of its `BoneSlider_BoneIndexArray`, with sign *σ* = −1 when
+   `BoneSlider_BoneReverse` is 1, else +1: for every channel bit in the slider's mask, **write**
+   (do not add or multiply) *σ* × the matching component of *c* into that bone's entry:
+   `TranslateX/Y/Z` → translation x/y/z, `RotateX/Y/Z` → angle x/y/z (radians), `ScaleX/Y/Z`
+   → scale x/y/z. The sign applies to every channel kind (no reversed scale slider exists).
+   Add the slider's bits to the entry's mask.
+3. A later slider that writes the same channel of the same bone replaces the earlier value.
+
+**Applying an entry to a local transform (BIN).** For each bone with an entry, on the
+deformation pose of §6.4 (never on the animated pose):
+
+- if the mask has any translate bit: local translation += the entry's translation;
+- if it has any rotate bit: local rotation = local rotation · *q*, where *q* is the
+  rotation **about local +Y by angle x, then about +Z by angle y, then about +X by angle z**
+  composed as *R*_Y(angle x) · *R*_Z(angle y) · *R*_X(angle z) (Hamilton products, active,
+  quaternions as `skeleton-anim.md` §5.2). Note the axis shift: the `RotateX` channel turns
+  about Y, `RotateY` about Z, `RotateZ` about X;
+- if it has any scale bit: local scale ×= the entry's scale, per component.
+
+Unmasked components hold their start values (0, or 1 for scale), so they change nothing.
+
+<a id="s6-4"></a>
+### 6.4 Bind-space deformation: body shape and sliders (BIN, A17)
+
+The original applies neither the body-shape deformer nor the bone sliders to the animated
+pose. It deforms the skinned meshes **once, in bind space**, and animates the deformed
+meshes with the ordinary skeleton. Inputs, all from the avatar's species table
+(`script-table.md` §6.9): the MeshDeformer node(s) (clip, time fraction from
+`AC_BoneScale_Test`, `UseBoneWeights`) and, on Human, Elf, HighElf and River-hobbit bodies, the SliderMeshDeformer node
+(entries of §6.3).
+
+Algorithm (run at assembly and again whenever a deformer time or the slider string
+changes):
+
+1. **Deformation local pose.** With at least one MeshDeformer: sample each deformer clip at
+   time = (fraction limited to [0, 1]) × its duration; its track weights are
+   ⌊255 × clip weight⌋ / 255 when `UseBoneWeights` is 1 and the clip has a weight array,
+   else 1; combine all deformer clips per bone by steps 4–5 of `skeleton-anim.md` §6.6
+   (normalised weighted average, reference pose filling a total below 0.1). Without one:
+   the skeleton's reference pose. No animation clip takes part, whatever is playing.
+2. **Sliders.** Apply every bone entry of §6.3 to this local pose.
+3. **Deformation transforms.** Compose model triples and form each bone's skinning
+   transform *D_b* by `skeleton-anim.md` §5.4 (against the ordinary reference pose).
+4. **Deform the vertices.** For every skinned part drawn on the figure's skeleton (body parts
+   and worn parts alike), replace each bind-space vertex *v* by Σ *w_k* · *D*_{j_k} · *v* over
+   its own influences (`skeleton-anim.md` §4.7). Normals: the same blended transform without
+   translation, renormalised (Reported by analogy; the client's normal handling was not
+   traced).
+5. **Draw.** Each frame, skin the deformed vertices with the animated palette
+   (`skeleton-anim.md` §10) exactly as undeformed ones; the reference pose and inverse
+   reference stay those of the skeleton.
+
+With the defaults (`AC_BoneScale_Test` 0.5, slider strings of 0x80) the Human, Elf, HighElf,
+Hobbit, Dwarf, Beorning and DwarfStoutAxe deformations leave the top and bottom of the
+default body within 1 mm of the undeformed mesh. The River-hobbit deformation is the
+hobbit look: its body-shape clip at every value scales the head 1.25 in height and 0.96 in
+width, moves the face bones 1.2 times further from the head joint, scales the eye-offset bones
+0.8, scales the feet 1.21 in length and 1.4 in height and lifts the foot joints 1.2 cm (which
+keeps the larger feet on the ground), plus girth changes that vary with the value; the
+fixed leg sliders shorten thigh and shin vertices about their joints (§6.3).
+
+Why this matters (RH): applied per frame to the animated pose with matrix composition, the
+same two leg sliders lift the River-hobbit feet 8.5 cm (M) and 8.8 cm (F) off the ground,
+the float the M4 viewer showed; by this algorithm the lowest vertex stays within 1 cm of the
+ground (§6.5).
+
+<a id="s6-5"></a>
+### 6.5 Expected standing heights (Confirmed computation, A18)
+
+Computed by RH on the real data with §6.1–§6.4, `script-table.md` §6.7–§6.8 and
+`skeleton-anim.md` §5.4, §6.6: setup default parts only (no appearance-list head or hair, no
+worn items), idle clip of §8.3 sampled at time 0, body-shape value 0.5, slider strings
+35 × `80`, unmounted, model scale of §6.1. Heights in metres at model scale.
+
+| Body | Height control value | Top of the mesh | Lowest vertex | Lowest bone |
+|---|---|---|---|---|
+| River-hobbit M (scale 0.7) | `AC_Avatar_Height` 0 (default) | 1.231 | −0.005 | +0.011 |
+| River-hobbit M | 0.5 | 1.266 | −0.003 | +0.013 |
+| River-hobbit M | 0.95 (maximum) | 1.300 | −0.001 | +0.016 |
+| River-hobbit F (scale 0.7) | 0 (default) | 1.200 | −0.008 | +0.009 |
+| River-hobbit F | 0.3 | 1.215 | −0.008 | +0.009 |
+| River-hobbit F | 0.6 (maximum) | 1.245 | −0.007 | +0.010 |
+| DwarfStoutAxe | `AC_BoneScale_Test` 0.5 (default) | 1.434 | +0.007 | +0.037 |
+| Dwarf M (comparison) | – | 1.345 | +0.000 | +0.030 |
+| Human M (comparison) | – | 1.806 | −0.001 | +0.022 |
+
+Invariant for tests: on every playable body, with every height value in its control's range,
+the lowest skinned vertex of the idle pose at time 0 lies within 0.01 m of the ground, and
+the River-hobbit top rises monotonically with `AC_Avatar_Height`.
+
+> **OPEN** (owner observation, implementation feedback 2026-10-05, moving): §6.5 covers the
+> idle pose only. With §6.2–§6.4 as implemented (default parts, `AC_Avatar_Height` 0,
+> model scale 0.7, two cycles sampled every 0.05 s), the lowest skinned vertex while
+> **walking** reaches −0.055 m on River-hobbit M against about −0.02 m on Human M, Hobbit M
+> and River-hobbit F; running, River-hobbit M and Human M both reach about −0.037 m. Taking
+> the River-hobbit M walk apart: −0.037 m without the held layer-110 clip, −0.033 m without
+> the bind-space deformation, −0.016 m without both (the held clip shortens the legs along
+> the leg, so an angled stance leg sinks; the body-shape clip enlarges the feet). Do
+> River-hobbit toes visibly dip into flat ground at toe-off while walking in the original
+> client? If not, which input differs (held-clip blending while moving, foot scaling,
+> skinning form of `skeleton-anim.md` §15)?
 
 ---
 
@@ -915,8 +1054,11 @@ character's appearance values.
 6. **Materials.** For each winning part: surface materials, then the groups of its own block
    that target `All` or its slot with a matching binding key, then its dye block
    (`material.md` §9.3, §12).
-7. **Scale and sliders.** Model scale per §6.1. Per frame, after sampling clips, apply bone
-   sliders (§6.3) before composing model transforms.
+7. **Scale, shape and sliders.** Model scale per §6.1. Once per change of the height
+   controls or slider string (not per frame), deform the skinned parts in bind space by the
+   body-shape deformer and the sliders (§6.4). The species table also starts the held
+   proportion clip of River-hobbit and DwarfStoutAxe bodies (`script-table.md` §6.8), which
+   the per-frame animation blends like any other layer.
 8. **Draw** every non-stub winning part with identity part transform in the setup frame,
    skinned to the skeleton (`skeleton-anim.md` §9.1); stubs per the O4 policy (draw or skip;
    no effect on hiding).
@@ -925,7 +1067,8 @@ character's appearance values.
    (`skeleton-anim.md` §8.4). Items whose location the wearer lacks are not drawn.
 
 A figure is rebuilt (steps 2–6) only when its equipment, appearance values or instance set
-change; steps 7–9 run per frame.
+change; the deformation of step 7 when a height control or the slider string changes; the
+animation of the figure and steps 8–9 run per frame.
 
 ---
 
@@ -991,7 +1134,9 @@ Failure categories an assembler distinguishes:
 | Default dye code source OPEN | `material.md` §12.4 | `Item_ClothingColor` / `Item_ClothingColorSecondary` (§4.9). |
 | Weenie SEDs place NPCs and interactive objects | `entity-descriptor.md` §4.1 | Housing hooks, distant-battle units, one door, one monster (§7.1). |
 | Landblock weenies are server-side templates | `landblock.md` §4.8 | Per-IID instance property sets for every SED plus server objects (§7.2). |
-| River-hobbit drawn at setup height or scaled: unknown | `skeleton-anim.md` §2.2 | Entity scale 0.7 plus fixed thigh and knee scale sliders (§6.1, §6.3); the composition with template scale is OPEN. |
+| River-hobbit drawn at setup height or scaled: unknown | `skeleton-anim.md` §2.2 | Entity scale 0.7, the layer-110 `scale_blend` clip held by `AC_Avatar_Height`, the body-shape deformer and the fixed thigh and knee sliders in bind space (§6.1–§6.5); the composition with template scale is OPEN. |
+| Height controls neutral; sliders applied per frame to the local pose after sampling, matrix composition | this spec §6.2–§6.3 (Decisions before 2026-10-05) | Height controls hold deformer and `scale_blend` clips (§6.2); sliders and body shape deform the meshes once in bind space with triple composition (§6.3–§6.4). |
+| Slider value *t* = byte / 255; "centred mapping equally plausible"; absent string means 0x80 | this spec §6.3, §14 | *t* = byte / 255 confirmed; sliders without a pair get 0.5; the absent-string case stays OPEN (§6.3). |
 | Appearance keys head 0x10000009, hair 0x10000032, beard 0x10000018 | DS §7.1 | Confirmed; their labels (`FaceTexture`, `HeadMesh`) are misleading (§3.3). |
 
 ---
@@ -1035,9 +1180,41 @@ block (Decision); its key-table value is 4.
 
 A slider with mask `ScaleX|ScaleY|ScaleZ`, min (0.9, 0.9, 0.9), max (1.1, 1.1, 1.1), bone 7;
 byte 0xFF → *t* = 1 → bone 7's local scale is multiplied by (1.1, 1.1, 1.1); byte 0x00 → 0.9;
-byte 0x80 → 0.9 + 0.2 × 128 / 255 = 1.00039. A mirrored `TranslateX` slider with limits ±0.003
-on bones 12 (reverse 1) and 13 (reverse 0) at byte 0xFF moves bone 12 by −0.003 and bone 13 by
-+0.003 along their local x.
+byte 0x80 → 0.9 + 0.2 × 128 / 255 = 1.00039; no pair for it in the string → *t* = 0.5 → 1.0.
+A mirrored `TranslateX` slider with limits ±0.003 on bones 12 (reverse 1) and 13 (reverse 0)
+at byte 0xFF moves bone 12 by −0.003 and bone 13 by +0.003 along their local x.
+
+<a id="s12-4"></a>
+### 12.4 Slider entries: overwrite and rotation axes
+
+- Two sliders, in this definition order, on bone 5: A with mask `ScaleX`, limits 1.0–1.2,
+  byte 0xFF; B with mask `ScaleX|ScaleZ`, limits 0.9–0.9 (fixed). Entry of bone 5: scale
+  (0.9, 1, 0.9) (B overwrites A's x; no product 1.08), mask `ScaleX|ScaleZ`.
+- A slider with mask `RotateX`, limits −0.1 to 0.1 radians, byte 0xFF, bone 19 (reverse 1)
+  and bone 22 (reverse 0): angles (−0.1, 0, 0) on bone 19 and (0.1, 0, 0) on bone 22; bone
+  19's local rotation is post-multiplied by a turn of −0.1 rad about its local **+Y**
+  axis, bone 22's by +0.1 rad about +Y.
+- Angles (a, b, c) on one bone give *R*_Y(a) · *R*_Z(b) · *R*_X(c). For a = 0.3, b = −0.7,
+  c = 1.1 rad the quaternion (x, y, z, w) is (0.44180, −0.05754, −0.36242, 0.81863).
+
+<a id="s12-5"></a>
+### 12.5 Bind-space deformation of a leg (§6.4)
+
+Skeleton (reference rotations identity, scales 1): hip bone 0 at z 1.0; knee bone 1 (child)
+at local (0, 0, −0.45); ankle bone 2 (child of 1) at local (0, 0, −0.41). No body-shape
+deformer; two fixed sliders: bone 0 `ScaleZ` 0.8, bone 1 `ScaleZ` 1.15. Deformation pose =
+reference pose with those scales. Model scales z: 0.8, 0.92, 0.92; joints stay at 1.0, 0.55,
+0.14.
+
+| Bind vertex (z), bone | Deformed z |
+|---|---|
+| 0.775, bone 0 | 1.0 + 0.8 × (−0.225) = 0.82 |
+| 0.345, bone 1 | 0.55 + 0.92 × (−0.205) = 0.3614 |
+| 0.0 (sole), bone 2 | 0.14 + 0.92 × (−0.14) = 0.0112 |
+
+Animating with the reference pose leaves these values unchanged; the sole stays 1.1 cm above
+the ground. Applying the same sliders to the animated pose with matrix composition instead
+would put the sole at 0.134 (`skeleton-anim.md` §14.7) — the floating-feet error.
 
 ---
 
@@ -1047,8 +1224,10 @@ on bones 12 (reverse 1) and 13 (reverse 0) at byte 0xFF moves bone 12 by −0.00
 > **OPEN** (owner observation O8): composition of template `vec3` and entity
 > `Render_AdjustableScale` (§6.1).
 
-> **OPEN** (owner observation O9): the height controls' effect, the bone-slider byte mapping
-> and frame (§6.2, §6.3).
+> **Resolved** (2026-10-05, BIN): the height controls' effect (§6.2), the bone-slider byte
+> mapping, combination, rotation axes and frame (§6.3–§6.4). **OPEN** (owner observation
+> O9, confirmation only): compare the shortest and tallest River-hobbit with §6.5; the
+> driven value of an absent slider string (§6.3).
 
 > **OPEN** (owner observation O10): equal-priority ties between worn items and in NPC lists
 > (§4.7); confirmation of the layering cases of §4.6.
@@ -1091,11 +1270,14 @@ entity scales (1.02, 1.03, 0.7). Points for the spec owner:
 > River-hobbit entities). The implementation accepts a float or a uniform vector and
 > ignores a non-uniform one. Please state the type, and what a non-uniform value would mean.
 
-> **OPEN:** §6.3 says the value string `AC_BoneSlider_Value_Array` has 70 characters "on all
-> slider avatars". Only the Human and River-hobbit avatar entities carry it; the Elf and
-> High-elf entities (which name 0x7800BEAB) have no such property, neither in their own set
-> nor in their 0x78 extra sets. The implementation then uses 0x80 for every visible slider.
-> Please confirm that an absent string means the defaults.
+> **Answered in part** (2026-10-05, spec writer; was: absent `AC_BoneSlider_Value_Array` on
+> the Elf and High-elf entities). Correct: only the Human and River-hobbit entities carry the
+> string; §6.3 now says so. The client's slider input is the SliderMeshDeformer node of the
+> species table, whose own stored string is 34 × `80` with `00` at slider 24; whether an
+> absent property leaves that string or yields the dictionary default was not traced
+> (§6.3 OPEN). Keep 0x80 for every slider (§6.3 Decision). Two related corrections: sliders
+> for which the string has no pair get *t* = 0.5 exactly, not 0x80; and the definitions
+> record is the node's (Elf M and HighElf M: 0x7800A9F1, identical in content to 0x7800BEAB).
 
 > **OPEN:** §5.3 (and `skeleton-anim.md` §8.5) take the paperdoll location per equipment
 > slot from the inventory-control object's `InventoryControl_SlotToPaperdollLocation_MappingList`,
@@ -1123,11 +1305,14 @@ entity scales (1.02, 1.03, 0.7). Points for the spec owner:
 > there (a review probe found it had leaked into the paperdoll view for 940 `Weapon_Ranged` items, javelins and
 > some bows, which got `Wpn_ROffhand` instead of `Sheath_Back_Bow`).
 
-> **OPEN** (§6.3 Decision "application", `tessera-anim` `BoneSliders`): when one slider
-> masks more than one rotation channel, the implementation post-multiplies the rotations
-> in the order x, then y, then z (the data drives one rotation channel per slider, so this
-> is untested by the data). Several sliders on one bone apply in definition order. Please
-> confirm or give the order.
+> **Answered** (2026-10-05, spec writer, BIN; was: rotation order and several sliders on one
+> bone). Neither the x-y-z order nor applying sliders one after another is the client's
+> rule. Sliders first build one entry per bone, a later slider **overwriting** the channels
+> it writes (§6.3 "Per-bone entries"); the entry's three angles then form one rotation
+> *R*_Y(angle x) · *R*_Z(angle y) · *R*_X(angle z), which post-multiplies the local rotation
+> (§6.3, worked example §12.4). And the entries are applied to the bind-space deformation
+> pose of §6.4, not to the animated pose: `BoneSliders` in `tessera-anim` needs to move from
+> the per-frame path to a mesh-deformation step.
 
 > **OPEN** (header "Implements into", review): the slot table (`SlotTable`), the holding
 > rule (`HoldingRule`) and the wardrobe fallbacks (`WardrobeFallbacks`) were implemented in
@@ -1229,3 +1414,31 @@ Review follow-up (clean room, 2026-10-05):
 > chosen dye. The holding location (§5.3), the stowing location (§5.4) and the worn-item
 > order (§4.7) use the slot an item is **equipped** in when the caller gives one (dual
 > wielding), else its `Inventory_DefaultSlot`.
+
+> **OPEN** (implementation, River-hobbit height fix, §6.3 values): "each pair read as a
+> base-16 number, so a pair that is not hexadecimal reads 0" leaves two cases open: a pair
+> whose first character is a hex digit and whose second is not (`8z`; a number parser that
+> stops at the first non-digit would read 8), and a trailing single character of an
+> odd-length string. Tessera Decision: a pair reads its value only when both characters are
+> hex digits, else 0; a trailing single character is not a pair. Please confirm.
+
+> **OPEN** (implementation, §6.4 step 1): a MeshDeformer time that is not finite (NaN or
+> infinite after the driven substitution) is read as fraction 0 by Tessera (Decision); the
+> client's handling was not stated. Step 1's "⌊255 × clip weight⌋ / 255" is implemented with
+> the same 10⁻⁴-of-a-step tolerance as the layer weights (`skeleton-anim.md` §6.6 OPEN).
+
+> **OPEN** (implementation, confirmation only, §6.4 step 4 and §6.5): the expected heights of §6.5 were
+> reproduced to the millimetre by the implementation (top 1.231 / 1.266 / 1.300 m and
+> lowest vertex −0.005 / −0.003 / −0.001 m for River-hobbit M at 0, 0.5, 0.95; F 1.200 /
+> 1.215 / 1.245 m; DwarfStoutAxe 1.434 m; Dwarf 1.345 m; Human 1.806 m) with the skinning
+> transform taken as the matrix product of `skeleton-anim.md` §5.4 OPEN below. Only the
+> lowest bone of River-hobbit M at 0.95 differs (0.015 against 0.016, rounding).
+
+---
+
+<a id="s16"></a>
+## 16. Change log
+
+| Date | Sections | Change | Role |
+|---|---|---|---|
+| 2026-10-05 | §1 (BIN, ST/SA2, RH, A10, A15–A18), §6.2, §6.3, new §6.4 and §6.5, §8 step 7, §11, §12.3, new §12.4–§12.5, §13, §14 | Height controls, bone-slider values and application, and bind-space deformation from the client (BIN, decision 0011), checked on real data (RH); the earlier Decisions of §6.2 and §6.3 withdrawn; expected standing heights added; implementation OPENs on absent slider strings and rotation order answered (the first in part). | Spec writer (dirty room) |

@@ -69,6 +69,8 @@ Legend:
 | OBS | Observed 2026-10-05: **all 7,526** 0x07 records and **all 28,992** 0x0C records of `client_gamelogic.dat` walked node by node (632,847 nodes); all 40,643 0x47 entity property sets and all 383,332 0x79 property sets searched for script-table properties; the race table and its 14 player-avatar objects; the 775 landblock weenie objects and the 23 distant-battle unit objects; the envelopes (duration, track count, weight count) of all 25,395 0x05 clips; foot-contact speed estimates for the player skeletons taken from the `skeleton-anim.md` probes; the enum mappers named in this spec. |
 | LC | LotroCompanion `delta-lotro-dat-utils` 11.4 (jar inside the `lotro-tools` clone; Apache-2.0 per its distribution), studied as bytecode for facts only: record outline, node-kind and port-type numbering, the layouts of 24 node kinds, port payloads of 20 (kind, port) pairs, target layout. It has no layout for the animation node and fails on about a third of the records of this install. |
 | BIN | The client executable of the user's install (`x64/lotroclient64.exe`), disassembled in the dirty room for facts only (method M4, authorised retroactively for this question only by [decision 0009](../decisions/0009-script-table-disassembly.md)): the node-kind registration (code → class) and each node class's reflected field list (field order, value kind, bound PID, parent class). |
+| BIN2 | The same executable, file version 4906.0071.1794.4035 (compiled 2026-09-27), disassembled again on 2026-10-05 under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: what a held (`ManualUpdate`) animation node does with `ManualTime` (§6.7); how the layers of §6.2 combine (answer in `skeleton-anim.md` §6.6); what the deformer nodes 18 and 81 do (§6.9, `appearance.md` §6.4). Why M1–M3 were not enough: the data show that River-hobbit `scale_blend` clips are held at a time driven by a property, but not the unit of that time, the wrap rule or the blend; no published source covers these nodes; observing the client (M3) cannot give the rules. Only the offline animation code was read: the animation node's start and update, the playback component, the deformer nodes and the pose and skinning code. |
+| RH | Dirty-room probe of 2026-10-05 that applies the rules of §6.7–§6.9, `skeleton-anim.md` §5.4 and §6.6 and `appearance.md` §6.4 to the real River-hobbit, DwarfStoutAxe, Dwarf and Human bodies (setups, clips, all vertices of the default parts). |
 | EM | Enum mappers in the data: node kinds 0x2300019A (base of 0x2300009E), port types 0x230000A1, target types 0x2300019B (base of 0x2300009F), switch-port operator 0x230000A2, when operator 0x230000A3, math operator 0x230000A4, animation layer 0x230000D5, script IDs 0x23000097 (base 0x230000F8), `Movement_MovementStyle` 0x2300017F, `Entity_Element` 0x23000069 (base 0x230001B9), story-hook type 0x230000BB (base 0x2300013D). |
 | DS | `research/notes/data-semantics.md` §10 (0x07 outline from LC, node-type names). |
 | HD, SA, AP, ED, PS | `havok-data.md`, `skeleton-anim.md`, `appearance.md`, `entity-descriptor.md`, `property-system.md` as companion specs. |
@@ -93,6 +95,10 @@ Legend:
 | T16 | Random choice uses `u32` weights on the ports of a Random node (§7.4) | OBS (137,690 ports; 96 % weight 1) | Confirmed (layout); selection rule Reported by name |
 | T17 | No clip carries a timed annotation; all animation events come from script ports (§9) | HD §4.4; OBS | Confirmed |
 | T18 | Script lookup precedence across includes | none | OPEN; pre-order and breadth-first disagree on about 590 keys per avatar (§8.2) |
+| T19 | A node with `ManualUpdate` = 1 never advances its clip; its time is `ManualTime` read as a fraction of the played range, wrapped (looping) or limited by `LoopCount` (§6.7) | BIN2; OBS (all 30 such nodes; 7 have `ManualTime` driven by a property) | Confirmed 2026-10-05 (rule BIN only) |
+| T20 | Layers combine by a remaining-weight budget from the highest layer down (§6.2; rule in `skeleton-anim.md` §6.6) | BIN2 | Confirmed 2026-10-05 (BIN only). Replaces the §6.2 Decision. |
+| T21 | River-hobbit and DwarfStoutAxe tables start, from `Startup`, a script that holds a layer-110 `scale_blend` clip at a time driven by `AC_Avatar_Height` (River-hobbit) or `AC_BoneScale_Test` (DwarfStoutAxe) (§6.8) | OBS (8 layer-110 nodes, their tables and scriptlets); BIN2 (§6.7 rule); RH (feet stay on the ground) | Confirmed 2026-10-05 |
+| T22 | Species tables' `Startup` scripts hold a MeshDeformer node (18) driven by `AC_BoneScale_Test` (15 tables) and, for the Human, Elf, HighElf and River-hobbit bodies, a SliderMeshDeformer node (81) driven by `AC_BoneSlider_Value_Array` (8 tables); both deform the body in bind space (§6.9) | OBS (all 74 + 8 nodes); BIN2 | Confirmed 2026-10-05 |
 
 ---
 
@@ -522,8 +528,8 @@ The *after-effect head* shared by kinds 30, 35, 38, 43 and 78 is `Persistent` bo
 | 13 | `RampOut` (`AnimationScript_RampOut`) | f32 | Blend-out time, seconds | 0 (10,044), 0.2 (8,842), 0.1, 0.3 … up to 3.0 |
 | 17 | `Layer` (`AnimationScript_Layer`) | u32 | Layer, enum 0x230000D5 (§6.2) | 40 (8,864), 30 (5,666), 20 (3,563), 10 (2,613) … |
 | 21 | `UseBoneOpacity` (`AnimationScript_UseBoneOpacity`) | bool8 | Use per-bone opacity (§6.5) | 1 in 23,469; driven by `ScriptSystem_CurrentlyMoving` in 7,722 |
-| 22 | `ManualUpdate` (`AnimationScript_ManualUpdate`) | bool8 | Hold a fixed time instead of playing | 1 in 30 |
-| 23 | `ManualTime` (`AnimationScript_ManualUpdateTime`) | f32 | Held time (fraction, OPEN) | 0 in 27,197; 0.1–1.0 otherwise |
+| 22 | `ManualUpdate` (`AnimationScript_ManualUpdate`) | bool8 | Hold the clip at `ManualTime` instead of playing it (§6.7) | 1 in 30 |
+| 23 | `ManualTime` (`AnimationScript_ManualUpdateTime`) | f32 | Held time as a **fraction** of the played range, with a wrap rule (§6.7); used only when `ManualUpdate` = 1 | 0 in 27,197; 0.1–1.0 otherwise; driven by a property in 7 nodes (§6.8) |
 | 27 | `StartTime` (`AnimationScript_StartTime`) | f32 | Start of the played range, a **fraction** of the clip | 0 in 27,172; 0.05–0.65 otherwise |
 | 31 | `EndTime` (`AnimationScript_EndTime`) | f32 | End of the played range, a fraction | 1 in 27,172; 0.1–0.9 otherwise |
 | 35 | `RandomizeStartTime` (`AnimationScript_RandomizeStartTime`) | bool8 | Start at a random phase | 1 in 16 |
@@ -540,7 +546,7 @@ are `RampIn` = `RampOut` = 0.1 and `Speed` = `SpeedMultiplier` = 1.0; serialized
 always override them.
 
 <a id="s6-2"></a>
-### 6.2 Layers (Confirmed values, priority rule Reported)
+### 6.2 Layers (Confirmed values; combination rule BIN, T20)
 
 Enum 0x230000D5 (base 0x230001AF adds 0 `Invalid`, 255 `tools`): 10 idle, 11
 idle_adjustment, 13 mounted_idle, 14 idle_stance_blending, 15 idle_emote, 18 face_emote,
@@ -555,10 +561,16 @@ avatar data relies on it: the base idle (layer 10) and a looping idle-emote (lay
 started together by the `Startup` script, and locomotion clips (layer 20) start on top
 whenever the character moves (§8.4).
 
-> **Decision** (until owner observation): a clip on a higher layer overrides a lower one
-> bone by bone, weighted by its ramp-in/ramp-out and, where `UseBoneOpacity` is 1, by the
-> clip's track weights (§6.5). Clips on one layer replace each other with a cross-fade of
-> the new clip's `RampIn`. **OPEN**: whether some layers add instead of override.
+**Combination (BIN2, T20).** The player keeps every started clip together with its layer
+number. Per bone, layers are visited from the highest number down; each clip's weight is its
+ramp envelope × the weight the higher layers left × its track opacity (§6.5), the clips of
+one layer share the same leftover, and lower layers receive only what remains. All clips that
+end up with weight are averaged; a bone whose weights add up to less than 0.1 is pulled to
+the reference pose. The full rule, its 1/255 quantisation and worked examples are in
+`skeleton-anim.md` §6.6 and §14.6–§14.8. Layers never add to each other (no additive mode;
+`skeleton-anim.md` §6.6), and a layer is just a number: nothing but the order of the numbers
+distinguishes `scale_blend` (110) from the others. Clips on one layer cross-fade by their
+ramp envelopes (a new clip's `RampIn`, the old clip's `RampOut`).
 
 <a id="s6-3"></a>
 ### 6.3 `LocomotionDisplacement` (Confirmed)
@@ -590,7 +602,7 @@ effect scriptlets), Random (3,283), StoryHook (2,771), Sound (2,279), Particle (
 Switch, Run, Collection, WhenRunning, Timer, CameraShake and Light nodes.
 
 <a id="s6-5"></a>
-### 6.5 `UseBoneOpacity` and track weights (OPEN)
+### 6.5 `UseBoneOpacity` and track weights (Confirmed data, rule BIN2)
 
 6,935 clips carry per-track weights (`havok-data.md` §2.3 field 8). The name suggests that
 `UseBoneOpacity` = 1 makes the player apply them, but the data does not prove it: of the
@@ -598,9 +610,12 @@ animation nodes on weighted clips, 6,612 have it set and 1,125 do not; of those 
 unweighted clips, 16,857 have it set (where it can change nothing). It is driven by
 `ScriptSystem_CurrentlyMoving` in 7,722 nodes, which fits "upper-body only while moving".
 
-> **Decision:** when `UseBoneOpacity` is 1 and the clip has weights, multiply each track's
-> blend weight by the clip's weight for that track; otherwise use 1. **OPEN** (owner
-> observation): play an emote while running and check whether the legs keep running.
+**Rule (BIN2).** When `UseBoneOpacity` is 1 and the clip has a weight array, the clip's
+weight for track *j* is that track's **opacity**: it multiplies the clip's weight on bone *j*
+in the layer budget of §6.2 (`skeleton-anim.md` §6.6). Otherwise every opacity is 1. When the
+flag changes during playback (driven nodes), the player moves between the two over time
+(`skeleton-anim.md` §6.6, duration OPEN there). Visual confirmation (emote while running,
+legs keep running) is still welcome but no longer needed to implement.
 
 <a id="s6-6"></a>
 ### 6.6 Where animation nodes are (Confirmed)
@@ -610,6 +625,129 @@ an animation node; together with Timer `ToolsAnimationOverride` (a tool-preview 
 clips), MeshDeformer nodes (32) and DID lists, 25,387 of the 25,395 clips are referenced
 from script data. The 0x0C record of a clip is usually a single animation node, optionally
 with event ports, so "play clip X with these settings" is "invoke scriptlet Y".
+
+<a id="s6-7"></a>
+### 6.7 Held clips: `ManualUpdate` and `ManualTime` (Confirmed census, rule BIN2, T19)
+
+An animation node with `ManualUpdate` = 1 starts its clip like any other (layer, ramps,
+opacity, §6.1–§6.5) but **never advances it**: its playback rate is 0 whatever `Speed` and
+`SpeedMultiplier` say, so time-based events of §6.4 do not fire from the passing of time. Its
+time comes from `ManualTime`, after the driven-property substitution of §4.2, as follows. Let
+*v* be the value, *n* its integer part (rounded toward zero) and *g* = *v* − *n*.
+
+1. **Fraction** *f*:
+   - `LoopForever` = 1: *f* = *g*, plus 1 when *g* is negative. So 1.0 gives 0, 1.3 gives
+     0.3, −0.2 gives 0.8.
+   - `LoopForever` = 0: *f* = 0 when *n* < 0; *f* = *g* when 0 ≤ *n* < `LoopCount`; *f* = 1
+     when *n* ≥ `LoopCount`. Then *f* is limited to [0, 1] (so −0.2 gives 0).
+2. **Clip time** = *f* × `duration` (the clip's, `havok-data.md` §2.3). This holds for
+   `StartTime` 0 and `EndTime` 1, the values of every held node of this install. The player
+   multiplies *f* by the clip's played length after cropping, so other values presumably
+   give `duration` × (`StartTime` + *f* × (`EndTime` − `StartTime`)); **OPEN** (not traced,
+   no instance).
+3. The fraction is applied again on every update of the node and whenever a property that
+   drives one of its fields changes, so a new value takes effect at once (no ramp).
+
+Census: 30 of 27,217 nodes are held: 13 on layer 40, 5 on layer 30, 4 on layer 80, 8 on
+layer 110. `ManualTime` is driven by a property in 7 of them (§6.8; one layer-80 node by
+`Character_Demo_Pose_Override_Time`). Worked example (synthetic, clip of 2.0 s, `StartTime` 0,
+`EndTime` 1):
+
+| `ManualTime` | `LoopForever` 1 | `LoopForever` 0, `LoopCount` 1 | `LoopForever` 0, `LoopCount` 2 |
+|---|---|---|---|
+| 0.25 | 0.5 s | 0.5 s | 0.5 s |
+| 0.95 | 1.9 s | 1.9 s | 1.9 s |
+| 1.0 | 0.0 s | 2.0 s | 0.0 s |
+| 1.3 | 0.6 s | 2.0 s | 0.6 s |
+| −0.2 | 1.6 s | 0.0 s | 0.0 s |
+
+<a id="s6-8"></a>
+### 6.8 Layer 110 `scale_blend`: River-hobbit and DwarfStoutAxe proportions (Confirmed, T21)
+
+All 8 animation nodes on layer 110 are held clips (§6.7) used to change body proportions,
+not to animate. Where they are and what drives them:
+
+| Body | Where | Clip (duration) | `ManualTime` from | `LoopForever` | `RampIn`/`RampOut` |
+|---|---|---|---|---|---|
+| River-hobbit M | table 0x07002F08, script `Reproportion_Idle` (key 0x10002CC4): scriptlet 0x0C00AF73 | 0x05008E76 (1.666 s) | `AC_Avatar_Height` | 1 | 0.1 / 0.1 |
+| River-hobbit M, mounted branch | same script: scriptlet 0x0C00AFCB | 0x05008ECC (1.666 s) | `AC_Avatar_Height` | 1 | 0.1 / 0.1 |
+| River-hobbit F | table 0x07002F09, `Reproportion_Idle`: scriptlet 0x0C00AF74 | 0x05008E75 (0.416 s) | `AC_Avatar_Height` | 1 | 0 / 0 |
+| River-hobbit F, mounted branch | same script: scriptlet 0x0C00AFCC | 0x05008ECB (0.416 s) | `AC_Avatar_Height` | 1 | 0 / 0 |
+| DwarfStoutAxe | table 0x0700247C, `Reproportion_Idle`: scriptlet 0x0C009506 | 0x050079DF (1.666 s) | `AC_BoneScale_Test` | 0 (`LoopCount` 1) | 0 / 0 |
+| DwarfStoutAxe, mounted on mount types 8, 16, 32 | same script: scriptlet 0x0C0095FB | 0x05007AC2 (1.666 s) | `AC_BoneScale_Test` | 0 (`LoopCount` 1) | 0 / 0 |
+| River-hobbit F / M, UI viewport | binding tables 0x07002F1A / 0x07002F1C, script `Viewport_Idle` (key 0x10000524) | 0x05008ECB / 0x05008ECC | constant 1.0 (so fraction 0, §6.7) | 1 | 0 / 0, 0.1 / 0.1 |
+
+All have `UseBoneOpacity` 1, `StartTime` 0, `EndTime` 1. The `Startup` script of each of the
+three species tables runs `Reproportion_Idle` with a Run node; the script's root is a
+persistent WhenRunning node on keys 0x10000147 (and, for the River-hobbit tables, also
+0x10002EE4): while none of them runs (the normal, unmounted case) its NotRunning port starts
+the first clip of the table above; while one runs, its Running port starts the mounted one
+(DwarfStoutAxe: through a Switch on `Mount_CurrentMountType`, cases 8, 16, 32, Default
+back to the normal clip). Other tables also run `Reproportion_Idle` (0x070013C5 under some
+`Appearance_RandomAppearanceType` cases, 0x0700291D); they are not avatar tables.
+
+**What the clips hold (Confirmed, all tracks).** 89 tracks (62 for DwarfStoutAxe), weight
+array 0.01 on the tracks that matter and 0 elsewhere, so with the layer rule of §6.2 a track
+moves only 2/254 of the way from the lower layers' value to the clip's value (effective
+weight 0.00787 over a full-weight idle). The clips are authored about 100 times too large for
+that: River-hobbit M root translation z −12.5 at fraction 0 rising to about 0 at fraction 1
+(−9.80 at 0.30, −4.94 at 0.57, −0.09 at 0.95), knee and ankle translation z 6.0 above their
+reference at fraction 0 falling to the reference at 1; River-hobbit F root the same and knee
+12.41 above (ankle unchanged); eye-offset bones at scale 31.25 with translation × 31.25 and
+four finger-base bones moved +0.8 to +0.9 along y, both constant. At the default height value 0
+the River-hobbit pelvis therefore sinks about 0.098 m and the legs shorten by about the same,
+so the feet stay on the ground (worked example §13.2). The mounted River-hobbit clips shorten
+the legs only (no pelvis drop) and reach the reference by fraction 0.5. The DwarfStoutAxe clip
+raises the root 0.099 m and lengthens hip, knee and ankle segments by the same amount (taller
+on longer legs, feet on the ground), and widens collar, shoulder, elbow and wrist offsets
+more the higher `AC_BoneScale_Test` is.
+
+**Consequences for an implementation.** Start these nodes as §8.3 starts the idle (they are
+part of the avatar's `Startup`), hold them by §6.7 and combine them by §6.2. A clip on layer
+110 that is *played* over time instead makes the figure grow and shrink in a loop (River-hobbit
+M: 1.666 s period), which is the M4 viewer symptom of `docs/checklists/m4-visual.md` note 1.
+Expected standing heights: `appearance.md` §6.5.
+
+<a id="s6-9"></a>
+### 6.9 Deformer nodes: MeshDeformer (18) and SliderMeshDeformer (81) (Confirmed census, rule BIN2, T22)
+
+These nodes do not play animation; they register a **bind-space deformation** of the
+entity's skinned meshes with its animation component, kept while the node runs, and
+recomputed when a field changes (`appearance.md` §6.4 gives the algorithm).
+
+| Kind | Fields used | Instances |
+|---|---|---|
+| 18 MeshDeformer | `…_AnimationAsset` (a clip), `…_AnimationTime` (a **fraction** of the clip, limited to [0, 1], no wrap), `…_UseBoneWeights` (use the clip's weight array as track weights; otherwise all tracks weight 1) | 74, all in tables: 15 are body-shape deformers in `Startup` scripts (14 species tables below and 0x07001819), all with `AnimationTime` driven by `AC_BoneScale_Test` and `UseBoneWeights` 1 (`appearance.md` §6.4); the other 59 are in 9 non-avatar tables (32 in 0x07001AFB driven by `Slider_Custom2`, 2 driven by `Slider_Custom1`, the rest constant, for example 0.56, 1 and 0.15 in table 0x07001B8E) |
+| 81 SliderMeshDeformer | `BoneSlider_ValueArray_String` (the slider value string; the stored value is 70 characters: 34 × `80` and `00` at slider 24), `BoneSlider_SliderDefinitionsFile` (the 0x78 definitions record) | 8, all in `Startup` scripts of the Human, Elf, HighElf and River-hobbit species tables (0x07002DAD, 0x07002DB0, 0x07002F08, 0x07002F09, 0x07003012, 0x07003013, 0x0700301A, 0x0700301B), all with the string driven by `AC_BoneSlider_Value_Array` |
+
+Each of the 14 avatar closures (§8.1) contains exactly one of these **species tables**
+(Confirmed, 14 of 14; the fifteenth body-shape table, 0x07001819, is in no avatar closure):
+
+| Avatar entity | Species table | Body-shape clip (§6.9 kind 18) | Slider definitions (kind 81) | Layer-110 script (§6.8) |
+|---|---|---|---|---|
+| Hobbit M 0x47000606 | 0x0700041F | 0x05000DF9 | – | – |
+| Hobbit F 0x47000607 | 0x07000425 | 0x05000DFF | – | – |
+| Human M 0x4700060A | 0x07002DAD | 0x050086F8 | 0x7800A9F1 | – |
+| Human F 0x4700060B | 0x07002DB0 | 0x05008710 | 0x7800A9F2 | – |
+| Elf M 0x4700060E | 0x07003013 | 0x050096B2 | 0x7800A9F1 | – |
+| Elf F 0x4700060F | 0x07003012 | 0x050096B1 | 0x7800BEAB | – |
+| Dwarf M 0x47000611 | 0x07000491 | 0x05001F42 | – | – |
+| Beorning M 0x47007004 | 0x07001D83 | 0x0500686F | – | – |
+| Beorning F 0x47007005 | 0x07001D85 | 0x05006870 | – | – |
+| HighElf M 0x4700806C | 0x0700301A | 0x050096B2 | 0x7800A9F1 | – |
+| HighElf F 0x47008071 | 0x0700301B | 0x050096CF | 0x7800BEAB | – |
+| DwarfStoutAxe 0x4700979A | 0x0700247C | 0x050079E0 | – | `Reproportion_Idle` |
+| River-hobbit M 0x4700CEA3 | 0x07002F08 (and binding table 0x07002F1C) | 0x05008E43 | 0x7800A9F3 | `Reproportion_Idle` |
+| River-hobbit F 0x4700CEA4 | 0x07002F09 (and binding table 0x07002F1A) | 0x05008E42 | 0x7800A9F4 | `Reproportion_Idle` |
+
+The three slider-definition records 0x7800A9F1, 0x7800A9F2 and 0x7800BEAB have identical
+content apart from their DID. Root nodes of the species tables' `Startup` scripts
+(Confirmed): always a Collection and the MeshDeformer; a Scriptlet node in the Hobbit, Dwarf
+and Beorning tables; the SliderMeshDeformer and one or two Switch nodes in the Human, Elf and
+HighElf tables; a Switch and the Run node of §6.8 in the DwarfStoutAxe table; a Switch on
+`CharGen_Stage`, the SliderMeshDeformer, the Run node and an Appearance node in the
+River-hobbit tables. An implementation that runs the `Startup` script of every closure table
+(§8.2) reaches them.
 
 ---
 
@@ -796,9 +934,15 @@ Facts about this table:
 - The binding table's `Startup` script has exactly two roots in all 14: the template
   invocation and a Switch. In 12 bindings the Switch is on `Combat_Violent`; its Default
   holds a Switch on `ScriptSystem_AvatarMood` (ten moods, each its own scriptlet) whose
-  Default starts a looping **idle-emote** clip on layer 15 (for Hobbit M 0x05000DF7, 12 s);
-  with `Combat_Violent` = 1 nothing is started there. In the two River-hobbit bindings the
-  Switch is on `CharGen_Stage` instead.
+  Default starts a looping **idle-emote** clip, on the layer its animation node names: 15
+  (`idle_emote`) for the Hobbit, Dwarf and DwarfStoutAxe bodies (Hobbit M 0x05000DF7, 12 s),
+  18 (`face_emote`) for the Human, Elf, Beorning, HighElf and River-hobbit bodies (Human M
+  0x05001544, Elf M 0x050017FF); with `Combat_Violent` = 1 nothing is started there. In the
+  two River-hobbit bindings the Switch is on `CharGen_Stage` instead.
+- Besides the binding table, every avatar closure holds one **species table** whose
+  `Startup` adds the body-shape deformer, the bone sliders and, for River-hobbit and
+  DwarfStoutAxe, the layer-110 proportion clip (§6.8–§6.9). They are part of the idle look:
+  without them a River-hobbit has the wrong height and face.
 - Run-forward bindings are Switch trees on `Movement_SpeedMultiplier` (= 0.75 selects a
   slowed clip), `Entity_Mode` (combat stances), `Agent_Class` and `Combat_AnimationSet`;
   idle bindings switch on `Stealth_IsStealthed`. The 8.8 m/s values are the stated
@@ -1015,14 +1159,18 @@ A 0x0C record is: VLE root count, nodes, u32 dependency count, DIDs, end.
      scriptlet's roots; ScriptletParameter: run the bound subtree or its own Default port;
    - Animation: start the clip on its layer with the node's fields, after applying driven
      properties (base block field 1) and scope overrides; register its event ports (§9);
+     a node with `ManualUpdate` = 1 is held at the time of §6.7 and re-derived whenever its
+     driving property changes;
+   - MeshDeformer (18) and SliderMeshDeformer (81): register the bind-space deformation of
+     §6.9 (`appearance.md` §6.4) with the driven values; recompute it when they change;
    - Run: look the key up (§8.2) and run that script; SetProperty: set the property and
      re-evaluate the switches that watch it;
    - every other kind: ignore in M4 (skip the subtree); sound, VFX and camera follow in M6.
 4. Each frame, feed the movement inputs; a changed property re-evaluates the persistent
    Switch/When/ScalarBlend nodes that watch it, stopping branches (ramp-out) and starting
    branches (ramp-in, cross-fade).
-5. Sample all running clips (`skeleton-anim.md` §10) and combine them by layer and blend
-   weight (§6.2).
+5. Sample all running clips (`skeleton-anim.md` §10) and combine them by the layer rule of
+   §6.2 (`skeleton-anim.md` §6.6). Held clips are sampled at their held time, not advanced.
 
 ---
 
@@ -1041,6 +1189,8 @@ A 0x0C record is: VLE root count, nodes, u32 dependency count, DIDs, end.
 | SI8 | Node IDs are non-zero and unique within a scriptlet (unique within a table in 7,515 of 7,524 tables, so not a rule there). |
 | SI9 | Every Scriptlet node's file is 0 or an existing 0x0C record. |
 | SI10 | For each of the 14 avatar entities, every clip bound to the template's idle, walk, run, back, strafe and turn parameters has as many tracks as the avatar's skeleton has bones. |
+| SI11 | Every animation node on layer 110 has `ManualUpdate` = 1 (8 of 8); every node whose `ManualTime` is driven has `ManualUpdate` = 1 (7 of 7: 4 by `AC_Avatar_Height`, 2 by `AC_BoneScale_Test`, 1 by `Character_Demo_Pose_Override_Time`). |
+| SI12 | Each avatar closure contains exactly one table with a MeshDeformer node in its `Startup` script (14 of 14), and for the Human, Elf, HighElf and River-hobbit avatars that table also holds the closure's only SliderMeshDeformer node (8 of 8; the Beorning tables have none). |
 
 Fuzzing (§0): one target decodes arbitrary bytes as a 0x07 record, one as a 0x0C record; both
 must return an error, never panic, and respect the limits of §4.5.
@@ -1115,6 +1265,29 @@ Tests:
   an animation child, starts that animation; invoked with no port named N, starts nothing
   (§7.8).
 
+<a id="s13-2"></a>
+### 13.2 Held proportion clip (§6.7, §6.8)
+
+Synthetic, invented values. A two-bone skeleton: bone 0 the root at the origin, bone 1 its
+child at local translation (0, 0, −0.5) (the "foot"). An idle clip on layer 10 holds the
+reference pose, overall weight 1, no weights. A held node on layer 110: `ManualUpdate` 1,
+`ManualTime` driven by property P, `LoopForever` 1, `UseBoneOpacity` 1, a clip of 2.0 s with
+track weights (0.01, 0.01) whose bone 0 translation z is −10 + 10 × (time / 2.0) and whose
+bone 1 translation z is −0.5 + 10 − 10 × (time / 2.0) (pelvis drop and leg shortening
+authored to cancel). Layer weights (§6.2, `skeleton-anim.md` §6.6): 2/255 for layer 110,
+252/255 for the idle.
+
+| P | Clip time | Bone 0 z | Bone 1 local z | Bone 1 model z |
+|---|---|---|---|---|
+| 0 (the entity default) | 0 s | (2 × −10) / 254 = −0.07874 | (2 × 9.5 + 252 × −0.5) / 254 = −0.42126 | −0.5 (on the ground) |
+| 0.5 | 1.0 s | −0.03937 | −0.46063 | −0.5 |
+| 0.95 | 1.9 s | −0.00394 | −0.49606 | −0.5 |
+| 1.0 | 0 s (wrap, §6.7) | −0.07874 | −0.42126 | −0.5 |
+
+Tests: the pose does not change with elapsed time; changing P changes it at once; the same
+clip *played* over time (rate 1, looping) moves bone 0 between −0.07874 and 0 every 2 s,
+which is the wrong behaviour (the figure grows and shrinks).
+
 ---
 
 <a id="s14"></a>
@@ -1146,9 +1319,11 @@ Tests:
    transition tail; of ForCurrentValue ports; of `Autonomous` and `Synchronized`; of the
    Particle extra byte; of the FireMissile custom elements; of the base block's
    scriptlet-driven pairs and scriptlet-parameter list.
-4. **Layer combination** (override versus additive; §6.2) and **`UseBoneOpacity`** (§6.5).
-5. `ManualTime`, `StartTime`, `EndTime` units for the 45 non-default nodes (fractions are
-   assumed), `DetachOnRampOut`, and events beyond the clip duration (§6.4).
+4. *Resolved 2026-10-05 (BIN2):* layer combination (§6.2, `skeleton-anim.md` §6.6) and
+   `UseBoneOpacity` (§6.5). Still open: the duration of a `UseBoneOpacity` change.
+5. `ManualTime` is resolved (a fraction with a wrap rule, §6.7). Still open: how
+   `StartTime` and `EndTime` other than 0 and 1 crop a held clip (§6.7 step 2),
+   `DetachOnRampOut`, and events beyond the clip duration (§6.4).
 6. **Speed matching** between clip rate and ground speed, and the avatar's default run
    clip where the bound Switch trees offer several (§8.3, §8.5; owner observation).
 7. The client's update rules for `Slider_Propel`, `Slider_Strafe`, `Slider_Turn` and
@@ -1204,12 +1379,14 @@ table). Points for the spec owner:
 > have no random idle; either the spec's analysis did not follow Run nodes or a gate on
 > those paths (a property the client sets) keeps them from running. Which is it?
 
-> **OPEN** (§8.3): the second root of the binding table's `Startup` starts a looping clip on
-> layer **15** for the Hobbit, Dwarf and DwarfStoutAxe bodies, but on layer **18**
-> (`face_emote`) for the Human, Elf, Beorning, HighElf and River-hobbit bodies (Human M
-> 0x05001544, Elf M 0x050017FF); §8.3 calls them all idle-emotes on layer 15. The
-> DwarfStoutAxe and River-hobbit bodies further reach a layer-110 (`scale_blend`) clip
-> through Run nodes. Please state the layers per body.
+> **Answered** (2026-10-05, spec writer; was: layers of the idle-emote and the layer-110
+> clip per body, §8.3). The layer is always the animation node's `Layer` field; §8.3 now
+> says 15 for Hobbit, Dwarf and DwarfStoutAxe and 18 for the others, as the implementation
+> found. The layer-110 clips that the DwarfStoutAxe and River-hobbit bodies reach through
+> `Reproportion_Idle` are **held** clips: never play them over time; hold them at the
+> fraction §6.7 derives from `AC_Avatar_Height` (River-hobbit) or `AC_BoneScale_Test`
+> (DwarfStoutAxe) and combine them by §6.2 (§6.8 has the nodes, clips and expected effect).
+> Playing 0x05008E76 over time is what makes the River-hobbit grow and shrink in a loop.
 
 > **OPEN** (§7.8, nested templates): a ScriptletParameter node inside a scriptlet that was
 > itself invoked from inside the template could look for its name in the innermost
@@ -1270,3 +1447,32 @@ table). Points for the spec owner:
 > duplicate it. The placement needs a decision record (move it, or record that `formats`
 > keeps the static evaluator), and then this header and the `crates/formats` line of
 > `CLAUDE.md` updated to match.
+
+> **OPEN** (implementation, River-hobbit height fix, §6.9): the MeshDeformer field names are
+> given only by their endings (`…_AnimationAsset`, `…_AnimationTime`,
+> `…_UseBoneWeights`). To apply a driven property the implementation must know which field
+> a driven pair names; it recognises the field by its dictionary type (DID, float, bool;
+> distinct for the three fields), not by name. Please give the full property names.
+
+> **OPEN** (implementation, §6.7): Tessera Decisions where the rule is silent: a
+> `ManualTime` that is not finite gives fraction 0; a looping fraction that rounds up to 1
+> (for a tiny negative value, *g* + 1) is taken as 0; when several held nodes start on one
+> layer the most likely one (blend weight × chance) is kept, as for idle layers; held clips
+> are combined like every other clip, on their own layer, in every motion state, and are
+> never faded out while moving. `StartTime`/`EndTime` other than 0 and 1 are ignored (no
+> held node of the install uses them; step 2 OPEN).
+
+> **OPEN** (implementation, §6.9 SliderMeshDeformer): when a node's value string is driven
+> by a property the entity lacks (Elf, HighElf), the implementation applies the
+> `appearance.md` §6.3 Decision (35 × `80`) rather than the node's stored string; when the
+> node's string is not driven at all it uses the stored string. No such node exists in the
+> install.
+
+---
+
+<a id="s17"></a>
+## 17. Change log
+
+| Date | Sections | Change | Role |
+|---|---|---|---|
+| 2026-10-05 | §1 (BIN2, RH, T19–T22), §6.1, §6.2, §6.5, new §6.7–§6.9, §8.3, §12 (SI11–SI12), new §13.2, §15, §16 | Held clips (`ManualUpdate`/`ManualTime`), layer combination, the layer-110 `scale_blend` clips of River-hobbit and DwarfStoutAxe, the deformer nodes 18 and 81 and the per-avatar species tables, from data and the client (BIN2, decision 0011); idle-emote layers per body corrected (implementation OPEN answered). | Spec writer (dirty room) |

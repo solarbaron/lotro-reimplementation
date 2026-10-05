@@ -511,9 +511,12 @@ pub struct StaticConfig {
     pub max_per_block: usize,
     /// Objects resident at once (spawned, queued to spawn, or waiting for
     /// their [`Event::EntityDespawned`]), `1..=MAX_RESIDENT_STATICS`.
-    /// When it is reached, blocks in the release ring are dropped early to
-    /// make room, nearest blocks are served first, and a block that could be
-    /// served only in part is asked again for the rest once there is room.
+    /// When it is reached, nearest blocks are served first: a block that
+    /// wants objects takes room from the farthest block that holds any and
+    /// is strictly farther from the player (a release-ring block is dropped
+    /// early; one still inside the radius is emptied and asked again once
+    /// there is room). A block that could be served only in part is asked
+    /// again for the rest once there is room.
     pub max_resident: usize,
     /// [`Event::StaticSpawned`] events emitted
     /// per poll at most (nearest blocks first), `>= 1`; the rest wait for
@@ -651,8 +654,8 @@ pub struct StaticStats {
     /// was created: a lower bound, since the sandbox asks for only one entry
     /// more than it takes (a source that ignores `limit` reveals more).
     pub truncated: u64,
-    /// Blocks in the release ring dropped early to make room for nearer
-    /// ones, since the sandbox was created.
+    /// Blocks dropped early (release ring) or emptied (inside the radius)
+    /// to make room for nearer ones, since the sandbox was created.
     pub evicted: u64,
 }
 
@@ -709,18 +712,32 @@ impl Statics {
     /// Removes `block`, queueing despawns for its spawned objects.
     fn release(&mut self, block: Landblock, source: &mut dyn WorldSource) {
         if let Some(state) = self.blocks.remove(&block) {
-            if let BlockState::Loaded {
-                queue, next, ids, ..
-            } = state
-            {
-                // Unspawned objects leave the budget now; spawned ones when
-                // their despawn is emitted.
-                self.resident = self
-                    .resident
-                    .saturating_sub(queue.len().saturating_sub(next));
-                self.despawns.extend(ids);
-            }
+            self.unload(state);
             source.release(block);
+        }
+    }
+
+    /// Empties `block` but keeps tracking it as [`BlockState::Waiting`], so
+    /// it is asked again from the start once there is room. The source keeps
+    /// the block (it is still in range).
+    fn trim(&mut self, block: Landblock) {
+        if let Some(state) = self.blocks.get_mut(&block) {
+            let state = std::mem::replace(state, BlockState::Waiting);
+            self.unload(state);
+        }
+    }
+
+    /// Takes a removed block's objects out of the budget: unspawned ones
+    /// now, spawned ones when their despawn is emitted.
+    fn unload(&mut self, state: BlockState) {
+        if let BlockState::Loaded {
+            queue, next, ids, ..
+        } = state
+        {
+            self.resident = self
+                .resident
+                .saturating_sub(queue.len().saturating_sub(next));
+            self.despawns.extend(ids);
         }
     }
 
@@ -790,7 +807,7 @@ impl Statics {
             // Blocks in the hysteresis ring are kept but never loaded.
             if wants && distance <= radius {
                 if self.resident >= self.config.max_resident {
-                    self.make_room(radius, source);
+                    self.make_room(distance, radius, source);
                 }
                 if self.resident >= self.config.max_resident {
                     starved += 1;
@@ -817,10 +834,14 @@ impl Statics {
         self.resident = self.resident.saturating_sub(n);
     }
 
-    /// With the budget full and no despawn already on its way, drops the
-    /// farthest release-ring block that holds anything, so nearer blocks get
-    /// room on a later poll.
-    fn make_room(&mut self, radius: u32, source: &mut dyn WorldSource) {
+    /// With the budget full and no despawn already on its way, frees the
+    /// farthest block that holds anything and lies strictly farther than
+    /// `wanted` (the distance of the block asking for room), so nearer
+    /// blocks get room on a later poll. A release-ring block is dropped; one
+    /// inside `radius` is emptied and stays tracked to be asked again. The
+    /// strict comparison means blocks never take room from blocks at their
+    /// own distance, so the budget cannot ping-pong.
+    fn make_room(&mut self, wanted: u32, radius: u32, source: &mut dyn WorldSource) {
         if !self.despawns.is_empty() {
             return; // room is already coming
         }
@@ -828,13 +849,21 @@ impl Statics {
             .order
             .iter()
             .rev()
-            .take_while(|(d, _)| *d > radius)
-            .map(|(_, b)| *b)
-            .find(|b| self.blocks.get(b).is_some_and(|s| s.resident() > 0));
-        if let Some(block) = victim {
-            tracing::debug!(%block, "static budget full; releasing a ring block early");
-            self.stats.evicted += 1;
-            self.release(block, source);
+            .take_while(|(d, _)| *d > wanted)
+            .find(|(_, b)| self.blocks.get(b).is_some_and(|s| s.resident() > 0))
+            .copied();
+        match victim {
+            Some((d, block)) if d > radius => {
+                tracing::debug!(%block, "static budget full; releasing a ring block early");
+                self.stats.evicted += 1;
+                self.release(block, source);
+            }
+            Some((_, block)) => {
+                tracing::debug!(%block, "static budget full; emptying a farther block");
+                self.stats.evicted += 1;
+                self.trim(block);
+            }
+            None => {}
         }
     }
 

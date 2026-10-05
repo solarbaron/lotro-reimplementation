@@ -240,6 +240,9 @@ struct SentInfo {
     last: Instant,
     /// All retransmissions (Karn's rule).
     retransmits: u32,
+    /// Outstanding while the peer reported PAUSED, so its acknowledgement
+    /// may include an application stall and is no RTT sample.
+    held: bool,
     /// Retransmissions with no acknowledgement progress since the previous
     /// send; this is what [`TransportConfig::max_retransmits`] bounds.
     strikes: u32,
@@ -626,7 +629,17 @@ impl<D: Datagram> ReliableEndpoint<D> {
         self.on_ack(packet.ack, now);
         match packet.body {
             Body::Empty => {}
-            Body::Reliable(seg) => self.on_segment(seg),
+            Body::Reliable(seg) => {
+                self.on_segment(seg);
+                // Advance through contiguous segments as they arrive, so a
+                // segment that follows its predecessor within one poll is
+                // the next expected one, not an out-of-order one charged to
+                // the reorder budget. Back-pressure still applies (see
+                // `deliver_in_order`). Spec: transport-design.md §6.4 steps
+                // 1 and 3 (`next` is the lowest sequence number not yet
+                // received) and the OPEN note in §10.
+                self.deliver_in_order(now);
+            }
             Body::Unreliable(payload) => {
                 let cost = payload.len() + INBOX_ENTRY_COST;
                 if self.inbox_bytes + cost <= self.config.max_inbox_bytes {
@@ -652,6 +665,34 @@ impl<D: Datagram> ReliableEndpoint<D> {
 
     fn on_ack(&mut self, ack: Ack, now: Instant) {
         self.peer_paused = ack.paused;
+        let (sample, newly_acked) = self.apply_ack(ack, now);
+        if ack.paused {
+            // Whatever is still unacknowledged may now be held back by the
+            // peer's application, not the network; its eventual ack is no
+            // RTT sample (transport-design.md §6.3, OPEN note in §10).
+            for seg in &mut self.outq {
+                let Some(sent) = &mut seg.sent else { break };
+                if !seg.acked {
+                    sent.held = true;
+                }
+            }
+        }
+        if newly_acked {
+            self.last_progress = now;
+            while self.outq.front().is_some_and(|s| s.acked) {
+                if let Some(seg) = self.outq.pop_front() {
+                    self.outq_cost -= seg.payload.len() + SEGMENT_QUEUE_COST;
+                }
+            }
+        }
+        if let Some(r) = sample {
+            self.update_rtt(r);
+        }
+    }
+
+    /// Marks the segments `ack` covers; reports the RTT sample and whether
+    /// any segment was newly acknowledged.
+    fn apply_ack(&mut self, ack: Ack, now: Instant) -> (Option<Duration>, bool) {
         if claims_unsent(ack, self.sent_end) {
             // Ignored per segment below; counted once per packet.
             self.stats.invalid_acks += 1;
@@ -674,23 +715,14 @@ impl<D: Datagram> ReliableEndpoint<D> {
             if acked && !seg.acked {
                 seg.acked = true;
                 newly_acked = true;
-                // Karn's rule: only sample segments never retransmitted.
-                if sent.retransmits == 0 {
+                // Karn's rule: only sample segments never retransmitted, and
+                // never one the peer may have held back while PAUSED.
+                if sent.retransmits == 0 && !sent.held {
                     sample = Some(now.saturating_duration_since(sent.first));
                 }
             }
         }
-        if newly_acked {
-            self.last_progress = now;
-            while self.outq.front().is_some_and(|s| s.acked) {
-                if let Some(seg) = self.outq.pop_front() {
-                    self.outq_cost -= seg.payload.len() + SEGMENT_QUEUE_COST;
-                }
-            }
-        }
-        if let Some(r) = sample {
-            self.update_rtt(r);
-        }
+        (sample, newly_acked)
     }
 
     fn update_rtt(&mut self, r: Duration) {
@@ -890,6 +922,8 @@ impl<D: Datagram> ReliableEndpoint<D> {
                             first: now,
                             last: now,
                             retransmits: 0,
+                            // Sent into a paused peer: may be held back.
+                            held: peer_paused,
                             strikes: 0,
                             rto: *rto,
                         });

@@ -482,8 +482,11 @@ impl Session {
     /// let mut events = Vec::new();
     /// session.poll_into(now, &mut events);
     /// for event in events.drain(..) {
-    ///     if let Event::Connected { characters } = event {
-    ///         let character = characters[0].name.clone();
+    ///     // The list may be empty (a new account): never index it.
+    ///     if let Event::Connected { characters } = event
+    ///         && let Some(first) = characters.first()
+    ///     {
+    ///         let character = first.name.clone();
     ///         session.send(now, Command::EnterWorld { character })?;
     ///     }
     /// }

@@ -1389,6 +1389,38 @@ fn resident_cap_serves_the_players_block() {
     }
     // Only the ring column x = 99 was given up.
     assert!(h.log.lock().unwrap().released.iter().all(|b| b.x == 99));
+
+    // Room for one block at radius 1 and 2: the budget is held by a block
+    // that is still inside the radius after the step, so it must yield to
+    // the nearer player's block (it used to keep the budget for good).
+    for radius in [1, 2] {
+        let mut cfg = config("1,100,100");
+        cfg.statics.radius = radius;
+        cfg.statics.max_per_block = 10;
+        cfg.statics.max_resident = 10;
+        let mut h = Harness::new(
+            cfg,
+            Script {
+                per_block: 10,
+                ..Script::default()
+            },
+        );
+        let mut live = Live::default();
+        live.apply(&h.enter());
+        live.apply(&h.run(3));
+        assert_eq!(live.in_block(100, 100), 10, "radius {radius}");
+        for (x, back) in [(101, false), (102, false), (101, true)] {
+            live.apply(&h.move_to(block(x, 100).location([80.0, 80.0, 0.0])));
+            live.apply(&h.run(10));
+            assert_eq!(
+                live.in_block(x, 100),
+                10,
+                "radius {radius}: block ({x}, 100), back = {back}"
+            );
+            assert!(live.0.len() <= 10);
+        }
+        assert!(h.stats().evicted >= 2, "radius {radius}");
+    }
 }
 
 /// A block served short for lack of room is asked again for the rest once

@@ -901,3 +901,114 @@ proptest! {
         prop_assert!(x.victim.reorder_bytes() <= cfg.max_reorder_bytes + 3000 + 32);
     }
 }
+
+/// Runs `a` and `b` in 5 ms steps until `b` has received `count` messages,
+/// returning them and the simulated time taken.
+fn drain_until(
+    a: &mut ReliableEndpoint<LoopbackDatagram>,
+    b: &mut ReliableEndpoint<LoopbackDatagram>,
+    t0: Instant,
+    count: usize,
+    limit: Duration,
+) -> (Vec<Vec<u8>>, Duration) {
+    let mut got = Vec::new();
+    let mut now = t0;
+    while got.len() < count {
+        assert!(now - t0 < limit, "only {} of {count} arrived", got.len());
+        now += STEP;
+        a.poll(now).unwrap();
+        b.poll(now).unwrap();
+        while let Some(m) = b.recv() {
+            got.push(m.payload);
+        }
+    }
+    (got, now - t0)
+}
+
+/// Regression: segments arriving in sequence within one poll were charged to
+/// the reorder budget (only the first of a burst counted as "next"), so a
+/// lossless link with `max_reorder_bytes: 0` dropped every fragment but the
+/// first and recovered one RTO at a time (18.8 s for 10 fragments).
+#[test]
+fn in_order_burst_is_not_charged_to_reorder_budget() {
+    let t0 = Instant::now();
+    let cfg = TransportConfig {
+        max_reorder_bytes: 0,
+        ..TransportConfig::default()
+    };
+    let (a, b) = LoopbackDatagram::pair(MTU);
+    let mut a = ReliableEndpoint::new(a, cfg.clone(), t0).unwrap();
+    let mut b = ReliableEndpoint::new(b, cfg, t0).unwrap();
+    let msg = message(7, 10 * a.fragment_payload_size());
+    a.send(&msg).unwrap();
+    let (got, took) = drain_until(&mut a, &mut b, t0, 1, Duration::from_secs(60));
+    assert_eq!(got, vec![msg]);
+    assert_eq!(b.stats().reorder_dropped, 0);
+    assert_eq!(a.stats().retransmits, 0);
+    assert!(took <= 2 * STEP, "took {took:?}");
+}
+
+/// Regression for the same bug with the default reorder budget and a large
+/// (legal) datagram size: bursts of 64 KiB segments overflowed the 1 MiB
+/// budget although nothing was out of order.
+#[test]
+fn large_datagrams_on_lossless_link_never_retransmit() {
+    let t0 = Instant::now();
+    let mtu = MAX_DATAGRAM_SIZE;
+    let cfg = TransportConfig {
+        max_datagram_size: mtu,
+        ..TransportConfig::default()
+    };
+    let (a, b) = LoopbackDatagram::pair(mtu);
+    let mut a = ReliableEndpoint::new(a, cfg.clone(), t0).unwrap();
+    let mut b = ReliableEndpoint::new(b, cfg.clone(), t0).unwrap();
+    let msgs: Vec<_> = (0..16).map(|i| message(i, cfg.max_message_size)).collect();
+    for m in &msgs {
+        a.send(m).unwrap();
+    }
+    let (got, _) = drain_until(&mut a, &mut b, t0, msgs.len(), Duration::from_secs(60));
+    assert_eq!(got, msgs);
+    assert_eq!(b.stats().reorder_dropped, 0);
+    assert_eq!(a.stats().retransmits, 0);
+}
+
+/// Regression: segments the peer held back while PAUSED were later taken as
+/// RTT samples covering the whole stall, pinning the RTO at `max_rto`.
+#[test]
+fn paused_hold_is_not_an_rtt_sample() {
+    let t0 = Instant::now();
+    let cfg = TransportConfig {
+        max_inbox_bytes: 4096,
+        ..TransportConfig::default()
+    };
+    let (a, b) = LoopbackDatagram::pair(MTU);
+    let mut a = ReliableEndpoint::new(a, cfg.clone(), t0).unwrap();
+    let mut b = ReliableEndpoint::new(b, cfg, t0).unwrap();
+    for i in 0..50 {
+        a.send(&message(i, 1000)).unwrap();
+    }
+    let frame = Duration::from_millis(16);
+    let mut now = t0;
+    while now - t0 < Duration::from_secs(120) {
+        now += frame;
+        a.poll(now).unwrap();
+        b.poll(now).unwrap();
+    }
+    let before = a.srtt().expect("sampled before the stall");
+    let mut got = 0;
+    while got < 50 || !a.is_flushed() {
+        now += frame;
+        a.poll(now).unwrap();
+        b.poll(now).unwrap();
+        while b.recv().is_some() {
+            got += 1;
+        }
+        assert!(now - t0 < Duration::from_secs(240), "did not resume");
+    }
+    let after = a.srtt().unwrap();
+    assert!(
+        after <= before.max(Duration::from_millis(100)),
+        "srtt {before:?} -> {after:?}"
+    );
+    assert!(a.rto() < Duration::from_millis(500), "rto {:?}", a.rto());
+}

@@ -1,16 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Setups and part assembly (part 1: static objects and the paths to geometry)
+# Setups and part assembly: static objects, characters, skeletons and attachments
 
 | | |
 |---|---|
-| **Status** | Review (part 1 of 2) |
-| **Last updated** | 2026-10-04 |
+| **Status** | Review. Complete (parts 1 and 2) apart from the OPENs listed in §10 and §14 |
+| **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | none yet |
-| **Implements into** | `crates/formats` (entity descriptor 0x47, visual template 0x1F, setup 0x04, appearance 0x20 decoders), `crates/mesh` / `crates/assets` (resolving an object to meshes), `apps/explorer` |
-| **Companion specs** | `mesh.md` (the 0x06 parts). This spec holds the full 0x20 grammar (§8) that `material.md` §9.3 refers to as a future appearance spec. `property-system.md` §5 (property sets embedded in 0x47; item property sets 0x79). `records.md` §1 (VLE, TSize). `material.md` (0x30 materials, 0x2B shaders named by appearance records). |
-| **Part 2 (later, M4)** | Skeleton decoding inside setups, attachment of held items to bones, character appearance assembly. |
+| **Implements into** | `crates/formats` (entity descriptor 0x47, visual template 0x1F, setup 0x04, appearance 0x20 decoders), `crates/mesh` / `crates/assets` (resolving an object to meshes), `crates/anim` (attach tables, §11–§13), `apps/explorer`, `apps/client` |
+| **Companion specs** | `mesh.md` (the 0x06 parts). This spec holds the full 0x20 grammar (§8) that `material.md` §9.3 refers to as a future appearance spec. `property-system.md` §5 (property sets embedded in 0x47; item property sets 0x79), §8 (DID maps). `records.md` §1 (VLE, TSize). `material.md` (0x30 materials, 0x2B shaders named by appearance records). `havok-data.md` (the skeleton tagfile of field 3, §6.1). `skeleton-anim.md` (bone mapping, skinning, conventions, attach-point semantics; part 2 here refers to it). `appearance.md` (M4: species and body assembly, worn-part replacement rules, bone sliders). |
+| **Part 2 (M4)** | §11 skeleton inside setups, §12 character setups versus static ones, §13 held items on bones, §14 part 2 invariants and open questions. Part 2 also settles §6.2 and §6.3. |
 
 ---
 
@@ -18,7 +18,7 @@
 ## 0. Purpose
 
 A mesh record (0x06) is one part. Whole objects (a barrel, a tree, a weapon, an NPC) are
-assembled by a short chain of records. This part of the spec covers:
+assembled by a short chain of records. Part 1 of this spec covers:
 
 - which DID prefixes take part and what each one is (§2);
 - the chains from an item or object to its meshes, with resolution statistics (§3);
@@ -28,7 +28,16 @@ assembled by a short chain of records. This part of the spec covers:
 - the worn-appearance record (0x20), the second path from items to meshes (§8);
 - invariants and open questions (§9–§10).
 
-Skeleton contents (the Havok data inside a setup) and animation are part 2.
+Part 2 (M4) adds:
+
+- the skeleton inside a setup, by reference to `havok-data.md` (§11);
+- the meaning of the attach map and frame lists (§6.2, §6.3) and how character setups differ
+  from static ones (§12);
+- how held items attach to bones (§13);
+- part 2 invariants, statistics and open questions (§14).
+
+Animation semantics (track binding, skinning, sampling, root motion) are in
+`skeleton-anim.md`.
 
 ---
 
@@ -41,6 +50,8 @@ by throwaway probes in the dirty-room scratchpad.
 | Tag | Source |
 |---|---|
 | OBS | Observed in user install 2026-10-04. **All** 40,643 records 0x47 (gamelogic), 29,134 records 0x1F, 28,555 records 0x04 and 4,201 records 0x20 (general) decoded to the last byte. All 383,332 item property sets (0x79) scanned for references to these prefixes, using the repository's own property-set decoder. Every chain resolved to its mesh records. Three multi-part setups rendered and inspected. |
+| OBS2 | Part 2, observed 2026-10-05: every setup's skeleton, attach map and frame lists decoded and checked against the skeleton; attach keys matched against all 735 enum mappers; the race table, player-avatar objects, inventory-control object and the holding-location properties of all item property sets read; every skinned submesh of all 47,563 meshes read (`skeleton-anim.md` §1). |
+| SA | `skeleton-anim.md` (part 2 relies on its §2, §4, §5, §8 and §9). |
 | MV | Mirarkitty `lotro_mesh_viewer` docs: `weapons.md` (held-item chain 0x47 → 0x1F → 0x04 → 0x06), `wardrobe.md` (0x20 grammar), `properties.md`. Facts only. |
 | DS | `research/notes/data-semantics.md` §6.4 (entity descriptors in landblocks), §7.1 (item → geometry chains), §7.2 (0x20 grammar), §8 (Havok tagfile magic). |
 | PS | `property-system.md` (embedded property-set form, TSize). |
@@ -55,6 +66,11 @@ by throwaway probes in the dirty-room scratchpad.
 | S6 | 0x04 layout: DID, tagfile length, Havok binary tagfile, body with attachment lists, collision volumes, physics bounds and the part list (§6) | MV (trailer is a counted 0x06 list); DS §8 (magic); OBS (28,555 of 28,555) | Confirmed |
 | S7 | Parts of a setup share the setup's frame; the part list carries no transforms (§7) | OBS (3 multi-part renders; bounds) | Confirmed for static setups |
 | S8 | Worn items: `Item_WornAppearanceMapList` → (0x20, appearance key) → entry → blocks → parts (§8) | MV, DS; OBS (4,201 of 4,201 records; 634,655 map entries) | Confirmed. The part layout differs from MV (§8.3). |
+| S9 | The setup's tagfile is the object's only skeleton; nothing shares a skeleton by reference (§11) | OBS2, SA §2 | Confirmed |
+| S10 | `attach_map` = `BoneType` enum key → bone index (§6.2) | OBS2 (378 setups) | Confirmed (part 2) |
+| S11 | Frame list A = `HoldingLocation` key → (bone or −1, bone-local frame); list C keyed by `UIViewport_Type` (§6.3) | OBS2 (2,737 and 50 setups) | Confirmed (part 2); list B meaning OPEN |
+| S12 | Parts of a skinned setup are drawn with identity part transforms and skinned to the setup's skeleton; part meshes carry their `MeshTypeID` slot in their `flags` (§12) | OBS2, SA §4, §9 | Confirmed |
+| S13 | Held items: the item's setup origin is placed at a holding-location frame of the wearer's list A (§13) | MV (bones); OBS2 | Confirmed for the geometry; location choice partly OPEN |
 
 ---
 
@@ -183,8 +199,8 @@ unsupported (none occur).
 <a id="s4-3"></a>
 ### 4.3 `kind` (Confirmed values, meaning OPEN)
 
-7 (40,229 records), 3 (240), 2 (141), 9 (18), 23 (8), 1 (2), 5, 19, 21, 31 (1 each). It
-looks like a bit set.
+7 (40,229 records), 3 (240), 2 (141), 9 (18), 23 (8), 1 (2), 5, 19, 21, 31, 32 (1 each;
+32 recounted 2026-10-05 after implementation feedback, §10.1). It looks like a bit set.
 
 > **OPEN:** Meaning of `kind`.
 
@@ -254,7 +270,16 @@ never have their own setup section.
 `vec3` values are uniform triples such as (0.3, 0.3, 0.3) or (1.03, 1.03, 1.03); `value_a`
 and `value_b` take values such as 0.6, 0.9, 1.5, 2.0, 2.5, 3.0.
 
-> **OPEN:** Meaning of `vec3`, `value_a` and `value_b` (scale factors are likely). Their
+Part 2 evidence (2026-10-05), the player-avatar templates of §12.3: `vec3` = (1.03, 1.03,
+1.03) on the Elf male and High-elf female templates and (1.05, 1.05, 1.05) on the High-elf
+male template, whose setups carry the same 89-bone skeleton and human-height bodies as the
+Human ones (a uniform model scale fits); `value_a` = 0.9 on the Human, Elf, High-elf and
+River-hobbit female templates and the Dwarf template, 0.65 on both Hobbit templates;
+`value_b` = 0.85 on both Hobbit templates only. The Hobbit setups already have small
+skeletons and bodies (1.16 m), so `value_a` and `value_b` are not plain geometry scales.
+
+> **OPEN:** Meaning of `vec3`, `value_a` and `value_b` (`vec3` as a uniform model scale is
+> likely; owner observation: an Elf male stands about 3 % taller than a Human male). Their
 > stream order when both 0x040 and 0x400 are set (34 records) is assumed to follow bit order;
 > the two orders cannot be told apart from the data.
 
@@ -299,7 +324,7 @@ modifiers.
 |---|---|---|---|
 | 1 | `did` | DID | Own DID |
 | 2 | `tagfile_length` *t* | u32 | Length of the next field |
-| 3 | `tagfile` | *t* bytes | Havok binary tagfile; begins with the 8-byte magic `1E 0D B0 CA CE FA 11 D0` in every record. Holds the skeleton (part 2). Common lengths 358 (16,376 records), 402, 351, 349. |
+| 3 | `tagfile` | *t* bytes | Havok binary tagfile; begins with the 8-byte magic `1E 0D B0 CA CE FA 11 D0` in every record. Holds the object's skeleton (§11; decoded by `havok-data.md` §3–§4.2). Common lengths 358 (16,376 records), 402, 351, 349. |
 | 4 | `attach_map` | TSize map {u32 → u32} | §6.2 |
 | 5 | `bone_frames` | frame list A | §6.3 |
 | 6 | `placements` | frame list B | §6.3 |
@@ -317,12 +342,18 @@ A decoder that needs only the parts must still parse fields 4–13 (their sizes 
 the part list backwards from the end is not reliable.
 
 <a id="s6-2"></a>
-### 6.2 `attach_map` (Confirmed layout, meaning OPEN)
+### 6.2 `attach_map` (Confirmed layout and meaning)
 
 TSize map, element = u32 key, u32 value. Empty in 28,177 setups. Keys are enum values
-0x1000xxxx (5,812 elements) or small integers (559); values are below 256 (bone-index sized).
+0x1000xxxx (5,812 elements) or small integers (559); values are below 256.
 
-> **OPEN:** Meaning (a slot → bone table for attachments is the likely reading; part 2).
+**Meaning (part 2, Confirmed on all 378 non-empty maps):** `key` is a value of the enum
+mapper labelled **`BoneType`** in the EMAPPER DID map (keys 0x1000xxxx; the small keys 1 =
+`physics` and 3 = `Root` come from its base mapper), and `value` is a **bone index** into the
+setup's skeleton (§11). Keys are unique and values are unique within every map, and every
+value is below the skeleton's bone count. It is the semantic bone table that effect and
+script properties use to find "the head", "the right weapon holder", a tail or a face-slider
+bone on any skeleton (`skeleton-anim.md` §8.1, label list and statistics).
 
 <a id="s6-3"></a>
 ### 6.3 Frame lists (Confirmed layout)
@@ -338,14 +369,32 @@ All three lists start with a u32 count *n*. When *n* = 0 nothing else follows. O
 **Frame** (40 bytes): position f32 × 3, scale f32 × 3, rotation quaternion f32 × 4 in
 **(w, x, y, z)** order (§6.7).
 
-Observed: list A in 2,737 setups (25,118 elements; `key2` = `key` always; `bone` ≥ −1,
-−1 probably meaning "not bound to a bone"; scale (1, 1, 1) in 24,190 elements); list B in 42 setups
-(50 elements, `id` = 0); list C in 50 setups (54 elements, `key2` = `key`). No setup has more
-than one of the three lists.
+Observed: list A in 2,737 setups (25,118 elements; `key2` = `key` always; `bone` ≥ −1;
+scale (1, 1, 1) in 24,190 elements); list B in 42 setups (50 elements, `id` = 0 in 48 and
+0x10000001 in 2); list C in 50 setups (54 elements, `key2` = `key`). No setup has more than
+one of the three lists.
 
-> **OPEN:** What list B and list C place (they hold 1–3 frames in setups with one part, so
-> they are not per-part transforms). List A is probably the attachment-point table (its keys are
-> 0x1000xxxx enum values and its elements name bones); its use is part 2.
+**Meaning (part 2, Confirmed):**
+
+- **List A is the holding-location table.** `key` is a value of the enum mapper labelled
+  **`HoldingLocation`** (all 115 keys in use resolve, with the small keys 1 `RHand`, 2 `LHand`,
+  3 `LOffHand`, 4, 6, 17, 18, 19 from its base mapper); keys are unique per setup. `bone` is a
+  bone index of the setup's skeleton (below the bone count in all 2,737 setups) or −1, meaning
+  the frame is relative to the setup origin (2,338 setups, almost all one-bone props and
+  weapons). The frame is expressed in the bone's frame: location = bone model transform ·
+  translate(position) · rotate(rotation) · scale(scale) (`skeleton-anim.md` §5.3, §8.2). It
+  holds every hand, off-hand, forearm, sheath, mount, target, effect and weapon-trail point
+  (`skeleton-anim.md` §8.2–§8.6).
+- **List C** is keyed by `UIViewport_Type` values (the enum mapper that the property
+  `UIViewport_Type` names; it has no EMAPPER label; labels `Paperdoll`, `Opponent`, `Self`,
+  `AppearanceMod`, `MountedPaperdoll`, `EmotesPaperdoll`; observed `Opponent` 31,
+  `MountedPaperdoll` 19, `EmotesPaperdoll` 3, `AppearanceMod` 1). They look like object
+  offsets for the UI's 3D viewports; world rendering ignores them.
+- **List B**: unscaled, unrotated positions on large single-part props, such as (0, 0, 2),
+  (0, 0, 6.1), (0, −6.7, 0).
+
+> **OPEN:** What list B places (a seat, a spawn or an effect point are candidates). World
+> rendering ignores it.
 
 <a id="s6-4"></a>
 ### 6.4 Collision volumes (Confirmed)
@@ -358,10 +407,11 @@ than one of the three lists.
 
 Semantics were confirmed against `physics_bounds` (§6.5): for all 1,910 sphere-only and all
 715 capsule-only setups the bounds equal the union of the volumes computed this way (a
-capsule spans z from centre − r to centre + length + r). For box-only setups, the corners
-moved by the frame position match the bounds in 865 of the 874 setups whose boxes are
-unrotated; the 108 setups with rotated boxes need the rotation applied (not checked), and 9
-unrotated ones differ (OPEN).
+capsule spans z from centre − r to centre + length + r). For all 990 box-only setups, the
+eight local corners rotated by the box frame's rotation (active rotation, (w, x, y, z) order,
+§6.7) and moved by its position give the bounds within 2 × 10⁻³ (recounted 2026-10-05: 864
+setups whose boxes are all unrotated and 126 with a rotated box; the earlier "9 differ" was a
+counting error, §10.1). No box has a scale other than (1, 1, 1).
 
 <a id="s6-5"></a>
 ### 6.5 Collision mesh and physics bounds (Confirmed)
@@ -403,10 +453,16 @@ quaternions that have one component equal to ±1, that component is the first in
 22,853 list-A elements, 50 of 50 list-B, 39 of 40 list-C and 1,040 of 1,042 boxes (the rest
 are genuine 180° turns). Rotations are therefore stored **w first**: (w, x, y, z).
 
+Confirmed directly as well (2026-10-05): with this order and an active rotation, box frames
+reproduce the physics bounds of all 990 box-only setups (§6.4), and the sheath frames of list A
+hang weapons blade-down (`skeleton-anim.md` §5.2, §8.3). Note that the skeleton's own
+quaternions (inside the tagfile) are stored in the other order, (x, y, z, w)
+(`havok-data.md` §4.2).
+
 ---
 
 <a id="s7"></a>
-## 7. Assembling a static object (Confirmed for static setups)
+## 7. Assembling an object (Confirmed)
 
 1. Resolve the object to a setup (§3.1).
 2. For each DID in the part list, in order, load the mesh (`mesh.md`) and draw its level 0
@@ -419,6 +475,13 @@ Evidence: three multi-part static setups rendered with every part at identity sh
 objects (a rock pile with a separate top part resting on it, a pillar with small separate
 decorations around it, and a creature-like prop); the second part's bounding box lies exactly
 where it belongs relative to the first.
+
+The same holds for setups with skinned parts (bodies split into head, torso, legs …): every
+part is drawn in the setup's frame with an identity part transform, and its skinned submeshes
+are skinned against the setup's skeleton (§12). At the skeleton's reference pose skinning is
+the identity, so the bind-pose display with identity transforms is exact (`skeleton-anim.md`
+§4.4, §9.1). An unskinned part never follows a bone: no setup mixes skinned and unskinned
+parts (§12.1).
 
 Scale and the 0x47 `block` (§4.4) or 0x1F scale-like fields (§5.2) are OPEN; a viewer draws
 unscaled.
@@ -451,7 +514,7 @@ unscaled.
 | 2 | `block_count` | u32 | 1 (46,215 entries), up to 53 |
 | 3 | blocks | × `block_count` | §8.3 |
 
-49,373 entries, 74,839 blocks in total.
+49,383 entries, 74,839 blocks in total (entry count recounted 2026-10-05, §10.1).
 
 <a id="s8-3"></a>
 ### 8.3 Block (Confirmed framing; field attribution partly OPEN)
@@ -470,9 +533,17 @@ unscaled.
 
 Statistics: 84,261 groups (`material` is a 0x30 DID in 83,984 and 0 in 277; `shader` is a
 0x2B DID in 22,151 and 0 in 62,110; the most common (`a`, `b`) pairs are (2, 0x10000050),
-(2, 0x10000018), (2, 0x10000055)); 81,088 parts, every `mesh` an existing 0x06 record.
+(2, 0x10000018), (2, 0x10000055)); 81,098 parts (recounted 2026-10-05), every `mesh` an
+existing 0x06 record.
 `part_param` is 1.0 (43,821), 10 (17,736), 15 (6,281), 4 (5,230) …; common slots are
 0x1000000C, 0x1000000E, 0x1000000A, 0x10000003, 0x1000000B, 0x10000001.
+
+**`slot` is a `MeshTypeID` value** (part 2, Confirmed): the enum mapper labelled `MeshTypeID`
+labels every slot value in use (`UpperBody` 0x1000000C, `Crest` 0x1000000E, `Helmet`
+0x1000000A, `LowerBody` 0x10000003, `Cape` 0x1000000B, `Hands` 0x10000001, `Feet`, `Shoulder`,
+`Ears`, `Head`, `Beard`, `Satchel`, `Accessory1`, mount, war-machine and fence slots, and 1
+`Default`, 2 `All` from its base mapper). The part mesh's own `flags` word equals its slot for
+80,974 of the 81,098 parts (§12.2).
 
 **Difference from MV's grammar.** MV reads the part list as `u32 count, f32, count × (u32 slot,
 u32 mesh, f32 lod)`, ending with the last part's float, and reports 11 unparsed records out of
@@ -514,6 +585,14 @@ replace materials only. The full material and dye rules belong to `material.md` 
 > bits of `mesh.md` §3.3 might then be a bone or slot number), or drawn with a material
 > that is invisible in practice (diffuse colour alpha 0). Until resolved, viewers draw every
 > part.
+>
+> Part 2 evidence (2026-10-05): the mesh `flags` low bits are not a bone number but the
+> part's `MeshTypeID` slot (§12.2). 242 three-vertex skinned stub meshes carry body or
+> equipment slots (`Accessory1` 32, `Crest` 28, `Shoulder`, `Head`, `UpperBody`, `Helmet` 17
+> each, `Cape` 16 …); the two examples above are `Shoulder` and `Helmet`. That fits **slot
+> placeholders** (a slot that is present but empty until a worn item fills it, like the
+> "none" style of MV's character-creation records) better than visible geometry. Whether the
+> original draws them stays an owner observation; `appearance.md` owns the slot rules.
 
 ---
 
@@ -527,7 +606,7 @@ replace materials only. The full material and dye rules belong to `material.md` 
 | **SI3** | 0x04: tagfile magic at offset 8; frame-list headers repeat their count; `reserved` = 0; the record ends exactly after the part list. |
 | **SI4** | Every part DID is an existing 0x06 record; every `collision_mesh` DID an existing 0x66 record. |
 | **SI5** | 0x20: `reserved` = 0; `table_tag` = 1; `table_count` = `entry_count`; block `end` = 0; entry keys unique. |
-| **SI6** | Chains terminate (no cycles; at most 4 0x47 hops and 1 0x1F hop observed). |
+| **SI6** | Chains terminate (no cycles). Counting every link (entity → entity, entity → template, template → template, template → setup), 0x47 chains are 2 – 6 links long (2: 38,588; 3: 2,029; 4: 12; 5: 6; 6: 8) and 0x1F chains 1 – 2. |
 
 ---
 
@@ -542,20 +621,23 @@ replace materials only. The full material and dye rules belong to `material.md` 
 | 0x20 worn appearance | 4,201 / 4,201 | 0 |
 
 Failure categories a decoder should distinguish: truncated, unsupported flag bits or section
-types, count mismatch (frame-list header, key table), dangling reference (resolver only),
-trailing bytes. None occur in this install.
+types, count mismatch (frame-list header, key table), dangling reference (the referenced
+record does not exist; resolver only), unreadable record (the record exists but could not be
+read: I/O, inflate or block corruption; resolver only), trailing bytes. None occur in this
+install.
 
 > **OPEN:** 0x47 `kind`, `block`, the 63 missing 0x78 sets (§4.3, §4.4).
 
 > **OPEN:** 0x1F scale-like fields and their order (§5.2); the appearance section's three
 > constants (§5.4).
 
-> **OPEN:** 0x04 `attach_map`, frame lists B and C (§6.2, §6.3); the 0x66 collision-mesh
-> layout (§6.5); the Havok tagfile contents (part 2).
+> **OPEN:** 0x04 frame list B (§6.3); the 0x66 collision-mesh layout (§6.5). (`attach_map`,
+> lists A and C and the tagfile contents are resolved by part 2: §6.2, §6.3, §11.)
 
 > **OPEN:** 0x20 `section`, group fields, `part_param`, key-table values (§8).
 
-> **OPEN:** One-triangle placeholder parts: skipped or drawn by the original (§8.5).
+> **OPEN** (owner observation): one-triangle placeholder parts: skipped or drawn by the
+> original (§8.5; part 2 evidence says slot placeholders).
 
 > **OPEN:** Who references 0x01 collision geometry (§2.2).
 
@@ -568,7 +650,9 @@ install with the counts of §10 (0 failures, 0 trailing bytes, SI1–SI5 hold), 
 record of the four types byte for byte, and reproduces the §6.4 bounds check (2,625 sphere-
 or capsule-only setups, 0 differ). Points for the spec owner:
 
-> **OPEN:** Box bounds (§6.4, §6.5, §6.7). Rotating a box's eight local corners by its frame
+> **Resolved (2026-10-05, spec owner):** recount agrees: all 990 box-only setups match (§6.4
+> updated); the "9 differ" was a counting error.
+> Original note: Box bounds (§6.4, §6.5, §6.7). Rotating a box's eight local corners by its frame
 > rotation as the active rotation `v' = q v q*`, with `q` read as (w, x, y, z), then adding
 > the frame position, gives the stored `physics_bounds` AABB for **all 990** box-only setups
 > (825 with unrotated boxes, 165 with rotated ones; within 2e-3). This confirms the (w, x, y,
@@ -580,29 +664,37 @@ or capsule-only setups, 0 differ). Points for the spec owner:
 > how a frame's scale combines with its rotation stays open; `CollisionBox::aabb` refuses
 > scaled boxes instead of guessing.
 
-> **OPEN:** SI6 says "at most 4 0x47 hops and 1 0x1F hop". Counting every link (entity →
+> **Resolved (2026-10-05):** SI6 now states the bound in links.
+> Original note: SI6 says "at most 4 0x47 hops and 1 0x1F hop". Counting every link (entity →
 > entity, entity → template, template → template, template → setup), real 0x47 chains are
 > 2–6 links long (2: 38,588; 3: 2,029; 4: 12; 5: 6; 6: 8) and 0x1F chains 1–2. Suggest
 > stating the bound in those terms.
 
-> **OPEN:** §10's failure categories have no entry for "the record could not be read"
+> **Resolved (2026-10-05):** "unreadable record" added to §10.
+> Original note: §10's failure categories have no entry for "the record could not be read"
 > (I/O, inflate or block corruption) as distinct from "dangling reference" (the record does
 > not exist). The implementation's resolver keeps them apart (`ResolveError::Fetch` vs
 > `DanglingReference`); please add the category.
 
-> **OPEN:** §4.3 lists `kind` values summing to 40,642. The implementation's census also
+> **Resolved (2026-10-05):** `kind` = 32 (1 record) added to §4.3.
+> Original note: §4.3 lists `kind` values summing to 40,642. The implementation's census also
 > finds `kind` = 32 in one record.
 
-> **OPEN:** §8.2/§8.3 give 49,373 entries and 81,088 parts; the implementation counts 49,383
+> **Resolved (2026-10-05):** recount gives 49,383 entries and 81,098 parts, as the implementation
+> found; §8.2 and §8.3 are corrected.
+> Original note: §8.2/§8.3 give 49,373 entries and 81,088 parts; the implementation counts 49,383
 > entries and 81,098 parts (blocks agree at 74,839, groups at 84,261). Either a counting
 > difference or a data update; please recount.
 
-> **OPEN:** 3,102 entries have several blocks and none with `variant` = 1.0, so §8.5's base
+> **OPEN** (owned by `appearance.md`): 3,102 entries have several blocks and none with `variant` = 1.0, so §8.5's base
 > look ("the block with variant 1.0, or the only block") is undefined for them.
 > `AppearanceEntry::base_block` returns nothing there; which block a viewer should draw is
 > open.
 
-> **OPEN:** Constants the implementation treats as layout-relevant and rejects as
+> **OPEN** (answered in part, 2026-10-05): the data cannot tell a plain value from a tag or
+> count when only one value ever occurs, so the conservative rejection stays. The tagfile
+> magic is a format constant (`havok-data.md` §3.1).
+> Original note: Constants the implementation treats as layout-relevant and rejects as
 > unsupported when they differ (conservative, since a different value might be a count or
 > a tag): the 0x47 flag bits 0x8B being set (§4.2), the 0x1F appearance-section words
 > (33, 2, 1) (§5.4), the 0x04 `reserved` byte (§6.1), and in 0x20 the `reserved` word, the
@@ -619,20 +711,211 @@ to scenes with this spec. On samples of the owner's install (every 211th setup, 
 template, 401st entity, 41st appearance record and 3,001st object property set) every
 setup, template and entity chain resolved to drawable parts. Points for the spec owner:
 
-> **OPEN:** Objects name geometry in more than one way. The viewer offers every top-level
+> **OPEN** (answered in part, 2026-10-05): held items use `PhysObj` unless the item has a worn
+> appearance for the wearer, in which case it is worn (§13.3); the ground and display cases
+> stay open.
+> Original note: Objects name geometry in more than one way. The viewer offers every top-level
 > property whose value is a 0x47, 0x1F or 0x04 DID (`PhysObj` and the alternatives of
 > §3.3) plus every `Item_WornAppearanceMapList` element as a choice. Which one the client
 > shows for an item lying on the ground, held, or worn is not stated; the viewer shows the
 > first (property order). 61 of 128 sampled 0x79 sets have neither (no geometry).
 
-> **OPEN:** A setup's parts are drawn with identity transforms (§7), and the 0x1F
+> **Resolved (2026-10-05, part 2):** identity part transforms are exact for static and skinned
+> setups (§7, §12.1; `skeleton-anim.md` §9.1). The 0x1F and 0x47 scale fields stay open
+> (§5.2, §4.4).
+> Original note: A setup's parts are drawn with identity transforms (§7), and the 0x1F
 > scale-like fields (§5.2) and the 0x47 `block` (§4.4) are ignored. Multi-part skinned
 > setups (bodies split into head, torso, …) then show in bind pose, which looks right; for
 > static multi-part setups the viewer adds an "explode" slider of its own to separate
 > parts, which is not a format fact.
 
-> **OPEN:** Appearance entries whose first entry is material-only: 63 of 103 sampled
+> **OPEN** (owned by `appearance.md`): Appearance entries whose first entry is material-only: 63 of 103 sampled
 > 0x20 records have no part meshes in entry 0 (the viewer lists every entry as a choice).
 > When a record mixes geometry entries and material-only entries, which material-only
 > entry applies to which geometry entry is not stated (see `material.md` §19).
 
+---
+
+<a id="s11"></a>
+## 11. Part 2: the skeleton inside a setup
+
+<a id="s11-1"></a>
+### 11.1 Decoding (Confirmed, by reference)
+
+Field 3 of every setup (§6.1) is a Havok binary tagfile holding exactly one `hkaSkeleton`:
+parent indices, bones (optional names, optional translation-lock flags) and a reference pose
+of translation, rotation (x, y, z, w) and scale per bone. Its grammar, members, defaults,
+invariants and failure categories are normative in `havok-data.md` §3–§4.2 and §9.1; this
+spec does not repeat them. All 28,555 skeletons decode (`havok-data.md` §8.2).
+
+Everything else in the setup that names a bone uses an index into this skeleton's bone
+array: `attach_map` values (§6.2), list A `bone` (§6.3), and the vertex bone indices of
+skinned parts (`mesh.md` §5.7; `skeleton-anim.md` §4.1).
+
+<a id="s11-2"></a>
+### 11.2 One skeleton per setup (Confirmed)
+
+The tagfile is the object's only skeleton. No setup, template, entity or clip names another
+setup's skeleton, and a skeleton has no name of its own (`skeleton-anim.md` §2.1). Equal
+skeletons are stored again in every setup that uses them: 923 distinct skeletons among the
+28,555 setups (191 distinct among the 293 with 30 or more bones). A loader may share decoded
+skeletons by content.
+
+<a id="s11-3"></a>
+### 11.3 Skeletons of static setups (Confirmed)
+
+| Bones | Setups | Reference pose all identity (zero translation, identity rotation, unit scale) |
+|---|---|---|
+| 1 | 22,434 | 22,185 |
+| 2 | 5,344 | 5,021 |
+
+A static setup's skeleton is not needed to draw it (its parts are unskinned, §12.1), but it
+still anchors list A frames with a non-negative `bone` and fits clips with 1 or 2 tracks (55
+and 346 clips). A viewer that only draws static objects may skip decoding the tagfile; it
+must still skip its bytes using `tagfile_length`.
+
+---
+
+<a id="s12"></a>
+## 12. Part 2: character setups and static setups
+
+<a id="s12-1"></a>
+### 12.1 What differs (Confirmed, all 28,555 setups)
+
+| Bones | Setups | All parts skinned | No part skinned | No parts |
+|---|---|---|---|---|
+| 1 | 22,434 | 19 | 22,413 | 2 |
+| 2 | 5,344 | 161 | 5,183 | 0 |
+| 3 – 29 | 484 | 480 | 4 | 0 |
+| 30 – 248 | 293 | 293 | 0 | 0 |
+
+- **Static setups** (almost all one- and two-bone setups): unskinned parts, trivial skeleton,
+  usually no attach map; drawn as §7 describes.
+- **Skinned setups** (characters, creatures, animated props; 953 setups): every part is
+  skinned against the setup's skeleton; parts are drawn with identity part transforms in the
+  setup frame (§7) and deformed by the palette of `skeleton-anim.md` §4.3. They usually have
+  an `attach_map` (229 of the 293 with 30 or more bones) and a list A of holding locations.
+- No setup mixes skinned and unskinned parts. A part that must follow a bone is skinned, if
+  need be with one influence per vertex.
+
+<a id="s12-2"></a>
+### 12.2 Parts carry their slot (Confirmed)
+
+Each part mesh's `flags` word (`mesh.md` §3.3) is a value of the enum mapper labelled
+`MeshTypeID`: 1 `Default` on the 27,960 static meshes, 2 `All` on 20, and a slot value
+0x1000_00nn on all 19,583 others (`Helmet` 4,014, `UpperBody` 2,960, `Shoulder` 2,603,
+`Crest` 1,503, `Hands` 1,191, `Feet` 1,113 …; `skeleton-anim.md` §9.2). In worn-appearance
+records (§8.3) the part's `slot` equals its mesh's `flags` for 80,974 of 81,098 parts.
+
+A character setup's part list is its **default body**: one part per slot. The 89-bone male
+avatar setups, for example, list one mesh each for `UpperBody`, `LowerBody`, `Hands`, `Feet`,
+`Head`, `Ears`, `Crest`, `Beard`, `Shoulder`, `Helmet`, `Cape` and `Satchel` (several of them
+three-vertex stubs, §8.5). A worn item's parts replace the body part of the same slot; the
+rules for which slots an item hides or keeps belong to `appearance.md`.
+
+<a id="s12-3"></a>
+### 12.3 Playable characters (Confirmed)
+
+A playable species and sex reaches its setup through the race table: DID-map label
+`RaceTableDirectory` → species objects → `RaceTable_GenderList` → `RaceTable_Gender_PlayerAvatar`
+→ `PhysObj` → 0x47 → 0x1F → 0x04 (`skeleton-anim.md` §2.2, with the full table). Observed:
+
+| Setups | Skeleton | Used by |
+|---|---|---|
+| 0x04000551, 0x04000552 | 62 bones each, own skeletons | Hobbit male, female |
+| 0x04000557 | 62 bones | Dwarf male; Stout-axe dwarf (both entries) |
+| 0x04000553, 0x04000555, 0x04005EC4, 0x0400772B | one 89-bone male skeleton | Human, Elf, High-elf, River-hobbit males; Beorning male uses 0x04000553 |
+| 0x04000554, 0x04000556, 0x04005EC5, 0x0400772A | one 89-bone female skeleton | the same species' females; Beorning female uses 0x04000554 |
+
+These setups carry the full set of holding locations (35 to 39 list A elements) and an
+`attach_map` of 25 (hobbit), 29 (dwarf) or 46 (89-bone) bones, including 21 face-slider bones on the
+89-bone ones. NPCs and creatures reach their setups through ordinary entity chains (§3.1).
+
+---
+
+<a id="s13"></a>
+## 13. Part 2: held items on bones
+
+<a id="s13-1"></a>
+### 13.1 Rule (Confirmed geometry)
+
+1. The held item resolves to its own setup through `PhysObj` (§3.1).
+2. A **holding location** is chosen (§13.2) and looked up in the **wearer's** list A (§6.3):
+   it gives a bone of the wearer's skeleton (or −1 for the wearer's origin) and a frame in
+   that bone's space.
+3. The item's setup origin is placed at that frame, following the bone through the animation:
+   item model transform = wearer bone model transform · frame transform; world placement =
+   wearer placement · item model transform. The item's parts are then drawn as §7 says, in its
+   own frame.
+
+Weapons are modelled with the grip at their origin and the long axis along +Y, so in-hand
+locations are identity frames on the weapon-holder bones and the item needs no offset of its
+own (`skeleton-anim.md` §8.3–§8.4, with the per-location table).
+
+<a id="s13-2"></a>
+### 13.2 Which location (Confirmed sources, rule partly OPEN)
+
+The data gives a paperdoll location per equipment slot (primary weapon `Wpn_RHand`, secondary
+`Wpn_LOffHand`, ranged `Sheath_Back_Bow`, from the inventory-control object), per-item
+overrides (`Inventory_ParentingLocation`: shields `Wpn_Forearm`, crossbows, javelins and some
+bows `Wpn_ROffhand`; `Inventory_PaperdollParentingLocation`) and explicit locations for
+cosmetic props. The full table and a viewer rule are in `skeleton-anim.md` §8.5.
+
+> **OPEN** (for `script-table.md`, and owner observation): the in-world default location per
+> equipment slot, and when and where weapons are stowed (the sheath locations of §12.3).
+
+<a id="s13-3"></a>
+### 13.3 Worn versus held (Reported, MV)
+
+Some class items (satchels, instruments) carry an `Item_WornAppearanceMapList` as well as a
+`PhysObj`; for them the worn appearance (§3.2) is what the wearer shows, and the `PhysObj`
+chain leads to a generic ground model. Rule: an item with a worn-appearance entry for the
+wearer's species and sex is worn; otherwise it is held.
+
+---
+
+<a id="s14"></a>
+## 14. Part 2: invariants, statistics and open questions
+
+| ID | Invariant (Confirmed over all records) |
+|---|---|
+| **SI7** | `attach_map`: keys unique; values unique; every value < the skeleton's bone count. |
+| **SI8** | List A: `key2` = `key`; keys unique per setup; `bone` = −1 or < bone count. List C: `key2` = `key`. |
+| **SI9** | No setup has both skinned and unskinned parts. |
+| **SI10** | Every skinned part's largest vertex bone index < the setup's bone count. |
+| **SI11** | Every part mesh's `flags` is a `MeshTypeID` value. |
+
+| Statistic | Value |
+|---|---|
+| Setups with `attach_map` / list A / list B / list C | 378 / 2,737 / 42 / 50 |
+| `attach_map` keys in use / list A keys in use | 72 (`BoneType`) / 115 (`HoldingLocation`) |
+| Setups with skinned parts | 953 |
+| Distinct skeletons | 923 (191 with 30 or more bones) |
+
+A decoder reports SI7, SI8 and SI10 violations as data-quality issues; none occur.
+
+> **OPEN:** frame list B (§6.3).
+
+> **OPEN** (for `script-table.md`, and owner observation): holding-location choice in the
+> world, and stowing (§13.2).
+
+> **OPEN** (owner observation): one-triangle slot placeholder parts (§8.5).
+
+> **OPEN:** the 0x1F scale-like fields (§5.2), with the part 2 evidence there.
+
+
+<a id="s14-1"></a>
+### 14.1 Implementation feedback, part 2 (clean room, 2026-10-05)
+
+`tessera-formats` exposes the part-2 meanings as typed views over the unchanged decoders:
+`Setup::bone_for` and `Setup::attachments` (§6.2), `Setup::holding_location` with an
+`Anchor` of origin (−1) or bone (§6.3 list A), `Setup::viewport_frame` (list C), and
+`TemplateAppearance::elements` (§5.4 as a one-record appearance list). Its real-data test
+reproduces the §14 statistics (378 attach maps, list A in 2,737 setups, list B in 42, list C
+in 50) and finds the skeleton-independent parts of SI7 and SI8 (unique keys and values, list
+A bones ≥ −1) in every setup; the largest bone index any setup names is 200.
+
+> **OPEN:** SI7, SI8 and SI10 compare indices with the skeleton's bone count, which lives in
+> the tagfile (`havok-data.md`). The formats crate keeps the tagfile opaque, so it checks
+> them only when a caller passes the bone count (`Setup::bone_issue`); the full check
+> belongs to a test that also decodes skeletons.

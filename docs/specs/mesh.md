@@ -358,20 +358,28 @@ union of the AABBs of the submeshes drawn by its level 0 (§8). (Setups carry th
 physics bounds, `setup.md`.)
 
 <a id="s6-2"></a>
-### 6.2 Influence list (length Confirmed, meaning OPEN)
+### 6.2 Influence list (Confirmed: redundant, 43,059 of 43,059)
 
 `influence_count` *I* and *I* u32 values.
 
 - *I* = 0 for every submesh with *K* = 0 (69,851 of 69,851).
-- For every submesh with *K* ≥ 1, *I* equals the number of non-zero weights in the whole
-  submesh (43,059 of 43,059).
-- Every value is ≤ the largest bone index used by the submesh's vertices.
-- The values are **not** the per-vertex bone indices in vertex order, nor a permutation of
-  them (their multisets differ).
+- For every submesh with *K* ≥ 1 the list is fully determined by the vertex data
+  (2026-10-05, all 43,059 skinned submeshes, exact): walk the vertices from the **last to the
+  first** (*V*−1 down to 0); for each vertex, write its **first** bone index (slot 0, §5.7)
+  once for every non-zero weight of that vertex. So *I* equals the number of non-zero weights
+  of the submesh, and every value is a bone index the submesh uses.
+- It is **not** a palette (it has one entry per influence, not per distinct bone) and **not**
+  a submesh-local → skeleton remap: vertex bone indices already address the skeleton's bone
+  array directly (§5.7; `skeleton-anim.md` §4.1).
 
-> **OPEN:** What this list is (a per-influence remap, a second skinning path, an
-> export artefact). Rendering does not need it: bind-pose display needs no skinning data,
-> and skinning uses the per-vertex data of §5.7. Decoders keep it as an opaque u32 array.
+Rendering ignores the list; skinning uses the per-vertex data of §5.7 and the skeleton's
+palette (`skeleton-anim.md` §4.3). Decoders keep it as a u32 array for lossless re-encoding
+and may recompute it from the vertices to validate a record (a mismatch is a data-quality
+issue, never observed).
+
+Synthetic example: three vertices with two influence slots, bones (4, 7) weights
+(0.75, 0.25); bones (2, 0) weights (1, 0); bones (9, 4) weights (0.5, 0.5). The list is
+(9, 9, 2, 4, 4).
 
 ---
 
@@ -767,7 +775,8 @@ drawn as a white triangle (`setup.md` §8.5 OPEN), not a decoding error.
 
 > **OPEN:** Colour channel use; uses of UV sets 1 … 6 (§5.4, §5.5) — owned by `material.md`.
 
-> **OPEN:** Meaning of the influence list (§6.2).
+> **Resolved (2026-10-05):** the influence list is redundant: per vertex in reverse order, its
+> slot-0 bone index once per non-zero weight (§6.2).
 
 > **OPEN:** Level switch distances, the repeated last detail level, and the use of proxy
 > levels (§8.3).
@@ -811,6 +820,7 @@ Census by the gated real-data test `crates/mesh/tests/real_data.rs` on the owner
 | Detail / proxy levels; collision meshes; tree blocks (with code, with `build_byte`) | 71,765 / 4,173; 71,765; 71,167 (70,956, 44,969) |
 | Distinct vertex format words | 27 (as §4.4) |
 | §14 invariant failures | only `CollisionIndexOverflow` (117 levels in 105 records, §9.2 OPEN); no other invariant failed |
+| §6.2 influence list equal to its recomputation from the vertices (`InfluenceListContent`, added 2026-10-05) | every skinned submesh (no issue in 47,563 records) |
 
 Decisions the spec left to the implementation:
 
@@ -832,4 +842,10 @@ Decisions the spec left to the implementation:
   disagree); quality violations, including the MI10 overflow above, still decode.
 - When a format has tangents but no normals, the bitangent sign is taken against the
   generated face normals.
+- M4 (2026-10-05): `MeshSummary` reads regions A–C without decoding vertices (slot and stub
+  detection for assembly, `appearance.md` §4.4; a stub is a mesh with at most three vertices
+  in all). `Mesh::skinned_level` flattens a level with four influences per vertex and the
+  bones each part uses, checked against a skeleton's bone count (`setup.md` SI10); the joint
+  remap is the identity (`skeleton-anim.md` §4.1), and `CompactPalette` is the optional
+  per-part palette of `skeleton-anim.md` §4.3.
 

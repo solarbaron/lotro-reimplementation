@@ -2,7 +2,7 @@
 
 # Renderer integration notes (`crates/render`)
 
-Status: **M2 design** (meshes, materials and shared buffers in §2). The clean-room implementer of
+Status: **M2 design** (meshes, materials and shared buffers in §2), **M4 skinning** (§2.4). The clean-room implementer of
 `tessera-render` wrote this file. It holds Tessera's own design decisions and the open questions that need spec facts. It contains no facts taken from
 dirty-room material. Spec writers may replace or extend any section.
 
@@ -75,6 +75,32 @@ exceed the device's `max_buffer_size` with `LimitExceeded` before allocating any
 Golden images for each pipeline: `crates/render/tests/mesh_golden.rs` (see the README next to
 the PNGs).
 
+### 2.4 Skinned meshes (M4)
+
+Tessera's own design on top of the format facts of `skeleton-anim.md` §4 (vertex bone indices
+address the skeleton's bone array directly; at most 4 influences; at most 248 bones, largest
+index 247; linear blend skinning; bind pose = reference pose) and `mesh.md` §5.7 (weights sum
+to 1 within 2 × 10⁻⁴; unused slots weight 0, index 0).
+
+| Topic | Choice | Where |
+|-------|--------|-------|
+| Input | A skinned mesh is a `MeshData` plus a `MeshSkin` side stream: four `u8` bone indices and four `f32` weights per vertex, and `palette_size` (an upper bound on the bone indices checked at upload, normally the skeleton's bone count, `1..=256`; draws do not compare palettes against it, see Draw; `MeshSkin::default()` uses 256 so struct-update syntax validates). A side stream rather than a new `MeshData` field, so existing struct literals in other crates keep compiling. `Renderer::upload_skinned_mesh`, or `MeshData::prepare_skinned` on a worker thread + `upload_prepared` | `skin.rs`, `mesh.rs` |
+| Validation (`MeshSkin::validate`, error `RenderError::InvalidSkin` naming the vertex) | both streams have one entry per position; `palette_size` in `1..=256`; every weight finite and ≥ 0; the four weights sum to 1 within **10⁻³** (`WEIGHT_SUM_TOLERANCE`, five times the observed deviation); every bone index **with a non-zero weight** is below `palette_size`. A zero-weight slot may hold any index (it is packed as bone 0). A vertex with all weights 0 is rejected (unskinned parts are drawn as static meshes, `skeleton-anim.md` §9.1) | `skin.rs` |
+| Packing | second vertex stream, 12 bytes per vertex: bone indices `uint8x4`, weights `unorm16x4`. Weights are renormalised by their sum and quantised so the four values sum to exactly 65535 (floor, then the remaining units to the largest fractional parts, ties to the lower slot); a slot whose weight quantises to 0 gets bone 0. `MeshSkin::drawn_weights` returns these quantised weights as `f32` so CPU code can match the drawn positions | `GpuSkin` |
+| Arena | the skin stream lives in a **skin buffer parallel to the page's vertex buffer** (12 bytes per vertex slot), so the rebased page indices address both streams and draws bind it once per page. It is created when the first skinned mesh lands on a page, counted in `max_total_bytes`, and released with the page's last skinned mesh, except on the warm page 0 (default size), which keeps it like the page itself so a character streaming in and out does not reallocate it; an idle skin buffer is released when an upload would otherwise exceed `max_total_bytes`. Skinned uploads prefer pages that already have one and never attach one to an oversized page. `ArenaStats::skinned_meshes` / `skin_bytes_used` | `arena.rs` |
+| Palette | per frame: `Frame::skin_palette(&[Mat4])` (or `skin_palette_rows(&[[f32; 12]])`, the layout `tessera-anim` writes) appends one palette (1..=256 matrices; only the top three rows, the affine part, are used; a non-finite matrix becomes the identity) to the frame's palette data and returns a `SkinPalette` handle. Each palette starts at the device's dynamic uniform offset alignment. `end_frame` uploads all palettes of the frame with **one** `write_buffer` into a growable uniform buffer (power-of-two growth; the draw bind group is rebuilt only when it grows). Budget: 64 MiB of palette data per frame, or the device's `max_buffer_size` if smaller (`LimitExceeded` from `skin_palette` beyond). The buffer is sized to one full 12 KiB binding from the last palette's start, the same quantity `skin_palette` checks against the budget, so an accepted palette never fails `end_frame`. The draw-uniform and palette buffers are both reserved before either error is returned, and the bind group is rebuilt if either was replaced | `skin.rs`, `frame.rs`, `renderer.rs` |
+| Binding | group 1 holds the draw uniform (binding 0) and the palette (binding 1), both **dynamic-offset uniform** bindings in the one draw bind group; the palette binding covers 256 × 48 B = 12 KiB, below the 16 KiB uniform binding size every adapter offers, so no storage buffers in vertex shaders are needed (downlevel/GL adapters work). A skinned draw sets `[draw offset, palette offset]`; static draws pass offset 0. No buffer or bind group is created per palette or per draw | `mesh_pipelines.rs` |
+| Draw | `MeshDraw::with_skin(palette)`; parts of one character share one palette. A skinned mesh without a palette draws its bind pose through the static pipelines; a palette from another frame, from a frame of another renderer (palettes carry the renderer id and the per-renderer frame serial), or shorter than `max_joint + 1` (`SkinInfo::required_palette_len`; `palette_size` is not checked here) is ignored with a warn-once and the bind pose is drawn; a palette on a static mesh is ignored. `transform` is applied after the palette (palette: bind-pose model space → posed model space) | `renderer.rs` |
+| Pipelines | every surface kind (opaque, alpha test, alpha blend incl. two-sided back/front, dye, normal map, specular, unlit) and every debug view (base colour, normals, UV checker, wireframe, normal lines) has a skinned variant (`MeshKey::skinned`) with the same fragment code; only the vertex stage differs. Surfaces sort by (alpha-tested, skinned, cull, material, page) | `mesh_pipelines.rs`, `mesh.wgsl` |
+| Shader formula | linear blend skinning written as **v + Σₖ wₖ (Mₖ v − v)** for positions and, without translation, for normals and tangents (renormalised in the fragment stage; the tangent's bitangent sign is kept). With weights summing to 1 this equals Σₖ wₖ Mₖ v; with identity matrices every term is exactly 0, so the **bind pose reproduces the static path bit for bit** (tested for every material mode and debug view on lavapipe and llvmpipe GL, and on 24 real meshes). Zero-weight slots are skipped | `mesh.wgsl` |
+| Statistics | `FrameStats::skinned_draws`, `palettes`, `palette_bytes` | `renderer.rs` |
+| CPU cost | `cargo bench -p tessera-render --bench skinned`: 50 characters × 30 skinned parts (1,500 draws, one 89-bone palette per character and frame) cost 1.27 ms of CPU per frame against 1.15 ms for the same draws unskinned (RTX 2070 Vulkan; lavapipe 1.67 / 1.70 ms), most of it the per-draw work shared with the static path | `benches/skinned.rs` |
+
+Real data (`crates/render/tests/skinned_real_data.rs`, 2026-10-05): all 19,049 skinned level-0
+meshes of the owner's install (22.5 M vertices; 1 to 4 influences, largest bone index 247)
+pass `MeshSkin::validate` with a 256-entry palette; 24 of them drawn with an identity palette
+equal the static path pixel for pixel. Golden images: `crates/render/tests/skinned_golden.rs`.
+
 ## 3. Open questions
 
 > **OPEN:** World coordinate convention in LOTRO data files: which axis is up, the handedness, the
@@ -134,5 +160,32 @@ the PNGs).
 > game's dye masks use and whether any mask is stored as A8; the material decoder has to produce
 > the renderer's channel convention (§2.3 "Mask channels").
 
-> **OPEN:** Skinned meshes: bone indices/weights streams are not part of `MeshData` yet; they
-> will be added with the skeleton spec (M4, `havok-data.md`). Bind-pose meshes render as static meshes.
+> **Resolved (M4, 2026-10-05):** Skinned meshes: bone indices and weights are a `MeshSkin` side
+> stream of `MeshData` with a GPU skinning path (§2.4), from the facts of `skeleton-anim.md` §4
+> and `mesh.md` §5.7.
+
+> **OPEN:** Weight renormalisation. The renderer renormalises each vertex's weights to sum
+> exactly 1 when packing (§2.4), which removes the |1 − Σw| · |v| bind-pose offset that
+> `skeleton-anim.md` §15 reports for unnormalised weights (up to 4.4 mm on large models).
+> `mesh.md` §5.7 says no renormalisation is needed; whether the original client renormalises
+> is open, as is whether 10⁻³ is a safe acceptance tolerance (all real data passes it).
+> The CPU and GPU skinners currently disagree: `tessera-anim`'s CPU reference skinner
+> (`skeleton-anim.md` §15) blends the stored weights as they are, so its positions differ from
+> the drawn ones by up to |1 − Σw| · |v| (up to 4.4 mm; a review's GPU-vs-CPU probe on three
+> real characters saw at most 15 differing pixels in a 320 × 480 frame). The renderer keeps
+> renormalising: its shader form v + Σₖ wₖ (Mₖ v − v) needs Σw = 1 to equal Σₖ wₖ Mₖ v at all (with unnormalised weights it gives
+> Σₖ wₖ Mₖ v + (1 − Σw) v, which matches neither convention), and renormalised weights keep
+> the bind pose exact. Proposed single convention: CPU skinners renormalise too, or blend with
+> `MeshSkin::drawn_weights`, which agrees with the GPU to quantisation error. Needs the owner
+> of `tessera-anim` / `skeleton-anim.md` §15 to adopt it.
+
+> **OPEN:** Mixed levels. `tessera-mesh` gives unskinned parts of a skinned level weight 0 on
+> every slot; `MeshSkin::validate` rejects such vertices, so a caller must draw those parts as
+> static meshes. None occurs in level 0 of the owner's install (`skeleton-anim.md` §2.4); if
+> the spec confirms they are rigid in model space (§9.1), the renderer could accept all-zero
+> weights as "unskinned" (the shader formula already leaves such a vertex unchanged).
+
+> **OPEN:** Mirroring skinning matrices. A palette matrix with a negative determinant (a
+> mirrored bone, e.g. the half-turn face bone of `skeleton-anim.md` §5.1 composed with a
+> reflection) would flip triangle winding and the bitangent; the renderer only accounts for
+> mirroring in the draw transform. No reflecting skinning matrix is known in the data.

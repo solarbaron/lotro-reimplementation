@@ -639,10 +639,12 @@ pub fn parse_slider_values(s: &str) -> Option<Vec<u8>> {
     if !b.len().is_multiple_of(2) || b.len() / 2 > MAX_SLIDER_BYTES {
         return None;
     }
-    b.chunks_exact(2)
-        .map(|p| {
+    b.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[hi, lo]| {
             let d = |c: u8| char::from(c).to_digit(16);
-            u8::try_from(d(p[0])? * 16 + d(p[1])?).ok()
+            u8::try_from(d(hi)? * 16 + d(lo)?).ok()
         })
         .collect()
 }

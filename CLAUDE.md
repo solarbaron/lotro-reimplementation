@@ -78,8 +78,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17), the
   reference-machine CPU model. These do not block M5.
-- **Toolchain note:** the 2026-10-05 checks ran on a distro rustc 1.97.1 (no rustup on that
-  machine); re-run clippy on the pinned 1.99.0.
+- **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
+  `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
   (`docs/decisions/0004-server-strategy.md`). Stop and ask the owner.
 

@@ -456,10 +456,12 @@ pub fn parse_sliders(s: &str) -> Result<Vec<u8>, SpecError> {
     if b.len() / 2 > MAX_SLIDER_BYTES {
         return err(format!("more than {MAX_SLIDER_BYTES} slider bytes"));
     }
-    b.chunks_exact(2)
-        .map(|p| {
+    b.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[hi, lo]| {
             let d = |c: u8| char::from(c).to_digit(16);
-            match (d(p[0]), d(p[1])) {
+            match (d(hi), d(lo)) {
                 (Some(h), Some(l)) => Ok((h * 16 + l) as u8),
                 _ => err("slider bytes must be hex digits"),
             }

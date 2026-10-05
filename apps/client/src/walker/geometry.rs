@@ -240,12 +240,9 @@ pub fn dye_mask(src: &RgbaImage) -> Option<RgbaImage> {
         return None;
     }
     let mut out = src.clone();
-    for px in out.pixels.chunks_exact_mut(4) {
+    for px in out.pixels.as_chunks_mut::<4>().0 {
         let v = 255 - px[3];
-        px[0] = v;
-        px[1] = v;
-        px[2] = v;
-        px[3] = 255;
+        *px = [v, v, v, 255];
     }
     Some(out)
 }

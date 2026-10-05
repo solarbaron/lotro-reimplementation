@@ -259,8 +259,8 @@ impl<'a> Rd<'a> {
     fn floats<const N: usize>(&mut self, what: &'static str) -> Result<[f32; N]> {
         let b = self.bytes(4 * N, what)?;
         let mut out = [0.0f32; N];
-        for (o, c) in out.iter_mut().zip(b.chunks_exact(4)) {
-            *o = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        for (o, &c) in out.iter_mut().zip(b.as_chunks::<4>().0) {
+            *o = f32::from_le_bytes(c);
         }
         Ok(out)
     }

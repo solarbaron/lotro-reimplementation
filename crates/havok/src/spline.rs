@@ -553,7 +553,13 @@ impl SplineBlock {
         let masks = bp.rd.bytes(mask_len)?;
         bp.rd.pad4()?;
         let mut tracks = Vec::with_capacity(params.tracks);
-        for (j, m) in masks.chunks_exact(4).take(params.tracks).enumerate() {
+        for (j, m) in masks
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .take(params.tracks)
+            .enumerate()
+        {
             bp.rd.track = j;
             let q = m[0];
             let position = bp.vector(m[1], q & 0x03, 0.0, Channel::Position)?;

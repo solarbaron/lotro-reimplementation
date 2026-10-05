@@ -46,7 +46,9 @@ fn render(
 
 fn coverage(img: &RgbaImage) -> usize {
     img.data
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| p[0] > 0 || p[1] > 0 || p[2] > 0)
         .count()
 }
@@ -253,8 +255,10 @@ fn rigid_palette_matches_moved_static_mesh() -> Result<(), RenderError> {
     // The same transform reached through the palette: equal up to rounding.
     let differing = reference
         .data
-        .chunks_exact(4)
-        .zip(posed.data.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(posed.data.as_chunks::<4>().0)
         .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 2))
         .count();
     assert!(

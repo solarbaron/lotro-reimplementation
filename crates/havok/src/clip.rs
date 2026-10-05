@@ -108,8 +108,10 @@ impl<'a> Envelope<'a> {
         }
         let raw = r.bytes((w as usize).saturating_mul(4), "track weights")?;
         let track_weights = raw
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| f32::from_le_bytes(c))
             .collect();
         if r.pos != record.len() {
             return Err(HavokError::EnvelopeTrailingBytes {

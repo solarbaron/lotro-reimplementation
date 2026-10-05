@@ -10,17 +10,26 @@
 //! ([`SourceShared::focus_request`]): before the avatar is placed, and afterwards while
 //! the request keeps being repeated (a teleport whose ground is not loaded yet).
 //!
-//! Static entities are not served through the sandbox: the walker draws them from its own
-//! landblock bundles, so [`WorldSource::static_entities`] answers `Unavailable`.
+//! Static scenery is not served through the sandbox: the walker draws it from its own
+//! landblock bundles. [`WorldSource::static_entities`] serves the **figures** of resident
+//! landblocks instead (NPC-like entities and weenie placements, `walker.md` §10), which the
+//! sandbox turns into `EntityCreated` events ([`super::figures`]); a block the walker has
+//! not streamed yet is `Pending`, one that failed `Unavailable`.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
+use tessera_formats::PropertySet;
 use tessera_net::model::{Anchor, Location, RegionId, compass_degrees_from_heading};
 use tessera_net::sandbox::world::{Landblock, Lookup, ResolvedPlace, StaticEntity, WorldSource};
-use tessera_world::{AreaName, LandblockKey, LocReport, MapConstants, MapCoords, WorldPos};
+use tessera_world::{
+    AreaName, FigureKind, LandblockBundle, LandblockKey, LocReport, MapConstants, MapCoords,
+    WorldPos,
+};
 
+use super::characters::catalog::{CharacterCatalog, WeenieRole};
+use super::figures::{figure_entries, figure_role, tag_parts};
 use super::places::PlaceIndex;
 use super::terrain::SharedTiles;
 
@@ -36,9 +45,35 @@ pub enum Places {
     Ready(Arc<PlaceIndex>),
 }
 
+/// The figures of one landblock as the walker knows them.
+#[derive(Debug, Clone)]
+pub enum FigureBlock {
+    /// Resident: the bundle holds the figures.
+    Ready(Arc<LandblockBundle>),
+    /// The landblock could not be loaded (or has no data): it has no figures.
+    Missing,
+}
+
+/// What the character layer needs of a placed figure ([`SourceShared::figure_info`]).
+#[derive(Debug, Clone)]
+pub struct FigureInfo {
+    /// The instance property set (`appearance.md` §7.2).
+    pub instance: Option<Arc<PropertySet>>,
+    /// Why it is a figure.
+    pub kind: FigureKind,
+    /// The weenie role (`None` for an NPC-like Physics figure).
+    pub role: Option<WeenieRole>,
+}
+
 /// State shared between the walker and its sandbox source.
 #[derive(Debug, Default)]
 pub struct SourceShared {
+    /// Figures of the landblocks the walker has streamed (resident or failed).
+    pub figures: BTreeMap<LandblockKey, FigureBlock>,
+    /// The character vocabulary (weenie roles), once loaded.
+    pub catalog: Option<Arc<CharacterCatalog>>,
+    /// Serve interior figures too.
+    pub interiors: bool,
     /// Region used for map coordinates and names without one.
     pub default_region: u8,
     /// Map-coordinate constants per region (`coordinates.md` §8).
@@ -64,6 +99,21 @@ impl SourceShared {
     pub fn request_focus(&mut self, pos: WorldPos) {
         self.focus_request = Some(pos);
         self.focus_at = Some(Instant::now());
+    }
+
+    /// The placed figure a sandbox tag names, while its landblock is resident.
+    #[must_use]
+    pub fn figure_info(&self, tag: u64) -> Option<FigureInfo> {
+        let (key, index) = tag_parts(tag)?;
+        let FigureBlock::Ready(b) = self.figures.get(&key)? else {
+            return None;
+        };
+        let f = b.figures.get(index as usize)?;
+        Some(FigureInfo {
+            instance: f.instance.clone(),
+            kind: f.kind,
+            role: figure_role(f.kind, f.weenie_type, self.catalog.as_deref()),
+        })
     }
 }
 
@@ -172,11 +222,32 @@ impl WorldSource for WalkerSource {
 
     fn static_entities(
         &mut self,
-        _block: Landblock,
-        _limit: usize,
-        _out: &mut Vec<StaticEntity>,
+        block: Landblock,
+        limit: usize,
+        out: &mut Vec<StaticEntity>,
     ) -> Lookup<()> {
-        Lookup::Unavailable("static objects are drawn from the walker's own landblock data".into())
+        let s = lock(&self.shared);
+        if !s.ready {
+            return Lookup::Pending;
+        }
+        let key = u8::try_from(block.region.0)
+            .ok()
+            .and_then(|r| LandblockKey::new(r, block.x, block.y).ok());
+        let Some(key) = key else {
+            return Lookup::Unavailable("not a landblock of the data".into());
+        };
+        match s.figures.get(&key) {
+            Some(FigureBlock::Ready(b)) => {
+                out.extend(figure_entries(b, s.catalog.as_deref(), s.interiors, limit));
+                Lookup::Ready(())
+            }
+            Some(FigureBlock::Missing) => Lookup::Unavailable("no landblock data".into()),
+            None => Lookup::Pending,
+        }
+    }
+
+    fn release(&mut self, _block: Landblock) {
+        // The walker drops figure blocks with their bundles.
     }
 
     fn describe(
@@ -284,6 +355,14 @@ mod tests {
             Lookup::Unavailable(_)
         ));
         let mut out = Vec::new();
+        assert_eq!(
+            src.static_entities(Landblock::new(RegionId(1), 1, 1).unwrap(), 10, &mut out),
+            Lookup::Pending,
+            "not streamed yet"
+        );
+        lock(&sh)
+            .figures
+            .insert(LandblockKey::new(1, 1, 1).unwrap(), FigureBlock::Missing);
         assert!(matches!(
             src.static_entities(Landblock::new(RegionId(1), 1, 1).unwrap(), 10, &mut out),
             Lookup::Unavailable(_)

@@ -544,6 +544,30 @@ impl Rotation {
         ))
     }
 
+    /// The heading (module convention: radians, 0 = +X, counter-clockwise, in
+    /// `(-π, π]`) a model whose forward axis is model +Y faces under this
+    /// rotation: the inverse of [`facing`](Self::facing) for turns about +Z.
+    /// A tilted rotation gives the heading of its forward axis projected onto
+    /// the ground; when that axis points straight up or down, the heading of
+    /// the model's +X axis turned by π/2 is used instead. `None` when the
+    /// rotation is not finite or has no direction.
+    #[must_use]
+    pub fn heading(self) -> Option<f32> {
+        let q = self.normalized()?;
+        let f = q.rotate(Vec3::new(0.0, 1.0, 0.0));
+        if f.x * f.x + f.y * f.y > 1.0e-8 {
+            return Some(f.y.atan2(f.x));
+        }
+        let r = q.rotate(Vec3::new(1.0, 0.0, 0.0));
+        let h = r.y.atan2(r.x) + std::f32::consts::FRAC_PI_2;
+        // Back into (-π, π].
+        Some(if h > std::f32::consts::PI {
+            h - std::f32::consts::TAU
+        } else {
+            h
+        })
+    }
+
     /// Rotates `v` (model frame) into the region frame.
     #[must_use]
     pub fn rotate(self, v: Vec3) -> Vec3 {
@@ -706,4 +730,116 @@ pub enum LocationCause {
     /// [`Event::EntityMoved`](crate::Event::EntityMoved), so the precise
     /// position survives the correction).
     Corrected,
+}
+
+/// Most [`Equipped`] entries of one [`Appearance`].
+pub const MAX_EQUIPMENT: usize = 32;
+
+/// Largest [`Appearance::scale`].
+pub const MAX_APPEARANCE_SCALE: f32 = 100.0;
+
+/// Largest dye code of an [`Equipped`] item. Dye codes of the user's data are small
+/// fractions and 1.0 is the base look (`docs/specs/appearance.md` §4.9).
+pub const MAX_DYE_CODE: f32 = 1.0;
+
+/// What a figure's body is, in Tessera's neutral terms. The values are the
+/// data's own (enum keys and record DIDs, opaque to this crate); the client
+/// resolves them to geometry and clips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
+pub enum Body {
+    /// A playable body chosen by species and sex: the data's species key and
+    /// sex value (`docs/specs/appearance.md` §2).
+    Character {
+        /// Species key.
+        species: u32,
+        /// Sex value.
+        sex: u32,
+    },
+    /// A data record that describes the figure itself: a game object (an NPC
+    /// or creature class) or a visual entity whose setup is the body
+    /// (`docs/specs/appearance.md` §7).
+    Object(DataId),
+}
+
+/// One item a figure wears or holds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Equipped {
+    /// The item's data record.
+    pub item: DataId,
+    /// Dye code of the first dye channel; `None` keeps the item's own default.
+    /// Finite, in `0 ..= MAX_DYE_CODE`.
+    pub dye: Option<f32>,
+    /// Dye code of the second channel, as `dye`.
+    pub secondary_dye: Option<f32>,
+    /// Held items: stowed (sheathed) instead of in the hand.
+    pub stowed: bool,
+}
+
+impl Equipped {
+    /// An item with its default dyes, in the hand when held.
+    #[must_use]
+    pub const fn new(item: DataId) -> Self {
+        Self {
+            item,
+            dye: None,
+            secondary_dye: None,
+            stowed: false,
+        }
+    }
+
+    /// True when both dye codes are absent or finite within `0 ..= MAX_DYE_CODE`.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let ok =
+            |d: Option<f32>| d.is_none_or(|v| v.is_finite() && (0.0..=MAX_DYE_CODE).contains(&v));
+        ok(self.dye) && ok(self.secondary_dye)
+    }
+}
+
+/// How an entity looks: enough for a client with the user's data to assemble
+/// and animate it (body, scale, equipment, a starting idle). Tessera's own
+/// vocabulary, not a wire format (`docs/ARCHITECTURE.md` §19.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Appearance {
+    /// The body.
+    pub body: Body,
+    /// Uniform scale on top of the body's own, in `(0, MAX_APPEARANCE_SCALE]`.
+    pub scale: f32,
+    /// Worn and held items, at most [`MAX_EQUIPMENT`].
+    pub equipment: Vec<Equipped>,
+    /// The data's starting-idle animation value (an enum key), if the figure
+    /// has one (`docs/specs/appearance.md` §7.2).
+    pub idle: Option<u32>,
+}
+
+impl Appearance {
+    /// A body at scale 1 with nothing equipped.
+    #[must_use]
+    pub fn new(body: Body) -> Self {
+        Self {
+            body,
+            scale: 1.0,
+            equipment: Vec::new(),
+            idle: None,
+        }
+    }
+
+    /// The same appearance with `item` equipped.
+    #[must_use]
+    pub fn wearing(mut self, item: Equipped) -> Self {
+        self.equipment.push(item);
+        self
+    }
+
+    /// True when the scale is finite and in range, there are at most
+    /// [`MAX_EQUIPMENT`] items and every item [is valid](Equipped::is_valid).
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.scale.is_finite()
+            && self.scale > 0.0
+            && self.scale <= MAX_APPEARANCE_SCALE
+            && self.equipment.len() <= MAX_EQUIPMENT
+            && self.equipment.iter().all(Equipped::is_valid)
+    }
 }

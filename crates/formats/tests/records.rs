@@ -4,6 +4,7 @@
 mod common;
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use common::B;
 use tessera_formats::property::{FLAG_HAS_DEFAULT, FLAG_HAS_MAX, FLAG_HAS_MIN, Waveform};
@@ -629,6 +630,61 @@ fn enum_mapper_and_base_chain() {
     let cyclic = EnumMapper::parse(&mapper(0x2300_0003, 0x2300_0003, &[], &[])).unwrap();
     let c2 = cyclic.clone();
     assert_eq!(cyclic.resolve(|_| Some(&c2), |m| m.name(1)), None);
+}
+
+#[test]
+fn enum_key_lookup_follows_owned_base_chains() {
+    // grandchild → child → base, loaded on demand as owned values.
+    let bytes: HashMap<Did, Vec<u8>> = [
+        mapper(0x2300_0001, 0, &[(1, "One"), (2, "Two")], &[]),
+        mapper(0x2300_0002, 0x2300_0001, &[(3, "Three")], &[]),
+        mapper(0x2300_0004, 0x2300_0002, &[(4, "Four")], &[]),
+        // A two-mapper cycle: 5 → 6 → 5.
+        mapper(0x2300_0005, 0x2300_0006, &[(5, "Five")], &[]),
+        mapper(0x2300_0006, 0x2300_0005, &[(6, "Six")], &[]),
+    ]
+    .into_iter()
+    .map(|b| (EnumMapper::parse(&b).unwrap().did, b))
+    .collect();
+    let mut loads = 0;
+    let mut fetch = |did: Did| {
+        loads += 1;
+        bytes.get(&did).map(|b| EnumMapper::parse(b).unwrap())
+    };
+    let grandchild = fetch(Did(0x2300_0004)).unwrap();
+    assert_eq!(grandchild.key_in_chain(&mut fetch, "Four"), Some(4));
+    assert_eq!(grandchild.key_in_chain(&mut fetch, "Two"), Some(2));
+    assert_eq!(grandchild.key_in_chain(&mut fetch, "Nine"), None);
+    assert_eq!(
+        EnumMapper::key_in_chain_from(Did(0x2300_0004), &mut fetch, "One"),
+        Some(1)
+    );
+    assert_eq!(
+        EnumMapper::key_in_chain_from(Did(0), &mut fetch, "One"),
+        None
+    );
+    // A missing base ends the search.
+    assert_eq!(
+        EnumMapper::key_in_chain_from(Did(0x2300_0099), &mut fetch, "One"),
+        None
+    );
+    // The cycle terminates, after finding what it can.
+    assert_eq!(
+        EnumMapper::key_in_chain_from(Did(0x2300_0005), &mut fetch, "Six"),
+        Some(6)
+    );
+    assert_eq!(
+        EnumMapper::key_in_chain_from(Did(0x2300_0005), &mut fetch, "Nine"),
+        None
+    );
+    assert!(loads < 20, "{loads} loads");
+    // Borrowed mappers work too.
+    let child = EnumMapper::parse(&bytes[&Did(0x2300_0002)]).unwrap();
+    let base = EnumMapper::parse(&bytes[&Did(0x2300_0001)]).unwrap();
+    assert_eq!(
+        child.key_in_chain(|d: Did| (d == base.did).then_some(&base), "One"),
+        Some(1)
+    );
 }
 
 // ---------------------------------------------------------------- DID maps

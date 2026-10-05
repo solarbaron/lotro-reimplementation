@@ -14,6 +14,11 @@ Tessera's own code from a procedural scene; none contains or is derived from gam
 | `mesh_dye.png` | same | dye: striped mask texture with three dye colours, and a base-alpha mask |
 | `mesh_normal_map.png` | same | tangent-space bump map on a plane without tangents (ignored), with tangents, and on a specular sphere, under a grazing light |
 | `mesh_debug.png` | same | debug views: hidden surfaces with wireframe, world normals, UV checker, lit with wireframe and normal-line overlays; camera framed with `OrbitCamera::frame_sphere` |
+| `skinned_bend.png` | `crates/render/tests/skinned_golden.rs` | GPU skinning: one two-bone cylinder drawn with three palettes in one frame (straight, bent forward, bent back), textured and specular |
+| `skinned_weights.png` | same | rigid weights (hard crease), smooth two-bone weights, and a three-bone chain whose vertices use all four influence slots |
+| `skinned_alpha_test.png` | same | an alpha-tested, two-sided skinned card folded forwards and backwards |
+| `skinned_dye.png` | same | dye on a skinned limb: texture mask with three colours and two palettes, base-alpha mask with specular |
+| `skinned_debug.png` | same | debug views following the skinned surface: wireframe only, world normals, UV checker with normal lines |
 | `../../../../apps/client/tests/golden/test_scene.png` | `apps/client/tests/scene_golden.rs` | the client's M0 test scene without game data |
 | `../../../../apps/client/tests/golden/test_scene_surface.png` | same | the same scene with a synthetic stand-in for a decoded surface |
 
@@ -31,6 +36,7 @@ Regenerate after an intended visual change, then review the new PNGs before comm
 ```sh
 TESSERA_BLESS=1 cargo test -p tessera-render --test golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test mesh_golden
+TESSERA_BLESS=1 cargo test -p tessera-render --test skinned_golden
 TESSERA_BLESS=1 cargo test -p tessera-client --test scene_golden
 ```
 
@@ -46,3 +52,7 @@ on lavapipe before committing it: lavapipe rasterises many 1-px lines packed int
 rows near the horizon differently from hardware drivers (it can fill a solid block), which
 is why the client scene's ground grid stops well short of the horizon
 (`GRID_HALF_CELLS` in `apps/client/src/scene.rs`).
+
+The `skinned_*` images were blessed the same way and verified on lavapipe from Mesa 24.2 (the
+Android SDK emulator's `lvp_icd.x86_64.json` works as `VK_DRIVER_FILES`) and on llvmpipe GL
+(Mesa 26.1).

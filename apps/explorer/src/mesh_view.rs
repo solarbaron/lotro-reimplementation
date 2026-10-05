@@ -567,6 +567,7 @@ fn viewport_widget(
         } else {
             0.0
         },
+        pose: None,
     });
 
     let painter = ui.painter_at(rect);

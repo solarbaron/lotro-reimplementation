@@ -47,6 +47,9 @@ pub struct Runtime {
     pub plugins: Plugins,
     /// State shared between the world walker and the sandbox (walker sessions only).
     pub walker_shared: Option<Arc<Mutex<SourceShared>>>,
+    /// The walker's sandbox settings, until [`Runtime::start_walker_session`] starts the
+    /// session (once the character catalog can give the avatar and crowd their bodies).
+    walker_session: Option<tessera_net::sandbox::SandboxConfig>,
     /// System chat lines (sender empty) since the last [`Runtime::take_notices`].
     notices: Vec<String>,
     character: Option<String>,
@@ -170,15 +173,21 @@ impl Runtime {
                 ..SourceShared::default()
             }))
         });
+        // The walker's session starts once the world data is loaded
+        // (`start_walker_session`); everything else gets a plain sandbox now.
+        let mut walker_session = None;
         let session = match &walker_shared {
-            Some(shared) => crate::walker_host::sandbox_config(args).and_then(|config| {
-                World::sandbox_with_world(now, config, WalkerSource::new(Arc::clone(shared)))
-                    .map_err(anyhow::Error::from)
-            }),
-            None => World::sandbox(now).map_err(anyhow::Error::from),
+            Some(_) => match crate::walker_host::sandbox_config(args) {
+                Ok(c) => {
+                    walker_session = Some(c);
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            },
+            None => World::sandbox(now).map(Some).map_err(anyhow::Error::from),
         };
         let world = match session {
-            Ok(w) => Some(w),
+            Ok(w) => w,
             Err(e) => {
                 tracing::error!("world session unavailable: {e}");
                 None
@@ -201,10 +210,74 @@ impl Runtime {
             world,
             plugins,
             walker_shared,
+            walker_session,
             notices: Vec::new(),
             character: None,
             texture_settled: false,
         })
+    }
+
+    /// Starts the walker's sandbox session with the avatar's appearance and the crowd's
+    /// appearances (no-op without a pending walker session). Entity events are not
+    /// captured yet: the walker switches that on once it exists
+    /// ([`World::capture_entity_events`]), so nothing queues events nobody drains. At most
+    /// [`tessera_net::sandbox::MAX_APPEARANCES`] crowd appearances are used; a crowd the
+    /// sandbox still refuses is dropped rather than the whole session.
+    pub fn start_walker_session(
+        &mut self,
+        now: Instant,
+        avatar: Option<tessera_net::Appearance>,
+        mut crowd: Vec<tessera_net::Appearance>,
+    ) {
+        let (Some(mut config), Some(shared)) =
+            (self.walker_session.take(), self.walker_shared.clone())
+        else {
+            return;
+        };
+        config.avatar = avatar;
+        if config.crowd.count > 0 {
+            if crowd.is_empty() {
+                tracing::warn!("--crowd: no playable bodies in the data; no crowd");
+                config.crowd.count = 0;
+            } else {
+                if crowd.len() > tessera_net::sandbox::MAX_APPEARANCES {
+                    tracing::warn!(
+                        bodies = crowd.len(),
+                        "--crowd: using the first {} playable bodies",
+                        tessera_net::sandbox::MAX_APPEARANCES
+                    );
+                    crowd.truncate(tessera_net::sandbox::MAX_APPEARANCES);
+                }
+                config.crowd.appearances = crowd;
+            }
+        }
+        let retry = (config.crowd.count > 0).then(|| {
+            let mut c = config.clone();
+            c.crowd.count = 0;
+            c.crowd.appearances.clear();
+            c
+        });
+        let world = match World::sandbox_with_world(now, config, WalkerSource::new(shared.clone()))
+        {
+            Err(e) if retry.is_some() => {
+                tracing::warn!("world session refused the crowd ({e}); starting without it");
+                retry.map(|c| World::sandbox_with_world(now, c, WalkerSource::new(shared)))
+            }
+            other => Some(other),
+        };
+        match world {
+            Some(Ok(w)) => self.world = Some(w),
+            Some(Err(e)) => tracing::error!("world session unavailable: {e}"),
+            None => {}
+        }
+    }
+
+    /// Starts (or stops) queueing the world session's entity events for the walker
+    /// (no-op without a session).
+    pub fn capture_walker_events(&mut self, on: bool) {
+        if let Some(w) = &mut self.world {
+            w.capture_entity_events(on);
+        }
     }
 
     /// Whether the loader has delivered (or given up on) the showcase texture.

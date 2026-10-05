@@ -17,8 +17,15 @@
 //!   it saw the teleport's [`Event::LocationReport`]),
 //! - with a [`WorldSource`], serves the static objects of the landblocks
 //!   around the player ([`Event::StaticSpawned`]), see [`world`],
+//! - gives the player an appearance ([`SandboxConfig::avatar`], an
+//!   [`Event::AppearanceChanged`] right after [`Event::WorldEntered`]),
 //! - spawns a few "wanderer" entities that walk in circles around the spawn
-//!   point and reports their movement at a fixed tick rate,
+//!   point and reports their movement at a fixed tick rate; with
+//!   [`SandboxConfig::wanderer_appearances`] they are animated characters
+//!   ([`Event::EntityCreated`]),
+//! - spawns a crowd of characters on a grid in front of the spawn
+//!   ([`CrowdConfig`]): standing, walking or running in circles, with varied
+//!   appearances and phases (a load test for the client's animation),
 //! - echoes chat back (tells get a system notice instead),
 //! - accepts player movement, correcting it back (an [`Event::EntityMoved`]
 //!   and a precise [`Event::LocationReport`]) if it moves implausibly fast or
@@ -60,14 +67,14 @@ use std::f32::consts::TAU;
 use std::time::{Duration, Instant};
 
 pub use world::{
-    Landblock, Lookup, ResolvedPlace, SpawnPoint, StaticConfig, StaticEntity, StaticStats,
-    WorldSource,
+    Landblock, Lookup, PlacedFigure, ResolvedPlace, SpawnPoint, StaticConfig, StaticEntity,
+    StaticStats, WorldSource,
 };
 
 use crate::NetError;
 use crate::model::{
-    Anchor, CharacterSummary, ChatChannel, Destination, DisconnectReason, EntityId, EntityKind,
-    Location, LocationCause, RegionId, Transform, Vec3,
+    Anchor, Appearance, CharacterSummary, ChatChannel, Destination, DisconnectReason, EntityId,
+    EntityKind, Location, LocationCause, RegionId, Transform, Vec3,
 };
 use crate::session::{Backend, Command, Event};
 use world::{Statics, clamp_location, sanitize_text};
@@ -87,6 +94,88 @@ pub const MAX_RESOLVE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Largest [`SandboxConfig::latency`]. Every event is held for the latency,
 /// so this also bounds how long the pending queue keeps growing.
 pub const MAX_LATENCY: Duration = Duration::from_secs(10);
+/// Upper bound on [`CrowdConfig::count`].
+pub const MAX_CROWD: usize = 1024;
+/// Most appearances in [`SandboxConfig::wanderer_appearances`] and
+/// [`CrowdConfig::appearances`].
+pub const MAX_APPEARANCES: usize = 256;
+/// Allowed range of [`CrowdConfig::spacing`], in metres.
+pub const CROWD_SPACING_RANGE: std::ops::RangeInclusive<f32> = 0.5..=100.0;
+/// Largest [`CrowdConfig::ahead`], in metres.
+pub const MAX_CROWD_AHEAD: f32 = 1000.0;
+
+/// A crowd of characters placed by the sandbox in front of the spawn point
+/// (Tessera's own load test for animated characters).
+///
+/// Members stand on a grid facing the spawn: `ceil(sqrt(2 · count))` columns
+/// [`spacing`](Self::spacing) apart across the spawn heading, rows from
+/// [`ahead`](Self::ahead) metres in front of the spawn outwards, so a camera
+/// behind the player sees all of them. Member *i* stands still (*i* mod 3 =
+/// 0), walks (1) or runs (2) in a circle around its grid point (radius 0.4 ×
+/// or 0.8 × the spacing) at [`walk_speed`](Self::walk_speed) or
+/// [`run_speed`](Self::run_speed), starting at its own phase, and has
+/// appearance *i* mod `appearances.len()`. Heights are the spawn's; a client
+/// with terrain puts them on the ground. Members follow the player on
+/// teleports like the wanderers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrowdConfig {
+    /// Members, `0..=MAX_CROWD` (0: no crowd).
+    pub count: usize,
+    /// Appearances, cycled; not empty when `count > 0`, at most
+    /// [`MAX_APPEARANCES`], each [valid](Appearance::is_valid).
+    pub appearances: Vec<Appearance>,
+    /// Grid spacing in metres, within [`CROWD_SPACING_RANGE`].
+    pub spacing: f32,
+    /// Distance of the first row in front of the spawn, `0..=MAX_CROWD_AHEAD`.
+    pub ahead: f32,
+    /// Walking speed in metres per second, in `(0, MAX_SPEED]`.
+    pub walk_speed: f32,
+    /// Running speed in metres per second, in `(0, MAX_SPEED]`.
+    pub run_speed: f32,
+}
+
+impl Default for CrowdConfig {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            appearances: Vec::new(),
+            spacing: 3.0,
+            ahead: 8.0,
+            walk_speed: 2.0,
+            run_speed: 6.0,
+        }
+    }
+}
+
+impl CrowdConfig {
+    fn validate(&self) -> Result<(), NetError> {
+        let speed_ok = |v: f32| v > 0.0 && v <= MAX_SPEED;
+        if self.count > MAX_CROWD
+            || (self.count > 0 && self.appearances.is_empty())
+            || self.appearances.len() > MAX_APPEARANCES
+            || !self.appearances.iter().all(Appearance::is_valid)
+            || !CROWD_SPACING_RANGE.contains(&self.spacing)
+            || !(0.0..=MAX_CROWD_AHEAD).contains(&self.ahead)
+            || !speed_ok(self.walk_speed)
+            || !speed_ok(self.run_speed)
+        {
+            return Err(NetError::InvalidConfig(
+                "sandbox crowd settings out of range",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Columns of the grid.
+    fn columns(&self) -> usize {
+        // ceil(sqrt(2n)) without floating point surprises.
+        let mut c = 1usize;
+        while c * c < 2 * self.count {
+            c += 1;
+        }
+        c
+    }
+}
 
 /// Settings for [`SandboxBackend`].
 #[derive(Debug, Clone)]
@@ -133,6 +222,15 @@ pub struct SandboxConfig {
     /// corrected with an [`Event::EntityMoved`] for the player. In
     /// `(0, MAX_SPEED]`. A free-flying world walker wants this high.
     pub max_player_speed: f32,
+    /// The player's appearance, sent as [`Event::AppearanceChanged`] right
+    /// after [`Event::WorldEntered`]. Must be [valid](Appearance::is_valid).
+    pub avatar: Option<Appearance>,
+    /// When not empty, wanderers are characters with these appearances
+    /// (cycled) and spawn as [`Event::EntityCreated`] instead of
+    /// [`Event::EntitySpawned`]. At most [`MAX_APPEARANCES`], each valid.
+    pub wanderer_appearances: Vec<Appearance>,
+    /// A crowd in front of the spawn (none by default).
+    pub crowd: CrowdConfig,
 }
 
 impl Default for SandboxConfig {
@@ -151,6 +249,9 @@ impl Default for SandboxConfig {
             latency: Duration::ZERO,
             echo_chat: true,
             max_player_speed: 50.0,
+            avatar: None,
+            wanderer_appearances: Vec::new(),
+            crowd: CrowdConfig::default(),
         }
     }
 }
@@ -205,6 +306,13 @@ impl SandboxConfig {
                 "sandbox tick interval must be non-zero",
             ));
         }
+        if self.avatar.as_ref().is_some_and(|a| !a.is_valid())
+            || self.wanderer_appearances.len() > MAX_APPEARANCES
+            || !self.wanderer_appearances.iter().all(Appearance::is_valid)
+        {
+            return Err(NetError::InvalidConfig("sandbox appearance out of range"));
+        }
+        self.crowd.validate()?;
         Ok(())
     }
 
@@ -224,12 +332,21 @@ enum Phase {
     Closed,
 }
 
+/// A simulated entity: a wanderer or a crowd member.
 #[derive(Debug)]
-struct Wanderer {
+struct Actor {
     id: EntityId,
-    /// Offset of the circle's centre from the spawn point.
+    /// Offset of the circle's centre (or of the standing spot) from the
+    /// anchor (the spawn point, moved by teleports).
     offset: Vec3,
+    /// Starting angle on the circle (radians).
     phase: f32,
+    /// Circle radius in metres.
+    radius: f32,
+    /// Speed along the circle in metres per second; 0 stands still.
+    speed: f32,
+    /// Facing while standing still.
+    heading: f32,
 }
 
 #[derive(Debug)]
@@ -301,9 +418,12 @@ pub struct SandboxBackend {
     phase: Phase,
     /// Events with the instant they become visible, in non-decreasing order.
     pending: VecDeque<(Instant, Event)>,
-    wanderers: Vec<Wanderer>,
+    /// Wanderers first, then crowd members.
+    wanderers: Vec<Actor>,
     /// Where the wanderers' circles are anchored.
     wander_anchor: Vec3,
+    /// The anchor moved (a teleport): standing actors are reported at the next tick.
+    anchor_moved: bool,
     player: Option<Player>,
     world_start: Option<Instant>,
     last_tick: Option<Instant>,
@@ -331,6 +451,7 @@ impl SandboxBackend {
             pending: VecDeque::new(),
             wanderers: Vec::new(),
             wander_anchor: Vec3::ZERO,
+            anchor_moved: false,
             player: None,
             world_start: None,
             last_tick: None,
@@ -629,6 +750,15 @@ impl SandboxBackend {
                 cause: LocationCause::Entered,
             },
         );
+        if let Some(appearance) = self.config.avatar.clone() {
+            self.emit(
+                now,
+                Event::AppearanceChanged {
+                    id,
+                    appearance: Box::new(appearance),
+                },
+            );
+        }
 
         let n = self.config.wanderers;
         let ring = self.config.wander_radius * 2.0;
@@ -638,26 +768,54 @@ impl SandboxBackend {
             let angle = TAU * i as f32 / n as f32;
             let offset = Vec3::new(ring * angle.cos(), ring * angle.sin(), 0.0);
             let id = self.alloc_id();
-            self.wanderers.push(Wanderer {
+            self.wanderers.push(Actor {
                 id,
                 offset,
                 phase: angle,
+                radius: self.config.wander_radius,
+                speed: self.config.wander_speed,
+                heading: 0.0,
             });
         }
+        self.add_crowd(heading);
         self.world_start = Some(now);
         self.last_tick = Some(now);
         for i in 0..self.wanderers.len() {
             let (transform, _) = self.wanderer_state(i, Duration::ZERO);
             let id = self.wanderers[i].id;
-            self.emit(
-                now,
-                Event::EntitySpawned {
+            let (name, appearance) = if i < n {
+                let a = &self.config.wanderer_appearances;
+                (
+                    format!("Wanderer {}", i + 1),
+                    (!a.is_empty()).then(|| a[i % a.len()].clone()),
+                )
+            } else {
+                let c = &self.config.crowd;
+                let k = i - n;
+                (
+                    format!("Crowd {}", k + 1),
+                    Some(c.appearances[k % c.appearances.len()].clone()),
+                )
+            };
+            let event = match appearance {
+                Some(appearance) => Event::EntityCreated {
                     id,
                     kind: EntityKind::NonPlayer,
-                    name: format!("Wanderer {}", i + 1),
+                    name,
+                    class: None,
+                    location: Location::from_position(location.region, transform.position),
+                    heading: transform.heading,
+                    appearance: Box::new(appearance),
+                    tag: None,
+                },
+                None => Event::EntitySpawned {
+                    id,
+                    kind: EntityKind::NonPlayer,
+                    name,
                     transform,
                 },
-            );
+            };
+            self.emit(now, event);
         }
         self.system(now, "Welcome to the Tessera sandbox.");
         self.phase = Phase::InWorld;
@@ -683,6 +841,7 @@ impl SandboxBackend {
         let id = player.id;
         // The wanderers follow the player.
         self.wander_anchor = transform.position;
+        self.anchor_moved = true;
         self.emit(
             now,
             Event::LocationReport {
@@ -765,11 +924,55 @@ impl SandboxBackend {
         self.scratch = events;
     }
 
-    /// Transform and velocity of wanderer `i` at `elapsed` since world entry.
+    /// Adds the crowd's actors (after the wanderers), facing `heading`'s
+    /// opposite (towards the spawn), on the grid of [`CrowdConfig`].
+    fn add_crowd(&mut self, heading: f32) {
+        let c = self.config.crowd.clone();
+        if c.count == 0 {
+            return;
+        }
+        let cols = c.columns();
+        let (s, co) = heading.sin_cos();
+        let forward = Vec3::new(co, s, 0.0);
+        let right = Vec3::new(s, -co, 0.0);
+        // The golden angle spreads the starting phases.
+        const GOLDEN: f32 = 2.399_963;
+        for i in 0..c.count {
+            #[allow(clippy::cast_precision_loss)] // bounded by MAX_CROWD
+            let (row, col, half) = (
+                (i / cols) as f32,
+                (i % cols) as f32,
+                (cols - 1) as f32 / 2.0,
+            );
+            let offset = forward * (c.ahead + row * c.spacing) + right * ((col - half) * c.spacing);
+            let (radius, speed) = match i % 3 {
+                0 => (0.4 * c.spacing, 0.0),
+                1 => (0.4 * c.spacing, c.walk_speed),
+                _ => (0.8 * c.spacing, c.run_speed),
+            };
+            #[allow(clippy::cast_precision_loss)] // bounded by MAX_CROWD
+            let phase = (GOLDEN * i as f32).rem_euclid(TAU);
+            let id = self.alloc_id();
+            self.wanderers.push(Actor {
+                id,
+                offset,
+                phase,
+                radius,
+                speed,
+                heading: heading + std::f32::consts::PI,
+            });
+        }
+    }
+
+    /// Transform and velocity of actor `i` at `elapsed` since world entry.
     fn wanderer_state(&self, i: usize, elapsed: Duration) -> (Transform, Vec3) {
         let w = &self.wanderers[i];
-        let r = self.config.wander_radius;
-        let omega = f64::from(self.config.wander_speed) / f64::from(r);
+        if w.speed <= 0.0 {
+            let h = w.heading.rem_euclid(TAU);
+            return (Transform::new(self.wander_anchor + w.offset, h), Vec3::ZERO);
+        }
+        let r = w.radius;
+        let omega = f64::from(w.speed) / f64::from(r);
         // Reduce the angle in f64 before narrowing: in f32, `elapsed` itself
         // loses sub-second precision after a few months of uptime.
         let theta =
@@ -779,7 +982,7 @@ impl SandboxBackend {
         let (s, c) = theta.sin_cos();
         let position = self.wander_anchor + w.offset + Vec3::new(r * c, r * s, 0.0);
         // Counter-clockwise motion: velocity is the tangent.
-        let velocity = Vec3::new(-s, c, 0.0) * self.config.wander_speed;
+        let velocity = Vec3::new(-s, c, 0.0) * w.speed;
         let heading = theta + std::f32::consts::FRAC_PI_2;
         (Transform::new(position, heading % TAU), velocity)
     }
@@ -869,7 +1072,11 @@ impl SandboxBackend {
         // stall we do not replay the missed ticks.
         self.last_tick = Some(now);
         let elapsed = now.saturating_duration_since(start);
+        let all = std::mem::take(&mut self.anchor_moved);
         for i in 0..self.wanderers.len() {
+            if !all && self.wanderers[i].speed <= 0.0 {
+                continue; // standing still: nothing to report
+            }
             let (transform, velocity) = self.wanderer_state(i, elapsed);
             let id = self.wanderers[i].id;
             self.emit(

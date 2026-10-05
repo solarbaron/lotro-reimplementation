@@ -1376,6 +1376,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-anim"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "tessera-assets",
+ "tessera-havok",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "tessera-assets"
 version = "0.1.0"
 dependencies = [
@@ -1426,9 +1437,11 @@ name = "tessera-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "tessera-anim",
  "tessera-dat",
  "tessera-dattool",
  "tessera-formats",
+ "tessera-havok",
  "tessera-input",
  "tessera-install",
  "tessera-material",
@@ -1442,6 +1455,14 @@ dependencies = [
  "tessera-text",
  "tessera-world",
  "tessera-wstate",
+]
+
+[[package]]
+name = "tessera-havok"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -1484,6 +1505,7 @@ dependencies = [
  "tessera-assets",
  "tessera-dat",
  "tessera-formats",
+ "tessera-props",
  "thiserror",
  "tracing",
 ]
@@ -1564,6 +1586,7 @@ dependencies = [
  "tessera-assets",
  "tessera-dat",
  "tessera-formats",
+ "tessera-havok",
  "tessera-props",
  "tessera-text",
  "tessera-wstate",

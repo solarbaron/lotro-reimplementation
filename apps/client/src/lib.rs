@@ -7,10 +7,12 @@
 //! - [`runtime`]: everything except presentation, shared by both.
 //! - [`data`]: background install discovery, archive statistics and the showcase texture.
 //! - [`net`], [`plugins`], [`scene`], [`input`]: subsystem glue.
-//! - [`walker`]: the offline world walker (ROADMAP M3); [`walker_host`] wires it into the
-//!   runtime, [`headless`] runs it offscreen (`--screenshot`, `--fly-path --headless`).
+//! - [`walker`]: the offline world walker (ROADMAP M3, M4 characters); [`walker_host`]
+//!   wires it into the runtime, [`headless`] runs it offscreen (`--screenshot`,
+//!   `--fly-path --headless`, `--duration --headless`); [`avatar`] parses `--avatar`.
 
 pub mod app;
+pub mod avatar;
 pub mod cli;
 pub mod data;
 pub mod headless;

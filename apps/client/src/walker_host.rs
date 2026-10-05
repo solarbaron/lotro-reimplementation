@@ -9,15 +9,18 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use tessera_net::sandbox::world::{SpawnPoint, StaticConfig};
-use tessera_net::sandbox::{MAX_RESOLVE_TIMEOUT, MAX_SPEED, SandboxConfig};
+use tessera_net::sandbox::{CrowdConfig, MAX_RESOLVE_TIMEOUT, MAX_SPEED, SandboxConfig};
 use tessera_net::{RegionId, Transform, Vec3};
 use tessera_render::{OffscreenFormat, Renderer, RgbaImage};
 use tessera_world::coords::MAX_BLOCK;
 use tessera_world::{BundleOptions, LANDBLOCK_SIZE, RingConfig, StreamConfig};
 
+use crate::avatar::AvatarSpec;
 use crate::cli::Args;
 use crate::runtime::{DataStatus, Runtime};
 use crate::walker::boot::WorldBoot;
+use crate::walker::characters::CharacterConfig;
+use crate::walker::characters::catalog::CharacterCatalog;
 use crate::walker::controls::MoveMode;
 use crate::walker::objects::ObjectConfig;
 use crate::walker::source::SourceShared;
@@ -27,6 +30,9 @@ use crate::walker::{FlightPlan, Walker, WalkerConfig};
 /// landblock (126, 140), the block of `coordinates.md` §8.4 B. The centre is at map
 /// `12.0S, 45.6W`; the example's own point `12.3S, 45.6W` is block-local (80, 20) of it.
 pub const DEFAULT_SPAWN: &str = "1,126,140";
+/// Landblocks around the player whose figures (NPCs, weenie placements) the sandbox
+/// serves (Chebyshev radius): 5 × 5 blocks, within the walker's near ring (3).
+pub const FIGURE_RADIUS: u8 = 2;
 
 /// The spawn point the command line asks for.
 ///
@@ -64,7 +70,13 @@ pub fn spawn_point(args: &Args) -> anyhow::Result<SpawnPoint> {
 ///
 /// As [`spawn_point`].
 pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
-    let spawn_point = spawn_point(args)?;
+    let mut spawn_point = spawn_point(args)?;
+    // The walker's `--heading` is the sandbox's too (the crowd stands in front of it).
+    let heading = args
+        .heading
+        .map(tessera_net::model::heading_from_compass_degrees)
+        .unwrap_or(0.0);
+    spawn_point = spawn_point.with_heading(heading);
     let region = match &spawn_point.destination {
         tessera_net::Destination::Location { location, .. }
         | tessera_net::Destination::Ground { location, .. }
@@ -75,9 +87,12 @@ pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
     let fallback = SpawnPoint::parse(DEFAULT_SPAWN).ok();
     let spawn = match fallback.map(|f| f.destination) {
         Some(tessera_net::Destination::Ground { location, .. }) if location.region == region => {
-            Transform::new(Vec3::new(location.x as f32, location.y as f32, 0.0), 0.0)
+            Transform::new(
+                Vec3::new(location.x as f32, location.y as f32, 0.0),
+                heading,
+            )
         }
-        _ => Transform::new(Vec3::new(20_000.0, 20_000.0, 0.0), 0.0),
+        _ => Transform::new(Vec3::new(20_000.0, 20_000.0, 0.0), heading),
     };
     Ok(SandboxConfig {
         region,
@@ -85,11 +100,18 @@ pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
         spawn_point: Some(spawn_point),
         resolve_timeout: MAX_RESOLVE_TIMEOUT.min(Duration::from_secs(300)),
         statics: StaticConfig {
-            radius: 0,
+            radius: FIGURE_RADIUS,
             ..StaticConfig::default()
         },
         wanderers: 0,
         max_player_speed: MAX_SPEED,
+        // Appearances come from the data (`Runtime::start_walker_session`).
+        crowd: CrowdConfig {
+            count: args.crowd,
+            spacing: args.crowd_spacing,
+            ahead: args.crowd_ahead,
+            ..CrowdConfig::default()
+        },
         ..SandboxConfig::default()
     })
 }
@@ -133,13 +155,56 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         interiors: args.interiors,
         keymap: args.keymap.clone(),
         flight,
-        frame_log: args.frame_log.is_some() || args.fly_path.is_some(),
+        frame_log: args.frame_log.is_some() || args.fly_path.is_some() || args.duration.is_some(),
         heading: args
             .heading
             .map(tessera_net::model::heading_from_compass_degrees),
         pitch: args.pitch.to_radians(),
         eye_height: args.eye_height,
+        characters: CharacterConfig {
+            markers: args.markers,
+            anim_distance: args.anim_distance,
+            draw_distance: args.character_distance,
+            ..CharacterConfig::default()
+        },
+        autorun: args.autorun.as_deref().map(|g| g == "walk"),
+        bench: args.duration.map(|secs| crate::walker::BenchPlan {
+            duration: Duration::from_secs(secs),
+            settle_timeout: Duration::from_secs(args.settle_timeout),
+        }),
         ..WalkerConfig::default()
+    }
+}
+
+/// The bundle options of a walker: the content layers of `--content-layers`.
+#[must_use]
+pub fn bundle_options(args: &Args) -> BundleOptions {
+    BundleOptions {
+        active_content_layers: args.content_layers.clone(),
+        ..BundleOptions::default()
+    }
+}
+
+/// The avatar's appearance: `--avatar` resolved against the catalog, else the default
+/// body, else (a catalog without bodies) none.
+#[must_use]
+pub fn avatar_appearance(
+    spec: &AvatarSpec,
+    catalog: &CharacterCatalog,
+) -> Option<tessera_net::Appearance> {
+    match catalog.appearance(spec) {
+        Ok(a) => Some(a),
+        Err(e) => {
+            tracing::warn!("--avatar {spec}: {e}; using the default body");
+            catalog.appearance(&AvatarSpec::default()).ok().or_else(|| {
+                catalog.bodies.first().map(|b| {
+                    tessera_net::Appearance::new(tessera_net::Body::Character {
+                        species: b.species,
+                        sex: b.sex,
+                    })
+                })
+            })
+        }
     }
 }
 
@@ -149,6 +214,8 @@ pub struct WalkerHost {
     /// State shared with the sandbox source.
     pub shared: Arc<Mutex<SourceShared>>,
     config: WalkerConfig,
+    avatar: AvatarSpec,
+    bundles: BundleOptions,
     boot: Option<WorldBoot>,
     started: bool,
     /// The walker, once the world is loaded.
@@ -164,6 +231,8 @@ impl WalkerHost {
         Self {
             shared,
             config: walker_config(args),
+            avatar: args.avatar.clone().unwrap_or_default(),
+            bundles: bundle_options(args),
             boot: None,
             started: false,
             walker: None,
@@ -173,7 +242,7 @@ impl WalkerHost {
 
     /// Starts the world start-up when the archives are open and creates the walker when
     /// it finishes. Never blocks.
-    pub fn poll(&mut self, rt: &Runtime, renderer: &mut Renderer<'_>) {
+    pub fn poll(&mut self, rt: &mut Runtime, renderer: &mut Renderer<'_>) {
         if self.walker.is_some() || self.failed.is_some() {
             return;
         }
@@ -189,7 +258,7 @@ impl WalkerHost {
                         return;
                     };
                     self.started = true;
-                    match WorldBoot::spawn(set, root.clone(), BundleOptions::default()) {
+                    match WorldBoot::spawn(set, root.clone(), self.bundles.clone()) {
                         Ok(b) => self.boot = Some(b),
                         Err(e) => self.failed = Some(format!("world start-up thread: {e}")),
                     }
@@ -201,14 +270,19 @@ impl WalkerHost {
             return;
         };
         self.boot = None;
-        let ctx = match result {
-            Ok(ctx) => ctx,
+        let (ctx, catalog) = match result {
+            Ok(r) => r,
             Err(e) => {
                 tracing::error!("world walker unavailable: {e}");
                 self.failed = Some(e);
                 return;
             }
         };
+        rt.start_walker_session(
+            std::time::Instant::now(),
+            avatar_appearance(&self.avatar, &catalog),
+            catalog.crowd(),
+        );
         let Some(set) = rt.archives.clone() else {
             self.failed = Some("archive set closed".into());
             return;
@@ -218,10 +292,15 @@ impl WalkerHost {
             set,
             ctx,
             Arc::clone(&self.shared),
+            catalog,
             renderer,
         ) {
-            Ok(w) => self.walker = Some(w),
+            Ok(w) => {
+                self.walker = Some(w);
+                rt.capture_walker_events(true);
+            }
             Err(e) => {
+                rt.capture_walker_events(false);
                 tracing::error!("world walker: {e:#}");
                 self.failed = Some(format!("{e:#}"));
             }

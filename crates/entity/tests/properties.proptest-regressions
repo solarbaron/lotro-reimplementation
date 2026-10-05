@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3aa72f9917e5ed3468da338f873f394026c808ccea2e91789283c93663ab7cc3 # shrinks to ops = [Spawn, SpawnStatic(1, true), Spawn, DespawnBlock(1), SpawnStatic(0, true), Spawn]

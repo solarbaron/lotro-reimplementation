@@ -25,13 +25,17 @@ pub enum ViewKind {
     /// 3D mesh and material viewer (meshes, setups, templates, entities, appearances,
     /// objects with geometry, surface records, materials).
     Mesh,
+    /// Character viewer and animation browser (M4): available for every record; a 0x47,
+    /// 0x04 or weenie record becomes the figure, a 0x05 clip plays, an item is previewed.
+    Character,
 }
 
 impl ViewKind {
     /// Every view, in tab order.
-    pub const ALL: [ViewKind; 8] = [
+    pub const ALL: [ViewKind; 9] = [
         ViewKind::Info,
         ViewKind::Mesh,
+        ViewKind::Character,
         ViewKind::Texture,
         ViewKind::Strings,
         ViewKind::Props,
@@ -52,6 +56,7 @@ impl ViewKind {
             Self::Icon => "Icon",
             Self::Record => "Record",
             Self::Mesh => "3D",
+            Self::Character => "Character",
         }
     }
 
@@ -67,6 +72,7 @@ impl ViewKind {
             Self::Icon => matches!(prefix, 0x41 | 0x70..=0x7F),
             Self::Record => tessera_formats::AnyRecord::is_decodable(did),
             Self::Mesh => crate::scene::SceneSource::of(did).is_some(),
+            Self::Character => true,
         }
     }
 
@@ -78,6 +84,7 @@ impl ViewKind {
             0x25 => Self::Strings,
             0x70..=0x7F => Self::Props,
             0x06 | 0x04 | 0x1F | 0x47 | 0x20 | 0x31 | 0x30 => Self::Mesh,
+            0x05 => Self::Character,
             _ if Self::Record.applies_to(did) => Self::Record,
             _ => Self::Hex,
         }
@@ -123,6 +130,11 @@ pub fn parse_did_arg(s: &str) -> Result<u32, String> {
         )),
     }
 }
+
+/// A list given as one option value (clap would otherwise treat a `Vec` as repeated
+/// values).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listed<T>(pub Vec<T>);
 
 /// GUI asset browser for the archives of an install (read-only).
 #[derive(Debug, Clone, Parser)]
@@ -224,10 +236,113 @@ pub struct Args {
     #[arg(long, value_name = "YAW,PITCH", value_parser = parse_angles_arg)]
     pub mesh_angle: Option<[f32; 2]>,
 
+    /// Character view: the figure, `SPECIES,SEX` (`human,m`, labels from the race table)
+    /// or a 0x47 / 0x70–0x76 / 0x04 DID. Implies `--view character`.
+    #[arg(long, value_name = "FIGURE", value_parser = crate::charspec::parse_figure)]
+    pub character: Option<crate::charspec::FigureArg>,
+
+    /// Character view: wear or hold an item, `DID[@dye=CODE][@dye2=CODE][@sheathed]
+    /// [@slot=primary|secondary|ranged|BITS]` (repeatable, at most 32 times).
+    #[arg(long, value_name = "ITEM", value_parser = crate::charspec::parse_item)]
+    pub wear: Vec<crate::charspec::ItemArg>,
+
+    /// Character view: the clip, `idle`, `walk`, `run` (as the script tables select),
+    /// `none` (reference pose) or a 0x05 DID.
+    #[arg(long, value_name = "CLIP", value_parser = crate::charspec::parse_clip)]
+    pub clip: Option<crate::charspec::ClipArg>,
+
+    /// Character view: pause at this clip play time in seconds (screenshots default to 0).
+    #[arg(long, value_name = "SECS", value_parser = crate::charspec::parse_time)]
+    pub time: Option<f32>,
+
+    /// Character view: bone-slider bytes as hex pairs, one per visible slider.
+    #[arg(long, value_name = "HEX", value_parser = |s: &str| crate::charspec::parse_sliders(s).map(Listed))]
+    pub sliders: Option<Listed<u8>>,
+
+    /// Character view: draw the bone overlay.
+    #[arg(long)]
+    pub bones: bool,
+
+    /// Character view: draw the root-motion trails.
+    #[arg(long)]
+    pub trail: bool,
+
+    /// Render the character view headless into a contact sheet (PNG) and exit, without a
+    /// window: one tile per camera angle (rows, `--angles`) and play time (columns,
+    /// `--times`). Uses `--character`, `--wear`, `--clip`, `--sliders`, `--bones`,
+    /// `--trail` and `--mesh-wireframe`.
+    #[arg(long, value_name = "PNG")]
+    pub sheet: Option<PathBuf>,
+
+    /// Sheet: play times in seconds, comma-separated (columns).
+    #[arg(long, value_name = "T,T,…", value_parser = |s: &str| crate::charspec::parse_times(s).map(Listed))]
+    pub times: Option<Listed<f32>>,
+
+    /// Sheet: camera angles `YAW,PITCH;YAW,PITCH…` in degrees (rows).
+    #[arg(long, value_name = "Y,P;Y,P…", value_parser = |s: &str| crate::charspec::parse_angle_list(s).map(Listed))]
+    pub angles: Option<Listed<[f32; 2]>>,
+
+    /// Sheet: frame the sphere `HEIGHT,RADIUS` (metres, on the figure's vertical axis)
+    /// instead of the whole figure, e.g. `1.65,0.3` for a head.
+    #[arg(long, value_name = "Z,R", value_parser = crate::charspec::parse_focus)]
+    pub focus: Option<[f32; 2]>,
+
+    /// Sheet: tile size `WIDTHxHEIGHT` in pixels.
+    #[arg(long, value_name = "WxH", value_parser = crate::charspec::parse_tile)]
+    pub tile: Option<[u32; 2]>,
+
+    /// Hide the archive tree, the DID list and the character view's inspector (character
+    /// view screenshots get the window's width; the 3D view keeps its inspector).
+    #[arg(long)]
+    pub hide_panels: bool,
+
     /// Font file (.ttf/.otf) for the UI. Default: TESSERA_EXPLORER_FONT, then the
     /// system's sans-serif font.
     #[arg(long, value_name = "FILE")]
     pub font: Option<PathBuf>,
+}
+
+impl Args {
+    /// Parses `words` (the program name first) like [`clap::Parser::try_parse_from`], then
+    /// applies the checks clap cannot express: at most
+    /// [`crate::charspec::MAX_ITEMS`] `--wear` options.
+    ///
+    /// # Errors
+    ///
+    /// A clap error (printed and exited on by `main`).
+    pub fn try_parse_checked<I, T>(words: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        use clap::CommandFactory;
+        let args = Self::try_parse_from(words)?;
+        if args.wear.len() > crate::charspec::MAX_ITEMS {
+            return Err(Self::command().error(
+                clap::error::ErrorKind::TooManyValues,
+                format!(
+                    "--wear is given {} times; at most {} items are accepted",
+                    args.wear.len(),
+                    crate::charspec::MAX_ITEMS
+                ),
+            ));
+        }
+        Ok(args)
+    }
+
+    /// The character-view options of the command line.
+    #[must_use]
+    pub fn character_args(&self) -> crate::charspec::CharacterArgs {
+        crate::charspec::CharacterArgs {
+            figure: self.character.clone(),
+            items: self.wear.clone(),
+            clip: self.clip,
+            time: self.time,
+            sliders: self.sliders.clone().map(|l| l.0),
+            bones: self.bones,
+            trail: self.trail,
+        }
+    }
 }
 
 /// Parses `a,b` as two unsigned integers.
@@ -302,6 +417,8 @@ mod tests {
         for v in ViewKind::ALL {
             assert!(!v.title().is_empty());
         }
+        assert!(ViewKind::Character.applies_to(0x2800_0000));
+        assert_eq!(ViewKind::default_for(0x0500_0001), ViewKind::Character);
     }
 
     #[test]
@@ -339,6 +456,62 @@ mod tests {
         assert_eq!(a.mesh_shading, Some(ShadingArg::Uv));
         assert!(a.mesh_wireframe && !a.mesh_normals);
         assert_eq!((a.mesh_lod, a.dye), (Some(2), Some([0x33, 0x66, 0x99])));
+    }
+
+    #[test]
+    fn character_args_parse() {
+        let a = Args::parse_from([
+            "x",
+            "--character",
+            "human,f",
+            "--wear",
+            "0x790006C3@dye=0.5",
+            "--wear",
+            "0x7900066F@sheathed",
+            "--clip",
+            "walk",
+            "--time",
+            "0.25",
+            "--bones",
+        ]);
+        let c = a.character_args();
+        assert!(c.any());
+        assert_eq!(c.items.len(), 2);
+        assert_eq!(c.time, Some(0.25));
+        assert!(c.bones && !c.trail);
+        assert!(Args::try_parse_from(["x", "--character", "nothing"]).is_err());
+        assert!(Args::try_parse_from(["x", "--wear", "0x06000001"]).is_err());
+        assert!(Args::try_parse_from(["x", "--clip", "jump"]).is_err());
+        assert!(Args::try_parse_from(["x", "--time", "-2"]).is_err());
+        assert!(!Args::parse_from(["x"]).character_args().any());
+        let s = Args::parse_from([
+            "x",
+            "--sheet",
+            "/tmp/s.png",
+            "--times",
+            "0,0.5",
+            "--angles",
+            "160,10;90,5",
+            "--tile",
+            "320x400",
+        ]);
+        assert_eq!(s.times, Some(Listed(vec![0.0, 0.5])));
+        assert_eq!(s.angles.map(|a| a.0.len()), Some(2));
+        assert_eq!(s.tile, Some([320, 400]));
+        let s = Args::parse_from(["x", "--sliders", "80ff"]);
+        assert_eq!(s.character_args().sliders, Some(vec![0x80, 0xFF]));
+        assert!(Args::try_parse_from(["x", "--tile", "1x1"]).is_err());
+        // At most MAX_ITEMS --wear options (regression: clap took any number).
+        let mut words = vec!["x".to_owned()];
+        for _ in 0..crate::charspec::MAX_ITEMS {
+            words.extend(["--wear".to_owned(), "0x790006C3".to_owned()]);
+        }
+        assert!(Args::try_parse_checked(words.clone()).is_ok());
+        words.extend(["--wear".to_owned(), "0x790006C3".to_owned()]);
+        let e = Args::try_parse_checked(words).unwrap_err();
+        assert_eq!(e.kind(), clap::error::ErrorKind::TooManyValues);
+        // 0x77/0x78 records are no items.
+        assert!(Args::try_parse_from(["x", "--wear", "0x7800A9F1"]).is_err());
     }
 
     #[test]

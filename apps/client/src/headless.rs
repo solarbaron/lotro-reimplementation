@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The world walker without a window: `--screenshot <png>` (render the spawn point once
-//! everything around it has loaded) and `--fly-path ... --headless` (a scripted flight
-//! with a frame log). Frames are rendered offscreen at `--size`, paced at 60 per second,
-//! and each frame waits for the GPU so frame times include GPU work.
+//! everything around it has loaded), `--fly-path ... --headless` (a scripted flight with a
+//! frame log) and `--duration SECS --headless` (a timing run once the spawn has settled).
+//! Frames are rendered offscreen at `--size`, paced at 60 per second (unless
+//! `--unpaced`), and each frame waits for the GPU so frame times include GPU work.
 
 use std::time::{Duration, Instant};
 
@@ -31,6 +32,29 @@ pub struct HeadlessReport {
     pub summary: Option<Summary>,
     /// Where the viewer ended.
     pub description: Option<String>,
+    /// The entities placed by the landblocks (NPCs, weenie placements) when the run
+    /// ended: sandbox tag, region-global position and heading (radians, 0 = east,
+    /// counter-clockwise), as the character layer holds them.
+    pub placed: Vec<PlacedReport>,
+    /// Character counters at the end.
+    pub characters: crate::walker::characters::CharacterStats,
+}
+
+/// One placed figure of a [`HeadlessReport`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlacedReport {
+    /// The sandbox tag (landblock-data DID and figure index).
+    pub tag: u64,
+    /// Region.
+    pub region: u8,
+    /// Region-global position.
+    pub position: [f64; 3],
+    /// Heading.
+    pub heading: f32,
+    /// The character layer drew the figure at the end of the run (figure on the GPU,
+    /// posed, within the character distance; `walker.md` §10.2), or hides it as a marker.
+    /// `false` while it is still a static instance: building, failed or too far.
+    pub figure_shown: bool,
 }
 
 /// Runs the walker offscreen (module docs).
@@ -39,8 +63,8 @@ pub struct HeadlessReport {
 ///
 /// No install, no GPU, the walker could not start, or the output could not be written.
 pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
-    if args.screenshot.is_none() && args.fly_path.is_none() {
-        bail!("a headless walker run needs --screenshot or --fly-path to end");
+    if args.screenshot.is_none() && args.fly_path.is_none() && args.duration.is_none() {
+        bail!("a headless walker run needs --screenshot, --fly-path or --duration to end");
     }
     // Fail before any work when an output would land in the install (checked again with
     // the discovered install before writing).
@@ -73,7 +97,8 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
     let deadline = deadline_after(
         started,
         Duration::from_secs(args.settle_timeout.saturating_add(120))
-            .saturating_add(Duration::from_secs_f64(flight_secs.max(0.0))),
+            .saturating_add(Duration::from_secs_f64(flight_secs.max(0.0)))
+            .saturating_add(Duration::from_secs(args.duration.unwrap_or(0))),
     );
     let mut report = HeadlessReport::default();
     let mut last = Instant::now();
@@ -85,7 +110,7 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
         last = now;
         let _ = rt.poll_loader();
         rt.tick(now);
-        host.poll(&rt, &mut renderer);
+        host.poll(&mut rt, &mut renderer);
         if let Some(reason) = &host.failed {
             break Err(anyhow::anyhow!("world walker failed: {reason}"));
         }
@@ -127,6 +152,12 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
                 report.summary = walker.frame_log().map(|l| l.summary());
                 break Ok(());
             }
+        } else if args.duration.is_some() {
+            if ev.duration_done {
+                report.summary = walker.frame_log().map(|l| l.summary());
+                report.settled = walker.settled();
+                break Ok(());
+            }
         } else if args.screenshot.is_some() {
             settled_frames = if walker.settled() {
                 settled_frames + 1
@@ -151,7 +182,7 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             break Ok(());
         }
         let spent = now.elapsed();
-        if spent < FRAME {
+        if spent < FRAME && !args.unpaced {
             std::thread::sleep(FRAME - spent);
         }
     };
@@ -175,6 +206,21 @@ fn finish(
     // the first error is returned.
     let mut first_error: Option<anyhow::Error> = result.err();
     report.description = walker.describe();
+    let chars = walker.characters();
+    report.characters = chars.stats();
+    report.placed = chars
+        .placed()
+        .filter_map(|(id, tag)| {
+            let (p, heading) = chars.entity_pose(id)?;
+            Some(PlacedReport {
+                tag,
+                region: p.region,
+                position: [p.x, p.y, p.z],
+                heading,
+                figure_shown: chars.shows_figure(tag),
+            })
+        })
+        .collect();
     if let Some(d) = &report.description {
         tracing::info!("viewer at: {d}");
     }

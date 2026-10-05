@@ -200,6 +200,40 @@ impl<F: Fn(u32) -> Option<PropertyType>> PropertySchema for F {
     }
 }
 
+/// Name → PID lookup, for code that finds properties by their dictionary names
+/// (`property-system.md` §2; names are identifiers stored in the data).
+///
+/// [`PropertyDictionary`] implements it; so do maps from names to PIDs and closures
+/// `Fn(&str) -> Option<u32>` (for tests and fuzzing).
+pub trait PropertyNames {
+    /// The PID named `name`, if defined.
+    fn pid_of(&self, name: &str) -> Option<u32>;
+}
+
+impl PropertyNames for PropertyDictionary {
+    fn pid_of(&self, name: &str) -> Option<u32> {
+        self.pid(name)
+    }
+}
+
+impl<S: std::hash::BuildHasher> PropertyNames for HashMap<String, u32, S> {
+    fn pid_of(&self, name: &str) -> Option<u32> {
+        self.get(name).copied()
+    }
+}
+
+impl PropertyNames for std::collections::BTreeMap<String, u32> {
+    fn pid_of(&self, name: &str) -> Option<u32> {
+        self.get(name).copied()
+    }
+}
+
+impl<F: Fn(&str) -> Option<u32>> PropertyNames for F {
+    fn pid_of(&self, name: &str) -> Option<u32> {
+        self(name)
+    }
+}
+
 /// A schema that defines no PID. Scalars decode with it; a non-empty struct or array
 /// fails with [`FormatError::UnknownProperty`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -624,6 +658,75 @@ impl PropertyValue {
         }
     }
 
+    /// The value as a number, for comparisons: integers, enum keys, bitfields, PIDs, DIDs,
+    /// string tokens, booleans (0/1), tri-states, floats and timestamps. `None` for strings,
+    /// vectors, positions, colours, StringInfo, structs, arrays and wide bitfields.
+    #[must_use]
+    pub fn as_f64(&self) -> Option<f64> {
+        Some(match self {
+            Self::StringToken(v) | Self::Enum(v) | Self::PropertyId(v) | Self::Bitfield32(v) => {
+                f64::from(*v)
+            }
+            Self::DidRef(d) => f64::from(d.0),
+            Self::Int(v) => f64::from(*v),
+            #[allow(clippy::cast_precision_loss)]
+            Self::Int64(v) => *v as f64,
+            #[allow(clippy::cast_precision_loss)]
+            Self::Bitfield64(v) | Self::InstanceId(v) => *v as f64,
+            Self::Float(v) => f64::from(*v),
+            Self::Timestamp(v) => *v,
+            Self::Bool(b) => f64::from(u8::from(*b)),
+            Self::TriState(v) => f64::from(*v),
+            _ => return None,
+        })
+    }
+
+    /// The value as an integer bit pattern, for bit tests: unsigned integers, enum keys,
+    /// bitfields (the first 64 bits of a type-22 bitfield), PIDs, DIDs and booleans; signed
+    /// integers as their two's-complement bits. `None` for floats and non-scalar values.
+    #[must_use]
+    pub fn as_bits(&self) -> Option<u64> {
+        Some(match self {
+            Self::StringToken(v) | Self::Enum(v) | Self::PropertyId(v) | Self::Bitfield32(v) => {
+                u64::from(*v)
+            }
+            Self::DidRef(d) => u64::from(d.0),
+            #[allow(clippy::cast_sign_loss)]
+            Self::Int(v) => u64::from(*v as u32),
+            #[allow(clippy::cast_sign_loss)]
+            Self::Int64(v) => *v as u64,
+            Self::Bitfield64(v) | Self::InstanceId(v) => *v,
+            Self::Bool(b) => u64::from(*b),
+            Self::TriState(v) => u64::from(*v),
+            Self::BitfieldAny(b) => {
+                let mut out = [0u8; 8];
+                for (o, i) in out.iter_mut().zip(&b.bytes) {
+                    *o = *i;
+                }
+                u64::from_le_bytes(out)
+            }
+            _ => return None,
+        })
+    }
+
+    /// The DID, if this is a DID reference.
+    #[must_use]
+    pub fn as_did(&self) -> Option<Did> {
+        match self {
+            Self::DidRef(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    /// The float, if this is a float value.
+    #[must_use]
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            Self::Float(v) => Some(*v),
+            _ => None,
+        }
+    }
+
     /// Nested entries of a struct (fields) or array (elements); empty for scalars.
     #[must_use]
     pub fn children(&self) -> &[PropertyEntry] {
@@ -678,7 +781,7 @@ impl<'s, S: PropertySchema + ?Sized> ValueDecoder<'s, S> {
         Ok(out)
     }
 
-    fn entry(
+    pub(crate) fn entry(
         &mut self,
         r: &mut Reader<'_>,
         echo: bool,
@@ -822,7 +925,7 @@ fn read_floats(r: &mut Reader<'_>, n: u32) -> Result<Vec<f32>> {
     Ok(v)
 }
 
-fn read_waveform(r: &mut Reader<'_>) -> Result<Waveform> {
+pub(crate) fn read_waveform(r: &mut Reader<'_>) -> Result<Waveform> {
     let subtype = r.u32()?;
     let (values, extra) = match subtype {
         0 => (Vec::new(), None),

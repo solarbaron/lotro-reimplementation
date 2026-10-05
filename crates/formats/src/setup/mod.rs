@@ -10,8 +10,10 @@
 //!   template link) decodes without a schema; the full record embeds a property set and
 //!   needs the property dictionary.
 //! - [`VisualTemplate`]: scale-like values, an optional appearance and the setup link.
-//! - [`Setup`]: Havok tagfile (opaque here), attachment frames, collision volumes, physics
-//!   bounds and the part list.
+//! - [`Setup`]: Havok tagfile (opaque here; decoded by `tessera-havok`), the `attach_map`
+//!   (`BoneType` → bone, [`Setup::bone_for`]), holding locations (frame list A,
+//!   [`Setup::holding_location`]), UI-viewport frames (list C), collision volumes, physics
+//!   bounds and the part list (a character setup's default body, one part per slot).
 //! - [`resolve_setup_did`] / [`resolve_setup`]: follow the chain through a caller-supplied
 //!   fetch function, with a hop limit and cycle detection, to the setup's DID (without
 //!   reading the setup) or to the decoded setup. They never touch an archive themselves.
@@ -25,7 +27,7 @@
 //! Parts of a static setup are drawn in the setup's own frame: the part list carries no
 //! transforms (`setup.md` §7).
 //!
-//! Spec: `docs/specs/setup.md` §2–§7, §9–§10. Prefix 0x01 records are stand-alone collision
+//! Spec: `docs/specs/setup.md` §2–§7, §9–§10, part 2 §11–§14. Prefix 0x01 records are stand-alone collision
 //! geometry, not setups (§2.2), and are not decoded here.
 
 mod entity;
@@ -38,8 +40,8 @@ pub use entity::{
     TemplateLink,
 };
 pub use record::{
-    BoneFrame, CollisionBox, CollisionCapsule, CollisionSphere, NamedFrame, PhysicsBounds,
-    Placement, Setup, TAGFILE_MAGIC,
+    Anchor, BoneAttachment, BoneFrame, CollisionBox, CollisionCapsule, CollisionSphere,
+    HoldingLocation, NamedFrame, PhysicsBounds, Placement, Setup, TAGFILE_MAGIC,
 };
 pub use resolve::{MAX_CHAIN_HOPS, ResolveError, SetupChain, resolve_setup, resolve_setup_did};
 pub use template::{

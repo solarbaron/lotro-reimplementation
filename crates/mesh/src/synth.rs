@@ -297,10 +297,12 @@ fn submesh(format: VertexFormat, v: u32, seed: u32) -> (Submesh, IndexBuffer) {
         }),
         positions,
     };
-    let nonzero = streams
+    // The influence list the vertex data implies (`mesh.md` §6.2).
+    let influence_list = streams
         .skin
         .as_ref()
-        .map_or(0, |s| s.weights.iter().filter(|w| **w != 0.0).count());
+        .map(Skin::influence_list)
+        .unwrap_or_default();
     let stored_aabb = Aabb::from_points(&streams.positions).unwrap_or(Aabb {
         min: [0.0; 3],
         max: [0.0; 3],
@@ -321,7 +323,7 @@ fn submesh(format: VertexFormat, v: u32, seed: u32) -> (Submesh, IndexBuffer) {
             vertex_count: v,
             streams,
             stored_aabb,
-            influence_list: (0..nonzero as u32).map(|i| i % 7).collect(),
+            influence_list,
         },
         IndexBuffer { indices },
     )

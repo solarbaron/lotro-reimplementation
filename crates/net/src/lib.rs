@@ -9,7 +9,9 @@
 //!   any wire format.
 //! - [`sandbox`]: an in-process fake world for offline development. With a
 //!   [`sandbox::WorldSource`] supplied by the client it spawns the player at
-//!   a landblock or named place and serves the static objects around them.
+//!   a landblock or named place and serves the static objects and placed
+//!   figures (NPCs) around them; it can give the player an appearance and
+//!   simulate wanderers and a crowd of animated characters.
 //! - [`transport`]: a generic reliable-datagram transport of our own design
 //!   (sequence numbers, acks, RTO retransmission, fragmentation) over a
 //!   pluggable [`transport::Datagram`]. Like the session it is poll-driven on
@@ -58,7 +60,8 @@ pub mod transport;
 
 pub use error::NetError;
 pub use model::{
-    Anchor, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason, EntityId,
-    EntityKind, Landblock, Location, LocationCause, Placement, RegionId, Rotation, Transform, Vec3,
+    Anchor, Appearance, Body, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason,
+    EntityId, EntityKind, Equipped, Landblock, Location, LocationCause, Placement, RegionId,
+    Rotation, Transform, Vec3,
 };
 pub use session::{Backend, Command, Event, Session, SessionState};

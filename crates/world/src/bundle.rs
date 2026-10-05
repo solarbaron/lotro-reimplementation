@@ -11,12 +11,19 @@
 //! - the landblock properties (minimap tile and light maps; §6);
 //! - the static entities as [`PlacedEntity`] values with their objects resolved to setups
 //!   and part meshes and the M3 draw rule applied (`entity-descriptor.md` §9);
+//! - the **figures** among them ([`PlacedFigure`]): weenie placements (type 6), Physics
+//!   entities whose instance property set (the landblock weenie list, `appearance.md`
+//!   §7.2) makes them NPC-like figures, and Physics entities on an animated rig of
+//!   [`BundleOptions::min_rig_bones`] bones or more, each with its instance set. Only the figures'
+//!   instance sets are kept (charged to [`LandblockBundle::heap_bytes`]); the rest of the
+//!   weenie list is dropped unless [`BundleOptions::keep_weenies`] (`walker.md` §10);
 //! - the area name, when an [`AreaNameSource`](crate::AreaNameSource) is attached.
 //!
 //! Only the landblock data is required: a failure in any other record is recorded in
 //! [`LandblockBundle::problems`] and the bundle is still delivered, so terrain shows even
 //! when, say, an info record does not decode.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tessera_assets::{AssetKey, Decoder, JobContext};
@@ -24,8 +31,8 @@ use tessera_formats::landblock::{
     FailureCategory, InstanceId, MinimapTile, Placement, StaticEntityType,
 };
 use tessera_formats::{
-    BlockMap, Did, FormatError, LandblockData, LandblockInfo, LandblockProperties, PropertyValue,
-    Record,
+    BlockMap, Did, FormatError, LandblockData, LandblockInfo, LandblockProperties, PropertySet,
+    PropertyValue, Record,
 };
 
 use crate::areas::AreaName;
@@ -48,8 +55,19 @@ pub struct BundleOptions {
     /// Keep the info record's links (`landblock.md` §4.6). Default false: an offline
     /// walker ignores them.
     pub keep_links: bool,
-    /// Keep the info record's weenies (§4.8). Default false.
+    /// Keep the info record's weenies (§4.8). Default false. The instance property sets
+    /// of figures are kept either way ([`BundleOptions::keep_figures`]).
     pub keep_weenies: bool,
+    /// Find the figures of each landblock ([`PlacedFigure`]) and keep their instance
+    /// property sets. Default true.
+    pub keep_figures: bool,
+    /// Most figures kept per landblock (the rest are left as plain entities and counted
+    /// in [`LandblockBundle::figures_dropped`]). Default 4096.
+    pub max_figures_per_block: usize,
+    /// Smallest skeleton (bones) that makes a drawn Physics entity a [`FigureKind::Rig`]
+    /// figure; 0 turns rig figures off. Default 30 (`skeleton-anim.md` §2.4: every setup
+    /// of 30 bones or more is a skinned character or creature rig).
+    pub min_rig_bones: u32,
     /// Resolve entity objects to setups and parts. Default true.
     pub resolve_objects: bool,
     /// Resolve the area name through the attached area-name source. Default true.
@@ -64,6 +82,9 @@ impl Default for BundleOptions {
             active_content_layers: vec![1],
             keep_links: false,
             keep_weenies: false,
+            keep_figures: true,
+            max_figures_per_block: 4096,
+            min_rig_bones: 30,
             resolve_objects: true,
             resolve_area_names: true,
             object_cache_entries: DEFAULT_OBJECT_CACHE_ENTRIES,
@@ -170,6 +191,46 @@ pub struct PlacedEntity {
     /// The M3 draw rule (§9): type Physics, content layers pass, not suppressed (entity
     /// values win over the object's), and the object resolved to geometry.
     pub draw: bool,
+    /// Index into [`LandblockBundle::figures`] when the entity is a figure. A figure that
+    /// also passes the draw rule (an NPC-like Physics entity) is meant to be drawn as a
+    /// character, not as static geometry.
+    pub figure: Option<u32>,
+}
+
+/// Why a placed entity is a figure (Tessera's rule, `walker.md` §10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FigureKind {
+    /// A Physics entity that passes the draw rule and whose instance property set carries
+    /// `NPC_StartingIdleAnimation`, `Appearance_RandomAppearanceType` or
+    /// `NPC_Cosmetic_Inventory_Item1` (`appearance.md` §7.2): a static NPC-like figure.
+    Npc,
+    /// A Weenie entity (type 6, `entity-descriptor.md` §4.3) whose content layers pass:
+    /// a game-object placement (housing hooks, distant-battle units, a door, a monster;
+    /// `appearance.md` §7.1).
+    Weenie,
+    /// A Physics entity that passes the draw rule and whose setup has a skeleton of at
+    /// least [`BundleOptions::min_rig_bones`] bones, without NPC properties: a character
+    /// or creature rig placed as scenery (soldiers in formation, statues of animated rigs).
+    Rig,
+}
+
+/// A figure placed by the landblock: an entity of [`LandblockBundle::entities`] that the
+/// sandbox serves as a created entity rather than the walker drawing it as scenery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedFigure {
+    /// Index into [`LandblockBundle::entities`].
+    pub entity: u32,
+    /// Why it is a figure.
+    pub kind: FigureKind,
+    /// The instance property set of the entity's IID in the landblock weenie list
+    /// (`appearance.md` §7.2), if there is one.
+    pub instance: Option<Arc<PropertySet>>,
+    /// `NPC_StartingIdleAnimation` of the instance set (an idle animation enum key).
+    pub idle: Option<u32>,
+    /// `Appearance_RandomAppearanceType` of the instance set (enum key).
+    pub random_appearance: Option<u32>,
+    /// `WeenieType` of a weenie's game object (enum key), from the resolved object.
+    pub weenie_type: Option<u32>,
 }
 
 /// Everything about one landblock (module docs).
@@ -199,6 +260,10 @@ pub struct LandblockBundle {
     pub entities: Vec<PlacedEntity>,
     /// Static entities without a placement (skipped; §4.4).
     pub unplaced_entities: u32,
+    /// Figures among the entities, in entity order.
+    pub figures: Vec<PlacedFigure>,
+    /// Figures beyond [`BundleOptions::max_figures_per_block`], left as plain entities.
+    pub figures_dropped: u32,
     /// The area's names.
     pub area: Option<Arc<AreaName>>,
     /// Non-fatal problems.
@@ -217,6 +282,20 @@ impl LandblockBundle {
     /// Entities that pass the draw rule.
     pub fn drawable(&self) -> impl Iterator<Item = &PlacedEntity> {
         self.entities.iter().filter(|e| e.draw)
+    }
+
+    /// Entities that pass the draw rule and are not figures: the static scenery of a
+    /// walker that draws figures as characters.
+    pub fn scenery(&self) -> impl Iterator<Item = &PlacedEntity> {
+        self.entities
+            .iter()
+            .filter(|e| e.draw && e.figure.is_none())
+    }
+
+    /// The entity of a figure.
+    #[must_use]
+    pub fn figure_entity(&self, figure: &PlacedFigure) -> Option<&PlacedEntity> {
+        self.entities.get(figure.entity as usize)
     }
 
     /// The minimap image for the active content layers (§6.3), if the block has a tile.
@@ -324,13 +403,17 @@ pub fn build_bundle(
         }
         _ => None,
     };
+    // The weenie list is dropped after the figures have taken their instance sets.
+    let mut weenie_list = Vec::new();
     if let Some(i) = info.as_mut() {
         if !ctx.options().keep_links {
             i.links = Vec::new();
         }
-        if !ctx.options().keep_weenies {
-            i.weenies.items = Vec::new();
-        }
+        weenie_list = if ctx.options().keep_weenies {
+            i.weenies.items.clone()
+        } else {
+            std::mem::take(&mut i.weenies.items)
+        };
     }
     if cancelled() {
         return Err(WorldError::Cancelled);
@@ -400,9 +483,83 @@ pub fn build_bundle(
                 own_draw,
                 visual,
                 draw,
+                figure: None,
             });
         }
     }
+    if cancelled() {
+        return Err(WorldError::Cancelled);
+    }
+
+    // Figures (walker.md §10).
+    let mut figures = Vec::new();
+    let mut figures_dropped = 0u32;
+    let mut instance_bytes = 0usize;
+    if ctx.options().keep_figures {
+        let wp = ctx.pids();
+        let by_iid: HashMap<u64, usize> = weenie_list
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.iid.0, i))
+            .collect();
+        let active = &ctx.options().active_content_layers;
+        for (n, e) in entities.iter_mut().enumerate() {
+            let instance = e
+                .iid
+                .and_then(|iid| by_iid.get(&iid.0))
+                .and_then(|&i| weenie_list.get(i))
+                .map(|w| &w.properties);
+            let get = |pid: Option<u32>| {
+                pid.and_then(|p| instance.and_then(|s| s.get(p)))
+                    .and_then(value_as_u32)
+            };
+            let idle = get(wp.npc_starting_idle);
+            let random_appearance = get(wp.random_appearance);
+            let has_prop = wp
+                .npc_cosmetic_item1
+                .is_some_and(|p| instance.is_some_and(|s| s.get(p).is_some()));
+            let kind = match e.kind {
+                Some(StaticEntityType::Weenie)
+                    if e.object.is_some() && layers_pass(e.content_layers.as_deref(), active) =>
+                {
+                    Some(FigureKind::Weenie)
+                }
+                Some(StaticEntityType::Physics)
+                    if e.draw && (idle.is_some() || random_appearance.is_some() || has_prop) =>
+                {
+                    Some(FigureKind::Npc)
+                }
+                Some(StaticEntityType::Physics)
+                    if e.draw
+                        && ctx.options().min_rig_bones > 0
+                        && e.visual
+                            .as_ref()
+                            .and_then(|v| v.bones)
+                            .is_some_and(|b| b >= ctx.options().min_rig_bones) =>
+                {
+                    Some(FigureKind::Rig)
+                }
+                _ => None,
+            };
+            let Some(kind) = kind else { continue };
+            if figures.len() >= ctx.options().max_figures_per_block {
+                figures_dropped += 1;
+                continue;
+            }
+            let instance = instance.map(|s| Arc::new(s.clone()));
+            instance_bytes += instance.as_ref().map_or(0, |s| 64 + 48 * s.value_count());
+            e.figure = u32::try_from(figures.len()).ok();
+            figures.push(PlacedFigure {
+                entity: u32::try_from(n).unwrap_or(u32::MAX),
+                kind,
+                instance,
+                idle,
+                random_appearance,
+                weenie_type: e.visual.as_ref().and_then(|v| v.weenie_type),
+            });
+        }
+    }
+    drop(weenie_list);
 
     // Area name (reads records; we are on a worker).
     let area = match (block_props.area, ctx.area_names()) {
@@ -425,6 +582,8 @@ pub fn build_bundle(
         + surface_bytes
         + DECODED_PER_STORED * stored.saturating_sub(data_rec.bytes.len())
         + entity_bytes
+        + figures.capacity() * std::mem::size_of::<PlacedFigure>()
+        + instance_bytes
         + 24 * block_props.values.capacity();
     Ok(LandblockBundle {
         key,
@@ -439,6 +598,8 @@ pub fn build_bundle(
         ceiling_light_map,
         entities,
         unplaced_entities,
+        figures,
+        figures_dropped,
         area,
         problems,
         heap_bytes,
@@ -468,15 +629,19 @@ fn draw_rule(
     if kind != Some(StaticEntityType::Physics) {
         return false;
     }
-    // An empty list is treated like no list (landblock.md OPEN noted in the spec).
-    let layers_ok = match layers {
-        None | Some([]) => true,
-        Some(l) => l.iter().any(|x| active.contains(x)),
-    };
     let Some(v) = visual else {
         return false;
     };
-    layers_ok && v.has_geometry() && !own.or(v.draw).suppressed()
+    layers_pass(layers, active) && v.has_geometry() && !own.or(v.draw).suppressed()
+}
+
+/// The content-layer filter (`entity-descriptor.md` §4.5.1): no list, an empty list (a
+/// `landblock.md` OPEN noted in the spec) or a list naming an active layer passes.
+fn layers_pass(layers: Option<&[u32]>, active: &[u32]) -> bool {
+    match layers {
+        None | Some([]) => true,
+        Some(l) => l.iter().any(|x| active.contains(x)),
+    }
 }
 
 /// Resolves a block map against its region's descriptor (§5.4).
@@ -579,6 +744,8 @@ mod tests {
             setup: Some(Did(0x0400_0001)),
             parts: vec![Did(0x0600_0001); parts].into(),
             draw,
+            weenie_type: None,
+            bones: None,
             error: None,
         }
     }

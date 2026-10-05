@@ -243,6 +243,19 @@ pub enum MeshError {
         expected: u64,
     },
 
+    /// A skinned part uses a bone index the skeleton does not have (`setup.md` SI10,
+    /// `skeleton-anim.md` §4.1). Only [`crate::Mesh::skinned_level`] with a bone count
+    /// reports it.
+    #[error("submesh {submesh}: bone index {joint} is not below the skeleton's {bone_count} bones")]
+    JointOutOfRange {
+        /// Submesh index.
+        submesh: u32,
+        /// The largest bone index the submesh uses.
+        joint: u8,
+        /// The skeleton's bone count.
+        bone_count: usize,
+    },
+
     /// Strict decoding found a failed structural invariant (§14).
     #[error("invariant failed: {0}")]
     Invalid(Issue),
@@ -273,9 +286,9 @@ impl MeshError {
         match self {
             Self::Truncated { .. } => FailureCategory::Truncated,
             Self::UnsupportedVertexFormat { .. } => FailureCategory::UnsupportedVertexFormat,
-            Self::IndexOutOfRange { .. } | Self::DrawOutOfRange { .. } => {
-                FailureCategory::IndexOutOfRange
-            }
+            Self::IndexOutOfRange { .. }
+            | Self::DrawOutOfRange { .. }
+            | Self::JointOutOfRange { .. } => FailureCategory::IndexOutOfRange,
             Self::CountMismatch { .. }
             | Self::BadFlagByte { .. }
             | Self::BadPrimitive { .. }

@@ -134,6 +134,8 @@ impl App {
         let size = window.inner_size();
         let walker = self.host.is_some();
         let config = RendererConfig {
+            // No vsync: Immediate where the surface offers it (may tear), else Mailbox, else
+            // Fifo (the renderer resolves the alias against the surface's modes).
             present_mode: if self.args.no_vsync {
                 wgpu::PresentMode::AutoNoVsync
             } else {
@@ -287,7 +289,7 @@ impl App {
                 now,
                 dt,
             );
-            quit = ev.quit;
+            quit = ev.quit || ev.duration_done;
             shot = ev.screenshot;
             flight_done = ev.flight_done;
         } else {

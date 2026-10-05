@@ -37,8 +37,9 @@ pub const APPEARANCE_SECTION_HEADER: [u32; 3] = [33, 2, 1];
 /// Setup-section element type for a DID list (§5.3); the only type supported.
 pub const SETUP_SECTION_DID_LIST: u32 = 9;
 
-/// The appearance section of a visual template (flag 0x100, §5.4). Ignored for static
-/// viewing; its modifiers are part 2 of the spec.
+/// The appearance section of a visual template (flag 0x100, §5.4): a one-record
+/// appearance list (`appearance.md` §7.4 step 2), mostly a dye of the parent template's
+/// geometry. Ignored for static viewing.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TemplateAppearance {
     /// The 0x20 appearance record.
@@ -46,8 +47,30 @@ pub struct TemplateAppearance {
     /// Header of the modifier map. Only the hint is written by
     /// [`VisualTemplate::to_bytes`]; the count is taken from `modifiers`.
     pub modifiers_size: TSize,
-    /// Modifier pairs (key, value) in stored order; key 0x10000034 is the common one.
+    /// (appearance key, modifier) pairs in stored order: each selects the block of the
+    /// record's entry for that key (`ClothingColor` in most sections).
     pub modifiers: Vec<(u32, f32)>,
+}
+
+impl TemplateAppearance {
+    /// The section as appearance-list elements, one per modifier, in stored order.
+    pub fn elements(&self) -> impl Iterator<Item = crate::appearance::AppearanceKeyInfo> + '_ {
+        self.modifiers
+            .iter()
+            .map(|&(key, modifier)| crate::appearance::AppearanceKeyInfo {
+                key,
+                file: self.appearance,
+                modifier,
+                toggle_file: None,
+                toggle_property: None,
+            })
+    }
+
+    /// The modifier for appearance key `key`.
+    #[must_use]
+    pub fn modifier(&self, key: u32) -> Option<f32> {
+        self.modifiers.iter().find(|(k, _)| *k == key).map(|e| e.1)
+    }
 }
 
 /// One element of a setup section (§5.3).
@@ -89,7 +112,9 @@ pub struct VisualTemplate {
     pub did: Did,
     /// Parent template (flag 0x002).
     pub parent: Option<Did>,
-    /// Three floats (flag 0x020); uniform triples, probably a scale (OPEN).
+    /// Three floats (flag 0x020); uniform triples. `appearance.md` §6.1 uses them as a
+    /// uniform model scale (Decision; `setup.md` §5.2 OPEN). See
+    /// [`VisualTemplate::uniform_scale`].
     pub vec3: Option<[f32; 3]>,
     /// One float (flag 0x040), meaning OPEN.
     pub value_a: Option<f32>,
@@ -106,6 +131,14 @@ impl VisualTemplate {
     #[must_use]
     pub fn setup(&self) -> Option<Did> {
         self.setup_section.as_ref().and_then(SetupSection::setup)
+    }
+
+    /// The model scale from `vec3` (`appearance.md` §6.1 Decision): its value when the
+    /// three components are equal, finite and positive; `None` otherwise or when absent.
+    #[must_use]
+    pub fn uniform_scale(&self) -> Option<f32> {
+        let [x, y, z] = self.vec3?;
+        (x == y && y == z && x.is_finite() && x > 0.0).then_some(x)
     }
 
     /// The first deviation from the invariants observed on every real record (SI2), or

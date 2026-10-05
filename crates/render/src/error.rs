@@ -45,6 +45,13 @@ pub enum RenderError {
     /// positions).
     #[error("invalid mesh: {0}")]
     InvalidMesh(String),
+    /// Skin streams ([`crate::MeshSkin`]) or a skinning palette were
+    /// rejected: lengths that differ from the vertex count, a weight that is
+    /// negative or not finite, weights that do not sum to 1, a bone index
+    /// outside the palette, or a palette size outside
+    /// `1..=`[`crate::MAX_PALETTE_BONES`]. The message names the vertex.
+    #[error("invalid skin: {0}")]
+    InvalidSkin(String),
     /// A texture handle is stale or was never issued by this renderer.
     #[error("unknown or destroyed texture {0:?}")]
     UnknownTexture(TextureId),

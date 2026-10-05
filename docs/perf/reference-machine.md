@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | **Proposed, owner to confirm** (2026-10-04) |
-| **Serves** | [ROADMAP](../ROADMAP.md) M3 criterion 2 (frame times), M4 criterion 4 (50 animated characters at 60 fps), M6 criterion 4 (no audio underruns), the [decision 0005](../decisions/0005-no-full-bevy.md) entity-storage benchmark; [§4 open question](../ROADMAP.md#open) |
+| **Serves** | [ROADMAP](../ROADMAP.md) M3 criterion 2 (frame times), M4 criterion 4 (50 animated characters at 60 fps), M6 criterion 4 (no audio underruns), the [decision 0005](../decisions/0005-no-full-bevy.md) entity-storage benchmark (decided in [0008](../decisions/0008-entity-storage.md) from a relative comparison on another machine, which stands; its absolute numbers on this machine are pending); [§4 open question](../ROADMAP.md#open) |
 
 ## Proposed reference: the primary workstation
 

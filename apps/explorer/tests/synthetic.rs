@@ -444,3 +444,26 @@ fn indexer_on_background_threads() {
     drop(Indexer::spawn(set, || {}));
     assert!(started.elapsed() < Duration::from_secs(1));
 }
+
+#[test]
+fn clip_catalogue_survives_unreadable_records() {
+    // Regression: one record whose zlib stream is broken made the whole 0x05 catalogue
+    // fail, and the browser spun for ever.
+    let dir = datkit::TempDir::new("explorer-clips");
+    let mut g = datkit::Builder::new();
+    // Compressed flag, a plausible inflated size, then bytes that are no zlib stream.
+    let mut broken = 64u32.to_le_bytes().to_vec();
+    broken.extend_from_slice(&[0xFF; 32]);
+    g.add(0x0500_0001, 3, broken, datkit::Layout::Plain);
+    // Readable, but no clip envelope.
+    g.stored(0x0500_0002, vec![1, 2, 3]);
+    std::fs::write(dir.0.join("client_general.dat"), &g.build().bytes).unwrap();
+    let set = Arc::new(ArchiveSet::open(&dir.0, SetOptions::default()).unwrap());
+    let ctx = DataContext::from_set(dir.0.clone(), set, None);
+    let cat =
+        tessera_explorer::character::build_clip_catalog(&ctx, &JobContext::detached()).unwrap();
+    assert!(cat.clips.is_empty());
+    assert_eq!(cat.failed, 2, "{cat:?}");
+    assert_eq!(cat.errors.len(), 1, "{:?}", cat.errors);
+    assert!(cat.errors[0].starts_with("0x05000001"), "{:?}", cat.errors);
+}

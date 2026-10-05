@@ -74,7 +74,9 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
     let mut actions = Vec::new();
     let mut cur = app.current.take();
     let mut settings = app.mesh_settings;
-    let wants_viewport = cur.as_ref().is_some_and(|c| c.nav.view == ViewKind::Mesh);
+    let wants_viewport = cur
+        .as_ref()
+        .is_some_and(|c| matches!(c.nav.view, ViewKind::Mesh | ViewKind::Character));
     if wants_viewport && app.viewport.is_none() {
         let ctx = ui.ctx().clone();
         app.viewport = Some(crate::viewport::Viewport::spawn(move || {
@@ -88,6 +90,7 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
         vp.clear_scene();
     }
     let mut viewport = app.viewport.take();
+    let mut character = std::mem::take(&mut app.character);
     let bookmarked = cur
         .as_ref()
         .is_some_and(|c| app.persist.is_bookmarked(c.nav.did));
@@ -130,8 +133,23 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
                     ui.label("the render thread is not running");
                 }
             },
+            ViewKind::Character => match viewport.as_mut() {
+                Some(vp) => crate::anim_view::character_view(
+                    ui,
+                    l,
+                    cur,
+                    &mut character,
+                    &mut settings,
+                    vp,
+                    &mut actions,
+                ),
+                None => {
+                    ui.label("the render thread is not running");
+                }
+            },
         }
     });
+    app.character = character;
     app.current = cur;
     app.viewport = viewport;
     app.mesh_settings = settings;

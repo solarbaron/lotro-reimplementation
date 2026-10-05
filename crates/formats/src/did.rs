@@ -182,12 +182,14 @@ pub enum DidKind {
     Animation,
     /// 0x06: meshes.
     Mesh,
-    /// 0x07: script tables (VFX/sound/animation event graphs).
+    /// 0x07: script tables (script-key → node-graph maps; `script-table.md` §2), decoded by
+    /// [`crate::ScriptTable`].
     ScriptTable,
     /// 0x0A: audio records.
     Sound,
-    /// 0x0C: possibly entity/prop data.
-    EntityData,
+    /// 0x0C: scriptlets (reusable node graphs invoked by script tables; `script-table.md`
+    /// §3), decoded by [`crate::Scriptlet`].
+    Scriptlet,
     /// 0x0E: singleton tables.
     SingletonTable,
     /// 0x0F: region descriptors, decoded by [`crate::RegionDescriptor`].
@@ -264,6 +266,9 @@ impl DidKind {
     /// Former name of [`DidKind::EntityDescriptor`] (0x47).
     #[deprecated(note = "renamed to `DidKind::EntityDescriptor`")]
     pub const PhysicsDescriptor: Self = Self::EntityDescriptor;
+    /// Former name of [`DidKind::Scriptlet`] (0x0C; `script-table.md` §3).
+    #[deprecated(note = "renamed to `DidKind::Scriptlet` (0x0C scriptlets)")]
+    pub const EntityData: Self = Self::Scriptlet;
 }
 
 impl DidKind {
@@ -277,7 +282,7 @@ impl DidKind {
             0x06 => Self::Mesh,
             0x07 => Self::ScriptTable,
             0x0A => Self::Sound,
-            0x0C => Self::EntityData,
+            0x0C => Self::Scriptlet,
             0x0E => Self::SingletonTable,
             0x0F => Self::RegionDescriptor,
             0x18 => Self::BlockMapProperties,
@@ -362,7 +367,7 @@ impl DidKind {
             Self::Mesh => "mesh",
             Self::ScriptTable => "script table",
             Self::Sound => "sound",
-            Self::EntityData => "entity data",
+            Self::Scriptlet => "scriptlet",
             Self::SingletonTable => "singleton table",
             Self::RegionDescriptor => "region descriptor",
             Self::BlockMapProperties => "block-map properties",

@@ -23,6 +23,9 @@
 //! * [`Handle`]: what a request returns, at once. It reports the [`AssetState`]
 //!   (`Queued → Loading → Ready | Failed | Cancelled`), offers a placeholder while loading,
 //!   can change its priority and can be cancelled through its [`CancelToken`].
+//! * [`WorkerPool::spawn`]: a generic task (any closure) on the same workers and queue,
+//!   with a [`Priority`], a [`CancelToken`] and a [`TaskHandle`]; used for work that is not
+//!   tied to a record, such as per-frame animation sampling.
 //!
 //! # Example
 //!
@@ -88,6 +91,7 @@ mod error;
 mod pool;
 mod source;
 mod store;
+mod task;
 
 use std::fmt;
 
@@ -98,6 +102,7 @@ pub use error::AssetError;
 pub use pool::{MAX_WORKERS, PoolConfig, PoolStats, WorkerPool};
 pub use source::{MemorySource, RecordSource};
 pub use store::{AssetState, AssetStore, Completion, Handle, Outcome, StoreConfig, StoreStats};
+pub use task::{TaskHandle, TaskStatus};
 
 /// Ready-made decoders built on `tessera-formats` (feature `formats`).
 #[cfg(feature = "formats")]

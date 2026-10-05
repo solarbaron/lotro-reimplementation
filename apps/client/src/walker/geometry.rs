@@ -15,7 +15,7 @@ use tessera_formats::RgbaImage;
 use tessera_material::vocab::ids;
 use tessera_material::{BlendMode, ResolvedMaterial};
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
-use tessera_render::{Indices, MeshData, Submesh};
+use tessera_render::{Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh};
 
 /// Texture variant: RGB of the texture, alpha forced to 1.
 pub const VARIANT_OPAQUE: u32 = 0;
@@ -24,6 +24,10 @@ pub const VARIANT_OWN_ALPHA: u32 = 1;
 /// Texture variant: white RGB with the texture's alpha (an opacity map without a base
 /// colour texture).
 pub const VARIANT_ALPHA_ONLY: u32 = 2;
+/// Texture variant: a dye mask in the renderer's convention (the value in R, G and B,
+/// alpha 255) from the texture's alpha, inverted (`material.md` §12.2: low alpha marks
+/// dyeable texels; the renderer wants high values there). Uploaded linear.
+pub const VARIANT_DYE_MASK: u32 = 3;
 
 /// How a planned material uses alpha.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +64,9 @@ pub struct MaterialPlan {
     pub base_color: [f32; 4],
     /// Skip lighting.
     pub unlit: bool,
+    /// Dye: the mask texture ([`VARIANT_DYE_MASK`]) and the linear dye colour. Only
+    /// figures use dye ([`plan_material_dyed`]); static objects never do (`walker.md` §4).
+    pub dye: Option<(TexRequest, [f32; 3])>,
 }
 
 impl MaterialPlan {
@@ -70,6 +77,7 @@ impl MaterialPlan {
         two_sided: false,
         base_color: [0.6, 0.6, 0.6, 1.0],
         unlit: false,
+        dye: None,
     };
 }
 
@@ -125,8 +133,8 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
                 did: d,
                 variant: VARIANT_OWN_ALPHA,
             }),
-            // DIDs 0–2 would collide with the variant codes; they are never real.
-            (Some(d), Some(a)) if a > VARIANT_ALPHA_ONLY => Some(TexRequest { did: d, variant: a }),
+            // DIDs 0–3 would collide with the variant codes; they are never real.
+            (Some(d), Some(a)) if a > VARIANT_DYE_MASK => Some(TexRequest { did: d, variant: a }),
             (Some(d), Some(_)) => Some(TexRequest {
                 did: d,
                 variant: VARIANT_OPAQUE,
@@ -172,7 +180,74 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
             1.0,
         ],
         unlit: !f.lit,
+        dye: None,
     }
+}
+
+/// [`plan_material`] plus the material's dye (`material.md` §12): the first dye channel
+/// with a mask texture, unless only the second has a colour other than white (the renderer
+/// draws one channel).
+#[must_use]
+pub fn plan_material_dyed(m: &ResolvedMaterial) -> MaterialPlan {
+    let mut plan = plan_material(m);
+    if !m.features.dyeable {
+        return plan;
+    }
+    let Some(setup) = m.dye else {
+        return plan;
+    };
+    let channel = |mask: Option<tessera_formats::Did>, color: [f32; 4]| {
+        let list = mask?;
+        (list.0 > VARIANT_DYE_MASK).then_some((
+            TexRequest {
+                did: list.0,
+                variant: VARIANT_DYE_MASK,
+            },
+            [
+                srgb_unit_to_linear(color[0]),
+                srgb_unit_to_linear(color[1]),
+                srgb_unit_to_linear(color[2]),
+            ],
+            color[..3].iter().all(|v| *v >= 0.999),
+        ))
+    };
+    let first = channel(setup.primary.mask.texture, setup.primary.color);
+    let second = setup
+        .secondary
+        .and_then(|c| channel(c.mask.texture, c.color));
+    let chosen = pick_dye_channel(
+        first.map(|(t, c, white)| ((t, c), white)),
+        second.map(|(t, c, white)| ((t, c), white)),
+    );
+    plan.dye = chosen;
+    plan
+}
+
+/// The dye channel drawn (`walker.md` §10.4): the first channel that has a mask, unless only
+/// the second has a colour other than white. Each channel is `(value, is_white)`.
+fn pick_dye_channel<T>(first: Option<(T, bool)>, second: Option<(T, bool)>) -> Option<T> {
+    match (first, second) {
+        (Some((_, true)), Some((s, false))) => Some(s),
+        (f, s) => f.or(s).map(|(v, _)| v),
+    }
+}
+
+/// The dye mask of `src` ([`VARIANT_DYE_MASK`]): R = G = B = 255 − alpha, alpha 255.
+/// `None` for an inconsistent image.
+#[must_use]
+pub fn dye_mask(src: &RgbaImage) -> Option<RgbaImage> {
+    if !image_ok(src) {
+        return None;
+    }
+    let mut out = src.clone();
+    for px in out.pixels.chunks_exact_mut(4) {
+        let v = 255 - px[3];
+        px[0] = v;
+        px[1] = v;
+        px[2] = v;
+        px[3] = 255;
+    }
+    Some(out)
 }
 
 /// The level a static object draws: the first detail level (`mesh.md` §8; proxy levels
@@ -215,6 +290,70 @@ pub fn level_mesh_data(geo: &LevelGeometry, label: String) -> MeshData {
             })
             .collect(),
     }
+}
+
+/// The renderer's bone streams of a flattened skinned level, for a skeleton of `bones`
+/// bones (`skeleton-anim.md` §4.1, §4.6): joints as stored, weights cleaned (non-finite or
+/// negative weights count as 0) and renormalised; a vertex without any weight follows bone
+/// 0 rigidly. Returns the skin and the number of vertices that had no weight.
+///
+/// # Errors
+///
+/// When `bones` is 0 or above the renderer's palette, the level has no bone streams or
+/// their lengths disagree with the positions, or a weighted joint is not below `bones`.
+pub fn mesh_skin(geo: &LevelGeometry, bones: usize) -> Result<(MeshSkin, usize), String> {
+    if bones == 0 || bones > MAX_PALETTE_BONES {
+        return Err(format!(
+            "{bones} bones (the palette holds 1 to {MAX_PALETTE_BONES})"
+        ));
+    }
+    let n = geo.positions.len();
+    let (Some(joints), Some(weights)) = (&geo.joints, &geo.weights) else {
+        return Err("the level has no bone influences".into());
+    };
+    if joints.len() != n || weights.len() != n {
+        return Err(format!(
+            "bone streams of {} and {} entries for {n} vertices",
+            joints.len(),
+            weights.len()
+        ));
+    }
+    let mut out_w = Vec::with_capacity(n);
+    let mut out_j = Vec::with_capacity(n);
+    let mut fixed = 0usize;
+    for (v, (j, w)) in joints.iter().zip(weights).enumerate() {
+        let mut w = w.map(|x| if x.is_finite() && x > 0.0 { x } else { 0.0 });
+        for k in 0..4 {
+            if w[k] > 0.0 && usize::from(j[k]) >= bones {
+                return Err(format!(
+                    "vertex {v} uses bone {} of a {bones}-bone skeleton",
+                    j[k]
+                ));
+            }
+        }
+        let sum: f32 = w.iter().sum();
+        if !(sum.is_finite() && sum > 0.0) {
+            fixed += 1;
+            out_w.push([1.0, 0.0, 0.0, 0.0]);
+            out_j.push([0; 4]);
+            continue;
+        }
+        if (sum - 1.0).abs() > 1.0e-4 {
+            for x in &mut w {
+                *x /= sum;
+            }
+        }
+        out_w.push(w);
+        out_j.push(*j);
+    }
+    Ok((
+        MeshSkin {
+            joints: out_j,
+            weights: out_w,
+            palette_size: u16::try_from(bones).unwrap_or(u16::MAX),
+        },
+        fixed,
+    ))
 }
 
 /// Whether `img` is non-empty and holds exactly `width × height × 4` bytes.
@@ -368,6 +507,92 @@ mod tests {
         let same = downscale_to(img(2, 2, |_, _| [1, 2, 3, 4]), 0);
         assert_eq!((same.width, same.height), (1, 1));
         assert_eq!(&same.pixels, &[1, 2, 3, 4]);
+    }
+
+    fn skinned(joints: Vec<[u8; 4]>, weights: Vec<[f32; 4]>) -> LevelGeometry {
+        LevelGeometry {
+            level: 0,
+            positions: vec![[0.0; 3]; joints.len()],
+            normals: vec![[0.0, 0.0, 1.0]; joints.len()],
+            tangents: None,
+            uv_sets: Vec::new(),
+            colors: None,
+            joints: Some(joints),
+            weights: Some(weights),
+            indices: MeshIndices::U16(Vec::new()),
+            parts: Vec::new(),
+            bounds: None,
+        }
+    }
+
+    #[test]
+    fn mesh_skin_cleans_and_renormalises_weights() {
+        let geo = skinned(
+            vec![[1, 2, 0, 0], [3, 0, 0, 0], [9, 9, 9, 9], [4, 5, 0, 0]],
+            vec![
+                [2.0, 2.0, 0.0, 0.0],              // renormalised
+                [1.0, 0.0, 0.0, 0.0],              // kept
+                [0.0, -1.0, f32::NAN, 0.0],        // no weight: bone 0 rigidly
+                [0.5, f32::INFINITY, 0.0, 0.5e-5], // non-finite counts as 0
+            ],
+        );
+        let (skin, fixed) = mesh_skin(&geo, 8).unwrap();
+        assert_eq!(fixed, 1);
+        assert_eq!(skin.palette_size, 8);
+        assert_eq!(skin.weights[0], [0.5, 0.5, 0.0, 0.0]);
+        assert_eq!(skin.weights[1], [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            (skin.joints[2], skin.weights[2]),
+            ([0; 4], [1.0, 0.0, 0.0, 0.0])
+        );
+        let w = skin.weights[3];
+        assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-6 && w[1] == 0.0);
+        // Joints out of range are fine while unweighted (vertex 2), an error when weighted.
+        let bad = skinned(vec![[8, 0, 0, 0]], vec![[1.0, 0.0, 0.0, 0.0]]);
+        assert!(mesh_skin(&bad, 8).is_err());
+        assert!(mesh_skin(&bad, 9).is_ok());
+        assert!(mesh_skin(&geo, 0).is_err());
+        assert!(mesh_skin(&geo, MAX_PALETTE_BONES + 1).is_err());
+        let mut short = geo.clone();
+        short.positions.push([0.0; 3]);
+        assert!(mesh_skin(&short, 8).is_err(), "stream lengths disagree");
+        let mut none = geo;
+        none.weights = None;
+        assert!(mesh_skin(&none, 8).is_err());
+    }
+
+    #[test]
+    fn dye_mask_inverts_alpha() {
+        let src = img(2, 1, |x, _| [1, 2, 3, if x == 0 { 0 } else { 200 }]);
+        let m = dye_mask(&src).unwrap();
+        assert_eq!(m.pixels, vec![255, 255, 255, 255, 55, 55, 55, 255]);
+        let broken = RgbaImage {
+            width: 2,
+            height: 2,
+            pixels: vec![0; 4],
+        };
+        assert!(dye_mask(&broken).is_none());
+    }
+
+    #[test]
+    fn dye_channel_choice() {
+        let w = |v: u8| Some((v, true));
+        let c = |v: u8| Some((v, false));
+        assert_eq!(pick_dye_channel(c(1), c(2)), Some(1), "first wins");
+        assert_eq!(pick_dye_channel(w(1), w(2)), Some(1), "both white: first");
+        assert_eq!(
+            pick_dye_channel(w(1), c(2)),
+            Some(2),
+            "only the second coloured"
+        );
+        assert_eq!(pick_dye_channel(c(1), w(2)), Some(1));
+        assert_eq!(
+            pick_dye_channel(None, w(2)),
+            Some(2),
+            "first without a mask"
+        );
+        assert_eq!(pick_dye_channel(w(1), None), Some(1));
+        assert_eq!(pick_dye_channel::<u8>(None, None), None);
     }
 
     #[test]

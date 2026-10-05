@@ -65,6 +65,10 @@ pub struct AppConfig {
     pub font: Option<PathBuf>,
     /// Start-up options of the mesh view.
     pub mesh: MeshOptions,
+    /// Start-up options of the character view.
+    pub character: crate::charspec::CharacterArgs,
+    /// Hide the archive tree, the DID list and the character view's inspector.
+    pub hide_panels: bool,
 }
 
 /// Exit code when the screenshot timed out waiting for the selection.
@@ -453,6 +457,8 @@ pub struct ExplorerApp {
     pub(crate) mesh_settings: MeshSettings,
     /// The mesh state of the first selection (from the command line).
     pub(crate) mesh_start: Option<MeshState>,
+    /// The character view's state (it persists while browsing).
+    pub(crate) character: crate::anim_view::CharacterState,
 }
 
 impl std::fmt::Debug for ExplorerApp {
@@ -499,6 +505,11 @@ impl ExplorerApp {
         });
         let mesh_settings = config.mesh.settings();
         let mesh_start = Some(config.mesh.start());
+        let mut character = crate::anim_view::CharacterState::new(
+            config.character.clone(),
+            config.screenshot.is_some(),
+        );
+        character.compact = config.hide_panels;
         let mut app = Self {
             egui_ctx,
             config,
@@ -528,6 +539,7 @@ impl ExplorerApp {
             viewport: None,
             mesh_settings,
             mesh_start,
+            character,
         };
         match dir {
             Some(d) => {
@@ -557,6 +569,7 @@ impl ExplorerApp {
     /// (whose entries name archives by their position in that install's set).
     pub(crate) fn open_install(&mut self, dir: PathBuf) {
         self.current = None;
+        self.character.reset_install();
         if let Some(vp) = &mut self.viewport {
             // The previous install's scene leaves the render thread too.
             vp.clear_scene();
@@ -1525,6 +1538,9 @@ impl ExplorerApp {
             ViewKind::Icon => fin(&cur.icon),
             ViewKind::Record => fin(&cur.record),
             ViewKind::Mesh => crate::mesh_view::mesh_ready(cur, self.viewport.as_ref()),
+            ViewKind::Character => {
+                crate::anim_view::character_ready(&self.character, self.viewport.as_ref())
+            }
         }
     }
 
@@ -1790,8 +1806,10 @@ impl eframe::App for ExplorerApp {
         self.top_bar(ui);
         self.status_bar(ui);
         if self.loaded().is_some() {
-            self.archive_tree(ui);
-            self.did_list(ui);
+            if !self.config.hide_panels {
+                self.archive_tree(ui);
+                self.did_list(ui);
+            }
             crate::views::central(self, ui);
         } else {
             self.welcome(ui);

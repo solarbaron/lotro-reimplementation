@@ -34,6 +34,9 @@ tessera-material.workspace = true
 tessera-settings.workspace = true
 tessera-mesh.workspace = true
 tessera-render.workspace = true
+# M4 character viewer and animation browser: skeletons, clips, sampling on workers.
+tessera-havok.workspace = true
+tessera-anim.workspace = true
 # No "default_fonts": egui's bundled fonts are OFL-1.1 / Ubuntu Font Licence, outside the
 # licence allow list (deny.toml). UI fonts come from the system at run time (src/fonts.rs).
 eframe = { version = "0.36", default-features = false, features = [

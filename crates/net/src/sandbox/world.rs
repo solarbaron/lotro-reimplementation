@@ -16,7 +16,11 @@
 //!   [`Event::StaticsCleared`] when everything goes at once), streamed in
 //!   rings with one ring of hysteresis, per-poll spawn, despawn and query
 //!   budgets and a resident budget served nearest-first
-//!   ([`StaticConfig`], [`WorldSource::static_entities`]),
+//!   ([`StaticConfig`], [`WorldSource::static_entities`]); an entry that
+//!   carries a [`PlacedFigure`] (an NPC or other figure the data places) is
+//!   served as [`Event::EntityCreated`] with its precise location, the
+//!   heading of its rotation, its class and its appearance, on the same
+//!   streaming terms,
 //! - describes the player's position on request ([`WorldSource::describe`]).
 //!
 //! An interior position (an [`Anchor`]ed destination, a landblock spawn
@@ -45,8 +49,8 @@ use std::str::FromStr;
 
 use crate::NetError;
 use crate::model::{
-    Anchor, DataId, Destination, EntityId, Location, MAX_LOCATION_COORDINATE, Placement, RegionId,
-    is_valid_place_name,
+    Anchor, Appearance, DataId, Destination, EntityId, EntityKind, Location,
+    MAX_LOCATION_COORDINATE, MAX_NAME_LEN, Placement, RegionId, is_valid_place_name,
 };
 pub use crate::model::{
     GRID_EXTENT, LANDBLOCK_SIZE, Landblock, MAX_LANDBLOCK, MAX_LOCAL_OFFSET, MAX_STATIC_SCALE,
@@ -91,6 +95,61 @@ pub struct StaticEntity {
     /// [`Event::StaticSpawned::tag`](crate::Event::StaticSpawned), e.g. the
     /// entity's index in the client's own landblock bundle.
     pub tag: u64,
+    /// `Some` for a figure (an NPC, creature or interactive object the data
+    /// places): served as [`Event::EntityCreated`]
+    /// instead of [`Event::StaticSpawned`]. Its
+    /// appearance must be [valid](Appearance::is_valid), otherwise the entry
+    /// is dropped (and counted in [`StaticStats::rejected`]).
+    pub figure: Option<Box<PlacedFigure>>,
+}
+
+impl StaticEntity {
+    /// A static object (no figure).
+    #[must_use]
+    pub fn new(object: DataId, placement: Placement, tag: u64) -> Self {
+        Self {
+            object,
+            placement,
+            tag,
+            figure: None,
+        }
+    }
+
+    /// The same entry served as a figure.
+    #[must_use]
+    pub fn with_figure(mut self, figure: PlacedFigure) -> Self {
+        self.figure = Some(Box::new(figure));
+        self
+    }
+}
+
+/// What makes a [`StaticEntity`] a figure: the fields of the
+/// [`Event::EntityCreated`] it becomes (the
+/// location comes from the placement, the heading from its rotation,
+/// [`Rotation::heading`](crate::model::Rotation::heading)).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedFigure {
+    /// Broad classification.
+    pub kind: EntityKind,
+    /// Display name (may be empty; cut to [`MAX_NAME_LEN`] bytes).
+    pub name: String,
+    /// The data record of the figure's class (a placed game object), if any.
+    pub class: Option<DataId>,
+    /// How it looks.
+    pub appearance: Appearance,
+}
+
+impl PlacedFigure {
+    /// A figure of `kind` with `appearance`, no name and no class.
+    #[must_use]
+    pub fn new(kind: EntityKind, appearance: Appearance) -> Self {
+        Self {
+            kind,
+            name: String::new(),
+            class: None,
+            appearance,
+        }
+    }
 }
 
 /// The client's world data, as the sandbox sees it. See the module
@@ -517,7 +576,18 @@ fn accept_static(block: Landblock, mut entity: StaticEntity) -> Option<StaticEnt
         return None;
     }
     p.rotation = p.rotation.normalized()?;
-    p.is_valid().then_some(entity)
+    if !p.is_valid() {
+        return None;
+    }
+    if let Some(f) = &mut entity.figure {
+        if !f.appearance.is_valid() {
+            return None;
+        }
+        if let std::borrow::Cow::Owned(name) = crate::model::sanitize_text(&f.name, MAX_NAME_LEN) {
+            f.name = name;
+        }
+    }
+    Some(entity)
 }
 
 #[derive(Debug)]
@@ -870,16 +940,37 @@ fn spawn_from(
         return;
     };
     while *spawns > 0 && *next < queue.len() {
-        let entity = &queue[*next];
+        let entity = &mut queue[*next];
         *next += 1;
         *spawns -= 1;
         let id = alloc();
         ids.push(id);
-        out.push(Event::StaticSpawned {
-            id,
-            object: entity.object,
-            placement: entity.placement,
-            tag: entity.tag,
+        out.push(match entity.figure.take() {
+            Some(figure) => {
+                let PlacedFigure {
+                    kind,
+                    name,
+                    class,
+                    appearance,
+                } = *figure;
+                Event::EntityCreated {
+                    id,
+                    kind,
+                    name,
+                    class,
+                    location: entity.placement.location,
+                    // Normalised and finite (accept_static).
+                    heading: entity.placement.rotation.heading().unwrap_or(0.0),
+                    appearance: Box::new(appearance),
+                    tag: Some(entity.tag),
+                }
+            }
+            None => Event::StaticSpawned {
+                id,
+                object: entity.object,
+                placement: entity.placement,
+                tag: entity.tag,
+            },
         });
     }
     if *next == queue.len() && !queue.is_empty() {
@@ -1056,15 +1147,15 @@ mod tests {
             _limit: usize,
             out: &mut Vec<StaticEntity>,
         ) -> Lookup<()> {
-            let entity = StaticEntity {
-                object: DataId(1),
-                placement: Placement::new(
+            let entity = StaticEntity::new(
+                DataId(1),
+                Placement::new(
                     block.location([1.0, 1.0, 1.0]),
                     crate::model::Rotation::IDENTITY,
                     1.0,
                 ),
-                tag: 0,
-            };
+                0,
+            );
             out.extend(std::iter::repeat_n(entity, self.0));
             Lookup::Ready(())
         }

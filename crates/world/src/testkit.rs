@@ -351,12 +351,7 @@ fn write_entity(out: &mut Vec<u8>, key: LandblockKey, e: &TestEntity) {
     }
     u32le(out, flags);
     u32le(out, e.kind);
-    let iid = (1u64 << 56)
-        | (u64::from(key.region()) << 52)
-        | (u64::from(key.x()) << 44)
-        | (u64::from(key.y()) << 36)
-        | u64::from(e.serial);
-    out.extend_from_slice(&iid.to_le_bytes());
+    out.extend_from_slice(&entity_iid(key, e.serial).to_le_bytes());
     if let Some(o) = e.object {
         u32le(out, o);
     }
@@ -371,6 +366,28 @@ fn write_entity(out: &mut Vec<u8>, key: LandblockKey, e: &TestEntity) {
 /// given entities, and the trailer that directory stamp 39 implies.
 #[must_use]
 pub fn landblock_info(key: LandblockKey, entities: &[TestEntity]) -> Vec<u8> {
+    landblock_info_with_weenies(key, entities, &[])
+}
+
+/// The instance ID [`landblock_info`] gives the entity with `serial` in `key`
+/// (`entity-descriptor.md` §4.2, kind byte 1).
+#[must_use]
+pub fn entity_iid(key: LandblockKey, serial: u32) -> u64 {
+    (1u64 << 56)
+        | (u64::from(key.region()) << 52)
+        | (u64::from(key.x()) << 44)
+        | (u64::from(key.y()) << 36)
+        | u64::from(serial)
+}
+
+/// [`landblock_info`] with a weenie list (`landblock.md` §4.8): (instance ID, property
+/// entries) pairs, the instance property sets of `appearance.md` §7.2.
+#[must_use]
+pub fn landblock_info_with_weenies(
+    key: LandblockKey,
+    entities: &[TestEntity],
+    weenies: &[(u64, Vec<(u32, TestValue)>)],
+) -> Vec<u8> {
     let mut out = Vec::new();
     u32le(&mut out, key.info_did().0);
     u32le(&mut out, 1); // flags: cells
@@ -384,7 +401,12 @@ pub fn landblock_info(key: LandblockKey, entities: &[TestEntity]) -> Vec<u8> {
     u32le(&mut out, 0); // links
     out.extend_from_slice(&property_set(&[])); // landblock properties
     u32le(&mut out, 0); // reserved
-    tsize(&mut out, 0, 0); // weenies
+    // The low 32 bits of the IID (the serial) choose the bucket.
+    #[allow(clippy::cast_possible_truncation)]
+    for (iid, props) in bucketed(&mut out, weenies, |w| w.0 as u32) {
+        out.extend_from_slice(&iid.to_le_bytes());
+        out.extend_from_slice(&property_set(&props));
+    }
     u32le(&mut out, 0); // trailer (stamp >= 31)
     out
 }
@@ -395,6 +417,20 @@ pub fn landblock_properties(key: LandblockKey, entries: &[(u32, TestValue)]) -> 
     let mut out = key.properties_did().0.to_le_bytes().to_vec();
     out.extend_from_slice(&property_set(entries));
     out
+}
+
+/// A setup like [`setup`] with an embedded chain skeleton of `bones` bones
+/// (`skeleton-anim.md` §2.1).
+#[must_use]
+pub fn setup_with_skeleton(did: u32, parts: &[u32], bones: usize) -> Vec<u8> {
+    Setup {
+        did: Did(did),
+        parts: parts.iter().map(|&p| Did(p)).collect(),
+        tagfile: tessera_havok::testkit::SkeletonSpec::chain(bones).to_tagfile(),
+        ..Setup::default()
+    }
+    .to_bytes()
+    .expect("testkit setup")
 }
 
 /// An entity descriptor (0x47) linking to `template` with property entries.
@@ -511,6 +547,14 @@ pub mod pid {
     pub const PHYS_OBJ: u32 = 0x1000_0115;
     /// `Physics_AdjustableScale` (vector).
     pub const PHYSICS_ADJUSTABLE_SCALE: u32 = 0x1000_0116;
+    /// `WeenieType` (enum).
+    pub const WEENIE_TYPE: u32 = 0x1000_0117;
+    /// `NPC_StartingIdleAnimation` (enum).
+    pub const NPC_STARTING_IDLE: u32 = 0x1000_0118;
+    /// `Appearance_RandomAppearanceType` (enum).
+    pub const RANDOM_APPEARANCE: u32 = 0x1000_0119;
+    /// `NPC_Cosmetic_Inventory_Item1` (DID).
+    pub const NPC_COSMETIC_ITEM1: u32 = 0x1000_011A;
 }
 
 /// The synthetic dictionary's definitions: (pid, name, type code).
@@ -544,6 +588,10 @@ pub fn definitions() -> Vec<(u32, &'static str, u32)> {
             8,
         ),
         (PHYS_OBJ, "PhysObj", 20),
+        (WEENIE_TYPE, "WeenieType", 8),
+        (NPC_STARTING_IDLE, "NPC_StartingIdleAnimation", 8),
+        (RANDOM_APPEARANCE, "Appearance_RandomAppearanceType", 8),
+        (NPC_COSMETIC_ITEM1, "NPC_Cosmetic_Inventory_Item1", 20),
     ]
 }
 
@@ -603,6 +651,11 @@ pub struct SyntheticWorld {
     pub blocks: BTreeMap<(u8, u8), bool>,
     /// Entities placed in every block that has info.
     pub entities_per_block: u32,
+    /// Give every block with info a weenie list: entity serial 1 (a drawable tree) gets an
+    /// NPC-like instance set ([`SyntheticWorld::FIGURE_IDLE`] as
+    /// `NPC_StartingIdleAnimation`), serial 2 an instance set without NPC properties, and
+    /// the weenie placement one with a random-appearance type. Default false.
+    pub figures: bool,
 }
 
 impl SyntheticWorld {
@@ -623,8 +676,16 @@ impl SyntheticWorld {
             region,
             blocks,
             entities_per_block: 4,
+            figures: false,
         }
     }
+
+    /// The idle value of the NPC-like instance sets ([`SyntheticWorld::figures`]).
+    pub const FIGURE_IDLE: u32 = 0x5A;
+    /// The random-appearance type of the weenie placement's instance set.
+    pub const FIGURE_RANDOM: u32 = 0xDB;
+    /// The `WeenieType` of [`obj::WEENIE`].
+    pub const WEENIE_TYPE: u32 = 0x24;
 
     /// The area object of block (X, Y): [`obj::AREA_A`] west of X = 128, else
     /// [`obj::AREA_B`].
@@ -746,7 +807,10 @@ impl SyntheticWorld {
             obj::WEENIE + 0x0900_0000,
             property_set_record(
                 obj::WEENIE + 0x0900_0000,
-                &[(PHYS_OBJ, TestValue::Did(obj::TREE))],
+                &[
+                    (PHYS_OBJ, TestValue::Did(obj::TREE)),
+                    (WEENIE_TYPE, TestValue::Enum(Self::WEENIE_TYPE)),
+                ],
             ),
             None,
         );
@@ -821,7 +885,34 @@ impl SyntheticWorld {
                         Vec::new(),
                     )
                 });
-                m.insert(key.info_did(), landblock_info(key, &entities), Some(39));
+                let weenies = if self.figures {
+                    vec![
+                        (
+                            entity_iid(key, 1),
+                            vec![(NPC_STARTING_IDLE, TestValue::Enum(Self::FIGURE_IDLE))],
+                        ),
+                        (
+                            entity_iid(key, 2),
+                            vec![(RENDER_ADJUSTABLE_SCALE, TestValue::Vec3([1.0; 3]))],
+                        ),
+                        (
+                            entity_iid(key, self.entities_per_block + 1),
+                            vec![(RANDOM_APPEARANCE, TestValue::Enum(Self::FIGURE_RANDOM))],
+                        ),
+                        // An instance set no entity places (a server spawn).
+                        (
+                            entity_iid(key, 9999),
+                            vec![(NPC_STARTING_IDLE, TestValue::Enum(1))],
+                        ),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                m.insert(
+                    key.info_did(),
+                    landblock_info_with_weenies(key, &entities, &weenies),
+                    Some(39),
+                );
             }
         }
         m

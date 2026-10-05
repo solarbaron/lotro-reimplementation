@@ -174,15 +174,12 @@ impl WorldSource for FakeWorld {
                     scale: 1.0,
                 },
                 tag: tag(block, i),
+                figure: None,
             });
         }
         if self.script.hostile {
             let good = block.location([1.0, 1.0, 1.0]);
-            let bad = |placement: Placement| StaticEntity {
-                object: DataId(1),
-                placement,
-                tag: u64::MAX,
-            };
+            let bad = |placement: Placement| StaticEntity::new(DataId(1), placement, u64::MAX);
             let p = Placement {
                 location: good,
                 rotation: Rotation::IDENTITY,

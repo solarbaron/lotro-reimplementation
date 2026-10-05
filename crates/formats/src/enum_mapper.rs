@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Enum mappers, DID prefix 0x23 (spec §7).
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -65,6 +66,67 @@ impl EnumMapper {
             .get(&key)
             .and_then(|&i| self.names.get(i as usize))
             .map(|(_, n)| n.as_str())
+    }
+
+    /// The key whose symbolic name is `name`, in this mapper only (the first stored one if
+    /// several keys share it). A linear search: labels are looked up once and cached by
+    /// callers.
+    #[must_use]
+    pub fn key_of(&self, name: &str) -> Option<u32> {
+        self.names.iter().find(|(_, n)| n == name).map(|(k, _)| *k)
+    }
+
+    /// The key named `name` in this mapper or its base chain. `fetch` loads a base mapper
+    /// by DID and may return it owned, borrowed or shared (anything that borrows as an
+    /// [`EnumMapper`]), so that callers which load mappers on demand need no cache.
+    /// Cycles and chains longer than [`ENUM_BASE_CHAIN_LIMIT`] (this mapper included) end
+    /// the search with `None`, as in [`EnumMapper::resolve`].
+    pub fn key_in_chain<M: Borrow<EnumMapper>>(
+        &self,
+        fetch: impl FnMut(Did) -> Option<M>,
+        name: &str,
+    ) -> Option<u32> {
+        if let Some(k) = self.key_of(name) {
+            return Some(k);
+        }
+        Self::chain_lookup(self.base, Some(self.did), 1, fetch, name)
+    }
+
+    /// [`EnumMapper::key_in_chain`] starting from the mapper `start` (for example the one a
+    /// property definition names), which `fetch` loads first. `None` for the null DID.
+    pub fn key_in_chain_from<M: Borrow<EnumMapper>>(
+        start: Did,
+        fetch: impl FnMut(Did) -> Option<M>,
+        name: &str,
+    ) -> Option<u32> {
+        Self::chain_lookup(start, None, 0, fetch, name)
+    }
+
+    fn chain_lookup<M: Borrow<EnumMapper>>(
+        mut did: Did,
+        visited: Option<Did>,
+        used: usize,
+        mut fetch: impl FnMut(Did) -> Option<M>,
+        name: &str,
+    ) -> Option<u32> {
+        let mut seen: HashSet<Did> = visited.into_iter().collect();
+        for _ in used..ENUM_BASE_CHAIN_LIMIT {
+            if did.is_null() {
+                return None;
+            }
+            if !seen.insert(did) {
+                tracing::warn!(%did, "enum mapper base chain has a cycle");
+                return None;
+            }
+            let m = fetch(did)?;
+            let m = m.borrow();
+            if let Some(k) = m.key_of(name) {
+                return Some(k);
+            }
+            did = m.base;
+        }
+        tracing::warn!(%did, "enum mapper base chain too long");
+        None
     }
 
     /// Display text of a key in this mapper only.

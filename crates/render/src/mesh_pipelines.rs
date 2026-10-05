@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Mesh pipelines: layouts, per-draw uniforms and the lazily built variants
-//! (surface alpha mode × cull mode × target format, plus the overlays).
+//! (surface alpha mode × cull mode × target format × static or skinned,
+//! plus the overlays).
+//!
+//! Skinned variants read a second vertex stream (bone indices and weights,
+//! [`crate::skin`]) and the draw's palette, a dynamic-offset uniform range of
+//! the per-frame palette buffer bound next to the draw uniform (group 1,
+//! binding 1). Static variants share the layout and ignore the palette.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Mat4};
@@ -8,6 +14,7 @@ use glam::{Mat3, Mat4};
 use crate::material::{AlphaMode, DyeMask, Material, MeshShading};
 use crate::mesh::GpuVertex;
 use crate::pipelines::{DEPTH_FORMAT, SharedLayouts};
+use crate::skin::{GpuSkin, PALETTE_BINDING_BYTES};
 
 const MESH_WGSL: &str = include_str!("shaders/mesh.wgsl");
 
@@ -184,6 +191,8 @@ pub(crate) struct MeshKey {
     pub format: wgpu::TextureFormat,
     pub kind: Kind,
     pub cull: Cull,
+    /// Skin the vertices with the draw's palette.
+    pub skinned: bool,
 }
 
 /// Layouts and shader shared by every mesh pipeline.
@@ -199,21 +208,37 @@ pub(crate) struct MeshLayouts {
 const VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4
 ];
+const SKIN_ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+    5 => Uint8x4, 6 => Unorm16x4
+];
 
 impl MeshLayouts {
     pub(crate) fn new(device: &wgpu::Device, shared: &SharedLayouts) -> Self {
         let draw = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tessera-mesh-draw-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // Skinning palette: MAX_PALETTE_BONES affine 3 × 4 matrices.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(PALETTE_BINDING_BYTES),
+                    },
+                    count: None,
+                },
+            ],
         });
         let mut entries = Vec::with_capacity(8);
         for binding in 0..4 {
@@ -265,6 +290,28 @@ impl MeshLayouts {
 
     fn build(&self, device: &wgpu::Device, key: MeshKey) -> wgpu::RenderPipeline {
         let (vs, fs, topology, step) = match key.kind {
+            Kind::Opaque | Kind::Mask | Kind::Blend if key.skinned => (
+                "vs_skinned",
+                match key.kind {
+                    Kind::Opaque => "fs_opaque",
+                    Kind::Mask => "fs_mask",
+                    _ => "fs_blend",
+                },
+                wgpu::PrimitiveTopology::TriangleList,
+                wgpu::VertexStepMode::Vertex,
+            ),
+            Kind::Wire if key.skinned => (
+                "vs_wire_skinned",
+                "fs_overlay",
+                wgpu::PrimitiveTopology::LineList,
+                wgpu::VertexStepMode::Vertex,
+            ),
+            Kind::NormalLines if key.skinned => (
+                "vs_normals_skinned",
+                "fs_overlay",
+                wgpu::PrimitiveTopology::LineList,
+                wgpu::VertexStepMode::Instance,
+            ),
             Kind::Opaque => (
                 "vs_main",
                 "fs_opaque",
@@ -309,7 +356,29 @@ impl MeshLayouts {
             Cull::Back => Some(wgpu::Face::Back),
             Cull::Front => Some(wgpu::Face::Front),
         };
-        let label = format!("tessera-mesh-{:?}-{:?}", key.kind, key.cull);
+        let label = format!(
+            "tessera-mesh-{:?}-{:?}{}",
+            key.kind,
+            key.cull,
+            if key.skinned { "-skinned" } else { "" }
+        );
+        let vertex_buffers = [
+            Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<GpuVertex>() as u64,
+                step_mode: step,
+                attributes: &VERTEX_ATTRS,
+            }),
+            Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<GpuSkin>() as u64,
+                step_mode: step,
+                attributes: &SKIN_ATTRS,
+            }),
+        ];
+        let buffers = if key.skinned {
+            &vertex_buffers[..]
+        } else {
+            &vertex_buffers[..1]
+        };
         let targets = [Some(wgpu::ColorTargetState {
             format: key.format,
             blend,
@@ -322,11 +391,7 @@ impl MeshLayouts {
                 module: &self.shader,
                 entry_point: Some(vs),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: step,
-                    attributes: &VERTEX_ATTRS,
-                })],
+                buffers,
             },
             primitive: wgpu::PrimitiveState {
                 topology,

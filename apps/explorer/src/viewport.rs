@@ -95,6 +95,48 @@ pub struct DyeOverride {
     pub channel: DyeChannel,
 }
 
+/// The pose of an animated figure for one frame (character view, `skeleton-anim.md` §10
+/// steps 6–8): what the render thread needs besides the uploaded scene.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PoseDraw {
+    /// The figure's placement (model scale and root motion), applied to every part.
+    pub placement: Mat4,
+    /// Skinning matrices by bone index; skinned parts ([`crate::scene::ScenePart::skinned`])
+    /// are drawn with them. Empty: bind pose.
+    pub palette: Vec<Mat4>,
+    /// Holding-location model transforms by `HoldingLocation` key: a held part
+    /// ([`crate::scene::ScenePart::attach`]) is drawn at placement × this × its own
+    /// transform. A held part whose location is missing is not drawn
+    /// (`skeleton-anim.md` §8.4).
+    pub attach: Vec<(u32, Mat4)>,
+    /// Overlay lines in world space (bones, trails), drawn over the meshes.
+    pub lines: Vec<([f32; 3], [f32; 3], [f32; 4])>,
+}
+
+impl PoseDraw {
+    /// The model transform of holding location `key`.
+    #[must_use]
+    pub fn attach_transform(&self, key: u32) -> Option<Mat4> {
+        self.attach.iter().find(|(k, _)| *k == key).map(|(_, m)| *m)
+    }
+}
+
+/// The holding-location transform a part is drawn with: identity for a part that is not
+/// held; for a held part ([`crate::scene::ScenePart::attach`]) its location in `pose`, or
+/// `None` (not drawn) when the pose lacks the location or there is no pose: without one
+/// the holding locations are unknown, as when the wearer lacks them
+/// (`skeleton-anim.md` §8.4).
+#[must_use]
+pub fn held_transform(attach: Option<u32>, pose: Option<&PoseDraw>) -> Option<Mat4> {
+    match attach {
+        None => Some(Mat4::IDENTITY),
+        Some(key) => pose.and_then(|p| p.attach_transform(key)),
+    }
+}
+
+/// Most overlay lines a pose draws.
+pub const MAX_POSE_LINES: usize = 8192;
+
 /// Everything that decides one rendered image, apart from the scene itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DrawRequest {
@@ -132,6 +174,8 @@ pub struct DrawRequest {
     /// Parts moved apart from the scene centre by this factor of their offset (0 = as
     /// assembled).
     pub explode: f32,
+    /// The pose of an animated figure (character view); `None` draws the scene as stored.
+    pub pose: Option<Arc<PoseDraw>>,
 }
 
 /// Commands to the render thread.
@@ -795,6 +839,19 @@ fn render(
     let mut frame = r.begin_offscreen_frame(t).map_err(|e| e.to_string())?;
     let scene = gpu.filter(|g| g.id == request.scene);
     let radius = scene.map_or(1.0, |g| g.scene.sphere.1);
+    let pose = request.pose.as_deref();
+    let palette = match pose {
+        Some(p) if scene.is_some() && !p.palette.is_empty() => Some(
+            frame
+                .skin_palette(&p.palette)
+                .map_err(|e| format!("skinning palette: {e}"))?,
+        ),
+        _ => None,
+    };
+    let placement = pose
+        .map(|p| p.placement)
+        .filter(Mat4::is_finite)
+        .unwrap_or(Mat4::IDENTITY);
     let pass = frame.world_pass("mesh-view", &request.camera);
     pass.clear(BACKGROUND).lighting(Lighting::default());
     pass.mesh_debug(MeshDebug {
@@ -828,7 +885,13 @@ fn render(
                 continue;
             };
             let offset = explode_offset(&g.scene, pi, request.explode);
-            let transform = Mat4::from_translation(offset) * Mat4::from_cols_array(&part.transform);
+            let Some(held) = held_transform(part.attach, pose) else {
+                continue;
+            };
+            let transform = placement
+                * held
+                * Mat4::from_translation(offset)
+                * Mat4::from_cols_array(&part.transform);
             for s in &part.submeshes {
                 if hidden.contains(&(pi, s.draw)) {
                     continue;
@@ -842,7 +905,13 @@ fn render(
                         || Material::color(fallback_color(dim)),
                         |m| material(m, &g.textures, request, dim),
                     );
-                pass.mesh(MeshDraw::new(mesh, transform, mat).with_submesh(s.draw));
+                let mut draw = MeshDraw::new(mesh, transform, mat).with_submesh(s.draw);
+                if part.skinned
+                    && let Some(pal) = palette
+                {
+                    draw = draw.with_skin(pal);
+                }
+                pass.mesh(draw);
                 if selected
                     && request.highlight
                     && let Some((lo, hi)) = s
@@ -851,6 +920,19 @@ fn render(
                 {
                     pass.aabb(vec3(lo) + offset, vec3(hi) + offset, [1.0, 0.55, 0.1, 1.0]);
                 }
+            }
+        }
+    }
+    if let Some(p) = pose
+        && !p.lines.is_empty()
+    {
+        // Over the meshes: a second pass with the depth cleared.
+        let overlay = frame.world_pass("pose-overlay", &request.camera);
+        overlay.clear_depth();
+        for &(a, b, color) in p.lines.iter().take(MAX_POSE_LINES) {
+            let (a, b) = (vec3(a), vec3(b));
+            if a.is_finite() && b.is_finite() {
+                overlay.line(a, b, color);
             }
         }
     }
@@ -868,6 +950,43 @@ fn render(
         return Err("read-back size mismatch".into());
     }
     Ok((ColorImage::new([w, h], pixels), stats))
+}
+
+/// Renders `requests` of one scene without a window or a thread (sheet mode, tests): a
+/// headless renderer uploads the scene once, renders each request and reads it back.
+///
+/// # Errors
+///
+/// When no GPU renderer can be created or a frame fails; upload problems of single parts
+/// or textures are returned with the images instead.
+pub fn render_offline(
+    scene: Arc<SceneProduct>,
+    requests: &[DrawRequest],
+) -> Result<(Vec<ColorImage>, Vec<String>), String> {
+    let config = RendererConfig {
+        clear_color: BACKGROUND,
+        ..RendererConfig::default()
+    };
+    let mut r = Renderer::new_headless(&config).map_err(|e| format!("no GPU renderer: {e}"))?;
+    let id = requests.first().map_or(1, |q| q.scene);
+    let (gpu, problems) = upload_scene(&mut r, id, scene);
+    let mut target = None;
+    let mut out = Vec::with_capacity(requests.len());
+    let mut failure = None;
+    for q in requests {
+        match render(&mut r, &mut target, Some(&gpu), q) {
+            Ok((img, _)) => out.push(img),
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        }
+    }
+    gpu.release(&mut r);
+    match failure {
+        Some(e) => Err(e),
+        None => Ok((out, problems)),
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -967,6 +1086,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn held_parts_need_their_location() {
+        let at = Mat4::from_translation(Vec3::new(0.0, 0.0, 1.2));
+        let pose = PoseDraw {
+            attach: vec![(7, at)],
+            ..PoseDraw::default()
+        };
+        // Not held: always drawn as placed.
+        assert_eq!(held_transform(None, None), Some(Mat4::IDENTITY));
+        assert_eq!(held_transform(None, Some(&pose)), Some(Mat4::IDENTITY));
+        assert_eq!(held_transform(Some(7), Some(&pose)), Some(at));
+        // The location is missing from the pose: not drawn (skeleton-anim.md §8.4).
+        assert_eq!(held_transform(Some(8), Some(&pose)), None);
+        // Regression: without a pose a held part was drawn at the figure's origin.
+        assert_eq!(held_transform(Some(7), None), None);
+    }
+
+    #[test]
     fn orbit_starts_in_front_and_frames() {
         let mut v = OrbitView::new();
         v.frame([1.0, 2.0, 3.0], 2.0, 1.5);
@@ -1039,6 +1175,7 @@ mod tests {
             dye: None,
             diffuse_tint: false,
             explode: 0.0,
+            pose: None,
         }
     }
 
@@ -1096,6 +1233,139 @@ mod tests {
         let (_, stats) = render(&mut r, &mut target, Some(&gpu), &other).unwrap();
         assert_eq!(stats.mesh_draws, 0);
         gpu.release(&mut r);
+    }
+
+    /// A skinned part (every vertex on bone 1) and a held part at location 7.
+    fn posed_scene() -> SceneProduct {
+        let mut scene = crate::scene::tests_support::two_part_scene();
+        let data = tessera_render::MeshData::plane(1.0, 1.0, 2, 2);
+        let skin = tessera_render::MeshSkin::rigid(data.positions.len(), 1, 2);
+        let prepared = data
+            .prepare_skinned(&skin, &tessera_render::MeshConfig::default())
+            .unwrap();
+        scene.parts[0].prepared = Some(Arc::new(prepared));
+        scene.parts[0].skinned = true;
+        scene.parts[1].attach = Some(7);
+        scene
+    }
+
+    fn pixels(r: &mut Renderer<'static>, g: &GpuScene, q: &DrawRequest) -> Vec<Color32> {
+        let mut target = None;
+        render(r, &mut target, Some(g), q).unwrap().0.pixels
+    }
+
+    /// Skinning follows the palette, a held part follows its location and is left out
+    /// when the location is missing, overlay lines draw over the meshes.
+    #[test]
+    fn poses_skin_place_and_overlay() {
+        let mut r = match Renderer::new_headless(&RendererConfig::default()) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("no GPU renderer in this environment, skipping: {e}");
+                return;
+            }
+        };
+        let scene = Arc::new(posed_scene());
+        let (gpu, problems) = upload_scene(&mut r, 3, Arc::clone(&scene));
+        assert!(problems.is_empty(), "{problems:?}");
+        let mut base = request_for(&scene, 3);
+        base.width = 128;
+        base.height = 128;
+        let at = |palette: Vec<Mat4>, attach: Vec<(u32, Mat4)>, lines| {
+            Some(Arc::new(PoseDraw {
+                placement: Mat4::IDENTITY,
+                palette,
+                attach,
+                lines,
+            }))
+        };
+        let rest = DrawRequest {
+            pose: at(
+                vec![Mat4::IDENTITY; 2],
+                vec![(7, Mat4::IDENTITY)],
+                Vec::new(),
+            ),
+            ..base.clone()
+        };
+        let moved = DrawRequest {
+            pose: at(
+                vec![
+                    Mat4::IDENTITY,
+                    Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0)),
+                ],
+                vec![(7, Mat4::IDENTITY)],
+                Vec::new(),
+            ),
+            ..base.clone()
+        };
+        let a = pixels(&mut r, &gpu, &rest);
+        let b = pixels(&mut r, &gpu, &moved);
+        assert_ne!(a, b, "the palette moved nothing");
+        // Without its location the held part is not drawn.
+        let no_loc = DrawRequest {
+            pose: at(vec![Mat4::IDENTITY; 2], Vec::new(), Vec::new()),
+            ..base.clone()
+        };
+        let c = pixels(&mut r, &gpu, &no_loc);
+        assert_ne!(a, c, "the held part was drawn without its location");
+        let held_moved = DrawRequest {
+            pose: at(
+                vec![Mat4::IDENTITY; 2],
+                vec![(7, Mat4::from_translation(Vec3::new(0.0, 0.0, 2.0)))],
+                Vec::new(),
+            ),
+            ..base.clone()
+        };
+        assert_ne!(a, pixels(&mut r, &gpu, &held_moved));
+        // Lines draw over everything; garbage lines are skipped.
+        let lined = DrawRequest {
+            pose: at(
+                vec![Mat4::IDENTITY; 2],
+                vec![(7, Mat4::IDENTITY)],
+                vec![
+                    ([-5.0, 0.0, 0.5], [5.0, 0.0, 0.5], [1.0, 0.0, 1.0, 1.0]),
+                    ([f32::NAN, 0.0, 0.0], [1.0, 1.0, 1.0], [1.0; 4]),
+                ],
+            ),
+            ..base.clone()
+        };
+        assert_ne!(a, pixels(&mut r, &gpu, &lined));
+        // A non-finite placement falls back to identity; an oversized palette is an error.
+        let nan = DrawRequest {
+            pose: Some(Arc::new(PoseDraw {
+                placement: Mat4::from_scale(Vec3::splat(f32::NAN)),
+                palette: vec![Mat4::IDENTITY; 2],
+                attach: vec![(7, Mat4::IDENTITY)],
+                lines: Vec::new(),
+            })),
+            ..base.clone()
+        };
+        assert_eq!(a, pixels(&mut r, &gpu, &nan));
+        let huge = DrawRequest {
+            pose: at(
+                vec![Mat4::IDENTITY; tessera_render::MAX_PALETTE_BONES + 1],
+                Vec::new(),
+                Vec::new(),
+            ),
+            ..base
+        };
+        let mut target = None;
+        assert!(render(&mut r, &mut target, Some(&gpu), &huge).is_err());
+        gpu.release(&mut r);
+        // The offline path renders the same requests.
+        match render_offline(scene, &[rest.clone(), moved]) {
+            Ok((imgs, problems)) => {
+                assert!(problems.is_empty());
+                assert_eq!(imgs.len(), 2);
+                assert_eq!(imgs[0].pixels, a);
+            }
+            Err(e) => panic!("{e}"),
+        }
+        assert_eq!(
+            rest.pose.as_ref().unwrap().attach_transform(7),
+            Some(Mat4::IDENTITY)
+        );
+        assert_eq!(rest.pose.as_ref().unwrap().attach_transform(8), None);
     }
 
     fn dye(mask: usize, color: [f32; 4]) -> crate::scene::GpuDye {
@@ -1299,6 +1569,7 @@ mod tests {
             dye: None,
             diffuse_tint: true,
             explode: 0.5,
+            pose: None,
         });
         let ctx = egui::Context::default();
         let deadline = Instant::now() + std::time::Duration::from_secs(60);

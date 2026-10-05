@@ -6,7 +6,10 @@
 > criteria were verified and closed on 2026-10-04 ([M0 status](#m0-status),
 > [M1 status](#m1-status), [M2 status](#m2-status)). M3 was verified on 2026-10-04
 > ([M3 status](#m3-status)): every criterion passes on Tessera's side; criteria 4 and 5
-> wait only for the owner's readings in the original client. M4 is next. Milestones are ordered by
+> wait only for the owner's readings in the original client. M4 was verified on 2026-10-05
+> ([M4 status](#m4-status)): criteria 1, 3 and 5 pass on Tessera's side; criterion 2 waits
+> on a spec question for the two River-hobbit bodies, and criterion 4 on the reference
+> machine. M5 is next; the remaining M4 items are listed in its status. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -54,7 +57,7 @@ like "ARCH §8" refer to it.
 | **M1** | Asset browser: textures, strings, icons, properties | T0 | `props`, `text`, `assets`, `settings`, `explorer` |
 | **M2** | Mesh and material viewer | T0/T1 | `mesh`, `material` |
 | **M3** | Terrain and offline landblock world walker | T1 | `world`, `terrain`, `input`, `wstate` |
-| **M4** | Characters and animation | T1 | `havok`, `anim` |
+| **M4** | Characters and animation | T1 | `havok`, `anim`, `entity` |
 | **M5** | UI layouts and skins, Lua plugins | T1 | `ui`, `plugins` |
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
@@ -504,6 +507,57 @@ motion), `appearance.md`, `setup.md` (complete), `script-table.md` (animation no
    workers.
 5. Fuzz targets for the Havok reader cover each structure kind.
 
+<a id="m4-status"></a>
+**Status (verified 2026-10-05 against the owner's install, release builds, on a laptop with
+an i9-10885H and an RTX 2070 Super Max-Q / Vulkan, which is not the reference machine):
+criteria 1, 3 (data side) and 5 pass; criterion 2 passes for 12 of 14 bodies, the two
+River-hobbit bodies wait on a spec question; criterion 4 passes on this machine only, which
+is indicative ([reference-machine rules](perf/reference-machine.md)), so it stays open until
+the run on the reference machine.** Every deliverable exists: `tessera-havok`,
+`tessera-anim`, the `tessera-formats` appearance, item, avatar and script-table decoders
+with the clip resolver, `tessera-mesh::assembly`, GPU skinning in `tessera-render`, the
+explorer's character viewer and animation browser, the walker's animated avatar, placed
+NPCs and `--crowd`, and decision [0008](decisions/0008-entity-storage.md) (own entity store,
+`bevy_ecs` not adopted). Specs used: `havok-data.md`, `skeleton-anim.md`, `appearance.md`,
+`setup.md` (parts 1 and 2), `script-table.md`, plus `mesh.md` §6.2, `render.md` §2.4 and
+`walker.md` §10. No `> **OPEN:**` item blocks a criterion except the River-hobbit leg
+sliders (below); the others carry a Tessera Decision or wait on owner observations
+O8–O17 in [owner-observations.md](checklists/owner-observations.md). The four new M4 specs
+(`havok-data.md`, `skeleton-anim.md`, `appearance.md`, `script-table.md`) are still in
+Review: no spec review is recorded for them yet. `script-table.md`'s `BIN` facts come from a
+disassembly of the client's script-table node classes, which the owner authorised
+retroactively in decision [0009](decisions/0009-script-table-disassembly.md) (an incident
+under `docs/CLEAN_ROOM.md` §10, limited to that question and client build).
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-havok --test real_data`: skeleton records (setups 0x04) 28,555 / 28,555 decode (53,370 bones, at most 248); clip records 25,395 / 25,395 decode (100.000 %; 24,800 spline-compressed, 595 interleaved, 31,294 blocks; 5,602 with annotation tracks, 110 leading and 104 embedded reference frames), every clip sampled with a largest quaternion length error of 1.19 × 10⁻⁷; 0 in each of the 27 failure categories of `havok-data.md` §9.3. `tessera-anim` `real_data`: all 28,555 skeletons build; 25,393 clips bind and sample (the other 2 have no skeleton with their track count, `skeleton-anim.md` §3.3), 0 non-finite matrices; reference-pose skinning of all 2,625 skinned setup submeshes (2.5 M vertices) reproduces the stored vertices (largest error 4.4 mm from the stored weight sums, 3.1 × 10⁻⁵ m with weights renormalised; 0 bone-index or influence-list violations). |
+| 2 | ⚠️ 36 / 42 rows; data-side done, owner observation pending | Rows B1–B42 of [m4-visual.md](checklists/m4-visual.md): all 14 bodies (11 setups) assemble, and their idle, walk and run clips (chosen by the script tables, equal to `script-table.md` §8.3 for all 14, `script_table_real_data`) play through `tessera-anim` on the workers and GPU skinning. The 42 sheets (`tessera-explorer --sheet … --character <body> --clip idle\|walk\|run`, 4 play times × 2 angles each) were re-rendered and viewed in this verification: no stretched, exploding or detached geometry, seams closed, no part left in the bind pose. The 6 River-hobbit rows (B37–B42) fail only the checklist's foot-contact check: with the two hidden leg-scale sliders applied as the `appearance.md` §6.3 Decision says, the feet float about 0.09 m (lowest bone 0.104 m against 0.015–0.03 m on the other bodies; skinning itself is clean). How those sliders apply is an open spec question (checklist note 1, O9). Comparison with the original: O8, O9, O14, O16. |
+| 3 | ✅ data-side, owner observation pending | `cargo test --release -p tessera-mesh --test assembly_real_data`: 48 distinct items over 27 worn, 9 layered, 27 held and 25 stowed rows on the checklist's bodies, every expected winner, hidden slot, priority, holding location and bone matches; the 7 static NPC spots and all 775 placed weenie objects assemble. Every W, L and H row was re-rendered and viewed (worn parts replace and hide the expected slots, held items sit at their location's bone and follow it; stowed one-handed weapons at the hip, two-handed weapons, bows and shields on the back). This verification fixed `ItemVisual::equipment_category`, which dropped category bits above 31, so the medium shield (H21) now stows on the back like the other shields. The grip axis of in-hand items (checklist note 3) and the in-world rest positions are open; comparison with the original: O10, O13. |
+| 4 | ⏳ indicative pass, reference machine pending | `tessera-client --headless --unpaced --duration 60 --crowd 50 --heading 30 --size 1280x720` on this laptop (re-run in this verification): 51 animated characters (crowd of all 14 bodies standing, walking and running, plus the avatar), all 51 drawn in every frame, 12,132 frames in 60 s, 202.2 fps mean, p50 5.0 ms, p99 6.8 ms, longest frame 12.4 ms (none over 16.7 ms); animation main thread 0.247 ms per frame, 81.2 % of the animation work on the asset workers. Windowed with vsync off the same crowd ran at 375.8 fps mean (`walker.md` §8.1). Under the [reference-machine rules](perf/reference-machine.md) these numbers are indicative: the criterion closes when the owner confirms the reference machine and the same run passes there. |
+| 5 | ✅ | `docs/specs/havok-data.md` §11 kinds K1–K13 map to the four Havok targets (`havok_tagfile` K1–K5, `havok_skeleton` K6, `havok_clip_record` K7, K8, K10–K13, `havok_spline_block` K9, K10; table in `crates/havok/src/lib.rs`); `crates/havok/tests/categories.rs` produces each of the 27 failure categories from synthetic input. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer) on all 15 new M4 targets plus `world_bundle`, `net_sandbox_world` and `mesh_decode`: no finding; Havok targets 0.09 M (`havok_clip_record`) to 3.9 M (`havok_spline_block`) executions, the others 0.15 M–11.0 M. |
+
+Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets --all-features --locked -D warnings` and on `fuzz/`,
+`cargo test --workspace` with `TESSERA_GAME_DIR` set (1,752 passed, 0 failed, 2 ignored, in a
+debug build), `cargo doc
+--workspace --no-deps -D warnings`, `cargo deny check bans licenses sources` (both
+manifests), `tools/check-content.sh` (two test identifiers renamed) and its self-test,
+`tools/check-spdx.sh` (0 errors) and the relative links and anchors of the Markdown docs all
+pass. The checks ran on the distro toolchain (rustc 1.97.1) because rustup is not installed
+on this machine; `rust-toolchain.toml` pins 1.99.0, so re-run clippy on the pinned toolchain
+before or after committing.
+
+Fixed during this verification: `ItemVisual::equipment_category` widened to the full bit
+pattern (H21 stowing); the renderer resolves the `AutoVsync`/`AutoNoVsync` present modes
+against the surface instead of falling back to `Fifo` (the client's `--no-vsync` now asks for
+`AutoNoVsync`); the NPC-spot test's settle timeout is longer in unoptimised builds (the
+432-figure spot did not settle within 60 s in a debug build); `fuzz/README.md` rows for the
+M4 targets; ARCHITECTURE §11 brought up to the M4 specs.
+
+Remaining for M4 to close: the reference-machine run of criterion 4; the River-hobbit leg
+slider question (rows B37–B42); owner observations O8–O17.
+
 ---
 
 <a id="m5"></a>
@@ -704,8 +758,11 @@ a go/no-go decision accepted by the project owner.
 > **OPEN:** reference machine for performance criteria (CPU, GPU, RAM). A proposal with the
 > primary workstation's hardware is in [`docs/perf/reference-machine.md`](perf/reference-machine.md)
 > (M3's performance evidence was measured there); the owner must confirm it, and decide
-> how results from another machine count, before the M4 performance criterion and the
-> decision 0005 benchmark are measured.
+> how results from another machine count, before M4 criterion 4 can close. The decision
+> 0005 entity-storage benchmark was run on a laptop that is not the reference machine;
+> decision [0008](decisions/0008-entity-storage.md) rests on the relative comparison (both
+> stores on the same machine), so it stands, while its absolute numbers on the reference
+> machine are still pending.
 
 > **OPEN:** whether a self-hosted CI runner with the owner's install should run the gated
 > real-data tests on every change, or nightly. Results must stay pass/fail and counts.

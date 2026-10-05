@@ -81,7 +81,9 @@ fn handmade(build_byte: bool) -> Vec<u8> {
         }
     }
     f32s(&mut r, &[0.0, 0.0, -1.0, 1.0, 2.0, 0.5]); // AABB
-    u32s(&mut r, &[5, 1, 2, 3, 4, 5]); // influence list: 5 non-zero weights
+    // Influence list (`mesh.md` §6.2): vertices 2, 1, 0, each slot-0 bone once per non-zero
+    // weight.
+    u32s(&mut r, &[5, 7, 7, 7, 7, 7]);
     // Region C.
     u32s(&mut r, &[1, 3]);
     for i in [0u16, 1, 2] {
@@ -153,7 +155,8 @@ fn handmade_record_decodes_field_by_field() {
         assert_eq!(skin.joints_of(1), &[7, 9]);
         assert_eq!(skin.weights_of(1), &[0.75, 0.25]);
         assert_eq!(skin.joints_of(0), &[7, 0]);
-        assert_eq!(sm.influence_list, vec![1, 2, 3, 4, 5]);
+        assert_eq!(sm.influence_list, vec![7, 7, 7, 7, 7]);
+        assert!(sm.influence_list_matches());
         assert_eq!(m.index_buffers[0].indices, vec![0, 1, 2]);
         assert_eq!(m.levels.len(), 2);
         assert_eq!(m.levels[1].kind, LevelKind::Proxy);
@@ -624,6 +627,11 @@ fn validation_categorises_quality_issues() {
     let mut m = clean.clone();
     m.submeshes[0].influence_list.pop();
     assert_eq!(issue_kinds(&m), vec![IssueKind::InfluenceListLength]);
+
+    // The right length with the wrong content (mesh.md §6.2: the list is redundant).
+    let mut m = clean.clone();
+    m.submeshes[0].influence_list[0] ^= 1;
+    assert_eq!(issue_kinds(&m), vec![IssueKind::InfluenceListContent]);
 
     let mut m = clean.clone();
     m.index_buffers[0].indices[0..3].copy_from_slice(&[1, 1, 2]);
@@ -1421,4 +1429,60 @@ fn aabb_union_contains_both() {
     assert_eq!(u.max, [1.0, 4.0, 3.0]);
     assert_eq!(a.union(&a), a);
     assert_eq!(b.union(&a), u);
+}
+
+// ---------------------------------------------------------------------------------------
+// Skinned levels (mesh.md §5.7, §6.2; skeleton-anim.md §4.1)
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn skinned_level_reports_bones_and_checks_the_skeleton() {
+    let limits = GeometryLimits::default();
+    let m = MeshSpec::single(0x3002_0252, 12).build().unwrap();
+    let skin = m.submeshes[0].streams.skin.as_ref().unwrap();
+    let max = skin.max_joint().expect("the synthetic skin uses bones");
+    let bones = usize::from(max) + 1;
+
+    let sl = m.skinned_level(0, &limits, Some(bones)).unwrap();
+    assert!(sl.is_skinned());
+    assert_eq!(sl.max_joint, Some(max));
+    assert_eq!(sl.palette_len(), bones);
+    assert_eq!(sl.parts.len(), sl.geometry.parts.len());
+    assert!(sl.parts[0].skinned);
+    assert_eq!(sl.parts[0].max_joint, Some(max));
+    assert_eq!(sl.parts[0].bones_used, skin.bones_used());
+    let streams = sl.part_streams(0).expect("skinned part");
+    assert_eq!(
+        streams.joints.len(),
+        sl.geometry.parts[0].vertex_count as usize
+    );
+    assert_eq!(streams.weights.len(), streams.joints.len());
+    // Without a bone count nothing is checked.
+    assert!(m.skinned_level(0, &limits, None).is_ok());
+    // One bone too few: the largest joint is out of range.
+    match m.skinned_level(0, &limits, Some(usize::from(max))) {
+        Err(MeshError::JointOutOfRange {
+            joint, bone_count, ..
+        }) => {
+            assert_eq!(joint, max);
+            assert_eq!(bone_count, usize::from(max));
+        }
+        other => panic!("expected JointOutOfRange, got {other:?}"),
+    }
+
+    // A hand-edited part range never panics, even when base + count overflows u32.
+    let mut edited = sl.clone();
+    edited.geometry.parts[0].base_vertex = u32::MAX;
+    assert!(edited.part_streams(0).is_none());
+    edited.geometry.parts[0].vertex_count = u32::MAX;
+    assert!(edited.part_streams(0).is_none());
+    assert!(sl.part_streams(99).is_none());
+
+    // A static mesh: no skin, no palette, no streams.
+    let s = MeshSpec::single(0x0000_0112, 6).build().unwrap();
+    let sl = s.skinned_level(0, &limits, Some(1)).unwrap();
+    assert!(!sl.is_skinned());
+    assert_eq!(sl.max_joint, None);
+    assert_eq!(sl.palette_len(), 0);
+    assert!(sl.part_streams(0).is_none());
 }

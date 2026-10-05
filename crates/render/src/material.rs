@@ -16,6 +16,7 @@ use glam::{Mat4, Vec3};
 
 use crate::arena::MeshId;
 use crate::frame::Rgba;
+use crate::skin::SkinPalette;
 use crate::texture::TextureId;
 
 /// How a material's alpha is used.
@@ -236,6 +237,12 @@ pub struct MeshDraw {
     pub transform: Mat4,
     /// Surface.
     pub material: Material,
+    /// Skinning palette of this frame ([`crate::Frame::skin_palette`]).
+    /// Used only for meshes uploaded with skin streams
+    /// ([`crate::Renderer::upload_skinned_mesh`]); `None` draws a skinned
+    /// mesh in its bind pose. The palette maps the mesh's bind-pose model
+    /// space to posed model space; `transform` is applied after it.
+    pub skin: Option<SkinPalette>,
 }
 
 impl MeshDraw {
@@ -247,7 +254,18 @@ impl MeshDraw {
             submesh: None,
             transform,
             material,
+            skin: None,
         }
+    }
+
+    /// Skin the draw with `palette` (see [`Self::skin`]). A palette that
+    /// belongs to another frame, or that has fewer matrices than the
+    /// mesh's [`crate::SkinInfo::required_palette_len`], is ignored with a
+    /// warning and the mesh is drawn in its bind pose.
+    #[must_use]
+    pub fn with_skin(mut self, palette: SkinPalette) -> Self {
+        self.skin = Some(palette);
+        self
     }
 
     /// Restrict the draw to one submesh.

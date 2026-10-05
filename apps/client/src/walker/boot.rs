@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Background start-up of the world: the world context (property dictionary, region and
-//! block-map descriptors, `landblock.md` §5.1) and the area-name resolver
-//! (`wstate.md` §11), loaded on their own thread so the window stays responsive.
+//! block-map descriptors, `landblock.md` §5.1), the area-name resolver (`wstate.md` §11)
+//! and the character catalog (race table, animation layers, weenie roles), loaded on
+//! their own thread so the window stays responsive.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,10 +12,15 @@ use std::time::Instant;
 use tessera_dat::ArchiveSet;
 use tessera_world::{BundleOptions, WStateAreaNames, WorldContext};
 
+use super::characters::catalog::CharacterCatalog;
+
+/// What the start-up produces.
+pub type Booted = (Arc<WorldContext>, Arc<CharacterCatalog>);
+
 /// A running or finished world start-up.
 #[derive(Debug)]
 pub struct WorldBoot {
-    handle: Option<JoinHandle<Result<Arc<WorldContext>, String>>>,
+    handle: Option<JoinHandle<Result<Booted, String>>>,
 }
 
 impl WorldBoot {
@@ -37,7 +43,7 @@ impl WorldBoot {
     }
 
     /// The result once ready (never blocks).
-    pub fn try_take(&mut self) -> Option<Result<Arc<WorldContext>, String>> {
+    pub fn try_take(&mut self) -> Option<Result<Booted, String>> {
         if self.handle.as_ref().is_some_and(JoinHandle::is_finished) {
             return Some(match self.handle.take()?.join() {
                 Ok(r) => r,
@@ -52,7 +58,7 @@ fn load(
     set: &Arc<ArchiveSet>,
     root: &std::path::Path,
     options: BundleOptions,
-) -> Result<Arc<WorldContext>, String> {
+) -> Result<Booted, String> {
     let t = Instant::now();
     let ctx = WorldContext::from_install(Arc::clone(set), options)
         .map_err(|e| format!("world context: {e}"))?;
@@ -65,10 +71,12 @@ fn load(
             ctx
         }
     };
+    let catalog = CharacterCatalog::build(Arc::clone(set));
     tracing::info!(
         regions = ctx.regions().len(),
+        bodies = catalog.bodies.len(),
         elapsed_ms = t.elapsed().as_millis(),
         "world context ready"
     );
-    Ok(Arc::new(ctx))
+    Ok((Arc::new(ctx), Arc::new(catalog)))
 }

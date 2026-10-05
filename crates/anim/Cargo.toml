@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-anim"
+description = "Skeleton hierarchy, clip sampling, blending, root motion, attach points and skinning palettes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tessera-havok.workspace = true
+tessera-assets.workspace = true
+glam = "0.33"
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+# Real-data tests (gated on TESSERA_GAME_DIR) read setups, clips and meshes of the install.
+tessera-dat.workspace = true
+tessera-formats.workspace = true
+tessera-mesh.workspace = true
+
+[[example]]
+name = "anim_bench"
+path = "examples/anim_bench.rs"
+
+[lints]
+workspace = true

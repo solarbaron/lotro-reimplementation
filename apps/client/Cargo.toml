@@ -19,14 +19,18 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+tessera-anim.workspace = true
 tessera-assets.workspace = true
 tessera-dat.workspace = true
+tessera-entity.workspace = true
 tessera-formats.workspace = true
+tessera-havok.workspace = true
 tessera-input = { workspace = true, features = ["winit"] }
 tessera-install.workspace = true
 tessera-material.workspace = true
 tessera-mesh.workspace = true
 tessera-net.workspace = true
+tessera-props.workspace = true
 tessera-render.workspace = true
 tessera-script.workspace = true
 tessera-terrain.workspace = true

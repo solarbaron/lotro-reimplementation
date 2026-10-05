@@ -10,6 +10,12 @@
 //! - The draw-suppression booleans `Render_Draw`, `Render_DrawMeshes` and
 //!   `Render_NeverAddToScene` are looked up on every 0x47 record of the chain; the first
 //!   value found wins (`entity-descriptor.md` §9).
+//! - A 0x70 game object's `WeenieType` (enum key) is kept from the same property set as
+//!   its `PhysObj` (`appearance.md` §7.1), so a walker can tell NPC-like weenies from
+//!   markers.
+//! - The bone count of the setup's skeleton (the tagfile embedded in the setup,
+//!   `skeleton-anim.md` §2.1, decoded by `tessera-havok`), so a walker can tell animated
+//!   rigs from static props (§2.4: every setup of 30 bones or more is skinned).
 //!
 //! Results are cached per object DID, so a landblock with thousands of placements of a
 //! few hundred objects reads each chain once. The cache is bounded by entry count and is
@@ -39,6 +45,14 @@ pub struct WorldPids {
     pub landblock: LandblockPids,
     /// `PhysObj`: the 0x47 physics object of a 0x70 game object (§4.3).
     pub phys_obj: Option<u32>,
+    /// `WeenieType`: what a 0x70 game object is (`appearance.md` §7.1).
+    pub weenie_type: Option<u32>,
+    /// `NPC_StartingIdleAnimation` (instance sets of NPC-like figures, `appearance.md` §7.2).
+    pub npc_starting_idle: Option<u32>,
+    /// `Appearance_RandomAppearanceType` (`appearance.md` §7.4).
+    pub random_appearance: Option<u32>,
+    /// `NPC_Cosmetic_Inventory_Item1`: a held prop of a static figure (`appearance.md` §5.5).
+    pub npc_cosmetic_item1: Option<u32>,
 }
 
 impl WorldPids {
@@ -48,6 +62,10 @@ impl WorldPids {
         Self {
             landblock: LandblockPids::from_names(&pid_of),
             phys_obj: pid_of("PhysObj"),
+            weenie_type: pid_of("WeenieType"),
+            npc_starting_idle: pid_of("NPC_StartingIdleAnimation"),
+            random_appearance: pid_of("Appearance_RandomAppearanceType"),
+            npc_cosmetic_item1: pid_of("NPC_Cosmetic_Inventory_Item1"),
         }
     }
 }
@@ -143,6 +161,10 @@ pub struct ResolvedObject {
     pub parts: Arc<[Did]>,
     /// Draw-suppression values along the chain.
     pub draw: DrawFlags,
+    /// `WeenieType` of a 0x70 game object (enum key), when it has one.
+    pub weenie_type: Option<u32>,
+    /// Bones of the setup's skeleton (`None`: no skeleton, or it did not decode).
+    pub bones: Option<u32>,
     /// Why resolution stopped, if it did.
     pub error: Option<String>,
 }
@@ -278,10 +300,14 @@ impl ObjectResolver {
     }
 
     fn resolve_uncached(&self, object: Did) -> ResolvedObject {
+        let mut weenie_type = None;
         let physics = match object.prefix() {
             ENTITY_PREFIX | TEMPLATE_PREFIX | SETUP_PREFIX => object,
             0x70..=0x77 => match self.phys_obj_of(object) {
-                Ok(p) => p,
+                Ok((p, w)) => {
+                    weenie_type = w;
+                    p
+                }
                 Err(e) => return ResolvedObject::failed(object, None, e),
             },
             _ => {
@@ -306,7 +332,12 @@ impl ObjectResolver {
         };
         let chain = match resolve_setup(physics, fetch) {
             Ok(c) => c,
-            Err(e) => return ResolvedObject::failed(object, Some(physics), e.to_string()),
+            Err(e) => {
+                return ResolvedObject {
+                    weenie_type,
+                    ..ResolvedObject::failed(object, Some(physics), e.to_string())
+                };
+            }
         };
         let mut draw = DrawFlags::default();
         for (did, bytes) in &entities {
@@ -318,19 +349,29 @@ impl ObjectResolver {
             }
         }
         let setup = chain.path.last().copied();
+        let bones = if chain.setup.tagfile.is_empty() {
+            None
+        } else {
+            tessera_havok::Skeleton::parse(&chain.setup.tagfile)
+                .ok()
+                .and_then(|s| u32::try_from(s.bone_count()).ok())
+        };
         ResolvedObject {
             object,
             physics: Some(physics),
+            bones,
             parts: chain.setup.parts.clone().into(),
             chain: chain.path,
             setup,
             draw,
+            weenie_type,
             error: None,
         }
     }
 
-    /// The `PhysObj` of a game object, from its property set at DID + 0x09000000.
-    fn phys_obj_of(&self, object: Did) -> Result<Did, String> {
+    /// The `PhysObj` and `WeenieType` of a game object, from its property set at DID +
+    /// 0x09000000.
+    fn phys_obj_of(&self, object: Did) -> Result<(Did, Option<u32>), String> {
         let pid = self
             .pids
             .phys_obj
@@ -344,9 +385,15 @@ impl ObjectResolver {
             .ok_or_else(|| format!("property set {:#010x} is missing", set_did.0))?;
         let rec = PropertySetRecord::parse_expecting(&bytes, set_did, &*self.schema)
             .map_err(|e| e.to_string())?;
+        let weenie_type = self
+            .pids
+            .weenie_type
+            .and_then(|p| rec.set.get(p))
+            .and_then(value_as_u32);
         rec.set
             .get(pid)
             .and_then(value_as_did)
+            .map(|d| (d, weenie_type))
             .ok_or_else(|| "the object has no PhysObj".to_owned())
     }
 }

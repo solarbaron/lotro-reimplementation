@@ -87,6 +87,9 @@ pub enum IssueKind {
     UnusedSlotNonZeroIndex,
     /// MI6: influence-list length ≠ number of non-zero weights.
     InfluenceListLength,
+    /// §6.2: the influence list has the right length but differs from the list the vertex
+    /// data implies ([`crate::Submesh::computed_influence_list`]; never observed).
+    InfluenceListContent,
     /// MI7: the smallest index of a non-empty buffer is not 0.
     IndexMinNotZero,
     /// MI7: the largest index is not `vertex_count − 1`.
@@ -161,6 +164,7 @@ impl IssueKind {
             | Self::FirstWeightNotPositive
             | Self::UnusedSlotNonZeroIndex => "MI5",
             Self::InfluenceListLength => "MI6",
+            Self::InfluenceListContent => "§6.2",
             Self::IndexMinNotZero
             | Self::IndexMaxNotLast
             | Self::UnusedVertex
@@ -541,10 +545,19 @@ fn check_submesh(r: &mut ValidationReport, index: u32, sm: &Submesh) {
         r.add(IssueKind::FirstWeightNotPositive, s, None, first);
         r.add(IssueKind::UnusedSlotNonZeroIndex, s, None, slot);
     }
+    let length_ok = sm.influence_list.len() as u64 == nonzero;
     r.add(
         IssueKind::InfluenceListLength,
         s,
         None,
-        u64::from(sm.influence_list.len() as u64 != nonzero),
+        u64::from(!length_ok),
     );
+    if length_ok && st.skin.is_some() {
+        r.add(
+            IssueKind::InfluenceListContent,
+            s,
+            None,
+            u64::from(!sm.influence_list_matches()),
+        );
+    }
 }

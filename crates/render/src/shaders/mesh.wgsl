@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Mesh surfaces (opaque / alpha-test / alpha-blend entry points), wireframe and
-// vertex-normal overlays. Written for Tessera; feature switches are uniforms.
+// vertex-normal overlays, static and skinned. Written for Tessera; feature switches are
+// uniforms.
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -48,6 +49,13 @@ const DYE_BASE_ALPHA: u32 = 2u;
 
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var<uniform> draw: Draw;
+
+// Skinning palette of the draw: 256 affine matrices, three rows each (row-major 3 x 4),
+// entry j = rows 3j .. 3j+2. Bound at the draw's dynamic offset; static draws ignore it.
+struct Palette {
+    rows: array<vec4<f32>, 768>,
+};
+@group(1) @binding(1) var<uniform> palette: Palette;
 @group(2) @binding(0) var t_base: texture_2d<f32>;
 @group(2) @binding(1) var t_normal: texture_2d<f32>;
 @group(2) @binding(2) var t_dye: texture_2d<f32>;
@@ -63,6 +71,13 @@ struct VsIn {
     @location(2) tangent: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) color: vec4<f32>,
+};
+
+// Second vertex stream of skinned meshes: four bone indices (u8) and four weights
+// (unorm16, summing to 1).
+struct SkinIn {
+    @location(5) joints: vec4<u32>,
+    @location(6) weights: vec4<f32>,
 };
 
 struct VsOut {
@@ -86,9 +101,10 @@ fn safe_normalize(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     return fallback;
 }
 
-@vertex
-fn vs_main(in: VsIn) -> VsOut {
-    let world = draw.model * vec4<f32>(in.position, 1.0);
+// Shared by the static and skinned entry points, so a skinned vertex at its bind pose
+// takes exactly the static path.
+fn surface_vertex(in: VsIn, position: vec3<f32>, normal: vec3<f32>, tangent: vec3<f32>) -> VsOut {
+    let world = draw.model * vec4<f32>(position, 1.0);
     let m3 = mat3x3<f32>(draw.model[0].xyz, draw.model[1].xyz, draw.model[2].xyz);
     var sign = 1.0;
     if ((draw.flags.x & F_MIRRORED) != 0u) {
@@ -97,11 +113,60 @@ fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = globals.view_proj * world;
     out.world_pos = world.xyz;
-    out.normal = normal_matrix() * in.normal.xyz;
-    out.tangent = vec4<f32>(m3 * in.tangent.xyz, in.tangent.w * sign);
+    out.normal = normal_matrix() * normal;
+    out.tangent = vec4<f32>(m3 * tangent, in.tangent.w * sign);
     out.uv = in.uv;
     out.color = in.color;
     return out;
+}
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    return surface_vertex(in, in.position, in.normal.xyz, in.tangent.xyz);
+}
+
+// ---- skinning ------------------------------------------------------------------------
+//
+// Linear blend skinning written as v + sum_k w_k * (M_k v - v). With weights summing to 1
+// this equals sum_k w_k * M_k v; with identity matrices every term is exactly zero, so the
+// bind pose reproduces the static path bit for bit. Directions (normal, tangent) use the
+// matrices without translation; the fragment stage renormalises them.
+
+fn bone_point(j: u32, p: vec3<f32>) -> vec3<f32> {
+    let b = min(j, 255u) * 3u;
+    let h = vec4<f32>(p, 1.0);
+    return vec3<f32>(dot(palette.rows[b], h), dot(palette.rows[b + 1u], h),
+        dot(palette.rows[b + 2u], h));
+}
+
+fn bone_dir(j: u32, d: vec3<f32>) -> vec3<f32> {
+    let b = min(j, 255u) * 3u;
+    return vec3<f32>(dot(palette.rows[b].xyz, d), dot(palette.rows[b + 1u].xyz, d),
+        dot(palette.rows[b + 2u].xyz, d));
+}
+
+fn skin_point(s: SkinIn, p: vec3<f32>) -> vec3<f32> {
+    var acc = p;
+    if (s.weights.x > 0.0) { acc = acc + s.weights.x * (bone_point(s.joints.x, p) - p); }
+    if (s.weights.y > 0.0) { acc = acc + s.weights.y * (bone_point(s.joints.y, p) - p); }
+    if (s.weights.z > 0.0) { acc = acc + s.weights.z * (bone_point(s.joints.z, p) - p); }
+    if (s.weights.w > 0.0) { acc = acc + s.weights.w * (bone_point(s.joints.w, p) - p); }
+    return acc;
+}
+
+fn skin_dir(s: SkinIn, d: vec3<f32>) -> vec3<f32> {
+    var acc = d;
+    if (s.weights.x > 0.0) { acc = acc + s.weights.x * (bone_dir(s.joints.x, d) - d); }
+    if (s.weights.y > 0.0) { acc = acc + s.weights.y * (bone_dir(s.joints.y, d) - d); }
+    if (s.weights.z > 0.0) { acc = acc + s.weights.z * (bone_dir(s.joints.z, d) - d); }
+    if (s.weights.w > 0.0) { acc = acc + s.weights.w * (bone_dir(s.joints.w, d) - d); }
+    return acc;
+}
+
+@vertex
+fn vs_skinned(in: VsIn, skin: SkinIn) -> VsOut {
+    return surface_vertex(in, skin_point(skin, in.position), skin_dir(skin, in.normal.xyz),
+        skin_dir(skin, in.tangent.xyz));
 }
 
 // 8 x 8 cells per UV unit, tinted by the UV value so orientation is visible.
@@ -212,11 +277,28 @@ fn pulled(world: vec3<f32>) -> vec4<f32> {
     return globals.view_proj * vec4<f32>(p, 1.0);
 }
 
-@vertex
-fn vs_wire(in: VsIn) -> LineOut {
-    let world = (draw.model * vec4<f32>(in.position, 1.0)).xyz;
+fn wire_vertex(position: vec3<f32>) -> LineOut {
+    let world = (draw.model * vec4<f32>(position, 1.0)).xyz;
     var out: LineOut;
     out.clip = pulled(world);
+    return out;
+}
+
+@vertex
+fn vs_wire(in: VsIn) -> LineOut {
+    return wire_vertex(in.position);
+}
+
+@vertex
+fn vs_wire_skinned(in: VsIn, skin: SkinIn) -> LineOut {
+    return wire_vertex(skin_point(skin, in.position));
+}
+
+fn normal_line_vertex(vi: u32, position: vec3<f32>, normal: vec3<f32>) -> LineOut {
+    let world = (draw.model * vec4<f32>(position, 1.0)).xyz;
+    let n = safe_normalize(normal_matrix() * normal, vec3<f32>(0.0));
+    var out: LineOut;
+    out.clip = pulled(world + n * (f32(vi & 1u) * draw.params.z));
     return out;
 }
 
@@ -224,11 +306,13 @@ fn vs_wire(in: VsIn) -> LineOut {
 // mesh vertex, the second one moved along the normal.
 @vertex
 fn vs_normals(@builtin(vertex_index) vi: u32, in: VsIn) -> LineOut {
-    let world = (draw.model * vec4<f32>(in.position, 1.0)).xyz;
-    let n = safe_normalize(normal_matrix() * in.normal.xyz, vec3<f32>(0.0));
-    var out: LineOut;
-    out.clip = pulled(world + n * (f32(vi & 1u) * draw.params.z));
-    return out;
+    return normal_line_vertex(vi, in.position, in.normal.xyz);
+}
+
+// The same with the skin stream stepped per instance too.
+@vertex
+fn vs_normals_skinned(@builtin(vertex_index) vi: u32, in: VsIn, skin: SkinIn) -> LineOut {
+    return normal_line_vertex(vi, skin_point(skin, in.position), skin_dir(skin, in.normal.xyz));
 }
 
 @fragment

@@ -5,6 +5,9 @@
 //! - `context_and_bundles`: loads the world context (dictionary, REGION map, region and
 //!   block-map descriptors), checks CO4 (`coordinates.md` §13), builds bundles around a
 //!   few landblocks and resolves an area name through `tessera-wstate`.
+//! - `figures_at_npc_spots`: the landblocks of the static NPC spots of
+//!   `docs/checklists/m4-visual.md` §N expose their figures (`walker.md` §10): the IID, the
+//!   object, the figure kind, the block-local position and the starting idle of each row.
 //! - `stream_straight_line_across_region`: flies a straight line across a full region at
 //!   high speed with the streamer, headless, paced at 60 frames per second, and reports
 //!   load times, peak residency and the longest main-thread update (ROADMAP M3 exit
@@ -26,8 +29,8 @@ use std::time::{Duration, Instant};
 use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_dat::{ArchiveKind, ArchiveSet, SetOptions};
 use tessera_world::{
-    BundleOptions, BundleSource, LandblockKey, RingConfig, StreamConfig, WStateAreaNames,
-    WorldContext, WorldPos, WorldStreamer, build_bundle,
+    BundleOptions, BundleSource, FigureKind, LandblockKey, RingConfig, StreamConfig,
+    WStateAreaNames, WorldContext, WorldPos, WorldStreamer, build_bundle,
 };
 
 fn install() -> Option<PathBuf> {
@@ -308,5 +311,176 @@ fn stream_straight_line_across_region() {
         st.peak_resident_bytes <= config.residency_budget + near_allowance,
         "peak residency {} over budget",
         st.peak_resident_bytes
+    );
+}
+
+/// One row of `m4-visual.md` §N: landblock-info DID, IID, object, figure kind, block-local
+/// position, starting idle (when the row names one), random-appearance type and the
+/// content layer the entity needs
+/// besides the default `[1]` (`entity-descriptor.md` §4.5.1).
+type Spot = (
+    u32,
+    u64,
+    u32,
+    FigureKind,
+    [f32; 3],
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+);
+
+/// The static NPC spots of `docs/checklists/m4-visual.md` §N. N4 lists content layer
+/// 0x10000019 and N6 0x10000536 only, so the walker's default layers hide them.
+pub const SPOTS: [Spot; 7] = [
+    (
+        0x8021_1B8F,
+        0x0111_B8F0_0000_002C,
+        0x4700_4E6F,
+        FigureKind::Npc,
+        [100.58, 19.27, 494.75],
+        Some(0x7),
+        None,
+        None,
+    ),
+    (
+        0x8021_678A,
+        0x0116_78A0_0000_00A5,
+        0x4700_4E6F,
+        FigureKind::Npc,
+        [48.32, 38.57, 357.86],
+        Some(0x59),
+        None,
+        None,
+    ),
+    (
+        0x8021_3FAA,
+        0x0113_FAA0_0000_00C8,
+        0x4700_4E75,
+        FigureKind::Npc,
+        [150.88, 124.19, 613.90],
+        Some(0x5E),
+        None,
+        None,
+    ),
+    (
+        0x8021_3B85,
+        0x0113_B850_0000_0019,
+        0x4700_4FB6,
+        FigureKind::Npc,
+        [47.04, 66.28, 593.33],
+        Some(0x29),
+        None,
+        Some(0x1000_0019),
+    ),
+    (
+        0x8021_4F79,
+        0x0114_F790_0000_0076,
+        0x4700_4E74,
+        FigureKind::Npc,
+        [151.07, 150.72, 402.49],
+        Some(0x5A),
+        Some(0x46),
+        None,
+    ),
+    (
+        0x8025_3E07,
+        0x0453_E070_0000_001B,
+        0x7006_986E,
+        FigureKind::Weenie,
+        [11.51, 49.93, 156.11],
+        None,
+        Some(0xDB),
+        Some(0x1000_0536),
+    ),
+    (
+        0x8022_35F6,
+        0x0423_5F60_0000_001D,
+        0x7003_E1BB,
+        FigureKind::Weenie,
+        [104.50, 151.44, 450.85],
+        None,
+        None,
+        None,
+    ),
+];
+
+#[test]
+fn figures_at_npc_spots() {
+    let Some(dir) = install() else { return };
+    let set = open(&dir);
+    let context = |layers: Vec<u32>| {
+        WorldContext::from_install(
+            Arc::clone(&set),
+            BundleOptions {
+                resolve_area_names: false,
+                active_content_layers: layers,
+                ..BundleOptions::default()
+            },
+        )
+        .expect("world context")
+    };
+    let default_ctx = context(vec![1]);
+    let mut total = (0usize, 0usize);
+    for (info, iid, object, kind, pos, idle, random, layer) in SPOTS {
+        let key = LandblockKey::from_did(info).expect("landblock key");
+        let bundle = |ctx: &WorldContext| {
+            let src = BundleSource::new(Arc::clone(ctx.source()));
+            let frame = tessera_assets::RecordSource::read_record(&src, key.data_did().0)
+                .expect("bundle frame");
+            build_bundle(ctx, key.data_did(), &frame, &|| false).expect("bundle")
+        };
+        let find = |b: &tessera_world::LandblockBundle| {
+            b.figures
+                .iter()
+                .position(|f| b.figure_entity(f).and_then(|e| e.iid).map(|i| i.0) == Some(iid))
+        };
+        let mut b = bundle(&default_ctx);
+        if let Some(l) = layer {
+            assert_eq!(find(&b), None, "{iid:#018x}: hidden by the default layers");
+            b = bundle(&context(vec![1, l]));
+        }
+        total.0 += b.figures.len();
+        total.1 += b.entities.len();
+        let f = &b.figures[find(&b).unwrap_or_else(|| {
+            let e = b.entities.iter().find(|e| e.iid.map(|i| i.0) == Some(iid));
+            panic!(
+                "{info:#010x}: no figure with IID {iid:#018x}; entity {:?}",
+                e.map(|e| (e.kind, e.object, &e.content_layers, e.interior))
+            )
+        })];
+        let e = b.figure_entity(f).expect("entity");
+        assert_eq!(f.kind, kind, "{iid:#018x}");
+        assert_eq!(e.object.map(|d| d.0), Some(object), "{iid:#018x}");
+        for (a, b) in e.placement.position.iter().zip(pos) {
+            assert!(
+                (a - b).abs() < 0.01,
+                "{iid:#018x}: {:?} vs {pos:?}",
+                e.placement.position
+            );
+        }
+        // The checklist names the idle of N1–N5 only.
+        if idle.is_some() {
+            assert_eq!(f.idle, idle, "{iid:#018x}");
+        }
+        // A weenie's random-appearance type sits on its game object, not on the instance
+        // set (`appearance.md` §7.1); the bundle reports the instance set's.
+        if kind == FigureKind::Npc {
+            assert_eq!(f.random_appearance, random, "{iid:#018x}");
+        }
+        if kind == FigureKind::Npc {
+            assert!(e.draw && f.instance.is_some(), "{iid:#018x}");
+        } else {
+            assert!(f.weenie_type.is_some(), "{iid:#018x}: weenie type");
+        }
+        eprintln!(
+            "{info:#010x}: {} figures of {} entities; {iid:#018x} {kind:?} weenie type {:?}",
+            b.figures.len(),
+            b.entities.len(),
+            f.weenie_type
+        );
+    }
+    eprintln!(
+        "figures at the 7 spots' landblocks: {} of {} entities",
+        total.0, total.1
     );
 }

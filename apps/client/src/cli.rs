@@ -20,7 +20,7 @@ const _: () = assert!(MAX_FLY_SPEED * 5.0 <= tessera_net::sandbox::MAX_SPEED);
 #[command(name = "tessera-client", version, about)]
 #[command(group(
     clap::ArgGroup::new("headless_task")
-        .args(["screenshot", "fly_path"])
+        .args(["screenshot", "fly_path", "duration"])
         .multiple(true)
 ))]
 pub struct Args {
@@ -79,7 +79,8 @@ pub struct Args {
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub size: (u32, u32),
 
-    /// Disable vsync (present mode `AutoNoVsync`).
+    /// Disable vsync (present mode `Immediate`, else `Mailbox` when the surface lacks it,
+    /// else `Fifo`).
     #[arg(long)]
     pub no_vsync: bool,
 
@@ -183,6 +184,98 @@ pub struct Args {
     /// Also draw interior (cell) entities.
     #[arg(long)]
     pub interiors: bool,
+
+    /// The avatar: `SPECIES,SEX` (a race-table label or key and m/f) or a figure DID,
+    /// then `;ITEM[@dye=CODE][@dye2=CODE][@wielded]` per worn or held item (held items
+    /// are stowed unless `@wielded`). Default `human,m`.
+    #[arg(long, value_name = "SPEC", value_parser = parse_avatar_arg)]
+    pub avatar: Option<crate::avatar::AvatarSpec>,
+
+    /// Place N animated characters (every playable body in turn) on a grid in front of
+    /// the spawn, standing, walking and running.
+    #[arg(long, value_name = "N", default_value_t = 0, value_parser = parse_crowd)]
+    pub crowd: usize,
+
+    /// Spacing of the `--crowd` grid in metres (0.5 to 100).
+    #[arg(long, value_name = "M", default_value_t = 3.0, value_parser = parse_spacing)]
+    pub crowd_spacing: f32,
+
+    /// Distance of the `--crowd`'s first row in front of the spawn, metres (0 to 1000).
+    #[arg(long, value_name = "M", default_value_t = 8.0, value_parser = parse_ahead)]
+    pub crowd_ahead: f32,
+
+    /// Content layers treated as active (`entity-descriptor.md` §4.5.1), comma-separated
+    /// keys (decimal or 0x hex). Default `1`.
+    #[arg(long, value_name = "LIST", default_value = "1", value_delimiter = ',', num_args = 1..=64, value_parser = parse_layer)]
+    pub content_layers: Vec<u32>,
+
+    /// Characters further than this (metres) keep their last pose instead of being
+    /// sampled every frame.
+    #[arg(long, value_name = "M", default_value_t = 200.0, value_parser = parse_positive)]
+    pub anim_distance: f32,
+
+    /// Characters further than this (metres) are not drawn.
+    #[arg(long, value_name = "M", default_value_t = 400.0, value_parser = parse_positive)]
+    pub character_distance: f32,
+
+    /// Also draw weenie markers (housing hooks, distant-battle units) as static figures.
+    #[arg(long)]
+    pub markers: bool,
+
+    /// Run for this many seconds once the spawn area has settled (or the settle timeout
+    /// passed), with a frame log, then exit (a timing run; `--frame-log` saves it).
+    #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..=MAX_TIMEOUT_SECS))]
+    pub duration: Option<u64>,
+
+    /// Move the avatar forward on its own from the start (`walk` or `run`; scripted
+    /// screenshots and timing runs).
+    #[arg(long, value_name = "GAIT", value_parser = ["walk", "run"])]
+    pub autorun: Option<String>,
+
+    /// Headless runs: render as fast as possible instead of pacing at 60 frames per second.
+    #[arg(long)]
+    pub unpaced: bool,
+}
+
+fn parse_spacing(s: &str) -> Result<f32, String> {
+    let v: f32 = s.trim().parse().map_err(|e| format!("{e}"))?;
+    if tessera_net::sandbox::CROWD_SPACING_RANGE.contains(&v) {
+        Ok(v)
+    } else {
+        Err("must be a number in 0.5..=100".into())
+    }
+}
+
+fn parse_ahead(s: &str) -> Result<f32, String> {
+    let v: f32 = s.trim().parse().map_err(|e| format!("{e}"))?;
+    if (0.0..=tessera_net::sandbox::MAX_CROWD_AHEAD).contains(&v) {
+        Ok(v)
+    } else {
+        Err("must be a number in 0..=1000".into())
+    }
+}
+
+fn parse_crowd(s: &str) -> Result<usize, String> {
+    let n: usize = s.trim().parse().map_err(|e| format!("{e}"))?;
+    if n <= tessera_net::sandbox::MAX_CROWD {
+        Ok(n)
+    } else {
+        Err(format!("at most {}", tessera_net::sandbox::MAX_CROWD))
+    }
+}
+
+fn parse_avatar_arg(s: &str) -> Result<crate::avatar::AvatarSpec, String> {
+    crate::avatar::parse_avatar(s).map_err(|e| e.to_string())
+}
+
+/// Parses one `--content-layers` key (decimal or `0x` hex).
+pub fn parse_layer(s: &str) -> Result<u32, String> {
+    let t = s.trim();
+    match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(h) => u32::from_str_radix(&h.replace('_', ""), 16),
+        None => t.replace('_', "").parse::<u32>(),
+    }
+    .map_err(|e| format!("{t:?}: {e}"))
 }
 
 impl Args {
@@ -369,6 +462,33 @@ mod tests {
         assert!(Args::try_parse_from(["t", "--headless"]).is_err());
         assert!(Args::try_parse_from(["t", "--headless", "--screenshot", "a.png"]).is_ok());
         assert!(Args::try_parse_from(["t", "--headless", "--fly-path", "1:2,3:4"]).is_ok());
+    }
+
+    #[test]
+    fn character_args() {
+        let a = Args::try_parse_from(["t"]).unwrap();
+        assert_eq!(a.avatar, None);
+        assert_eq!((a.crowd, a.content_layers.clone()), (0, vec![1]));
+        let a = Args::try_parse_from([
+            "t",
+            "--avatar",
+            "elf,f;0x79006BF8@stowed",
+            "--crowd",
+            "50",
+            "--content-layers",
+            "1, 0x10000019",
+        ])
+        .unwrap();
+        assert_eq!(a.avatar.map(|s| s.items.len()), Some(1));
+        assert_eq!(a.crowd, 50);
+        assert_eq!(a.content_layers, vec![1, 0x1000_0019]);
+        assert!(Args::try_parse_from(["t", "--avatar", "x"]).is_err());
+        assert!(Args::try_parse_from(["t", "--crowd", "5000"]).is_err());
+        assert!(Args::try_parse_from(["t", "--content-layers", "a"]).is_err());
+        let a =
+            Args::try_parse_from(["t", "--headless", "--duration", "60", "--crowd", "50"]).unwrap();
+        assert!(a.walker_headless());
+        assert!(Args::try_parse_from(["t", "--duration", "0"]).is_err());
     }
 
     #[test]

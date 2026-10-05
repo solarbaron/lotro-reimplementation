@@ -33,9 +33,9 @@ use std::time::Instant;
 
 use crate::NetError;
 use crate::model::{
-    Anchor, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason, EntityId,
-    EntityKind, Location, LocationCause, MAX_CHAT_LEN, MAX_NAME_LEN, Placement, Transform, Vec3,
-    is_valid_name, sanitize_text,
+    Anchor, Appearance, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason,
+    EntityId, EntityKind, Location, LocationCause, MAX_CHAT_LEN, MAX_NAME_LEN, Placement,
+    Transform, Vec3, is_valid_name, sanitize_text,
 };
 
 /// Something that happened in the world, reported by a backend.
@@ -97,12 +97,50 @@ pub enum Event {
         /// put in [`StaticEntity::tag`](crate::sandbox::world::StaticEntity::tag)).
         tag: u64,
     },
-    /// Every static object spawned so far ([`Event::StaticSpawned`]) is gone,
-    /// as if each had been sent an [`Event::EntityDespawned`]. Sent instead of
-    /// one despawn per object when the whole streamed neighbourhood is dropped
-    /// at once (a region change, a far teleport, leaving the grid). Dynamic
-    /// entities are not affected.
+    /// Every static object spawned so far ([`Event::StaticSpawned`]) and every
+    /// entity created with a [`tag`](Event::EntityCreated::tag) (placed by the
+    /// world data) is gone, as if each had been sent an
+    /// [`Event::EntityDespawned`]. Sent instead of one despawn per object when
+    /// the whole streamed neighbourhood is dropped at once (a region change, a
+    /// far teleport, leaving the grid). Other entities are not affected.
     StaticsCleared,
+    /// An entity came into view with a precise position and an appearance:
+    /// a character, creature or object the client assembles and animates
+    /// (`docs/ARCHITECTURE.md` §19.1 "entity created"). Moves follow as
+    /// [`Event::EntityMoved`]; removal as [`Event::EntityDespawned`] (or
+    /// [`Event::StaticsCleared`] for an entity with a tag).
+    EntityCreated {
+        /// The new entity.
+        id: EntityId,
+        /// Its broad classification.
+        kind: EntityKind,
+        /// Display name (may be empty).
+        name: String,
+        /// The data record of the entity's class (for an object placed by the
+        /// world data, the game object it places), if there is one.
+        class: Option<DataId>,
+        /// Where it is (the player's current region).
+        location: Location,
+        /// Facing in radians (module convention of [`crate::model`]).
+        heading: f32,
+        /// How it looks.
+        appearance: Box<Appearance>,
+        /// `Some` for an entity placed by the world data: an opaque value from
+        /// the world source that lets the client match it with its own copy of
+        /// the data (for the sandbox, what the client's
+        /// [`WorldSource`](crate::sandbox::world::WorldSource) put in
+        /// [`StaticEntity::tag`](crate::sandbox::world::StaticEntity::tag)).
+        /// `None` for an entity the world source simulates itself.
+        tag: Option<u64>,
+    },
+    /// An entity's appearance changed, or (for the player, right after
+    /// [`Event::WorldEntered`]) became known.
+    AppearanceChanged {
+        /// The entity.
+        id: EntityId,
+        /// How it looks now.
+        appearance: Box<Appearance>,
+    },
     /// The precise, region-qualified position of an entity (so far only the
     /// player). Sent right after [`Event::WorldEntered`] by backends that know
     /// regions, after a teleport (followed by an [`Event::EntityMoved`] with
@@ -453,7 +491,8 @@ impl Session {
     /// ```
     ///
     /// Events that make no sense in the current state, or carry non-finite
-    /// transforms or invalid placements (a backend bug), are dropped with a
+    /// transforms, invalid placements or invalid appearances
+    /// ([`Appearance::is_valid`]; a backend bug), are dropped with a
     /// warning, so consumers can trust the ordering and the values. Inbound
     /// text is cleaned the same way outbound text is checked: chat text and
     /// disconnect reasons are cut to [`MAX_CHAT_LEN`] bytes and names (chat
@@ -579,6 +618,17 @@ impl Session {
             Event::StaticSpawned { placement, .. } if !placement.is_valid() => {
                 Verdict::Invalid("invalid static placement")
             }
+            Event::EntityCreated {
+                location,
+                heading,
+                appearance,
+                ..
+            } if !location.is_valid() || !heading.is_finite() || !appearance.is_valid() => {
+                Verdict::Invalid("invalid created entity")
+            }
+            Event::AppearanceChanged { appearance, .. } if !appearance.is_valid() => {
+                Verdict::Invalid("invalid appearance")
+            }
             Event::LocationReport {
                 location, heading, ..
             } if !location.is_valid() || !heading.is_finite() => {
@@ -611,6 +661,8 @@ impl Session {
                 verdict
             }
             Event::EntitySpawned { .. }
+            | Event::EntityCreated { .. }
+            | Event::AppearanceChanged { .. }
             | Event::StaticSpawned { .. }
             | Event::StaticsCleared
             | Event::EntityDespawned { .. } => self.world_verdict(),
@@ -736,9 +788,9 @@ fn clean_text(event: &mut Event) -> bool {
             characters.retain(|c| is_valid_name(&c.name));
             characters.len() != before
         }
-        Event::WorldEntered { name, .. } | Event::EntitySpawned { name, .. } => {
-            clean(name, MAX_NAME_LEN)
-        }
+        Event::WorldEntered { name, .. }
+        | Event::EntitySpawned { name, .. }
+        | Event::EntityCreated { name, .. } => clean(name, MAX_NAME_LEN),
         Event::ChatMessage {
             channel,
             sender,

@@ -923,3 +923,188 @@ fn object_cache_is_bounded() {
     assert_eq!(r.stats().cached, 0);
     assert!(r.cached(Did(obj::TREE)).is_none());
 }
+
+#[test]
+fn figures_take_their_instance_sets() {
+    let mut w = SyntheticWorld::rectangle(1, 3..=3, 4..=4);
+    w.figures = true;
+    let ctx = context(w.build());
+    let b = bundle_of(&ctx, key(3, 4)).unwrap();
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    // Entities: tree (NPC-like instance set), tree (plain instance set), hidden, broken,
+    // weenie.
+    assert_eq!(b.figures.len(), 2, "{:?}", b.figures);
+    let npc = &b.figures[0];
+    assert_eq!(npc.kind, FigureKind::Npc);
+    assert_eq!(npc.entity, 0);
+    assert_eq!(npc.idle, Some(SyntheticWorld::FIGURE_IDLE));
+    assert_eq!(npc.random_appearance, None);
+    assert_eq!(npc.weenie_type, None);
+    let set = npc.instance.as_ref().expect("instance set kept");
+    assert!(set.get(testkit::pid::NPC_STARTING_IDLE).is_some());
+    assert_eq!(b.entities[0].figure, Some(0));
+    assert!(b.entities[0].draw, "the draw rule is unchanged");
+    assert_eq!(b.entities[1].figure, None, "no NPC property");
+
+    let weenie = &b.figures[1];
+    assert_eq!(weenie.kind, FigureKind::Weenie);
+    assert_eq!(weenie.entity, 4);
+    assert_eq!(
+        weenie.random_appearance,
+        Some(SyntheticWorld::FIGURE_RANDOM)
+    );
+    assert_eq!(weenie.weenie_type, Some(SyntheticWorld::WEENIE_TYPE));
+    assert_eq!(
+        b.figure_entity(weenie).and_then(|e| e.object),
+        Some(Did(obj::WEENIE))
+    );
+    // Scenery excludes the figures; drawable still includes the NPC-like tree.
+    assert_eq!(b.drawable().count(), 2);
+    assert_eq!(b.scenery().count(), 1);
+    // The rest of the weenie list is dropped; the figures' sets are charged.
+    assert!(b.info.as_ref().unwrap().weenies.is_empty());
+    let mut plain = SyntheticWorld::rectangle(1, 3..=3, 4..=4);
+    plain.figures = false;
+    let plain_ctx = context(plain.build());
+    let p = bundle_of(&plain_ctx, key(3, 4)).unwrap();
+    assert!(b.heap_bytes > p.heap_bytes);
+    // Without instance sets only the weenie placement is a figure.
+    assert_eq!(p.figures.len(), 1);
+    assert_eq!(p.figures[0].kind, FigureKind::Weenie);
+    assert!(p.figures[0].instance.is_none());
+}
+
+#[test]
+fn figures_can_be_turned_off_or_capped() {
+    let mut w = SyntheticWorld::rectangle(1, 3..=3, 4..=4);
+    w.figures = true;
+    let src = Arc::new(w.build());
+    let off = WorldContext::load(
+        src.clone(),
+        BundleOptions {
+            keep_figures: false,
+            ..BundleOptions::default()
+        },
+    )
+    .unwrap();
+    let b = bundle_of(&off, key(3, 4)).unwrap();
+    assert!(b.figures.is_empty());
+    assert!(b.entities.iter().all(|e| e.figure.is_none()));
+    let capped = WorldContext::load(
+        src.clone(),
+        BundleOptions {
+            max_figures_per_block: 1,
+            ..BundleOptions::default()
+        },
+    )
+    .unwrap();
+    let b = bundle_of(&capped, key(3, 4)).unwrap();
+    assert_eq!(b.figures.len(), 1);
+    assert_eq!(b.figures_dropped, 1);
+    // Keeping the weenie list keeps it whole.
+    let keep = WorldContext::load(
+        src,
+        BundleOptions {
+            keep_weenies: true,
+            ..BundleOptions::default()
+        },
+    )
+    .unwrap();
+    let b = bundle_of(&keep, key(3, 4)).unwrap();
+    assert_eq!(b.info.as_ref().unwrap().weenies.len(), 4);
+    assert_eq!(b.figures.len(), 2);
+}
+
+#[test]
+fn figure_content_layers_and_suppression() {
+    let k = key(0, 0);
+    let mut s = SyntheticWorld::rectangle(1, 0..=0, 0..=0).build();
+    let layer2 = (
+        testkit::pid::ENTITY_CONTENT_LAYERS,
+        testkit::TestValue::Array(vec![(
+            testkit::pid::ENTITY_CONTENT_LAYER,
+            testkit::TestValue::Enum(2),
+        )]),
+    );
+    let ents = vec![
+        // A hidden object with an NPC instance set: not drawable, so not a figure.
+        testkit::TestEntity::physics(1, obj::HIDDEN, [1.0, 1.0, 1.0], Vec::new()),
+        // A weenie on an inactive content layer.
+        testkit::TestEntity {
+            kind: 6,
+            ..testkit::TestEntity::physics(2, obj::WEENIE, [2.0, 2.0, 1.0], vec![layer2])
+        },
+        // A weenie without an object.
+        testkit::TestEntity {
+            kind: 6,
+            object: None,
+            ..testkit::TestEntity::physics(3, obj::WEENIE, [3.0, 3.0, 1.0], Vec::new())
+        },
+    ];
+    let weenies = vec![(
+        testkit::entity_iid(k, 1),
+        vec![(testkit::pid::NPC_STARTING_IDLE, testkit::TestValue::Enum(3))],
+    )];
+    s.insert(
+        k.info_did(),
+        testkit::landblock_info_with_weenies(k, &ents, &weenies),
+        Some(39),
+    );
+    let ctx = context(s);
+    let b = bundle_of(&ctx, k).unwrap();
+    assert!(b.figures.is_empty(), "{:?}", b.figures);
+}
+
+#[test]
+fn rigs_of_thirty_bones_or_more_are_figures() {
+    let k = key(0, 0);
+    let mut s = SyntheticWorld::rectangle(1, 0..=0, 0..=0).build();
+    let schema = testkit::schema();
+    // Two rigs: 30 bones (a figure) and 29 bones (scenery).
+    for (entity, template, setup, bones) in [
+        (0x4700_0020u32, 0x1F00_0020u32, 0x0400_0020u32, 30usize),
+        (0x4700_0021, 0x1F00_0021, 0x0400_0021, 29),
+    ] {
+        s.insert(
+            entity,
+            testkit::entity_descriptor(entity, template, &[], &schema),
+            None,
+        );
+        s.insert(template, testkit::visual_template(template, setup), None);
+        s.insert(
+            setup,
+            testkit::setup_with_skeleton(setup, &[0x0600_0001], bones),
+            None,
+        );
+    }
+    let ents = vec![
+        testkit::TestEntity::physics(1, 0x4700_0020, [1.0, 1.0, 1.0], Vec::new()),
+        testkit::TestEntity::physics(2, 0x4700_0021, [2.0, 2.0, 1.0], Vec::new()),
+        testkit::TestEntity::physics(3, obj::TREE, [3.0, 3.0, 1.0], Vec::new()),
+    ];
+    s.insert(k.info_did(), testkit::landblock_info(k, &ents), Some(39));
+    let src = Arc::new(s);
+    let ctx = WorldContext::load(src.clone(), BundleOptions::default()).unwrap();
+    let b = bundle_of(&ctx, k).unwrap();
+    let bones: Vec<Option<u32>> = b
+        .entities
+        .iter()
+        .map(|e| e.visual.as_ref().and_then(|v| v.bones))
+        .collect();
+    assert_eq!(bones, vec![Some(30), Some(29), None]);
+    assert_eq!(b.figures.len(), 1, "{:?}", b.figures);
+    assert_eq!(b.figures[0].kind, FigureKind::Rig);
+    assert_eq!(b.figures[0].entity, 0);
+    assert!(b.figures[0].instance.is_none());
+    assert_eq!(b.scenery().count(), 2);
+    // Turned off.
+    let off = WorldContext::load(
+        src,
+        BundleOptions {
+            min_rig_bones: 0,
+            ..BundleOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(bundle_of(&off, k).unwrap().figures.is_empty());
+}

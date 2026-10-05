@@ -54,7 +54,7 @@ use crate::data::DataContext;
 use crate::decoders::{label_text, load_property_set};
 use crate::error::ExplorerError;
 use crate::geometry::{
-    AlphaSource, ConvertOptions, alpha_mask, base_texture, fit_image, level_mesh_data,
+    AlphaSource, ConvertOptions, alpha_mask, base_texture, fit_image, level_mesh_data, mesh_skin,
     srgb_unit_to_linear, thumbnail, transform_aabb, y_up_to_z_up,
 };
 
@@ -131,6 +131,9 @@ pub enum SceneSource {
     Surface,
     /// A 0x30 material (preview sphere).
     Material,
+    /// An assembled character (the character view, [`crate::character`]); never the
+    /// type of a selected DID.
+    Figure,
 }
 
 impl SceneSource {
@@ -162,6 +165,7 @@ impl SceneSource {
             Self::Object => "object",
             Self::Surface => "surface record",
             Self::Material => "material",
+            Self::Figure => "character",
         }
     }
 }
@@ -278,6 +282,12 @@ pub struct ScenePart {
     pub triangles: usize,
     /// Bounding sphere of the drawn level (centre, radius).
     pub sphere: Option<([f32; 3], f32)>,
+    /// The prepared streams carry bone influences: the part is skinned with the figure's
+    /// palette (character view, `skeleton-anim.md` §9.1); otherwise it is drawn rigid.
+    pub skinned: bool,
+    /// For a held item's part: the `HoldingLocation` key of the wearer whose model
+    /// transform places it (`skeleton-anim.md` §8.4).
+    pub attach: Option<u32>,
 }
 
 /// How the renderer treats a material's alpha.
@@ -1369,21 +1379,26 @@ fn used_as(m: &ResolvedMaterial, plan: &GpuPlan, id: u32) -> String {
     }
 }
 
+/// (surface, matching (shader override, material) layers) of an assembled part's draw.
+type LayeredKey = (Did, Vec<(Option<Did>, Did)>);
+
 /// Collects distinct textures and thumbnails while materials are added.
-struct Collector<'a> {
+pub(crate) struct Collector<'a> {
     ctx: &'a DataContext,
     keys: Vec<TexKey>,
     key_index: HashMap<TexKey, usize>,
     plans: Vec<GpuPlan>,
     materials: Vec<SceneMaterial>,
     material_index: HashMap<(Did, Option<(Did, Did)>), usize>,
+    /// Materials of assembled parts by (surface, matching layers).
+    layered_index: HashMap<LayeredKey, usize>,
     thumb_lists: Vec<(Did, bool)>,
     thumb_index: HashMap<(Did, bool), usize>,
     notes: Vec<String>,
 }
 
 impl<'a> Collector<'a> {
-    fn new(ctx: &'a DataContext) -> Self {
+    pub(crate) fn new(ctx: &'a DataContext) -> Self {
         Self {
             ctx,
             keys: Vec::new(),
@@ -1391,6 +1406,7 @@ impl<'a> Collector<'a> {
             plans: Vec::new(),
             materials: Vec::new(),
             material_index: HashMap::new(),
+            layered_index: HashMap::new(),
             thumb_lists: Vec::new(),
             thumb_index: HashMap::new(),
             notes: Vec::new(),
@@ -1489,7 +1505,11 @@ impl<'a> Collector<'a> {
 
     /// The material of one draw: the surface record, layered with the appearance group
     /// whose binding key matches (`material.md` §9.3).
-    fn surface_material(&mut self, surface: Did, groups: Option<&[MaterialGroup]>) -> usize {
+    pub(crate) fn surface_material(
+        &mut self,
+        surface: Did,
+        groups: Option<&[MaterialGroup]>,
+    ) -> usize {
         let lib = &self.ctx.materials;
         let group = groups.and_then(|g| {
             let key = lib.surface_record(surface).ok()?.binding_key;
@@ -1537,7 +1557,62 @@ impl<'a> Collector<'a> {
     }
 
     /// Decodes the textures and thumbnails; returns them with the final GPU materials.
-    fn finish(mut self, job: &JobContext<'_>) -> Result<Finished, ExplorerError> {
+    /// The material of one draw of an assembled part: the surface record layered with
+    /// every layer of `layers` (material groups, then dye blocks, in application order,
+    /// `material.md` §9.2) whose binding key matches the surface's (`material.md` §9.3,
+    /// `appearance.md` §8 step 6). The first layer with a shader override sets the shader.
+    pub(crate) fn surface_material_layered(
+        &mut self,
+        surface: Did,
+        layers: &[(Option<Did>, Did, u32)],
+    ) -> usize {
+        let lib = &self.ctx.materials;
+        let key = lib.surface_record(surface).ok().map(|r| r.binding_key);
+        let matching: Vec<(Option<Did>, Did)> = layers
+            .iter()
+            .filter(|(_, m, k)| Some(*k) == key && !m.is_null())
+            .map(|&(sh, m, _)| (sh, m))
+            .take(16)
+            .collect();
+        if matching.is_empty() {
+            return self.surface_material(surface, None);
+        }
+        let cache_key = (surface, matching.clone());
+        if let Some(&i) = self.layered_index.get(&cache_key) {
+            return i;
+        }
+        let shader = matching.iter().find_map(|(sh, _)| *sh);
+        let materials: Vec<Did> = matching.iter().map(|(_, m)| *m).collect();
+        let title = format!(
+            "{surface} + {}",
+            materials
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" + ")
+        );
+        let what = format!(
+            "assembled layers {}{}",
+            materials
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            shader.map_or_else(String::new, |s| format!(", shader override {s}"))
+        );
+        let layering = Layering {
+            shader_override: shader,
+            materials,
+        };
+        let i = match lib.resolve_layered(surface, &layering) {
+            Ok(m) => self.add_resolved(&m, title, Some(&what)),
+            Err(e) => self.add_failed(title, e.to_string()),
+        };
+        self.layered_index.insert(cache_key, i);
+        i
+    }
+
+    pub(crate) fn finish(mut self, job: &JobContext<'_>) -> Result<Finished, ExplorerError> {
         let lib = &self.ctx.materials;
         let cap = texture_cap(self.keys.len());
         // The library picks the first level within the cap, or the chain's last level
@@ -1803,11 +1878,11 @@ fn thumb_image(th: &RgbaImage, alpha: bool) -> RgbaImage {
 }
 
 /// What [`Collector::finish`] produces.
-struct Finished {
-    materials: Vec<SceneMaterial>,
-    textures: Vec<Arc<SceneTexture>>,
-    thumbs: Vec<Thumb>,
-    notes: Vec<String>,
+pub(crate) struct Finished {
+    pub(crate) materials: Vec<SceneMaterial>,
+    pub(crate) textures: Vec<Arc<SceneTexture>>,
+    pub(crate) thumbs: Vec<Thumb>,
+    pub(crate) notes: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1828,16 +1903,16 @@ fn level_kind_name(k: LevelKind) -> String {
 
 /// What is left of a scene's geometry budget ([`SceneLimits`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct GeometryBudget {
+pub(crate) struct GeometryBudget {
     vertices: u64,
     indices: u64,
     bytes: u64,
     /// Parts not built because the budget was used up or too small for them.
-    refused: usize,
+    pub(crate) refused: usize,
 }
 
 impl GeometryBudget {
-    fn new(limits: &SceneLimits) -> Self {
+    pub(crate) fn new(limits: &SceneLimits) -> Self {
         Self {
             vertices: limits.max_vertices,
             indices: limits.max_indices,
@@ -1877,11 +1952,27 @@ impl GeometryBudget {
 /// Decodes the mesh of a part and prepares its drawn level within `budget`. The result
 /// has no caption and no materials yet ([`place_part`] adds them), so parts that repeat
 /// a mesh share it.
-fn build_mesh_part(
+pub(crate) fn build_mesh_part(
     ctx: &DataContext,
     did: Did,
     req: SceneRequest,
     budget: &mut GeometryBudget,
+) -> ScenePart {
+    build_part(ctx, did, req, budget, None)
+}
+
+/// [`build_mesh_part`], skinned when `skin_bones` is the bone count of the figure's
+/// skeleton and the drawn level has bone influences (`skeleton-anim.md` §4.1, §9.1): the
+/// prepared streams then carry four influences per vertex ([`crate::geometry::mesh_skin`])
+/// and the part is marked [`ScenePart::skinned`]. A level whose bones exceed the skeleton
+/// or whose weights cannot be drawn is prepared rigid (bind pose), with the reason in the
+/// part's issues.
+pub(crate) fn build_part(
+    ctx: &DataContext,
+    did: Did,
+    req: SceneRequest,
+    budget: &mut GeometryBudget,
+    skin_bones: Option<usize>,
 ) -> ScenePart {
     let mut part = ScenePart {
         mesh: did.0,
@@ -1897,6 +1988,8 @@ fn build_mesh_part(
         vertices: 0,
         triangles: 0,
         sphere: None,
+        skinned: false,
+        attach: None,
     };
     if budget.exhausted() {
         budget.refused += 1;
@@ -1991,9 +2084,38 @@ fn build_mesh_part(
         uv_set: 0,
     };
     let data = level_mesh_data(&geo, &options, format!("{did} level {}", part.level));
+    let skin = skin_bones.and_then(|bones| {
+        if !geo.parts.iter().any(|p| p.skinned) {
+            return None;
+        }
+        match mesh_skin(&geo, bones) {
+            Ok(s) => {
+                if s.fixed > 0 {
+                    part.issues.push(format!(
+                        "{} vertices without influences follow bone 0 (rigid in a skinned \
+                         mesh)",
+                        s.fixed
+                    ));
+                }
+                Some(s.skin)
+            }
+            Err(e) => {
+                part.issues
+                    .push(format!("drawn in bind pose, not skinned: {e}"));
+                None
+            }
+        }
+    });
     drop(geo);
-    match data.prepare(&MeshConfig::default()) {
-        Ok(p) => part.prepared = Some(Arc::new(p)),
+    let prepared = match &skin {
+        Some(sk) => data.prepare_skinned(sk, &MeshConfig::default()),
+        None => data.prepare(&MeshConfig::default()),
+    };
+    match prepared {
+        Ok(p) => {
+            part.prepared = Some(Arc::new(p));
+            part.skinned = skin.is_some();
+        }
         Err(e) => part.error = Some(format!("renderer refused the level: {e}")),
     }
     part
@@ -2053,6 +2175,8 @@ fn sphere_part(material: usize, caption: &str) -> ScenePart {
         vertices: data.positions.len(),
         triangles: data.indices.len() / 3,
         sphere: Some(([0.0, 0.0, 0.5], 0.5)),
+        skinned: false,
+        attach: None,
     };
     match data.prepare(&MeshConfig::default()) {
         Ok(p) => part.prepared = Some(Arc::new(p)),
@@ -2189,6 +2313,11 @@ pub fn build_scene_limited(
                 .push("a preview sphere drawn with this surface record's material".into());
             Vec::new()
         }
+        SceneSource::Figure => {
+            return Err(ExplorerError::NotApplicable(
+                "characters are built by the character view".into(),
+            ));
+        }
         SceneSource::Material => {
             let rec = ctx
                 .materials
@@ -2282,6 +2411,61 @@ pub fn build_scene_limited(
         ));
     }
     parts.extend(extra_parts);
+    finish_product(
+        ProductParts {
+            did,
+            source,
+            request: req,
+            chain,
+            choices,
+            choice,
+            parts,
+            notes,
+            dyes,
+            started,
+        },
+        mats,
+        job,
+    )
+}
+
+/// What [`finish_product`] turns into a [`SceneProduct`].
+pub(crate) struct ProductParts {
+    pub(crate) did: u32,
+    pub(crate) source: SceneSource,
+    pub(crate) request: SceneRequest,
+    pub(crate) chain: Vec<ChainLink>,
+    pub(crate) choices: Vec<String>,
+    pub(crate) choice: usize,
+    pub(crate) parts: Vec<ScenePart>,
+    pub(crate) notes: Vec<String>,
+    pub(crate) dyes: Vec<DyeBlock>,
+    pub(crate) started: Instant,
+}
+
+/// Finishes a scene: decodes the materials' textures and thumbnails, computes bounds,
+/// level labels and totals, and bounds the notes.
+///
+/// # Errors
+///
+/// [`ExplorerError::Cancelled`] when the job is cancelled while textures load.
+pub(crate) fn finish_product(
+    p: ProductParts,
+    mats: Collector<'_>,
+    job: &JobContext<'_>,
+) -> Result<SceneProduct, ExplorerError> {
+    let ProductParts {
+        did,
+        source,
+        request: req,
+        chain,
+        choices,
+        choice,
+        parts,
+        mut notes,
+        dyes,
+        started,
+    } = p;
     let Finished {
         materials,
         textures,
@@ -2293,7 +2477,8 @@ pub fn build_scene_limited(
     // Bounds over the drawn parts, each in scene space (its transform applied).
     let mut aabb: Option<([f32; 3], [f32; 3])> = None;
     for p in &parts {
-        if p.prepared.is_none() {
+        // Held parts sit at the wearer's origin until posed: leave them out.
+        if p.prepared.is_none() || p.attach.is_some() {
             continue;
         }
         for s in &p.submeshes {
@@ -2337,10 +2522,13 @@ pub fn build_scene_limited(
             format!("level {i} · {kind} · {tris} triangles")
         })
         .collect();
-    if parts.iter().any(|p| p.submeshes.iter().any(|s| s.skinned)) {
+    if parts
+        .iter()
+        .any(|p| !p.skinned && p.submeshes.iter().any(|s| s.skinned))
+    {
         notes.push("skinned submeshes are drawn in bind pose (no skeleton yet)".into());
     }
-    if parts.len() > 1 {
+    if parts.len() > 1 && source != SceneSource::Figure {
         notes.push(
             "parts share the setup's frame; the part list has no transforms (setup.md §7)".into(),
         );
@@ -2416,6 +2604,8 @@ pub(crate) mod tests_support {
                 vertices: geo.vertex_count(),
                 triangles: geo.triangle_count(),
                 sphere: Some((sphere.center.to_array(), sphere.radius)),
+                skinned: false,
+                attach: None,
             });
         }
         let checker: Vec<u8> = (0..16 * 16)

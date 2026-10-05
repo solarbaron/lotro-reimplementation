@@ -6,8 +6,9 @@ use crate::did::{Did, DidKind};
 use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::error::Result;
-use crate::property::PropertyDictionary;
+use crate::property::{PropertyDictionary, PropertySchema};
 use crate::record::Record;
+use crate::script_table::{ScriptTable, Scriptlet};
 use crate::setup::{Setup, VisualTemplate};
 use crate::sound::SoundRecord;
 use crate::string_table::StringTable;
@@ -18,7 +19,8 @@ use crate::texture_list::TextureList;
 ///
 /// Property sets (0x78–0x7F) and entity descriptors (0x47) are not included: they need the
 /// property dictionary as a schema; see [`crate::PropertySetRecord`] and
-/// [`crate::EntityDescriptor`].
+/// [`crate::EntityDescriptor`]. Script tables (0x07) and scriptlets (0x0C) need it too and
+/// are produced only by [`AnyRecord::decode_with_schema`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AnyRecord<'a> {
@@ -42,6 +44,10 @@ pub enum AnyRecord<'a> {
     Setup(Setup),
     /// 0x20: appearance record.
     Appearance(AppearanceRecord),
+    /// 0x07: script table (only from [`AnyRecord::decode_with_schema`]).
+    ScriptTable(ScriptTable),
+    /// 0x0C: scriptlet (only from [`AnyRecord::decode_with_schema`]).
+    Scriptlet(Scriptlet),
 }
 
 impl<'a> AnyRecord<'a> {
@@ -70,6 +76,35 @@ impl<'a> AnyRecord<'a> {
             }
             _ => return Ok(None),
         }))
+    }
+
+    /// [`AnyRecord::decode`], plus the record types that need the property dictionary as a
+    /// schema and carry no DID of their own: script tables (0x07) and scriptlets (0x0C),
+    /// whose [`ScriptTable::did`] / [`Scriptlet::did`] is set to `did`.
+    ///
+    /// Returns `Ok(None)` when no decoder exists for the prefix.
+    pub fn decode_with_schema<S: PropertySchema + ?Sized>(
+        did: impl Into<Did>,
+        payload: &'a [u8],
+        schema: &S,
+    ) -> Result<Option<Self>> {
+        let did = did.into();
+        Ok(Some(match did.kind() {
+            DidKind::ScriptTable => {
+                Self::ScriptTable(ScriptTable::parse_expecting(payload, did, schema)?)
+            }
+            DidKind::Scriptlet => {
+                Self::Scriptlet(Scriptlet::parse_expecting(payload, did, schema)?)
+            }
+            _ => return Self::decode(did, payload),
+        }))
+    }
+
+    /// Whether [`AnyRecord::decode_with_schema`] has a decoder for this DID's prefix.
+    #[must_use]
+    pub fn is_decodable_with_schema(did: impl Into<Did>) -> bool {
+        let did = did.into();
+        Self::is_decodable(did) || matches!(did.kind(), DidKind::ScriptTable | DidKind::Scriptlet)
     }
 
     /// Whether [`AnyRecord::decode`] has a decoder for this DID's prefix.
@@ -104,6 +139,8 @@ impl<'a> AnyRecord<'a> {
             Self::VisualTemplate(r) => r.did(),
             Self::Setup(r) => r.did(),
             Self::Appearance(r) => r.did(),
+            Self::ScriptTable(r) => r.did,
+            Self::Scriptlet(r) => r.did,
         }
     }
 
@@ -121,6 +158,8 @@ impl<'a> AnyRecord<'a> {
             Self::VisualTemplate(_) => VisualTemplate::NAME,
             Self::Setup(_) => Setup::NAME,
             Self::Appearance(_) => AppearanceRecord::NAME,
+            Self::ScriptTable(_) => ScriptTable::NAME,
+            Self::Scriptlet(_) => Scriptlet::NAME,
         }
     }
 }

@@ -19,14 +19,20 @@
 //! Start-up work that reads the archives (world context, area names: `boot`; the place
 //! index: `places`) runs on its own threads.
 //!
-//! # Avatar
+//! # Avatar and characters
 //!
 //! The sandbox backend of `tessera-net` owns the avatar: it resolves `--spawn` and
 //! `--place` through the walker's `source::WalkerSource`, reports where the player
-//! entered the world, and receives the walker's movement.
+//! entered the world and how the player looks, and receives the walker's movement. It
+//! also serves the figures the landblocks place (static NPCs, weenie placements; the
+//! source hands it the resident bundles' figures) and its simulated characters
+//! (wanderers, `--crowd`). The character layer (`characters`) keeps them all in the
+//! entity store, assembles and animates them, and draws them skinned (`walker.md` §10).
 
 pub(crate) mod boot;
+pub mod characters;
 pub(crate) mod controls;
+pub mod figures;
 pub(crate) mod framelog;
 pub(crate) mod geometry;
 pub(crate) mod hud;
@@ -47,7 +53,7 @@ use std::time::{Duration, Instant};
 use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_dat::ArchiveSet;
 use tessera_input::RawEvent;
-use tessera_net::{LocationCause, RegionId};
+use tessera_net::{EntityId, Event, LocationCause, RegionId};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
     Camera, Frame, Lighting, Material, MeshConfig, MeshData, MeshDraw, MeshId, PassSpace,
@@ -58,6 +64,9 @@ use tessera_world::{
     LANDBLOCK_SIZE, LandblockKey, StreamConfig, WorldContext, WorldPos, WorldStreamer,
 };
 
+use self::characters::catalog::CharacterCatalog;
+use self::characters::figure::{ClipStore, FigureContext};
+use self::characters::{CharacterConfig, CharacterLayer};
 use self::controls::{Controls, MoveMode};
 use self::framelog::{FrameLog, FrameRow, Rolling, rss_bytes};
 use self::hud::TextPanel;
@@ -65,7 +74,7 @@ use self::minimap::{MinimapLayer, MinimapView};
 use self::objects::{ObjectConfig, ObjectLayer};
 use self::parse::FlyPath;
 use self::places::PlaceBuild;
-use self::source::{Places, SourceShared, describe, loc_text, lock};
+use self::source::{FigureBlock, Places, SourceShared, describe, loc_text, lock};
 use self::terrain::TerrainLayer;
 use self::view::{Anchor, Frustum};
 use crate::net::PlayerLocation;
@@ -84,7 +93,22 @@ pub trait WalkerSession {
         heading: f32,
         velocity: tessera_net::Vec3,
     );
+    /// The player's entity, once in the world.
+    fn player_id(&self) -> Option<EntityId> {
+        None
+    }
+    /// Appends at most `max` of the entity events (created, moved, appearance, despawned,
+    /// cleared) received since the last call, oldest first; the rest stay for the next
+    /// call. The default has none.
+    fn drain_entity_events(&mut self, out: &mut Vec<Event>, max: usize) {
+        let _ = (out, max);
+    }
 }
+
+/// Most session entity events applied in one frame (decision 0008: the store's change
+/// lists are unbounded, so the client bounds what it applies); the rest wait, in order, for
+/// the next frames.
+pub const MAX_ENTITY_EVENTS_PER_FRAME: usize = 4096;
 
 /// Sky colour (linear).
 pub const SKY: Rgba = [0.42, 0.58, 0.80, 1.0];
@@ -237,6 +261,24 @@ pub struct FlightPlan {
     pub settle_timeout: Duration,
 }
 
+/// A timing run (`--duration`): waits for the spawn area to settle (at most
+/// `settle_timeout`), then logs every frame for `duration`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BenchPlan {
+    /// How long to log.
+    pub duration: Duration,
+    /// Longest wait for the spawn area to settle.
+    pub settle_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Bench {
+    plan: BenchPlan,
+    wait_until: Option<Instant>,
+    started: Option<Instant>,
+    done: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Flight {
     plan: FlightPlan,
@@ -284,6 +326,12 @@ pub struct WalkerConfig {
     pub pitch: f32,
     /// Fly camera height above the spawn.
     pub eye_height: f32,
+    /// Characters (avatar, NPCs, crowd).
+    pub characters: CharacterConfig,
+    /// Timing run.
+    pub bench: Option<BenchPlan>,
+    /// Move forward on its own from the start: `Some(true)` walking, `Some(false)` running.
+    pub autorun: Option<bool>,
 }
 
 impl Default for WalkerConfig {
@@ -306,6 +354,9 @@ impl Default for WalkerConfig {
             heading: None,
             pitch: -0.25,
             eye_height: 30.0,
+            characters: CharacterConfig::default(),
+            bench: None,
+            autorun: None,
         }
     }
 }
@@ -315,6 +366,8 @@ impl Default for WalkerConfig {
 pub struct WalkerEvents {
     /// Close the walker.
     pub quit: bool,
+    /// The run duration (`--duration`) is over.
+    pub duration_done: bool,
     /// Save a screenshot.
     pub screenshot: bool,
     /// The scripted flight reached its end.
@@ -355,6 +408,13 @@ pub struct Walker {
     viewport: (u32, u32),
     last_report: tessera_world::FrameReport,
     notice: Option<(String, Instant)>,
+    characters: CharacterLayer,
+    bench: Option<Bench>,
+    entity_events: Vec<Event>,
+    char_draws: Vec<MeshDraw>,
+    player_region: u8,
+    /// Main-thread time of the character layer this frame (events, figures, animation).
+    chars_ms: f64,
 }
 
 impl std::fmt::Debug for Walker {
@@ -389,6 +449,7 @@ impl Walker {
         set: Arc<ArchiveSet>,
         ctx: Arc<WorldContext>,
         shared: Arc<Mutex<SourceShared>>,
+        catalog: Arc<CharacterCatalog>,
         renderer: &mut Renderer<'_>,
     ) -> anyhow::Result<Self> {
         let pool = WorkerPool::new(PoolConfig {
@@ -425,8 +486,21 @@ impl Walker {
             object_arena,
         );
         let minimap = MinimapLayer::new(Arc::clone(&set), &pool);
+        let characters = CharacterLayer::new(
+            config.characters,
+            Arc::new(FigureContext {
+                set: Arc::clone(&set),
+                catalog: Arc::clone(&catalog),
+                materials: objects.materials(),
+                mesh_config: mesh_cfg,
+                clips: ClipStore::default(),
+            }),
+            &pool,
+        );
         {
             let mut s = lock(&shared);
+            s.catalog = Some(Arc::clone(&catalog));
+            s.interiors = config.interiors;
             s.default_region = config.region;
             s.maps = ctx
                 .regions()
@@ -437,7 +511,10 @@ impl Walker {
             s.ready = true;
         }
         let keymap = controls::load_keymap(config.keymap.as_deref());
-        let controls = Controls::new(&keymap, config.mode, config.fly_speed);
+        let mut controls = Controls::new(&keymap, config.mode, config.fly_speed);
+        if let Some(walk) = config.autorun {
+            controls.set_autorun(true, walk);
+        }
         let help = controls::help_text(&keymap);
         tracing::info!("walker controls: {help}");
         let avatar = match renderer.upload_mesh(&MeshData::uv_sphere(0.5, 16, 8)) {
@@ -461,6 +538,8 @@ impl Walker {
             "world walker ready"
         );
         let far = far_plane(config.stream.rings.far);
+        let config_region = config.region;
+        let config_bench = config.bench;
         Ok(Self {
             far,
             help,
@@ -494,6 +573,17 @@ impl Walker {
             viewport: (1280, 720),
             last_report: tessera_world::FrameReport::default(),
             notice: None,
+            characters,
+            bench: config_bench.map(|plan| Bench {
+                plan,
+                wait_until: None,
+                started: None,
+                done: false,
+            }),
+            entity_events: Vec::new(),
+            char_draws: Vec::new(),
+            player_region: config_region,
+            chars_ms: 0.0,
         })
     }
 
@@ -538,6 +628,13 @@ impl Walker {
             && self.last_report.deferred == 0
             && self.terrain.settled()
             && self.objects.settled()
+            && self.characters.settled()
+    }
+
+    /// The character layer (tests and diagnostics).
+    #[must_use]
+    pub fn characters(&self) -> &CharacterLayer {
+        &self.characters
     }
 
     /// The viewer's position.
@@ -562,6 +659,13 @@ impl Walker {
         let mut events = WalkerEvents::default();
 
         // Spawn and teleports from the sandbox.
+        let mut player_id = None;
+        if let Some(w) = world.as_deref() {
+            player_id = w.player_id();
+            if let Some(loc) = w.player_location() {
+                self.player_region = u8::try_from(loc.location.region.0).unwrap_or(0);
+            }
+        }
         if let Some(w) = world.as_deref()
             && let Some(loc) = w.player_location()
             && loc.seq != self.location_seq
@@ -595,6 +699,21 @@ impl Walker {
                 Placement::Ignore => {}
             }
         }
+
+        // Entity events (ARCHITECTURE §20.3 step 2).
+        let mut world = world;
+        let t_chars = Instant::now();
+        if let Some(w) = world.as_deref_mut() {
+            w.drain_entity_events(&mut self.entity_events, MAX_ENTITY_EVENTS_PER_FRAME);
+        }
+        self.characters.apply_events(
+            &mut self.entity_events,
+            &self.shared,
+            player_id,
+            self.player_region,
+            now,
+        );
+        let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
         // Input and movement.
         let tiles = self.terrain.tiles().clone();
@@ -658,14 +777,73 @@ impl Walker {
                 self.minimap.update(renderer, k, radius, &mut budget);
             }
         }
+        // Characters: the avatar follows the walk controller; figures, animation.
+        let pose = self.controls.avatar().map(|(feet, yaw)| {
+            let v = self.controls.velocity();
+            (feet, yaw, v.x.hypot(v.y))
+        });
+        self.characters.set_player_pose(pose);
+        let tiles = self.terrain.tiles().clone();
+        let ground = |r: u8, gx: f64, gy: f64| tiles.height_in(r, gx, gy);
+        let t_chars = Instant::now();
+        self.characters.update(
+            renderer,
+            &mut budget,
+            &mut self.objects,
+            &ground,
+            eye,
+            now,
+            dt,
+        );
+        chars_ms += t_chars.elapsed().as_secs_f64() * 1e3;
+        self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
 
         if let Some(w) = world {
             self.report_move(w, now);
         }
+        events.duration_done = self.bench_step(now);
         self.pump_places();
         self.refresh_hud(renderer, now);
         events
+    }
+
+    /// The timing run: starts logging once settled (or after the settle timeout), returns
+    /// true on the frame its duration is over.
+    fn bench_step(&mut self, now: Instant) -> bool {
+        let placed = self.controls.placed();
+        let settled = self.settled();
+        let Some(b) = self.bench.as_mut() else {
+            return false;
+        };
+        if b.done || !placed {
+            return false;
+        }
+        let wait = *b
+            .wait_until
+            .get_or_insert_with(|| crate::runtime::deadline_after(now, b.plan.settle_timeout));
+        match b.started {
+            None => {
+                if settled || now >= wait {
+                    tracing::info!(settled, "timing run starts");
+                    b.started = Some(now);
+                    self.log_start = now;
+                    if let Some(log) = &mut self.log {
+                        *log = FrameLog::default();
+                    }
+                    self.rolling = Rolling::default();
+                }
+                false
+            }
+            Some(start) => {
+                if now.saturating_duration_since(start) >= b.plan.duration {
+                    b.done = true;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
     }
 
     /// The scripted flight: waits for the start area, then moves along the path.
@@ -737,6 +915,49 @@ impl Walker {
                 fresh.push((key, Arc::clone(bundle)));
             }
         }
+        {
+            let mut s = lock(&self.shared);
+            for (key, _ring, bundle) in self.streamer.resident() {
+                let stale = !matches!(s.figures.get(&key), Some(FigureBlock::Ready(b)) if Arc::ptr_eq(b, bundle));
+                if stale {
+                    s.figures
+                        .insert(key, FigureBlock::Ready(Arc::clone(bundle)));
+                }
+            }
+            s.figures.retain(|k, f| match f {
+                FigureBlock::Ready(_) => resident.contains(k),
+                FigureBlock::Missing => true,
+            });
+            // Landblocks around the viewer that failed (or have no data) have no figures.
+            if let Some(k) = self
+                .controls
+                .placed()
+                .then(|| self.controls.focus().landblock())
+                .flatten()
+            {
+                for dy in -3i32..=3 {
+                    for dx in -3i32..=3 {
+                        let Some(n) = k.offset(dx, dy) else { continue };
+                        if matches!(
+                            self.streamer.state_of(n),
+                            Some(tessera_world::BlockState::Failed(_))
+                        ) {
+                            s.figures.insert(n, FigureBlock::Missing);
+                        } else if matches!(s.figures.get(&n), Some(FigureBlock::Missing))
+                            && resident.contains(&n)
+                        {
+                            s.figures.remove(&n);
+                        }
+                    }
+                }
+                s.figures.retain(|n, _| {
+                    n.region() == k.region()
+                        && n.x().abs_diff(k.x()) <= 8
+                        && n.y().abs_diff(k.y()) <= 8
+                        || resident.contains(n)
+                });
+            }
+        }
         for (key, bundle) in fresh {
             if self.terrain.insert(key, &bundle, renderer) {
                 self.minimap
@@ -765,6 +986,7 @@ impl Walker {
         for k in keys {
             self.objects.remove(k);
         }
+        self.characters.reset_gpu(renderer, &mut self.objects);
         self.objects.clear(renderer);
         self.minimap.clear(renderer);
         lock(&self.shared).areas.clear();
@@ -986,6 +1208,24 @@ impl Walker {
                 ),
                 GREY,
             ));
+            let cs = self.characters.stats();
+            out.push((
+                format!(
+                    "Characters {} ({} animated, {} drawn, {} sampled); figures {} ready / {} \
+                     pending / {} failed, {:.0} MiB; anim main {:.2} ms, workers {:.2} ms",
+                    cs.entities,
+                    cs.animated,
+                    cs.drawn,
+                    cs.sampled,
+                    cs.figures_ready,
+                    cs.figures_pending,
+                    cs.figures_failed,
+                    mib(cs.gpu_bytes),
+                    cs.collect_ms + cs.submit_ms + cs.palette_ms,
+                    cs.worker_ms
+                ),
+                GREY,
+            ));
             if self.flight.is_none() {
                 out.push((
                     format!("{} (fly {:.0} m/s)", self.help, self.controls.fly_speed()),
@@ -1024,6 +1264,16 @@ impl Walker {
                 },
             };
             let frustum = Frustum::from_view_proj(camera.view_proj(aspect));
+            let mut char_draws = std::mem::take(&mut self.char_draws);
+            char_draws.clear();
+            self.characters.prepare_draws(
+                frame,
+                &anchor,
+                eye,
+                &frustum,
+                &self.objects,
+                &mut char_draws,
+            );
             let pass = frame.world_pass("walker-world", &camera);
             pass.clear(SKY).lighting(Lighting {
                 direction: Vec3::new(0.35, -0.45, 0.82),
@@ -1031,8 +1281,20 @@ impl Walker {
                 ambient: [0.36, 0.38, 0.42],
             });
             self.terrain.draw(renderer, pass, &anchor, &frustum);
-            self.objects.draw(pass, &anchor, eye, &frustum);
+            // Figures the character layer draws are left out of the static instances.
+            self.objects.draw(
+                pass,
+                &anchor,
+                eye,
+                &frustum,
+                self.characters.shown_figures(),
+            );
+            for d in char_draws.drain(..) {
+                pass.mesh(d);
+            }
+            self.char_draws = char_draws;
             if let (Some(mesh), Some((feet, yaw))) = (self.avatar, self.controls.avatar())
+                && !self.characters.player_ready()
                 && let Some(p) = anchor.to_render(&feet)
             {
                 let tf = Mat4::from_translation(p + Vec3::Z * 0.9)
@@ -1080,6 +1342,7 @@ impl Walker {
         let p = self.focus().unwrap_or(WorldPos::new(0, 0.0, 0.0, 0.0));
         let ts = self.terrain.stats();
         let os = self.objects.stats();
+        let cs = self.characters.stats();
         let r = &self.last_report;
         let Some(log) = &mut self.log else { return };
         log.push(FrameRow {
@@ -1098,6 +1361,13 @@ impl Walker {
             rss: self.rss.1,
             draws: os.draws,
             terrain: ts.drawn,
+            characters: cs.animated,
+            character_draws: cs.drawn,
+            characters_ms: self.chars_ms,
+            anim_collect_ms: cs.collect_ms,
+            anim_submit_ms: cs.submit_ms,
+            anim_upload_ms: cs.palette_ms,
+            anim_worker_ms: cs.worker_ms,
             x: p.x,
             y: p.y,
             z: p.z,
@@ -1149,6 +1419,7 @@ impl Walker {
 
     /// Frees GPU resources and stops the workers.
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>) {
+        self.characters.shutdown(renderer, &mut self.objects);
         self.terrain.shutdown();
         self.clear_all(renderer);
         self.hud.release(renderer);

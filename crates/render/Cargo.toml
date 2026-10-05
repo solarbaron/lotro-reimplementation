@@ -22,6 +22,13 @@ tracing-subscriber.workspace = true
 # Real-data test only (tests/real_data.rs): real surfaces through every mesh pipeline.
 tessera-dat.workspace = true
 tessera-formats.workspace = true
+# Real-data test only (tests/skinned_real_data.rs): skin streams of real mesh records.
+tessera-mesh.workspace = true
+
+# CPU cost of skinned drawing (50 characters x 30 parts); a plain binary, no harness.
+[[bench]]
+name = "skinned"
+harness = false
 
 [lints]
 workspace = true

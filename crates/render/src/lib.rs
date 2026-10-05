@@ -31,6 +31,32 @@
 //! [`MeshDebug`] view (wireframe, normals, UV checker).
 //! [`OrbitCamera::frame_sphere`] frames a mesh's [`BoundingSphere`].
 //!
+//! Skinned meshes (M4): [`Renderer::upload_skinned_mesh`] adds a
+//! [`MeshSkin`] (four bone indices and weights per vertex) to the mesh
+//! streams; [`Frame::skin_palette`] uploads one palette of skinning
+//! matrices per character and frame, and [`MeshDraw::with_skin`] draws any
+//! number of parts with it. Skinning runs in the vertex shader for every
+//! material mode and debug view.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), tessera_render::RenderError> {
+//! use tessera_render::glam::Mat4;
+//! use tessera_render::*;
+//! let mut r = Renderer::new_headless(&RendererConfig::default())?;
+//! let data = MeshData::plane(1.0, 2.0, 1, 4);
+//! // Every vertex fully on bone 1 of a two-bone skeleton.
+//! let skin = MeshSkin::rigid(data.positions.len(), 1, 2);
+//! let mesh = r.upload_skinned_mesh(&data, &skin)?;
+//! let target = r.create_offscreen_target(64, 64, OffscreenFormat::Rgba8Srgb)?;
+//! let mut frame = r.begin_offscreen_frame(&target)?;
+//! let palette = frame.skin_palette(&[Mat4::IDENTITY, Mat4::from_rotation_z(0.5)])?;
+//! frame
+//!     .world_pass("skinned", &Camera::default())
+//!     .mesh(MeshDraw::new(mesh, Mat4::IDENTITY, Material::default()).with_skin(palette));
+//! r.end_frame(frame)?;
+//! # Ok(()) }
+//! ```
+//!
 //! ```no_run
 //! # fn main() -> Result<(), tessera_render::RenderError> {
 //! use tessera_render::glam::Mat4;
@@ -69,6 +95,7 @@ mod mesh_pipelines;
 mod pipelines;
 mod renderer;
 mod shapes;
+mod skin;
 mod texture;
 
 pub use arena::{ArenaStats, MeshConfig, MeshId, RangeAllocator};
@@ -92,6 +119,7 @@ pub use renderer::{
     FrameStats, OffscreenFormat, OffscreenTarget, Renderer, RendererConfig, RgbaImage,
 };
 pub use shapes::MAX_SEGMENTS as MAX_SHAPE_SEGMENTS;
+pub use skin::{MAX_PALETTE_BONES, MeshSkin, SkinInfo, SkinPalette, WEIGHT_SUM_TOLERANCE};
 pub use texture::{ColorSpace, Filter, TextureId, TextureUpload, Wrap};
 
 /// Re-export of the math library used in the public API.

@@ -35,8 +35,13 @@ complete** (exit criteria verified 2026-10-04 against a real install; see
 [M2 status](docs/ROADMAP.md#m2-status)). **M3 (terrain and offline world walker) is done on
 Tessera's side** ([M3 status](docs/ROADMAP.md#m3-status)): every criterion passes against
 the data; the comparison with the original client at 20 reference locations awaits the
-owner's in-game readings. **M4 (characters and animation) is next.** Nothing here is
-playable yet: the walker flies and walks over the world offline.
+owner's in-game readings. **M4 (characters and animation) is done on Tessera's side for
+most criteria** ([M4 status](docs/ROADMAP.md#m4-status)): every skeleton and clip decodes,
+characters of all 14 playable bodies assemble with worn and held items and play idle, walk
+and run with GPU skinning; still open are the 50-character performance run on the
+reference machine, a spec question about the River-hobbit leg sliders, and the owner's
+comparisons with the original client. Nothing here is playable yet: the walker flies and
+walks over the world offline, with an animated avatar and the NPCs the data places.
 
 | Area | State |
 |---|---|
@@ -52,7 +57,10 @@ playable yet: the walker flies and walks over the world offline.
 | `tessera-explorer` 3D view: meshes, setups, objects, wireframe, normals, UV checker, material inspector, dye preview | done (M2) |
 | Landblock records (heights, block maps, landblock info and static entities, properties and minimap tiles), coordinates and map coordinates, world state (areas, regions) | done (M3): 100 % of 923,545 landblock records decode |
 | Terrain meshing with LODs and seamless normals; `tessera-client` offline world walker (streaming, static objects, area name, map coordinates, `/loc`, minimap, keymap, fly and walk) | done (M3): full-region flight with no frame over 50 ms; crack-free seams over all 390,150 blocks; 20 reference locations match the data (owner's in-game readings pending) |
-| Characters, UI and plugins, audio, own test server | planned (M4–M7) |
+| Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
+| Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run; a 48-item worn/held checklist matches; River-hobbit foot height pending a spec question |
+| `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 202 fps (p99 6.8 ms) on a non-reference laptop; reference-machine run pending |
+| UI and plugins, audio, own test server | planned (M5–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -125,11 +133,13 @@ decompress every record). Run
 cargo run --release -p tessera-client
 ```
 
-With an install, the client is the M3 **world walker**: it streams landblocks with terrain
-and static objects around you, shows the area name, map coordinates, `/loc` and a minimap,
-and lets you walk or fly (Ctrl+F toggles free-fly; Shift is faster). Choose where to start
-with `--spawn R,X,Y[,x,y[,z]]` (a landblock) or `--place "<area name, map coordinates or a
-pasted /loc line>"` (with `--region N`), and `--fly` to start flying. Headless forms, for
+With an install, the client is the **world walker** (M3, with M4 characters): it streams
+landblocks with terrain, static objects and the NPCs the data places around you, shows the
+area name, map coordinates, `/loc` and a minimap, and lets you walk or fly as an animated
+avatar (Ctrl+F toggles free-fly; Shift is faster). Choose where to start with
+`--spawn R,X,Y[,x,y[,z]]` (a landblock) or `--place "<area name, map coordinates or a
+pasted /loc line>"` (with `--region N`), and `--fly` to start flying; `--avatar` picks the
+avatar's body and items and `--crowd N` adds N animated characters. Headless forms, for
 scripts and machines without a display:
 
 ```sh
@@ -151,7 +161,9 @@ cargo run --release -p tessera-explorer
 The explorer shows the archive tree, DID search, a hex view, textures (mip levels,
 channels, alpha), layered icons, string tables with their variables, and property sets
 with names and enum labels. Since M2 it also has a 3D view for meshes, setups and objects
-(orbit camera, wireframe, normals, UV checker, material inspector, dye preview). It
+(orbit camera, wireframe, normals, UV checker, material inspector, dye preview), and since
+M4 a character viewer (any playable body, worn and held items, dyes, sliders) with an
+animation browser; `--sheet` renders a grid of play times and camera angles headless. It
 remembers the game directory in Tessera's own settings file. Headless:
 `xvfb-run -a cargo run --release -p tessera-explorer -- --screenshot /tmp/explorer.png`.
 
@@ -183,30 +195,33 @@ from game data is ever written into the repository.
 | Path | Contents |
 |---|---|
 | `crates/dat` | Archive container: header, extents, B-tree directory, zlib, archive set, DID routing |
-| `crates/formats` | Record decoders: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors |
+| `crates/formats` | Record decoders: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors, appearance records, items, avatar bodies, script tables and the idle/walk/run clip resolver |
 | `crates/install` | Install detection and version identification |
-| `crates/render` | wgpu renderer |
+| `crates/render` | wgpu renderer (mesh, material, terrain and skinned pipelines) |
 | `crates/script` | Sandboxed Lua 5.1 host |
 | `crates/net` | Transport-agnostic session layer with a local sandbox backend |
 | `crates/props` | Property registry, property sets, enum labels, DID maps |
 | `crates/text` | String tables, variable substitution, grammar tags, locale selection |
 | `crates/assets` | Asset worker pool with priorities, cancellation and a decoded cache |
 | `crates/material` | Surface/material/shader records, effective parameters, feature flags, dyes, layered icon composition, mip-chain helpers |
-| `crates/mesh` | Mesh records: vertex formats, engine-neutral vertex streams, detail levels, collision data, bounds, a cached mesh library |
+| `crates/mesh` | Mesh records: vertex formats, engine-neutral vertex streams (static and skinned), detail levels, collision data, bounds, a cached mesh library; character and object assembly |
+| `crates/havok` | Clean-room reader for the Havok tagfile subset in the archives: skeletons and animation clips |
+| `crates/anim` | Skeletons, clip sampling and blending, root motion, attach points, bone sliders, skinning palettes, worker scheduler |
+| `crates/entity` | The client's entity store (decision 0008) |
 | `crates/wstate` | Script class library (WLib) and object-state (WState) records; area/region/dungeon resolution |
 | `crates/world` | Coordinates and map coordinates, landblock IDs, streaming rings, landblock bundles, block-map lookups, area names, minimap tiles |
 | `crates/terrain` | Heightmap meshing with LODs and stitched seams, seamless normals, shading, splatting inputs, CPU height queries |
 | `crates/input` | Actions, contexts, bindings, Tessera's keymap file, fly and walk controllers |
 | `crates/settings` | Tessera's own settings file |
 | `apps/dattool` | `tessera-dattool` inspection CLI |
-| `apps/client` | `tessera-client`, the game client (currently the offline world walker) |
+| `apps/client` | `tessera-client`, the game client (currently the offline world walker with an animated avatar and placed NPCs) |
 | `apps/explorer` | `tessera-explorer`, the GUI asset browser |
 | `fuzz/` | Fuzz targets, one per parser |
 | `tools/` | Machine setup (`dev-setup.sh`), checks run by CI (`check-content.sh`, `check-spdx.sh`, `check-dco.sh`, `fuzz-smoke.sh`), research-clone fetcher, ImHex patterns and Kaitai schemas written from our specs ([tools/README.md](tools/README.md)) |
 | `docs/` | Architecture, roadmap, legal, clean-room process, tooling, specs |
 | `research/` | Dirty-room notes. **Implementers must not open this directory.** |
 
-More crates arrive with later milestones (animation and skeletons, audio, UI layouts, the
+More crates arrive with later milestones (audio, UI layouts, the
 plugin host on top of `crates/script`); see
 [docs/ARCHITECTURE.md §3](docs/ARCHITECTURE.md#layers).
 

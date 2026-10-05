@@ -149,6 +149,8 @@ pub struct Controls {
     latch: IntentLatch,
     start: Instant,
     autorun: bool,
+    /// Autorun at walking speed (scripted runs, `--autorun walk`).
+    autowalk: bool,
     mode: MoveMode,
     origin: [f64; 2],
     region: u8,
@@ -193,6 +195,7 @@ impl Controls {
             latch: IntentLatch::default(),
             start: Instant::now(),
             autorun: false,
+            autowalk: false,
             mode,
             origin: [0.0, 0.0],
             region: 0,
@@ -202,6 +205,12 @@ impl Controls {
             zoom: DEFAULT_ZOOM,
             placed: false,
         }
+    }
+
+    /// Starts (or stops) moving forward on its own, walking or running (`--autorun`).
+    pub fn set_autorun(&mut self, on: bool, walk: bool) {
+        self.autorun = on;
+        self.autowalk = walk;
     }
 
     /// The movement mode.
@@ -336,7 +345,10 @@ impl Controls {
                 }
             }
         }
-        let intent = a.intent(&self.mapper, self.autorun);
+        let mut intent = a.intent(&self.mapper, self.autorun);
+        if self.autorun && self.autowalk {
+            intent.walk = true;
+        }
         self.latch.frame(intent);
         let ticks = self.timestep.advance(f64::from(dt.max(0.0)));
         let step = self.timestep.dt() as f32;

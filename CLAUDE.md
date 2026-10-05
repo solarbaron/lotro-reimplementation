@@ -63,11 +63,25 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 ## Current state (keep this section current; it is how a new session or machine catches up)
 
 - **Done:** M0 base, M1 asset browser, M2 mesh/material viewer, M3 terrain + world walker
-  (offline). Evidence: the status tables in `docs/ROADMAP.md`.
-- **Next:** M4, characters and animation. It includes the entity-storage decision record
-  (`bevy_ecs` vs our own store, see `docs/decisions/0005-no-full-bevy.md`).
+  (offline). M4 characters and animation is verified on Tessera's side (2026-10-05):
+  criteria 1, 3, 5 pass; entity storage decided (`docs/decisions/0008-entity-storage.md`,
+  own store). Evidence: the status tables in `docs/ROADMAP.md`.
+- **M4 still open:** criterion 4 (50 animated characters at 60 fps) passed only on a
+  non-reference laptop (RTX 2070 Super Max-Q, 202 fps headless); it needs the run on the reference
+  machine once the owner confirms it (`docs/perf/reference-machine.md`). Criterion 2 fails
+  only the River-hobbit foot height (rows B37–B42 of `docs/checklists/m4-visual.md`), which
+  waits on the leg-slider question in `appearance.md` §6.3 (O9).
+- **Clean-room incident:** `script-table.md`'s `BIN` facts came from a client disassembly;
+  the owner authorised it retroactively for that question only
+  (`docs/decisions/0009-script-table-disassembly.md`). Any other disassembly needs its own
+  decision record first.
+- **Next:** M5 (UI layouts, skins and Lua plugins), unless the owner wants the open M4 items
+  closed first.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
-  M3 reference locations, frame-capture questions from M2). These do not block M4.
+  M3 reference locations, frame-capture questions from M2, M4 items O8–O17), confirmation
+  of the reference machine. These do not block M5.
+- **Toolchain note:** the 2026-10-05 checks ran on a distro rustc 1.97.1 (no rustup on that
+  machine); re-run clippy on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
   (`docs/decisions/0004-server-strategy.md`). Stop and ask the owner.
 
@@ -87,12 +101,15 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 ## Layout
 
 - `crates/dat` — `.dat`/`.datx` container: header, extent/block layer, B-tree directory, zlib, archive set, DID routing
-- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors
+- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver
 - `crates/props` — property registry, values, property sets, enum mappers, DID maps
 - `crates/text` — string tables, StringInfo resolution, substitution, markup
 - `crates/assets` — prioritised worker pool, cancellation, decoded-asset cache
 - `crates/material` — materials, surfaces, texture chains, dye, layered icons
-- `crates/mesh` — mesh records → engine-neutral vertex streams, mesh library
+- `crates/mesh` — mesh records → engine-neutral vertex streams (static and skinned), mesh library, character/object assembly (`assembly`: body parts by priority, worn and held items, dye layers)
+- `crates/havok` — clean-room reader for the Havok tagfile subset in the archives: skeletons (in 0x04 setups) and clips (0x05: spline-compressed, interleaved, annotation tracks, reference frames)
+- `crates/anim` — skeletons, clip binding and sampling, blending, root motion, attach points, bone sliders, skinning palettes, animation scheduler on the asset workers
+- `crates/entity` — the client's entity store (decision 0008): entities, transforms, network IDs, render/animation handles, landblock membership, per-frame change lists
 - `crates/wstate` — WLib class library and WState object graph
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
@@ -100,11 +117,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
 - `crates/net` — transport-agnostic session layer and a local sandbox backend
-- `crates/render` — wgpu renderer (mesh/material/terrain pipelines, golden-image tests)
+- `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests)
 - `crates/script` — Lua 5.1 plugin host
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
-- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes)
-- `apps/client` — the game client binary (world walker)
+- `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`)
+- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test)
 - `docs/specs` — clean-room specifications; `docs/decisions` — decision records;
   `docs/checklists` — visual/owner checklists; `docs/` — legal, process, roadmap, tooling, development
 - `research/` — dirty-room notes, the verified resource catalogue and `clones.txt`

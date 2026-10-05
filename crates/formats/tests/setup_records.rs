@@ -847,7 +847,8 @@ fn appearance() -> AppearanceRecord {
                 }],
             },
         ],
-        key_table: vec![(0x1000_0001, 0), (0x1000_0002, 1)],
+        // Key-table values are the selection counts (blocks with variant < 0.5, AI2).
+        key_table: vec![(0x1000_0001, 1), (0x1000_0002, 1)],
     }
 }
 

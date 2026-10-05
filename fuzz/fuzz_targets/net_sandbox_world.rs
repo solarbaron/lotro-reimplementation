@@ -131,19 +131,21 @@ impl WorldSource for Hostile {
         let Some(answer) = Self::pick(&self.script.statics, self.calls) else {
             return Lookup::Ready(());
         };
-        let to_entity = |e: &RawEntity| StaticEntity {
-            object: DataId(e.object),
-            placement: Placement {
-                location: Location::new(
-                    RegionId(block.region.0.wrapping_add(u16::from(e.region_delta % 2))),
-                    e.pos[0],
-                    e.pos[1],
-                    e.pos[2],
-                ),
-                rotation: Rotation::new(e.rot[0], e.rot[1], e.rot[2], e.rot[3]),
-                scale: e.scale,
-            },
-            tag: e.tag,
+        let to_entity = |e: &RawEntity| {
+            StaticEntity::new(
+                DataId(e.object),
+                Placement {
+                    location: Location::new(
+                        RegionId(block.region.0.wrapping_add(u16::from(e.region_delta % 2))),
+                        e.pos[0],
+                        e.pos[1],
+                        e.pos[2],
+                    ),
+                    rotation: Rotation::new(e.rot[0], e.rot[1], e.rot[2], e.rot[3]),
+                    scale: e.scale,
+                },
+                e.tag,
+            )
         };
         match answer {
             Answer::Ready(Statics::List(list)) => {

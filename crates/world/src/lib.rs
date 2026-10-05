@@ -8,7 +8,7 @@
 //! | [`MapConstants`], [`MapCoords`], [`LocReport`] | Map coordinates ("12.3S, 45.6W") and `/loc` tokens, formatting and parsing; minimap pixels | §8–§10 |
 //! | [`RingTracker`], [`RingConfig`], [`Ring`] | Desired landblock set around a focus, rings with hysteresis | ARCH §9.2 |
 //! | [`WorldContext`] | Per-install data: property schema and PIDs, region descriptors, map constants, block-map descriptors, object resolver, area names | `landblock.md` §5.1, `environment.md` §3 |
-//! | [`LandblockBundle`], [`build_bundle`], [`BundleDecoder`] | One landblock: data, info, resolved block map ([`BlockProps`]), properties (minimap, light maps), [`PlacedEntity`] list with objects resolved | `landblock.md` §8, `entity-descriptor.md` §9 |
+//! | [`LandblockBundle`], [`build_bundle`], [`BundleDecoder`] | One landblock: data, info, resolved block map ([`BlockProps`]), properties (minimap, light maps), [`PlacedEntity`] list with objects resolved, figures ([`PlacedFigure`]: NPC-like entities and weenie placements with their instance property sets) | `landblock.md` §8, `entity-descriptor.md` §9, `appearance.md` §7.2, `walker.md` §10 |
 //! | [`ObjectResolver`], [`ResolvedObject`] | 0x47 / 0x70 → setup → parts, draw-suppression flags, cached | `setup.md` §3.1 |
 //! | [`WorldStreamer`] | Per-frame streaming on `tessera-assets` workers: priorities by ring and distance, cancellation, residency budget with eviction, lookups (area, music, ambient, sky, height, minimap) | ARCH §9.2, §20.3 |
 //! | [`AreaNameSource`], [`WStateAreaNames`] | Area → territory → region names via `tessera-wstate` and `tessera-text` | `wstate.md` §11 |
@@ -62,8 +62,8 @@ pub mod testkit;
 
 pub use areas::{AreaName, AreaNameSource, FixedAreaNames, WStateAreaNames};
 pub use bundle::{
-    BlockProps, BlockValue, BundleDecoder, BundleOptions, BundleProblem, LandblockBundle,
-    PlacedEntity, build_bundle,
+    BlockProps, BlockValue, BundleDecoder, BundleOptions, BundleProblem, FigureKind,
+    LandblockBundle, PlacedEntity, PlacedFigure, build_bundle,
 };
 pub use context::{RegionInfo, WorldContext};
 pub use coords::{

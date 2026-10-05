@@ -5,8 +5,10 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::error::Result;
 use crate::material::{Lighting, MeshDebug, MeshDraw};
 use crate::pipelines::LineVertex;
+use crate::skin::{PaletteData, SkinPalette};
 use crate::texture::TextureId;
 
 /// Linear RGBA colour.
@@ -305,9 +307,74 @@ pub struct Frame {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) passes: Vec<Pass>,
+    /// Serial of this frame within its renderer (stamped, together with
+    /// `owner`, into its palettes; the pair is process-unique).
+    pub(crate) serial: u64,
+    /// Skinning palettes of this frame, uploaded by `end_frame`.
+    pub(crate) palettes: PaletteData,
 }
 
 impl Frame {
+    /// Upload a skinning palette for this frame: `matrices[b]` is the
+    /// skinning matrix of bone `b` (pose transform times inverse bind
+    /// transform, `skeleton-anim.md` §4.4), mapping bind-pose model space to
+    /// posed model space. Only the affine part (top three rows) is used;
+    /// a non-finite matrix is replaced by the identity.
+    ///
+    /// Attach the returned handle to any number of draws of this frame with
+    /// [`MeshDraw::with_skin`] (all parts of one character share one
+    /// palette). All palettes of a frame go to the GPU in one copy; no
+    /// buffer or bind group is created per palette or per draw.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::RenderError::InvalidSkin`] for an empty palette or one with
+    /// more than [`crate::MAX_PALETTE_BONES`] matrices;
+    /// [`crate::RenderError::LimitExceeded`] when the frame's palettes would
+    /// exceed the renderer's per-frame palette budget (64 MiB, or less on
+    /// devices with smaller buffers).
+    pub fn skin_palette(&mut self, matrices: &[Mat4]) -> Result<SkinPalette> {
+        let offset = self
+            .palettes
+            .push(matrices.len(), |i| PaletteData::mat4_rows(&matrices[i]))?;
+        Ok(self.palette_handle(offset, matrices.len()))
+    }
+
+    /// [`Self::skin_palette`] with each matrix given as its top three rows
+    /// (`[r0c0, r0c1, r0c2, r0c3, r1c0, …, r2c3]`, the affine 3 × 4 part,
+    /// row-major).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::skin_palette`].
+    pub fn skin_palette_rows(&mut self, rows: &[[f32; 12]]) -> Result<SkinPalette> {
+        let offset = self.palettes.push(rows.len(), |i| {
+            let r = &rows[i];
+            [
+                [r[0], r[1], r[2], r[3]],
+                [r[4], r[5], r[6], r[7]],
+                [r[8], r[9], r[10], r[11]],
+            ]
+        })?;
+        Ok(self.palette_handle(offset, rows.len()))
+    }
+
+    fn palette_handle(&self, offset: u32, len: usize) -> SkinPalette {
+        SkinPalette {
+            owner: self.owner,
+            frame: self.serial,
+            offset,
+            // `push` accepted it, so len <= MAX_PALETTE_BONES.
+            len: u16::try_from(len).unwrap_or(u16::MAX),
+        }
+    }
+
+    /// Bytes of skinning-palette data queued in this frame so far.
+    #[must_use]
+    pub fn palette_bytes(&self) -> u64 {
+        self.palettes.rows.len() as u64 * 16
+    }
+
     /// Target size in pixels.
     #[must_use]
     pub fn size(&self) -> (u32, u32) {

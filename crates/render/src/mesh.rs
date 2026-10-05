@@ -27,6 +27,7 @@ use glam::{DVec3, Mat4, Vec3};
 
 use crate::arena::MeshConfig;
 use crate::error::{RenderError, Result};
+use crate::skin::{GpuSkin, MeshSkin, SkinInfo};
 
 /// Index stream of a [`MeshData`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +215,8 @@ pub struct MeshInfo {
     pub has_uvs: bool,
     /// Vertex colours were supplied.
     pub has_colors: bool,
+    /// Bone influences of a skinned mesh (`None`: static mesh).
+    pub skin: Option<SkinInfo>,
 }
 
 /// GPU vertex (must match `VsIn` in `mesh.wgsl`). 40 bytes.
@@ -258,6 +261,8 @@ pub struct PreparedMesh {
     pub(crate) indices: Vec<u32>,
     pub(crate) submeshes: Vec<PreparedSubmesh>,
     pub(crate) info: MeshInfo,
+    /// Packed bone influences, one per vertex (skinned meshes only).
+    pub(crate) skin: Option<Vec<GpuSkin>>,
 }
 
 impl PreparedMesh {
@@ -269,11 +274,15 @@ impl PreparedMesh {
     }
 
     /// Bytes this mesh occupies in the shared buffers (vertices, triangle
-    /// indices and edge indices).
+    /// indices, edge indices and, for a skinned mesh, bone influences).
     #[must_use]
     pub fn gpu_bytes(&self) -> u64 {
         (self.vertices.len() as u64) * size_of::<GpuVertex>() as u64
             + (self.indices.len() as u64) * 4
+            + self
+                .skin
+                .as_ref()
+                .map_or(0, |s| (s.len() as u64) * size_of::<GpuSkin>() as u64)
     }
 
     /// Drop the wireframe edge list (for a renderer that does not keep
@@ -462,6 +471,36 @@ impl MeshData {
     /// to be uploaded.
     pub fn validate(&self, config: &MeshConfig) -> Result<MeshInfo> {
         self.prepare(config).map(|p| p.info)
+    }
+
+    /// [`Self::prepare`] for a skinned mesh: the streams plus `skin`'s bone
+    /// influences (validated with [`MeshSkin::validate`], then packed with
+    /// weights renormalised to sum exactly 1). The result reports
+    /// [`MeshInfo::skin`] and is drawn skinned when a
+    /// [`crate::MeshDraw`] carries a palette ([`crate::MeshDraw::with_skin`]),
+    /// in its bind pose otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::prepare`], then [`RenderError::InvalidSkin`].
+    pub fn prepare_skinned(&self, skin: &MeshSkin, config: &MeshConfig) -> Result<PreparedMesh> {
+        let mut prepared = self.prepare(config)?;
+        let (info, data) = skin.pack(self.positions.len(), true)?;
+        prepared.info.skin = Some(info);
+        prepared.skin = Some(data);
+        Ok(prepared)
+    }
+
+    /// [`Self::validate`] for a skinned mesh (the summary
+    /// [`crate::Renderer::upload_skinned_mesh`] would report).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::prepare_skinned`].
+    pub fn validate_skinned(&self, skin: &MeshSkin, config: &MeshConfig) -> Result<MeshInfo> {
+        let mut info = self.validate(config)?;
+        info.skin = Some(skin.validate(self.positions.len())?);
+        Ok(info)
     }
 }
 
@@ -692,7 +731,9 @@ pub(crate) fn prepare_with(
             has_tangents: data.tangents.is_some(),
             has_uvs: data.uvs.is_some(),
             has_colors: data.colors.is_some(),
+            skin: None,
         },
+        skin: None,
     })
 }
 

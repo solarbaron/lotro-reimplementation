@@ -259,6 +259,16 @@ pub enum FormatError {
         source: Box<FormatError>,
     },
 
+    /// A property name or enum label that code looks up in the data is not defined there
+    /// (for example a property missing from the dictionary).
+    #[error("{what} `{name}` is not defined in the data")]
+    UnknownName {
+        /// What kind of name: "property", "enum label", ...
+        what: &'static str,
+        /// The name that was looked up.
+        name: &'static str,
+    },
+
     /// The operation needs a cargo feature that was not enabled.
     #[error("feature `{0}` is not enabled")]
     FeatureDisabled(&'static str),

@@ -119,7 +119,7 @@ constraints that show up as structure:
                          │ client app  │     │           │           │
                          └──┬───┬───┬──┘     │           │           │
  L4 presentation & host     │   │   │        │           │           │
-     render  audio*  ui*  input*  settings*  plugins*(→script)  net(backends)
+     render  audio*  ui*  input*  settings*  plugins*(→script)  net(backends)  entity*
         │      │      │     │                   │               │
  L3 world & assets   world*  terrain*  anim*  mesh*  material*  │
         └──────┴──────┴──────┬─────────────────────────────────┘
@@ -151,7 +151,7 @@ Rules:
 | `tessera-dat` (`crates/dat`) | L0 | M0 | Archive header, extent/block layer, B-tree directory, zlib inflate, archive set, DID routing. Read-only. |
 | `tessera-install` (`crates/install`) | L0 | M0 | Find installs (env var, CLI, Steam libraries, Wine/Proton prefixes), validate them and identify the data version. |
 | `tessera-formats` (`crates/formats`) | L1 | M0 | Record decoders on top of `dat`: primitives (variable-length integers, sized lists, strings), string tables, render surfaces (textures), property dictionary. Grows by module per record type. |
-| `tessera-havok` (`crates/havok`) | L1 | M4 | Clean-room reader for Havok binary tagfile/packfile data as stored in the archives: skeletons and animation clips (spline-compressed and uncompressed). |
+| `tessera-havok` (`crates/havok`) | L1 | M4 | Clean-room reader for Havok binary tagfile (version 3) data as stored in the archives: skeletons and animation clips (spline-compressed and uncompressed). |
 | `tessera-props` (`crates/props`) | L2 | M1 | Property registry, typed values, property sets, enum mappers, DID maps (§7). |
 | `tessera-text` (`crates/text`) | L2 | M1 | String-table lookup, StringInfo resolution, `${VAR}` substitution and grammar-tag selection. |
 | `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). |
@@ -161,6 +161,7 @@ Rules:
 | `tessera-mesh` (`crates/mesh`) | L3 | M2 | Static and skinned mesh (GfxObj) decoding into engine vertex streams; setup/part assemblies (§11). |
 | `tessera-anim` (`crates/anim`) | L3 | M4 | Skeleton hierarchy, pose sampling, blending, skinning palettes, attach points (§11). |
 | `tessera-material` (`crates/material`) | L3 | M2 | Surface → material → texture-list → texture chains, shader-feature classification, dye rules (§12). |
+| `tessera-entity` (`crates/entity`) | L4 | M4 | Main-thread entity store: generational entity IDs, sparse-set component columns, the client's component sets (transform, network ID, render and animation handles as type parameters, landblock membership of streamed statics), per-frame change and despawn lists, deferred removal ([0008](decisions/0008-entity-storage.md)). Depends on no other Tessera crate; L4 because it holds the client's game state, which lower layers never see. |
 | `tessera-render` (`crates/render`) | L4 | M0 | wgpu renderer: device and surface, frame graph, pipelines and WGSL shaders, texture/mesh uploads, headless mode (§13). |
 | `tessera-audio` (`crates/audio`) | L4 | M6 | Mixer, 3D sound, music regions, Vorbis/WAV decoding, player-music (ABC) synthesis (§14). |
 | `tessera-ui` (`crates/ui`) | L4 | M5 | Retained widget tree built from UI layout records, user skins and plugin controls; text layout; 2D batching (§15). |
@@ -583,21 +584,28 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
 - Converts Z-up source data into the engine convention at load (Decision: the engine uses
   Z-up world space too, and converts only in the camera/projection, so world data never
   needs re-axing).
-- Assemblies: setup records (0x01) and appearance records (0x20) combine parts into a
-  character or object (M4).
+- Assemblies: setup records (0x04; 0x01 records are collision geometry, `setup.md` §2.2)
+  and appearance records (0x20) combine parts into a character or object. M4 implements
+  this as `tessera-mesh::assembly` (`appearance.md` §8): body parts by priority, worn and
+  held items, dye layers, and the inputs of the clip resolver.
 
 <a id="anim"></a>
 ### 11.2 Skeletons and animation (`tessera-havok`, `tessera-anim`)
 
-- Skeletons (0x04) and clips (0x05) are stored as Havok binary data (Reported, Havok 6.x
-  era): skeleton bones with parent indices and reference pose; clips mostly
-  spline-compressed with 40-bit quaternions, some uncompressed interleaved.
+- Skeletons (a tagfile inside each 0x04 setup) and clips (0x05) are stored as Havok binary
+  tagfiles, version 3 (Confirmed, `havok-data.md` §2): skeleton bones with parent indices
+  and reference pose; clips spline-compressed with 40-bit quaternions (24,800) or
+  uncompressed interleaved (595). M4 decodes 100 % of both.
 - `tessera-havok` is a clean-room reader for exactly the subset found in the archives,
   written from `docs/specs/havok-data.md`. It never links against or calls Havok code,
   and no GPL-only implementation is ported.
 - `tessera-anim`: pose sampling (decompression on worker threads, cached per clip),
   blending, root motion, attach points (weapon bones), skinning palette output for the
-  renderer. Tracks map to bones by position (Reported).
+  renderer. Tracks map to bones by position: track *j* drives bone *j*, and a clip fits a
+  skeleton only when its track count equals the bone count (Confirmed,
+  `skeleton-anim.md` §3). Vertex bone indices address the setup's skeleton directly, with
+  no palette remap (`skeleton-anim.md` §4). Which clips play for idle, walk and run is
+  decided by script tables (`script-table.md`), resolved in `tessera-formats`.
 
 ---
 
@@ -883,11 +891,12 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
 9. Audio: update listener and emitters; send commands to the audio thread.
 10. Render: cull, sort, encode, submit, present.
 
-> **OPEN:** entity storage. A plain arena with typed component vectors is enough through
-> M3. [Decision 0005](decisions/0005-no-full-bevy.md) narrows the M4 question: an M4
-> decision record benchmarks a standalone `bevy_ecs` against a plain project-owned store
-> (50 animated characters plus streamed landblocks; frame time, code clarity, build cost,
-> upgrade churn) and adopts `bevy_ecs` only if it clearly wins. No full Bevy engine.
+Entity storage (Decision, [0008](decisions/0008-entity-storage.md)): the project-owned
+`tessera-entity` store (generational IDs, sparse-set components, per-frame change lists),
+main thread only. A standalone `bevy_ecs` lost the M4 benchmark that
+[0005](decisions/0005-no-full-bevy.md) required and is not used by the client. Entity
+transforms hold `f64` region-frame positions (the §9.1 world position); the renderer
+subtracts its camera anchor in `f64` and narrows to `f32` (the §9.1 render position).
 
 ---
 
@@ -1029,7 +1038,7 @@ tiers:
 | 5 | Disk cache of derived data (value and legal sign-off) | M3 | ADR + `LEGAL.md` |
 | 6 | Height scale and trailing landblock data (terrain types) | M3 | `specs/landblock.md` |
 | 7 | Interiors, portals, PVS | after M3 | `specs/landblock.md` |
-| 8 | Entity storage / ECS choice | M4 | ADR |
+| 8 | Entity storage / ECS choice: **decided**, project-owned store ([0008](decisions/0008-entity-storage.md)) | M4 | ADR 0008 |
 | 9 | Shader-record classification method | M2 | `specs/material.md` |
 | 10 | UI layout grammar, UIData variants, font records | M5 | `specs/ui-layout.md` |
 | 11 | Plugin namespace naming rationale | M5 | `LEGAL.md` |

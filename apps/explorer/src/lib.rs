@@ -38,6 +38,12 @@
 //! `--height` even inside a Wayland session; a capture of another size is logged as a
 //! warning.
 //!
+//! The character view (M4, [`anim_view`]) is reproducible from the command line:
+//! `--view character --character human,m --wear 0x790006C3 --clip walk --time 0.4
+//! --mesh-angle 160,15 [--bones] [--trail] [--sliders HEX]` assembles the figure, loads
+//! the clip, samples the pose at that time on the workers and waits for its frame
+//! ([`charspec`] has the grammar). Without `--select`, the root DID map is selected.
+//!
 //! # Modules
 //!
 //! | Module | Purpose |
@@ -60,10 +66,17 @@
 //! | [`geometry`] | Mesh level → renderer streams; texture compositions (pure) |
 //! | [`viewport`] | The render thread (offscreen `tessera-render`) and the orbit camera |
 //! | [`mesh_view`] | The 3D view's UI: toolbar, viewport, part list, material inspector |
+//! | [`character`] | Character viewer data (M4): bodies, assembled figures, clips, clip catalogue (workers) |
+//! | [`anim_view`] | The character view's UI: body, equipment, sliders, clip browser, playback |
+//! | [`sheet`] | `--sheet`: the character view rendered headless into a contact sheet |
+//! | [`charspec`] | Text forms of `--character`, `--wear`, `--clip`, `--time`, `--sliders` |
 
 #![warn(missing_docs)]
 
+pub mod anim_view;
 pub mod app;
+pub mod character;
+pub mod charspec;
 pub mod cli;
 pub mod data;
 pub mod decoders;
@@ -82,6 +95,7 @@ pub mod richtext;
 pub mod scene;
 pub mod screenshot;
 pub mod search;
+pub mod sheet;
 pub mod viewport;
 mod views;
 

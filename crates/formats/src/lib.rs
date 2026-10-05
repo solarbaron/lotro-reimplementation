@@ -33,7 +33,8 @@
 //!
 //! [`AnyRecord::decode`] picks the decoder for a DID's type prefix. Property sets and entity
 //! descriptors need the property dictionary as a schema, so they are decoded with
-//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. Landblock records
+//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. Script tables and
+//! scriptlets need it too; [`AnyRecord::decode_with_schema`] routes them. Landblock records
 //! (prefix 0x80) depend on their directory stamp, and some on the dictionary, so they are
 //! decoded through the [`landblock`] module, not [`AnyRecord`]. The [`decode`] module has one `decode_*(&[u8])` function per decoder, for fuzz
 //! targets and tools. The [`prelude`] brings the [`Record`] trait and the common types
@@ -55,22 +56,28 @@
 //! | [`did_map`] | DID maps (0x28) | §8 |
 //! | [`sound`] | sound records (0x0A) and container sniffing | §9 |
 //! | [`setup`] | entity descriptors (0x47), visual templates (0x1F), setups (0x04), chain resolution | `setup.md` §2–§7 |
-//! | [`appearance`] | appearance records (0x20) | `setup.md` §8 |
+//! | [`appearance`] | appearance records (0x20), block choice, part priorities, slot table, appearance lists | `setup.md` §8, `appearance.md` §3–§4 |
+//! | [`avatar`] | race table, avatar bodies, bone-slider definitions | `appearance.md` §2–§3, §6 |
+//! | [`item`] | worn and held items: wardrobe structs, dyes, holding locations | `appearance.md` §4–§5, `setup.md` §13 |
+//! | [`script_table`] | script tables (0x07), scriptlets (0x0C), clip selection | `script-table.md` |
 //! | [`landblock`] | landblock data, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties, region descriptors (0x0F) | `landblock.md`, `entity-descriptor.md`, `coordinates.md` |
 
 mod any;
 pub mod appearance;
+pub mod avatar;
 pub mod bcn;
 pub mod decode;
 pub mod did;
 pub mod did_map;
 pub mod enum_mapper;
 mod error;
+pub mod item;
 pub mod landblock;
 pub mod property;
 pub mod property_set;
 pub mod reader;
 mod record;
+pub mod script_table;
 pub mod setup;
 pub mod sound;
 pub mod string_info;
@@ -80,8 +87,8 @@ pub mod texture_list;
 
 pub use any::AnyRecord;
 pub use appearance::{
-    AppearanceBlock, AppearanceEntry, AppearanceExtra, AppearancePart, AppearanceRecord,
-    MaterialGroup,
+    AppearanceBlock, AppearanceEntry, AppearanceExtra, AppearanceKeyInfo, AppearanceListPids,
+    AppearancePart, AppearanceRecord, MaterialGroup, SlotTable,
 };
 pub use bcn::{BcFormat, decode_bcn};
 pub use decode::{
@@ -89,9 +96,9 @@ pub use decode::{
     decode_embedded_property_set, decode_entity_descriptor, decode_entity_header,
     decode_enum_mapper, decode_landblock_data, decode_landblock_group, decode_landblock_info,
     decode_landblock_properties, decode_property_dictionary, decode_property_set,
-    decode_property_value, decode_region_descriptor, decode_setup, decode_sound,
-    decode_string_info, decode_string_table, decode_surface, decode_texture_list,
-    decode_visual_template,
+    decode_property_value, decode_region_descriptor, decode_script_table, decode_scriptlet,
+    decode_setup, decode_sound, decode_string_info, decode_string_table, decode_surface,
+    decode_texture_list, decode_visual_template,
 };
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
@@ -106,8 +113,8 @@ pub use landblock::{
 };
 pub use property::{
     BitfieldAny, NoSchema, Position, PropertyArray, PropertyDefinition, PropertyDictionary,
-    PropertyEntry, PropertySchema, PropertyStruct, PropertyType, PropertyValue, Waveform,
-    WaveformExtra,
+    PropertyEntry, PropertyNames, PropertySchema, PropertyStruct, PropertyType, PropertyValue,
+    Waveform, WaveformExtra,
 };
 pub use property_set::{
     EntryContext, EntryVisit, PropertySet, PropertySetRecord, is_property_set_did,
@@ -115,6 +122,7 @@ pub use property_set::{
 };
 pub use reader::{Reader, TSize, Utf16String};
 pub use record::Record;
+pub use script_table::{Node, NodeData, NodeKind, Script, ScriptTable, Scriptlet};
 // Record types and resolvers only; the setup family's field types (frames, collision
 // volumes, `Aabb`, ...) stay under `setup::`.
 pub use setup::{
@@ -135,7 +143,7 @@ pub mod prelude {
         AnyRecord, AppearanceRecord, BlockMap, BlockMapDescriptor, DataIdMap, Did, DidKind,
         EntityDescriptor, EntityHeader, EnumMapper, FormatError, LandblockData, LandblockInfo,
         LandblockProperties, PropertyDictionary, PropertySchema, PropertySet, PropertySetRecord,
-        PropertyValue, Record, RegionDescriptor, Setup, SoundRecord, StringInfo, StringTable,
-        Surface, SurfaceFormat, TextureList, VisualTemplate, WaveInfo,
+        PropertyValue, Record, RegionDescriptor, ScriptTable, Scriptlet, Setup, SoundRecord,
+        StringInfo, StringTable, Surface, SurfaceFormat, TextureList, VisualTemplate, WaveInfo,
     };
 }

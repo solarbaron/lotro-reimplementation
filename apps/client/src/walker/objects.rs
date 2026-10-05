@@ -40,10 +40,11 @@ use tessera_render::{
 use tessera_world::{LANDBLOCK_SIZE, LandblockKey};
 
 use super::UploadBudget;
+use super::figures::figure_tag;
 use super::geometry::{
-    AlphaFrom, AlphaKind, MaterialPlan, TexRequest, VARIANT_ALPHA_ONLY, VARIANT_OPAQUE,
-    VARIANT_OWN_ALPHA, compose_texture, display_level, downscale_to, level_mesh_data,
-    plan_material,
+    AlphaFrom, AlphaKind, MaterialPlan, TexRequest, VARIANT_ALPHA_ONLY, VARIANT_DYE_MASK,
+    VARIANT_OPAQUE, VARIANT_OWN_ALPHA, compose_texture, display_level, downscale_to, dye_mask,
+    level_mesh_data, plan_material,
 };
 use super::terrain::Instance;
 use super::view::{Anchor, Frustum};
@@ -207,6 +208,10 @@ impl Decoder for TexDecoder {
             VARIANT_ALPHA_ONLY => {
                 let a = load(key.did)?;
                 compose_texture(None, AlphaFrom::Image(&a.image))
+            }
+            VARIANT_DYE_MASK => {
+                let a = load(key.did)?;
+                dye_mask(&a.image)
             }
             VARIANT_OPAQUE | VARIANT_OWN_ALPHA => {
                 let b = load(key.did)?;
@@ -375,9 +380,21 @@ pub struct ObjectStats {
     pub distance: f64,
 }
 
+/// Where a texture of the object layer stands ([`ObjectLayer::texture`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TexLookup {
+    /// On the GPU.
+    Ready(TextureId),
+    /// Failed for good.
+    Failed,
+    /// Loading, waiting for upload, or not referenced.
+    Pending,
+}
+
 /// The object layer (module docs).
 pub struct ObjectLayer {
     config: ObjectConfig,
+    materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     parts: AssetStore<StampedSource, PartDecoder>,
     textures: AssetStore<NoRecord, TexDecoder>,
     blocks: HashMap<LandblockKey, BlockObjects>,
@@ -396,6 +413,14 @@ pub struct ObjectLayer {
     arena_limit: u64,
     /// When a part last had to wait for arena space.
     arena_full_at: Option<Instant>,
+}
+
+/// Whether instance `inst` of block `key` is a placed figure the character layer draws
+/// (its tag is in `characters`), so the object layer leaves it out.
+#[must_use]
+pub fn drawn_as_character(key: LandblockKey, inst: &Instance, characters: &HashSet<u64>) -> bool {
+    inst.figure
+        .is_some_and(|i| characters.contains(&figure_tag(key, i)))
 }
 
 impl std::fmt::Debug for ObjectLayer {
@@ -424,6 +449,7 @@ impl ObjectLayer {
                 ..LibraryConfig::default()
             },
         ));
+        let library = Arc::clone(&materials);
         let parts = AssetStore::new(
             pool,
             StampedSource::new(Arc::clone(&set)),
@@ -457,6 +483,7 @@ impl ObjectLayer {
         );
         Self {
             config,
+            materials: library,
             parts,
             textures,
             blocks: HashMap::new(),
@@ -471,6 +498,53 @@ impl ObjectLayer {
             order: Vec::new(),
             arena_limit,
             arena_full_at: None,
+        }
+    }
+
+    /// The material library the layer decodes with (shared with the character figures).
+    #[must_use]
+    pub fn materials(&self) -> Arc<MaterialLibrary<Arc<ArchiveSet>>> {
+        Arc::clone(&self.materials)
+    }
+
+    /// Adds a reference to each texture of `reqs` for a user outside the layer (character
+    /// figures): referenced textures are loaded, uploaded within the frame budget and kept
+    /// until released ([`ObjectLayer::release_textures`]).
+    pub fn acquire_textures(&mut self, reqs: impl IntoIterator<Item = TexRequest>) {
+        let now = Instant::now();
+        for t in reqs {
+            let te = self.gpu_tex.entry(t).or_insert_with(|| TexEntry {
+                refs: 0,
+                state: TexState::Retry(now - RETRY_AFTER),
+                unused_since: None,
+            });
+            te.refs += 1;
+            te.unused_since = None;
+        }
+    }
+
+    /// Drops one reference to each texture of `reqs` (taken with
+    /// [`ObjectLayer::acquire_textures`]); unreferenced textures are evicted like the
+    /// layer's own.
+    pub fn release_textures(&mut self, reqs: impl IntoIterator<Item = TexRequest>) {
+        let now = Instant::now();
+        for t in reqs {
+            if let Some(te) = self.gpu_tex.get_mut(&t) {
+                te.refs = te.refs.saturating_sub(1);
+                if te.refs == 0 {
+                    te.unused_since = Some(now);
+                }
+            }
+        }
+    }
+
+    /// The state of texture `t`.
+    #[must_use]
+    pub fn texture(&self, t: TexRequest) -> TexLookup {
+        match self.gpu_tex.get(&t).map(|e| &e.state) {
+            Some(TexState::Ready(id, _)) => TexLookup::Ready(*id),
+            Some(TexState::Failed) => TexLookup::Failed,
+            _ => TexLookup::Pending,
         }
     }
 
@@ -884,6 +958,11 @@ impl ObjectLayer {
             match renderer.upload_texture(&TextureUpload {
                 label: Some(&label),
                 wrap: Wrap::Repeat,
+                color_space: if t.variant == VARIANT_DYE_MASK {
+                    tessera_render::ColorSpace::Linear
+                } else {
+                    tessera_render::ColorSpace::Srgb
+                },
                 ..TextureUpload::rgba8(img.width, img.height, &img.pixels)
             }) {
                 Ok(id) => {
@@ -1043,7 +1122,16 @@ impl ObjectLayer {
     }
 
     /// Records the visible objects into `pass`. `camera` is the eye in `anchor`'s frame.
-    pub fn draw(&mut self, pass: &mut Pass, anchor: &Anchor, camera: Vec3, frustum: &Frustum) {
+    /// `characters` holds the tags ([`figure_tag`]) of the placed figures the character
+    /// layer draws: their static instances are left out (`walker.md` §10.2).
+    pub fn draw(
+        &mut self,
+        pass: &mut Pass,
+        anchor: &Anchor,
+        camera: Vec3,
+        frustum: &Frustum,
+        characters: &HashSet<u64>,
+    ) {
         let mut draws = 0usize;
         let mut culled = 0usize;
         let mut capped = false;
@@ -1070,6 +1158,9 @@ impl ObjectLayer {
             }
             let block_tf = Mat4::from_translation(off);
             for inst in b.instances.iter() {
+                if drawn_as_character(key, inst, characters) {
+                    continue;
+                }
                 let Some(e) = self.gpu_parts.get(&inst.part) else {
                     continue;
                 };
@@ -1171,7 +1262,28 @@ mod tests {
                 at,
             ),
             scale,
+            figure: None,
         }
+    }
+
+    #[test]
+    fn figure_instances_are_left_out_only_while_drawn_as_characters() {
+        let key = LandblockKey::new(1, 10, 20).unwrap();
+        let other = LandblockKey::new(1, 13, 20).unwrap();
+        let mut fig = inst(1, Vec3::ZERO, 1.0);
+        fig.figure = Some(3);
+        let plain = inst(2, Vec3::ZERO, 1.0);
+        let mut shown = HashSet::new();
+        // Pending, failed or released figures stay static instances.
+        assert!(!drawn_as_character(key, &fig, &shown));
+        shown.insert(figure_tag(key, 3));
+        assert!(drawn_as_character(key, &fig, &shown));
+        // Whatever the distance (the sandbox's hysteresis ring included): only the tag
+        // counts, and only for that block's figure.
+        assert!(!drawn_as_character(other, &fig, &shown));
+        shown.insert(figure_tag(other, 2));
+        assert!(!drawn_as_character(other, &fig, &shown));
+        assert!(!drawn_as_character(key, &plain, &shown));
     }
 
     #[test]

@@ -13,6 +13,9 @@
 //! | [`Mesh::to_bytes`] | Writes a mesh back in the record layout (fixtures, round trips) | §3 |
 //! | [`synth`] | Synthetic meshes from a small description (tests, fuzz seeds, golden scenes) | §14 |
 //! | [`MeshLibrary`] | Mesh records of an install, decoded on the asset pool and cached | §2, §10.4 |
+//! | [`MeshSummary::parse`] | Slot, surfaces and vertex/index counts without decoding vertices (stub detection) | §3, §7 |
+//! | [`Mesh::skinned_level`], [`SkinStreams`], [`SkinnedLevel::part_streams`] | Skinned streams: four influences per vertex, bones used per part, joint-range check, influence-list recomputation (GPU palettes live in `tessera-anim`) | §5.7, §6.2 |
+//! | [`assembly`] | Characters and objects assembled from setups, appearance records, worn and held items | `appearance.md` §8 |
 //!
 //! # Conventions
 //!
@@ -57,6 +60,7 @@
 
 #![warn(missing_docs)]
 
+pub mod assembly;
 mod bounds;
 mod encode;
 mod error;
@@ -65,6 +69,8 @@ mod geometry;
 mod library;
 mod read;
 mod record;
+mod skin;
+mod summary;
 pub mod synth;
 pub mod validate;
 
@@ -82,5 +88,7 @@ pub use record::{
     MESH_PREFIX, Mesh, MeshHeader, PRIMITIVE_TRIANGLE_LIST, SKINNING_FLAG, SURFACE_PREFIX, Skin,
     Submesh, TreeCode, VertexStreams,
 };
+pub use skin::{PartSkin, PartStreams, SkinStreams, SkinnedLevel};
+pub use summary::{MeshSummary, STUB_VERTEX_COUNT, SubmeshSummary};
 pub use tessera_formats::Did;
 pub use validate::{Attribute, Issue, IssueClass, IssueKind, ValidationReport};

@@ -16,7 +16,7 @@
 
 use tessera_formats::RgbaImage;
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry};
-use tessera_render::{Indices, MeshData, Submesh};
+use tessera_render::{Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh};
 
 /// Options of [`level_mesh_data`]. The default is vertex colours off and UV set 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -105,6 +105,90 @@ pub fn level_mesh_data(geo: &LevelGeometry, options: &ConvertOptions, label: Str
         indices,
         submeshes,
     }
+}
+
+/// The result of [`mesh_skin`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkinConversion {
+    /// Four influences per vertex, weights summing to 1, indices below the bone count.
+    pub skin: MeshSkin,
+    /// Vertices that had no non-zero weight (rigid vertices inside a skinned level) and
+    /// were put fully on bone 0.
+    pub fixed: usize,
+    /// Vertices whose weights were rescaled to sum to 1 (sums off by more than the
+    /// renderer's tolerance).
+    pub renormalised: usize,
+}
+
+/// The renderer's bone streams of a flattened level ([`LevelGeometry::joints`],
+/// [`LevelGeometry::weights`]) for a skeleton of `bones` bones (`skeleton-anim.md` §4.1:
+/// indices address the skeleton's bones directly).
+///
+/// Weights are made drawable: non-finite or negative weights count as 0, weights whose
+/// sum differs from 1 are rescaled, and a vertex without any weight (an unskinned part of
+/// a level that also has skinned ones) is put fully on bone 0 and counted in
+/// [`SkinConversion::fixed`].
+///
+/// # Errors
+///
+/// When the level has no bone streams, their lengths differ from the vertex count, the
+/// bone count is 0 or above the renderer's palette ([`MAX_PALETTE_BONES`]), or a vertex
+/// uses a bone at or above `bones` with a non-zero weight.
+pub fn mesh_skin(geo: &LevelGeometry, bones: usize) -> Result<SkinConversion, String> {
+    if bones == 0 || bones > MAX_PALETTE_BONES {
+        return Err(format!(
+            "{bones} bones (the palette holds 1 to {MAX_PALETTE_BONES})"
+        ));
+    }
+    let n = geo.positions.len();
+    let (Some(joints), Some(weights)) = (&geo.joints, &geo.weights) else {
+        return Err("the level has no bone influences".into());
+    };
+    if joints.len() != n || weights.len() != n {
+        return Err(format!(
+            "bone streams of {} and {} entries for {n} vertices",
+            joints.len(),
+            weights.len()
+        ));
+    }
+    let mut out_w = Vec::with_capacity(n);
+    let mut out_j = Vec::with_capacity(n);
+    let (mut fixed, mut renormalised) = (0usize, 0usize);
+    for (v, (j, w)) in joints.iter().zip(weights).enumerate() {
+        let mut w = w.map(|x| if x.is_finite() && x > 0.0 { x } else { 0.0 });
+        for k in 0..4 {
+            if w[k] > 0.0 && usize::from(j[k]) >= bones {
+                return Err(format!(
+                    "vertex {v} uses bone {} of a {bones}-bone skeleton",
+                    j[k]
+                ));
+            }
+        }
+        let sum: f32 = w.iter().sum();
+        if !(sum.is_finite() && sum > 0.0) {
+            fixed += 1;
+            out_w.push([1.0, 0.0, 0.0, 0.0]);
+            out_j.push([0; 4]);
+            continue;
+        }
+        if (sum - 1.0).abs() > 1.0e-4 {
+            renormalised += 1;
+            for x in &mut w {
+                *x /= sum;
+            }
+        }
+        out_w.push(w);
+        out_j.push(*j);
+    }
+    Ok(SkinConversion {
+        skin: MeshSkin {
+            joints: out_j,
+            weights: out_w,
+            palette_size: u16::try_from(bones).unwrap_or(u16::MAX),
+        },
+        fixed,
+        renormalised,
+    })
 }
 
 /// Whether an image is non-empty and its pixel buffer has exactly `width × height × 4`
@@ -353,6 +437,58 @@ pub fn grid_cell(radius: f32) -> f32 {
 mod tests {
     use super::*;
     use tessera_mesh::{GeometryLimits, synth::MeshSpec};
+
+    #[test]
+    fn skin_streams_for_the_renderer() {
+        // Format 0x3002_0112: two influences per vertex, bones up to 61 (tessera-mesh synth).
+        let mesh = MeshSpec::single(0x3002_0112, 24).build().unwrap();
+        let geo = mesh.level_geometry(0, &GeometryLimits::default()).unwrap();
+        let s = mesh_skin(&geo, 62).unwrap();
+        assert_eq!(s.skin.joints.len(), geo.vertex_count());
+        assert_eq!((s.fixed, s.renormalised), (0, 0));
+        assert!(
+            s.skin
+                .weights
+                .iter()
+                .all(|w| (w.iter().sum::<f32>() - 1.0).abs() < 1e-4)
+        );
+        // The renderer accepts them as they are.
+        let data = level_mesh_data(&geo, &ConvertOptions::default(), "skin".into());
+        assert!(
+            data.prepare_skinned(&s.skin, &tessera_render::MeshConfig::default())
+                .is_ok()
+        );
+        // A skeleton too small for the bones used, no skeleton, a palette overflow.
+        assert!(mesh_skin(&geo, 10).unwrap_err().contains("bone"));
+        assert!(mesh_skin(&geo, 0).is_err());
+        assert!(mesh_skin(&geo, MAX_PALETTE_BONES + 1).is_err());
+        // Hostile weights: zero rows go to bone 0, odd sums are rescaled, NaN is zero.
+        let mut bad = geo.clone();
+        if let Some(w) = &mut bad.weights {
+            w[0] = [0.0; 4];
+            w[1] = [2.0, 2.0, 0.0, 0.0];
+            w[2] = [f32::NAN, 1.0, -3.0, 0.0];
+        }
+        let s = mesh_skin(&bad, 62).unwrap();
+        assert_eq!(s.fixed, 1);
+        assert_eq!(s.skin.joints[0], [0; 4]);
+        assert_eq!(s.renormalised, 1);
+        assert_eq!(s.skin.weights[1], [0.5, 0.5, 0.0, 0.0]);
+        assert_eq!(s.skin.weights[2][0], 0.0);
+        // Missing or short streams are refused.
+        let mut none = geo.clone();
+        none.joints = None;
+        assert!(mesh_skin(&none, 62).is_err());
+        let mut short = geo.clone();
+        if let Some(j) = &mut short.joints {
+            j.pop();
+        }
+        assert!(mesh_skin(&short, 62).is_err());
+        // An unskinned level has no streams.
+        let plain = MeshSpec::single(0x3000_0152, 24).build().unwrap();
+        let plain = plain.level_geometry(0, &GeometryLimits::default()).unwrap();
+        assert!(mesh_skin(&plain, 62).is_err());
+    }
 
     fn img(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 4]) -> RgbaImage {
         let mut pixels = Vec::new();

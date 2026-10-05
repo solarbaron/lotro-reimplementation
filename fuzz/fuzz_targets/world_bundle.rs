@@ -13,8 +13,9 @@
 //!   each optionally prefixed with its correct DID so the decoders reach their bodies.
 //!
 //! Nothing may panic. An accepted bundle has its own key, finite placements, a positive
-//! residency charge, entities that pass the draw rule only with resolved geometry, and
-//! height lookups that work.
+//! residency charge, entities that pass the draw rule only with resolved geometry,
+//! consistent figure links (figure ↔ entity, the per-block cap, NPC and rig figures pass
+//! the draw rule), and height lookups that work.
 
 #![no_main]
 
@@ -23,7 +24,7 @@ use std::sync::{Arc, OnceLock};
 use libfuzzer_sys::fuzz_target;
 use tessera_world::testkit::{SyntheticWorld, landblock_data};
 use tessera_world::{
-    BundleFrame, BundleOptions, FramedRecord, LandblockKey, WorldContext, build_bundle,
+    BundleFrame, BundleOptions, FigureKind, FramedRecord, LandblockKey, WorldContext, build_bundle,
 };
 
 fn ctx() -> &'static WorldContext {
@@ -117,6 +118,24 @@ fuzz_target!(|input: &[u8]| {
         assert!(e.scale.iter().all(|c| c.is_finite() && *c > 0.0));
         if e.draw {
             assert!(e.visual.as_ref().is_some_and(|v| v.has_geometry()));
+        }
+    }
+    // Figures (`walker.md` §10.2): each names its entity and the entity names it back,
+    // at most the configured number per block, NPC and rig figures pass the draw rule.
+    assert!(b.figures.len() <= BundleOptions::default().max_figures_per_block);
+    for (i, f) in b.figures.iter().enumerate() {
+        let e = b
+            .entities
+            .get(f.entity as usize)
+            .expect("a figure names an entity of the bundle");
+        assert_eq!(e.figure, u32::try_from(i).ok());
+        if matches!(f.kind, FigureKind::Npc | FigureKind::Rig) {
+            assert!(e.draw, "{:?} figure without the draw rule", f.kind);
+        }
+    }
+    for e in &b.entities {
+        if let Some(i) = e.figure {
+            assert!((i as usize) < b.figures.len());
         }
     }
     for (x, y) in [(0.0, 0.0), (160.0, 160.0), (12.5, 99.0)] {

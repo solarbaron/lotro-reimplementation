@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-entity"
+description = "Main-thread entity store of the client: generational IDs, component columns (transform, network ID, render and animation handles, landblock membership), change lists"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Compiles the standalone bevy_ecs adapter of the entity-storage benchmark
+# (docs/decisions/0008-entity-storage.md, examples/entity_bench). Never on by default; the
+# library itself does not use it.
+bevy-bench = ["dep:bevy_ecs"]
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+# Benchmark only (feature `bevy-bench`). 0.18 is the newest release line whose MSRV (1.89)
+# fits the workspace's 1.90; 0.19 needs 1.95. Minimal features: World, Query, Schedule.
+bevy_ecs = { version = "0.18", optional = true, default-features = false, features = ["std"] }
+
+[dev-dependencies]
+proptest.workspace = true
+# The decision benchmark (examples/entity_bench): real animation sampling, the M3 streaming
+# ring logic and, with TESSERA_GAME_DIR set, landblock bundles of the install.
+tessera-anim.workspace = true
+tessera-assets.workspace = true
+tessera-dat.workspace = true
+tessera-havok.workspace = true
+tessera-world.workspace = true
+
+[[example]]
+name = "entity_bench"
+path = "examples/entity_bench/main.rs"
+
+[lints]
+workspace = true

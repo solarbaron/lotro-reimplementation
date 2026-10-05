@@ -42,6 +42,20 @@ pub struct FrameRow {
     pub draws: usize,
     /// Terrain meshes drawn.
     pub terrain: usize,
+    /// Animated characters (entities with an animation instance).
+    pub characters: usize,
+    /// Characters drawn.
+    pub character_draws: usize,
+    /// Main thread: the whole character layer (events, figure uploads, animation), ms.
+    pub characters_ms: f64,
+    /// Main thread: collecting finished sampling jobs (step 6 of ARCHITECTURE §20.3), ms.
+    pub anim_collect_ms: f64,
+    /// Main thread: advancing animators and submitting sampling jobs, ms.
+    pub anim_submit_ms: f64,
+    /// Main thread: uploading skinning palettes while recording the frame, ms.
+    pub anim_upload_ms: f64,
+    /// Worker time of the sampling jobs collected this frame, ms.
+    pub anim_worker_ms: f64,
     /// Viewer position (region-global).
     pub x: f64,
     /// Viewer position.
@@ -79,6 +93,36 @@ pub struct Summary {
     pub peak_rss: u64,
     /// Frames with near-ring holes.
     pub near_missing_frames: usize,
+    /// 95th percentile frame, ms.
+    pub p95_ms: f64,
+    /// Mean frames per second (frames over the summed frame times).
+    pub fps: f64,
+    /// Most animated characters in one frame.
+    pub max_characters: usize,
+    /// Fewest characters drawn in one frame (over frames with any animated character).
+    pub min_character_draws: usize,
+    /// Mean main-thread animation work per frame (collect, submit, palette upload), ms.
+    pub anim_main_ms: f64,
+    /// Longest main-thread animation work in one frame, ms.
+    pub max_anim_main_ms: f64,
+    /// Mean worker time of sampling per frame, ms.
+    pub anim_worker_ms: f64,
+    /// Longest main-thread time of the whole character layer in one frame, ms.
+    pub max_characters_ms: f64,
+}
+
+impl Summary {
+    /// Share of the animation work done on workers: worker time over worker plus
+    /// main-thread animation time (0 without animation).
+    #[must_use]
+    pub fn worker_share(&self) -> f64 {
+        let total = self.anim_worker_ms + self.anim_main_ms;
+        if total > 0.0 {
+            self.anim_worker_ms / total
+        } else {
+            0.0
+        }
+    }
 }
 
 impl std::fmt::Display for Summary {
@@ -104,7 +148,25 @@ impl std::fmt::Display for Summary {
             mib(self.peak_gpu_bytes as f64),
             mib(self.peak_rss as f64),
             self.near_missing_frames,
-        )
+        )?;
+        if self.max_characters > 0 {
+            write!(
+                f,
+                "; {:.1} fps mean, p95 {:.2} ms; up to {} animated characters ({} drawn at least); animation main thread {:.3} ms/frame (max {:.2} ms), \
+                 workers {:.3} ms/frame: {:.1} % of the animation work on workers; character \
+                 layer max {:.2} ms",
+                self.fps,
+                self.p95_ms,
+                self.max_characters,
+                self.min_character_draws,
+                self.anim_main_ms,
+                self.max_anim_main_ms,
+                self.anim_worker_ms,
+                100.0 * self.worker_share(),
+                self.max_characters_ms,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -147,12 +209,14 @@ impl FrameLog {
         writeln!(
             w,
             "frame,t_s,frame_ms,cpu_ms,stream_ms,uploaded_bytes,resident_blocks,resident_bytes,\
-             loading,near_missing,gpu_bytes,rss_bytes,object_draws,terrain_draws,x,y,z"
+             loading,near_missing,gpu_bytes,rss_bytes,object_draws,terrain_draws,characters,\
+             character_draws,characters_ms,anim_collect_ms,anim_submit_ms,anim_upload_ms,anim_worker_ms,x,y,z"
         )?;
         for (i, r) in self.rows.iter().enumerate() {
             writeln!(
                 w,
-                "{i},{:.4},{:.3},{:.3},{:.3},{},{},{},{},{},{},{},{},{},{:.2},{:.2},{:.2}",
+                "{i},{:.4},{:.3},{:.3},{:.3},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},\
+                 {:.2},{:.2},{:.2}",
                 r.t,
                 r.frame_ms,
                 r.cpu_ms,
@@ -166,6 +230,13 @@ impl FrameLog {
                 r.rss,
                 r.draws,
                 r.terrain,
+                r.characters,
+                r.character_draws,
+                r.characters_ms,
+                r.anim_collect_ms,
+                r.anim_submit_ms,
+                r.anim_upload_ms,
+                r.anim_worker_ms,
                 r.x,
                 r.y,
                 r.z
@@ -187,14 +258,32 @@ pub fn summarize(rows: &[FrameRow]) -> Summary {
     let mut times: Vec<f64> = rows.iter().map(|r| r.frame_ms).collect();
     times.sort_unstable_by(f64::total_cmp);
     let pct = |q: f64| times[((times.len() - 1) as f64 * q).round() as usize];
+    let total_ms: f64 = times.iter().sum();
+    let n = rows.len() as f64;
     let mut s = Summary {
         frames: rows.len(),
         seconds: rows.last().map_or(0.0, |r| r.t) - rows.first().map_or(0.0, |r| r.t),
         p50_ms: pct(0.5),
+        p95_ms: pct(0.95),
         p99_ms: pct(0.99),
+        fps: if total_ms > 0.0 {
+            n * 1000.0 / total_ms
+        } else {
+            0.0
+        },
+        min_character_draws: usize::MAX,
         ..Summary::default()
     };
     for r in rows {
+        let main = r.anim_collect_ms + r.anim_submit_ms + r.anim_upload_ms;
+        s.anim_main_ms += main / n;
+        s.anim_worker_ms += r.anim_worker_ms / n;
+        s.max_anim_main_ms = s.max_anim_main_ms.max(main);
+        s.max_characters_ms = s.max_characters_ms.max(r.characters_ms);
+        s.max_characters = s.max_characters.max(r.characters);
+        if r.characters > 0 {
+            s.min_character_draws = s.min_character_draws.min(r.character_draws);
+        }
         s.max_frame_ms = s.max_frame_ms.max(r.frame_ms);
         s.max_cpu_ms = s.max_cpu_ms.max(r.cpu_ms);
         s.max_stream_ms = s.max_stream_ms.max(r.stream_ms);
@@ -204,6 +293,9 @@ pub fn summarize(rows: &[FrameRow]) -> Summary {
         s.peak_gpu_bytes = s.peak_gpu_bytes.max(r.gpu_bytes);
         s.peak_rss = s.peak_rss.max(r.rss);
         s.near_missing_frames += usize::from(r.near_missing > 0);
+    }
+    if s.min_character_draws == usize::MAX {
+        s.min_character_draws = 0;
     }
     s
 }
@@ -291,6 +383,35 @@ mod tests {
         let text = std::fs::read_to_string(&p).unwrap();
         assert_eq!(text.lines().count(), 101);
         assert_eq!(summarize(&[]), Summary::default());
+        assert_eq!(s.max_characters, 0);
+        assert!(!s.to_string().contains("animated"));
+    }
+
+    #[test]
+    fn animation_summary() {
+        let rows: Vec<FrameRow> = (0..10)
+            .map(|i| FrameRow {
+                t: f64::from(i) / 100.0,
+                frame_ms: 10.0,
+                characters: 50,
+                character_draws: if i == 3 { 49 } else { 50 },
+                anim_collect_ms: 0.1,
+                anim_submit_ms: 0.2,
+                anim_upload_ms: 0.1,
+                anim_worker_ms: 1.6,
+                ..FrameRow::default()
+            })
+            .collect();
+        let s = summarize(&rows);
+        assert!((s.fps - 100.0).abs() < 1e-9);
+        assert_eq!(s.p95_ms, 10.0);
+        assert_eq!((s.max_characters, s.min_character_draws), (50, 49));
+        assert!((s.anim_main_ms - 0.4).abs() < 1e-9);
+        assert!((s.worker_share() - 0.8).abs() < 1e-9);
+        assert!(
+            s.to_string()
+                .contains("80.0 % of the animation work on workers")
+        );
     }
 
     #[test]

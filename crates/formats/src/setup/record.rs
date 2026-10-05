@@ -17,17 +17,61 @@ use crate::record::{Record, read_prologue};
 /// a different start is reported by [`Setup::first_unusual_field`], not rejected.
 pub const TAGFILE_MAGIC: [u8; 8] = [0x1E, 0x0D, 0xB0, 0xCA, 0xCE, 0xFA, 0x11, 0xD0];
 
-/// Element of frame list A (52 bytes, §6.3); probably an attachment point bound to a bone.
+/// Element of frame list A (52 bytes, §6.3): a **holding location** (`setup.md` part 2,
+/// `skeleton-anim.md` §8.2). See [`Setup::holding_location`] for the typed view.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoneFrame {
-    /// Key, an enum value 0x1000xxxx in observed data.
+    /// `HoldingLocation` enum key (`RHand`, `Wpn_RHand`, `Sheath_Back_2H`, …); unique per
+    /// setup.
     pub key: u32,
     /// Second key; equal to `key` in every observed element.
     pub key2: u32,
-    /// Bone index; −1 probably means "not bound to a bone".
+    /// Bone index into the setup's skeleton, or −1 for the setup origin.
     pub bone: i32,
-    /// The frame.
+    /// The frame, in the bone's space: location = bone model transform · translate ·
+    /// rotate · scale.
     pub frame: Frame,
+}
+
+impl BoneFrame {
+    /// What the frame is relative to; `None` for a bone value below −1 (never observed).
+    #[must_use]
+    pub fn anchor(&self) -> Option<Anchor> {
+        match self.bone {
+            -1 => Some(Anchor::Origin),
+            b => u32::try_from(b).ok().map(Anchor::Bone),
+        }
+    }
+}
+
+/// What a holding-location frame is relative to (`setup.md` §6.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Anchor {
+    /// The setup's origin (stored bone −1).
+    Origin,
+    /// A bone of the setup's skeleton.
+    Bone(u32),
+}
+
+/// A holding location of a setup (frame list A, `setup.md` §6.3, §13): where a held item's
+/// origin goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HoldingLocation {
+    /// The `HoldingLocation` enum key.
+    pub key: u32,
+    /// What the frame is relative to.
+    pub anchor: Anchor,
+    /// The frame in the anchor's space.
+    pub frame: Frame,
+}
+
+/// An `attach_map` element (`setup.md` §6.2): a `BoneType` enum key and the bone it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoneAttachment {
+    /// The `BoneType` enum key (`head`, `Rweaponholder`, face-slider bones, …).
+    pub bone_type: u32,
+    /// Bone index into the setup's skeleton.
+    pub bone: u32,
 }
 
 /// Element of frame list B (44 bytes, §6.3). What it places is OPEN.
@@ -39,10 +83,12 @@ pub struct Placement {
     pub frame: Frame,
 }
 
-/// Element of frame list C (48 bytes, §6.3). What it places is OPEN.
+/// Element of frame list C (48 bytes, §6.3): an object offset for a UI viewport, keyed by
+/// `UIViewport_Type` (`Paperdoll`, `Opponent`, `MountedPaperdoll`, …). World rendering
+/// ignores it.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct NamedFrame {
-    /// Key.
+    /// `UIViewport_Type` enum key.
     pub key: u32,
     /// Second key; equal to `key` in every observed element.
     pub key2: u32,
@@ -197,19 +243,20 @@ pub struct Setup {
     /// Header of the attachment map. Only the hint is written by [`Setup::to_bytes`]; the
     /// count is taken from `attach_map`.
     pub attach_map_size: TSize,
-    /// Attachment map (key, value) pairs in stored order; meaning OPEN (§6.2).
+    /// Attachment map (key, value) pairs in stored order: `BoneType` enum key → bone index
+    /// into the setup's skeleton (§6.2). See [`Setup::attachments`] and [`Setup::bone_for`].
     pub attach_map: Vec<(u32, u32)>,
     /// TSize hint of frame list A's header; 0 and unused when the list is empty. (The
     /// header is absent for an empty list and repeats the list's u32 count, so only the
     /// hint is kept.)
     pub bone_frames_hint: u8,
-    /// Frame list A.
+    /// Frame list A: holding locations (§6.3). See [`Setup::holding_location`].
     pub bone_frames: Vec<BoneFrame>,
-    /// Frame list B.
+    /// Frame list B: unscaled, unrotated positions on large props (meaning OPEN, §6.3).
     pub placements: Vec<Placement>,
     /// TSize hint of frame list C's header; 0 and unused when the list is empty.
     pub named_frames_hint: u8,
-    /// Frame list C.
+    /// Frame list C: UI-viewport offsets keyed by `UIViewport_Type` (§6.3).
     pub named_frames: Vec<NamedFrame>,
     /// Collision boxes.
     pub boxes: Vec<CollisionBox>,
@@ -230,6 +277,100 @@ impl Setup {
     #[must_use]
     pub fn tagfile_has_magic(&self) -> bool {
         self.tagfile.starts_with(&TAGFILE_MAGIC)
+    }
+
+    /// The `attach_map` as typed elements, in stored order (§6.2).
+    pub fn attachments(&self) -> impl Iterator<Item = BoneAttachment> + '_ {
+        self.attach_map
+            .iter()
+            .map(|&(bone_type, bone)| BoneAttachment { bone_type, bone })
+    }
+
+    /// The bone a `BoneType` key names on this skeleton, or `None` when the skeleton has no
+    /// such bone (callers fall back to the object origin; `skeleton-anim.md` §8.1).
+    #[must_use]
+    pub fn bone_for(&self, bone_type: u32) -> Option<u32> {
+        self.attach_map
+            .iter()
+            .find(|(k, _)| *k == bone_type)
+            .map(|&(_, b)| b)
+    }
+
+    /// The holding location `key` (frame list A), or `None` when the setup lacks it (a held
+    /// item at a missing location is not drawn; `appearance.md` §10) or its bone value is
+    /// below −1.
+    #[must_use]
+    pub fn holding_location(&self, key: u32) -> Option<HoldingLocation> {
+        self.bone_frames
+            .iter()
+            .find(|f| f.key == key)
+            .and_then(Self::typed_location)
+    }
+
+    /// Every holding location, in stored order (elements with a bone below −1 skipped).
+    pub fn holding_locations(&self) -> impl Iterator<Item = HoldingLocation> + '_ {
+        self.bone_frames.iter().filter_map(Self::typed_location)
+    }
+
+    fn typed_location(f: &BoneFrame) -> Option<HoldingLocation> {
+        Some(HoldingLocation {
+            key: f.key,
+            anchor: f.anchor()?,
+            frame: f.frame,
+        })
+    }
+
+    /// The UI-viewport frame for `UIViewport_Type` key `key` (frame list C).
+    #[must_use]
+    pub fn viewport_frame(&self, key: u32) -> Option<&Frame> {
+        self.named_frames
+            .iter()
+            .find(|f| f.key == key)
+            .map(|f| &f.frame)
+    }
+
+    /// The first violation of the part-2 bone invariants against the setup's skeleton of
+    /// `bone_count` bones (SI7, SI8): `attach_map` keys and values unique and below the bone
+    /// count, list A keys unique and bones −1 or below the bone count. `None` when all hold.
+    /// Callers report violations as data-quality issues (§14).
+    #[must_use]
+    pub fn bone_issue(&self, bone_count: usize) -> Option<&'static str> {
+        if let Some(why) = self.attachment_issue() {
+            return Some(why);
+        }
+        let below = |b: u32| usize::try_from(b).is_ok_and(|b| b < bone_count);
+        if self.attach_map.iter().any(|&(_, b)| !below(b)) {
+            return Some("attach_map bone index not below the bone count");
+        }
+        if self.bone_frames.iter().any(|f| {
+            !matches!(f.anchor(), Some(Anchor::Origin))
+                && !matches!(f.anchor(), Some(Anchor::Bone(b)) if below(b))
+        }) {
+            return Some("frame list A bone neither -1 nor below the bone count");
+        }
+        None
+    }
+
+    /// The skeleton-independent part of SI7 and SI8: unique `attach_map` keys and values,
+    /// unique list A keys, list A bones ≥ −1.
+    fn attachment_issue(&self) -> Option<&'static str> {
+        fn has_dup(mut v: Vec<u32>) -> bool {
+            v.sort_unstable();
+            v.windows(2).any(|w| w[0] == w[1])
+        }
+        if has_dup(self.attach_map.iter().map(|e| e.0).collect()) {
+            return Some("attach_map keys not unique");
+        }
+        if has_dup(self.attach_map.iter().map(|e| e.1).collect()) {
+            return Some("attach_map bone indices not unique");
+        }
+        if has_dup(self.bone_frames.iter().map(|f| f.key).collect()) {
+            return Some("frame list A keys not unique");
+        }
+        if self.bone_frames.iter().any(|f| f.bone < -1) {
+            return Some("frame list A bone below -1");
+        }
+        None
     }
 
     /// Whether the setup has any collision: a mesh or a volume.
@@ -263,7 +404,8 @@ impl Setup {
     }
 
     /// The first deviation from the invariants observed on every real record (SI3, SI4
-    /// prefixes, §6.3 key echoes), or `None`. Such records still decode.
+    /// prefixes, §6.3 key echoes, the skeleton-independent parts of SI7 and SI8), or
+    /// `None`. Such records still decode. [`Setup::bone_issue`] checks against a skeleton.
     #[must_use]
     pub fn first_unusual_field(&self) -> Option<&'static str> {
         if !self.tagfile_has_magic() {
@@ -280,6 +422,9 @@ impl Setup {
         }
         if self.named_frames.iter().any(|f| f.key2 != f.key) {
             return Some("frame list C key2 differs from key");
+        }
+        if let Some(why) = self.attachment_issue() {
+            return Some(why);
         }
         if !self.has_collision() && !self.physics_bounds.is_zero() {
             return Some("physics bounds without collision");

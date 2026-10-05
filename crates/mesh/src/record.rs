@@ -124,7 +124,7 @@ impl MeshHeader {
         Self::read(&mut Cursor::new(bytes))
     }
 
-    fn read(c: &mut Cursor<'_>) -> Result<Self> {
+    pub(crate) fn read(c: &mut Cursor<'_>) -> Result<Self> {
         let did = Did(c.u32("DID")?);
         let flags = c.u32("flags")?;
         let s = c.count("surface list", 4)?;
@@ -362,7 +362,9 @@ pub struct Submesh {
     /// The AABB stored after the vertices (§6.1). Equal to the positions' bounds in
     /// observed data; [`Mesh::validate`] checks it.
     pub stored_aabb: Aabb,
-    /// The influence list of §6.2, kept opaque (meaning OPEN).
+    /// The influence list of §6.2: redundant with the vertex data (see
+    /// [`Submesh::computed_influence_list`]); kept for lossless re-encoding and checked by
+    /// [`Mesh::validate`] ([`crate::IssueKind::InfluenceListContent`]).
     pub influence_list: Vec<u32>,
 }
 

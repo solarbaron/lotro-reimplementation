@@ -21,6 +21,7 @@ use crate::mesh_pipelines::{
 use crate::pipelines::{
     DEPTH_CLEAR, DEPTH_FORMAT, Globals, LineVertex, PipelineCache, QuadInstance, SharedLayouts,
 };
+use crate::skin::{MeshSkin, PALETTE_BINDING_BYTES, PaletteData};
 use crate::texture::{Filter, Samplers, TextureId, TextureStore, TextureUpload, Wrap};
 
 /// Process-unique renderer ids; every handle a renderer issues carries its
@@ -36,7 +37,9 @@ fn next_owner_id() -> u64 {
 pub struct RendererConfig {
     /// GPU selection.
     pub context: ContextOptions,
-    /// Preferred present mode; falls back to `Fifo` when unsupported.
+    /// Preferred present mode; falls back to `Fifo` when unsupported. `AutoVsync` and
+    /// `AutoNoVsync` are resolved against the surface's modes (`FifoRelaxed`, else `Fifo`;
+    /// `Immediate`, else `Mailbox`, else `Fifo`).
     pub present_mode: wgpu::PresentMode,
     /// Colour the first pass clears to when it does not set its own.
     pub clear_color: Rgba,
@@ -150,6 +153,13 @@ pub struct FrameStats {
     pub mesh_draws: u32,
     /// Triangles submitted by mesh surface draws.
     pub triangles: u64,
+    /// Mesh surface draws that were skinned with a palette (included in
+    /// `mesh_draws`).
+    pub skinned_draws: u32,
+    /// Skinning palettes uploaded with the frame.
+    pub palettes: u32,
+    /// Bytes of skinning-palette data uploaded with the frame.
+    pub palette_bytes: u64,
 }
 
 struct SurfaceState<'w> {
@@ -221,8 +231,17 @@ struct StreamBuffer {
 
 impl StreamBuffer {
     fn new(device: &wgpu::Device, label: &'static str, usage: wgpu::BufferUsages) -> Self {
+        Self::with_size(device, label, usage, 4096)
+    }
+
+    fn with_size(
+        device: &wgpu::Device,
+        label: &'static str,
+        usage: wgpu::BufferUsages,
+        size: u64,
+    ) -> Self {
         let usage = usage | wgpu::BufferUsages::COPY_DST;
-        let buffer = Self::alloc(device, label, usage, 4096);
+        let buffer = Self::alloc(device, label, usage, size);
         Self {
             label,
             usage,
@@ -287,8 +306,18 @@ pub struct Renderer<'w> {
     mesh_pipelines: MeshPipelineCache,
     arena: MeshArena,
     draw_uniforms: StreamBuffer,
+    /// Skinning palettes of the current frame (dynamic-offset uniform).
+    palettes: StreamBuffer,
+    /// Draw uniforms (binding 0) and palettes (binding 1).
     draw_bg: wgpu::BindGroup,
     draw_stride: u64,
+    /// Start alignment of each palette (the dynamic uniform offset alignment).
+    palette_align: u64,
+    /// Per-frame cap on palette bytes.
+    palette_budget: u64,
+    /// Serial stamped into the next frame (and its palettes, together with
+    /// `owner`).
+    next_frame_serial: u64,
     /// Mesh material bind groups keyed by the four resolved textures, with
     /// the index of the frame that last used them.
     material_bgs: HashMap<[TextureId; 4], (wgpu::BindGroup, u64)>,
@@ -302,6 +331,9 @@ pub struct Renderer<'w> {
 }
 
 const MAX_DEPTH_CACHE: usize = 4;
+/// Per-frame budget of skinning-palette bytes (about 5,000 palettes of 256
+/// bones, or 25,000 of 89 bones).
+const MAX_PALETTE_BYTES_PER_FRAME: u64 = 64 << 20;
 /// Material bind groups kept before entries unused in the current frame are
 /// evicted. A frame that alone uses more raises the threshold to twice its
 /// working set, so a large scene never re-creates its bind groups every
@@ -333,6 +365,8 @@ struct MeshItem {
     page: usize,
     indices: Range<u32>,
     uniform_offset: u32,
+    /// Dynamic offset of the palette (0 for static draws).
+    palette_offset: u32,
     /// Index into the frame's material bind group list.
     material: usize,
     /// NDC depth of the submesh's bounding-sphere centre (blend sorting).
@@ -352,6 +386,7 @@ struct OverlayItem {
     key: MeshKey,
     page: usize,
     uniform_offset: u32,
+    palette_offset: u32,
     draw: OverlayDraw,
 }
 
@@ -379,6 +414,7 @@ struct FrameWarnings {
     submesh: bool,
     wire: bool,
     screen_mesh: bool,
+    palette: bool,
 }
 
 /// Camera position for a world pass: the explicit eye, else the centre of
@@ -468,11 +504,16 @@ impl<'w> Renderer<'w> {
             .find(wgpu::TextureFormat::is_srgb)
             .or_else(|| caps.formats.first().copied())
             .ok_or(RenderError::SurfaceUnsupported)?;
-        let present_mode = if caps.present_modes.contains(&present_mode) {
-            present_mode
-        } else {
-            tracing::warn!(?present_mode, "present mode unsupported, using Fifo");
-            wgpu::PresentMode::Fifo
+        let present_mode = {
+            let chosen = choose_present_mode(present_mode, &caps.present_modes);
+            if !matches!(
+                present_mode,
+                wgpu::PresentMode::AutoVsync | wgpu::PresentMode::AutoNoVsync
+            ) && chosen != present_mode
+            {
+                tracing::warn!(?present_mode, "present mode unsupported, using Fifo");
+            }
+            chosen
         };
         let alpha_mode = caps
             .alpha_modes
@@ -533,7 +574,22 @@ impl<'w> Renderer<'w> {
         );
         let draw_uniforms =
             StreamBuffer::new(device, "tessera-mesh-draws", wgpu::BufferUsages::UNIFORM);
-        let draw_bg = Self::make_draw_bg(device, &mesh_layouts, &draw_uniforms.buffer);
+        let palettes = StreamBuffer::with_size(
+            device,
+            "tessera-skin-palettes",
+            wgpu::BufferUsages::UNIFORM,
+            PALETTE_BINDING_BYTES,
+        );
+        let draw_bg = Self::make_draw_bg(
+            device,
+            &mesh_layouts,
+            &draw_uniforms.buffer,
+            &palettes.buffer,
+        );
+        let palette_align = u64::from(device.limits().min_uniform_buffer_offset_alignment).max(16);
+        let palette_budget = MAX_PALETTE_BYTES_PER_FRAME
+            .min(device.limits().max_buffer_size)
+            .min(u64::from(u32::MAX));
         let [r, g, b, a] = config.clear_color.map(f64::from);
         let mut renderer = Self {
             owner,
@@ -555,8 +611,12 @@ impl<'w> Renderer<'w> {
             mesh_pipelines: MeshPipelineCache::default(),
             arena: MeshArena::new(owner, config.meshes),
             draw_uniforms,
+            palettes,
             draw_bg,
             draw_stride,
+            palette_align,
+            palette_budget,
+            next_frame_serial: 0,
             material_bgs: HashMap::new(),
             material_bg_cap: MAX_MATERIAL_BIND_GROUPS,
             clear_color: wgpu::Color { r, g, b, a },
@@ -591,19 +651,39 @@ impl<'w> Renderer<'w> {
         device: &wgpu::Device,
         layouts: &MeshLayouts,
         buffer: &wgpu::Buffer,
+        palettes: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tessera-mesh-draws"),
             layout: &layouts.draw,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
-                }),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(size_of::<DrawUniform>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: palettes,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(PALETTE_BINDING_BYTES),
+                    }),
+                },
+            ],
         })
+    }
+
+    fn new_frame_parts(&mut self) -> (u64, PaletteData) {
+        let serial = self.next_frame_serial;
+        self.next_frame_serial = self.next_frame_serial.wrapping_add(1);
+        (
+            serial,
+            PaletteData::new(self.palette_align, self.palette_budget),
+        )
     }
 
     /// The GPU context (device, queue, adapter info).
@@ -809,6 +889,24 @@ impl<'w> Renderer<'w> {
         }
     }
 
+    /// Validate a skinned mesh (the streams of `data` plus the bone
+    /// influences of `skin`) and copy it into the shared mesh buffers. The
+    /// influences go to a skin buffer parallel to the vertex buffer of the
+    /// mesh's page.
+    ///
+    /// Draw it with a palette ([`crate::MeshDraw::with_skin`]) to skin it,
+    /// or without one to show its bind pose. Errors as for
+    /// [`Self::upload_mesh`], plus [`RenderError::InvalidSkin`] for bad
+    /// skin streams (see [`MeshSkin::validate`]). To do the CPU work
+    /// elsewhere, call [`MeshData::prepare_skinned`] and
+    /// [`Self::upload_prepared`].
+    pub fn upload_skinned_mesh(&mut self, data: &MeshData, skin: &MeshSkin) -> Result<MeshId> {
+        let prepared = data.prepare_skinned(skin, self.arena.config())?;
+        let id = self.upload_prepared(prepared)?;
+        tracing::trace!(?id, label = data.label.as_deref(), "uploaded skinned mesh");
+        Ok(id)
+    }
+
     /// Free a mesh's buffer space. Returns `false` for stale or foreign
     /// handles. Draws of a destroyed mesh are skipped (with a warning).
     pub fn destroy_mesh(&mut self, id: MeshId) -> bool {
@@ -927,6 +1025,7 @@ impl<'w> Renderer<'w> {
         uniforms: &mut Vec<u8>,
         bind_groups: &mut Vec<wgpu::BindGroup>,
         bind_group_index: &mut HashMap<[TextureId; 4], usize>,
+        frame_serial: u64,
         warnings: &mut FrameWarnings,
     ) -> Result<PassMeshes> {
         let mut out = PassMeshes::default();
@@ -946,6 +1045,36 @@ impl<'w> Renderer<'w> {
             let page = mesh.page;
             let has_tangents = mesh.info.has_tangents;
             let vertex_range = mesh.vertex_range.clone();
+            // Skinned when the mesh has influences and the draw a usable
+            // palette; otherwise the bind pose (static path).
+            // A palette is usable only in the frame (of this renderer) that
+            // issued it: its offset addresses that frame's palette buffer.
+            let owner = self.owner;
+            let this_frame =
+                |p: &crate::skin::SkinPalette| p.owner == owner && p.frame == frame_serial;
+            let palette_offset = match (mesh.skinned, mesh.info.skin, draw.skin) {
+                (true, Some(info), Some(p))
+                    if this_frame(&p) && p.len() >= info.required_palette_len() =>
+                {
+                    Some(p.offset)
+                }
+                (true, Some(info), Some(p)) => {
+                    if !warnings.palette {
+                        tracing::warn!(
+                            mesh = ?draw.mesh,
+                            palette_len = p.len(),
+                            needed = info.required_palette_len(),
+                            same_frame = this_frame(&p),
+                            "skin palette from another frame or too short; drawing the bind pose"
+                        );
+                        warnings.palette = true;
+                    }
+                    None
+                }
+                _ => None,
+            };
+            let skinned = palette_offset.is_some();
+            let palette_offset = palette_offset.unwrap_or(0);
             // Indices into `mesh.submeshes` (the mesh is looked up again
             // below, after the material borrows `self` mutably).
             let submesh_range = match draw.submesh {
@@ -1053,10 +1182,16 @@ impl<'w> Renderer<'w> {
                     };
                     for &cull in culls {
                         let item = MeshItem {
-                            key: MeshKey { format, kind, cull },
+                            key: MeshKey {
+                                format,
+                                kind,
+                                cull,
+                                skinned,
+                            },
                             page,
                             indices: tris.clone(),
                             uniform_offset,
+                            palette_offset,
                             material,
                             depth,
                         };
@@ -1083,9 +1218,11 @@ impl<'w> Renderer<'w> {
                             format,
                             kind: Kind::Wire,
                             cull: Cull::None,
+                            skinned,
                         },
                         page,
                         uniform_offset,
+                        palette_offset,
                         draw: OverlayDraw::Wire(edges),
                     });
                 }
@@ -1103,9 +1240,11 @@ impl<'w> Renderer<'w> {
                         format,
                         kind: Kind::NormalLines,
                         cull: Cull::None,
+                        skinned,
                     },
                     page,
                     uniform_offset,
+                    palette_offset,
                     draw: OverlayDraw::Normals(vertex_range),
                 });
             }
@@ -1116,6 +1255,7 @@ impl<'w> Renderer<'w> {
         out.surfaces.sort_by_key(|item| {
             (
                 item.key.kind == Kind::Mask,
+                item.key.skinned,
                 item.key.cull,
                 item.material,
                 item.page,
@@ -1265,14 +1405,18 @@ impl<'w> Renderer<'w> {
         });
         let (width, height, format) =
             (state.config.width, state.config.height, state.config.format);
+        let token = Arc::clone(&self.frame_token);
+        let (serial, palettes) = self.new_frame_parts();
         Ok(Some(Frame {
             owner: self.owner,
-            target: FrameTarget::Surface(texture, Arc::clone(&self.frame_token)),
+            target: FrameTarget::Surface(texture, token),
             view,
             format,
             width,
             height,
             passes: Vec::new(),
+            serial,
+            palettes,
         }))
     }
 
@@ -1282,6 +1426,7 @@ impl<'w> Renderer<'w> {
     /// by a different renderer.
     pub fn begin_offscreen_frame(&mut self, target: &OffscreenTarget) -> Result<Frame> {
         self.check_target(target)?;
+        let (serial, palettes) = self.new_frame_parts();
         Ok(Frame {
             owner: self.owner,
             target: FrameTarget::Offscreen,
@@ -1290,6 +1435,8 @@ impl<'w> Renderer<'w> {
             width: target.width,
             height: target.height,
             passes: Vec::new(),
+            serial,
+            palettes,
         })
     }
 
@@ -1333,6 +1480,8 @@ impl<'w> Renderer<'w> {
             width,
             height,
             mut passes,
+            serial,
+            palettes,
         } = frame;
 
         if passes.is_empty() {
@@ -1406,6 +1555,7 @@ impl<'w> Renderer<'w> {
                     &mut mesh_uniforms,
                     &mut material_groups,
                     &mut material_index,
+                    serial,
                     &mut warnings,
                 )?);
             } else {
@@ -1439,17 +1589,32 @@ impl<'w> Renderer<'w> {
         let line_bytes: &[u8] = bytemuck::cast_slice(&line_data);
         self.instances.reserve(device, inst_bytes.len() as u64)?;
         self.lines.reserve(device, line_bytes.len() as u64)?;
-        if self
+        // Both buffers of the draw bind group: run both reserves and rebuild
+        // the bind group when either was replaced *before* propagating an
+        // error, so a failed palette reserve cannot leave `draw_bg` pointing
+        // at a draw-uniform buffer that has since been replaced.
+        let draws_grew = self
             .draw_uniforms
-            .reserve(device, mesh_uniforms.len() as u64)?
-        {
-            self.draw_bg =
-                Self::make_draw_bg(device, &self.mesh_layouts, &self.draw_uniforms.buffer);
+            .reserve(device, mesh_uniforms.len() as u64);
+        let palettes_grew = self.palettes.reserve(device, palettes.buffer_bytes());
+        if matches!(draws_grew, Ok(true)) || matches!(palettes_grew, Ok(true)) {
+            self.draw_bg = Self::make_draw_bg(
+                device,
+                &self.mesh_layouts,
+                &self.draw_uniforms.buffer,
+                &self.palettes.buffer,
+            );
         }
+        draws_grew?;
+        palettes_grew?;
         let queue = &self.ctx.queue;
         queue.write_buffer(&self.uniforms.buffer, 0, &uniform_data);
         if !mesh_uniforms.is_empty() {
             queue.write_buffer(&self.draw_uniforms.buffer, 0, &mesh_uniforms);
+        }
+        let palette_bytes: &[u8] = bytemuck::cast_slice(&palettes.rows);
+        if !palette_bytes.is_empty() {
+            queue.write_buffer(&self.palettes.buffer, 0, palette_bytes);
         }
         if !inst_bytes.is_empty() {
             queue.write_buffer(&self.instances.buffer, 0, inst_bytes);
@@ -1473,6 +1638,8 @@ impl<'w> Renderer<'w> {
         let mut stats = FrameStats {
             frame_index: self.frame_index,
             passes: u32::try_from(passes.len()).unwrap_or(u32::MAX),
+            palettes: palettes.count,
+            palette_bytes: palette_bytes.len() as u64,
             ..FrameStats::default()
         };
         let mut encoder = self
@@ -1640,6 +1807,9 @@ impl<'w> Renderer<'w> {
             return false;
         };
         rp.set_vertex_buffer(0, p.vertex_buffer.slice(..));
+        if let Some(skin) = &p.skin_buffer {
+            rp.set_vertex_buffer(1, skin.slice(..));
+        }
         rp.set_index_buffer(p.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         *bound = Some(page);
         true
@@ -1673,10 +1843,17 @@ impl<'w> Renderer<'w> {
                 rp.set_bind_group(2, material, &[]);
                 current_material = Some(item.material);
             }
-            rp.set_bind_group(1, &self.draw_bg, &[item.uniform_offset]);
+            rp.set_bind_group(
+                1,
+                &self.draw_bg,
+                &[item.uniform_offset, item.palette_offset],
+            );
             rp.draw_indexed(item.indices.clone(), 0, 0..1);
             stats.draw_calls = stats.draw_calls.saturating_add(1);
             stats.mesh_draws = stats.mesh_draws.saturating_add(1);
+            if item.key.skinned {
+                stats.skinned_draws = stats.skinned_draws.saturating_add(1);
+            }
             stats.triangles = stats.triangles.saturating_add(u64::from(
                 item.indices.end.saturating_sub(item.indices.start) / 3,
             ));
@@ -1699,7 +1876,11 @@ impl<'w> Renderer<'w> {
                 rp.set_pipeline(pipeline);
                 current_key = Some(item.key);
             }
-            rp.set_bind_group(1, &self.draw_bg, &[item.uniform_offset]);
+            rp.set_bind_group(
+                1,
+                &self.draw_bg,
+                &[item.uniform_offset, item.palette_offset],
+            );
             match &item.draw {
                 OverlayDraw::Wire(range) => {
                     if !self.bind_page(rp, item.page, bound_page) {
@@ -1717,6 +1898,15 @@ impl<'w> Renderer<'w> {
                     let end = u64::from(range.end) * size;
                     rp.set_vertex_buffer(0, p.vertex_buffer.slice(start..end));
                     *bound_page = None;
+                    if item.key.skinned {
+                        let Some(skin) = &p.skin_buffer else {
+                            continue;
+                        };
+                        let size = size_of::<crate::skin::GpuSkin>() as u64;
+                        let (start, end) =
+                            (u64::from(range.start) * size, u64::from(range.end) * size);
+                        rp.set_vertex_buffer(1, skin.slice(start..end));
+                    }
                     rp.draw(0..2, 0..range.end.saturating_sub(range.start));
                 }
             }
@@ -1842,8 +2032,49 @@ fn unpad_rows(src: &[u8], width: u32, height: u32, padded_row: u64) -> Option<Ve
     Some(out)
 }
 
+/// The present mode to configure for `requested` on a surface that supports `supported`.
+///
+/// Surfaces never list the `Auto*` aliases, so they are resolved here: `AutoVsync` to
+/// `FifoRelaxed` when supported, else `Fifo`; `AutoNoVsync` to `Immediate`, else `Mailbox`,
+/// else `Fifo`. A concrete mode the surface lacks becomes `Fifo`, which every surface
+/// supports.
+pub(crate) fn choose_present_mode(
+    requested: wgpu::PresentMode,
+    supported: &[wgpu::PresentMode],
+) -> wgpu::PresentMode {
+    use wgpu::PresentMode as P;
+    let first = |modes: &[P]| {
+        modes
+            .iter()
+            .copied()
+            .find(|m| supported.contains(m))
+            .unwrap_or(P::Fifo)
+    };
+    match requested {
+        P::AutoVsync => first(&[P::FifoRelaxed, P::Fifo]),
+        P::AutoNoVsync => first(&[P::Immediate, P::Mailbox, P::Fifo]),
+        m if supported.contains(&m) => m,
+        _ => P::Fifo,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn auto_present_modes_resolve_against_the_surface() {
+        use super::choose_present_mode as choose;
+        use wgpu::PresentMode as P;
+        let all = [P::Fifo, P::FifoRelaxed, P::Immediate, P::Mailbox];
+        assert_eq!(choose(P::AutoNoVsync, &all), P::Immediate);
+        assert_eq!(choose(P::AutoNoVsync, &[P::Fifo, P::Mailbox]), P::Mailbox);
+        assert_eq!(choose(P::AutoNoVsync, &[P::Fifo]), P::Fifo);
+        assert_eq!(choose(P::AutoVsync, &all), P::FifoRelaxed);
+        assert_eq!(choose(P::AutoVsync, &[P::Fifo]), P::Fifo);
+        assert_eq!(choose(P::Mailbox, &[P::Fifo]), P::Fifo);
+        assert_eq!(choose(P::Mailbox, &all), P::Mailbox);
+        assert_eq!(choose(P::Immediate, &[]), P::Fifo);
+    }
     use super::*;
 
     #[test]

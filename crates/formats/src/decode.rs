@@ -19,6 +19,7 @@ use crate::landblock::{
 use crate::property::{PropertyDictionary, PropertySchema, PropertyType, PropertyValue};
 use crate::property_set::{PropertySet, PropertySetRecord};
 use crate::record::Record;
+use crate::script_table::{ScriptTable, Scriptlet};
 use crate::setup::{EntityDescriptor, EntityHeader, Setup, VisualTemplate};
 use crate::sound::SoundRecord;
 use crate::string_info::StringInfo;
@@ -123,6 +124,21 @@ pub fn decode_setup(data: &[u8]) -> Result<Setup> {
 /// Decodes an appearance record (prefix 0x20; `setup.md` §8).
 pub fn decode_appearance(data: &[u8]) -> Result<AppearanceRecord> {
     AppearanceRecord::parse(data)
+}
+
+/// Decodes a script table (prefix 0x07; `script-table.md` §2) with `schema` typing the
+/// PVs and property sets inside its nodes. The record stores no DID, so the result's
+/// [`ScriptTable::did`] is null.
+pub fn decode_script_table<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    schema: &S,
+) -> Result<ScriptTable> {
+    ScriptTable::parse(data, schema)
+}
+
+/// Decodes a scriptlet (prefix 0x0C; `script-table.md` §3), like [`decode_script_table`].
+pub fn decode_scriptlet<S: PropertySchema + ?Sized>(data: &[u8], schema: &S) -> Result<Scriptlet> {
+    Scriptlet::parse(data, schema)
 }
 
 /// Decodes a landblock-data record (`0x800RXXYY`; `landblock.md` §3). `stamp` is the

@@ -18,6 +18,9 @@ members = [
     "crates/terrain",
     "crates/wstate",
     "crates/input",
+    "crates/havok",
+    "crates/anim",
+    "crates/entity",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -48,6 +51,9 @@ tessera-world = { path = "crates/world" }
 tessera-terrain = { path = "crates/terrain" }
 tessera-wstate = { path = "crates/wstate" }
 tessera-input = { path = "crates/input" }
+tessera-havok = { path = "crates/havok" }
+tessera-anim = { path = "crates/anim" }
+tessera-entity = { path = "crates/entity" }
 
 anyhow = "1"
 bitflags = "2"

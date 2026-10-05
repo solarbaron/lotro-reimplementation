@@ -164,6 +164,9 @@ pub struct Instance {
     pub model: Mat4,
     /// Largest axis scale (for bounding spheres).
     pub scale: f32,
+    /// The bundle's figure index when the part belongs to a placed figure (`walker.md`
+    /// §10.2): drawn as a static instance unless the character layer draws that figure.
+    pub figure: Option<u32>,
 }
 
 /// What the block job produces.
@@ -971,6 +974,7 @@ pub fn build_block(
                 part: part.0,
                 model,
                 scale: scale.max_element(),
+                figure: e.figure,
             });
         }
     }
@@ -1159,6 +1163,8 @@ mod tests {
             ceiling_light_map: None,
             entities: Vec::new(),
             unplaced_entities: 0,
+            figures: Vec::new(),
+            figures_dropped: 0,
             area: None,
             problems: Vec::new(),
             heap_bytes: 0,

@@ -32,6 +32,8 @@ tessera-input = { path = "../crates/input" }
 tessera-wstate = { path = "../crates/wstate" }
 tessera-world = { path = "../crates/world" }
 tessera-terrain = { path = "../crates/terrain" }
+tessera-havok = { path = "../crates/havok" }
+tessera-anim = { path = "../crates/anim" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -307,6 +309,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "explorer_character_spec"
+path = "fuzz_targets/explorer_character_spec.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-input (docs/specs/keymap.md) ---
 
 [[bin]]
@@ -399,6 +408,116 @@ bench = false
 [[bin]]
 name = "client_walker_text"
 path = "fuzz_targets/client_walker_text.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-havok (docs/specs/havok-data.md §11) ---
+
+[[bin]]
+name = "havok_tagfile"
+path = "fuzz_targets/havok_tagfile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "havok_skeleton"
+path = "fuzz_targets/havok_skeleton.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "havok_clip_record"
+path = "fuzz_targets/havok_clip_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "havok_spline_block"
+path = "fuzz_targets/havok_spline_block.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats M4: script tables, clip selection, assembly (script-table.md, appearance.md) ---
+
+[[bin]]
+name = "formats_script_table"
+path = "fuzz_targets/formats_script_table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_clip_resolver"
+path = "fuzz_targets/formats_clip_resolver.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_appearance_m4"
+path = "fuzz_targets/formats_appearance_m4.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-anim (docs/specs/skeleton-anim.md) ---
+
+[[bin]]
+name = "anim_bind"
+path = "fuzz_targets/anim_bind.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anim_rig"
+path = "fuzz_targets/anim_rig.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-mesh: summaries, skin streams and assembly (docs/specs/mesh.md, appearance.md) ---
+
+[[bin]]
+name = "mesh_summary"
+path = "fuzz_targets/mesh_summary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mesh_assembly"
+path = "fuzz_targets/mesh_assembly.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-render: skinned mesh input (docs/specs/render.md §2.4) ---
+
+[[bin]]
+name = "render_skinned_mesh_data"
+path = "fuzz_targets/render_skinned_mesh_data.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-net / tessera-client: characters (walker.md §10, M4) ---
+
+[[bin]]
+name = "client_avatar_spec"
+path = "fuzz_targets/client_avatar_spec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_npc_events"
+path = "fuzz_targets/net_npc_events.rs"
 test = false
 doc = false
 bench = false

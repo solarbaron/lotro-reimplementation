@@ -210,13 +210,44 @@ pub struct KeymapOptions {
 }
 
 /// A keymap document: bindings per context and action, plus options.
-#[derive(Debug, Clone, PartialEq, Default)]
+///
+/// Equality treats a NaN kept among the unknown top-level keys (§6.1) as
+/// equal to another NaN, so that a keymap equals itself and its own
+/// round trip; binding numbers are always finite (§6.3).
+#[derive(Debug, Clone, Default)]
 pub struct Keymap {
     /// Options.
     pub options: KeymapOptions,
     contexts: BTreeMap<String, BTreeMap<String, Vec<BindingSpec>>>,
     /// Unknown top-level keys, kept so a save does not lose them.
     extra: toml::Table,
+}
+
+impl PartialEq for Keymap {
+    fn eq(&self, other: &Self) -> bool {
+        self.options == other.options
+            && self.contexts == other.contexts
+            && same_table(&self.extra, &other.extra)
+    }
+}
+
+/// Structural equality of TOML tables with NaN equal to NaN.
+fn same_table(a: &toml::Table, b: &toml::Table) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .all(|(k, va)| b.get(k).is_some_and(|vb| same_value(va, vb)))
+}
+
+fn same_value(a: &toml::Value, b: &toml::Value) -> bool {
+    use toml::Value as V;
+    match (a, b) {
+        (V::Float(x), V::Float(y)) => x == y || (x.is_nan() && y.is_nan()),
+        (V::Array(x), V::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same_value(p, q))
+        }
+        (V::Table(x), V::Table(y)) => same_table(x, y),
+        _ => a == b,
+    }
 }
 
 /// Result of [`Keymap::parse_lenient`].
@@ -734,11 +765,26 @@ fn key(name: &str) -> String {
 /// A float literal that TOML reads back as the same `f32` (callers pass
 /// validated, finite values; anything else is written as `0.0` rather than
 /// as text that is not TOML).
+///
+/// The reader parses the text as `f64` and narrows it to `f32` (§5.3), so
+/// the shortest `f32` text can round twice and land on a neighbour. That
+/// text is kept only when it survives that path; otherwise the exact `f64`
+/// widening is written, whose shortest text parses back to the same `f64`
+/// and so narrows back to `v` exactly (§6.3: the strict reader returns
+/// exactly the keymap that was written).
 fn float(v: f32) -> String {
     if !v.is_finite() {
         return "0.0".into();
     }
-    let s = format!("{v:?}");
+    let short = format!("{v:?}");
+    let reads_back = short
+        .parse::<f64>()
+        .is_ok_and(|d| (d as f32).to_bits() == v.to_bits());
+    let s = if reads_back {
+        short
+    } else {
+        format!("{:?}", f64::from(v))
+    };
     if s.contains(['.', 'e', 'E']) {
         s
     } else {
@@ -1181,8 +1227,62 @@ jump = 4
         assert!(k.set("a", "", vec![]).is_err());
     }
 
+    /// `float` text read the way the reader does (f64, then narrowed)
+    /// gives back the same bits, over a spread of bit patterns.
+    #[test]
+    fn float_text_survives_f64_narrowing() {
+        let mut bits = 0u32;
+        loop {
+            let v = f32::from_bits(bits);
+            if v.is_finite() {
+                let text = float(v);
+                let back = text.parse::<f64>().unwrap() as f32;
+                assert_eq!(back.to_bits(), bits, "{text}");
+            }
+            match bits.checked_add(16_411) {
+                Some(b) => bits = b,
+                None => break,
+            }
+        }
+        let v = f32::from_bits(0x15ae_43fd);
+        assert_eq!(
+            (float(v).parse::<f64>().unwrap() as f32).to_bits(),
+            0x15ae_43fd
+        );
+    }
+
+    /// A NaN under an unknown top-level key (kept, §6.1) does not make the
+    /// keymap unequal to itself or to its round trip.
+    #[test]
+    fn nan_in_unknown_key_compares_equal() {
+        for doc in [
+            "a = nan",
+            "a = -nan",
+            "a = [1.0, nan]\n[x]\ny = { z = nan }",
+        ] {
+            let k = Keymap::parse(doc).unwrap();
+            let lenient = Keymap::parse_lenient(doc);
+            assert!(lenient.warnings.is_empty(), "{doc}");
+            assert_eq!(lenient.keymap, k, "{doc}");
+            assert_eq!(k, k.clone(), "{doc}");
+            let again = Keymap::parse(&k.to_toml_string().unwrap()).unwrap();
+            assert_eq!(again, k, "{doc}");
+        }
+        assert_ne!(
+            Keymap::parse("a = nan").unwrap(),
+            Keymap::parse("a = 1.0").unwrap()
+        );
+        assert_ne!(
+            Keymap::parse("a = nan").unwrap(),
+            Keymap::parse("b = nan").unwrap()
+        );
+    }
+
     /// Every hostile number a caller can put into a public `BindingSpec`.
-    const HOSTILE: [f32; 12] = [
+    const HOSTILE: [f32; 14] = [
+        // Its shortest f32 text rounds to a neighbour when read through f64.
+        f32::from_bits(0x15ae_43fd),
+        f32::from_bits(0x95ae_43fd),
         f32::NAN,
         f32::INFINITY,
         f32::NEG_INFINITY,

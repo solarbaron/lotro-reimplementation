@@ -18,7 +18,7 @@
 
 use tessera_formats::landblock::{GRID_SAMPLES, GRID_SIDE, GRID_SPACING, QUAD_SIDE};
 
-use crate::block::{STEPS_PER_UNIT, TerrainBlock, unit_normal, vertex_index};
+use crate::block::{TerrainBlock, UNITS_PER_STEP, unit_normal, vertex_index};
 use crate::lod::Side;
 
 /// The four edge neighbours of a block (any may be missing).
@@ -95,7 +95,8 @@ impl VertexNormals {
             }
         };
         // Stored steps over two cells → world-unit slope.
-        let scale = 1.0 / (STEPS_PER_UNIT * 2.0 * f64::from(GRID_SPACING));
+        // `terrain.md` §5: slope = difference × (2,000 / 65,535) / 10.
+        let scale = UNITS_PER_STEP / (2.0 * f64::from(GRID_SPACING));
         let mut normals = Box::new([[0.0f32, 0.0, 1.0]; GRID_SAMPLES]);
         for j in 0..GRID_SIDE {
             for i in 0..GRID_SIDE {

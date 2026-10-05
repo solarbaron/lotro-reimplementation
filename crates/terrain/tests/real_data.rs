@@ -10,8 +10,10 @@
 //!   triangle of the level-0 mesh (the mesh uses the data's own triangulation, HM6);
 //! - a mesh at a pseudo-random level, stitched to its neighbours' levels, is a valid
 //!   counter-clockwise cover of the block;
-//! - for every east and north neighbour pair with shared edge samples (HM7), the two meshes
-//!   (at pseudo-random levels each) have bit-identical edge vertices, normals and segments.
+//! - for every east and north neighbour pair with shared edge samples (HM7) whose two blocks
+//!   both have all four edge neighbours loaded (so both have final normals), the two meshes (at
+//!   pseudo-random levels each) have bit-identical edge vertices, normals and segments; east
+//!   and north seams are counted separately and both must be non-zero.
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. Run with
 //! `cargo test --release -p tessera-terrain --test real_data -- --nocapture`. Only counts,
@@ -101,7 +103,8 @@ struct Stats {
     pairs_matching: usize,
     pairs_mismatched_flat: usize,
     pairs_mismatched_relief: usize,
-    seams_checked: usize,
+    seams_east: usize,
+    seams_north: usize,
     lod_checks: usize,
     decode_failures: usize,
     t_block: Duration,
@@ -198,7 +201,7 @@ type LoadedRow = (
     (Duration, Duration),
 );
 
-/// Visits rows `ys` and columns `xs` of `region`, keeping a three-row window.
+/// Visits rows `ys` and columns `xs` of `region`, keeping a four-row window (y − 1 ..= y + 2).
 fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut Stats) {
     let shading = HeightSlopeShading::default();
     // Row cache: y → blocks (indexed like xs).
@@ -227,8 +230,10 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
     };
     let mut pending_data: BTreeMap<u8, Vec<Option<LandblockData>>> = BTreeMap::new();
     for (yi, &y) in ys.iter().enumerate() {
-        // Make rows y and y + 1 resident (y + 1 for north neighbours and normals).
-        for &ry in ys.iter().skip(yi).take(2) {
+        // Make rows y ..= y + 2 resident: y + 1 for north neighbours and this row's
+        // normals, y + 2 for the north neighbour's own neighbours (its final normals and
+        // stitching), without which no north seam could be compared.
+        for &ry in ys.iter().skip(yi).take(3) {
             if let std::collections::btree_map::Entry::Vacant(e) = rows.entry(ry) {
                 let (blocks, datas, t) = load_row(ry);
                 stats.t_block += t.0;
@@ -270,7 +275,8 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
             matching: usize,
             mismatched_flat: usize,
             mismatched_relief: usize,
-            seams: usize,
+            seams_east: usize,
+            seams_north: usize,
             lod_checks: usize,
             t_normals: Duration,
             t_mesh0: Duration,
@@ -289,7 +295,8 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
                 matching: 0,
                 mismatched_flat: 0,
                 mismatched_relief: 0,
-                seams: 0,
+                seams_east: 0,
+                seams_north: 0,
                 lod_checks: 0,
                 t_normals: Duration::ZERO,
                 t_mesh0: Duration::ZERO,
@@ -439,7 +446,10 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
                     "{:#010x} {side:?} seam ({lod} | {olod})",
                     data_did(region, x, y)
                 );
-                o.seams += 1;
+                match side {
+                    Side::East => o.seams_east += 1,
+                    _ => o.seams_north += 1,
+                }
             }
             Some(o)
         });
@@ -454,7 +464,8 @@ fn run_region(set: &ArchiveSet, region: u8, xs: &[u8], ys: &[u8], stats: &mut St
             stats.pairs_matching += o.matching;
             stats.pairs_mismatched_flat += o.mismatched_flat;
             stats.pairs_mismatched_relief += o.mismatched_relief;
-            stats.seams_checked += o.seams;
+            stats.seams_east += o.seams_east;
+            stats.seams_north += o.seams_north;
             stats.lod_checks += o.lod_checks;
             stats.t_normals += o.t_normals;
             stats.t_mesh0 += o.t_mesh0;
@@ -518,7 +529,8 @@ fn terrain_meshes_real_landblocks() {
         eprintln!(
             "region {region}: {} blocks ({} flat), {} decode failures, {} height checks \
              (max diff {:.2e}), {} layers / {} layer triangles on mesh triangles, {} stitched \
-             covers, neighbour pairs: {} matching ({} seams compared), {} mismatched (flat), {} \
+             covers, neighbour pairs: {} matching ({} east + {} north seams compared), {} \
+             mismatched (flat), {} \
              mismatched (relief), {} exact LOD-error checks",
             s.blocks,
             s.flat_blocks,
@@ -529,7 +541,8 @@ fn terrain_meshes_real_landblocks() {
             s.layer_triangles,
             s.covers,
             s.pairs_matching,
-            s.seams_checked,
+            s.seams_east,
+            s.seams_north,
             s.pairs_mismatched_flat,
             s.pairs_mismatched_relief,
             s.lod_checks
@@ -537,7 +550,8 @@ fn terrain_meshes_real_landblocks() {
         assert_eq!(s.decode_failures, 0, "region {region}");
         assert_eq!(s.pairs_mismatched_relief, 0, "region {region}: HM7");
         total.blocks += s.blocks;
-        total.seams_checked += s.seams_checked;
+        total.seams_east += s.seams_east;
+        total.seams_north += s.seams_north;
         total.lod_checks += s.lod_checks;
         total.layer_triangles += s.layer_triangles;
         total.t_block += s.t_block;
@@ -552,10 +566,11 @@ fn terrain_meshes_real_landblocks() {
     }
     let per = |d: Duration| d.as_secs_f64() * 1e6 / total.meshes0.max(1) as f64;
     eprintln!(
-        "total: {} blocks, {} seams, {} layer triangles in {:.1} s; per block (one thread): \
+        "total: {} blocks, {} east + {} north seams, {} layer triangles in {:.1} s; per block (one thread): \
          TerrainBlock {:.1} µs, LOD errors {:.1} µs, normals {:.1} µs, LOD0 mesh {:.1} µs",
         total.blocks,
-        total.seams_checked,
+        total.seams_east,
+        total.seams_north,
         total.layer_triangles,
         started.elapsed().as_secs_f64(),
         per(total.t_block),
@@ -563,6 +578,7 @@ fn terrain_meshes_real_landblocks() {
         per(total.t_normals),
         per(total.t_mesh0)
     );
-    assert!(total.seams_checked > 0, "no seam was compared");
+    assert!(total.seams_east > 0, "no east seam was compared");
+    assert!(total.seams_north > 0, "no north seam was compared");
     assert!(total.lod_checks > 0, "no LOD error was checked");
 }

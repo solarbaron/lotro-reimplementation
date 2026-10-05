@@ -8,23 +8,31 @@
 use std::sync::OnceLock;
 
 use tessera_formats::landblock::{
-    GRID_SAMPLES, GRID_SIDE, GRID_SPACING, HEIGHT_STEPS_PER_UNIT, HeightGrid, LANDBLOCK_SIZE,
-    LandblockData, QUAD_COUNT, QUAD_SIDE, VertexFlags, height_from_raw,
+    GRID_SAMPLES, GRID_SIDE, GRID_SPACING, HeightGrid, LANDBLOCK_SIZE, LandblockData, QUAD_COUNT,
+    QUAD_SIDE, VertexFlags, height_from_raw,
 };
 
 use crate::lod::{Lod, Side};
 
-/// Stored height steps per world unit (`landblock.md` §3.4): the decoder's f32 constant
-/// ([`HEIGHT_STEPS_PER_UNIT`]) widened to f64. Every height this crate produces is
-/// `(stored / STEPS_PER_UNIT) as f32` evaluated in f64; for an integer `stored` that is
-/// bit-identical to [`height_from_raw`] (an f32 quotient computed in f64 and rounded once
-/// to f32 is the correctly rounded f32 quotient), so queries, bounds and mesh vertices
-/// agree exactly at the samples.
-pub(crate) const STEPS_PER_UNIT: f64 = HEIGHT_STEPS_PER_UNIT as f64;
+/// Height in world units of the largest stored sample (`landblock.md` §3.4).
+const HEIGHT_RANGE: f32 = 2000.0;
+/// The f32 nearest 1 / 65,535, the second factor of the height rule (`landblock.md` §3.4).
+const INV_MAX_RAW: f32 = 1.0 / 65_535.0;
+/// World units per stored step, 2,000 / 65,535 (`landblock.md` §3.4), in f64: the factor
+/// for slopes, normals and error bounds (`terrain.md` §3, §5), where no stored value is
+/// converted and the f32 rounding steps of the height rule do not apply.
+pub(crate) const UNITS_PER_STEP: f64 = 2000.0 / 65_535.0;
 
-/// Converts a height in stored steps (f64, possibly interpolated) to world units.
+/// Converts a height in stored steps (f64, possibly interpolated) to world units with the
+/// steps of the height rule (`landblock.md` §3.4, `terrain.md` §1): the steps times 2,000.0
+/// rounded to f32, times the f32 nearest 1 / 65,535 rounded to f32. For an integer `steps`
+/// in 0–65,535 the first product is exact in f64, so its f32 rounding equals the f32
+/// product of the rule and the result is bit-identical to [`height_from_raw`]: queries,
+/// bounds and mesh vertices agree exactly at the samples. Both steps are monotone, so a
+/// value clamped to the samples' range stays within their heights.
 fn units(steps: f64) -> f32 {
-    (steps / STEPS_PER_UNIT) as f32
+    let scaled = (steps * f64::from(HEIGHT_RANGE)) as f32;
+    scaled * INV_MAX_RAW
 }
 
 /// Vertex number of grid sample (i, j), i along X: **33 · j + i** (Y-major). This is the
@@ -60,7 +68,7 @@ pub struct GroundSample {
 /// The terrain of one landblock, ready for meshing and height queries.
 ///
 /// Built from the decoded height grid and vertex flags of a landblock-data record. Heights
-/// are kept as the stored u16 values (converted with `stored / 32.768` on use, see
+/// are kept as the stored u16 values (converted with `stored × 2,000 / 65,535` on use, see
 /// [`height_from_raw`]), so the shared edge samples of two neighbours (HM7) produce
 /// bit-identical vertices.
 ///
@@ -266,7 +274,7 @@ impl TerrainBlock {
             for lod in Lod::all().skip(1) {
                 // Monotone by construction: a coarser level never reports less error.
                 worst = worst.max(self.measure_lod_error(lod));
-                let bound = worst / STEPS_PER_UNIT;
+                let bound = worst * UNITS_PER_STEP;
                 let mut e = bound as f32;
                 if f64::from(e) < bound {
                     e = e.next_up();
@@ -394,7 +402,7 @@ impl TerrainBlock {
     #[must_use]
     pub fn normal_at(&self, x: f32, y: f32) -> Option<[f32; 3]> {
         let (i, j, fx, fy) = Self::locate(Lod::FINEST, x, y)?;
-        let [h00, h10, h01, h11] = self.quad_corners(i, j, 1).map(|h| h / STEPS_PER_UNIT);
+        let [h00, h10, h01, h11] = self.quad_corners(i, j, 1).map(|h| h * UNITS_PER_STEP);
         let d = f64::from(GRID_SPACING);
         // Plane gradient (dz/dx, dz/dy) of the triangle containing the point.
         let (gx, gy) = if self.split_sw_ne(i, j) {
@@ -589,11 +597,11 @@ mod tests {
             let t = b.height_at(x, y).unwrap();
             let l = b.height_bilinear(x, y).unwrap();
             assert!((t - l).abs() < 1e-3);
-            let expect = (1000.0 + 6.0 * f64::from(x) + 14.0 * f64::from(y)) / 32.768;
+            let expect = (1000.0 + 6.0 * f64::from(x) + 14.0 * f64::from(y)) * UNITS_PER_STEP;
             assert!((f64::from(t) - expect).abs() < 1e-3);
             let n = b.normal_at(x, y).unwrap();
-            let gx = 6.0 / 32.768;
-            let gy = 14.0 / 32.768;
+            let gx = 6.0 * UNITS_PER_STEP;
+            let gy = 14.0 * UNITS_PER_STEP;
             let len = (gx * gx + gy * gy + 1.0f64).sqrt();
             assert!((f64::from(n[0]) + gx / len).abs() < 1e-6);
             assert!((f64::from(n[1]) + gy / len).abs() < 1e-6);
@@ -717,8 +725,9 @@ mod tests {
 
     #[test]
     fn queries_and_mesh_heights_use_one_conversion() {
-        // Regression: queries divided by an exact f64 32.768 while sample heights, bounds
-        // and mesh vertices used the decoder's f32 constant (1 ulp apart for most values).
+        // Regression: queries once used a different conversion from sample heights, bounds
+        // and mesh vertices (1 ulp apart for most values). `terrain.md` §1: all of them equal
+        // the decoder's `height_from_raw` (`landblock.md` §3.4) bit for bit.
         for raw in 0..=u16::MAX {
             let b = TerrainBlock::flat(raw);
             let z = b.height_at(80.0, 80.0).unwrap();

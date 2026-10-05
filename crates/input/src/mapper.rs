@@ -494,17 +494,24 @@ impl InputMapper {
         let order = self.ordered();
         let mods = self.mods();
 
-        // Modifier holds.
+        // Modifier holds (§7.4). A matching modifier-only binding is a held
+        // digital binding, so its `value` also counts towards an axis
+        // action's value (§2, §5.1).
         let mut held = vec![false; self.live.len()];
+        let mut modifier_value = vec![0.0f32; self.live.len()];
         for &c in &order {
             if let Some(cc) = self.compiled.get(c.index()) {
                 for b in &cc.digital {
                     let s = b.chord.first();
+                    let i = b.action.index();
                     if s.is_modifier_hold()
                         && mods_match(mods, s.mods(), b.policy).is_some()
-                        && let Some(h) = held.get_mut(b.action.index())
+                        && let Some(h) = held.get_mut(i)
                     {
                         *h = true;
+                        if let Some(v) = modifier_value.get_mut(i) {
+                            *v += b.value;
+                        }
                     }
                 }
             }
@@ -554,14 +561,18 @@ impl InputMapper {
             }
         }
         for i in 0..n {
-            let threshold = if self.analog_pressed[i] {
-                ANALOG_PRESS_THRESHOLD - ANALOG_RELEASE_HYSTERESIS
-            } else {
-                ANALOG_PRESS_THRESHOLD
-            };
+            // §7.5: the 0.5 press / 0.4 release hysteresis applies to button
+            // actions only; an axis is pressed while |value| >= 0.5 (§2).
             let pressed = match self.kind(ActionId(i as u16)) {
-                ActionKind::Button => analog_max[i] >= threshold,
-                ActionKind::Axis => abs_sum[i].abs() >= threshold,
+                ActionKind::Button => {
+                    let threshold = if self.analog_pressed[i] {
+                        ANALOG_PRESS_THRESHOLD - ANALOG_RELEASE_HYSTERESIS
+                    } else {
+                        ANALOG_PRESS_THRESHOLD
+                    };
+                    analog_max[i] >= threshold
+                }
+                ActionKind::Axis => abs_sum[i].abs() >= ANALOG_PRESS_THRESHOLD,
             };
             self.analog_pressed[i] = pressed;
             self.refresh(ActionId(i as u16));
@@ -576,7 +587,8 @@ impl InputMapper {
                 .iter()
                 .filter(|h| h.action == id)
                 .map(|h| self.hold_value(h))
-                .sum();
+                .sum::<f32>()
+                + modifier_value.get(i).copied().unwrap_or(0.0);
             let pressed = self.live[i];
             let (value, d) = match self.kind(id) {
                 ActionKind::Axis => (
@@ -1613,6 +1625,65 @@ sprint = ["Shift"]
         assert!(f.m.pressed(f.chat), "hysteresis keeps it pressed");
         set(&mut f.m, 0.3);
         assert!(f.m.state(f.chat).just_released());
+    }
+
+    /// keymap.md §2: an axis is pressed while a digital binding is held or
+    /// `|value| >= 0.5`; the 0.5/0.4 hysteresis of §7.5 is for buttons only.
+    #[test]
+    fn analog_axis_pressed_has_no_hysteresis() {
+        let mut f = fixture(|_| {});
+        let set = |m: &mut InputMapper, v| {
+            m.handle(
+                &RawEvent::PadAxis {
+                    axis: AnalogAxis::PadLeftY,
+                    value: v,
+                },
+                T0,
+            );
+            m.update(T0);
+        };
+        // Dead zone 0.2: 0.7 -> 0.625, 0.55 -> 0.4375.
+        set(&mut f.m, 0.7);
+        assert!(f.m.state(f.fwd).just_pressed());
+        set(&mut f.m, 0.55);
+        let s = f.m.state(f.fwd);
+        assert!((s.value - 0.4375).abs() < 1e-6, "{s:?}");
+        assert!(!s.pressed && s.just_released(), "{s:?}");
+        set(&mut f.m, -0.7);
+        assert!(f.m.state(f.fwd).just_pressed());
+    }
+
+    /// keymap.md §2, §5.1, §7.4: a modifier-only stroke is a held digital
+    /// binding, so its `value` counts towards an axis action.
+    #[test]
+    fn modifier_hold_adds_axis_value() {
+        let mut f = fixture(|k| {
+            let list = vec![
+                BindingSpec::parse("W").unwrap(),
+                BindingSpec::digital(crate::chord::Chord::parse("Ctrl").unwrap(), -1.0),
+            ];
+            k.set("movement", "forward", list).unwrap();
+        });
+        f.m.handle(&key(KeyCode::ControlLeft, true), T0);
+        f.m.update(T0);
+        let s = f.m.state(f.fwd);
+        assert!(s.pressed && s.presses == 1, "{s:?}");
+        assert_eq!(s.value, -1.0);
+        // W (subset policy) adds +1 on top.
+        f.m.handle(&key(KeyCode::W, true), T0);
+        f.m.update(T0);
+        assert_eq!(f.m.value(f.fwd), 0.0);
+        f.m.handle(&key(KeyCode::ControlLeft, false), T0);
+        f.m.update(T0);
+        assert_eq!(f.m.value(f.fwd), 1.0);
+        f.m.handle(&key(KeyCode::W, false), T0);
+        f.m.update(T0);
+        let s = f.m.state(f.fwd);
+        assert!(!s.pressed && s.value == 0.0, "{s:?}");
+        // The window system's modifier report counts as well.
+        f.m.handle(&RawEvent::Modifiers(Modifiers::CTRL), T0);
+        f.m.update(T0);
+        assert_eq!(f.m.value(f.fwd), -1.0);
     }
 
     #[test]

@@ -27,13 +27,23 @@ pub const MAX_TEXT_PER_KEY: usize = 32;
 /// Translate a window event; calls `push` zero or more times.
 pub fn window_event(event: &WindowEvent, mut push: impl FnMut(RawEvent)) {
     match event {
-        WindowEvent::KeyboardInput { event, .. } => key_input(
-            event.physical_key,
-            event.state,
-            event.repeat,
-            event.text.as_deref(),
-            push,
-        ),
+        WindowEvent::KeyboardInput {
+            event,
+            is_synthetic,
+            ..
+        } => {
+            if drops_synthetic(event.state, *is_synthetic) {
+                tracing::trace!(key = ?event.physical_key, "synthetic press dropped");
+            } else {
+                key_input(
+                    event.physical_key,
+                    event.state,
+                    event.repeat,
+                    event.text.as_deref(),
+                    push,
+                );
+            }
+        }
         WindowEvent::ModifiersChanged(m) => push(RawEvent::Modifiers(modifiers(m.state()))),
         WindowEvent::MouseInput { state, button, .. } => push(RawEvent::MouseButton {
             button: mouse_button(*button),
@@ -48,6 +58,19 @@ pub fn window_event(event: &WindowEvent, mut push: impl FnMut(RawEvent)) {
         WindowEvent::Focused(false) => push(RawEvent::FocusLost),
         _ => {}
     }
+}
+
+/// Whether a keyboard event is a synthetic press, which is dropped with its
+/// text. On focus gain some platforms report every key that is already
+/// physically down as a synthetic press; the mapper released everything on
+/// focus loss (§7.3), so forwarding them would fire edge-triggered actions
+/// (`menu`, `open_chat`) and type text for keys pressed in another window.
+/// Such a key acts again once it is released and pressed. Synthetic
+/// releases are forwarded: a release of a button the mapper does not hold
+/// changes nothing. keymap.md §10 does not cover synthetic events; this is
+/// Tessera's choice, recorded there as an open item.
+fn drops_synthetic(state: ElementState, is_synthetic: bool) -> bool {
+    is_synthetic && state == ElementState::Pressed
 }
 
 /// Translate a device event (raw mouse motion for mouse look).
@@ -327,6 +350,14 @@ mod tests {
         m.handle(&wheel(MouseScrollDelta::LineDelta(1.0, 0.0)), t);
         m.update(t);
         assert!(m.just_pressed(left) && !m.just_pressed(right));
+    }
+
+    #[test]
+    fn synthetic_presses_are_dropped() {
+        assert!(drops_synthetic(ElementState::Pressed, true));
+        assert!(!drops_synthetic(ElementState::Released, true));
+        assert!(!drops_synthetic(ElementState::Pressed, false));
+        assert!(!drops_synthetic(ElementState::Released, false));
     }
 
     #[test]

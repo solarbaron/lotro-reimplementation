@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use glam::Vec3;
 use tessera_input::{
-    FixedTimestep, FlyConfig, FlyController, GroundState, InputMapper, IntentLatch, KeyCode,
-    Keymap, LookSettings, RawEvent, StandardActions, WalkConfig, WalkController, default_keymap,
-    default_registry,
+    BindingSpec, Chord, FixedTimestep, FlyConfig, FlyController, GroundState, InputMapper,
+    IntentLatch, KeyCode, Keymap, LookSettings, RawEvent, StandardActions, WalkConfig,
+    WalkController, default_keymap, default_registry,
 };
 
 fn key(key: KeyCode, pressed: bool) -> RawEvent {
@@ -34,6 +34,14 @@ fn walk_across_hills_with_user_overrides() {
     )
     .unwrap();
     let keymap = default_keymap().overlay(&user);
+    let forward = keymap.get("movement", "move_forward").unwrap();
+    let w = Chord::parse("W").unwrap();
+    assert!(
+        !forward
+            .iter()
+            .any(|b| matches!(b, BindingSpec::Digital { chord, .. } if *chord == w)),
+        "{forward:?}"
+    );
     let (mut input, warnings) = InputMapper::new(registry, &keymap);
     assert!(warnings.is_empty(), "{warnings:?}");
     ids.enter_walk_mode(&mut input);
@@ -48,14 +56,24 @@ fn walk_across_hills_with_user_overrides() {
     for f in 0..600 {
         now += Duration::from_secs_f64(frame);
         match f {
+            // The old binding does nothing any more: W alone (I not held)
+            // gives no forward value and the walker stays put.
+            5 => input.handle(&key(KeyCode::W, true), now),
+            25 => input.handle(&key(KeyCode::W, false), now),
             30 => input.handle(&key(KeyCode::I, true), now),
-            // The old binding does nothing any more.
-            31 => input.handle(&key(KeyCode::W, true), now),
             200 => input.handle(&key(KeyCode::J, true), now),
             201 => input.handle(&key(KeyCode::J, false), now),
             _ => {}
         }
         input.update(now);
+        if (5..25).contains(&f) {
+            assert_eq!(input.value(ids.move_forward), 0.0, "frame {f}");
+            assert!(!input.pressed(ids.move_forward), "frame {f}");
+        }
+        if f == 29 {
+            let p = walker.position();
+            assert!(p.x.abs() < 1e-4 && p.y.abs() < 1e-4, "moved on W: {p}");
+        }
         latch.frame(ids.intent(&input, false));
         for _ in 0..step.advance(frame) {
             let ev = walker.tick(&latch.tick(), &hills, step.dt() as f32);

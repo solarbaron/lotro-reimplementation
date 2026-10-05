@@ -46,7 +46,7 @@
 //! );
 //! assert!(mesh.indices.iter().all(|&i| usize::from(i) < mesh.positions.len()));
 //! let z = block.height_at(80.0, 80.0).unwrap();
-//! assert!((z - (10_000.0 + 40.0 * 16.0 + 25.0 * 16.0) / 32.768).abs() < 1e-3);
+//! assert!((z - (10_000.0 + 40.0 * 16.0 + 25.0 * 16.0) * 2_000.0 / 65_535.0).abs() < 1e-3);
 //! # Ok::<(), TerrainError>(())
 //! ```
 

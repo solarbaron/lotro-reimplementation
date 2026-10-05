@@ -11,12 +11,22 @@ use crate::texture::TextureId;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RenderError {
-    /// No adapter matched the requested backends / filters.
+    /// No adapter matched the requested backends / filters (no candidate
+    /// reached device creation).
     #[error("no suitable GPU adapter found (backends: {backends}): {reason}")]
     NoAdapter {
         /// Human readable list of the backends that were searched.
         backends: String,
         /// Why every candidate was rejected.
+        reason: String,
+    },
+    /// At least one adapter matched, but none of them could create a device
+    /// (several candidates were tried or rejected; `reason` lists each).
+    #[error("no GPU device could be created (backends: {backends}): {reason}")]
+    NoDevice {
+        /// Human readable list of the backends that were searched.
+        backends: String,
+        /// Why each candidate was rejected or failed device creation.
         reason: String,
     },
     /// The adapter refused to create a device.
@@ -34,6 +44,10 @@ pub enum RenderError {
     /// The surface was lost and must be recreated with `Renderer::replace_surface`.
     #[error("presentation surface lost; it must be recreated")]
     SurfaceLost,
+    /// The operation needs every surface frame of this renderer to be ended
+    /// or dropped first (e.g. `Renderer::replace_surface`).
+    #[error("a surface frame of this renderer is still alive; end or drop it first")]
+    FrameInFlight,
     /// Acquiring the next surface texture raised a validation error.
     #[error("validation error while acquiring the surface texture")]
     SurfaceValidation,

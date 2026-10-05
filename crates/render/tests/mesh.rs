@@ -531,6 +531,11 @@ fn specular_brightens_the_highlight() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// Saturated magenta (red and blue high, green low), which white does not pass.
+fn is_magenta(p: &[u8; 4]) -> bool {
+    p[0] > 200 && p[2] > 200 && p[1] < 64
+}
+
 #[test]
 fn debug_views_and_overlays() -> Result<(), RenderError> {
     let Some(mut r) = renderer() else {
@@ -610,10 +615,36 @@ fn debug_views_and_overlays() -> Result<(), RenderError> {
         .as_chunks::<4>()
         .0
         .iter()
-        .filter(|p| p[0] > 200 && p[2] > 200)
+        .filter(|p| is_magenta(p))
         .count();
     assert!(magenta >= 4, "{magenta} normal-line pixels");
     assert_eq!(center(&lines), [0, 0, 0, 255]);
+    // With a wireframe too, the normal lines keep their own colour (not the
+    // wireframe's, not white).
+    let both = view(
+        &mut r,
+        MeshDebug {
+            shading: MeshShading::Hidden,
+            wireframe: Some([0.0, 1.0, 0.0, 1.0]),
+            normals: Some(NormalLines {
+                length: 0.5,
+                color: [1.0, 0.0, 1.0, 1.0],
+            }),
+        },
+    )?;
+    let px = both.data.as_chunks::<4>().0;
+    let magenta = px.iter().filter(|p| is_magenta(p)).count();
+    let green = px
+        .iter()
+        .filter(|p| p[1] > 200 && p[0] < 64 && p[2] < 64)
+        .count();
+    let white = px
+        .iter()
+        .filter(|p| p[0] > 200 && p[1] > 200 && p[2] > 200)
+        .count();
+    assert!(magenta >= 4, "{magenta} normal-line pixels");
+    assert!(green > 4 * 20, "{green} wire pixels");
+    assert_eq!(white, 0, "white overlay pixels");
     Ok(())
 }
 

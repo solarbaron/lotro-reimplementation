@@ -523,3 +523,33 @@ fn offscreen_target_as_texture() -> Result<(), RenderError> {
     assert_eq!(r.read_pixels(&inner)?.pixel(0, 0), Some([0, 255, 0, 255]));
     Ok(())
 }
+
+/// An adapter that matches but cannot open a device is not reported as "no
+/// adapter": the GPU test harness skips on `NoAdapter` and must fail instead.
+#[test]
+fn device_failures_are_not_reported_as_no_adapter() {
+    // Only meaningful where an adapter exists at all.
+    let Some(r) = renderer() else {
+        return;
+    };
+    let config = tessera_render::RendererConfig {
+        context: tessera_render::ContextOptions {
+            backends: Some(tessera_render::wgpu::Backends::all()),
+            allow_software: true,
+            // No device can satisfy this, so every candidate's request fails.
+            required_limits: Some(tessera_render::wgpu::Limits {
+                max_texture_dimension_2d: u32::MAX,
+                ..tessera_render::wgpu::Limits::default()
+            }),
+            ..tessera_render::ContextOptions::default()
+        },
+        ..tessera_render::RendererConfig::default()
+    };
+    match Renderer::new_headless(&config) {
+        Ok(_) => panic!("a device with impossible limits was created"),
+        Err(RenderError::NoDevice { reason, .. }) => assert!(!reason.is_empty()),
+        Err(RenderError::RequestDevice(_)) => {}
+        Err(e) => panic!("wrong error for failed device requests: {e}"),
+    }
+    drop(r);
+}

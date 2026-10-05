@@ -169,9 +169,17 @@ impl Pass {
 
     /// Queue a mesh draw (world passes only; screen passes ignore meshes).
     ///
-    /// Within a world pass, opaque and alpha-tested meshes are drawn first
-    /// (in submission order), then quads, lines and debug overlays, then
-    /// alpha-blended meshes sorted back to front.
+    /// Within a world pass, opaque meshes are drawn first, then alpha-tested
+    /// ones, then quads, lines and debug overlays, then alpha-blended meshes
+    /// sorted back to front (`docs/specs/render.md` §2.3, "Draw order").
+    ///
+    /// Opaque and alpha-tested draws are each grouped by pipeline (skinned,
+    /// face culling), material and atlas page to save state changes, so they
+    /// are **not** drawn in submission order: only draws with equal keys keep
+    /// it. Depth testing passes equal depth, so of two coplanar surfaces the
+    /// one drawn later wins; a coplanar decal therefore wins reliably only
+    /// when it shares the pipeline, material and page of the surface beneath
+    /// it and is submitted after it.
     pub fn mesh(&mut self, draw: MeshDraw) -> &mut Self {
         self.meshes.push(draw);
         self

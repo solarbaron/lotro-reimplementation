@@ -39,7 +39,10 @@ pub(crate) struct DrawUniform {
     pub dye: [f32; 4],
     pub specular: [f32; 4],
     pub params: [f32; 4],
+    /// Wireframe colour.
     pub overlay_color: [f32; 4],
+    /// Vertex-normal line colour ([`crate::NormalLines::color`]).
+    pub normal_color: [f32; 4],
     pub flags: [u32; 4],
 }
 
@@ -91,7 +94,10 @@ pub(crate) struct DrawContext {
     pub dye_mask: bool,
     /// The specular texture resolved.
     pub specular_tex: bool,
+    /// Wireframe colour.
     pub overlay_color: [f32; 4],
+    /// Vertex-normal line colour.
+    pub normal_color: [f32; 4],
     pub normal_length: f32,
 }
 
@@ -163,6 +169,7 @@ impl DrawUniform {
                 OVERLAY_PULL,
             ],
             overlay_color: ctx.overlay_color.map(|c| finite_or(c, 1.0)),
+            normal_color: ctx.normal_color.map(|c| finite_or(c, 1.0)),
             flags: [flags, mode_index(ctx.shading), dye_source, 0],
         }
     }
@@ -308,7 +315,7 @@ impl MeshLayouts {
             ),
             Kind::NormalLines if key.skinned => (
                 "vs_normals_skinned",
-                "fs_overlay",
+                "fs_normal_lines",
                 wgpu::PrimitiveTopology::LineList,
                 wgpu::VertexStepMode::Instance,
             ),
@@ -338,7 +345,7 @@ impl MeshLayouts {
             ),
             Kind::NormalLines => (
                 "vs_normals",
-                "fs_overlay",
+                "fs_normal_lines",
                 wgpu::PrimitiveTopology::LineList,
                 wgpu::VertexStepMode::Instance,
             ),
@@ -462,7 +469,7 @@ mod tests {
 
     #[test]
     fn uniform_layout() {
-        assert_eq!(size_of::<DrawUniform>(), 208);
+        assert_eq!(size_of::<DrawUniform>(), 224);
     }
 
     fn ctx() -> DrawContext {
@@ -472,6 +479,7 @@ mod tests {
             dye_mask: false,
             specular_tex: false,
             overlay_color: [1.0; 4],
+            normal_color: [1.0; 4],
             normal_length: 0.1,
         }
     }

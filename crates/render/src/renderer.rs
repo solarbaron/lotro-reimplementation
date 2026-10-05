@@ -443,6 +443,24 @@ fn sort_depth(view_proj: Mat4, point: Vec3) -> f32 {
     }
 }
 
+impl Drop for Renderer<'_> {
+    fn drop(&mut self) {
+        // A surface frame still alive would present or discard its texture
+        // through the surface's id after the surface is gone, which panics
+        // inside wgpu. Leak the surface instead (misuse path; the frame
+        // keeps the GPU objects it needs alive on its own).
+        if self.frame_alive()
+            && let Some(state) = self.surface.take()
+        {
+            tracing::warn!(
+                "renderer dropped while a surface frame is alive; leaking the surface \
+                 (end or drop surface frames before the renderer)"
+            );
+            std::mem::forget(state.surface);
+        }
+    }
+}
+
 fn align_up(v: u64, a: u64) -> u64 {
     if a <= 1 { v } else { v.div_ceil(a) * a }
 }
@@ -520,6 +538,9 @@ impl<'w> Renderer<'w> {
             .first()
             .copied()
             .unwrap_or(wgpu::CompositeAlphaMode::Auto);
+        // Same clamp as `resize`: a larger surface cannot be configured.
+        let max = ctx.device.limits().max_texture_dimension_2d;
+        let (width, height) = (width.min(max), height.min(max));
         tracing::info!(?format, ?present_mode, width, height, "surface configured");
         Ok(SurfaceState {
             surface,
@@ -623,7 +644,7 @@ impl<'w> Renderer<'w> {
             frame_index: 0,
             frame_token: Arc::new(()),
         };
-        renderer.apply_surface_config();
+        renderer.apply_surface_config()?;
         renderer.ctx.errors.check()?;
         Ok(renderer)
     }
@@ -722,16 +743,33 @@ impl<'w> Renderer<'w> {
         Arc::strong_count(&self.frame_token) > 1
     }
 
-    fn apply_surface_config(&mut self) {
+    /// (Re)configure the surface when its configuration changed.
+    ///
+    /// A failed configure keeps the surface dirty and is returned as
+    /// [`RenderError::Gpu`]: wgpu panics when a texture is acquired from a
+    /// surface that was never configured successfully, so `begin_frame` must
+    /// not reach `get_current_texture` after a failure.
+    fn apply_surface_config(&mut self) -> Result<()> {
         let alive = self.frame_alive();
         let Some(state) = self.surface.as_mut() else {
-            return;
+            return Ok(());
         };
         if !state.dirty || alive || state.config.width == 0 || state.config.height == 0 {
-            return;
+            return Ok(());
         }
-        state.surface.configure(&self.ctx.device, &state.config);
+        let device = &self.ctx.device;
+        let ((), gpu_error) =
+            with_error_scope(device, || state.surface.configure(device, &state.config));
+        if let Some(e) = gpu_error {
+            tracing::warn!(
+                width = state.config.width,
+                height = state.config.height,
+                "surface configure failed: {e}"
+            );
+            return Err(RenderError::Gpu(format!("surface configure failed: {e}")));
+        }
         state.dirty = false;
+        Ok(())
     }
 
     /// Handle a window resize. A zero dimension (minimised window) pauses
@@ -753,16 +791,27 @@ impl<'w> Renderer<'w> {
                 self.depth.remove(old);
             }
         }
-        self.apply_surface_config();
+        // A failure is logged by `apply_surface_config`; the surface stays
+        // dirty and the next `begin_frame` retries and reports it.
+        let _ = self.apply_surface_config();
     }
 
     /// Replace a lost surface (after [`RenderError::SurfaceLost`]).
+    ///
+    /// Fails with [`RenderError::FrameInFlight`] while a surface frame of
+    /// this renderer is alive (end or drop it first: presenting or
+    /// discarding its texture needs the old surface), and with
+    /// [`RenderError::Gpu`] when the new surface cannot be configured (the
+    /// next [`Self::begin_frame`] retries).
     pub fn replace_surface(
         &mut self,
         target: impl Into<wgpu::SurfaceTarget<'w>>,
         width: u32,
         height: u32,
     ) -> Result<()> {
+        if self.frame_alive() {
+            return Err(RenderError::FrameInFlight);
+        }
         let surface = self.ctx.instance.create_surface(target)?;
         if !self.ctx.adapter.is_surface_supported(&surface) {
             return Err(RenderError::SurfaceUnsupported);
@@ -770,8 +819,7 @@ impl<'w> Renderer<'w> {
         self.surface = None;
         let state = Self::make_surface_state(&self.ctx, surface, width, height, self.present_mode)?;
         self.surface = Some(state);
-        self.apply_surface_config();
-        Ok(())
+        self.apply_surface_config()
     }
 
     /// Upload an RGBA8 texture.
@@ -1116,8 +1164,11 @@ impl<'w> Renderer<'w> {
                 }
             };
 
-            let (overlay_color, normal_length) = (
+            // Wireframe and normal lines share the draw's uniform but each
+            // has its own colour.
+            let (overlay_color, normal_color, normal_length) = (
                 debug.wireframe.unwrap_or([1.0; 4]),
+                debug.normals.map_or([1.0; 4], |n| n.color),
                 debug.normals.map_or(0.0, |n| n.length),
             );
             let uniform = DrawUniform::new(
@@ -1129,6 +1180,7 @@ impl<'w> Renderer<'w> {
                     dye_mask: dye_mask.is_some(),
                     specular_tex: spec.is_some(),
                     overlay_color,
+                    normal_color,
                     normal_length,
                 },
             );
@@ -1373,7 +1425,9 @@ impl<'w> Renderer<'w> {
             tracing::warn!("begin_frame called while a surface frame is still alive");
             return Ok(None);
         }
-        self.apply_surface_config();
+        // A failed configure is reported here, before `get_current_texture`
+        // (which panics inside wgpu on a surface that was never configured).
+        self.apply_surface_config()?;
         let Some(state) = self.surface.as_mut() else {
             return Err(RenderError::NoSurface);
         };
@@ -1787,8 +1841,9 @@ impl<'w> Renderer<'w> {
         }
         self.frame_index = self.frame_index.wrapping_add(1);
         // A Suboptimal acquire marks the surface dirty; reconfigure now that
-        // the frame is gone.
-        self.apply_surface_config();
+        // the frame is gone. A failure keeps it dirty; the next
+        // `begin_frame` retries and reports it.
+        let _ = self.apply_surface_config();
         self.ctx.errors.check()?;
         tracing::trace!(?stats, "frame submitted");
         Ok(stats)
@@ -2076,6 +2131,58 @@ mod tests {
         assert_eq!(choose(P::Immediate, &[]), P::Fifo);
     }
     use super::*;
+
+    /// A window handle that is never available (stand-in surface target).
+    struct NoWindow;
+
+    impl wgpu::rwh::HasWindowHandle for NoWindow {
+        fn window_handle(
+            &self,
+        ) -> std::result::Result<wgpu::rwh::WindowHandle<'_>, wgpu::rwh::HandleError> {
+            Err(wgpu::rwh::HandleError::Unavailable)
+        }
+    }
+
+    impl wgpu::rwh::HasDisplayHandle for NoWindow {
+        fn display_handle(
+            &self,
+        ) -> std::result::Result<wgpu::rwh::DisplayHandle<'_>, wgpu::rwh::HandleError> {
+            Err(wgpu::rwh::HandleError::Unavailable)
+        }
+    }
+
+    #[test]
+    fn replace_surface_refuses_while_a_surface_frame_is_alive() {
+        let config = RendererConfig {
+            context: crate::ContextOptions {
+                allow_software: true,
+                ..crate::ContextOptions::default()
+            },
+            ..RendererConfig::default()
+        };
+        let mut r = match Renderer::new_headless(&config) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("SKIPPED: no GPU renderer: {e}");
+                return;
+            }
+        };
+        // A surface frame holds a clone of the liveness token. Replacing the
+        // surface under it would make its present/discard panic in wgpu.
+        let token = Arc::clone(&r.frame_token);
+        let target = wgpu::SurfaceTarget::Window(Box::new(NoWindow));
+        assert!(matches!(
+            r.replace_surface(target, 64, 64),
+            Err(RenderError::FrameInFlight)
+        ));
+        drop(token);
+        // Without a live frame the call gets as far as creating the surface.
+        let target = wgpu::SurfaceTarget::Window(Box::new(NoWindow));
+        assert!(matches!(
+            r.replace_surface(target, 64, 64),
+            Err(RenderError::CreateSurface(_))
+        ));
+    }
 
     #[test]
     fn unpad() {

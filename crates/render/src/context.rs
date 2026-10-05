@@ -212,6 +212,36 @@ fn log_adapter(info: &wgpu::AdapterInfo, chosen: bool) {
     }
 }
 
+/// The error for an adapter search that opened no device. `rejected` lists
+/// every candidate's reason (filtered out, cannot present, or a failed device
+/// request); `last_device_error` is the last failed device request, if any
+/// candidate got that far.
+///
+/// `NoAdapter` only when no candidate reached device creation: an adapter that
+/// matched but could not open a device is a different failure (the GPU test
+/// harness fails on it instead of skipping).
+fn no_device_error(
+    backends: String,
+    rejected: &[String],
+    last_device_error: Option<wgpu::RequestDeviceError>,
+) -> RenderError {
+    match last_device_error {
+        Some(e) if rejected.len() == 1 => RenderError::RequestDevice(e),
+        Some(_) => RenderError::NoDevice {
+            backends,
+            reason: rejected.join("; "),
+        },
+        None => RenderError::NoAdapter {
+            backends,
+            reason: if rejected.is_empty() {
+                "no adapters enumerated".to_owned()
+            } else {
+                rejected.join("; ")
+            },
+        },
+    }
+}
+
 impl GpuContext {
     /// Create an instance with the resolved backends and optional display handle.
     pub(crate) fn create_instance(
@@ -300,20 +330,11 @@ impl GpuContext {
         }
 
         let Some((adapter, info, device, queue)) = opened else {
-            if let Some(e) = last_device_error
-                && rejected.len() == 1
-            {
-                return Err(RenderError::RequestDevice(e));
-            }
-            let reason = if rejected.is_empty() {
-                "no adapters enumerated".to_owned()
-            } else {
-                rejected.join("; ")
-            };
-            return Err(RenderError::NoAdapter {
-                backends: format!("{backends:?}"),
-                reason,
-            });
+            return Err(no_device_error(
+                format!("{backends:?}"),
+                &rejected,
+                last_device_error,
+            ));
         };
 
         let errors = ErrorSink::default();

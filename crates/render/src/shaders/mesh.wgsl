@@ -27,7 +27,10 @@ struct Draw {
     // x = alpha cutoff, y = normal-map green sign, z = normal line length,
     // w = fraction of the eye distance overlay lines are pulled forward
     params: vec4<f32>,
+    // wireframe colour
     overlay_color: vec4<f32>,
+    // vertex-normal line colour
+    normal_color: vec4<f32>,
     // x = feature bits, y = shading mode, z = dye mask source
     flags: vec4<u32>,
 };
@@ -318,4 +321,9 @@ fn vs_normals_skinned(@builtin(vertex_index) vi: u32, in: VsIn, skin: SkinIn) ->
 @fragment
 fn fs_overlay() -> @location(0) vec4<f32> {
     return draw.overlay_color;
+}
+
+@fragment
+fn fs_normal_lines() -> @location(0) vec4<f32> {
+    return draw.normal_color;
 }

@@ -520,7 +520,8 @@ impl StaticEntity {
 
 /// Validates a stored transform: a non-finite component, a position component beyond
 /// ±[`MAX_PLACEMENT_COORD`] and a zero-length rotation are malformed. The rotation is always
-/// normalised; one off unit length by more than 0.01 is also reported.
+/// normalised; one off unit length by more than 0.01 is reported through
+/// [`Placement::renormalised`] (the record decoder logs the count once per record).
 fn placement(position: [f32; 3], stored: Quaternion, offset: usize) -> Result<Placement> {
     let bad =
         |reason: &'static str| FormatError::malformed("static entity placement", offset, reason);
@@ -534,9 +535,6 @@ fn placement(position: [f32; 3], stored: Quaternion, offset: usize) -> Result<Pl
         return Err(bad("zero-length rotation"));
     };
     let renormalised = (stored.length() - 1.0).abs() > RENORMALISE_TOLERANCE;
-    if renormalised {
-        tracing::debug!(offset, "static entity rotation renormalised");
-    }
     Ok(Placement {
         position,
         rotation,

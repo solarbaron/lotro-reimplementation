@@ -658,6 +658,67 @@ mod jpeg {
         assert!(peak < MIB, "peak {peak}");
     }
 
+    /// The 8192x4096 colour frame of `progressive_frame_counts_coefficient_memory`, made
+    /// progressive, as a stream without its start-of-image marker.
+    fn hidden_progressive_frame() -> Vec<u8> {
+        let mut jpeg = encode(16, 16, ExtendedColorType::Rgb8);
+        patch_sof(&mut jpeg, 8192, 4096);
+        let sof = jpeg
+            .windows(2)
+            .position(|m| m == [0xFF, 0xC0])
+            .expect("SOF0 marker");
+        jpeg[sof + 1] = 0xC2;
+        jpeg.split_off(2)
+    }
+
+    /// A baseline 16x16 single-component frame header (a decoy).
+    const DECOY_SOF0: [u8; 13] = [
+        0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x10, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00,
+    ];
+
+    fn assert_rejected_cheaply(stream: &[u8]) {
+        assert!(8192 * 4096 <= jpeg_pixel_budget(stream.len()));
+        let data = surface(stream);
+        let s = Surface::parse(&data).unwrap();
+        let (r, peak) = peak_during(|| s.to_rgba8());
+        assert!(r.is_err(), "{:?}", r.map(|i| (i.width, i.height)));
+        assert!(peak < MIB, "peak {peak}");
+    }
+
+    /// A restart (D0) or TEM (01) marker before the frame header: the pre-scan must not
+    /// treat it as stand-alone and find a decoy baseline frame while the decoder reads the
+    /// marker's "length" (here FF C0), skips the decoy and decodes a hidden progressive
+    /// frame whose coefficient buffers exceed `MAX_JPEG_DECODE_BYTES`.
+    #[test]
+    fn stand_alone_marker_cannot_hide_a_progressive_frame() {
+        let _serial = serial();
+        let hidden = hidden_progressive_frame();
+        for code in [0xD0u8, 0x01] {
+            let mut v = vec![0xFF, 0xD8, 0xFF, code];
+            v.extend_from_slice(&DECOY_SOF0);
+            // A decoder that reads FF C0 as a length lands at 4 + 0xFFC0.
+            v.resize(4 + 0xFFC0, b' ');
+            v.extend_from_slice(&hidden);
+            assert_rejected_cheaply(&v);
+        }
+    }
+
+    /// `FF 00` before the frame header: a decoder that skips 00 as fill reads the next
+    /// `FF FE` as a comment and reaches the hidden frame; a walk that reads a length after
+    /// 00 jumps over it to a decoy baseline frame.
+    #[test]
+    fn stuffed_zero_cannot_hide_a_progressive_frame() {
+        let _serial = serial();
+        let hidden = hidden_progressive_frame();
+        let mut v = vec![0xFF, 0xD8, 0xFF, 0x00, 0xFF, 0xFE, 0x00, 0x02];
+        v.extend_from_slice(&hidden);
+        // A walk that reads FF FE as the length of the 00 segment lands at 4 + 0xFFFE.
+        v.resize(4 + 0xFFFE, b' ');
+        v.extend_from_slice(&DECOY_SOF0);
+        v.extend_from_slice(&[0xFF, 0xD9]);
+        assert_rejected_cheaply(&v);
+    }
+
     #[test]
     fn dimension_limit_applies_even_with_budget() {
         let _serial = serial();
@@ -776,16 +837,82 @@ fn unknown_struct_hints_log_once_per_record() {
     assert!(all <= 1, "{all} events for one record");
 }
 
+/// Every SED with an off-unit rotation is renormalised and flagged, but logged once per
+/// record, not once per entity.
+#[test]
+fn renormalised_rotations_log_once_per_record() {
+    use tessera_formats::LandblockInfo;
+    use tessera_formats::landblock::MAX_STATIC_ENTITIES;
+    let _serial = serial();
+    let n = MAX_STATIC_ENTITIES;
+    let mut b = B::new().u32(0x8021_0203).u32(0).u32(0).u32(0).u32(n);
+    for _ in 0..n {
+        // flags 0x010 (placement), position (0,0,0), rotation (w,x,y,z) = (2,0,0,0)
+        b = b.u32(0x010).f32(0.0).f32(0.0).f32(0.0);
+        b = b.f32(2.0).f32(0.0).f32(0.0).f32(0.0);
+    }
+    let data = b.u32(0).tsize(0, 0).u32(0).tsize(0, 0).build();
+    let schema = |_: u32| -> Option<PropertyType> { None };
+    let (_, all) = count_events(|| {
+        let info = LandblockInfo::parse(&data, None, &schema).expect("valid record");
+        assert_eq!(info.entities.len(), n as usize);
+        assert!(
+            info.entities
+                .iter()
+                .all(|e| e.placement.is_some_and(|p| p.renormalised))
+        );
+    });
+    assert!(all <= 1, "{all} events for one record");
+}
+
+/// Definitions whose two child-PID copies differ are logged once per dictionary.
+#[test]
+fn mismatched_child_pids_log_once_per_dictionary() {
+    let _serial = serial();
+    let n = 10_000u32;
+    let mut b = B::new()
+        .u32(0x3400_0000)
+        .bytes(&[0; 8])
+        .tsize(0, 0)
+        .u16(0)
+        .tsize(0, n);
+    for i in 0..n {
+        let pid = 0x1000_0000 + i;
+        b = b
+            .u32(pid)
+            .u32(pid)
+            .u32(15)
+            .u32(0)
+            .u32(0)
+            .u32(0)
+            .u32(0)
+            .u32(0);
+        // marker, field_d, one child whose copies differ, no subset, terminator
+        b = b.u32(0x3FC0_0000).bytes(&[0; 5]).vle(1).u32(1).u32(2);
+        b = b.u32(0).u32(0);
+    }
+    let data = b.build();
+    let (_, all) = count_events(|| {
+        let d = PropertyDictionary::parse(&data).expect("valid dictionary");
+        assert_eq!(d.definitions().len(), n as usize);
+        assert_eq!(
+            d.definitions().first().map(|d| d.children.clone()),
+            Some(vec![1])
+        );
+    });
+    assert!(all <= 1, "{all} events for one dictionary");
+}
+
 // ---------------------------------------------------------------- DID prefixes and API
 
-/// Every kind `AnyRecord` decodes, and the property-set kinds `PropertySetRecord` decodes,
-/// report `Evidence::Decoded`.
+/// Every kind `AnyRecord` decodes (with or without a schema), and the property-set kinds
+/// `PropertySetRecord` decodes, report `Evidence::Decoded`.
 #[test]
 fn decodable_kinds_report_decoded_evidence() {
     let _serial = serial();
     for prefix in 0..=0xFFu32 {
         let did = Did(prefix << 24 | 1);
-        if AnyRecord::is_decodable(did) {
+        if AnyRecord::is_decodable_with_schema(did) {
             assert_eq!(did.kind().evidence(), Evidence::Decoded, "{did}");
         }
     }

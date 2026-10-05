@@ -279,6 +279,29 @@ fn unusual_terrain_triangles_are_reported() {
     assert!(d.first_unusual_field().unwrap().contains("HM5"));
 }
 
+/// landblock.md §3.7 / scenery.md SC6: coarse-grid bits 15–31 (encounter slot and above)
+/// are always 0; bits 0–14 (terrain-type id, scene slot) are not unusual.
+#[test]
+fn coarse_grid_high_bits_are_reported() {
+    let mut d = full_data(Some(1));
+    d.coarse[0] = 0x0000_7FFF;
+    assert_eq!(d.first_unusual_field(), None);
+    for v in [0x0000_8000u32, 0x0001_0000, 0x8000_0000] {
+        d.coarse[0] = v;
+        assert!(
+            d.first_unusual_field().unwrap().contains("coarse-grid"),
+            "{v:#x}"
+        );
+    }
+    // Word (i, j) is at 17·i + j, i along X.
+    let mut d = full_data(Some(1));
+    d.coarse[17 * 2 + 5] = 0x0203;
+    assert_eq!(d.coarse_word(2, 5), Some(0x0203));
+    assert_eq!(d.coarse_word(5, 2), Some(0));
+    assert_eq!(d.coarse_word(17, 0), None);
+    assert_eq!(d.coarse_word(0, 17), None);
+}
+
 #[test]
 fn layer_kinds_and_windows() {
     let c = chunk_for_quad0(true);
@@ -304,11 +327,33 @@ fn grid_orders() {
     assert_eq!(g.get(33, 0), None);
     assert_eq!(g.min_max(), (0, 3520));
     assert!(!g.is_constant());
-    assert!(
-        (height_from_raw(13_107) - 399.99).abs() < 0.005,
-        "coordinates.md §13"
-    );
-    assert!((height_from_raw(32_768) - 1000.0).abs() < 1e-3);
+    // landblock.md §3.4: 13,107 × 2,000 / 65,535 = 400 (the superseded / 32.768 rule
+    // gave the 399.99 of coordinates.md §13).
+    assert!((height_from_raw(13_107) - 400.0).abs() < 1e-4);
+}
+
+/// landblock.md §3.4: height = (f32(stored) × 2,000.0) × f32(1 / 65,535), each product
+/// rounded to f32.
+#[test]
+fn height_rule_matches_the_client() {
+    use tessera_formats::landblock::{HEIGHT_INV_MAX_RAW, HEIGHT_RANGE};
+    assert_eq!(HEIGHT_INV_MAX_RAW, 1.525_902_2e-5_f32);
+    assert_eq!(HEIGHT_RANGE, 2000.0);
+    assert_eq!(height_from_raw(0), 0.0);
+    assert_eq!(height_from_raw(65_535), 2000.0);
+    assert!((height_from_raw(32_768) - 1000.0153).abs() < 1e-4);
+    // Differs from the superseded rule (stored / 32.768).
+    assert!((height_from_raw(3000) - 91.554_13).abs() < 1e-5);
+    assert_ne!(height_from_raw(3000), 3000.0 / 32.768);
+    // Within 6.2e-5 units of the exact quotient for every stored value, and monotonic.
+    let mut last = -1.0f32;
+    for raw in 0..=u16::MAX {
+        let h = height_from_raw(raw);
+        let exact = f64::from(raw) * 2000.0 / 65_535.0;
+        assert!((f64::from(h) - exact).abs() <= 6.2e-5, "{raw}: {h}");
+        assert!(h >= last, "{raw}");
+        last = h;
+    }
 }
 
 #[test]
@@ -881,6 +926,43 @@ fn quaternion_conventions() {
     assert!(!t.is_pure_yaw(1e-4));
     let y = Quaternion::from_yaw(1.0);
     assert!((y.yaw() - 1.0).abs() < 1e-5 && (y.length() - 1.0).abs() < 1e-6);
+    // Tilted rotations take ψ from the z-y-x decomposition (coordinates.md §11.4), not from
+    // the projected model +Y axis. The §11.4 example: 45° about +X, then 30° about +Y, has
+    // ψ = 0 although its model +Y projects to a bearing of 26.6°.
+    let tilted = Quaternion {
+        w: 0.8924,
+        x: 0.369_64,
+        y: 0.239_12,
+        z: -0.099_05,
+    };
+    assert!(tilted.yaw().abs() < 1e-3, "{}", tilted.yaw());
+    let h = tilted.heading_degrees();
+    assert!(h < 0.1 || h > 359.9, "{h}");
+    // 45° yaw followed by a 60° tilt about +X: ψ = atan2(2(xy + wz), w² + x² − y² − z²).
+    let q = Quaternion {
+        w: 0.800_103,
+        x: 0.461_94,
+        y: -0.191_342,
+        z: 0.331_414,
+    };
+    let psi = f64::atan2(
+        2.0 * (0.461_94 * -0.191_342 + 0.800_103 * 0.331_414),
+        0.800_103f64.powi(2) + 0.461_94f64.powi(2) - 0.191_342f64.powi(2) - 0.331_414f64.powi(2),
+    );
+    assert!((f64::from(q.heading_degrees()) - (360.0 - psi.to_degrees())).abs() < 1e-2);
+    assert!(
+        (q.heading_degrees() - 333.43).abs() < 0.01,
+        "{}",
+        q.heading_degrees()
+    );
+    // Rotated +X vertical: atan2(0, 0) = 0, heading north.
+    let up = Quaternion {
+        w: 0.5,
+        x: -0.5,
+        y: -0.5,
+        z: -0.5,
+    };
+    assert_eq!(up.heading_degrees(), 0.0);
     assert!(!Quaternion { w: f32::NAN, ..y }.is_finite());
 }
 

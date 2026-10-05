@@ -581,16 +581,26 @@ fn property_dictionary_rejects_bad_marker_echo_and_unsupported_type() {
         Err(FormatError::Malformed { .. })
     ));
 
-    // A type code outside 1–22 with a stored default cannot be skipped.
-    let unknown_type = dictionary(
-        |b| def(b, 0x1000_0001, 23, 0, FLAG_HAS_DEFAULT, |b| b.u32(0)),
-        1,
-        &names,
-    );
-    assert_eq!(
-        PropertyDictionary::parse(&unknown_type).unwrap_err(),
-        FormatError::UnsupportedPropertyType { code: 23 }
-    );
+    // A type code outside 1–22 is malformed (property-system.md §3), with or without a
+    // stored default.
+    for (code, flags) in [(23, FLAG_HAS_DEFAULT), (23, 0), (0, 0), (u32::MAX, 0)] {
+        let unknown_type = dictionary(
+            |b| def(b, 0x1000_0001, code, 0, flags, |b| b.u32(0)),
+            1,
+            &names,
+        );
+        let err = PropertyDictionary::parse(&unknown_type).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FormatError::Malformed {
+                    what: "property definition",
+                    ..
+                }
+            ),
+            "type {code}, flags {flags:#x}: {err:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------- enum mappers

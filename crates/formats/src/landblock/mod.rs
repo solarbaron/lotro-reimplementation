@@ -30,7 +30,8 @@
 //! # Coordinates
 //!
 //! Landblock-local x, y run from the south-west corner (0–160 units); z is absolute.
-//! Heights are stored as u16 with **height = stored / 32.768** ([`height_from_raw`]).
+//! Heights are stored as u16 with **height = stored × 2,000 / 65,535**, evaluated in f32 as
+//! the original client does ([`height_from_raw`], `landblock.md` §3.4).
 //! The height grid is X-major (sample (i, j) at index 33·i + j, i along X), while the
 //! vertex numbers of surface-layer triangles are **Y-major** (33·y + x); see
 //! [`vertex_to_height_index`]. Rotations are (w, x, y, z) unit quaternions applied as active
@@ -89,17 +90,28 @@ pub const QUAD_COUNT: usize = QUAD_SIDE * QUAD_SIDE;
 pub const COARSE_SIDE: usize = 17;
 /// Entries in the coarse grid (17 × 17 = 289).
 pub const COARSE_SAMPLES: usize = COARSE_SIDE * COARSE_SIDE;
-/// Stored height steps per world unit: height = stored / 32.768 (`landblock.md` §3.4).
-pub const HEIGHT_STEPS_PER_UNIT: f32 = 32.768;
+/// Height in world units of the largest stored sample, 65,535 (`landblock.md` §3.4).
+pub const HEIGHT_RANGE: f32 = 2000.0;
+/// The f32 nearest 1 / 65,535 (1.5259022 × 10⁻⁵), the second factor of the height rule
+/// (`landblock.md` §3.4). IEEE division is correctly rounded, so this is that nearest value.
+pub const HEIGHT_INV_MAX_RAW: f32 = 1.0 / 65_535.0;
+/// Stored height steps per world unit, 65,535 / 2,000 (`landblock.md` §3.4), as the nearest
+/// f32. For continuous (interpolated) conversions only: one divisor cannot reproduce the
+/// rule's two f32 roundings, so [`height_from_raw`] is the bit-exact conversion of a stored
+/// sample. (The superseded rule of the spec divided by 32.768.)
+pub const HEIGHT_STEPS_PER_UNIT: f32 = 32.7675;
 /// Largest landblock X or Y observed (0–254; `coordinates.md` §4).
 pub const MAX_LANDBLOCK_COORD: u8 = 254;
 /// Offset from a landblock-data DID to the landblock-info DID of the same landblock.
 pub const INFO_DID_OFFSET: u32 = 0x0020_0000;
 
-/// Converts a stored height sample to world units (`landblock.md` §3.4).
+/// Converts a stored height sample to world units (`landblock.md` §3.4): the sample as an
+/// f32, times 2,000.0 rounded to f32, times the f32 nearest 1 / 65,535 rounded to f32, the
+/// order the original client uses. Stored 65,535 is exactly 2,000.0.
 #[must_use]
 pub fn height_from_raw(raw: u16) -> f32 {
-    f32::from(raw) / HEIGHT_STEPS_PER_UNIT
+    let scaled = f32::from(raw) * HEIGHT_RANGE;
+    scaled * HEIGHT_INV_MAX_RAW
 }
 
 /// Height-grid index (33·i + j, i along X) of surface-layer vertex number `v`, which is

@@ -1005,7 +1005,9 @@ impl PropertyDefinition {
         u8::try_from(self.data.0).ok().filter(|&c| c != 0)
     }
 
-    fn read(r: &mut Reader<'_>, pid: u32) -> Result<Self> {
+    /// Reads one definition keyed by `pid`. Child entries whose two PID copies differ are
+    /// added to `mismatched_children` (the caller logs the total once per record).
+    fn read(r: &mut Reader<'_>, pid: u32, mismatched_children: &mut u64) -> Result<Self> {
         const WHAT: &str = "property definition";
         let echo_at = r.position();
         let echo = r.u32()?;
@@ -1016,7 +1018,16 @@ impl PropertyDefinition {
                 format!("pid echo {echo:#x} differs from key {pid:#x}"),
             ));
         }
+        let ty_at = r.position();
         let ty = PropertyType::from_code(r.u32()?);
+        // property-system.md §3: "Readers report a type code outside 1–22 as malformed."
+        if let PropertyType::Unknown(code) = ty {
+            return Err(FormatError::malformed(
+                WHAT,
+                ty_at,
+                format!("type code {code} outside 1–22"),
+            ));
+        }
         let field_a = r.u32()?;
         let field_b = r.u32()?;
         let data = r.did()?;
@@ -1044,18 +1055,14 @@ impl PropertyDefinition {
         let field_d = r.array()?;
         let child_count = r.vle()?;
         let mut children = r.alloc_vec(child_count, 8, PREALLOC_CAP)?;
-        let mut mismatched = 0usize;
         for _ in 0..child_count {
             let a = r.u32()?;
             let b = r.u32()?;
             if a != b {
-                mismatched += 1;
+                // The first copy is kept (records.md §13, property-system.md §2.2).
+                *mismatched_children = mismatched_children.saturating_add(1);
             }
             r.push(&mut children, a, child_count)?;
-        }
-        if mismatched != 0 {
-            // One event per definition, not per child (spec §13: the first copy is kept).
-            tracing::debug!(pid, count = mismatched, "property child PID copies differ");
         }
         let subset_count = r.u32()?;
         let mut subset = r.alloc_vec(subset_count, 4, PREALLOC_CAP)?;
@@ -1198,10 +1205,19 @@ impl Record<'_> for PropertyDictionary {
             4 + 28 + 4 + 5 + 1 + 4 + 4,
             PREALLOC_CAP,
         )?;
+        let mut mismatched_children = 0u64;
         for _ in 0..definitions_size.count {
             let pid = r.u32()?;
-            let def = PropertyDefinition::read(&mut r, pid)?;
+            let def = PropertyDefinition::read(&mut r, pid, &mut mismatched_children)?;
             r.push(&mut definitions, def, definitions_size.count)?;
+        }
+        if mismatched_children != 0 {
+            // One event per record, however many definitions are affected.
+            tracing::debug!(
+                %did,
+                count = mismatched_children,
+                "property child PID copies differ; first copies kept"
+            );
         }
         r.expect_end(Self::NAME)?;
         r.log_unknown_hints(Self::NAME);

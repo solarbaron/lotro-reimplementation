@@ -217,17 +217,26 @@ impl Quaternion {
         self.x.abs() <= eps && self.y.abs() <= eps
     }
 
-    /// Yaw ψ in radians, counter-clockwise seen from above, in (−π, π]: the angle by which
-    /// model +X turns towards +Y, measured on the rotated +X axis projected onto the
-    /// ground plane. For a pure turn this equals 2 · atan2(z, w) (`coordinates.md` §11.3).
+    /// Yaw ψ in radians, counter-clockwise seen from above, in [−π, π]: the yaw of the
+    /// z-y-x decomposition of `coordinates.md` §11.3,
+    /// ψ = atan2(2(xy + wz), w² + x² − y² − z²), evaluated in f32 in the order of that
+    /// section's table (C13). It is the bearing of the rotated model +X axis projected onto
+    /// the ground (0 when that axis is vertical). For a pure turn this equals
+    /// 2 · atan2(z, w).
     #[must_use]
     pub fn yaw(self) -> f32 {
-        let [rx, ry, _] = self.rotate([1.0, 0.0, 0.0]);
-        ry.atan2(rx)
+        let Self { w, x, y, z } = self;
+        let half = x * y + w * z;
+        let num = half + half;
+        let den = ((x * x + w * w) - y * y) - z * z;
+        num.atan2(den)
     }
 
-    /// Compass heading of model +Y in degrees, clockwise from north, in [0, 360):
-    /// (360° − ψ) mod 360° (`coordinates.md` §11.4; the clockwise sense is OPEN there).
+    /// Compass heading in degrees, clockwise from north, in [0, 360):
+    /// h = (360° − ψ) mod 360° with ψ = [`Quaternion::yaw`] (`coordinates.md` §11.4). For a
+    /// pure turn this is the bearing of model +Y. For a tilted rotation it is **not** the
+    /// bearing of the projected model +Y axis: §11.4 takes ψ from the z-y-x decomposition,
+    /// as the original client does.
     #[must_use]
     pub fn heading_degrees(self) -> f32 {
         let h = (360.0 - self.yaw().to_degrees()).rem_euclid(360.0);

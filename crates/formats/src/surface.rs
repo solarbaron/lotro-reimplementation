@@ -69,15 +69,25 @@ struct JpegFrame {
     progressive: bool,
     /// Number of colour components in the frame.
     components: u8,
+    /// Frame width in pixels, as stored in the frame header.
+    width: u16,
+    /// Frame height in pixels, as stored in the frame header.
+    height: u16,
 }
 
 /// Walks the marker segments of a JPEG stream up to its start-of-frame marker. `None` if
 /// the stream ends, a segment is malformed, or a scan starts before any frame header.
+///
+/// Fails closed on the marker codes that have no place before a frame header: 0x00 (a
+/// stuffed byte), 0x01 (TEM), 0xD0–0xD7 (restart markers) and a second 0xD8 (start of
+/// image). Decoders disagree on how to step over them (stand-alone marker, length-carrying
+/// segment, or fill), so accepting them would let this walk reach a different frame header
+/// from the one the decoder uses, and the memory check below would rely on the wrong frame.
 #[cfg(feature = "jpeg")]
 fn jpeg_frame(data: &[u8]) -> Option<JpegFrame> {
     let mut pos = 2usize; // after FF D8
     while pos < data.len() {
-        if data[pos] != 0xFF {
+        if *data.get(pos)? != 0xFF {
             return None;
         }
         // Fill bytes: any number of FF before the marker code.
@@ -86,8 +96,8 @@ fn jpeg_frame(data: &[u8]) -> Option<JpegFrame> {
         }
         let marker = *data.get(pos)?;
         pos += 1;
-        if matches!(marker, 0x01 | 0xD0..=0xD7) {
-            continue; // stand-alone markers carry no length
+        if matches!(marker, 0x00 | 0x01 | 0xD0..=0xD8) {
+            return None;
         }
         let len = usize::from(u16::from_be_bytes([*data.get(pos)?, *data.get(pos + 1)?]));
         if len < 2 {
@@ -96,9 +106,12 @@ fn jpeg_frame(data: &[u8]) -> Option<JpegFrame> {
         let segment = data.get(pos + 2..pos.checked_add(len)?)?;
         match marker {
             0xC0..=0xCF if !matches!(marker, 0xC4 | 0xC8 | 0xCC) => {
+                // Frame header: precision (1), height (2), width (2), components (1).
                 return Some(JpegFrame {
                     progressive: matches!(marker, 0xC2 | 0xC6 | 0xCA | 0xCE),
                     components: *segment.get(5)?,
+                    width: u16::from_be_bytes([*segment.get(3)?, *segment.get(4)?]),
+                    height: u16::from_be_bytes([*segment.get(1)?, *segment.get(2)?]),
                 });
             }
             0xDA | 0xD9 => return None,
@@ -442,6 +455,14 @@ fn decode_jpeg(data: &[u8]) -> Result<RgbaImage> {
     // outside the decoder's allocation limit, so the total is checked here up front.
     let frame = jpeg_frame(data)
         .ok_or_else(|| FormatError::malformed(SURFACE, 24, "JPEG frame header not found"))?;
+    // Second safeguard: the frame this walk found must be the one the decoder parsed.
+    if (u32::from(frame.width), u32::from(frame.height)) != (width, height) {
+        return Err(FormatError::malformed(
+            SURFACE,
+            24,
+            "JPEG frame header does not match the frame the decoder read",
+        ));
+    }
     let need = jpeg_decode_bytes(width, height, frame.components, frame.progressive);
     if need > MAX_JPEG_DECODE_BYTES {
         // Pixels this frame type could have had within the byte budget.
@@ -578,7 +599,9 @@ mod tests {
                 jpeg_frame(&header(marker, 3)),
                 Some(JpegFrame {
                     progressive,
-                    components: 3
+                    components: 3,
+                    width: 0x2000,
+                    height: 0x1000,
                 }),
                 "{marker:#x}"
             );
@@ -594,6 +617,17 @@ mod tests {
         }
         assert_eq!(jpeg_frame(&[0xFF, 0xD8, 0x00]), None);
         assert_eq!(jpeg_frame(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01]), None);
+    }
+
+    /// Marker codes that decoders step over in different ways are rejected before the
+    /// frame header, so the walk cannot be steered to a decoy frame.
+    #[test]
+    fn ambiguous_markers_before_the_frame_are_rejected() {
+        for code in [0x00, 0x01, 0xD0, 0xD3, 0xD7, 0xD8] {
+            let mut v = vec![0xFF, 0xD8, 0xFF, code];
+            v.extend_from_slice(&header(0xC0, 1)[2..]);
+            assert_eq!(jpeg_frame(&v), None, "{code:#x}");
+        }
     }
 
     #[test]

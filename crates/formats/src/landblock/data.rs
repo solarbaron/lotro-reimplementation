@@ -7,8 +7,8 @@
 use std::ops::Range;
 
 use super::{
-    COARSE_SAMPLES, GRID_SAMPLES, GRID_SIDE, GRID_SPACING, INFO_DID_OFFSET, LANDBLOCK_SIZE,
-    LayoutRule, QUAD_COUNT, QUAD_SIDE, height_from_raw, put, read_landblock_did,
+    COARSE_SAMPLES, COARSE_SIDE, GRID_SAMPLES, GRID_SIDE, GRID_SPACING, INFO_DID_OFFSET,
+    LANDBLOCK_SIZE, LayoutRule, QUAD_COUNT, QUAD_SIDE, height_from_raw, put, read_landblock_did,
     tree_build_byte_rule, vertex_xy,
 };
 use crate::did::{Did, LandblockId, LandblockKind};
@@ -26,7 +26,7 @@ const VERTEX_FLAG_COUNT_BYTES: [u8; 4] = (GRID_SAMPLES as u32).to_le_bytes();
 /// A 33 × 33 grid of stored u16 height samples (terrain or ceiling), **X-major**: sample
 /// (i, j) at index 33·i + j, i along X (east), j along Y (north) (`landblock.md` §3.3).
 ///
-/// Convert samples with [`height_from_raw`] (stored / 32.768).
+/// Convert samples with [`height_from_raw`] (stored × 2,000 / 65,535 in f32, §3.4).
 #[derive(Clone, PartialEq, Eq)]
 pub struct HeightGrid(Box<[u16; GRID_SAMPLES]>);
 
@@ -577,7 +577,11 @@ pub struct LandblockData {
     pub ceiling: Option<Ceiling>,
     /// Vertex flags (bit 7: split diagonal).
     pub vertex_flags: VertexFlags,
-    /// The 17 × 17 coarse grid (meaning and order OPEN, §3.7).
+    /// The 17 × 17 coarse grid of per-vertex scenery words (`landblock.md` §3.7): word
+    /// (i, j) is at index 17 · i + j with i along X and belongs to height sample (2i, 2j)
+    /// (see [`LandblockData::coarse_word`]). Bits 0–7: terrain-type id for scenery; bits
+    /// 8–14: scene slot; bits 15–19: encounter slot; bits 20–31: unused. Bits 15–31 are 0
+    /// in every observed record (`scenery.md` SC6).
     pub coarse: Box<[u32; COARSE_SAMPLES]>,
     /// The terrain's surface layers.
     pub terrain: SurfaceChunk,
@@ -592,6 +596,16 @@ pub struct LandblockData {
 impl LandblockData {
     /// Human-readable record type name, used in errors.
     pub const NAME: &'static str = "landblock data";
+
+    /// Coarse-grid word (i, j), i along X, for 0 ≤ i, j ≤ 16 (`landblock.md` §3.7): the
+    /// scenery word of height sample (2i, 2j). `None` outside the grid.
+    #[must_use]
+    pub fn coarse_word(&self, i: usize, j: usize) -> Option<u32> {
+        if i >= COARSE_SIDE || j >= COARSE_SIDE {
+            return None;
+        }
+        self.coarse.get(COARSE_SIDE * i + j).copied()
+    }
 
     /// A minimal record for `did` with the given heights: no info, no ceiling, all vertex
     /// flags 0 (every quad split south-east to north-west), an all-zero coarse grid, no
@@ -856,8 +870,10 @@ impl LandblockData {
         {
             return Some("vertex-flag low bits outside {0, 1, 126, 127}");
         }
-        if self.coarse.iter().any(|&v| v >> 16 != 0) {
-            return Some("coarse-grid bits 16–31 set");
+        // landblock.md §3.7, scenery.md SC6: the encounter slot (bits 15–19) and bits
+        // 20–31 are 0 in every observed record.
+        if self.coarse.iter().any(|&v| v >> 15 != 0) {
+            return Some("coarse-grid bits 15–31 set");
         }
         if self.boxes.is_some() && self.ceiling.is_none() {
             return Some("box list without a ceiling");

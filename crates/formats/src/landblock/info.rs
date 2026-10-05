@@ -342,9 +342,17 @@ impl LandblockInfo {
             });
         }
         let mut entities = r.alloc_vec(count, SED_MIN, usize::MAX)?;
+        let mut renormalised = 0u32;
         for _ in 0..count {
             let e = StaticEntity::read(r, schema)?;
+            if e.placement.is_some_and(|p| p.renormalised) {
+                renormalised += 1;
+            }
             r.push(&mut entities, e, count)?;
+        }
+        if renormalised != 0 {
+            // One event per record; each entity carries its own `Placement::renormalised`.
+            tracing::debug!(%did, count = renormalised, "static entity rotations renormalised");
         }
 
         let count = r.u32()?;

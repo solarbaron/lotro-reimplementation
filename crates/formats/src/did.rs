@@ -80,7 +80,8 @@ impl fmt::UpperHex for Did {
 /// How well the meaning of a DID prefix is established (spec §2 status column).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Evidence {
-    /// Record content is decoded by this crate: by [`crate::AnyRecord`], or, for property
+    /// Record content is decoded by this crate: by [`crate::AnyRecord`] (including the
+    /// script tables and scriptlets of [`crate::AnyRecord::decode_with_schema`]), or, for property
     /// sets and entity descriptors (which need the dictionary as a schema), by
     /// [`crate::PropertySetRecord`] and [`crate::EntityDescriptor`], or, for the landblock
     /// family and its per-region tables (which need the directory stamp or the dictionary),
@@ -336,6 +337,8 @@ impl DidKind {
             | Self::EntityDescriptor
             | Self::RegionDescriptor
             | Self::BlockMapProperties
+            | Self::ScriptTable
+            | Self::Scriptlet
             | Self::Landblock(
                 LandblockKind::Heightmap
                 | LandblockKind::BlockMap

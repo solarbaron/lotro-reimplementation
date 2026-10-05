@@ -80,8 +80,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
-- **Next:** M5 (UI layouts, skins and Lua plugins), unless the owner wants the open M4 items
-  closed first.
+- **Next:** M4.5, world fidelity (owner decision 2026-10-06: it runs before M5; M5–M8 keep
+  their numbers): terrain texturing, scenery and grass, collision and the walk controller
+  (new crate `tessera-physics`), water, materials and the lit pipeline, sky, time of day
+  and fog. Plan and exit criteria: `docs/ROADMAP.md` M4.5. Run it with
+  `.claude/workflows/tessera-milestone.js` (milestone "M4.5").
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17). These do not
   block M5.

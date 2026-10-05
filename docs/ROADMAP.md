@@ -10,7 +10,8 @@
 > ([M4 status](#m4-status)): every criterion passes on Tessera's side (criterion 4 on
 > the reference machine, the owner's laptop, [decision 0010](decisions/0010-reference-machine-laptop.md);
 > criterion 2 since the River-hobbit fix of the same day); the remaining owner comparisons
-> are listed in its status. M5 is next. Milestones are ordered by
+> are listed in its status. **M4.5 (world fidelity) is next** ([M4.5](#m4-5)): the owner
+> inserted it on 2026-10-06 to run before M5; M5–M8 keep their numbers. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -59,13 +60,16 @@ like "ARCH §8" refer to it.
 | **M2** | Mesh and material viewer | T0/T1 | `mesh`, `material` |
 | **M3** | Terrain and offline landblock world walker | T1 | `world`, `terrain`, `input`, `wstate` |
 | **M4** | Characters and animation | T1 | `havok`, `anim`, `entity` |
+| **M4.5** | World fidelity: terrain texturing, scenery and grass, collision and walking, water, lit materials, sky and time of day | T1 | `physics` (new, L3); grows `formats`, `terrain`, `world`, `material`, `render`, `client` |
 | **M5** | UI layouts and skins, Lua plugins | T1 | `ui`, `plugins` |
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
 | **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
 
 M1–M6 depend on M0, and mostly on each other in order, but M5 (UI) and M6 (audio) can run
-in parallel with M4 once M3's asset and world plumbing exists.
+in parallel with M4 once M3's asset and world plumbing exists. M4.5 builds on M3 (streaming,
+terrain), M2 (the material chain) and M4 (the walking avatar, setup collision volumes). M5
+and M6 do not depend on it; by the owner's decision of 2026-10-06 it runs before them.
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
@@ -560,6 +564,308 @@ deformation, one figure path for the client and the explorer (criterion 2, rows 
 
 Remaining for M4 to close: owner observations O8–O17 (for criterion 2: O8, O9, O14, O16,
 and the River-hobbit M walking toe dip of `appearance.md` §6.5 OPEN).
+
+---
+
+<a id="m4-5"></a>
+## M4.5: World fidelity
+
+Inserted by the owner on 2026-10-06 to run after M4 and before M5. M5–M8 keep their numbers.
+
+**Goal:** the offline world looks and behaves like the original's at its default settings.
+Terrain is drawn with its own texture layers. Trees, rocks and grass stand where the data's
+placement rules put them. The avatar walks on collision geometry instead of terrain heights:
+walls, objects and cave ceilings block it, it enters interiors through their cells, and it
+wades and swims. Lakes, rivers and seas are drawn. Surfaces go through the lit pipeline,
+under a sky that follows the game clock with its sun, ambient light and fog. Everything is
+built from the user's own data at run time, deterministically, and stays within the M3/M4
+frame budget on the reference machine.
+
+<a id="m4-5-deliverables"></a>
+**Deliverables**
+
+- `tessera-formats` (each decoder consumes its record exactly, treats input as hostile, and
+  has one fuzz target):
+  - per-region tables named by the region descriptor (0x0F, slots 1–8, `environment.md` §3;
+    the M3 decoder is extended): terrain type table **0x19** (`terrain-texturing.md` §3),
+    terrain-scene table **0x12** and scene-choice table **0x11** (`scenery.md` §4.2–§4.3),
+    water table **0x16** and fog-zone table **0x17** (`water.md` §4–§5);
+  - scene records **0x02** (`scenery.md` §5);
+  - collision: stand-alone collision meshes **0x66**, cell geometry **0x01** (cell volume,
+    portals, wall polygons, hull vertices, physics mesh), and the quantised tree reader that
+    meshes, terrain, ceilings, 0x66 records and cells share (`collision.md` §3–§5);
+  - environment: sky description **0x15** (the single record 0x15000007), day descriptions
+    **0x1A**, game time **0x35** (0x35000000), LOD-class table **0x32** (0x32000000)
+    (`environment.md` §5, §6, §9.1);
+  - landblock data brought up to the revised `landblock.md`: the client's height rule
+    (stored × 2,000 / 65,535, §3.4, replacing stored / 32.768), the ceiling diagonal from
+    vertex-flag bit 0 (§3.5–§3.6), terrain and ceiling tree blocks (§3.9), light-map
+    properties (§6.4), and the water pairs of the kind-5 distant-sector records (§7, only as
+    far as the layout is known);
+  - optional, may slip to M5 without blocking: camera-state records **0x08**
+    (`walker.md` §11.5).
+- `tessera-terrain`: layer resolution against the region's 0x19 table (key, order,
+  `whole`, unmasked layers, holes, quad and coarse grids, `terrain-texturing.md` §4); alpha
+  masks (§5); per-vertex texture-coordinate sets with the per-type scale, rotation and
+  offset and the per-block offset (§6.1–§6.3); the tangent frame for normal maps (§6.4);
+  the opacity rule and splat inputs per layer (§7); ceiling chunks (§4.8); light-map
+  coordinates (§10). This replaces the height and slope shading that ARCH §10 planned until
+  splatting was known.
+- `tessera-physics` (new crate, below): terrain and ceiling collision triangles with the
+  client's numbering (`collision.md` §6.1–§6.4), the terrain radius and plane queries that
+  scenery placement uses (§6.6), cell volumes and the point-in-cell lookup (§5.4, §5.8.1),
+  per-landblock collision sets of statics, generated objects and cells (§9.3, §9.4, §12.1)
+  with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller
+  (§10–§12: parameter layering, float height, walkable/slide/wall contacts, step-up, fixed
+  1/60 s step) including the water states of `water.md` §7.4.
+- `tessera-world`:
+  - scenery generation per landblock (`scenery.md` §6–§7: vertex scene pick, seeds,
+    placement nodes, height and water ranges, clearance and spacing). It is deterministic,
+    runs on the asset workers, and its objects enter the bundle like statics, with their
+    collision (`collision.md` §9.4);
+  - the frill (grass) layer: 10 × 10-unit sectors in their own ring around the camera with
+    the engine defaults of `scenery.md` §8.2–§8.4. Frills never collide;
+  - landblock water (`water.md` §6.2–§6.3), water volumes from the volume entity and placed
+    volumes (§7), and the "under water" query;
+  - cells and portals of landblock info in the collision residency; collision sets built
+    with the bundle on the asset workers;
+  - the game clock, day-description choice per sky key, keyframe blending and sky objects
+    (`environment.md` §11). The clock epoch is OPEN, so Tessera's clock has a settable
+    start time;
+  - light selection per object and Light entities (`lighting.md` §8.3–§8.5);
+  - object draw distances by LOD class from 0x32 with fades and detail levels
+    (`walker.md` §11.4, `mesh.md` §8).
+- `tessera-material`: float-curve evaluation (`material.md` §5.3.1), texture transforms
+  (§8.4), feature flags (alpha test, blend, two-sided, §11), the per-surface lighting
+  inputs of `lighting.md` §4.1, and the water material chain (`water.md` §8.2). The 0x31,
+  0x30 and 0x2B decoders exist since M2.
+- `tessera-render`:
+  - mip-chain upload (`texture-list.md` §5; closes the aliasing OPEN of `walker.md` §9);
+  - the terrain layer pipeline (`terrain-texturing.md` §8–§9: draw order, blend state,
+    opacity, normal maps, specular, baked light maps);
+  - the lit pipeline (`lighting.md` §5–§7): ambient with the hemispheric term, the sun or
+    moon with a shadow map (§9), up to 8 point lights (§8.3), specular, emissive and glow,
+    vertex colours, distance fog (§10), and the unlit and additive passes;
+  - the water pipeline (`water.md` §8, distant water §9);
+  - the sky (`environment.md` §12);
+  - instanced scenery and frills (`scenery.md` §8.3, §9);
+  - a synthetic golden image for each pipeline.
+- `tessera-client` (walker):
+  - walk mode on `tessera-physics` (capsule from the avatar's setup, `collision.md` §10.6)
+    instead of terrain heights, with jumping, sliding, wading, swimming and interior cells;
+  - time-of-day controls (start time and rate);
+  - a switch per M4.5 system for profiling;
+  - the default-settings profile of `walker.md` §11.8: landscape extent 2,080 m, per-class
+    object distances with the 1.5 s fade, detail levels, frills at level 2;
+  - a scripted `--walk-path` with a movement log (position, state, cell, contacts) for the
+    collision tests;
+  - new frame-log columns for the M4.5 systems.
+- `tessera-explorer`: views for terrain type tables, scene records and a landblock's
+  generated scenery, the water table and landblock water, the sky and day-description
+  timeline, and collision meshes and cells as overlays. `tessera-dattool` gets inspection
+  commands for the same records.
+- Documents:
+  - `docs/checklists/m4-5-visual.md`, the visual and collision checklist, written by the
+    dirty room as `m3-reference-locations.md` was: coordinates and expected facts only;
+  - new owner items in [owner-observations.md](checklists/owner-observations.md) for the
+    measurements below;
+  - an M4.5 section in `walker.md` (Tessera's design);
+  - in ARCHITECTURE: §10 rewritten (splatting, water, sky; the OPEN there is answered by
+    the specs), a §3.1 row for `tessera-physics` with the sibling allowance, and §20.3's
+    30 Hz simulation tick reconciled with the 1/60 s controller step of `collision.md`
+    §12.3.
+
+<a id="m4-5-crates"></a>
+**Crate placement (decision for this milestone).** Collision and movement go into a new
+L3 crate, **`tessera-physics` (`crates/physics`)**, and not into `tessera-world`. It
+depends only on `formats` and `props` (L1–L2) and has no GPU, asset-server or streaming
+dependency. `tessera-world` gets an explicit sibling allowance to depend on it: scenery
+generation reads the terrain collision mesh and its queries, and bundles carry collision
+sets built on the workers. Reasons: the controller can then be unit-tested and fuzzed
+without streaming, and the M7 test server can reuse it for server-side movement without
+pulling in `world`'s asset, animation and text dependencies. The quantised-tree reader
+and the 0x66 and 0x01 decoders stay in `tessera-formats`, like every record decoder.
+Scenery, frills, water state and the game clock are modules of `tessera-world`, as their
+specs say. No other new crate.
+
+<a id="m4-5-order"></a>
+**Order of work.** (1) Specs to Accepted (table below). (2) Decoders and their real-data
+censuses. (3) Terrain layers and the lit pipeline, which every later visual depends on.
+(4) Physics: terrain, ceiling, cells, statics, then the controller. (5) Scenery and frills,
+which need the terrain collision mesh. (6) Water. (7) Sky, clock and fog. (8) Walker
+integration, the default-settings profile and the performance runs.
+
+<a id="m4-5-specs"></a>
+**Specs needed** (status at drafting, 2026-10-06; spec writers may be revising some of them)
+
+| Spec | Covers | Status |
+|---|---|---|
+| `terrain-texturing.md` | 0x19, layers, masks, texture coordinates, opacity, blending, light maps | Review; re-review requested changes (narrow the §4.5 holes sentence and cite `collision.md` §6.5's OPEN; §8 layer count) |
+| `scenery.md` | 0x11, 0x12, 0x02, hashes and seeds, generation, frills, LOD classes, wind | Review; re-review requested changes (§8.1–§8.3 frill records of non-frill objects; inline unknowns in §4.2, §5.1, §8.3 need OPEN callouts) |
+| `collision.md` | Quantised trees, 0x66, 0x01, cells and portals, terrain and ceiling collision, setup volumes, movement data, Tessera's controller | **Accepted** |
+| `water.md` | 0x16, 0x17, landblock water, water volumes, drawing water | Review; re-review requested changes (§8.4 step 6 specular sentence; §8.2 permutation table) |
+| `material.md` | 0x31, 0x30, 0x2B, float curves, transforms, feature flags, dyes | Review; re-review requested changes (§20.1 unlit row; the one flag-1 parameter that has a binding; §8.4 pair count) |
+| `lighting.md` | Passes, lighting equation, light sources, sun shadow, fog | Review; re-review requested small changes (change-log constant name; §4.1 binding of 2013) |
+| `environment.md` | 0x0F, 0x15, 0x1A, 0x35, 0x32, game clock, keyframe blending, sky | **Accepted**. §10 still lists the 0x08 layout as OPEN, although `walker.md` §11.5 decodes the camera-state records; to be aligned |
+| `landblock.md` | Height rule, ceiling grid, vertex flags, tree blocks, light maps, kind 5 | Review; the revision answering the second re-review (§3.6, §8 step 1) is not yet re-reviewed |
+| `records.md` | Prologues and DB types of every prefix above, VLE, TSize | **Accepted** |
+| `walker.md` | §11 distances, LOD classes, default-settings profile, camera states; §1–§10 Tessera design | §11 **Accepted**; an M4.5 design section to be added by the implementer |
+| `terrain.md`, `texture-list.md`, `mesh.md`, `entity-descriptor.md`, `setup.md`, `property-system.md` | Meshing; mip chains; detail levels; light properties and the draw rule; collision volumes and physics bounds; property values | **Accepted** |
+| `coordinates.md` | Rotations and axes used by scenery and collision | Review; re-review requested changes (§9.7 test vector, §11.4 placement) |
+| `render.md` | Tessera's renderer design; to be extended for the new pipelines | Implementer's design file |
+
+Every spec above must be Accepted before M4.5 exits. None has a blocking `> **OPEN:**` item
+at drafting time: each open point either has a Tessera Decision or is not needed offline.
+
+<a id="m4-5-re"></a>
+**RE tasks** (open items from the specs' `> **OPEN:**` callouts. None blocks an exit
+criterion, because each has a Tessera Decision; closing them improves fidelity. The
+methods are those of §2, with method M4 under the standing authorisation of
+[decision 0011](decisions/0011-standing-m4-authorisation.md) and numeric constants under
+[decision 0012](decisions/0012-numeric-constants.md).)
+
+- **Movement, by owner observation** (`collision.md` Q9, Q11; `water.md` §7.4): jump height
+  and airtime; walk, run, backward, strafe and swim speeds; the highest step that can be
+  climbed and the steepest slope that can be walked; the water depth at which wading turns
+  into swimming; how a mover is tested against the liquid boxes. Also the integration of
+  jump, ramp, control acceleration and damper, and the plane solver (method M4).
+- **Collision, from data study and method M4:** the surface property that removes a draw
+  from a mesh-level code (Q1); the plane-list terminators, portal lead byte and winding
+  (Q2); the neighbour flag byte and whether a mover's cell is re-evaluated every step (Q3);
+  load-time trees (Q4); what per-level collision meshes are used for (Q6); the exact
+  ethereality test (Q7); bodies for client-only generated objects (Q12); terrain under the
+  413,655 hole triangles whose ceiling samples are all 0 (`collision.md` §6.5).
+- **Terrain texturing:** the reference landblock of the per-block texture offset (§6.2);
+  the landscape-shadow target (§9.5); ceiling normals (§4.8); quad-grid weighting (§4.6);
+  distance bands and the near/far seam (§12); the depth comparison of stacked layers (§8,
+  also `lighting.md` §6); `slope_orientation`. Frame captures of the original are the
+  first method.
+- **Scenery and frills:** `kind` and `unknown_f` of terrain entries and the 0x11 choice
+  `flag` (§4.2–§4.3); scene `flag_a` (§5.1); what fills the seed-A list (§6.3); the
+  `spacing_3d` variant and the static-entity filter mode offline (§7.4); frill fade,
+  terrain-colour blend and sway (§8.3); the frill pass's footprint markers (§8.2); the
+  meaning of the eight LOD-class values and imposters (§9.1, `walker.md` §11.9:
+  `DistantImposters`, prefix 0x27, `Render_FarViewDistance`); wind constants (§10); whether
+  the kind-5 sector records feed frills (§15 item 12).
+- **Water:** the near-water geometry builder, reflection pass, permutation choice, depth,
+  flow and foam, draw order (§8.1, §8.4); the `extra` DIDs and `value` of water entries
+  (§4.2); fog-zone modes (§5, moot in this install); the full kind-5 layout (§9,
+  `landblock.md` §7).
+- **Lighting:** the engine's sun-shadow values (colour, range, cascades, fade, §9); how sun
+  colour and brightness form the main light and its specular colour (§8.1); how an
+  object's light list is built, the run-time light scale and baked landscape lights
+  (§8.3, §8.5); the two-colour-layer combine (§5.2); glow and bloom, cube environment
+  maps; projector lights and point-light shadows; the channel order of property colours
+  (§4.4).
+- **Environment:** how the day type is set (§11.2); the remaining keyframe and sky-object
+  fields and how tints and curves blend (§5.3–§5.4, §11.3–§11.4); the game-time fields and
+  the clock epoch (§6); sky draw order, depth, scale and fog (§12); region-descriptor field
+  4 (§3.1).
+- **Landblock:** vertex-flag bits 1–6 (§3.6), the box list (§3.10), block-map key
+  0x10000012 (§5.6), and how ceiling vertices at or below the floor are drawn (§3.5).
+- **Material** (low priority): render-state byte 6, the use of flag 4007, edge softening,
+  and the effect-family parameters for wind and snow (`material.md` §17).
+
+<a id="m4-5-exit"></a>
+**Exit criteria** (real-data criteria run with `TESSERA_GAME_DIR` set, release builds;
+results recorded as pass/fail and counts)
+
+1. **Decode.** Every record of each new kind decodes to its last byte, with no failures:
+   - 0x19: 5 / 5, with 4,688 entries;
+   - 0x12: 5 / 5 and 0x11: 5 / 5;
+   - 0x02: 3,402 / 3,402;
+   - 0x66: 16,819 / 16,819 and 0x01: 1,057 / 1,057;
+   - 0x16: 5 / 5 (125 listed entries) and 0x17: 5 / 5;
+   - 0x15: 1 / 1 (30,184 bytes), 0x1A: 963 / 963, 0x35: 1 / 1 (180 bytes), and 0x32: 1 / 1
+     (32 classes);
+   - 0x0F: 7 / 7 with all eight table slots.
+
+   The M2 decoders still decode 0x31 13,781, 0x30 24,094 and 0x2B 510. The quantised-tree
+   code of every host walks without an unknown opcode or an out-of-range jump (CO4): all
+   0x66 records and cell physics meshes, the 58,546 terrain trees, the ceiling trees and
+   the mesh levels. The M3 landblock tests still pass with the new height rule, and so does
+   `reference_locations` at its tolerances (or the checklist gets an erratum with the
+   recomputed values).
+2. **Invariants** hold on the real data, each run as a gated test:
+   - `terrain-texturing.md` §3.5 (1–6) and `scenery.md` SC7: every layer key is in its
+     region's table.
+     All 646,073 masks of drawn layers are A8. The 5,441 light-map properties name 5,422
+     DXT1 surfaces;
+   - `scenery.md` SC1–SC6, SC9 and SC10. The §12 census is reproduced: 11,921,024
+     vertices with a group scene, 11,854,954 with a frill layer, and 7,295 without a scene;
+   - `collision.md` CO1–CO11, including 5,310,848 ceiling triangles on the bit-0 diagonal
+     and 2,750,134 hole triangles. The §9.3 blocker classification is reproduced (82,139
+     undrawn mesh blockers among 97,688 undrawn blocking SEDs). Terrain render triangles
+     equal collision triangles in all 390,150 landblocks;
+   - `water.md` WA1–WA5: the §6.2 rule finds 89,913 wet landblocks (67,175 fully
+     submerged), and all 12,925 distant sectors agree with it;
+   - `environment.md` EV1–EV6.
+3. **Determinism.** Scenery generation for all 78,114 landblocks with a non-zero coarse grid
+   is run twice: with 1 worker and with the default worker count, in different landblock
+   orders. The object lists (DID, position, rotation, scale) are identical bit for bit
+   (SC8). The only exception is frill thinning at a density below 1, which is random by
+   design. The synthetic worked examples are reproduced exactly as tests:
+   - `scenery.md` §14 (hash values, orientations, the plane band, the clearance query) and
+     SC11;
+   - `collision.md` §14;
+   - `water.md` §12;
+   - `environment.md` §14;
+   - `terrain-texturing.md` §14;
+   - `lighting.md` §14.
+
+   With the same inputs and fixed step, a controller run gives the same trajectory bit for
+   bit. So do the water state and the blended sky values at a given game time.
+4. **Walking on collision.** The scripted walks of `m4-5-visual.md` (at least 24, at spots
+   the dirty room records as coordinates with expected outcomes) all pass in an automated
+   `--walk-path` test, with no capsule penetration deeper than 0.01 m:
+   - at least 4 walls of placed buildings block the walker;
+   - at least 2 undrawn blockers block it;
+   - at least 3 generated trees or rocks block it;
+   - it climbs at least 3 steps no higher than the step-up height;
+   - it slides on, and does not climb, at least 2 slopes steeper than walkable;
+   - it enters at least 3 interiors through their doorways, reporting the expected cell;
+   - it walks at least 2 cave floors under a ceiling;
+   - in at least 3 water entries it wades, then swims at the depth of `water.md` §7.4;
+   - at least 2 areas covered only by frills do not block it.
+
+   A seeded soak of at least 1,000 random walks of 60 s simulated time each, spread over
+   the land landblocks of all six regions, ends with 0 fall-throughs (feet more than 0.05 m
+   below the terrain, or below the floor of the cell that contains them) and 0 non-finite
+   states.
+5. **Frame time** on the reference machine
+   ([reference-machine.md](perf/reference-machine.md), its rule 1 for recording), with
+   every M4.5 system on and the default-settings profile of `walker.md` §11.8:
+   - The M3 baseline flights M3-a, M3-b and M3-d have 0 frames over 50 ms and no near-ring
+     holes, and the residency budget holds. Scenery generation and collision building run
+     on the workers.
+   - At 5 walk spots from the checklist (dense forest with frills, a town, a lake shore, an
+     interior, a vista at the full landscape extent), 60 s each, headless 1920 × 1080
+     unpaced: p99 ≤ 16.7 ms.
+   - M4 criterion 4 (50 animated characters at 60 fps) still passes with these systems on.
+6. **Visual checklist.** Every row of `docs/checklists/m4-5-visual.md` passes on Tessera's
+   renders. The rows cover:
+   - terrain layers: at least 12 spots over the six regions, including roads,
+     normal-mapped and specular layers, light-mapped blocks and ceiling chunks;
+   - scenery: at least 10 spots;
+   - frills: at least 5 spots;
+   - water: at least 8, including sea level, rivers, lava, placed water and distant water;
+   - sky and fog: 4 times of day under at least 3 sky keys, and interior fog;
+   - lighting: at least 6, including sun shadows, point lights at night, emissive, glow and
+     specular, and blended surfaces.
+
+   As in M3 and M4, the owner then compares the rows with the original client at the same
+   coordinates (and game time, where it can be set) and records the result. Screenshots
+   stay private.
+7. **Golden images.** Each new pipeline has a synthetic golden image that passes on Mesa
+   lavapipe and on the reference GPU: a 3 × 3 splatted patch with masks and a normal map, a
+   water patch, the sky at two times, a frill sector, and a lit mesh with a point light,
+   shadow and fog.
+8. **Fuzzing.** There is a fuzz target for each new decoder (0x19, 0x11, 0x12, 0x02, 0x66,
+   0x01, 0x16, 0x17, 0x15, 0x1A, 0x35, 0x32, and 0x08 if done), for the tree reader, for
+   scenery generation from hostile tables (cycles, depth cap, counts), and for a controller
+   step against hostile geometry. `tools/fuzz-smoke.sh -t 60` finds nothing.
+9. **Specs and docs.** Every spec in the table above is Accepted with no blocking OPEN.
+   ARCHITECTURE §3.1, §10 and §20.3 are updated as listed in the deliverables.
 
 ---
 

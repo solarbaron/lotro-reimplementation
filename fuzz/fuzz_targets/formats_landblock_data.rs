@@ -66,14 +66,19 @@ fn payload(mode: u8, rest: &[u8]) -> Vec<u8> {
             put_grid(&mut out, seed.wrapping_add(1));
             out.push(0);
         }
-        // Ceiling with a tree whose code length and build byte come from the input.
+        // Ceiling with a tree whose code length and code come from the input. Bit 0x20 of
+        // the length byte appends one more input byte as the `build_byte`, which a tree has
+        // iff the stamp is >= 38 (landblock.md §3.9); with the bit clear, trees of the
+        // older layout (stamps <= 33, or the stamp-less fallback) can be accepted too.
         _ => {
             out.push(1);
             put_grid(&mut out, seed.wrapping_add(1));
             out.push(1);
             out.extend_from_slice(&[0; 16]);
-            let len = usize::from(rest.first().copied().unwrap_or(0) % 32);
-            let take = (1 + len + 1).min(rest.len());
+            let first = rest.first().copied().unwrap_or(0);
+            let len = usize::from(first % 32);
+            let build = usize::from(first & 0x20 != 0);
+            let take = (1 + len + build).min(rest.len());
             out.extend_from_slice(&(len as u32).to_le_bytes());
             out.extend_from_slice(rest.get(1..take).unwrap_or(&[]));
             rest = rest.get(take..).unwrap_or(&[]);
@@ -113,7 +118,8 @@ fuzz_target!(|input: &[u8]| {
         let h = d
             .terrain_height(x, y)
             .expect("finite coordinates have a height");
-        assert!(h.is_finite() && (0.0..2000.0).contains(&h));
+        // The largest stored sample, 65,535, is 2,000 units (landblock.md §3.4).
+        assert!(h.is_finite() && (0.0..=2000.0).contains(&h));
     }
     for i in 0..32 {
         assert!(d.quad_triangles(i, 31 - i).is_some());

@@ -132,9 +132,21 @@ fuzz_target!(|data: &[u8]| {
             let _ = HEADER_READ_LEN;
         }
         2 => {
-            // Several archives' records, split at 0xFF bytes.
-            let entries: Vec<ContentEntry> =
-                rest.split(|&b| b == 0xFF).take(8).map(records).collect();
+            // Several archives' records, each behind a u16 LE length (cut to what is
+            // left). A length prefix rather than a separator byte, so records may hold any
+            // byte: iteration runs are negative i32s whose top byte is 0xFF, and stamps
+            // are arbitrary.
+            let mut entries: Vec<ContentEntry> = Vec::new();
+            let mut rest = rest;
+            while entries.len() < 8 {
+                let Some((len, tail)) = rest.split_first_chunk::<2>() else {
+                    break;
+                };
+                let len = usize::from(u16::from_le_bytes(*len)).min(tail.len());
+                let (rec, tail) = tail.split_at(len);
+                entries.push(records(rec));
+                rest = tail;
+            }
             let fp = ContentFingerprint::compute(&entries);
             assert_eq!(fp.sha256.len(), 64);
             assert!(fp.text.ends_with('\n'));

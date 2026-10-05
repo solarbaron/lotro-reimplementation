@@ -6,8 +6,11 @@
 //! composition and the box-filter downscale.
 //!
 //! Input layout: byte 0 selects the mode. Text modes take the rest as (lossy) UTF-8.
-//! The mesh mode takes the rest as a mesh record; the texture mode builds small images
-//! (of consistent or deliberately wrong pixel length) from the rest.
+//! The raw mesh mode takes the rest as a mesh record. The synthetic mesh mode reads the
+//! rest as a description for `tessera_mesh::synth`, encodes it, damages it with an optional
+//! cut and decodes it, so runs reach the static-object conversion without a seed corpus
+//! (a raw record almost never decodes). The texture mode builds small images (of
+//! consistent or deliberately wrong pixel length) from the rest.
 //!
 //! Nothing may panic. Parsed paths have finite ends inside the region grid; normalised
 //! names contain only lowercase alphanumerics and single spaces; sanitised lines are short
@@ -30,6 +33,7 @@ use parse::{
     MAX_HUD_LINE, match_score, normalize_name, parse_fly_path, parse_path_point, sanitize_line,
 };
 use tessera_formats::RgbaImage;
+use tessera_mesh::synth::{LevelSpec, MeshSpec, SubmeshSpec};
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh};
 use tessera_render::MeshConfig;
 
@@ -40,6 +44,18 @@ const LIMITS: GeometryLimits = GeometryLimits {
     max_bytes: 8 << 20,
     max_amplification: 64,
 };
+
+/// Vertex formats the synthetic mode draws from.
+const FORMATS: [u32; 8] = [
+    0x0000_0112,
+    0x0000_0152,
+    0x3000_0112,
+    0x3000_0152,
+    0x3000_0372,
+    0x3001_0112,
+    0x3002_0252,
+    0x3004_0152,
+];
 
 const GRID: f64 = 255.0 * 160.0;
 
@@ -77,8 +93,10 @@ fn mesh(record: &[u8]) {
         return;
     };
     let Some(level) = geometry::display_level(&mesh) else {
+        assert!(mesh.levels.is_empty());
         return;
     };
+    assert!(level < mesh.levels.len());
     let Ok(geo) = mesh.level_geometry(level, &LIMITS) else {
         return;
     };
@@ -90,6 +108,49 @@ fn mesh(record: &[u8]) {
         assert!(u64::from(s.first_index) + u64::from(s.index_count) <= data.indices.len() as u64);
     }
     let _ = data.prepare(&MeshConfig::default());
+}
+
+/// A mesh record described by `data`: one to four submeshes, split into a detail level and
+/// an optional proxy level (in either order of draws), then cut short by up to 64 KiB.
+fn synth(data: &[u8]) -> Option<Vec<u8>> {
+    let b = |i: usize| data.get(i).copied().unwrap_or(0);
+    let n = usize::from(b(0) % 4) + 1;
+    let submeshes = (0..n)
+        .map(|i| SubmeshSpec {
+            format: FORMATS[usize::from(b(1 + i)) % FORMATS.len()],
+            vertices: 3 + u32::from(b(5 + i) % 40),
+        })
+        .collect();
+    #[allow(clippy::cast_possible_truncation)] // n <= 4
+    let mut draws: Vec<u32> = (0..n as u32).collect();
+    if b(9) & 1 == 1 {
+        draws.reverse();
+    }
+    let split = usize::from(b(10)) % n;
+    let detail = LevelSpec::detail(draws.get(..=split)?.to_vec());
+    let proxy = draws
+        .get(split + 1..)
+        .filter(|d| !d.is_empty())
+        .map(|d| LevelSpec::proxy(d.to_vec()));
+    // Bit 2 puts the proxy level first, so `display_level` has to look past it.
+    let levels = match proxy {
+        Some(p) if b(9) & 2 != 0 => vec![p, detail],
+        Some(p) => vec![detail, p],
+        None => vec![detail],
+    };
+    let spec = MeshSpec {
+        did: 0x0600_0001,
+        flags: 1,
+        submeshes,
+        levels,
+        build_byte: b(11) & 1 == 1,
+    };
+    let mut bytes = spec.build().ok()?.to_bytes().ok()?;
+    let cut = usize::from(u16::from_le_bytes([b(12), b(13)]));
+    if cut != 0 && cut < bytes.len() {
+        bytes.truncate(bytes.len() - cut);
+    }
+    Some(bytes)
 }
 
 fn image(bytes: &[u8], w: u32, h: u32, consistent: bool) -> RgbaImage {
@@ -135,9 +196,14 @@ fuzz_target!(|data: &[u8]| {
     let Some((&mode, rest)) = data.split_first() else {
         return;
     };
-    match mode % 3 {
+    match mode % 4 {
         0 => text(rest),
         1 => mesh(rest),
-        _ => textures(rest),
+        2 => textures(rest),
+        _ => {
+            if let Some(record) = synth(rest) {
+                mesh(&record);
+            }
+        }
     }
 });

@@ -7,9 +7,17 @@
 # on). Without them it builds the same targets on the stable toolchain with libFuzzer's
 # coverage instrumentation passed as plain codegen flags (no sanitizer), which is enough to
 # find panics, assertion failures, overflows (overflow checks are on) and memory blow-ups.
+# The nightly toolchain is only detected (`rustup toolchain list`), never installed.
+#
+# Memory limits: every run gets -rss_limit_mb=2048 (resident memory, polled by libFuzzer).
+# libFuzzer enforces -malloc_limit_mb=1024 (one allocation too large) only through the
+# sanitizer's malloc hooks, so only on the cargo-fuzz path. The stable path has no such
+# hooks; it caps the address space instead (`ulimit -v`, 3 GiB = the two limits together),
+# so that a large reservation that is never touched still fails, as an allocation failure
+# (abort) that libFuzzer reports as a crash.
 #
 # Usage: tools/fuzz-smoke.sh [-t SECONDS] [-j JOBS] [--stable] [TARGET...]
-#   -t SECONDS  run time per target (default 30)
+#   -t SECONDS  run time per target, at least 1 (default 30)
 #   -j JOBS     targets run at the same time (default 1)
 #   --stable    force the stable-toolchain path even if cargo-fuzz is installed
 #   TARGET...   targets to run (default: all, from `[[bin]]` entries in fuzz/Cargo.toml);
@@ -37,20 +45,27 @@ while [ $# -gt 0 ]; do
         -t) secs="${2:?-t needs seconds}"; shift 2 ;;
         -j) jobs="${2:?-j needs a job count}"; shift 2 ;;
         --stable) force_stable=1; shift ;;
-        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,/^# Exit status/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "fuzz-smoke: unknown option $1" >&2; exit 2 ;;
         *) targets+=("$1"); shift ;;
     esac
 done
-case "$secs" in ''|*[!0-9]*) echo "fuzz-smoke: -t needs a whole number" >&2; exit 2 ;; esac
-case "$jobs" in ''|0|*[!0-9]*) echo "fuzz-smoke: -j needs a positive number" >&2; exit 2 ;; esac
+# Both must be positive: libFuzzer reads -max_total_time=0 as "no time limit".
+case "$secs" in ''|*[!0-9]*) echo "fuzz-smoke: -t needs a positive whole number" >&2; exit 2 ;; esac
+case "$jobs" in ''|*[!0-9]*) echo "fuzz-smoke: -j needs a positive number" >&2; exit 2 ;; esac
+secs=$((10#$secs))
+jobs=$((10#$jobs))
+[ "$secs" -gt 0 ] || { echo "fuzz-smoke: -t needs a positive whole number" >&2; exit 2; }
+[ "$jobs" -gt 0 ] || { echo "fuzz-smoke: -j needs a positive number" >&2; exit 2; }
 named=${#targets[@]}
 if [ "$named" -eq 0 ]; then
     while IFS= read -r t; do targets+=("$t"); done < <(
         awk '/^\[\[bin\]\]/{b=1;next} b&&/^name *=/{gsub(/.*= *"|".*/,"");print;b=0}' "$fuzz/Cargo.toml")
 fi
 
-limits=(-rss_limit_mb=2048 -malloc_limit_mb=1024)
+rss_mb=2048
+malloc_mb=1024
+limits=(-rss_limit_mb="$rss_mb" -malloc_limit_mb="$malloc_mb")
 # Honour the configured target dir instead of hard-coding one inside the checkout.
 base="$(cd "$fuzz" && cargo metadata --format-version 1 --no-deps 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' 2>/dev/null)" \
@@ -65,8 +80,18 @@ else
     bin_args=(--bins)
 fi
 
-if [ "$force_stable" = 0 ] && command -v cargo-fuzz >/dev/null 2>&1 \
-    && cargo +nightly --version >/dev/null 2>&1; then
+# Whether a nightly toolchain is installed, without side effects: `cargo +nightly` would
+# make rustup download one when it is missing.
+have_nightly() {
+    if command -v rustup >/dev/null 2>&1; then
+        # `+nightly` means the undated channel (`nightly-<host>`); dated ones do not count.
+        rustup toolchain list 2>/dev/null | grep -Eq '^nightly-[a-z]'
+    else
+        RUSTUP_AUTO_INSTALL=0 cargo +nightly --version >/dev/null 2>&1
+    fi
+}
+
+if [ "$force_stable" = 0 ] && command -v cargo-fuzz >/dev/null 2>&1 && have_nightly; then
     mode="cargo-fuzz"
     if [ "$named" -gt 0 ]; then
         for t in "${targets[@]}"; do (cd "$fuzz" && cargo +nightly fuzz build "$t") || exit 2; done
@@ -93,12 +118,13 @@ run_one() {
     if [ -f "$fuzz/dict/$t.dict" ]; then extra+=(-dict="$fuzz/dict/$t.dict"); fi
     # mlua makes one-time allocations while a plugin loads that LeakSanitizer cannot trace
     # back to the long-lived plugin manager (fuzz_targets/script_pattern.rs). Only matters
-    # with cargo-fuzz (AddressSanitizer); the stable path has no leak checker.
+    # with cargo-fuzz (AddressSanitizer); the stable path has no leak checker. Leak checks
+    # are turned off in LeakSanitizer only: libFuzzer's own -detect_leaks=0 would also skip
+    # installing the malloc hooks that enforce -malloc_limit_mb.
     local asan="${ASAN_OPTIONS:-}"
     case "$t" in
         script_pattern)
-            extra+=(-detect_leaks=0)
-            asan="${asan:+$asan:}detect_leaks=0" ;; # also the at-exit check
+            asan="${asan:+$asan:}detect_leaks=0" ;; # per-input and at-exit checks
     esac
     start=$(date +%s)
     if [ "$mode" = "cargo-fuzz" ]; then
@@ -106,9 +132,12 @@ run_one() {
             && cargo +nightly fuzz run "$t" -- -max_total_time="$secs" "${limits[@]}" \
             -print_final_stats=1 "${extra[@]}") >"$log" 2>&1 || rc=$?
     else
-        "$CARGO_TARGET_DIR/$host/release/$t" "$fuzz/corpus/$t" \
+        # No malloc hooks here (see the header): cap the address space instead, in a
+        # subshell so the cap stays with this run.
+        (ulimit -v $(((rss_mb + malloc_mb) * 1024)) \
+            && exec "$CARGO_TARGET_DIR/$host/release/$t" "$fuzz/corpus/$t" \
             -max_total_time="$secs" "${limits[@]}" -print_final_stats=1 \
-            -artifact_prefix="$fuzz/artifacts/$t/" "${extra[@]}" >"$log" 2>&1 || rc=$?
+            -artifact_prefix="$fuzz/artifacts/$t/" "${extra[@]}") >"$log" 2>&1 || rc=$?
     fi
     end=$(date +%s)
     echo "$rc $((end - start))" >"$log.status"

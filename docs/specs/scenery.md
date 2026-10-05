@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), 2026-10-05: changes requested (CLEAN_ROOM.md §5.3; issues listed in the review reply). Re-review 2026-10-05: changes requested (repairs of the first round verified; new issues on §8.1–§8.3 frill records of non-frill objects and inline OPENs in §4.2, §5.1, §8.3 listed in the review reply) |
+| **Review record** | Claude review session (spec-writer agent), 2026-10-05: changes requested (CLEAN_ROOM.md §5.3; issues listed in the review reply). Re-review 2026-10-05: changes requested (repairs of the first round verified; new issues on §8.1–§8.3 frill records of non-frill objects and inline OPENs in §4.2, §5.1, §8.3 listed in the review reply). Third review 2026-10-06: changes requested. The repairs of the re-review are verified, and S4, S7, S26, S30 (the 452 column) and §5.4 reproduce exactly on the install. Open issue: the property counts of §8.3 (1,515 frill-layer objects) and §9 (2,746 objects) cover only each 0x47 record's own property set. Resolved along the 0x47 parent chain (`entity-descriptor.md` E22 order), they become `Entity_CreationType` 1,515 and 2,746, `Render_Frill_AnimationIntensity` 974, and `Render_LODClass` 1,042 and 2,441. The spec should label which counts it gives, and state (BIN, or OPEN with a Tessera Decision) whether the per-object reads of §8.3 rules 6–7 and the class-2 default of §9 follow that chain. Minor: cite `mesh.md` §6.1 for the bounding box in §8.5 step 5, say which UV sets are copied, and replace a quoted client phrase in §8.5 step 1 with plain words. Repaired 2026-10-06 (change log). Fourth review 2026-10-06: changes requested. The repairs of the third review are verified. §9.2 rules 1–6, its Tessera Decision, S31–S35, SC14, SC15, §8.5 steps 1 and 5 and the own-set/resolved labelling are complete and implementable. An independent probe using the repository's crates read all 4,261 objects, their parents and every 0x78 extra set. It reproduces every own and resolved count of §8.3, §9, §9.2 and §10 (1,515: 82 with a parent, 45/6, 68/0, 54/2, 881 animated; 2,746: 115 with a parent, 65/12, 61/13, `Render_CastLandscapeShadows` 2,147/2,241, clearance lists 1,257/1,325 and 296/354, `Render_ImposterName` 840/844; the 452 have no parent; 1,043 records name one or two extra sets, none with a `Render_*` or `Entity_*` property). Open issues: (1) §9.2 intro and the S1 OBS row say the 197 objects with a parent have "28 distinct parents". They have **156** distinct parents. 128 of them are scene objects themselves and 28 are not, so the 28 is the count of extra records (4,289 = 4,261 + 28). None of the 156 has a parent of its own, so the chain-depth conclusion holds. Correct both sentences. (2) Minor: the §9 `Render_LODClass` value list reads as descending but skips two classes of 121 / 121 each (0x10000010 and `SmallDecor`) before `Bush` 107. List them, or say that the list is a selection. Repaired 2026-10-06 (change log). Fifth review, Claude review session (spec-writer agent), 2026-10-06: **passed; status Review → Accepted.** Both issues of the fourth review are repaired and verified by an independent read-only probe (the repository's crates, all records): the 197 objects with a parent have 156 distinct parents, 128 of them scene objects and 28 not, 4,289 records in all, none of the 156 with a parent, 1,043 records naming extra sets; the eleven `Render_LODClass` values of §9 and their own/resolved counts match exactly (sums 2,376 and 2,441) and the labels match enum mapper 0x2300008D. Further spot checks reproduced exactly: (1) S7/§5.1: 3,402 scene records, zero leftover bytes, `group_count` 1/0/2 in 3,398/3/1, frill layer in 2,334, 180 empty, all with frequency 1.0, 2,320 with zero displacement, 8,031 frill-layer children all scene references; (2) §5.2: 62,922 object children, 11,033 scene references, 66,191 nodes (63,846 in groups); (3) §5.3 and SC10: `frequency` ≥ 1 in 25,582 (1.0 in 25,450), `clearance` 0 in 49,405 (all with the SC10 tuple), 0.5 in 15,798, `clear_aspect_tol` 360 in all, `height_mode` 0/1 in 64,789/1,402, `align_to_slope` in 38,992; (4) S5/SC2: 5 records 0x11 with zero leftover bytes, 91 – 1,054 entries, 3,320 choices all with flag 1, 2,472 named scenes; (5) §5.4/S24: 4,261 objects, 2,981 through groups, 1,515 through frill layers (1,512 from named scenes only), 235 in both; and every own/resolved count of §8.3, §9 and §9.2 (82 and 115 with a parent; 45/6, 68/0, 54/2, 65/12, 61/13; `SmallDecor` 746/786; `SharedClientOnlyImmobile` 1,176/1,230; `Render_LODCrossFade` true in 14; `Render_FarViewDistance` 1,000 – 2,000). §5.3 checklist satisfied: functional facts in prose and tables only, no code or pseudo-code, no game text, keys or hostnames, names only for interoperability, provenance marks on every fact, BIN rows (a)–(n) with questions and the M1–M3 justification, unknowns as OPEN callouts with Tessera Decisions, no closed gate. |
 | **Implements into** | `crates/formats` (decoders for the region scene tables 0x11, 0x12 and scene records 0x02; the terrain-type table 0x19 decoder of `terrain-texturing.md` §3 and the LOD-class record 0x32 decoder of `environment.md` §9.1, which own those layouts; fuzz targets for each), `crates/world` (per-landblock scenery generation, §7), a frill (grass) layer with its own ring (§8, `crates/world` + `crates/render`), `crates/render` (instanced drawing of scenery and frill objects), `apps/explorer` (scene and scenery views), `apps/client` |
-| **Companion specs** | [`landblock.md`](landblock.md) §3.3–§3.8 (height grid, coarse 17 × 17 grid, surface layers and quad grid), §4.5 (static entities), §5 (block maps). [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19, full entry layout), §13 (height constant). [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh and triangle keys), §6.6 (terrain triangles near a point), §9.4 (collision of generated scenery). [`water.md`](water.md) §6.2–§6.4 (per-landblock water surface). [`environment.md`](environment.md) §3 (region descriptor slots), §7.4 (`WindSpeed`), §9.1 (LOD-class record 0x32, owner of its layout). [`entity-descriptor.md`](entity-descriptor.md) (hand-placed static entities). [`setup.md`](setup.md) (0x47 → 0x1F → 0x04 → 0x06 chain). [`coordinates.md`](coordinates.md) §11 (axes, quaternion convention, compass heading). [`property-system.md`](property-system.md) (property sets in 0x47 records). [`records.md`](records.md) §1 (VLE, TSize). |
+| **Companion specs** | [`landblock.md`](landblock.md) §3.3–§3.8 (height grid, coarse 17 × 17 grid, surface layers and quad grid), §4.5 (static entities), §5 (block maps). [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19, full entry layout), §13 (height constant). [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh and triangle keys), §6.6 (terrain triangles near a point), §9.4 (collision of generated scenery). [`water.md`](water.md) §6.2–§6.4 (per-landblock water surface). [`environment.md`](environment.md) §3 (region descriptor slots), §7.4 (`WindSpeed`), §9.1 (LOD-class record 0x32, owner of its layout). [`entity-descriptor.md`](entity-descriptor.md) (hand-placed static entities). [`setup.md`](setup.md) (0x47 → 0x1F → 0x04 → 0x06 chain; §3.1 parent 0x47 records, §4.4 extra sets, used by §9.2). [`mesh.md`](mesh.md) §6.1 (stored vertex-block bounding box, §8.5). [`coordinates.md`](coordinates.md) §11 (axes, quaternion convention, compass heading). [`property-system.md`](property-system.md) (property sets in 0x47 records). [`records.md`](records.md) §1 (VLE, TSize). |
 
 ---
 
@@ -51,8 +51,8 @@ counts.
 
 | Tag | Source |
 |---|---|
-| OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratchpad: **all** 5 records of each of the prefixes 0x11, 0x12, 0x17 and 0x19, **all** 3,402 records 0x02, the coarse grid, heights and surface quad grid of **all** 390,150 landblock-data records, and **all** 4,261 distinct 0x47 records referenced by scenes (properties read with the repository's own property-set decoder; meshes resolved with its setup resolver and mesh summary). Second pass, same date: the record 0x32000000 (§9.1) and the clearance fields of all 66,191 placement nodes (§5.3, SC10). Third pass, same date (answering the review): the default entry of all 5 records 0x12 (§4.2), the empty scenes and frill-layer children of all 3,402 records 0x02 (§5.4), the `frequency` census (§5.3), the objects reachable through frill layers (§5.4, §8.2). |
-| BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, compiled 2026-09-27), disassembled in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: (a) which record kinds and fields the per-vertex grid indexes and how a scene is chosen; (b) the scene-record grammar and the meaning of each placement-node field; (c) the placement algorithm (seeds, hash, displacement, rotation, scale, height, slope, terrain-type, spacing and bounds checks); (d) how frills are produced and the frill-engine defaults. Second pass, same build, 2026-10-05: (e) the orientation conventions (sign of the heading, axes of the second and third angles, the frame built by `align_to_slope`); (f) which terrain triangle supplies the plane, what the "physics clearance" step queries and tests, and which already-placed objects the spacing step compares against; (g) the frill draw distance per level, fades, reduction and fade-in; (h) which client record type the DID range 0x32… belongs to. Third pass, same build, 2026-10-05: (i) the comparison that picks the terrain triangle when a point lies on a quad's diagonal, and whether the client's general terrain height and terrain plane queries at a point use the same rule; (j) which frill layers the frill pass processes and how the "under a frill layer" state is kept. Why M1–M3 were not enough: procedural placements are **not stored** anywhere in the data (only the parameters are), so neither file observation nor published sources can give the generation rule; no public decoder of these records exists; frame captures (M3) would show results but not the seeds or rules, and none is available to this session. No network, login, launcher or anti-tamper code was examined. |
+| OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratchpad: **all** 5 records of each of the prefixes 0x11, 0x12, 0x17 and 0x19, **all** 3,402 records 0x02, the coarse grid, heights and surface quad grid of **all** 390,150 landblock-data records, and **all** 4,261 distinct 0x47 records referenced by scenes (properties read with the repository's own property-set decoder; meshes resolved with its setup resolver and mesh summary). Second pass, same date: the record 0x32000000 (§9.1) and the clearance fields of all 66,191 placement nodes (§5.3, SC10). Third pass, same date (answering the review): the default entry of all 5 records 0x12 (§4.2), the empty scenes and frill-layer children of all 3,402 records 0x02 (§5.4), the `frequency` census (§5.3), the objects reachable through frill layers (§5.4, §8.2). Fourth pass, 2026-10-06 (answering the re-review): the group objects that the frill pass meets after a frill layer (§8.1), the part, detail-level and draw-entry census of all 1,967 objects that can become frill records (meshes read with the repository's mesh decoder; §8.3), and the properties of the 452 objects among them that no frill layer reaches (§8.3). Fifth pass, 2026-10-06 (answering the third review): the properties of all 4,261 objects resolved along their 0x47 parent chains (197 objects have a parent; 156 distinct parents, 128 of them scene objects themselves and 28 not, none of which has a parent of its own), and the 0x78 extra sets named by all 4,289 records involved, the 4,261 objects and the 28 parents that are not scene objects (1,043 of these records name one or two; every set exists and none holds a `Render_*` or `Entity_*` property) (§9.2). |
+| BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, compiled 2026-09-27), disassembled in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: (a) which record kinds and fields the per-vertex grid indexes and how a scene is chosen; (b) the scene-record grammar and the meaning of each placement-node field; (c) the placement algorithm (seeds, hash, displacement, rotation, scale, height, slope, terrain-type, spacing and bounds checks); (d) how frills are produced and the frill-engine defaults. Second pass, same build, 2026-10-05: (e) the orientation conventions (sign of the heading, axes of the second and third angles, the frame built by `align_to_slope`); (f) which terrain triangle supplies the plane, what the "physics clearance" step queries and tests, and which already-placed objects the spacing step compares against; (g) the frill draw distance per level, fades, reduction and fade-in; (h) which client record type the DID range 0x32… belongs to. Third pass, same build, 2026-10-05: (i) the comparison that picks the terrain triangle when a point lies on a quad's diagonal, and whether the client's general terrain height and terrain plane queries at a point use the same rule; (j) which frill layers the frill pass processes and how the "under a frill layer" state is kept. Fourth pass, same build, 2026-10-06: (k) what the frill engine does with a frill record: whether it filters records by object property, creation type or part count, which geometry of the object it draws, and how it stores the vertices of a sector; (l) which graphics back ends force the frill terrain-colour intensity to 0. Fifth pass, same build, 2026-10-06: (m) how the client resolves a property of an object along its 0x47 chain, which reads of `Entity_CreationType`, `Render_LODClass` and the frill per-object properties go through that resolution, and what an object without `Render_LODClass` gets; (n) which texture-coordinate set the frill bake copies. Why M1–M3 were not enough: procedural placements are **not stored** anywhere in the data (only the parameters are), so neither file observation nor published sources can give the generation rule; no public decoder of these records exists; frame captures (M3) would show results but not the seeds or rules, and none is available to this session. No network, login, launcher or anti-tamper code was examined. |
 | LB | [`landblock.md`](landblock.md) (height grid, coarse grid layout, surface chunks, block maps). |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19 decoded to the last byte), §13 (height constant). |
 | COL | [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh, triangle keys), §6.6 (terrain triangles near a point), §9.4. |
@@ -94,6 +94,16 @@ data together but not proven for every case; **Reported** = third-party only.
 | S23 | Frill option defaults, including terrain-colour blending on and the dial-back halving (§8.4) | BIN (g) | BIN |
 | S24 | The frill pass processes the frill layer of every scene it instantiates, including scenes reached through scene references; the "under a frill layer" state lasts to the end of the vertex; the frill pass uses the landblock's generated list (§8.2) | BIN (j); OBS (1,515 objects reachable this way, 1,512 through the frill layers of the 2,472 scenes named by 0x11 tables alone) | BIN; counts Confirmed |
 | S25 | The client's general terrain height and terrain plane queries at a point use the triangle choice of §7.4 step 8, not the geometric triangle of `landblock.md` §3.11 (§7.4 step 8) | BIN (i) | BIN |
+| S26 | Frill records come from objects inside a frill layer (1,515 distinct) and from group objects that the frill pass meets after a frill layer in the same vertex (474 distinct in 84 named scenes, 452 of them not among the 1,515); 1,967 objects in all (§8.1) | BIN (j) (rule); OBS fourth pass (counts) | Rule BIN; counts Confirmed |
+| S27 | The frill engine filters no frill record by property, creation type or part count; per object it creates one source entity and draws only the first draw entry of detail level 0 of the model's first part (§8.5 steps 1–3) | BIN (k) | BIN |
+| S28 | The frill engine bakes every record of a sector into one vertex and one index buffer with 16-bit indices, offset by a running vertex count kept in 16 bits; per-vertex sway weight from the vertex block's bounding box (§8.5 steps 5–6) | BIN (k) | BIN |
+| S29 | The frill terrain-colour intensity is 0 under the Direct3D 9 back end built into the executable and under the OpenGL back end (§8.3 rule 7) | BIN (l) | BIN |
+| S30 | Mesh and property census of the 1,967 objects that can become frill records (§8.3); property counts over each record's own set (the resolved counts are S33) | OBS fourth pass | Confirmed |
+| S31 | Property lookup on a descriptor: the record's own set (its 0x78 extra sets in list order, the embedded set on top), then the parent 0x47 record by the same rule, recursively; the nearest level that has the property wins. Building an entity's property set from a descriptor merges the chain with the same precedence (§9.2 rules 1–3) | BIN (m) | BIN |
+| S32 | The client reads `Entity_CreationType` for generated objects and `Render_LODClass` with the lookup of S31; the frill engine reads its per-object values through the client's general property lookup on the source entity (§9.2 rules 4–5) | BIN (m); that the frill source entity holds the merged set of S31: Probable | BIN; Probable for the frill source entity |
+| S33 | Property counts of §8.3, §9 and §10, over each record's own set and resolved along the chain (§9.2) | OBS fifth pass | Confirmed |
+| S34 | In the one traced reader of `Render_LODClass`, an object with no class anywhere on its chain gets no class value; the registry default (2) is not applied there (§9.2) | BIN (m) | BIN |
+| S35 | The frill bake copies only texture-coordinate set 0 of each vertex (§8.5 step 5) | BIN (n) | BIN |
 
 ---
 
@@ -197,9 +207,9 @@ Terrain entry (the default entry and every entry of the list have this one layou
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `name` | name | Internal label of a scene zone or ground type (1 + n bytes) |
-| n + 1 | `kind` | u32 | 1 in the default entry; in the list 2 in most entries, 1 in region 6, 3 – 50 in region 1's ground-type entries. Not used by placement. OPEN |
+| n + 1 | `kind` | u32 | 1 in the default entry; in the list 2 in most entries, 1 in region 6, 3 – 50 in region 1's ground-type entries. Not used by placement; meaning OPEN (callout below the default-entry paragraph) |
 | n + 5 | `id` | u32 | **Terrain-type id** matched against bits 0–7 of the coarse word. 0 in the default entry; ids in the list 1 – 204, each occurring once within a record. |
-| n + 9 | `unknown_f` | f32 | 0.7071 (the f32 nearest √½) in every entry, the default entry included (the client's default is 0.7). Not used by placement. OPEN |
+| n + 9 | `unknown_f` | f32 | 0.7071 (the f32 nearest √½) in every entry, the default entry included (the client's default is 0.7). Not used by placement; meaning OPEN (callout below the default-entry paragraph) |
 | n + 13 | `has_default_pair` | u8 | 1 in the default entry, 0 in every entry of the list |
 | n + 14 | default pair | pair | Present only when `has_default_pair` = 1 |
 | … | `pair_count` | u32 | 1 – 73 |
@@ -214,12 +224,19 @@ Read with this one entry layout, all 5 records decode to their last byte with ze
 bytes, the first pair of every entry of the list is (2, 0), and ids and slots are distinct as
 stated (Confirmed, 5 of 5).
 
+> **OPEN:** the meaning of a terrain entry's `kind` (offset n + 1) and `unknown_f` (offset
+> n + 9). Neither the lookup below nor the placement code of §7 and §8 reads them (BIN); no
+> other reader in the client was traced. Observed values: `kind` 1 in the default entry of
+> all 5 records; in the list 2 in most entries, 1 in every entry of region 6, 3 – 50 in the
+> ground-type entries of region 1; `unknown_f` 0.7071 in every entry. **Tessera Decision:**
+> decode both, keep them for tools, ignore them for placement, and accept any value.
+
 Lookup (BIN):
 
 1. Find the entry whose `id` equals the word's `terrain`. If none, use the default entry.
 2. In that entry, find the pair whose `slot` equals the word's `slot` (by value, not by
    position). If none, use the entry's default pair if it has one; otherwise the vertex has
-   **no scene** (the client logs a "missing scene index" diagnostic).
+   **no scene** (the client logs a diagnostic).
 3. The pair's `scene_key` is looked up in the scene-choice table (§4.3). A key of 0 means no
    scene.
 
@@ -280,11 +297,16 @@ regions 4 and 5 → 0x19000007 (read the slot at run time).
 |---|---|---|---|
 | 1 | reserved | u32 | 0 |
 | 2 | did | DID | Own DID |
-| 3 | `flag_a` | bool8 | 1 in all records. OPEN |
+| 3 | `flag_a` | bool8 | 1 in all records. Meaning OPEN (callout below) |
 | 4 | `has_frill_layer` | bool8 | 1 in 2,334 records, 0 in 1,068 |
 | 5 | frill layer | placement node (§5.3) | Present when `has_frill_layer` = 1 |
 | 6 | `group_count` | u32 | 1 (3,398 records), 0 (3), 2 (1) |
 | 7 | groups | `group_count` × group | |
+
+> **OPEN:** the meaning of `flag_a` (1 in all 3,402 records). Scene instantiation in the
+> static pass (§7.3) and in the frill pass (§8.2) does not read it (BIN); no other reader in
+> the client was traced. **Tessera Decision:** decode it, ignore it, and accept 0 as well
+> as 1.
 
 Group:
 
@@ -387,7 +409,9 @@ unobserved enum values as unsupported.
   layers, counting the frill layer of every scene that the frill pass can instantiate
   (§8.2: those named by 0x11 tables and those reached from them through scene references);
   235 through both. Counting only the frill layers of the 2,472 named scenes gives 1,512
-  (`collision.md` §9.4 used this narrower count before its 2026-10-05 revision).
+  (`collision.md` §9.4 used this narrower count before its 2026-10-05 revision). A further
+  452 objects, reached through groups only, can also become frill records, because the frill
+  pass meets them after a frill layer (§8.1); 1,967 objects in all.
 
 ---
 
@@ -740,14 +764,16 @@ An object child names a 0x47 entity descriptor. The client appends a record to t
 landblock's generated list (BIN): the object DID, the frame (position and orientation Q of
 the node, or the incoming frame for an object directly in a scene group), the scale (the
 node's σ′, or the incoming σ; uniform in this install) and the object's
-`Entity_CreationType`. Object records carry no clearance volume and do not take part in the
+`Entity_CreationType`, looked up along the object's 0x47 chain (§9.2 rule 2; 0 when no
+level has it, which no scene object in this install lacks). Object records carry no
+clearance volume and do not take part in the
 spacing test (§7.4 step 14). Objects of the encounter pass go to a separate list.
 
 After generation the client turns every object record into a static-entity creation
 request of the same form as those for landblock-info statics (request kind 4 instead of 2),
 with an instance ID synthesized from the landblock and the record's position in the list;
-rendering, collision (`collision.md` §9.4) and LOD then follow the object's own properties
-(§9, `setup.md`). Footprint markers (§7.4 step 15) create nothing.
+rendering, collision (`collision.md` §9.4) and LOD then follow the object's properties,
+resolved along its 0x47 chain (§9, §9.2, `setup.md`). Footprint markers (§7.4 step 15) create nothing.
 
 <a id="s7-7"></a>
 ### 7.7 Encounter pass (out of scope)
@@ -766,10 +792,25 @@ entries; bits 15–19 are 0 everywhere in this install, so a viewer can omit it.
 <a id="s8-1"></a>
 ### 8.1 What a frill is (BIN; structure Confirmed)
 
-A frill is an object produced by a scene's **frill layer** (§5.1). The frill layer is a
-placement node whose children are scene references; the objects of those scenes, placed
-by the full §7.4 algorithm, are the frills. They are not created as entities: each yields a
-**frill record** (object DID, landblock, frame, scale) that the frill engine draws in bulk.
+A **frill record** (object DID, landblock, frame, scale) is what the frill pass of §8.2
+produces for an object instead of an entity. Frill records are not entities: they have no
+collision, no selection and no LOD class; the frill engine draws them in bulk (§8.3, §8.5).
+The frill pass makes a frill record of **every** object it meets while its per-vertex state
+*under a frill layer* is set (§8.2), with the frame and scale computed by the full §7.4
+algorithm. The frill layer (§5.1) is a placement node whose children are scene references.
+Objects reach the frill pass with the state set in two ways (census over the 2,472 scenes
+named by 0x11 tables and everything they reference, before frequency and other tests; OBS,
+2026-10-06):
+
+| Source | How the frill pass meets the object | Distinct objects |
+|---|---|---|
+| (a) **Frill-layer objects** | While a frill layer is being processed: the group objects of the scenes that a frill layer references, at any depth (§5.4) | 1,515 |
+| (b) **Late group objects** | While no frill layer is being processed, but after one has finished in the same vertex: group objects that come, in visit order, after a scene whose frill layer has been processed (§8.2 item 4) | 474, in 84 of the 2,472 named scenes; 22 of them are also in (a) |
+| All | | 1,967 (1,515 + 452) |
+
+The 452 objects of (b) that are not in (a) are ordinary scenery (census in §8.3): the static
+pass of §7 makes them entities as well. The client treats both sources alike (§8.5);
+Tessera does not draw the records of source (b) (§8.6).
 
 <a id="s8-2"></a>
 ### 8.2 Generation per frill sector
@@ -799,7 +840,9 @@ by the full §7.4 algorithm, are the frills. They are not created as entities: e
      (BIN). In 84 of the 2,472 scenes named by 0x11 tables, the visit order puts group
      objects (474 distinct DIDs) after such a frill layer (OBS, before frequency and other
      tests), so this matters in the data; such objects are also entities of the static
-     pass, at the same frame when the same nodes are placed.
+     pass, at the same frame when the same nodes are placed. These are source (b) of §8.1.
+     The client draws their frill records like any other (§8.5); Tessera discards them
+     (§8.6).
   5. Footprint markers (§7.4 step 15): nodes processed while the state is clear append
      markers, nodes processed while it is set do not. The frill pass runs on the same
      per-landblock generator, and appends to the same generated list, as the static pass
@@ -828,16 +871,47 @@ by the full §7.4 algorithm, are the frills. They are not created as entities: e
 <a id="s8-3"></a>
 ### 8.3 Drawing (BIN; shader formulas OPEN)
 
-- Frill objects are single-part meshes (1,515 of 1,515), small: median 36 triangles (5 %
-  have 6 or fewer; 95 % at most 300) and median 48 vertices. They are small card or clump
-  meshes, suited to instancing.
-- Per-object properties (OBS, counts over the 1,515 frill objects):
-  `Render_Frill_AnimationIntensity` (f32, 929 objects; 0.15, 0.2, 0.1, 0.0 …),
-  `Render_Frill_TerrainColorIntensity` (f32, 48; 0.25 or 0), `Render_Frill_IsOpaque`
-  (bool, 5), `Render_Frill_AllowDistanceReduction` (bool, defined; no stored value seen;
-  registry default true), `Render_LODClass` (974; mostly `SmallDecor`),
-  `Entity_CreationType` (1,461; mostly `SharedClientOnlyImmobile`, i.e. one shared instance
-  source per object kind).
+- **Mesh census** of the objects that can become frill records (OBS, 2026-10-06, all 1,967
+  of §8.1). "Drawn" means the geometry the frill engine uses: the first draw entry of
+  detail level 0 of the first part (§8.5 step 3).
+
+  | | (a) Frill-layer objects | (b) Late group objects not in (a) |
+  |---|---|---|
+  | Objects | 1,515 | 452 |
+  | Parts per setup | 1 in all | 1 in 440; 8 in 6; 9 in 6 (in these 12, the first three parts are real meshes and the rest one-triangle placeholders, `setup.md` §8.5) |
+  | Only part is a one-triangle placeholder | 0 | 8 |
+  | First part has more than one detail level | 24 | 348 |
+  | Level 0 of the first part has more than one draw entry | 1 | 140 |
+  | Triangles drawn: median / 95th percentile / maximum | 36 / 280 / 2,052 | 1,511 / 9,896 / 11,266 |
+  | Vertices drawn: median / maximum | 48 / 2,134 | 1,291 / 9,654 |
+  | Objects whose level-0 geometry over all parts exceeds what is drawn | 1 | 152 |
+  | Triangles over all parts and all detail levels: median / maximum | 36 / 4,270 | 3,329 / 29,462 |
+
+  The frill-layer objects are small card or clump meshes, suited to instancing; the late
+  group objects have the size of ordinary scenery (§9).
+- Per-object properties of the late group objects (OBS, 452): `Entity_CreationType` on all
+  (`SharedStaticImmobile` 310, `SharedClientOnlyImmobile` 107, `UniqueStaticImmobile` 33,
+  `UniqueClientOnlyImmobile` 2); `Render_LODClass` 441; appearance properties
+  (`Appearance_*`) 222; `Render_Frill_AnimationIntensity` 18 (0.02 or 0.15);
+  `Render_Frill_IsOpaque` 1; `Render_Frill_TerrainColorIntensity` none, so rule 7 gives
+  them the default intensity 1.0. None of the 452 has a parent 0x47 record, so these
+  counts are the same over the own sets and resolved along the chain (§9.2).
+- Per-object properties of the 1,515 frill-layer objects (OBS). Each count is given twice:
+  first over each record's **own** set, then **resolved** along the record's 0x47 chain
+  (§9.2; 82 of the 1,515 have a parent):
+
+  | Property | Type | Own set | Resolved | Values |
+  |---|---|---|---|---|
+  | `Render_Frill_AnimationIntensity` | f32 | 929 | 974 | 0.15, 0.2, 0.1, 0.0 …; above 0.0002 (animated) in 836 own, 881 resolved |
+  | `Render_Frill_TerrainColorIntensity` | f32 | 48 | 48 | 0.25 or 0 |
+  | `Render_Frill_IsOpaque` | bool | 5 | 5 | true |
+  | `Render_Frill_AllowDistanceReduction` | bool | 0 | 0 | defined in the registry (default true); no stored value |
+  | `Render_LODClass` | enum | 974 | 1,042 | mostly `SmallDecor` (746 own, 786 resolved) |
+  | `Entity_CreationType` | enum | 1,461 | 1,515 | mostly `SharedClientOnlyImmobile` (1,176 own, 1,230 resolved), i.e. one shared instance source per object kind |
+
+  So 45 frill kinds take their sway intensity only from their parent. Six frill-layer
+  objects carry an intensity of their own that differs from their parent's; their own
+  value wins (§9.2 rule 2).
 
 The frill engine's rules (BIN), with S = 10 units the frill sector size (160 / 16):
 
@@ -866,14 +940,23 @@ The frill engine's rules (BIN), with S = 10 units the frill sector size (160 / 1
    t = age / 1.5 s.
 6. **Per-object values.** For each frill object kind the engine reads
    `Render_Frill_AllowDistanceReduction` (default true), `Render_Frill_IsOpaque` (default
-   true) and `Render_Frill_AnimationIntensity` (default 0, clamped to 0 … 1). The shader
+   true) and `Render_Frill_AnimationIntensity` (default 0, clamped to 0 … 1). It reads them
+   from the kind's source entity (§8.5 step 1) through the client's general property lookup
+   (BIN (m)). The defaults apply only when the lookup finds nothing. Whether that lookup
+   follows the 0x47 chain is Probable, not traced (§9.2 rule 5). **Tessera Decision:**
+   resolve these values, and the one of rule 7, along the chain as in §9.2 rule 2. The shader
    variant depends on whether the object is opaque, whether its animation intensity
    exceeds 0.0002 (animated sway) and on one further flag (OPEN).
 7. **Terrain colour.** When `Render.FrillTerrainColor` is on (default) the engine reads
-   `Render_Frill_TerrainColorIntensity` with a default of **1.0** (clamped to 0 … 1), so
-   frills without the property blend fully toward the terrain colour beneath them; when it
-   is off (and in two render modes, OPEN) the intensity is 0. The blend formula is in the
-   frill shaders (OPEN).
+   `Render_Frill_TerrainColorIntensity` with a default of **1.0** (clamped to 0 … 1), in the
+   same way as rule 6, so frills without the property blend fully toward the terrain colour
+   beneath them. (The chain does not change this property's counts here: 48 own and 48
+   resolved.) The
+   intensity is 0 when the option is off, and also, whatever the option says, when the
+   client runs on its Direct3D 9 back end (the one built into the executable) or on its
+   OpenGL back end (BIN (l)); on the Direct3D 10 and Direct3D 11 back ends the property
+   applies. The blend formula is in the frill shaders (OPEN, callout below).
+   **Tessera Decision:** Tessera's renderer behaves like the Direct3D 10/11 back ends.
 
 > **OPEN:** the shader-side fade or scale formula, the terrain-colour blend and the sway
 > formula (frill shader programs, prefix 0x2B); the third variant flag; the renderer
@@ -900,6 +983,108 @@ The frill engine's rules (BIN), with S = 10 units the frill sector size (160 / 1
 Tessera's own settings may use these defaults; the names are listed only so that an
 implementation can read a user's existing preferences if it chooses to.
 
+<a id="s8-5"></a>
+### 8.5 What the frill engine draws for a frill record (BIN)
+
+The frill engine builds the geometry of a frill sector from all the frill records of that
+sector (§8.2):
+
+1. **One source per object.** The engine keeps one *source* per object DID: it looks the
+   DID up first and creates a source only when none exists. A new source asks the client's
+   entity system for an entity of the object (a creation request of its own kind, not one of
+   the kinds of §7.6), with the object's properties and appearance. Those properties are the ones
+   resolved along the object's 0x47 chain. This is Probable for the source entity and BIN
+   for the descriptor lookup (§9.2 rule 5). If a sector's records name a source that has not finished loading, the sector is
+   not built yet: the build stops without producing geometry and tells its caller that the
+   sector is incomplete (BIN). That the engine then tries again later is Probable; the retry
+   was not traced. **Tessera Decision:** build a sector as soon as all of its sources are loaded. If a source is a shared entity (`Entity_CreationType` shared)
+   with an appearance change, the client completes the appearance change at once and logs a
+   diagnostic; the geometry of step 3 is then taken from the changed model.
+2. **No filter.** Every frill record is used. The engine tests neither
+   `Entity_CreationType`, nor any other property, nor the part count, nor whether the
+   object was reached through a frill layer. It reads only the per-object values of §8.3
+   rules 6 and 7.
+3. **Geometry.** From the source's model the engine takes the **first entry of its part
+   list**, that part's mesh, the mesh's **detail level 0** (the first kind-1 level,
+   `mesh.md` §8.3) and, of that level, **only the first draw entry**: its vertex block,
+   index buffer and surface. Nothing else is used: no other part, no other draw entry of
+   level 0 and no other detail level. Frills therefore have no distance LOD; rule 4 of §8.3
+   thins instances instead. The one-triangle rule of `setup.md` §8.5 plays no part: the
+   first part is used as it is. In this install it is a one-triangle placeholder only for
+   the 8 objects whose only part is one (§8.3).
+4. **Groups.** Records are grouped by the surface state of the draw entry, the opaque flag,
+   the reduction flag and the third flag of §8.3 rule 6. Records of different objects that
+   agree in all four share a group.
+5. **Baking.** For every record, with position p, orientation Q and per-axis scale s, and
+   for every vertex of the vertex block (model space, position v, normal n), the engine
+   writes one world-space vertex:
+   - position p + Q(s ⊙ v): the scale multiplies each model axis before the rotation;
+   - normal Q(n): rotated, not scaled;
+   - texture coordinates: only **set 0** of the vertex is copied, unchanged; any further
+     texture-coordinate sets of the vertex block are dropped (BIN (n));
+   - a **sway weight** w = clamp((v.z − z_min) / h, 0, 1). Here z_min and z_max are the z
+     components of the minimum and maximum of the vertex block's stored bounding box
+     (`mesh.md` §6.1), not recomputed from the vertices. h = max(0.0002, z_max − z_min), and
+     w = 0 when h ≤ 0.01 (flat blocks do not sway). v.z is the unscaled model-space z;
+   - per-record terrain-colour and animation inputs of the frill shaders (§8.3 rules 6–7;
+     formulas OPEN, §8.3 callout).
+
+   The block's indices are copied, each increased by the number of vertices already written
+   for the sector.
+6. **Buffer limits.** All frill vertices of one sector go into one vertex buffer and one
+   index buffer. The indices are 16-bit, and the running vertex count added to them is kept
+   in 16 bits. A sector with more than 65,536 frill vertices therefore gets wrapped, wrong
+   indices; the client does not split the buffer. Frill-layer objects have at most 2,134
+   vertices each, so this needs dozens of instances in one 10 × 10-unit sector. A late group
+   object has up to 9,654, and 13 of them have 6,554 or more, so ten instances in one sector
+   are enough. **Tessera Decision:** use 32-bit indices, or split the sector's geometry every
+   65,536 vertices. Never reproduce the wrap.
+
+> **OPEN:** whether the order of the part list that the frill engine reads is always the
+> order of the setup's part list (`setup.md` §6.6). The engine reads the same list as the
+> client's part draw list (`setup.md` §8.5). That the two orders agree is Probable. It
+> matters only for the 12 multi-part objects of §8.3; in all 12 the stored first part is a
+> real mesh. **Tessera Decision:** use the first part of the setup's part list.
+
+<a id="s8-6"></a>
+### 8.6 Frill records of ordinary scenery objects (client behaviour BIN; Tessera Decision)
+
+**What the client does.** A late group object (§8.1 source (b)) that passes the frill pass's
+tests becomes a frill record. Within the frill radius and after density thinning (§8.2,
+§8.3), the frill engine draws it like any frill, as §8.5 describes:
+- only the first draw entry of level 0 of its first part is drawn;
+- it is drawn with the frill shaders;
+- the terrain-colour intensity is 1.0, because none of the 452 objects carries
+  `Render_Frill_TerrainColorIntensity`;
+- the sway weight follows §8.5, and the animation intensity comes from the property
+  (default 0).
+
+Nothing compares frill records with the entities of the static pass. When the static pass
+placed the same object at the same frame (same seeds and node, and both passes accepted it),
+the client draws it twice in the same place: once as an entity (all parts, detail levels,
+ordinary shaders) and once as frill geometry. Whether this is visible in the original's
+frames (coincident surfaces, terrain tint) could not be checked without a frame capture.
+
+> **OPEN:** how the original client's frames look where a late group object is drawn twice.
+> Answering this needs an M3 frame capture at a vertex whose scene is one of the 84 scenes
+> of §8.1 source (b). It does not affect the Tessera Decision below.
+
+**Tessera Decision:**
+- The frill pass notes for each frill record whether it was created **inside** a frill
+  layer or **after** one. Inside means that at least one frill layer is being processed, at
+  any depth: the layer node, its nested nodes, and every scene it references, recursively,
+  including the frill layers of those scenes. After means that the state is set but no frill
+  layer is being processed.
+- Records created after a frill layer are discarded. They are not given to the frill engine
+  and not drawn.
+- Everything else stays as §8.2 describes it:
+  - the state still becomes set and stays set until the vertex ends;
+  - footprint markers are appended or not as before;
+  - the landblock and density tests are unchanged. The density generator is unseeded, so
+    discarding a record changes no other result.
+- Result: exactly the frill-layer objects (source (a)) reach the frill engine. Every late
+  group object appears once, as the entity that the static pass made of it.
+
 ---
 
 <a id="s9"></a>
@@ -907,18 +1092,33 @@ implementation can read a user's existing preferences if it chooses to.
 
 - Every object DID in a scene is a 0x47 entity descriptor that resolves through
   `setup.md` to a setup and meshes (4,261 of 4,261). Non-frill scenery objects: 2,715 of
-  2,746 single-part; median 742 triangles (5 % ≤ 50, 95 % ≤ 15,024).
-- Properties on the non-frill scenery objects (2,746): `Entity_CreationType` (2,685:
-  `SharedStaticImmobile` 1,575, `UniqueStaticImmobile` 634, `SharedClientOnlyImmobile` 437,
-  `UniqueClientOnlyImmobile` 39); `Render_LODClass` (2,376: `Tree` 907, `SmallStructure`
-  351, `LargeDecor` 300, `LargeStructure` 235, `MediumDecor` 203, `Bush` 107 …);
-  `Render_CastLandscapeShadows` (2,147); `Entity_Clearance_Box`/`BoxList` (1,257) and
-  `Entity_Clearance_Cylinder`/`CylinderList` with `Radius`, `Height`, `LowPoint` (296)
-  — the clearance volumes of §7.4 step 14; `Render_ImposterName` (840, distant tree
-  imposters); `Render_LODCrossFade` (341; true in 14); `Render_FarViewDistance` (8: 1,000 –
-  2,000 units).
-- The LOD class labels come from enum mapper 0x2300008D (read at run time). An object
-  without `Render_LODClass` has class 2 (the property's registry default).
+  2,746 single-part; median 742 triangles (5 % ≤ 50, 95 % ≤ 15,024). The 2,746 include the
+  452 late group objects of §8.1 source (b), which the client also feeds to the frill
+  engine (§8.6).
+- Properties on the non-frill scenery objects (2,746; 115 of them have a parent 0x47
+  record). Each count is given over each record's **own** set and **resolved** along the
+  0x47 chain (§9.2):
+
+  | Property | Own set | Resolved | Values (own / resolved) |
+  |---|---|---|---|
+  | `Entity_CreationType` | 2,685 | 2,746 | `SharedStaticImmobile` 1,575 / 1,587, `UniqueStaticImmobile` 634 / 660, `SharedClientOnlyImmobile` 437 / 457, `UniqueClientOnlyImmobile` 39 / 42 |
+  | `Render_LODClass` | 2,376 | 2,441 | `Tree` 907 / 941, `SmallStructure` 351 / 367, `LargeDecor` 300 / 315, `LargeStructure` 235 / 235, `MediumDecor` 203 / 203, `Landmark` (0x10000010) 121 / 121, `SmallDecor` (0x10000012) 121 / 121, `Bush` 107 / 107, `Creature` (0x10000008) 19 / 19, `FarView500` (0x1000000F) 8 / 8, `Equipment` (0x10000013) 4 / 4 (all eleven classes present; their sums are the two counts) |
+  | `Render_CastLandscapeShadows` | 2,147 | 2,241 | |
+  | `Entity_Clearance_BoxList` (boxes with `Entity_Clearance_Box_Min`/`Max`) | 1,257 | 1,325 | the clearance volumes of §7.4 step 14 |
+  | `Entity_Clearance_CylinderList` (`Radius`, `Height`, `LowPoint`) | 296 | 354 | as above |
+  | `Render_ImposterName` | 840 | 844 | distant tree imposters |
+  | `Render_LODCrossFade` | 341 | 341 | true in 14 |
+  | `Render_FarViewDistance` | 8 | 8 | 1,000 – 2,000 units |
+
+  65 objects take their LOD class only from their parent, and 12 carry a class of their own
+  that differs from their parent's (their own wins, §9.2 rule 2). 61 take their creation
+  type only from their parent, and 13 override their parent's.
+- The LOD class labels come from enum mapper 0x2300008D (read at run time). The registry
+  default of `Render_LODClass` is 2. The client's traced reader of the property does not
+  apply that default (§9.2 rule 6). **Tessera Decision:** an object with no
+  `Render_LODClass` on any level of its chain uses class 2 for Tessera's draw distance
+  (§9.1). In this install that is 305 non-frill objects resolved along the chain (370 by
+  own set alone).
 
 <a id="s9-1"></a>
 ### 9.1 The LOD-class record, prefix 0x32 (layout in `environment.md` §9.1; values OPEN)
@@ -934,16 +1134,90 @@ What scenery needs from it:
 
 - `class` is a `Render_LODClass` value (§9): the keys are 1, 2 and 3 (no label in the
   mapper) and the 29 labelled values 0x10000001 – 0x1000001D, each once (OBS). Objects
-  without `Render_LODClass` use class 2 (§9).
+  with no `Render_LODClass` on their chain use class 2 by Tessera Decision (§9, §9.2
+  rule 6).
 - `d0` ranges from 25 (`SmallDecor`) to 4,000; `Tree` has 140, structures 180 – 300,
   landmark classes 1,000 – 4,000 (OBS; full value census in `environment.md` §9.1). A
   reader reads the record at run time and never hard-codes the values.
 
 > **OPEN:** what the eight values mean (draw distance, detail-level steps, fade lengths,
-> shadow and imposter distances are the candidates; the reader of the record was not
-> found), and how imposters are chosen and drawn. **Tessera Decision** until then: `d0` is
-> the class's maximum draw distance in units (scaled by Tessera's own draw-distance
-> setting), and the other values are ignored.
+> shadow and imposter distances are the candidates; the record's own reader was not
+> found; one consumer of one value is described in §9.2 rule 6), and how imposters are
+> chosen and drawn. **Tessera Decision** until then: `d0` is the class's maximum draw
+> distance in units (scaled by Tessera's own draw-distance setting), and the other values
+> are ignored.
+
+<a id="s9-2"></a>
+### 9.2 Resolving an object's properties along its 0x47 chain (BIN; counts Confirmed)
+
+A 0x47 record can name another 0x47 record as its template, its **parent** (`setup.md`
+§3.1 step 2). Of the 4,261 scene objects, 197 have a parent. They have 156 distinct
+parents: 128 are scene objects themselves and 28 are not, so the chain covers 4,289
+records. None of the 156 has a parent of its own (OBS). A 0x47 record can also name
+0x78 **extra sets** (`setup.md` §4.4). What the client does (BIN (m)):
+
+1. **Own set.** The client combines a record's extra sets in list order, each later set
+   overriding the earlier ones, and then puts the record's embedded property set on top. The
+   embedded value of a property wins over an extra set's value. In this install no extra
+   set named by a scene object or its parent holds a `Render_*` or `Entity_*` property
+   (OBS), so this step changes no count of this spec.
+2. **Lookup.** To read a property of a descriptor, the client looks in the record's own set.
+   If the property is not there and the record's template is a 0x47 record, it looks in
+   the parent in the same way, recursively. The first level that has the property gives
+   the value, so a record's own value hides its parent's. If no level has it, the lookup
+   finds nothing. The lookup itself applies no registry default; each reader applies its
+   own default, as stated where the reader is described.
+3. **Merge.** When the client builds an entity's property set from a descriptor, it merges
+   the chain: the parent-most level first, then each nearer level, overriding values already
+   present, and the record's own set last. The result gives the same value for every
+   property as rule 2. The client builds the property sets of landblock-info static entities
+   this way, with the static entity's own set as the nearest level and the named 0x47 chain
+   behind it. That is the order `entity-descriptor.md` E22 chose for the draw properties.
+4. **Readers that use rule 2.** These readers use the lookup of rule 2 (BIN (m)):
+   - the `Entity_CreationType` stored with every generated object (§7.6);
+   - `Render_LODClass` and `Render_FarViewDistance` in the reader of rule 6.
+5. **The frill engine.** The frill engine reads its per-object values (§8.3 rules 6–7)
+   through the client's general property lookup on the frill source entity (§8.5 step 1),
+   not through rule 2 directly. The source entity is created from the object DID by a
+   creation request. The descriptor load path that turns a descriptor DID into an entity's
+   property set uses the merge of rule 3. That the frill source's request takes this path
+   is **Probable**: the link between the frill engine's request and that load path was not
+   traced end to end.
+6. **A missing LOD class.** One reader of `Render_LODClass` was traced (BIN (m)). It
+   computes a per-object distance as the larger of two values. The first is a value from
+   the object's entry in the LOD-class record (§9.1), or −1 when the chain has no
+   `Render_LODClass` or the record has no entry for it. The second is
+   `Render_FarViewDistance`, or −1 when absent. The value taken from the entry sits at the
+   position of `d6` if the client keeps the record's field order. That is Probable: `d6` is
+   −1 in 31 of the 32 classes (`environment.md` §9.1). The reader then compares the result
+   with 250 and with 160 units. A result in 0 … 160 that is not 0 is raised to at least 25.
+   What these outputs control is OPEN. The point for this spec: an object without a class
+   on its chain gets −1 here, **not** the value of class 2. Whether other consumers, such as
+   the renderer's detail-level choice, apply the registry default 2 was not traced.
+
+**Tessera Decision.** Every per-object property read in this spec (§7.6, §8.3 rules 6–7,
+§8.5, §9, §10) resolves the value by rules 1–2: the own set, then the parent, recursively.
+A default (the registry default, or the default stated in the rule that reads the
+property) applies only when no level has the property. An object with no `Render_LODClass`
+on its chain uses class 2 (§9).
+
+Effect of the chain on this install (OBS, fifth pass; full counts in §8.3 and §9):
+
+| Objects | Property | Own set | Resolved | Objects whose value comes only from the parent | Own value differs from the parent's |
+|---|---|---|---|---|---|
+| 1,515 frill-layer | `Render_Frill_AnimationIntensity` | 929 | 974 | 45 | 6 |
+| 1,515 frill-layer | `Render_LODClass` | 974 | 1,042 | 68 | 0 |
+| 1,515 frill-layer | `Entity_CreationType` | 1,461 | 1,515 | 54 | 2 |
+| 1,515 frill-layer | `Render_Frill_TerrainColorIntensity`, `Render_Frill_IsOpaque` | 48, 5 | 48, 5 | 0 | 0 |
+| 2,746 non-frill | `Render_LODClass` | 2,376 | 2,441 | 65 | 12 |
+| 2,746 non-frill | `Entity_CreationType` | 2,685 | 2,746 | 61 | 13 |
+| 2,746 non-frill | `Render_Frill_AnimationIntensity` | 57 | 57 | 0 | 0 |
+| 452 late group (in the 2,746) | all of §8.3 | same | same | 0 | 0 |
+
+> **OPEN:** (a) whether the frill source entity's property set is the merged chain of
+> rule 3 (Probable; rule 5); (b) what the distance and the two comparisons of rule 6
+> control, and whether any other reader of `Render_LODClass` applies the registry default
+> 2 (§15 item 16). The Tessera Decision above stands until these are traced.
 
 ---
 
@@ -953,8 +1227,8 @@ What scenery needs from it:
 - Hand-placed static entities carry `WindSpeed` (enum mapper 0x23000362: Undef 0,
   Medium 1, Low 2, High 3, Interior 5, LowMed) on 18,334 entities (`environment.md` §7.4,
   ED). None of the 4,261 scene objects carries it.
-- Frill objects carry `Render_Frill_AnimationIntensity` (§8.3); 57 non-frill scene objects
-  carry it too.
+- Frill objects carry `Render_Frill_AnimationIntensity` (§8.3: 929 own set, 974 resolved
+  along the chain, §9.2); 57 non-frill scene objects carry it too (57 either way).
 - The shader programs (prefix 0x2B) contain wind constants (current and previous wind
   value, phase, height factor, maximum displacement, vertical motion) in 3 programs, a
   "reactive frill" configuration in 4 programs, and generic per-axis vertex-displacement
@@ -1045,6 +1319,27 @@ record, shared edges counted twice):
   quaternion; with `align_to_slope` the rotated model +Z equals the step-8 normal; without
   it and with a2 = a3 = 0 the rotated model +Y has compass bearing h (`coordinates.md`
   §11.4).
+- **SC12** (Tessera Decision of §8.6, synthetic fixture): a vertex scene whose group holds a
+  scene reference to a scene with a frill layer, followed by an object X, yields an entity
+  for X in the static pass and **no** frill record for X in the frill pass. The objects of
+  the referenced scene's frill layer still yield frill records.
+- **SC13** (§8.5 BIN; the last sentence tests the Tessera Decision of §8.5 step 6;
+  synthetic fixture): a frill record of a two-part object whose first part's
+  level 0 has two draw entries contributes exactly the vertices and indices of the first
+  draw entry of the first part. Its baked positions equal p + Q(s ⊙ v), and its baked
+  texture coordinates equal set 0 of the source vertices when the vertex block has two
+  sets. A sector holding more than 65,536 frill vertices still draws every triangle with
+  its original vertices.
+- **SC14** (§9.2 rules 1–2 and the Tessera Decision there; synthetic fixture): a frill-layer
+  object A whose 0x47 record has no `Render_Frill_AnimationIntensity`, with parent P that
+  has 0.2, gets intensity 0.2 (animated sway). If A's embedded set has 0.1, A gets 0.1. If
+  A names an extra set with 0.3 and its embedded set has 0.1, A gets 0.1. With the extra set
+  alone, A gets 0.3. With no value on any level, A gets the default 0. A non-frill object
+  with no `Render_LODClass` on itself or its parent uses class 2 (Tessera Decision); one
+  whose parent has `Tree` uses `Tree`.
+- **SC15** (OBS): resolved along the 0x47 chain, every one of the 4,261 scene objects has
+  `Entity_CreationType` (1,515 + 2,746); every parent named by a scene object exists and
+  is a 0x47 record.
 
 <a id="s13-1"></a>
 ### 13.1 Hostile-input notes
@@ -1109,11 +1404,11 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 ## 15. Open questions (summary)
 
 1. (Closed: decision 0012 allows the binary-sourced constants of §6–§8 in specs and code.)
-2. `kind` and `unknown_f` of terrain entries and the two-byte name length form (§4.2); the
-   0x11 choice `flag` (§4.3). (The default entry's "extra byte" of an earlier draft does not
-   exist; §4.2 corrected.)
+2. `kind` and `unknown_f` of terrain entries (§4.2 callout) and the two-byte name length
+   form (§4.2); the 0x11 choice `flag` (§4.3). (The default entry's "extra byte" of an
+   earlier draft does not exist; §4.2 corrected.)
 3. (Closed: the 0x19 entry is decoded in `terrain-texturing.md` §3.3.)
-4. `flag_a` of the scene record (§5.1). (Offsets 143–155 are now named; 163 and 174 are not
+4. `flag_a` of the scene record (§5.1 callout). (Offsets 143–155 are now named; 163 and 174 are not
    read by the placement code.)
 5. (Closed: rotation conventions, §7.4 step 10.) Remaining: the sphere-against-cylinder
    variant of the spacing test with `spacing_3d` (§7.4 step 14a; unused here).
@@ -1122,7 +1417,7 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 7. Seed A: what fills the landblock-info list that switches A to 1 (§6.3).
 8. Frills: the shader-side fade or scale formula, the terrain-colour blend and the sway
    formula (frill shader programs); the third shader-variant flag and the renderer
-   capability level (§8.3).
+   capability level (§8.3). (Closed: the two back ends without terrain colour, §8.3 rule 7.)
 9. Meaning of the eight values of the LOD-class record and how imposters are chosen
    (§9.1; layout owned by `environment.md` §9.1).
 10. Wind: mapping from `WindSpeed` and animation intensity to shader constants (§10).
@@ -1132,6 +1427,15 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
     (for example as terrain colour for frill blending). Not needed to place frills (§8.2).
 13. Frill pass: whether the static pass's footprint markers are still in the generated list
     when the frill pass runs, and when the frill pass's own markers are removed (§8.2).
+14. Frill engine: whether the part-list order it reads always equals the setup's stored order
+    (§8.5 callout; Probable, matters for 12 objects).
+15. How the original's frames look where a late group object is drawn both as an entity and
+    as frill geometry (§8.6; needs an M3 frame capture; Tessera does not draw the frill copy).
+16. Property resolution (§9.2 callout): whether the frill source entity's property set is
+    the merged 0x47 chain (Probable). What the distance and the 250 and 160-unit
+    comparisons of the traced `Render_LODClass` reader control, and whether any other
+    reader applies the registry default class 2. Until then, Tessera resolves every
+    per-object property along the chain and uses class 2 when no level has a class.
 
 ---
 
@@ -1142,3 +1446,6 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 | 2026-10-05 | First draft: per-vertex scenery word, region scene tables 0x11/0x12, terrain-type flag in 0x19, scene record 0x02 grammar, placement algorithm and hashes (BIN), frills, census. |
 | 2026-10-05 | Second pass (BIN and OBS), status Draft → Review. §4.4 now defers the 0x19 layout to `terrain-texturing.md` §3.3 and looks entries up by key (the stale "body grammar OPEN" and "keep stored order" removed). §5.3 names offsets 143–155 (clearance flatness test) and marks 163 and 174 as unread. §7.1 states what exists before generation. §7.3 uses the client's height constant. §7.4: terrain plane from the client's terrain mesh with its band rule (step 8); heading sign, Euler axes and the `align_to_slope` frame (step 10); height modes in full (step 11); the clearance step is a terrain flatness test using `collision.md` §6.6 (step 13); the spacing lists are the landblock-info statics with their clearance volumes and the footprint markers of placed nodes (step 14); markers and `max_objects` (step 15). §7.6 creation path. §8.3–§8.4 frill radius per level, far distance, fade, reduction, fade-in, per-object defaults, terrain-colour default on. §9.1 the LOD-class record 0x32. §11 now points to `water.md` §6.2–§6.3 instead of its own 0x17 reading, and the earlier "no landblock has water" statement is withdrawn (89,913 landblocks have water, `water.md` §6.4). New invariants SC9–SC11, worked examples for orientation, the band rule and the clearance query, §15 updated; the note on hash constants and §15 item 1 now cite decision 0012; step 10 names the composition after `coordinates.md` §11.3. The default 0x12 entry's label is described by length only. |
 | 2026-10-05 | Revision answering the spec review (third pass, OBS and BIN (i), (j)). §4.2: the 0x12 default entry has the same layout as every other entry (the "extra zero byte" of the earlier text does not exist; all 5 records decode with zero leftover bytes); entry offsets corrected for the name's length byte (`kind` at n + 1, not n); the two-byte name length is a proper OPEN; S4 corrected. §4.1: stale correction note for `environment.md` removed. §5.3: `frequency` ≥ 1 in 25,582, exactly 1.0 in 25,450. §5.4: third empty scene 0x020000CB; 180 frill layers without children; the objects reachable through frill layers (1,515) are defined, with the narrower 1,512. §7.3 step 1: stale height-constant remark removed (`landblock.md` §3.4 now gives the client's rule). §7.4 step 8: the tie on the diagonal of bit-7-set quads (strict fx > fy, so the north-west triangle) is the client's (BIN); the client's general terrain height and plane queries use the same rules; `landblock.md` §3.11 is the geometric rule and is Tessera's, not the client's point query (S25); step 15 wording. §8.2: the frill pass processes the frill layer of every scene it instantiates; the per-vertex "under a frill layer" state and its persistence; markers and the shared generated list (S24); new OPEN on the frill pass's markers with a Tessera Decision. §9.1: the 0x32 layout is owned by `environment.md` §9.1 (no `length` or DID echo; payload 1,160 bytes); field names follow that spec; S21 and the Implements-into row updated. SC5, SC9 restated; worked example of the diagonal tie (§14); §15 items 2, 9 and new 13. |
+| 2026-10-06 | Revision answering the re-review (fourth pass, OBS and BIN (k), (l)). §8.1 rewritten: a frill record is made of every object that the frill pass meets with its state set. There are two sources: frill-layer objects (1,515) and late group objects met after a frill layer (474 in 84 named scenes, 452 not among the 1,515), 1,967 objects in all (S26). §8.2 item 4 points to §8.1 (b), §8.5 and §8.6. §8.3: mesh census of both sources (parts, placeholders, detail levels, draw entries, drawn triangles and vertices) and properties of the 452 (S30), replacing the statement that all frill objects are single-part. Rule 7: the "two render modes" are the Direct3D 9 back end built into the executable and the OpenGL back end (S29), with a Tessera Decision. New §8.5: what the frill engine draws (one source entity per object, no filter, first draw entry of detail level 0 of the first part, baking with sway weight, 16-bit sector indices with a Tessera Decision against the wrap; S27, S28; OPEN on part-list order). New §8.6: the client draws late group objects a second time as frill geometry; Tessera Decision to discard frill records created after a frill layer; OPEN on the original's visual result. §4.2: OPEN callout for `kind` and `unknown_f`, and the quoted client log text replaced by plain words. §5.1: OPEN callout for `flag_a`. §5.4, §9 mention the 452. New invariants SC12, SC13; §15 items 2, 4, 8 updated, new 14, 15. |
+| 2026-10-06 | Revision answering the third review (fifth pass, OBS and BIN (m), (n)). New §9.2: how the client resolves an object's properties along its 0x47 chain. The own set is the extra sets with the embedded set on top. The lookup tries the own set, then the parent, recursively, and the nearest level wins. Building an entity merges the chain with the same precedence. Generated objects' `Entity_CreationType` and the traced `Render_LODClass` reader use this lookup. For the frill source entity it is Probable. In the traced reader, a missing class gives −1, not class 2. A Tessera Decision resolves every per-object read along the chain and keeps class 2 as Tessera's default; OPEN callout and §15 item 16 (S31–S34). The counts in §8.3 (1,515 frill-layer objects), §9 (2,746) and §10 are now labelled as own-set counts, and the counts resolved along the chain are added: `Entity_CreationType` 1,515 and 2,746, `Render_Frill_AnimationIntensity` 974, `Render_LODClass` 1,042 and 2,441, and others (S33). §8.3 rules 6–7 state where the per-object values come from. §7.6 and §8.5 step 1 no longer say "own properties". §8.5 step 1 says in plain words that an incomplete sector is not built. §8.5 step 5 cites `mesh.md` §6.1 for the stored bounding box and says that only texture-coordinate set 0 is copied (S35). §9 and §9.1: the class-2 default is a Tessera Decision. New invariants SC14 and SC15; SC13 extended. Companion specs updated. |
+| 2026-10-06 | Revision answering the fourth review (sixth pass, OBS; every count re-measured over all 4,261 objects, their parents and the 2,746 non-frill objects). §9.2 intro and the OBS provenance row: the 197 objects with a parent have **156** distinct parents (128 are scene objects themselves, 28 are not), not 28; 28 is the number of parent records outside the 4,261, which makes 4,289 records in all. None of the 156 has a parent of its own, so the chain depth of one is unchanged. §9: the `Render_LODClass` value list now names all eleven classes present, adding `Landmark` and `SmallDecor` (121 / 121 each), `Creature` 19 / 19, `FarView500` 8 / 8 and `Equipment` 4 / 4; the own and resolved values sum to 2,376 and 2,441. The other counts of §9 (creation-type values, `Render_CastLandscapeShadows`, clearance lists, `Render_ImposterName`, `Render_LODCrossFade` true in 14, `Render_FarViewDistance` 1,000 – 2,000, 2,715 single-part, triangle median and percentiles, 305 / 370 without a class, 65 / 12 and 61 / 13) were re-measured and are unchanged. |

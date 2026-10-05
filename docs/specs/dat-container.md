@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-05 of the revision: changes requested. One issue: §7.2 says an all-zero set identifier is "allowed only for a one-part set", but §2.3 step 3 says the client accepts an all-zero identifier on the first part and adopts the next part's identifier, so a multi-part set with an all-zero base is accepted; make §7.2 (and the "all parts share the identifier" clause of I-24, if intended) agree with §2.3. All earlier issues (1)–(4) and the three minors are resolved. Spot checks that matched on 2026-10-05: §6.1 census with *Z* = `length` − 4 (0 failures, 17 only via the 512,000 clause, 5,758 failures if `length` were used; no *U* < stored length; no *U* ≤ 16; smallest compressed 19); 3,009,330 unused entry slots with 186,823 all zero, no entry with DID 0 or 0xFFFFFFFF; 112,267 nodes / 3,838,957 entries / 1,740,962 compressed; only `local_English` not a multiple of 1 MiB; cell/map class 0 and 1 low bytes ≤ 0xFE; the §8.1/§8.2 high-byte placement per archive (70/76 and 78/79 only, 25 only, kind-3 row = `general` contents). Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §6.1 writer policy: "10 × compressed ≤ 8 × original" does not say what "compressed" measures; read as the stored `length` (prefix included), 5,758 of the 1,740,962 compressed records break the 80 % clause without saving 512,000 bytes, so the claim "every compressed record satisfies the rule" is false as written. It holds for all of them when "compressed" is the zlib stream length (`length` − 4). State that. (2) §5.5: the "no DID" value that lookup treats as absent is not given; state it or add an OPEN. (3) §3.4 note: the older identifier encoding (0x14E and 0x14F both zero) is an unknown with neither an OPEN callout nor a reader rule. (4) BIN facts without a provenance row or BIN question: the set-opening procedure of §2.3 (part order, all-zero identifier rule, part-count failure, deletion of mismatched files), the sharing mode of §3.7 and §9, and the growth formula and 8 MiB headroom of §4.7 (P31 covers only aux-part creation). Minor: I-17 does not say whether the legal value 1 warns; the §8.2 home table says "present in the install" but lists absent high bytes (11–1D, 70–77, 7A–7F); the client-table name of kind 0x0D (§2.4, §3.4) is not needed by a reader, so describe the kind without it. Spot checks that matched: every cell of the §3.5 header table and the common fields for all 29 archives; 3,838,957 entries, 112,267 nodes, depths and 30–61 non-root counts; 1,740,962 compressed (789C 1,055,024 / 78DA 685,938); the 8 flags-0 records; 256 fragmented records with the §4.2 per-archive and local_English F distribution, all reassembled (47 inflate exactly, 209 echo their DID); sizing rule 3,780,330 / 58,371 / 0; 340 larger nodes and 25 / 4 in general / local; 2,778 nodes with stale pointers; tiling and free tables (I-20…I-22) in 29/29; stamp values; 10,677 records written 20:08:20–20:08:53 on 2026-10-04; metadata presence, lengths, stamps and iteration 0; 0xFFFF0005 part index and counts; 383,332 0x70/0x79 pairs; no cross-archive duplicates; §6.2 echo counts for general and local; RegionID keys 1–6, 14, 15; all four §3.6 checksum test vectors; full inflation of anim, mesh_aux_1 and cell_14.. **Response:** every item addressed in the revision of 2026-10-05 (change log, [§13](#s13)). |
+| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-06 of the second revision of 2026-10-06: **passed** (Accepted). The blocking issue is resolved: BIN questions Q15 and Q16 no longer carry the Q14 note, and the BIN source row, Q17, Q18, P52 and P53 record the 2026-10-06 reads. The seven §14 implementer notes are answered in §2.1, §2.3 (severity table), §4.5, §7.2 and I-21, I-22, I-24, I-25, and the answers agree with each other and with the change log. Checklist §5.3: every item true (functional facts only; no code or pseudo-code; no copied prose; no game text, keys or hostnames; provenance and marks present; byte layouts complete with units; invariants testable; unknowns marked OPEN; no closed gate). Spot checks that matched on 2026-10-06 (fresh read-only walk of all 29 archives): (1) P53/I-21/I-22: every free table has header `{0, 0}`, 16 + 8 × 0x15C < 0x1A0, no zero-size pair before index 0x15C, pair 0x15C = `{0, 0}`, pairs sorted by offset, every size ≥ 0x144, 0x19C = Σ (size − 8), and the client test Σ size = 8 × 0x15C + 0x19C holds; (2) P52: 0xFFFF0005 present in 29/29 with `stamp` 1, 24 bytes, flag bit 0 clear; (3) §3.3: 0x190/0x194/0x198 = 104/32/8, 0x148 = file length, 0x1A4 = 2460 when 0x144 < 2460 else 0x144, 0x178 = 3 for portal and language and 0 for cell and map, 0x1A8–0x3FF zero, in 29/29; (4) §5.4/P24: every node header `{0, 0}`, non-root counts 30–61, uniform leaf depth per archive, 3,838,957 entries; (5) §7.1: 0xFFFF0003 is 37 bytes with `stamp` 1 in 27 archives and absent exactly in `mesh_aux_1` and `highres_aux_3`; 0xFFFF0004 is 12 bytes with `stamp` 2 in exactly the 10 listed archives; every metadata record has `iteration` 0. Non-blocking notes for a later revision: I-24 lacks a full stop before "A record that is absent"; the §2.3 severity rule ("Warn when every file is readable") does not by itself cover the Error row "number of parts ≠ base count" when extra readable parts exist (the table is explicit, so it is implementable); the §7.2 reader rule treats a short record as wholly absent, which is simpler than the client's per-field defaults (same severity, deliberate); §2.3 orders aux parts by N but does not say where a non-canonical aux match without a number (§2.1) sorts. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-06 of the revision of 2026-10-06: changes requested. The re-review issue of 2026-10-05 is resolved: §2.3 step 3, §7.2, I-24 and P49 now agree, and the rule matches the client (re-read 2026-10-06 at the per-part membership check; the comparison constant is 16 zero bytes, an all-zero part fails unless it is the first part loaded, an all-zero set identifier adopts the part's identifier without an index check, otherwise identifier and index = position are both required). One issue, in the provenance record only: the BIN-question rows Q15 (access and sharing mode) and Q16 (file growth) now end with "identifier rules re-checked on 2026-10-06", which belongs to Q14 alone and misstates the M4 work done for Q15 and Q16; remove it from those two rows. Non-blocking: the seven implementer OPEN callouts added to §14 from the audit of 2026-10-06 still need a spec-writer answer. Checklist §5.3: every other item true. Spot checks that matched on 2026-10-06 (fresh read-only walk of all 29 archives): 0xFFFF0005 present in 29/29, 24 bytes, `stamp` 1, identifier non-zero in 29/29, 22 distinct identifiers, shared within the mesh/sound/surface/highres sets with index = N and counts 2/2/3/4, every other archive count 1; 0x158 = 0x119C in exactly `cell_5`, `cell_15`, `map_5`, `map_15`; 0x17C all zero in exactly `mesh_aux_1` and `highres_aux_3`, one shared value in the other 27; the 8 flags-0 records are 0xFFFF0003 and 0xFFFF0008 of those four archives; 0xFFFF0008 in all 22 bases and no aux part, 16 bytes, one value; root entry counts 1–58 (general 4, local 5) and 3,838,957 entries; every file length a multiple of 1 MiB except `local_English`. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-05 of the revision: changes requested. One issue: §7.2 says an all-zero set identifier is "allowed only for a one-part set", but §2.3 step 3 says the client accepts an all-zero identifier on the first part and adopts the next part's identifier, so a multi-part set with an all-zero base is accepted; make §7.2 (and the "all parts share the identifier" clause of I-24, if intended) agree with §2.3. All earlier issues (1)–(4) and the three minors are resolved. Spot checks that matched on 2026-10-05: §6.1 census with *Z* = `length` − 4 (0 failures, 17 only via the 512,000 clause, 5,758 failures if `length` were used; no *U* < stored length; no *U* ≤ 16; smallest compressed 19); 3,009,330 unused entry slots with 186,823 all zero, no entry with DID 0 or 0xFFFFFFFF; 112,267 nodes / 3,838,957 entries / 1,740,962 compressed; only `local_English` not a multiple of 1 MiB; cell/map class 0 and 1 low bytes ≤ 0xFE; the §8.1/§8.2 high-byte placement per archive (70/76 and 78/79 only, 25 only, kind-3 row = `general` contents). Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §6.1 writer policy: "10 × compressed ≤ 8 × original" does not say what "compressed" measures; read as the stored `length` (prefix included), 5,758 of the 1,740,962 compressed records break the 80 % clause without saving 512,000 bytes, so the claim "every compressed record satisfies the rule" is false as written. It holds for all of them when "compressed" is the zlib stream length (`length` − 4). State that. (2) §5.5: the "no DID" value that lookup treats as absent is not given; state it or add an OPEN. (3) §3.4 note: the older identifier encoding (0x14E and 0x14F both zero) is an unknown with neither an OPEN callout nor a reader rule. (4) BIN facts without a provenance row or BIN question: the set-opening procedure of §2.3 (part order, all-zero identifier rule, part-count failure, deletion of mismatched files), the sharing mode of §3.7 and §9, and the growth formula and 8 MiB headroom of §4.7 (P31 covers only aux-part creation). Minor: I-17 does not say whether the legal value 1 warns; the §8.2 home table says "present in the install" but lists absent high bytes (11–1D, 70–77, 7A–7F); the client-table name of kind 0x0D (§2.4, §3.4) is not needed by a reader, so describe the kind without it. Spot checks that matched: every cell of the §3.5 header table and the common fields for all 29 archives; 3,838,957 entries, 112,267 nodes, depths and 30–61 non-root counts; 1,740,962 compressed (789C 1,055,024 / 78DA 685,938); the 8 flags-0 records; 256 fragmented records with the §4.2 per-archive and local_English F distribution, all reassembled (47 inflate exactly, 209 echo their DID); sizing rule 3,780,330 / 58,371 / 0; 340 larger nodes and 25 / 4 in general / local; 2,778 nodes with stale pointers; tiling and free tables (I-20…I-22) in 29/29; stamp values; 10,677 records written 20:08:20–20:08:53 on 2026-10-04; metadata presence, lengths, stamps and iteration 0; 0xFFFF0005 part index and counts; 383,332 0x70/0x79 pairs; no cross-archive duplicates; §6.2 echo counts for general and local; RegionID keys 1–6, 14, 15; all four §3.6 checksum test vectors; full inflation of anim, mesh_aux_1 and cell_14.. **Response:** every item of the earlier review addressed in the revision of 2026-10-05; the re-review issue (§7.2 vs §2.3, I-24) addressed in the revision of 2026-10-06; the re-review of 2026-10-06 (Q15/Q16 note) and its seven non-blocking §14 notes addressed in the second revision of 2026-10-06 (change log, [§13](#s13)). |
 | **Implements into** | `crates/dat` (container, extents, directory, zlib, archive set, DID routing), `apps/dattool` |
 | **Companion specs** | [`install-layout.md`](install-layout.md) (finding the install, version fingerprint, the 0xFFFF0001 run-list decoder), [`records.md`](records.md) (record prologues §1.6, DID type table §2, DID maps §8), [`property-system.md`](property-system.md) (DID maps and enum mappers) |
 
@@ -74,7 +74,7 @@ Source tags:
 | AT1 | Adobe Type 1 Font Format specification (published), for the checksum cipher constants in [§3.6](#s3-6) |
 | OBS | Our own black-box observation of the user's install, 2026-10-03 and 2026-10-05 (probes in the spec writer's scratch area; no data committed) |
 | EM | Game data read in the install on 2026-10-05: the "Languages" enumeration (EMAPPER DID map label, enum mapper 0x230000B1 with base 0x23000186) and the "RegionID" DID map (0x28000008), decoded with [`records.md`](records.md) §7–§8 |
-| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, **client build 4906.0071.1794.4035**, read on 2026-10-05 in a dirty-room spec-writing session, address ranges only. **Scope:** the client's own archive library (file open and header handling, directory B-tree, extent and chained reads, free-space handling, the journal and overlay side files, compression, archive-set handling, metadata records) and the archive-selection code that maps a DID to an archive. **Not read:** any network, login, patch-protocol, launcher, patcher (`PatchClient.dll`) or anti-tamper code. The questions and why M1–M3 could not answer them are listed in the table below. |
+| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, **client build 4906.0071.1794.4035**, read on 2026-10-05 in a dirty-room spec-writing session (Q17, Q18 and the Q14 re-check on 2026-10-06), address ranges only. **Scope:** the client's own archive library (file open and header handling, directory B-tree, extent and chained reads, free-space handling, the journal and overlay side files, compression, archive-set handling, metadata records) and the archive-selection code that maps a DID to an archive. **Not read:** any network, login, patch-protocol, launcher, patcher (`PatchClient.dll`) or anti-tamper code. The questions and why M1–M3 could not answer them are listed in the table below. |
 
 BIN questions:
 
@@ -93,9 +93,11 @@ BIN questions:
 | Q11 | Empty root nodes, fragmented directory nodes, leaf strictness, maximum fragment count | These cases do not occur in the data. |
 | Q12 | The DID value that lookup treats as "no DID" | Nothing in an archive declares it, and the data cannot show what a lookup does with any particular key. The data only hints at it (never-used entry slots, [§5.1](#s5-1)). Asked on 2026-10-05 (revision). |
 | Q13 | The older resource-identifier encoding (0x14E and 0x14F both zero) and what the client does with it | No archive in the install uses it. Asked on 2026-10-05 (revision). |
-| Q14 | How a set is opened: part order, identifier rules, part-count check, deletion of mismatched files | Every set in the install is complete and consistent. Observing the failure paths would need missing or mismatched aux files in the install (writing to the install is forbidden) and a run of the client, which deletes files on that path. Re-read on 2026-10-05 (revision). |
+| Q14 | How a set is opened: part order, identifier rules, part-count check, deletion of mismatched files | Every set in the install is complete and consistent. Observing the failure paths would need missing or mismatched aux files in the install (writing to the install is forbidden) and a run of the client, which deletes files on that path. Re-read on 2026-10-05 (revision); identifier rules re-checked on 2026-10-06. |
 | Q15 | Access and sharing mode in which the archive library opens a file | M3 would need the official client running next to a probe, which is not possible in a dirty-room session on this machine. Even then it could not show the mode that is not in use. Re-read on 2026-10-05 (revision). |
 | Q16 | When the writer grows a file, by how much, and when an archive counts as full | These are write-side rules. The data shows only the resulting lengths (multiples of 1 MiB), from which the constants cannot be recovered. Re-read on 2026-10-05 (revision). |
+| Q17 | How the client loads a part's 0xFFFF0005 record: stamp, length, compression, and what happens when the record is absent or unusable | No archive in the install has an absent, short, compressed or wrongly stamped membership record, and producing one would mean writing to the install. Asked on 2026-10-06 (answer to the implementer notes of [§14](#s14)). |
+| Q18 | When and how the client reads the version-112 free-space table, and what it checks | Every table in the install is consistent, and the client reads it only on the write side, which cannot be run against the install. Asked on 2026-10-06 (answer to the implementer notes of [§14](#s14)). |
 
 | # | Fact (section) | Sources | Mark |
 |---|---|---|---|
@@ -147,9 +149,11 @@ BIN questions:
 | P46 | Compression writer policy: only payloads > 16 bytes. The zlib stream (entry `length` − 4) is kept only if 10 × its length ≤ 8 × the original length, or if the original minus the stream length is ≥ 512,000 bytes ([§6.1](#s6-1)) | OBS, BIN (Q8) | C (all 1,740,962 satisfy it with the stream length; 17 only through the 512,000 clause; 2026-10-05), BIN |
 | P47 | The "no DID" value is 0: lookup of DID 0 reports "absent" without searching; new nodes fill unused entry slots with DID 0 ([§5.1](#s5-1), [§5.5](#s5-5)) | OBS, BIN (Q12) | BIN (value and rule); C (186,823 unused entry slots are all zero; no entry has DID 0; 2026-10-05) |
 | P48 | Older identifier encoding: recognised when 0x14E and 0x14F are both zero and the u32 at 0x14C is non-zero; converted in memory only ([§3.4](#s3-4)) | BIN (Q13) | BIN only (no such archive in the install) |
-| P49 | Set opening: discovery by pattern, byte-wise name order, identifier and index checks, part-count check, deletion of the set's files on failure ([§2.3](#s2-3)) | BIN (Q14) | BIN only; C for the membership values it checks ([§7.2](#s7-2)) |
+| P49 | Set opening: discovery by pattern, byte-wise name order, identifier and index checks (all-zero identifier allowed only on the first part loaded; while the set's identifier is all zero the part's identifier is adopted without an index check), part-count check, deletion of the set's files on failure ([§2.3](#s2-3), [§7.2](#s7-2)) | BIN (Q14, identifier rules re-checked 2026-10-06), OBS | BIN only for the rules; C for the membership values it checks ([§7.2](#s7-2)) and for "no all-zero identifier in 29 of 29 archives" (2026-10-05) |
 | P50 | Access and sharing: read-write mode opens with no sharing, read-only mode opens for reading with read sharing ([§3.7](#s3-7), [§9](#s9)) | BIN (Q15) | BIN only. The flags per mode were re-read at the file-open routine on 2026-10-05; that the game client uses the read-write mode comes from the first BIN reading of its archive initialisation. |
 | P51 | File growth: *need* formula, growth by whole MiB, the full test with 8 MiB headroom, metadata exemption ([§4.7](#s4-7)) | BIN (Q16) | BIN only; C (file lengths are multiples of 1 MiB except `local_English`) |
+| P52 | Loading 0xFFFF0005: ordinary record read (a compressed copy is inflated), `stamp` must be 1, the first 24 bytes are used and further bytes ignored, a shorter record leaves the missing fields at their defaults; the open does not check whether the load worked; defaults are an all-zero identifier, index 0, count 1 ([§7.2](#s7-2)) | BIN (Q17) | BIN only (no such record in the install); C for "every membership record has `stamp` 1, 24 bytes and flag bit 0 clear" (29 of 29, 2026-10-06) |
+| P53 | Version-112 free table: read only when the writer first allocates or frees space; offset 0 with size 0 means an empty free list; the allocation header is skipped, pairs are read up to the first pair whose size is 0, and the one check is that 8 × pairs read + Σ (size − 8) equals 8 × 0x15C + 0x19C ([§4.5](#s4-5)) | BIN (Q18), OBS | BIN; C (29 of 29 tables: offset and size non-zero, the first pair with size 0 is the pair at index 0x15C and is `{0, 0}`, and the check holds; 2026-10-06) |
 
 ---
 
@@ -173,6 +177,19 @@ BIN questions:
 - Other `*.dat` files in the install, such as `icudtl.dat` and an uninstaller's `unins000.dat`,
   are **not** archives. They do not carry the magic at 0x140. A locator must select files by the
   `client_` prefix and verify the magic. **C**
+- That rule only filters out names the client never opens. A file whose name is one the client
+  **does** open (a base name of [§2.4](#s2-4), or a name matching a set's aux pattern of
+  [§2.3](#s2-3) step 1) but which is too short or lacks the magic is a broken archive, not a
+  foreign file: the client fails that archive's set ([§2.3](#s2-3)). Report it as an error
+  (I-1 or I-2) for that set. A `client_<x>.dat` name that is not one of these stays a warning.
+  **BIN** (Q14)
+- Name matching. The original client runs on a case-insensitive file system, so letter case in
+  file names carries no meaning there (**R**, platform). Its aux search counts **every** name
+  matching `client_<name>_aux_*.datx`, whatever stands in place of `*` (for example `_aux_01`
+  or `_aux_x`), and checks each such part by its position in byte-wise name order (**BIN**,
+  Q14). A reader that accepts only the canonical form `_aux_<N>` (N decimal, no leading zero)
+  should report any other matching name as a warning that says the client would count it as
+  a part.
 - Side files that the original client may create next to an archive are not archives a reader
   should open as part of the set: `<archive file name>.jrnl` ([§3.6](#s3-6)) and an overlay
   ([§2.5](#s2-5)). **BIN**
@@ -221,11 +238,21 @@ The client opens a set like this (**BIN**, P49):
    been loaded so far:
    - a part whose set identifier is all zero is accepted only if it is the first part loaded
      (in practice the base). Anywhere else it is an error;
-   - while the set's identifier is still all zero (because the base carried zero), the next
-     part's identifier is adopted as the set's, without an index check;
+   - while the set's identifier is still all zero, the part's identifier is adopted as the
+     set's, without an index check. The set's identifier starts out all zero, so this is how
+     the base's identifier becomes the set's (so the base's own part index is never checked);
+     if the base carried zero, it is also how the first aux part's identifier becomes the
+     set's;
    - otherwise the part's identifier must equal the set's, and its part index must equal its
      position in the opening order (base 0, first aux 1, …). A mismatch is logged as a stamp
      mismatch and the part fails.
+
+   Consequence: a set of any part count is accepted with an all-zero identifier on the base,
+   provided every aux part carries the same non-zero identifier and the second and later aux
+   parts carry their positions as part index. In that case the first aux part's index is not
+   checked. An all-zero identifier on an aux part always fails. (Re-checked against the client
+   on 2026-10-06; the "all zero" comparison is against a 16-byte all-zero constant.) No archive
+   in the install has an all-zero identifier (29 of 29 non-zero, 2026-10-05). **BIN**, **C**
 4. In the normal open, if any aux part fails to open or fails step 3, the client closes the
    set and deletes the base file and every aux file it found, logging each one as a deleted
    mismatched file. The open then fails without reaching step 5. A read-only reader must
@@ -242,6 +269,27 @@ A reader should discover aux parts both by pattern and by name, order them by th
 in the file name (not by byte-wise name order), and check the membership records as in step 3.
 It should report a missing part (index < count but no file present) or a count mismatch as an
 error for that set, not crash.
+
+How a part's 0xFFFF0005 record is loaded, and the values a part has when the record is absent
+or unusable, is in [§7.2](#s7-2). Only the base's part count enters step 5. The client never
+compares the count fields of aux parts.
+
+Recommended severities for a reader. The rule is: **Error** when records of the set cannot be
+read; **Warn** when every file is readable but the membership metadata disagrees, even where the
+client would refuse the set. A read-only reader can still serve every record in that case.
+
+| Situation | Client ([§2.3](#s2-3), [§7.2](#s7-2)) | Reader severity |
+|---|---|---|
+| Base or aux file with a name the client opens, too short or without the magic | the set fails (an aux part also triggers step 4) | Error (I-1, I-2) for the set |
+| File with valid magic that cannot be opened (I-4, I-6 entry size, I-8, read error) | the set fails | Error under that invariant |
+| Part missing (index < base count, no file) or number of parts ≠ base count | step 5 fails | Error for the set |
+| Part index ≠ its position, identifier disagrees, all-zero identifier on an aux part | step 3 fails | Warn (I-24) |
+| 0xFFFF0005 absent, `stamp` ≠ 1, or shorter than 24 bytes | defaults are used, step 3 or 5 then decides | Warn (I-24) |
+| Aux part's count differs from the base's | not checked | Warn (I-24) |
+| Declared count above a reader's own limit | (no limit in the client) | the reader's resource limit; Error is acceptable |
+
+Region archives other than region 1 that fail are tolerated by the client ([§2.4](#s2-4)). The
+severity is still reported for that archive, and the other sets stay usable.
 
 <a id="s2-4"></a>
 ### 2.4 Which archives the client opens
@@ -783,12 +831,40 @@ size given by the pointer or entry.
   it. A reader can still read every record (the directory does not depend on the free list) but
   must not read the table and must skip I-20…I-22. **BIN**
 
+How the client reads the table (**BIN**, Q18, P53):
+- It does not read the table to open an archive or to read records. It loads the table the
+  first time the writer needs to allocate or free space. Opening checks only the
+  0xFFFFFFFF marker above.
+- **No table.** Offset (0x154) 0 **and** size (0x1A0) 0 mean "no table yet": the free list is
+  empty and nothing is read or checked. The writer is in this state right after it creates an
+  archive, and right after it converts a version-111 archive. The next save writes a table
+  (the relocation rule above, since 16 + 8 × count is never below a size of 0). No archive in
+  the install is in this state.
+- **Otherwise** it reads the table's (0x1A0 − 8) bytes after the 8-byte allocation header. It
+  never looks at the header itself. It takes pairs one after another and stops at the first
+  pair whose **size** is 0. It does not stop at the count in 0x15C.
+- Its one consistency test: 8 × (number of pairs taken) + Σ (size − 8) over those pairs must
+  equal 8 × 0x15C + 0x19C, which is the same as "the sizes sum to 8 × 0x15C + 0x19C". If the
+  test fails, the write that needed the table fails. No test of bounds, order or minimum size
+  was found in the loader.
+
+Reader rules that follow:
+- 0x154 = 0 and 0x1A0 = 0 in version 112: no table. Report Info, skip I-21, and run I-20 and
+  I-22 with an empty free list. 0x15C or 0x19C non-zero in that state: Warn (I-22).
+- Exactly one of 0x154 and 0x1A0 zero: the table is unusable. Warn (I-21), and skip the I-20
+  and I-22 checks that depend on it.
+- Read pairs up to the first pair with size 0, as the client does. That pair must be the one
+  at index 0x15C, and it should be `{0, 0}`. A zero size earlier, or none within the table:
+  Warn (I-21).
+
 Observed (**C**, all 29 archives, 2026-10-05):
 - Table header `{0, 0}`; terminating pair `{0, 0}`; `16 + 8 × count` < 0x1A0.
 - Every free extent's size is ≥ the minimum allocation size.
 - Header 0x19C equals the sum over pairs of (size − 8).
 - Free extents contain stale data. Their first 8 bytes are **not** a chain link.
 - The last free extent often, but not always, ends at end-of-file.
+- (2026-10-06, 29 of 29) 0x154 and 0x1A0 non-zero; the first pair with size 0 is the pair at
+  index 0x15C; the client's consistency test holds.
 
 **Version 111: free chain** (**BIN**; matches DO).
 - 0x154 is the first free block, 0x158 the last, 0x15C the number of blocks, 0x1A0 the size
@@ -1128,13 +1204,33 @@ refuses to look up 0xFFFF0005 through a set, because every part has its own. **B
 
 | Offset | Size | Type | Meaning | Mark |
 |---|---|---|---|---|
-| 0 | 16 | bytes | Set identifier, identical in all parts of one set and different between sets; all zero allowed only for a one-part set | C, BIN |
+| 0 | 16 | bytes | Set identifier, identical in all parts of one set and different between sets. All zero is allowed on the base (part 0) of a set of any size; the aux parts then carry one shared non-zero identifier, which the set adopts. All zero on an aux part is never allowed. Rules in [§2.3](#s2-3) step 3 | C, BIN |
 | 16 | 4 | u32 | Part index: 0 for the `.dat` base, N for `_aux_N.datx` | C, BIN |
 | 20 | 4 | u32 | Number of parts in the set | C, BIN |
 
 Observed counts: mesh 2, sound 2, surface 3, highres 4, every other archive 1. Each cell and
 map archive has its own identifier (count 1). **C** How the client checks the record is in
 [§2.3](#s2-3).
+
+How the client loads the record of each part (**BIN**, Q17, P52):
+- It reads 0xFFFF0005 from that part alone with its ordinary record read, so a compressed copy
+  is inflated by the rules of [§6.1](#s6-1). Compression is allowed, though never observed.
+- The record's `stamp` must be 1. Otherwise the record is ignored.
+- It reads the three fields in order: the 16-byte identifier, then the index, then the count.
+  Bytes after the first 24 are ignored, so a longer record is accepted. If the record ends
+  early, every field from the first incomplete one onwards keeps its default.
+- Defaults, in force before the load and whenever the record is absent, ignored or short: an
+  all-zero identifier, part index 0, part count 1.
+- Opening the part does not check whether the load worked. An unusable record therefore acts
+  as "all zero, index 0, count 1" in [§2.3](#s2-3). A one-part set is accepted that way. On an
+  aux part the all-zero identifier fails step 3. On the base of a multi-part set the count 1
+  fails step 5.
+
+Reader rules: read the record like any other record. Use the first 24 bytes, and treat a
+record that is absent, has `stamp` ≠ 1 or has fewer than 24 bytes as absent (I-24 warning,
+then the defaults above). A reader may cap the length it inflates for this record. A record
+above that cap is valid for the client, so report it as a warning (I-24), not as a corrupt
+archive.
 
 <a id="s7-3"></a>
 ### 7.3 Iteration list (0xFFFF0001)
@@ -1338,11 +1434,11 @@ request.
 | I-18 | Record first extent or block: offset ≥ 0x400, offset + allocSize ≤ length; for flag bit 1 set: 8 + 8F ≤ allocSize, and if F = 0 then allocSize ≥ length + 8 | Error |
 | I-19 | Fragments and chained blocks in bounds; the payload can be completed | Error |
 | I-20 | Tiling: nodes, record extents, fragments, the free table and free extents cover [0x400, length) exactly, with no overlap | Warn (Error on overlap); skipped when 0x154 = 0xFFFFFFFF |
-| I-21 | Free table header `{0,0}`; 16 + 8·count ≤ 0x1A0; terminator `{0,0}`; pairs in bounds, sorted by offset; each size ≥ 0x144 | Warn; skipped when 0x154 = 0xFFFFFFFF |
-| I-22 | 0x19C = Σ (free size − 8) | Warn; skipped when 0x154 = 0xFFFFFFFF |
+| I-21 | Free table header `{0,0}`; 16 + 8·count ≤ 0x1A0; the first pair with size 0 is the pair at index count and is `{0,0}` ([§4.5](#s4-5)); pairs in bounds, sorted by offset; each size ≥ 0x144 | Warn; skipped when 0x154 = 0xFFFFFFFF; not applicable (Info) when 0x154 = 0 and 0x1A0 = 0 (no table) |
+| I-22 | 0x19C = Σ (free size − 8); with no table (0x154 = 0 and 0x1A0 = 0), 0x15C = 0 and 0x19C = 0 | Warn; skipped when 0x154 = 0xFFFFFFFF |
 | I-23 | Compressed record: length ≥ 16, inflated length = prefix, stream ends within `length` with a valid trailer, no trailing bytes | Error for that record (trailing bytes: Warn) |
-| I-24 | 0xFFFF0005 exists; its part index matches the file name (0 for `.dat`, N for `_aux_N`) and index < count; all parts share the identifier | Warn |
-| I-25 | Across the open set, no DID (< 0xFFFF0000) appears in two archives | Warn |
+| I-24 | 0xFFFF0005 exists; its part index matches the file name (0 for `.dat`, N for `_aux_N`) and index < count; all parts share the identifier, except that the base may carry an all-zero identifier while the aux parts share one non-zero identifier ([§2.3](#s2-3) step 3; such a set is valid and gives no warning); an aux part with an all-zero identifier is a warning A record that is absent, has `stamp` ≠ 1 or is shorter than 24 bytes counts as absent; a compressed or longer record is valid ([§7.2](#s7-2)) | Warn |
+| I-25 | Across the archives the client opens together (every portal and region set plus the **one** selected language set, [§2.4](#s2-4)), no DID (< 0xFFFF0000) appears in two archives. Archives of other languages are validated on their own and are not part of this check | Warn |
 | I-26 | 0x16C = 0 (no pending journal) | Error by default ([§3.6](#s3-6)) |
 | I-27 | 0x154 ≠ 0xFFFFFFFF (free table valid) | Warn |
 | I-28 | Child pointers 0…n have bit 0 of the offset clear | Error |
@@ -1471,6 +1567,8 @@ The list exists for reviewers.
 | 2026-10-03 | First version, written from research notes and confirmed or corrected by full B-tree walks of all 29 archives in the user's install. |
 | 2026-10-05 | Revised with method M4 (BIN, client build 4906.0071.1794.4035, questions Q1–Q11) and a full re-observation after the 2026-10-04 content re-application, including inflation of every compressed record. Resolved the 22 OPEN items of the first version (answers in place and in [§14](#s14)). New: flag bit 1 selects the layout (§5.3); chained-layout algorithm (§4.3); pending journal and `.jrnl` format (§3.6); client open checks (§3.7); resource identifier, archive table and language/region naming (§2.1, §2.4, §3.4); free-table capacity, relocation and invalid marker (§4.5); writer rules (§4.4, §4.7, §6.1); meanings of `stamp`, `time`, `iteration` (§5.2); metadata record roles (§7); the client's routing order (§8.2–§8.3); invariants I-26…I-32; I-6, I-7, I-9, I-10, I-11, I-17, I-18 changed. Corrected: 0x158 is not always 0; flags 0 occurs; 0x190–0x198 must not cause a refusal (I-6); 0x100 area is not a journal. Updated all per-archive observations to 2026-10-05. Provenance rows P32–P46 added. |
 | 2026-10-05 (revision after review) | Answers the review of 2026-10-05. §6.1: the writer's 80 % rule measures the zlib stream (*Z* = `length` − 4), not the stored length; census re-run (0 failures, 17 through the 512,000-byte clause, 5,758 failures if the prefix were counted); worked example added. §5.5: the "no DID" value is 0 (new BIN question Q12, P47); §5.1 notes that new nodes zero their slots; new invariant I-33. §3.4.1 (new): the older identifier encoding, its conversion and a reader rule (Q13, P48), replacing the former note. §2.3 rewritten after re-reading the set-opening code (Q14, P49): discovery by pattern, byte-wise name order, the exact identifier rules, the part-count test (inequality, not only "fewer"), and deletion of the set's files when an aux part fails in the normal open. §3.7 and §9: access and sharing per mode (Q15, P50). §4.7: provenance (Q16, P51), the modular arithmetic of the full test, the "no maximum" case and a worked example. I-17 now says value 1 gives no warning. §8.2: table heading and cells name only ranges that hold records, with the occurring high bytes of multi-byte ranges; 0x13, 0x1B and 0x1C (no records, and no registration was found for them) removed from the kind-3 row; absent registered ranges listed. The client-table name of kind 0x0D removed (§2.4, §3.4). Q8 extended to the writer policy. |
+| 2026-10-06 | Answers the re-review of 2026-10-05. §7.2: the set-identifier row no longer says all zero is "allowed only for a one-part set"; it now agrees with §2.3 (all zero allowed on the base of a set of any size, never on an aux part). §2.3 step 3: re-checked against the client (Q14) and the consequence stated (the base's identifier is adopted the same way; with an all-zero base the first aux part's identifier is adopted and its index is not checked); observation added that no archive has an all-zero identifier. I-24: the "all parts share the identifier" clause now exempts an all-zero base and says an all-zero aux identifier warns. P49 updated. |
+| 2026-10-06 (second revision) | Answers the re-review of 2026-10-06. Provenance: removed the note "identifier rules re-checked on 2026-10-06" from BIN questions Q15 and Q16, where it had been added by mistake (it belongs to Q14 alone). Answers the seven implementer notes of [§14](#s14) (audit of 2026-10-06) with two new BIN questions, both read on 2026-10-06 under decision 0011 (address ranges of the archive library only): Q17, how a part's 0xFFFF0005 is loaded (P52), and Q18, how the free table is loaded (P53). New text: §2.1 (names the client opens without the magic are errors; the aux pattern counts any match), §2.3 (aux counts are never compared; reader severity table), §4.5 (the client reads the table only on the write side; offset 0 with size 0 means no table; pairs read up to the first zero size; the sum test), §7.2 (load rules and defaults of 0xFFFF0005). Invariants changed: I-21 (terminator position, no-table case), I-22 (no-table case), I-24 (what counts as absent), I-25 (which archives it covers). Probe of 29 archives on 2026-10-06: every free table passes the client's test with its first zero-size pair at index 0x15C, and every 0xFFFF0005 has `stamp` 1, 24 bytes and flag bit 0 clear. |
 
 ---
 
@@ -1528,6 +1626,124 @@ silent. Each is answered below (2026-10-05).
 > never looks at a leaf's other pointers. No observed leaf has a non-zero pointer 1…n.
 > Refusing such a leaf is stricter than the client; a warning (I-11) and reading it as a leaf
 > matches the client.
+
+Engineering choices made by `crates/dat` while fixing the audit of 2026-10-06, where this spec
+is silent. They are recorded here for review; none of them changes a format fact. Each is
+answered below (2026-10-06, with BIN questions Q17 and Q18).
+
+> **Implementer note:** Set-level severities (I-24 and open failures). The implementation reports a file
+> named like an archive but without the magic (too short, or wrong magic) as a **warning**
+> (§2.1: not an archive), and a file whose magic is valid but that cannot be opened (I-4,
+> I-6 entry size, I-8, or a read error) as an **error** under that invariant, since every DID
+> it holds is lost. A missing part, a part count that differs between parts and a declared
+> count above 64 are **errors** for the set (§2.3); a wrong part index, a disagreeing
+> identifier, an all-zero identifier on an aux part and an absent or unreadable 0xFFFF0005
+> stay I-24 **warnings**. Is that split the intended reading of §2.3 and §10?
+>
+> **Answered:** Partly. The general rule and a table are now in [§2.3](#s2-3): Error when
+> records of the set cannot be read, Warn when every file is readable but the membership
+> metadata disagrees. Two changes follow from it. (1) A file with a name the client opens
+> (a base name of [§2.4](#s2-4), or a match of a set's aux pattern) that is too short or lacks
+> the magic is **not** a foreign file. The client fails that set, so report an **Error** (I-1,
+> I-2) for the set. Only `client_<x>` names that the client never opens stay warnings
+> ([§2.1](#s2-1)). (2) A part count that differs between parts is a **Warn** (I-24), not an
+> Error: the client compares only the base's count with the number of parts and never reads
+> an aux part's count ([§2.3](#s2-3)). A missing part and "number of parts ≠ base count" stay
+> Errors. The cap of 64 parts is the reader's own resource limit, and Error is acceptable for
+> it. The rest of the split (index, identifier, all-zero aux identifier, absent or unreadable
+> 0xFFFF0005 as I-24 warnings) is the intended reading.
+
+> **Implementer note:** Size cap for 0xFFFF0005. The record is read with a stored and inflated cap of
+> 1,024 bytes (24 needed) and must decode to at least 24 bytes, or it is corrupt. A
+> compressed 0xFFFF0005 (never observed, §7.1) is still decoded. Should a compressed or
+> longer-than-24-byte membership record be refused outright?
+>
+> **Answered:** Do not refuse either case ([§7.2](#s7-2), BIN Q17). The client reads the
+> record with its ordinary read, so a compressed copy is inflated and is valid. It uses the
+> first 24 bytes and ignores the rest, so a longer record is valid too. It ignores the record
+> when `stamp` ≠ 1. When the record is shorter than 24 bytes, the fields that are not complete
+> keep their defaults (all-zero identifier, index 0, count 1). It never fails the open because
+> of the load itself. Treat absent, `stamp` ≠ 1 and shorter than 24 bytes as "absent" (I-24
+> warning, defaults). A stored or inflated cap of 1,024 bytes is a fine resource limit, but a
+> record above it must give an I-24 warning, not "corrupt": the client accepts it.
+
+> **Implementer note:** Validator work on overlapping records (I-20, I-23). With full inflation (I-23)
+> the validator inflates a compressed record only if none of its extents overlaps bytes
+> already inflated for another record or itself; a skipped record gets an I-23 warning (the
+> overlap itself is the I-20 error). Out-of-range fragments are reported once per record
+> (I-19, "N of F fragments out of range"), not once per fragment. The reader keeps
+> per-record caps only (§9); callers that read every record are told to budget the
+> aggregate. Acceptable?
+>
+> **Answered:** Acceptable. The client never checks tiling or overlap and has no aggregate
+> limit, so these are validator choices with no client behaviour to match. Skipping inflation
+> of a record whose extents overlap is a safe way to bound the work. Report the overlap under
+> I-20 (Error) and the skipped inflation under I-23 (Warn). One I-19 finding per record is
+> fine.
+
+> **Implementer note:** Language selection in the set. The set routes the language set (§8.2) to the
+> archives of one language only: the one requested by the caller, else `English`, else the
+> lexicographically first label (install-layout §3.5); a requested label that is absent is
+> a warning and the default is used. Archives of other languages stay open and are
+> validated, but `locate` never searches them (no cross-locale fallback, string-table
+> §10.1) and they take no part in I-25. Is excluding them from I-25 right?
+>
+> **Answered:** Yes. The client opens exactly one language set, the one for its selected
+> language ([§2.4](#s2-4)), together with the portal and region sets. Archives of other
+> languages are never open alongside them, so a DID they share with the selected language
+> has no effect on the client. Including them could report duplicates that do not matter.
+> (Only one language archive is installed here, so whether they share DIDs is not observed.)
+> I-25 now says which archives it
+> covers ([§10](#s10)). The fallback order (requested, else `English`, else the first label)
+> belongs to [`install-layout.md`](install-layout.md) §3.5 and is not a container fact.
+
+> **Implementer note:** File-name grammar. Archive names are matched ASCII case-insensitively against
+> install-layout §3.1 (aux parts only as `.datx`, `<r>` and `<N>` without leading zeros, an
+> unknown key word kept as an "other" archive). When two files differ only in case, the
+> canonical spelling is opened (else the lexicographically smallest name) and the other is
+> reported as a warning (install-layout §2). For a language archive the canonical label is
+> not known to the container layer, so two spellings of one label resolve to the smallest
+> name. Acceptable?
+>
+> **Answered:** Acceptable, with one addition ([§2.1](#s2-1)). The client runs on a
+> case-insensitive file system, so case-insensitive matching is right, and keeping one file
+> for names that differ only in case is a reasonable rule where the host file system allows
+> both. The addition: the client's aux search counts **every** name matching
+> `client_<name>_aux_*.datx` (for example `_aux_01.datx` or `_aux_x.datx`) and checks it by
+> position. Report such a non-canonical match as a warning that the client would count it as
+> a part. For two spellings of one language label, choosing the smallest name is fine. A
+> caller that knows the label from the Languages enumeration can ask for the canonical
+> spelling.
+
+> **Implementer note:** Free-space table check (§4.5, I-21). The reader now requires
+> `16 + 8 × count ≤ size` (header, pairs and terminating pair) and has no special case for a
+> zero-sized table, so an archive without a table gets an I-21 warning. The terminator's
+> value and the 0x154 = 0xFFFFFFFF case (§4.5, I-27) are not yet checked by the validator.
+>
+> **Answered:** BIN Q18, now in [§4.5](#s4-5) and I-21, I-22. Offset 0 **and** size 0 is the
+> client's "no table" state (empty free list, nothing read). Report it as Info, not an I-21
+> warning, and check I-20 and I-22 with an empty list (0x15C and 0x19C should then be 0).
+> Exactly one of the two zero is a broken table (I-21 warning). Otherwise the client reads
+> pairs up to the first pair with size 0, not up to 0x15C. The validator should check that
+> this pair is the one at index 0x15C and is `{0, 0}`, and should apply the client's one test:
+> the sizes of the pairs read sum to 8 × 0x15C + 0x19C. The 0x154 = 0xFFFFFFFF case remains
+> I-27 (Warn) and skips I-20…I-22. Keep `16 + 8 × count ≤ size` as a reader bound.
+
+> **Implementer note:** Unopenable archives in tools (`apps/dattool`, audit of 2026-10-06). For a
+> directory input, `dattool validate` counts a file it cannot open as an **error** when its
+> name is one of the archive kinds of §2.1 (`general`, `gamelogic`, `local_<Lang>`, `mesh`,
+> `surface`, `highres`, `sound`, `anim`, `cell_<r>`, `map_<r>` and their aux parts), also when
+> it is too short or lacks the magic (I-1, I-2: an interrupted patch leaves such a file); an
+> unknown `client_<x>` name stays a warning. `info`, `stat`, `snapshot` and `diff` treat such
+> an archive as an input that could not be read completely (status 1, or 2 for `diff`). This
+> is stricter than the set's own warning for a recognised name without the magic (note
+> above). Should a recognised name without the magic be an error everywhere?
+>
+> **Answered:** Yes. A recognised name (any archive kind of [§2.1](#s2-1) and its aux parts,
+> including a match of the aux pattern) that is too short or lacks the magic is an **Error**
+> (I-1, I-2) everywhere, in the set and in every tool. The client fails that set, so the
+> tools' current behaviour is right and the set's warning should be raised to match
+> ([§2.3](#s2-3) table). Unknown `client_<x>` names stay warnings.
 
 ---
 

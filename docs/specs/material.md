@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review (revised 2026-10-05, see §20) |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (2026-10-06; revised 2026-10-06, see §20.2) |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-05: **changes requested**. First-round items (1)–(9) fixed. New: (1) §20.1 row "§11.3 'unlit'" is wrong. Of the 105 unlit records used by surface records (2,142 surface records), light inputs are read by more than "the six water records": also 0x2B0000A9, 0x2B0000DC, 0x2B00084B and 0x2B00089A (5 surface records; ambient, hemispheric and per-vertex lights in their OpenGL `Color`/`Color2` permutation, the fake directional light in their water permutations), and 0x2B000A8C (1 surface record; `ColorAndOpacity`/`ColorAndOpacity2`, SRCALPHA / ONE with depth write; ambient, hemispheric and light-0 colour in its Direct3D 11 and OpenGL programs). 0x2B000A8D does so only in its OpenGL `Color`/`Color2` permutation. "126 records, 2,020 surface records" does not match: 94 records (2,043 surface records) read no light input, 84 of them (2,020) no water input either. (2) §7.3 ("every flag-1 parameter" has no binding entries), §8.6 ("None of the flag-1 parameters has binding entries") and MA19's "which is why it needs no binding entries" are false for 2013: it has one binding, semantic 4, in 7 records (0x2B00072C, 0x2B0007AC, 0x2B0009C0, 0x2B000A17, 0x2B000A18, 0x2B000A1F, 0x2B000A20), as §7.3's own semantic list (2013 → 4) says. (3) Minor: §8.4 "205 material entries" counts the U pairs only (1070/1017: 92, 1072/1019: 113); with the V pairs there are 264 pairs in 136 materials. Spot checks that matched: MA35 (95 flag-1 ids, exact ranges), 148 used ids, 197 labelled ids plus 0, 2007/2008 labelled but unused, 1150, 1172, 1181 unlabelled; §20.1 522 + 15, roles 463 / 43 / 12 / 4, 93 surface records on the six water records (55/10/5/21/1/1), 239 + 131 on 9 + 4 records (largest 158 and 122); §11.3 lit 158 records (11,639), unlit 352 (2,142); 0x2B0000A8 `Color`/`Color2` only in permutations 8 (Direct3D 11) and 9 (OpenGL). First round, review 2026-10-05: changes requested. (1) §20.1 uses 0x2B0000A8 as the generic `Color` / pass-0x00 lit example, but it is the water shader (`water.md` §8.2–§8.4; 55 surface records in this install, its `Color`/`Color2` samplers in only 2 of its 13 permutations), so it cannot be "the kind" of the 442 `Color` surface records; correct the example or cross-reference. (2) §20.1 rows on specular power 0 and on colour space still call these OPEN in `lighting.md` §15, which answers them (as do later rows of the same table); mark them superseded. Likewise the §18–§19 OPEN callouts that §20.1 answers are still shown as open. (3) §8.7 excludes 1070–1075; §8.0 excludes 1070–1085. (4) §8.6 gives water as 1170–1190, overlapping 1174, 1175–1177 and 1178–1180; the flag-1 water ids in the data are 1170, 1171, 1173 and 1182–1190 (`water.md` §8.2). (5) "Future `appearance.md`" is stale (header, §3.1, §9.3, §12.4, §17); low priority while another writer owns it. (6) §5.3.1 noise N₁ narrates the client routine loop by loop (`srand(0)`, a per-index `rand` loop, a reverse swap loop); restate it as a functional definition of the tables in terms of the generator's output sequence (the constants may stay, decision 0012). (7) The §11.3 table row "Lit: opaque, or cut-out" contradicts the revised Decision at the end of §11.3 (source-alpha blend, transparent pass unless the output alpha is 1 by construction). (8) The §1 legend does not define the marks BIN and Decision used in MA21–MA33 and the text. (9) Minor: §18 counts 522 unlit blended records without an opacity source, §20.1 counts 530. Spot checks that matched (independent decoder): every 0x31 (sizes 18 + 4n, counts 6/13,691/82/2, `tail`, `binding_key`), 0x30 (24,091 in general, zero leftover, entry-count and curve-mode census, 17,608 + local unsorted) and 0x2B record (zero leftover, 9,832 declarations by group, 29 without parameters, permutation kinds, 541 without programs, 105,119 samplers, 78,326 texture bindings in range, extra items and 121,965 arrays with n = 1, every render-state census figure of §7.6, 4004/1043 in 307 records), MA19 (95 flag-1 ids, 53 flag-0, none mixed). |
+| **Review record** | Claude review session (spec-writer agent), third review 2026-10-06: **passed** (CLEAN_ROOM §5.3, every item). Re-review items (1)–(3) fixed and re-checked with an independent decoder on all records: 2013 is declared by 11 records, 7 with exactly one binding (semantic 4, group 2000, `slot` 0) naming permutation 1 or 2 without programs (key 22, 0, 8200, 0), none in 0x2B0006E4, 0x2B0007B7, 0x2B00080E, 0x2B0009DE; no other flag-1 id has bindings and no material entry has any (MA19, §7.3, §8.6); §8.4 centre pairs 264 in 136 materials (92 / 113 / 25 / 34, none on set 2); §20.1 "unlit" row and MA36 from the constant tables of every permutation of all four back ends: 11 records (99 surface records) read light inputs, 94 (2,043) none, of which 10 (23) read water parameters and 84 (2,020) neither; `Color`/`Color2` permutation in Direct3D 10/11 and OpenGL for 0x2B0000A8, CE, 559, 5EC, 7FD and OpenGL only for A9, DC, 84B, 89A, A8D; 0x2B0007FD reads the sun-shadow inputs in its four Direct3D 10/11 water permutations; 0x2B000A8C reads E3 and E5 in all four permutations. Further spot checks that matched: §4.2 census (material counts 6 / 13,691 / 82 / 2; `tail` 13,711 / 69 / 1; `binding_key` 6,976 / 8 / 6,797 with 203 distinct values); §7.6 bytes 0, 4, 5 and `alpha_ref` over all 31,519 blocks; §11.3 lit 158 (11,639) / unlit 352 (2,142) and every unlit table row (17 / 79 / 31 / 204 / 21 records; 2 / 1,266 / 719 / 98 / 57 surface records); 95 flag-1 ids, 148 used, none mixed. Earlier rounds: re-review 2026-10-05: **changes requested**. First-round items (1)–(9) fixed. New: (1) §20.1 row "§11.3 'unlit'" is wrong. Of the 105 unlit records used by surface records (2,142 surface records), light inputs are read by more than "the six water records": also 0x2B0000A9, 0x2B0000DC, 0x2B00084B and 0x2B00089A (5 surface records; ambient, hemispheric and per-vertex lights in their OpenGL `Color`/`Color2` permutation, the fake directional light in their water permutations), and 0x2B000A8C (1 surface record; `ColorAndOpacity`/`ColorAndOpacity2`, SRCALPHA / ONE with depth write; ambient, hemispheric and light-0 colour in its Direct3D 11 and OpenGL programs). 0x2B000A8D does so only in its OpenGL `Color`/`Color2` permutation. "126 records, 2,020 surface records" does not match: 94 records (2,043 surface records) read no light input, 84 of them (2,020) no water input either. (2) §7.3 ("every flag-1 parameter" has no binding entries), §8.6 ("None of the flag-1 parameters has binding entries") and MA19's "which is why it needs no binding entries" are false for 2013: it has one binding, semantic 4, in 7 records (0x2B00072C, 0x2B0007AC, 0x2B0009C0, 0x2B000A17, 0x2B000A18, 0x2B000A1F, 0x2B000A20), as §7.3's own semantic list (2013 → 4) says. (3) Minor: §8.4 "205 material entries" counts the U pairs only (1070/1017: 92, 1072/1019: 113); with the V pairs there are 264 pairs in 136 materials. Spot checks that matched: MA35 (95 flag-1 ids, exact ranges), 148 used ids, 197 labelled ids plus 0, 2007/2008 labelled but unused, 1150, 1172, 1181 unlabelled; §20.1 522 + 15, roles 463 / 43 / 12 / 4, 93 surface records on the six water records (55/10/5/21/1/1), 239 + 131 on 9 + 4 records (largest 158 and 122); §11.3 lit 158 records (11,639), unlit 352 (2,142); 0x2B0000A8 `Color`/`Color2` only in permutations 8 (Direct3D 11) and 9 (OpenGL). First round, review 2026-10-05: changes requested. (1) §20.1 uses 0x2B0000A8 as the generic `Color` / pass-0x00 lit example, but it is the water shader (`water.md` §8.2–§8.4; 55 surface records in this install, its `Color`/`Color2` samplers in only 2 of its 13 permutations), so it cannot be "the kind" of the 442 `Color` surface records; correct the example or cross-reference. (2) §20.1 rows on specular power 0 and on colour space still call these OPEN in `lighting.md` §15, which answers them (as do later rows of the same table); mark them superseded. Likewise the §18–§19 OPEN callouts that §20.1 answers are still shown as open. (3) §8.7 excludes 1070–1075; §8.0 excludes 1070–1085. (4) §8.6 gives water as 1170–1190, overlapping 1174, 1175–1177 and 1178–1180; the flag-1 water ids in the data are 1170, 1171, 1173 and 1182–1190 (`water.md` §8.2). (5) "Future `appearance.md`" is stale (header, §3.1, §9.3, §12.4, §17); low priority while another writer owns it. (6) §5.3.1 noise N₁ narrates the client routine loop by loop (`srand(0)`, a per-index `rand` loop, a reverse swap loop); restate it as a functional definition of the tables in terms of the generator's output sequence (the constants may stay, decision 0012). (7) The §11.3 table row "Lit: opaque, or cut-out" contradicts the revised Decision at the end of §11.3 (source-alpha blend, transparent pass unless the output alpha is 1 by construction). (8) The §1 legend does not define the marks BIN and Decision used in MA21–MA33 and the text. (9) Minor: §18 counts 522 unlit blended records without an opacity source, §20.1 counts 530. Spot checks that matched (independent decoder): every 0x31 (sizes 18 + 4n, counts 6/13,691/82/2, `tail`, `binding_key`), 0x30 (24,091 in general, zero leftover, entry-count and curve-mode census, 17,608 + local unsorted) and 0x2B record (zero leftover, 9,832 declarations by group, 29 without parameters, permutation kinds, 541 without programs, 105,119 samplers, 78,326 texture bindings in range, extra items and 121,965 arrays with n = 1, every render-state census figure of §7.6, 4004/1043 in 307 records), MA19 (95 flag-1 ids, 53 flag-0, none mixed). |
 | **Implements into** | `crates/formats` or `crates/material` (decoders for prefixes 0x31, 0x30 and 0x2B), `crates/material` (effective parameter set, texture roles, feature flags, dye), `crates/render` (pipeline selection from feature flags), explorer material inspector and dye preview |
 | **Companion specs** | `texture-list.md` (a texture slot names a 0x40 texture list; level selection and highres fallback). `records.md` §1 (primitives), §5 (0x41 surfaces). `dat-container.md` (routing). `mesh.md` (mesh record layout; only the surface list is used here). [`setup.md`](setup.md) §8 (normative for the 0x20 worn-appearance layout) and [`appearance.md`](appearance.md) §4.9–§4.10 (dyes and material groups of worn items); only the parts needed for material binding are repeated here, §9.3. [`lighting.md`](lighting.md) (passes, lighting equation and engine inputs that use these parameters; §4.4 colour encodings). [`terrain-texturing.md`](terrain-texturing.md) (terrain layers use the same transform and parameters, §6.3, §8.2). [`water.md`](water.md) §8 (water parameters). |
 
@@ -104,7 +104,7 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | MA16 | Render-state block per permutation: blend factors, blend op, alpha compare, depth write, cull, alpha reference (§7.6) | OBS (31,519 blocks); D3D (enum values) | Layout Confirmed; meanings Inferred |
 | MA17 | Shader records are compiled HLSL with no name field; classification by counting constant names in the blob | MV | Reported. Not used by Tessera (§11.1). |
 | MA18 | Parameter labels (enum mapper 0x230001A6): 4001 DepthTest, 4002 DepthWrite, 4003 DoubleSided, 4004 AlphaTest, 4005/4006 DiffuseMapWrapU/V, 4007 AlphaBlendPass; the full list §8.0 | EM | Confirmed (labels) |
-| MA19 | The per-entry `flag` byte is 1 exactly for the ids whose label starts with `c_` (95 ids) and 0 for the other 53 (§8.6) | EM; OBS (all declarations and material entries) | Confirmed |
+| MA19 | The per-entry `flag` byte is 1 exactly for the ids whose label starts with `c_` (95 ids) and 0 for the other 53 (§8.6). Flag-1 parameters reach the programs by name; the only one with binding entries is 2013 (one semantic-4 binding in 7 of 11 records, naming a permutation without programs, §7.3) | EM; OBS (all declarations and material entries; 2013 bindings re-checked 2026-10-06) | Confirmed |
 | MA20 | Two-sided is flag 4003, not 4007 (§11.4) | EM; OBS (4003 is bound to permutations with binding semantic 5) | Confirmed label; rendering effect BIN |
 | MA21 | Float-curve waveforms (§5.3) | BIN-C | BIN |
 | MA22 | Alpha test discards when opacity ≤ threshold; lit base passes blend with output alpha = opacity × material alpha (§11.2, §11.3) | BIN-S | BIN |
@@ -121,6 +121,7 @@ that date; the rest of the Confirmed facts date from 2026-10-04.
 | MA33 | No back end samples textures through sRGB formats; colours are used as stored (§12.3) | BIN-T (g) (Direct3D 10/11 and OpenGL back ends) | BIN |
 | MA34 | Output alpha of the unlit blended surface records without an opacity source, by role and record (§20.1) | OBS (census, 2026-10-05); BIN-S (third pass) | Census Confirmed; program behaviour BIN |
 | MA35 | Flag-1 ids in the data: 1044–1069, 1100–1106, 1120–1127, 1140–1149, 1160, 1170, 1171, 1173–1180, 1182–1207, 2004–2006, 2009–2011, 2013 (95 ids); 197 labelled ids, 148 of them used (§8.0, §8.6) | EM; OBS (all declarations and material entries, 2026-10-05) | Confirmed |
+| MA36 | Light inputs read by the unlit records used by surface records: 11 records (99 surface records) read some, 94 (2,043) none; per record and permutation as in §20.1 | OBS (constant tables of every program permutation of all four back ends, 2026-10-06); meanings of the inputs BIN-S (`lighting.md` §4.2) | Confirmed (census); input meanings BIN |
 
 ---
 
@@ -444,8 +445,14 @@ almost all records (for example 2000 → 0, 2001 → 1, 1000 → 2, 2014 → 3, 
 2013 → 4, 4003 → 5, 4001 → 6, 4002 → 7, 4004 → 8, 1043 → 9, 4005 → 11, 4006 → 12; the
 texture-transform floats use 33–44). Tessera does not need `semantic`.
 
-Parameters with no binding entries exist: every flag-1 parameter (§8.6), parameter 4007 in
-all 442 records that declare it, and a few others in a few records. They are still part of
+Parameters with no binding entries exist: every flag-1 parameter except 2013 (§8.6),
+parameter 4007 in all 442 records that declare it, and a few others in a few records. 2013
+has exactly one binding (semantic 4, group 2000, `slot` 0) in 7 of the 11 records that declare
+it (0x2B00072C, 0x2B0007AC, 0x2B0009C0, 0x2B000A17, 0x2B000A18, 0x2B000A1F, 0x2B000A20) and
+none in the other 4 (0x2B0006E4, 0x2B0007B7, 0x2B00080E, 0x2B0009DE). In all 7 that binding
+names a permutation without programs (`has_programs` = 0, §7.4; permutation 1 or 2, key
+words 22, 0, 8200, 0), so it reaches no program; the programs that read the second dye colour
+get it by name (§8.6) like every other flag-1 parameter (OBS, all records, 2026-10-06). They are still part of
 the interface (they have defaults and materials set them).
 
 `semantic` is an engine-side role code (OBS census; meanings from the program inputs, BIN-S;
@@ -481,7 +488,7 @@ OpenGL and 14 in Direct3D 10/11 permutations. **Tessera Decision:** use semantic
 ignore 33–37.
 
 Unbound parameters: ids whose `flag` is 1 are bound by name to the program constant of the
-same name (§8.6); 4007 has no binding and no program reads it (§8.5).
+same name (§8.6), whether or not they also have binding entries (only 2013 has any, above); 4007 has no binding and no program reads it (§8.5).
 
 <a id="s7-4"></a>
 ### 7.4 Permutation (Confirmed layout)
@@ -741,9 +748,12 @@ A matrix value that its record does not declare keeps the client's reset value, 
 (so an undeclared scale would collapse the coordinates); every matrix that uses semantics
 38–44 declares all seven (§7.3).
 
-Rotation about the texture centre: in 205 material entries an early translation of −0.5 is
-paired with a translation of +0.5 (OBS, census of 2026-10-05), which rotates and scales the
-texture about (0.5, 0.5). The terrain layers use the same routine with the early translation 0
+Rotation about the texture centre: in 136 materials an early translation of −0.5 is paired
+with a translation of +0.5 on the same axis of the same set, which rotates and scales the
+texture about (0.5, 0.5). Counted as pairs of material entries (constant curves, OBS, census
+of 2026-10-06 over all 24,091 materials): 264 pairs, 205 on U (set 0: 1070/1017, 92; set 1:
+1072/1019, 113) and 59 on V (set 0: 1071/1018, 25; set 1: 1073/1020, 34); none on set 2.
+The earlier figure "205 material entries" counted the U pairs only. The terrain layers use the same routine with the early translation 0
 (`terrain-texturing.md` §6.3).
 
 <a id="s8-5"></a>
@@ -779,11 +789,14 @@ and triplanar 1200–1202; 1203 (`c_AlphaBlendMax`, terrain layers); anisotropic
 dye colour 2013) and 0 for every other id (Confirmed, all declarations and material entries,
 re-checked 2026-10-05; the earlier ranges "1170–1190" and "1140–1160" overlapped other
 families). Ids 1172, 1181, 1150–1159 have no label; 2007 and 2008 are labelled water colours
-that no record uses. None of the flag-1 parameters has binding entries.
+that no record uses. No flag-1 parameter has binding entries except 2013, which has one
+semantic-4 binding in 7 of its 11 records; that binding names a permutation without programs
+(§7.3), so for every program the flag-1 parameters, 2013 included, are reached by name only.
 
 Meaning (Confirmed, MA19): `flag` = 1 exactly for the 95 ids whose label (§8.0) starts
-with `c_`; such a parameter feeds the program constant whose name equals its label, which is
-why it needs no binding entries. `flag` = 0 for the other 53 ids.
+with `c_`; such a parameter feeds the program constant whose name equals its label, so it
+needs no binding entries to reach a program (the one exception that has any, 2013, is
+described in §7.3). `flag` = 0 for the other 53 ids.
 
 <a id="s8-7"></a>
 ### 8.7 Effect-specific parameters
@@ -1376,6 +1389,48 @@ Added after review of the implementation (2026-10-04):
 > JPEG level (header 0×0) its stream's frame size; a level of zero width or height, or a
 > JPEG level whose frame header cannot be read, does not resolve (step 3).
 
+Added by the clean-room implementation of the 2026-10-05 revisions (`crates/material`,
+2026-10-06). Each is an engineering choice where the revised text is silent:
+
+> **OPEN (Decision):** 4002 DepthWrite (§8.5) is applied as "0 turns depth write off": the
+> effective depth write is the render-state byte (unlit) or on (lit base passes) AND
+> 4002 ≠ 0. Whether an effective 4002 = 1 also turns depth write **on** for a record whose
+> chosen render-state byte 4 is 0 is not stated; the implementation leaves the byte's choice.
+> 4001 DepthTest is exposed as `ResolvedMaterial::depth_test` (on when undeclared).
+
+> **OPEN:** §20.1 describes the `ColorTexture` record (0x2B0000B7) as outputting "twice the
+> product of the two layers' alphas and the 2000 alpha", but the Rule in the same row lists
+> only the slot-3000 alpha. The implementation multiplies the 2000 alpha, the slot-3000
+> alpha and the second layer's alpha (3001, when its effective texture is non-zero) and
+> does **not** apply the factor 2. Is the factor 2 part of the rule, and is the second layer
+> read whatever its role?
+
+> **OPEN (Decision):** Lit blend classification (§11.3) treats any §11.2 opacity source as
+> "the base role carries opacity", including 3020 `OpacityAlpha` and 3018
+> `EmissiveAndOpacity`, and also when that slot's effective texture is 0 (§18, opacity
+> source without a texture). Such a surface goes to the transparent pass. "Opaque by
+> construction" is: no §11.2 source and effective 2000 alpha ≥ 1 (a non-finite alpha counts
+> as below 1). Undeclared 2000 counts as alpha 1.
+
+> **OPEN (Decision):** Two colour layers (§11.2): the second opacity slot is 3001 when the
+> opacity (or the blend's source alpha) comes from slot 3000, the 3000 role contains
+> `Opacity` and the 3001 role contains `Opacity`, and 3001's effective texture is non-zero
+> (as for §11.5 `second_layer`). Exposed as `ResolvedMaterial::second_opacity_slot`.
+
+> **OPEN (Decision):** Wrap flags (§8.5): a texture slot's address mode U (V) is set from
+> the effective 4005 (4006) when any of the slot's texture bindings names the same
+> (permutation, sampler index) as a binding of the 4005 (4006) declaration, whatever that
+> binding's `semantic`; 1 → wrap (code 1), 0 → clamp (code 3), including over a stored
+> border (4). Slots whose samplers no flag binding names keep their stored bytes.
+
+> **OPEN (Decision):** Float curves (§5.3.1). Static consumers (the 1043 threshold, the
+> 1000 power and every `ParameterSet::float`) use the value at *t* = 0 with a fresh state
+> (for mode 10, the value at its start, *p* = 0.1); animated use evaluates over time with
+> per-curve state. Mode 3 uses a xorshift32 generator. A mode-10 position that is NaN (a
+> zero or non-finite `period`) is treated like *p* ≤ 0 (*p* = 0.1). The |*t*| > 3,600
+> reduction of step 1 is applied to mode 10 as well, as the section's structure says
+> ("for the other modes").
+
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)
 
@@ -1454,7 +1509,7 @@ open:
 |---|---|
 | §18 alpha test on blended records | The programs discard by the alpha test and still output their blend alpha: test and blend are independent, as implemented. |
 | §18 unlit blended records without an opacity source (Decision `BlendState::opacity_slot`) | **Revise** (census and programs re-checked 2026-10-05; this row replaces an earlier count of 530 that used a different selection). The set is the 522 surface records that declare slot 3000, are unlit, choose a blend triple with a SRCALPHA or INVSRCALPHA factor and have no §11.2 source (463 `Color`, 43 `DiffuseTexture`, 12 `LiquidDiffuseTexture`, 4 `ColorTexture`), plus 15 that declare no slot 3000 (they output the 2000 alpha, times the vertex alpha in one record). What the kind-4 colour programs of their records output as alpha (BIN-S): **`Color` (463), the slot-3000 alpha never reaches the output.** 239 surface records (9 records, the largest 0x2B00078B with 158) output the 2000 alpha; 131 (4 records, the largest the additive 0x2B0007F2 with 122) output vertex-colour alpha × 2000 alpha, times a soft-particle depth fade in permutations that have one (parameter 1174); 93 (6 water records: 0x2B0000A8, 0x2B0000CE, 0x2B0005EC, 0x2B0007FD, 0x2B000559, 0x2B000A8D) output an alpha computed by the water programs (`water.md` §8), except in their simple `Color`/`Color2` permutations, which output the 2000 alpha. **`DiffuseTexture` (43): the slot-3000 alpha reaches the output**, multiplied by effect factors: vertex alpha (heat distortion, 0x2B000084), 2000 alpha and a Fresnel term (mirror 0x2B0000AA, window 0x2B000077 and the window family 0x2B0009E1–0x2B0009E8, §8.7). **`LiquidDiffuseTexture` (12):** slot-3000 alpha × 2000 alpha. **`ColorTexture` (4, 0x2B0000B7):** twice the product of the two layers' alphas and the 2000 alpha. Rule: source alpha = 2000 alpha × (vertex alpha where the record reads vertex colours, `lighting.md` §5.13) × (slot-3000 alpha only for roles `DiffuseTexture`, `LiquidDiffuseTexture`, `ColorTexture`, `ColorTexture2`); the water, mirror, window and heat-distortion factors stay OPEN (§8.7). |
-| §11.3 "unlit" | "Unlit" in §11.3 means "no additive light passes", not "no lighting". Among the records used by surface records, only the six water records above (93 surface records) apply light inputs in their single pass (ambient, hemispheric ambient and per-vertex lights; for 0x2B0000A8 in its `Color`/`Color2` permutation, `lighting.md` §4.3). The other unlit records used by surface records (126 records, 2,020 surface records) read no light input. The 192 terrain layer records are also "unlit" in this sense and are lit in their own passes (`terrain-texturing.md` §9). |
+| §11.3 "unlit" | "Unlit" in §11.3 means "no additive light passes", not "no lighting". **Revised 2026-10-06** (census of every permutation of every back end; the former row counted only Direct3D 10/11 programs and was wrong). Of the 105 unlit records used by surface records (2,142 surface records), 11 records (99 surface records) read light inputs (`lighting.md` §4.2) in their single pass and 94 records (2,043 surface records) read none. The 11: **(a) ten water-family records** — the six water records above (93 surface records) and 0x2B0000A9 (2), 0x2B0000DC, 0x2B00084B, 0x2B00089A (1 each). In their water permutations they read the fake directional light (E18; 0x2B0007FD also the sun-shadow inputs E13 in its Direct3D 10/11 water permutations). In their simple `Color`/`Color2` permutation they read ambient × material (E1), hemispheric × material (E2) and the per-vertex point and directional lights with their counts (E9–E11). That permutation exists for both Direct3D 10/11 and OpenGL in 0x2B0000A8, 0x2B0000CE, 0x2B000559, 0x2B0005EC and 0x2B0007FD, and for OpenGL only in 0x2B0000A9, 0x2B0000DC, 0x2B00084B, 0x2B00089A and 0x2B000A8D. **(b) 0x2B000A8C** (1 surface record; samplers `ColorAndOpacity`/`ColorAndOpacity2`, SRCALPHA / ONE with depth write): every one of its four program permutations (Direct3D 9 shader model 2.0, two Direct3D 10/11, OpenGL) reads ambient and hemispheric without the material colour (E3) and the light-0 colour and range (E5). Of the 94 records that read no light input, 10 (23 surface records: 0x2B000442, 0x2B0004B5, 0x2B00063E, 0x2B000810 and the window family 0x2B0009E1–0x2B0009E5, 0x2B0009E8) read water parameters and 84 (2,020 surface records) read neither. The 192 terrain layer records are also "unlit" in this sense and are lit in their own passes (`terrain-texturing.md` §9). |
 | §19 specular power 0 | **Superseded by the "second pass" row below.** First-pass answer: the programs compute x⁰ = 1 (for x > 0), a view-independent highlight; whether the engine avoids it was then open. |
 | §19 diffuse colour 2000 | Confirmed as a tint of the lit result (it multiplies every light and ambient colour) and as the output alpha factor (`lighting.md` §5.12). A (0, 0, 0, 0) material is black and fully transparent, i.e. invisible: the one-triangle part of setup 0x04000001 is not visible in the original. |
 | §19 vertex colours | Only the 116 shader records whose programs take a colour input read them (2,624 surface records; `lighting.md` §5.13). There they multiply 2000: RGB scales the lit colour, alpha scales the output alpha, **after** the alpha test. All other records ignore vertex colours, which is why multiplying them in everywhere deleted foliage and darkened snow. |
@@ -1477,3 +1532,4 @@ open:
 | 2026-10-05 | §17, §20 | Status of the former frame-capture questions; answers to §18–§19. |
 | 2026-10-05 | §1, §5.3.1, §7.3, §8.3, §8.4, §8.7, §11.5, §12.3, §17, §20.1 | Second M4 pass (BIN-T), provenance rows MA27–MA33. §5.3.1: the clock (global, seconds since the client's timer started); mode 3 = global random generator; modes 7 and 8 specified (1-D gradient noise *N₁* from `srand(0)`/`rand`, 6-octave sum for mode 8); mode-10 search confirmed strict at exact key positions, with an example. §7.3: semantic → transform value table, including the older codes 33–37 (Tessera ignores them). §8.3: what the client does before upload (per-object tint, specular power scale, black specular below power 0.5); colour storage note. §8.4: composition rule (early translation, scale, counter-clockwise rotation, translation), matrix layout, reset value, rotation about the centre; OPEN closed. §8.7: water pointer to `water.md`. §11.5: specular below 0.5. §12.3: colour space answered (no sRGB). §17, §20.1 updated. |
 | 2026-10-05 | header, §1, §3.1, §5.3.1, §8.0, §8.6, §8.7, §9.3, §11.3, §12.4, §17, §18, §19, §20.1 | Third revision after review (spec writer; M1 and BIN-S third pass). §1: legend defines the marks BIN and Decision and the dates; BIN-S logs the third pass; rows MA34–MA35; MA31 and §5.3.1 name the programs' time input without a program-constant label. §5.3.1: noise *N₁* restated as a definition of the two tables in terms of the generator's output sequence (constants kept, decision 0012). §8.0: 197 labelled ids, 148 used (was "148 labelled"). §8.6: flag-1 water ids are 1044–1069, 1170, 1171, 1173, 1182–1190, 2004–2006, 2009–2011 (the former "1170–1190" overlapped depth fade, tie-dye and wind; distortion is 1140–1149 plus heat 1160). §8.7: the exclusion is 1070–1085, as in §8.0. §11.3: the lit table row now states the revised Decision (source-alpha blend, transparent pass unless the output alpha is 1 by construction). §3.1, §9.3, §12.4, §17, header: the stale "future `appearance.md`" replaced by `setup.md` §8 and `appearance.md` §4.9–§4.11; fields `a` (slot) and `g` (next group's priority) answered from `setup.md` §8.3. §18–§19: callouts answered by §20.1 marked as answered or revised. §20.1: the unlit-blended row recounted (522 + 15, not 530) with the output alpha per record family; 0x2B0000A8 identified as the water shader (its texture-free alpha holds only for its `Color`/`Color2` permutation); the "unlit" row corrected (only the six water records apply lights in their single pass); first-pass rows on specular power 0 and colour space marked superseded. |
+| 2026-10-06 | §1, §7.3, §8.4, §8.6, §20.1 | Fourth revision after the re-review of 2026-10-05 (spec writer; M1 only). §7.3, §8.6, MA19: 2013 is the one flag-1 parameter with binding entries (one semantic-4 binding in 7 of its 11 records, all naming a permutation without programs); the statements that no flag-1 parameter has bindings are corrected, and flag-1 parameters still reach every program by name. §8.4: the centre-rotation census is 264 early-translation/translation pairs in 136 materials (205 on U, 59 on V); "205 material entries" counted U only. §20.1 "unlit" row rewritten from a census of all back ends: 11 records (99 surface records) read light inputs (ten water-family records, E18 in water permutations and E1, E2, E9–E11 in their `Color`/`Color2` permutation, some OpenGL only; 0x2B000A8C reads E3 and E5 in all four permutations), 94 (2,043) read none, 84 of them (2,020) no water parameter either. New row MA36. |

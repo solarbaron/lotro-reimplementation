@@ -865,6 +865,19 @@ interprets §4.7 and §4.8 on the decoded string; otherwise it shows every chara
   levels (records.md §4.2). Past it, the nested value fails (reason 7 for the outer
   message).
 
+> **OPEN:** (implementer, 2026-10-06; engineering choice, no client fact needed unless the
+> spec wants to fix the numbers) Resource bounds for hostile nesting, beyond depth. The
+> depth limit alone lets N nested arguments that share one wide entry (S slots) cost N×S.
+> `crates/text` adds: a per-render work budget (`RenderOptions::max_work`, default 2²²
+> units; a nested message costs 16 units per slot, piece and segment plus 1 per byte of
+> piece text, charged up front; a nested message that does not fit renders as absent with a
+> work-limit diagnostic; the outermost message is always rendered); at most 65,536 nested
+> argument values built per resolve call; and at most the cache's byte limit (64 MiB by
+> default) of table records read from the archive per resolve call, after which only
+> cached tables are used. The table cache (§9.2) does not keep a table larger than its byte
+> limit, so loading one does not flush the others; one resolve call holds the table of its
+> last lookup so such a table is read once per call.
+
 Example (synthetic, end to end). Pieces `"#1:{The [!n]}#1:"`, `" lifts #1:{her[f]|his[m]|its} lantern"`, `"."`, with arg IDs [*A*, *B*]. Values: *A* = `Copper Golem[e]`, *B* = empty text.
 - §7.2 builds `#1:{The [!n]}#1:` U+0001 `Copper Golem[e]` U+0001 ` lifts #1:{her[f]|his[m]|its} lantern` U+0001 U+0001 `.`
 - §7.3: variable 1 has display text `Copper Golem`, tags `e`; the second variable is unlabelled, display text empty, tags `+b`.
@@ -964,6 +977,13 @@ The StringInfo byte layout is records.md §4.1.
      the token does not (reason 2).
    - 17 resolved references point at an empty single-piece entry. They render as empty
      text, which is not a miss.
+
+   > **OPEN:** (implementer, 2026-10-06) `property-system.md` §4.8 and §7.5 say a (table 0,
+   > token 0) StringInfo means "no text" (2 property values in the install), while this step
+   > puts it under reason 1, which shows the diagnostic of §9.3. Which one applies to
+   > Tessera's display of such values? `crates/text` currently follows property-system.md:
+   > exactly (0, 0) resolves to empty text with no diagnostic, also as a nested argument;
+   > token 0 in a non-null table, or a non-zero token with table 0, is still a miss.
 3. **Arguments**: build the value map from the argument block (records.md §4.2): each
    argument value is turned into text and keyed by its `var_id`. Then, if no argument has
    the ID 0x0DA47675 (`PLAYERNAME`), the client adds the process-wide value it keeps for

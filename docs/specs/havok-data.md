@@ -1388,6 +1388,34 @@ writer, 2026-10-05 (the implementation's choices are confirmed unless stated oth
 > **Answered:** the order of envelope checks is the implementation's choice; each failed record
 > still reports exactly one category.
 
+Raised by the clean-room implementation after an audit (`tessera-havok`, 2026-10-06). These
+are hostile-input choices of the implementation; none changes a result on real data.
+
+> **OPEN:** Tessera now caps the decoded values of one tagfile (present object members plus
+> stored struct-array columns) at 1,048,576 (fewer than 100 occur) and reports more as
+> `tagfile.unsupported_form`, like its other resource limits. A present member can cost one
+> bit of input, so without a cap a small record decoded to a model hundreds of times its size.
+> The columns of a struct array with count 0 are still read and checked (prefixes included)
+> but not kept, since each equals the §3.10 default. Please confirm or state other limits.
+
+> **OPEN:** Tessera rejects a curve degree above 7 as `spline.bad_curve` (§5.4 and HV11 observe
+> only 1 and 3). §7.3 and the §9.3 `bad_curve` row reject only degrees outside 1 … *n*, which
+> allows up to 255; evaluation costs O(*p*²) per channel, so a degree-255 clip made one sample
+> thousands of times slower. Should §5.4, §7.3 and §9.3 state a degree limit, and which?
+
+> **OPEN:** the §9.3 `bad_curve` row does not list "an interior knot repeated more than *p*
+> times", though §5.4 and HV11 require multiplicity ≤ *p* and §10 enforces "HV11 structure".
+> The implementation now rejects it as `spline.bad_curve` (previously it was accepted and the
+> curve jumped at that knot). Please add it to the row, or say if it should be accepted.
+
+> **OPEN:** §7.8 words the interleaved and reference-frame blend as *a* + α × (*b* − *a*).
+> For finite frames of opposite sign near the `f32` limit, *b* − *a* overflows and the sample
+> becomes NaN or infinite although both frames are finite. Tessera evaluates the same blend as
+> (1 − α) × *a* + α × *b* (equal in exact arithmetic, exact at α = 0 and 1, never overflows
+> for finite frames). The §9.2 finiteness check also samples each interleaved frame at its
+> own time through the playback sampler, not only as stored. Please confirm that this form is
+> acceptable, or state the required arithmetic.
+
 ---
 
 <a id="s15"></a>

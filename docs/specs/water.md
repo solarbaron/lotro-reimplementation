@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (first round; addressed). Re-review 2026-10-05: changes requested (§8.4 step 6: the specular sentence is broken by the inserted *L* text, so "plus a sparkle term" dangles and it is not stated where the sparkle term is added; §8.2 permutation table: "position only (one vertex input)" is true of the programs' use, but the Direct3D 11 water permutations declare position, normal and UV in their input signature and read only position). Spot checks passed: W2, W3, W16 (55 users of 0x2B0000A8, 43 water; 13 permutations: 8 water, 4 Direct3D 11 with depth and 2 with ripple, ONE/ZERO without depth, SRCALPHA/INVSRCALPHA with depth, cull NONE; 5 low-detail with Color/Color2, cull CW), the 43/21/5/5/1/1 shader split. |
+| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (first round; addressed). Re-review 2026-10-05: changes requested (§8.4 step 6: the specular sentence is broken by the inserted *L* text, so "plus a sparkle term" dangles and it is not stated where the sparkle term is added; §8.2 permutation table: "position only (one vertex input)" is true of the programs' use, but the Direct3D 11 water permutations declare position, normal and UV in their input signature and read only position). Spot checks passed: W2, W3, W16 (55 users of 0x2B0000A8, 43 water; 13 permutations: 8 water, 4 Direct3D 11 with depth and 2 with ripple, ONE/ZERO without depth, SRCALPHA/INVSRCALPHA with depth, cull NONE; 5 low-detail with Color/Color2, cull CW), the 43/21/5/5/1/1 shader split. Second round addressed 2026-10-06 (change log). Third review 2026-10-06, Claude review session (spec-writer agent): **passed, Accepted.** All §5.3 items hold. §8.4 step 6 was checked against the OpenGL water pixel program and all four Direct3D 11 water pixel programs of 0x2B0000A8: the per-component clamp of the normalised tangent-space normal minus the threshold, the factor 4, the sum added after the exponent, the half vector normalize(*v* − *L*) and the toward-eye *v*. §8.2 and §8.3 were checked too: the four Direct3D 11 water vertex programs declare position, normal and UV in their signature but have only the position as a declared input register. Five Confirmed facts were spot-checked on freshly read data and all passed. W2: 5 of 5 tables, zero bytes left over, 125 entries (47/19/23/31/5), keys 4 and 7, volume entities 120/3/2, `value` 24.0, 76 surfaces. W3: 137 and 1,244 bytes, zero left over, zone key 3, `active` 0 in the defaults and 1 in all 9 zones. W15 and WA4: keys 3, 4 and 7 are in all 390,150 block maps, and key 3 is 0 in all of them. W8 and the §6.1 and §6.4 tables: 89,913 wet landblocks, with every per-region count equal. W16: 13 permutations with their render-state bytes. Advisory note for a later revision, not blocking: the Direct3D 11 depth permutations tint the refraction by a depth difference instead of the eye-distance shoreline blend of step 3, and they scale the output alpha by depth. This falls under the existing OPEN on depth permutations, and the Tessera rule avoids it. |
 | **Implements into** | `crates/formats` (decoders for the water table, prefix 0x16, and the fog-zone table, prefix 0x17; one fuzz target each), `crates/world` (per-landblock water state, water volumes, "is under water" query), `crates/terrain` or `crates/render` (water quads per landblock), `crates/render` (water pipeline), the movement controller of `collision.md` §12 (water states), `apps/explorer` (water table and per-landblock water view) |
 | **Companion specs** | [`environment.md`](environment.md) §3 (region descriptor: slots 5 and 6 name the two tables). [`landblock.md`](landblock.md) §3.4 (height conversion), §5 (block maps; keys 3, 4 and 7 are read here), §7 (distant-landscape sector records). [`material.md`](material.md) §4 (surface records 0x31), §5–§8 (shader records 0x2B, parameter entries, labels; §8.6: `c_`-labelled parameters feed the program constant of the same name). [`collision.md`](collision.md) §9–§12 (volumes, movement states, controller). [`scenery.md`](scenery.md) §7.4–§7.5 (height modes and water ranges that read the water plane). [`entity-descriptor.md`](entity-descriptor.md) (placed static entities). [`property-system.md`](property-system.md) §5 (0x78 property sets), §7 (enum mappers). [`records.md`](records.md) §1 (VLE), §2.1 (prefix → DB type table). |
 
@@ -493,7 +493,7 @@ with the vertex texture coordinates, lights them per vertex and fogs them.
 
 | Permutations | Inputs and samplers | Lighting | Output and render state |
 |---|---|---|---|
-| Water permutations: 8 of the record's 13 (four Direct3D 11, all with a depth sampler, two of them also with the ripple map; two shader-model-2 and two OpenGL, without depth, one of each pair with a reflection sampler) | position only (one vertex input); normal map, frame-buffer copy, optionally reflection, depth, ripple map | none from the light slots; only the fake directional light of §8.4 step 6 | §8.4; without a depth sampler source ONE, destination ZERO; with one, source alpha and inverse source alpha; cull byte NONE (both faces) |
+| Water permutations: 8 of the record's 13 (four Direct3D 11, all with a depth sampler, two of them also with the ripple map; two shader-model-2 and two OpenGL, without depth, one of each pair with a reflection sampler) | read only the position (the four Direct3D 11 vertex programs also declare a normal and one UV set in their input signature, unused; the program's only declared input register is the position); normal map, frame-buffer copy, optionally reflection, depth, ripple map | none from the light slots; only the fake directional light of §8.4 step 6 | §8.4; without a depth sampler source ONE, destination ZERO; with one, source alpha and inverse source alpha; cull byte NONE (both faces) |
 | Low-detail permutations: the other 5 (one Direct3D 11 and one OpenGL with programs and the two colour samplers 3000, 3001; three without programs whose extra state lists describe two texture stages, `material.md` §7.4, §7.7) | position, normal and one UV set (three vertex inputs); the two colour layers through texture matrices 0 and 1 | ambient, hemispheric ambient, the per-vertex point-light array and the extra directional light (constants read by the OpenGL program; `lighting.md` §5, §7) | output alpha the material colour's alpha (2000); source alpha and inverse source alpha; cull byte CW (back faces culled) |
 
 So "a two-layer, `Color`-role record lit per vertex and blended by 2000 alpha" (`material.md`
@@ -531,7 +531,7 @@ formulas were not traced (OPEN).
 <a id="s8-3"></a>
 ### 8.3 Vertex stage (SH, shader record 0x2B0000A8)
 
-The water programs (all but the low-detail permutations) take **positions only**. With *P*
+The water programs (all but the low-detail permutations) read **only the vertex position** (the Direct3D 11 ones also declare a normal and one UV set in their input signature but never read them, §8.2; a vertex layout that supplies position, normal and UV satisfies every permutation). With *P*
 the world position (in the program's frame the vertical axis is the second component; below,
 x and y are horizontal and z vertical as everywhere in Tessera), *T* the effect time in
 seconds, and *B* = ((*P*.x, *P*.y) − *O*) / 160, where *O* is an engine-supplied horizontal
@@ -558,8 +558,8 @@ position in landblock units and the normal layers continue seamlessly across lan
 
 1. **Normal:** sample the normal map at the three layer coordinates, map each sample to
    2 · (rgb − 0.5), add the three, normalise (*n*, tangent space), and rotate *n* into world
-   space with the surface frame. Keep the unnormalised sum's horizontal part for the sparkle
-   term.
+   space with the surface frame. Keep the first two components of the normalised
+   tangent-space *n* (before the rotation) for the sparkle term of step 6.
 2. **Screen coordinates** *S* of the pixel in [0, 1]².
 3. **Refraction:** sample the frame-buffer copy (the scene drawn so far) at *S* plus the world
    normal's two horizontal components × `RefractionBumpDistortionAmount`. Call it *F*.
@@ -573,15 +573,18 @@ position in landblock units and the normal layers continue seamlessly across lan
 5. **Fresnel:** with *v* the unit vector toward the eye, *f* = `FresnelBias` + (1 −
    `FresnelBias`) · (1 − |*v* · *n*|)^`FresnelExponent`; colour = refraction + *f* ·
    (reflection − refraction).
-6. **Specular:** *s* = clamp(*n* · normalize(*v* − *L*), 0, 1)^`SpecularPower`, with *L* the
-   engine's directional "fake light" direction (program constant
-   `c_FakeDirLight_WorldSpaceDirection`): the main light's **travel** direction (pointing
-   away from the light, so −*L* points toward it) when the main light is directional, and an
-   engine default direction otherwise (`lighting.md` §4.2, BIN-L (g); W17). For an outdoor
-   scene whose main light is the sun, −*L* is the toward-sun vector of `lighting.md` §8.1.
-   plus a sparkle term
+6. **Specular:** *s* = clamp(*n* · normalize(*v* − *L*), 0, 1)^`SpecularPower` +
    4 · (clamp(*g*ₓ − `FakeSpecularThreshold`, 0, 1) + clamp(*g*ᵧ − `FakeSpecularThreshold`,
-   0, 1)) where *g* is the horizontal part of the normalised normal-map sum.
+   0, 1)). The second summand is the sparkle term; it is added **after** the exponent and is
+   not itself clamped, so *s* can exceed 1 (at most 9). Here *n* is the world-space normal of
+   step 1, *v* the unit vector toward the eye, and *g* the first two (tangent-space,
+   horizontal) components of the normalised normal-map sum of step 1, before its rotation into
+   world space.
+   *L* is the engine's directional "fake light" direction (program constant
+   `c_FakeDirLight_WorldSpaceDirection`): the main light's **travel** direction (pointing away
+   from the light, so −*L* points toward it) when the main light is directional, and an engine
+   default direction otherwise (`lighting.md` §4.2, BIN-L (g); W17). For an outdoor scene
+   whose main light is the sun, −*L* is the toward-sun vector of `lighting.md` §8.1.
 7. **Output:** colour × `WaterColor` × `OverbrightAmount` + *s* × the fake light's specular
    colour × `SpecularColor`; then mixed toward the distance-fog colour by the fog factor of
    §8.3. Output alpha = the alpha of the material colour (2000).
@@ -729,3 +732,4 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 |---|---|
 | 2026-10-05 | First version. Settles what prefixes 0x16 and 0x17 are (BIN); full layouts with censuses; landblock water rule and census (89,913 wet landblocks); water volumes; drawing (geometry BIN, shading SH); distant water pairs; corrections to `environment.md`, `scenery.md`, `terrain-texturing.md`, `landblock.md`, `collision.md`, `terrain.md`, `walker.md`, `material.md`. |
 | 2026-10-05 | Revision after review (changes requested). Legend: **Inferred** defined. New rows W16 (0x2B0000A8 users and permutations, OBS + SH) and W17 (fake-light direction, from `lighting.md` §4.2). §8.2: 0x2B0000A8 user count (55 surface records, 43 water) and a permutation table saying which statements cover which permutation; the "other declared water parameters" list no longer includes 2006, which the table already covers. §8.4 step 6: *L* is the main light's travel direction (or an engine default), adopted from `lighting.md` §4.2. §10: scenery row updated. §13: scenery and terrain-texturing rows marked done; correction rows added for `material.md` §20.1 and `lighting.md` §4.3. |
+| 2026-10-06 | Second revision after re-review (changes requested). §8.4 step 6 restated as one formula: the sparkle term 4 · (clamp(*g*ₓ − threshold) + clamp(*g*ᵧ − threshold)) is added to the specular term after the exponent, outside the clamp (SH: the OpenGL water program and all four Direct3D 11 water pixel programs of 0x2B0000A8 agree); *L* is defined in a separate sentence. §8.4 step 1: the sparkle input is the normalised tangent-space normal (was wrongly "unnormalised sum"). §8.2 permutation table and §8.3: the water programs read only the position; the four Direct3D 11 vertex programs also declare a normal and one UV set in their input signature, unused (SH, all four checked). |

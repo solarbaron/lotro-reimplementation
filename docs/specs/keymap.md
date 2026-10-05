@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | §0–§11: Implementer (clean room); everything there is a **Tessera design decision**, not a description of another program. §12–§13 and the 2026-10-05 revisions of §1 and §11: Spec writer (dirty room); §12 describes the original client's key-mapping file and key-map data, with provenance (§1.2). |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-05: changes requested. All four points of the first review are answered (§12.4 empty-text nodes, §12.6.3 joystick spelling table, §11 heading, §12.3 rule 1 / §12.7 / §12.15 / §12.6.3 precision). Remaining hostile-input gaps, each to be closed by a rule or a precise OPEN: (1) §12.5/§12.7: a top-level `Devices`, `MetaKeys` or `Bindings` node without a child list (empty part or file rejected?). (2) §12.7/K35: children attached to leaf nodes other than GUID nodes (device index, control name, sub-control word, mask, activation; e.g. `DIK_A ( x )`, `0x00000000 [ y ]`) are not covered; only the name node, device entries and GUID nodes are. (3) §12.4/§12.14.1: an unknown directive (`!foo`), `!error`/`!warning` without a child, and whether a quoted token starting with `!` is a directive, are not stated, nor what the importer does with an unknown directive. (4) §12.7: a binding whose device index is not a number (`User [ x DIK_A ]`): binding dropped or file rejected? (A mask that is not a number rejects the file, so it cannot be inferred.) Nit: §12.15 rule 2 should say that a digital entry of `look_x`/`look_y` (only an "axis entry" row) reports nothing. Spot checks repeated with independent probes, all matched: DID maps 0x28000000/0C/0A/01 keys and labels; the four 0x1D records (devices 8, meta keys 12/8/12/12, sections 6/8/0/1, bindings 178/77/0/1, 0 bytes left, the 8 GUIDs in order, one-bit reversed masks, bucket rule, activations 246/5/3/2, devices 233/23); both 0x51 records (364/364/93 and 53/53/0, toggle 91/250/16/4/3, classes 22/321/21, 341 of 342 own targets, one 0.5 scale); mapper chains (290 + 181, no overlap, 16 input maps, 0x230001C0–C2 labels); I2 (12 sections, 254 bindings, 2 dropped, 12 meta keys); I5 class counts and splits; I1 rebuild 16,613 bytes byte for byte; `DIMOFS_Z` for the wheel in the owner's file (K27); `CameraReset` is toggle type 2 (Example H); the joystick, mouse and virtual name vocabulary of §12.6.2–§12.6.4 present in the client. Checklist items that pass: functional facts only, no code or pseudo-code, no copied prose, no game text/keys/hostnames, provenance complete (BIN row logs build, questions and reasons), byte layouts complete (Example G verified, 77 bytes), invariants testable, no closed gate touched. |
+| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-06: **passed**; status moved to Accepted. All four points and the nit of the 2026-10-05 re-review are closed by stated rules: (1) parts 2–4 without a child list are empty parts (§12.5, §12.7, K38); (2) children of every node read only for its text or number, and children of a binding after the third, are ignored, with the list of nodes whose child lists are read (§12.7, K35); (3) directives: recognition by the first byte of the completed node text at every level, quoted or escaped alike, ASCII case-insensitive names, unknown `!` names kept as ordinary nodes with their effect by position, `!error`/`!warning` without a child, a failed `!include` only reported, removed directives not counted, importer handling (§12.4, §12.7, §12.14.1 step 2, K39); (4) a device index that is not a number: binding dropped and reported, meta key rejects the file (§12.7, K40); nit: digital `look_x`/`look_y` entries report nothing (§12.15 rule 2). The new fact K41 (four 0xAA bytes rejected before parsing; §12.3 rule 8, §12.14.1 step 2) is consistent with §12.7, I7 and Example H; the directive names and the binary-node refusal are corroborated by strings present in the client. Spot checks with new, independent probes on records freshly read from the install (2026-10-06), all matched: §12.9 census of the four 0x1D records (devices 8, meta keys 12/8/12/12, sections 6/8/0/1, bindings 178/77/0/1, 0 bytes left) and the bucket rule for every table; K7 the eight standard device GUIDs and type codes, identical and in order in all four records; §12.5.3 meta-key bits 1–8 and their controls (bits 5–8 in `gm` records only); I3 activations 246/5/3/2, devices 0/1 = 233/23, sub-controls 0–2 only; K22 both 0x51 records (A/B/C 364/364/93 and 53/53/0, 0 bytes left, bucket order, A and B the same command set, toggle 91/250/16/4/3, classes 22/321/21, 341 of 342 own targets, one 0.5 scale); K21/K24 DID-map keys and labels, 290 + 181 command names with no shared ID, 16 input maps; I2 effective map from the records alone (12 sections in the stated order and counts, 254 bindings, 2 dropped, 12 meta keys). Checklist §5.3: every item passes (functional facts only; no code or pseudo-code; no copied prose, names only for interoperability; no game text, keys, hostnames or traffic; provenance K1–K41 complete with the BIN sessions logged; byte layouts complete; invariants testable; unknowns marked OPEN; no closed gate). Non-blocking note for a later revision: how `!include` uses its children (no child, several children) is not stated; the importer never follows `!include`, so nothing in Tessera depends on it. Earlier records: first review 2026-10-05 and re-review 2026-10-05, both changes requested (§14). |
 | **Implements into** | `crates/input` (`tessera-input`); the importer of §12 also reads records through `crates/dat`/`crates/formats` |
 | **Companion docs** | `docs/ARCHITECTURE.md` §16 (input pipeline), §17 (settings directories), §20.3 (frame loop, 30 Hz fixed tick); `mesh.md` §11 (axes, units, handedness, model facing); `install-layout.md` §8.1 (settings folder), §10 (`--keymap`); `records.md` §1 (VLE, TSize, Pascal string), §7 (enum mappers), §8 (DID maps); `property-system.md` (DID-map groups). |
 
@@ -64,7 +64,7 @@ Sources:
 | Key | Source |
 |---|---|
 | **OBS** | The owner's install and settings folder, read **read-only** on 2026-10-05: the four key-map records (prefix 0x1D) and two action-map records (prefix 0x51) in full; the enum mappers 0x230000AF, 0x23000176, 0x230000B0, 0x2300019E, 0x230001C0, 0x230001C1, 0x230001C2; the DID maps 0x28000000, 0x28000001, 0x2800000A, 0x2800000C; the owner's own key-mapping file (written by the original client, 254 bindings) and the `[Input]` section of the owner's preferences file. Probes were throwaway scripts in the dirty scratch area. |
-| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, 2026-10-05, confined to its key-map reader, writer, merge and binding-selection code, the generic text-tree parser that reader uses, the device-name tables, the XInput translation and the registration of the `[Input]` preferences. **Questions:** (a) the lexical grammar of the key-mapping file; (b) how the four parts and each binding are interpreted, and which errors reject the whole file; (c) the start-up load-and-merge sequence and the conflict rule; (d) the accepted control-name vocabulary; (e) the format the client writes; (f) how one binding is chosen at run time; (g) how XInput pads are presented as controls; (h) the initial values of the `[Input]` preferences. **Why M1–M3 were not enough:** the format is undocumented (research notes: "not found"); the install holds only one file written by the client (M1), which cannot show error handling, case rules, the accepted vocabulary, defaults merging or rejection reasons; black-box tests (M3) would need many edited files fed to the running official client, rewriting the owner's settings each time, and still could not show merge order. The BIN model was then checked against M1 data: rebuilding the owner's file from its user entries and the install's records reproduced it **byte for byte** (§12.17, I1). **Revision session (same build, 2026-10-05)**, answering a review, confined to the same parser, reader and writer code plus the construction of the control-name tables, the string-to-number conversion of node texts, the splitting and writing of activation words, and the loading of the XInput state function. Questions, all within (a), (b), (e) and (g): what an opening bracket with no token before it produces; what bytes 0xFF and 0x00 do; what the original does with extra children of the name node and of device entries, and with empty tokens where numbers, activations and sub-controls are expected; which of the two spellings of each joystick code the writer emits; what the writer emits for a control code without a name and for activations without a word; which XInput state call supplies the pad buttons. Why M1–M3 were not enough: the owner's file uses none of these cases, and feeding hand-edited files to the official client (M3) would rewrite the owner's settings each time and would not show the writer's choice for controls nobody has bound. Network, login and launcher code were not examined (decision 0004). |
+| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, 2026-10-05, confined to its key-map reader, writer, merge and binding-selection code, the generic text-tree parser that reader uses, the device-name tables, the XInput translation and the registration of the `[Input]` preferences. **Questions:** (a) the lexical grammar of the key-mapping file; (b) how the four parts and each binding are interpreted, and which errors reject the whole file; (c) the start-up load-and-merge sequence and the conflict rule; (d) the accepted control-name vocabulary; (e) the format the client writes; (f) how one binding is chosen at run time; (g) how XInput pads are presented as controls; (h) the initial values of the `[Input]` preferences. **Why M1–M3 were not enough:** the format is undocumented (research notes: "not found"); the install holds only one file written by the client (M1), which cannot show error handling, case rules, the accepted vocabulary, defaults merging or rejection reasons; black-box tests (M3) would need many edited files fed to the running official client, rewriting the owner's settings each time, and still could not show merge order. The BIN model was then checked against M1 data: rebuilding the owner's file from its user entries and the install's records reproduced it **byte for byte** (§12.17, I1). **Revision session (same build, 2026-10-05)**, answering a review, confined to the same parser, reader and writer code plus the construction of the control-name tables, the string-to-number conversion of node texts, the splitting and writing of activation words, and the loading of the XInput state function. Questions, all within (a), (b), (e) and (g): what an opening bracket with no token before it produces; what bytes 0xFF and 0x00 do; what the original does with extra children of the name node and of device entries, and with empty tokens where numbers, activations and sub-controls are expected; which of the two spellings of each joystick code the writer emits; what the writer emits for a control code without a name and for activations without a word; which XInput state call supplies the pad buttons. Why M1–M3 were not enough: the owner's file uses none of these cases, and feeding hand-edited files to the official client (M3) would rewrite the owner's settings each time and would not show the writer's choice for controls nobody has bound. **Second revision session (same build, 2026-10-06)**, answering the re-review, confined to the same text-tree parser (its node-list loop, directive handler and the check made before parsing), the key-map reader's four part readers, its binding and control-specification readers, and the node accessors they call (child count, child by index, text, number). Questions, all within (a) and (b): what a top-level part without a child list gives; whether children of nodes read only for their text are looked at; how directives are recognised, matched and handled when unknown or without a child; what a device index that is not a number does. Why M1–M3 were not enough: as for the first revision (none of these cases occurs in the owner's file, and M3 would rewrite the owner's settings). Network, login and launcher code were not examined (decision 0004). |
 | **DX** | Public DirectInput 8 and XInput header constants (key, mouse and joystick offset names and values, the two DirectInput system-device GUIDs, XInput button bits). Public C runtime behaviour (text-mode reading, `strtoul`). General engineering knowledge, not dirty (CLEAN_ROOM.md §2). |
 | **PUB** | Public developer discussion of XInput (SDL project forum, "SDL Archaeology: Where does XINPUT_GAMEPAD_EX come from?", read 2026-10-05): the guide button is bit 0x0400, it is reported only by an undocumented extended state call (ordinal 100 of later XInput versions), not by the documented `XInputGetState`, and the oldest XInput version has no such call. Facts only. |
 | **PLG** | Third-party dump of the plugin API (vscode-lotro-api `TurbineDump.json`, March 2026): the `Action` enumeration. Facts only. |
@@ -107,9 +107,13 @@ Sources:
 | K32 | Asheron's Call retail key maps use the same file family (§12.1) | AC | Reported |
 | K33 | An opening bracket with no token before it makes a node with empty text (§12.4) | BIN | BIN |
 | K34 | Byte 0xFF stops tokens and lists like the end of input without being the end of input (§12.3) | BIN | BIN |
-| K35 | Extra children of the name node and of device entries, and children of GUID nodes, are ignored (§12.7) | BIN | BIN |
+| K35 | Extra children of the name node, of device entries and of bindings are ignored; so are the children of every node the reader uses only for its text or number (GUID, device index, control name, sub-control word, meta-key mask, activation) (§12.7) | BIN | BIN |
 | K36 | Empty tokens: a number reads as 0, an activation as 0; empty command, section, control and sub-control names are unknown (§12.5.7, §12.5.9, §12.7) | BIN; DX (`strtoul`) | BIN |
 | K37 | The writer emits an empty control name for a code without a name in the table of the device's type and for every virtual-device control; activations with no word are written empty or left out (§12.13) | BIN | BIN |
+| K38 | A top-level `Devices`, `MetaKeys` or `Bindings` node without a child list is an empty part, as with an empty list (§12.5) | BIN | BIN |
+| K39 | Directives are recognised by the first byte of the node text, at every level, quoted or not; their names are compared without regard to ASCII case; an unknown directive stays in the tree as an ordinary node; `!error` and `!warning` without a child use an empty message; an `!include` file that is missing or fails to parse is only reported (§12.4) | BIN | BIN |
+| K40 | A device index that is not a number makes the control specification invalid, like an index of 256 or more: a binding is dropped, a meta key rejects the file (§12.7) | BIN | BIN |
+| K41 | A file whose first four bytes are all 0xAA is rejected before it is parsed (§12.3 rule 8) | BIN | BIN |
 
 ---
 
@@ -614,6 +618,15 @@ sanitised into a sane range each tick.
   (positive = away from the user) is used as is.
 - Raw device motion (`DeviceEvent::MouseMotion`) feeds `MouseX`/`MouseY`.
 
+> **OPEN:** synthetic keyboard events. On focus gain some platforms report every key that
+> is already physically down as a *synthetic* press (with text). This section does not say
+> what to do with them. The implementation (2026-10-06, engineering choice) drops synthetic
+> presses and their text and forwards synthetic releases, so a key held across a focus change
+> does not fire edge-triggered actions (`menu`, `open_chat`) or type text, and acts again
+> only after it is released and pressed. The alternative, recording such keys as held
+> without resolving their bindings (so a held movement key resumes at once), would need a
+> new raw event. Confirm or choose.
+
 ---
 
 <a id="s11"></a>
@@ -669,7 +682,7 @@ The open items of the importer are collected in §12.19.
 ## 12. Importing the original client's key map
 
 Everything in this section describes the original client and its data. Each statement rests
-on a provenance row of §1.2 (K1–K37). Subsections marked **Decision** are Tessera's choices
+on a provenance row of §1.2 (K1–K41). Subsections marked **Decision** are Tessera's choices
 about how to use those facts.
 
 <a id="s12-1"></a>
@@ -758,6 +771,11 @@ owner's file exercises.
    fatal (§12.4): *unexpected close* at the top level, *mismatched brackets* inside a list.
    A file holding such a byte is therefore rejected. Inside a comment a 0xFF byte is
    consumed and ends the comment as an LF would; it does no harm there.
+8. **Binary marker** (K41). Before parsing, the original reads the first four bytes of the
+   file in binary mode, without the translation of rule 1. If there are four and all four
+   are 0xAA, the file is rejected without being parsed (the original reports that binary
+   node files are not supported). A file shorter than four bytes, or with any other first
+   four bytes, is parsed by rules 1–7. Nothing else about binary node files is used here.
 
 Consequences:
 
@@ -787,10 +805,25 @@ Consequences:
   fatal error *unexpected close*. Either one rejects the whole file.
 - The original sets no nesting limit. Files it writes nest four levels below a top-level
   node (section, binding, origin node, control parts).
-- **Directives**: a node whose text starts with `!` is handled by the parser and does not
-  appear in the tree. `!include` splices in the top-level nodes of another file, found by
-  name; `!error` turns its first child's text into a fatal error; `!warning` reports that
-  text and continues (BIN). The original never writes directives.
+- **Directives** (K39). After a node has been parsed, with its child list if it has one, the
+  parser looks at the first byte of its **text**. If that byte is `!`, the node is a
+  directive candidate. Text is what rules 4 and 5 of §12.3 produce, so a quoted token
+  (`"!error"`) and an escaped one (`\!error`) count the same as a bare one; an empty-text
+  node is never a directive. This happens in every list, at the top level and inside child
+  lists alike. The whole text is compared with the three directive names below, without
+  regard to the case of ASCII letters (`!ERROR` is `!error`; `!errorx` matches nothing):
+
+  | Text | Effect |
+  |---|---|
+  | `!include` | Its children name another file; that file's top-level nodes take the directive's place in the current list (at whatever level the directive stands). The directive node itself is not kept. A file that cannot be found, or that fails to parse, is **reported and parsing continues** (not fatal); what a failed include contributes is not described here, because the importer never follows `!include` (§12.14.1). Where files are searched is OPEN (§12.19). |
+  | `!error` | Fatal error: the file is rejected. The message is the text of the first child; with no child it is empty, and the file is still rejected. Further children are ignored. The node is not kept. |
+  | `!warning` | Reported, parsing continues. The message is the text of the first child, or empty with no child. The node is not kept. |
+  | any other text starting with `!` | Not an error and not reported: the node **stays in the tree** as an ordinary node, with its text (including the `!`) and its children. The key-map structure then treats it like any other node in that position (§12.7). |
+
+  Because the effect comes after the node is complete, a directive's child list must still be
+  well formed: a mismatched bracket inside it is fatal as anywhere else. Directive nodes
+  that are not kept do not count as nodes, for example toward the four top-level parts of
+  §12.5. The original never writes directives.
 
 <a id="s12-5"></a>
 ### 12.5 Document structure
@@ -804,6 +837,11 @@ texts are not checked (K5). Any other count rejects the file.
 | 2 | `Devices` | device list (§12.5.2) |
 | 3 | `MetaKeys` | meta-key table (§12.5.3) |
 | 4 | `Bindings` | sections of bindings (§12.5.4–§12.5.6) |
+
+Parts 2, 3 and 4 are read through their child lists only. A part **without a child list**
+(for example `MetaKeys` with no bracket after it) is the same as a part with an empty list: no devices
+(the eight standard devices are still appended, §12.5.2), no meta keys, no sections. It is
+not an error and is not reported (K38). The name node differs: it needs a child (§12.5.1).
 
 <a id="s12-5-1"></a>
 #### 12.5.1 Name node
@@ -1179,21 +1217,27 @@ What the original does on each problem (K16, K17):
 
 | Problem | Effect |
 |---|---|
-| Mismatched brackets, a closing bracket at the top level, an `!error` directive | file rejected |
+| Mismatched brackets, a closing bracket at the top level, an `!error` directive (with or without a child) | file rejected |
 | An unescaped byte 0xFF outside a comment (§12.3 rule 7) | file rejected |
+| First four bytes all 0xAA (§12.3 rule 8) | file rejected, not parsed |
+| `!warning` directive (with or without a child); an `!include` file missing or failing to parse | reported; parsing continues (§12.4) |
+| A node whose text starts with `!` but is not one of the three directive names | not reported; kept as an ordinary node (§12.4), then treated by the rows below like any node in its position |
 | Not exactly four top-level nodes | file rejected |
+| Top-level part 2, 3 or 4 without a child list | empty part, not reported (§12.5, K38) |
 | Name node: missing child list, so no GUID; unreadable GUID | file rejected |
 | Name node: children after the first; children of the GUID node; empty text | ignored, not reported (K35) |
 | Device entry: unknown or empty type word; missing child list, so no GUID; unreadable GUID | file rejected |
 | Device entry: children after the GUID; children of the GUID node | ignored, not reported (K35) |
 | Device entry: a GUID listed twice in the file | not checked: each entry gets its own index |
-| Meta key: index outside 1–32 (an empty index reads as 0), invalid control specification, device index beyond the list | file rejected |
+| Meta key: index outside 1–32 (an empty index reads as 0; an index that is not a number counts as 0), invalid control specification (including a device index that is not a number, K40), device index beyond the list | file rejected |
 | Section: unknown or empty name, or an input map that already had a section | file rejected |
 | Binding: meta-key mask that is not a number (for example an activation word in its place) | file rejected |
 | Binding: unknown activation word | file rejected |
 | Binding: empty mask, empty device index, empty activation | read as 0 (§12.5.7, §12.5.9); not reported |
 | Binding: unknown or empty command name | binding dropped, reported |
-| Binding: missing origin node; control specification with other than 2 or 3 children, device index of 256 or more, unknown or empty control name, unknown or empty sub-control word | binding dropped, reported |
+| Binding: missing origin node; control specification with other than 2 or 3 children, device index that is not a number (`User [ x DIK_A ]`, K40) or is 256 or more, unknown or empty control name, unknown or empty sub-control word | binding dropped, reported |
+| Children attached to a node that is read only for its text or number: a device index, control name, sub-control word, meta-key mask or activation node (`DIK_A ( x )`, `0x00000000 [ y ]`), and a GUID node | ignored, not reported; the node's own text is used as if it had no children (K35) |
+| Binding: children after the third (§12.5.5) | ignored, not reported (K35) |
 | Binding: empty origin token | accepted as a non-user binding (as in the older engine's files, §12.5.5) |
 | Binding: command of toggle type 3 (AutoRepeat) or 6 (Continuous) (§12.10) whose activation has none of Down, DblClickDown, NearbyDown | binding dropped, reported |
 | Binding that conflicts with an earlier one (§12.8) | later binding dropped, not reported |
@@ -1205,6 +1249,17 @@ alike. An empty-text node in a position of the structure gets the effect of an e
 that position: as the name node it is accepted, as a device entry or section it rejects the
 file, as a meta key it rejects the file (index 0), as a binding it is dropped (unknown
 command), as an origin node it gives a non-user binding.
+
+Child lists are looked at only where the structure has them: the name node (first child),
+the three parts, device entries (first child), meta-key nodes, sections, bindings (up to
+three children) and origin nodes (2 or 3 children). Every other node is read for its text or
+number alone, and a child list attached to it changes nothing (K35).
+
+An unknown directive kept as an ordinary node (§12.4) is handled by its position: as a fifth
+top-level node it makes the count wrong (file rejected); as a device entry, section or meta
+key it is an unknown type word, section name or index (file rejected); as a binding it is an
+unknown command (binding dropped, reported); as an origin token it gives a non-user binding;
+as a control name it is unknown (binding dropped).
 
 When the file is rejected, the original runs on the default key maps alone (§12.8, step 2
 contributes nothing).
@@ -1488,12 +1543,16 @@ BIN only):
 1. Find the source file: the user file of §12.2, or the file given to Tessera through the
    original's `--keymap` option (see §13, item 2, for the option's name clash). Read at most
    1 MiB; a larger file is not imported.
-2. Apply the text-mode translation of §12.3 rule 1 to the bytes read (stop at 0x1A; CR LF
+2. Check the binary marker of §12.3 rule 8 on the raw bytes (four bytes 0xAA: rejected).
+   Then apply the text-mode translation of §12.3 rule 1 to the bytes read (stop at 0x1A; CR LF
    becomes LF), then parse by §12.3–§12.7, with two limits of Tessera's own: nesting depth 16
    (empty-text nodes of §12.4 count as levels like any other node) and token length 4,096
-   bytes; exceeding either rejects the file. `!include` is not followed: the file is
-   treated as rejected and the report says why. `!warning` is reported; `!error` rejects the
-   file, as in the original.
+   bytes; exceeding either rejects the file. Directives are recognised and matched as in
+   §12.4. `!include`, in any letter case and at any level, is not followed: the file is
+   treated as rejected and the report says why. `!warning` is reported with its message
+   (empty if it has no child) and removed; `!error` rejects the file, with or without a
+   child, as in the original. Any other node whose text starts with `!` is kept as an
+   ordinary node, as in the original, and gives the result §12.7 states for its position.
 3. Build the effective key map by §12.8 from the file (or none, if rejected) and the four
    records reached through the DID maps.
 4. Translate the bindings of the sections named in §12.14.2, in effective order, by
@@ -1640,7 +1699,9 @@ pair, in table order:
    `text_submit` reports `AcceptInput`.
 2. **Digital entries of axis actions** (`"text"` or `{ input, value }`, §5.3): the first row
    whose Value has the sign of the entry's value (a plain `"text"` entry has value +1,
-   §5.3). A value of exactly 0 reports nothing.
+   §5.3). A value of exactly 0 reports nothing. Rows whose Value is "axis entry" have no
+   sign and are never chosen here, so a digital entry of `look_x` or `look_y`, whose only
+   rows are "axis entry" rows, reports nothing.
 3. **Analog entries** (`{ axis = … }`): the first row whose Value is "axis entry" when the
    pair has one (`look_x` → `PointerX`, `look_y` → `PointerY`), whatever the scale.
    Otherwise the first row whose Value has the sign of the stored scale (negative after
@@ -1711,10 +1772,16 @@ Tessera use yet.
   read-back result is the one §12.13 states (binding dropped, or activation 0x03).
 - **I7** (synthetic): the merge examples of §12.18 give exactly the orders shown; a file with
   five top-level nodes, a leading byte-order mark, a mismatched bracket, an unknown section,
-  an unknown activation word, an unescaped 0xFF byte outside a comment, or an empty-text
-  device entry, section or meta key is rejected; a file with an unknown command name, an
-  unknown control name or an empty-text binding is accepted without that binding; the
-  examples of Example H (§12.18) give exactly the trees and results shown.
+  an unknown activation word, an unescaped 0xFF byte outside a comment, an empty-text
+  device entry, section or meta key, an `!error` directive with or without a child (in any
+  letter case, quoted or not, at any level), or four 0xAA bytes at the start is rejected; a
+  file with an unknown command name, an unknown control name, an empty-text binding, a
+  binding whose device index is not a number, or a binding named by an unknown directive
+  (`!foo`) is accepted without that binding; a file whose `Devices`, `MetaKeys` and
+  `Bindings` parts have no child list is accepted as an empty key map with the eight
+  standard devices; a child list attached to a device index, control name, sub-control,
+  mask or activation node changes nothing; the examples of Example H (§12.18) give exactly
+  the trees and results shown.
 - **I8**: the importer opens no file for writing, refuses a source larger than 1 MiB, and never
   touches the settings folder or the install.
 
@@ -1790,6 +1857,13 @@ the virtual control `DIV_MOUSELOOK` on device 2 is written `[ 2 "" ]` (§12.13).
 | bytes `61 62 5C 0D 0A 63 64` (`ab\`, CR LF, `cd`) | with the text-mode translation: one token of 5 bytes `61 62 0A 63 64`; without it: tokens `61 62 0D` and `63 64` |
 | bytes `22 61 62 0D 0A` (`"ab`, CR LF) | unterminated, reported; token `61 62` with the translation, `61 62 0D` without |
 | bytes `41 20 5B 20 78 FF 20 5D` (`A [ x`, 0xFF, ` ]`) | the list of `A` ends at 0xFF, its closing bracket is missing there: mismatched brackets, file rejected |
+| `"" [ GUID_Virtual ] Devices MetaKeys Bindings` | parts 2–4 without child lists: a valid, empty key map with the eight standard devices (§12.5) |
+| `CameraReset [ User [ 0 DIK_HOME ( x ) ] 0x00000000 [ y ] Down [ z ] ]` inside a section | the children `x`, `y`, `z` are ignored: control DIK_HOME on device 0, mask 0, activation Down |
+| `CameraReset [ User [ x DIK_HOME ] ]` inside a section | device index not a number: binding dropped, reported; the file is still accepted |
+| `"!WARNING" [ note ]` as an extra top-level node | reported with the message `note` and removed; the remaining four nodes are the parts |
+| `!error` as an extra top-level node | file rejected (empty message) |
+| `!foo [ User [ 0 DIK_A ] ]` inside a section | not a directive name: kept as a binding with command `!foo`, unknown command, dropped, reported |
+| bytes `AA AA AA AA` at the start of the file | rejected before parsing (§12.3 rule 8) |
 
 **Example G: a minimal key-map record** (DID and command ID invented for the example):
 
@@ -1887,3 +1961,4 @@ These specs are owned elsewhere; the corrections are recorded here, not made the
 | 2026-10-04 | First version (clean room): §0–§11. |
 | 2026-10-05 | Spec writer (dirty room): new §12 (the original client's key-mapping file and key-map records: syntax, structure, control vocabulary, errors, effective key map, record layouts, command classes, writer format, import into Tessera, plugin action IDs, related preferences, invariants, examples), §13 and §14; provenance split into §1.1 and §1.2 (K1–K32, with the BIN record); §0 and the header updated; §11 revised (import, plugin IDs, height scale and yaw relation resolved; gamepad and auto-repeat notes extended). §2–§10 unchanged. |
 | 2026-10-05 | Spec writer (dirty room), answering the review of the same day; section numbers unchanged. (1) §12.4: an opening bracket with no token before it makes an empty-text node (K33), with the consequences in §12.7 and Example H. (2) §12.6.3: per-code table of the joystick spellings the writer emits (K27, BIN; the same rule confirmed for the mouse wheel by OBS); §12.6 intro and Example F aligned. (3) §11: the compass heading is clockwise from north per `coordinates.md` §11.4 (row C11); stale OPEN remark removed, check values added. (4a) §12.3 rule 1: a raw-byte reader must apply the text-mode translation first; the three cases where tokens differ are listed; §12.14.1 step 2 applies it. (4b) §12.7: name node and device entries with extra children, children of GUID nodes, duplicate device GUIDs, empty texts in every position (K35, K36). (4c) §12.15: the reported command for entries without a remembered command is defined for button actions, digital and analog entries. (4d) §12.6.3: bits 0x0400/0x0800 are never set in the original (documented XInput call; K28, PUB); `PadMode` for button 10 marked as a Decision with its basis. Also found while answering: byte 0xFF stops tokens and lists and makes a file rejected (§12.3 rules 4, 5, 7; K34; corrects "0x80–0xFF are token bytes"); empty tokens read as number 0 and activation 0; numeric command and section names are converted without whole-token checks (§12.5.9); the writer emits an empty control name for unnamed codes and every virtual-device control and handles word-less activations as stated (§12.13, K37); I6 restricted accordingly, I7 extended; new OPEN on empty activation words. Provenance: BIN row extended with the revision session; new source PUB; rows K33–K37. Status stays Review; Reviewer reset to none yet. |
+| 2026-10-06 | Spec writer (dirty room), answering the re-review of 2026-10-05; section numbers unchanged, status stays Review. (1) §12.5: a `Devices`, `MetaKeys` or `Bindings` part without a child list is an empty part, not an error (K38); §12.7 row added. (2) §12.7: children attached to any node read only for its text or number (device index, control name, sub-control, mask, activation, GUID) are ignored, as are children of a binding after the third; the nodes whose child lists are read are listed (K35 widened). (3) §12.4: directives are recognised by the first byte of the node text after the node is complete, quoted or escaped alike, in every list; names compared without regard to ASCII case; an unknown `!` name stays as an ordinary node; `!error` without a child still rejects the file, `!warning` without a child reports an empty message; a missing or unparsable `!include` file is only reported (K39); §12.7 rows and a paragraph on unknown directives by position; §12.14.1 step 2 states the importer's handling. (4) §12.7: a device index that is not a number makes the control specification invalid: binding dropped and reported, meta key rejects the file (K40). Nit: §12.15 rule 2 states that digital `look_x`/`look_y` entries report nothing. Also found: a file whose first four bytes are all 0xAA is rejected before parsing (§12.3 rule 8, K41; §12.14.1 step 2). I7 and Example H extended. Provenance: BIN row extended with the second revision session; rows K38–K41. |

@@ -716,6 +716,13 @@ module). The real-data test resolves 500 random lists with no TL6, TL7 or TL9 fi
 > the exactly halving run from level 1) gives the same pixels as the original at the default
 > setting and is accepted as a Tessera simplification.
 
+> **OPEN (Decision, 2026-10-06):** `MaterialLibrary::texture_chain` ends the effective chain
+> before the first later level that is larger than the level before it in width or height
+> (TL7 broken, hostile data only) or whose larger side is above the resolution cap (the
+> caller's cap and the configured texture limit), so every returned level is within the
+> limit and the chain is largest first. On a complete install (TL7 holds for all chains)
+> this changes nothing. The two equal levels of the §4.2 exception are kept.
+
 ---
 
 <a id="s14"></a>

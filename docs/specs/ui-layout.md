@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review: Claude review session (spec-writer agent), review 2026-10-05: changes requested. Every earlier issue is repaired, and every §5.3 item passes except one census fact that a spot check over all 302 records contradicts. §5.7 says 258 based elements get their default state only through the base chain, so that it "exists after resolution". In fact it exists after resolution for 237 of them, and for 21 based elements it is defined nowhere, so 92 default states (71 + 21) have no effect, not 71. These spot checks matched: all 302 records were re-extracted from the install, byte-identical; the §7.3 override census (97 + 13, 82 / 28, 8 of 21, 7); U30 (223 / 9, 3 states); the ObjectMode census; the §10 zero and 0x25 breakdown; 5,555 / 13,036; 83,161 instances; 131 Text without a font; `has_position` 222 / 209 / 12; the §5.2 ID counts. Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested (unmarked unknowns need `> **OPEN:**` callouts; provenance rows missing for §3.2, §8.5, §9.1, §9.2, §9.8; §7.3 step 6 base references of overriding/inherited based children; minor: aspect-pass float width, stale §15 rows, §10 0x25 row wording). Grammar and censuses re-verified independently on all 302 records. |
+| **Review record** | Fifth review: Claude review session (spec-writer agent), review 2026-10-06: **passed; status moved to Accepted**. The one fourth-review item is repaired. §4.7 now says "observed lengths ≤ 50 (media paths ≤ 48)". §11 has a Pascal-string census row. The third-review change-log row no longer states a maximum of 47, and a fourth-review change-log row records the correction. Every §5.3 item passes: only functional facts; no code or pseudo-code; no copied prose; no game text, keys or hostnames; every fact has a provenance row and a mark; byte layouts are complete; invariants are testable; all 14 §16 items have an in-section `> **OPEN:**` callout; no closed gate. The spec is implementable. Re-check of the disputed counts: all 302 records were re-extracted read-only from the install on 2026-10-06 (2,610,590 bytes, byte-identical, dictionary 0x34000000 identical). A decoder written independently from §4, §6.1, `property-system.md` §2, §4 and §5 and `records.md` §1 and §4 decodes every record with zero leftover bytes. It counts 11,377 Pascal strings (11,365 Image paths, 2 Movie paths, 10 in property sets), the longest 50 bytes. Twelve strings are longer than 47 (ten Image paths of 48, one property-set string of 49, one of 50). Movie paths are 28 and 47 bytes, 11 Image paths are non-empty, and every length is below 128. Further spot checks, all matched: the §5.1 design-size histogram, with 151 of 3,144 top-level elements outside their design area; the §5.2 ID counts (13,035 distinct, one used 88 times, 69 engine-level; states 9,470 / 3,507; types 6,484 / 1,320); §5.5 read-order numbering in all 302 top-level and 3,774 non-empty child tables; §5.6 5,665 cross-layout and 2,952 same-layout references; the §5.9 entry, PID and value-type census and the top five state properties; the §6.2 Image census and draw modes; the §6.3 Coloured-image census; the §6.4 Animation census (2,252 frames, 2–109 per item, durations, draw modes, loop); the §6.5 hot spots; the §6.6 Fade depths 18 / 16 / 2; the §6.7 Pause pairs; the §6.8 State and Message items; the §11 record sizes, per-record maxima, 13,970 elements without states and the engine widget-type counts. Earlier records follow. Fourth review: Claude review session (spec-writer agent), review 2026-10-06: **changes requested** (one item). All three third-review items are repaired. §9.1 now states only that a panel is created from a (layout DID, top-level element ID) pair and points to the OPEN callouts. U27 no longer claims how the pair is chosen. §6.1 gives the Movie and Image path length as a VLE (REC §1), 1 byte for every observed path. §16 item 9 allows "not at all", matching §3.2. Every other §5.3 item still passes, and the spec is implementable. Remaining issue, which a spot check over all 302 records contradicts (§5.3, "each fact ... marked Confirmed"): §4.7 "Defensive limits" says "Pascal strings: observed lengths ≤ 47". That is false. The records hold 11,377 Pascal strings (11,367 media paths plus 10 strings inside property sets), and the longest is 50 bytes. 12 strings are longer than 47: ten of 48, one of 49 and one of 50. The ten Image paths of 48 bytes are the longest media paths (Movie paths are 28 and 47). The third review record above wrongly repeated the "47 or shorter" figure, and the change log row inherited it. Fix: say "observed lengths ≤ 50 (media paths ≤ 48)" in §4.7, and correct the 2026-10-06 change-log row if it is restated. Every length is still below 128, so the §6.1 statement that the VLE is 1 byte holds and needs no change. Spot checks on the 302 records extracted read-only from the install on 2026-10-06 (2,610,590 bytes) all matched: the §5.8 edge census for all four edges; the §5.4 element and state flag census; §5.3 (118 z-levels, 12,911 zeros; `has_position` 16,199 / 222, of which 209 typed and 12 based have a zero rectangle); the §6.1 per-kind counts and their element / state split (12,998); the §11 media-per-block rows; 2,852 empty states; all state tables at hint 1 and every element table at the minimal hint; the §5.7 default-state table (883 / 237 / 21 / 71 = 1,212, none of the 21 an override child); the §7.1 chain depths 7,076 / 1,494 / 44 with 3 failures; 11,365 Image and 2 Movie items, every one carrying its path. Earlier records follow. Third review: Claude review session (spec-writer agent), review 2026-10-06: **changes requested** (one blocking item). Both earlier issues are repaired: §5.7 now gives the correct default-state census, and §9.1 has an OPEN callout, so every §16 item has an in-section callout. Blocking, §5.3 "unknowns are marked OPEN, not guessed": §9.1, first sentence, says game code creates a panel "usually through the UILAYOUT DID map". That is stated as a BIN fact ("All of §9.1: BIN, U27"), but §3.2 says none of the map's use was traced in the client (U23), and the new §9.1 callout lists "directly, or through a `UILAYOUT` map entry" as unknown. Delete "usually through the UILAYOUT DID map" (or replace it with a pointer to the OPEN), so that §9.1 states only that a panel is created from a (layout DID, top-level element ID) pair. Non-blocking: in §6.1, "(1-byte length prefix)" for the Movie and Image path strings can be read as a u8 length. REC §1 defines a VLE length, and it is 1 byte only for lengths below 128 (all observed paths are 47 bytes or shorter), so say "VLE length; 1 byte for every observed path". Also, §16 item 9 ("how game code finds layouts through the maps") assumes the maps are used, while the §3.2 callout allows "not at all"; align the wording. Everything else passes the §5.3 checklist and is implementable: grammar, limits, merge, layout formulas, states, media player, invariants and the §14 examples. I recomputed the §14.1 offsets (158 bytes) and every §14.2 and §14.3 result, including the 32-bit aspect pass. Spot checks, re-extracted from the install read-only on 2026-10-06: all 302 records, 2,610,590 bytes, byte-identical to the earlier extraction. These match: the §5.7 default-state table (883 / 237 / 21 / 71 = 1,212, by an independent resolver), with none of the 21 an override child; the §5.8 edge census for all four edges; the §5.4 flag census for elements and states; §5.3 (118 z-levels, 12,911 zeros; `has_position` 16,199 / 222, of which 209 typed and 12 based have a zero rectangle); the §6.1 per-kind and element/state media counts (12,998); the §11 media-per-block rows; 2,852 empty states (§9.4); state tables all hint 1 and element tables at the minimal hint (§4.2); the §7.1 chain depths 7,076 / 1,494 / 44, with 3 failures. Earlier records follow. Re-review: Claude review session (spec-writer agent), review 2026-10-05: changes requested. Every earlier issue is repaired, and every §5.3 item passes except one census fact that a spot check over all 302 records contradicts. §5.7 says 258 based elements get their default state only through the base chain, so that it "exists after resolution". In fact it exists after resolution for 237 of them, and for 21 based elements it is defined nowhere, so 92 default states (71 + 21) have no effect, not 71. These spot checks matched: all 302 records were re-extracted from the install, byte-identical; the §7.3 override census (97 + 13, 82 / 28, 8 of 21, 7); U30 (223 / 9, 3 states); the ObjectMode census; the §10 zero and 0x25 breakdown; 5,555 / 13,036; 83,161 instances; 131 Text without a font; `has_position` 222 / 209 / 12; the §5.2 ID counts. Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested (unmarked unknowns need `> **OPEN:**` callouts; provenance rows missing for §3.2, §8.5, §9.1, §9.2, §9.8; §7.3 step 6 base references of overriding/inherited based children; minor: aspect-pass float width, stale §15 rows, §10 0x25 row wording). Grammar and censuses re-verified independently on all 302 records. |
 | **Implements into** | `crates/formats` (decoder for prefix 0x22 records with a fuzz target, §4), `crates/ui` (descriptor resolution §7, run-time layout §8, element tree, states and media player §9, drawing of element images §9.6), `apps/explorer` (layout browser: tree, states, media, resolved view), `apps/client` (native panels, M5) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize and bucket order, Pascal strings), §2 (DID prefixes), §5 (render surfaces 0x41), §7 (enum mappers), §8 (DID maps). [`property-system.md`](property-system.md) §4–§5 (property values and embedded property sets), §8 (root DID map). [`dat-container.md`](dat-container.md) (routing; prefix 0x22 lives in `client_local_<Locale>.dat`). [`fonts.md`](fonts.md) §7–§9 (text layout, outline, font choice; written in parallel). [`string-table.md`](string-table.md) (StringInfo text). [`lua-plugin-api.md`](lua-plugin-api.md) (plugin controls, blend-mode values). [`install-layout.md`](install-layout.md) (install directory, the `raw/` folder). `skin-definition.md` (user skins; not yet written). |
 
@@ -309,7 +309,7 @@ Defensive limits (suggestions; data never comes close):
   sizes.
 - Media counts: each item needs at least 12 bytes; animation frame counts at most remaining ÷ 4.
 - Property sets: PS §5.3 limits.
-- Pascal strings: observed lengths ≤ 47; reject lengths above the remaining bytes.
+- Pascal strings: observed lengths ≤ 50 (media paths ≤ 48); reject lengths above the remaining bytes.
 
 ---
 
@@ -389,10 +389,20 @@ layout) from which this element inherits (§7). 5,665 references point into anot
 ### 5.7 Default state
 
 After an element is created, the client starts its own media list and then switches it to
-`default_state` (§9.2 step 8). 1,212 elements set it: for 883 the state is defined on the
-element itself, for 258 only through its base chain (it exists after resolution, §7), and for
-71 nowhere (no base). A switch to a state that the resolved element does not define becomes a
-switch to state 0 (§9.4 step 1), so for those 71 the default state has no effect.
+`default_state` (§9.2 step 8). 1,212 elements set it (a non-zero value). Counted over all 302
+records, each element taken as stored and, when it has a base, resolved by §7:
+
+| Where the default state is defined | Elements |
+|---|---|
+| In the element's own state table | 883 |
+| Based element, not in its own table, present after resolution (§7) | 237 |
+| Based element, defined nowhere in the resolved descriptor | 21 |
+| Typed element (no base), not in its own table | 71 |
+
+None of the 21 based elements is an override child (§7.3 step 6), and all 21 resolve without a
+failure. A switch to a state that the resolved element does not define becomes a switch to
+state 0 (§9.4 step 1), so for 92 elements (71 + 21) the default state has no effect.
+(Confirmed, OBS, U20; probe re-run 2026-10-06.)
 
 <a id="s5-8"></a>
 ### 5.8 Edge modes (values Confirmed; behaviour BIN)
@@ -481,10 +491,10 @@ in substance (§15).
 
 | Kind | Name | Body (in order) | Body size | Count in data |
 |---|---|---|---|---|
-| 1 | Movie | u32 movie DID (DB-object type 0x08, `property-system.md` §9); Pascal string file path; bool8 fit_to_screen | 6 + path length (1-byte length prefix) | 2 (states) |
+| 1 | Movie | u32 movie DID (DB-object type 0x08, `property-system.md` §9); Pascal string file path; bool8 fit_to_screen | 5 + path length + size of the path's VLE length (REC §1); that VLE is 1 byte for every observed path, giving 6 + path length | 2 (states) |
 | 2 | — | not supported by the client | — | 0 |
 | 3 | Jump | u32 target index; f32 probability | 8 | 0 |
-| 4 | Image | u32 image DID; u32 draw mode; Pascal string file path (see note) | 9 + path length (1-byte length prefix) | 11,365 |
+| 4 | Image | u32 image DID; u32 draw mode; Pascal string file path (see note) | 8 + path length + size of the path's VLE length (REC §1); that VLE is 1 byte for every observed path, giving 9 + path length | 11,365 |
 | 5 | Message | u32 UI message ID; f32 probability | 8 | 31 |
 | 6 | Fade | f32 start opacity; f32 end opacity; f32 duration (seconds) | 12 | 36 |
 | 7 | Hit mask | u32 image DID | 4 | 0 |
@@ -861,8 +871,8 @@ screen-level reference boxes of §8.3, which read the current screen size.
 <a id="s9-1"></a>
 ### 9.1 Root panels
 
-Game code creates a panel by (layout DID, top-level element ID), usually through the UILAYOUT
-DID map. The generic steps are:
+Game code creates a panel from a (layout DID, top-level element ID) pair. How it chooses the
+pair is OPEN (see the callout at the end of this section and §3.2). The generic steps are:
 
 1. Load the layout and find the top-level element (top-level table only).
 2. Create the element tree (§9.2 steps 1–6) without a parent, then run the panel's
@@ -878,9 +888,15 @@ object mode, the client gives it CanvasResize. `UICore_Dialog_UILayout_Override`
 `UICore_Dialog_UIElement_Override` replace the layout DID and element ID that the dialog would
 otherwise use.
 
-Which panels exist and when they open is game code. For Tessera's walker (M5) the data-driven
-part is: create a root panel from a (layout, element) pair and run §9.2–§9.6. (All of §9.1:
-BIN, U27.)
+For Tessera's walker (M5) the data-driven part is: create a root panel from a (layout, element)
+pair and run §9.2–§9.6. (All of §9.1: BIN, U27.)
+
+> **OPEN:** which panels the client creates at start-up, in which order, and how game code
+> chooses the (layout DID, top-level element ID) pair for each (directly, or through a
+> `UILAYOUT` map entry, see the OPEN in §3.2). This is game code outside the layout records; no
+> record in the install lists the start-up panels. Tessera chooses its own panel set for M5 and
+> does not need this to render a panel. Settle per panel by tracing the code that opens it, when
+> a milestone needs that panel's exact behaviour.
 
 <a id="s9-2"></a>
 ### 9.2 Creating an element tree
@@ -1112,6 +1128,7 @@ property on the element or any of its states (FO §9.1 rule 4: such text is not 
 | Distinct element IDs | 13,035 |
 | Default states set | 1,212 |
 | `has_position` = 0 | 222 elements |
+| Pascal strings (re-measured 2026-10-06) | 11,377: 11,367 media file paths and 10 strings inside property sets. Longest 50 bytes; 12 longer than 47 (ten of 48, one of 49, one of 50). Media paths: Image up to 48 bytes (the ten of 48), Movie 28 and 47; 11,354 of the 11,365 Image paths are empty, so 13 media items name a file (§10). All lengths below 128, so every length VLE is 1 byte |
 
 ---
 
@@ -1316,9 +1333,10 @@ Every item has an in-section `> **OPEN:**` callout; this list only collects them
 6. Behaviour of the remaining engine-level properties and of each widget class (§5.9); trace
    per widget as panels need it.
 7. Object modes None, Tile and CanvasResize beyond the layout rule of §8.4 step 1 (§8.4).
-8. Which panels the client opens at start-up and how game code wires them (game code, out of
-   scope; §9.1).
-9. How game code finds layouts through the `UILAYOUT` and `PRELOADRESOURCES` maps (§3.2).
+8. Which panels the client opens at start-up and how game code picks each panel's layout and
+   element (game code; §9.1).
+9. Whether and how game code uses the `UILAYOUT` and `PRELOADRESOURCES` maps to find layouts
+   (by entry key, by label or not at all), and how the one unreferenced layout is opened (§3.2).
 10. Readers of `has_position` outside the layout code (§5.3).
 11. Which non-root elements own a drawing surface, so that a Fade on them is visible (§6.6).
 12. What the client does when the screen size changes (§8.5).
@@ -1336,3 +1354,6 @@ None of the owner-observation items O1–O17 concerns UI layouts.
 |---|---|
 | 2026-10-05 | First complete draft: record grammar with census over all 302 records, media-item variants, field meanings and enum mappers, base-element resolution, design-time and run-time layout with edge modes 0–6, sibling order, states, media player, image drawing, button states, references and failure categories (OBS + BIN, client 4906.0071.1794.4035). |
 | 2026-10-05 | Revision after review (changes requested). §7.3 step 6: an override merges the derived child into the inherited child without resolving either; the inherited child's type and base reference survive, the derived child's are ignored; the merged child is resolved at creation (BIN), with an override census and worked example §14.5, invariant UL15. §8.4 step 3: aspect pass stated in 32-bit floats (BIN). §8.4 step 5: the clamp bounds *Nw* and *Nh* confirmed as the client's exact rule (BIN). New in-section OPEN callouts in §3.2, §5.3, §8.4 step 1 (object modes), §8.5, §9.2 step 5 (with the traced lookup keys), §9.3 and §9.6 (DrawAfterChildren census and search result); §16 lists all OPENs. Provenance rows U21–U30 for §3.1–§3.2, §7.3, §8.4, §8.5, §9.1, §9.2, §9.6 and §9.8; U13 mark split; BIN row lists the revision questions. §10: the 0x25 count split into 5,362 StringInfo and 5 DID references, and the 1,324 zero references broken down. §15: the 0x2A, 0x21 and colour rows reworded as agreements; the 0x22 row quotes the current status. |
+| 2026-10-06 | Revision after re-review (changes requested). §5.7: default-state census corrected and put in a table: 883 on the element, 237 based and present after resolution, 21 based and defined nowhere (none an override child, all resolve), 71 typed and undefined; 92 default states have no effect (re-probed over all 302 records). §9.1: the start-up panel question is now an in-section OPEN callout, so every §16 item has one; §16 item 8 reworded to match. |
+| 2026-10-06 | Revision after third review (changes requested). §9.1: removed the unsupported claim that panels are usually created through the `UILAYOUT` map; the section now states only that a panel is created from a (layout DID, top-level element ID) pair and points to the OPEN callouts in §9.1 and §3.2. §6.1: Movie and Image body sizes now state the path's VLE length (REC §1), 1 byte for every observed path (all shorter than 128 bytes; see the 2026-10-06 fourth-review row for the corrected maximum). §16 item 9 reworded to allow that the maps are not used at all, matching §3.2. |
+| 2026-10-06 | Revision after fourth review (changes requested). §4.7: the observed Pascal-string maximum corrected from 47 to 50 bytes (media paths ≤ 48), re-measured over all 302 records freshly extracted read-only from the install (2,610,590 bytes, byte-identical to the review extraction): 11,377 Pascal strings (11,367 media paths, 10 inside property sets), twelve longer than 47 (ten Image paths of 48, one property-set string of 49, one of 50); Movie paths 28 and 47. The third-review change-log row no longer states "all 47 bytes or shorter". §11: new census row for Pascal strings. The other §4 counts were re-measured over all records and stand: nesting depth ≤ 7; media per block 0–5 (elements) and 0–10 (states); table sizes up to 450 (top level), 339 (children), 0–139 (states); state tables all hint 1, element tables and property sets at the minimal hint (one element set of 23 entries at hint 1); 16,421 element and 12,977 state blocks with the §4.3 and §4.4 equalities; 7,804 typed / 8,617 based; 12,998 media items with kind = tag. §6.1 unchanged (every length VLE is 1 byte). |

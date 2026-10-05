@@ -174,6 +174,17 @@ published sources only.
   loops forever freezes the client. Tessera adds an instruction budget per host-to-Lua call
   (default 500 million VM instructions, coroutines included) — a deliberate safety
   deviation; when it trips, the call is aborted with an error reported like any other.
+  > **OPEN:** (implementer note, `crates/script`, 2026-10-06) Lua 5.1 runs `__gc`
+  > metamethods with debug hooks disabled, so a plugin finalizer (attached through
+  > `newproxy(true)`) would escape the budget, including at state close. Engineering choice:
+  > `newproxy(true)` returns a proxy whose metatable, as seen by `getmetatable`, is a view;
+  > writes through it reach the real metatable, except that `__gc` installs a host
+  > dispatcher which runs the plugin's finalizer in a fresh coroutine (metered) and
+  > re-raises its error, as 5.1 does for a finalizer error. Finalizers run at apartment
+  > close share one fresh budget. Observable differences from stock 5.1: `rawget`, `rawset`,
+  > `next`/`pairs` on a proxy's metatable see the (empty) view, and a `rawset` on it has no
+  > effect on the proxy. Question for the spec: is this deviation acceptable, or must the
+  > metatable be the raw table (which would need a different way to meter finalizers)?
 - **Garbage collection.** Once per frame the original runs one incremental collection step
   in every apartment (BIN). Tessera may do the same or rely on the default collector.
 - All plugin code runs on the main (UI) thread, between frames (Tessera architecture §18.1).

@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Review** |
-| Last updated | 2026-10-05 |
+| Status | **Accepted** |
+| Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent) |
-| Review record | Claude review session (spec-writer agent), 2026-10-05: changes requested (descriptor field rules D6–D8 and §5 contradict the client; D14 key-character rule wrong; stale against `lua-plugin-api.md` §20; broken internal section references; quoted third-party/client prose; D4 mis-marked Confirmed). Revised the same day; every item is addressed (see the change log). Re-review, Claude review session (spec-writer agent), 2026-10-05: changes requested (D14/§11.1 and D21/§7.1 state ASCII-only as the client's rule, but the client applies the C runtime `isalnum` in the game-language locale it sets at start-up; contradicts `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row, and §12.2 row 7; D14 "Confirmed (folders)" overclaims; naming note's LEGAL §10 citation; §4.2 ordering claim unsourced). |
+| Review record | Claude review session (spec-writer agent), 2026-10-05: changes requested (descriptor field rules D6–D8 and §5 contradict the client; D14 key-character rule wrong; stale against `lua-plugin-api.md` §20; broken internal section references; quoted third-party/client prose; D4 mis-marked Confirmed). Revised the same day; every item is addressed (see the change log). Re-review, Claude review session (spec-writer agent), 2026-10-05: changes requested (D14/§11.1 and D21/§7.1 state ASCII-only as the client's rule, but the client applies the C runtime `isalnum` in the game-language locale it sets at start-up; contradicts `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row, and §12.2 row 7; D14 "Confirmed (folders)" overclaims; naming note's LEGAL §10 citation; §4.2 ordering claim unsourced). Revised 2026-10-06; every item is addressed (see the change log). Third review, Claude review session (spec-writer agent), 2026-10-06: **passed**, status Accepted. Every `CLEAN_ROOM.md` §5.3 item holds, and the spec can be implemented without dirty material. Every item from the 2026-10-05 re-review is resolved: the client rule is now stated as `isalnum` in the start-up locale, and ASCII-only is a stated Tessera deviation; D14's Confirmed mark is narrowed; the naming-note citation is fixed; the ordering claim is sourced (D33/D34); §12.2 row 7 agrees with `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row. Spot checks on the owner's install (2026-10-06): D1 (no `Plugins/` and no `.plugin` file in the settings folder), D13 (three `PluginOptions.xml` files, each with a UTF-8 declaration with `standalone="no"`, CRLF line ends, an empty `AutoloadOptions` and, in one file, an empty `ScalingOptions`), D14 (only the `PluginData/<account>/<world>/` level exists and there is no `.plugindata` file), and D15 (three world folders, one with a bracketed prefix and a space). BIN spot checks on build SHA-256 prefix `d22363eb9aff0fb5`: D30 (one all-categories `setlocale` call choosing among the four names, with `English` as the default; the other calls set only the numeric category); D14 and D21 (a key unit is zero-extended and a package byte is sign-extended before `isalnum`); D33 (narrow `_findfirst64i32`/`_findnext64i32` from the UCRT); D12 (no `compendium` string). The CRT reading of D32 also matches the published UCRT and Wine sources for single-byte locales. Non-blocking suggestion for the next revision: in the WINE source row, describe the directory-cache sort in words instead of naming the Wine function. |
 | Implements into | `crates/plugins` (discovery, descriptor parse, apartments, package resolution), with `crates/install` (settings-folder location) and `crates/script` (Lua host) |
 | Related specs | [`lua-plugin-api.md`](lua-plugin-api.md) (the Lua runtime, apartment states, `import` internals and the API surface; this spec is the disk-and-discovery companion to it and agrees with its §4, §5, §6.1, §7.2 and §10.2), [`install-layout.md`](install-layout.md) §8 (settings folder and its contents) |
 
@@ -21,7 +21,9 @@
 > `UseScaling`, `true`, `True`) and the native package name `Turbine` are the identifiers the
 > original client and existing third-party plugins use. They are reproduced only because a
 > compatible implementation cannot read the same files without them (see
-> `docs/ARCHITECTURE.md` §18 and `docs/LEGAL.md` §10). They must appear in Tessera only in the
+> `docs/ARCHITECTURE.md` §18.2 and the *Google v. Oracle* row of `docs/LEGAL.md` §4.1; the
+> written interoperability record that ARCHITECTURE §18.2 asks for is still pending as its
+> "OPEN (legal)" item, and `docs/LEGAL.md` §10 governs naming). They must appear in Tessera only in the
 > plugin subsystem, never as product names, crate names or UI strings. All descriptive text
 > here is our own; no third-party prose, documentation wording or client message text is
 > reproduced.
@@ -57,13 +59,16 @@ Source keys:
 | Key | Source |
 |---|---|
 | **OBS** | The owner's install, read-only, 2026-10-05 (re-checked the same day for this revision): the settings folder of the Steam/Proton prefix (`…/compatdata/212500/pfx/drive_c/users/steamuser/Documents/The Lord of the Rings Online/`). It holds `UserPreferences.ini`, `lotro.keymap`, `CEF/`, and `PluginData/<account>/<world>/PluginOptions.xml` for three worlds. It has **no** `Plugins/` folder and no `.plugin` file anywhere (this owner has installed no plugins). The in-prefix settings folder is the only one present. |
-| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix `d22363eb9aff0fb5`, re-checked for this revision), with its imports from `xerces-c_2_6.dll` (the XML parser) and `lua51.dll`; read with capstone on individual functions in the dirty room on 2026-10-05, first draft and again for this revision. **Questions:** (a) what the descriptor parser reads, in what structure, and what it rejects; (b) the per-field length limits and trimming; (c) how a package name is checked and resolves to a file, the precedence of the folder form over the file form, and the native/disk merge; (d) how discovery lists and filters directory entries, how deep it looks, how it treats duplicate names, and whether it reads companion files; (e) the structure and value rules of the per-account/world options file; (f) the plugin-data key rules; (g) how apartment names compare; (h) how a disk chunk is loaded. **Why M1–M3 were not enough:** the acceptance and rejection rules, resolution precedence, depth and duplicate handling are code, not data, and no public source describes them at the needed precision (the community schema even disagrees with the client on one point, D18); this owner's install has no `Plugins/` tree and only empty options files, so OBS can confirm the folder layout and the empty file form but no parser branch; no running official client with third-party plugins is available to this session for M3. Only offline plugin-host, XML and file code was read: nothing about network, login, keys, the launcher or anti-tamper. Numeric constants below are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). |
+| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix `d22363eb9aff0fb5`, re-checked for this revision), with its imports from `xerces-c_2_6.dll` (the XML parser) and `lua51.dll`; read with capstone on individual functions in the dirty room on 2026-10-05, first draft and again for this revision. **Questions:** (a) what the descriptor parser reads, in what structure, and what it rejects; (b) the per-field length limits and trimming; (c) how a package name is checked and resolves to a file, the precedence of the folder form over the file form, and the native/disk merge; (d) how discovery lists and filters directory entries, how deep it looks, how it treats duplicate names, and whether it reads companion files; (e) the structure and value rules of the per-account/world options file; (f) the plugin-data key rules; (g) how apartment names compare; (h) how a disk chunk is loaded. **Why M1–M3 were not enough:** the acceptance and rejection rules, resolution precedence, depth and duplicate handling are code, not data, and no public source describes them at the needed precision (the community schema even disagrees with the client on one point, D18); this owner's install has no `Plugins/` tree and only empty options files, so OBS can confirm the folder layout and the empty file form but no parser branch; no running official client with third-party plugins is available to this session for M3. **Re-read 2026-10-06** (same build, SHA-256 prefix re-checked) for the second revision, function by function: the plugin-data key validator and the package-name check of the disk resolver (how each passes its characters to `isalnum`), the start-up `setlocale` call, the directory-listing routine that discovery calls, and the discovery loop. Questions: (f) and (c) again, plus (i) which listing API discovery uses and whether it reorders entries. Only offline plugin-host, XML and file code was read: nothing about network, login, keys, the launcher or anti-tamper. Numeric constants below are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). |
 | **XSD** | `lunarwtr/vscode-lotro-api` (MIT), `resources/xsds/lotroplugin.xsd` (also vendored in OneLauncher), `plugincompendium.xsd`, `skincompendium.xsd`, `musiccompendium.xsd`, `compendium-basetypes.xsd` (community schemas; facts only). |
 | **DOC** | Official "Update 25" Lua API reference HTML (© 2016 publisher), mirrored in `lunarwtr/lotro-api-docs` (`U25/`) and `Goldbishop/Lotro_LUA` (`U24/`): the `PluginManager` and `Plugin` pages, including `RefreshAvailablePlugins`. Facts only; no wording reproduced. |
 | **SMP** | Sample `.plugin` files read in the dirty room: the publisher's 2010 beta samples (`Goldbishop/Lotro_LUA`, `dist/Beta_LuaPlugins.zip`) and two modern descriptors (`LotroCompanion/lotro-companion-plugin`, `lunarwtr` TurbineDumper). Nothing from these files is reproduced; only structure and shapes. |
 | **OL** | `JuneStepp/OneLauncher` (GPL-3), `src/onelauncher/addon_manager_window.py`: a third-party plugin manager's discovery and install logic (facts only). |
 | **XML** | The XML 1.0 recommendation (general knowledge, not dirty): §4.3.3 (encoding detection; bytes illegal in the detected encoding are a fatal error) and the DOM Level 3 `textContent` rule. |
 | **LPA** | [`lua-plugin-api.md`](lua-plugin-api.md), whose BIN rows were made from the same client build. Cited where this spec relies on it rather than re-reading the code. |
+| **CRT** | Published C runtime sources, read 2026-10-06 for facts only: the Microsoft Universal C Runtime as vendored in ReactOS (`sdk/lib/ucrt/convert/_ctype.cpp` for character classification; `sdk/lib/ucrt/filesystem/findfile.cpp` and `sdk/lib/ucrt/inc/corecrt_internal_win32_buffer.h` for the narrow find functions and their code page) and Wine's `dlls/msvcrt/ctype.c`. The two runtimes state the same rule for `isalnum` (D32); Wine's narrow find functions were not checked (D35). Not observed on a running client. |
+| **WINE** | Wine's `dlls/ntdll/unix/file.c` (directory cache: entries other than `.` and `..` are sorted by `name_compare`) and its case-insensitive wide compare (upper-case folding with Wine's Unicode table), read 2026-10-06 for facts only. Relevant because the owner runs the client under Steam Proton. |
+| **NTFS** | General platform knowledge (not dirty): an NTFS directory index is kept sorted by file name compared after upper-casing each UTF-16 unit with the volume's upper-case table, and directory enumeration returns entries in index order. |
 
 Marks: **Confirmed** = observed in the owner's install, with date; **BIN** = rests on the
 disassembly (for BIN facts, no contradicting data was found); **Reported** = from published
@@ -84,14 +89,14 @@ sources only, not observed here.
 | D11 | In plugin apartments a native package name is **also** looked up on disk; when both a native package and a disk chunk exist, the package is their merge (native part installed, then the disk chunk run in the same namespace) | BIN (c) (the native hit does not end the lookup when the apartment's plugin flag is set); LPA §7.2, §7.4, P30 | BIN |
 | D12 | The client does not read `.plugincompendium`, `.skincompendium` or `.musiccompendium` files; these are third-party manager metadata only | BIN (d) (no such strings in the client); OL; XSD | BIN |
 | D13 | The in-game manager stores its choices per account and world at `PluginData/<account>/<world>/PluginOptions.xml`: root `PluginOptions` with `AutoloadOptions` and (in newer files) `ScalingOptions`. Populated structure in §10 | OBS (three files: XML declaration with `encoding="UTF-8" standalone="no"`, CRLF line ends, root, empty `AutoloadOptions`; one file also has an empty `ScalingOptions`); BIN (e) (writer and reader); LPA P23 | **Confirmed** 2026-10-05 (empty form) / BIN (populated structure) |
-| D14 | A plugin-data key must be 1 to 64 characters, each an ASCII letter, an ASCII digit or underscore (the client tests each character with the C runtime's alphanumeric test or accepts `_`, 0x5F). Data is stored as `<key>.plugindata` under `PluginData/<account>/{AllServers,<world>/{AllCharacters,<character>}}/` | BIN (f); OBS (`PluginData/<account>/<world>/`); LPA P14, §10.2–§10.3 | BIN (key rule) / **Confirmed** 2026-10-05 (folders) |
+| D14 | A plugin-data key must be 1 to 64 UTF-16 units. Each unit must be `_` (0x5F) or pass the C runtime's `isalnum` test, to which the client passes the unit's value unchanged (zero-extended), in the locale set at start-up (D30). ASCII letters, ASCII digits and `_` therefore always pass; which other units pass is D31/D32. Data is stored as `<key>.plugindata` under `PluginData/<account>/AllServers/`, `PluginData/<account>/<world>/AllCharacters/` or `PluginData/<account>/<world>/<character>/` | BIN (f) (re-read 2026-10-06: length check, then one `isalnum` call per unit, `_` accepted); OBS (only `PluginData/<account>/<world>/` exists in the owner's settings folder, and no `.plugindata` file); LPA P14, §10.2–§10.3 | BIN (key rule; `AllServers`, `AllCharacters`, `<character>` folders and the `.plugindata` name, also LPA) / **Confirmed** 2026-10-05, re-checked 2026-10-06 (`PluginData/<account>/<world>/` level only) |
 | D15 | World folder names under `PluginData/<account>/` are the display names of the worlds and may contain spaces and other punctuation (one observed name has a bracketed prefix and a space) | OBS (three world folders, one bracketed) | **Confirmed** 2026-10-05 |
 | D16 | The `Image` file is a JPG or TGA icon shown at 32×32 pixels; a larger image is cropped to that size and a smaller one is repeated (tiled) to fill it | XSD | Reported |
 | D17 | Refresh rebuilds the available list from disk; it does not unload a loaded plugin whose descriptor has been removed, which then simply stops being listed | DOC; LPA §4.3 step 5 | Reported |
 | D18 | The `Apartment` attribute is optional (the community schema marks it required; the client does not). When present, its value is used exactly as written: not trimmed, no length check, and an empty value is accepted | BIN (a, g); XSD (disagrees on "required", resolved by BIN) | BIN |
 | D19 | Namespace of a resolved package: `C1.….Ck` for the folder form and for a native package; `C1.….C(k-1)` for the file form (for `k = 1`, the apartment's global table) | BIN (c); LPA §7.2 | BIN |
 | D20 | A disk chunk is loaded with the stock Lua 5.1.4 file loader of `lua51.dll`, which accepts both source text and precompiled chunks and skips a first line that starts with `#`; it does not strip a UTF-8 byte-order mark | BIN (h) (the resolver calls the library's file loader); LPA §7.2, Appendix B; Lua 5.1 reference behaviour | BIN |
-| D21 | A package name is checked before any lookup: components of one or more ASCII letters, digits or underscores (C runtime alphanumeric test or 0x5F), separated by single dots, with no leading or trailing dot. A name that fails the check does not resolve at all | BIN (c); LPA P5 | BIN |
+| D21 | A package name is checked before any lookup: components separated by single dots, with no leading, trailing or doubled dot; every other byte of the (UTF-8) name must be `_` (0x5F) or pass the C runtime's `isalnum` test in the locale of D30, the byte being passed **sign-extended** (bytes 0x80–0xFF arrive as −128 to −1). ASCII letters, ASCII digits and `_` always pass; bytes 0x80–0xFF are D32. A name that fails the check does not resolve from disk | BIN (c) (re-read 2026-10-06: one `isalnum` call per byte with sign extension, `.` as separator, `_` accepted); LPA P5, §7.2 | BIN |
 | D22 | The descriptor is parsed by a general DOM parser (Xerces-C 2.6) with an error handler that counts errors; the parse succeeds only when that count is zero. Encoding is taken from a byte-order mark or the encoding declaration, otherwise UTF-8; bytes illegal in that encoding are a fatal XML error and therefore reject | BIN (a) (parser library, error-count test); XML §4.3.3 | BIN / Reported (encoding-error rule, not exercised on this install) |
 | D23 | A field's value is the element's text content: the concatenated text of all its descendant text and CDATA nodes, in document order, excluding comments and processing instructions | BIN (a) (the DOM text-content call); XML (DOM Level 3 rule) | BIN |
 | D24 | Trimming removes leading and trailing characters from the set space (0x20), line feed (0x0A), carriage return (0x0D), tab (0x09) and form feed (0x0C). A value made only of these characters trims to empty | BIN (b) (the trim routine and its character-set constant); LPA §5.2 | BIN |
@@ -100,6 +105,12 @@ sources only, not observed here.
 | D27 | Apartment names compare case-insensitively | BIN (g) (the apartment map hashes lower-cased characters and compares case-insensitively); LPA P11 | BIN |
 | D28 | `PluginOptions.xml` reading rules: `AllCharacters` is true only when its value is exactly `true`, `UseScaling` only when exactly `True` (case-sensitive; anything else is false). Autoload entries are kept in a map keyed by plugin `Name` with a case-sensitive hash; a later entry with a name already present is dropped. The file order of entries is therefore not kept | BIN (e) | BIN |
 | D29 | While a plugin's main package runs, the plugin's apartment carries a "loading a plugin" mark, which is cleared afterwards (this changes `PluginData.Load`, LPA §10.1). No per-plugin "loading" log line was found in the load path | BIN; LPA §6.2 steps 4 and 7 | BIN |
+| D30 | At start-up the client sets the C runtime locale for all categories to a name chosen by its game language: `English` (also for any language not listed), `english-uk`, `french` or `german`. That global locale governs the `isalnum` tests of D14 and D21 | BIN (re-read 2026-10-06: one `setlocale` call for all categories with one of these four names; the client's other `setlocale` calls touch only the numeric category); LPA P43 | BIN |
+| D31 | Under the standard Windows locale data these four names select code page 1252. A value 0x00–0xFF passed to `isalnum` is classified by that locale's character-type table, which is indexed by the value as a code-page-1252 byte. For a plugin-data key unit 0xA0–0xFF this coincides with the Latin-1 character of the same value (for example U+00E9 passes); a unit 0x80–0x9F (a C1 control in UTF-16) is classified as the code-page-1252 character at that byte position, not as a control | LPA P44; CRT (the table is indexed by the value) | Reported |
+| D32 | In a single-byte locale such as code page 1252, `isalnum` returns false for every argument below −1 or above 0xFF, and the table entry for −1 is "no class". Consequences: no package-name byte 0x80–0xFF ever passes D21 (so a package name with any non-ASCII byte never resolves from disk), and no plugin-data key unit above 0xFF passes D14 | CRT (Microsoft UCRT source and Wine agree); not observed on a running client | Reported |
+| D33 | Discovery lists folders with a narrow (byte-string) C runtime find-first/find-next pair over the pattern `*.*`. Each entry other than `.` and `..` is tested against the wanted name pattern and appended to the end of the result list; subdirectories are appended to a second list. The client never sorts either list, so "first found" is the order the operating system returns. Paths and names stay narrow byte strings through discovery and the descriptor open | BIN (i) (listing routine and discovery loop re-read 2026-10-06) | BIN |
+| D34 | Listing order returned to the client: on NTFS, ascending order of names after upper-casing each UTF-16 unit; under Wine/Proton (the owner's setup), Wine sorts each directory's entries (after `.` and `..`) by a case-insensitive comparison that upper-cases each UTF-16 unit, then by a case-sensitive comparison as tie-break. Other file systems (FAT, exFAT, network shares) may return other orders | NTFS; WINE | Reported |
+| D35 | Because the listing is narrow, the operating system converts each name to the process's ANSI code page (not the C runtime locale of D30). A folder or file name with a character outside that code page reaches the client altered (best-fit or `?`), so such a descriptor or plugin folder may fail to open | CRT (the UCRT narrow find functions call the wide find API and convert each name to the ANSI code page, or the OEM code page when file APIs are set to OEM, or UTF-8 when the C runtime locale's code page is UTF-8, which D30's locales are not; no replacement character is specified, so the system default applies); BIN (D33) | Reported |
 
 ---
 
@@ -174,11 +185,34 @@ refresh` chat command and `PluginManager.RefreshAvailablePlugins()`, `lua-plugin
 6. Refresh does not unload anything. A loaded plugin whose descriptor has disappeared stays
    loaded and is no longer listed (D17).
 
-**Order.** On Windows, the order of both listings is the file system's (on NTFS,
-case-insensitive name order), so "first found" depends on folder and file names. Tessera
-processes directories and files in case-insensitive byte order of their names, which makes the
-winner of a duplicate deterministic and matches the usual NTFS outcome
-(`lua-plugin-api.md` §4.3).
+**Order.** The original never sorts: both listings keep the order in which the operating
+system returns entries (D33). That order is the file system's, not the client's (D34): on
+NTFS it is ascending name order after upper-casing each UTF-16 unit; under Wine/Proton, Wine
+sorts each directory's entries the same way (upper-case folding) and breaks ties between
+names that are equal after folding by comparing them case-sensitively; FAT, exFAT and network
+shares may return other orders. So "first found" depends on folder and file names and, on
+some file systems, on history.
+
+Tessera does not depend on the host's order. It sorts both listings itself by this exact
+rule, its definition of the "case-insensitive byte order" of `lua-plugin-api.md` §4.3:
+
+1. Take each name as its UTF-8 bytes.
+2. Form a key by replacing every byte 0x61–0x7A (`a`–`z`) with that byte minus 0x20 (`A`–`Z`).
+   No other byte changes.
+3. Compare two keys byte by byte as unsigned values; the first differing byte decides. If one
+   key is a prefix of the other, the shorter sorts first.
+4. If the keys are equal (possible only on a case-sensitive host), compare the unmodified
+   UTF-8 bytes the same way.
+
+For names made only of ASCII characters this gives the same order as NTFS and Wine (both fold
+to upper case, so `_`, 0x5F, sorts **after** the letters). For names with non-ASCII
+characters it can differ, because Tessera folds ASCII letters only; this is accepted.
+
+**Names on disk.** The original receives names as narrow strings in the process's ANSI code
+page (D33, D35), so a folder or file name with a character outside that code page may reach
+it altered and fail to open. Tessera reads names in the host's native form and does not
+reproduce this loss; a plugin that the original could not find because of its name may be
+found by Tessera (a deliberate, widening deviation).
 
 **Case folding of `Name`.** The original folds case with the C runtime's wide-character
 case-insensitive comparison. Tessera folds ASCII letters only; names that differ only in the
@@ -202,6 +236,10 @@ case of non-ASCII letters are treated as distinct.
   name).
 - An invalid descriptor whose `Name` text would duplicate a valid one does not block the valid
   one, whatever the order.
+- Order rule (Tessera): `Ab` sorts before `A_b` (keys `AB` and `A_B`; 0x42 is below 0x5F);
+  `abc` sorts before `ABCD` (prefix); `B` and `b` have equal keys, and `B` sorts first by the
+  tie-break (0x42 is below 0x62). So with folders `A_b/` and `Ab/` each holding a valid
+  descriptor named `Same`, the one in `Ab/` is kept.
 
 ---
 
@@ -408,10 +446,28 @@ also kept).
 <a id="7-1"></a>
 ### 7.1 Package grammar
 
-A package name is one or more components separated by single dots: `C1.C2.….Ck`. Each
-component is one or more ASCII letters (`A`–`Z`, `a`–`z`), ASCII digits (`0`–`9`) or
-underscores (`_`). There is no leading or trailing dot and no empty component (D21). The
-descriptor's `/Plugin/Package` text is the package of the plugin's main chunk; plugin code
+A package name is one or more components separated by single dots: `C1.C2.….Ck`. There is no
+leading or trailing dot and no empty component (D21).
+
+- **Original rule.** Every byte of the UTF-8 name other than a separating dot must be `_` or
+  pass the C runtime's `isalnum` test in the game-language locale (D30); the byte is passed
+  sign-extended (D21). ASCII letters (`A`–`Z`, `a`–`z`), ASCII digits (`0`–`9`) and `_` always
+  pass. Under the code-page-1252 locales of all four game languages, the published runtime
+  sources say that bytes 0x80–0xFF, arriving as −128 to −1, never pass (D32), so no name with
+  a non-ASCII byte resolves from disk.
+- **Tessera rule.** Each component is one or more ASCII letters, ASCII digits or `_`. Any
+  other byte fails, in every locale. This is stated as a Tessera deviation because it is
+  locale-independent by design; by D32 it gives the same result as the original under its
+  four locales.
+
+> **OPEN:** D32 rests on published C runtime sources, not on a running client: whether the
+> runtime that the original actually loads (Microsoft's on Windows, Wine's built-in one under
+> Proton) rejects package-name bytes 0x80–0xFF, and plugin-data key units above 0xFF (§11.1),
+> was not observed. An owner test with a plugin folder and package name containing `é`, and a
+> plugin-data key containing U+0100, would settle it. Same question as the OPEN in
+> `lua-plugin-api.md` §7.2. Tessera rejects both in any case.
+
+The descriptor's `/Plugin/Package` text is the package of the plugin's main chunk; plugin code
 reaches further chunks with `import`, whose argument may be a literal or computed at run time
 (`lua-plugin-api.md` §7.1).
 
@@ -425,7 +481,7 @@ The full mechanics (per-apartment cache, run-once record, namespace environments
 field) are owned by `lua-plugin-api.md` §7.2–§7.4; this section states the disk-facing part,
 which agrees with it. To resolve a package `N` = `C1.C2.….Ck` in a plugin apartment:
 
-1. Check `N` against the grammar of §7.1. If it fails, resolution fails.
+1. Check `N` against the grammar of §7.1 (Tessera applies its rule there). If it fails, resolution fails.
 2. Ask the native registry for `N` (the names `Turbine`, `Turbine.Gameplay`,
    `Turbine.Gameplay.Attributes`, `Turbine.UI`, `Turbine.UI.Lotro`; `lua-plugin-api.md` §7.4).
 3. Look on disk as well. This happens in plugin apartments **even when step 2 found a native
@@ -604,14 +660,35 @@ optional importer may read it, read-only, using the rules above; it must never w
 Plugin data (the `Turbine.PluginData` API) is specified in `lua-plugin-api.md` §10. The facts
 that concern files and folders are:
 
-- A plugin-data **key** must be **1 to 64 characters**, and each character must be an ASCII
-  letter, an ASCII digit or underscore (D14). Anything else, including an empty key or a key
-  of 65 or more characters, raises an error in the caller.
+- A plugin-data **key** must have **1 to 64** UTF-16 units. An empty key or one of 65 or
+  more units raises an error in the caller (D14).
+- **Original character rule.** Each unit must be `_` or pass the C runtime's `isalnum` test,
+  called with the unit's value, in the game-language locale (D14, D30). ASCII letters, ASCII
+  digits and `_` pass in every locale. Under code page 1252 (all four game languages, D31),
+  units 0xA0–0xFF that are Latin-1 letters or digits pass (for example U+00E9), and units
+  0x80–0x9F pass when the code-page-1252 character at that byte position is a letter (D31).
+  Units above 0xFF never pass (D32; see the OPEN in §7.1).
+- **Tessera rule (stated deviation).** Each unit must be an ASCII letter, an ASCII digit or
+  `_`; anything else raises the same error. Keys are file names, and a fixed ASCII rule keeps
+  them portable across file systems and independent of locale. A plugin that uses a key such
+  as `é` works in the original and gets an error in Tessera (`lua-plugin-api.md` §10.2).
 - Data is stored as `<key>.plugindata` under `PluginData/<account>/`: the account scope in a
   folder named `AllServers`, the world scope under `<world>/AllCharacters/`, and the character
-  scope under `<world>/<character>/` (`lua-plugin-api.md` §10.3; `PluginData/<account>/<world>/`
-  observed, OBS). Because keys are restricted to letters, digits and underscore, a key can
-  never form a path separator, a drive letter or a reserved file-name character.
+  scope under `<world>/<character>/` (`lua-plugin-api.md` §10.3, BIN). Only the
+  `PluginData/<account>/<world>/` level is observed in the owner's install, which holds no
+  `.plugindata` file (OBS).
+- **Path safety.** Under either rule a key can never form a path separator (`/`, `\`), a
+  drive colon, a dot, a control character below 0x20 or a Windows reserved file-name character
+  (`< > : " | ? *`): all of these are ASCII non-alphanumerics, which `isalnum` rejects in every
+  locale and which the Tessera rule rejects. The extra units the original accepts under code
+  page 1252 (0x80–0xFF alphanumerics) are all legal in Windows file names. A key can still
+  spell a Windows reserved device name such as `CON`, `NUL` or `COM1`.
+
+> **OPEN:** what the original does with a plugin-data key that spells a Windows reserved
+> device name (for example `CON`, which gives `CON.plugindata`); its save and load paths were
+> not followed for this case. Tessera: write plugin data only through its own path layer,
+> which on a Windows host must refuse to open a device name and report the same error as an
+> invalid key.
 
 ---
 
@@ -644,7 +721,7 @@ revision applies all seven, and re-verified each against the client:
 | In plugin apartments native names are also looked up on disk and merged | D11, §7.2, §7.3 |
 | Apartment names compare case-insensitively | D27, §6.2 |
 | Populated structure of `PluginOptions.xml` | D13, D28, §10.2 |
-| Plugin-data keys are ASCII letters, digits and underscore only | D14, §11.1 |
+| Plugin-data keys: the original rule is `_` or the C runtime's `isalnum` in the game-language locale (code page 1252, so units such as U+00E9 pass); Tessera accepts only ASCII letters, digits and `_`, a stated deviation (the current `lua-plugin-api.md` §20 D14 row, P14, P43, P44). An earlier version of that row said "ASCII only"; this revision follows the current row | D14, D30–D32, §11.1 (package names likewise: D21, §7.1) |
 
 <a id="12-3"></a>
 ### 12.3 Additions suggested for `lua-plugin-api.md` (not contradictions)
@@ -660,6 +737,9 @@ owns only this file.
 | `lua-plugin-api.md` §5.4 | `AllCharacters` reads as true only for exactly `true`, `UseScaling` only for exactly `True`; a repeated autoload `Name` keeps the first | BIN (D28) |
 | `lua-plugin-api.md` §6.2 OPEN (autoload order) | The reader keeps autoload entries in a hashed map, so file order is not preserved | BIN (D28) |
 | `lua-plugin-api.md` §4.3 step 2 | The `*.plugin` match is a whole-name, case-insensitive wildcard match; matched entries are not checked to be files | BIN (D2, D25) |
+| `lua-plugin-api.md` §4.3 (order) | The client does not sort the listings (narrow find functions, entries appended in returned order); NTFS and Wine both return names in upper-case-folded order; Tessera's "case-insensitive byte order" is defined exactly in §4.2 here (fold `a`–`z` to `A`–`Z`, unsigned byte compare, unmodified bytes as tie-break) | BIN (D33); NTFS, WINE (D34) |
+| `lua-plugin-api.md` §7.2 OPEN (bytes 0x80–0xFF, units above 0xFF) | The published Microsoft UCRT and Wine sources both make `isalnum` false for arguments below −1 or above 0xFF in a single-byte locale, and the entry for −1 is empty; the OPEN can be narrowed to "not observed on a running client" | CRT (D32) |
+| `lua-plugin-api.md` §4.3 / §4.4 (non-ASCII names) | Discovery names reach the client in the ANSI code page, so names outside it may fail to open in the original | BIN (D33); CRT (D35) |
 
 ---
 
@@ -669,6 +749,10 @@ owns only this file.
 ### 13.1 Open
 
 - Case folding of non-ASCII letters when comparing plugin names (§4.2).
+- Run-time confirmation of D32: whether the runtime the original loads rejects package-name
+  bytes 0x80–0xFF and plugin-data key units above 0xFF (§7.1; same as `lua-plugin-api.md`
+  §7.2).
+- Plugin-data keys that spell a Windows reserved device name (§11.1).
 - Load behaviour of an empty apartment name (§6.2).
 - Autoload ordering at character login (§8.2).
 
@@ -691,3 +775,4 @@ owns only this file.
 |---|---|
 | 2026-10-05 | First draft. Discovery, descriptor structure and validation, apartments, package resolution, companion files and `PluginOptions.xml`, from the owner's install (OBS), public schemas and docs (XSD, DOC, SMP, OL), and disassembly of client build 4906.0071.1794.4035 (BIN). Records four corrections to `lua-plugin-api.md` (§12). |
 | 2026-10-05 | Revision answering the review (changes requested) and reconciling with `lua-plugin-api.md` §20; all facts re-verified by BIN on the same build. **Corrected:** D3 and §4.2 (one folder level, no recursion; whole-name case-insensitive wildcard; entries not checked to be files); D6–D8, §5.1, §5.2, §5.4 (repeated field rejects; `Name` required; `Name`/`Version` over 120 reject instead of being cut; `Author`/`Image` cut to 120; `Description` cut to 2048; present-but-empty rejects; `Package` 1–120; lookups of `Information`, `Package`, `Configuration` reach any depth; fields are direct children only; trim set stated and whitespace-only values are empty); D9, D18, §5.1 (`Apartment` optional, used as written, may be empty; the schema disagrees); D11, §7.2, §7.3 (native names also looked up on disk and merged); D14, §11 (keys are ASCII letters, digits and underscore); §7.1 grammar (ASCII letters, digits and underscore, matching `lua-plugin-api.md` P5); §7.2 step 6 (the original's loader accepts precompiled chunks; rejecting them is a Tessera deviation); §3.2 multiple-match rule aligned with `lua-plugin-api.md` §4.4. **Removed:** the "loading plugin" log-line claim (it was a misreading of the per-apartment loading mark, D29); the quoted documentation sentence in §6.1 and the quoted client message wording in §12. **Provenance:** D4 re-marked BIN / Reported (no `.plugin` file exists in the owner's install); new rows D16–D29 (icon size, refresh, apartment value, namespace rule, chunk loader, name grammar, parser and encoding, text content, trim set, non-file entries, duplicate names, apartment case, options-file reading rules, loading mark); new source keys XML and LPA. **Closed OPENs:** recursion depth, duplicate names, encoding fallback, apartment case, `PluginOptions.xml` structure (§13.2). **New OPENs:** non-ASCII case folding of names (§4.2), empty apartment name at load (§6.2); autoload order narrowed (§8.2). **Structure:** fixed every internal section reference; added `<a id>` anchors to §8–§13 (§8.1, §8.2, §9.1, §10.1–§10.3, §11.1, §12.1–§12.3, §13.1–§13.2); added §4.3 invariants, §5.5 and §7.4 worked synthetic examples, §10.3 invariants; §12 now lists the first draft's corrections as applied, the seven received corrections as applied here, and new suggested additions to `lua-plugin-api.md`. Reviewer field reset for re-review. |
+| 2026-10-06 | Revision answering the re-review (changes requested). **Accuracy:** D14, D21, §7.1, §11.1 and §12.2 row 7 no longer state ASCII-only as the client's rule; they state the original rule (`_` or C runtime `isalnum` in the game-language locale; key units passed as is, package bytes sign-extended) and make ASCII-only a stated Tessera deviation, aligned with `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row. New rows D30 (start-up locale, BIN re-read), D31 (code-page-1252 classification, Reported), D32 (runtime rejects arguments outside −1…0xFF, Reported from the UCRT and Wine sources). New OPEN in §7.1 (run-time confirmation of D32) and §11.1 (reserved device names); §11.1 path-safety argument restated for code-page-1252 alphanumerics. **Marks:** D14 is Confirmed only for `PluginData/<account>/<world>/`; `AllServers`, `AllCharacters`, `<character>` and `.plugindata` are BIN/LPA. **Order:** §4.2 rewritten: the client does not sort (D33, BIN re-read of the listing routine and discovery loop); NTFS and Wine orders stated with sources (D34; new source keys NTFS, WINE, CRT); Tessera's order defined exactly (ASCII upper-case fold, unsigned byte compare, unmodified bytes as tie-break) with a new §4.3 invariant; narrow names and the ANSI code page (D35) with a stated widening deviation. **Naming note:** cites `docs/ARCHITECTURE.md` §18.2 and the *Google v. Oracle* row of `docs/LEGAL.md` §4.1, with the interoperability record pending; `LEGAL.md` §10 is cited for naming only. §12.3 gains four suggested additions to `lua-plugin-api.md`; §13.1 lists the two new OPENs. |

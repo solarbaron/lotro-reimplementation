@@ -83,6 +83,16 @@ layout, buffer layout, hostile-input limits) is a **Tessera Decision**.
   equal it bit for bit. Queries interpolate on stored integers in f64, apply the same factor
   and round once to f32; an interpolated query (clamped to the samples' range) never leaves
   the block's height bounds.
+> **OPEN:** "apply the same factor and round once to f32" and "equal it bit for bit" cannot
+> both hold under the revised rule of `landblock.md` §3.4, whose two f32 products round
+> twice: a single rounding of stored × 2,000 / 65,535 differs from the rule by 1 ulp for some
+> stored values. The implementation (2026-10-06) keeps bit identity: an interpolated height
+> in stored steps (f64, clamped to the samples' range) is multiplied by 2,000 in f64, rounded
+> to f32, then multiplied in f32 by the f32 nearest 1 / 65,535. At a sample this is exactly
+> the decoder's rule; both steps are monotone, so the height bounds still hold. Slopes,
+> normals (§5) and level error bounds (§3) use the f64 factor 2,000 / 65,535. Confirm or
+> reword this bullet.
+
 - **Memory.** A block keeps 2,178 bytes of heights and a 128-byte bit set of split diagonals
   (about 2.3 KiB). The per-level error bounds (§3) are computed on first use, so height-only
   users (ground clamping, a server) never pay for them.
@@ -287,6 +297,16 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
   setup 1.2 µs, level error bounds (lazy) 36 µs, normals 7 µs, level-0 mesh 28 µs.
 - Fuzzing: `terrain_mesh` (meshing, normals, shading, queries, selection, tiles, splat
   conversion on arbitrary inputs).
+
+> **OPEN:** the real-data figures above overstate the seam coverage: before 2026-10-06 the
+> test kept only rows y − 1 to y + 1 resident, so a north neighbour never had all four of its
+> own neighbours loaded and **no north seam was compared**; the 382,536 seams were all east
+> pairs. The test now keeps rows y − 1 to y + 2 and counts both directions. Release run on
+> 2026-10-06 (this install, height rule of `landblock.md` §3.4 as revised): all 390,150
+> blocks, 382,536 east + 382,536 north seams (765,072) bit-identical, 0 mismatched pairs,
+> height queries within 1.22 × 10⁻³ units of the decoder's rule, all 458,061,498 layer
+> triangles on level-0 mesh triangles. The spec writer should update this bullet (and the
+> M3 criterion-3 evidence in `docs/ROADMAP.md`).
 
 <a id="s9"></a>
 ## 9. Open questions

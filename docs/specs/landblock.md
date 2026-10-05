@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (first round; addressed). Re-review 2026-10-05: changes requested (§3.6: "126 occurs only together with a ceiling" is false in 8 of the 365 records that contain low value 126; §8 step 1 keeps only bit 7 of the vertex flags, but ceilings need bit 0). Spot checks passed over all 390,150 landblock-data records: L6 (458,061,498 terrain triangles, bit 7 and counter-clockwise), L6a (5,310,848 ceiling triangles in 2,068 chunks, bit 0 and clockwise, bit 7 4,999,408), L6b (2,368 hole landblocks, 2,750,134 triangles, all with a ceiling), 6,867 ceilings, low seven bits only 0, 1, 126, 127 and whole bytes 0, 1, 126, 127, 128, 129, 254, 255. |
+| **Review record** | Re-review 2026-10-06 (after the second repair), Claude review session (spec-writer agent): **passed; Accepted**. Every §5.3 item holds. Item 3: the landblock-info field and part names (§4.1–§4.3, §4.6, §4.8, §9–§11) are now Tessera's own; none of the names taken from the published loader remains, and the change log does not repeat them. The remaining identifiers are generic (`did`, `flags`, `index`, `key`) or interoperability labels read from the install (property names, `EntityLinkType` labels, L24). The cross-references are fixed (L11 and §2.4 now point to §4.9, L12 to §4.4). Spot checks on 2026-10-06 matched the spec. A read-only probe read all 49,636 landblock-info records and both enum mappers directly from the install: L10/§4.1 (`flags` 1: 39,252, 3: 9,704, 5: 636, 7: 44; `aux_word` below the payload length in 49,625 records and above it in 11); L11/§2.4/§4.9 (stamp split 7,106 below 31 and 42,530 at 31 or above, and the stamp set as listed); §4.2 (block-pair part in 9,748 records, 79,147 records of 24 bytes, the same as the §4.6 `has_pair` count); §4.3 (cell groups in 680 records); L24 (0x28000001 key 0x0D names `EntityLinkType` and points to 0x230000BE, whose base is 0x230001A9 with codes 0x00–0x1B; every code and label in §4.6 matches); L12/LI3 (first cell of the 1,433 records with cells: geometry is always a 0x01 DID, and `position` names this region, landblock and `index`). Non-blocking follow-ups: (a) §4.2 says "names two landblock-info records", but one of the 158,294 block-pair DIDs, 0x8025474E, has the landblock-info shape and no record exists for it. The writer should say "DID of landblock-info shape; may not exist" in a later revision. Until then, implementers must not treat a missing record as an error. (b) The code rename noted by the writer (`crates/formats/src/landblock/info.rs`, `mod.rs`) is for an implementer, citing §4.1–§4.8. Earlier record: third review 2026-10-06, changes requested (§5.3 item 3, copied landblock-info names; wrong §4.10 references), addressed the same day (change log, third 2026-10-06 row). That round also spot-checked all 390,150 landblock-data and block-map records (L2/HM2, L5/HM1, L6c, L9, §3.8.1/HM5, §3.9, §5.3/BM1/BM2), and all matched. Review 2026-10-05 and re-review 2026-10-05: changes requested, both addressed (the §3.6 value-126 claim and the §8 step 1 vertex-flag byte). |
 | **Implements into** | `crates/formats` (landblock data, landblock info, block-map and descriptor decoders), `crates/world` (landblock IDs, bundles, block-map resolution, minimap tiles), `crates/terrain` (height grid, triangulation, surface layers), `apps/explorer` (landblock view), `fuzz/` (one target per record kind) |
 | **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor and the per-region tables). `records.md` §1 (VLE, TSize, Pascal string), §2.1–§2.2 (prefix and landblock DID shape, DB types), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). **Meaning of the parts decoded here:** [`terrain-texturing.md`](terrain-texturing.md) (surface layers, masks, quad grid, light maps), [`collision.md`](collision.md) (tree code, terrain and ceiling collision, 0x01 cell geometry, portals), [`scenery.md`](scenery.md) (coarse grid), [`water.md`](water.md) (water and fog-zone keys of the block map, water per landblock, kind 5 water). |
 
@@ -45,7 +45,7 @@ assert the invariants, not the counts.
 
 Legend:
 
-- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05 where the row
+- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05 or 2026-10-06 where the row
   says so) by throwaway probes in the dirty-room scratchpad, over **all** records of the kind
   unless a sample is stated. For a fact with a BIN source: the data agrees on every record.
 - **BIN**: rests on the disassembly of the client (tag BIN below, or the BIN tags of the
@@ -77,12 +77,13 @@ Legend:
 | L6 | Bit 7 of the vertex-flag grid selects the split diagonal of each **terrain** grid quad (§3.6) | OBS (65.5 M sampled terrain-layer triangles, 100 %) | Confirmed |
 | L6a | Bit 0 of the vertex-flag grid selects the split diagonal of each **ceiling** grid quad, with or without stored triangles; ceiling triangles are clockwise from above (§3.5, §3.6) | COL §6.4 (BIN: the client's mesh builder tests bit 0 for the ceiling, bit 7 for the terrain; OBS: all 5,310,848 stored ceiling triangles follow bit 0, bit 7 only 94.1 %); review probe 2026-10-05 (all 486,882 stored ceiling triangles of region 1: clockwise and bit 0 without exception, bit 7 95.8 %) | Confirmed |
 | L6b | Terrain grid triangles that no layer covers are kept by the client's terrain collision; they lie where the terrain is buried under the ceiling surface or where there is no ceiling (§3.5) | COL §6.5 (OBS census of all records; BIN for the collision mesh) | Confirmed (census); collision rule BIN |
+| L6c | Vertex-flag bytes: the low seven bits take only 0, 1, 126 and 127; whole bytes only 0, 1, 126, 127, 128, 129, 254, 255; low value 126 occurs in 365 records (region 1: 21, region 2: 271, region 14: 73), 357 of them with a ceiling, 8 without (0x80020A90, 0x800220F6, 0x80027590, 0x800E06C7, 0x800E07CD, 0x800E08A6, 0x800E09A5, 0x800E09C8) (§3.6) | OBS (probe 2026-10-06 over all 390,150 landblock-data records of regions 1–5 and 14; 6,867 with a ceiling) | Confirmed (2026-10-06) |
 | L7 | Surface layers: terrain-type key (`material`), 0x41 alpha-mask DID, `whole` flag, triangle range into a shared index list over grid vertices (§3.8) | OBS; TT §4 (meaning: key into the region's 0x19 terrain type table, draw order, masks, `whole`) | Confirmed (layout and meaning) |
 | L8 | Index-list vertex numbers are **Y-major** (33·y + x), the transpose of the height array (§3.8.3) | OBS (two independent tests) | Confirmed |
 | L9 | The ceiling grid is present exactly when the block map says `Landblock_UseCeiling` = 1 (§3.5) | ER (caves use an inverted terrain ceiling); OBS (6,867 of 6,867) | Confirmed |
-| L10 | Landblock info layout (§4) | LC; OBS (49,636 records, zero leftover bytes) | Confirmed |
-| L11 | Landblock info ends with a u32 only when the record's `stamp` ≥ 31 (§4.10) | OBS (perfect split) | Confirmed |
-| L12 | Cell geometry DIDs are 0x01 records (§4.5) | OBS (1,033 distinct, all resolve) | Confirmed. Answers `setup.md` §2.2 OPEN. |
+| L10 | Landblock info layout (§4); field and part names are Tessera's own, chosen for this spec (§4.1–§4.8) | LC (field order); OBS (49,636 records, zero leftover bytes) | Confirmed |
+| L11 | Landblock info ends with a u32 only when the record's `stamp` ≥ 31 (§4.9) | OBS (perfect split) | Confirmed |
+| L12 | Cell geometry DIDs are 0x01 records (§4.4) | OBS (1,033 distinct, all resolve) | Confirmed. Answers `setup.md` §2.2 OPEN. |
 | L13 | Block map = list of (key, u16 index) into the region's 0x18 descriptor (§5) | LC; OBS (390,150 records) | Confirmed |
 | L14 | The region's 0x18 descriptor is named by its 0x0F region descriptor (§5.1) | ENV; LC (hard-coded table that agrees); OBS | Confirmed |
 | L15 | Landblock properties = DID + property set; minimap tile is a 200 × 200 JPEG at 1.25 px per unit, north up (§6) | LC (property names, tiling); OBS (60,450 records; 120 tiles) | Confirmed |
@@ -94,6 +95,7 @@ Legend:
 | L21 | Quad grid: index 32 · qy + qx; the dominant visible terrain type of each quad (§3.8.4) | TT §4.6 | Confirmed (order); Probable (meaning) |
 | L22 | Light maps: row 0 on the south edge, column 0 on the west edge; bound as material parameter 3019 and **added** to the lighting sum; content is baked light (§6.4) | TT §10, T22 (BIN there) | Confirmed (orientation); BIN (additive use); Probable (content) |
 | L23 | A point enters a cell from the outdoor world by containment in the cell's phantom and cell volume, not by crossing a portal (§4.4) | COL §5.8.1 | BIN |
+| L24 | `link_type` (§4.2, §4.6) takes codes of the install's `EntityLinkType` enumeration: the enum list 0x28000001 names it at key 0x0D and points to enum mapper 0x230000BE (codes 0x10000001 and up), whose base mapper 0x230001A9 holds codes 0x00–0x1B. Every code observed in §4.6 has a label there; the labels are quoted as interoperability names from the data | OBS (2026-10-06, both mappers read in full) | Confirmed |
 
 ---
 
@@ -176,7 +178,7 @@ kind 4 as "the playable area". There is no explicit per-region bounds record in 
 <a id="s2-4"></a>
 ### 2.4 Directory stamps (Confirmed)
 
-The directory entry `stamp` (`dat-container.md` §5.2) changes two layouts (§3.9, §4.10).
+The directory entry `stamp` (`dat-container.md` §5.2) changes two layouts (§3.9, §4.9).
 
 | Kind | Stamps observed (record count) |
 |---|---|
@@ -187,7 +189,7 @@ The directory entry `stamp` (`dat-container.md` §5.2) changes two layouts (§3.
 | 5 | 38 (24,434), 39 (8,725) |
 
 A decoder therefore takes the record's `stamp` as an input next to the payload, as for
-meshes. §3.9 and §4.10 give fallbacks for payloads without a stamp.
+meshes. §3.9 and §4.9 give fallbacks for payloads without a stamp.
 
 ---
 
@@ -371,8 +373,9 @@ meshes a ceiling must read bit 0; for terrain it reads bit 7.
 **Bits 1–6:** the seven low bits take only the values 0, 1, 126 and 127, so bits 1–6 are
 either all set (0x7E) or all clear in every byte. Per record, the set of low values is
 {127} in most records with stamp 20–27, {0} in most with stamp 38–39, and mixed in a few
-hundred; 126 occurs only together with a ceiling. Whole bytes observed: 0, 1, 126, 127,
-128, 129, 254, 255.
+hundred. The low value 126 occurs in 365 records, 357 of them with a ceiling and 8 without
+(3 in region 2, 5 in region 14; L6c), so it does not imply a ceiling. Whole bytes
+observed: 0, 1, 126, 127, 128, 129, 254, 255.
 
 > **OPEN:** Meaning of bits 1–6 (`collision.md` §15). The client's terrain and ceiling mesh
 > builders test only bits 7 and 0 (`collision.md` §6.4). Tessera ignores bits 1–6.
@@ -625,10 +628,10 @@ a renderer meshes: two triangles per quad, diagonal per bit 7, counter-clockwise
 | Order | Field | Type | Present when | § |
 |---|---|---|---|---|
 | 1 | did | DID | always | own DID |
-| 2 | `flags` | u32 | always | bit 0 cells, bit 1 cross links, bit 2 header indices. Observed 1 (39,252), 3 (9,704), 5 (636), 7 (44): **bit 0 is always set**. |
-| 3 | `size_hint` | u32 | always | Below the payload length in 49,625 records, above it in 11. Meaning OPEN; ignore. |
-| 4 | cross links | TSize count, entries | `flags` bit 1 | §4.2 |
-| 5 | header indices | TSize count, entries | `flags` bit 2 | §4.3 |
+| 2 | `flags` | u32 | always | bit 0 cells, bit 1 block-pair records, bit 2 cell groups. Observed 1 (39,252), 3 (9,704), 5 (636), 7 (44): **bit 0 is always set**. |
+| 3 | `aux_word` | u32 | always | Below the payload length in 49,625 records, above it in 11. Meaning OPEN; ignore. |
+| 4 | block-pair records | TSize count, entries | `flags` bit 1 | §4.2 |
+| 5 | cell groups | TSize count, entries | `flags` bit 2 | §4.3 |
 | 6 | cells | TSize count, entries | `flags` bit 0 | §4.4 |
 | 7 | reserved | u32 | always | 0 in every record |
 | 8 | static entities | u32 count, entity descriptors | always | §4.5 |
@@ -642,24 +645,28 @@ a renderer meshes: two triangles per quad, diagonal per bit 7, counter-clockwise
 Totals: 104,271 cells, 3,253,862 static entities, 1,324,469 links, 3,768,840 weenies.
 
 <a id="s4-2"></a>
-### 4.2 Cross links (24 bytes each)
+### 4.2 Block-pair records (24 bytes each)
 
-| Field | Type | Meaning (LC names) |
-|---|---|---|
-| `from_index` | u32 | |
-| `from_info` | DID | A landblock-info DID |
-| `to_info` | DID | A landblock-info DID |
-| `link_type` | u32 | Same code space as §4.6 |
-| `to_index` | u32 | |
-| `mask` | u32 | Large varying values; meaning OPEN |
+Each record names two landblock-info records. The field names are Tessera's own and say
+nothing about direction; the order below is the byte order.
+
+| Order | Field | Type | Meaning |
+|---|---|---|---|
+| 1 | `number_a` | u32 | Meaning OPEN |
+| 2 | `info_a` | DID | A landblock-info DID |
+| 3 | `info_b` | DID | A landblock-info DID |
+| 4 | `link_type` | u32 | Same code space as §4.6 |
+| 5 | `number_b` | u32 | Meaning OPEN |
+| 6 | `pair_word` | u32 | Large varying values; meaning OPEN |
 
 Present in 9,748 records.
 
 <a id="s4-3"></a>
-### 4.3 Header indices
+### 4.3 Cell groups
 
-Each entry: u16 `index`, then u32 count *k*, then *k* × u16. All listed u16 values are cell
-indices of the same record (1,288 entries); the leading `index` is a cell index in 608 of
+"Cell group" is Tessera's name for this part; it describes the shape, not a known meaning.
+Each entry: u16 `lead`, then u32 count *k*, then *k* × u16 `members`. All `members` values
+are cell indices of the same record (1,288 entries); `lead` is a cell index in 608 of
 them. Present in 680 records. Meaning OPEN (a visibility or grouping list over cells is
 likely).
 
@@ -723,18 +730,25 @@ u32 count, then entries:
 | Order | Field | Type |
 |---|---|---|
 | 1 | `name` | Pascal string (often empty) |
-| 2 | `iid` | u64 |
-| 3 | `to_iid` | u64 |
-| 4 | `from_iid` | u64 |
-| 5 | `link_type` | u32 |
+| 2 | `link_id` | u64 |
+| 3 | `end_id_1` | u64 |
+| 4 | `end_id_2` | u64 |
+| 5 | `link_type` | u32 (L24) |
 | 6 | properties | embedded property set |
-| 7 | `cross` | u8, 0 or 1 |
-| 8 | coda | 4 × u32 (index, info DID, info DID, index) if `cross` = 1 |
+| 7 | `has_pair` | u8, 0 or 1 |
+| 8 | block pair | 4 × u32 (number, info DID, info DID, number); present only if `has_pair` = 1 |
 
-`cross` = 1 in 79,147 links; both coda DIDs are landblock-info DIDs in all, and one of them
-is this record's in all but 6.
+The names of fields 2–4, 7 and 8 are Tessera's own.
 
-`link_type` codes observed, with LC's labels (Reported) and counts: 7 Generator_PositionSet
+> **OPEN:** what the three u64 values identify (the link itself and its two ends are
+> likely, but not checked against the static entities of §4.5), which end is which, and the
+> meaning of the two numbers of the block pair.
+
+`has_pair` = 1 in 79,147 links; both DIDs of the block pair are landblock-info DIDs in all,
+and one of them is this record's in all but 6.
+
+`link_type` codes observed, with their labels from the install's `EntityLinkType` enum
+mappers (L24; interoperability names from the data) and counts: 7 Generator_PositionSet
 (418,989), 16 Path (266,194), 8 Generator (237,228), 12 Script (194,932), 9 Segment (62,398),
 0x1000000C House_Decoration (32,627), 0x10000013 House_PropertyDriver (32,302), 2 Patrol
 (28,717), 0x10000019 Phasing (23,376), 19 AIRemoteDetector (18,352), 1 PatrolOnce (6,723),
@@ -752,9 +766,10 @@ holds dungeon and interior settings such as `Dungeon_DID`, `InteriorAmbientLight
 <a id="s4-8"></a>
 ### 4.8 Weenies
 
-TSize count, then entries of u64 `iid` followed by an embedded property set. These are
-server-side object templates (spawn generators and the like; LC follows
-`Generator_ProfileDID`). An offline walker skips them.
+TSize count, then entries of u64 `object_id` (Tessera's name) followed by an embedded
+property set. These are server-side object templates (spawn generators and the like; a
+published loader resolves their `Generator_ProfileDID` property, Reported). An offline
+walker skips them.
 
 <a id="s4-9"></a>
 ### 4.9 Trailer (Confirmed rule)
@@ -1010,8 +1025,9 @@ The surfaces are DXT1, 128 × 128 (1.25 units per texel). Settled in
 For landblock (R, X, Y):
 
 1. Data: read `0x800RXXYY` from `client_cell_R.dat` (always present for 0 ≤ X, Y ≤ 254).
-   Decode §3 with the record's directory stamp. Keep heights, flags (bit 7), ceiling,
-   surface chunks; keep the other parts raw.
+   Decode §3 with the record's directory stamp. Keep the heights, the whole vertex-flag
+   byte of every sample (bit 7 meshes the terrain, bit 0 meshes the ceiling; §3.5, §3.6),
+   the ceiling grid and the surface chunks; keep the other parts raw.
 2. Info: if the header's info DID is non-zero, read it (same archive) and decode §4 with the
    record's stamp.
 3. Block map: read `0x801RXXYY` from `client_map_R.dat` and resolve it (§5.4) with the
@@ -1102,7 +1118,7 @@ failures under these categories, so a later install can be compared:
 | `Truncated` | Payload ended inside a field |
 | `TrailingBytes` | Bytes left after the layout |
 | `BadCount` | Height, ceiling or flag count ≠ 1,089; coarse count ≠ 289; quad count ∉ {0, 1,024} |
-| `BadFlag` | A `has_*`, `whole` or `cross` byte not 0/1 |
+| `BadFlag` | A `has_*` byte (including the link's `has_pair`, §4.6) or `whole` byte not 0/1 |
 | `IndexOutOfRange` | A layer window outside the index list, or a vertex ≥ 1,089 |
 | `DidMismatch` | Own DID or header info DID inconsistent |
 | `UnknownStampRule` | Stamp 30 (info) or 34–37 (tree `build_byte`) where the rules have no observation; use the fallbacks |
@@ -1167,7 +1183,7 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 ## 10. Hostile-input notes
 
 - Bound every count by the bytes remaining: a layer is 17 bytes, an index 2, a quad entry
-  2, a box 24, a cross link 24, a neighbour 15, a block-map entry 6.
+  2, a box 24, a block-pair record 24, a neighbour 15, a block-map entry 6.
 - `code_length` of a tree is bounded by the remaining bytes (`mesh.md` §10.3).
 - Validate layer windows before slicing the index list.
 - Cap the cell, entity, link and weenie counts by remaining bytes as well.
@@ -1187,8 +1203,8 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 4. Rendering of "ceiling below floor" vertices (§3.5); box list (§3.10). *(Ceiling diagonal
    answered: bit 0 for every quad, `collision.md` §6.4, Q5 answered; hole triangles are kept
    in collision, `collision.md` §6.5.)*
-5. Landblock-info `size_hint`, trailer, cross-link `mask`, header indices, cell flags, the
-   neighbour flag byte, lists A and B, `extra`, placement of the 2 cells without an offset
+5. Landblock-info `aux_word`, trailer, the block-pair `number_a`, `number_b` and
+   `pair_word`, the link ids, cell groups, cell flags, the neighbour flag byte, lists A and B, `extra`, placement of the 2 cells without an offset
    (§4). *(The 0x01 cell geometry, the neighbour meaning and entering a cell from outdoors
    are answered by `collision.md` §5, §5.8.1; only the re-evaluation frequency stays open,
    `collision.md` Q3.)*
@@ -1208,3 +1224,5 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 | 2026-10-04 | First version (§0–§11). |
 | 2026-10-05 | Sweep adopting the correction tables of `terrain-texturing.md` §15, `collision.md` §15 and `water.md` §13, plus new BIN facts. §1: tags TT, COL, SCN, WAT and BIN; L4 revised; L7 and L16 updated; new L18–L22. §2.1: DB type of every kind; `K` = 6 registered but absent. §3.4: height rule changed to the client's stored × 2,000 / 65,535 (BIN), largest difference to the former stored / 32.768 is 0.0305 units. §3.5: ceiling facing, collision numbering and terrain holes cross-referenced; OPEN narrowed. §3.8.2: `material` is a terrain-type key; the layer-kinds table states what the client draws; mask census; former OPENs (1)–(4) answered. §3.8.4: order Confirmed, meaning Probable. §3.9: tree code specified by `collision.md` §3. §3.13: summary updated. §4.4: 0x01 geometry and neighbour meaning answered by `collision.md` §5; OPEN narrowed. §5.6: keys 3, 4, 6, 7 resolved (fog zone, water level, encounter zone, water type); only 0x10000012 OPEN. §6.4: light-map orientation and use answered. §7: kind 5 is the distant-landscape sector record and carries water pairs. §8: step 6 (water). §11 updated; this change log added. |
 | 2026-10-05 | Revision after review (changes requested): the `collision.md` §15 rows for §3.5 and §3.6, not adopted by the sweep above, are now adopted. §1: legend adds BIN and Tessera Decision and covers 2026-10-05 facts; L6 limited to terrain; new L6a (bit 0 = ceiling diagonal), L6b (holes kept in collision, not cave mouths), L23 (entering a cell by containment); L22 marks the additive use BIN. §3.5: ceiling triangulation by bit 0 for every quad (replaces "from the stored triangles" and the implementation-census OPEN); holes described per `collision.md` §6.5 (not cave mouths); only the "ceiling below floor" rendering question stays OPEN, with a Tessera Decision. §3.6: bit 0 specified; bits 1–6 always set or clear together, OPEN. §3.8.3: evidence sentence limited to terrain chunks. §3.12 HM6: ceiling triangles follow bit 0. §3.13: rows updated. §4.4: entering a cell from outdoors answered (`collision.md` §5.8.1); OPEN narrowed to the re-evaluation frequency. §6.4: additive use BIN, content Probable. §11 items 1, 4 and 5 updated. |
+| 2026-10-06 | Revision after re-review (changes requested). §1: new row L6c (vertex-flag value census, Confirmed 2026-10-06 over all 390,150 records). §3.6: the false sentence "126 occurs only together with a ceiling" replaced by the counts (365 records with low value 126, 357 with a ceiling, 8 without). §8 step 1: the loader keeps the whole vertex-flag byte (bit 7 for the terrain, bit 0 for the ceiling) instead of bit 7 only. |
+| 2026-10-06 | Revision after third review (changes requested, §5.3 item 3). Landblock-info field and part names taken from a published loader replaced by Tessera's own (old names deliberately not repeated here): §4.1 field 3 is now `aux_word`, part 4 "block-pair records" (§4.2, retitled) and part 5 "cell groups" (§4.3, retitled), also in the `flags` bit labels; §4.2 fields 1–6 are now `number_a`, `info_a`, `info_b`, `link_type`, `number_b`, `pair_word`, with an Order column and a plain Meaning column; §4.3 entry fields `lead` and `members`; §4.6 fields 2–4 are now `link_id`, `end_id_1`, `end_id_2`, field 7 `has_pair` and field 8 "block pair", with a new OPEN on the u64 ids; §4.8 entry id is now `object_id`; §9 (`BadFlag`), §10 and §11 item 5 follow. No layout, count or rule changed. New row L24: `link_type` labels now cited from the install's `EntityLinkType` enum mappers 0x230000BE and 0x230001A9 (OBS, Confirmed 2026-10-06) instead of a published loader. L10 notes that the names are Tessera's own. Wrong cross-references fixed: L11 and §2.4 (twice) now point to §4.9 for the trailer rule; L12 points to §4.4 (cells), not §4.5. |

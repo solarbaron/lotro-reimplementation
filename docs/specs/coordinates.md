@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review: Claude review session (spec-writer agent), 2026-10-05, **changes requested**. All earlier items are fixed. New issues: (1) §9.7 row 10 is a wrong test vector as written: the listed q = (0.95125, 0.04494, −0.16773, 0.25489) gives pitch −0.00043° under §11.3 and §9.4 (above the 0.0002 threshold), so the text is `… h330.0 p-0.0 b-20.0`, not `… h330.0 b-20.0`; only the exact composed rotation gives the listed text. State that the row uses the exact rotation (or give inputs that produce the text, or correct the expected text). (2) Minor: §7 does not say which distance the 83 / 194 / 464 / 167 buckets use; they match the largest per-axis distance outside the square, while the Euclidean distance gives 83 / 193 / 464 / 168. Spot checks against the install that matched: CO2 (a)–(c) counts; §7 type split of the 4,960 (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); C20 3,091 arguments beyond ±1 and 2,769 exactly ±1; §9.4 constants and examples recomputed in f32; §11.3 test vectors (1.0000001, 0.99999994 → 89.98°); §9.7 rows 1–9 and §11.5 rows. Previous review: Claude review session (spec-writer agent), 2026-10-05, changes requested; every item is addressed in the repair revision of the same date (§16). Items: (1) Invariant CO2 (§13) is false on the install: landblocks without cells hold 2,252,187 positioned SEDs, 4,960 of them outside the 160 m square (4,052 with the interior flag, 908 without; all 908 non-interior out-of-square SEDs are in cell-less landblocks); "2,247,227 of 2,247,227" counts only the in-square ones. (2) BIN facts without a provenance row and not among the BIN questions: the Position flag-bit rules of §15 (0x01–0x80), cell values 0 and 0xFFFF (§7), block value 0xFF as invalid (§4), the inverse-parser facts of §9.8. (3) Unknowns not in `> **OPEN:**` callouts: the layout of the `Language` record that supplies the decimal separator (§8.3, §15), indoor hiding of map coordinates (§8.3, listed only in §14), out-of-domain handling of the bank asin (§11.3). (4) The "OPEN (implementation choice)" on lenient map-coordinate input is a Tessera convention, not an unknown, and sits in §11.4 instead of §8. Spot checks that matched: REGION map 0x28000008 (9 entries) and all 7 descriptors (offset 4 = key; offsets 16–32), the `Position` table (5 tokens, argument IDs) and the pair template with arguments 0x753/0x6C7, 20 of 20 reference rows recomputed in f32, all §8.4 vectors, CO1 over 923,545 landblock-family DIDs, CO3, 3,115,694 pure turns, 2,916 scalar-last-looking rotations, §7 768,911 of 1,001,648. |
+| **Review record** | Third re-review: Claude review session (spec-writer agent), 2026-10-06, **passed** (Accepted). Every item of §5.3 holds, and both items of the second re-review are fixed. (1) C4, §6, §9.7 and §13 now give the `landblock.md` §3.4 rule (stored × 2,000.0 × f32(1 / 65,535) in f32). Recomputed in f32: 0 → 0.0, 13,106 → 399.96948, 13,107 → 400.0, 32,768 → 1,000.01526, 65,502 → 1,998.9929, 65,535 → 2,000.0; the largest difference from stored / 32.768 is 0.0305. The implementer OPEN is answered (the `oz399.99` values are free synthetic offsets) and removed, and the formats crate uses the same rule. (2) The §11.1 tolerances are stated and reproduce. Spot checks on the install (all 3,253,835 framed SEDs, my own census, 2026-10-06), all matched: §11.1 (3,115,694 with \|x\|, \|y\| < 10⁻⁴; 3,049,348 exact zero; 2,916 with \|w\|, \|x\| ≤ 10⁻⁶ and \|y\|, \|z\| > 10⁻⁶; 9,908 with y, z non-zero); CO3 (none off unit length by more than 0.001); C20 (3,091 beyond ±1, 2,769 exactly ±1); CO2 (a)–(c) (768,911 of 1,001,648; 2,247,227 in-square and 4,960 out of 2,252,187, split 4,052 / 908); C4 scale and the §6 and §13 vectors. All seven remaining OPENs are listed in §14. The §15 rows for `entity-descriptor.md` §8 and `m3-reference-locations.md` R1 match those files, which still state stored / 32.768. Second re-review: Claude review session (spec-writer agent), 2026-10-06, **changes requested**. Both items of the previous re-review are fixed: §9.7 rows 9–11 recomputed in f32 under §11.3 and §9.4 give exactly the listed texts (row 9 bank 4.3 · 10⁻⁷°, row 10 pitch 4.5 · 10⁻⁷°, row 11 pitch −0.00043° → `p-0.0`), the eight-decimal inputs equal the exact composed rotations, and the §9.5 sign rule holds; the §7 buckets reproduce on the install (largest per-axis distance 83 / 194 / 464 / 167, Euclidean 83 / 193 / 464 / 168). New issues: (1) **Blocking.** C4, §6 (second bullet: "height = stored / 32.768 … 0 – 1,999.97") and the §13 test vector "stored height 13,107 → 399.99 units" state the superseded height rule; `landblock.md` §3.4 (row L4, revised 2026-10-05) now gives stored × 2,000.0 × f32(1 / 65,535) in f32, under which 13,107 → 400.0 and 65,535 → 2,000.0 (recomputed). C4 cites LB §3.4 as Confirmed for a rule that spec has withdrawn. The implementer's `> **OPEN:**` under §13 (formats implementation, 2026-10-06) asks exactly this and is unanswered; it is also missing from the §14 summary. Revise C4, §6 and the §13 row (say whether the `oz399.99` inputs of §9.7 and §13 are tied to a stored height or are free synthetic values), answer and remove the OPEN, add a §15 row if needed and a §16 entry. (2) Minor: §11.1's evidence omits its tolerances. "In 95.8 % the second and third components are zero" holds only with \|x\|, \|y\| < 10⁻⁴ (3,115,694 of 3,253,835); exactly zero gives 3,049,348 (93.7 %). The 2,916 scalar-last-looking rotations are those with \|w\|, \|x\| ≤ 10⁻⁶ and y and z non-zero. State both criteria. Spot checks on the install (all 3,253,835 framed SEDs, 2026-10-06) that matched: CO1 (923,545 landblock-family DIDs, none with X or Y = 255); CO2 (a)–(c) and the §7 type split (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); CO3 (no rotation off unit length by more than 0.001); C20 (3,091 arguments beyond ±1, 2,769 exactly ±1); §7 bucket counts under both metrics. Also recomputed in f32: §11.5 rows and the §11.3 arcsine vectors (1.0000001 → NaN, 0.99999994 → 89.98°). Checklist items 1–4 and 9 pass (no code or pseudo-code; the f32 evaluation-order table of §11.3 is a functional fact; labels and tokens are interoperability names; no game text, keys or hostnames; no closed gate touched). Previous re-review: Claude review session (spec-writer agent), 2026-10-05, **changes requested**; both items are addressed in the repair revision of 2026-10-06 (§16). All earlier items are fixed. New issues: (1) §9.7 row 10 is a wrong test vector as written: the listed q = (0.95125, 0.04494, −0.16773, 0.25489) gives pitch −0.00043° under §11.3 and §9.4 (above the 0.0002 threshold), so the text is `… h330.0 p-0.0 b-20.0`, not `… h330.0 b-20.0`; only the exact composed rotation gives the listed text. State that the row uses the exact rotation (or give inputs that produce the text, or correct the expected text). (2) Minor: §7 does not say which distance the 83 / 194 / 464 / 167 buckets use; they match the largest per-axis distance outside the square, while the Euclidean distance gives 83 / 193 / 464 / 168. Spot checks against the install that matched: CO2 (a)–(c) counts; §7 type split of the 4,960 (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); C20 3,091 arguments beyond ±1 and 2,769 exactly ±1; §9.4 constants and examples recomputed in f32; §11.3 test vectors (1.0000001, 0.99999994 → 89.98°); §9.7 rows 1–9 and §11.5 rows. Previous review: Claude review session (spec-writer agent), 2026-10-05, changes requested; every item is addressed in the repair revision of the same date (§16). Items: (1) Invariant CO2 (§13) is false on the install: landblocks without cells hold 2,252,187 positioned SEDs, 4,960 of them outside the 160 m square (4,052 with the interior flag, 908 without; all 908 non-interior out-of-square SEDs are in cell-less landblocks); "2,247,227 of 2,247,227" counts only the in-square ones. (2) BIN facts without a provenance row and not among the BIN questions: the Position flag-bit rules of §15 (0x01–0x80), cell values 0 and 0xFFFF (§7), block value 0xFF as invalid (§4), the inverse-parser facts of §9.8. (3) Unknowns not in `> **OPEN:**` callouts: the layout of the `Language` record that supplies the decimal separator (§8.3, §15), indoor hiding of map coordinates (§8.3, listed only in §14), out-of-domain handling of the bank asin (§11.3). (4) The "OPEN (implementation choice)" on lenient map-coordinate input is a Tessera convention, not an unknown, and sits in §11.4 instead of §8. Spot checks that matched: REGION map 0x28000008 (9 entries) and all 7 descriptors (offset 4 = key; offsets 16–32), the `Position` table (5 tokens, argument IDs) and the pair template with arguments 0x753/0x6C7, 20 of 20 reference rows recomputed in f32, all §8.4 vectors, CO1 over 923,545 landblock-family DIDs, CO3, 3,115,694 pure turns, 2,916 scalar-last-looking rotations, §7 768,911 of 1,001,648. |
 | **Implements into** | `crates/world` (coordinate types, conversions, map-coordinate formatting and parsing), `crates/terrain` (height lookup), `crates/net` sandbox (`--spawn`, reported position), `apps/client` (on-screen coordinates, minimap), `apps/explorer` |
 | **Companion specs** | `landblock.md` (landblock records, height scale §3.4, triangulation §3.11, minimap tiles §6). `entity-descriptor.md` §4.4–§6 (placement frame, rotation evidence, placement transform). `environment.md` §3 (region descriptor 0x0F, which stores the map-coordinate constants). `property-system.md` §4.6 (stored Position encoding). `records.md` §2.2 (landblock DIDs), §8 (DID maps). `string-table.md` §7–§9 (StringInfo arguments, used by the map-coordinate text). `mesh.md` §11 (model axes and units). |
 
@@ -47,7 +47,7 @@ data; facts that rest on BIN alone say so; **Reported** = third-party only.
 
 | Tag | Source |
 |---|---|
-| OBS | Observed in user install 2026-10-04: all landblock records of regions 1–5 and 14 (`landblock.md` §1), all 7 region descriptors, all 3,253,862 placed static entities, 120 minimap tiles. Re-checked 2026-10-05: the REGION DID map 0x28000008 (all 9 entries), the region descriptors' offsets 4–35 (all 7), the STRINGTABLE DID map 0x28000004 entries used in §8.3, the string table it names under the label `Position` (all 5 entries), and the 20 reference rows of `docs/checklists/m3-reference-locations.md` recomputed with §8.2–§8.3. Repair re-check 2026-10-05: the block-local position of every one of the 3,253,835 SEDs with a frame against whether its landblock-info record has cells and whether the SED has the interior flag (CO2, §7), and the bank-arcsine argument of every stored SED rotation evaluated in the client's f32 order (§11.3). |
+| OBS | Observed in user install 2026-10-04: all landblock records of regions 1–5 and 14 (`landblock.md` §1), all 7 region descriptors, all 3,253,862 placed static entities, 120 minimap tiles. Re-checked 2026-10-05: the REGION DID map 0x28000008 (all 9 entries), the region descriptors' offsets 4–35 (all 7), the STRINGTABLE DID map 0x28000004 entries used in §8.3, the string table it names under the label `Position` (all 5 entries), and the 20 reference rows of `docs/checklists/m3-reference-locations.md` recomputed with §8.2–§8.3. Repair re-check 2026-10-05: the block-local position of every one of the 3,253,835 SEDs with a frame against whether its landblock-info record has cells and whether the SED has the interior flag (CO2, §7), and the bank-arcsine argument of every stored SED rotation evaluated in the client's f32 order (§11.3). Re-check 2026-10-06: the near-zero component patterns of all 3,253,835 framed SED rotations at the tolerances stated in §11.1. |
 | BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room on 2026-10-05 for facts only. Questions: (1) how the `/loc` position text is produced: tokens, order, landcell rule, number formats, omissions (owner item O1); (2) how its heading relates to a stored rotation, and so to placed objects (O2); (3) how map coordinates are computed, rounded, lettered and composed, and where their constants come from (O1, the former §8.3 OPEN); (4) what the region number is. Why M1–M3 were not enough: the data hold the constants and the string templates but no rule; the published description (ER) gives the output only by example, and its omission rule for `h` disagrees with the code; the owner's in-game readings (M3, items O1 and O2) are pending and could sample the rounding but not establish it. Only position-formatting, map-coordinate, region-lookup, angle, number-formatting and string-argument code was read; no network, login, launcher or anti-tamper code. **Second use, 2026-10-05 (repair session, same build, same method, address ranges only):** (5) how the client computes the flag byte of a stored Position, bits 0x01–0x80 (§15); (6) which cell values mean "outdoors", "interior" and "no valid cell", and where the outdoor value comes from (§7); (7) which region and block values make a position invalid (§4, §8.2, §9.2); (8) which members, separators and defaults the client's inverse position parser accepts (§9.8); (9) whether the reduction of h, p and b and their omission tests run in single or double precision, and with which constants (§9.4); (10) what the client does when the bank arcsine argument leaves [−1, 1] (§11.3); (11) whether the callers of the map-coordinate routine test the cell (§8.3). **Why M1–M3 were not enough for (5)–(11):** the data hold only values that already satisfy the rules (no stored Position disagrees with its flags, none has region 0, block 0xFF or cell 0xFFFF), so they cannot show the rule or its edge cases; precision and out-of-domain behaviour leave no trace in data; no published source states them; the owner's readings (M3) cannot reach a parser that only developer facilities use. Only the Position flag writer, the position-text formatter, the static initialisers of the cell constants, the angle helpers, the quaternion decomposition, the inverse parser's strings and member table, and the three direct callers of the map-coordinate routine were read. |
 | LC | LotroCompanion `delta-lotro-dat-utils` (Apache-2.0 distribution; decompiled `PositionDecoder`, `GeoLoader`) and `lotro-tools` `MapUtils` (readable source). Facts only. |
 | ER | `research/notes/engine-client-re.md` §3–§4: lotro-wiki "Coordinate Systems" page (landcells, `/loc` fields, map-coordinate formula), engine position struct and resource keys. |
@@ -63,7 +63,7 @@ data; facts that rest on BIN alone say so; **Reported** = third-party only.
 | C1 | Landblocks are 160 × 160 units; X, Y in 0–254 per region (§4) | DS, ER; OBS (LB §2.3); BIN (160 is the block size in the map arithmetic) | Confirmed |
 | C2 | Axes: +X east, +Y north, +Z up, right-handed (§3) | ER; OBS (minimap orientation, terrain seams, layer winding, quaternion test); BIN (longitude grows with X and is lettered E when positive, latitude grows with Y, §8) | Confirmed |
 | C3 | Block-local x, y measured from the landblock's south-west corner, 0–160; z absolute (§5, §6) | DS, ED; OBS | Confirmed |
-| C4 | Height scale stored / 32.768 (§6) | LB §3.4 | Confirmed |
+| C4 | Terrain height in units = stored u16 × 2,000.0 × f32(1 / 65,535), each product rounded to f32; 65,535 = 2,000.0 units (§6). Replaces the former stored / 32.768 | LB §3.4 (row L4: rule from the client, scale fixed by 3.25 M placed entities) | Rule BIN (via LB); scale Confirmed. Revised 2026-10-06 |
 | C5 | Landcells: 20 units, 8 per landblock; `/loc` landcell = 8 · X + x / 20 truncated toward zero outdoors, 8 · X indoors (§5.2, §9.2) | ER; BIN | BIN (formula); the 20-unit size is the same for every region |
 | C6 | Map coordinates: longitude = ΔL + (G_x − 20 · X0) · s, evaluated in single precision in a fixed order; constants X0, Y0, ΔL, Δφ, s read from the region descriptor (§8.1–§8.2) | LC, ER, DS; OBS (constants in every descriptor); BIN | Constants Confirmed; formula and evaluation order BIN, consistent with LC and ER |
 | C7 | Letters: S when the computed latitude is below 0, else N; W when the longitude is below 0, else E; number before letter, no space; latitude first (§8.3) | ER, AYA, LC; BIN; OBS (string tables) | BIN |
@@ -201,11 +201,18 @@ resource keys (ER §3). A landcell is **not** the same thing as an interior cell
 ---
 
 <a id="s6"></a>
-## 6. Heights (Confirmed)
+## 6. Heights (scale Confirmed; rule BIN via `landblock.md` §3.4)
 
 - z is an **absolute** height in world units, not an offset from the ground (ED §4.4).
-- Terrain stores heights as u16 with **height = stored / 32.768** (LB §3.4); 0 – 1,999.97.
-  Observed terrain spans 0 to about 1,999 units.
+- Terrain stores heights as u16 samples. **Height in units = stored × 2,000.0 × f32(1 / 65,535)**,
+  evaluated in single precision as LB §3.4 states (convert the sample to f32, multiply by
+  2,000.0, round to f32, multiply by the f32 nearest 1 / 65,535 = 1.5259022 · 10⁻⁵, round to
+  f32). The range is 0 – 2,000.0 units: stored 0 → 0.0, 13,107 → 400.0, 32,768 → 1,000.0153,
+  65,535 → 2,000.0. The rule is the client's (LB row L4, BIN); the scale is Confirmed. The
+  former rule of this spec, stored / 32.768, is superseded; it differs by at most 0.0305
+  units. Observed stored values reach 65,502 (1,998.99 units, LB §3.4).
+- A position's z (and so `oz`) is an f32 of its own, not a stored height sample; it is not
+  quantised to steps of 2,000 / 65,535.
 - The terrain height under (x, y) is defined by the triangulation of LB §3.11.
 - `/loc` reports the position's z as `oz` (§9). For the player that is the origin of the
   avatar's frame, which `mesh.md` §11.1 puts at the foot point.
@@ -241,8 +248,12 @@ resource keys (ER §3). A landcell is **not** the same thing as an interior cell
   4,960 of their 2,252,187 SEDs with a frame (0.22 %). 4,052 of them carry the interior flag
   (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1): interior content
   placed in the frame of a block that stores no cell list of its own (ED §4.8 OPEN). 908 do
-  not (Physics 886, Light 22); by their distance outside the square: under 1 unit 83, 1–10
-  units 194, 10–100 units 464, 100 units or more 167. These 908 are the only out-of-square
+  not (Physics 886, Light 22). By their distance outside the square, measured per axis
+  (the larger of the two amounts by which x and y leave [0, 160], each 0 when that
+  coordinate is inside) and bucketed with half-open bounds: under 1 unit 83, at least 1 and
+  under 10 units 194, at least 10 and under 100 units 464, 100 units or more 167. (The
+  Euclidean distance to the square gives 83 / 193 / 464 / 168 for the same buckets; both
+  censuses over all 908, OBS 2026-10-05.) These 908 are the only out-of-square
   SEDs without the interior flag in the install. They are not re-homed either: a SED always
   stays in the frame of the block that stores it (OBS, repair re-check 2026-10-05).
 - For an interior position `/loc` reports lx = 8 · X and ly = 8 · Y (the block's
@@ -539,7 +550,8 @@ a heading between 359.95° and 359.9885° prints as `h360.0`, and one between 0.
 `ox`, `oy`, `oz` use two decimals and `h`, `p`, `b` one decimal, through the C runtime's
 fixed-point formatting of the f32 value widened to f64: the correctly rounded decimal of
 the exact binary value (so 19.999 prints as `20.00` while its landcell, from the unrounded
-value, stays 0). An exact tie arises only for binary-exact values (for example 40.125 at two
+value, stays 0). A negative value whose magnitude rounds to zero keeps its minus sign, as
+that runtime format does (−0.00043 prints as `-0.0`, §9.7 row 11). An exact tie arises only for binary-exact values (for example 40.125 at two
 decimals).
 
 > **OPEN (minor):** the runtime decides exact ties; the current Windows runtime rounds them
@@ -569,8 +581,25 @@ Region 1, landblock (100, 150), outdoors, instance 0 unless stated:
 | 0, 0, 0 | identity | `r1 lx800 ly1200` |
 | 160.0, 159.99, 12.5 | yaw ψ = 359.97° | `r1 lx808 ly1207 ox160.00 oy159.99 oz12.50 h0.0` |
 | 10, 10, 5 | yaw ψ = 0.005° | `r1 lx800 ly1200 ox10.00 oy10.00 oz5.00` |
-| 10, 10, 5 | q = (0.96225, 0.08419, 0.02256, 0.25783) (yaw 30° after a 10° turn about +X) | `r1 lx800 ly1200 ox10.00 oy10.00 oz5.00 h330.0 p10.0` |
-| 10, 10, 5 | q = (0.95125, 0.04494, −0.16773, 0.25489) (yaw 30° after −20° about +Y) | `r1 lx800 ly1200 ox10.00 oy10.00 oz5.00 h330.0 b-20.0` |
+| 10, 10, 5 | q = (0.96225019, 0.08418598, 0.02255757, 0.25783416) (yaw 30° after a 10° turn about +X) | `r1 lx800 ly1200 ox10.00 oy10.00 oz5.00 h330.0 p10.0` |
+| 10, 10, 5 | q = (0.95125124, 0.04494346, −0.16773126, 0.25488700) (yaw 30° after −20° about +Y) | `r1 lx800 ly1200 ox10.00 oy10.00 oz5.00 h330.0 b-20.0` |
+| 10, 10, 5 | q = (0.95125, 0.04494, −0.16773, 0.25489) (the previous rotation rounded to five decimals) | `r1 lx800 ly1200 ox10.00 oy10.00 oz5.00 h330.0 p-0.0 b-20.0` |
+
+The quaternions of the last three rows are inputs as written: each decimal is converted to
+the nearest f32 and then decomposed in single precision as in §11.3 and reduced and tested
+as in §9.4. The eight-decimal values of rows 9 and 10 are the exact composed rotations
+rounded to f32 precision; with them the angle that should vanish stays near
+4 · 10⁻⁷ degrees (bank in row 9, pitch in row 10), far below the 0.0002 threshold. Row 11
+shows why the precision of a test input matters: rounding the same rotation to five
+decimals moves its pitch to −0.00043°, which is above the threshold, so `p` is printed,
+as `p-0.0` (one decimal of a small negative value keeps its sign, §9.5). Row 9 rounded to
+five decimals would give a bank of about 0.00019°, just inside the threshold; do not use
+that rounding as a test input.
+
+The z values of these rows (399.99, 20.0, 12.5, 5, 100.0) are free synthetic offsets, chosen
+for the number format; they are not derived from a stored terrain height, and none of them
+needs to lie on the terrain. (No stored sample gives 399.99 under §6: 13,106 gives 399.96948
+and 13,107 gives 400.0.)
 
 Region 14, landblock (3, 7), offset (19.999, 20.0, 100.0), yaw −90° →
 `r14 lx24 ly57 ox20.00 oy20.00 oz100.00 h90.0`.
@@ -633,11 +662,16 @@ Orientations of placed entities (ED §4.4), cells (LB §4.4) and Position values
 order **(w, x, y, z)**: scalar first. The client reads the four values into memory in the
 same order and its identity quaternion is (1, 0, 0, 0) (BIN).
 
-Evidence: 3,253,835 entity rotations all have length 1 within 0.001; in 95.8 % the
-second and third components are zero, the pattern of a pure turn about the vertical axis
-when the scalar is first (the scalar-last reading would put
-the zeros in the first two components; only 2,916 rotations look like that, and those are
-genuine combined turns).
+Evidence (census of all 3,253,835 SEDs with a placement frame, 2026-10-06): every rotation
+has length 1 within 0.001. In 3,115,694 (95.8 %) the second and third stored components
+have magnitude below 10⁻⁴, the pattern of a pure turn about the vertical axis when the
+scalar is first; with an exact-zero test the count is 3,049,348 (93.7 %), the rest carrying
+rounding residue. The scalar-last reading would instead put the near-zeros in the first two
+components while the other two are not: only 2,916 rotations have |w| ≤ 10⁻⁶ and
+|x| ≤ 10⁻⁶ with both |y| > 10⁻⁶ and |z| > 10⁻⁶ (half turns about an axis in the y–z plane,
+genuine combined turns under the scalar-first reading). With "y and z non-zero" in place of
+|y|, |z| > 10⁻⁶ the count is 9,908, because rounding residue makes many vertical half turns
+(y ≈ 0, z ≈ ±1) qualify.
 
 <a id="s11-2"></a>
 ### 11.2 Meaning (Confirmed)
@@ -812,7 +846,8 @@ Test vectors for `crates/world` (all synthetic):
 | (X 100, Y 150, cell 5, x −300.5, y 412.25) → landcell | lx 800, ly 1,200, `cInside` |
 | `/loc` tokens `r1 lx802 ly1204 ox40.00 oy80.00 oz399.99` → position | R 1, X 100, Y 150, (40, 80, 399.99), heading 0 |
 | position of the previous row with q (0.70711, 0, 0, 0.70711) → text | `r1 lx802 ly1204 ox40.00 oy80.00 oz399.99 h270.0` |
-| stored height 13,107 | 399.99 units |
+| stored height 13,107 → height (§6, f32) | 400.0 units |
+| stored height 65,535 / 32,768 / 0 → height (§6, f32) | 2,000.0 / 1,000.01526 / 0.0 units |
 | tile (100, 150), pixel (50, 100), px0 0, py0 200, s 1.25 | G (16,040, 24,080) |
 | q (0.70711, 0, 0, 0.70711) applied to (0, 1, 0) | (−1, 0, 0); heading 270° |
 | §9.7 and §11.5 rows | as listed |
@@ -821,6 +856,11 @@ Test vectors for `crates/world` (all synthetic):
 | q (0.7071068, 0, 0.7071068, 0), Tessera (§11.3) | arcsine argument 1.0000001 clamped to 1, θ = 90°, `b90.0` |
 | map input `45.6W, 12.3S` (§8.5) | latitude −12.3, longitude −45.6 |
 | map input `-12.3S, 45.6W` (§8.5) | rejected |
+
+The `oz399.99` inputs and outputs of the `/loc` rows above and of §9.7 are free synthetic
+offsets, not tied to the stored-height row: a position's z is its own f32 (§6). (Answers the
+formats implementation's question of 2026-10-06: stored 13,107 is 400.0 units, as
+`tessera-formats` returns; the former 399.99 followed the superseded rule.)
 
 <a id="s14"></a>
 ## 14. Open questions (summary)
@@ -861,6 +901,8 @@ Owner items this revision answers (`docs/checklists/owner-observations.md`):
 | `string-table.md` §9.4, §10.3 (formerly §14 item 6) | Decimal places and rounding of kind-2 (float) arguments; layout of the locale record | **Agrees** (both specs revised 2026-10-05): the client prints exactly the argument's number of decimals after adding half a unit of the last place plus 0.0002 to the magnitude and cutting the digits (§8.3 here), with digits, decimal separator, grouping and negative form from the locale record (key 0x0B `Language` of the STRINGTABLE map, prefix 0x58), whose layout is `string-table.md` §10.3. For map coordinates the number of decimals is 1 and the value is a magnitude, so grouping and the negative form never apply. The field match of §10.3 there is Inferred (§8.3 OPEN here). |
 | `docs/checklists/m3-reference-locations.md` §3 | Rounding versus truncation; whether R5 applies in regions 2–5; whether `r` equals the landblock region | Rounding (the first form of every row; §8.3); R5 applies per region with that region's descriptor, whose constants are equal in all regions (§8.1); `r` is the region number used by the landblock DIDs and the REGION DID map (§4, §9.1). The `oz` height reference stays open (§6). |
 | `engine-client-re` notes (ER §4), as quoted in §9 before this revision | `h` omitted within about 1.3° of north | The client's rule is 0.0002 rad (§9.4). |
+| `entity-descriptor.md` §8 | Terrain height in metres is raw / 32.768 | Superseded by `landblock.md` §3.4 (row L4): stored × 2,000.0 × f32(1 / 65,535) in f32 (§6 here, C4). The §8 evidence (fitted scale 1 / 32.7665) fits both rules; only the stated formula is out of date. |
+| `docs/checklists/m3-reference-locations.md` §1 (row R1) | Terrain height in metres = raw u16 sample / 32.768 | Same correction as the previous row; recomputed `oz` expectations move by at most 0.0305 units. |
 | `walker.md` §5–§6 (`WorldSource` location descriptions, HUD lines) | Built on the pre-BIN rules of §8.3 (round half away from zero in f64 with an exact 0.005) and §9 | Follow §8.2–§8.3 and §9 (f32 order, 0.0502 rounding, letters by sign, `ox` group omission, `h` tolerance, `p`/`b`) for character-exact output. |
 
 ---
@@ -873,3 +915,5 @@ Owner items this revision answers (`docs/checklists/owner-observations.md`):
 | 2026-10-04 | all | First version (Review). | Spec writer (dirty room) |
 | 2026-10-05 | header, §0, §1 (BIN source, C5–C8, C10–C14), §2, §4, §5.2, §6, §7, §8.1–§8.4, §9 (rewritten as §9.1–§9.8), §11.1, §11.3–§11.5, §13, §14, new §15–§16 | Map-coordinate arithmetic, rounding, letters and text templates; the `/loc` position text; landcells; the yaw/pitch/bank decomposition and the heading rule, all from the client (BIN, decision 0011) and recomputed against the 20 reference rows. Former OPENs on rounding, zero letter, heading sense, interior landcells and tilted headings closed; two implementation choices of `tessera-world` (landcell clamp, projected +Y heading) marked as deviations. Owner items O1 and O2 answered (§14). | Spec writer (dirty room) |
 | 2026-10-05 | header, §1 (OBS re-check, BIN second use with questions 5–11, new C15–C21), §4, §7, §8.3, new §8.5, §9.4, §9.8, §11.3, §11.4, §13 (CO2 rewritten, new test vectors), §14, §15 | Repair after review. CO2 was false: it counted only in-square SEDs; it now states the full census (768,911 of 768,911 out-of-square SEDs in blocks with cells are interior; 4,960 of 2,252,187 framed SEDs in blocks without cells are out of the square, 4,052 interior and 908 not; all 908 non-interior out-of-square SEDs are in blocks without cells), and §7 describes the 4,960. BIN facts that lacked provenance now have rows and listed questions (Position flag bits C15; cell values 0, 1 and 0xFFFF and how the client derives them C16; invalid R, X, Y and cell C17; inverse-parser members, separators and the `r` default C18). New BIN facts: §9.4 reductions and omission tests run in f32 with the stated constants (C19); the bank arcsine is not clamped and 3,091 stored rotations leave its domain in f32 (C20); the map-coordinate routine's callers do not test the cell (C21). New OPEN callouts: locale-record field match (§8.3), indoor hiding of the player's map coordinates (§8.3), NaN text of `b` (§11.3); Tessera decisions recorded for each. The lenient map-coordinate input moved from an OPEN in §11.4 to a Decision in new §8.5, with test vectors. | Spec writer (dirty room) |
+| 2026-10-06 | header, §7, §9.5, §9.7 | Repair after re-review. §9.7: rows 9 and 10 now give their quaternions to eight decimals (the exact composed rotations rounded to f32), which produce the listed texts under §11.3 and §9.4 with the vanishing angle near 4 · 10⁻⁷°; the former five-decimal input of row 10 is kept as new row 11 with its correct text `… h330.0 p-0.0 b-20.0` (pitch −0.00043°, above the 0.0002 threshold), and a note explains how the inputs are evaluated and why row 9 must not be rounded to five decimals (bank 0.00019°). §9.5: a negative value that rounds to zero prints with its minus sign. §7: the distance of the 908 non-interior out-of-square SEDs is defined as the larger per-axis distance outside the square, with half-open buckets; the Euclidean counts (83 / 193 / 464 / 168) are given for comparison. | Spec writer (dirty room) |
+| 2026-10-06 | §1 (OBS, C4), §6 (title and bullets), §9.7, §11.1, §13, §15 | Repair after the second re-review. C4 and §6 now state the client's height rule of `landblock.md` §3.4 (row L4): stored × 2,000.0 × f32(1 / 65,535) in f32, 0 – 2,000.0 units; C4 is marked rule BIN (via LB), scale Confirmed, instead of citing the withdrawn stored / 32.768 as Confirmed. §13: the stored-height vector is now 13,107 → 400.0 (plus 65,535, 32,768 and 0); the implementer OPEN of 2026-10-06 is answered and removed (it is therefore not in §14): the `oz399.99` values of §9.7 and §13 are free synthetic offsets, not derived from a stored height, and §6 and §9.7 say so. §11.1: the evidence now states its tolerances (95.8 % with \|x\|, \|y\| < 10⁻⁴; 93.7 % with exact zeros; the 2,916 scalar-last-looking rotations are those with \|w\|, \|x\| ≤ 10⁻⁶ and \|y\|, \|z\| > 10⁻⁶; 9,908 with "y, z non-zero"), re-counted on the install 2026-10-06. §15: rows for `entity-descriptor.md` §8 and `m3-reference-locations.md` R1, which still state stored / 32.768. | Spec writer (dirty room) |

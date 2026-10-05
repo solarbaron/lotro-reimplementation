@@ -317,3 +317,23 @@ Send calls only queue data. Nothing reaches the wire until the next poll.
 
 > **OPEN:** One reliable stream only. Independent ordered channels, so that bulk transfers
 > do not cause head-of-line blocking for chat, would need a channel id field.
+
+> **OPEN:** (implementer note, transport fixes) §6.4 steps 3–4 and §8 steps 1–2 read as "store
+> every segment of the poll's receive batch, then deliver". `next` then lags behind
+> segments already received in the same batch, so in-order segments after the first one
+> of a burst were charged to the reorder budget and dropped unacknowledged on a lossless
+> link (with a reorder budget of 0, or with large datagrams). The implementation advances
+> `next` through contiguous segments after **each** received datagram (still subject to
+> back-pressure, §6.4 step 5), so `next` matches step 1's definition ("the lowest sequence
+> number not yet received") whenever delivery is not paused, and §8 step 2 only resumes
+> delivery after the application drained the inbox. The spec writer should restate §6.4
+> steps 3–4 and §8 to say this (`in_order_burst_is_not_charged_to_reorder_budget`,
+> `large_datagrams_on_lossless_link_never_retransmit`).
+
+> **OPEN:** (implementer note, transport fixes) §6.3's Karn rule samples any segment acknowledged
+> without a retransmission, which includes segments the peer held back while PAUSED: after
+> a long stall the sample covers the whole stall and pins the RTO at the maximum. The
+> implementation also excludes every segment that was outstanding (sent, unacknowledged)
+> when a packet carrying PAUSED arrived, or that was first sent while the peer was
+> paused; segments the PAUSED packet itself acknowledges are still sampled. The spec
+> writer should add this exclusion to §6.3 (`paused_hold_is_not_an_rtt_sample`).

@@ -3,6 +3,7 @@
 //! scoped parallel map.
 
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -222,6 +223,18 @@ pub fn did_hex(did: u32) -> String {
     format!("0x{did:08X}")
 }
 
+/// A path as a JSON string. `serde_json::json!` unwraps the serialisation of its values and
+/// a `Path` that is not UTF-8 (legal on Unix) fails to serialise, so paths always go
+/// through this lossy conversion instead.
+pub fn path_json(p: &Path) -> serde_json::Value {
+    serde_json::Value::String(p.to_string_lossy().into_owned())
+}
+
+/// [`path_json`] of an optional path (`null` when absent).
+pub fn opt_path_json(p: Option<&Path>) -> serde_json::Value {
+    p.map_or(serde_json::Value::Null, path_json)
+}
+
 /// Lower-case hex string of a byte slice.
 pub fn hex_bytes(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -230,6 +243,18 @@ pub fn hex_bytes(b: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_paths_become_lossy_json_strings() {
+        use std::os::unix::ffi::OsStrExt;
+        let p = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/x\xff.bin"));
+        // What the old code did: json!(path) panics on this path.
+        assert!(serde_json::to_value(p).is_err());
+        assert_eq!(path_json(p), "/tmp/x\u{fffd}.bin");
+        assert_eq!(opt_path_json(Some(p)), path_json(p));
+        assert!(opt_path_json(None).is_null());
+    }
 
     #[test]
     fn dids_parse_with_and_without_prefix() {

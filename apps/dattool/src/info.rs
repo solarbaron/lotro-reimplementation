@@ -10,8 +10,10 @@ use tessera_dat::{Archive, ArchiveId, Header};
 use tessera_formats::{Did, DidKind};
 
 use crate::Out;
-use crate::input::{Ctx, Input};
-use crate::util::{Align, Table, did_hex, format_time, hex_bytes, human_bytes, par_map};
+use crate::input::{Ctx, Input, Unopened};
+use crate::util::{
+    Align, Table, did_hex, format_time, hex_bytes, human_bytes, opt_path_json, par_map, path_json,
+};
 
 /// Per-prefix bucket of the histogram.
 #[derive(Debug, Clone, Copy, Default)]
@@ -219,7 +221,7 @@ fn archive_json(label: &str, a: &Archive, w: &Walk) -> Value {
     json!({
         "archive": label,
         "identity": identity_json(&identity(a)),
-        "path": a.path(),
+        "path": opt_path_json(a.path()),
         "file_len": a.file_len(),
         "header": header_json(a.header()),
         "membership": a.membership().ok().flatten().map(|m| json!({
@@ -366,8 +368,10 @@ fn info_one(out: &mut Out, label: &str, a: &Archive, w: &Walk) -> Result<()> {
 }
 
 /// Failure when any directory walk stopped early (the statistics are then partial).
-fn walk_status(walks: &[Walk]) -> ExitCode {
-    if walks.iter().any(|w| w.error.is_some()) {
+/// Status 1 when a walk stopped early or a recognised archive of a directory input could
+/// not be opened (the input was not read completely), else success.
+fn walk_status(walks: &[Walk], unopened: &[Unopened]) -> ExitCode {
+    if walks.iter().any(|w| w.error.is_some()) || !unopened.is_empty() {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -378,6 +382,7 @@ fn walk_status(walks: &[Walk]) -> ExitCode {
 pub fn info(out: &mut Out, ctx: &Ctx, target: &str) -> Result<ExitCode> {
     let input = Input::open(target, ctx)?;
     let archives = input.archives();
+    let unopened = input.unopened_recognised();
     let walks = par_map(&archives, |(_, a)| walk(a));
     if out.json {
         let v: Vec<Value> = archives
@@ -385,12 +390,16 @@ pub fn info(out: &mut Out, ctx: &Ctx, target: &str) -> Result<ExitCode> {
             .zip(&walks)
             .map(|((label, a), w)| archive_json(label, a, w))
             .collect();
-        out.json(&json!({ "dir": input.home_dir(), "archives": v }))?;
-        return Ok(walk_status(&walks));
+        out.json(&json!({
+            "dir": opt_path_json(input.home_dir().as_deref()),
+            "archives": v,
+            "unopened": unopened_json(&unopened),
+        }))?;
+        return Ok(walk_status(&walks, &unopened));
     }
     if let (Input::Archive { label, archive }, Some(w)) = (&input, walks.first()) {
         info_one(out, label, archive, w)?;
-        return Ok(walk_status(&walks));
+        return Ok(walk_status(&walks, &unopened));
     }
     let mut t = Table::new(&[
         ("ARCHIVE", Align::Left),
@@ -468,7 +477,36 @@ pub fn info(out: &mut Out, ctx: &Ctx, target: &str) -> Result<ExitCode> {
             "(!) {label}: header region (0x150) differs from the file name"
         )?;
     }
-    Ok(walk_status(&walks))
+    write_unopened(out, &unopened)?;
+    Ok(walk_status(&walks, &unopened))
+}
+
+fn unopened_json(unopened: &[Unopened]) -> Value {
+    Value::Array(
+        unopened
+            .iter()
+            .map(|u| {
+                json!({
+                    "archive": u.label,
+                    "path": path_json(&u.path),
+                    "error": u.error,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn write_unopened(out: &mut Out, unopened: &[Unopened]) -> Result<()> {
+    for u in unopened {
+        writeln!(
+            out.w,
+            "(!) {}: {} could not be opened: {}",
+            u.label,
+            u.path.display(),
+            u.error
+        )?;
+    }
+    Ok(())
 }
 
 fn hist_table(hist: &[Bucket], total: u64) -> Table {
@@ -515,6 +553,7 @@ fn hist_json(hist: &[Bucket]) -> Value {
 pub fn stat(out: &mut Out, ctx: &Ctx, target: &str, totals_only: bool) -> Result<ExitCode> {
     let input = Input::open(target, ctx)?;
     let archives = input.archives();
+    let unopened = input.unopened_recognised();
     let walks = par_map(&archives, |(_, a)| walk(a));
     let mut total = vec![Bucket::default(); 256];
     let mut holders: Vec<Vec<&str>> = vec![Vec::new(); 256];
@@ -545,8 +584,9 @@ pub fn stat(out: &mut Out, ctx: &Ctx, target: &str, totals_only: bool) -> Result
             "archives": if totals_only { Value::Null } else { Value::Array(per) },
             "totals": hist_json(&total),
             "entries": grand,
+            "unopened": unopened_json(&unopened),
         }))?;
-        return Ok(walk_status(&walks));
+        return Ok(walk_status(&walks, &unopened));
     }
     if !totals_only {
         for ((label, _), w) in archives.iter().zip(&walks) {
@@ -602,5 +642,6 @@ pub fn stat(out: &mut Out, ctx: &Ctx, target: &str, totals_only: bool) -> Result
             }
         }
     }
-    Ok(walk_status(&walks))
+    write_unopened(out, &unopened)?;
+    Ok(walk_status(&walks, &unopened))
 }

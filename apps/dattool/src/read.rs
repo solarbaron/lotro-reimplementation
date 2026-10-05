@@ -13,7 +13,7 @@ use tessera_formats::{AnyRecord, Did, DidKind, Record, StringTable, StringTableE
 use crate::Out;
 use crate::input::{Ctx, Found, Input};
 use crate::output::{check_output_path, protected_dirs, write_output};
-use crate::util::{did_hex, format_time, hex_bytes, hexdump, human_bytes};
+use crate::util::{did_hex, format_time, hex_bytes, hexdump, human_bytes, path_json};
 
 /// Options of `cat`.
 #[derive(Debug)]
@@ -295,7 +295,7 @@ pub fn extract(out: &mut Out, ctx: &Ctx, o: &ExtractOpts) -> Result<ExitCode> {
     if out.json {
         let mut v = entry_json(&found);
         if let Some(m) = v.as_object_mut() {
-            m.insert("output".into(), json!(o.output));
+            m.insert("output".into(), path_json(&o.output));
             m.insert("written".into(), json!(bytes.len()));
             m.insert("format".into(), json!(what));
         }

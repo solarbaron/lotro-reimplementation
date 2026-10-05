@@ -12,7 +12,12 @@
 //! When a directory walk stopped early, that side's list is reliable only up to the last
 //! DID it reached (walks run in ascending DID order). DIDs beyond it are counted as *not
 //! compared* instead of added or removed, the walk error is printed, and `diff` exits with
-//! status 2.
+//! status 2. An archive of a directory that could not be opened at all is indexed as a walk
+//! that stopped before its first DID, so all of the other side's DIDs are *not compared*.
+//!
+//! When content is compared, a pair whose metadata matches but whose payload could not be
+//! read on one side has *unknown content*: it is not a change, but it is reported, and
+//! `diff` exits with status 2 because the inputs could not be read completely.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -31,8 +36,8 @@ use crate::util::{Align, Table, did_hex, format_time, hex_bytes};
 
 /// Exit status of `diff --exit-code` when differences were found.
 pub const EXIT_DIFFERENT: u8 = 1;
-/// Exit status when the comparison is incomplete (a directory walk stopped early). Errors
-/// exit with the same status.
+/// Exit status when the comparison is incomplete (a directory walk stopped early, or content
+/// could not be compared). Errors exit with the same status.
 pub const EXIT_TROUBLE: u8 = 2;
 
 /// Options of `diff`.
@@ -246,6 +251,9 @@ pub struct ArchiveDiff<'a> {
     pub unchanged: u64,
     /// Pairs whose hashes were compared.
     pub content_compared: u64,
+    /// Pairs counted as unchanged although content was to be compared, because a payload
+    /// could not be read for hashing on one side.
+    pub content_unknown: u64,
     /// DIDs present on one side beyond where the other side's walk stopped.
     pub not_compared: u64,
 }
@@ -313,6 +321,10 @@ impl Report<'_> {
     pub fn not_compared(&self) -> u64 {
         self.archives.iter().map(|a| a.not_compared).sum()
     }
+    /// Sum of pairs whose content could not be compared.
+    pub fn content_unknown(&self) -> u64 {
+        self.archives.iter().map(|a| a.content_unknown).sum()
+    }
     /// No added, removed or changed DID among those compared.
     pub fn identical(&self) -> bool {
         self.added() == 0 && self.removed() == 0 && self.changed() == 0
@@ -375,9 +387,16 @@ pub fn diff_archive<'a>(
                     size: x.size != y.size,
                     content: false,
                 };
-                if compare_content && let (Some(hx), Some(hy)) = (&x.hash, &y.hash) {
-                    d.content_compared += 1;
-                    r.content = hx != hy;
+                let mut unknown = false;
+                if compare_content {
+                    match (&x.hash, &y.hash) {
+                        (Some(hx), Some(hy)) => {
+                            d.content_compared += 1;
+                            r.content = hx != hy;
+                        }
+                        // A hashed index lacks a hash only where the payload was unreadable.
+                        _ => unknown = true,
+                    }
                 }
                 if r.any() {
                     d.changed.push(Change {
@@ -387,6 +406,9 @@ pub fn diff_archive<'a>(
                     });
                 } else {
                     d.unchanged += 1;
+                    if unknown {
+                        d.content_unknown += 1;
+                    }
                 }
             }
             (Some(x), y) if y.is_none_or(|y| x.did < y.did) => {
@@ -605,6 +627,7 @@ fn change_json(c: &Change<'_>) -> Value {
 
 fn side_text(s: &Side) -> String {
     let i = &s.index;
+    let unreadable: u64 = i.archives.iter().map(|a| a.unreadable).sum();
     let mut t = format!(
         "{} ({}, {} archives, {} records{})",
         i.source,
@@ -614,7 +637,11 @@ fn side_text(s: &Side) -> String {
         },
         i.archives.len(),
         i.records(),
-        if i.hashed { ", hashed" } else { "" }
+        match (i.hashed, unreadable) {
+            (false, _) => String::new(),
+            (true, 0) => ", hashed".to_owned(),
+            (true, n) => format!(", hashed, {n} payloads unreadable"),
+        }
     );
     if s.origin == Origin::Snapshot {
         t.push_str(&format!(
@@ -709,6 +736,7 @@ fn write_json(w: &mut dyn Write, a: &Side, b: &Side, r: &Report<'_>, o: &Opts) -
             "unchanged": r.unchanged(),
             "moved": r.moved.len(),
             "not_compared": r.not_compared(),
+            "content_unknown": r.content_unknown(),
         }),
         false,
     )?;
@@ -744,6 +772,7 @@ fn write_json(w: &mut dyn Write, a: &Side, b: &Side, r: &Report<'_>, o: &Opts) -
             "unchanged": d.unchanged,
             "content_compared": d.content_compared,
             "not_compared": d.not_compared,
+            "content_unknown": d.content_unknown,
             "a_complete": d.a_complete,
             "b_complete": d.b_complete,
             "a_walk_error": d.a_error,
@@ -894,8 +923,26 @@ pub fn write_report(out: &mut Out, a: &Side, b: &Side, r: &Report<'_>, o: &Opts)
         )?;
     }
 
+    if r.content_unknown() > 0 {
+        if !r.incomplete() {
+            writeln!(w)?;
+        }
+        for d in r.archives.iter().filter(|d| d.content_unknown > 0) {
+            writeln!(
+                w,
+                "(!) {}: content of {} records could not be compared (payload unreadable)",
+                d.label, d.content_unknown
+            )?;
+        }
+        writeln!(
+            w,
+            "(!) comparison incomplete: {} records' content could not be compared",
+            r.content_unknown()
+        )?;
+    }
+
     if r.identical() {
-        if r.incomplete() {
+        if r.incomplete() || r.content_unknown() > 0 {
             writeln!(w, "\nno differences among the records compared")?;
         } else {
             writeln!(w, "\nno differences")?;
@@ -993,10 +1040,11 @@ pub fn write_report(out: &mut Out, a: &Side, b: &Side, r: &Report<'_>, o: &Opts)
     Ok(())
 }
 
-/// The exit status for a finished report: [`EXIT_TROUBLE`] when it is incomplete,
-/// [`EXIT_DIFFERENT`] for differences under `--exit-code`, else success.
+/// The exit status for a finished report: [`EXIT_TROUBLE`] when it is incomplete or some
+/// content could not be compared (the CLI's "a diff whose inputs could not be read
+/// completely"), [`EXIT_DIFFERENT`] for differences under `--exit-code`, else success.
 pub fn exit_status(r: &Report<'_>, exit_code: bool) -> ExitCode {
-    if r.incomplete() {
+    if r.incomplete() || r.content_unknown() > 0 {
         ExitCode::from(EXIT_TROUBLE)
     } else if exit_code && !r.identical() {
         ExitCode::from(EXIT_DIFFERENT)
@@ -1014,6 +1062,12 @@ pub fn run(out: &mut Out, ctx: &Ctx, o: &Opts) -> Result<ExitCode> {
         tracing::warn!(
             not_compared = report.not_compared(),
             "comparison incomplete: a directory walk stopped early"
+        );
+    }
+    if report.content_unknown() > 0 {
+        tracing::warn!(
+            content_unknown = report.content_unknown(),
+            "comparison incomplete: some payloads could not be read for hashing"
         );
     }
     Ok(exit_status(&report, o.exit_code))
@@ -1278,6 +1332,65 @@ mod tests {
         assert!(r.content);
         assert!(r.identical());
         assert_eq!(r.archives[0].content_compared, 0);
+        // ... but its content was not compared, so the diff is not a clean "no differences".
+        assert_eq!(r.archives[0].content_unknown, 1);
+        assert_eq!(r.content_unknown(), 1);
+        assert_eq!(exit_status(&r, false), ExitCode::from(EXIT_TROUBLE));
+        assert_eq!(exit_status(&r, true), ExitCode::from(EXIT_TROUBLE));
+        #[derive(Clone, Default)]
+        struct Shared(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl Write for Shared {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buf = Shared::default();
+        let side = |index: Index| Side {
+            index,
+            origin: Origin::Snapshot,
+        };
+        let o = Opts {
+            a: "a".into(),
+            b: "b".into(),
+            content: true,
+            prefix: None,
+            max_list: 20,
+            summary: false,
+            exit_code: false,
+        };
+        let mut out = crate::Out {
+            w: Box::new(buf.clone()),
+            json: false,
+        };
+        write_report(&mut out, &side(a.clone()), &side(b.clone()), &r, &o).unwrap();
+        let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("could not be compared"), "{text}");
+        assert!(!text.contains("\nno differences\n"), "{text}");
+        // A record whose metadata already differs is a change whatever its content.
+        let b2 = idx(
+            SourceKind::Dir,
+            true,
+            vec![arch("g", vec![rec(1, 2, 1, None)])],
+        );
+        let r = diff_indexes(&a, &b2, None).unwrap();
+        assert_eq!(r.changed(), 1);
+        assert_eq!(r.content_unknown(), 0);
+        // Unreadable on both sides: still unknown.
+        let r = diff_indexes(&b, &b, None).unwrap();
+        assert_eq!(r.content_unknown(), 1);
+        // Without content comparison a missing hash means nothing.
+        let unhashed = idx(
+            SourceKind::Dir,
+            false,
+            vec![arch("g", vec![rec(1, 1, 1, None)])],
+        );
+        let r = diff_indexes(&unhashed, &b, None).unwrap();
+        assert_eq!(r.content_unknown(), 0);
+        assert_eq!(exit_status(&r, true), ExitCode::SUCCESS);
         // Two hashed sides compare hashes without being asked: a content-only change shows.
         let b = idx(
             SourceKind::Dir,

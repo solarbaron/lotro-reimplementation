@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use tessera_dat::{Archive, ArchiveId, ArchiveSet, Did, Entry, SetOptions};
+use tessera_dat::{Archive, ArchiveId, ArchiveKind, ArchiveSet, Did, Entry, SetOptions};
 
 use crate::output::Protected;
 
@@ -138,6 +138,22 @@ pub enum Input {
     Set(ArchiveSet),
 }
 
+/// An archive file of a directory input that could not be opened (its header failed the
+/// checks of `docs/specs/dat-container.md` §10, I-1/I-2/I-4/I-8, or it could not be read).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unopened {
+    /// The file.
+    pub path: PathBuf,
+    /// Display label, as [`label_of`] gives it.
+    pub label: String,
+    /// Whether the name is one of the archive kinds of the spec (`general`, `local_<Lang>`,
+    /// `cell_<r>`, ... and their aux parts). Any other `client_<x>` file is not part of the
+    /// set (install-layout.md §3.1), so failing to open it is not trouble.
+    pub recognised: bool,
+    /// Why it could not be opened.
+    pub error: String,
+}
+
 /// Where a DID was found.
 #[derive(Debug)]
 pub struct Found<'a> {
@@ -186,6 +202,46 @@ impl Input {
             label,
             archive: Box::new(archive),
         })
+    }
+
+    /// The archive files of a directory input that could not be opened. They are not part
+    /// of [`Input::archives`]; commands report them and treat a recognised one as an input
+    /// that could not be read completely.
+    pub fn unopened(&self) -> Vec<Unopened> {
+        let Self::Set(set) = self else {
+            return Vec::new();
+        };
+        set.problems()
+            .iter()
+            .filter_map(|p| {
+                // `ArchiveSet::open` reports a file it skipped as "not opened: <error>"; its
+                // other problems (membership, ignored duplicates) concern files that are
+                // either open or deliberately left out.
+                let error = p.message.strip_prefix("not opened: ")?;
+                let path = p.path.as_ref()?;
+                if set.members().iter().any(|m| &m.path == path) {
+                    return None;
+                }
+                let kind = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(ArchiveId::from_file_name)
+                    .map(|id| id.kind);
+                Some(Unopened {
+                    path: path.clone(),
+                    label: label_of(path),
+                    recognised: kind.is_some_and(|k| !matches!(k, ArchiveKind::Other(_))),
+                    error: error.to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    /// The recognised archives of [`Input::unopened`].
+    pub fn unopened_recognised(&self) -> Vec<Unopened> {
+        let mut v = self.unopened();
+        v.retain(|u| u.recognised);
+        v
     }
 
     /// Every archive as `(label, archive)`, in set order.

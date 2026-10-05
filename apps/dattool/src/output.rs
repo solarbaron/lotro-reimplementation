@@ -7,7 +7,13 @@
 //! 1. The *real* destination is checked, not the path as typed: [`resolve`] follows every
 //!    symlink on the way, including a dangling one at the end and one that comes after a
 //!    `missing/..` step, and the check is repeated on the canonical parent directory once it
-//!    exists.
+//!    exists. Missing directories are created along the resolved path, never along the
+//!    typed one (where the OS would resolve `missing/..` by first creating `missing`).
+//!    Containment is decided on canonical forms of both sides (on Windows the verbatim,
+//!    long-name, real-case form `fs::canonicalize` gives) and, on Unix, also by directory
+//!    identity (device and inode of every existing ancestor), so an alias of a protected
+//!    directory (a bind mount, or other letter case on a case-insensitive file system) is
+//!    caught too.
 //! 2. The protected set ([`protected_dirs`]) holds the input's own directory (and the real
 //!    directory of every input archive reached through a symlink), `--game-dir`,
 //!    `$TESSERA_GAME_DIR`, and every install or candidate a full discovery finds.
@@ -115,22 +121,82 @@ pub fn resolve(p: &Path) -> Result<PathBuf> {
     Ok(out)
 }
 
-/// The canonical form of a protected directory, or `None` if it cannot be resolved.
-fn canonical_dir(d: &Path) -> Option<PathBuf> {
-    fs::canonicalize(d).ok().or_else(|| resolve(d).ok())
+/// The real location of `p`, an absolute path without `..` (as [`resolve`] returns): its
+/// deepest existing ancestor in canonical form with the components that do not exist yet
+/// appended. Both sides of a containment test go through this, so they are compared in the
+/// same form (on Windows `fs::canonicalize` gives `\\?\C:\...` while `std::path::absolute`
+/// gives `C:\...`, and the two never match as path prefixes).
+fn real_location(p: &Path) -> PathBuf {
+    let mut base = p.to_path_buf();
+    let mut tail: Vec<OsString> = Vec::new();
+    loop {
+        if let Ok(mut out) = fs::canonicalize(&base) {
+            for n in tail.iter().rev() {
+                out.push(n);
+            }
+            return out;
+        }
+        match base.file_name() {
+            Some(n) => {
+                tail.push(n.to_owned());
+                base.pop();
+            }
+            None => return p.to_path_buf(),
+        }
+    }
 }
 
-/// Fails if the real location of `output` is inside any of `protected`.
+/// The canonical form of a protected directory, or `None` if it cannot be resolved.
+fn canonical_dir(d: &Path) -> Option<PathBuf> {
+    resolve(d).ok().map(|r| real_location(&r))
+}
+
+/// Identity of an existing directory: (device, inode).
+#[cfg(unix)]
+fn dir_id(p: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(p)
+        .ok()
+        .filter(fs::Metadata::is_dir)
+        .map(|m| (m.dev(), m.ino()))
+}
+
+/// Identities of every existing directory on the way from `p` up to the root.
+#[cfg(unix)]
+fn ancestor_ids(p: &Path) -> Vec<(u64, u64)> {
+    p.ancestors().filter_map(dir_id).collect()
+}
+
+/// The parent directory of a typed output path (`.` for a bare file name).
+fn parent_of(output: &Path) -> &Path {
+    output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// Fails if the real location of `output` is inside any of `protected`: both the file a
+/// final symlink points to and the directory entry that is actually written (rule 3).
 pub fn check_output_path(output: &Path, protected: &[Protected]) -> Result<()> {
-    check_resolved(output, &resolve(output)?, protected)
+    check_resolved(output, &resolve(output)?, protected)?;
+    if let Some(name) = output.file_name() {
+        check_resolved(output, &resolve(parent_of(output))?.join(name), protected)?;
+    }
+    Ok(())
 }
 
 fn check_resolved(output: &Path, target: &Path, protected: &[Protected]) -> Result<()> {
+    let target = real_location(target);
+    #[cfg(unix)]
+    let ids = ancestor_ids(&target);
     for p in protected {
         let Some(dir) = canonical_dir(&p.path) else {
             continue;
         };
-        if target.starts_with(&dir) {
+        let inside = target.starts_with(&dir);
+        #[cfg(unix)]
+        let inside = inside || dir_id(&dir).is_some_and(|id| ids.contains(&id));
+        if inside {
             bail!(
                 "refusing to write {}: it is inside {} {} (archives and the directories \
                  holding them are only ever read)",
@@ -189,19 +255,19 @@ pub fn write_output(
         bail!("{} does not name a file", output.display());
     };
     check_output_path(output, protected)?;
-    let parent = output
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+    // Create the directories along the resolved parent, which has no `..` left: every one
+    // created is an ancestor of the checked destination, so none is inside a protected
+    // directory. (`create_dir_all` on the typed path would create `missing` to resolve
+    // `missing/..`, possibly inside one.)
+    let parent = resolve(parent_of(output))?;
+    fs::create_dir_all(&parent).with_context(|| format!("cannot create {}", parent.display()))?;
     // The parent exists now: check the real destination once more, from its canonical form.
-    let dir =
-        fs::canonicalize(parent).with_context(|| format!("cannot resolve {}", parent.display()))?;
+    let dir = fs::canonicalize(&parent)
+        .with_context(|| format!("cannot resolve {}", parent.display()))?;
     let dest = dir.join(&name);
     check_resolved(output, &dest, protected)?;
     if force {
-        replace(&dir, &name, &dest, bytes)
-            .with_context(|| format!("cannot write {}", output.display()))
+        replace(&dir, &dest, bytes).with_context(|| format!("cannot write {}", output.display()))
     } else {
         // create_new is O_CREAT|O_EXCL: it fails on any existing entry, symlinks included,
         // and never follows one.
@@ -221,14 +287,13 @@ pub fn write_output(
     }
 }
 
-/// Writes a temporary file in `dir` and renames it to `dest`.
-fn replace(dir: &Path, name: &std::ffi::OsStr, dest: &Path, bytes: &[u8]) -> io::Result<()> {
+/// Writes a temporary file in `dir` and renames it to `dest`. The temporary name does not
+/// embed the destination's name, so it stays short whatever that is (a name near the
+/// file-name limit would otherwise make it too long).
+fn replace(dir: &Path, dest: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut last = None;
     for attempt in 0..16u32 {
-        let mut tmp_name = OsString::from(".");
-        tmp_name.push(name);
-        tmp_name.push(format!(".tessera-tmp-{}-{attempt}", std::process::id()));
-        let tmp = dir.join(tmp_name);
+        let tmp = dir.join(format!(".tessera-tmp-{}-{attempt}", std::process::id()));
         let mut f = match OpenOptions::new().write(true).create_new(true).open(&tmp) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
@@ -362,6 +427,62 @@ mod tests {
             names.iter().all(|n| !n.contains("tessera-tmp")),
             "{names:?}"
         );
+    }
+
+    fn listing(d: &Path) -> Vec<OsString> {
+        let mut v: Vec<OsString> = fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn dotdot_after_a_missing_dir_inside_the_game_dir_creates_nothing_there() {
+        let (t, game, out) = scratch("mkdir");
+        symlink(&game, out.join("gamelink")).unwrap();
+        let p = prot(&game);
+        let before = listing(&game);
+        // `game/sub` does not exist: `sub/..` cancels, so the destination is out/x1.bin,
+        // and no directory may be created on the way inside the game dir.
+        write_output(&game.join("sub/../../out/x1.bin"), b"1", false, &p).unwrap();
+        write_output(&out.join("gamelink/sub2/../../out/x2.bin"), b"2", false, &p).unwrap();
+        write_output(&game.join("a/b/../../../out/new/x3.bin"), b"3", true, &p).unwrap();
+        assert_eq!(listing(&game), before);
+        assert_eq!(fs::read(out.join("x1.bin")).unwrap(), b"1");
+        assert_eq!(fs::read(out.join("x2.bin")).unwrap(), b"2");
+        assert_eq!(fs::read(out.join("new/x3.bin")).unwrap(), b"3");
+        // Refused targets create nothing either.
+        assert!(write_output(&game.join("sub/../new/x.bin"), b"x", false, &p).is_err());
+        assert!(write_output(&t.0.join("out/../game/new/x.bin"), b"x", false, &p).is_err());
+        assert_eq!(listing(&game), before);
+    }
+
+    #[test]
+    fn protected_dirs_are_matched_by_identity_not_only_by_path() {
+        // A bind mount or another letter case on a case-insensitive file system names the
+        // game dir by a path the prefix test cannot match; the identity test still does.
+        // Neither can be set up without privileges, so the identity test is checked alone.
+        let (_t, game, out) = scratch("identity");
+        let id = dir_id(&game).unwrap();
+        assert!(ancestor_ids(&game.join("new/dir/x.bin")).contains(&id));
+        assert!(ancestor_ids(&game.join("x.bin")).contains(&id));
+        assert!(!ancestor_ids(&out.join("x.bin")).contains(&id));
+        assert!(!ancestor_ids(&out.join("new/x.bin")).contains(&id));
+        assert_eq!(dir_id(&out.join("..").join("game")), Some(id));
+        assert_eq!(dir_id(&out.join("missing")), None);
+    }
+
+    #[test]
+    fn force_works_for_long_file_names() {
+        let (_t, game, out) = scratch("longname");
+        // 240 bytes: legal (NAME_MAX is 255), but too long once wrapped in a temp-file
+        // name that embeds it.
+        let f = out.join("n".repeat(240));
+        write_output(&f, b"one", false, &prot(&game)).unwrap();
+        write_output(&f, b"two", true, &prot(&game)).unwrap();
+        assert_eq!(fs::read(&f).unwrap(), b"two");
     }
 
     #[test]

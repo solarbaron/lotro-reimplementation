@@ -17,7 +17,7 @@ use tessera_install::{
 
 use crate::Out;
 use crate::input::Ctx;
-use crate::util::{human_bytes, par_map};
+use crate::util::{human_bytes, opt_path_json, par_map, path_json};
 
 fn source_text(s: &Source) -> String {
     match s {
@@ -171,7 +171,7 @@ pub fn run_path(out: &mut Out, ctx: &Ctx) -> Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     };
     if out.json {
-        out.json(&json!({ "root": inst.root }))?;
+        out.json(&json!({ "root": path_json(&inst.root) }))?;
     } else {
         writeln!(out.w, "{}", inst.root.display())?;
     }
@@ -196,15 +196,15 @@ pub fn run(out: &mut Out, ctx: &Ctx, with_content: bool) -> Result<ExitCode> {
             .map(|(i, r)| {
                 let schema = i.schema_fingerprint();
                 json!({
-                    "root": i.root,
+                    "root": path_json(&i.root),
                     "sources": i.sources.iter().map(source_text).collect::<Vec<_>>(),
                     "game_type": game_type_text(&i.game_type),
                     "project_version": project_version_text(&i.project_version),
                     "languages": i.languages,
-                    "client_dir": i.client_dir,
-                    "prefix": i.prefix,
+                    "client_dir": opt_path_json(i.client_dir.as_deref()),
+                    "prefix": opt_path_json(i.prefix.as_deref()),
                     "steam": i.steam.as_ref().map(|s| json!({
-                        "library": s.library,
+                        "library": path_json(&s.library),
                         "buildid": s.buildid,
                         "proton_version": s.proton_version,
                     })),
@@ -229,7 +229,7 @@ pub fn run(out: &mut Out, ctx: &Ctx, with_content: bool) -> Result<ExitCode> {
             .iter()
             .map(|r| {
                 json!({
-                    "path": r.path,
+                    "path": path_json(&r.path),
                     "sources": r.sources.iter().map(source_text).collect::<Vec<_>>(),
                     "problems": r.problems.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 })

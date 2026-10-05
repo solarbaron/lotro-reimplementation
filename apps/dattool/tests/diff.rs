@@ -30,6 +30,56 @@ struct Fx {
 /// - 0x01000009 same length and iteration, different bytes (content-only change).
 ///
 /// `surface` is identical on both sides.
+/// The `general` archive of install A (`newer == false`) or B.
+fn general_builder(newer: bool) -> Builder {
+    let mut g = Builder::new();
+    g.fanout = 4;
+    for i in 0..20u32 {
+        let did = 0x0100_0000 + i;
+        if newer && did == 0x0100_0003 {
+            continue;
+        }
+        let mut data = common::payload(did, 40 + i as usize);
+        if newer && did == 0x0100_0005 {
+            data.extend_from_slice(b"grown");
+        }
+        if newer && did == 0x0100_0009 {
+            for x in &mut data {
+                *x ^= 0x5A;
+            }
+        }
+        g.stored(did, data);
+        if newer && did == 0x0100_0007 {
+            g.records.last_mut().unwrap().iteration += 1;
+        }
+    }
+    if newer {
+        g.stored(0x0100_0100, common::payload(0x0100_0100, 33));
+    }
+    g
+}
+
+/// The `surface` archive, the same in A and B.
+fn surface_builder() -> Builder {
+    let mut s = Builder::new();
+    s.dataset = 0x0109_0000;
+    s.membership = Some(([7; 16], 0, 1));
+    s.compressed(
+        SURFACE_DID,
+        &common::payload(SURFACE_DID, 300),
+        Compression::default(),
+    );
+    s
+}
+
+/// Makes the compressed record `did` unreadable: its deflate stream starts with a block
+/// of the reserved type 3.
+fn break_zlib(built: &mut Built, did: u32) {
+    let (off, _) = built.records[&did];
+    // Allocation header (8), inflated length (4), zlib header (2), first deflate byte.
+    built.bytes[off as usize + 8 + 4 + 2] = 0xFF;
+}
+
 fn fixture() -> Fx {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_owned();
@@ -37,45 +87,8 @@ fn fixture() -> Fx {
     for d in [&a, &b, &out] {
         std::fs::create_dir_all(d).unwrap();
     }
-
-    let general = |newer: bool| {
-        let mut g = Builder::new();
-        g.fanout = 4;
-        for i in 0..20u32 {
-            let did = 0x0100_0000 + i;
-            if newer && did == 0x0100_0003 {
-                continue;
-            }
-            let mut data = common::payload(did, 40 + i as usize);
-            if newer && did == 0x0100_0005 {
-                data.extend_from_slice(b"grown");
-            }
-            if newer && did == 0x0100_0009 {
-                for x in &mut data {
-                    *x ^= 0x5A;
-                }
-            }
-            g.stored(did, data);
-            if newer && did == 0x0100_0007 {
-                g.records.last_mut().unwrap().iteration += 1;
-            }
-        }
-        if newer {
-            g.stored(0x0100_0100, common::payload(0x0100_0100, 33));
-        }
-        g.build().bytes
-    };
-    let surface = || {
-        let mut s = Builder::new();
-        s.dataset = 0x0109_0000;
-        s.membership = Some(([7; 16], 0, 1));
-        s.compressed(
-            SURFACE_DID,
-            &common::payload(SURFACE_DID, 300),
-            Compression::default(),
-        );
-        s.build().bytes
-    };
+    let general = |newer: bool| general_builder(newer).build().bytes;
+    let surface = || surface_builder().build().bytes;
     std::fs::write(a.join("client_general.dat"), general(false)).unwrap();
     std::fs::write(b.join("client_general.dat"), general(true)).unwrap();
     std::fs::write(a.join("client_surface.dat"), surface()).unwrap();
@@ -389,21 +402,99 @@ fn hashed_snapshots_compare_content_without_the_flag() {
         v["compared"],
         serde_json::json!(["iteration", "size", "content"])
     );
-    // A snapshot of the same install with only the content-only change: still caught.
+    // The same-size, same-iteration rewrite is caught from the hashes alone.
+    let g = general(&v);
+    assert_eq!(g["changed_dids"][2]["did"], "0x01000009");
+    assert_eq!(
+        g["changed_dids"][2]["reasons"],
+        serde_json::json!(["content"])
+    );
+    // A hashed snapshot compared with itself is identical.
     let v = json_of(tool().args(["--json", "diff", s(&sa), s(&sa)]));
     assert_eq!(v["identical"], true);
+}
+
+/// Install C: B with unreadable payloads, one in `general` (an added DID, 0x01000200) and
+/// two in `surface` (the shared 0x41000001 and an added 0x41000002). Hashing a payload that
+/// cannot be read counts it as unreadable, so the counts show what was hashed.
+fn with_unreadable_payloads(f: &Fx) -> PathBuf {
+    let c = f.out.join("c");
+    std::fs::create_dir_all(&c).unwrap();
+    let mut g = general_builder(true);
+    g.compressed(
+        0x0100_0200,
+        &common::payload(0x0100_0200, 200),
+        Compression::default(),
+    );
+    let mut g = g.build();
+    break_zlib(&mut g, 0x0100_0200);
+    std::fs::write(c.join("client_general.dat"), &g.bytes).unwrap();
+    let mut sf = surface_builder();
+    sf.compressed(
+        0x4100_0002,
+        &common::payload(0x4100_0002, 300),
+        Compression::default(),
+    );
+    let mut sf = sf.build();
+    break_zlib(&mut sf, SURFACE_DID);
+    break_zlib(&mut sf, 0x4100_0002);
+    std::fs::write(c.join("client_surface.dat"), &sf.bytes).unwrap();
+    c
+}
+
+fn json_with_code(c: &mut Command, code: i32) -> Value {
+    let a = c.assert().code(code);
+    serde_json::from_slice(&a.get_output().stdout).expect("JSON output")
 }
 
 #[test]
 fn content_hashing_is_limited_to_what_can_be_paired() {
     let f = fixture();
+    let c = with_unreadable_payloads(&f);
     let ga = f.a.join("client_general.dat");
+    // Control: without a limit every payload of C is hashed, the three broken ones too.
+    // The shared surface record's content is then unknown, so the diff exits 2.
+    let v = json_with_code(
+        tool().args(["--json", "diff", "--content", s(&f.a), s(&c)]),
+        2,
+    );
+    assert_eq!(v["b"]["unreadable"], 3);
+    assert_eq!(v["totals"]["content_unknown"], 1);
     // A single archive against a whole install: only `general` is hashed on the install
-    // side, and the content-only change is still found.
-    let v = json_of(tool().args(["--json", "diff", "--content", s(&ga), s(&f.b)]));
-    assert_eq!(v["totals"]["changed"], 3);
+    // side (its one broken payload, not surface's two), and the content-only change is
+    // still found. The broken record is unpaired (added), so nothing is left unknown.
+    let v = json_of(tool().args(["--json", "diff", "--content", s(&ga), s(&c)]));
     assert_eq!(v["b"]["hashes"], true);
-    // With a prefix that excludes every changed DID, nothing is reported.
+    assert_eq!(v["b"]["unreadable"], 1);
+    assert_eq!(v["totals"]["changed"], 3);
+    assert_eq!(v["totals"]["content_unknown"], 0);
+    // A prefix limits hashing to its DIDs: only surface's two broken payloads.
+    let v = json_with_code(
+        tool().args([
+            "--json",
+            "diff",
+            "--content",
+            "--prefix",
+            "0x41",
+            s(&f.a),
+            s(&c),
+        ]),
+        2,
+    );
+    assert_eq!(v["b"]["unreadable"], 2);
+    // Both limits together: `general` holds no 0x41 DID, so nothing is hashed or broken.
+    let v = json_of(tool().args([
+        "--json",
+        "diff",
+        "--content",
+        "--prefix",
+        "0x41",
+        s(&ga),
+        s(&c),
+    ]));
+    assert_eq!(v["b"]["unreadable"], 0);
+    assert_eq!(v["identical"], true);
+    // With a prefix that excludes every changed DID of the readable B, nothing is reported.
     let v = json_of(tool().args([
         "--json",
         "diff",
@@ -415,6 +506,113 @@ fn content_hashing_is_limited_to_what_can_be_paired() {
     ]));
     assert_eq!(v["identical"], true);
     assert_eq!(v["b"]["unreadable"], 0);
+}
+
+#[test]
+fn content_that_could_not_be_hashed_is_trouble_not_sameness() {
+    let f = fixture();
+    let c = with_unreadable_payloads(&f);
+    let (sa, sc) = (f.out.join("a.snap"), f.out.join("c.snap"));
+    tool()
+        .args(["snapshot", "--content", s(&f.a), "-o", s(&sa)])
+        .assert()
+        .success();
+    tool()
+        .args(["snapshot", "--content", s(&c), "-o", s(&sc)])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("3 payloads could not be read"));
+    // Only surface is compared: same metadata, but one payload's content is unknown.
+    let a = tool()
+        .args(["diff", "--prefix", "0x41", s(&sa), s(&sc), "--exit-code"])
+        .assert()
+        .code(2);
+    let out = String::from_utf8(a.get_output().stdout.clone()).unwrap();
+    assert!(out.contains("3 payloads unreadable"), "{out}");
+    assert!(
+        out.contains("content of 1 records could not be compared"),
+        "{out}"
+    );
+    assert!(!out.contains("\nno differences\n"), "{out}");
+    let v = json_with_code(
+        tool().args(["--json", "diff", s(&sa), s(&sc), "--summary"]),
+        2,
+    );
+    assert_eq!(v["totals"]["content_unknown"], 1);
+    let surf = v["archives"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["archive"] == "surface")
+        .unwrap();
+    assert_eq!(surf["content_unknown"], 1);
+}
+
+#[test]
+fn an_archive_that_cannot_be_opened_is_not_a_mass_removal() {
+    let f = fixture();
+    // An interrupted patch: B's general cut down to 100 bytes.
+    let gb = f.b.join("client_general.dat");
+    let bytes = std::fs::read(&gb).unwrap();
+    std::fs::write(&gb, &bytes[..100]).unwrap();
+    let v = json_with_code(
+        tool().args(["--json", "diff", s(&f.a), s(&f.b), "--exit-code"]),
+        2,
+    );
+    assert_eq!(v["totals"]["removed"], 0);
+    assert_eq!(v["totals"]["not_compared"], 21);
+    assert_eq!(v["incomplete"], true);
+    let g = general(&v);
+    assert_eq!(g["b_complete"], false);
+    assert!(
+        g["b_walk_error"]
+            .as_str()
+            .unwrap()
+            .contains("could not be opened"),
+        "{g}"
+    );
+    tool()
+        .args(["diff", s(&f.a), s(&f.b)])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("could not be opened"));
+    // An archive file against that install: paired with the unopened member.
+    tool()
+        .args(["diff", s(&f.a.join("client_general.dat")), s(&f.b)])
+        .assert()
+        .code(2);
+    // A snapshot records the archive as incomplete (and says so), so a later diff
+    // against it is incomplete too instead of reporting 21 removals.
+    let snap = f.out.join("b.snap");
+    tool()
+        .args(["snapshot", s(&f.b), "-o", s(&snap)])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("could not be opened"));
+    let v = json_with_code(
+        tool().args(["--json", "diff", s(&f.a), s(&snap), "--exit-code"]),
+        2,
+    );
+    assert_eq!(v["totals"]["removed"], 0);
+    assert_eq!(v["totals"]["not_compared"], 21);
+    // info and stat report it and exit 1.
+    for cmd in ["info", "stat"] {
+        tool()
+            .args([cmd, s(&f.b)])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("could not be opened"));
+        let v = json_with_code(tool().args(["--json", cmd, s(&f.b)]), 1);
+        assert_eq!(v["unopened"][0]["archive"], "general");
+    }
+    // A file with an unrecognised name is not part of the set: no trouble.
+    std::fs::write(&gb, &bytes).unwrap();
+    std::fs::write(f.b.join("client_notakind.dat"), b"junk").unwrap();
+    tool().args(["info", s(&f.b)]).assert().success();
+    tool()
+        .args(["diff", s(&f.b), s(&f.b), "--exit-code"])
+        .assert()
+        .success();
 }
 
 #[test]

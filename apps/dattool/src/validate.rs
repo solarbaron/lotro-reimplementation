@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use tessera_dat::{Issue, Severity, ValidateOptions, ValidationReport};
 
 use crate::Out;
-use crate::input::{Ctx, Input};
-use crate::util::{Align, Table, human_bytes, par_map};
+use crate::input::{Ctx, Input, Unopened};
+use crate::util::{Align, Table, human_bytes, par_map, path_json};
 
 /// Options of `validate`.
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ fn report_json(label: &str, r: &ValidationReport) -> Value {
     let s = &r.stats;
     json!({
         "archive": label,
-        "path": r.path,
+        "path": r.path.as_deref().map(path_json),
         "ok": r.is_ok(),
         "errors": r.errors(),
         "warnings": r.warnings(),
@@ -74,7 +74,11 @@ pub fn run(out: &mut Out, ctx: &Ctx, target: &str, o: &Opts) -> Result<ExitCode>
         ..ValidateOptions::default()
     };
     let started = Instant::now();
-    let (archives, set_issues, duplicates): (Vec<(String, ValidationReport)>, Vec<Issue>, u64) =
+    // A recognised archive the set could not open is unusable: an error, as the header
+    // invariants that make it so (I-1, I-2, I-4, I-8) are errors in dat-container.md §10.
+    // Other `client_<x>` files stay the set's I-24 warning (install-layout.md §3.1).
+    let unopened: Vec<Unopened> = input.unopened_recognised();
+    let (archives, mut set_issues, duplicates): (Vec<(String, ValidationReport)>, Vec<Issue>, u64) =
         match &input {
             Input::Set(set) => {
                 let r = set.validate(&opts);
@@ -95,8 +99,16 @@ pub fn run(out: &mut Out, ctx: &Ctx, target: &str, o: &Opts) -> Result<ExitCode>
                 )
             }
         };
+    // Each unopened archive is counted once, as an error, not also as a set issue.
+    set_issues.retain(|i| {
+        !unopened.iter().any(|u| {
+            i.message
+                .starts_with(&format!("{}: not opened: ", u.path.display()))
+        })
+    });
     let elapsed = started.elapsed();
     let errors: u64 = archives.iter().map(|(_, r)| r.errors()).sum::<u64>()
+        + unopened.len() as u64
         + set_issues
             .iter()
             .filter(|i| i.severity == Severity::Error)
@@ -120,6 +132,11 @@ pub fn run(out: &mut Out, ctx: &Ctx, target: &str, o: &Opts) -> Result<ExitCode>
             "duplicate_dids": duplicates,
             "seconds": elapsed.as_secs_f64(),
             "archives": archives.iter().map(|(l, r)| report_json(l, r)).collect::<Vec<_>>(),
+            "unopened": unopened.iter().map(|u| json!({
+                "archive": u.label,
+                "path": path_json(&u.path),
+                "error": u.error,
+            })).collect::<Vec<_>>(),
             "set_issues": set_issues.iter().map(issue_json).collect::<Vec<_>>(),
         }))?;
         return Ok(code);
@@ -160,8 +177,23 @@ pub fn run(out: &mut Out, ctx: &Ctx, target: &str, o: &Opts) -> Result<ExitCode>
             r.errors().to_string(),
         ]);
     }
+    for u in &unopened {
+        let mut row = vec![u.label.clone(), "UNOPENED".into()];
+        row.extend(std::iter::repeat_n("-".to_owned(), 8));
+        row.extend(["0".to_owned(), "1".to_owned()]);
+        t.row(row);
+    }
     t.write(&mut out.w)?;
 
+    for u in &unopened {
+        writeln!(out.w, "\n{}:", u.label)?;
+        writeln!(
+            out.w,
+            "  error: {} could not be opened: {}",
+            u.path.display(),
+            u.error
+        )?;
+    }
     for (label, r) in &archives {
         if r.issues.is_empty() {
             continue;
@@ -190,7 +222,7 @@ pub fn run(out: &mut Out, ctx: &Ctx, target: &str, o: &Opts) -> Result<ExitCode>
     writeln!(
         out.w,
         "\n{} archives, {total_entries} entries, {errors} errors, {warnings} warnings{} in {:.1}s: {}",
-        archives.len(),
+        archives.len() + unopened.len(),
         if matches!(input, Input::Set(_)) {
             format!(", {duplicates} DIDs in more than one archive")
         } else {

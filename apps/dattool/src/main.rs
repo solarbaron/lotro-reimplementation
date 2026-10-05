@@ -41,8 +41,8 @@ use crate::util::{parse_did, parse_prefix};
                   holding the input archives, --game-dir, $TESSERA_GAME_DIR or any detected \
                   install, and never through a symlink or hard link into one.\n\n\
                   Exit status: 0 success; 1 a check failed (validate found errors, a \
-                  directory walk stopped early in info, stat or snapshot, or diff \
-                  --exit-code found differences); 2 error (bad arguments, unreadable input, \
+                  directory walk stopped early or an archive of a <dir> could not be opened \
+                  in info, stat or snapshot, or diff --exit-code found differences); 2 error (bad arguments, unreadable input, \
                   or a diff whose inputs could not be read completely)."
 )]
 struct Cli {
@@ -239,7 +239,8 @@ struct DiffArgs {
     #[arg(long)]
     summary: bool,
     /// Exit with status 1 when differences are found (0 when none). Errors, and a
-    /// comparison left incomplete by a directory walk that stopped early, exit with 2
+    /// comparison left incomplete (a directory walk that stopped early, an archive that
+    /// could not be opened, or a payload whose content could not be hashed), exit with 2
     /// whether or not this is given.
     #[arg(long)]
     exit_code: bool,

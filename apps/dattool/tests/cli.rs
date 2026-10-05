@@ -552,6 +552,35 @@ fn extract_never_writes_into_the_game_dir() {
         ));
 }
 
+#[test]
+fn a_dotdot_after_a_missing_dir_creates_nothing_in_the_game_dir() {
+    let f = fixture();
+    let listing = || {
+        let mut v: Vec<String> = std::fs::read_dir(&f.game)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    let before = listing();
+    // `game/sub` does not exist, so the path means out/x.bin: written there, and no
+    // `game/sub` is created on the way.
+    let typed = f.game.join("sub/../../out/x.bin");
+    tool()
+        .args(["extract", s(&f.game), "41000001", "-o", s(&typed)])
+        .assert()
+        .success();
+    let typed = f.game.join("sub2/../../out/x.snap");
+    tool()
+        .args(["snapshot", s(&f.game), "-o", s(&typed), "--force"])
+        .assert()
+        .success();
+    assert_eq!(before, listing());
+    assert!(f.out.join("x.bin").is_file());
+    assert!(f.out.join("x.snap").is_file());
+}
+
 #[cfg(unix)]
 mod links {
     use super::*;
@@ -759,6 +788,46 @@ fn validate_passes_clean_and_fails_corrupt() {
     let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
     assert_eq!(v["ok"], false);
     assert!(v["errors"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn validate_counts_an_archive_that_cannot_be_opened_as_an_error() {
+    let f = fixture();
+    // An interrupted patch left 16 junk bytes where client_general.dat was.
+    std::fs::write(f.game.join("client_general.dat"), [0xA5u8; 16]).unwrap();
+    let a = tool().args(["validate", s(&f.game)]).assert().code(1);
+    let out = String::from_utf8(a.get_output().stdout.clone()).unwrap();
+    assert!(out.contains("UNOPENED"), "{out}");
+    assert!(out.contains("could not be opened"), "{out}");
+    assert!(out.contains("FAILED"), "{out}");
+    assert!(out.contains("2 archives"), "{out}");
+    let a = tool()
+        .args(["--json", "validate", s(&f.game)])
+        .assert()
+        .code(1);
+    let v: serde_json::Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    assert_eq!(v["ok"], false);
+    assert_eq!(v["errors"], 1);
+    assert_eq!(v["unopened"][0]["archive"], "general");
+    // The same file named directly fails too (it cannot even be opened).
+    tool()
+        .args(["validate", s(&f.game.join("client_general.dat"))])
+        .assert()
+        .code(2);
+    // A junk file with a name that is no archive kind is only a warning.
+    let g = f.root.join("g2");
+    std::fs::create_dir_all(&g).unwrap();
+    std::fs::copy(
+        f.game.join("client_surface.dat"),
+        g.join("client_surface.dat"),
+    )
+    .unwrap();
+    std::fs::write(g.join("client_notakind.dat"), [0xA5u8; 16]).unwrap();
+    tool()
+        .args(["validate", s(&g)])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("OK"));
 }
 
 #[test]

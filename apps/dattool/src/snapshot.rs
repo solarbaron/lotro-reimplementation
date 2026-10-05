@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use serde_json::json;
 use tessera_dat::{Archive, Entry};
 pub use tessera_dattool::snapfile::{
-    ArchiveIndex, Index, MAGIC, Rec, SourceKind, content_hash, decode_from, encode,
+    ArchiveIndex, Index, LabelSet, MAGIC, Rec, SourceKind, content_hash, decode_from, encode,
 };
 
 use crate::Out;
@@ -89,6 +89,12 @@ impl HashPlan {
 /// Builds the index of an opened input. Payloads selected by `plan` are read, inflated and
 /// hashed (slow: hashing a whole install reads every record). Records outside the plan
 /// carry no hash and do not count as unreadable.
+///
+/// A recognised archive of a directory that could not be opened is listed as an incomplete
+/// archive with no records, so `diff` counts its DIDs as not compared instead of removed
+/// or added. Labels are unique ignoring ASCII case (as snapshot files require): a later
+/// archive whose label is taken (`client_general.dat` and `client_general.datx` both
+/// read `general`) is labelled with its file name, or failing that a `~N` suffix.
 pub fn index_input(input: &Input, source: &str, plan: &HashPlan) -> Index {
     let archives = input.archives();
     let walks = par_map(&archives, |(_, a)| walk(a));
@@ -146,7 +152,8 @@ pub fn index_input(input: &Input, source: &str, plan: &HashPlan) -> Index {
         }
     }
     let mut out = Vec::with_capacity(archives.len());
-    for (((label, _), (_, err)), (recs, unreadable)) in archives
+    let mut labels = LabelSet::new();
+    for (((label, a), (_, err)), (recs, unreadable)) in archives
         .iter()
         .zip(walks)
         .zip(recs.into_iter().zip(unreadable))
@@ -155,11 +162,20 @@ pub fn index_input(input: &Input, source: &str, plan: &HashPlan) -> Index {
             tracing::warn!(archive = %label, error = %e, "directory walk stopped early");
         }
         out.push(ArchiveIndex {
-            label: label.clone(),
+            label: unique_label(&mut labels, label, a.path()),
             recs,
             complete: err.is_none(),
             walk_error: err,
             unreadable,
+        });
+    }
+    for u in input.unopened_recognised() {
+        out.push(ArchiveIndex {
+            label: unique_label(&mut labels, &u.label, Some(&u.path)),
+            recs: Vec::new(),
+            complete: false,
+            walk_error: Some(format!("the archive could not be opened: {}", u.error)),
+            unreadable: 0,
         });
     }
     Index {
@@ -173,6 +189,21 @@ pub fn index_input(input: &Input, source: &str, plan: &HashPlan) -> Index {
         hashed: plan.enabled,
         archives: out,
     }
+}
+
+/// `label`, or when another archive already has it, the file name of `path`, or failing
+/// that `label` with a `~N` suffix.
+fn unique_label(labels: &mut LabelSet, label: &str, path: Option<&Path>) -> String {
+    if !labels.contains(label) {
+        return labels.take(label);
+    }
+    let name = path
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| !labels.contains(n));
+    let new = labels.take(name.as_deref().unwrap_or(label));
+    tracing::warn!(archive = %label, renamed = %new, "two archives have the same label");
+    new
 }
 
 /// Reads `path` as a snapshot if it is a file starting with [`MAGIC`]; `Ok(None)` otherwise.

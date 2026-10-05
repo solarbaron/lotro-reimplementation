@@ -41,6 +41,7 @@
 //! All archives together hold at most [`MAX_RECORDS`] records. The body must end exactly
 //! after the last archive.
 
+use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read, Take, Write};
 
 use flate2::Compression;
@@ -199,19 +200,60 @@ impl Index {
 // ---------------------------------------------------------------------------------------
 // Encoding
 
-fn put_str(b: &mut Vec<u8>, s: &str, max: usize) {
-    // Truncate on a char boundary so the result stays valid UTF-8.
+/// The longest prefix of `s` of at most `max` bytes that ends on a char boundary.
+fn truncated(s: &str, max: usize) -> &str {
     let mut end = s.len().min(max);
     while !s.is_char_boundary(end) {
         end -= 1;
     }
-    b.extend_from_slice(&(end as u16).to_le_bytes());
-    b.extend_from_slice(&s.as_bytes()[..end]);
+    &s[..end]
+}
+
+fn put_str(b: &mut Vec<u8>, s: &str, max: usize) {
+    // Truncate on a char boundary so the result stays valid UTF-8.
+    let s = truncated(s, max);
+    b.extend_from_slice(&(s.len() as u16).to_le_bytes());
+    b.extend_from_slice(s.as_bytes());
+}
+
+/// Labels already used by an index, compared the way [`decode`] compares them (ignoring
+/// ASCII case, after truncation to [`MAX_LABEL`] bytes).
+#[derive(Debug, Clone, Default)]
+pub struct LabelSet(HashSet<String>);
+
+impl LabelSet {
+    /// An empty set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether `label` (as it would be stored) is taken.
+    pub fn contains(&self, label: &str) -> bool {
+        self.0
+            .contains(&truncated(label, MAX_LABEL).to_ascii_lowercase())
+    }
+
+    /// Takes `label` if it is free and returns it (truncated to [`MAX_LABEL`] bytes);
+    /// otherwise takes and returns the first free `<label>~2`, `<label>~3`, ... that fits.
+    pub fn take(&mut self, label: &str) -> String {
+        let mut candidate = truncated(label, MAX_LABEL).to_owned();
+        let mut n = 1u32;
+        while !self.0.insert(candidate.to_ascii_lowercase()) {
+            n += 1;
+            let suffix = format!("~{n}");
+            candidate = format!(
+                "{}{suffix}",
+                truncated(label, MAX_LABEL.saturating_sub(suffix.len()))
+            );
+        }
+        candidate
+    }
 }
 
 /// Serialises an index into snapshot bytes. Archives beyond [`MAX_ARCHIVES`] and records
-/// beyond [`MAX_RECORDS`] are dropped (and their archives marked incomplete), so the output
-/// always decodes.
+/// beyond [`MAX_RECORDS`] are dropped (and their archives marked incomplete), and a label
+/// that equals an earlier one ignoring ASCII case (after truncation) is written with a
+/// `~N` suffix ([`LabelSet::take`]), so the output always decodes.
 pub fn encode(index: &Index) -> io::Result<Vec<u8>> {
     let mut head = Vec::with_capacity(12);
     head.extend_from_slice(MAGIC);
@@ -236,8 +278,9 @@ pub fn encode(index: &Index) -> io::Result<Vec<u8>> {
     let n = index.archives.len().min(MAX_ARCHIVES as usize);
     b.extend_from_slice(&(n as u32).to_le_bytes());
     let mut budget = MAX_RECORDS;
+    let mut labels = LabelSet::new();
     for a in index.archives.iter().take(n) {
-        put_str(&mut b, &a.label, MAX_LABEL);
+        put_str(&mut b, &labels.take(&a.label), MAX_LABEL);
         let count = (a.recs.len() as u64).min(budget);
         budget -= count;
         let complete = a.complete && count == a.recs.len() as u64;
@@ -807,6 +850,46 @@ mod tests {
         for n in 0..good.len() {
             assert!(decode(&good[..n]).is_err(), "prefix of {n} bytes decoded");
         }
+    }
+
+    #[test]
+    fn duplicate_labels_are_made_unique_so_the_output_decodes() {
+        let mut i = sample(false);
+        // `client_general.dat` + `client_general.datx`, and `client_foo` + `client_FOO`.
+        let mut dup = i.archives[0].clone();
+        dup.recs.truncate(1);
+        i.archives.push(dup);
+        for label in ["foo", "FOO", "Foo"] {
+            let mut a = i.archives[2].clone();
+            a.label = label.into();
+            i.archives.push(a);
+        }
+        // Two long labels that only differ past MAX_LABEL bytes.
+        for tail in ["x", "y"] {
+            let mut a = i.archives[2].clone();
+            a.label = format!("{}{tail}", "é".repeat(MAX_LABEL));
+            i.archives.push(a);
+        }
+        let back = decode(&encode(&i).unwrap()).unwrap();
+        let labels: Vec<&str> = back.archives.iter().map(|a| a.label.as_str()).collect();
+        assert_eq!(
+            &labels[..7],
+            [
+                "general",
+                "surface_aux_1",
+                "empty",
+                "general~2",
+                "foo",
+                "FOO~2",
+                "Foo~3"
+            ]
+        );
+        assert!(labels[7].len() <= MAX_LABEL && labels[8].len() <= MAX_LABEL);
+        assert!(labels[8].ends_with("~2"), "{}", labels[8]);
+        assert_eq!(back.records(), i.records());
+        // Unique labels are written unchanged.
+        let u = sample(true);
+        assert_eq!(decode(&encode(&u).unwrap()).unwrap(), u);
     }
 
     #[test]

@@ -1310,6 +1310,77 @@ fn geo_resolves_chain_dungeons_and_regions() {
     assert_eq!(index.len(), 6);
 }
 
+/// A territory or region link that is not an object DID (outside 0x70–0x77) is a
+/// wrong-kind link: `area_chain` ends the chain early and keeps the area's own name
+/// instead of failing (`wstate.md` §11.2; audit finding).
+#[test]
+fn geo_area_chain_stops_at_non_object_links() {
+    const BAD_TERRITORY_AREA: u32 = 0x7000_0050;
+    const BAD_REGION_AREA: u32 = 0x7000_0051;
+    const BAD_REGION_TERRITORY: u32 = 0x7000_0052;
+    let mut src = synthetic_world();
+    let set = |did: u32, entries: &[(u32, Vec<u8>)]| {
+        (
+            did + 0x0900_0000,
+            property_set_record(did + 0x0900_0000, entries),
+        )
+    };
+    for (did, bytes) in [
+        set(
+            BAD_TERRITORY_AREA,
+            &[
+                (P_AREA_NAME, si("Ashvale")),
+                (P_AREA_TERRITORY, le(&[0x0F00_0001])),
+            ],
+        ),
+        set(
+            BAD_REGION_AREA,
+            &[
+                (P_AREA_NAME, si("Brackwater")),
+                (P_AREA_TERRITORY, le(&[BAD_REGION_TERRITORY])),
+            ],
+        ),
+        set(
+            BAD_REGION_TERRITORY,
+            &[
+                (P_AREA_NAME, si("Fenmark")),
+                (P_AREA_REGION, le(&[0x0F00_0002])),
+            ],
+        ),
+    ] {
+        src.insert(did, bytes);
+    }
+    let store = ObjectStore::new(src);
+    let geo = Geo::new(&store).expect("geo");
+
+    let chain = geo
+        .area_chain(Did(BAD_TERRITORY_AREA))
+        .expect("non-object territory link ends the chain");
+    assert_eq!(chain.area.territory, Some(Did(0x0F00_0001)));
+    assert!(chain.area.name.is_some());
+    assert!(chain.territory.is_none());
+    assert!(chain.region.is_none());
+
+    let chain = geo
+        .area_chain(Did(BAD_REGION_AREA))
+        .expect("non-object region link ends the chain");
+    assert_eq!(
+        chain.territory.as_ref().map(|t| t.did),
+        Some(Did(BAD_REGION_TERRITORY))
+    );
+    assert_eq!(
+        chain.territory.as_ref().and_then(|t| t.region),
+        Some(Did(0x0F00_0002))
+    );
+    assert!(chain.region.is_none());
+
+    // The area itself must still be an object DID.
+    assert!(matches!(
+        geo.area_chain(Did(0x0F00_0001)),
+        Err(WStateError::NotObjectDid { .. })
+    ));
+}
+
 #[test]
 fn value_type_codes() {
     for code in [1, 2, 3, 130, 131, 195] {

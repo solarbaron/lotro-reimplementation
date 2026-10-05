@@ -821,8 +821,9 @@ impl WorldStreamer {
     /// Repeats [`WorldStreamer::update`] at `focus` until an update changes nothing
     /// (nothing loading or waiting to retry, nothing requested, integrated or evicted) or
     /// `timeout` passes (loading screens, tools, tests). Returns whether it settled.
+    /// A timeout too large for an [`Instant`] (such as `Duration::MAX`) means no deadline.
     pub fn settle(&mut self, focus: WorldPos, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now().checked_add(timeout);
         loop {
             let r = self.update(focus);
             if r.loading == 0
@@ -833,7 +834,7 @@ impl WorldStreamer {
             {
                 return true;
             }
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|d| Instant::now() >= d) {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(1));

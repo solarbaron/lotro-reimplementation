@@ -289,6 +289,60 @@ mod tests {
         assert_eq!(n.cached(), 5);
     }
 
+    /// A territory link that is not an object DID ends the chain early; the area's own
+    /// name survives (`wstate.md` §11.2; audit finding).
+    #[test]
+    fn wstate_names_keep_area_name_with_non_object_links() {
+        const BAD_TERRITORY_AREA: u32 = 0x7000_0050;
+        const BAD_REGION_AREA: u32 = 0x7000_0051;
+        const BAD_REGION_TERRITORY: u32 = 0x7000_0052;
+        let mut m = area_world();
+        let le = |v: u32| v.to_le_bytes().to_vec();
+        type Entries = Vec<(u32, Vec<u8>)>;
+        let sets: [(u32, Entries); 3] = [
+            (
+                BAD_TERRITORY_AREA,
+                vec![
+                    (P_AREA_NAME, si("Ashvale")),
+                    (P_AREA_TERRITORY, le(0x0F00_0001)),
+                ],
+            ),
+            (
+                BAD_REGION_AREA,
+                vec![
+                    (P_AREA_NAME, si("Brackwater")),
+                    (P_AREA_TERRITORY, le(BAD_REGION_TERRITORY)),
+                ],
+            ),
+            (
+                BAD_REGION_TERRITORY,
+                vec![
+                    (P_AREA_NAME, si("Fenmark")),
+                    (P_AREA_REGION, le(0x0F00_0002)),
+                ],
+            ),
+        ];
+        for (did, entries) in sets {
+            m.insert(
+                did + 0x0900_0000,
+                property_set_record(did + 0x0900_0000, &entries),
+                None,
+            );
+        }
+        let n = names(m);
+        let a = n
+            .area_name(Did(BAD_TERRITORY_AREA))
+            .expect("area with a non-object territory link resolves");
+        assert_eq!(a.name.as_deref(), Some("Ashvale"));
+        assert_eq!((a.territory.as_deref(), a.region.as_deref()), (None, None));
+        let b = n
+            .area_name(Did(BAD_REGION_AREA))
+            .expect("area with a non-object region link resolves");
+        assert_eq!(b.name.as_deref(), Some("Brackwater"));
+        assert_eq!(b.territory.as_deref(), Some("Fenmark"));
+        assert_eq!(b.region.as_deref(), None);
+    }
+
     #[test]
     fn wstate_names_without_dictionary_degrade() {
         let mut m = area_world();

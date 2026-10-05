@@ -373,7 +373,9 @@ impl<'a, S: RecordSource> Geo<'a, S> {
     }
 
     /// Resolves area `did` → territory → region (§11.2). Missing or wrong-kind links end
-    /// the chain early instead of failing.
+    /// the chain early instead of failing; a link that is not an object DID (outside
+    /// 0x70–0x77, `wstate.md` §2) counts as wrong-kind. Only `did` itself must be an
+    /// area.
     pub fn area_chain(&self, did: Did) -> Result<AreaChain> {
         let area = self.area(did)?;
         let territory = match area.territory {
@@ -391,11 +393,18 @@ impl<'a, S: RecordSource> Geo<'a, S> {
         })
     }
 
-    /// Turns "absent" and "wrong kind" into `None`, keeping real failures.
+    /// Turns "absent", "wrong kind" and "not an object DID" into `None`, keeping real
+    /// failures (I/O, decoding). Used for the links of [`Geo::area_chain`]: §11.2 expects
+    /// territory and region links to name object records, and one that does not (corrupt
+    /// or future data) ends the chain rather than losing the area's own name.
     fn optional<T>(&self, r: Result<T>) -> Result<Option<T>> {
         match r {
             Ok(v) => Ok(Some(v)),
-            Err(WStateError::Missing { .. } | WStateError::WrongKind { .. }) => Ok(None),
+            Err(
+                WStateError::Missing { .. }
+                | WStateError::WrongKind { .. }
+                | WStateError::NotObjectDid { .. },
+            ) => Ok(None),
             Err(e) => Err(e),
         }
     }

@@ -350,12 +350,65 @@ fn missing_landblocks_fail_softly() {
     assert!(w.state_of(key(200, 200)).is_none());
 }
 
+/// `settle` with `Duration::MAX` waits without a deadline instead of overflowing the
+/// `Instant` arithmetic (audit finding; matches `tessera_assets::Handle::wait`).
+#[test]
+fn settle_accepts_an_unbounded_timeout() {
+    let ctx = context(SyntheticWorld::rectangle(1, 9..=11, 9..=11).build());
+    let pool = pool();
+    let mut w = WorldStreamer::new(ctx, &pool, StreamConfig::default()).unwrap();
+    let c = centre(10, 10);
+    assert!(w.settle(c, Duration::MAX));
+    assert!(w.bundle(key(10, 10)).is_some());
+    // Already settled: returns at once.
+    assert!(w.settle(c, Duration::MAX));
+}
+
+/// Checks the farthest-first property of the admitted set at `focus` (`landblock.md` §8.1,
+/// "Residency admission"): every near-ring member is resident, and no deferred ring member
+/// is nearer than a resident block that is not merely a seam neighbour of a resident
+/// near/mid block (those are pulled in with the block that needs them). Returns the
+/// numbers of resident and deferred ring members.
+fn assert_farthest_first(w: &WorldStreamer, focus: WorldPos) -> (usize, usize) {
+    for k in w.rings().members().keys() {
+        if w.ring_of(*k) == Some(Ring::Near) {
+            assert!(
+                matches!(w.state_of(*k), Some(BlockState::Ready(_))),
+                "near block {k} is {:?}",
+                w.state_of(*k)
+            );
+        }
+    }
+    let neighbour_of_resident = |k: LandblockKey| {
+        w.resident()
+            .any(|(b, r, _)| r != Ring::Far && b.seam_neighbours().contains(&Some(k)))
+    };
+    let anchor = w
+        .resident()
+        .filter(|(k, _, _)| !neighbour_of_resident(*k))
+        .map(|(k, _, _)| k.distance_to(focus.xy()))
+        .fold(0.0, f64::max);
+    let mut deferred = 0;
+    for k in w.rings().members().keys() {
+        if matches!(w.state_of(*k), Some(BlockState::Deferred)) {
+            assert!(
+                k.distance_to(focus.xy()) >= anchor,
+                "{k} nearer than {anchor}"
+            );
+            deferred += 1;
+        }
+    }
+    (w.resident().count(), deferred)
+}
+
 #[test]
 fn residency_budget_evicts_farthest() {
     let ctx = context(SyntheticWorld::rectangle(1, 0..=20, 0..=20).build());
     let pool = pool();
     let probe = bundle_of(&ctx, key(10, 10)).unwrap().heap_bytes;
-    let budget = probe * 20;
+    // Enough for the seam closures of the near ring (about 50 bundles with these rings)
+    // but far less than the whole desired set (about 200).
+    let budget = probe * 60;
     let mut w = WorldStreamer::new(
         Arc::clone(&ctx),
         &pool,
@@ -373,7 +426,7 @@ fn residency_budget_evicts_farthest() {
         },
     )
     .unwrap();
-    let c = LocalPos::new(key(10, 10), [80.0, 80.0, 0.0]).to_world();
+    let c = centre(10, 10);
     assert!(w.settle(c, Duration::from_secs(20)));
     let r = w.update(c);
     assert!(r.deferred > 0, "{r:?}");
@@ -383,23 +436,35 @@ fn residency_budget_evicts_farthest() {
         w.resident_bytes()
     );
     // The nearest are resident, the farthest deferred.
+    let (resident, deferred) = assert_farthest_first(&w, c);
+    assert!(resident > 9 && deferred > 0, "{resident} / {deferred}");
     let max_res = w
         .resident()
         .map(|(k, _, _)| k.distance_to(c.xy()))
         .fold(0.0, f64::max);
     for d in [key(5, 10), key(15, 10)] {
-        assert!(matches!(w.state_of(d), Some(BlockState::Deferred)));
+        assert!(matches!(w.state_of(d), Some(BlockState::Deferred)), "{d}");
         assert!(d.distance_to(c.xy()) >= max_res);
     }
-    // Shrinking the reachable set by moving evicts nothing near; moving far evicts.
-    let east = LocalPos::new(key(14, 10), [80.0, 80.0, 0.0]).to_world();
+    assert_seam_closure(&w, true);
+
+    // Moving east evicts nothing near the new focus; it releases what left the rings and
+    // evicts resident blocks that are now the farthest.
+    let before = w.stats().clone();
+    let east = centre(14, 10);
     assert!(w.settle(east, Duration::from_secs(20)));
-    assert!(w.stats().evicted > 0 || w.stats().released > 0);
+    let after = w.stats().clone();
+    // Block (5, 10) is 1 360 units from the new focus, beyond far + hysteresis.
+    assert!(after.released > before.released);
+    assert!(w.state_of(key(5, 10)).is_none());
+    assert!(after.evicted > before.evicted, "{before:?} -> {after:?}");
     assert!(w.resident_bytes() <= budget + probe);
+    let (resident, deferred) = assert_farthest_first(&w, east);
+    assert!(resident > 9 && deferred > 0, "{resident} / {deferred}");
     assert_seam_closure(&w, true);
 
     // With the near ring forced, a budget of 4 bundles still keeps the near ring and its
-    // seam closure resident (and nothing else).
+    // seam closure resident (and nothing else), at the start and after moving.
     let mut w = WorldStreamer::new(
         Arc::clone(&ctx),
         &pool,
@@ -411,11 +476,24 @@ fn residency_budget_evicts_farthest() {
     )
     .unwrap();
     assert!(w.settle(c, Duration::from_secs(20)));
-    for k in w.rings().members().keys() {
-        if w.ring_of(*k) == Some(Ring::Near) {
-            assert!(w.bundle(*k).is_some(), "{k}");
+    let near_ring_resident = |w: &WorldStreamer| {
+        let mut n = 0;
+        for k in w.rings().members().keys() {
+            if w.ring_of(*k) == Some(Ring::Near) {
+                assert!(w.bundle(*k).is_some(), "{k}");
+                n += 1;
+            }
         }
-    }
+        n
+    };
+    assert_eq!(near_ring_resident(&w), 9);
+    assert_seam_closure(&w, false);
+    let before = w.stats().evicted;
+    assert!(w.settle(east, Duration::from_secs(20)));
+    assert_eq!(near_ring_resident(&w), 9);
+    // The old near ring is still in the (mid) rings but over the budget: evicted.
+    assert!(w.stats().evicted > before);
+    assert!(w.bundle(key(10, 10)).is_none());
     assert_seam_closure(&w, false);
 }
 

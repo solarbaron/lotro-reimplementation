@@ -4,10 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-04 |
+| **Status** | Accepted |
+| **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Claude review session (spec-writer agent) |
+| **Review record** | Claude review session (spec-writer agent), 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; spot checks against the install: record prologues of every prefix in `client_general.dat` and `client_gamelogic.dat`, prefix counts of `client_general.dat`, the 4-byte VLE example and hint of 0x34000000, bucket order and group count of all 24 DID maps, the 0x0F/0x15/0x16/0x17/0x1A/0x32/0x35 prologues). Re-review 2026-10-05: passed, unchanged (spot checks: own-DID prologue of every 0x0F, 0x14, 0x16, 0x17, 0x28, 0x32, 0x35 record; 0x2B count 510, 0x31 count 13,781, 0x28 count 24). |
 | **Companion spec** | `docs/specs/dat-container.md` (archive header, block/extent layer, B-tree directory, zlib, DID routing). This spec starts where that one ends: with a fully reassembled and, if needed, decompressed subfile payload. |
 
 ## Purpose
@@ -15,7 +16,7 @@
 This spec gives an implementer of the `formats` crate what they need to decode these records from the bytes of a subfile payload:
 
 - the shared primitive encodings (§1);
-- what the high byte of a DID means (§2);
+- what the high byte of a DID means, the DB object type the client registers for each prefix, and what each record starts with (§1.6, §2);
 - localized string tables, DID prefix 0x25 (§3), and the StringInfo value that points into them (§4);
 - render surfaces (textures and icons), DID prefix 0x41 (§5);
 - the master property dictionary, DID 0x34000000 (§6, now a pointer to `property-system.md`);
@@ -43,6 +44,7 @@ Source abbreviations:
 | MER | Middle-earth-Revenge master-property-viewer. Facts only. |
 | DU | Middle-earth-Revenge DATUnpacker. Facts only. |
 | D3D | Public Direct3D 9 `D3DFORMAT` enumeration and the public S3TC/DXTn block-compression description. These are general references. |
+| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-05. **Question:** which DB object type the client registers for each DID range (a start-up table pairing a DID range with a type code and a cache). **Why M1–M3 were not enough:** the data pairs only some type codes with prefixes (`property-system.md` §9 lists the codes that stored references exercise); no published source has the full table; M3 cannot show it. Only offline start-up code was read. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -55,8 +57,9 @@ Source abbreviations:
 | P7 | Prefixed UTF-16 string (VLE count of UTF-16 code units, then UTF-16LE) | LC, KD; OBS | Confirmed |
 | P8 | u8-length ASCII string | LC; OBS (0x28 labels) | Confirmed |
 | P9 | Name hash used for string-table argument IDs | LC (hash routine); OBS (argument IDs match the hash of the argument-name strings stored beside them; 11,280 of 16,212 sampled IDs match a published name list) | Confirmed |
-| P10 | Records begin with their own DID | LC, JT, DU; OBS (every record decoded) | Confirmed |
+| P10 | The record types of this spec begin with their own DID; other types differ (§1.6) | LC, JT, DU; OBS (every record decoded; prologue census of 8 archives, 2026-10-05) | Confirmed. Corrected 2026-10-05: the earlier claim "records begin with their own DID" holds for most but not all prefixes. |
 | D1 | DID high-byte type table (§2) | LC routing, research notes; OBS (per-archive prefix census of all archives) | Mixed. Per row in §2. |
+| D2 | DB object type registered for each DID range (§2.1, §2.2) | BIN (the client's start-up table of DID ranges); OBS (labels from the DBOType enum mapper; every decoded prefix agrees with its type) | BIN |
 | S1 | String-table layout (§3) | LC, KD, EP; OBS (282,152 tables, 806,052 entries, zero leftover bytes) | Confirmed |
 | S2 | StringInfo layout (§4) | LC; OBS (6,352 enum display values and 626 property-definition defaults) | Confirmed |
 | R1 | 0x41 surface header (§5) | LC, JT, DU; OBS (all 1,408,052 headers) | Confirmed |
@@ -192,9 +195,19 @@ This is the classic ELF/PJW hash, except that the high nibble is not cleared ins
 Invariant **H1**: every argument ID in a string table is < 0x10000000 (Confirmed). When a string-table entry carries argument names (§3.3), each name hashes to the matching argument ID (Confirmed on every such entry).
 
 <a id="s1-6"></a>
-### 1.6 Common record prologue (Confirmed)
+### 1.6 Record prologue (Confirmed; corrected 2026-10-05)
 
-Every record type in this spec starts with `u32` = its own DID. A mismatch between this value and the DID that was looked up means the record is corrupt or was routed to the wrong archive.
+Every record type **decoded in this spec** (0x0A, 0x23, 0x25, 0x28, 0x34, 0x41) starts with `u32` = its own DID. A mismatch between that value and the DID that was looked up means the record is corrupt or was routed to the wrong archive.
+
+This is **not** true of every record type. The earlier statement "every record begins with its own DID" (P10) was wrong. Census of the first 8 bytes of every record of `client_general.dat`, `client_gamelogic.dat`, `client_anim.dat`, `client_mesh.dat`, `client_sound.dat`, `client_local_English.dat`, `client_cell_1.dat` and `client_map_1.dat` (2026-10-05; the same split as `dat-container.md` §6.2):
+
+| Prologue | Prefixes | What precedes or replaces the DID |
+|---|---|---|
+| **D**: own DID at offset 0 | 0x01, 0x04, 0x06, 0x0A, 0x0F, 0x12, 0x14, 0x16–0x19, 0x1D, 0x20–0x23, 0x25, 0x27, 0x28, 0x2A, 0x2B, 0x2D, 0x30–0x35, 0x40, 0x41, 0x42, 0x51, 0x56, 0x70, 0x76, 0x78, 0x79, 0x80; most of 0x0E | nothing |
+| **xD**: one u32, then own DID | 0x02 (u32 0, `scenery.md` §5.1), 0x11 (u32 0, `scenery.md` §4.3), 0x15 (u32 version 1, `environment.md` §5.1.1), 0x1A (u32 0, `environment.md` §5.2), 0x1F (u32 flag word, `setup.md` §5.1), 0x47 (u32 flag word, `setup.md` §4.1) | the u32 named |
+| **–**: no own DID in the first 8 bytes | 0x05 (f32 clip duration first, `havok-data.md` §2.3), 0x07 (u32 table kind first, `script-table.md` §2.1), 0x0C (no prefix at all, `script-table.md`), 0x66 (VLE vertex count first, `collision.md` §4.1), 0x08, 0x39, 0x43, 0x44, 0x58, 3 of 0x0E (compression dictionaries), 0xFF (archive metadata) | type-specific; layouts of 0x08, 0x39, 0x43, 0x44, 0x58 OPEN |
+
+A decoder therefore checks the DID only where its record's spec places it; the container layer must not require it (`dat-container.md` §6.2).
 
 ---
 
@@ -207,68 +220,88 @@ The "Archive (count)" column lists the observed population in each archive of th
 
 Status codes:
 
-- **C**: record content was decoded in this spec.
+- **C**: record content was decoded in this spec, or in the spec named in parentheses.
+- **BIN**: only the DB type is known (column "DB type"); the layout is not specified.
 - **L**: the meaning is confirmed by a label in a DID map (§8) that points at DIDs of this prefix.
 - **R**: Reported only.
 
 <a id="s2-1"></a>
 ### 2.1 Table
 
-| Prefix | Archive (count, 2026-10-03) | Meaning | Status |
-|---|---|---|---|
-| 0x01 | general (1,057) | Stand-alone collision geometry, **not** setups (corrected by [`setup.md`](setup.md) §2.2, S2) | C (setup.md) |
-| 0x02 | general (3,402) | Unknown | OPEN |
-| 0x04 | general (28,555) | Setups: embedded Havok skeleton tagfile, body with attachment lists, collision volumes, part list ([`setup.md`](setup.md) §6, S1/S6, 28,555 of 28,555 decoded). A DID-map label ending in "_Setup" points into this range. | C (setup.md), L |
-| 0x05 | anim (25,395) | Animation clips | R |
-| 0x06 | mesh (37,484), mesh_aux_1 (10,079) | Meshes (GfxObj) | R |
-| 0x07 | gamelogic (7,526) | Script tables (VFX/sound/animation event graphs) | R |
-| 0x08 | general (11) | Unknown | OPEN |
-| 0x0A | sound (12,613), sound_aux_1 (2,531), local_English (29,193) | Audio records (§9). Localized voice-over is in local. | C |
-| 0x0C | gamelogic (28,992) | Unknown, possibly entity/prop data | R (weak) |
-| 0x0E | general (7), local (1) | Singleton tables, e.g. place names (0x0E000004), map notes (0x0E000006). 0x0E010000–2 are the compression dictionaries (label in DID map). 0x0E200000 is a name-filter table (label). | R, L |
-| 0x0F | general (7) | Region descriptors (labelled per region in DID map 0x28000008) | L |
-| 0x11, 0x12, 0x14, 0x16, 0x17, 0x19 | general (5 each); 0x15 general (1) | Per-region records; the serials follow the region numbering | OPEN |
-| 0x18 | general (5) | Block-map property descriptors, one per region | R |
-| 0x1A | general (963) | Unknown | OPEN |
-| 0x1D | general (3), local (1) | Key maps (labelled in DID map 0x2800000C) | L |
-| 0x1F | general (29,134) | Held-item visual templates | R |
-| 0x20 | general (4,201) | Appearance / wardrobe records | R |
-| 0x21 | general (20) | Unknown | OPEN |
-| 0x22 | **local (302) only** | UI layouts | R |
-| 0x23 | general (735) | **EnumMapper** (§7) | C |
-| 0x25 | local (282,152) | **String tables** (§3) | C |
-| 0x26 | none observed | Reported as part of the string-table range | R |
-| 0x27 | cell_1..5 (≈100 each), cell_14 (13) | Unknown per-region cell data; serials 0x27RR…, stepping by 0x1B | OPEN |
-| 0x28 | general (24) | **DataIdMap** (§8) | C |
-| 0x2A | general (45,544) | Unknown | OPEN |
-| 0x2B | general (510) | Compiled shader programs (labels name render materials) | R, L |
-| 0x2D | general (3) | Unknown | OPEN |
-| 0x30 | general (24,091), local (3) | Materials | R |
-| 0x31 | general (13,781) | Surface descriptors (link shader and material) | R |
-| 0x32, 0x35 | general (1 each) | Unknown | OPEN |
-| 0x33 | general (24) | Compositors (DID-map labels such as "…_Face_Compositor") | L |
-| 0x34 | gamelogic (1: 0x34000000) | **Master property dictionary** (§6) | C |
-| 0x39 | general (11,155) | Unknown | OPEN |
-| 0x40 | general (81,135), local (1) | Texture lists / mip chains (ordered 0x41 DIDs) | R |
-| 0x41 | highres (15,371), highres_aux_1..3 (16,885 / 38,556 / 7,169), surface (443,694), surface_aux_1..2 (545,619 / 340,535), local (223) | **Render surfaces** (§5) | C |
-| 0x42 | general (3), local (45) | Fonts (DID map 0x2800000B labels font names pointing here) | L |
-| 0x43 | gamelogic (1) | Unknown | OPEN |
-| 0x44 | general (254) | Unknown | OPEN |
-| 0x47 | gamelogic (40,643) | Physics/entity descriptors | R |
-| 0x51 | general (2) | Action maps (labelled in DID map 0x2800000A) | L |
-| 0x56 | gamelogic (1: 0x56000000) | Compiled script library (class metadata) | R, L |
-| 0x58 | local (1) | Unknown | OPEN |
-| 0x66 | general (16,819) | Unknown | OPEN |
-| 0x70 | gamelogic (383,332) | Script-state objects (items, quests, skills, …) | R, L |
-| 0x76 | gamelogic (11) | Script-state objects (variant) | R |
-| 0x78 | gamelogic (1,616), local (2) | Stand-alone property sets | R, L |
-| 0x79 | gamelogic (383,332) | Property set of the 0x70 object with the same low 24 bits (DID + 0x09000000) | R. Count parity Confirmed: 383,332 each. |
-| 0x80 | cell_R, map_R | Landblock family (§2.2) | R |
-| 0xFF | every archive (2–5 each: 0xFFFF0001, 3, 4, 5, 8) | Archive metadata records; see `dat-container.md` | OPEN here |
+The **DB type** column is the DB object type the client registers for the DID range (BIN:
+the client's start-up table of DID ranges, read on 2026-10-05; see Provenance BIN). The code
+is not the prefix (0x41 holds type 0x05, and prefixes 0x16 and 0x17 hold types 0x17 and
+0x16). Labels are data: the DB-object-type enum mapper ("DBOType" in the EMAPPER DID map,
+base 0x230000F0, `property-system.md` §9); they are quoted for interoperability. Where a range
+is narrower than the whole prefix it is given. "Prologue" says what the record starts with
+(§1.6): **D** own DID; **xD** one u32, then own DID; **–** no own DID in the first 8 bytes.
 
-> **OPEN:** The status column predates `texture-list.md` and `property-system.md` §5, which decode 0x40 texture lists (81,136 records clean) and 0x78/0x79 property sets (384,950 records clean) completely. The `formats` implementation reports all three as decoded. Please change their status to C.
+| Prefix | Archive (count, 2026-10-03) | DB type (BIN) | Meaning | Prologue | Status |
+|---|---|---|---|---|---|
+| 0x01 | general (1,057) | 0x52 CELLMESH | Cell geometry: physics mesh, cell volume, portals, wall polygons, embedded render mesh ([`collision.md`](collision.md) §5; **not** setups, [`setup.md`](setup.md) §2.2) | D | C (collision.md) |
+| 0x02 | general (3,402) | 0x3C SCENE | Scene records: procedural placement nodes ([`scenery.md`](scenery.md) §5) | xD | C (scenery.md) |
+| 0x04 | general (28,555) | 0x0B SETUP | Setups: embedded Havok skeleton tagfile, body with attachment lists, collision volumes, part list ([`setup.md`](setup.md) §6, S1/S6, 28,555 of 28,555 decoded). A DID-map label ending in "_Setup" points into this range. | D | C (setup.md), L |
+| 0x05 | anim (25,395) | 0x0F DBANIMATOR | Animation clips ([`havok-data.md`](havok-data.md) §2.3) | – | C (havok-data.md) |
+| 0x06 | mesh (37,484), mesh_aux_1 (10,079) | 0x38 RENDER_MESH | Meshes ([`mesh.md`](mesh.md)) | D | C (mesh.md) |
+| 0x07 | gamelogic (7,526) | 0x2A SCRIPTTABLE | Script tables ([`script-table.md`](script-table.md) §2) | – | C (script-table.md) |
+| 0x08 | general (11) | 0x0D CAMERASTATE | Camera states; layout OPEN | – | BIN |
+| 0x0A | sound (12,613), sound_aux_1 (2,531), local_English (29,193) | 0x40 SOUND | Audio records (§9). Localized voice-over is in local. | D | C |
+| 0x0C | gamelogic (28,992) | 0x15 SCRIPTLET | Scriptlets ([`script-table.md`](script-table.md)) | – | C (script-table.md) |
+| 0x0D | none | 0x08 MOVIE | Registered; no record in this install | | BIN |
+| 0x0E | general (7), local (1) | by DID: 0x0E000002 0x1D SEGMENT_TABLE; 0x0E000004 0x19 PLACES_TABLE; 0x0E000006–0x0E00FFFF 0x44 MAPNOTE_DESC; 0x0E010000–0x0E01FFFF 0x01 COMPRESSION_DICTIONARY; 0x0E100001 0x18 FARVIEWENTITIES; 0x0E100003 0x3D STRING_TOKEN_MAPPER; 0x0E100009 0x58 FALLBACK_MAPPER_TABLE; 0x0E100010–0x0E100030 0x06 MONITOREDPROPERTIES; 0x0E200000–0x0E20001F 0x14 NAME_FILTER_TABLE; 0x0E400000–0x0E4FFFFF 0x2D QUEST_MAPNOTE_DESC; 0x0EBADA55 0x22 TABOO_TABLE | Singleton tables, e.g. place names (0x0E000004), map notes (0x0E000006), the compression dictionaries 0x0E010000–2 (label in DID map), a name-filter table 0x0E200000 (label) | D (4 of 7 in general, the local one); – (3) | R, L, BIN |
+| 0x0F | general (7) | 0x4F REGION | Region descriptors ([`environment.md`](environment.md) §3; labelled per region in DID map 0x28000008) | D | C (environment.md), L |
+| 0x11 | general (5) | 0x4A SCENE_DESC | Scene-choice tables, region slot 1 ([`scenery.md`](scenery.md) §4.3) | xD | C (scenery.md) |
+| 0x12 | general (5) | 0x1C TERRAIN_DESC | Terrain-scene tables, slot 2 ([`scenery.md`](scenery.md) §4.2) | D | C (scenery.md) |
+| 0x14 | general (5) | 0x13 ENCOUNTER_DESC | Encounter tables, slot 3; layout OPEN ([`environment.md`](environment.md) §4) | D | BIN |
+| 0x15 | general (1) | 0x3F SKY_DESC | Sky description, slot 4 ([`environment.md`](environment.md) §5.1) | xD (u32 version 1) | C (environment.md) |
+| 0x16 | general (5) | 0x17 WATER_DESC | Water tables, slot 5 ([`water.md`](water.md) §4) | D | C (water.md) |
+| 0x17 | general (5) | 0x16 FOG_DESC | Fog-zone tables, slot 6 ([`water.md`](water.md) §5) | D | C (water.md) |
+| 0x18 | general (5) | 0x21 PROPERTY_DESC | Block-map property descriptors, slot 7 ([`landblock.md`](landblock.md) §5.2) | D | C (landblock.md) |
+| 0x19 | general (5) | 0x35 TERRAIN_TYPE_TABLE | Terrain type tables, slot 8 ([`terrain-texturing.md`](terrain-texturing.md) §3) | D | C (terrain-texturing.md) |
+| 0x1A | general (963) | 0x3A DAY_DESC | Day descriptions ([`environment.md`](environment.md) §5.2) | xD | C (environment.md) |
+| 0x1D | general (3), local (1) | 0x2C KEYMAP | Key maps (labelled in DID map 0x2800000C) | D | L, BIN |
+| 0x1F | general (29,134) | 0x2B VISUAL_DESC | Held-item and object visual templates ([`setup.md`](setup.md) §5) | xD (u32 flags) | C (setup.md) |
+| 0x20 | general (4,201) | 0x4E APPEARANCE | Appearance / wardrobe records ([`setup.md`](setup.md) §8, [`appearance.md`](appearance.md)) | D | C (setup.md) |
+| 0x21 | general (20) | 0x43 UI_SCENE | UI scenes; layout OPEN | D | BIN |
+| 0x22 | **local (302) only** | 0x28 UI_LAYOUT | UI layouts | D | R, BIN |
+| 0x23 | general (735) | 0x4D ENUM_MAPPER | **EnumMapper** (§7) | D | C |
+| 0x24 | none | 0x31 LAND_BLOCK_TERRAIN_LIST | Registered; no record in this install | | BIN |
+| 0x25 | local (282,152) | 0x20 STRING_TABLE (range 0x25000000–0x26FFFFFF) | **String tables** (§3) | D | C |
+| 0x26 | none observed | 0x20 STRING_TABLE (same range) | Part of the string-table range | | R, BIN |
+| 0x27 | cell_1..5 (≈100 each), cell_14 (13) | 0x30 RENDER_IMPOSTER_TABLE | Per-region imposter tables; serials 0x27RR…, stepping by 0x1B; layout OPEN | D | BIN |
+| 0x28 | general (24) | 0x49 DID_MAPPER | **DataIdMap** (§8) | D | C |
+| 0x2A | general (45,544) | 0x12 SOUNDINFO | Sound-info records (also `property-system.md` §9); layout OPEN | D | BIN |
+| 0x2B | general (510) | 0x51 RENDERMATERIAL | Shader records ([`material.md`](material.md) §7; labels name render materials) | D | C (material.md), L |
+| 0x2D | general (3) (range 0x2D000000–0x2D0FFFFF) | 0x62 COMPUTESHADER | Compute shaders (a DXBC container) | D | BIN |
+| 0x30 | general (24,091), local (3) | 0x1F MATERIALMODIFIER | Materials ([`material.md`](material.md) §6) | D | C (material.md) |
+| 0x31 | general (13,781) | 0x36 MATERIALINSTANCE | Surface records: shader and material links ([`material.md`](material.md) §4) | D | C (material.md) |
+| 0x32 | general (1) | 0x3B RENDER_LOD_CLASSES | LOD-class distance table ([`environment.md`](environment.md) §9.1) | D | C (environment.md) |
+| 0x33 | general (24) | 0x26 IMAGE_COMPOSITOR | Compositors (DID-map labels such as "…_Face_Compositor") | D | L, BIN |
+| 0x34 | gamelogic (1: 0x34000000) | 0x25 MASTER_PROPERTY | **Master property dictionary** (§6) | D | C |
+| 0x35 | general (1) | 0x02 GAME_TIME | Game time ([`environment.md`](environment.md) §6) | D | C (environment.md) |
+| 0x39 | general (11,155) | 0x1E PSDESC | Particle-system descriptors; layout OPEN | – | BIN |
+| 0x40 | general (81,135), local (1) | 0x0A RENDERTEXTURE | Texture lists / mip chains ([`texture-list.md`](texture-list.md)) | D | C (texture-list.md) |
+| 0x41 | highres (15,371), highres_aux_1..3 (16,885 / 38,556 / 7,169), surface (443,694), surface_aux_1..2 (545,619 / 340,535), local (223) | 0x05 RENDERSURFACE | **Render surfaces** (§5) | D | C |
+| 0x42 | general (3), local (45) (range 0x42000000–0x42000FFF) | 0x4C FONT | Fonts (DID map 0x2800000B labels font names pointing here) | D | L, BIN |
+| 0x43 | gamelogic (1) (range 0x43001000–0x43FFFFFF) | 0x50 SCRIPTCHANNELS | Script channels; layout OPEN | – | BIN |
+| 0x44 | general (254) | 0x56 FORKPSDESC | Particle systems (texture names, particle templates); layout OPEN | – | BIN |
+| 0x46 | none | 0x1A ENTITYGROUP | Registered; no record in this install | | BIN |
+| 0x47 | gamelogic (40,643) | 0x39 ENTITYDESC | Entity descriptors ([`setup.md`](setup.md) §4) | xD (u32 flags) | C (setup.md) |
+| 0x51 | general (2) | 0x24 ACTIONMAP | Action maps (labelled in DID map 0x2800000A) | D | L, BIN |
+| 0x53 | none | 0x47 CONTENTDB | Registered; no record in this install | | BIN |
+| 0x56 | gamelogic (1: 0x56000000) | 0x3E WLIB | Compiled script library ([`wlib.md`](wlib.md)) | D | C (wlib.md), L |
+| 0x58 | local (1) (range 0x58000000–0x58000001) | 0x46 STRING_STATE | String state; layout OPEN | – | BIN |
+| 0x66 | general (16,819) | 0x0E PHYSICS_MESH | Stand-alone collision meshes named by setups ([`collision.md`](collision.md) §4) | – (VLE count first) | C (collision.md) |
+| 0x70–0x77 | gamelogic (383,332 at 0x70, 11 at 0x76) | 0x45 WSTATE | Script-state objects and singletons ([`wstate.md`](wstate.md)) | D | C (wstate.md), L |
+| 0x78–0x7F | gamelogic (1,616 at 0x78, 383,332 at 0x79), local (2) | 0x32 DBPROPERTIES | Property sets; 0x79 + low 24 bits = the property set of the 0x70 object (`property-system.md` §5–§6) | D | C (property-system.md), L |
+| 0x80 | cell_R, map_R | per kind, §2.2 | Landblock family | D | C ([`landblock.md`](landblock.md)) |
+| 0x90–0x9F | none | registered three times: 0x64 KYNPATHDATA, 0x07 LBO, 0x59 HKX | Not archive records in this install (run-time or tool ranges) | | BIN |
+| 0xFF | every archive (2–5 each: 0xFFFF0001, 3, 4, 5, 8) | none registered | Archive metadata records; see `dat-container.md` §7 | – | OPEN here |
 
-The one 0x0E record in local is 0x0EBADA55, a text filter list. It is mentioned only so that a census does not flag it as an anomaly.
+The former OPEN of this section (status of 0x40 and 0x78/0x79) is resolved: they are C.
+
+The one 0x0E record in local is 0x0EBADA55, a text filter list (TABOO_TABLE). It is mentioned
+only so that a census does not flag it as an anomaly.
 
 <a id="s2-2"></a>
 ### 2.2 Landblock family (prefix 0x80)
@@ -278,13 +311,14 @@ DID = `0x80` | (`K` << 20) | (`R` << 16) | (`X` << 8) | `Y`, where:
 - `R` is the region: 1–5, or 14 (0xE). Archives for region 15 exist but contain only metadata.
 - `X`, `Y` are landblock coordinates.
 
-| K nibble | Archive | Meaning | Count per full region | Status |
-|---|---|---|---|---|
-| 0 | cell_R | Terrain heightmap block | 65,025 | R (meaning); count Confirmed |
-| 1 | map_R | Block-map indices | 65,025 | R; count Confirmed |
-| 2 | cell_R | Landblock info (cells, entities, links) | sparse | R |
-| 4 | cell_R | Landblock properties (minimap) | sparse | R |
-| 5 | cell_R | Unknown | sparse | OPEN |
+| K nibble | Archive | DB type (BIN) | Meaning | Count per full region | Status |
+|---|---|---|---|---|---|
+| 0 | cell_R | 0x11 LANDBLOCKDATA | Landblock data: heights, terrain surface layers, collision trees | 65,025 | C (`landblock.md` §3) |
+| 1 | map_R | 0x2F LANDBLOCKBLOCKMAP | Block map: per-landblock (key, value) pairs | 65,025 | C (`landblock.md` §5) |
+| 2 | cell_R | 0x2E LANDBLOCKINFO | Landblock info (cells, static entities, links, weenies) | sparse | C (`landblock.md` §4) |
+| 4 | cell_R | 0x29 LANDBLOCKPROPERTIES | Landblock properties (minimap tiles, light maps) | sparse | C (`landblock.md` §6) |
+| 5 | cell_R | 0x41 DISTANT_LANDSCAPE_SECTOR | Distant-landscape sector, one per 3 × 3 landblocks | sparse | Framing C; most of the layout OPEN (`landblock.md` §7) |
+| 6 | none | 0x63 KYNLANDBLOCK | Registered (navigation); no record in this install | | BIN |
 
 Invariant **L1** (Confirmed): `X` and `Y` each range over **0–254**, giving 255 × 255 = 65,025 blocks per region. They do not range over 0–255.
 
@@ -614,7 +648,7 @@ So the trailer is not a codec ID.
 
 > **OPEN:** The meaning of the two trailer fields.
 
-> **OPEN:** LC also describes a "sound info" record (DID, flags, 5 × f32, u32 sound DID, optional Pascal name). No 0x0A record in this install has that shape, so it may live under another prefix. Reported only.
+> **OPEN:** LC also describes a "sound info" record (DID, flags, 5 × f32, u32 sound DID, optional Pascal name). No 0x0A record in this install has that shape. **Partly answered (2026-10-05):** sound-info records are prefix 0x2A (DB type 0x12 SOUNDINFO, §2.1, BIN; also `property-system.md` §9). Their layout is not specified here.
 
 <a id="s9-2"></a>
 ### 9.2 Container sniffing (Confirmed)
@@ -653,6 +687,8 @@ These were found against `research/notes/dat-format.md` (DF) and `research/notes
 | X13 | DS §7.4: 0x41 layout lists only formats | The JPEG header has width = height = 0, and each record is one level with no mips | New (§5) |
 | X14 | DF §5: subfile payloads "usually" have a class index at +4 | True for some types only. For 0x41, +4 is a category; for 0x25 a flag; for 0x23 a base DID. | Type-specific |
 | X15 | DS §1 lists the 0x41 search order across archives | No DID is duplicated between those archives in this install, so order does not change the result today | Noted |
+| X16 | P10 / §1.6 (this spec, 2026-10-03): every record begins with its own DID | 0x02, 0x11, 0x15, 0x1A, 0x1F and 0x47 begin with a u32 before the DID; 0x05, 0x07, 0x08, 0x0C, 0x39, 0x43, 0x44, 0x58, 0x66 and some 0x0E have no DID at the start | Corrected (§1.6, 2026-10-05) |
+| X17 | `environment.md` first look: kinds of 0x11, 0x12, 0x16, 0x17, 0x19, 0x02, 0x32 by content | The client's registration gives SCENE_DESC, TERRAIN_DESC, WATER_DESC, FOG_DESC, TERRAIN_TYPE_TABLE, SCENE, RENDER_LOD_CLASSES | Corrected (§2.1) |
 
 ---
 
@@ -668,7 +704,7 @@ These were found against `research/notes/dat-format.md` (DF) and `research/notes
 7. 0x34000000 reserved and separator bytes; definition fields a/b/c/d; flag bits; subset list; colour channel order (moved to `property-system.md` §13).
 8. DID-map second group (§8.1).
 9. Sound trailer fields; where the sound-info records live (§9.1).
-10. Meanings of prefixes 0x02, 0x08, 0x11–0x19 family, 0x1A, 0x21, 0x27, 0x2A, 0x2D, 0x32, 0x35, 0x39, 0x43, 0x44, 0x58, 0x66, and landblock K = 5 (§2).
+10. *(Answered 2026-10-05: the kind of every prefix is now known from the client's DID-range registration, §2.1, and most are decoded in other specs.)* Layouts still OPEN: 0x08, 0x14, 0x21, 0x27, 0x2A, 0x39, 0x43, 0x44, 0x58 and most of landblock K = 5 (§2).
 
 <a id="s12"></a>
 ## 12. Validation guidance for implementers
@@ -712,3 +748,11 @@ These came up while implementing `crates/formats` from this spec alone. Each rec
 > **OPEN:** MP5 (§6.5) does not hold for type 20 (DID reference). Every type-20 definition in this install (1,849 of 1,849) has a non-zero `data` field below 0x01000000. Example: PID 16 has `data` = 0x45. These values look like a code for the expected DID type (perhaps a DID-type index, but not the §2 high-byte prefix itself), not a zero. Found by `crates/formats/tests/real_data.rs` on 2026-10-04. The spec writer should determine what this value means and correct MP5 and the §6.3 table.
 >
 > **Resolved (2026-10-04):** the value is a DB-object-type code, labelled by the enum mapper that the EMAPPER DID map names "DBOType". 0x45 is the game-object (WState) type, whose references point at 0x70 DIDs. MP5 is corrected in `property-system.md` §2.5, and the code table is in §9.
+
+<a id="s14"></a>
+## 14. Change log
+
+| Date | Change |
+|---|---|
+| before 2026-10-05 | First version 2026-10-03 and later edits; no change log was kept (see the repository history). |
+| 2026-10-05 | Provenance: BIN row and D2; P10 corrected. §1.6 rewritten: record prologues per prefix (census of 8 archives); the claim that every record starts with its own DID is withdrawn (false for 0x05, 0x07, 0x0C, 0x66 and others). §2.1 rewritten: DB type of every prefix from the client's DID-range registration (adds the 0x15/0x1A/0x35 pairings, 0x66 = PHYSICS_MESH, 0x2A = SOUNDINFO, 0x16/0x17 = WATER_DESC/FOG_DESC, and all others), prologue column, statuses updated to the specs that decode each prefix (0x40, 0x78/0x79 now C as the former OPEN asked). §2.2: DB type per landblock kind; K = 5 is the distant-landscape sector; K = 6 registered but absent. §9.1 OPEN partly answered (sound info = 0x2A). §10: X16, X17. §11 item 10 updated. This change log added. |

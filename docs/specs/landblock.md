@@ -5,11 +5,12 @@
 | | |
 |---|---|
 | **Status** | Review |
-| **Last updated** | 2026-10-04 |
+| **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Claude review session (spec-writer agent) |
+| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (first round; addressed). Re-review 2026-10-05: changes requested (§3.6: "126 occurs only together with a ceiling" is false in 8 of the 365 records that contain low value 126; §8 step 1 keeps only bit 7 of the vertex flags, but ceilings need bit 0). Spot checks passed over all 390,150 landblock-data records: L6 (458,061,498 terrain triangles, bit 7 and counter-clockwise), L6a (5,310,848 ceiling triangles in 2,068 chunks, bit 0 and clockwise, bit 7 4,999,408), L6b (2,368 hole landblocks, 2,750,134 triangles, all with a ceiling), 6,867 ceilings, low seven bits only 0, 1, 126, 127 and whole bytes 0, 1, 126, 127, 128, 129, 254, 255. |
 | **Implements into** | `crates/formats` (landblock data, landblock info, block-map and descriptor decoders), `crates/world` (landblock IDs, bundles, block-map resolution, minimap tiles), `crates/terrain` (height grid, triangulation, surface layers), `apps/explorer` (landblock view), `fuzz/` (one target per record kind) |
-| **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor) and §4 (per-region tables 0x11–0x19). `records.md` §1 (VLE, TSize, Pascal string), §2.2 (landblock DID shape), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). |
+| **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor and the per-region tables). `records.md` §1 (VLE, TSize, Pascal string), §2.1–§2.2 (prefix and landblock DID shape, DB types), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). **Meaning of the parts decoded here:** [`terrain-texturing.md`](terrain-texturing.md) (surface layers, masks, quad grid, light maps), [`collision.md`](collision.md) (tree code, terrain and ceiling collision, 0x01 cell geometry, portals), [`scenery.md`](scenery.md) (coarse grid), [`water.md`](water.md) (water and fog-zone keys of the block map, water per landblock, kind 5 water). |
 
 ---
 
@@ -30,7 +31,7 @@ for the world walker:
 - **block maps** `0x801RXXYY` and their per-region descriptors (prefix 0x18): area, music,
   ambient sound, sky and other per-landblock keys (§5);
 - **landblock properties** `0x804RXXYY`: minimap tiles and baked light maps (§6);
-- the framing of the unidentified kind `0x805RXXYY` (§7);
+- the framing of kind 5 `0x805RXXYY`, the distant-landscape sector record (§7);
 - the bundle-loading algorithm, invariants, statistics, failure categories and what remains
   unknown (§8–§12).
 
@@ -44,10 +45,15 @@ assert the invariants, not the counts.
 
 Legend:
 
-- **Confirmed**: decoded on the user's own install on 2026-10-04 by throwaway probes in the
-  dirty-room scratchpad, over **all** records of the kind unless a sample is stated.
+- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05 where the row
+  says so) by throwaway probes in the dirty-room scratchpad, over **all** records of the kind
+  unless a sample is stated. For a fact with a BIN source: the data agrees on every record.
+- **BIN**: rests on the disassembly of the client (tag BIN below, or the BIN tags of the
+  companion specs named in the row) and has not been checked against every record.
 - **Probable**: supported by a statistical test on the data, but not by an exact rule.
 - **Reported**: comes only from third-party material and was not, or could not be, checked.
+- **Tessera Decision**: Tessera's own rule where the original's is not known; never a
+  statement about the original.
 
 | Tag | Source |
 |---|---|
@@ -58,16 +64,20 @@ Legend:
 | ER | `research/notes/engine-client-re.md` §3 (cache type names, 3 × 3 frill source groups, inverted terrain ceiling for caves). |
 | ENV | `environment.md` §3 (region descriptor layout; written in parallel from the same install). |
 | ED | `entity-descriptor.md` (static entity descriptors; written in parallel from the same install). |
+| TT, COL, SCN, WAT | `terrain-texturing.md`, `collision.md`, `scenery.md`, `water.md` (same install, 2026-10-05): each decodes the meaning of parts whose layout is given here; their correction tables (`terrain-texturing.md` §15, `collision.md` §15, `water.md` §13) are adopted in this revision. |
+| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-05 (objdump, capstone). **Questions:** (a) how the client converts a stored height sample to world units (every converter found: terrain vertex builder, height queries, physics, the landblock minimum and maximum, `terrain-texturing.md` §13 and `water.md` BIN (c)); (b) which DB object type the client registers for each landblock kind; (c) which records read block-map keys 3, 4, 6 and 7. **Why M1–M3 were not enough:** the data fits stored / 32.768 and stored × 2,000 / 65,535 equally well (they differ by at most 0.031 units); the record kinds and the keys without a 0x18 descriptor entry are named nowhere in the data or in published sources; no running client is available for M3. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
 | L1 | Landblock-family DIDs and archive routing (§2) | DS, LC; OBS | Confirmed |
 | L2 | Landblock data header: DID, landblock-info DID or 0, u32 0, u32 1089, then 33 × 33 u16 heights (§3.2) | LC, JT; OBS (390,150) | Confirmed |
 | L3 | Heights are stored **X-major**: sample (i, j) at index 33·i + j, i along X (§3.3) | LC (index formula); OBS (seam test, entity contact test) | Confirmed |
-| L4 | Height in world units = stored value / 32.768 (32,768 = 1,000 units) (§3.4) | LC (`value / 32768`, a factor 1,000 off); OBS (3.25 M placed entities; round-number sea levels) | Confirmed |
+| L4 | Height in world units = stored value × 2,000 / 65,535, computed in 32-bit floats (65,535 = 2,000 units) (§3.4) | BIN (a) (the rule); OBS (3.25 M placed entities fix the scale to within 0.031 units; the water heights of `water.md` §6.5); LC (`value / 32768`, a factor 1,000 off and 1.0000153 off) | Rule BIN; scale Confirmed. Revised 2026-10-05 (was stored / 32.768). |
 | L5 | The bytes after the height grid: optional ceiling grid and its collision tree, vertex-flag grid, 17 × 17 grid, surface-layer chunks, terrain collision tree, box list (§3.1) | OBS (all 390,150 records, zero leftover bytes) | Confirmed (layout). No published source describes them. |
-| L6 | Bit 7 of the vertex-flag grid selects the split diagonal of each grid quad (§3.6) | OBS (65.5 M sampled layer triangles, 100 %) | Confirmed |
-| L7 | Surface layers: material id, 0x41 alpha-mask DID, triangle range into a shared index list over grid vertices (§3.8) | OBS | Confirmed (layout); meaning of the material id OPEN |
+| L6 | Bit 7 of the vertex-flag grid selects the split diagonal of each **terrain** grid quad (§3.6) | OBS (65.5 M sampled terrain-layer triangles, 100 %) | Confirmed |
+| L6a | Bit 0 of the vertex-flag grid selects the split diagonal of each **ceiling** grid quad, with or without stored triangles; ceiling triangles are clockwise from above (§3.5, §3.6) | COL §6.4 (BIN: the client's mesh builder tests bit 0 for the ceiling, bit 7 for the terrain; OBS: all 5,310,848 stored ceiling triangles follow bit 0, bit 7 only 94.1 %); review probe 2026-10-05 (all 486,882 stored ceiling triangles of region 1: clockwise and bit 0 without exception, bit 7 95.8 %) | Confirmed |
+| L6b | Terrain grid triangles that no layer covers are kept by the client's terrain collision; they lie where the terrain is buried under the ceiling surface or where there is no ceiling (§3.5) | COL §6.5 (OBS census of all records; BIN for the collision mesh) | Confirmed (census); collision rule BIN |
+| L7 | Surface layers: terrain-type key (`material`), 0x41 alpha-mask DID, `whole` flag, triangle range into a shared index list over grid vertices (§3.8) | OBS; TT §4 (meaning: key into the region's 0x19 terrain type table, draw order, masks, `whole`) | Confirmed (layout and meaning) |
 | L8 | Index-list vertex numbers are **Y-major** (33·y + x), the transpose of the height array (§3.8.3) | OBS (two independent tests) | Confirmed |
 | L9 | The ceiling grid is present exactly when the block map says `Landblock_UseCeiling` = 1 (§3.5) | ER (caves use an inverted terrain ceiling); OBS (6,867 of 6,867) | Confirmed |
 | L10 | Landblock info layout (§4) | LC; OBS (49,636 records, zero leftover bytes) | Confirmed |
@@ -76,7 +86,14 @@ Legend:
 | L13 | Block map = list of (key, u16 index) into the region's 0x18 descriptor (§5) | LC; OBS (390,150 records) | Confirmed |
 | L14 | The region's 0x18 descriptor is named by its 0x0F region descriptor (§5.1) | ENV; LC (hard-coded table that agrees); OBS | Confirmed |
 | L15 | Landblock properties = DID + property set; minimap tile is a 200 × 200 JPEG at 1.25 px per unit, north up (§6) | LC (property names, tiling); OBS (60,450 records; 120 tiles) | Confirmed |
-| L16 | Kind 5 exists only at XX, YY divisible by 3 and holds 99 × 99 five-byte samples (§7) | ER (3 × 3 groups); OBS (33,159) | Confirmed (framing); meaning OPEN |
+| L16 | Kind 5 exists only at XX, YY divisible by 3 and holds 99 × 99 five-byte samples; it is the distant-landscape sector record (DB type 0x41) and carries the sector's water pairs (§7) | ER (3 × 3 groups); OBS (33,159); BIN (b); WAT §9 | Confirmed (framing, water pairs); rest of the layout OPEN |
+| L17 | Coarse grid = per-vertex scenery word: bits 0–7 terrain-type id, 8–14 scene slot, 15–19 encounter slot; X-major order with shared edges (§3.7) | OBS (all 390,150 records; seam test 2026-10-05); BIN (client `x64/lotroclient64.exe` 4906.0071.1794.4035: how the client reads the word; method M4 under decision 0011, because no data or published source says which table the bytes index); `scenery.md` | Confirmed |
+| L18 | DB object types of the landblock kinds: K 0 = 0x11, 1 = 0x2F, 2 = 0x2E, 4 = 0x29, 5 = 0x41 (§2.1) | BIN (b); labels from the DBOType enum mapper (OBS) | BIN |
+| L19 | Block-map keys without a 0x18 descriptor entry are read by other region tables: key 3 by the fog-zone table, keys 4 and 7 by the water table, key 6 by the encounter table (§5.6) | BIN (c); OBS (the tables store the key numbers) | Confirmed (3, 4, 7); Probable (6) |
+| L20 | The tree `code` of terrain and ceiling trees is the quantised bounding-volume program of `collision.md` §3; terrain keys number the grid triangles (§3.9) | COL §3, §6 | Confirmed |
+| L21 | Quad grid: index 32 · qy + qx; the dominant visible terrain type of each quad (§3.8.4) | TT §4.6 | Confirmed (order); Probable (meaning) |
+| L22 | Light maps: row 0 on the south edge, column 0 on the west edge; bound as material parameter 3019 and **added** to the lighting sum; content is baked light (§6.4) | TT §10, T22 (BIN there) | Confirmed (orientation); BIN (additive use); Probable (content) |
+| L23 | A point enters a cell from the outdoor world by containment in the cell's phantom and cell volume, not by crossing a portal (§4.4) | COL §5.8.1 | BIN |
 
 ---
 
@@ -95,16 +112,18 @@ DID = `0x80` · 2²⁴ + `K` · 2²⁰ + `R` · 2¹⁶ + `XX` · 2⁸ + `YY` (`r
 | `XX` | 8–15 | Landblock X, 0–254 |
 | `YY` | 0–7 | Landblock Y, 0–254 |
 
-| `K` | Record | Archive | §  |
-|---|---|---|---|
-| 0 | Landblock data (heights, terrain surface) | `client_cell_R.dat` | §3 |
-| 1 | Block map (per-landblock keys) | `client_map_R.dat` | §5 |
-| 2 | Landblock info (cells, static entities, links, weenies) | `client_cell_R.dat` | §4 |
-| 4 | Landblock properties (minimap, light maps) | `client_cell_R.dat` | §6 |
-| 5 | Unidentified 3 × 3-group record | `client_cell_R.dat` | §7 |
+| `K` | Record | DB type (BIN, L18; label from the DBOType mapper) | Archive | §  |
+|---|---|---|---|---|
+| 0 | Landblock data (heights, terrain surface) | 0x11 LANDBLOCKDATA | `client_cell_R.dat` | §3 |
+| 1 | Block map (per-landblock keys) | 0x2F LANDBLOCKBLOCKMAP | `client_map_R.dat` | §5 |
+| 2 | Landblock info (cells, static entities, links, weenies) | 0x2E LANDBLOCKINFO | `client_cell_R.dat` | §4 |
+| 4 | Landblock properties (minimap, light maps) | 0x29 LANDBLOCKPROPERTIES | `client_cell_R.dat` | §6 |
+| 5 | Distant-landscape sector, one per 3 × 3 group | 0x41 DISTANT_LANDSCAPE_SECTOR | `client_cell_R.dat` | §7 |
 
-No other `K` occurs. `R` selects the archive pair: region *R* lives in `client_cell_R.dat`
-and `client_map_R.dat` with *R* written in decimal (region 14 → `client_cell_14.dat`).
+No other `K` occurs. (The client also registers `K` = 6 for DB type 0x63, labelled
+KYNLANDBLOCK, a navigation record; no such record exists in this install.) `R` selects the
+archive pair: region *R* lives in `client_cell_R.dat` and `client_map_R.dat` with *R* written
+in decimal (region 14 → `client_cell_14.dat`).
 
 <a id="s2-2"></a>
 ### 2.2 Regions (Confirmed)
@@ -239,22 +258,33 @@ neighbour store identical values on their common edge. Terrain built from each b
 still need the neighbour's second row (`crates/terrain`).
 
 <a id="s3-4"></a>
-### 3.4 Height scale (Confirmed)
+### 3.4 Height scale (rule BIN; scale Confirmed; revised 2026-10-05)
 
-**Height in world units = stored value / 32.768** (equivalently, stored value · 1,000 /
-32,768). Stored 0 is height 0; 32,768 is 1,000 units; the u16 maximum 65,535 is 1,999.97
-units.
+**Height in world units = stored value × 2,000 / 65,535.** The original client computes it
+in 32-bit floats as: convert the stored u16 to a float, multiply by 2,000.0, multiply by the
+32-bit float nearest 1 / 65,535 (1.5259022 × 10⁻⁵), rounding each product to 32 bits (BIN (a):
+every converter in the client, `terrain-texturing.md` §13). Stored 0 is height 0; 65,535 is
+exactly 2,000 units; 32,768 is 1,000.0153 units. The 32-bit result differs from the exact
+quotient by at most 6.2 × 10⁻⁵ units.
 
-Evidence:
+The earlier rule of this spec, stored / 32.768 (32,768 = 1,000 units), is **superseded**. The
+two differ by a factor 1.0000153: the largest difference over all stored values is
+**0.0305 units** (3 cm, near the top of the range), and less than 0.016 units below stored
+32,768. No data test separates them; the client's rule is adopted so that heights, water
+levels (`water.md` §6.2) and scenery placement (`scenery.md` §7) match the original bit for
+bit. Specs that cite this section (`scenery.md` §7.3, `collision.md` §6.1, `terrain.md` §1,
+`water.md` §6.2) use this rule.
+
+Evidence for the scale (Confirmed):
 
 - The median ratio of placed-entity *z* (absolute height, ED §4.4) to the bilinear terrain
-  sample under the entity is 0.030518 in every region (1 / 32.768 = 0.0305176), over
-  2,479,912 entities.
+  sample under the entity is 0.030518 in every region (2,000 / 65,535 = 0.0305180;
+  1 / 32.768 = 0.0305176), over 2,479,912 entities.
 - With the scale and the triangulation of §3.11, 491,515 entities (19.8 %) sit within 1 cm
   and 1,221,684 (49.3 %; 42.5 % in region 4 to 60.5 % in region 1) within 25 cm of the
   terrain; the rest are on buildings, bridges, in water or deliberately sunk.
-- Constant-height blocks use round heights under this scale: stored 4,915 → 149.99,
-  10,485 → 319.98, 32,765 → 999.9.
+- Constant-height blocks use round heights: stored 4,915 → 149.996, 10,485 → 319.982,
+  32,765 → 999.924.
 - LC divides by 32,768, which gives the same shape in thousands of units; jtauber's
   logarithmic formula is a visualisation, not a scale.
 
@@ -287,18 +317,32 @@ Present when `has_ceiling` = 1 (6,867 records: region 1: 971, 2: 4,303, 3: 99, 4
 `has_ceiling_tree` = 1 in 1,095 records; a collision tree block (§3.9) follows. A ceiling is
 rendered with the ceiling surface chunk (§3.8) and faces downwards.
 
-> **OPEN:** Winding and facing of ceiling triangles, and the exact rule for "ceiling below
-> floor" vertices (cull, clamp or render). Not needed for an outdoor walker.
+**Ceiling triangulation (Confirmed, L6a).** The diagonal of every ceiling quad (i, j) is
+given by **bit 0** of the vertex-flag byte of sample (i, j) (§3.6), whether or not the quad
+has stored ceiling-chunk triangles: set → south-west/north-east, clear →
+south-east/north-west. Ceiling triangles are **clockwise seen from above** (they face down):
+the same two triangles per quad as the terrain split for that diagonal, with the corners of
+each triangle in reverse order. Every stored ceiling-chunk triangle (5,310,848, all records)
+follows this rule; bit 7 agrees for only 4,999,408 of them (94.1 %), so bit 7 must not be
+used for ceilings (`collision.md` §6.4; the 2026-10-04 implementation census that raised the
+question is answered by it). A renderer draws the ceiling's layers from their stored
+triangles (§3.8); any ceiling mesh built from the grid (a `whole` ceiling layer, the
+collision mesh) uses the bit-0 diagonal. The client's ceiling collision mesh holds all
+2,048 grid triangles, including those over zero samples (at height 0, normally far below the
+terrain); its collision tree uses the terrain numbering (`collision.md` §6.2, §6.4).
 
-> **OPEN (implementation census, 2026-10-04):** Tessera's decoder census
-> (`crates/formats/tests/landblock_real_data.rs`, every ceiling of the install) found that
-> of 5,310,848 ceiling-layer triangles **none** is counter-clockwise seen from above: every
-> stored ceiling triangle is clockwise from above, i.e. it faces down, as expected. But only
-> 4,999,408 (94.1 %) use the diagonal that bit 7 of the vertex-flag grid (§3.6) gives for
-> their quad; 311,440 use the other diagonal (in 986 records). So HM6 (§3.12) holds for
-> terrain chunks only. Which rule picks a ceiling quad's diagonal (a separate flag, the
-> ceiling heights, or only the stored triangles) is open; renderers mesh ceilings from the
-> stored triangles, not from bit 7. Every ceiling triangle does lie in one grid quad.
+**Terrain holes (Confirmed census, client rule BIN; L6b).** Terrain grid triangles that no
+terrain layer covers are not drawn (`terrain-texturing.md` §4.5). They occur only in
+landblocks with a ceiling, and they are **not** cave mouths: no such triangle lies under an
+open cave; they lie where the terrain is buried under the ceiling surface (ceiling at or
+below the terrain) or where the ceiling samples are all 0. The client's terrain collision
+keeps every one of them (all 2,048 grid triangles, `collision.md` §6.5), so a walker
+collides with the full grid.
+
+> **OPEN:** How the original renders ceiling vertices that lie at or below the floor (61 %
+> of non-zero ceiling samples): culled, clamped or simply drawn and hidden by the depth test.
+> Not needed for an outdoor walker. **Tessera Decision** until then: draw the stored ceiling
+> triangles unchanged and let the depth test hide what lies inside the ground.
 
 <a id="s3-6"></a>
 ### 3.6 Vertex-flag grid (Confirmed layout)
@@ -314,37 +358,51 @@ the quad with corners (i, j) and (i + 1, j + 1), 0 ≤ i, j ≤ 31:
 | set | from (i, j) to (i + 1, j + 1) (south-west to north-east) | (i, j), (i + 1, j), (i + 1, j + 1) and (i, j), (i + 1, j + 1), (i, j + 1) |
 | clear | from (i + 1, j) to (i, j + 1) (south-east to north-west) | (i, j), (i + 1, j), (i, j + 1) and (i + 1, j), (i + 1, j + 1), (i, j + 1) |
 
-Triangles are listed counter-clockwise seen from above (+Z), matching the stored layer
-triangles (§3.8.3). Evidence: every triangle of every surface layer (65,471,762 in a 1-in-7
-sample) uses exactly the diagonal this bit predicts. Bytes in row i = 32 or column j = 32
+Triangles are listed counter-clockwise seen from above (+Z), matching the stored terrain
+layer triangles (§3.8.3). Evidence: every triangle of every terrain surface layer
+(65,471,762 in a 1-in-7 sample) uses exactly the diagonal this bit predicts. Bytes in row i = 32 or column j = 32
 carry no quad.
 
-**Bits 0–6:** observed values 0, 1, 126 and 127 only. Per record, the set of low values is
+**Bit 0 (0x01): split diagonal of the ceiling quad whose south-west corner is this sample**
+(§3.5, L6a). Same table as above with bit 0 in place of bit 7, and with each triangle's
+corners in reverse order (clockwise from above). A renderer or collision builder that
+meshes a ceiling must read bit 0; for terrain it reads bit 7.
+
+**Bits 1–6:** the seven low bits take only the values 0, 1, 126 and 127, so bits 1–6 are
+either all set (0x7E) or all clear in every byte. Per record, the set of low values is
 {127} in most records with stamp 20–27, {0} in most with stamp 38–39, and mixed in a few
 hundred; 126 occurs only together with a ceiling. Whole bytes observed: 0, 1, 126, 127,
 128, 129, 254, 255.
 
-> **OPEN:** Meaning of bits 0–6. Hypotheses: a per-vertex lighting or blend value, or an
-> editor flag. A renderer ignores them.
+> **OPEN:** Meaning of bits 1–6 (`collision.md` §15). The client's terrain and ceiling mesh
+> builders test only bits 7 and 0 (`collision.md` §6.4). Tessera ignores bits 1–6.
 
 <a id="s3-7"></a>
-### 3.7 Coarse grid (Confirmed layout; meaning OPEN)
+### 3.7 Coarse grid: per-vertex scenery word (Confirmed layout and order; meaning in `scenery.md`)
 
-u32 count (always 289 = 17 × 17), then 289 × u32. The grid has one entry per 10 units
-(every second height sample), presumably in the height grid's order.
+u32 count (always 289 = 17 × 17), then 289 × u32. The grid has one word per 10 units
+(every second height sample). Word (i, j), 0 ≤ i, j ≤ 16, is at index **17 · i + j** with
+**i along X**, the height grid's order: word (i, j) belongs to height sample (2i, 2j), and
+word (16, j) of block (X, Y) equals word (0, j) of block (X + 1, Y) (31,500 of 31,500
+adjacent pairs in regions 1 and 2; the transposed reading matches 16 %).
+
+| Bits | Field | Observation (all 390,150 records) |
+|---|---|---|
+| 0–7 | Terrain-type id for scenery (`scenery.md` §3) | 0–94; distinct sets per region |
+| 8–14 | Scene slot (`scenery.md` §3) | 0–72 |
+| 15–19 | Encounter slot (`scenery.md` §7.7) | always 0 |
+| 20–31 | — | always 0 |
 
 | Observation (all 390,150 records) | Value |
 |---|---|
-| Bits 16–31 | always 0 |
-| Byte 0 (bits 0–7) | 0–94; distinct sets per region (region 1 uses up to 94) |
-| Byte 1 (bits 8–15) | 0–72 |
-| Records whose 289 entries are all 0 | region 1: 43,976; 2: 52,988; 3: 53,071; 4: 47,402; 5: 50,675; 14: 63,924 |
+| Records whose 289 words are all 0 | region 1: 43,976; 2: 52,988; 3: 53,071; 4: 47,402; 5: 50,675; 14: 63,924 |
 | Distinct values per record | 1 in most; up to 16 |
 
-> **OPEN:** Meaning (terrain type and scenery/frill type per 10-unit vertex are the leading
-> hypotheses; ER §3 describes grass "frills" as landscape-driven), the table the two bytes
-> index (candidates: the per-region 0x16 and 0x19 tables, ENV §4), and the index order.
-> Not needed for geometry or for texturing with §3.8.
+The grid selects **procedural scenery and frills**, not terrain textures: bits 0–7 are
+looked up by id in the region's terrain-scene table (prefix 0x12) and bits 8–14 select a
+scene slot of that entry, which leads through the scene-choice table (0x11) to a scene
+record (0x02). `scenery.md` §3–§7 specifies the tables and the generation. Texturing uses
+only §3.8. A block whose words are all 0 has no procedural scenery.
 
 <a id="s3-8"></a>
 ### 3.8 Surface chunks (terrain and ceiling) (Confirmed layout)
@@ -376,7 +434,7 @@ Facts (terrain chunks / ceiling chunks):
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
-| 0 | `material` | u32 | Material/layer id. 0 – 1,420 in terrain chunks (1,409 distinct values); 390 distinct values in ceiling chunks. 0 is the most common single value. |
+| 0 | `material` | u32 | **Terrain-type key**: the `key` of an entry of the region's terrain type table, prefix 0x19 (`terrain-texturing.md` §3, §4.1). 0 – 1,420 in terrain chunks (1,409 distinct values); 390 distinct values in ceiling chunks. 0 is the most common single value. |
 | 4 | `mask` | DID | A render surface (prefix 0x41) holding the layer's **alpha mask**, or 0 |
 | 8 | `whole` | u8 | 0 or 1 (§ below) |
 | 9 | `start` | u16 | First index of this layer's triangles in the chunk's index list |
@@ -391,23 +449,28 @@ and every vertex number they use is in [`min_vertex`, `min_vertex` + `vertex_spa
 
 Layer kinds (terrain counts; ceiling layers follow the same pattern):
 
-| `whole` | `prims` | `mask` | Count | Reading |
+| `whole` | `prims` | `mask` | Count | Reading (what the client draws: `terrain-texturing.md` §4.3, BIN there) |
 |---|---|---|---|---|
-| 0 | > 0 | non-zero | 629,340 | Draw these triangles with this mask. **Every such mask exists** in the surface archives. |
-| 0 | > 0 | 0 | 67,409 | Draw these triangles fully opaque (no mask). |
-| 0 | 0 | non-zero | 142,091 | No geometry. **None of these masks exists** in the install. Skip. |
-| 0 | 0 | 0 | 55,944 | No geometry, no mask. Skip. |
-| 1 | 0 | non-zero (resolves) or 0 | 8,084 + 9,170 | No index range; probably covers the whole block (a base layer). |
+| 0 | > 0 | non-zero | 629,340 | Draw these triangles through this mask. **Every such mask exists** in the surface archives. |
+| 0 | > 0 | 0 | 67,409 | Draw these triangles with mask value 1 everywhere. |
+| 0 | 0 | non-zero | 142,091 | Nothing (skipped; does not count as the first drawn layer). **None of these masks exists** in the install. |
+| 0 | 0 | 0 | 55,944 | Nothing (skipped). |
+| 1 | 0 | non-zero (resolves) or 0 | 8,084 + 9,170 | **All 2,048 triangles of the block** (the full-grid triangulation of §3.6: bit 7 in terrain chunks, bit 0 and clockwise in ceiling chunks, §3.5), through the mask or with mask value 1. `start`, `prims`, `min_vertex`, `vertex_span` are 0 and ignored. |
 
-Masks sampled (43): A8 format, 128 × 128 (42) or 256 × 256 (1) (`records.md` §5).
+Masks (`terrain-texturing.md` §5, all 646,073 masks of drawn layers): format 28 (A8),
+square, 128, 256 or 512 texels; read the size from the surface, not from the type entry.
 
-> **OPEN:** (1) What `material` indexes. It is not the coarse-grid byte (§3.7, range 0–94).
-> The per-region 0x19 table (ENV §4: 317–1,422 named terrain layers with texture lists) is
-> the leading candidate: its size matches the observed maximum of 1,420. (2) The draw order
-> and blend rule between layers (stored order is the natural guess). (3) The orientation of
-> the alpha mask over the block (which texel row is north). (4) The exact meaning of
-> `whole` = 1. Until (1) is settled, `crates/terrain` shades by height and slope as the
-> roadmap allows.
+Meaning of the layers, settled in `terrain-texturing.md` (the former OPENs (1)–(4) of this
+section):
+
+1. `material` is a key of the region's terrain type table (0x19, region-descriptor slot 8):
+   that spec §4.1 (none of 925,884 layers out of range).
+2. Order and blending: layers are stored in ascending `draw_order` of their entries; stored
+   order is the draw order, bottom first; the first drawn layer is opaque and every later
+   drawn layer is blended "over" with its per-pixel opacity: that spec §4.2, §7, §8.
+3. Mask orientation: texel row 0 lies on the block's **south** edge, column 0 on its west
+   edge, coordinates (x / 160, y / 160): that spec §5.2 (unlike the minimap tiles of §6.3).
+4. `whole` = 1: the table above, that spec §4.3.
 
 <a id="s3-8-3"></a>
 #### 3.8.3 Index list and its vertex numbering
@@ -421,8 +484,9 @@ its height is the height-grid element 33 · (*v* mod 33) + ⌊*v* / 33⌋.
 
 Evidence (two independent tests):
 
-- With this reading, the diagonal used by every stored triangle agrees with bit 7 of the
-  vertex-flag grid read in height-grid order (65,471,762 of 65,471,762 sampled triangles).
+- With this reading, the diagonal used by every stored terrain-chunk triangle agrees with
+  bit 7 of the vertex-flag grid read in height-grid order (65,471,762 of 65,471,762 sampled
+  triangles); every ceiling-chunk triangle agrees with bit 0 (§3.5).
   Reading *v* in height-grid order instead agrees for only 96.6 %.
 - Ceiling-chunk triangles should use vertices that have a ceiling. Of 15.87 M ceiling
   triangle vertices on non-flat ceilings, 217,960 have a ceiling sample only under this
@@ -434,15 +498,20 @@ Under this reading every stored triangle is **counter-clockwise seen from above*
 <a id="s3-8-4"></a>
 #### 3.8.4 Quad grid
 
-1,024 u16 values, one per quad (32 × 32). Every value is the `material` of one of the
-chunk's layers (86,726 of 86,726 chunks).
+1,024 u16 values, one per quad (32 × 32). Every value is the `material` (terrain-type key)
+of one of the chunk's layers (86,726 of 86,726 chunks).
 
-Probable order: quad (column qx, row qy) at index 32 · qy + qx, the same Y-major order as the
-index list (a layer's own triangles land on quads holding that layer's `material` 31.5 % of
-the time under this order, 23.5 % under the transpose).
+**Order (Confirmed):** quad (column qx along X, row qy along Y) at index **32 · qy + qx**, the
+same Y-major order as the index list (`terrain-texturing.md` §4.6: 93.6–94.9 % agreement with
+a recomputation per region, 51–56 % for the transposed order).
 
-> **OPEN:** Which layer the quad grid records (topmost, dominant, or the one for footstep
-> sounds and physics surfaces) and a firm orientation.
+**Meaning (Probable):** the terrain type most visible in that quad after the layers are
+composited (`terrain-texturing.md` §4.6). It is not used for drawing. Procedural scenery reads
+it to test each type's "procedural content allowed" flag (`scenery.md` §7.4 step 7); the
+type entry's physics material suggests footstep and ground-type use as well.
+
+> **OPEN:** The exact weighting the exporter used for "most visible" (`terrain-texturing.md`
+> §4.6).
 
 <a id="s3-9"></a>
 ### 3.9 Collision tree blocks (Confirmed layout)
@@ -456,7 +525,7 @@ mesh collision tree block **without** its leading `has_code` byte (that role is 
 | `origin` | 3 × f32 |
 | `scale` | f32 |
 | `code_length` *n* | u32 |
-| `code` | *n* bytes, opaque |
+| `code` | *n* bytes: the quantised bounding-volume program of `collision.md` §3 |
 | `build_byte` | u8, value 1. Present **iff the record's `stamp` ≥ 38** (`mesh.md` §10.4) |
 
 Observed: `has_terrain_tree` = 1 in 58,546 records (49,919 of them with stamp ≥ 38 and a
@@ -469,8 +538,13 @@ count u32 1,089 (bytes 41 04 00 00); if the next four bytes are not that, a `bui
 is present. For the terrain tree, a `build_byte` is present exactly when consuming it lets
 the remaining bytes parse as parts 13–14 with nothing left over.
 
-Tessera does not interpret the code (`mesh.md` §10.2). Physics may build its own structure
-from the heights.
+The code is specified in `collision.md` §3 (opcodes, integer coordinates, queries). For
+terrain trees its keys are grid triangle numbers 2 · (32 · j + i) + side, and every terrain
+code reports exactly the 2,048 grid triangles of §3.11's triangulation (`collision.md` §6.1,
+§6.2); ceiling trees use the same numbering over the ceiling grid (`collision.md` §6.4).
+331,604 records have no terrain tree, so the tree is not needed to collide with terrain. A
+decoder parses past the code by its length; Tessera builds its own collision structure from
+the triangles (`collision.md` §3.8, a Tessera Decision).
 
 <a id="s3-10"></a>
 ### 3.10 Box list (Confirmed layout; meaning OPEN)
@@ -517,8 +591,9 @@ a renderer meshes: two triangles per quad, diagonal per bit 7, counter-clockwise
   index < 1,089; every layer's triangles lie within its `start`/`prims` window and its
   vertex window.
 - **HM6**: every triangle of a layer index list lies in one grid quad. In **terrain** chunks
-  it also uses the diagonal given by §3.6 and is counter-clockwise from above; ceiling
-  triangles are clockwise from above and do not always follow bit 7 (§3.5 census).
+  it uses the diagonal given by bit 7 (§3.6) and is counter-clockwise from above; in
+  **ceiling** chunks it uses the diagonal given by bit 0 (§3.6) and is clockwise from above
+  (§3.5).
 - **HM7**: edge samples equal the neighbour's (§3.3).
 
 <a id="s3-13"></a>
@@ -526,14 +601,18 @@ a renderer meshes: two triangles per quad, diagonal per bit 7, counter-clockwise
 
 | Part | Status |
 |---|---|
-| Heights, scale, axis order, triangulation | Known |
-| Ceiling grid and when it exists | Known; facing OPEN |
-| Vertex flags bit 7 | Known |
-| Vertex flags bits 0–6 | OPEN (§3.6) |
-| Coarse 17 × 17 grid | Layout known; meaning and order OPEN (§3.7) |
-| Surface layers | Layout and geometry known; `material` table, blend order, mask orientation, `whole` OPEN (§3.8) |
-| Collision trees | Layout known; code opaque (as for meshes) |
+| Heights, axis order, triangulation | Known |
+| Height scale | Known: the client's rule stored × 2,000 / 65,535 (§3.4, BIN) |
+| Ceiling grid and when it exists | Known; faces down; diagonal from bit 0 for every quad (§3.5); rendering of ceiling vertices below the floor OPEN |
+| Vertex flags bits 7 and 0 | Known: terrain and ceiling diagonals (§3.6) |
+| Vertex flags bits 1–6 | OPEN (§3.6); always all set or all clear together |
+| Terrain triangles in no layer | Known: not drawn, kept in collision, not cave mouths (§3.5) |
+| Coarse 17 × 17 grid | Known: per-vertex scenery word (§3.7, `scenery.md`) |
+| Surface layers | Known: terrain-type keys, draw order, masks, `whole` (§3.8, `terrain-texturing.md`) |
+| Quad grid | Order known; meaning Probable (§3.8.4) |
+| Collision trees | Known: `collision.md` §3, §6 (§3.9) |
 | Box list | Layout known; meaning OPEN (§3.10) |
+| Water | Not stored here: per-landblock water comes from block-map keys 4 and 7 and the height-grid minimum (`water.md` §6) |
 
 ---
 
@@ -604,11 +683,24 @@ Cells are interior spaces (rooms, caves, dungeon pieces) placed in the landblock
 | 8 | properties | embedded property set | If `cell_flags` bit 2 (always). Holds `Render_AdjustableScale` and `Physics_AdjustableScale` in every cell, often `Appearance_InstanceList`, `Dungeon_DID`, interior fog and light values, `Ambient_*` |
 
 Cell positions use the landblock frame but are not confined to 0–160 (`coordinates.md`
-§6). Rendering cells needs the 0x01 geometry format, which is not specified yet.
+§6). The 0x01 geometry records are decoded in `collision.md` §5 (physics mesh, cell-volume
+planes, portals, wall polygons, hull, properties and an embedded render mesh, §5.7, which is
+what a renderer draws). A cell places its geometry by `position` and orientation as an active
+rotation (`collision.md` §5.8). **Neighbour entry *k* describes portal *k* of the cell's
+geometry:** the neighbour cell is the cell seen through that portal and the back-reference is
+the index of the same opening among the neighbour's portals (`collision.md` §5.8; reciprocal
+in all 393,842 entries).
 
-> **OPEN:** layout of the 0x01 cell geometry records (portals, PVS); meaning of
-> `cell_flags` bits 3, 4, 5, the neighbour back-reference and flag, lists A and B and
-> `extra`. Interiors are after M3 in the roadmap.
+A point enters a cell from the outdoor world by **containment**, not through a portal: the
+client puts a phantom shaped like each cell's hull into the landblock's physics world and
+takes the first cell whose phantom overlaps a small cube around the point and whose cell
+volume contains it (`collision.md` §5.8.1, BIN; L23). No portal leads outside.
+
+> **OPEN:** Meaning of `cell_flags` bits 3, 4, 5, of the neighbour flag byte (`collision.md`
+> Q3), of lists A and B and of `extra`; how often the client re-evaluates a moving
+> character's cell (after every step, or only when its phantom starts or stops overlapping a
+> cell phantom; `collision.md` Q3, Tessera Decision there). Interiors are after M3 in the
+> roadmap.
 
 > **OPEN:** how a cell whose `position` has no x, y, z (flag 0x4B, 2 cells) is placed:
 > at the landblock origin, at the position of a neighbour or portal, or from its geometry.
@@ -699,8 +791,9 @@ music, sky, level cap, …) by index into a per-region **descriptor** table.
 <a id="s5-1"></a>
 ### 5.1 Finding the descriptor (Confirmed)
 
-Region number → REGION DID map 0x28000008 → region descriptor 0x0F… → the DID in table
-slot 7 (offset 102, ENV §3.1) → descriptor 0x18…. In this install:
+Region number → REGION DID map 0x28000008 → region descriptor 0x0F… → the key-0 entry of its
+seventh DID map (`environment.md` §3.1; offset 102 in every record of this install) →
+descriptor 0x18…. In this install:
 
 | Region | Region descriptor | Block-map descriptor |
 |---|---|---|
@@ -797,14 +890,21 @@ For the world walker the relevant ones are `Area_DID` (on-screen area name via
 ### 5.6 Keys without a descriptor entry
 
 Every block map also carries keys 0x00000003, 0x00000004, 0x00000006, 0x00000007, and in
-regions 2, 3, 4, 5 and 14 key 0x10000012, which no 0x18 descriptor lists. Their indices
-vary: key 3 is always 0; key 4 takes up to 182 distinct values per region; key 6 up to 8;
-key 7 up to 32; key 0x10000012 0 or 1.
+regions 2, 3, 4, 5 and 14 key 0x10000012, which no 0x18 descriptor lists. Their values are
+**not** palette indices: the client uses the raw u16 (BIN (c)). Another region table names
+each key in its own header (the u32 at offset 8, or 12 for the water type), and the client
+reads that field and looks the key up in the landblock's block map (BIN (c)):
 
-> **OPEN:** Where keys 3, 4, 6, 7 and 0x10000012 are resolved. Candidates are the other
-> per-region tables named by the region descriptor (ENV §4: 0x11, 0x12, 0x14, 0x16, 0x17,
-> 0x19); key 4's range suggests a terrain or environment zone. Readers keep the raw
-> (key, index) pairs.
+| Key | Named by (region-descriptor slot) | Meaning | Values in this install | Spec |
+|---|---|---|---|---|
+| 3 | Fog-zone table, prefix 0x17 (slot 6), offset 8 | Fog-zone number, looked up at the landblock and its east, north and north-east neighbours | 0 in all 390,150 (no active zone) | `water.md` §5 |
+| 4 | Water table, prefix 0x16 (slot 5), offset 8 | Water level *L*; height *L* × 1000 / 255 | 0–255; up to 182 distinct per region | `water.md` §6 |
+| 6 | Encounter table, prefix 0x14 (slot 3), offset 8 | Encounter zone (Probable: the client reads that table's key field the same way; the encounter pass is out of scope offline) | region 1 only: 0, 1, 4, 6, 12–15; 0 elsewhere | `scenery.md` §7.7 |
+| 7 | Water table, offset 12 | Water type (an entry key of the water table) | 0–47 | `water.md` §6 |
+| 0x10000012 | not found | OPEN | 1 in 5 blocks of region 2, else 0 | |
+
+> **OPEN:** Which record or code reads key 0x10000012. Readers keep the raw (key, value)
+> pairs of every key.
 
 <a id="s5-7"></a>
 ### 5.7 Invariants (Confirmed)
@@ -858,28 +958,49 @@ Own DID, then one embedded property set (`property-system.md` §5), nothing left
 <a id="s6-4"></a>
 ### 6.4 Light maps
 
-The surfaces sampled are DXT1, 128 × 128 (1.25 units per texel): baked landscape lighting
-and static-object shadows (ER §3 notes that object shadows are baked into the landscape).
-The ceiling variant lights the ceiling surface.
+The surfaces are DXT1, 128 × 128 (1.25 units per texel). Settled in
+`terrain-texturing.md` §10 (the former OPEN of this section):
 
-> **OPEN:** Light-map texel orientation and how it combines with the layer textures.
+- **Orientation (Confirmed):** the same as the layer masks, row 0 on the block's south edge,
+  column 0 on its west edge, sampled at (x / 160, y / 160); seam test on 4,323 adjacent block
+  pairs. This is the opposite row order to the minimap tiles of §6.3.
+- **Use (BIN, `terrain-texturing.md` §10 and T22):** bound as material parameter 3019 with
+  clamp addressing and bilinear filtering, and **added** to the lighting sum of every layer,
+  not multiplied.
+- **Content (Probable):** baked light from placed light sources; 79 % of texels are black
+  (OBS).
+- The ceiling variant (`Landblock_CeilingLightMap`) applies to the ceiling chunk in the same
+  way.
 
 ---
 
 <a id="s7"></a>
-## 7. Kind 5 `0x805RXXYY` (Confirmed framing; meaning OPEN)
+## 7. Kind 5 `0x805RXXYY`: distant-landscape sector (Confirmed framing; DB type BIN; most of the layout OPEN)
 
+- **What it is (BIN (b)):** the client registers DID range 0x80500000–0x805FFFFF for DB type
+  0x41, labelled DISTANT_LANDSCAPE_SECTOR: the low-detail landscape for a 3 × 3 group of
+  landblocks, drawn beyond the full-detail rings (`terrain-texturing.md` §12). It is not the
+  navigation record (that is `K` = 6, absent). Whether the frill engine's 3 × 3 "source
+  groups" (ER §3) read it is not known (`scenery.md` §15 item 12).
 - Exists only where X and Y are multiples of 3 (33,159 records), and only with stamps 38 or
-  39. One record per 3 × 3-landblock group; ER §3 reports 3 × 3 "source groups" for grass
-  (frills), and a cache type named for navigation landblocks; either may be this record.
+  39. One record per 3 × 3-landblock group.
 - Layout: own DID; u32 *n* = 9,801 (= 99 × 99) in every record; *n* × 5 bytes; then a
-  trailing section that starts with u32 0 in every record and whose layout is not decoded.
+  trailing section that starts with u32 0 in every record.
 - In each 5-byte sample, bytes 0–1 read as a u16 on the terrain height scale and bytes 2–4
   as three unsigned bytes near (127, 255, 127) (an up-pointing vector in a biased encoding
   is the guess). The u16 values do **not** equal the terrain heights at the obvious
   corresponding points (median difference 15 units).
+- **Water (Confirmed):** the trailing section carries the sector's water list, a VLE count
+  and that many pairs of (u8 water type, f32 height), and per landblock a "has water" byte and
+  the index of its pair (BIN). In all 12,925 records whose landblocks include a wet one, every
+  (type, height) pair predicted by `water.md` §6.2 occurs, bit-identical. The client builds
+  its landscape water quads from these pairs (`water.md` §8.1, §9); a reader can derive the
+  same pairs from the block maps instead.
 
-> **OPEN:** meaning, sample spacing and the trailing section. Not required by M3.
+> **OPEN:** Sample spacing and meaning, and the rest of the trailing section (the client's
+> reader has several versioned sub-objects: a mode byte, a sub-object present when the mode is
+> non-zero, a u32, the water list, a list of 23-byte entries and, for newer versions, further
+> counted lists). Not required by M3 or M4.
 
 ---
 
@@ -898,6 +1019,9 @@ For landblock (R, X, Y):
 4. Properties: read `0x804RXXYY` if present (§6).
 5. For seamless normals, also request the heights of the east, north and north-east
    neighbours (their edge samples equal this block's; §3.3).
+6. Water: decide the landblock's water from the block map (keys 7 and 4) and the height
+   grid's minimum with `water.md` §6.2; the fog-zone key 3 needs the east, north and
+   north-east neighbours' block maps (`water.md` §5.3).
 
 <a id="s8-1"></a>
 ### 8.1 Implementation notes (`tessera-world`, 2026-10-04)
@@ -1030,6 +1154,14 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 > **OPEN (decoder policy):** Region descriptors (prefix 0x0F) are accepted only at exactly
 > 114 bytes (`environment.md` §3.1, every observed record). The block-map descriptor is
 > looked up as the first table DID with prefix 0x18 rather than by slot number.
+>
+> **Answered (2026-10-05, spec writer):** `environment.md` §3.1 now gives the region
+> descriptor's full grammar (BIN): fixed fields, nine DID maps (each a TSize count and
+> (u32 key, DID) entries) and a trailing DID. Every record of this install has one entry in
+> maps 1–7 and none in maps 8–9, hence 114 bytes, but a decoder should parse the grammar
+> rather than require the size. The block-map descriptor is the key-0 entry of map 7 (the
+> client asks every map for key 0 only); the prefix rule gives the same DID in this
+> install.
 
 <a id="s10"></a>
 ## 10. Hostile-input notes
@@ -1046,14 +1178,33 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 <a id="s11"></a>
 ## 11. Open questions (summary)
 
-1. Bits 0–6 of the vertex-flag grid (§3.6).
-2. The 17 × 17 coarse grid (§3.7).
-3. Surface-layer `material` table, blend order, mask orientation, `whole` (§3.8.2); quad-grid
-   meaning and order (§3.8.4).
-4. Ceiling diagonal rule (§3.5; facing is now known: down); box list (§3.10).
-5. Landblock-info `size_hint`, trailer, cross-link `mask`, header indices, cell flags and
-   lists, 0x01 cell geometry, placement of the 2 cells without an offset (§4).
-6. Block-map keys without descriptor entries (§5.6); descriptor `flag` byte (§5.2).
-7. Light-map orientation (§6.4).
-8. Kind 5 (§7).
+1. Bits 1–6 of the vertex-flag grid (§3.6). *(Bit 0 answered: the ceiling diagonal,
+   `collision.md` §6.4.)*
+2. *(Answered: the 17 × 17 coarse grid is the per-vertex scenery word, §3.7 and `scenery.md`.)*
+3. *(Answered 2026-10-05: surface-layer `material`, order, blending, mask orientation and
+   `whole`, §3.8.2 and `terrain-texturing.md` §4–§8; quad-grid order, §3.8.4.)* Remaining:
+   the quad grid's exact weighting (§3.8.4).
+4. Rendering of "ceiling below floor" vertices (§3.5); box list (§3.10). *(Ceiling diagonal
+   answered: bit 0 for every quad, `collision.md` §6.4, Q5 answered; hole triangles are kept
+   in collision, `collision.md` §6.5.)*
+5. Landblock-info `size_hint`, trailer, cross-link `mask`, header indices, cell flags, the
+   neighbour flag byte, lists A and B, `extra`, placement of the 2 cells without an offset
+   (§4). *(The 0x01 cell geometry, the neighbour meaning and entering a cell from outdoors
+   are answered by `collision.md` §5, §5.8.1; only the re-evaluation frequency stays open,
+   `collision.md` Q3.)*
+6. Block-map key 0x10000012 (§5.6; keys 3, 4, 6 and 7 answered); descriptor `flag` byte
+   (§5.2).
+7. *(Answered 2026-10-05: light-map orientation and use, §6.4 and `terrain-texturing.md`
+   §10.)*
+8. Kind 5: sample meaning and the rest of the trailing section (§7; the record kind and its
+   water pairs are known).
 9. In-game height test points (§3.4).
+
+<a id="s12"></a>
+## 12. Change log
+
+| Date | Change |
+|---|---|
+| 2026-10-04 | First version (§0–§11). |
+| 2026-10-05 | Sweep adopting the correction tables of `terrain-texturing.md` §15, `collision.md` §15 and `water.md` §13, plus new BIN facts. §1: tags TT, COL, SCN, WAT and BIN; L4 revised; L7 and L16 updated; new L18–L22. §2.1: DB type of every kind; `K` = 6 registered but absent. §3.4: height rule changed to the client's stored × 2,000 / 65,535 (BIN), largest difference to the former stored / 32.768 is 0.0305 units. §3.5: ceiling facing, collision numbering and terrain holes cross-referenced; OPEN narrowed. §3.8.2: `material` is a terrain-type key; the layer-kinds table states what the client draws; mask census; former OPENs (1)–(4) answered. §3.8.4: order Confirmed, meaning Probable. §3.9: tree code specified by `collision.md` §3. §3.13: summary updated. §4.4: 0x01 geometry and neighbour meaning answered by `collision.md` §5; OPEN narrowed. §5.6: keys 3, 4, 6, 7 resolved (fog zone, water level, encounter zone, water type); only 0x10000012 OPEN. §6.4: light-map orientation and use answered. §7: kind 5 is the distant-landscape sector record and carries water pairs. §8: step 6 (water). §11 updated; this change log added. |
+| 2026-10-05 | Revision after review (changes requested): the `collision.md` §15 rows for §3.5 and §3.6, not adopted by the sweep above, are now adopted. §1: legend adds BIN and Tessera Decision and covers 2026-10-05 facts; L6 limited to terrain; new L6a (bit 0 = ceiling diagonal), L6b (holes kept in collision, not cave mouths), L23 (entering a cell by containment); L22 marks the additive use BIN. §3.5: ceiling triangulation by bit 0 for every quad (replaces "from the stored triangles" and the implementation-census OPEN); holes described per `collision.md` §6.5 (not cave mouths); only the "ceiling below floor" rendering question stays OPEN, with a Tessera Decision. §3.6: bit 0 specified; bits 1–6 always set or clear together, OPEN. §3.8.3: evidence sentence limited to terrain chunks. §3.12 HM6: ceiling triangles follow bit 0. §3.13: rows updated. §4.4: entering a cell from outdoors answered (`collision.md` §5.8.1); OPEN narrowed to the re-evaluation frequency. §6.4: additive use BIN, content Probable. §11 items 1, 4 and 5 updated. |

@@ -110,6 +110,12 @@ Notes:
    equipment category has a bit above 31, which `tessera-formats` dropped, so it stayed in
    hand); it now stows on the back (`Sheath_Back_Shield`, bone 16) like the other shields,
    and `assembly_real_data` checks all 25 stowed rows without exceptions.
+7. **Owner look, 2026-10-05:** the owner ran Tessera on the laptop (RTX 2070 Super Max-Q)
+   and judged the characters' positions and heights fine by eye. This is a look at
+   Tessera's own output, with no side-by-side screenshots and no `/loc` readings, and it
+   does not say which bodies were looked at. So it does not settle the River-hobbit
+   foot-contact rows (B37–B42, note 1) or the measured comparisons with the original client
+   (O8, O9, O17).
 
 ## B. Bodies (criterion 2)
 

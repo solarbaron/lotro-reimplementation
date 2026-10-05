@@ -42,7 +42,7 @@ marks the item **done** here.
 | [O5](#o5) | Exact dye blend | `material.md` §12.3 | Look, or frame capture | open |
 | [O6](#o6) | Other material and render-state questions | `material.md` §17 and §19 | Frame capture | open |
 | [O7](#o7) | Command-line option leniency | `install-layout.md` §10 | Launch test | open, low priority |
-| [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | open (M4) |
+| [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | open (M4; informal look at Tessera fine, 2026-10-05) |
 | [O9](#o9) | Height slider and facial bone sliders in character creation | `appearance.md` §6.2, §6.3 | Character-creation screen | open (M4) |
 | [O10](#o10) | Worn-item layering and equal-priority ties | `appearance.md` §4.6, §4.7 | Look (wardrobe preview) | open (M4) |
 | [O11](#o11) | Updated-avatar option and default style files | `appearance.md` §3.3 | Options screen, look | open (M4) |
@@ -51,7 +51,7 @@ marks the item **done** here.
 | [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | Look, `/loc`, short videos | open (M4) |
 | [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3 | Frame capture | open (M4, low priority) |
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §16 | Look, explorer side by side | open (M4) |
-| [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7 | In-game `/loc`, look | open (M4) |
+| [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7 | In-game `/loc`, look | open (M4; informal look at Tessera fine, 2026-10-05) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O14, O16; criterion 3 (worn and held
@@ -210,6 +210,9 @@ Hobbit. Measure the top of the head of each in pixels.
 
 **Record:** for each pair, the height ratio (to two decimals), and whether a High-elf
 female stands about 3 % or about 5 % taller than a Human female.
+
+**2026-10-05 (informal):** the owner looked at characters in Tessera on the laptop and found
+their heights fine by eye. No ratios were measured, so the record above is still wanted.
 
 <a id="o9"></a>
 ## O9. Height slider and facial bone sliders (M4)
@@ -392,3 +395,7 @@ content layers; see also [O3](#o3)).
 **Record:** per row: present yes/no; the `/loc` numbers; the facing as a compass bearing
 (±10° is enough); `same` / `different` from the walker's figure (position within about a
 metre, facing, pose such as sitting or standing, held item).
+
+**2026-10-05 (informal):** the owner looked at characters in Tessera on the laptop and found
+their positions fine by eye. No `/loc` readings or facings were taken, so the record above
+is still wanted.

@@ -67,19 +67,17 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   criteria 1, 3, 5 pass; entity storage decided (`docs/decisions/0008-entity-storage.md`,
   own store). Evidence: the status tables in `docs/ROADMAP.md`.
 - **M4 still open:** criterion 4 (50 animated characters at 60 fps) passed only on a
-  non-reference laptop (RTX 2070 Super Max-Q, 202 fps headless); it needs the run on the reference
-  machine once the owner confirms it (`docs/perf/reference-machine.md`). Criterion 2 fails
+  non-reference laptop (RTX 2070 Super Max-Q, 202 fps headless). The owner confirmed the
+  reference machine on 2026-10-05: the GTX 1070 Ti workstation (`docs/perf/reference-machine.md`).
+  It is not available at the moment; run `--crowd 50` there when it is. Criterion 2 fails
   only the River-hobbit foot height (rows B37–B42 of `docs/checklists/m4-visual.md`), which
-  waits on the leg-slider question in `appearance.md` §6.3 (O9).
-- **Clean-room incident:** `script-table.md`'s `BIN` facts came from a client disassembly;
-  the owner authorised it retroactively for that question only
-  (`docs/decisions/0009-script-table-disassembly.md`). Any other disassembly needs its own
-  decision record first.
+  waits on the leg-slider question in `appearance.md` §6.3 (O9). The owner's informal look on
+  the laptop (2026-10-05) found character positions and heights fine.
 - **Next:** M5 (UI layouts, skins and Lua plugins), unless the owner wants the open M4 items
   closed first.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
-  M3 reference locations, frame-capture questions from M2, M4 items O8–O17), confirmation
-  of the reference machine. These do not block M5.
+  M3 reference locations, frame-capture questions from M2, M4 items O8–O17), the
+  reference-machine CPU model. These do not block M5.
 - **Toolchain note:** the 2026-10-05 checks ran on a distro rustc 1.97.1 (no rustup on that
   machine); re-run clippy on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review

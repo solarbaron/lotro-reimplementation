@@ -12,8 +12,10 @@ use std::sync::Arc;
 
 use tessera_formats::Did;
 
-use crate::interface::ShaderInterface;
-use crate::records::{BlendFactor, BlendOp, MaterialRecord, ParamEntry, ParamValue, SamplerState};
+use crate::interface::{ShaderInterface, SlotInterface};
+use crate::records::{
+    BlendFactor, BlendOp, FloatCurve, MaterialRecord, ParamEntry, ParamValue, SamplerState,
+};
 use crate::vocab::{AlphaUse, ChannelPacking, SlotKind, ids};
 
 /// Where an effective value comes from.
@@ -183,10 +185,21 @@ impl ParameterSet {
         self.params.get(*self.index.get(&id)?)
     }
 
-    /// The effective float `id` ([`crate::records::FloatCurve::evaluate`]).
+    /// The effective float `id` at time 0 ([`crate::records::FloatCurve::evaluate`]).
+    /// For an animated value, evaluate [`ParameterSet::curve`] over time instead.
     #[must_use]
     pub fn float(&self, id: u32) -> Option<f32> {
         self.get(id)?.value.as_float()
+    }
+
+    /// The effective float curve `id`, for evaluation over time
+    /// ([`crate::records::FloatCurve::evaluate_at`], `material.md` §5.3.1).
+    #[must_use]
+    pub fn curve(&self, id: u32) -> Option<&FloatCurve> {
+        match &self.get(id)?.value {
+            ParamValue::Float(c) => Some(c),
+            _ => None,
+        }
     }
 
     /// The effective colour `id`.
@@ -229,7 +242,10 @@ pub struct TextureSlot {
     pub role: Option<String>,
     /// Channel packing (§10.2).
     pub packing: ChannelPacking,
-    /// Sampler state (address and filter, §7.5).
+    /// Sampler state (address and filter, §7.5), with the effective address modes: where
+    /// a binding of flag 4005 / 4006 names the slot's sampler, address mode U / V is wrap
+    /// (code 1) when the effective flag is 1 and clamp (code 3) when it is 0, whatever the
+    /// stored byte (§8.5: the flags, not the stored bytes, decide the wrap mode).
     pub sampler: Option<SamplerState>,
     /// Where the texture value comes from.
     pub origin: ParamOrigin,
@@ -238,9 +254,11 @@ pub struct TextureSlot {
 /// Blend mode (§11.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlendMode {
-    /// No blending, depth write on.
+    /// Opaque pass. For a lit record the factors are still SRCALPHA / INVSRCALPHA, but the
+    /// output alpha is 1 by construction (no opacity source and 2000 alpha 1, §11.3).
     Opaque,
-    /// Opaque with alpha test.
+    /// Opaque with alpha test: an unlit record whose blend is ONE / ZERO (a lit record
+    /// with an opacity source blends, §11.3).
     Cutout,
     /// colour × opacity + destination × (1 − opacity).
     AlphaBlend,
@@ -255,22 +273,28 @@ pub enum BlendMode {
 pub struct BlendState {
     /// The classified mode.
     pub mode: BlendMode,
-    /// Source factor. "Source alpha" is the alpha of [`BlendState::opacity_slot`], or 1
-    /// without one.
+    /// Source factor. "Source alpha" is the effective 2000 alpha
+    /// ([`ResolvedMaterial::material_alpha`]) × the alpha of [`BlendState::opacity_slot`]
+    /// (1 without one) × the alpha of [`ResolvedMaterial::second_opacity_slot`] (when
+    /// there is one) × the vertex alpha where the record reads vertex colours
+    /// (`material.md` §11.3, §20.1; `lighting.md` §5.12, §5.13).
     pub src: BlendFactor,
     /// Destination factor.
     pub dst: BlendFactor,
     /// Operation.
     pub op: BlendOp,
-    /// Depth write.
+    /// Depth write: the render-state byte (unlit) or on (lit base passes), and off when
+    /// the effective 4002 DepthWrite is 0 (§8.5). Depth test: [`ResolvedMaterial::depth_test`].
     pub depth_write: bool,
-    /// The texture slot whose alpha is "source alpha" in the factors; `None` means 1.
+    /// The texture slot whose alpha multiplies "source alpha" in the factors (see
+    /// [`BlendState::src`]); `None` means the texture contributes 1.
     ///
-    /// It is the §11.2 opacity source ([`FeatureFlags::opacity_slot`]) when there is one.
-    /// For an unlit record whose factors use source alpha and that has no such source, it
-    /// is slot 3000 when that slot's alpha is not a gloss or dye mask (role `Color`,
-    /// `DiffuseTexture`, `Diffuse…`, unnamed or unknown): such effect textures carry
-    /// their shape in alpha (`material.md` §18 Decision). Alpha test is unaffected.
+    /// It is the §11.2 opacity source ([`FeatureFlags::opacity_slot`]) when there is one,
+    /// for lit and unlit records. For an unlit record whose factors use source alpha and
+    /// that has no such source, it is slot 3000 only when that slot's role is
+    /// `DiffuseTexture`, `LiquidDiffuseTexture`, `ColorTexture` or `ColorTexture2`
+    /// (`material.md` §20.1, revising the §18 Decision); for every other role (`Color`,
+    /// unnamed, …) source alpha is the 2000 alpha alone. Alpha test is unaffected.
     pub opacity_slot: Option<u32>,
 }
 
@@ -302,9 +326,13 @@ impl BlendState {
 /// Alpha test (§11.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlphaTest {
-    /// A fragment is kept when opacity ≥ threshold.
+    /// A fragment is discarded when opacity ≤ threshold, so it is kept only when
+    /// opacity **>** threshold (`material.md` §11.2, `lighting.md` §5.12). The test uses
+    /// the texture opacity only, before any vertex-colour alpha.
     pub threshold: f32,
-    /// The texture slot whose alpha is the opacity.
+    /// The texture slot whose alpha is the opacity. With two colour layers
+    /// ([`ResolvedMaterial::second_opacity_slot`]) the opacity is the product of both
+    /// slots' alphas (§11.2).
     pub source_slot: u32,
 }
 
@@ -318,11 +346,13 @@ pub struct FeatureFlags {
     /// Alpha test, when enabled and an opacity source exists.
     pub alpha_test: Option<AlphaTest>,
     /// The opacity source slot (§11.2), the alpha-test source. Blending uses
-    /// [`BlendState::opacity_slot`], which is the same slot when there is one.
+    /// [`BlendState::opacity_slot`], which is the same slot when there is one. A second
+    /// colour layer may multiply it ([`ResolvedMaterial::second_opacity_slot`]).
     pub opacity_slot: Option<u32>,
     /// Blend state.
     pub blend: BlendState,
-    /// Two-sided (no back-face culling, §11.4).
+    /// Two-sided (no back-face culling): effective 4003 DoubleSided = 1, or the record's
+    /// most common cull is NONE (§11.4, revised 2026-10-05; 4007 is not the flag).
     pub two_sided: bool,
     /// Normal-mapped.
     pub normal_mapped: bool,
@@ -409,6 +439,24 @@ pub struct ResolvedMaterial {
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
+/// Slot-3000 roles whose alpha reaches the output of an unlit blended record without a
+/// §11.2 opacity source (`material.md` §20.1).
+const UNLIT_ALPHA_ROLES: [&str; 4] = [
+    "DiffuseTexture",
+    "LiquidDiffuseTexture",
+    "ColorTexture",
+    "ColorTexture2",
+];
+
+/// Sampler-state byte of address mode U (§7.5).
+const SAMPLER_ADDRESS_U: usize = 8;
+/// Sampler-state byte of address mode V (§7.5).
+const SAMPLER_ADDRESS_V: usize = 9;
+/// Address code "wrap" (§7.5).
+const ADDRESS_WRAP: u8 = 1;
+/// Address code "clamp" (§7.5).
+const ADDRESS_CLAMP: u8 = 3;
+
 /// Fallback alpha-test threshold when neither 1043 nor a render-state reference exists.
 pub const FALLBACK_ALPHA_THRESHOLD: f32 = 0.5;
 
@@ -454,7 +502,9 @@ impl ResolvedMaterial {
                     texture: p.and_then(|p| p.value.as_texture()),
                     role: s.role.clone(),
                     packing: s.packing,
-                    sampler: s.sampler,
+                    sampler: s
+                        .sampler
+                        .map(|state| Self::effective_sampler(s, state, &params)),
                     origin: p.map_or(ParamOrigin::Default, |p| p.origin),
                 }
             })
@@ -490,7 +540,31 @@ impl ResolvedMaterial {
         }
     }
 
-    /// The slot whose alpha is source alpha for blending ([`BlendState::opacity_slot`]).
+    /// The stored sampler `state` of `slot` with the effective wrap flags applied: §8.5,
+    /// 4005 / 4006 = 1 wrap, 0 clamp, for the samplers their bindings name.
+    fn effective_sampler(
+        slot: &SlotInterface,
+        mut state: SamplerState,
+        params: &ParameterSet,
+    ) -> SamplerState {
+        let code = |wrap: bool| if wrap { ADDRESS_WRAP } else { ADDRESS_CLAMP };
+        if slot.wrap_u_bound
+            && let Some(wrap) = params.flag(ids::WRAP_U)
+        {
+            state.raw[SAMPLER_ADDRESS_U] = code(wrap);
+        }
+        if slot.wrap_v_bound
+            && let Some(wrap) = params.flag(ids::WRAP_V)
+        {
+            state.raw[SAMPLER_ADDRESS_V] = code(wrap);
+        }
+        state
+    }
+
+    /// The slot whose alpha multiplies source alpha for blending
+    /// ([`BlendState::opacity_slot`]): the §11.2 source, else, for an unlit record whose
+    /// factors read source alpha, slot 3000 when its role is one whose alpha reaches the
+    /// programs' output (§20.1).
     fn blend_opacity_slot(
         shader: &ShaderInterface,
         opacity_slot: Option<u32>,
@@ -500,9 +574,9 @@ impl ResolvedMaterial {
             return opacity_slot;
         }
         shader
-            .slot(ids::DIFFUSE)
-            .filter(|s| matches!(s.packing.alpha, AlphaUse::Unused | AlphaUse::Unknown))
-            .map(|s| s.id)
+            .role(ids::DIFFUSE)
+            .filter(|role| UNLIT_ALPHA_ROLES.contains(role))
+            .map(|_| ids::DIFFUSE)
     }
 
     fn features(
@@ -529,8 +603,24 @@ impl ResolvedMaterial {
             _ => None,
         };
 
+        let material_alpha = params.color(ids::DIFFUSE_COLOR).map_or(1.0, |c| c[3]);
         let blend = if shader.lit {
-            BlendState::OPAQUE
+            // §11.3 Rule (revised 2026-10-05): the lit base passes blend SRCALPHA /
+            // INVSRCALPHA by output alpha = (opacity texel when the base role carries
+            // opacity) × 2000 alpha; opaque pass only when that is 1 by construction.
+            let opaque = opacity_slot.is_none() && material_alpha >= 1.0;
+            BlendState {
+                mode: if opaque {
+                    BlendMode::Opaque
+                } else {
+                    BlendMode::AlphaBlend
+                },
+                src: BlendFactor::SrcAlpha,
+                dst: BlendFactor::InvSrcAlpha,
+                op: BlendOp::Add,
+                depth_write: true,
+                opacity_slot: None,
+            }
         } else {
             match shader.common_blend {
                 None => BlendState::OPAQUE,
@@ -562,10 +652,14 @@ impl ResolvedMaterial {
         };
         let blend = BlendState {
             opacity_slot: Self::blend_opacity_slot(shader, opacity_slot, &blend),
+            // §8.5: an effective 4002 DepthWrite of 0 turns depth write off (Inferred:
+            // overrides the render-state byte). A 1 leaves the byte's choice.
+            depth_write: blend.depth_write && params.flag(ids::DEPTH_WRITE) != Some(false),
             ..blend
         };
 
-        let two_sided = shader.cull_none || params.flag(ids::TWO_SIDED) == Some(true);
+        // §11.4 (revised 2026-10-05): 4003 DoubleSided, or a most common cull of NONE.
+        let two_sided = shader.cull_none || params.flag(ids::DOUBLE_SIDED) == Some(true);
         let normal_mapped =
             slot(ids::NORMAL).is_some_and(|s| s.texture.is_some() && s.packing.is_normal());
         let dyeable = (role_has(shader, ids::DIFFUSE, "Dye")
@@ -669,6 +763,54 @@ impl ResolvedMaterial {
     #[must_use]
     pub fn tint(&self) -> [f32; 4] {
         self.params.color(ids::DIFFUSE_COLOR).unwrap_or(WHITE)
+    }
+
+    /// The alpha of the material colour 2000 (1 when not declared): a factor of every
+    /// output alpha (`lighting.md` §5.12; `material.md` §11.3, §20.1). 0 makes a blended
+    /// surface invisible.
+    #[must_use]
+    pub fn material_alpha(&self) -> f32 {
+        self.tint()[3]
+    }
+
+    /// Depth test: off only when the effective 4001 DepthTest is 0 (§8.5); on when the
+    /// shader does not declare it.
+    #[must_use]
+    pub fn depth_test(&self) -> bool {
+        self.params.flag(ids::DEPTH_TEST) != Some(false)
+    }
+
+    /// A second texture slot whose alpha multiplies the opacity of slot 3000, when the
+    /// opacity (alpha test and blending) or the blend's source alpha comes from slot 3000:
+    ///
+    /// - two colour layers `ColorAndOpacity` (3000) and `ColorAndOpacity2` (3001): the
+    ///   opacity is the product of both alphas (§11.2; `lighting.md` §5.2 step 2, §5.12);
+    /// - an unlit `ColorTexture` diffuse: its source alpha uses the product of the two
+    ///   layers' alphas (§20.1).
+    ///
+    /// The second layer counts only when its effective texture is non-zero (§11.5
+    /// `second_layer`).
+    #[must_use]
+    pub fn second_opacity_slot(&self) -> Option<u32> {
+        let first = self
+            .features
+            .blend
+            .opacity_slot
+            .or(self.features.opacity_slot)?;
+        if first != ids::DIFFUSE {
+            return None;
+        }
+        let second = self
+            .slot(ids::SECOND_LAYER)
+            .filter(|s| s.texture.is_some())?;
+        let diffuse_role = self.slot(ids::DIFFUSE).and_then(|s| s.role.as_deref());
+        let two_opacity_layers = diffuse_role.is_some_and(|r| r.contains("Opacity"))
+            && second
+                .role
+                .as_deref()
+                .is_some_and(|r| r.contains("Opacity"));
+        let color_texture = diffuse_role == Some("ColorTexture");
+        (two_opacity_layers || color_texture).then_some(ids::SECOND_LAYER)
     }
 
     /// Specular colour (2001) and power (1000), when the shader is specular.

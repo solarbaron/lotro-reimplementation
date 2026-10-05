@@ -37,9 +37,10 @@ pub fn group_of(id: u32) -> u16 {
 
 /// A float curve (§5.3).
 ///
-/// Mode 1 is a constant. Modes 2–9 carry ten waveform parameters and mode 10 eleven, a
-/// flag byte and keyframe pairs; their shapes are OPEN, so Tessera evaluates every curve
-/// as its first parameter (§5.3 Decision).
+/// Mode 1 is a constant. Modes 2–9 carry ten waveform parameters `w[0..9]`; mode 10
+/// carries `w[0..9]` (unused by that mode), its `period`, a `loop` byte and keyframe pairs.
+/// [`FloatCurve::evaluate_at`] evaluates every mode over time (§5.3.1, Decision revised
+/// 2026-10-05); [`FloatCurve::evaluate`] is the value at time 0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloatCurve {
     /// Curve mode, 1–10.
@@ -49,9 +50,11 @@ pub struct FloatCurve {
     pub params: [f32; 11],
     /// Number of stored parameters in `params`.
     pub param_count: u8,
-    /// The mode-10 flag byte (0 otherwise; meaning OPEN).
-    pub key_flag: u8,
-    /// The mode-10 keyframe pairs (empty otherwise; meaning and order OPEN).
+    /// The mode-10 `loop` byte: 0 holds the last value after one period, 1 restarts
+    /// (§5.3.1). Always 0 or 1 (a reader rejects other values, §5.3); 0 for other modes.
+    pub loop_flag: u8,
+    /// The mode-10 keyframe pairs (value, position in percent of the period), in stored
+    /// order (empty for other modes).
     pub keys: Vec<(f32, f32)>,
 }
 
@@ -65,16 +68,19 @@ impl FloatCurve {
             mode: 1,
             params,
             param_count: 1,
-            key_flag: 0,
+            loop_flag: 0,
             keys: Vec::new(),
         }
     }
 
-    /// The value Tessera uses: the constant of a mode-1 curve, `w[0]` of any other mode
-    /// (§5.3 Decision: no animation in M2).
+    /// The mode-10 `period` in seconds (`params[10]`); 0 for other modes.
     #[must_use]
-    pub fn evaluate(&self) -> f32 {
-        self.params[0]
+    pub fn period(&self) -> f32 {
+        if self.mode == 10 {
+            self.params[10]
+        } else {
+            0.0
+        }
     }
 
     /// Whether the curve is not a constant (`mode` ≠ 1), i.e. animated in the original.
@@ -108,10 +114,19 @@ impl FloatCurve {
         for p in params.iter_mut().take(usize::from(param_count)) {
             *p = r.f32()?;
         }
-        let mut key_flag = 0;
+        let mut loop_flag = 0;
         let mut keys = Vec::new();
         if mode == 10 {
-            key_flag = r.u8()?;
+            let loop_at = r.position();
+            loop_flag = r.u8()?;
+            // §5.3: `loop` is 0 or 1; a reader rejects ≥ 2.
+            if loop_flag > 1 {
+                return Err(FormatError::Malformed {
+                    what,
+                    offset: loop_at,
+                    reason: format!("float curve loop byte {loop_flag} is not 0 or 1").into(),
+                });
+            }
             let k = r.u32()?;
             keys = alloc_vec::<(f32, f32)>(r, k, 8)?;
             for _ in 0..k {
@@ -122,7 +137,7 @@ impl FloatCurve {
             mode,
             params,
             param_count,
-            key_flag,
+            loop_flag,
             keys,
         })
     }
@@ -177,7 +192,8 @@ impl ParamValue {
         }
     }
 
-    /// The float value Tessera uses ([`FloatCurve::evaluate`]), for float values.
+    /// The float value at time 0 ([`FloatCurve::evaluate`]), for float values. Animated
+    /// curves need [`FloatCurve::evaluate_at`] with a clock.
     #[must_use]
     pub fn as_float(&self) -> Option<f32> {
         match self {

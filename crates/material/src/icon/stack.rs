@@ -170,6 +170,11 @@ impl StackEntry {
 /// Maximum number of layers in one [`IconStack`]. Real stacks have at most five.
 pub const MAX_STACK_LAYERS: usize = 16;
 
+/// The most input entries [`IconStack::from_entries`] reads, kept or dropped (an entry
+/// with a zero DID and no fallback is dropped). Bounds the work on an endless input of
+/// dropped entries; real stacks are built from five entries.
+pub const MAX_STACK_INPUT: usize = MAX_STACK_LAYERS * 4;
+
 /// The surfaces of one icon, bottom to top.
 ///
 /// Built from a property lookup (`name → DID`), which for a property set from
@@ -196,31 +201,39 @@ impl IconStack {
     /// A stack of the given entries, drawn in the given order (first = bottom). An entry
     /// with a zero DID is replaced by its fallback entry if it has one, else dropped.
     ///
-    /// The input is read only up to the first `MAX_STACK_LAYERS + 1` kept entries, so
-    /// the count in [`MaterialError::TooManyLayers`] is a lower bound here.
+    /// The input is read only until `MAX_STACK_LAYERS + 1` entries are kept or
+    /// [`MAX_STACK_INPUT`] + 1 entries are read, whichever comes first, so an endless
+    /// iterator is safe. Either fails with [`MaterialError::TooManyLayers`], whose count
+    /// is then a lower bound (of kept entries, or of entries read).
     pub fn from_entries(entries: impl IntoIterator<Item = StackEntry>) -> Result<Self> {
-        let entries: Vec<StackEntry> = entries
-            .into_iter()
-            .filter_map(|e| {
-                let e = StackEntry {
-                    fallback: e.fallback.filter(|d| d.0 != 0),
-                    ..e
-                };
-                if e.did.0 != 0 {
-                    Some(e)
-                } else {
-                    e.fallback_entry()
-                }
-            })
-            .take(MAX_STACK_LAYERS + 1)
-            .collect();
-        if entries.len() > MAX_STACK_LAYERS {
-            return Err(MaterialError::TooManyLayers {
-                count: entries.len(),
-                limit: MAX_STACK_LAYERS,
-            });
+        let mut kept: Vec<StackEntry> = Vec::new();
+        for (read, e) in entries.into_iter().enumerate() {
+            if read >= MAX_STACK_INPUT {
+                return Err(MaterialError::TooManyLayers {
+                    count: read.saturating_add(1),
+                    limit: MAX_STACK_LAYERS,
+                });
+            }
+            let e = StackEntry {
+                fallback: e.fallback.filter(|d| d.0 != 0),
+                ..e
+            };
+            let Some(e) = (if e.did.0 != 0 {
+                Some(e)
+            } else {
+                e.fallback_entry()
+            }) else {
+                continue;
+            };
+            kept.push(e);
+            if kept.len() > MAX_STACK_LAYERS {
+                return Err(MaterialError::TooManyLayers {
+                    count: kept.len(),
+                    limit: MAX_STACK_LAYERS,
+                });
+            }
         }
-        Ok(Self { entries })
+        Ok(Self { entries: kept })
     }
 
     /// An item icon (`icon-layers.md` §2.2, §3.2, §5.6): Background, Underlay, Shadow,
@@ -440,5 +453,16 @@ mod tests {
         ));
         let msg = IconStack::from_entries([e; 40]).unwrap_err().to_string();
         assert!(msg.contains("at least 17"), "{msg}");
+        // An endless input of dropped entries (zero DID, no fallback) returns too.
+        let dropped = StackEntry::new(LayerRole::Single, Did(0), None);
+        assert!(matches!(
+            IconStack::from_entries(std::iter::repeat(dropped)),
+            Err(MaterialError::TooManyLayers { count, limit: MAX_STACK_LAYERS })
+                if count == MAX_STACK_INPUT + 1
+        ));
+        // Up to the input bound, dropped entries are only skipped.
+        let mut some: Vec<StackEntry> = vec![dropped; MAX_STACK_INPUT - 1];
+        some.push(e);
+        assert_eq!(IconStack::from_entries(some).unwrap().entries().len(), 1);
     }
 }

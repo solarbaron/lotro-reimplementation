@@ -238,7 +238,7 @@ fn all_material_records() {
     let mut alpha_test_declared = 0usize;
     let mut no_diffuse = 0usize;
     // Transparent blends whose factors read source alpha, by where that alpha comes from
-    // (§11.2 source, the slot-3000 extension of the §18 Decision, or none).
+    // (§11.2 source, slot 3000 for the four roles of §20.1, or none: 2000 alpha only).
     let mut blend_opacity: BTreeMap<String, usize> = BTreeMap::new();
     let mut extended_lists: Vec<Did> = Vec::new();
     let mut sourceless_lists: Vec<Did> = Vec::new();
@@ -404,10 +404,23 @@ fn all_material_records() {
          lists: {ext_low} of {ext_n} with slot-3000 opacity, {none_low} of {none_n} without any"
     );
 
-    assert_eq!(
-        none_low, 0,
-        "blended surfaces with a mostly transparent diffuse but no opacity source"
-    );
+    // §20.1 (revised 2026-10-05, replacing the §18 Decision that also took the alpha of a
+    // `Color` diffuse): a blend without a §11.2 source takes slot-3000 alpha only for the
+    // roles whose alpha reaches the programs' output. Others (mostly `Color`) blend by the
+    // 2000 alpha, so `none_low` above is reported, not required to be 0.
+    for key in blend_opacity.keys().filter(|k| k.starts_with("slot 3000")) {
+        assert!(
+            [
+                "DiffuseTexture",
+                "LiquidDiffuseTexture",
+                "ColorTexture",
+                "ColorTexture2"
+            ]
+            .iter()
+            .any(|role| *key == format!("slot 3000 ({role})")),
+            "slot-3000 blend opacity for another role: {key}"
+        );
+    }
     assert_eq!(sh_fail + m_fail + s_fail, 0, "records that do not decode");
     assert_eq!(mt1 + mt5 + mt5_sh + mt7 + mt8, 0, "invariant violations");
     assert_eq!(resolved, n, "surface records that do not resolve");

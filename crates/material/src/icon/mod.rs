@@ -50,7 +50,7 @@ use crate::source::RecordSource;
 pub use blend::{
     centre_offset, draw_centred, draw_over, is_fully_transparent, source_over, validate_image,
 };
-pub use stack::{IconStack, LayerRole, MAX_STACK_LAYERS, StackEntry, names};
+pub use stack::{IconStack, LayerRole, MAX_STACK_INPUT, MAX_STACK_LAYERS, StackEntry, names};
 
 /// Default largest layer width or height, in pixels, for [`decode_layer`],
 /// [`compose_images`] and [`IconComposer`]. Item icon layers are 16–128 px and the

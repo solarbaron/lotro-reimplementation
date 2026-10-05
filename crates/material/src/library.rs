@@ -529,8 +529,10 @@ impl<S: RecordSource> MaterialLibrary<S> {
     /// The resolved mip chain of texture list `list` for a GPU upload
     /// (`texture-list.md` §4.4, §5.2): the effective chain, from its first level whose
     /// larger side is within both `max_dimension` and the configured limit (keeping at
-    /// least the last level), with level headers and an upload plan. Level headers are
-    /// cached, so only the first request reads the levels.
+    /// least the last level), with level headers and an upload plan. The chain ends before
+    /// a later level that is larger than its predecessor (which breaks TL7) or above the
+    /// cap, so every level is within the configured limit. Level headers are cached, so
+    /// only the first request reads the levels.
     ///
     /// Fails with [`MaterialError::TextureUnavailable`] when no level resolves,
     /// [`MaterialError::TooLarge`] when even the last level is above the configured limit,
@@ -544,11 +546,31 @@ impl<S: RecordSource> MaterialLibrary<S> {
                 expected: "mip-chain texture list",
             });
         }
-        let levels = self.walk(&tl.surfaces, self.effective_cap(max_dimension), false, None);
+        let cap = self.effective_cap(max_dimension);
+        let mut levels = self.walk(&tl.surfaces, cap, false, None);
         let first = levels
             .first()
             .ok_or(MaterialError::TextureUnavailable { did: list })?;
         self.check_limit(&first.level)?;
+        // The chain ends before the first later level that is larger than the one before
+        // it (TL7: sides never grow, `texture-list.md` §9) or above the cap, which includes
+        // the configured limit: such a level only occurs in hostile data, and every level
+        // returned stays within the limit, largest first.
+        let end = levels
+            .windows(2)
+            .position(|w| match w {
+                [prev, next] => {
+                    next.level.width > prev.level.width
+                        || next.level.height > prev.level.height
+                        || next.level.width.max(next.level.height) > cap
+                }
+                _ => false,
+            })
+            .map_or(levels.len(), |i| i + 1);
+        if end < levels.len() {
+            tracing::debug!(%list, kept = end, stored = levels.len(), "texture chain cut at a growing or oversized level");
+            levels.truncate(end);
+        }
         let headers: Vec<LevelHeader> = levels.iter().map(|l| l.level).collect();
         Ok(TextureChain {
             list,

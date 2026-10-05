@@ -162,8 +162,10 @@ pub enum MaterialError {
     #[error("at least {count} layers given, more than the limit of {limit}")]
     TooManyLayers {
         /// Layers given. [`crate::icon::IconStack::from_entries`] stops reading its input
-        /// after `limit + 1` non-zero entries (so an endless iterator is safe), so there it
-        /// is a lower bound; [`crate::icon::compose_images`] reports the exact count.
+        /// after `limit + 1` kept entries or [`crate::icon::MAX_STACK_INPUT`] + 1 entries
+        /// read (so an endless iterator is safe), so there it is a lower bound of kept
+        /// entries or of entries read; [`crate::icon::compose_images`] reports the exact
+        /// count.
         count: usize,
         /// The limit.
         limit: usize,

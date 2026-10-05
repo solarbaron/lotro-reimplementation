@@ -61,10 +61,24 @@ pub mod ids {
     pub const NORMAL_2: u32 = 3078;
     /// Foam.
     pub const FOAM: u32 = 3079;
+    /// DepthTest flag: 0 = no depth test (§8.5).
+    pub const DEPTH_TEST: u32 = 4001;
+    /// DepthWrite flag: 0 = no depth write, overriding the render-state byte (§8.5).
+    pub const DEPTH_WRITE: u32 = 4002;
+    /// DoubleSided flag: 1 = draw both faces (§8.5, §11.4).
+    pub const DOUBLE_SIDED: u32 = 4003;
+    /// The two-sided flag: [`DOUBLE_SIDED`] (4003, §11.4 revised 2026-10-05). Before that
+    /// revision this constant named 4007, which is [`ALPHA_BLEND_PASS`], not two-sided.
+    pub const TWO_SIDED: u32 = DOUBLE_SIDED;
     /// Alpha-test enable flag.
     pub const ALPHA_TEST: u32 = 4004;
-    /// Never bound; the candidate two-sided flag (§8.5, §11.4 Decision).
-    pub const TWO_SIDED: u32 = 4007;
+    /// DiffuseMapWrapU: 1 = wrap, 0 = clamp, for the samplers its bindings name (§8.5).
+    pub const WRAP_U: u32 = 4005;
+    /// DiffuseMapWrapV: 1 = wrap, 0 = clamp, for the samplers its bindings name (§8.5).
+    pub const WRAP_V: u32 = 4006;
+    /// AlphaBlendPass: never bound, read by no program; the engine's use is OPEN (§8.5).
+    /// Not the two-sided flag (§11.4).
+    pub const ALPHA_BLEND_PASS: u32 = 4007;
 
     /// Texture-coordinate transform floats for sets 0, 1 and 2 (§8.4): scale, offset,
     /// rotation and rotation centre.

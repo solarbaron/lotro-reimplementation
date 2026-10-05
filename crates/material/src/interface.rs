@@ -4,14 +4,14 @@
 //! render-state summary used for feature flags. Built once per shader record; the
 //! permutation list itself is dropped.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::mem::size_of;
 
 use tessera_formats::Did;
 
 use crate::records::{GROUP_TEXTURE, ParamEntry, ParamValue, SamplerState, ShaderRecord, group_of};
-use crate::vocab::{ChannelPacking, SlotKind, choose_role};
+use crate::vocab::{ChannelPacking, SlotKind, choose_role, ids};
 
 /// A declared parameter: its id and default value (§7.2).
 #[derive(Debug, Clone, PartialEq)]
@@ -38,9 +38,16 @@ pub struct SlotInterface {
     pub role: Option<String>,
     /// Channel packing derived from the role (§10.2).
     pub packing: ChannelPacking,
-    /// The sampler state of the first binding that names a sampler (address and filter
-    /// agree across permutations in observed data, §7.5).
+    /// The stored sampler state of the first binding that names a sampler (address and
+    /// filter agree across permutations in observed data, §7.5). The effective address
+    /// mode can differ: see `wrap_u_bound` and [`crate::TextureSlot::sampler`].
     pub sampler: Option<SamplerState>,
+    /// A binding of flag 4005 (DiffuseMapWrapU) names a sampler this slot is bound to
+    /// (same permutation and sampler index, §7.3), so the effective 4005 decides its
+    /// address mode U (§8.5).
+    pub wrap_u_bound: bool,
+    /// The same for flag 4006 (DiffuseMapWrapV) and address mode V.
+    pub wrap_v_bound: bool,
 }
 
 /// The blend triple Tessera uses for an unlit shader record (§11.3 Decision).
@@ -125,6 +132,18 @@ impl ShaderInterface {
             }
         }
 
+        // The samplers (permutation, sampler index) whose address mode U / V a wrap flag
+        // sets: the `slot` of the flag's bindings (§7.3, §8.5).
+        let flag_targets = |id: u32| -> HashSet<(u32, u32)> {
+            decl_entries
+                .iter()
+                .filter(|e| e.id == id)
+                .flat_map(|e| e.bindings.iter().map(|b| (b.permutation, b.slot)))
+                .collect()
+        };
+        let wrap_u = flag_targets(ids::WRAP_U);
+        let wrap_v = flag_targets(ids::WRAP_V);
+
         let slots = decl_entries
             .iter()
             .filter(|e| group_of(e.id) == GROUP_TEXTURE)
@@ -137,12 +156,20 @@ impl ShaderInterface {
                 };
                 let role = choose_role(bound().map(|s| s.name.as_str())).map(str::to_owned);
                 let sampler = bound().find(|s| !s.name.is_empty()).map(|s| s.state);
+                let named_by = |targets: &HashSet<(u32, u32)>| {
+                    entry
+                        .bindings
+                        .iter()
+                        .any(|b| targets.contains(&(b.permutation, b.slot)))
+                };
                 SlotInterface {
                     id: entry.id,
                     kind: SlotKind::of(entry.id),
                     packing: ChannelPacking::from_role(role.as_deref()),
                     role,
                     sampler,
+                    wrap_u_bound: named_by(&wrap_u),
+                    wrap_v_bound: named_by(&wrap_v),
                 }
             })
             .collect();

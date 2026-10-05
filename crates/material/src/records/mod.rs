@@ -15,6 +15,7 @@
 //! budget. Compiled program blobs inside shader records are skipped by their size fields
 //! and never kept (§7.4, §11.1).
 
+mod curve;
 mod params;
 mod shader;
 
@@ -23,6 +24,7 @@ use std::mem::size_of;
 
 use tessera_formats::{Did, FormatError, Reader, Record};
 
+pub use curve::CurveState;
 pub use params::{
     BINDING_SIZE, Binding, FloatCurve, GROUP_COLOR, GROUP_FLAG, GROUP_FLOAT, GROUP_TEXTURE,
     MAX_CURVE_MODE, ParamEntry, ParamValue, VALUE_TYPE_COLOR, VALUE_TYPE_CURVE, VALUE_TYPE_WORD,

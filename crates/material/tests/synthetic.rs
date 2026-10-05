@@ -327,9 +327,10 @@ fn material_with_every_value_type() {
     let ParamValue::Float(k) = &m.get(1018).unwrap().value else {
         panic!("float")
     };
-    assert_eq!((k.mode, k.key_flag, k.keys.len()), (10, 1, 3));
-    assert_eq!(k.stored_params()[10], 4.0);
-    assert_eq!(k.evaluate(), 0.5);
+    assert_eq!((k.mode, k.loop_flag, k.keys.len()), (10, 1, 3));
+    assert_eq!((k.stored_params()[10], k.period()), (4.0, 4.0));
+    // §5.3.1: w[0] is unused by mode 10; at its start p = 0.1, between (0, 0) and (1, 50).
+    assert!((k.evaluate() - 0.002).abs() < 1e-6);
     assert_eq!(
         DyeColors::of_material(&m).primary,
         Some([0.5, 0.25, 1.0, 1.0])
@@ -674,10 +675,12 @@ fn defaults_only() {
     assert_eq!(r.diffuse(), Some(Did(0x4000_0007)));
     assert_eq!(r.params.get(3000).unwrap().origin, ParamOrigin::Default);
     assert!(r.features.lit);
-    // 4004 defaults to 0: no alpha test.
+    // 4004 defaults to 0: no alpha test. A lit `ColorAndOpacity` surface is then
+    // translucent by its texture alpha (§11.3, revised 2026-10-05).
     assert_eq!(r.features.alpha_test, None);
-    assert_eq!(r.features.blend.mode, BlendMode::Opaque);
-    assert!(!r.features.blend.is_transparent());
+    assert_eq!(r.features.blend.mode, BlendMode::AlphaBlend);
+    assert!(r.features.blend.is_transparent());
+    assert_eq!(r.features.blend.opacity_slot, Some(3000));
     assert!(r.features.normal_mapped);
     assert!(r.features.specular);
     assert_eq!(r.specular(), Some(([0.5; 4], 25.0)));
@@ -692,7 +695,8 @@ fn one_material_and_last_wins() {
     let r = lib.resolve_surface(Did(0x3100_0002)).unwrap();
     let at = r.features.alpha_test.unwrap();
     assert_eq!((at.threshold, at.source_slot), (0.8, 3000));
-    assert_eq!(r.features.blend.mode, BlendMode::Cutout);
+    // Lit and alpha-tested: the kept texels blend by their opacity (§11.3).
+    assert_eq!(r.features.blend.mode, BlendMode::AlphaBlend);
 
     let r = lib.resolve_surface(Did(0x3100_0003)).unwrap();
     assert_eq!(r.features.alpha_test.unwrap().threshold, 0.4);
@@ -835,18 +839,6 @@ fn blend_classes_of_unlit_shaders() {
 }
 
 #[test]
-fn two_sided_by_flag_4007() {
-    let mut store = base_store();
-    store.insert(
-        0x3000_0050,
-        material(0x3000_0050, &[entry(4007, V::Word(1), &[], 0)]),
-    );
-    let lib = library(store);
-    let r = lib.resolve(Did(0x2B00_0010), &[Did(0x3000_0050)]).unwrap();
-    assert!(r.features.two_sided);
-}
-
-#[test]
 fn alpha_test_needs_an_opacity_source() {
     // A ColorAndDye diffuse with 4004 on: no opacity source, alpha test off (§11.2).
     let did = 0x2B00_0200;
@@ -985,7 +977,9 @@ fn dye_preview_applies_both_channels() {
         secondary: Some([0.5, 0.5, 0.5, 1.0]),
     };
     let img = lib.dye_preview_with(&r, colors, None).unwrap().unwrap();
-    assert_eq!(&img.pixels[..4], &[100, 0, 0, 255]); // x = 0: both
+    // x = 0, both masks fully dyeable: the second channel dyes the undyed base,
+    // a2·(200, 0, 0) + (1 − a2)·(200 × 0.5) with a2 = 0 (§20.1, lighting.md §5.2 step 3).
+    assert_eq!(&img.pixels[..4], &[100, 100, 100, 255]);
     assert_eq!(&img.pixels[8..12], &[100, 100, 100, 255]); // x = 2: second only
     // A non-dyeable material has no preview.
     let plain = lib.resolve_surface(Did(0x3100_0001)).unwrap();
@@ -1420,7 +1414,7 @@ fn resolve_one(
 }
 
 #[test]
-fn unlit_source_alpha_blends_take_opacity_from_the_diffuse() {
+fn unlit_source_alpha_from_the_diffuse_by_role() {
     const ALPHA: (u8, u8, u8, u8, u8, f32) = (5, 6, 1, 0, 2, 0.9);
     // Additive with depth write: without it, the record would be lit (§11.3).
     const ADD: (u8, u8, u8, u8, u8, f32) = (5, 2, 1, 1, 2, 0.9);
@@ -1429,13 +1423,18 @@ fn unlit_source_alpha_blends_take_opacity_from_the_diffuse() {
         let b: &[(u16, u32, u32)] = if bound { &[(10, 0, 0)] } else { &[] };
         vec![entry(3000, V::Word(0x4000_0007), b, 0)]
     };
-    // (sampler name, bound, state, expected blend opacity slot)
-    let cases: [(&str, bool, _, Option<u32>); 9] = [
+    // (sampler name, bound, state, expected blend opacity slot). §20.1: only
+    // `DiffuseTexture`, `LiquidDiffuseTexture`, `ColorTexture` and `ColorTexture2` put the
+    // slot-3000 alpha into the output; `Color` and the others output the 2000 alpha.
+    let cases: [(&str, bool, _, Option<u32>); 12] = [
         ("DiffuseTexture", true, ALPHA, Some(3000)),
-        ("Color", true, ADD, Some(3000)),
-        ("DiffuseMap", true, ALPHA, Some(3000)),
+        ("Color", true, ADD, None),
+        ("Color", true, ALPHA, None),
+        ("DiffuseMap", true, ALPHA, None),
         ("LiquidDiffuseTexture", true, ALPHA, Some(3000)),
-        ("", false, ALPHA, Some(3000)), // no named binding: unknown alpha
+        ("ColorTexture", true, ADD, Some(3000)),
+        ("ColorTexture2", true, ALPHA, Some(3000)),
+        ("", false, ALPHA, None), // no named binding
         ("ColorAndGloss", true, ALPHA, None),
         ("ColorAndDye", true, ADD, None),
         ("DiffuseTexture", true, ONE_ZERO, None), // factors without source alpha
@@ -1634,4 +1633,351 @@ fn normal_dye_mask_keeps_the_opacity_alpha() {
     // Dyed everywhere (the mask is fully dyeable); the diffuse alpha (opacity) is kept.
     assert_eq!(&img.pixels[..4], &[200, 0, 0, 0]);
     assert_eq!(&img.pixels[8..12], &[200, 0, 0, 255]);
+}
+
+// ---------------------------------------------------------------------------------------
+// Audit regressions (2026-10-06): revised material.md §5.3, §8.5, §11.2–§11.4, §20.1;
+// texture-list.md TL7
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn texture_chain_stops_before_a_level_that_grows() {
+    // The fuzz input of the audit: [1×1, 65×1] with a limit of 64. The second level grows
+    // (TL7) and is above the limit; the chain ends before it.
+    let mut s = Store::new();
+    s.insert(
+        0x4000_0001,
+        texture_list(0x4000_0001, 2, &[0x4100_0001, 0x4100_0002]),
+    );
+    s.insert(
+        0x4100_0001,
+        surface_a8r8g8b8(0x4100_0001, 1, 1, |_, _| [0; 4]),
+    );
+    s.insert(
+        0x4100_0002,
+        surface_a8r8g8b8(0x4100_0002, 65, 1, |_, _| [0; 4]),
+    );
+    // A growing chain within the limit: [2×2, 4×4] ends after its first level too.
+    s.insert(
+        0x4000_0002,
+        texture_list(0x4000_0002, 2, &[0x4100_0003, 0x4100_0004]),
+    );
+    s.insert(
+        0x4100_0003,
+        surface_a8r8g8b8(0x4100_0003, 2, 2, |_, _| [0; 4]),
+    );
+    s.insert(
+        0x4100_0004,
+        surface_a8r8g8b8(0x4100_0004, 4, 4, |_, _| [0; 4]),
+    );
+    // Two equal levels (texture-list.md §4.2 exception) are kept.
+    s.insert(
+        0x4000_0003,
+        texture_list(0x4000_0003, 2, &[0x4100_0004, 0x4100_0004, 0x4100_0003]),
+    );
+    let lib = library_with(s, limit(64));
+    for cap in [None, Some(16)] {
+        let chain = lib.texture_chain(Did(0x4000_0001), cap).unwrap();
+        let sizes: Vec<_> = chain
+            .levels
+            .iter()
+            .map(|l| (l.index, l.level.width, l.level.height))
+            .collect();
+        assert_eq!(sizes, vec![(0, 1, 1)], "cap {cap:?}");
+        let plan = chain.plan.unwrap();
+        assert_eq!((plan.first, plan.uploadable, plan.stored), (0, 1, 1));
+    }
+    let chain = lib.texture_chain(Did(0x4000_0002), None).unwrap();
+    assert_eq!(chain.levels.len(), 1);
+    let chain = lib.texture_chain(Did(0x4000_0003), None).unwrap();
+    assert_eq!(chain.levels.len(), 3);
+}
+
+/// A lit shader (base and light pass) with `decls` bound to `samplers` in its base pass.
+fn lit_two_pass(did: u32, decls: &[Vec<u8>], samplers: &[&str]) -> Vec<u8> {
+    shader(
+        did,
+        decls,
+        &[
+            Perm {
+                programs: None,
+                samplers,
+                extra_type5: false,
+                state: LIT_BASE,
+            },
+            Perm {
+                programs: None,
+                samplers,
+                extra_type5: false,
+                state: LIT_LIGHT,
+            },
+        ],
+    )
+}
+
+#[test]
+fn two_sided_is_flag_4003_not_4007() {
+    // Every block culls (cull 2); 4003 DoubleSided and 4007 AlphaBlendPass declared.
+    let did = 0x2B00_0800;
+    let sh = || {
+        lit_two_pass(
+            did,
+            &[
+                entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+                entry(4003, V::Word(0), &[(5, 0, 0)], 0),
+                entry(4007, V::Word(0), &[], 0),
+            ],
+            &["ColorAndOpacity"],
+        )
+    };
+    let flags = |f4003: u32, f4007: u32| {
+        material(
+            0x3000_0001,
+            &[
+                entry(4003, V::Word(f4003), &[], 0),
+                entry(4007, V::Word(f4007), &[], 0),
+            ],
+        )
+    };
+    let r = resolve_one(sh(), did, &[(0x3000_0001, flags(1, 0))]);
+    assert!(r.features.two_sided, "4003 = 1 is two-sided (§11.4)");
+    let r = resolve_one(sh(), did, &[(0x3000_0001, flags(0, 1))]);
+    assert!(!r.features.two_sided, "4007 alone is not two-sided (§11.4)");
+    let r = resolve_one(sh(), did, &[]);
+    assert!(!r.features.two_sided);
+}
+
+#[test]
+fn lit_surfaces_blend_by_opacity_and_material_alpha() {
+    // (role, alpha test, 2000, expected mode, expected opacity slot)
+    type Case<'a> = (&'a str, bool, [f32; 4], BlendMode, Option<u32>);
+    let cases: [Case<'_>; 6] = [
+        // (a) ColorAndOpacity without alpha test: translucent by texture alpha.
+        (
+            "ColorAndOpacity",
+            false,
+            [1.0; 4],
+            BlendMode::AlphaBlend,
+            Some(3000),
+        ),
+        // (b) An opaque role with 2000 alpha 0.5: translucent.
+        (
+            "ColorAndGloss",
+            false,
+            [1.0, 1.0, 1.0, 0.5],
+            BlendMode::AlphaBlend,
+            None,
+        ),
+        // (c) 2000 = (0, 0, 0, 0): blended (invisible), not opaque black.
+        ("Color", false, [0.0; 4], BlendMode::AlphaBlend, None),
+        // (d) Alpha-tested ColorAndOpacity: transparent pass, keeping the alpha test.
+        (
+            "ColorAndOpacity",
+            true,
+            [1.0; 4],
+            BlendMode::AlphaBlend,
+            Some(3000),
+        ),
+        // Opaque role and 2000 alpha 1: opaque by construction.
+        ("ColorAndGloss", false, [1.0; 4], BlendMode::Opaque, None),
+        ("ColorAndDye", true, [1.0; 4], BlendMode::Opaque, None),
+    ];
+    for (i, (role, test, color, mode, slot)) in cases.into_iter().enumerate() {
+        let did = 0x2B00_0900 + i as u32;
+        let sh = lit_two_pass(
+            did,
+            &[
+                entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+                entry(4004, V::Word(u32::from(test)), &[(8, 0, 0)], 0),
+                entry(1043, V::Const(0.5), &[(9, 0, 0)], 0),
+                entry(2000, V::Color(color), &[(0, 0, 0)], 0),
+            ],
+            &[role],
+        );
+        let r = resolve_one(sh, did, &[]);
+        let b = r.features.blend;
+        assert!(r.features.lit);
+        assert_eq!(r.material_alpha(), color[3]);
+        assert_eq!(b.mode, mode, "case {i} ({role})");
+        assert_eq!(
+            (b.src, b.dst),
+            (BlendFactor::SrcAlpha, BlendFactor::InvSrcAlpha),
+            "case {i}"
+        );
+        assert!(b.depth_write);
+        assert_eq!(b.opacity_slot, slot, "case {i} ({role})");
+        assert_eq!(b.is_transparent(), mode != BlendMode::Opaque);
+        assert_eq!(r.features.alpha_test.is_some(), test && slot.is_some());
+    }
+}
+
+#[test]
+fn depth_write_flag_overrides_the_render_state() {
+    // Lit, and unlit additive with byte 4 = 1: effective 4002 = 0 turns depth write off.
+    let decls = || {
+        vec![
+            entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+            entry(4001, V::Word(1), &[(6, 0, 0)], 0),
+            entry(4002, V::Word(1), &[(7, 0, 0)], 0),
+        ]
+    };
+    let off = || {
+        material(
+            0x3000_0001,
+            &[
+                entry(4001, V::Word(0), &[], 0),
+                entry(4002, V::Word(0), &[], 0),
+            ],
+        )
+    };
+    let did = 0x2B00_0A00;
+    let r = resolve_one(lit_two_pass(did, &decls(), &["Color"]), did, &[]);
+    assert!(r.features.blend.depth_write);
+    assert!(r.depth_test());
+    let r = resolve_one(
+        lit_two_pass(did, &decls(), &["Color"]),
+        did,
+        &[(0x3000_0001, off())],
+    );
+    assert!(!r.features.blend.depth_write);
+    // 4001 DepthTest = 0: no depth test (§8.5).
+    assert!(!r.depth_test());
+    let did = 0x2B00_0A01;
+    let add = (5, 2, 1, 1, 2, 0.9);
+    let r = resolve_one(one_pass_shader(did, &decls(), &["Color"], add), did, &[]);
+    assert!(r.features.blend.depth_write);
+    let r = resolve_one(
+        one_pass_shader(did, &decls(), &["Color"], add),
+        did,
+        &[(0x3000_0001, off())],
+    );
+    assert!(!r.features.blend.depth_write);
+}
+
+#[test]
+fn wrap_flags_override_the_stored_address() {
+    // 3000 is bound to sampler 0 (stored wrap); 4005 / 4006 name the same sampler.
+    let did = 0x2B00_0B00;
+    let sh = || {
+        one_pass_shader(
+            did,
+            &[
+                entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+                entry(3011, V::Word(0x4000_000D), &[(10, 0, 1)], 0),
+                entry(4005, V::Word(1), &[(11, 0, 0)], 0),
+                entry(4006, V::Word(1), &[(12, 0, 0)], 0),
+            ],
+            &["Color", "TSNormal"],
+            (2, 1, 1, 1, 2, 0.9),
+        )
+    };
+    let r = resolve_one(sh(), did, &[]);
+    let s = r.slot(3000).unwrap().sampler.unwrap();
+    assert_eq!(
+        (s.address_u(), s.address_v()),
+        (AddressMode::Wrap, AddressMode::Wrap)
+    );
+    let clamp_u = material(0x3000_0001, &[entry(4005, V::Word(0), &[], 0)]);
+    let r = resolve_one(sh(), did, &[(0x3000_0001, clamp_u)]);
+    let s = r.slot(3000).unwrap().sampler.unwrap();
+    assert_eq!(
+        (s.address_u(), s.address_v()),
+        (AddressMode::Clamp, AddressMode::Wrap)
+    );
+    // The normal map's sampler (index 1) is not named by the flags: stored bytes.
+    let n = r.slot(3011).unwrap().sampler.unwrap();
+    assert_eq!(n.address_u(), AddressMode::Wrap);
+}
+
+#[test]
+fn mode_10_loop_byte_above_1_is_rejected() {
+    let keyed = |flag| V::Keyed([0.0; 11], flag, vec![(0.0, 0.0), (1.0, 100.0)]);
+    for flag in [0u8, 1] {
+        let m = material(0x3000_0001, &[entry(1017, keyed(flag), &[], 0)]);
+        assert!(MaterialRecord::parse(&m).is_ok(), "loop {flag}");
+    }
+    for flag in [2u8, 0xFF] {
+        let m = material(0x3000_0001, &[entry(1017, keyed(flag), &[], 0)]);
+        assert!(
+            matches!(
+                MaterialRecord::parse(&m),
+                Err(FormatError::Malformed { .. })
+            ),
+            "loop {flag}"
+        );
+    }
+}
+
+#[test]
+fn float_curves_evaluate_at_time_zero() {
+    let curve = |v: V| {
+        let m = MaterialRecord::parse(&material(0x3000_0001, &[entry(1017, v, &[], 0)])).unwrap();
+        m.get(1017).unwrap().value.as_float().unwrap()
+    };
+    // Mode 2 at t = 0: B + π·w[4] (§5.3.1).
+    let v = curve(V::Wave(2, [0.1, 0., 0., 0., 0.25, 0., 0., 0., 0., 0.]));
+    assert!(
+        (v - (0.1 + std::f32::consts::PI * 0.25)).abs() < 1e-6,
+        "{v}"
+    );
+    // Mode 10 at its start: p = 0.1 between (0, 0) and (1, 50): 0.002; w[0] is unused.
+    let v = curve(V::Keyed(
+        [0.5, 0., 0., 0., 0., 0., 0., 0., 0., 0., 4.0],
+        1,
+        vec![(0.0, 0.0), (1.0, 50.0), (0.0, 100.0)],
+    ));
+    assert!((v - 0.002).abs() < 1e-6, "{v}");
+}
+
+#[test]
+fn second_colour_layer_multiplies_the_opacity() {
+    // 3000 `ColorAndOpacity` + 3001 `ColorAndOpacity2`: the opacity is the product of
+    // both alphas (§11.2), for the alpha test and for blending.
+    let decls = |second: u32| {
+        vec![
+            entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+            entry(3001, V::Word(second), &[(10, 0, 1)], 0),
+            entry(4004, V::Word(1), &[(8, 0, 0)], 0),
+            entry(1043, V::Const(0.5), &[(9, 0, 0)], 0),
+        ]
+    };
+    let did = 0x2B00_0C00;
+    let roles = ["ColorAndOpacity", "ColorAndOpacity2"];
+    let r = resolve_one(lit_two_pass(did, &decls(0x4000_0008), &roles), did, &[]);
+    assert_eq!(r.features.alpha_test.unwrap().source_slot, 3000);
+    assert_eq!(r.second_opacity_slot(), Some(3001));
+    // No second texture: no second layer.
+    let r = resolve_one(lit_two_pass(did, &decls(0), &roles), did, &[]);
+    assert_eq!(r.second_opacity_slot(), None);
+    // A second layer that is not an opacity layer (`ColorAndDye2`): not multiplied.
+    let r = resolve_one(
+        lit_two_pass(
+            did,
+            &decls(0x4000_0008),
+            &["ColorAndOpacity", "ColorAndDye2"],
+        ),
+        did,
+        &[],
+    );
+    assert_eq!(r.second_opacity_slot(), None);
+    // Unlit `ColorTexture` diffuse blending by source alpha: both layers' alphas (§20.1).
+    let alpha = (5, 6, 1, 0, 2, 0.9);
+    let unlit = |role: &str| {
+        one_pass_shader(
+            did,
+            &[
+                entry(3000, V::Word(0x4000_0007), &[(10, 0, 0)], 0),
+                entry(3001, V::Word(0x4000_0008), &[(10, 0, 1)], 0),
+            ],
+            &[role, "Color2"],
+            alpha,
+        )
+    };
+    let r = resolve_one(unlit("ColorTexture"), did, &[]);
+    assert_eq!(r.features.blend.opacity_slot, Some(3000));
+    assert_eq!(r.second_opacity_slot(), Some(3001));
+    // `Color`: the 2000 alpha only, no texture alpha.
+    let r = resolve_one(unlit("Color"), did, &[]);
+    assert_eq!(r.features.blend.opacity_slot, None);
+    assert_eq!(r.second_opacity_slot(), None);
 }

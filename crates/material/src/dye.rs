@@ -3,11 +3,14 @@
 //! reading dye colours from a dye material, and choosing an appearance's dye block for a
 //! dye code.
 //!
-//! The blend is the smooth form of §12.3, applied to 8-bit sRGB-encoded values as
-//! stored (whether the original multiplies in linear or gamma space is OPEN):
+//! The blend is the smooth form of §12.3, applied to the 8-bit values as stored (the
+//! original uses no sRGB conversion, §12.3):
 //!
 //! - dye weight *w* = 1 − *a*, where *a* is the mask alpha in 0–1 (low = dyeable);
 //! - dyed colour = *c* × (1 − *w*) + (*c* × *d*) × *w*.
+//!
+//! A second channel (2013) dyes the **undyed** base: *c* ← *a2* · (first-dyed colour) +
+//! (1 − *a2*) · (*c₀* × *d2*) (§20.1; `lighting.md` §5.2 step 3).
 
 use tessera_formats::RgbaImage;
 
@@ -20,7 +23,7 @@ use crate::vocab::ids;
 pub struct DyeLayer<'a> {
     /// The mask image. Scaled to the base image by nearest sampling if its size differs.
     pub mask: &'a RgbaImage,
-    /// Dye colour, RGBA in 0–1. Its alpha is ignored (role OPEN, §12.3).
+    /// Dye colour, RGBA in 0–1. Its alpha is not used (§12.3).
     pub color: [f32; 4],
 }
 
@@ -33,6 +36,12 @@ pub fn dye_weight(mask_alpha: u8) -> f32 {
 /// Dyes one 8-bit channel value `c` with dye component `d` (0–1) at weight `w` (§12.3).
 #[must_use]
 pub fn dye_channel(c: u8, d: f32, w: f32) -> u8 {
+    dye_channel_over(c, c, d, w)
+}
+
+/// One channel of a later dye layer: `current` (the colour so far) × (1 − `w`) + `base`
+/// (the undyed value) × `d` × `w` (§20.1). For the first layer `current` = `base`.
+fn dye_channel_over(current: u8, base: u8, d: f32, w: f32) -> u8 {
     let d = if d.is_finite() {
         d.clamp(0.0, 1.0)
     } else {
@@ -43,9 +52,8 @@ pub fn dye_channel(c: u8, d: f32, w: f32) -> u8 {
     } else {
         0.0
     };
-    let c = f32::from(c);
-    let v = c * (1.0 - w) + c * d * w;
-    // In range: v ≤ c ≤ 255 because d ≤ 1.
+    let v = f32::from(current) * (1.0 - w) + f32::from(base) * d * w;
+    // In range: v ≤ max(current, base) ≤ 255 because d, w ∈ [0, 1].
     v.round().clamp(0.0, 255.0) as u8
 }
 
@@ -72,6 +80,11 @@ fn nearest(i: u32, dst: u32, src: u32) -> u32 {
 
 /// Applies dye layers in order to `base` and returns the dyed RGBA8 image.
 ///
+/// Each layer blends the colour so far with the **undyed** base times its colour,
+/// weighted by its mask: *c* ← *a* · *c* + (1 − *a*) · (*c₀* × *d*). For the first layer
+/// this is §12.3; for the second channel it is §20.1 (`lighting.md` §5.2 step 3), so
+/// overlapping masks do not compound the two dye colours.
+///
 /// The output alpha is `base`'s alpha when `keep_alpha` is set (the base alpha is
 /// opacity), else 255 (the base alpha is a mask or gloss, not opacity). Fails only on an
 /// inconsistent or empty image.
@@ -81,6 +94,7 @@ pub fn apply_dye(base: &RgbaImage, layers: &[DyeLayer<'_>], keep_alpha: bool) ->
         check_image(layer.mask)?;
     }
     let mut out = base.pixels.clone();
+    let undyed = &base.pixels;
     let (w, h) = (base.width, base.height);
     for layer in layers {
         let mask = layer.mask;
@@ -91,13 +105,16 @@ pub fn apply_dye(base: &RgbaImage, layers: &[DyeLayer<'_>], keep_alpha: bool) ->
                 let mx = if same { x } else { nearest(x, w, mask.width) };
                 let mi = (my as usize * mask.width as usize + mx as usize) * 4;
                 let oi = (y as usize * w as usize + x as usize) * 4;
-                let (Some(&a), Some(px)) = (mask.pixels.get(mi + 3), out.get_mut(oi..oi + 3))
-                else {
+                let (Some(&a), Some(px), Some(c0)) = (
+                    mask.pixels.get(mi + 3),
+                    out.get_mut(oi..oi + 3),
+                    undyed.get(oi..oi + 3),
+                ) else {
                     continue;
                 };
                 let weight = dye_weight(a);
-                for (c, d) in px.iter_mut().zip(layer.color) {
-                    *c = dye_channel(*c, d, weight);
+                for ((c, &b), d) in px.iter_mut().zip(c0).zip(layer.color) {
+                    *c = dye_channel_over(*c, b, d, weight);
                 }
             }
         }
@@ -234,6 +251,68 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kept.pixels[3], 0);
+    }
+
+    #[test]
+    fn second_layer_dyes_the_undyed_base() {
+        // Base 200, both masks fully dyeable, both colours 0.5: 100, not 200 → 100 → 50.
+        let base = image(1, 1, [200, 200, 200, 255]);
+        let mask = image(1, 1, [0, 0, 0, 0]);
+        let half = [0.5, 0.5, 0.5, 1.0];
+        let layers = [
+            DyeLayer {
+                mask: &mask,
+                color: half,
+            },
+            DyeLayer {
+                mask: &mask,
+                color: half,
+            },
+        ];
+        let out = apply_dye(&base, &layers, false).unwrap();
+        assert_eq!(out.pixels, vec![100, 100, 100, 255]);
+        // Second mask not dyeable (alpha 255): the first dye stays.
+        let keep = image(1, 1, [0, 0, 0, 255]);
+        let red = [1.0, 0.0, 0.0, 1.0];
+        let out = apply_dye(
+            &base,
+            &[
+                DyeLayer {
+                    mask: &mask,
+                    color: red,
+                },
+                DyeLayer {
+                    mask: &keep,
+                    color: half,
+                },
+            ],
+            false,
+        )
+        .unwrap();
+        assert_eq!(out.pixels, vec![200, 0, 0, 255]);
+        // Half-dyeable second mask (alpha 128 ≈ 0.502): a2·(200, 0, 0) + (1 − a2)·100.
+        let soft = image(1, 1, [0, 0, 0, 128]);
+        let out = apply_dye(
+            &base,
+            &[
+                DyeLayer {
+                    mask: &mask,
+                    color: red,
+                },
+                DyeLayer {
+                    mask: &soft,
+                    color: half,
+                },
+            ],
+            false,
+        )
+        .unwrap();
+        let a2 = 128.0f32 / 255.0;
+        let expect = |first: f32| (a2 * first + (1.0 - a2) * 100.0).round() as u8;
+        assert_eq!(
+            out.pixels,
+            vec![expect(200.0), expect(0.0), expect(0.0), 255]
+        );
     }
 
     #[test]

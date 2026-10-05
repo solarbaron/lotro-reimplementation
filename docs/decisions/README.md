@@ -15,6 +15,7 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0005](0005-no-full-bevy.md) | No Bevy engine; `bevy_ecs` alone only if the M4 benchmark favours it | Accepted | 2026-10-04 |
 | [0006](0006-codename.md) | Working codename "Tessera"; naming rules | Accepted | 2026-10-03 |
 | [0007](0007-multi-device-workflow.md) | Multi-device workflow: git is the only shared state | Accepted | 2026-10-04 |
+| [0009](0009-script-table-disassembly.md) | Incident: unauthorised client disassembly for script tables; owner authorises M4 retroactively for that one question (EU) | Accepted | 2026-10-05 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next
 number, add a row here.

@@ -1,13 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Proposed: UI input bridge. UI commands are keymap actions, activation timing lives in the mapper, and the UI map stack becomes a UI band of the context stack
+# 0014 — UI input bridge. UI commands are keymap actions, activation timing lives in the mapper, and the UI map stack becomes a UI band of the context stack
 
-**Status:** Proposed (awaiting the owner), 2026-10-06. This record has no number yet; it gets
-the next free one if it is accepted. It answers review critique A1 of the M5 input design.
-Revisions 1, 2, 3, 4 and 5 (same day) answer the five reviews of this record; the last five
-sections list each review point and what was done with it. The section "Coordination" lists
-what the companion record `proposed-ui-rendering.md` must change to stay consistent with this
-one.
+**Status:** Accepted by the owner, 2026-10-06 (approved with its companion record and the
+questions in the owner summary answered "yes"). The open review items below are left to the
+M5 implementation.
 
 ## Owner summary
 
@@ -38,7 +35,7 @@ one.
    `plugin-runtime.md` §10.3 (D8, owners list)? That includes two Tessera rules: plugin
    events raised by game or session state are queued and delivered in step 7, not when the
    state changes (Known difference 21), and the unload at logout runs in step 7. It must be
-   accepted together with `proposed-ui-rendering.md` and the follow-ups under "Coordination".
+   accepted together with `0015-ui-rendering.md` and the follow-ups under "Coordination".
 3. Do you accept these visible changes? With a UI attached, Escape opens the game menu
    instead of quitting. A quick right re-press over a panel element is a double click and
    does not resume mouse-look. During any item drag a right press neither turns the camera
@@ -774,11 +771,11 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
      puts the cursor back at *F* where the platform allows (`set_cursor_position`; on
      Wayland only while the grab is still `Locked`, so before releasing it), releases the
      grab and shows the cursor. (With the software cursor in use, `ui_cursor = software` of
-     `proposed-ui-rendering.md` §2.5, "hides" means the software cursor is not drawn and
+     `0015-ui-rendering.md` §2.5, "hides" means the software cursor is not drawn and
      "shows" means it is drawn again; the OS cursor stays hidden throughout that mode.) If the warp is refused (for example after focus loss, or on
      a platform that forbids it), the cursor reappears where the OS has it. The UI has seen
      *F* until then, and the next OS cursor-position event moves it to the real position
-     (the recorded difference of `proposed-ui-rendering.md` §2.5).
+     (the recorded difference of `0015-ui-rendering.md` §2.5).
 
   Without a UI attached the client may keep today's ungrabbed mouse-look.
 - So a quick right click on a panel still works: at the release the `mouselook` End comes
@@ -869,7 +866,7 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
   8 onward (session, simulation, layout, paint and rendering), and never on another
   thread. The owners list asks for that wording.
 - **Step 8, layout and paint.** Layout, painting and the composition list, as
-  `proposed-ui-rendering.md` describes them. Its layout changes no box that a hit test
+  `0015-ui-rendering.md` describes them. Its layout changes no box that a hit test
   reads (below).
 - **What the order means.** `MouseHover` comes before `Update` in a frame, as in LPA §3.3.
   An `Update` handler that moves or shows a control under a resting pointer does not get a
@@ -895,7 +892,7 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
   spurious `MouseLeave` or `MouseEnter`, and its `X`/`Y` are relative to where it now is.
   What is drawn may lag by a frame or more (the companion's paint jobs), which is the
   companion's recorded difference "hit testing during a transition".
-- **Budget.** U1 of `proposed-ui-rendering.md` §6 (its performance budget; steady state,
+- **Budget.** U1 of `0015-ui-rendering.md` §6 (its performance budget; steady state,
   outside the content-event frames that its U4 judges) counts Tessera's own work inside the
   offers (hit tests, routing, native element handling) and in the step-7 tick. Time inside
   plugin Lua calls is measured separately as plugin time. That covers the input handlers of
@@ -1191,7 +1188,7 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
       then the collector step in every apartment (`plugin-runtime.md` §9.2); then apply the
       UI's band changes to the mapper". Only the deferred work is sliced (D8, budget).
     - Step 8 becomes "UI: layout, paint damaged rectangles within the UI slice, build the
-      composition list". The paint wording is `proposed-ui-rendering.md`'s; see
+      composition list". The paint wording is `0015-ui-rendering.md`'s; see
       "Coordination". "Layout" there changes no box that a hit test reads (D8, "Geometry
       used for hit tests").
     - A sentence after the list: "At client exit, after the last frame, the plugin host
@@ -1206,7 +1203,7 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     bounded by the per-call instruction budget, are not cut by a slice, and are measured as
     plugin time. The deferred work of step 7, which includes the game-raised events and the
     logout unload, is sliced by whole items (2 ms per frame, at least one item).
-  - `proposed-ui-rendering.md`: the required follow-ups are under "Coordination" below.
+  - `0015-ui-rendering.md`: the required follow-ups are under "Coordination" below.
 - **Cost.** The `keymap.md` revision below, then mapper work: entries, the band, the code
   access rules of D5 (`activate` on UI-band contexts, owner 0, refused pushes of game-band
   contexts, the pending-sequence drop on the first `opaque_keys` push), ownership, gesture
@@ -1239,7 +1236,7 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     release-class bindings present; and run-time changes of *T*, *W* and *H*. It checks invariants (c) (one End per offered Start) and (p) (no End before
     its Start, no End of a never-offered hold) on every run.
 
-## Coordination with `proposed-ui-rendering.md`
+## Coordination with `0015-ui-rendering.md`
 
 The two records are meant to be accepted together. This record does not edit the companion.
 Its owner must make the changes below before the two are accepted, or the session that
@@ -1765,7 +1762,7 @@ active, nothing focused, pointer over a plugin button *B*.
    queue, offered at the next `handle_with` or by `offer_pending` (D7).
 4. **Architecture and frame loop.** Accepted. D8 places input routing and plugin input
    handlers in step 1, and cites LPA §3.3 and §9.7, which require this. The owners list now
-   names ARCH §20.3, ARCH §18.1 and the conflicting sentence in `proposed-ui-rendering.md`.
+   names ARCH §20.3, ARCH §18.1 and the conflicting sentence in `0015-ui-rendering.md`.
    Hit tests use the previous frame's layout. (Revision 5, item 2, replaces this: hit tests
    use the current geometry.)
 5. **Budget.** Accepted. Pointer moves are coalesced (D7) and plugin time is counted
@@ -1823,7 +1820,7 @@ active, nothing focused, pointer over a plugin button *B*.
    restated from the census as it is given (19 elements set `lose_focus_on_escape`, 103
    have `editable` true, so at least 84 editable fields lack it), because the census does
    not say how the two sets overlap.
-6. **Wrong citation.** Accepted: D8 and the owners list cite §6 of `proposed-ui-rendering.md`.
+6. **Wrong citation.** Accepted: D8 and the owners list cite §6 of `0015-ui-rendering.md`.
 7. **`double_click_px`.** Accepted: it is the rectangle size (*W* = *H* = value), in logical
    pixels, scaled by the window's scale factor before the clamp (D3, list item 7, worked
    example).

@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Proposed — Game UI rendering: exact CPU compositing per panel surface, GPU composition of the surfaces
+# 0015 — Game UI rendering: exact CPU compositing per panel surface, GPU composition of the surfaces
 
-**Status:** Proposed (awaiting the owner), 2026-10-06. It gets a number when it is accepted.
-It is an architecture proposal for M5 (`docs/ROADMAP.md` M5). It does not change any
-accepted record.
+**Status:** Accepted by the owner, 2026-10-06 (approved with its companion record and the
+questions in the owner summary answered "yes"). The open review items below are left to the
+M5 implementation.
 
 **Revision 1 (2026-10-06)** answered the review of the first draft. **Revision 2
 (2026-10-06)** answered the second review and aligned this record with its companion
-`proposed-ui-input-bridge.md` (D7, D8), `game-panels.md` (Accepted), `ui-widgets.md` and the
+`0014-ui-input-bridge.md` (D7, D8), `game-panels.md` (Accepted), `ui-widgets.md` and the
 updated `ui-behaviour.md` and `lua-plugin-api.md`. **Revision 3 (2026-10-06)** answers the
 third review: one rule for damage from nested surfaces (an angle-independent coverage region),
 Tile surfaces exempt from the box-to-canvas scale, the cursor at the end of the pointer lock
@@ -34,7 +34,7 @@ last five sections map each item of the five reviews to its answer, and the sect
 Abbreviations for the documents cited most: UL = `ui-layout.md`, UB = `ui-behaviour.md`, UW =
 `ui-widgets.md`, FO = `fonts.md`, LPA = `lua-plugin-api.md`, SK = `skin-definition.md`, PU =
 `plugin-api-usage.md`, GP = `game-panels.md`, KM = `keymap.md`, IB =
-`docs/decisions/proposed-ui-input-bridge.md`.
+`docs/decisions/0014-ui-input-bridge.md`.
 
 ## Owner summary
 
@@ -1750,7 +1750,7 @@ render implementer picks the number.
 - **Tool UI is unchanged:** egui remains for the explorer and the planned developer
   overlays only.
 
-## Coordination with IB (required follow-ups in `proposed-ui-input-bridge.md`)
+## Coordination with IB (required follow-ups in `0014-ui-input-bridge.md`)
 
 This record and IB are meant to be accepted together. This revision does not edit IB. It
 applies IB's own "Coordination" items 1–9 to this record. **Two small follow-ups in IB
@@ -1776,7 +1776,7 @@ remain** (items 6 and 7 below); neither changes IB's design.
    Consequences ("Agreement with IB") use IB's wording. **Standing request:** any later
    change to IB D7's lock-on point, grab, warp or position feed says that it also changes
    §2.5 of this record. IB D7 item 2's reference to "the recorded difference of
-   `proposed-ui-rendering.md` §2.5" still points to §2.5 item 3.
+   `0015-ui-rendering.md` §2.5" still points to §2.5 item 3.
 4. **U1's scope: agreed**, with IB Coordination item 9 applied. IB D8 cites U1 for Tessera's
    own work inside the step-1 offers and in the step-7 tick, in steady state outside the
    content-event frames that U4 judges, and excludes plugin time (the input handlers, the

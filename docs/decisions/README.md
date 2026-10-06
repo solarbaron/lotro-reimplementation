@@ -20,6 +20,8 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0010](0010-reference-machine-laptop.md) | Reference machine: the owner's laptop (i9-10885H, RTX 2070 Super Max-Q); M3 re-baselined there | Accepted | 2026-10-05 |
 | [0011](0011-standing-m4-authorisation.md) | Standing M4 (disassembly/decompilation) authorisation for the offline client; network, login and anti-tamper excluded | Accepted | 2026-10-05 |
 | [0012](0012-numeric-constants.md) | Numeric algorithm constants from the client may be used in specs and code (keys, hostnames, network and bulk data tables stay forbidden) | Accepted | 2026-10-05 |
+| [0014](0014-ui-input-bridge.md) | UI input bridge: UI commands as tessera-input actions with activation filters, a UI band above game contexts, pass-through pointer context, plugin code in frame steps 1 and 7 | Accepted | 2026-10-06 |
+| [0015](0015-ui-rendering.md) | UI rendering: exact CPU compositing per surface, GPU composition of finished surfaces, own-opacity nested surfaces, frame budgets U1-U5 for M5 | Accepted | 2026-10-06 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next
 number, add a row here.

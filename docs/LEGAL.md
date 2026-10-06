@@ -9,7 +9,9 @@
 > before any networked feature beyond the local sandbox, the project must obtain review by
 > a qualified IP lawyer** (see [§9](#9-gates-and-the-official-server-target)).
 
-Status: adopted 2026-10-03; §17 (plugin API names) added 2026-10-06. Sources were fetched
+Status: adopted 2026-10-03; §17 (plugin API names) added 2026-10-06; §9.5 and §18
+(extended scripting, [decision 0017](decisions/0017-extended-scripting.md)) added
+2026-10-07. Sources were fetched
 and read on 2026-10-03 unless another date is given. Quoted contract text is from the versions dated below; Daybreak can change
 these documents at any time, so re-check them before relying on this page.
 
@@ -360,6 +362,36 @@ If G1 advises against T4, or Daybreak or MEE object, the project stays at T2 per
 this section is updated to say so. The project will not proceed against an explicit
 objection from either rights holder (see [§14](#14-incident-response)).
 
+### 9.5 Extended scripts never run against an official server
+
+Added 2026-10-07 by [decision 0017](decisions/0017-extended-scripting.md) (§6.4, §6.5).
+"Extended scripts" are scripts written for Tessera's own scripting API (global `Ext`,
+[§18](#18-extended-scripting)), not the plugins of [§17](#17-plugin-api-names-interoperability-record).
+
+**Binding project policy: extended scripts never run against an official server.** This
+holds at every tier, before and after the gate of §9.3.
+
+1. **How Tessera's builds keep it.** The extended-script host runs only while the session
+   is the in-process sandbox or, from slice 3 (with M7), Tessera's own protocol to the
+   project-owned test server. Before the client connects to any other backend it unloads
+   every extended script, and it starts none until that session ends. No setting, flag or
+   environment variable changes this. As defence in depth, a compatibility backend, if the
+   gate ever passes, is a separate crate outside the workspace, and a CI check fails any
+   build graph that holds both it and the extended-script crates.
+2. **Any M8 gate decision must address this rule explicitly.** The decision record of G3
+   cannot set it aside silently. Plugins are not covered by this rule: they are the
+   original client's own feature and follow whatever the gate decides.
+3. **It binds Tessera's own builds only.** A client-side gate can only rely on what the
+   build reports about its own backends. A modified build, or a proxy run by the user that
+   translates Tessera's protocol to another service, defeats any client-side gate: the
+   client cannot know what lies behind a connection, and such a user is their own
+   "operator", acting outside the project's builds and this policy. The project does not
+   offer, document or support either.
+4. **The design answer to that limit is to keep automation away from every server.**
+   Automation (`input.drive`) and every later module that issues game-state commands or
+   movement on the user's behalf run **offline only**. No server policy can turn them on.
+   A future decision that wants them on any server must address the proxy case of item 3.
+
 ---
 
 ## 10. Naming and trademark rules
@@ -420,7 +452,8 @@ Allowed:
 
 Exporters and viewers are for personal use, are opt-in, and are never advertised as bulk
 extraction or ripping tools. The engine must run with original placeholder content so it
-has substantial uses that do not depend on game data.
+has substantial uses that do not depend on game data. Extended scripts' read access to
+decoded data is assessed under these rules in [§18.4](#184-decoded-data-and-export).
 
 ---
 
@@ -656,7 +689,142 @@ Added 2026-10-06. It answers the "OPEN (legal)" item of
 
 ---
 
-## 18. Sources
+## 18. Extended scripting
+
+Added 2026-10-07. It records the legal points of
+[decision 0017](decisions/0017-extended-scripting.md) §12. In 0017, "§12" means the
+record's own §12, never [§12](#12-distribution-and-money) of this document.
+
+### 18.1 What it is
+
+- Extended scripts are Lua programs written for **Tessera's own** scripting API, under one
+  neutral global, `Ext`, loaded from their own folder in Tessera's data directory. The API
+  is Tessera's design. It is separate from the plugin compatibility surface of
+  [§17](#17-plugin-api-names-interoperability-record): plugins never see `Ext`, and
+  extended scripts never see the plugin API's names.
+- Nothing is allowed by default. Each power is a module handed out only for a capability
+  that the user granted, and the effective rights are the intersection of the script's
+  request, the user's grant, the backend and the server's policy.
+- Third-party scripts are their authors' works. Tessera does not host, bundle, download or
+  redistribute them, as [§17.6](#176-remaining-risk) says for plugins. A signature on a
+  script proves authorship only.
+
+### 18.2 Tiers and servers
+
+- Offline use is **T1**. Use on Tessera's own protocol is **T2**, which [§8](#8-risk-tier-ladder)
+  limits to the sandbox and the **project-owned** test server. Extended-script support on
+  that protocol, its script policy and its defaults exist for the project-owned test
+  server only. The project neither designs for, documents nor tests third-party operators.
+- The client cannot verify who runs a server: a user can point it at any address. That is
+  the threat-model limit of [§9.5](#95-extended-scripts-never-run-against-an-official-server)
+  item 3, not a supported use.
+- **Third-party Tessera-protocol servers** are T3 territory ("any publicly hosted shard,
+  free or not"). Supporting them, for extended scripts or for the client at all, needs its
+  own decision, with the owner's and counsel's review, that amends
+  [decision 0004](decisions/0004-server-strategy.md) and §8 first.
+- Extended scripts never run against an official server in Tessera's builds
+  ([§9.5](#95-extended-scripts-never-run-against-an-official-server)), so they cannot
+  raise the project's tier. §8 is unchanged.
+
+### 18.3 Rules (binding project policy)
+
+1. **No BIN facts in the extended-script contract.** `ext-api.md` defines the extended
+   widgets, their input behaviour, events and drawing in its own terms, from Tessera's
+   design and general GUI conventions. It cites no fact that rests on disassembly
+   ([§17.2](#172-rules-binding-project-policy) rule 7) as part of that contract. The
+   implementation may share code with native panels and plugin controls, but extended
+   scripts may rely only on what `ext-api.md` states. Giving extended widgets parity with
+   plugin controls would need an amendment of §17.2 reviewed by counsel.
+2. **The plugin surface does not grow.** Extended scripts give plugins no capability the
+   original API lacks ([§17.2](#172-rules-binding-project-policy) rule 5). The bridge to
+   plugins is **one-way**: a script may list, load and unload plugins, read a named
+   plugin's data and run a plugin's own command, each as the user's own action and
+   rate-limited; it may not write plugin data or inject chat lines that plugins receive.
+   A two-way bridge needs its own decision amending §17.2 rule 5. Withdrawing the plugin
+   surface (§17.2 rule 6) leaves extended scripts working.
+3. **Never offered.** No module, slice or grant provides: compiling strings (`load`,
+   `loadstring` or any equivalent), binary chunks or bytecode; file paths outside the
+   script's folder and its own store, other than the user's file-picker dialog; sockets,
+   HTTP, processes, native code or FFI; write access to the install, raw archive bytes,
+   enumeration by DID range or export of decoded assets; the state of other scripts or of
+   plugins (except the bridge of rule 2) and the content of UI the script does not own;
+   synthesised raw input or a clipboard API; the user's OS identity (user name, home path,
+   host name); custom shaders; code delivered by a server.
+4. **Neutral names.** `Ext`, the module names, the crates, the script tool, the folders and
+   every UI string are neutral ([§10](#10-naming-and-trademark-rules)). The plugin API's
+   interoperability names stay inside the plugin subsystem
+   ([§17.2](#172-rules-binding-project-policy) rules 1 and 6).
+5. **No game content.** Scripts refer to DIDs that resolve in the user's install. Examples
+   embed no extracted data, names or strings. The packing tool refuses `.dat`/`.datx` files
+   and archive-headed files and warns that extracted game assets must not be packed
+   ([§11](#11-content-rules)). Nothing in Tessera advertises scripts as extraction tools.
+6. **Automation** (`input.drive`) runs offline only, where it harms no one
+   ([§9.5](#95-extended-scripts-never-run-against-an-official-server) item 4). The
+   plugin API's anti-automation boundary stays as it is for plugins.
+
+### 18.4 Decoded data and export
+
+This is the [§11](#11-content-rules) assessment of the `data.read` capability, which lets a
+script read decoded values of records from the user's install.
+
+- **Personal use.** It is a viewer of the user's own install inside the user's own
+  client, like the explorer, and it is opt-in per script. It gives no raw bytes and no
+  enumeration by DID range, and it writes nothing.
+- **No export route, by design rather than by statement:**
+  - `data.read` is offered **offline only**;
+  - it is **local-only**: no script holds it together with the server-channel capability
+    (`session.server`), on any backend;
+  - a script's store written while it held a local-only capability is **wiped** before the
+    script opens it with the server channel, and every file operation on that store runs
+    in order on one queue, so no late write lands after the wipe;
+  - no hand-off of running state crosses a change of grants;
+  - the plugin bridge, the one way to put data into plugin data, is local-only too;
+  - no other module reaches the network.
+- **File output.** The only files a script can produce are its own store (capped at
+  16 MiB) and its script log (whatever it prints, decoded values included; capped at 2 MiB
+  per script), both in Tessera's directories on the user's machine.
+- **The stated limit.** No single script can send decoded data off the machine on its own.
+  Programs that the user installs and runs together could still pass data to each other,
+  and one of them could later send it to a server:
+  - two or more extended scripts, through shared engine state (for example the game
+    clock), through shared pools that answer "busy" to one script according to what others
+    use, and **across sessions** through shared quotas that survive a restart (the total
+    store space answering "full");
+  - a script and a plugin, through a bridged command whose arguments the plugin keeps or
+    turns into a quickslot that the user later clicks on a server, through plugin data,
+    which persists by design, or through frame timing and window layout.
+
+  That is a covert channel between programs the user chose to run, comparable to any
+  other software on their computer. Tessera neither offers nor documents it.
+
+### 18.5 The layout residual
+
+Extended windows lie below plugin windows and native panels, and receive the pointer only
+where nothing above catches it. A large, even transparent, extended window that receives
+pointer notifications therefore learns **where** plugin windows and native panels catch
+the pointer: their positions and mouse-visible shapes, **never their content**. Pointer
+moves reach a window only over its own mouse-visible elements, at most once per frame. It
+is a channel of layout only.
+
+### 18.6 Remaining risk
+
+- **This section rests on Tessera's builds.** Its guarantees hold for the builds the
+  project publishes. A modified build is outside them
+  ([§9.5](#95-extended-scripts-never-run-against-an-official-server) item 3).
+- **Open security items.** Decision 0017 lists security and design items that are still
+  open and must be closed by the M5.5 threat model and its escape tests before the first
+  slice ships. Two bear on this section: the actions that `input.drive` may press must be
+  limited to an explicit list, because a driven screenshot would write image files outside
+  the file output of §18.4; and two further channels between extended scripts (a shared
+  decode cache, and the layout residual of §18.5 between scripts) must be closed or added
+  to the stated limit of §18.4. This section is updated with the result.
+- **Contract is unchanged.** Extended scripting does not cure ToS §12 or ToS §7.1
+  ([§3.3](#33-consequences)), and the account and server risks of [§9.2](#92-why-it-is-the-highest-risk-tier)
+  are why the rule of §9.5 exists.
+
+---
+
+## 19. Sources
 
 Read 2026-10-03 unless noted. The project's research notes hold the detailed citations.
 

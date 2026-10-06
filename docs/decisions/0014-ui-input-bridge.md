@@ -6,6 +6,50 @@
 questions in the owner summary answered "yes"). The open review items below are left to the
 M5 implementation.
 
+**Amended in part by [0017](0017-extended-scripting.md) (2026-10-07).** The rest of this
+record is unchanged and is not rewritten. Each point applies only while an ext script is
+loaded, and with no ext script loaded input behaves exactly as this record says. 0017
+"Consequences" has the full table.
+- *Superseded in part:*
+  - **D4.** Ext contexts are tried for release-class bindings only after D4's two passes
+    over every non-ext context. They are tried only if no non-ext release-class binding
+    ended the resolution and no `opaque` context or `opaque_keys` band end stopped it. A
+    release after a UI-owned press never reaches them (0017 §5.5).
+  - **D5, "The band is consulted before every game-band context".** While an ext script is
+    loaded, the panic-chord tier is tested first, before the band and before KM §7.2
+    step 1 (0017 §5.5).
+  - **D5, "On a game-band context, `activate` keeps today's rule".** For ext contexts,
+    activating or deactivating an ext context drops a pending sequence only when that
+    sequence belongs to a context of the same script that the change deactivates. The
+    host registering or unregistering a script's actions and contexts follows the same
+    rule for the contexts it unregisters (0017 §5.5).
+  - **D7, the `handle_with` order.** The panic-chord tier is tested before any event of
+    the press is resolved or offered, which is before steps 1 and 2. Steps 1 and 2 still
+    run in that call for the earlier events they offer. Only the chord press itself is
+    consumed, so D7's ordering is otherwise unchanged.
+  - **D8, the step-7 list.** Items 6a–6c (the ext queue, the ext tick and the ext
+    collector) go between item 6 and item 7. Items 1–6, the plugin queue, its 2 ms plugin
+    slice and the plugin-time rules are unchanged.
+- *Extended:*
+  - **D5, "Who pushes".** A focused ext text box pushes `text_entry` (`EditControls`,
+    priority 50) and `ui.clipboard` (`CopyAndPasteControls`, the same element, right
+    after `EditControls`), as a plugin `TextBox` does. It pops both when it loses focus. It
+    can gain focus only under 0017 §4's gesture-rooted and visible-and-uncovered rules. A
+    hovered ext scrollable pushes `ui.scroll_mouse` for itself, as a native scrollable
+    does.
+  - **D6 (`opaque_keys`).** A key or pad press that ends at the band end because of
+    `opaque_keys`, in either pass, never reaches the ext passes. Consent prompts push
+    `ui.eat_keyboard`, which makes them its first user (0017 §5.3, §5.5).
+  - **D8, "Budget".** Two new time categories, both outside U1 and plugin time and inside
+    the frame rule: ext time (items 6a–6c) and ext UI time (native ext UI work in steps
+    1, 7 and 8). Step 8 is unchanged. 0017's open item 8 (ext world labels placed in
+    step 8) is still to be resolved by the M5.5 threat model.
+  - **D8, client-exit unload.** Ext apartments unload at the same point, after the
+    plugins.
+  - **D8, step 1.** Consent prompts raised outside step 1 are shown at the start of the
+    next frame's redraw, immediately before `offer_pending`. Ext windows' activation and
+    focus follow 0017 §4's gesture-rooted rule, so no ext call runs plugin code.
+
 ## Owner summary
 
 **The decision in five lines.**

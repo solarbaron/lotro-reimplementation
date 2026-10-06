@@ -1,13 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Proposed — Extended scripting: Lua 5.1 ext apartments on the shared script core, capability modules behind a fail-closed backend gate
+# 0017 — Extended scripting: Lua 5.1 ext apartments on the shared script core, capability modules behind a fail-closed backend gate
 
-**Status:** Proposed (awaiting the owner), 2026-10-06, **revision 6** (answers the sixth
-review; see "Revision 6: answers to the sixth review" at the end; the answers of
-revisions 5, 4, 3, 2 and 1 follow it). Not numbered yet. The session that accepts it gives it the
-next number, adds the row to `docs/decisions/README.md`, and makes the edits listed under
-"Required follow-ups" (Consequences), including the "amended in part" notes on 0014 and
-0015. This proposal edits no other file.
+**Status:** Accepted by the owner, 2026-10-07, as written (revision 6; all owner questions
+answered "yes"). The Lua 5.1.5 hardening patch (owner question 1) lives in a pinned fork of the
+Lua source crate outside this repository, so `REUSE.toml` stays unchanged. The open security
+and design items below are M5.5 threat-model requirements and escape tests. The "Required
+follow-ups" (Consequences) are carried out in separate commits.
 
 This is the architecture that [0016](0016-plugin-class-helper.md) item 2 promises. The owner
 asked for "much more extended scripting support that would allow much more stuff", with the

@@ -24,6 +24,7 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0014](0014-ui-input-bridge.md) | UI input bridge: UI commands as tessera-input actions with activation filters, a UI band above game contexts, pass-through pointer context, plugin code in frame steps 1 and 7 | Accepted | 2026-10-06 |
 | [0015](0015-ui-rendering.md) | UI rendering: exact CPU compositing per surface, GPU composition of finished surfaces, own-opacity nested surfaces, frame budgets U1-U5 for M5 | Accepted | 2026-10-06 |
 | [0016](0016-plugin-class-helper.md) | Ship a clean-room plugin `class` helper (user's original package wins if installed); extended scripting API later, separate namespace, compatibility API unchanged | Accepted | 2026-10-06 |
+| [0017](0017-extended-scripting.md) | Extended scripting (M5.5): Lua 5.1 ext apartments under `Ext`, capability-granted modules, fail-closed gate (never official servers), patched Lua in an external fork | Accepted | 2026-10-07 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next
 number, add a row here.

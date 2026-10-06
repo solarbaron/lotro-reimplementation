@@ -4,13 +4,13 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (re-review of the repaired third revision of 2026-10-06 passed on 2026-10-06; this text revises the spec Accepted earlier on 2026-10-06, so under `CLEAN_ROOM.md` §5.2 it is a **Revised** spec: implementers re-check the code listed under "Implementers re-check" in the last two change-log rows) |
+| Status | **Revised, awaiting review** (decision-alignment revision of 2026-10-06, its repair after review and the second repair, the last three change-log rows: they apply the Accepted decisions [0014](../decisions/0014-ui-input-bridge.md) and [0015](../decisions/0015-ui-rendering.md) to Tessera's own rules; no fact about the original changed, and section numbers and anchors are unchanged). Before it: **Accepted** (re-review of the repaired third revision of 2026-10-06 passed on 2026-10-06; that text revised the spec Accepted earlier on 2026-10-06, so under `CLEAN_ROOM.md` §5.2 it is a **Revised** spec: implementers re-check the code listed under "Implementers re-check" in the change-log rows, the last one included) |
 | Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent), 2026-10-06 (re-review of the repair of the third revision of 2026-10-06: **passed**; a different session from the writer). Earlier: Claude review session (spec-writer agent), 2026-10-06 (review of the third revision of 2026-10-06: changes requested); Claude review session (spec-writer agent), 2026-10-06 (re-review of the writer's second revision of 2026-10-06: passed); the first 2026-10-06 revision was reviewed by a Claude review session (spec-writer agent), 2026-10-06 (changes requested); the 2026-10-05 text was reviewed by a Claude review session (spec-writer agent) |
-| Review record | **Re-review of the repaired third revision: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three items of the review of the third revision are resolved. (1) §14.2.1 step 3 now gives the full table of base-layer operation numbers (Replace 0, Mix colour 1, Over 2, Colorize 3, Multiply 4, Screen 5, Grayscale 6, "none" 7), the `SetBlendMode` value that produces each, and the blend mode and operation after one rebuild for every value; I recomputed every row and the chain example (8 → 7, 5, 1 with Screen, Mix colour, Colorize), the AlphaBlend example (2, Replace) and invariant 57; every chain except Grayscale reaches Replace (the longest, from operation 7, takes six rebuilds, within the stated "at most seven"). (2) §13.19 "Which elements have a surface" states one rule (wanted when the object-mode value is non-zero or, without a value, for a root panel; present only while wanted and own-visible or `UICore_Element_KeepObjectWhenHidden`), and §13.17, §13.18 and §13.20 steps 2–3 now agree with it; invariant 53 is split into shown, never-shown and plugin-mode cases, each with a stated `GetStretchMode()`, `GetRotation()` and drawing, and I checked each case against steps 2–3; invariant 58 follows from the rule. (3) P72 cites the new source key S6, which the source table defines. **§5.3 checklist:** functional facts only; no code, pseudo-code, listing structure or addresses (searched); no copied prose; no game text, keys or hostnames; numeric constants under decision 0012; P77 and P78 carry marks and sources; 42 OPEN callouts before §19, each in §19 (the narrowed §13.20 callout included); no closed gate touched. **Spot checks** (own probes, read-only, decision 0011 targeted reading with address ranges only, build 4906.0071.1794.4035; O7 from the earlier extraction of the install): (a) BIN P77: the plugin blend-mode setter rejects values above 8 (unsigned), stores the value for the getter, and converts 1→3, 2→0, 3→4, 4→2, 5→1, 6→6, 7→5, 8→7, 0→0 before calling the element's operation setter: match. (b) BIN P65/P77: the rebuild routine reads the old element's operation through the element's operation getter (the same field the operation setter writes) and passes it to the plugin blend-mode setter after restoring visibility, position, size, z-level and background: match. (c) BIN P78: the object-mode property handler passes "value non-zero" to the surface step, which sets the wanted mark (re-read from the property when present), and creates and installs a surface only when wanted and the own visibility flag or the `KeepObjectWhenHidden` flag is set, otherwise installs none: match. (d) BIN P72/§13.20: `SetRotation` on an element without a surface clears the saved state, reads the object mode and sets it to 1 unless the plugin mark is set and the value is non-zero, then targets the own surface or the nearest ancestor's, stores the angles for `GetRotation()` only when a surface was found, and remembers the rotation only from the element's own surface: match. (e) O7 P77/P78: `luaplugins` = key 0x100000C8 → 0x22000826, 13 top-level elements, none with media items of its own or after resolution (two button elements have media in states only, and buttons are never rebuilt); the scaler window containers carry object mode 3; 188 resolved elements, states included, none with `UICore_Element_KeepObjectWhenHidden` (property 0x1BA): match. Non-blocking remarks for the next revision: (i) the initial value of `GetRotation()` on a never-rotated window is not stated (BIN: the getter always returns the stored three-number record; the constructor's initial value was not checked, Probable 0, 0, 0); invariant 53(b) is phrased relative to it and stays testable; (ii) "after at most seven rebuilds" in §14.2.1 step 3 could say six. Earlier records follow. **Repair of the third revision (spec writer, dirty room, 2026-10-06): submitted for re-review.** It answers the three items of the review below (change log, last row): the full operation-number table and the blend mode after a rebuild (§14.2.1 step 3, P77, invariant 57); one rule for when a window has a surface, used by §13.17–§13.20 alike, with invariant 53 split into shown, never-shown and plugin-mode cases (§13.19, §13.20 steps 2–3, P78, invariants 53 and 58); source key S6 for the usage facts of P72. Earlier records follow. Review of the third revision of 2026-10-06 (game-styled controls, drawing, scale, rotation, markup in `WriteLine`, class-table writes; font-record correction): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. These `CLEAN_ROOM.md` §5.3 items hold. The text is functional facts only. The colour packing, title layout and scale rules are outcomes in words, with numeric constants under decision 0012; they contain no code, no listing structure and no addresses. There is no copied prose. The layout and dictionary labels are data identifiers under the naming note and `LEGAL.md` §17. There is no game text, key or hostname, and no closed gate is touched. The one byte layout, §14.1, is complete. Every new fact has a row (P65–P76, O7). There are 42 OPEN callouts before §19, as the change log says, and each is listed in §19. The worked examples of §13.17 (150/50/50 and the packed (127, 0, 0, 255), against `ui-layout.md` §9.6.2–§9.6.3), §13.21 and §14.2.3 recompute, and so do invariants 44, 45, 49 and 52. **Spot checks** (own probes, read-only, 2026-10-06; the dictionary was re-read from the install and is byte-identical to the earlier extraction): (1) O7/P65 data: `UILAYOUT` (0x28000003) entry `luaplugins` = key 0x100000C8 → 0x22000826, design 1024 × 768, 13 top-level elements. The labels and resolved types of the ten base IDs match the §14.2.1 table, and 0x10004CE3 has its own type `UIScaler`. The four window containers have min width 150 and min height 100, and the two scaler containers have group 72, origin 0, 0 and object mode 3. The 13 part rectangles, z-levels and edge modes give exactly the §14.2.3 formulas under `ui-layout.md` §8.2/§8.4. Descendants 0x100022AA, 0x100025B0 and 0x100025B1 are present: match. (2) O7 markup and dictionary: 203 elements and states set `UICore_Text_parse_markup_tags`, all true. `ChatLogElement` (and the IM log) names 0x10000309 = `ChatLogListboxItemTemplate`, which has the property true. Dictionary: `ObjectOpacity` default 1.0, min 0, max 1; `parse_markup_tags` default false; `ObjectMode`, `font_color` and the four size limits have no default: match. (3) P12, §14.1 and invariant 23: there are 48 records, 45 in `client_local_English` and 3 (0x42000027, 0x42000028, 0x420000FD) in `client_general`, all with directory flags 2. In every record, offset 4 equals the largest glyph height and offset 8 the widest glyph, and in all 48 offset 4 equals the trailing number of the S3 enum name: match. (4) BIN P65 creation descriptors: each of the seven class functions looks up map 4 key 0x100000C8, writes type 0 and the stated base element. `GoldButton` and `GoldWindow` first run the plain class's step and then override it. The scroll bar's element is 0x1000239E plus (orientation ≠ 0), so Horizontal = 0 gives 0x1000239E. `Window` tests its scaled mark and `GoldWindow` tests a different byte flag: match. (5) BIN P66/P67: in the title layout, *t* = min(*W* − 140, max(*m*, 120)), the lefts are halved toward zero, and the bars are *t* + 80 wide. The close-button listener calls the window's close method only for the source 0x10002298 and message 0x35. The text-box text-element override looks up descendant 0x100022AA: match. **Issues:** (1) **§14.2.1 step 3 and P65 (implementability; the unknown is not marked OPEN).** A rebuild "passes the old base-layer operation number to `SetBlendMode`", and Tessera is told to reproduce this. The only operation numbers given are the example's (Over = 2, Replace = 0), so an implementer cannot reproduce a rebuild after `SetBlendMode` 1, 3, 5, 6, 7 or 8. Fix: give the complete table that maps compositor operation to operation number (all seven operations and "none"; numeric constants under decision 0012), so that the blend mode after a rebuild is defined for every value, or mark the missing numbers OPEN with a Tessera default. (2) **§13.19, §13.20 steps 2–3 and invariant 53 (internal contradiction; invariant not concrete).** §13.19 says every window "always" has a surface. §13.20 step 3 says a surface exists only while the element is visible, so a never-shown window may have none. Step 2 says that setting object mode 1 "creates the surface", which step 3 contradicts for a hidden window. Invariant 53 then expects both a visible 90-degree turn and `GetStretchMode()` = 1 after the first `SetRotation`. Under step 2, a window that has been shown already has a surface, so its stretch mode stays 0; and a hidden window that gets mode 1 may find no surface, so its rotation is dropped. Fix: state when a window's surface exists (created at build, at first show, or by an object-mode change while hidden), make §13.19 and §13.20 agree, and split invariant 53 into a shown-window case and a never-shown case, each with its expected `GetStretchMode()`, `GetRotation()` and drawing. (3) Minor: P72 cites a source "S-usage" that the source-key table does not define. Cite `plugin-api-usage.md` or add a key. Everything else is implementable for M5 as written. Earlier records follow. Re-review of the writer's second revision of 2026-10-06: Claude review session (spec-writer agent), 2026-10-06: **passed, Accepted**. All five issues of the review below are resolved: (1) §9.6 states the clamp order (maximum, then minimum, unsigned), the defaults, the 64-bit truncation that keeps the low 32 bits, the unsigned scroll-bar getters, the range rules of `SetMinimum`/`SetMaximum`, the large/small change caps and the minimum-above-maximum case, and invariant 29 tests them; (2) §13.1 gives the 50 × 50 creation size (P64) and §13.16 the initial references and the creation mark that makes None take the current coordinate, with invariants 39 and 40; (3) §13.12.5 names the pointer-outside flag, the strict comparison and the restart at capture end (P49, P51, invariant 42); (4) P48 now covers the text-box key listener (invariant 43); (5) §13.12.1/§13.12.2 say that only type 2 is special and that types 0, 1, 3, 4, 5 follow the Momentary rules, with a precise OPEN on the input layer's sequences (invariant 41). Every §5.3 item holds: functional facts only; no code or pseudo-code (the new prose describes outcomes and orders, not listing structure); no copied prose; no game text, keys or hostnames; every new fact has a provenance row (P48–P51, P57, P58 extended; P64 added); the §14.1 layout is unchanged and complete; invariants 29 and 39–43 are concrete; 38 OPEN callouts before §19, each listed in §19; no closed gate touched (UI and scripting only). Spot checks (re-review, own probes): O6 re-read of 0x51000000 (364 entries, 91/250/16/4/3; 0xAB toggle type 2 and a key of the 471-key input-action chain; the nine mouse-button actions and 0x82/0x10 as in §13.12.1); BIN `ScrollBar:SetValue` (bound check, equality test, maximum clamp then minimum clamp unsigned, `ValueChanged` raised after the clamp regardless of the result, thumb fraction 0 when maximum equals minimum); BIN `SetMinimum`/`SetMaximum`/`SetLargeChange`/`SetSmallChange` (drag of the other bound, re-clamp through `SetValue`, caps in the stated order) and the constructor defaults 0/100/0/10/1; BIN number conversion (setters truncate to 64 bits and pass the low 32 bits; the five scroll-bar getters push the stored value zero-extended, the geometry getters sign-extended); BIN creation descriptors (every descriptor function writes width 50 and height 50; seven skinned-class functions add a layout element); BIN hover check (hovered mark, pointer-outside flag, capture and hover target tested, per-element delay or the 0.25 default, strict comparison against the last movement time; the flag is cleared at creation and every store to it writes clear); §9.6 worked example and invariant 29 recompute. Non-blocking remark for the next revision: the probe found one more creation-descriptor function, in a factory-created element table with a different slot layout, that also writes 50 × 50 and a layout element; whether that table belongs to a plugin control class was not settled, so the counts "25" and "seven" in P64 may need re-counting (the 50 × 50 rule and the §13.1 OPEN are unaffected). Earlier record, 2026-10-06 revision (second OPEN-closing pass): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. Checklist items 1–4, 6 and 9 hold (functional facts only; no code or pseudo-code; no copied prose; the Lua error text in §6.6 is stock Lua and the plugin-data failure text is described, not quoted; no game text; the only layout, §14.1, is complete; no closed gate touched). Spot checks passed: O6 (0x51000000 table A re-read: 364 entries, 91/250/16/4/3 by toggle type, the six select and double-select actions and 0x82/0x10 Momentary, the three tap actions Impulse), O4 (input-action chain 290 + 181 = 471 keys, chat-type chain 39 + 9 = 48, all 16 action keys of §13.12.1 and all 34 `ChatType` values are keys), O5 (owner's key map: left select default, left double-select `MouseDblClick`, left tap `Tap`, right select `Tap`, no middle binding, wheel Z positive/negative), S3 captures of P50/P62 (`MouseDoubleClick` `Button` 1, `MouseClick` `Button` 2, `AssistTargetRemoved` empty, `KeyUp` `Action` 19), P63 counts (62, 9 and 7 Lua files, none uses `newproxy` or `__gc`), and BIN for P51 (the hover check skips while the mouse is captured, uses a per-element delay or the default 0.25 as a 32-bit float, and sets the hovered mark from the handler's result); the 35 OPEN callouts match §19; the §13.15 and §13.16 worked examples and invariants 26–30 recompute correctly. **Issues:** (1) §9.6/`ScrollBar:SetValue` and invariant 29: the order of the minimum and maximum clamps under unsigned comparison is not stated; it decides the result whenever the minimum is negative (e.g. minimum −10, maximum 10, `SetValue(20)` gives 10 or −10), so state the order or add an OPEN, and say what happens when the minimum is above the maximum. (2) §13.16: a control that never captured references (no `AttachEdges` call) still goes through the layout step when its size is 0 × 0 ("None" then takes the reference coordinate), but the spec gives no initial reference values, and the default size of a new control is stated nowhere; give both or mark them OPEN. (3) §13.12.5: the hover check also tests one more manager-level flag besides capture and the hovered mark (seen in the spot check); state the condition or add an OPEN. (4) §13.13 step 2 (a focused plugin `TextBox` fires `KeyDown`/`KeyUp` from the key notification, whatever `GetWantsKeyEvents()`) has no provenance row that names it; extend P48 or P53. (5) §13.12.2 covers only Momentary and Impulse mouse-button actions; the toggle type is read at run time, so say what an AutoRepeat, Analog or Toggle mouse-button action does, or add an OPEN. None of these blocks the rest of the M5 work. Writer's second revision 2026-10-06 addresses every item (change log); re-reviewed above. Earlier record: Claude review session (spec-writer agent), 2026-10-05: changes requested (named-colour component values in §13.9/A.5 do not match the original, which uses byte/255 rounded to 3 decimals; the plugin-data key character rule in §10.2/P14/invariant 12 is locale-dependent in the original, not ASCII-only; O4 key count 472 should be 471; unsourced behaviour statements in §13.1, §13.10, §14.2, §14.5; OPEN count in change log is 22, not 23; naming note cites `LEGAL.md` §10, which has no interoperability record). Writer's revision 2026-10-05 addresses every item (change log). Re-review: Claude review session (spec-writer agent), 2026-10-05: **passed, Accepted** (every §5.3 item true; spot checks against the install, the owner's settings folder, S3 and targeted BIN all passed: 141 named colours / 423 components follow the 3-decimal rule, O4 and §15 counts, game-language setlocale and both `isalnum` checks, `GetScriptVersion` = 13, 0, 48 font records, Appendix A.1 vs S3, `PluginOptions.xml` structure; 25 precise OPENs, none blocking) |
+| Review record | **Decision-alignment revision (spec writer, dirty room, 2026-10-06): awaiting review by a different session.** The second review round (2026-10-06) is answered by the last change-log row (second repair: the §3.3 head-of-queue wait for the first file index, the lead-in to invariants 59–65, the §13.18 mode-1 citation). Scope for the reviewer: only Tessera rules (the "Tessera:" parts of OPEN callouts and the paragraphs marked as Tessera rules) were reworded or added, each with a cross-reference to decision 0014 or 0015; check that no BIN, O or S fact was changed, that every new OPEN is in §19, and that the new invariants 59–65 follow from the cited decision text. The first review of this revision (2026-10-06, changes requested: autoload not placed in the frame; first-paint bound too strong; the `Received` skip rule and the window-built clip chain stated as settled; P79 under-cited; blocking writes and the frame clock not covered; invariant 63 missing "within one frame") is answered by the repair row of the change log, which is submitted for re-review. Earlier records follow. **Re-review of the repaired third revision: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three items of the review of the third revision are resolved. (1) §14.2.1 step 3 now gives the full table of base-layer operation numbers (Replace 0, Mix colour 1, Over 2, Colorize 3, Multiply 4, Screen 5, Grayscale 6, "none" 7), the `SetBlendMode` value that produces each, and the blend mode and operation after one rebuild for every value; I recomputed every row and the chain example (8 → 7, 5, 1 with Screen, Mix colour, Colorize), the AlphaBlend example (2, Replace) and invariant 57; every chain except Grayscale reaches Replace (the longest, from operation 7, takes six rebuilds, within the stated "at most seven"). (2) §13.19 "Which elements have a surface" states one rule (wanted when the object-mode value is non-zero or, without a value, for a root panel; present only while wanted and own-visible or `UICore_Element_KeepObjectWhenHidden`), and §13.17, §13.18 and §13.20 steps 2–3 now agree with it; invariant 53 is split into shown, never-shown and plugin-mode cases, each with a stated `GetStretchMode()`, `GetRotation()` and drawing, and I checked each case against steps 2–3; invariant 58 follows from the rule. (3) P72 cites the new source key S6, which the source table defines. **§5.3 checklist:** functional facts only; no code, pseudo-code, listing structure or addresses (searched); no copied prose; no game text, keys or hostnames; numeric constants under decision 0012; P77 and P78 carry marks and sources; 42 OPEN callouts before §19, each in §19 (the narrowed §13.20 callout included); no closed gate touched. **Spot checks** (own probes, read-only, decision 0011 targeted reading with address ranges only, build 4906.0071.1794.4035; O7 from the earlier extraction of the install): (a) BIN P77: the plugin blend-mode setter rejects values above 8 (unsigned), stores the value for the getter, and converts 1→3, 2→0, 3→4, 4→2, 5→1, 6→6, 7→5, 8→7, 0→0 before calling the element's operation setter: match. (b) BIN P65/P77: the rebuild routine reads the old element's operation through the element's operation getter (the same field the operation setter writes) and passes it to the plugin blend-mode setter after restoring visibility, position, size, z-level and background: match. (c) BIN P78: the object-mode property handler passes "value non-zero" to the surface step, which sets the wanted mark (re-read from the property when present), and creates and installs a surface only when wanted and the own visibility flag or the `KeepObjectWhenHidden` flag is set, otherwise installs none: match. (d) BIN P72/§13.20: `SetRotation` on an element without a surface clears the saved state, reads the object mode and sets it to 1 unless the plugin mark is set and the value is non-zero, then targets the own surface or the nearest ancestor's, stores the angles for `GetRotation()` only when a surface was found, and remembers the rotation only from the element's own surface: match. (e) O7 P77/P78: `luaplugins` = key 0x100000C8 → 0x22000826, 13 top-level elements, none with media items of its own or after resolution (two button elements have media in states only, and buttons are never rebuilt); the scaler window containers carry object mode 3; 188 resolved elements, states included, none with `UICore_Element_KeepObjectWhenHidden` (property 0x1BA): match. Non-blocking remarks for the next revision: (i) the initial value of `GetRotation()` on a never-rotated window is not stated (BIN: the getter always returns the stored three-number record; the constructor's initial value was not checked, Probable 0, 0, 0); invariant 53(b) is phrased relative to it and stays testable; (ii) "after at most seven rebuilds" in §14.2.1 step 3 could say six. Earlier records follow. **Repair of the third revision (spec writer, dirty room, 2026-10-06): submitted for re-review.** It answers the three items of the review below (change log, last row): the full operation-number table and the blend mode after a rebuild (§14.2.1 step 3, P77, invariant 57); one rule for when a window has a surface, used by §13.17–§13.20 alike, with invariant 53 split into shown, never-shown and plugin-mode cases (§13.19, §13.20 steps 2–3, P78, invariants 53 and 58); source key S6 for the usage facts of P72. Earlier records follow. Review of the third revision of 2026-10-06 (game-styled controls, drawing, scale, rotation, markup in `WriteLine`, class-table writes; font-record correction): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. These `CLEAN_ROOM.md` §5.3 items hold. The text is functional facts only. The colour packing, title layout and scale rules are outcomes in words, with numeric constants under decision 0012; they contain no code, no listing structure and no addresses. There is no copied prose. The layout and dictionary labels are data identifiers under the naming note and `LEGAL.md` §17. There is no game text, key or hostname, and no closed gate is touched. The one byte layout, §14.1, is complete. Every new fact has a row (P65–P76, O7). There are 42 OPEN callouts before §19, as the change log says, and each is listed in §19. The worked examples of §13.17 (150/50/50 and the packed (127, 0, 0, 255), against `ui-layout.md` §9.6.2–§9.6.3), §13.21 and §14.2.3 recompute, and so do invariants 44, 45, 49 and 52. **Spot checks** (own probes, read-only, 2026-10-06; the dictionary was re-read from the install and is byte-identical to the earlier extraction): (1) O7/P65 data: `UILAYOUT` (0x28000003) entry `luaplugins` = key 0x100000C8 → 0x22000826, design 1024 × 768, 13 top-level elements. The labels and resolved types of the ten base IDs match the §14.2.1 table, and 0x10004CE3 has its own type `UIScaler`. The four window containers have min width 150 and min height 100, and the two scaler containers have group 72, origin 0, 0 and object mode 3. The 13 part rectangles, z-levels and edge modes give exactly the §14.2.3 formulas under `ui-layout.md` §8.2/§8.4. Descendants 0x100022AA, 0x100025B0 and 0x100025B1 are present: match. (2) O7 markup and dictionary: 203 elements and states set `UICore_Text_parse_markup_tags`, all true. `ChatLogElement` (and the IM log) names 0x10000309 = `ChatLogListboxItemTemplate`, which has the property true. Dictionary: `ObjectOpacity` default 1.0, min 0, max 1; `parse_markup_tags` default false; `ObjectMode`, `font_color` and the four size limits have no default: match. (3) P12, §14.1 and invariant 23: there are 48 records, 45 in `client_local_English` and 3 (0x42000027, 0x42000028, 0x420000FD) in `client_general`, all with directory flags 2. In every record, offset 4 equals the largest glyph height and offset 8 the widest glyph, and in all 48 offset 4 equals the trailing number of the S3 enum name: match. (4) BIN P65 creation descriptors: each of the seven class functions looks up map 4 key 0x100000C8, writes type 0 and the stated base element. `GoldButton` and `GoldWindow` first run the plain class's step and then override it. The scroll bar's element is 0x1000239E plus (orientation ≠ 0), so Horizontal = 0 gives 0x1000239E. `Window` tests its scaled mark and `GoldWindow` tests a different byte flag: match. (5) BIN P66/P67: in the title layout, *t* = min(*W* − 140, max(*m*, 120)), the lefts are halved toward zero, and the bars are *t* + 80 wide. The close-button listener calls the window's close method only for the source 0x10002298 and message 0x35. The text-box text-element override looks up descendant 0x100022AA: match. **Issues:** (1) **§14.2.1 step 3 and P65 (implementability; the unknown is not marked OPEN).** A rebuild "passes the old base-layer operation number to `SetBlendMode`", and Tessera is told to reproduce this. The only operation numbers given are the example's (Over = 2, Replace = 0), so an implementer cannot reproduce a rebuild after `SetBlendMode` 1, 3, 5, 6, 7 or 8. Fix: give the complete table that maps compositor operation to operation number (all seven operations and "none"; numeric constants under decision 0012), so that the blend mode after a rebuild is defined for every value, or mark the missing numbers OPEN with a Tessera default. (2) **§13.19, §13.20 steps 2–3 and invariant 53 (internal contradiction; invariant not concrete).** §13.19 says every window "always" has a surface. §13.20 step 3 says a surface exists only while the element is visible, so a never-shown window may have none. Step 2 says that setting object mode 1 "creates the surface", which step 3 contradicts for a hidden window. Invariant 53 then expects both a visible 90-degree turn and `GetStretchMode()` = 1 after the first `SetRotation`. Under step 2, a window that has been shown already has a surface, so its stretch mode stays 0; and a hidden window that gets mode 1 may find no surface, so its rotation is dropped. Fix: state when a window's surface exists (created at build, at first show, or by an object-mode change while hidden), make §13.19 and §13.20 agree, and split invariant 53 into a shown-window case and a never-shown case, each with its expected `GetStretchMode()`, `GetRotation()` and drawing. (3) Minor: P72 cites a source "S-usage" that the source-key table does not define. Cite `plugin-api-usage.md` or add a key. Everything else is implementable for M5 as written. Earlier records follow. Re-review of the writer's second revision of 2026-10-06: Claude review session (spec-writer agent), 2026-10-06: **passed, Accepted**. All five issues of the review below are resolved: (1) §9.6 states the clamp order (maximum, then minimum, unsigned), the defaults, the 64-bit truncation that keeps the low 32 bits, the unsigned scroll-bar getters, the range rules of `SetMinimum`/`SetMaximum`, the large/small change caps and the minimum-above-maximum case, and invariant 29 tests them; (2) §13.1 gives the 50 × 50 creation size (P64) and §13.16 the initial references and the creation mark that makes None take the current coordinate, with invariants 39 and 40; (3) §13.12.5 names the pointer-outside flag, the strict comparison and the restart at capture end (P49, P51, invariant 42); (4) P48 now covers the text-box key listener (invariant 43); (5) §13.12.1/§13.12.2 say that only type 2 is special and that types 0, 1, 3, 4, 5 follow the Momentary rules, with a precise OPEN on the input layer's sequences (invariant 41). Every §5.3 item holds: functional facts only; no code or pseudo-code (the new prose describes outcomes and orders, not listing structure); no copied prose; no game text, keys or hostnames; every new fact has a provenance row (P48–P51, P57, P58 extended; P64 added); the §14.1 layout is unchanged and complete; invariants 29 and 39–43 are concrete; 38 OPEN callouts before §19, each listed in §19; no closed gate touched (UI and scripting only). Spot checks (re-review, own probes): O6 re-read of 0x51000000 (364 entries, 91/250/16/4/3; 0xAB toggle type 2 and a key of the 471-key input-action chain; the nine mouse-button actions and 0x82/0x10 as in §13.12.1); BIN `ScrollBar:SetValue` (bound check, equality test, maximum clamp then minimum clamp unsigned, `ValueChanged` raised after the clamp regardless of the result, thumb fraction 0 when maximum equals minimum); BIN `SetMinimum`/`SetMaximum`/`SetLargeChange`/`SetSmallChange` (drag of the other bound, re-clamp through `SetValue`, caps in the stated order) and the constructor defaults 0/100/0/10/1; BIN number conversion (setters truncate to 64 bits and pass the low 32 bits; the five scroll-bar getters push the stored value zero-extended, the geometry getters sign-extended); BIN creation descriptors (every descriptor function writes width 50 and height 50; seven skinned-class functions add a layout element); BIN hover check (hovered mark, pointer-outside flag, capture and hover target tested, per-element delay or the 0.25 default, strict comparison against the last movement time; the flag is cleared at creation and every store to it writes clear); §9.6 worked example and invariant 29 recompute. Non-blocking remark for the next revision: the probe found one more creation-descriptor function, in a factory-created element table with a different slot layout, that also writes 50 × 50 and a layout element; whether that table belongs to a plugin control class was not settled, so the counts "25" and "seven" in P64 may need re-counting (the 50 × 50 rule and the §13.1 OPEN are unaffected). Earlier record, 2026-10-06 revision (second OPEN-closing pass): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. Checklist items 1–4, 6 and 9 hold (functional facts only; no code or pseudo-code; no copied prose; the Lua error text in §6.6 is stock Lua and the plugin-data failure text is described, not quoted; no game text; the only layout, §14.1, is complete; no closed gate touched). Spot checks passed: O6 (0x51000000 table A re-read: 364 entries, 91/250/16/4/3 by toggle type, the six select and double-select actions and 0x82/0x10 Momentary, the three tap actions Impulse), O4 (input-action chain 290 + 181 = 471 keys, chat-type chain 39 + 9 = 48, all 16 action keys of §13.12.1 and all 34 `ChatType` values are keys), O5 (owner's key map: left select default, left double-select `MouseDblClick`, left tap `Tap`, right select `Tap`, no middle binding, wheel Z positive/negative), S3 captures of P50/P62 (`MouseDoubleClick` `Button` 1, `MouseClick` `Button` 2, `AssistTargetRemoved` empty, `KeyUp` `Action` 19), P63 counts (62, 9 and 7 Lua files, none uses `newproxy` or `__gc`), and BIN for P51 (the hover check skips while the mouse is captured, uses a per-element delay or the default 0.25 as a 32-bit float, and sets the hovered mark from the handler's result); the 35 OPEN callouts match §19; the §13.15 and §13.16 worked examples and invariants 26–30 recompute correctly. **Issues:** (1) §9.6/`ScrollBar:SetValue` and invariant 29: the order of the minimum and maximum clamps under unsigned comparison is not stated; it decides the result whenever the minimum is negative (e.g. minimum −10, maximum 10, `SetValue(20)` gives 10 or −10), so state the order or add an OPEN, and say what happens when the minimum is above the maximum. (2) §13.16: a control that never captured references (no `AttachEdges` call) still goes through the layout step when its size is 0 × 0 ("None" then takes the reference coordinate), but the spec gives no initial reference values, and the default size of a new control is stated nowhere; give both or mark them OPEN. (3) §13.12.5: the hover check also tests one more manager-level flag besides capture and the hovered mark (seen in the spot check); state the condition or add an OPEN. (4) §13.13 step 2 (a focused plugin `TextBox` fires `KeyDown`/`KeyUp` from the key notification, whatever `GetWantsKeyEvents()`) has no provenance row that names it; extend P48 or P53. (5) §13.12.2 covers only Momentary and Impulse mouse-button actions; the toggle type is read at run time, so say what an AutoRepeat, Analog or Toggle mouse-button action does, or add an OPEN. None of these blocks the rest of the M5 work. Writer's second revision 2026-10-06 addresses every item (change log); re-reviewed above. Earlier record: Claude review session (spec-writer agent), 2026-10-05: changes requested (named-colour component values in §13.9/A.5 do not match the original, which uses byte/255 rounded to 3 decimals; the plugin-data key character rule in §10.2/P14/invariant 12 is locale-dependent in the original, not ASCII-only; O4 key count 472 should be 471; unsourced behaviour statements in §13.1, §13.10, §14.2, §14.5; OPEN count in change log is 22, not 23; naming note cites `LEGAL.md` §10, which has no interoperability record). Writer's revision 2026-10-05 addresses every item (change log). Re-review: Claude review session (spec-writer agent), 2026-10-05: **passed, Accepted** (every §5.3 item true; spot checks against the install, the owner's settings folder, S3 and targeted BIN all passed: 141 named colours / 423 components follow the 3-decimal rule, O4 and §15 counts, game-language setlocale and both `isalnum` checks, `GetScriptVersion` = 13, 0, 48 font records, Appendix A.1 vs S3, `PluginOptions.xml` structure; 25 precise OPENs, none blocking) |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
-| Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), [`ui-layout.md`](ui-layout.md) (layout records, inheritance, layout rules, image layers and compositor; the game-styled controls of §14.2 are built from it), [`ui-behaviour.md`](ui-behaviour.md) (UI scale §9.2, resize bars §8.2, moving §8.1), [`skin-definition.md`](skin-definition.md) (skins reach the game-styled controls), [`fonts.md`](fonts.md) (font records, text layout and colour packing), [`plugin-api-usage.md`](plugin-api-usage.md) (how real plugins use this surface) |
+| Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), [`ui-layout.md`](ui-layout.md) (layout records, inheritance, layout rules, image layers and compositor; the game-styled controls of §14.2 are built from it), [`ui-behaviour.md`](ui-behaviour.md) (UI scale §9.2, resize bars §8.2, moving §8.1), [`skin-definition.md`](skin-definition.md) (skins reach the game-styled controls), [`fonts.md`](fonts.md) (font records, text layout and colour packing), [`plugin-api-usage.md`](plugin-api-usage.md) (how real plugins use this surface), [`plugin-runtime.md`](plugin-runtime.md) (interpreter, limits, collector step). Tessera decisions that place this API in the client: [0014](../decisions/0014-ui-input-bridge.md) (input reaches the UI and plugins; frame-loop placement of all plugin code, D8) and [0015](../decisions/0015-ui-rendering.md) (how surfaces, nested surfaces, opacity, clipping and rotation are drawn) |
 
 > **Naming note (interoperability).** The namespace, class, method, event, field, enum member,
 > XML element/attribute and file names in this document are the identifiers that existing
@@ -80,13 +80,15 @@ Source keys:
 | **O5** | Observed 2026-10-05 (read-only): the owner's `lotro.keymap` in the Proton prefix binds the scroll-up input action to the mouse's Z axis in the positive direction and the scroll-down action to the negative direction. Observed 2026-10-06 in the same file: the left button is bound to the left select action (default activation), the left double-select action (`MouseDblClick` activation) and the left tap action (`Tap`); the right button's select action uses the `Tap` activation; no middle-button action is bound |
 | **O6** | Observed 2026-10-06 in user install data (read-only, M1): action-map record 0x51000000, table A (`keymap.md` §12.10), read afresh: toggle type 1 (Momentary) for the six select and double-select actions 0x56, 0x4C, 0xA4, 0x33, 0x2E, 0x93 and for the wheel actions 0x82, 0x10; toggle type 2 (Impulse) for the three tap actions 0x32, 0x73, 0x6E; 364 entries in all (91 Momentary, 250 Impulse, 16 AutoRepeat, 4 Analog, 3 Toggle, as in `keymap.md`). Re-read 2026-10-06 by the second revision: the same counts; action 0xAB is a key of the input-action chain (O4) and has toggle type 2; none of the nine mouse-button actions has toggle type 3, 4 or 5 |
 | **O7** | Observed 2026-10-06 in user install data (read-only, M1, own decoder written from `ui-layout.md` §4–§7): the `UILAYOUT` DID map (root key 4) entry with key 0x100000C8 is labelled `luaplugins` and names layout 0x22000826 (design size 1024 × 768, 13 top-level elements: their labels, types, rectangles, edge modes, properties and the trees of the window containers as summarised in §14.2); the `chatwindow` layout (0x22000034) element `ChatLogElement` names the top-level element `ChatLogListboxItemTemplate` in its `UI_ChatLog_TextElement` property, and that template has `UICore_Text_parse_markup_tags` = true; 203 elements of all layouts set that property, all to true. Property dictionary 0x34000000 (read-only): `UICore_Element_ObjectOpacity` has default 1.0, minimum 0, maximum 1; `UICore_Element_ObjectMode`, `UICore_Text_font_color` and the four size-limit properties have no default; `UICore_Text_parse_markup_tags` has default false. Values are observations of this install, read at run time |
+| **DEC** | Tessera decision records, not sources of facts about the original: [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge; Accepted by the owner 2026-10-06) and [0015](../decisions/0015-ui-rendering.md) (UI rendering; Accepted by the owner 2026-10-06). Text that cites them states Tessera behaviour, which may differ from the original where the decision records a known difference |
 
 Marks: **Confirmed** = observed in the owner's install (data, settings folder or the client
 binary), with date; BIN facts are Confirmed by disassembly on 2026-10-05 (P1–P46) or
 2026-10-06 (P47–P61, P64, the third-pass extensions of P48–P51, P57 and P58, the
 fourth-pass rows P65–P76 and the repair rows P77–P78) and are marked
 "BIN"; facts that rest only on BIN are flagged as such in the row. **Reported** = from
-published sources only.
+published sources only. Rows that cite only **DEC** state Tessera rules, not facts; they carry the
+mark **Tessera rule** and need no observation.
 
 | # | Fact or group of facts | Sources | Mark |
 |---|---|---|---|
@@ -168,6 +170,8 @@ published sources only.
 | P76 | Class tables are plain writable tables: the binding layer installs no `__newindex` anywhere, registers each class's own methods only on its own table, and finds methods (and evaluates `IsA`) through the ordinary `__index` chain; so a function stored on a class table is what every Lua lookup through that class finds, for existing and new instances; native client code never calls plugin methods through these tables | BIN (fourth pass: string references and the instance and `IsA` paths; first-pass registration code); P19 | **Confirmed** 2026-10-06 (BIN only); not observed in a running client |
 | P77 | Base-layer operation numbers: `SetBlendMode(n)` stores `n` and gives the element the operation number 3 for `n` = 1 (Colorize), 0 for 2 (Replace), 4 for 3 (Multiply), 2 for 4 (Over), 1 for 5 (Mix colour), 6 for 6 (Grayscale), 5 for 7 (Screen), 7 for 8 ("none") and 0 for `n` = 0; a new element's number is 0; the rebuild routine reads the old element's number and passes it to the same setter, so the blend mode after a rebuild follows the table of §14.2.1 step 3; the rebuilt top elements of the plugin layout carry no media items (O7) | BIN (repair of the fourth pass, 2026-10-06: the plugin blend-mode setter and its eight-way conversion, the element's operation getter, the rebuild routine; same build and method as the fourth pass, address ranges only); O7 (media census of the 13 top elements) | **Confirmed** 2026-10-06 (BIN; media census O7) |
 | P78 | When an element has its own surface: it **wants** one when its object-mode value is non-zero, or, without a value, when it is a root panel (every plugin window); the surface exists while it wants one **and** its own visibility flag is set or `UICore_Element_KeepObjectWhenHidden` is true; the client re-evaluates this on object-mode, root-flag and visibility changes; hiding saves the surface's rotation and showing restores it; a surface for an element without an object-mode value is CanvasResize; `SetRotation` on a window without a surface clears the saved state, sets object mode 1 unless the plugin set a non-zero mode, and then targets the nearest ancestor surface; no element of the 13 resolved trees of the plugin layout (188 elements, states included) sets `UICore_Element_KeepObjectWhenHidden` | BIN (repair of the fourth pass, 2026-10-06: the root-panel constructor, the object-mode property handler, the element's visibility setter and show/hide step, the surface creation and installation steps, the surface-state save on hide, the window rotation setter); O7 (property census, read-only, 2026-10-06); `ui-behaviour.md` §11.2 (agrees) | **Confirmed** 2026-10-06 (BIN; census O7); whether an unshown top-level window reaches the screen root's surface, OPEN (§13.20) |
+| P79 | Frame-loop placement of plugin code in Tessera: input handlers in step 1, the UI tick, `Update`, the plugin host's deferred work (sliced by whole items, 2 ms per frame) and the collector step in step 7; every plugin load (queued `LoadPlugin`, `/plugins load`, manager UI, autoload at login; the last three a Tessera reading of D8) as a step-7 deferred item, none before the first `Plugins/` index (0015 §4.4); asynchronous `PluginData.Load` handlers and writes as deferred items; game-raised plugin events (`Turbine.Chat.Received`, the gameplay views' `…Changed` events) and the logout unload queued as deferred work; the `Received` skip set (interim, pending a revision of 0014, open review item 1); the client-exit unload after the last frame; blocking writes at unload and when the frame clock steps (interim rules, 0014 "Other improvements"); pointer-move coalescing; hit tests against current geometry; the pointer lock as client state; command names and IDs, activation order, timing, repeats and toggle types of the actions the UI receives; typed characters and `opaque_keys`; Escape with a UI attached; the scroll actions over plugin controls (§3.3, §6.2, §6.3, §6.6, §9.4, §9.7, §10.6, §11.1, §11.3, §12, §13.3, §13.11–§13.13, §15) | DEC (0014 D1–D9, "Escape with a UI attached", Known differences 6, 7, 10, 12, 15, 16, 18, 21, open review items 1 and 2, "Other improvements"; 0015 §4.4) | **Tessera rule** (no observation; the original's timing is OPEN where stated) |
+| P80 | Drawing of plugin surfaces in Tessera: a nested surface is a separate composition entry with its own opacity only, clipped by its nearest enclosing window and every enclosing window above it, turning with its surfaced ancestors; stand-in surfaces for top-level windows in object mode 0; mode-0 child windows drawn into the nearest surface above; mode 2 repeat addressing and Tile parents; the mode-change refresh; first paints, caps and the image checks of `SetBackground(path)` (§13.2, §13.8, §13.17–§13.21); the clip chain built from windows (interim, pending a revision of 0015, open review item 1) | DEC (0015 Decision 1.1, 1.5–1.8, U4 (c), §2.1, §2.3, §4.3–§4.4, §7, open review item 1) | **Tessera rule** (no observation; the original's composition of nested surfaces is OPEN, §13.18, §13.19) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -235,8 +239,47 @@ published sources only.
   through the view with normal indexing (including `getmetatable(p).__gc`) must return what
   the plugin stored, not the host dispatcher.
 - **Garbage collection.** Once per frame the original runs one incremental collection step
-  in every apartment (BIN). Tessera may do the same or rely on the default collector.
-- All plugin code runs on the main (UI) thread, between frames (Tessera architecture §18.1).
+  in every apartment (BIN). Tessera must make the same step, `lua_gc` with `LUA_GCSTEP` and
+  20 in every apartment once per tick (`plugin-runtime.md` §9.2, which governs; this replaces
+  the earlier "may rely on the default collector"). It runs in frame-loop step 7, after the
+  plugin host's deferred work (decision 0014 D8, step 7 item 6).
+- All plugin code runs on the main (UI) thread. **Tessera rule (decision 0014 D8):** "between
+  frames" (ARCHITECTURE §18.1, `plugin-runtime.md` §10.3) means in frame-loop **step 1**
+  (the plugin input handlers that the input layer's offers run: `MouseDown`, `MouseUp`,
+  `MouseClick`, `MouseDoubleClick`, `MouseMove`, `MouseEnter`, `MouseLeave`, `MouseWheel`,
+  `KeyDown`, `KeyUp`, `FocusGained`, `FocusLost` and the notifications they cause, §9.7) and
+  **step 7** (the UI tick below, then the plugin host's deferred work, which includes the
+  game-raised plugin events of §11.3 and §15 and the logout unload of §6.3, then the
+  collector step), with one exception: the unload of every apartment at client exit, which
+  runs after the last frame (§6.3). Plugin code never runs during the session, simulation,
+  layout, paint or rendering steps, and never on another thread. Input that arrives between
+  two redraws is handled in the window system's callbacks on arrival and counts as step 1 of
+  the following frame. Time spent in plugin Lua calls is measured as plugin time, apart from
+  the UI's own budget; it counts toward the frame-time rule. Input handlers, the `Update`
+  broadcast and the collector step are never deferred or cut by a time slice; each handler
+  call has its own instruction budget (above).
+  > **OPEN:** how Tessera keeps the notification events (§9.7) that game or session code
+  > causes outside steps 1 and 7 inside those steps: for example a native panel shown by a
+  > session event with activation on show, which deactivates the active plugin window and
+  > takes focus from its text box at once (§13.13, §13.14), or a window-size change that
+  > re-lays out root panels and raises `SizeChanged`/`PositionChanged`. Recorded as open
+  > review item 2 of decision 0014, to be settled there (either such UI changes are applied
+  > in step 7, or the rule above is widened). Until then the rule above is the target, and
+  > any such event is still delivered by §9.7.
+
+  > **OPEN (when the frame clock steps, decision 0014 "Other improvements"):**
+  > `Turbine.Engine.GetGameTime()` is constant within one frame (§12), and the hover delay
+  > of §13.12.5 is measured on the UI's frame clock. Decision 0014 places input handled in
+  > window-system callbacks in step 1 of the following frame but does not say when these
+  > clocks advance, so a step-1 handler run in a callback could see the previous frame's
+  > value while that frame's `Update` sees the next. **Tessera rule until the decision
+  > says otherwise:** one frame clock serves `GetGameTime()` and the UI; it advances once
+  > per frame, right after the previous frame has been presented and before any step-1
+  > work of the next frame, including work done in callbacks. So every plugin call that
+  > belongs to one frame (its step-1 handlers wherever they run, and its step 7) sees the
+  > same value, and the time of a pointer movement for §13.12.5 is the clock value of the
+  > frame whose step 1 delivers it. The client-exit unload (§6.3) sees the value of the
+  > last frame.
 - **UI tick (P48, P51).** Once per frame the UI element manager runs one tick, in this
   order: (1) if the pointer needs re-evaluating, the hit test and hover target are refreshed
   (§13.11); (2) the hover check, which may deliver `MouseHover` (§13.12); (3) the `Update`
@@ -245,8 +288,32 @@ published sources only.
   processes input, outside this tick. Deferred work of the plugin host (queued `LoadPlugin`
   requests, asynchronous `PluginData.Load` handlers, plugin-data writes) runs between frames
   too (§6.2, §10.6). > **OPEN:** the order of the plugin host's deferred work relative to
-  the UI tick within one frame. Tessera: input, then the UI tick, then the plugin host's
-  deferred work, then rendering.
+  the UI tick within one frame. Tessera (decision 0014 D8): input (frame-loop step 1), then,
+  in step 7, the UI tick in the order above, then the plugin host's deferred work, then the
+  collector step; layout, paint and rendering follow in step 8 and later.
+- **Tessera's deferred work (decision 0014 D8, Tessera rules).** The queue holds, in the
+  order they were queued: `LoadPlugin` requests (§6.2), the other plugin loads (§6.2: loads
+  asked for with `/plugins load` or from the manager UI, and the **autoload loads**, one item
+  per autoloaded plugin, queued in the order of Tessera's autoload list when the session
+  reports the character login; D8 names only `LoadPlugin` requests, so these are a Tessera
+  reading of D8, as in `plugin-runtime.md` §8.4 and `plugin-descriptor.md` §8.1),
+  asynchronous `PluginData.Load` handlers, plugin-data writes and their `onDone` callbacks
+  (§10.1, §10.6), the **game-raised plugin events** (`Turbine.Chat.Received`, §11.3; the
+  gameplay views' `…Changed` events, §15) and the **logout unload** (§6.3), one item per
+  apartment. The host runs the items in queue order and starts no further item once this
+  frame's deferred work has taken 2 ms of plugin time; the rest waits for the next frame's
+  step 7. An item is never interrupted, and queue order is never changed, so load order
+  (§6.2) and per-key plugin-data order (§10.6) are kept. At least one item runs in each
+  frame (D8), with one exception: no load item runs before the first `Plugins/` file index
+  of §13.8 is ready (decision 0015 §4.4). While that index is not ready and the item at the
+  head of the queue is a load, that frame's deferred work stops at that item (so when it
+  is the head at the start of step 7's deferred work, no item runs that frame: D8's
+  at-least-one-item rule does not apply), and the items behind it wait too, so queue order
+  is kept. Refreshed indexes never hold back a load (the previous index serves until
+  the rebuilt one is swapped in). This is the rule of `plugin-runtime.md` §8.4 ("Wait for
+  the first file index"); D8 does not state the exception, which follows from 0015 §4.4.
+  A plugin's top-level code and its `Load` handlers therefore run only inside such an item,
+  in step 7, whatever asked for the load.
 - Every host-to-Lua call is protected; an error in one callback never aborts the frame or
   affects other apartments (§6.6).
 
@@ -461,7 +528,8 @@ autoload at character login.
 `PluginManager.LoadPlugin(name)` only **queues** the request: it checks that an available
 plugin of that name exists (case-insensitive) and that no plugin of that name is loaded in
 any apartment, and if both hold, appends the request to a queue that the plugin manager
-works through later (between frames). It returns nothing, raises nothing, and does nothing
+works through later (between frames; in Tessera, as an item of the plugin host's deferred
+work in frame-loop step 7, §3.3). It returns nothing, raises nothing, and does nothing
 if the checks fail. Processing a queued request (and the other triggers) does:
 
 1. Get the plugin's apartment by name, creating it if needed (§6.1).
@@ -481,8 +549,18 @@ So `plugin` is usable during the main package's top-level run and inside its `Lo
 handlers, and is nil afterwards; code that needs its plugin object later must keep its own
 reference (or use `Plugins[name]`).
 
+When each load runs in Tessera (Tessera rules; the steps above are unchanged): a queued
+`LoadPlugin` request is one step-7 deferred-work item (decision 0014 D8). The other triggers
+are queued the same way, one load per item (§3.3): a `/plugins load` or manager-UI load when
+it is asked for, and the autoload loads when the session reports the character login (a
+Tessera reading of D8, which does not name them; `plugin-runtime.md` §8.4). No load runs
+before the first `Plugins/` file index is ready (decision 0015 §4.4, §13.8). So the load
+steps 1–8 above never run during the session step or inside the step-1 routing of a chat
+line or click; they run in frame-loop step 7.
+
 > **OPEN:** the order in which autoloaded plugins load. Tessera: the order of its own
-> autoload list.
+> autoload list, each load one step-7 deferred-work item queued when the session reports the
+> login, as above (decision 0014 D8, Tessera reading; `plugin-runtime.md` §8.4).
 
 <a id="6-3"></a>
 ### 6.3 Unloading an apartment (P10, P29)
@@ -506,6 +584,32 @@ manager's unload action, logout, or client exit.
 
 Real plugins work around rule 2 with a helper plugin in another apartment (O2).
 `/plugins unload` with no argument unloads every apartment (S5).
+
+**When the steps run in Tessera (Tessera rule, decision 0014 D8; the steps themselves are
+unchanged).**
+
+- An unload that a plugin or the user asks for (`PluginManager.UnloadScriptState`,
+  `/plugins unload`, the manager's unload action) runs where the request is made: inside the
+  plugin call, or inside the routing of the chat line or click that asked for it, so in
+  frame-loop step 1 or 7 (§3.3).
+- The **logout** unload (every apartment) is queued by the session code that reports the
+  logout and runs as deferred work in step 7, one item per apartment in queue order, sliced
+  like the other items (§3.3). Plugin-data writes queued before it keep their order.
+- The **client-exit** unload runs when the client's event loop ends, after the last frame
+  has been presented and before the renderer and window are destroyed, on the main thread:
+  the `Unload` handlers, then the state close with its synchronous `PluginData.Save`
+  (§10.6). Every handler call keeps its instruction budget (§3.3). It is the only plugin
+  code outside frame-loop steps 1 and 7.
+
+> **OPEN (blocking writes at unload, decision 0014 "Other improvements", ARCHITECTURE
+> §21):** an unload in step 1 or 7 (asked for by a plugin or the user, or the logout unload)
+> closes Lua states, and step 5 above with §10.6 makes `PluginData.Save` write synchronously
+> while a state closes, and Tessera flushes the apartment's queued writes before the close.
+> That is blocking file I/O on the main thread inside a frame, which `docs/ARCHITECTURE.md`
+> §21 does not list as an exception; decision 0014 notes the gap and does not settle it (an
+> §21 exception, or a flush that does not block the frame). The client-exit unload runs
+> after the last frame, so no frame waits for it. Tessera, until it is settled: keep the
+> synchronous write and the flush, as `plugin-runtime.md` §8.4 also records.
 
 <a id="6-4"></a>
 ### 6.4 Chat command `/plugins`
@@ -568,8 +672,9 @@ same text and no added prefix, so that plugins that parse their own errors from 
 working; put the plugin name, apartment and an optional traceback in the log only.
 
 > **OPEN:** whether the error line is also delivered to `Turbine.Chat.Received` handlers
-> (with `ChatType` 1). Tessera: deliver it like any other chat line, never re-entrantly
-> (§9.6).
+> (with `ChatType` 1). Tessera: deliver it like any other chat line, as a queued
+> game-raised event in frame-loop step 7 (§11.3, decision 0014 D8), never re-entrantly
+> (§9.6; the skip set of the §11.3 OPEN on re-entrancy).
 
 <a id="6-7"></a>
 ### 6.7 Plugin manager rows
@@ -902,7 +1007,11 @@ false or the control is destroyed (P48):
   `Update` in the same tick. A control that turns updates off during the broadcast is not
   called again, from that moment on (also later in the same tick).
 - `Update` carries no time value; plugins measure time with `Turbine.Engine.GetGameTime()`,
-  which is constant within one frame (§12).
+  which is constant within one frame (§12). Plugin timers are `Update` handlers; the API has
+  no other timer.
+- Tessera (decision 0014 D8): the broadcast runs in frame-loop step 7 as part of the UI
+  tick (§3.3) and is never cut short by a per-frame time slice; each handler call has its
+  own instruction budget.
 
 Worked example: controls A, B and C call `SetWantsUpdates(true)` in that order; during A's
 `Update` handler, C calls `SetWantsUpdates(false)` and D calls `SetWantsUpdates(true)`. In
@@ -1048,7 +1157,9 @@ Worked example (synthetic): control C has handlers `MouseClick` (calls `C:SetSiz
 then `C:SetVisible(false)`), `SizeChanged` and `VisibleChanged`, each appending its name to a
 log. One click over C (its size was 40 × 20) gives the log `MouseClick`, `SizeChanged`,
 `VisibleChanged`. If `MouseClick` also calls `print(C:GetWidth())`, it prints 50: the size
-itself changes at once, only the event waits.
+itself changes at once, only the event waits. Tessera (decision 0014 D8): the next hit test
+(§13.11) also reads the new size and position, so the next input event is routed against
+the control's current geometry.
 
 **Broadcasts.** A few messages go from the manager to every subscribed control instead:
 `Update` (subscription by `SetWantsUpdates`, §9.4) and the key messages behind `KeyDown` and
@@ -1228,6 +1339,13 @@ Booleans, numbers, strings, nil and tables of those (BIN):
   `Load` of the same key see the last `Save`, flush everything before an apartment closes
   (data saved in `Unload` handlers must reach disk), and write atomically (temporary file in
   the same folder, then rename).
+- Tessera (decision 0014 D8): "later, between frames" means as items of the plugin host's
+  deferred work in frame-loop step 7, in queue order (§3.3): each queued write with its
+  `onDone` callback, and each asynchronous `Load` handler, is one item. Writes made while an
+  apartment closes (§6.3 step 5, including the unload at client exit) are written
+  synchronously, as above. When that close happens inside a frame (step 1 or 7), the write
+  and the flush block the main thread; whether that is allowed is the §6.3 OPEN on blocking
+  writes at unload.
 
 **The write step (P60).** Whether run at once (state closing) or later, one write does:
 
@@ -1276,8 +1394,11 @@ is allowed.
 Registrations of an apartment are removed when it unloads (§6.3).
 
 > **OPEN:** whether `WriteLine` lines reach `Turbine.Chat.Received` handlers (type 8 is not in
-> the `ChatType` enum). Tessera: deliver them with `ChatType = 8`, no `Sender`, on the next
-> pump, never inside `WriteLine` and never re-entrantly (§9.6).
+> the `ChatType` enum). Tessera: deliver them with `ChatType = 8`, no `Sender`, as queued
+> game-raised events in frame-loop step 7 (§11.3, decision 0014 D8), never inside
+> `WriteLine` and never re-entrantly: not to an apartment in the line's skip set (§9.6;
+> the interim Tessera rule of the §11.3 OPEN on re-entrancy, pending a revision of decision
+> 0014).
 
 <a id="11-2"></a>
 ### 11.2 `Turbine.ShellCommand`
@@ -1312,6 +1433,41 @@ are in Appendix A (they are keys of the chat-text-type enum 0x230002A8, P41), ot
 can occur. Message text may contain the client's markup (§13.4).
 > **OPEN:** the full grammar of markup in `Message` (item and other links).
 
+**When `Received` is delivered in Tessera (Tessera rule, decision 0014 D8 and its Known
+difference 21).** Every chat line the client shows produces one queued `Received` event:
+lines from session events, Tessera's own system notices, `WriteLine` lines (§11.1) and
+error lines (§6.6). The code that takes the line in never calls Lua. It appends the event,
+with its argument values (§9.3) taken at that moment, to the plugin host's deferred-work
+queue, and the host delivers it in frame-loop step 7, one line being one item, in queue
+order (§3.3), to the `Received` handlers set at delivery; an apartment closed in between
+gets nothing. The chat window shows the line at once; only the delivery to plugins waits,
+so it may come in a later frame when the deferred work of a frame has used its 2 ms. A line
+produced while plugin code runs (in step 1 or 7) is queued the same way, so `Received` is
+never entered from inside a handler.
+
+> **OPEN (re-entrancy of queued `Received`, decision 0014 open review item 1):** delivered
+> as above "to the handlers set at delivery" (D8 as written), a line that a `Received`
+> handler writes would reach its own apartment one item later, against §9.6 (BIN), and an
+> echoing plugin would use the whole deferred-work slice in every frame. Decision 0014 lists
+> the fix as a must-fix review item but its D8 text does not contain it yet. **Tessera rule
+> until decision 0014 is revised** (the same interim rule as `plugin-runtime.md` §8.4; it
+> refines D8's "handlers set at delivery" and does not otherwise change it): every queued
+> `Received` event carries a **skip set** of apartments, and its delivery calls no handler
+> of an apartment in that set. A line produced while no queued `Received` event is being
+> delivered gets an empty skip set (in Tessera a `Received` handler runs only inside such a
+> delivery). A line produced while a queued `Received` event is being delivered gets that
+> event's skip set **plus** the apartment whose handler is running. So a `WriteLine` in a
+> `Received` handler never reaches its own apartment, and two or more echoing apartments
+> cannot feed each other: a chain of lines that started from one delivery grows its skip
+> set by one apartment per step and ends after at most as many steps as there are
+> apartments with `Received` handlers. This matches the nested synchronous model of §9.6,
+> under which every dispatch of the chain is still running when the next line is written.
+> Invariants 61 and 65 test it.
+
+> **OPEN:** when the original delivers `Received`: synchronously when the chat window takes
+> the line in, or later in the frame. Decision 0014 (Known difference 21) asks this; no
+> surveyed plugin behaviour is known to depend on it. Tessera: the queued delivery above.
+
 ---
 
 ## 12. Engine (`Turbine.Engine`, static)
@@ -1320,7 +1476,7 @@ can occur. Message text may contain the client's markup (§13.4).
 |---|---|
 | `GetDate()` | Table, local time of the current moment (P35): `Year` (four-digit), `Month` 1–12, `Day` 1–31, `Hour` 0–23, `Minute` 0–59, `Second` 0–60, `DayOfWeek` **1 = Sunday … 7 = Saturday**, `DayOfYear` **1-based** (1–366), `IsDST` boolean. |
 | `GetLocalTime()` | Seconds since 1970-01-01 00:00 UTC, as a **32-bit signed** integer (wraps after 2038-01-19). |
-| `GetGameTime()` | The client's frame clock in seconds (fractional); constant within one frame; only differences matter. |
+| `GetGameTime()` | The client's frame clock in seconds (fractional); constant within one frame; only differences matter. When Tessera advances it relative to input handled in window-system callbacks: the §3.3 OPEN on the frame clock. |
 | `GetLanguage()` | The client's language, a `Turbine.Language` value (Appendix A). |
 | `GetLocale()` | The two-letter ISO 639 language code of the **operating system's** current locale (e.g. `en`, `de`), not of the game client; `""` if unavailable. |
 | `GetScriptVersion()` | Two numbers: **13, 0** (in that order) in this build. |
@@ -1369,8 +1525,9 @@ have not been observed in this build.
   (S2; BIN, §13.14).
 - **Opacity:** 0.0 (fully transparent) to 1.0 (opaque); rules in §13.19 (P70): it is the
   opacity of the control's own drawing surface, so on a window it fades the whole window
-  with all its children, and on another control it has a visible effect only while the
-  control has a non-zero stretch mode (§13.18).
+  with all its children that are drawn into its surface, and on another control it has a
+  visible effect only while the control has a non-zero stretch mode (§13.18). Children with
+  a surface of their own: §13.19 OPEN (Tessera: not faded by the window, decision 0015).
 - **Mouse:** a control with `SetMouseVisible(false)` does not take mouse input; the controls
   underneath handle it, but its own children still do (S2; BIN, §13.11). Capture, clicks,
   hover and the wheel: §13.12.
@@ -1404,7 +1561,10 @@ have not been observed in this build.
 **Size warning.** When a control becomes wider or taller than the graphics device's largest
 texture dimension, the original reports a warning (with the place in the Lua source where the
 control was created) to the error listeners; it does not clamp the size and raises no error
-(BIN). Tessera: same, using the renderer's maximum texture size.
+(BIN). Tessera: same, using the renderer's maximum texture size. Tessera's own surface
+limits (decision 0015 §7): a surface is at most the device's largest texture dimension and
+at most 16,384 pixels on each axis; beyond that its canvas covers only the part of the
+control that lies on the screen, and the case is reported once, like this warning.
 
 <a id="13-3"></a>
 ### 13.3 `Window` (extends `Control`)
@@ -1429,7 +1589,11 @@ Events: `Activated`, `Deactivated`, `Closing`, `Closed`, `UIScaleChanged`.
 window ignores `Close()`, and fires nothing), fire `Closing` with
 `Cancel = false`; if a handler set `Cancel` true, stop; otherwise make the window not
 visible and fire `Closed`. Closing does not destroy the window. > **OPEN:** whether Escape closes plugin windows automatically. Recommended: no;
-plugins handle the `Escape` action themselves.
+plugins handle the `Escape` action themselves. (In Tessera an Escape that no control
+consumes, including one typed into a focused text box, goes on to game code as the escape
+command and to the plugins' `KeyDown` broadcast, decision 0014 D2 and "Escape with a UI
+attached"; what game code then does with an active plugin window belongs to
+`game-panels.md`.)
 
 <a id="13-4"></a>
 ### 13.4 `Label` (extends `ScrollableControl`)
@@ -1593,6 +1757,20 @@ events `CheckedChanged`, `EnabledChanged`.
   - nil or the empty string: no background.
   - other types: no background, no error.
   - If the loaded image has an unsupported format, the call **raises an error**.
+- **Tessera checks for `SetBackground(path)` (decision 0015 §4.3–§4.4, Tessera rules).**
+  The call checks existence and format on the main thread without decoding, so that both
+  errors are raised at call time: existence against an index of the whole `Plugins/` tree
+  (paths matched as §4.4 says; the index is built by a directory walk off the main thread
+  when the plugin host starts (no plugin is loaded before that first index is ready) and
+  rebuilt when the available plugins are refreshed, §6.7, so
+  a file added after the last walk is found only after the rebuilt index is swapped in), and
+  format by reading at most the first 64 bytes of the file once (cached per path). Only TGA
+  and JPEG are accepted; a `.png` or `.bmp` file raises the unsupported-format error (the
+  formats named above; `plugin-api-usage.md` O6 asks whether the original accepts `.png`).
+  The full decode runs later, off the main thread; if it fails after the header check
+  passed (a corrupt JPEG body), the failure is reported to the apartment's error listeners
+  (§6.6) and the layer draws nothing, where the original would have raised the error at the
+  call (a stated deviation).
 - `Turbine.UI.Graphic`: `Graphic()` empty, `Graphic(did)` or `Graphic(path)` (S2);
   accepted wherever a background is.
 - Each call first removes the previous base image; the new image becomes the element's base
@@ -1697,9 +1875,23 @@ reported pointer position and refuses to move the cursor). With no pointer targe
 target is none as well, which sends the `MouseLeave` events of §13.12.4. In this build the
 pointer-outside flag is cleared when the UI is created and every write to it stores "clear",
 so it never suppresses anything; Tessera may omit it. > **OPEN:** which client states lock
-the pointer (expected: the camera's mouse-look drag). Tessera: the pointer is locked exactly
-while the world camera is being turned with the mouse, so plugin controls see no hover,
-enter or move events during that drag.
+the pointer (expected: the camera's mouse-look drag). Tessera (decision 0014 D7): the lock
+is the client's state. It turns on when a mouse-look press (the camera-steer command,
+`CameraInstantMouseSteer`) is offered to the UI, the UI does not consume it and no item drag
+is in progress, and it turns off after the end of the last mouse-look hold that turned it
+on; during any item drag a right press never locks the pointer. While it is on, the pointer
+position the UI sees stays frozen where the mouse-look press was made, and plugin controls
+see no hover, enter or move events, so they get none during a camera drag. For mouse
+buttons during the lock see §13.12.2.
+
+**Geometry used by the search (Tessera rule, decision 0014 D8).** The search reads every
+control's **current** position, size, visibility and z-order at the moment it runs: a change
+made by a plugin call (`SetPosition`, `SetSize`, `SetVisible`, `SetZOrder`), a window move or
+resize, or the re-layout of edge attachments (§13.16) applies to the next search at once,
+even within one frame. A re-layout that Tessera defers for speed is completed before any
+search reads a control it would move. What is drawn may lag behind by a frame or more
+(decision 0015 Decision 1.5, "Hit testing during a transition"); hit testing never waits for
+drawing.
 
 > **OPEN:** the client's own panels can use two refinements of the point test (a per-pixel
 > hit mask and a second geometric check) that the plugin API cannot set; whether a plugin
@@ -1746,6 +1938,36 @@ The `Button` field of the button events (§9.3) is converted from the action:
 
 (0x66, 0x72, 0x03, 0x43 and 0x67 are alternate tap and double-select variants that the table
 covers although the UI does not route them as mouse-button actions.)
+
+**What Tessera's input layer delivers (Tessera rules, decision 0014 D1, D7, D9).** In
+Tessera the actions come from its own key map (`keymap.md`), whose actions carry the
+original's command names; the input layer offers them to the UI one event at a time, in
+arrival order, each with its command name, its command ID when it resolves (resolved at run
+time from the input-action mapper chain, `keymap.md` §12.11), press or release, the value
+1.0, the pointer position and the held modifiers.
+
+- An action with **no command name** is never offered: game code gets it and plugins never
+  see it. An action with a name but **no ID** (for example in runs without install data) is
+  routed by the class of its name (one of the nine mouse-button names, a wheel name, or a
+  key action); its `Button` value comes from the name (Left for the left select,
+  double-select and tap names, and so on), and it skips the `KeyDown`/`KeyUp` broadcast,
+  which needs an ID.
+- **Toggle types.** Tessera reads "the action map of the input context in force" as table
+  A of the default action map (DID map ACTIONMAP, key 1; `keymap.md` §12.2, §12.10), read
+  at run time. An ID not in that table, or an action without an ID, has type 0. Without
+  action-map data every type is 0, so a tap action then gives plugin button events, which
+  the original would not give (decision 0014 Known difference 12; such runs load no
+  plugins).
+- **Never offered:** modifier holds, analog presses of button actions and analog or
+  relative axis input, so plugins never see their commands, and action 0xAB is never
+  produced (decision 0014 Known differences 6 and 10).
+- **Repeats.** An operating-system auto-repeat of a held key gives a repeated **start**,
+  with no end in between, for each hold whose command has toggle type 3 (AutoRepeat) in that
+  table (without action-map data, the built-in repeat flag of the Tessera action decides).
+  The UI routes a repeated start like a start (§13.13: offered again and, if not consumed,
+  `KeyDown` again). Delay and rate are the operating system's; the original's repeat timing
+  is not known (decision 0014 Known difference 7). Mouse buttons get no operating-system
+  repeat, so a mouse-button action gets one start at the press and one end at the release.
 
 <a id="13-12-2"></a>
 #### 13.12.2 Capture, `MouseDown`, `MouseUp`, `MouseClick`, `MouseDoubleClick`
@@ -1796,7 +2018,8 @@ physical press and ends at a later one (a Toggle latch) behaves as a button held
 keeping the capture. > **OPEN:** which start and end sequence the input layer produces for
 mouse-button actions of types 3, 4 and 5 (repeat timing, latch, analog threshold);
 `keymap.md` does not give it for UI actions. Tessera: the input layer delivers one start at
-the press and one end at the release for a mouse-button action of any type other than 2.
+the press and one end at the release for a mouse-button action of any type other than 2
+(this agrees with decision 0014 D7: mouse buttons get no repeat, §13.12.1).
 
 Plugin controls accept double clicks: S3 captured `MouseDoubleClick` (with `Button` 1) on a
 plugin control (Reported). > **OPEN:** whether every plugin control class accepts double
@@ -1812,8 +2035,30 @@ double-select action (the capture ends with the last of them). > **OPEN:** the o
 the input layer starts and ends two actions triggered by one physical event (here select and
 double-select), and how it turns a `Tap` activation of a Momentary action (the owner's right
 select) into a start and an end (expected: both at the release, giving `MouseDown`,
-`MouseUp`, `MouseClick` together; S3 captured `MouseClick` with `Button` 2). Tessera: the
-order of the bindings in the effective key map; start and end both at the release.
+`MouseUp`, `MouseClick` together; S3 captured `MouseClick` with `Button` 2). Tessera
+(decision 0014 D3, D4; this replaces the earlier Tessera choice "the order of the bindings
+in the effective key map"): at a press, the actions start in this order: bindings that
+match the held modifiers exactly before those that match a subset of them; then context by
+context in the input layer's resolution order; within one context press-activated bindings
+before double-press ones before double-press-nearby ones; then the order in which the
+actions were registered. At a release, the ends of the holds that this release ends come
+first, in the order those holds began, then the release- and tap-activated actions by the
+same keys (release before tap), each as a start immediately followed by its end. A tap
+fires at a release that comes at most half the double-click time after the press, so its
+start and end are both at the release. Each binding fires at most once per physical event,
+so a second start of the same action is never produced by one press (it would turn into a
+release at step 3). With Tessera's default bindings (decision 0014 D2 and its worked
+example) this gives the order of the worked example above.
+
+**Mouse buttons during the pointer lock (Tessera rule, decision 0014 D7 and its Known
+difference 16).** While the pointer is locked (§13.11), the start of a mouse-button action
+reaches no control, even while a control is capturing, and is not consumed. The end of an
+action that is in the capturing control's pressed set is still applied: the release steps
+1, 2 and 4 run, so the capturing control gets `MouseUp` and the capture ends when its set
+becomes empty; step 3 finds no hover target while the pointer is locked, so no `MouseClick`
+or `MouseDoubleClick` follows. So no capture or pressed set outlives its buttons. Example:
+left pressed on control C (C captures), right pressed (mouse-look, the lock turns on), left
+released: C gets `MouseUp` and no `MouseClick`, and the capture has ended.
 
 <a id="13-12-3"></a>
 #### 13.12.3 `MouseMove`
@@ -1823,6 +2068,18 @@ On every pointer movement the UI notes the time, refreshes the pointer and hover
 capturing control if there is one, otherwise to the hover target, with `X`, `Y` relative to
 that control. While the mouse is captured, the capturing control receives `MouseMove` even
 when the pointer is outside it.
+
+**Coalesced movements (Tessera rule, decision 0014 D7 and its Known difference 15).**
+Tessera's input layer does not offer every operating-system pointer movement. It records
+the latest position and offers one movement, at that position, before the next key, mouse
+button, wheel, typed character, pointer-left or focus-lost event, and once more per frame
+in frame-loop step 1. So a plugin gets at most one `MouseMove` per other input event plus
+one per frame; a handler that counts movements or traces the path sees fewer, coarser
+steps, and a button, key or wheel event always follows a movement to its own position.
+`X` and `Y` are relative to the control's **current** position (§13.11, "Geometry used by
+the search"): a `MouseMove` handler that drags its window with `SetPosition` gets, for two
+movements in one frame, two events relative to where the window is after the first, and no
+spurious `MouseLeave` or `MouseEnter`.
 
 <a id="13-12-4"></a>
 #### 13.12.4 `MouseEnter`, `MouseLeave`
@@ -1870,6 +2127,12 @@ holding and `MouseHover` is delivered again in every following tick until the po
 > pointer rests on a plain control in a plain window) whether the original repeats it every
 > frame. Tessera: repeat every tick, as described.
 
+Tessera (decision 0014 D7, D8 and its Known difference 15): the tick runs in frame-loop step
+7 (§3.3). "The last pointer movement" is the time at which the coalesced movement of
+§13.12.3 is delivered (at the latest in step 1 of the same frame), read on the frame clock
+of the §3.3 OPEN on the frame clock, not the time of the last operating-system movement, so
+`MouseHover` may start up to one frame later than in the original.
+
 <a id="13-12-6"></a>
 #### 13.12.6 `MouseWheel` (P52)
 
@@ -1881,6 +2144,18 @@ activates or deactivates windows. When no control is under the pointer, plugin c
 nothing. A `MouseWheel` notification that no native control consumes travels on to the
 ancestors' native handling (§9.7), where client panels may scroll; it never fires
 `MouseWheel` on a plugin ancestor.
+
+The scroll actions exist only while an element under the pointer makes them active: in the
+client's own panels a scrollable element or scroll bar does so while it is hovered
+(`ui-widgets.md` §5.7, §6.9; decision 0014 D5). Tessera rule (decision 0014 D5): every
+hovered plugin control makes them active, so every `MouseWheel` handler fires, and the
+wheel does not zoom the camera while the pointer is over a plugin control; elsewhere,
+including over a plain native panel, it zooms the camera. During the pointer lock (§13.11)
+nothing is hovered, so the wheel zooms the camera.
+> **OPEN:** which plugin control classes make the scroll actions active in the original
+> (the `Label` family derives from `ScrollableControl`, §13.4, but the native element class
+> behind each plugin control is not known). Decision 0014 asks the owner whether the wheel
+> zooms the camera over a plain plugin window. Tessera: every plugin control, as above.
 
 <a id="13-13"></a>
 ### 13.13 Keyboard routing and focus (P48, P53)
@@ -1922,8 +2197,18 @@ wants them changes nothing; turning it off stops both `KeyDown` and `KeyUp` at o
 
 > **OPEN:** which key actions a focused plugin TextBox (and the client's own text fields)
 > consume, and how character input (typed text, as opposed to key-binding actions) reaches a
-> text box. Tessera: a focused text box consumes the actions it uses for editing (characters,
-> cursor movement, deletion, selection, copy and paste) and lets every other action through.
+> text box. Tessera (decision 0014 D2, D6, D7): a focused text box consumes the actions it
+> uses for editing (cursor movement, deletion, selection, copy and paste) and lets every
+> other action through, Escape and Enter included, which then go on to game code and to
+> the `KeyDown` broadcast. Typed characters are not actions: the input layer hands them to
+> the UI as character input while an editing context is active, and the focused text box
+> inserts them. While a text box has focus, the input layer swallows keyboard keys that no
+> UI context binds before they become actions (mouse buttons, the wheel and mouse-look are
+> not affected), so the text box's own `KeyDown` (step 2) and the broadcast (step 3) never
+> see such keys, for example the function keys or Tab outside a dialog. This narrows step
+> 2 for Tessera (decision 0014 Known difference 18). Commands that have no Tessera action
+> yet (quick slots and the like) never reach the broadcast either (decision 0014, "Still
+> OPEN").
 
 **Keyboard focus.** At most one control has keyboard focus.
 
@@ -2156,7 +2441,11 @@ and a hidden window draws nothing). Replace and
 the Replace back-colour fill therefore write their alpha into that canvas: a back colour of
 alpha 0.5 with the default mode makes that rectangle of the window half transparent, so the
 game scene shows through when the window's surface is composed onto the screen
-(`ui-layout.md` §9.6.1 OPEN on that composition; Tessera's rule there applies).
+(`ui-layout.md` §9.6.1 OPEN on that composition; Tessera's rule there applies, and its
+composition of surfaces is decision 0015 Decision 1.6 and §8: premultiplied source-over,
+which at 1 : 1 and opacity 1 equals straight source-over within ±1). For a window that
+stored object mode 0 see the Tessera rule of §13.19; a child control with its own surface
+is composed by the Tessera rule of §13.18.
 
 **Skins.** A background set by DID is drawn unskinned until the next skin switch, then
 re-skinned (`skin-definition.md` §6.8, SK41); file images are never skinned.
@@ -2191,7 +2480,7 @@ the value from the element's layout (game-styled scaled windows, §14.2.1), othe
 | Mode | Own surface | Canvas | What changes for the control |
 |---|---|---|---|
 | 0 (default) | no | — | Drawn into its window's (or the nearest surfaced ancestor's) canvas, clipped to the control and its ancestors; images tiled at native size (§13.17). |
-| 1 Stretch | yes | the control's size when the surface is created | When the control is later resized, its children are **not** laid out again (`ui-layout.md` §8.4 step 1) and the canvas keeps its size; the surface is drawn scaled onto the new rectangle (`ui-behaviour.md` §9.2, Probable). A background set at size S therefore appears scaled by (new size ÷ S). |
+| 1 Stretch | yes | the control's size when the surface is created | When the control is later resized, its children are **not** laid out again (the element resize of a Stretch surface keeps the layout box, `ui-behaviour.md` §9.2.1; `ui-layout.md` §8.4 step 1 is not the reason here, as Tessera applies that step only under a root-panel parent, `ui-layout.md` §8.4 scope OPEN) and the canvas keeps its size; the surface is drawn scaled onto the new rectangle (`ui-behaviour.md` §9.2, Probable). A background set at size S therefore appears scaled by (new size ÷ S). |
 | 2 Tile | yes | the size of the control's base image (or a size set by client code) when the surface is created | If either side of that size is not a power of two, the client writes a diagnostic and uses mode 3 instead. How the canvas is repeated over the rectangle: `ui-layout.md` §8.4 OPEN. |
 | 3 CanvasResize | yes | follows the control's size | Drawn 1:1 as its own layer (Probable). |
 | 4 and other values | yes (any non-zero value) | the control's size; the surface is created with the value as given (the creation step special-cases only 2) | Stored and returned; no label in the data enum; any other effect not traced. |
@@ -2209,10 +2498,72 @@ on the stretch mode).
 > canvas or onto the frame: clipping by intermediate parents, filtering when scaled, blending
 > (`ui-layout.md` §9.6.1 and §8.4 OPENs; `fonts.md` Q3); (2) the drawing of mode 2 and the
 > effects of mode 4; (3) the element flag that `SetStretchMode(1)` also sets on a control
-> that has a parent. Tessera: compose an own surface with straight source-over at the
-> control's rectangle, clipped to its window only; scale mode-1 surfaces with linear
-> filtering; treat 4 like 1 and leave mouse visibility unchanged; treat 2 as 3 unless both
-> image sides are powers of two, then repeat the canvas from the control's top-left corner.
+> that has a parent. Tessera (decision 0015, which replaces the earlier "straight
+> source-over at the control's rectangle, clipped to its window only"): the rules below;
+> treat 4 like 1 and leave mouse visibility unchanged.
+
+**Tessera's drawing of own surfaces (Tessera rules, decision 0015 Decision 1.6–1.8, §2.1,
+§2.3, §7).**
+
+- **Separate entry.** A control's own surface is never blended into its window's canvas on
+  the CPU. It is composed as a separate quad onto its displayed rectangle, scaled by
+  displayed size ÷ canvas size on each axis, with premultiplied source-over. At exactly
+  1 : 1 and unrotated the texels are copied unchanged; when scaled or rotated it is filtered
+  bilinearly on premultiplied colour (a Tessera setting can choose nearest), until the
+  original's filter is known (`fonts.md` Q3).
+- **Order.** The window's content and the control's surface keep the drawing order of one
+  canvas at every pixel: what the window draws after the control in drawing order (later
+  siblings, for example) and inside the control's region is put into a separate layer
+  composed after the control. Inside that region an operation that reads the destination
+  sees transparent black instead of what lies below, which is a recorded approximation.
+- **Clip.** The surface is clipped by its nearest enclosing window, whether that window is
+  drawn through its own surface or into the canvas of a surface above it, tested in that
+  window's own (rotated) rectangle, and also by every enclosing window further up. A child
+  control with a stretch mode between them does not clip (consistent with the community
+  description of mode 3, "not clipped by the parent"). So a stretch-mode control inside a
+  child window that extends past the child window is cut at the child window's edge, and a
+  child window that extends past its parent window is cut, with everything in it, at the
+  parent's edge. The clip by the windows above the nearest one is a Tessera extension of
+  the earlier rule "clipped to its window only" (decision 0015, spec question 12). Building
+  the chain from the windows rather than from their surfaces is an interim Tessera rule,
+  pending a revision of decision 0015 (OPEN after this list).
+- **Opacity and rotation.** The surface takes its own opacity only (§13.19). It turns with
+  every ancestor whose surface holds a rotation, about that ancestor's centre, after its
+  own rotation if its surface holds one (§13.20).
+- **Mode 2 (Tile).** The canvas has the size of the control's base image when both sides
+  are powers of two, otherwise the control's size as for mode 3. It is not fitted to the
+  control: it is repeated from the control's top-left corner over the displayed rectangle,
+  1 : 1 inside an unscaled window and scaled with the window inside a scaled one. A control
+  below a mode-2 surface (or below a native Tile surface) never gets a surface of its own:
+  it is painted into the Tile canvas as if its mode were 0 (unscaled, without its own
+  opacity or rotation) and repeats with it, with one warning to the apartment's error
+  listeners. Its stored mode and `GetStretchMode()` are unchanged.
+- **Mode change on an existing surface** ("refreshed for the new mode" above; Tessera rule,
+  because only that word was traced). A change from one non-zero mode to another keeps the
+  surface, its rotation and its opacity; its canvas takes the size the new mode gives
+  (modes 1, 3 and 4: the current size; mode 2: as above). If the canvas size, the displayed
+  rectangle or the covered region changes, or the change is to or from 2, the surface is
+  repainted in full and the old picture stays on screen until the new one is complete;
+  otherwise only its composition changes. A change to 0 releases the surface, and a change
+  from 0 creates one, which is drawn after its first paint (§13.19).
+- **Caps.** At most 512 surfaces per apartment (windows and controls together), 4,096
+  surfaces in all, and 8 levels of nested surfaces below a top-level surface; Tessera's
+  memory budgets for canvases and textures act the same way. A control or child window over
+  a cap gets no surface and is painted into its parent's canvas as if its mode were 0; a
+  top-level window over a cap draws nothing. Each case gives one warning per plugin to the
+  apartment's error listeners (§6.6).
+
+> **OPEN (clip chain of mode-0 child windows, decision 0015 open review item 1):** decision
+> 0015 as written (Decision 1.6, 1.7 "Clip", §8) builds the clip chain from the surfaces
+> above the entry that are a root or belong to a root panel. A plugin child window in
+> stretch mode 0 has no surface of its own, so under that text a stretch-mode control inside
+> it is not cut at the child window's edge, which contradicts the example in 0015's own
+> Decision 1.7 and the earlier rule of this section. 0015 lists the fix as a must-fix review
+> item but does not contain it yet. **Tessera rule until decision 0015 is revised** (the
+> fix the review proposes): the chain is built from the displayed boxes of the enclosing
+> windows, whether each is drawn through its own surface or into the canvas of a surface
+> above it; a window without a surface is tested in the space of the surface that draws it.
+> Invariant 60 tests it.
 
 <a id="13-19"></a>
 ### 13.19 Opacity (P70)
@@ -2256,25 +2607,61 @@ nothing, so the absence of a surface while hidden is not visible; it matters for
 Therefore, for opacity:
 
 - **Windows** have a surface whenever they are shown, unless the plugin stored object mode
-  0. A window's opacity fades the window **and all its children**, its frame (game-styled
-  windows), backgrounds, back colours and text alike. An explicit `SetStretchMode(0)` on a
-  window stores object mode 0 and so removes its surface (condition 1), after which its
-  opacity has no effect. Where such a window is then drawn was not traced; Tessera draws
-  every shown window through a surface and ignores mode 0 **for drawing only**: the stored
-  mode, `GetStretchMode()` and the "has a surface" test of §13.20 step 2 still follow
-  conditions 1 and 2.
+  0. A window's opacity fades the window **and all its children that are drawn into its
+  surface** (every child without a surface of its own), its frame (game-styled windows),
+  backgrounds, back colours and text alike; children with a surface of their own are the
+  OPEN below. An explicit `SetStretchMode(0)` on a window stores object mode 0 and so
+  removes its surface (condition 1), after which its opacity has no effect. Where such a
+  window is then drawn was not traced. Tessera rule (decision 0015 Decision 1.1, which
+  narrows the earlier "Tessera draws every shown window through a surface"):
+  - a **top-level** window in mode 0 (no surface above it) is drawn through a Tessera
+    **stand-in surface**, sized and repainted like CanvasResize, composed at opacity 1
+    (its stored opacity has no visible effect, as above). The stand-in is not a surface for
+    any other rule: the stored mode, `GetStretchMode()`, the resize rule (the window takes
+    the new size and its children are laid out again), the "has a surface" test of §13.20
+    step 2 and the target search of step 3 still follow conditions 1 and 2. When step 2 of
+    §13.20 sets mode 1 on such a shown window, the stand-in becomes its real Stretch
+    surface in place, with no new first paint;
+  - a **child** window in mode 0 (its parent window is drawn through a surface or a
+    stand-in) gets no surface and is drawn into the canvas of the nearest surface above it,
+    as §13.17 says for every control without a surface, clipped by its own rectangle and
+    its ancestors'. Its opacity has no visible effect and it has no rotation of its own.
 - **Other controls** have a surface only while their stretch mode is not 0 (§13.18) and they
   are shown. With mode 0, `SetOpacity` is stored and returned by `GetOpacity()` and has
   **no visible effect**; after `SetStretchMode(1)` (or any non-zero mode) it fades the
-  control and its children; setting mode 0 again removes the effect.
+  control and its children that are drawn into its surface; setting mode 0 again removes
+  the effect.
 
 In every case `GetOpacity()` returns the stored property whether or not a surface exists.
 
 > **OPEN:** whether a child's own surface inside a window is faded by the window's opacity
 > as well (it depends on the composition of nested surfaces, §13.18 OPEN (1)), and whether
-> values outside 0–1 are clamped when drawing. Tessera: compose nested surfaces into their
-> window first, so the window's opacity applies to them; clamp to 0–1 when drawing and
-> return the stored value from `GetOpacity()`.
+> values outside 0–1 are clamped when drawing. Tessera (decision 0015 Decision 1.7, accepted
+> by the owner; it replaces the earlier "compose nested surfaces into their window first, so
+> the window's opacity applies to them"): every surface is composed with **its own**
+> opacity only; the opacity of its window and of other ancestors is not multiplied in. So a
+> window set to opacity 0 still shows its children that have stretch mode 1, 2, 3 or 4, and
+> a window at opacity 0.5 does not fade such a child. This follows the client's auto-fade,
+> which writes the fade opacity into the element and into each child with its own surface
+> (`ui-behaviour.md` §11.1 step 2), which only makes sense if the child is composed on its
+> own. Clamp to 0–1 when drawing and return the stored value from `GetOpacity()`.
+
+**First paint and the logical show (Tessera rule, decision 0015 Decision 1.8).** Showing a
+control takes effect at once for every rule the plugin can observe: `IsVisible()`,
+`IsDisplayed()`, hit testing (§13.11), activation and focus, and the visibility, activation
+and focus events they cause (the setter table of §9.6, delivered as notifications by §9.7).
+A newly created surface is drawn only once its first paint is complete and the images it
+needs have arrived, but at most 100 ms after the show; after that it is drawn with what has
+been painted, and the rest appears as it is painted. The 100 ms bound holds for every
+window (a root is a group of its own) and for a nested surface shown while its window's
+group has no repaint generation running. **Exception (0015 Decision 1.5 and 1.8, U4 (c)):**
+a nested surface (a stretch-mode control inside a window) shown while its group's
+generation is running is first drawn at the swap of the next generation, so later than
+100 ms when those generations take longer: 0015 bounds it at 8 frames for groups whose
+surfaces are up to 1038 × 802 (for example a window resized on every frame) and at 41
+frames for a screen-sized plugin window after a screen resize. During any of these waits a
+click can reach a control that is not drawn yet. A surface that already exists is repainted
+in the background and swapped in whole, so a shown window never appears half-updated.
 
 <a id="13-20"></a>
 ### 13.20 Window rotation (P72)
@@ -2310,13 +2697,27 @@ In every case `GetOpacity()` returns the stored property whether or not a surfac
    any ancestor surface (the screen root's, the window's parent after it is attached to
    the screen, `ui-layout.md` §9.1 step 4), and so whether such a call rotates something
    else or nothing. Tessera: it rotates nothing, `GetRotation()` keeps its previous value,
-   and the object-mode change of step 2 still happens.
+   and the object-mode change of step 2 still happens. Tessera's stand-in surfaces of mode-0
+   top-level windows (§13.19) are never targets, because for the original those windows
+   have no surface (decision 0015 §2.3).
 4. Drawing: each angle is reduced modulo 360 (C `fmod`, so the sign is kept) and converted
    to radians as angle × π ÷ 180 (32-bit floats). The surface's rectangle is drawn as a
    quad rotated **about its centre** by the three rotations (about the screen's horizontal
    axis for `x`, the vertical axis for `y`, the axis out of the screen for `z`), so `z`
    turns the window in the screen plane and `x`/`y` tilt it. When all three stored angles
    are within 0.0002 of 0, the surface is drawn by the ordinary unrotated path.
+
+**How Tessera draws rotations (Tessera rules, decision 0015 §2.3, Decision 1.6–1.7, §7).**
+The rotation is state of the surface that received it: composition reads the angles each
+surface holds, never the `GetRotation()` values. A surface turns about its own centre by its
+own angles and then with every ancestor whose surface holds a rotation, about that
+ancestor's centre, so the controls with their own surfaces inside a rotated window turn
+with it and are clipped by the window's rotated rectangle. Example: a hidden child window C
+of a shown window P gets `SetRotation{z = 60}`; the target is P's surface (step 3), so P
+turns by 60 with everything in it, `C:GetRotation()` returns *z* = 60, and when C is shown it
+is drawn unrotated relative to P, turning only with P. Angles that are not finite numbers
+(infinity, NaN) are treated as 0, so the unrotated path is used. Hit testing ignores
+rotation (OPEN below).
 
 Plugin usage agrees: the values plugins pass are degrees, almost always as `z` (0, 90, 180,
 270, headings), with a few `x` tilts (S6 and `plugin-api-usage.md` §5.3, §9.3 rows 8 and
@@ -2351,7 +2752,14 @@ Rules (BIN):
    the layout at run time). In both cases the window is **resized** when scaled and its
    children follow their own edge modes (plugin children without attachments keep their
    positions, §13.16; the game-styled frame follows its layout edge modes). The title text
-   is set again.
+   is set again. > **OPEN:** rule 1's "children follow their own edge modes" when a scaled
+   window is resized disagrees with the panel-scale rule that rule 5 applies
+   (`ui-behaviour.md` §9.2 step 6 resizes scaler types in Stretch mode and then restores
+   their object mode, so their children are not laid out again, §9.2.1); which of the two
+   holds for a plugin `SetScale` was not settled. Tessera (decision 0015 §2.1, "Plugin
+   `SetScale`"): follow `ui-behaviour.md` §9.2 step 6; the drawing handles both outcomes (a
+   Stretch resize changes only how the surface is composed, a CanvasResize resize repaints
+   it).
 2. **Group.** `SetUIScalingGroup(g)` stores `g` as the element's
    `UIComponent_UIScaler_Group`, after replacing it by 72 when it is 0 (both window kinds)
    or 60 (plain windows only; a game-styled window keeps 60). `SetScale` sets the group to
@@ -2742,7 +3150,21 @@ P46) unless marked.
 
 Read-only views of client-side game state, fed in Tessera by the session layer. Every getter
 returns the current value; every `XChanged` event fires after the value changed. The full
-member list is in §16; the main entry points:
+member list is in §16; the main entry points are in the table below.
+
+**When `…Changed` events are delivered in Tessera (Tessera rule, decision 0014 D8 and its
+Known difference 21).** The session layer and the gameplay views never call Lua. A value
+change appends its `…Changed` event, with its argument values taken at that moment, to the
+plugin host's deferred-work queue, and the host delivers it in frame-loop step 7, one event
+being one item, in queue order (§3.3), to the handlers set at delivery; an apartment closed
+in between gets nothing. The rule "fires after the value changed" still holds. Two changes
+of one value in one frame give two events in that order, but a getter called in the first
+handler already returns the second value, because getters return the value at delivery.
+> **OPEN:** when the original delivers these events relative to the change (synchronously,
+> or later in the frame). Decision 0014 (Known difference 21) asks this; no surveyed plugin
+> behaviour is known to depend on it. Tessera: the queued delivery above.
+
+The main entry points:
 
 | Entry point | Notes |
 |---|---|
@@ -3233,6 +3655,56 @@ third-party plugins) or against the user install.
     child control with `SetStretchMode(1)` has a surface exactly while its own
     `IsVisible()` is true; a shown child with stretch mode 0 has none.
 
+Invariants 59–65 check Tessera rules taken from decisions 0014 and 0015 (P79, P80), not
+facts about the original.
+
+59. **Nested opacity (§13.18, §13.19; decision 0015):** a shown window at opacity 0 with a
+    child that has `SetStretchMode(1)` and an opaque background: the child's rectangle shows
+    the child's background at full strength, and no other pixel of the window is visible.
+    With the window at 0.5 and the child at 1, the child's pixels are composed at alpha 1
+    times its own canvas alpha.
+60. **Clip chain (§13.18; decision 0015):** a stretch-mode control inside a child window,
+    extending past the child window, is cut at the child window's edge, not at the outer
+    window's; with the child window itself extending past its parent window, both the child
+    window and its control are cut at the parent's edge; the same holds when the child
+    window has stretch mode 0.
+61. **Deferred `Received` (§11.3; decision 0014 D8):** a chat line taken in during a frame
+    reaches `Turbine.Chat.Received` in that frame's step 7 (or a later frame's when the
+    deferred work's 2 ms are used up), after that frame's `Update` broadcast, and never
+    inside the call that produced it. A plugin whose `Received` handler calls
+    `Shell.WriteLine` for every line it receives gets no `Received` for its own lines, so it
+    produces exactly one `WriteLine` per line from another source; a second apartment
+    receives each of those lines once (skip set: the interim rule of the §11.3 OPEN on
+    re-entrancy).
+62. **Plugin code placement (§3.3; decision 0014 D8):** with a probe that records the
+    frame-loop step whenever a host-to-Lua call starts, no plugin call starts in steps 2–6
+    or 8 onward during a run that includes a login with autoloaded plugins (their top-level
+    code and `Load` handlers run in step 7), a `/plugins load`, chat lines, gameplay value
+    changes, input and a logout, as long as no game or session code shows, hides, activates
+    or resizes UI elements outside steps 1 and 7 (that case is the §3.3 OPEN on notification events); at
+    client exit the `Unload` handlers run after the last frame, and a `PluginData.Save` made
+    in them is on disk before the process ends.
+63. **Coalesced movement and current geometry (§13.12.3; decision 0014 D7, D8):** a control
+    captured by a left press, whose `MouseMove` handler calls `SetPosition` to follow the
+    pointer, gets for two coalesced movements in one frame (one delivered before a key
+    event, one at the frame's input step) exactly two `MouseMove` events, with `X`/`Y`
+    relative to its position after the first, and no `MouseLeave` or `MouseEnter`; a burst
+    of 50 pointer movements followed by a button press, all arriving within one frame (no
+    redraw between them), delivers one `MouseMove`, at the last position, before the
+    `MouseDown`.
+64. **Mouse buttons during the lock (§13.12.2; decision 0014 D7):** left pressed on control
+    C (C captures), right pressed and not consumed (the lock turns on), left released: C
+    gets `MouseUp` and no `MouseClick`, and C no longer captures. A right press during an
+    item drag never turns the lock on.
+65. **Two echoing apartments (§11.3 OPEN on re-entrancy; decision 0014 open review item 1,
+    interim Tessera rule):** apartments A and B each have a `Received` handler that calls
+    `Shell.WriteLine` once for every line it receives. One line L0 from the session gives
+    exactly four plugin-written lines: L1 by A and L2 by B, each in reply to L0; L1 reaches
+    only B and L2 only A; then L3 by B in reply to L1 and L4 by A in reply to L2, which
+    reach no apartment. After that no further `Received` event is queued, so the pair does
+    not use the deferred work of later frames. (Skip sets: L0 empty; L1 {A}; L2 {B}; L3 and
+    L4 {A, B}.)
+
 ---
 
 ## 19. Open questions (summary)
@@ -3240,9 +3712,13 @@ third-party plugins) or against the user install.
 All `> **OPEN:**` callouts above:
 
 - Sandbox and scheduling: whether any path sets an apartment memory limit (§3.3); order of
-  the plugin host's deferred work relative to the UI tick (§3.3).
+  the plugin host's deferred work relative to the UI tick (§3.3); how Tessera keeps
+  notification events caused by game- or session-driven UI changes inside frame-loop steps 1
+  and 7 (§3.3, decision 0014 open review item 2); when the frame clock behind
+  `GetGameTime()` and the hover delay advances (§3.3, decision 0014 "Other improvements").
 - Names: C-runtime class of package-name bytes 0x80–0xFF and of key units above 0xFF (§7.2).
-- Lifecycle: autoload order (§6.2); localized aliases of `/plugins` (§6.4); whether error
+- Lifecycle: autoload order (§6.2); blocking `PluginData` writes and flushes when an unload
+  closes a state inside a frame (§6.3, ARCHITECTURE §21); localized aliases of `/plugins` (§6.4); whether error
   lines reach `Chat.Received` (§6.6).
 - Events: fields of `Party.MemberAdded/MemberRemoved` (§9.3); when an `Update` subscriber
   that turned updates off is dropped (§9.4); whether `SetText`, `SetChecked`,
@@ -3252,7 +3728,9 @@ All `> **OPEN:**` callouts above:
   (§10.6).
 - Shell and chat: `WriteLine` lines and `Chat.Received` (§11.1); the client command-line
   parser's whitespace, quote and case rules for `Execute` arguments (§11.2); markup in chat
-  `Message` (§11.3).
+  `Message` (§11.3); when the original delivers `Chat.Received` (§11.3); the skip set that
+  keeps queued `Received` from re-entering an apartment, pending a revision of decision 0014
+  (§11.3, its open review item 1).
 - UI: whether creation applies the inherited size limits of game-styled windows (§13.1);
   Escape (§13.3); the drawn colour of a text element without a colour property, and
   clamping of a selection end past the text (§13.4); which buttons and keys make a native
@@ -3261,19 +3739,24 @@ All `> **OPEN:**` callouts above:
   special point tests of client panels and which client states lock the pointer (§13.11); double-click acceptance of every control
   class, the order of two actions from one physical event, the start/end of `Tap`
   activations and the start/end sequences of mouse-button actions of toggle types 3–5
-  (§13.12.2); per-tick repetition of `MouseHover` (§13.12.5); keys consumed by
+  (§13.12.2); per-tick repetition of `MouseHover` (§13.12.5); which plugin controls make
+  the scroll actions active (§13.12.6); keys consumed by
   focused text boxes and character input (§13.13); `ZOrder` of client panels and equal-ZOrder
   order (§13.14); non-activatable client panels, activation on show and on hide (§13.14);
   negative or zero sizes (§13.15); layout of top-level windows and re-capture on a parent
   move (§13.16); composition of own surfaces, mode 2 drawing, mode 4 and the extra flag of
-  mode 1 (§13.18); window opacity on nested surfaces and range clamping (§13.19); direction,
-  order and projection of rotations, hit testing of rotated windows and whether a rotation of a window that has no surface (hidden) reaches an ancestor's, the screen root's, surface (§13.20); initial
+  mode 1 (§13.18); the clip chain of controls inside mode-0 child windows, pending a
+  revision of decision 0015 (§13.18, its open review item 1); window opacity on nested surfaces and range clamping (§13.19); direction,
+  order and projection of rotations, hit testing of rotated windows and whether a rotation of a window that has no surface (hidden) reaches an ancestor's, the screen root's, surface (§13.20); whether
+  a scaled window's children follow their edge modes or are not laid out again (§13.21
+  rule 1 against `ui-behaviour.md` §9.2 step 6), initial
   global state of the game-styled scaler and which windows receive `UIScaleChanged`
   (§13.21); the scaling-service flag that picks the `GoldWindow` variant (§14.2.1); read
   order of plugin-created elements against the drag bar (§14.2.3); interaction details of
   the game-object controls (§14.5).
 - Lotro and gameplay: item shortcut companion value and `SetData` parsing (§14.6); which of
-  the remaining enums follow a data enum (§15).
+  the remaining enums follow a data enum (§15); when the original delivers the gameplay
+  views' `…Changed` events (§15).
 
 The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
 `AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
@@ -3288,6 +3771,17 @@ order remain), scaling units, origin point and combination with groups (§13.3, 
 label selection base and defaults (§13.4; the drawn default colour remains), stretch modes
 (§13.8, §13.18; composition and modes 2 and 4 remain), skinned frame metrics and parts
 (§14.2), `WriteLine` markup (§11.1, usage O9) and class-table replacement (§8.6, usage O2).
+
+The decision-alignment revision of 2026-10-06 closed no callout. It rewrote the Tessera
+parts of the callouts in §3.3, §6.6, §11.1, §13.11, §13.12.2, §13.13, §13.18, §13.19 and
+§13.20 to follow decisions 0014 and 0015, and added five: notification events from game- or
+session-driven UI changes (§3.3), when the original delivers `Chat.Received` (§11.3) and
+the gameplay `…Changed` events (§15), which plugin controls make the scroll actions active
+(§13.12.6), and §13.21 rule 1 against `ui-behaviour.md` §9.2 step 6. Its repair after
+review added four more, each recording an interim Tessera rule where a decision record is
+silent or not yet revised: when the frame clock steps (§3.3), blocking writes at unload
+(§6.3), the `Received` skip set (§11.3, moved out of the body text) and the clip chain of
+mode-0 child windows (§13.18, likewise).
 
 ---
 
@@ -3424,8 +3918,8 @@ this revision. Implementers should re-check the affected code.
 | `PluginData.Load(scope, key, handler)` with data available: return the value **and** call the handler on the next pump | Original: during loading, `Load` calls a function `handler(value)` **immediately**, then returns the value; outside loading, the handler is required and is called later, and `Load` returns nothing (§10.1). Change: call the handler synchronously in the loading case. |
 | `PluginData.Save` with a fourth argument that is neither nil nor callable: ignore it | Correct: a non-function `onDone` is ignored (§10.1). A validation or serialisation failure raises an error whether or not `onDone` is given. |
 | Rows of `GetAvailablePlugins()` / `GetLoadedPlugins()`: `Name`, `Author`, `Version`, `Description` (when present), plus `ScriptState` on loaded rows only | Original: both have `Name`, `Author`, `Version`, `Package`, `ScriptState`; available rows also `Description` and `Image` (§6.7). |
-| `LoadPlugin`, `UnloadScriptState`, `RefreshAvailablePlugins` queued until after the current script call | `LoadPlugin` is queued (§6.2). `UnloadScriptState` is immediate but refused for an apartment with running Lua code (§6.3); queuing it is still acceptable for Tessera as long as a self-unload is refused. `RefreshAvailablePlugins` reruns discovery (§6.7); immediate or deferred is not observable to plugins except through `GetAvailablePlugins`. |
-| `Shell.WriteLine` echo to `Chat.Received` with `Sender = ""`, on the next pump | Original posts the line as chat type 8; delivery to `Received` is OPEN (§11.1). Tessera: deliver with `ChatType = 8` and **no** `Sender` field (system lines have none, §9.3), never re-entrantly. |
+| `LoadPlugin`, `UnloadScriptState`, `RefreshAvailablePlugins` queued until after the current script call | `LoadPlugin` is queued (§6.2). `UnloadScriptState` is immediate but refused for an apartment with running Lua code (§6.3); queuing it was accepted earlier, but decision 0014 D8 now makes Tessera run it where it is asked for, in step 1 or 7 (§6.3), with a self-unload refused. `RefreshAvailablePlugins` reruns discovery (§6.7); immediate or deferred is not observable to plugins except through `GetAvailablePlugins`. |
+| `Shell.WriteLine` echo to `Chat.Received` with `Sender = ""`, on the next pump | Original posts the line as chat type 8; delivery to `Received` is OPEN (§11.1). Tessera: deliver with `ChatType = 8` and **no** `Sender` field (system lines have none, §9.3), never re-entrantly. Timing (revision of 2026-10-06, decision 0014 D8): not "on the next pump" but as a queued item of the plugin host's deferred work in frame-loop step 7, skipping the apartments of the line's skip set (the interim Tessera rule of the §11.3 OPEN on re-entrancy, pending a revision of decision 0014; §11.1, §11.3). |
 | Default `GetHelp()` / `GetShortHelp()` return nil | Original returns the empty string `""` (§11.2). Change. |
 | `Execute(command, arguments)`: case preserved, one separating whitespace removed, trailing whitespace kept, nil when nothing follows; `plugins` reserved; `/plugin` not an alias | `arguments` is `""` (never nil) when nothing follows (§11.2). Change. The rest stays (whitespace and case OPEN). |
 | `GetScriptVersion()` returns 0, 0 | Original: 13, 0 (§12). Change. Default `GetDate()` without time-zone data: the original uses local time; `DayOfWeek` 1 = Sunday and 1-based `DayOfYear` are confirmed. |
@@ -3447,3 +3941,6 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-06 | Second revision of the day (spec writer, dirty room; BIN third pass on the same build, O6 re-read), answering the review of 2026-10-06; section numbers unchanged, one anchor added (`9-6-1`). (1) §9.6: `ScrollBar:SetValue` clamps against the maximum first, then the minimum (unsigned); new "scroll-bar numbers" paragraph: defaults 0/100/0/10/1, 64-bit truncation keeping the low 32 bits, unsigned results of the five getters, `SetMinimum`/`SetMaximum` drag the other bound and re-clamp the value (so minimum above maximum cannot be reached; if it were, `SetValue` would give the minimum), large/small change caps, thumb fractions, worked example; §13.7 points to it; invariant 29 extended. (2) §13.1: every plugin control is created at 0, 0 with size 50 × 50 (new P64); §13.16: initial references (R = creation rectangle, no Q, the parent's own reference used instead), captures of windows marked for global scaling, and a correction: plugin controls carry the creation mark that makes None edges always take the current coordinate, so the 0 × 0 exception never applies to them and a control without attachments never moves with its parent. (3) §13.12.5: the hover check also requires the manager's pointer-outside flag to be clear (never set in this build) and a hover target; the delay comparison is strict; the delay restarts at the end of a capture; the tooltip is hidden first. §13.11: the pointer-outside flag and the input layer's pointer lock suppress the hit test. (4) §13.13: the text-box key listener is now sourced (P48 extended): it fires on any key notification whose source is the text box, for `TextBox` and the skinned text box; consequence: double delivery when the text box also subscribes; action 0xAB is ignored by the UI (O6, P48). (5) §13.12.1/§13.12.2: the UI only tests for toggle type 2 in the action map of the context in force; types 0, 1, 3, 4, 5 all follow the Momentary rules; consequences for repeated starts and latches; OPEN on the input layer's sequences. **Provenance:** BIN key extended with the third session; P48–P51, P57, P58, O6 extended; P64 added. **Invariants** 39–43 added. **OPEN callouts:** 38 before §19 (new: initial size of skinned controls §13.1, what locks the pointer §13.11, start/end sequences of type 3–5 mouse-button actions §13.12.2). **Implementers re-check:** scroll-bar arithmetic and getters (§9.6), initial control size (§13.1), the None rule and initial references of the edge layout (§13.16), the hover conditions (§13.12.5), toggle-type handling of mouse-button actions (§13.12.1) and text-box key events and action 0xAB (§13.13). |
 | 2026-10-06 | Third revision of the day (spec writer, dirty room; BIN fourth pass on the same build and file hash, new O7 data observations), answering the M5 completeness critique items A4/C2 (game-styled controls), A5/C3 (drawing, opacity, rotation, scale, label defaults, `WriteLine` markup, class-table writes) and B8 (font-record field); status Accepted → **Review** (becomes Revised after re-review). Section numbers 1–20 kept; **new sections and anchors:** §8.6, §13.17 (drawing backgrounds and back colours, with a byte-level worked example), §13.18 (stretch modes and own surfaces), §13.19 (opacity), §13.20 (window rotation), §13.21 (window scale and scaling groups, worked example), §14.2.1–§14.2.6 (how the game-styled controls are built from the `luaplugins` layout; text targets; window parts, title layout with worked example, close button, resize bars; layout invariants; neutral art). **Changed:** naming note (cites `LEGAL.md` §17; layout and dictionary labels are data labels), related specs, purpose; §11.1 `WriteLine` renders markup; §13.1 initial geometry of game-styled controls (layout element is the base; inherited size limits), transparency, opacity; §13.2 look row; §13.3 rotation, scaling, `Close()` only when visible; §13.4 text targets, defaults, alignment table, 1-based selection, `b`/`i` without effect; §13.8 points to §13.17/§13.18 (the community stretch-mode table moved there as Reported, with the disagreements marked); §14.1 offset 4 is the **line height in pixels** (B8; P12, invariant 23 corrected). **Provenance:** BIN key extended with the fourth session; O7 added; P12, P64 corrected; P65–P76 added. **Invariants** 44–56 added. **Corrections to other specs (§20):** `skin-definition.md` §6.8, `ui-layout.md` §5.9 (two rows), `fonts.md` §9.4, `ui-behaviour.md` §9.2, `plugin-api-usage.md` §6.3/§6.9. **OPEN callouts:** 42 before §19 (38 before; closed: initial size of skinned controls (narrowed to one new callout), opacity of children, rotation units and pivot, scaling units and combination, label defaults and selection base (replaced by two narrow callouts), stretch modes, skinned frame metrics; new: own-surface composition and modes 2/4, opacity on nested surfaces, rotation direction and order, rotation of a window without a surface, global state of the game-styled scaler, `UIScaleChanged` recipients, the `GoldWindow` variant flag, read order of plugin elements against the drag bar). **Implementers re-check:** control creation for the `Turbine.UI.Lotro` classes (§14.2.1–§14.2.3), the background/back-colour/blend-mode drawing and defaults (§13.17), stretch mode and opacity (§13.18, §13.19), `Close()` on hidden windows (§13.3), label defaults, alignment and selection (§13.4), rotation and scale (§13.20, §13.21), `WriteLine` markup (§11.1), and any code that read the font record's offset 4 as a point size (§14.1). |
 | 2026-10-06 | Repair of the third revision (spec writer, dirty room; BIN repair reading on the same build and file hash, O7 re-checked), answering the review of the third revision; status stays **Review** until re-review; section numbers unchanged, one anchor added (`13-19-surfaces`). (1) §14.2.1 step 3: the full table of base-layer operation numbers (Replace 0, Mix colour 1, Over 2, Colorize 3, Multiply 4, Screen 5, Grayscale 6, "none" 7) with the blend mode and operation that one rebuild produces for every `SetBlendMode` value; a control that never set a blend mode reports 0 after a rebuild; the mapping repeats at every scroll-bar rebuild (chains end at Replace except Grayscale); worked example; §13.17 points to the table. (2) §13.19 new paragraph "Which elements have a surface": an element wants a surface when its object mode is non-zero or, without one, when it is a root panel (every window); the surface exists only while it is wanted and the element's own visibility flag is set (or `UICore_Element_KeepObjectWhenHidden`, which no plugin element has); so a new window has no surface until it is first shown. This replaces "windows always have a surface" in §13.19 and §13.17, and §13.18 points to it. §13.20 steps 2–3 rewritten on that rule: the object-mode change happens only when the window has no surface at the call (hidden, or plugin mode 0), creates the surface at once only when shown, and a rotation set while hidden is never shown (it is not remembered; a rotation set while shown survives hide/show); the OPEN on ancestor surfaces is narrowed to the screen root. Invariant 53 split into (a) shown, (b) never shown and (c) plugin stretch mode; new invariants 57 (blend mode across a rebuild) and 58 (surface lifetime). (3) P72 cited an undefined source key: new source key S6 (the M5 API census of published plugins, results in `plugin-api-usage.md` §5.3 and §9.3). **Provenance:** BIN key extended with the repair reading; P65, P70 and P72 updated; P77 and P78 added. **OPEN callouts:** 42 before §19, unchanged (the §13.20 callout reworded, §19 updated). **Implementers re-check:** the blend mode applied after a rebuild (§14.2.1 step 3), the surface lifetime of windows and stretched controls (§13.19), and `SetRotation` on hidden windows (§13.20). |
+| 2026-10-06 | Decision-alignment revision (spec writer, dirty room), applying the owner-Accepted decisions [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge) and [0015](../decisions/0015-ui-rendering.md) (UI rendering) to Tessera's own rules; no new research, **no fact about the original changed** (BIN, O and S statements are untouched; where a body sentence overstated a fact that is OPEN, it was narrowed to the known part). Status Accepted → **Revised, awaiting review**. Section numbers and anchors unchanged. **Changed Tessera rules:** §3.3 collector step "may rely on the default collector" → "must" (`plugin-runtime.md` §9.2, 0014 D8); "between frames" read as frame-loop steps 1 and 7 with the client-exit exception (0014 D8, owners list); the deferred-work list gains the game-raised events and the logout unload, sliced by whole items (2 ms, at least one item, order kept); the Tessera order of the §3.3 OPEN now names steps 1, 7 and 8. §6.2 queued `LoadPlugin` = step-7 deferred work. §6.3 when each unload runs (in the requesting call, logout in step 7, client exit after the last frame). §6.6 and §11.1 OPENs: error and `WriteLine` lines reach `Received` as queued step-7 events, "next pump" retired. §9.4 `Update` is never sliced; plugin timers are `Update` handlers. §9.7 hit tests read the current geometry. §10.6 asynchronous `Load` handlers and writes are step-7 items. §11.3 new paragraph: every chat line is a queued `Received` event delivered in step 7 (0014 Known difference 21), and the queued line records the apartments whose `Received` dispatch produced it so that §9.6's non-re-entrancy holds (the fix of 0014 open review item 1). §13.1 opacity bullet narrowed to children drawn into the window's surface. §13.2 surface size limits (0015 §7). §13.3 Escape note (0014 "Escape with a UI attached"). §13.8 Tessera checks of `SetBackground(path)`: whole-tree index, 64-byte header probe, `.png`/`.bmp` refused, late decode failure reported (0015 §4.3–§4.4). §13.11 the pointer lock is client state (0014 D7) and the search reads current geometry (0014 D8). §13.12.1 what the input layer delivers: command names and IDs, toggle types from table A of ACTIONMAP key 1, actions never offered, repeats per hold (0014 D1, D7, D9; Known differences 6, 7, 10, 12). §13.12.2 the two-action order follows 0014 D4 (replacing "the order of the bindings in the effective key map"); mouse buttons during the lock (0014 D7, Known difference 16); types 3–5 agree with D7. §13.12.3 coalesced movements and current-geometry `X`/`Y` (Known difference 15). §13.12.5 hover clock from the coalesced movement, tick in step 7. §13.12.6 scroll actions active over every hovered plugin control (0014 D5). §13.13 OPEN: text-box consumption, typed characters and the `opaque_keys` narrowing of step 2 (0014 D2, D6, D7, Known difference 18). §13.17 composition cross-reference. §13.18 OPEN Tessera rule replaced ("straight source-over, clipped to its window only" → 0015 Decision 1.6–1.8): separate entry, premultiplied filtering, canvas-above order, clip by the nearest enclosing window and every window above (spec question 12), own opacity, inherited rotation, mode 2 repeat addressing and Tile parents (spec question 11), mode-change refresh (spec question 15), caps. §13.19 OPEN Tessera rule "window opacity applies to nested surfaces" → **own opacity only** (0015 Decision 1.7, owner question 3, spec question 1); body sentences on fading "all its children" narrowed to children drawn into the surface; "Tessera draws every shown window through a surface" → stand-in surface for top-level mode-0 windows only, mode-0 child windows drawn into the nearest surface above (0015 Decision 1.1, spec question 13); first paint and the logical show (0015 Decision 1.8). §13.20 stand-ins are not rotation targets; composition reads surface rotation, non-finite angles are 0 (0015 §2.3, §7). §13.21 rule 1 against `ui-behaviour.md` §9.2 step 6 (spec question 2). Appendix B `WriteLine` row timing. **Provenance:** source key DEC and mark **Tessera rule**; rows P79 (0014) and P80 (0015). **Invariants** 59–64 added (Tessera rules). **OPEN callouts:** 47 before §19 (42 before; 5 new, listed in §19; none closed). **Implementers re-check:** plugin-host scheduling and the deferred-work queue (§3.3, §6.2, §6.3, §10.6), `Received` and `…Changed` delivery (§11.3, §15), input routing to plugin controls (§13.11–§13.13), the composition of plugin surfaces, opacity, clip and rotation (§13.18–§13.20), and `SetBackground(path)` checks (§13.8). **Not applied here (other owners):** ARCHITECTURE §18.1/§20.3/§21, `plugin-runtime.md` §8.3/§10.3, `ui-layout.md` §5.9/§6.6/§8.4, `ui-behaviour.md` §4.9/§7.4/§9.2.1, `keymap.md`, `game-panels.md`, `render.md`. |
+| 2026-10-06 | Repair of the decision-alignment revision (spec writer, dirty room), answering its first review (changes requested); no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **Autoload placed in the frame:** the §3.3 deferred-work list now holds every plugin load: queued `LoadPlugin` requests, `/plugins load` and manager-UI loads, and the autoload loads, one item per autoloaded plugin, queued in Tessera's autoload order when the session reports the login (a Tessera reading of 0014 D8, as in `plugin-runtime.md` §8.4 and `plugin-descriptor.md` §8.1); no load runs before the first `Plugins/` index (0015 §4.4); §6.2 gains a "when each load runs" paragraph and its OPEN's Tessera text says the same; invariant 62 now includes autoload and `/plugins load`. (2) **First paint (§13.19):** the 100 ms bound is limited to windows and to nested surfaces shown while no generation runs; a nested surface shown during its group's generation is drawn at the next generation's swap (0015 Decision 1.5, 1.8, U4 (c): 8 or 41 frames); the events cited are the §9.6 setter table and §9.7, not "the events of §9.6". (3) **Pending decision revisions framed as such:** the `Received` skip rule moved from §11.3 body text into a new OPEN ("Tessera rule until decision 0014 is revised", as `plugin-runtime.md` §8.4), and it now also covers several echoing apartments: a line raised while a queued `Received` is delivered inherits that event's skip set plus the running apartment (new invariant 65; §6.6, §11.1, invariant 61 and Appendix B point to it); the window-built clip chain of §13.18 moved into a new OPEN ("Tessera rule until decision 0015 is revised", its open review item 1). (4) **P79** now cites 0014 D1–D9, "Escape with a UI attached", Known differences 6, 7, 10, 12, 15, 16, 18, 21, open review items 1 and 2, "Other improvements" and 0015 §4.4, and lists §6.2, §6.6, §9.4, §9.7, §10.6, §12 and §13.3; **P80** adds 0015 Decision 1.5, U4 (c) and open review item 1. (5) **New OPENs with interim Tessera rules:** blocking `PluginData` writes and flushes when an unload closes a state inside a frame (§6.3, cross-referenced from §10.6; ARCHITECTURE §21; same as `plugin-runtime.md` §8.4); when the frame clock behind `GetGameTime()` and the hover delay advances (§3.3: once per frame, right after the previous present and before any step-1 work, so every plugin call of one frame sees one value; §12 and §13.12.5 point to it). (6) **Invariant 63** says the 50-movement burst arrives within one frame. Appendix B `UnloadScriptState` row aligned with §6.3 (runs where asked, 0014 D8). **OPEN callouts:** 51 before §19 (47 before; 4 new, listed in §19; none closed). **Implementers re-check:** load scheduling, autoload included (§3.3, §6.2), the `Received` skip set (§11.3), the frame clock (§3.3), first-paint waits of nested surfaces (§13.19). **Left for other owners:** decision 0014 (skip set into D8 and Known difference 21; the frame clock; the ARCHITECTURE §21 exception) and decision 0015 (clip chain from windows) are locked records; `chat-window.md` §10 item 9 should point to the §11.3 OPEN here. |
+| 2026-10-06 | Second repair of the decision-alignment revision (spec writer, dirty room), answering the second review round; no new research, **no fact about the original changed**; status stays **Revised, awaiting review**; section numbers and anchors unchanged. (1) **§3.3 deferred work made consistent:** the at-least-one-item rule of 0014 D8 now carries its one exception, from 0015 §4.4: while the first `Plugins/` file index is not ready and the head of the queue is a load, that frame's deferred work stops at the load, no item runs and the items behind it wait, so queue order is kept; refreshed indexes never hold back a load; this is the rule of `plugin-runtime.md` §8.4 "Wait for the first file index", which §3.3 now cites. (2) **§18:** the lead-in to the Tessera-rule invariants reads 59–65 (invariant 65 is the §11.3 interim rule). (3) **§13.18 mode-1 row** (non-blocking): the reason why the children of a resized Stretch control are not laid out again is now `ui-behaviour.md` §9.2.1 (a Stretch element resize keeps the layout box), not `ui-layout.md` §8.4 step 1, which Tessera applies only under root-panel parents (`ui-layout.md` §8.4 scope OPEN); the behaviour is unchanged. **OPEN callouts:** count unchanged (no new or closed callout). **Implementers re-check:** deferred-work slicing while the first index is pending (§3.3). **Left for other owners:** decision 0014 D8 (locked) does not name the first-index exception to its at-least-one-item rule; it should, when 0014 is next revised, together with the skip set already listed. |

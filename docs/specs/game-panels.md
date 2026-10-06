@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Revised (2026-10-06: applies the accepted decisions 0014 and 0015, see the change log; review pending). Previously Accepted |
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
@@ -47,7 +47,7 @@ It covers the panels of UL §17.2 (P1–P15). The facts per panel:
 | P10 World map | §9 (map tree, image choice, georeference) |
 | P11 Quest tracker | §4 |
 | P14 Extra shortcut bar | §10, §4 |
-| All | §3 (summary of hidden-by-code rules), §11 (the remaining game types and Tessera's fallback) |
+| All | §3 (summary of hidden-by-code rules), §11 (the remaining game types and Tessera's fallback), §16 (Escape with the game UI attached, Tessera rule) |
 
 The chat window (P2) is out of scope (critique item A8). Engine widget classes (Meter, ListBox,
 Tree, Scrollbar, tabs) are out of scope (critique item A2); where a panel here depends on one,
@@ -64,6 +64,7 @@ the dependency is named.
 | BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, change list 711794, compiled 2026-09-27), read in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md) (method M4) on 2026-10-06. Only the routines named in the questions and their direct callees were read, by address range. **Questions:** (q1) what the game widget types `Radar` and `MapFogOfWar` do when created and when the player moves: which children they look up, which records they load, which images they set and with which draw mode, where they place them; (q2) how the minimap rim and mood, time-of-day and coordinate elements are driven; (q3) what `HiddenDragBox` does at creation, on its toggle and on mouse messages, and how it passes states to children; (q4) whether `TutorialHighlighter`, `HideWhenField`, `PipDisplay` and `ToolbarQuickslotPageChanger` hide themselves, and the full `HideWhenField` rule including its comparison operators; (q5) how `QuickslotBar` builds its slots, how many, from which template, and when empty slots are visible; (q6) how the world-map window reads its map tree and how the dungeon map is chosen for the minimap and the world map. **Why M1–M3 were not enough:** the layout data name the elements, states and images but not which code shows or hides them, which records feed the map images or how they are placed; the original client cannot be observed in this session and no owner screenshots exist yet. The network protocol, login, keys, launcher and anti-tamper code were not read (decision 0004). |
 | LC | LotroCompanion `lotro-tools` (map loaders and map finder), read for facts only: how a parchment-map tree is read from the `map` layout and that an area is found through `UI_Map_AreaDIDs_Array`. Marked **Reported** where only LC supports a fact. |
 | UL, UB, LB, CO, WS, PS, KM, LPA | The companion specs listed in the header. |
+| DEC | Accepted Tessera decisions [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge, **IB**) and [0015](../decisions/0015-ui-rendering.md) (UI rendering, **UR**). They fix **Tessera's** behaviour, not facts about the original; statements taken from them are marked "Tessera rule" with the decision and its section. |
 
 Marks: **Confirmed** = checked over every record or element of the kind (OBS), or a BIN fact the
 data agree with in every case; **BIN** = rests on the disassembly only; **Probable** = supported
@@ -109,6 +110,9 @@ by BIN or data but not proven in every case; **Reported** = third-party only.
 | G36 | Clicking a `UI_Map_Child_Map` button shows the node whose active element it names (§9.2) | OBS (770 of 773 buttons name another node's active element and none names its own; the other 3 name top-level elements of the `map` layout that are no node's active element; G25, recounted 2026-10-06); LC (map loaders read the same property as a link) | Probable |
 | G38 | Per-type comparison of the hide test: the type that selects the branch, 32-bit and float compares, types for which the ordering operators give false, types that use their own comparison routine; *B*'s value when the player lacks *P* (§6.2) | BIN (q4, re-read 2026-10-06: the equality routine that operators 2 and 3 share, the four ordering routines, and the routine that resets a value to its property's default); OBS (G7: only types 8, 15 and 21 occur in the data, with operators 2 and 3 for 8 and 21) | BIN |
 | G37 | A quickslot's `QuickslotLabelText` shows the key bound to the slot's shortcut index (§10.1 step 3) | BIN (q5: the text comes from a key-binding lookup by shortcut index); the text format was not traced | Probable |
+| G39 | In the resolved P1 tree, `GamePlay_Radar`, `MinimapPlayerMarker` and `Minimap_Frame` carry `UICore_Element_ObjectMode` 1 (Stretch) in the layout data, so the marker already has the mode that §8.2 step 3 sets (§8.2, §8.7.2) | OBS (UL U46, every element of the instantiated P1, 2026-10-06) | Confirmed |
+| G40 | In the resolved P1 tree: `MinimapViewport` has no `DrawAfterChildren`; its children in drawing order (z-level descending, then read order, UL §9.3) are `MinimapMapImage` and `RadarMapImage` (z 2), `MinimapFogOfWarDisplay` (z 1), `RadarQuestObjective` and `MinimapPlayerMarker` (z 0, mode 1), then `Minimap_Frame` and seven more children at z −1, all in mode 1; the three map elements and their descendants have no object mode; `RadarMapImage_Template` has no object mode and no children; the children of `GamePlay_Radar` in mode 1 drawn before `MinimapViewport` (z ≥ 0 against its −1) lie at rows ≥ 194 of the radar, the viewport at rows 0–169; every child of `GamePlay_Radar` after `MinimapViewport` has mode 1 (§8.7.2) | OBS (2026-10-06: every element of the instantiated P1 and the template, resolved by UL §7, read-only probes) | Confirmed |
+| G41 | In the resolved P1 tree, `GamePlay_Radar` is a direct child of the root `GamePlay_RadarBox` (224 × 280) with rect (0, 33, 224, 260): it sits at x = 0, y = 33 of the root, so its box reaches 13 rows past the root's bottom edge; every child of `GamePlay_Radar` and every descendant of `MinimapViewport` lies above radar row 247 (root row 280) except the map elements and the fog, which `MinimapViewport` clips (§8.7.2 "Clip") | OBS (2026-10-06: the instantiated P1 tree resolved by UL §7, read-only probe; one record, so all records) | Confirmed |
 
 ---
 
@@ -404,7 +408,8 @@ After the tree is created, the radar:
    truncating toward zero: (85, 85) for 170 × 170.
 2. Finds `MinimapMapImage`, `RadarMapImage`, `MinimapPlayerMarker`, the two labels and the fog
    elements; if any is missing it stops (the minimap shows no map).
-3. Sets the marker's `UICore_Element_ObjectMode` to 1 (UL §8.4 object modes) and places the marker
+3. Sets the marker's `UICore_Element_ObjectMode` to 1 (UL §8.4 object modes; the layout data
+   already give it 1, G39) and places the marker
    so that its centre is on *c*: position (*c*.x − *w* div 2, *c*.y − *h* div 2) = (71, 71) for a
    28 × 28 marker.
 4. Shows `MinimapFogOfWarDisplay` (it is hidden again outdoors, §8.3) and hides
@@ -585,6 +590,17 @@ with an east-pointing arrow gives a clockwise screen rotation of (*h* − 90°).
 > north must point up); and the resampling the client uses for a rotated image (UL §9.6 draws
 > images unrotated only).
 
+**Tessera rule** (DEC: UR §2.3, Decision 1.7; answers Tessera's side of the resampling OPEN):
+the marker owns a surface (step 3 of §8.2), so it is composed as a separate entry in P1's
+drawing order, not blended into the radar's canvas. Its rotation is a rotation of that entry
+about its centre, set so that the screen result is the one above (an east-pointing arrow turns
+clockwise on screen by *h* − 90°), whatever sign convention the plugin API's rotation turns
+out to have. The rotated marker is resampled with Tessera's surface filter (bilinear on
+premultiplied texels by default). Its coverage region in the radar's canvas is the square
+around the circle through its corners, 40 × 40 for the 28 × 28 marker, the same at every
+heading, so turning causes no repaint. It takes its own opacity only, so a Fade on P1's root
+does not fade it (UL §5.9 opacity OPEN).
+
 <a id="s8-7"></a>
 ### 8.7 Rim, disc, labels and buttons
 
@@ -597,7 +613,9 @@ It is drawn with **draw mode 2** (Replace, UL §9.6.2), which writes its alpha i
 surface; the map tiles and the indoor map are drawn after it with draw mode 5, which keeps that
 alpha. The minimap is round only because the panel surface's alpha is used when the surface is
 composed onto the frame (UL §9.6.1 OPEN). A Tessera implementation that composes panels with
-their alpha (UL §9.6.1 Tessera choice) gets the round map; one that ignores alpha shows a square.
+their alpha gets the round map; one that ignores alpha shows a square. Tessera's composition
+always uses the surface alpha (UL §9.6.1 Tessera rule, DEC: UR Decision 1.6 and its §8
+round-minimap test).
 
 <a id="s8-7-2"></a>
 #### 8.7.2 The rim (BIN, G21)
@@ -632,6 +650,64 @@ its default state.
 > ring would be cut off. Either the client does not clip here (UL §9.3 `clip_to_parent` OPEN) or
 > the original shows a clipped rim. Settle with an owner screenshot (checklist P1-A). Tessera
 > draws the rim unclipped by the viewport (clipped only by the radar root) until then.
+> Data that bear on this (G39): `Minimap_Frame` carries object mode 1 in the layout, so by
+> LPA §13.19 it owns a surface of its own. The clip of UL §9.3 step 6 is traced for drawing
+> into one surface; whether the viewport's box clips an element with its own surface depends
+> on how the original composes such surfaces (UL §9.3 nested-surface OPEN, LPA §13.18
+> OPEN (1)). Tessera composes it as a nested entry
+> clipped only by its enclosing root panel (DEC: UR Decision 1.7), which gives the same
+> result as the Tessera rule above.
+
+<a id="s8-7-2-composition"></a>
+**How P1 splits into surfaces in Tessera** (DEC: UR Decision 1.1 and 1.7; data G40, UL §17.2).
+Decision 0015 names the marker as P1's only nested entry and checks rim pixels "in the root
+canvas" (its P1 check 2). The data give P1 more surfaces than that, so test authors should use
+the following instead:
+
+- **Surfaces.** 18 non-root elements of P1 have a non-zero object mode (UL §17.2), so each owns
+  a surface in Tessera when shown. `GamePlay_Radar` itself is in mode 1: it is a nested entry
+  of the root's surface, and the rim `Minimap_Frame`, the marker, `RadarQuestObjective`,
+  `TimeOfDay`, `Mood`, the five buttons, the two labels, `AreaText_QuestHighlight` and the
+  two tutorial highlighters are nested entries of the **radar's** surface, one level further
+  down. The drag bar and title of the drag box are nested entries of the root's surface. So
+  the disc, the tile grid, the indoor map and the fog are painted into the radar's canvas (the
+  "panel surface" of §8.7.1 is, in Tessera, the radar's surface), and the rim's pixels are in
+  the rim's own canvas, not in the root canvas.
+- **Drawing order (G40).** In `MinimapViewport`'s drawing order (UL §9.3; it has no
+  `UICore_Element_DrawAfterChildren`) its own disc image comes first, then `MinimapMapImage`
+  and `RadarMapImage` (z-level 2), then `MinimapFogOfWarDisplay` (z-level 1), and only then
+  the first children that own a surface (`RadarQuestObjective` and the marker at z-level 0,
+  the rim and the rest at −1). The tile items made from `RadarMapImage_Template` have no object
+  mode and no children. In `GamePlay_Radar`'s drawing order the children that own a surface
+  and come before `MinimapViewport` (the quest highlight, the area-text tutorial highlighter
+  and the two labels) all lie at radar rows 194 and below, outside the viewport's rows 0–169.
+  Every element drawn after the rim owns a surface. So under the split of UR Decision 1.7 no
+  pixel of the disc, the tiles, the indoor map or the fog falls inside the coverage region of
+  an earlier nested entry: all of them go to the radar's canvas below, where draw mode 5 finds
+  the disc's alpha (§8.7.1). The rim's coverage region contains the whole disc, but nothing of
+  the radar's canvas is drawn after the rim, so its canvas above stays empty.
+- **Clip.** `GamePlay_Radar` is not a root panel, so the nearest enclosing window of the rim,
+  the marker and the other nested entries of the radar is P1's root (UR Decision 1.7, "Clip"),
+  as the Tessera rule above says. `GamePlay_Radar` sits at x = 0, y = 33 of the root
+  `GamePlay_RadarBox` (224 × 280; rect (0, 33, 224, 260), G41) and `MinimapViewport` at
+  (27, 0) of the radar. So in layout values at the design size the rim's box runs from
+  7 pixels left of the root's box (0 + 27 − 34 = −7) to 6 pixels past its right edge
+  (−7 + 237 = 230 against a width of 224), and from root row 0 (33 + 0 − 33) to row 237 of
+  280; the root's clip cuts those 13 columns and no row. The radar's own box reaches root
+  row 293, but nothing the radar draws lies below root row 280 (G41), so that cut removes no
+  pixel. These offsets are this install's layout values; read them from the data.
+- **Test.** Instead of decision 0015's P1 check 2: in a painter and composition test on a
+  synthetic P1-shaped tree, the composed result shows rim pixels outside the 170 × 170 viewport
+  box and none outside the root's box, and the radar's canvas holds the disc and the map
+  pixels with the disc's alpha (GP17).
+  Decision 0015's P1 check 4 is corrected in one clause: the marker and the rim are both
+  nested entries of the radar's surface, the rim paints into its own canvas, and everything
+  after the marker in the radar's drawing order owns a surface (G40), so the marker's
+  **canvas above is empty** at every heading; it holds no rim pixels. A test that follows
+  check 4 asserts that the canvas above is empty at every angle, not that it "holds the same
+  rim pixels". The rest of check 4 is unchanged: the marker's coverage region is the same
+  40 × 40 square at every heading, and turning through 360° in 1° steps gives no damage after
+  the first rotation.
 
 <a id="s8-7-3"></a>
 #### 8.7.3 Time of day (BIN, G22)
@@ -932,6 +1008,18 @@ Behaviour invariants (for Tessera's implementation and synthetic fixtures):
 - **GP14** In the hide test, a boolean or enum *P* with operator 2 or 3 compares the stored 32-bit
   values; with operator 1, 4, 5 or 6 a boolean never hides and an enum compares its keys as signed
   32-bit integers (§6.2).
+- **GP15** With a game UI attached, no press of Escape quits the client, whatever is focused or
+  active (§16).
+- **GP16** With a game UI attached, no on-demand panel shown and P6 hidden, a declined Escape
+  shows P6 as the active panel; the next declined Escape hides it again. With an on-demand
+  panel active, a declined Escape hides that panel and leaves every HUD panel (P1–P5, P11,
+  P14) and every plugin window as it was (§16).
+- **GP17** In P1 as Tessera composes it (§8.7.2, "How P1 splits into surfaces"), every pixel of
+  `MinimapViewport`'s disc and of the visible map element (tile grid or indoor map) is in
+  `GamePlay_Radar`'s canvas below, none in a canvas above; a tile pixel drawn over a disc
+  pixel of alpha 0 stays transparent, and one over alpha 255 keeps alpha 255 (draw mode 5).
+  The canvases above of the rim and of `MinimapPlayerMarker` are empty, the marker's at every
+  heading.
 
 ---
 
@@ -1000,6 +1088,25 @@ false or absent. Operator 6 never hides, whatever *B* is.
 any other key, including the default 0 when *P* is absent; operator 6 hides when the player's key,
 read as a signed 32-bit integer, is less than 7.
 
+<a id="s13-7"></a>
+### 13.7 Escape (§16)
+
+Synthetic sequence; game UI attached, HUD shown, nothing else open, nothing focused.
+
+1. Escape: there is no keyboard target, so `EscapeKey` reaches game code. No on-demand panel is
+   active and P6 is hidden, so rule 2 shows P6 and makes it the active panel.
+2. Escape: P6 is the keyboard target and does not consume `EscapeKey` (assumed for this
+   example); P6 is an active on-demand panel, so rule 1 hides it.
+3. P9 is opened and becomes active; a text field in it without `lose_focus_on_escape` gets
+   focus. Escape: the field declines it (UB §5.4); P9 is the active panel, so rule 1 hides P9.
+4. The chat window's entry line gets focus and Escape is pressed: the chat window consumes it
+   (`chat-window.md` §6.2), so this rule does not run.
+5. Escape again: the entry no longer has focus and the chat window does not handle it; the
+   active panel is the chat window, a HUD panel, so rule 1 does not apply, and P6 is hidden, so
+   rule 2 shows P6.
+
+At no step does the client quit (GP15).
+
 ---
 
 <a id="s14"></a>
@@ -1015,6 +1122,8 @@ read as a signed 32-bit integer, is less than 7.
 | `m5-visual.md` P14-A | "Bar frame and empty slot frames as the bar lays them out" | With no shortcuts and the toggle off, P14 draws nothing; its frame appears only in the edit mode (§4, §10.2). The checklist row should judge the edit-mode frame, or slots during a drag |
 | `m5-visual.md` P1-A | "judge the rim, buttons and frame only" | The map image is now specified (§8); the rim's clipping is OPEN (§8.7.2) |
 | LB §6.2 | `UI_Map_FogOfWar` listed as int, always 0 | Its type is boolean (PS type 21); false in every landblock record (same value). True in 670 dungeon maps (§8.5.2) |
+| `walker.md` §5 | "Escape quits" | Holds only without a game UI. With a UI attached, a declined Escape follows §16 and never quits (decision 0014, Consequences "Escape with a UI attached") |
+| Decision 0015, Decision 1.7 "Clip" (last paragraph) and P1 checks 2 and 4 under §8 | The P1 marker is the only named nested entry of the M5 panels; a painter test finds rim pixels outside the viewport box "in the root canvas" (check 2); while turning, "the canvas above holds the same rim pixels at every angle" (check 4) | **Correction (data, G40, G41, UL §17.2):** P1 has 18 non-root surfaces at two levels; the rim owns a surface and its pixels are in its own canvas; the map and disc are in `GamePlay_Radar`'s canvas. The clip result is unchanged (root only). Check 4: the marker's canvas above is **empty** at every heading (the rim and everything after the marker in the radar's drawing order own surfaces); the 40 × 40 coverage region and the absence of damage while turning still hold. Test as in §8.7.2 "How P1 splits into surfaces". For the decision's next revision (the record is not edited here) |
 | `walker.md` §6 | Walker minimap: ±320 m, tiles of resident blocks | Agreement on the tiles and the layer; the native P1 panel shows a fixed 3 × 3 grid at 1.25 px per unit and is not the walker's debug minimap |
 
 ---
@@ -1028,8 +1137,8 @@ read as a signed 32-bit integer, is less than 7.
 4. §8.4.4, §10.1: ListBox arrangement (critique A2).
 5. §8.5.1: the game-script rule that picks the dungeon map.
 6. §8.5.3: fog-of-war drawing.
-7. §8.6.3: marker direction on screen and rotation resampling.
-8. §8.7.2: whether the rim is clipped to the viewport.
+7. §8.6.3: marker direction on screen and rotation resampling (Tessera rule from decision 0015).
+8. §8.7.2: whether the rim is clipped to the viewport (the rim owns a surface by its layout mode, G39; Tessera rule agrees with decision 0015).
 9. §8.7.4: the coordinate-label rule; §8.7.5: the `MapZoom` event.
 10. §8.8: note blips.
 11. §9.4: world-map choice outside listed areas; dungeon maps in the world-map window.
@@ -1047,6 +1156,42 @@ read as a signed 32-bit integer, is less than 7.
 21. §8.7.2: what drives the `Mood` gauge (G35).
 22. §9.2: the effect of a click on a child-map button, and the 3 buttons whose target is no node's active element (G36).
 23. §10.1: how a key binding becomes the `QuickslotLabelText` text (G37).
+24. §16: what the original's game code does with an `EscapeKey` that the UI declined (Tessera rule from decision 0014).
+
+---
+
+<a id="s16"></a>
+## 16. Escape with the game UI attached (Tessera rule)
+
+With a game UI attached, Escape gives the action `menu`, which carries the command `EscapeKey`
+(DEC: IB D2). The UI is offered it first (UB §5.3): a focused text field with
+`lose_focus_on_escape` gives up focus and consumes it (UB §5.4), an engine confirmation dialog
+that is the active panel closes with its "no" result (UB §5.5), and the chat window, when its
+entry has focus, releases that focus and clears the entry (`chat-window.md` §6.2). A command that no keyboard target consumes goes on
+to game code and to the plugins' key broadcast (UB §5.3 step 3, LPA §13.13). This happens
+often: only 19 elements set `lose_focus_on_escape` while 103 are editable (UB §5.4), a focused
+plugin text box does not consume Escape under the Tessera rule of LPA §13.13, and an active
+panel that does not handle `EscapeKey` declines it.
+
+> **OPEN:** what the original's game code does with an `EscapeKey` that reaches it: which panels
+> it closes and in what order, whether it opens the main menu, and whether HUD panels or plugin
+> windows react. Not traced (game code). Owner observation: in the original, press Escape with
+> (a) nothing open, (b) the main menu open, (c) the quest log open and active, (d) a plugin
+> window active.
+
+**Tessera rule** (DEC: IB, Consequences "Escape with a UI attached"; it never quits). When a UI
+is attached, the client treats the **press** of `menu` that the UI did not consume as game
+code's handling of `EscapeKey`; its release and its auto-repeats do nothing. The **on-demand
+panels** are P6, P7, P8, P9, P10, P12, P13 and P15 of UL §17.2; the HUD panels P1–P5, P11 and
+P14 and all plugin windows are never hidden by this rule.
+
+1. If the active panel (UB §5.1) is an on-demand panel, hide it. Done.
+2. Otherwise, if P6 (main menu) is hidden, show it (UL §17.1) and make it the active panel;
+   if P6 is shown, hide it.
+
+Without a UI attached (the walker of M3 and M4) `menu` keeps its meaning of `walker.md` §5
+(quit). How the client is quit while a UI is attached is outside this rule; the walker's help
+line must not label Escape "quit" then (IB, Cost).
 
 ---
 
@@ -1057,3 +1202,6 @@ read as a signed 32-bit integer, is less than 7.
 | 2026-10-06 | First version (critique item A9): drag-box frames (answers UL §17.5 (1)), tutorial highlighters, `HideWhenField` rule with operators, pip displays and page changer, the minimap's outdoor tile grid, content-layer choice, indoor dungeon map, placement, disc, rim mood states, time of day, labels; the world-map tree, georeference and choice (answers UL §17.5 (4) in part); quickslot slots, empty-slot rule and content templates; the remaining game types; invariants GP1–GP12; examples §13.1–§13.6; corrections to UL §17.4, the M5 checklist and LB §6.2. OBS and BIN (client 4906.0071.1794.4035). |
 | 2026-10-06 | Revision 2 after the second review. G7 corrected after an own recount over all layouts and the property dictionary: the 19 compared properties are 14 int, 2 enum and 3 boolean (it read 16 int and 3 boolean), and their dictionary defaults are recorded. New row G38 (BIN, q4 re-read): §6.2 now has a table of how each value type compares under operators 2 and 3 and under the ordering operators (enums and ints signed 32-bit; booleans and other 32-bit types equality only, ordering never hides; NaN handling for floats). It also states *B* when the player lacks *P* (dictionary default, else the type's zero value). The §6.2 OPEN and its Tessera rule now cover only the types with their own comparison routine; §15 item 15 updated. New invariants GP13 (data) and GP14, and §13.6 boolean and enum examples. New in-section OPEN callouts with Tessera rules for the Probable statements G34 (§4.3), G35 (§8.7.2), G36 (§9.2) and G37 (§10.1); §15 items 20–23. G36 now records what the 3 buttons that name no node point to. The §6.3 sandbox results are unchanged. Section numbers unchanged. |
 | 2026-10-06 | Revision 1 after the first review. Added in-section OPEN callouts to §6.2 (other value types, with a Tessera rule for booleans and the G7 census of compared types), §8.5.3 (fog enable condition), §8.6.1 (no georeference, with a Tessera rule), §8.7.3 (the two `Unknown_Time` flags), §8.7.4 (coordinate-label rule), §8.7.5 (`MapZoom` event) and §10.2 (per-bar counter); §15 items 15–19 and item 13 extended. §9.2: node count corrected to "196 of 227 nodes have buttons to nodes that are not their tree children (199 to any other node)" (own recount 2026-10-06). §10.3: the shortcut-type reference now points to LPA, not KM §12. GP10 restricted to positions with a georeference. New provenance rows G34–G37 (Probable) for §4.3, §8.7.2, §9.2 and §10.1 step 3; G7 extended. Section numbers unchanged. |
+| 2026-10-06 | **Revision 3: applies the accepted decisions 0014 (UI input bridge) and 0015 (UI rendering)** (status Accepted → Revised, review pending). No fact about the original is changed. New provenance tag DEC. **New §16** (Tessera rule from decision 0014, Consequences "Escape with a UI attached"): game code's reaction to a declined `EscapeKey` with a UI attached (hide the active on-demand panel, else toggle the main menu P6; never quit), with an OPEN on the original's behaviour and an owner observation; §0 table, invariants GP15 and GP16, example §13.7, §14 row for `walker.md` §5, §15 item 24. **§8.6.3:** Tessera rule from decision 0015 §2.3 and Decision 1.7 next to the OPEN (the marker is a separate entry rotated about its centre to the stated screen result, resampled with the surface filter, a fixed 40 × 40 coverage square, own opacity only). **§8.7.1:** the composition uses the surface alpha by the UL §9.6.1 Tessera rule (decision 0015), replacing the reference to an earlier Tessera choice. **§8.7.2:** OPEN extended with the data fact G39 (`Minimap_Frame` has object mode 1, so it owns a surface) and the agreement of decision 0015's nested-surface clip with the rim rule. **§8.2 step 3:** the layout already gives the marker mode 1 (new row G39, OBS 2026-10-06 via UL U46). §15 items 7 and 8 updated. Section numbers unchanged; §16 and §13.7 are new. |
+| 2026-10-06 | **Fixes after the review of Revision 3** (status stays Revised, review pending). **§16 rule 1:** the active panel is defined in UB §5.1 (activation), not UB §4.6; citation corrected. **§8.7.2:** new paragraph "How P1 splits into surfaces" (DEC: UR Decision 1.1, 1.7): `GamePlay_Radar` and 17 other non-root P1 elements own surfaces, so the disc and map are painted into the radar's canvas and the rim into its own; from the data (new row G40, OBS 2026-10-06, Confirmed) the disc and every map element come before every surface-owning element in drawing order, so none of their pixels goes to a canvas above and draw mode 5 keeps finding the disc's alpha; the rim's box extends 7 and 6 pixels past the root, which the root clip cuts; a replacement for decision 0015's P1 check 2. New invariant GP17; §14 row on decision 0015's "only nested entry" sentence and P1 check 2 (for the decision's next revision). No fact about the original is changed. |
+| 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.7.2 "How P1 splits into surfaces":** the Test bullet now also corrects decision 0015's P1 check 4 (the marker's canvas above is empty at every heading and holds no rim pixels; the 40 × 40 coverage region and no damage while turning still hold); the Clip bullet states `GamePlay_Radar`'s offset (0, 33) in the root, the rim's root rows, and that the root's bottom cut removes no pixel. New provenance row G41 (Confirmed 2026-10-06, read-only probe of the resolved P1 tree). GP17 states that the rim's and the marker's canvases above are empty. §14 decision-0015 row extended to check 4. |

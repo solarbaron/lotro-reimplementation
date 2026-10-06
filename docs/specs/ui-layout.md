@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (M5 consolidation revision, reviewed 2026-10-06) |
+| **Status** | Revised (2026-10-06: applies the accepted decisions 0014 and 0015, see the change log; review pending). Previously Accepted (M5 consolidation revision, reviewed 2026-10-06) |
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
@@ -66,6 +66,7 @@ counts.
 | PS | [`property-system.md`](property-system.md) (embedded property sets, value encodings, root DID map). |
 | REC | [`records.md`](records.md) (VLE, TSize, strings, enum mappers, DID maps, render surfaces). |
 | FO | [`fonts.md`](fonts.md) (font choice, text drawing). |
+| DEC | Accepted Tessera decisions [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge, **IB**) and [0015](../decisions/0015-ui-rendering.md) (UI rendering, **UR**). They fix **Tessera's** behaviour where the original's is unknown or where Tessera departs from it; they are not sources of facts about the original. Statements taken from them are marked "Tessera rule" with the decision and its section. |
 
 Marks: **Confirmed** = checked over every record of the kind (OBS), or a BIN fact the data
 agrees with on every record; **BIN** = rests on the disassembly only (no data can show it);
@@ -119,6 +120,8 @@ third-party only; **Analogue** = vocabulary from the related engine.
 | U43 | The UI's 2D compositor runs on the CPU over the panel's drawing surface (the routines are integer per-pixel loops over 32-bit pixels) | BIN | BIN; how panel surfaces reach the screen is OPEN (§9.6.1) |
 | U44 | In `DrawAfterChildren` buttons of the main menu, options and plugin manager panels the button draws its own label text and its frame pieces are children, so the label lands on top of the frame (§9.6) | OBS (element trees of §17 panels P6, P7, P12) | Confirmed (data agreement) |
 | U45 | The original's bag windows are the six top-level elements `PlayerBag1_Template` … `PlayerBag6_Template` of the `containerdisplay` layout: one game routine constructs six bag windows, passing the six element IDs as immediates, and each bag window opens the `containerdisplay` key with its element ID through the open-panel entry; no call site opens `backpack` (§17.2 P15) | BIN (the open-panel call site with the `containerdisplay` key, the bag-window constructor and its six callers); OBS (element labels, resolved trees) | BIN (open path), Confirmed (data) |
+| U46 | Per panel of §17, the non-root elements whose resolved `UICore_Element_ObjectMode` is set, by mode, how deep they nest and how many the layout hides; no state block of these panels sets the property (§17.2, UL22) | OBS (2026-10-06: every element instance of the 15 instantiated panels, resolved by §7 with property replacement by PID; the per-panel element counts equal those of §17.2) | Confirmed |
+| U47 | (a) In the 15 instantiated panels of §17, 159 children without an object mode of their own sit under a non-root element in Stretch mode; steps 2–6 of §8.4 at the parent's design size give back the design box for 158 of them; the exception is P10's `Panel_Label_Title` (295 × 20 at x = 0, edges (1, 5, 1, 5)) inside the 350 pixels wide `Panel_TitleBar` (§8.4 OPEN (scope)). (b) The portraits: `PlayerPortrait` (P4) has object mode 3, no media and no children; `OpponentPortrait` (P5) has object mode 1 and one Image item with draw mode 2, and its child `Target_Image` (no media) has mode 1 (§17.4) | OBS (2026-10-06: the same instantiated panels as U46, read-only probes; (a) counts every such child, with the edge rules of §8.4 step 2) | Confirmed |
 
 ---
 
@@ -513,6 +516,27 @@ each a layout DID plus element ID), meter images and directions (`UICore_Meter_*
 > list boxes, trees, meters, scroll bars, menus, browsers, viewports) beyond their names and
 > value types. Each widget class reads its own set; trace per widget as M5 panels need them.
 
+<a id="s5-9-opacity"></a>
+> **OPEN:** which descendants `UICore_Element_ObjectOpacity` reaches when they own a drawing
+> surface of their own. The row above (BIN) states that the property fades the element's
+> surface with all its children; that is traced for children drawn **into** that surface. For a
+> descendant with its own surface (§6.6), `ui-behaviour.md` §11.1 step 2 (BIN) has auto-fade
+> write the fade opacity into the element **and** into each child with its own surface, which
+> would be needed only if such a child is composed on its own and is not reached by its
+> ancestor's opacity; `lua-plugin-api.md` §13.19 leaves the same question OPEN for plugin
+> windows. Fade items (§6.6) and the plugin setter write only the element's own property. Not
+> traced. **Tessera rule** (DEC: UR Decision 1.7, "Opacity"): every surface is composed with
+> its own `ObjectOpacity` only, and the ancestors' opacity is not multiplied in. So in Tessera
+> a Fade item or `SetOpacity` on an element leaves its descendants that own surfaces unfaded
+> (for example the minimap's player marker under a Fade on P1's root, `game-panels.md` §8.2
+> step 3), while auto-fade fades them through UB §11.1 step 2.
+
+<a id="s5-9-erase"></a>
+> **OPEN:** the effect of `UICore_Element_ShouldEraseBackground` (named only above; it may make
+> the erase of an update region, §9.6.1, conditional per element). **Tessera rule** (DEC: UR
+> Decision 1.3): every update rectangle is erased to transparent black before it is drawn, and
+> the property is ignored.
+
 ---
 
 <a id="s6"></a>
@@ -613,11 +637,22 @@ items, hot spots (16, 16) 157, (16, 14) 20, (0, 0) 3.
 ### 6.6 Fade (kind 6)
 
 Animates `UICore_Element_ObjectOpacity` (§5.9: the opacity of the element's own drawing
-surface, so the element fades together with its children) from *start* to *end* over
+surface, so the element fades together with its children; for children that own a surface of
+their own see the §5.9 opacity OPEN) from *start* to *end* over
 *duration* seconds. 18 of the 36 Fade items sit on top-level elements, 16 on depth-1 and 2 on
 depth-2 elements.
 
 > **OPEN:** which non-root elements own a drawing surface (so that a Fade on them is visible).
+> Partial answers from other specs: `lua-plugin-api.md` §13.19 (BIN) gives the client's rule
+> for every element: it owns a surface while its `UICore_Element_ObjectMode` value is not 0
+> (or it has no value and is a root panel) and it is shown or has
+> `UICore_Element_KeepObjectWhenHidden` true; `ui-widgets.md` §4.5: an alpha-test meter asks
+> for a surface at post-creation; `game-panels.md` §8.2 step 3: game code sets object mode 1
+> on the minimap's player marker. §17.2 (U46) counts the non-root elements of the §17 panels
+> that carry an object mode. Still open: whether that rule and the scope stated in §8.4 step 1
+> describe the same set (§8.4 OPEN), and which descendants a Fade reaches when they own
+> surfaces (§5.9 opacity OPEN). Tessera applies the LPA §13.19 rule to native and plugin
+> elements alike (DEC: UR Decision 1.1).
 
 1. On its first run: read the element's current opacity *c*. If the fade goes downwards
    (*start* > *end*) and *c* < *start*, or upwards (*start* < *end*) and *c* > *start*, the fade
@@ -811,6 +846,12 @@ When an element is laid out at run time (§8.4), its *O* and *N* are:
 The client lays an element out when it is attached to a parent, and lays all children of an
 element out again whenever that element's size changes.
 
+Tessera rule (DEC: IB D8, "Geometry used for hit tests"): hit tests read every element's
+current geometry, so this re-layout takes effect at once for hit testing. An implementation
+may defer it for speed only until the next hit test that would read an element it moves; before
+any hit test every pending re-layout is completed. Painting (UR Decision 1.3) reads the same
+geometry and changes no box that a hit test reads.
+
 1. **Stretch parents.** If the element has no object mode of its own and its parent's object
    mode (`UICore_Element_ObjectMode`, consulted only on root panels and elements flagged by code;
    default CanvasResize) is Stretch, keep the element's current box and go to step 6 (no
@@ -822,6 +863,77 @@ element out again whenever that element's size changes.
 > code): Tile needs surface dimensions that are powers of two; otherwise the client logs the
 > problem and switches the element to CanvasResize. Data use on elements: Stretch 301,
 > CanvasResize 119, None 24, Tile 2. Not needed for panels drawn 1:1.
+>
+> **Tessera rules** until traced (DEC: UR Decision 1.1, 1.6, 1.7 and §2.1):
+> - every surface's canvas has the size of the element's layout box (UB §9.2.1) and is
+>   composed onto the element's displayed box, scaled by displayed box ÷ canvas on each axis
+>   (1 : 1 when the two are equal); Stretch and CanvasResize differ only in what an element
+>   resize does to the layout box (UB §9.2.1);
+> - **Tile** with both canvas sides powers of two is **not** fitted to the box: the canvas is
+>   repeated from the box's top-left corner over the displayed box at the scale of the nearest
+>   display node at or above the element (UB §9.2.1), so unscaled it is an exact 1 : 1
+>   repeat. An element below a Tile surface gets no surface of its own and is drawn into the
+>   Tile surface's canvas as if its mode were 0;
+> - **None** on a shown root panel that has no surface above it (for example a native
+>   top-level panel whose layout value is 0): the panel is drawn through a Tessera stand-in
+>   surface, sized and composed like CanvasResize but at opacity 1, because for the original
+>   the element has no surface for its `ObjectOpacity`. A resize of such a panel follows the
+>   no-surface rule of UB §9.2.1 step 3 (the layout box takes the size, the children are laid
+>   out again). For every other rule the panel counts as having no surface.
+>
+> **OPEN (conflict, Tile canvas size):** the Tile bullet above takes its canvas size from UR
+> §2.1 (the layout box, when both of its sides are powers of two). `lua-plugin-api.md` §20
+> (BIN, fourth pass, correction to §5.9 here) says instead that a Tile surface of the original
+> takes the size of the element's **base image** (or a size set by code), and falls back to
+> CanvasResize unless both sides of that size are powers of two. The two do not agree, and the
+> decision does not cite the LPA statement. The BIN statement is the fact about the original;
+> the layout-box canvas stays Tessera's rule only until decision 0015 is revised to
+> reconcile it (for plugin mode 2 the decision already uses the base image). It does not affect
+> M5: no element of the §17 panels is in mode Tile (UL22), and the data hold 2 Tile elements
+> in all.
+
+<a id="s8-4-scope"></a>
+> **OPEN:** two statements about object modes do not yet agree, and neither was re-traced.
+> (1) Step 1 says the object mode is consulted only on root panels and elements flagged by
+> code; `lua-plugin-api.md` §13.19 and its §20 correction to §5.9 (BIN) say that **any**
+> non-zero object mode, from a layout or from `SetStretchMode`, gives the element its own
+> surface, and §17.2 (U46) finds 92 non-root elements with a non-zero mode in the §17 panels.
+> Whether the Stretch-parent test of step 1 also applies to a non-root parent that owns a
+> surface by that rule is not known. (2) `ui-behaviour.md` §9.2.1 has a branch for the element
+> resize of a surface-owning element in mode None (the layout box is not changed); by
+> LPA §13.19 condition 1 an element in mode 0 owns no surface, so that branch would never be
+> reached; `ui-behaviour.md` §9.2.1 records the same question as an OPEN, with the same Tessera
+> rule. **Tessera rule** (DEC: UR Decision 1.1, §2.1): surface ownership follows
+> LPA §13.19 for every element, native or plugin; for an element that owns a surface, its
+> object mode decides an element resize as UB §9.2.1 says (Stretch: the layout box is kept and
+> the children are not laid out again); an element in mode 0 resizes by the no-surface rule of
+> UB §9.2.1 step 3.
+>
+> **Tessera rule for question (1)** (a Tessera choice, not a decision text; the decisions do
+> not settle it): the Stretch-parent test of step 1 is applied only when the parent is a **root
+> panel**. Step 1 also names "elements flagged by code"; which elements code flags is not known
+> (§6.6 OPEN), and Tessera flags none. Whether that flag is the one by which an alpha-test
+> meter asks for a surface at post-creation (`ui-widgets.md` §4.5) is not known; the two were
+> traced separately. Tessera does not treat an alpha-test meter as a flagged element: it owns a
+> surface (UW §4.5), but for step 1 and for the screen-level row of §8.3 it is laid out like
+> any other non-root element. No alpha-test meter is in the §17 panels, so M5 does not depend
+> on this. A child of a **non-root** element that owns a
+> surface in Stretch mode (for example the children of `GamePlay_Radar` in P1) is laid out by
+> steps 2–6 like the
+> child of any other non-root element, both when it is attached and whenever its parent's
+> layout box changes. Because an element resize of a Stretch surface keeps its layout box
+> (UB §9.2.1), such a child is in practice laid out again only when the parent's layout box
+> changes by another path (for example after a change of the parent's object mode), not
+> through the parent's own element resize. Data that bear on the
+> choice (OBS, 2026-10-06, the 15 instantiated panels of §17, U47): 159 children without an
+> object mode of their own sit under a non-root Stretch element. For 158 of them, steps 2–6 at
+> the parent's design size give back the child's design box, so the two readings agree. The
+> one exception is P10's title label `Panel_Label_Title`, a 295 pixels wide element with
+> centring edges (1, 5, 1, 5) at design x = 0 inside the 350 pixels wide Stretch element
+> `Panel_TitleBar`. Laid out by its edges it sits at x = 28 (and is 294 wide, §8.4 step 2);
+> kept by step 1 it would stay at x = 0. The authored centring edges point to layout by edges,
+> which is why Tessera chose it. An owner screenshot of P10's title bar settles it: under this
+> rule the title is centred in its bar.
 
 2. **First pass**, each edge by its mode:
 
@@ -898,6 +1010,12 @@ root panel again from its layout's design size to the new screen size (§8.3), a
 containers (§9.1), being screen-root children with edges (5, 5, 5, 5), follow. What game code
 does on the accompanying notification is OPEN there.
 
+Tessera rule (DEC: UR §2.6): the screen size is the render target's size in physical pixels.
+The platform's display scale factor is **not** applied to it, because the original has no such
+factor; larger panels come from `UIScale_Global` (`ui-behaviour.md` §9.1), as in the original.
+On a screen resize a root panel whose size does not change is only moved (§8.4 step 6), so its
+children are not laid out again.
+
 ---
 
 <a id="s9"></a>
@@ -922,6 +1040,17 @@ container element (a Field, edges 5, 5, 5, 5) that is itself screen-level; if th
 object mode, the client gives it CanvasResize. `UICore_Dialog_UILayout_Override` and
 `UICore_Dialog_UIElement_Override` replace the layout DID and element ID that the dialog would
 otherwise use.
+
+Tessera rules for these dialogs:
+- **Surface** (DEC: UR Decision 1.1, "Modal dialogs"): the dialog owns the drawing surface
+  (it gets CanvasResize when it has no object mode, above). The screen-sized container, which
+  code creates with no images and no text, gets no canvas; it stays in the tree for layout and
+  hit testing. Whether the original gives the container a surface is not stated; the
+  difference cannot be seen.
+- **Input** (DEC: IB D5, "Who pushes"; `ui-behaviour.md` §5.6 OPEN): while a dialog of the
+  dialog framework is the active panel, Tessera pushes the input map `DialogBoxes` (Tessera
+  context `ui.dialog`) for it at priority 0. Which panels push that map in the original is
+  not known.
 
 For Tessera's walker (M5) the data-driven part is: create a root panel from a (layout, element)
 pair and run §9.2–§9.6. (Steps and dialogs: BIN, U27.)
@@ -1013,6 +1142,10 @@ order.
   point passes to the elements behind it (BIN, U33). Boxes here are the elements' displayed
   boxes, which differ from the layout boxes of §8 only under a UI scale. The full procedure,
   the flag rule and the box model are `ui-behaviour.md` §4.1–§4.3 and §9.2.1.
+  Tessera rules: hit tests read every element's current geometry as it stands when they run
+  (DEC: IB D8, §8.4 note); the cases in which Tessera's drawn position and hit-test box differ
+  (a rotated surface, a resize whose paint is still running, rounding under a UI scale) are
+  recorded in UR §2.4.
 - **Drawing** goes from the start of the list to its end: higher z-levels behind, lower in
   front, and among equal z-levels the lower read order first (BIN, U13, U34). Each child is
   drawn with all its descendants before its next sibling.
@@ -1038,6 +1171,18 @@ regions (a list of rectangles that changed). Drawing an element:
 
 So every element is clipped to its own box and to all its ancestors' boxes; nothing is drawn
 outside a parent, and an element that lies wholly outside its parent is never drawn.
+
+<a id="s9-3-nested"></a>
+> **OPEN:** how an element that owns a surface of its own below a root panel (a non-zero
+> object mode, §6.6, §8.4 OPEN; §17.2 counts them per panel) is composed into or over the
+> surface of its parent: its clip, its order against the parent content drawn after it, and
+> the opacity it takes (`lua-plugin-api.md` §13.18 OPEN (1), §13.19 OPEN; §5.9 opacity OPEN).
+> The steps above are the traced rule for drawing into one surface. **Tessera rule** (DEC: UR
+> Decision 1.7): such an element is composed as a separate entry at its place in the drawing
+> order; parent content drawn after it inside its coverage region goes to a canvas above it;
+> it is clipped by its nearest enclosing root panel and by the root panels above that, not by
+> its other ancestors; it takes its own opacity only. One consequence for P1 is recorded in
+> `game-panels.md` §8.7.2.
 
 > **OPEN:** `UICore_Element_clip_to_parent` (PID 0xBD0, set on one element) is read per child in
 > step 6 and, when true, makes the client take the child's rectangle from a second set of the
@@ -1152,8 +1297,17 @@ How the panel surfaces reach the screen is a separate step:
 > **OPEN:** how a root panel's drawing surface is composed onto the frame (blend state,
 > premultiplication, filtering) and what a newly created surface or an erased area holds before
 > drawing (the erase fill colour is a run-time value, zero at start-up; Probable: transparent
-> black (0, 0, 0, 0)). Tessera composes panel surfaces with straight (non-premultiplied)
-> source-over blending until a frame capture (M3) settles it.
+> black (0, 0, 0, 0)). **Tessera rule** until a frame capture (M3) settles it (DEC: UR
+> Decision 1.1, 1.6 and the "UI pipeline" and "Blending on stored values" rows of its §8): a
+> new surface and an erased area hold transparent black; surfaces are composed on stored
+> (not sRGB-decoded) values with premultiplied source-over, the straight-alpha canvas texels
+> being premultiplied when they are read. At 1 : 1 and opacity 1 this equals straight
+> source-over within ±1 per channel and replaces the frame exactly where the surface alpha is
+> 255. A scaled or rotated surface is filtered bilinearly on premultiplied texels by default,
+> with a Tessera setting for nearest (UR §2.2; `fonts.md` Q3). The surface's alpha is always
+> used, which is what makes the minimap round
+> (`game-panels.md` §8.7.1). (This replaces the earlier Tessera choice of straight source-over
+> blending.)
 
 <a id="s9-6-2"></a>
 #### 9.6.2 Per-pixel arithmetic of the base layer (BIN, U37)
@@ -1217,7 +1371,12 @@ operations have separate routines per source format that were not read, Probable
 > **OPEN:** the routines for source formats other than 32-bit ARGB and 24-bit RGB (JPEG images
 > after decoding, alpha-only images), and for destination formats other than 32-bit ARGB. Not
 > needed for the panels of §17 as long as Tessera decodes JPEG to opaque RGB and treats it like
-> an R8G8B8 source.
+> an R8G8B8 source. **Tessera rule** for the other sources (DEC: UR §4.2): every image is
+> converted to 32-bit ARGB before it is drawn, and the drawing above uses those pixels;
+> sources without alpha get alpha 255; alpha-only sources become black with their 8-bit value
+> as alpha; channels of 1–6 bits are widened by bit replication and 10-bit channels keep
+> their top 8 bits; DXTn surfaces are decompressed. The source format is kept beside the
+> pixels for the overlay rule of §9.6.3.
 
 <a id="s9-6-3"></a>
 #### 9.6.3 Per-pixel arithmetic of the overlay layer (BIN, U37, U39)
@@ -1247,6 +1406,14 @@ item has *C*.A = 255.
 > **OPEN:** the overlay routines that data does not use (table above), and overlay images in
 > formats other than 32-bit ARGB: for an alpha-only image the client has separate routines (not
 > read); for any other format it draws nothing.
+
+<a id="s9-6-3-formats"></a>
+> **OPEN:** whether a render surface or user-skin image stored in a 32-bit format other than
+> A8R8G8B8 (A8B8G8R8, the engine-specific R8G8B8A8 of `skin-definition.md` §7.4) reaches the
+> compositor as "32-bit ARGB" after loading, and so draws as an overlay image. Not traced; in
+> this install every overlay image is A8R8G8B8 (above). **Tessera rule** (DEC: UR §4.2): only
+> A8R8G8B8 sources count as 32-bit ARGB here. An overlay with an image in any other format
+> draws nothing, except an alpha-only image, whose 8-bit value is used as *I*.A.
 
 <a id="s9-7"></a>
 ### 9.7 Button state choice (engine widget type Button)
@@ -1449,6 +1616,11 @@ Confirmed on every record unless marked.
   `PlayerBag1_Template` … `PlayerBag6_Template`; each resolves (§7.1) to the game type
   `UIScaler`, and none of them is named by a base reference of another layout's element
   (§17.2 P15, U45).
+- **UL22** (OBS) In the 15 instantiated panels of §17, exactly 92 non-root elements have a
+  resolved `UICore_Element_ObjectMode`: 86 Stretch (1) and 6 CanvasResize (3), none None (0)
+  and none Tile (2); no state block of these panels sets the property; no such element has
+  more than 3 surfaced ancestors, where a surfaced ancestor is an ancestor with a non-zero
+  resolved object mode, or the root (counted once, whatever its mode) (§17.2, U46).
 
 <a id="s12-1"></a>
 ### 12.1 Hostile-input notes
@@ -1646,6 +1818,8 @@ no change in the target; they record the evidence this spec adds.
 | `ui-behaviour.md` §4.3 OPEN (how the mouse-button flag of §9.2 step 5 maps onto the hit-test flags) | — | **Answered there** (UB revision 2): the flag is mouse-visible; the "second flag" is blocks clicks; §9.2 step 5 and §9.3 here now refer to UB §4.3. | BIN |
 | `skin-definition.md` §8.6 and D23 (bags = `containerdisplay` / `PlayerBag1_Template`) against §17.2 P15 here (`backpack` / `RealBackpackField`) | Two different bag panels | **Resolved** in favour of `containerdisplay` / `PlayerBag1_Template`, the bag window the original opens (U45); §17 here changed, SK D23 now names this catalogue. | BIN, OBS |
 | `lua-plugin-api.md` Appendix A (`BlendMode` values equal the draw modes) | Blend-mode names and values | **Agreement, with arithmetic.** The draw-mode values are converted to the compositor operations of §9.6.1; §9.6.2 gives their arithmetic for native layers. Whether plugin controls use the same compositor path is for that spec to establish. | BIN |
+| `ui-behaviour.md` §9.2.1 (element resize of a surface-owning element in mode None: the layout box is not changed) | — | **Recorded in UB §9.2.1 OPEN; agreement.** The conflict with `lua-plugin-api.md` §13.19 condition 1 (a mode-0 element owns no surface), raised by decision 0015 (spec question 14), is now an OPEN in `ui-behaviour.md` §9.2.1 (whether the original can reach the None branch at all), with the same Tessera rule as §8.4 OPEN (scope) here: an element in mode 0 resizes by the no-surface rule of UB §9.2.1 step 3. | BIN (both specs); DEC (UR §2.1, Decision 1.1) |
+| `lua-plugin-api.md` §13.18, mode-1 row (children of a resized Stretch plugin control are not laid out again) | Earlier text gave §8.4 step 1 here as the reason | **Correction of the citation; applied in the working-tree `lua-plugin-api.md` §13.18, pending its review.** Under the Tessera choice of the §8.4 scope OPEN, step 1 applies only under a root-panel parent, so it is not the reason; the reason is that an element resize of a Stretch surface keeps the layout box (`ui-behaviour.md` §9.2.1). The result for the plugin control is unchanged. | DEC; Tessera choice |
 | LC `UILayoutLoader` and its summary in the research notes (Reported sources only) | Movie item ends with a u32; kind 6 "animate value"; kind 13 "scale" (two floats); the u32 after the rectangle is a colour (notes) or skipped (LC); media count is a u8 | Movie ends with a bool8 (LC fails on the only record that has Movie items); kind 6 fades the opacity; kind 13 is a random wait in seconds; the u32 is the z-level; the count is a VLE (identical on data, all counts < 128). | BIN, OBS |
 
 ---
@@ -1659,20 +1833,23 @@ Every item has an in-section `> **OPEN:**` callout; this list only collects them
 2. Jump item index arithmetic (§6.8); unused in data.
 3. Which code assigns an element a reference box (§8.3).
 4. ~~Blend equations of the draw modes~~ (closed 2026-10-06, §9.6.1–§9.6.3). Remaining: how panel
-   surfaces are composed onto the frame and what an erased area holds (§9.6.1); the overlay
-   opacity question (§9.6); routines for other source formats and for unused overlay
-   combinations (§9.6.2, §9.6.3).
+   surfaces are composed onto the frame and what an erased area holds (§9.6.1; Tessera rule
+   from decision 0015); the overlay opacity question (§9.6); routines for other source formats
+   and for unused overlay combinations (§9.6.2, §9.6.3; Tessera rules from decision 0015).
 5. ~~Drawing traversal of the child list~~ (closed 2026-10-06, §9.3). Remaining: the rectangle
    that `UICore_Element_clip_to_parent` selects (§9.3).
 6. Behaviour of the remaining engine-level properties and of each widget class (§5.9); trace
    per widget as panels need it.
-7. Object modes None, Tile and CanvasResize beyond the layout rule of §8.4 step 1 (§8.4).
+7. Object modes None, Tile and CanvasResize beyond the layout rule of §8.4 step 1 (§8.4;
+   Tessera rules from decision 0015).
 8. Which panels the client opens at start-up, in which order, and which only on demand (§9.1).
    How game code picks each panel's layout and element is closed (§9.1, U31).
 9. `PRELOADRESOURCES` use and the one unreferenced layout (§3.2). The use of `UILAYOUT` is
    closed (§3.2, U31).
 10. Readers of `has_position` outside the layout code (§5.3).
-11. Which non-root elements own a drawing surface, so that a Fade on them is visible (§6.6).
+11. Which non-root elements own a drawing surface, so that a Fade on them is visible (§6.6;
+    partial answers from `lua-plugin-api.md` §13.19, `ui-widgets.md` §4.5 and
+    `game-panels.md` §8.2, and the per-panel census of §17.2).
 12. ~~What the client does when the screen size changes~~ (closed 2026-10-06 by `ui-behaviour.md` §9.4; §8.5).
 13. ~~The per-element table consulted at creation~~ (closed 2026-10-06: the listener registry,
     §9.2 step 5). Saved panel locations: the live store, the layout identifier and the element
@@ -1681,6 +1858,22 @@ Every item has an in-section `> **OPEN:**` callout; this list only collects them
 15. Per-panel game behaviour that §17 lists as OPEN: the chat windows' element IDs, the
     drag-box frame state in normal play, map and minimap art chosen by code, the visible set of
     main-menu buttons (§17.5). The bag panel's open path is closed (U45, §17.2 P15).
+16. Which descendants `UICore_Element_ObjectOpacity` (and so a Fade item) reaches when they own
+    a surface of their own (§5.9; Tessera rule: own opacity only, decision 0015).
+17. The effect of `UICore_Element_ShouldEraseBackground` (§5.9; Tessera rule: always erase,
+    decision 0015).
+18. The scope of the object-mode test of §8.4 step 1 against the surface rule of
+    `lua-plugin-api.md` §13.19, and the unreachable None branch of `ui-behaviour.md` §9.2.1
+    (§8.4; Tessera rules from decision 0015, and for question (1) Tessera's own choice: the
+    Stretch-parent test only for root parents; an owner screenshot of P10's title bar settles
+    it). Also: whether the alpha-test meter's surface flag (`ui-widgets.md` §4.5) is the
+    "flagged by code" of §8.3 and §8.4 step 1 (Tessera: it is not).
+19. How an element that owns a surface below a root panel is composed into or over its parent:
+    clip, order, opacity (§9.3; Tessera rule from decision 0015).
+20. Whether 32-bit images in a byte order other than A8R8G8B8 count as 32-bit ARGB for the
+    overlay rule (§9.6.3; Tessera rule from decision 0015).
+21. The canvas size of a native Tile surface: the layout box (decision 0015 §2.1) against the
+    base image or a code-set size (`lua-plugin-api.md` §20, BIN) (§8.4; not relevant to M5).
 
 None of the owner-observation items O1–O17 concerns UI layouts.
 
@@ -1768,6 +1961,36 @@ anywhere in the panel: Image, Coloured-image and Cursor items (the cursor's imag
 elements and states, animation frames, and DID-valued properties; not all are visible at once.
 Button and Field counts dominate the element counts.
 
+<a id="s17-2-modes"></a>
+**Non-root elements with an object mode** (OBS, U46, UL22; asked for by decision 0015, which
+gives each of them a surface of its own, §6.6, §9.3 OPEN). Counted on the same instantiated
+panels; the root itself is not counted. "Surfaced ancestors" is the largest number of
+ancestors above one such element that have a non-zero resolved object mode, or are the root
+(the root counts once, whatever its mode; the same definition as UL22). In Tessera each
+non-root one owns a surface and the root is drawn through its own surface or, in mode 0,
+through the stand-in surface of §8.4 (DEC: UR Decision 1.1), so the column is also the number
+of surfaces above the element. "Hidden by game code" uses the
+normal-play rules of `game-panels.md` §3 (drag-box frame children §4, tutorial highlighters
+§5, radar children §8.2).
+
+| # | Count | Stretch (1) | CanvasResize (3) | Surfaced ancestors | Hidden by the layout (`UICore_Element_hide`) | Hidden by game code in normal play | Which elements |
+|---|---|---|---|---|---|---|---|
+| P1 | 18 | 17 | 1 | 2 | 0 | 6 | the drag bar (3) and title of the drag box; `GamePlay_Radar`; inside it `Minimap_Frame`, `MinimapPlayerMarker`, `RadarQuestObjective`, `AreaText_QuestHighlight`, the two labels, `TimeOfDay`, `Mood`, five buttons and two tutorial highlighters |
+| P2 | 0 | | | | | | |
+| P3 | 53 | 53 | 0 | 1 | 15 | 23 | all 23 tutorial highlighters; per shortcut slot (15) a new-info highlight and a darkening overlay, the overlays hidden by the layout |
+| P4 | 4 | 2 | 2 | 2 | 0 | 2 | the drag bar (3) and title; `VitalsParent`; the portrait `PlayerPortrait` (3) inside it |
+| P5 | 6 | 5 | 1 | 3 | 0 | 3 | the drag bar (3) and title; `VitalsParentOpponent`; the portrait `OpponentPortrait` and the Field `Target_Image` inside it; one tutorial highlighter |
+| P6, P7, P9, P12, P13, P15 | 0 | | | | | | |
+| P8 | 1 | 1 | 0 | 1 | 0 (its ancestor `GuildMembers_Field` is) | 0 | one header button inside `GuildMembers_Field` of the kinship page |
+| P10 | 4 | 4 | 0 | 1 | 0 | 0 | the title bar, two toggle buttons and the resize-bar image |
+| P11 | 3 | 2 | 1 | 1 | 0 | 2 | the drag bar (3) and title; `GamePlay_QuestTracker` |
+| P14 | 3 | 2 | 1 | 1 | 0 | 2 | the drag bar (3) and title; `CtrlBar` |
+| **All** | **92** | **86** | **6** | at most 3 | 15 | 38 | none in mode None (0) or Tile (2); no state block sets a mode |
+
+These are data facts. Whether the original gives every one of these elements a surface of its
+own is the §8.4 scope OPEN; in Tessera each of them that is shown owns one (DEC: UR Decision
+1.1), so they bound where Tessera's surface contents are not byte-exact (UR Decision 1.7).
+
 <a id="s17-3"></a>
 ### 17.3 Default geometry of the roots
 
@@ -1810,8 +2033,8 @@ their sizes always and their positions only when the original has no saved locat
 | P1 | Player position and heading (marker), the minimap image of the current area, fog of war, time of day, mood (a gauge), housing shortcuts | Position, heading and world time: yes (walker). Minimap image: OPEN (chosen by game code; Tessera draws the frame without it until settled). Fog of war, mood, housing: not provided; those children are hidden by Tessera |
 | P2 | Chat lines by channel, tabs, the text-entry line | Yes: Tessera's own system lines and local echo of typed text; one tab |
 | P3 | Shortcut slots, experience meter, class resource pips, combat or non-combat state (default state `toolbar_noncombat`), menu buttons | Slots: Tessera's own actions or empty; meter: a fixed sandbox value; pips: hidden; state: non-combat; menu buttons open the other panels here |
-| P4 | Name, level, morale and power meters, effects, a 3D portrait (`TargetViewport`) | Name, level and full meters: yes; effects: empty; portrait: optional (M4 figure rendered into the viewport), otherwise empty |
-| P5 | The selected target's name, level, vitals, class, portrait, effects | Yes when the player selects a sandbox figure or himself; hidden when nothing is selected (Tessera's choice; the original's rule is game code) |
+| P4 | Name, level, morale and power meters, effects, a 3D portrait (`TargetViewport`) | Name, level and full meters: yes; effects: empty; portrait: optional (M4 figure rendered into the viewport; composed as external content by the Tessera rule of `ui-widgets.md` §12, DEC: UR Decision 1.7), otherwise empty. `PlayerPortrait` also has object mode 3 and no media (§17.2, U47), so it owns a CPU surface as well; how the two are ordered is the `ui-widgets.md` §12 OPEN and Tessera rule on surface-owning viewports |
+| P5 | The selected target's name, level, vitals, class, portrait, effects | Yes when the player selects a sandbox figure or himself; hidden when nothing is selected (Tessera's choice; the original's rule is game code). Portrait (`OpponentPortrait`): optional, as for P4, composed as external content by the Tessera rule of `ui-widgets.md` §12 (DEC: UR Decision 1.7). It has object mode 1 and its own image (draw mode 2), and its child `Target_Image` also has mode 1 (§17.2, U47), so both own CPU surfaces as well; their order against the external content is the `ui-widgets.md` §12 OPEN and Tessera rule on surface-owning viewports |
 | P6 | Fixed buttons. The button field holds eight text buttons (Buttons whose left, middle and right frame pieces are children) and a close box (a Button without text). Two of the text buttons resolve with `UICore_Element_hide` true, so six text buttons and the close box show by default; the six keep their stored positions, which leave the slot of one hidden button empty between two visible ones (the other hidden button shares its stored rectangle with a visible one) | Yes, the six default text buttons and the close box; the two hidden buttons stay hidden (Tessera choice until the OPEN in §17.5 item (6) is settled) |
 | P7 | Option pages built by game code from the templates of the same layout | Partly: Tessera fills the pages with its own settings using those templates |
 | P8 | Friend, guild, group and raid lists | Yes, as empty lists |
@@ -1854,3 +2077,6 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-06 | **M5 revision (status back to Review).** New BIN questions (k)–(p) on the same client build; provenance rows U31–U44; U13, U16, U23, U27, U28, U30 updated. **Closed OPENs:** how game code names layouts (§3.2: by `UILAYOUT` entry key through root-map index 4) and opens panels (§9.1: open-panel, activatables loop, create-element; 114 call sites with immediate pairs, all resolving); the §9.2 step 5 table (**corrected**: it is the message-listener registry; keys 0x0E, 0x18, 0x1E, 0x32 are the mouse-button messages and the hook sets the element's mouse-button flag that hit testing needs; it is not saved panel data); the drawing traversal (§9.3: visible elements only, clipped to their box and ancestors, children from the start of the list); `UICore_Element_DrawAfterChildren` (§9.3, §9.6: children first, then the element's own content; reached through a subtraction chain, so no immediate 0x3CD); the blend equations (new §9.6.1–§9.6.3: CPU compositor, draw-mode conversion table, per-pixel arithmetic of every operation data uses, Colorize as an HSV recombination, base-layer Grayscale draws nothing, overlay images contribute only their alpha). **Corrected:** §9.6 no longer says both layers use the image opacity (base layer only). **New:** §5.9 rows for PIDs 0x3CD, 0xBD0, 0x695, 0x476, 0x475 and the game-level `UI_Element_CreateAsRootElement`; §9.9 saved panel locations and their XML file form; invariants UL16–UL20; examples §14.6–§14.8; §15 rows for `skin-definition.md` OPEN-1 and `lua-plugin-api.md` Appendix A; §17 catalogue of 15 native panels (layout, root, open path, geometry at three screen sizes, counts, data and sandbox, game-code OPENs) for ROADMAP M5 exit criterion 2, with the checklist `docs/checklists/m5-visual.md`. §16 updated (items 4, 5, 13, 14 closed; 15 added). |
 | 2026-10-06 | Revision after the M5-revision review (changes requested). §17.2 second table recounted on the instantiated panels by an independent re-run of the resolver that replaces a base property with the derived property of the same PID (§7.2 step 3); the earlier probe had appended base and derived property entries. **Corrected:** String refs P4 12 → 11, P10 5 → 4, P12 16 → 15; Fonts P2 8 → 6. Every other String-refs and Fonts cell re-measured and unchanged. Art-surface cells now include the images of Cursor items (§6.5), as the note always claimed: P1 167, P2 13, P4 313, P5 572, P7 58, P8 106, P9 122, P10 25, P11 12, P12 93, P13 77, P14 16 (P3, P6, P15 unchanged; the art counts without cursor images were unaffected by the replacement fix). The note under the table now defines each count. §9.6.3: the opening sentence no longer says the overlay opacity is always 255; it says the element's opacity is not applied, and that with an image the compositor job takes the colour's alpha as its opacity. §17.4 P6 row: the button field has eight text buttons and a close box; two text buttons are hidden by `UICore_Element_hide` in the layout, so six text buttons and the close box show by default (re-checked on the resolved tree). §17.5 item (6) and §16 item 15: whether game code changes that set is OPEN. U42 updated. Checklist `m5-visual.md` P2-T, P6-A and the A rows updated to match. |
 | 2026-10-06 | **M5 consolidation revision** (status Accepted → Review; answers the M5 completeness critique items B1, B3, B4, B5 and B6 for this spec; BIN consolidation questions (q)–(r) on the same build). **Hit flags (B1):** §9.2 step 5 and §9.3 now say the hook sets the **mouse-visible** flag and that the hit test reads mouse-visible and blocks clicks; post-creation recomputes mouse-visible from the type rule (§9.2 step 8, U28), so the creation-time value does not survive; the Tessera rule "elements without a handler let clicks through" is withdrawn in favour of `ui-behaviour.md` §4.3, the single statement of the rule; §14.6 and U33 follow. **Box model (B3):** §9.3 notes that hit testing uses displayed boxes (UB §9.2.1). **Bag panel (B4):** P15 is now `containerdisplay` / `PlayerBag1_Template`, the window the original opens (U45, new); its catalogue, count, geometry and data rows are re-measured (61 elements, 2 text elements, 7 string refs, 3 fonts, 47 art surfaces, 67 states; (599, 164, 197, 183) at every screen size); §17.5 item (3) and §16 item 15 closed; UL21 added. **`has_position` (B5):** §5.3 and §9.8 corrected per `skin-definition.md` SK33/SK34 (the override does not set it, zeroes the edge modes unless protected, may set the scaler origin, acts on a per-build copy), U29 updated. **Stale references (B6):** §8.5 OPEN and §16 item 12 answered by UB §9.4; header companion list names `skin-definition.md` and `ui-behaviour.md`; §15 rows for SK OPEN-1 and the SK §13 correction marked applied, new rows for UB §4.3 and the bag contradiction. The checklist `m5-visual.md` P15 rows still name the old panel and need the maintainer's update. |
+| 2026-10-06 | **Revision applying the accepted decisions 0014 (UI input bridge) and 0015 (UI rendering)** (status Accepted → Revised, review pending). No fact about the original is changed; the decisions fix only Tessera's behaviour. New provenance tag DEC. **Tessera rules now taken from the decisions:** §9.6.1 OPEN (composition onto the frame: premultiplied source-over on stored values, transparent-black initial content; **replaces** the earlier Tessera choice of straight source-over); §8.4 step-1 OPEN (canvas = layout box composed onto the displayed box; Tile with power-of-two sides repeated at the display-node scale, no surfaces below a Tile surface; a stand-in surface at opacity 1 for a shown mode-0 root panel); §9.6.2 OPEN (conversion of other source formats); §8.4 note (re-layout complete before any hit test, IB D8); §8.5 note (physical render size, no platform scale factor); §9.1 notes (modal dialog surface and container; `DialogBoxes` push); §9.3 hit-test note; §17.4 P4 portrait as external content. **New OPEN callouts with Tessera rules** (spec questions 1, 3, 5, 14 and 16 of decision 0015): §5.9 which descendants `ObjectOpacity` reaches when they own surfaces (own opacity only); §5.9 `ShouldEraseBackground` (always erase); §8.4 scope of the step-1 object-mode test against LPA §13.19, and the None branch of UB §9.2.1; §9.3 composition of non-root surfaces; §9.6.3 32-bit formats other than A8R8G8B8. §6.6 OPEN cites LPA §13.19, UW §4.5 and GP §8.2 step 3 as partial answers. **New data (spec question 7 of decision 0015):** §17.2 census of non-root elements with an object mode per panel (92 in the 15 panels: 86 Stretch, 6 CanvasResize), row U46, invariant UL22, measured 2026-10-06 on the instantiated panels with read-only probes. §15 row for the UB §9.2.1 conflict; §16 items 4, 7, 11 updated and items 16–20 added. Section numbers unchanged. |
+| 2026-10-06 | **Fixes after the review of the decision-0014/0015 revision** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** explicit Tessera choice for question (1): the Stretch-parent test of step 1 applies only to root parents, so the children of a non-root Stretch surface are laid out by their edges; supporting data in new row U47 (a) (159 such children in the §17 panels, the readings differ only for P10's `Panel_Label_Title`, x 28 against 0); the OPEN now points to the matching `ui-behaviour.md` §9.2.1 OPEN. **§8.4:** new OPEN on the conflict between the Tile canvas of decision 0015 §2.1 (the layout box) and the BIN statement of `lua-plugin-api.md` §20 (the base image or a code-set size); §16 item 21. **§15:** the UB §9.2.1 row now reads "recorded in UB §9.2.1 OPEN; agreement". **§17.4:** the P5 row gets the external-content portrait note; the P4 and P5 rows say that the portraits also own CPU surfaces (`PlayerPortrait` mode 3; `OpponentPortrait` mode 1 with an own image and a mode-1 child; U47 (b)) and point to the new `ui-widgets.md` §12 OPEN and Tessera rule. **UL22 and the §17.2 note:** one definition of "surfaced ancestors" (ancestors with a non-zero resolved object mode, plus the root); counts re-checked, unchanged. §16 item 18 updated. |
+| 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** one note that it is not known whether the flag by which an alpha-test meter asks for a surface (`ui-widgets.md` §4.5) is the "flagged by code" of §8.3 and §8.4 step 1, with the Tessera choice that it is not (the meter owns a surface but is laid out as a non-root element; no M5 panel affected); §16 item 18 extended to match. **§15:** new row recording the corrected citation in `lua-plugin-api.md` §13.18 (mode-1 row: the reason is UB §9.2.1, not §8.4 step 1), applied in the working-tree LPA, pending its review. |

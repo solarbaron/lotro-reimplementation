@@ -4,13 +4,13 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (revision of 2026-10-06, the naming note only, re-reviewed; §1–§13 unchanged) |
+| Status | **Revised** (2026-10-06: cross-references to the Accepted decisions 0014 and 0015 in §4.2, §6.2, §8.1 and §8.2, see the change log; repaired the same day after its first review, last change-log row; awaiting review of this change. No fact about the original changed; every other section is unchanged from the Accepted revision) |
 | Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent) |
 | Review record | Claude review session (spec-writer agent), 2026-10-05: changes requested (descriptor field rules D6–D8 and §5 contradict the client; D14 key-character rule wrong; stale against `lua-plugin-api.md` §20; broken internal section references; quoted third-party/client prose; D4 mis-marked Confirmed). Revised the same day; every item is addressed (see the change log). Re-review, Claude review session (spec-writer agent), 2026-10-05: changes requested (D14/§11.1 and D21/§7.1 state ASCII-only as the client's rule, but the client applies the C runtime `isalnum` in the game-language locale it sets at start-up; contradicts `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row, and §12.2 row 7; D14 "Confirmed (folders)" overclaims; naming note's LEGAL §10 citation; §4.2 ordering claim unsourced). Revised 2026-10-06; every item is addressed (see the change log). Third review, Claude review session (spec-writer agent), 2026-10-06: **passed**, status Accepted. Every `CLEAN_ROOM.md` §5.3 item holds, and the spec can be implemented without dirty material. Every item from the 2026-10-05 re-review is resolved: the client rule is now stated as `isalnum` in the start-up locale, and ASCII-only is a stated Tessera deviation; D14's Confirmed mark is narrowed; the naming-note citation is fixed; the ordering claim is sourced (D33/D34); §12.2 row 7 agrees with `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row. Spot checks on the owner's install (2026-10-06): D1 (no `Plugins/` and no `.plugin` file in the settings folder), D13 (three `PluginOptions.xml` files, each with a UTF-8 declaration with `standalone="no"`, CRLF line ends, an empty `AutoloadOptions` and, in one file, an empty `ScalingOptions`), D14 (only the `PluginData/<account>/<world>/` level exists and there is no `.plugindata` file), and D15 (three world folders, one with a bracketed prefix and a space). BIN spot checks on build SHA-256 prefix `d22363eb9aff0fb5`: D30 (one all-categories `setlocale` call choosing among the four names, with `English` as the default; the other calls set only the numeric category); D14 and D21 (a key unit is zero-extended and a package byte is sign-extended before `isalnum`); D33 (narrow `_findfirst64i32`/`_findnext64i32` from the UCRT); D12 (no `compendium` string). The CRT reading of D32 also matches the published UCRT and Wine sources for single-byte locales. Non-blocking suggestion for the next revision: in the WINE source row, describe the directory-cache sort in words instead of naming the Wine function. **Review of the naming-note revision: 2026-10-06, Claude review session (spec-writer agent), a different session from the author, against `CLEAN_ROOM.md` §5.3. Result: passed; status Accepted.** The diff against the committed version touches only the status row, the naming note and a change-log row. The note correctly cites `docs/LEGAL.md` §17 and agrees with its §17.2 rules 1, 2 and 4. Spot checks: on the owner's settings folder (read-only), D1 (no `Plugins/`, no `.plugin` or `.plugindata` file), D13 (three `PluginOptions.xml` files, each with `encoding="UTF-8"`, `standalone="no"`, CRLF and an empty `AutoloadOptions`, one with `ScalingOptions`), D14 (only the `PluginData/<account>/<world>/` level) and D15 (three world folders, one bracketed with a space). On the client (SHA-256 prefix `d22363eb9aff0fb5`), D12: no `compendium` string in ASCII or UTF-16. Non-blocking: the earlier suggestion about the WINE source row still applies. |
 | Implements into | `crates/plugins` (discovery, descriptor parse, apartments, package resolution), with `crates/install` (settings-folder location) and `crates/script` (Lua host) |
-| Related specs | [`lua-plugin-api.md`](lua-plugin-api.md) (the Lua runtime, apartment states, `import` internals and the API surface; this spec is the disk-and-discovery companion to it and agrees with its §4, §5, §6.1, §7.2 and §10.2), [`install-layout.md`](install-layout.md) §8 (settings folder and its contents) |
+| Related specs | [`lua-plugin-api.md`](lua-plugin-api.md) (the Lua runtime, apartment states, `import` internals and the API surface; this spec is the disk-and-discovery companion to it and agrees with its §4, §5, §6.1, §7.2 and §10.2), [`install-layout.md`](install-layout.md) §8 (settings folder and its contents), [`plugin-runtime.md`](plugin-runtime.md) §8.4 (where loads and unloads run in Tessera's frame); decision records [`0014-ui-input-bridge.md`](../decisions/0014-ui-input-bridge.md) (D8) and [`0015-ui-rendering.md`](../decisions/0015-ui-rendering.md) (§4.4, the plugin file index) |
 
 > **Naming note (interoperability).** The XML element and attribute names (`Plugin`,
 > `Information`, `Name`, `Author`, `Version`, `Description`, `Image`, `Package`,
@@ -186,6 +186,17 @@ refresh` chat command and `PluginManager.RefreshAvailablePlugins()`, `lua-plugin
    the **first one found wins** (D26). Tessera logs each dropped duplicate.
 6. Refresh does not unload anything. A loaded plugin whose descriptor has disappeared stays
    loaded and is no longer listed (D17).
+
+**Tessera, the plugin file index** (decision 0015 §4.4; not a fact about the original).
+Besides the available list, Tessera keeps an index of every file in the whole `Plugins/`
+tree, under the path rules of §3.2, which `SetBackground(path)` uses to check at call time
+that an image exists. That index is built by a directory walk on an asset worker, never on
+the main thread: once when the plugin host starts (the host loads no plugin before the
+first index is ready, and the main thread does not wait for it) and again on every refresh
+of this section. A rebuilt index replaces the previous one as a whole, on the main thread,
+when it is ready; until then lookups use the previous one. Whether the descriptor scan of
+this section itself runs at once or deferred is not observable to plugins except through
+`GetAvailablePlugins` (`lua-plugin-api.md` Appendix B, row on `RefreshAvailablePlugins`).
 
 **Order.** The original never sorts: both listings keep the order in which the operating
 system returns entries (D33). That order is the file system's, not the client's (D34): on
@@ -429,6 +440,10 @@ cannot see each other's globals or native singletons.
 The client loads a plugin by its `Name` but unloads by apartment: unloading an apartment
 unloads **every** plugin in it, and an apartment cannot be unloaded while its own Lua code is
 running, which includes a request from inside itself (DOC; `lua-plugin-api.md` §6.2–§6.3).
+When an unload runs in Tessera's frame loop (an unload asked for by a plugin or the user in
+the call or input handling that asks; the logout unload as deferred work of frame-loop step
+7; the client-exit unload after the last frame) is decision 0014 D8, restated in
+`plugin-runtime.md` §8.4.
 Apartment names compare **case-insensitively** (D27): `Shared` and `SHARED` name the same
 apartment. Tessera folds ASCII letters only (as for `Name`, §4.2).
 
@@ -560,6 +575,15 @@ Synthetic tree under `Plugins/`: a folder `Example/`, holding `Alpha.plugin` (Pa
   afterwards (D29). It changes how `PluginData.Load` behaves (`lua-plugin-api.md` §10.1).
   This spec defines no logging behaviour for the load path; Tessera's own diagnostics are
   free-form.
+- **Tessera, when loads run** (`plugin-runtime.md` §8.4, which states the rules and their
+  sources). Queued `LoadPlugin` requests run as deferred work in frame-loop step 7, one load
+  per item, in queue order (decision 0014 D8). The autoload loads are not named in D8;
+  Tessera queues them the same way, one item per autoloaded plugin, when the session reports
+  the login (a Tessera reading of D8, `plugin-runtime.md` §8.4). Loads asked for with
+  `/plugins load` or from the manager UI are queued the same way too (a Tessera choice,
+  `plugin-runtime.md` §8.4). The deferred work is sliced by whole items at 2 ms per frame
+  (D8), so a long list of loads can take several frames, but their order is kept. No load
+  item runs before the first plugin file index of §4.2 is ready (decision 0015 §4.4).
 
 <a id="8-2"></a>
 ### 8.2 Autoload order
@@ -570,8 +594,11 @@ The options reader keeps autoload entries in a map keyed by plugin `Name`, so th
 > **OPEN:** the order in which autoloaded plugins load at character login. It is decided by
 > the code that walks the autoload map at login, which was not read; the map is hashed, so the
 > order is probably unrelated to the file order or to alphabetical order. Recommended for
-> Tessera: load in the order of its own autoload list; within an apartment, later loads add to
-> the shared state. (Same open question as `lua-plugin-api.md` §6.2.)
+> Tessera: load in the order of its own autoload list, each load one step-7 deferred-work
+> item (a Tessera reading of decision 0014 D8, which does not name autoload;
+> `plugin-runtime.md` §8.4), none before the first plugin file index of §4.2 is ready
+> (decision 0015 §4.4); within an apartment, later loads add to the shared state.
+> (Same open question as `lua-plugin-api.md` §6.2.)
 
 ---
 
@@ -779,3 +806,5 @@ owns only this file.
 | 2026-10-05 | Revision answering the review (changes requested) and reconciling with `lua-plugin-api.md` §20; all facts re-verified by BIN on the same build. **Corrected:** D3 and §4.2 (one folder level, no recursion; whole-name case-insensitive wildcard; entries not checked to be files); D6–D8, §5.1, §5.2, §5.4 (repeated field rejects; `Name` required; `Name`/`Version` over 120 reject instead of being cut; `Author`/`Image` cut to 120; `Description` cut to 2048; present-but-empty rejects; `Package` 1–120; lookups of `Information`, `Package`, `Configuration` reach any depth; fields are direct children only; trim set stated and whitespace-only values are empty); D9, D18, §5.1 (`Apartment` optional, used as written, may be empty; the schema disagrees); D11, §7.2, §7.3 (native names also looked up on disk and merged); D14, §11 (keys are ASCII letters, digits and underscore); §7.1 grammar (ASCII letters, digits and underscore, matching `lua-plugin-api.md` P5); §7.2 step 6 (the original's loader accepts precompiled chunks; rejecting them is a Tessera deviation); §3.2 multiple-match rule aligned with `lua-plugin-api.md` §4.4. **Removed:** the "loading plugin" log-line claim (it was a misreading of the per-apartment loading mark, D29); the quoted documentation sentence in §6.1 and the quoted client message wording in §12. **Provenance:** D4 re-marked BIN / Reported (no `.plugin` file exists in the owner's install); new rows D16–D29 (icon size, refresh, apartment value, namespace rule, chunk loader, name grammar, parser and encoding, text content, trim set, non-file entries, duplicate names, apartment case, options-file reading rules, loading mark); new source keys XML and LPA. **Closed OPENs:** recursion depth, duplicate names, encoding fallback, apartment case, `PluginOptions.xml` structure (§13.2). **New OPENs:** non-ASCII case folding of names (§4.2), empty apartment name at load (§6.2); autoload order narrowed (§8.2). **Structure:** fixed every internal section reference; added `<a id>` anchors to §8–§13 (§8.1, §8.2, §9.1, §10.1–§10.3, §11.1, §12.1–§12.3, §13.1–§13.2); added §4.3 invariants, §5.5 and §7.4 worked synthetic examples, §10.3 invariants; §12 now lists the first draft's corrections as applied, the seven received corrections as applied here, and new suggested additions to `lua-plugin-api.md`. Reviewer field reset for re-review. |
 | 2026-10-06 | Revision answering the re-review (changes requested). **Accuracy:** D14, D21, §7.1, §11.1 and §12.2 row 7 no longer state ASCII-only as the client's rule; they state the original rule (`_` or C runtime `isalnum` in the game-language locale; key units passed as is, package bytes sign-extended) and make ASCII-only a stated Tessera deviation, aligned with `lua-plugin-api.md` P5, P14, P43, P44 and its §20 D14 row. New rows D30 (start-up locale, BIN re-read), D31 (code-page-1252 classification, Reported), D32 (runtime rejects arguments outside −1…0xFF, Reported from the UCRT and Wine sources). New OPEN in §7.1 (run-time confirmation of D32) and §11.1 (reserved device names); §11.1 path-safety argument restated for code-page-1252 alphanumerics. **Marks:** D14 is Confirmed only for `PluginData/<account>/<world>/`; `AllServers`, `AllCharacters`, `<character>` and `.plugindata` are BIN/LPA. **Order:** §4.2 rewritten: the client does not sort (D33, BIN re-read of the listing routine and discovery loop); NTFS and Wine orders stated with sources (D34; new source keys NTFS, WINE, CRT); Tessera's order defined exactly (ASCII upper-case fold, unsigned byte compare, unmodified bytes as tie-break) with a new §4.3 invariant; narrow names and the ANSI code page (D35) with a stated widening deviation. **Naming note:** cites `docs/ARCHITECTURE.md` §18.2 and the *Google v. Oracle* row of `docs/LEGAL.md` §4.1, with the interoperability record pending; `LEGAL.md` §10 is cited for naming only. §12.3 gains four suggested additions to `lua-plugin-api.md`; §13.1 lists the two new OPENs. |
 | 2026-10-06 | Revision (spec writer, dirty room); status Accepted → Review for the re-review of this change only. The naming note now cites the interoperability record `docs/LEGAL.md` §17 (which answers the ARCHITECTURE §18.2 "OPEN (legal)" item it previously called pending) and its §17.2 rules (critique B10). No functional fact, section number, invariant or OPEN changed; implementers may keep building from §1–§13 as Accepted. |
+| 2026-10-06 | Revision (spec writer, dirty room); status Accepted → Revised, awaiting review of this change. Applies the Accepted decisions 0014 (UI input bridge) and 0015 (UI rendering) by cross-reference only; no fact about the original, provenance row, invariant or OPEN changed. **§4.2:** a Tessera paragraph on the whole-`Plugins/` file index of decision 0015 §4.4 (built on an asset worker at host start and on every refresh, swapped in whole; no plugin loads before the first index), and the note that an immediate or deferred descriptor scan is acceptable. **§6.2:** when unloads run in Tessera's frame loop (0014 D8, `plugin-runtime.md` §8.4). **§8.1:** queued loads run as step-7 deferred items, sliced by whole items, order kept. **§8.2:** the autoload recommendation names the step-7 item. Related specs and decisions added to the header. |
+| 2026-10-06 | Repair of the decision revision after its review (spec writer, dirty room); status stays Revised, awaiting review. **§8.1:** the autoload loads as step-7 items are labelled a Tessera reading of decision 0014 D8 (D8 names only queued `LoadPlugin` requests), as `plugin-runtime.md` §8.4 already says; `/plugins load` and manager-UI loads are queued the same way (Tessera choice, `plugin-runtime.md` §8.4); no load item runs before the first plugin file index (decision 0015 §4.4). **§8.2:** the autoload recommendation carries the same label and the same index gate. No fact about the original, provenance row, invariant or OPEN changed. |

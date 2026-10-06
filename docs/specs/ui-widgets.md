@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Revised (2026-10-06: applies the accepted decisions 0014 and 0015, see the change log; review pending). Previously Accepted |
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
@@ -60,6 +60,7 @@ the counts.
 | OBS | The owner's Steam install, read in place and read-only on 2026-10-06 with throwaway probes in the dirty-room scratch area: all 302 UI layout records (prefix 0x22) decoded with the full property values by the grammar of UL §4; every element resolved by UL §7 and every top-level element instantiated with all inherited children (83,161 element instances, the same total as UL §7.3); the property dictionary 0x34000000 decoded with its default, minimum and maximum values (PS §2.2); the enum mappers `UIElementType` (base 0x230001BC), `UIElementID` (base 0x2300013B), `UIStateID` (base 0x2300017B), `UIElementMessage` (base 0x230001AC), the meter-direction mapper 0x2300017C and the camera mapper 0x230000B9; four arrow-button render surfaces and five meter images converted to images to check orientation and size. **Revision 1 (same day, same install):** the six native panels of §13 instantiated again and walked element by element (types, sizes, properties, states, page lists); censuses of every resolved GroupBox, ColorPicker, Browser and Menu instance, of every arrow button that is a direct child of a scroll bar, of every Panel page entry, and of the ListBox fill flags. |
 | BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`), disassembled with capstone in the dirty room on 2026-10-06, address ranges only. **Questions:** (a) which widget class the factory creates for each engine element type, and how the classes derive from each other; (b) for Meter, Scrollable, Scrollbar, ListBox, Tree, Panel and Menu: which properties each class reads, what each one does, which parts it creates or finds by element ID, and how it lays them out (the classes' property-change handlers, post-creation routines, resize routines, frame-update routines and layout routines); (c) the scroll-bar value mapping, stops, dragging, paging and wheel handling, and how a scrollable widget keeps its scroll bars in step (the classes' message handlers); (d) the Button's auto-repeat ("hot button"), its click on release and its translation of state requests; (e) the ListBox grid layout, entry creation from templates and selection; (f) the Panel's page and tab switching. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). Diagnostic strings in the executable name the meter routines; they are not reproduced. **Why M1–M3 were not enough:** the layout data gives property values and labels but no behaviour; no published source describes the engine's widget classes (the plugin API documents only the plugin surface); the original client cannot be observed running in this session, and observation could not give the arithmetic, rounding or ordering rules anyway. Only offline UI code was read; nothing about network, login, keys, launcher, patcher or anti-tamper. No address, listing or symbol appears in this spec. **Revision 1 questions (same build, read 2026-10-06):** (g) what the GroupBox class does (its factory, constructor, the methods it replaces relative to the base element, its message handler, property-change handler and its step in the pass that runs after a tree is created) and which methods the ColorPicker class replaces; (h) the exact scope of the early stops in the Button's state-request translation (§7.3); (i) whether the tree placement adds the indent amount when the parent has no icon (§9.3), and which sizes the ListBox placement uses under `ignore_cell_alignment` (§8.3); (j) the order of the descendant lookup (§2.3); (k) what the pass that runs after a tree is created does for scrollables, Trees and Buttons (§5.2, §9.1); (l) how a scroll bar treats arrow buttons that are not its descendants (§6.2, re-read). |
 | UL, UB, PS, REC, FO, LPA, KM | The companion specs named in the header; facts taken from them keep their marks. |
+| DEC | Accepted Tessera decisions [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge, **IB**) and [0015](../decisions/0015-ui-rendering.md) (UI rendering, **UR**). They fix **Tessera's** behaviour, not facts about the original; statements taken from them are marked "Tessera rule" with the decision and its section. |
 
 Marks: **Confirmed** = observed in the install over every record or instance of the kind, or a
 BIN fact the data agrees with; **BIN** = rests on the disassembly only; **Probable** = supported
@@ -445,10 +446,28 @@ At post-creation the meter is given its own drawing surface (the flag that makes
 surface for a non-root element, UL §6.6 OPEN). On every update the meter passes 1 − *p* to that
 surface as a threshold.
 
+Whether this flag is the "flagged by code" of UL §8.3 (screen-level reference boxes) and
+UL §8.4 step 1 is not known; see the UL §8.4 scope OPEN. Tessera rule there: it is not, so an
+alpha-test meter owns a surface but is laid out like any other non-root element. No M5 panel
+holds an alpha-test meter.
+
 > **OPEN:** the exact effect of the threshold (which pixels of the meter's image the surface
 > drops for a given value, and whether the comparison is "less than" or "less or equal"). 4
 > elements use this mode; none is in the §17 panels of UL. Tessera rule: draw the meter's image
 > and drop the pixels whose alpha ÷ 255 is below 1 − *p*.
+
+Tessera rule for where the threshold acts (DEC: UR Decision 1.1, 1.4 and 1.6): the meter owns
+its own surface, into which its image is painted as for any element; the threshold 1 − *p* is
+a value of that surface's composition entry and is applied when the surface is composed. A
+position change therefore changes only the composition entry and repaints nothing. The alpha
+compared is the surface pixel's own alpha, as in the rule above, before the entry's opacity is
+applied. This order **departs** from decision 0015 §8 as written: its "UI pipeline" row multiplies
+the texel by the entry's opacity first and applies the threshold to the result. This spec
+follows instead the decision's open review item "Alpha-threshold order" (decision 0015, Open
+review items, Other improvements), which asks for the threshold on the unfaded texel alpha:
+the meter's fill must not change when only its opacity changes (for example during a fade).
+The difference concerns no M5 panel (none of the 4 alpha-test meters is in the UL §17
+panels), and the decision's §8 row should be aligned when the record is next revised.
 
 <a id="s4-6"></a>
 ### 4.6 Position, goal and smooth movement (BIN, W7)
@@ -630,6 +649,28 @@ With *V* the view size on the axis and *n* the number of columns (horizontal) or
 > entry; when it enters another element of the same scrollable's subtree, push again by the rule
 > above (UB §5.2 handles duplicates). The net effect, wheel commands only while the pointer is
 > over the scrollable's subtree or a scroll bar (§6.9), is the same under either reading.
+
+**Tessera input mapping** (DEC: IB D5, D7). The pushes of this section and of §6.9 reach
+Tessera's input mapper as entries of the Tessera context `ui.scroll_mouse` (owner = the
+element the map was pushed for, priority 0), which binds `WheelUp`/`WheelDown` to the actions
+carrying `ScrollUp`/`ScrollDown`. While such an entry exists, a wheel event's motion does not
+reach the camera, so the wheel scrolls and does not zoom; over an element that pushes nothing
+(for example a plain native panel) the wheel zooms the camera. Two consequences that follow
+from the rules here and in UB §4.4, stated so that no implementation special-cases them:
+- **Captures.** During a capture the hovered element is the captured element while the pointer
+  is over it, and nothing otherwise (UB §4.4 step 2). When the pointer leaves a captured
+  element, the hover value 0 pops the entry (§6.9 for a bar; the Tessera pop rule above for a
+  scrollable), so during a thumb drag that leaves the thumb the wheel zooms the camera until
+  the pointer is back over it.
+- **Pointer lock.** While the pointer is locked for mouse-look nothing is hovered
+  (`ui-behaviour.md` §4.9), so the entry is popped and the wheel zooms.
+
+> **OPEN:** whether plugin controls push `ScrollableControls_Mouse`, and which classes (the
+> engine class behind each plugin control is not specified, `lua-plugin-api.md` §13.4).
+> **Tessera rule** (DEC: IB D5, "Who pushes"): every hovered plugin control pushes it for
+> itself at priority 0, so a plugin's wheel handler always fires; the cost is that the wheel
+> does not zoom the camera over a plugin window. Owner observation (IB owner summary,
+> question 4): does the wheel zoom the camera over a plain plugin window in the original?
 
 ---
 
@@ -833,7 +874,7 @@ So one wheel step scrolls a list by one line step (§5.6).
 
 - **Hover.** On `Element_mouse_over_top` with value 1 the bar pushes `ScrollableControls_Mouse`
   (key 0x2) for itself with priority 0; with value 0 it pops it. So the wheel works over a bar
-  as over its list.
+  as over its list. (Tessera's mapping of this push, and what it means during a capture: §5.7.)
 - **Goal.** When `goal_position` changes: if `smooth_movement` is true and
   `smooth_movement_duration` is set on the bar with |duration| > 0.0002, animate from the
   current position to the goal over the duration exactly as the meter does (§4.6, without the
@@ -1349,6 +1390,37 @@ the same properties.
 > figure into the element box if available, otherwise draw nothing there. The checklist judges
 > the panel frame around it.
 
+Tessera rule for composing a portrait (DEC: UR Decision 1.7, "External content"; it answers
+only Tessera's side of the OPEN above): the figure is rendered into an offscreen target of the
+element's layout-box size, in a linear 8-bit RGBA format (never sRGB), cleared to transparent
+black each frame it is drawn and holding premultiplied colour. The target is composed as a
+separate entry in the panel's drawing order, onto the element's displayed box, so the panel
+art shows where nothing is drawn. The `UICore_Viewport_RenderToTexture…` properties are
+recorded but not used until the OPEN above is answered. A Browser shows no web content in M5
+(§3.5).
+
+> **OPEN:** a viewport element that also has a non-zero object mode, and so owns a surface of
+> its own (UL §8.4 OPEN (scope), `lua-plugin-api.md` §13.19): how the original orders the 3D
+> scene against the element's own media and its children. Both M5 portraits are such elements
+> (UL §17.2, §17.4, U47): `PlayerPortrait` (P4) has mode 3, no media and no children;
+> `OpponentPortrait` (P5) has mode 1, one Image item (draw mode 2) and a child `Target_Image`
+> in mode 1. Decision 0015 composes external content as a separate entry but does not say
+> where it sits when its element owns a surface. Not traced (viewport rendering is outside the
+> traced widget code).
+
+Tessera rule for a surface-owning viewport (a Tessera choice that applies UR Decision 1.7; the
+decision does not state this case): the element's own surface holds what the element paints
+on the CPU (its media, by the usual rules, and the content of its descendants that own no
+surface). The external content is a **direct nested entry of that surface**, placed in the
+surface's drawing order at the point where the element's own content ends and its children
+begin, with the element's box as its coverage region. So the composition order is: the
+element's canvas below (its own image, for `OpponentPortrait` drawn with Replace), then the
+3D scene, then the element's children in their order (for `OpponentPortrait`, `Target_Image` as
+its own nested entry), with anything the element's surface itself draws after that point in
+its canvas above. For `PlayerPortrait` the canvas below is empty, so only the scene shows. A
+viewport element without a surface of its own keeps the rule above (its scene is a nested
+entry of the nearest surface above it, at the same place in that surface's drawing order).
+
 ---
 
 <a id="s13"></a>
@@ -1554,10 +1626,11 @@ proportional, so the thumb stays 16 wide; travel *v* = 290 − 16 = 274. At *q* 
 |---|---|---|---|
 | `ui-layout.md` §5.9 OPEN, §16 item 6 | Behaviour of the remaining engine-level properties and of each widget class not traced | Answered for GroupBox (§3.4), Meter, Scrollable, Scrollbar, ListBox, Tree, Panel, Menu (§4–§11) and for the Button additions (§7); ColorPicker and Browser are OPEN with a Tessera rule (§3.5); Viewport drawing (§12) and Dragbar and ResizeBar beyond UB remain outside this spec | BIN |
 | `ui-layout.md` §9.2 step 3 | "The engine types used by the layouts … have engine widgets" | **Agreement**, with the table of §3.1; types 3, 6, 13 and 19 have no factory | BIN |
-| `ui-layout.md` §6.6 OPEN (which non-root elements own a surface) | — | One more case: alpha-test meters ask for their own surface at post-creation (§4.5) | BIN |
+| `ui-layout.md` §6.6 OPEN (which non-root elements own a surface) | — | One more case: alpha-test meters ask for their own surface at post-creation (§4.5). Whether that flag also makes the meter a "flagged" element for UL §8.3 and §8.4 step 1 is not known; UL §8.4 scope OPEN records it with the Tessera choice that it does not | BIN |
 | `ui-behaviour.md` §4.7 OPEN | Whether an unhandled scroll message reaches a scrollable ancestor; how far one wheel step scrolls | A scrollable acts on wheel messages without checking the sender (so descendants' wheel messages reach it, Probable) and turns one wheel step into one line step: for lists, content size ÷ rows, at most one view (§5.6, §5.7, §6.8) | BIN |
 | `ui-behaviour.md` §4.3 OPEN | Per-type mouse-visible rules | Not answered here. Related facts: a Panel turns on the mouse-button flag of its tabs (§10.2); a slider-mode scroll bar turns off its thumb's flag (§6.7); meter parts are `mouse_invisible` (§4.3) | BIN |
-| `ui-behaviour.md` §5.2, `keymap.md` §12 (and the input-bridge gap of the M5 critique, item A1) | Which code pushes `ScrollableControls_Mouse` | Scrollables and scroll bars push it (key 0x2, priority 0) for the hovered element while the pointer is over them (§5.7, §6.9); Tessera's input bridge should make its wheel actions active the same way | BIN |
+| `ui-behaviour.md` §5.2, `keymap.md` §12 (and the input-bridge gap of the M5 critique, item A1) | Which code pushes `ScrollableControls_Mouse` | Scrollables and scroll bars push it (key 0x2, priority 0) for the hovered element while the pointer is over them (§5.7, §6.9); Tessera's input bridge should make its wheel actions active the same way. **Agreement:** decision 0014 (D5, D7) does so through the UI-band context `ui.scroll_mouse`, one wheel step being one line step (§5.6, §6.8); its Tessera rules for plugin controls and captures are in §5.7 | BIN; DEC |
+| `ui-layout.md` §6.6 OPEN (which non-root elements own a surface) and decision 0015 (Decision 1.1) | — | **Agreement:** decision 0015 gives alpha-test meters their own surface, as §4.5 says, and applies the threshold at composition (§4.5) | BIN; DEC |
 | `ui-layout.md` §9.2 | Creation ends with post-creation (step 8) | One more step for a top-level element: after its whole tree is created, a completion pass runs over the tree (§3.4); scrollables, Trees, Buttons and GroupBoxes act in it (§5.1, §9.1, §7.3, §3.4) | BIN |
 | `ui-behaviour.md` §4.3 (mouse-visible writers) | Type rule, listener registration, direct code | In the completion pass a scrollable that finds a scroll bar sets its own mouse-visible flag (§5.1); this is a direct-code write | BIN |
 | `ui-layout.md` §17.4 P4, P5 | Meters full in the sandbox | With *p* = 1 a child meter's fill covers the meter for every direction (§15.1) | BIN |
@@ -1577,7 +1650,7 @@ numbering).
 4. The entry-under-pointer rule, drag selection, `drag_rollover` and the add and remove
    notifications of list boxes (§8.4).
 5. Menu text-entry creation and popup sizing (§11.4).
-6. Viewport and `TargetViewport` drawing (§12).
+6. Viewport and `TargetViewport` drawing (§12; Tessera's composition of a portrait from decision 0015).
 7. The plugin manager's initial info tab (§13).
 8. The lookup boundary of the nearest-element search (§2.3).
 9. The input-layer condition that suppresses line and page messages (§5.5).
@@ -1587,6 +1660,10 @@ numbering).
 13. The exact pop path of the `ScrollableControls_Mouse` entry a scrollable pushes for a hovered
     descendant (§5.7).
 14. Which class the game type `LevelProgressMeter` is created with (§13, P3).
+15. Whether plugin controls push `ScrollableControls_Mouse`, and which classes (§5.7; Tessera rule from decision 0014: every hovered plugin control pushes it).
+16. How a viewport that owns a surface of its own orders its 3D scene against its own media
+    and its children (§12; Tessera choice: the scene is a nested entry of the element's own
+    surface between its own content and its children).
 
 Outside this spec: the Text class's own scrolling (Text is a Scrollable, §3.2, but its line
 layout belongs to FO). Unused in data and so not pursued: any reader of
@@ -1600,3 +1677,6 @@ layout belongs to FO). Unused in data and so not pursued: any reader of
 |---|---|
 | 2026-10-06 | First complete draft (status Review), answering the M5 completeness critique items A2 and C1: factory and class table (§3); Meter child, frame and alpha-test modes with exact fill geometry per direction, position, goal and smooth movement (§4); Scrollable offsets, scroll-bar update, scroll-to clamp, line and page steps, wheel and hover (§5); Scrollbar parts, track, thumb geometry, value mapping, stops, arrow buttons, paging, dragging with the 100-pixel rule, slider mode, wheel, disabled and ghosted (§6); Button auto-repeat, click on release, boolean toggle and state-request translation (§7); ListBox templates, grid layout and selection (§8); Tree nodes, indentation, icons and expand (§9); Panel pages and tabs (§10); Menu popup (§11); Viewport properties (§12); checklist mapping (§13); the `ScrollableControls_Mouse` push on hover (§5.7, §6.9); invariants WI1–WI14 and worked examples. OBS + BIN, client 4906.0071.1794.4035. |
 | 2026-10-06 | **Revision 1** (answers the review of the same day; status stays Review). **Blocking 1:** new §3.4 GroupBox (selection change, completion-pass default, clicks with the stop answer, census) and §3.5 ColorPicker and Browser with an OPEN and a Tessera rule (§17 item 12); §3.2 rows; §13 P8-S names the four Panels, the two GroupBoxes and the four Menus; §16 row 1. **Blocking 2:** §7.3 states that the stops apply only when that step changed `highlighted` (BIN re-trace, W26); WI12 extended; §15.7. **Blocking 3:** provenance rows W22 (panel composition, OBS) and W23 (censuses of §7.2, §8.3, §10.5, §11.4, OBS); W11 and W18 point to W23. **Minor:** (a) §10.5 counts 286 entries and 572 IDs; (b) §6.6 uses *a* and *len*; (c) §5.7 OPEN on the pop path (§17 item 13); (d) §9.3 step 1 (indent added in every case, parent without entry), the width reserve explained, §8.3 cell use under `ignore_cell_alignment` (vertical lists unaffected). **Also found (BIN, same build):** the completion pass (§3.4, §5.1, §9.1, §7.3; W28), which closes the §5.2 OPEN (§17 item 3) and attaches scrollables to their bars as listeners; Trees force `click_select` and `layout_only_visible` true; descendant lookup order (§2.3); the track's mutual test for arrow buttons (§6.3); selection display 0 (§11.4). **Corrected:** §13 P7 sliders do have arrow buttons (adopted siblings, §6.2); §13 P3 has no cap pieces, and the `LevelProgressMeter` element's own properties and states are given, with an OPEN on its class (§17 item 14); §11.4 census (194 of 195 menus have a rollover state). New W24–W28, WI15–WI17, §15.8–§15.10, §16 rows for UL §9.2 and UB §4.3. |
+| 2026-10-06 | **Revision applying the accepted decisions 0014 (UI input bridge) and 0015 (UI rendering)** (status Accepted → Revised, review pending). No fact about the original is changed. New provenance tag DEC. §4.5: Tessera rule for where the alpha threshold acts (the meter's own surface, applied at composition, compared with the pixel's own alpha before opacity; a position change repaints nothing). §5.7: Tessera's mapping of the `ScrollableControls_Mouse` pushes to the context `ui.scroll_mouse` and the wheel-motion rule, with the capture and pointer-lock consequences; new OPEN callout with Tessera rule on plugin controls (every hovered plugin control pushes), §17 item 15. §6.9: pointer to §5.7. §12: Tessera rule for composing a portrait as external content (offscreen target at the layout-box size, linear RGBA, premultiplied, separate entry). §16: the `ScrollableControls_Mouse` row records the agreement with decision 0014; new agreement row for alpha-test meter surfaces. §17 item 6 updated. Section numbers unchanged. |
+| 2026-10-06 | **Fixes after the review of the decision-0014/0015 revision** (status stays Revised, review pending). §4.5: the Tessera rule now states that applying the alpha threshold before the entry's opacity departs from decision 0015 §8 ("UI pipeline" row) as written and follows the decision's open review item "Alpha-threshold order"; no M5 panel is affected. §12: new OPEN and Tessera rule for a viewport element that also owns a surface (both M5 portraits: `PlayerPortrait` mode 3, `OpponentPortrait` mode 1 with an own image and a mode-1 child; data from `ui-layout.md` U47): the external content is a direct nested entry of the element's own surface, between its own content and its children. §17 item 16 added. No fact about the original is changed. |
+| 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. §4.5: one note that it is not known whether the meter's surface flag is the "flagged by code" of UL §8.3 and §8.4 step 1, pointing to the UL §8.4 scope OPEN and its Tessera choice (it is not; no M5 panel affected). §16 row on UL §6.6 extended to match. |

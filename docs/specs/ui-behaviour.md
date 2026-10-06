@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision 3, 2026-10-06) |
+| **Status** | Revised (revision 4, 2026-10-06: applies the accepted decisions 0014 and 0015; awaiting review). Revision 3 was Accepted on 2026-10-06 |
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | **Revision 3 re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** Both blocking items of the revision-2 review are resolved. Blocking 1: §4.1 step 3, the last paragraph of §9.2.1, UB3, UB46 and UB-I20 name the scale (the nearest display node at or above the element, (1, 1, 1) only when none) and the three-component 0.0002 test, and agree with `fonts.md` revision 6. Blocking 2: §8.2 names the boxes; the displayed result under a UI scale is an OPEN with a Tessera rule, and UB-I9 is restricted to unscaled targets. BIN spot checks (decision 0011, build 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5): (1) the resize begin records the pointer and *W0*, *H0* as displayed right − left + 1 and bottom − top + 1 (UB-I21); (2) the resize step uses the recorded pointer offset unscaled and anchors on the layout box; on the axis a handle does not resize, both edges stay as they are (handle table §8.2 step 4.5, all 8 handles); (3) the order of step 4.3 is maximum, then minimum, and the aspect ratio of 0 is skipped; the caps are left and top ≥ 0, and right and bottom ≤ screen − 1 unless the matching Ignore flag is set; the target is then moved and resized; (4) the element-resize limit pass (UB47) runs `max_height`, `min_height`, `max_width`, `min_width` and then the aspect ratio. Width drives unless the last limit that changed a value was a height limit; this is the same as the spec's wording, because the width limits run last. A ratio of 0 is not skipped; (5) the text hit-test conversion of `fonts.md` §6.3 item 3 calls the same scale accessor as the point test. §13.5 recomputes to 350 × 233 and 360 × 240 (box (100, 50, 459, 289)), and §13.15 recomputes to (6, 5). All four minor items are resolved: UB-I16 is restricted to updates made without a capture; §6.1 covers a `TooltipDelay` change; the §15 and §6.3 nested-value counts are stated; §14 is in order; the §4.3 marker sentence is behavioural. Non-blocking notes for a later revision: §9.2.1 still calls the node scale vector (*sx*, *sy*), and its last paragraph says (1, 1), whereas §4.1 uses three components and (1, 1, 1). **Revision 3 (spec writer, 2026-10-06): submitted for review.** It answers both blocking items and the four minor items of the revision-2 review below, with BIN questions 17–19 on the same build (change log). Blocking 1: §4.1 step 3 and §9.2.1 now name the scale (the nearest display node at or above the element, (1, 1, 1) only when none) and the three-component tolerance test; `fonts.md` revision 6 makes the same correction. Blocking 2: §8.2 now names the boxes (the resize begins from the displayed size, the step anchors on the layout box, the pointer offset is used unscaled) and adds the limit pass that every element resize applies (§9.2.1); the displayed result for a target under a UI scale is OPEN and UB-I9 is restricted to targets without one. The BIN re-read also corrected §13.5 (the second case ends at 360 × 240, not 350 × 233). **Revision 2 review: Claude review session (spec-writer agent), 2026-10-06: changes requested** (two blocking items, four minor). Blocking 1 (§5.3 "unknowns are marked OPEN, not guessed"; §4.1 step 3, §9.2.1 last paragraph): the spec does not say which scale a displayed point is divided by. BIN spot check (decision 0011, same build): the element's scale accessor that the point-in-element test calls returns the scale of the element's own display node, otherwise that of the nearest ancestor that has one (following parents), and (1, 1, 1) only when none exists, so it is the (*ex*, *ey*) of §9.2.1, not the element's "own" scale. The test also compares all three components (x, y, z) with 1 and divides when any of them differs by more than 0.0002, not only "either of" two. Say both in §4.1 step 3 and §9.2.1. `fonts.md` §6.3 item 1 states the opposite (an element without a node has scale 1), and that review asks for the same fix there. Blocking 2 (§5.3 "unknowns are marked OPEN" and "invariants concrete enough to test"; §8.2, UB-I9): revision 2 introduces two boxes per element, but §8.2 does not say which box the resize step records (*W0*, *H0*), sets and caps (step 4.6) when the target is under a UI scale, or how the pointer offset in screen pixels relates to it. §8.1 names the displayed box for the move clamp. The resize step reads a different set of box fields from the ones the move clamp uses (BIN spot check), so the displayed box cannot be assumed. State the box, or add an OPEN and restrict UB-I9 to unscaled targets. Minor (not blocking): (a) UB-I16 second clause has an edge case. By §4.4 step 2 a captured element stays the candidate while it is the hit element, and an element that only blocks clicks can be the hit element. So a captured element whose mouse-visible flag was cleared during the capture (for example a Button made ghosted) and that blocks clicks stays hovered. Restrict the invariant, or make step 2 require mouse-visible. (b) §6.3 and §15 count `tooltip_entry` on "1,780 elements". 1,777 element blocks hold it directly, and 3 more values are nested inside struct or array values of element blocks. Likewise, all 233 `UICore_Panel_tab_element` values are nested. Say "values in element blocks, nested values included". (c) The revision-1 notes on §6.1 (a `TooltipDelay` change while the hover-handled flag is set has no visible effect) and on the order of §14 still apply. (d) §4.3 "the client reads a ... marker at the start of every type rule" could be phrased purely as behaviour (a never-set override marker that would freeze the flag). Every other §5.3 item passes. The new material is prose and tables with decision-0012 constants. There are no addresses or listing structure, and no game text, keys, hostnames or traffic. The identifiers are covered by the extended naming note, UB41–UB45 carry marks, and no closed gate applies. B1, B2, B6, B9 and C4 are answered consistently with `ui-layout.md` §9.2–§9.3 and `fonts.md` §7.6. Arithmetic re-checked: §13.11–§13.14 (displayed box (70, 80, 429, 319); child (12, 24)–(71, 35); pointer (20, 30) inside), §13.12 chains, and §13.13 stop. Spot checks (owner's install, read-only, 2026-10-06; fresh extraction of 316 records, byte-identical to the earlier review extraction; reviewer's own reader): (1) UB39/§15: `context_menu` 55 (52 true), `container` 200 (196), `dragable` 10, `AllowStretchOnDrag` 2 (1/1), `drag_rollover` 8, `editable` 128 (103) + 4 states, `selectable` 138 (126) + 4, `lose_focus_on_escape` 19, `_acceptinput` 56, `max_chars` 84, `KeepObjectWhenHidden` 35, `focus_on_show` 11, `enable_visibility_broadcast` 1, `mouse_invisible` 27 (16), `blocks_clicks` 292 (247) + 1 state, `disallow_drag_out` 2 (false); Dragbar 135, ResizeBar 52: all match. (2) UB35/§10.1: `truncate_text_to_fit` 325 values (324 elements + 1 state); 318 element values and the state value name one of two entries of one table, 1 names a second table and 5 are null; `auto_tooltip_truncated_text` 271 (246): match. (3) UB19/UB20: the default tooltip layout (named by 2,076 elements) has four variants, each 30 × 30, z −1500, edges 0. Each has a Field at (0, 0), 512 × 512, z 1, edges 5, and a Text at (2, 2), 26 × 26, z 0, edges 5, with margins 6/6/0, `max_width` 508 and `max_height` 508 (808 in one): match. (4) UB17/UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25` in `[Misc]`, and the three `UIScale_*` = 1.00 in `[UI]`: match. (5) UB4/UB5 BIN: the hit test recurses through the point test and then catches on exactly the mouse-visible and blocks-clicks bits. The Button rule returns the stored flag under the marker, else true unless ghosted, and a ghosted Button only with `broadcast_when_ghosted` or `click_when_ghosted`: match. **Revision 2 (spec writer, 2026-10-06): submitted for review.** It answers the M5 completeness critique items B1, B2, B3, B6, B9 and C4 for this spec (change log). Earlier records follow. First review: Claude review session (spec-writer agent), review 2026-10-06: **changes requested** (three blocking items, four minor). Blocking 1 (§5.3 "each fact ... marked Confirmed"; UB19, UB20, §6.3 last sentence): the claim that each tooltip variant's "only child is a Text element" is false. All 4 top-level elements of the tooltip layout have **two** children: a Field (z-level 1, at (0, 0), 512 × 512, edges (5, 5, 5, 5)) behind the Text element (z-level 0). Everything else in that sentence matches. Fix the sentence, and say in §6.4 step 2 that the Field follows the panel by its edges as the Text element does. Blocking 2 (§5.3 "invariants concrete enough to test"; UB-I9 against §8.2 step 4): "min limits hold when set" does not follow from the algorithm. Steps 4.4 (aspect ratio) and 4.6 (screen caps) run after the minimums of step 4.3. Example: the §13.5 setup with `min_height` 240 gives *H* = trunc(350 ÷ 1.5) = 233 < 240. A correct implementation would fail the invariant. Restrict UB-I9 to what holds (for example: min limits hold when no aspect ratio is set and the caps do not apply), or change §8.2 if the BIN trace says otherwise. Blocking 3 (§5.3 "unknowns are marked OPEN"; §8.1 step 3, UB-I8): the move clamp lists four inequalities but no order. A target wider or taller than its parent (a root panel larger than a small window) cannot meet all four, so the result is undefined and UB-I8 cannot hold. State the order, as §9.2 step 5 does, or add an OPEN and limit UB-I8 to targets that fit inside their parent. Minor (not blocking): (a) §6.2 says nothing about elements whose hover handler shows no tooltip (`tooltips_on` false, no text, `TooltipEnable` false). Say whether the handler, and `Element_mouse_hover`, run again on every frame after the delay or once per hover, or add an OPEN. (b) §5.2 step 1: say whether giving focus to *F* pops the active panel's map. "Push again" on clearing focus otherwise reads as a second push. (c) §3.3: the Windows default values (500 ms, 4 × 4) have no provenance row. (d) §16 row 2 ("through a chain of subtractions, not an immediate"), the §5.6 OPEN ("no comparison with these IDs ... jump table") and the §3.3 OPEN ("tests a further flag before the comparison") describe machine-code structure, not behaviour. Rephrase them as plain unknowns. Every other §5.3 item passes. The algorithms are prose with numeric constants allowed under decision 0012. Nothing has code or listing structure, and no prose is copied. There is no game text, key, hostname or traffic. The example "level 5" is invented, the template text is not reproduced, and the property, enum, command, map and preference names are interop identifiers covered by the naming note. Every fact has a row UB1–UB39 with a mark (the BIN and Probable marks follow the Accepted `ui-layout.md`). Every §17 item has an in-section callout. No network, login or server material is involved, so no closed gate applies. The spec is implementable apart from the three items above. I recomputed every §13 example by hand and all of them match: 13.1 timing, 13.2 hit test, 13.3 placement 1704 / 1032 and size 216 × 18, 13.4 threshold, 13.5 resize 350 × 233, 13.6 order *Y*, *X*, *Z*, 13.7 scale (70, 80). They also agree with UL §9.3 sibling order and KM §12.5.7 bits. Spot checks, read-only on the install 2026-10-06, with independent probes. (1) UB39 / §15 over all 302 layout records: `HoverDelay` 243 (242 × 0.1, 1 × 300); `AutoFade` 105 (101 × 0.1, 4 × 0.5); `dragable` 10; `mouse_invisible` 27 (16 true); alpha threshold 3 × 128; resize-bar borders 30 / 39 / 3 / 3; `activatable` 370 (349 true) + 1 state; `blocks_clicks` 292 (247) + 1; `auto_tooltip_truncated_text` 271 (246); `KeepObjectWhenHidden` 35; `save_loc` 194 (192) + 1; aspect ratio 1 ≈ 1.2715; `tooltip_layout` 2,091 (2,076 / 0 in 3) + 41 states; `InputMapID` and `disallow_drag_in` on none; Dragbar 135, ResizeBar 52: all match. (2) UB-I1: 2,084 blocks set both properties, with 7 distinct pairs. 5 resolve to a Text descendant through `tooltip_text_ID`, (0, 0) occurs in 3 blocks, and one pair in 2 blocks names a missing element: matches. (3) UB31 / UB-I2: of the 1,616 0x78 sets, only one holds `UIScaleDefinition_Array`. It decodes to the end with 56 entries, all Min 0.4, Max 4.0 and 73 stops. Groups 60 and 61 carry the two preference keys and the other 54 carry a property; none has both or neither. `UpdateOnRelease` is 1 in 3 entries: matches. (4) UB35 / UB-I3: the REC §1.5 hash of the three identifiers gives 0x0AA521D0, 0x00058AD4 and 0x094418B0. `STRINGTABLE` maps `UI_Helper` with key 0x0F to a table with exactly one entry, with that token, both argument IDs and three pieces of lengths 0, 2 and 0: matches. (5) UB17 / UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25`, and all three `UIScale_*` = 1.00: matches. (6) UB20 tooltip layout: four 30 × 30 top-level elements at z-level −1500 with edges 0. Each Text child is at (2, 2), 26 × 26, with edges 5, left and right margins 6, top margin 0, `max_width` 508 and `max_height` 508 (808 in one variant): matches, except for the second child (Blocking 1). **Revision 1 by the spec writer, 2026-10-06**: every item above is addressed; see the change log. **Re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three blocking items are fixed. Blocking 1: §6.3, §6.4 step 2, UB19 and UB20 now describe both children. A fresh read-only check of all 4 variants confirms them: the Field is at (0, 0), 512 × 512, z-level 1, edges 5, 5, 5, 5; the Text element is at (2, 2), 26 × 26, z-level 0, edges 5, with margins 6 / 6 / 0 and `max_width` 508. Blocking 2: §8.2 now says the step 4.3 limits are not final. UB-I9 is restricted to the case with no aspect ratio and no cap change. I checked that this restricted form follows from steps 4.1–4.3, including the case where a minimum is above the maximum. The extended §13.5 recomputes to 350 × 233. Blocking 3: the §8.1 step 3 clamp order is stated. The rewritten UB-I8 follows from it on both branches, and §13.10 recomputes to x = −200 and y = 200. Minor items: (a) §6.2 steps 2–5 and UB-I13 are consistent. (b) §5.2 step 1 and UB-I14 are consistent, and §13.9 recomputes stack by stack. (c) UB40 is Reported with sources. (d) the three OPEN and §16 phrasings are now plain unknowns. The §5.3 checklist passes on every item. Further spot checks against the install (read-only, 2026-10-06), all matching: `min_width` / `min_height` / `max_width` / `max_height` 230 / 153 / 218 / 124; `Resizebar_Target_Element` 3; `IgnoreResizeHeightCap` 1 and `IgnoreResizeWidthCap` 0; `activate_on_show` 136 (134) + 1 state; `focus_on_show` 11; `UICoreDragbar_Ancestor_UIElementID` 4 (one label); `tooltips_on` 1,827 (1,787) + 42; `container` 200 (196); `save_size` 41 (34); `editable` / `selectable` 128 / 138; `hide` 769 (740) + 165 states (42 / 123); `tooltip_text_ID` 173 (98 zero); `UICore_Panel_tab_element` 233 occurrences. Non-blocking notes for a later revision: §14 lists UB-I13 and UB-I14 between UB-I9 and UB-I10. §6.1 says a change to `TooltipDelay` "runs the timer check again", but by §6.2 step 2 only a `TooltipEnable` change clears the hover-handled flag, so a delay change while the flag is set has no visible effect. Saying so would remove the ambiguity. |
+| **Review record** | **Revision 4 (spec writer, 2026-10-06): submitted for review.** It applies the accepted decision records 0014 (UI input bridge) and 0015 (UI rendering) to this spec: the Tessera rules they replace are reworded, and the sections whose Tessera behaviour now lives in a decision point there (change log). No fact about the original is changed; the new OPEN callouts record unknowns that the decisions answer with Tessera rules. **Revision 3 re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** Both blocking items of the revision-2 review are resolved. Blocking 1: §4.1 step 3, the last paragraph of §9.2.1, UB3, UB46 and UB-I20 name the scale (the nearest display node at or above the element, (1, 1, 1) only when none) and the three-component 0.0002 test, and agree with `fonts.md` revision 6. Blocking 2: §8.2 names the boxes; the displayed result under a UI scale is an OPEN with a Tessera rule, and UB-I9 is restricted to unscaled targets. BIN spot checks (decision 0011, build 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5): (1) the resize begin records the pointer and *W0*, *H0* as displayed right − left + 1 and bottom − top + 1 (UB-I21); (2) the resize step uses the recorded pointer offset unscaled and anchors on the layout box; on the axis a handle does not resize, both edges stay as they are (handle table §8.2 step 4.5, all 8 handles); (3) the order of step 4.3 is maximum, then minimum, and the aspect ratio of 0 is skipped; the caps are left and top ≥ 0, and right and bottom ≤ screen − 1 unless the matching Ignore flag is set; the target is then moved and resized; (4) the element-resize limit pass (UB47) runs `max_height`, `min_height`, `max_width`, `min_width` and then the aspect ratio. Width drives unless the last limit that changed a value was a height limit; this is the same as the spec's wording, because the width limits run last. A ratio of 0 is not skipped; (5) the text hit-test conversion of `fonts.md` §6.3 item 3 calls the same scale accessor as the point test. §13.5 recomputes to 350 × 233 and 360 × 240 (box (100, 50, 459, 289)), and §13.15 recomputes to (6, 5). All four minor items are resolved: UB-I16 is restricted to updates made without a capture; §6.1 covers a `TooltipDelay` change; the §15 and §6.3 nested-value counts are stated; §14 is in order; the §4.3 marker sentence is behavioural. Non-blocking notes for a later revision: §9.2.1 still calls the node scale vector (*sx*, *sy*), and its last paragraph says (1, 1), whereas §4.1 uses three components and (1, 1, 1). **Revision 3 (spec writer, 2026-10-06): submitted for review.** It answers both blocking items and the four minor items of the revision-2 review below, with BIN questions 17–19 on the same build (change log). Blocking 1: §4.1 step 3 and §9.2.1 now name the scale (the nearest display node at or above the element, (1, 1, 1) only when none) and the three-component tolerance test; `fonts.md` revision 6 makes the same correction. Blocking 2: §8.2 now names the boxes (the resize begins from the displayed size, the step anchors on the layout box, the pointer offset is used unscaled) and adds the limit pass that every element resize applies (§9.2.1); the displayed result for a target under a UI scale is OPEN and UB-I9 is restricted to targets without one. The BIN re-read also corrected §13.5 (the second case ends at 360 × 240, not 350 × 233). **Revision 2 review: Claude review session (spec-writer agent), 2026-10-06: changes requested** (two blocking items, four minor). Blocking 1 (§5.3 "unknowns are marked OPEN, not guessed"; §4.1 step 3, §9.2.1 last paragraph): the spec does not say which scale a displayed point is divided by. BIN spot check (decision 0011, same build): the element's scale accessor that the point-in-element test calls returns the scale of the element's own display node, otherwise that of the nearest ancestor that has one (following parents), and (1, 1, 1) only when none exists, so it is the (*ex*, *ey*) of §9.2.1, not the element's "own" scale. The test also compares all three components (x, y, z) with 1 and divides when any of them differs by more than 0.0002, not only "either of" two. Say both in §4.1 step 3 and §9.2.1. `fonts.md` §6.3 item 1 states the opposite (an element without a node has scale 1), and that review asks for the same fix there. Blocking 2 (§5.3 "unknowns are marked OPEN" and "invariants concrete enough to test"; §8.2, UB-I9): revision 2 introduces two boxes per element, but §8.2 does not say which box the resize step records (*W0*, *H0*), sets and caps (step 4.6) when the target is under a UI scale, or how the pointer offset in screen pixels relates to it. §8.1 names the displayed box for the move clamp. The resize step reads a different set of box fields from the ones the move clamp uses (BIN spot check), so the displayed box cannot be assumed. State the box, or add an OPEN and restrict UB-I9 to unscaled targets. Minor (not blocking): (a) UB-I16 second clause has an edge case. By §4.4 step 2 a captured element stays the candidate while it is the hit element, and an element that only blocks clicks can be the hit element. So a captured element whose mouse-visible flag was cleared during the capture (for example a Button made ghosted) and that blocks clicks stays hovered. Restrict the invariant, or make step 2 require mouse-visible. (b) §6.3 and §15 count `tooltip_entry` on "1,780 elements". 1,777 element blocks hold it directly, and 3 more values are nested inside struct or array values of element blocks. Likewise, all 233 `UICore_Panel_tab_element` values are nested. Say "values in element blocks, nested values included". (c) The revision-1 notes on §6.1 (a `TooltipDelay` change while the hover-handled flag is set has no visible effect) and on the order of §14 still apply. (d) §4.3 "the client reads a ... marker at the start of every type rule" could be phrased purely as behaviour (a never-set override marker that would freeze the flag). Every other §5.3 item passes. The new material is prose and tables with decision-0012 constants. There are no addresses or listing structure, and no game text, keys, hostnames or traffic. The identifiers are covered by the extended naming note, UB41–UB45 carry marks, and no closed gate applies. B1, B2, B6, B9 and C4 are answered consistently with `ui-layout.md` §9.2–§9.3 and `fonts.md` §7.6. Arithmetic re-checked: §13.11–§13.14 (displayed box (70, 80, 429, 319); child (12, 24)–(71, 35); pointer (20, 30) inside), §13.12 chains, and §13.13 stop. Spot checks (owner's install, read-only, 2026-10-06; fresh extraction of 316 records, byte-identical to the earlier review extraction; reviewer's own reader): (1) UB39/§15: `context_menu` 55 (52 true), `container` 200 (196), `dragable` 10, `AllowStretchOnDrag` 2 (1/1), `drag_rollover` 8, `editable` 128 (103) + 4 states, `selectable` 138 (126) + 4, `lose_focus_on_escape` 19, `_acceptinput` 56, `max_chars` 84, `KeepObjectWhenHidden` 35, `focus_on_show` 11, `enable_visibility_broadcast` 1, `mouse_invisible` 27 (16), `blocks_clicks` 292 (247) + 1 state, `disallow_drag_out` 2 (false); Dragbar 135, ResizeBar 52: all match. (2) UB35/§10.1: `truncate_text_to_fit` 325 values (324 elements + 1 state); 318 element values and the state value name one of two entries of one table, 1 names a second table and 5 are null; `auto_tooltip_truncated_text` 271 (246): match. (3) UB19/UB20: the default tooltip layout (named by 2,076 elements) has four variants, each 30 × 30, z −1500, edges 0. Each has a Field at (0, 0), 512 × 512, z 1, edges 5, and a Text at (2, 2), 26 × 26, z 0, edges 5, with margins 6/6/0, `max_width` 508 and `max_height` 508 (808 in one): match. (4) UB17/UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25` in `[Misc]`, and the three `UIScale_*` = 1.00 in `[UI]`: match. (5) UB4/UB5 BIN: the hit test recurses through the point test and then catches on exactly the mouse-visible and blocks-clicks bits. The Button rule returns the stored flag under the marker, else true unless ghosted, and a ghosted Button only with `broadcast_when_ghosted` or `click_when_ghosted`: match. **Revision 2 (spec writer, 2026-10-06): submitted for review.** It answers the M5 completeness critique items B1, B2, B3, B6, B9 and C4 for this spec (change log). Earlier records follow. First review: Claude review session (spec-writer agent), review 2026-10-06: **changes requested** (three blocking items, four minor). Blocking 1 (§5.3 "each fact ... marked Confirmed"; UB19, UB20, §6.3 last sentence): the claim that each tooltip variant's "only child is a Text element" is false. All 4 top-level elements of the tooltip layout have **two** children: a Field (z-level 1, at (0, 0), 512 × 512, edges (5, 5, 5, 5)) behind the Text element (z-level 0). Everything else in that sentence matches. Fix the sentence, and say in §6.4 step 2 that the Field follows the panel by its edges as the Text element does. Blocking 2 (§5.3 "invariants concrete enough to test"; UB-I9 against §8.2 step 4): "min limits hold when set" does not follow from the algorithm. Steps 4.4 (aspect ratio) and 4.6 (screen caps) run after the minimums of step 4.3. Example: the §13.5 setup with `min_height` 240 gives *H* = trunc(350 ÷ 1.5) = 233 < 240. A correct implementation would fail the invariant. Restrict UB-I9 to what holds (for example: min limits hold when no aspect ratio is set and the caps do not apply), or change §8.2 if the BIN trace says otherwise. Blocking 3 (§5.3 "unknowns are marked OPEN"; §8.1 step 3, UB-I8): the move clamp lists four inequalities but no order. A target wider or taller than its parent (a root panel larger than a small window) cannot meet all four, so the result is undefined and UB-I8 cannot hold. State the order, as §9.2 step 5 does, or add an OPEN and limit UB-I8 to targets that fit inside their parent. Minor (not blocking): (a) §6.2 says nothing about elements whose hover handler shows no tooltip (`tooltips_on` false, no text, `TooltipEnable` false). Say whether the handler, and `Element_mouse_hover`, run again on every frame after the delay or once per hover, or add an OPEN. (b) §5.2 step 1: say whether giving focus to *F* pops the active panel's map. "Push again" on clearing focus otherwise reads as a second push. (c) §3.3: the Windows default values (500 ms, 4 × 4) have no provenance row. (d) §16 row 2 ("through a chain of subtractions, not an immediate"), the §5.6 OPEN ("no comparison with these IDs ... jump table") and the §3.3 OPEN ("tests a further flag before the comparison") describe machine-code structure, not behaviour. Rephrase them as plain unknowns. Every other §5.3 item passes. The algorithms are prose with numeric constants allowed under decision 0012. Nothing has code or listing structure, and no prose is copied. There is no game text, key, hostname or traffic. The example "level 5" is invented, the template text is not reproduced, and the property, enum, command, map and preference names are interop identifiers covered by the naming note. Every fact has a row UB1–UB39 with a mark (the BIN and Probable marks follow the Accepted `ui-layout.md`). Every §17 item has an in-section callout. No network, login or server material is involved, so no closed gate applies. The spec is implementable apart from the three items above. I recomputed every §13 example by hand and all of them match: 13.1 timing, 13.2 hit test, 13.3 placement 1704 / 1032 and size 216 × 18, 13.4 threshold, 13.5 resize 350 × 233, 13.6 order *Y*, *X*, *Z*, 13.7 scale (70, 80). They also agree with UL §9.3 sibling order and KM §12.5.7 bits. Spot checks, read-only on the install 2026-10-06, with independent probes. (1) UB39 / §15 over all 302 layout records: `HoverDelay` 243 (242 × 0.1, 1 × 300); `AutoFade` 105 (101 × 0.1, 4 × 0.5); `dragable` 10; `mouse_invisible` 27 (16 true); alpha threshold 3 × 128; resize-bar borders 30 / 39 / 3 / 3; `activatable` 370 (349 true) + 1 state; `blocks_clicks` 292 (247) + 1; `auto_tooltip_truncated_text` 271 (246); `KeepObjectWhenHidden` 35; `save_loc` 194 (192) + 1; aspect ratio 1 ≈ 1.2715; `tooltip_layout` 2,091 (2,076 / 0 in 3) + 41 states; `InputMapID` and `disallow_drag_in` on none; Dragbar 135, ResizeBar 52: all match. (2) UB-I1: 2,084 blocks set both properties, with 7 distinct pairs. 5 resolve to a Text descendant through `tooltip_text_ID`, (0, 0) occurs in 3 blocks, and one pair in 2 blocks names a missing element: matches. (3) UB31 / UB-I2: of the 1,616 0x78 sets, only one holds `UIScaleDefinition_Array`. It decodes to the end with 56 entries, all Min 0.4, Max 4.0 and 73 stops. Groups 60 and 61 carry the two preference keys and the other 54 carry a property; none has both or neither. `UpdateOnRelease` is 1 in 3 entries: matches. (4) UB35 / UB-I3: the REC §1.5 hash of the three identifiers gives 0x0AA521D0, 0x00058AD4 and 0x094418B0. `STRINGTABLE` maps `UI_Helper` with key 0x0F to a table with exactly one entry, with that token, both argument IDs and three pieces of lengths 0, 2 and 0: matches. (5) UB17 / UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25`, and all three `UIScale_*` = 1.00: matches. (6) UB20 tooltip layout: four 30 × 30 top-level elements at z-level −1500 with edges 0. Each Text child is at (2, 2), 26 × 26, with edges 5, left and right margins 6, top margin 0, `max_width` 508 and `max_height` 508 (808 in one variant): matches, except for the second child (Blocking 1). **Revision 1 by the spec writer, 2026-10-06**: every item above is addressed; see the change log. **Re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three blocking items are fixed. Blocking 1: §6.3, §6.4 step 2, UB19 and UB20 now describe both children. A fresh read-only check of all 4 variants confirms them: the Field is at (0, 0), 512 × 512, z-level 1, edges 5, 5, 5, 5; the Text element is at (2, 2), 26 × 26, z-level 0, edges 5, with margins 6 / 6 / 0 and `max_width` 508. Blocking 2: §8.2 now says the step 4.3 limits are not final. UB-I9 is restricted to the case with no aspect ratio and no cap change. I checked that this restricted form follows from steps 4.1–4.3, including the case where a minimum is above the maximum. The extended §13.5 recomputes to 350 × 233. Blocking 3: the §8.1 step 3 clamp order is stated. The rewritten UB-I8 follows from it on both branches, and §13.10 recomputes to x = −200 and y = 200. Minor items: (a) §6.2 steps 2–5 and UB-I13 are consistent. (b) §5.2 step 1 and UB-I14 are consistent, and §13.9 recomputes stack by stack. (c) UB40 is Reported with sources. (d) the three OPEN and §16 phrasings are now plain unknowns. The §5.3 checklist passes on every item. Further spot checks against the install (read-only, 2026-10-06), all matching: `min_width` / `min_height` / `max_width` / `max_height` 230 / 153 / 218 / 124; `Resizebar_Target_Element` 3; `IgnoreResizeHeightCap` 1 and `IgnoreResizeWidthCap` 0; `activate_on_show` 136 (134) + 1 state; `focus_on_show` 11; `UICoreDragbar_Ancestor_UIElementID` 4 (one label); `tooltips_on` 1,827 (1,787) + 42; `container` 200 (196); `save_size` 41 (34); `editable` / `selectable` 128 / 138; `hide` 769 (740) + 165 states (42 / 123); `tooltip_text_ID` 173 (98 zero); `UICore_Panel_tab_element` 233 occurrences. Non-blocking notes for a later revision: §14 lists UB-I13 and UB-I14 between UB-I9 and UB-I10. §6.1 says a change to `TooltipDelay` "runs the timer check again", but by §6.2 step 2 only a `TooltipEnable` change clears the hover-handled flag, so a delay change while the flag is set has no visible effect. Saying so would remove the ambiguity. |
 | **Implements into** | `crates/ui` (`tessera-ui`: pointer routing, hover, capture, activation and z-order, keyboard focus and key routing, tooltips, drag and drop, move and resize, auto-fade, UI scale, text truncation), `crates/input` (activation timing of mouse commands, §3.3), `crates/settings` (tooltip and scale preferences, §6.1, §9.1), `apps/client` (native panels, M5) |
-| **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, element tree, run-time layout §8, sibling order and hit-test order §9.3, states §9.4, media §9.5, button state choice §9.7; called **UL** below), [`keymap.md`](keymap.md) §12 (commands, input maps, activations; **KM**), [`fonts.md`](fonts.md) §7–§9 (text layout and drawing; **FO**), [`string-table.md`](string-table.md) §4.7, §7.8, §9 (markup, StringInfo; **ST**), [`skin-definition.md`](skin-definition.md) §8 (panel overrides, scaler origin; **SK**), [`lua-plugin-api.md`](lua-plugin-api.md) §9, §13 (plugin controls; **LPA**), [`install-layout.md`](install-layout.md) §8 (settings folder, `UserPreferences.ini`; **IL**), [`property-system.md`](property-system.md) (property sets; **PS**), [`records.md`](records.md) §1.5 (name hash), §7–§8 (enum mappers, DID maps; **REC**) |
+| **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, element tree, run-time layout §8, sibling order and hit-test order §9.3, states §9.4, media §9.5, button state choice §9.7; called **UL** below), [`keymap.md`](keymap.md) §12 (commands, input maps, activations; **KM**), [`fonts.md`](fonts.md) §7–§9 (text layout and drawing; **FO**), [`string-table.md`](string-table.md) §4.7, §7.8, §9 (markup, StringInfo; **ST**), [`skin-definition.md`](skin-definition.md) §8 (panel overrides, scaler origin; **SK**), [`lua-plugin-api.md`](lua-plugin-api.md) §9, §13 (plugin controls; **LPA**), [`install-layout.md`](install-layout.md) §8 (settings folder, `UserPreferences.ini`; **IL**), [`property-system.md`](property-system.md) (property sets; **PS**), [`records.md`](records.md) §1.5 (name hash), §7–§8 (enum mappers, DID maps; **REC**). Tessera decision records (Accepted 2026-10-06): [`0014-ui-input-bridge.md`](../decisions/0014-ui-input-bridge.md) (how input-layer commands reach `tessera-ui`, the UI band of input maps, the pointer lock; **IB**) and [`0015-ui-rendering.md`](../decisions/0015-ui-rendering.md) (surfaces, compositing, opacity, scale filter, cursor; **UR**) |
 
 > **Naming note (interoperability).** Property names (`UICore_…`, `UICoreDragbar_…`,
 > `UIComponent_UIScaler_…`, `UIScaleDefinition_…`, `GOP_UIScale_…`), enum labels (UI element
@@ -68,6 +68,7 @@ and tests assert the invariants (§14), not the counts.
 | UL | [`ui-layout.md`](ui-layout.md) (Accepted): element tree, sibling list order, hit-test order, states, run-time layout, Button state choice. Facts taken from there keep its marks. |
 | KM | [`keymap.md`](keymap.md) §12: command names and IDs (InputActions mapper chain), input maps, activation words, the default bindings. |
 | FO, ST, SK, LPA, IL, PS, REC | The companion specs named in the header. |
+| IB, UR | The accepted Tessera decision records 0014 and 0015 (header). They decide **Tessera's** behaviour only and are the source of no fact about the original. Paragraphs that cite them are marked "Tessera" and sit next to the facts they implement, which keep their own marks (revision 4). |
 
 Marks: **Confirmed** = observed in the install (all records of the kind) or a BIN fact that the
 data agrees with; **BIN** = rests on the disassembly only; **Probable** = supported by BIN or
@@ -193,6 +194,18 @@ The UI manager receives every command delivery of type "command" from the input 
 Commands it does not consume are passed on to game code through the manager's notifications
 (§5.3).
 
+**Tessera (IB D1, D2, D7).** In Tessera the commands are actions of Tessera's input layer that
+carry their InputActions command name and, when the client resolves it, the command ID. The
+mapper offers the Start, End and Repeat events of digital holds, typed characters, pointer
+moves, "pointer left" and "focus lost" to `tessera-ui` in arrival order, through a synchronous
+sink (analog contributions and modifier holds are not offered, IB Known difference 6), and `tessera-ui` routes it by the class of
+the command name: one of the nine names above, a wheel name, or a key command. The UI's
+verdict (consumed or not) is decided by the rules of this spec: §4.6 (with the Tessera rule
+there), §4.7 and §5.3. A command that is not consumed goes on to game code as the same action,
+not as a re-resolved key (IB D7). The four game commands of item 1 have no Tessera
+action yet (IB Known difference 8). IB D1–D9 are the single statement of this bridge; this
+spec does not repeat it.
+
 <a id="s3-2"></a>
 ### 3.2 Default bindings that feed the UI (Confirmed, KM)
 
@@ -200,7 +213,9 @@ In the default key map (KM §12.9–§12.10, input map `Main`), `SelectLeft` is 
 button 0 with activation `Click` (press and release), `SelectDblLeft` and `SelectDblRight` to
 buttons 0 and 1 with `MouseDblClick`, `TapLeft` to button 0 with `Tap`, and `SelectRight` to
 button 1 with `Tap`. The wheel is bound to `ScrollUp`/`ScrollDown` in
-`ScrollableControls_Mouse`. Tessera's importer (KM §12.14) keeps these names.
+`ScrollableControls_Mouse`. Tessera's importer (KM §12.14) keeps these names. In Tessera the
+`Main` mouse-click rows are the nine actions of the built-in `pointer` context, and
+`ScrollableControls_Mouse` is the UI-band context `ui.scroll_mouse` (IB D2, D5).
 
 <a id="s3-3"></a>
 ### 3.3 Click, tap and double-click timing in the input layer (BIN, UB2)
@@ -223,12 +238,33 @@ toward zero.
 5. **DblClickUp** (0x10) and **NearbyUp** (0x40): on the release that follows a press that had
    DblClickDown (respectively NearbyDown).
 
-Tessera takes *T*, *W* and *H* from the platform at run time. For reference, the Windows
-defaults are 500 ms and 4 × 4 pixels (UB40, Reported); they are operating-system values and
-must not be hard-coded in place of the platform's.
+For reference, the Windows defaults are 500 ms and 4 × 4 pixels (UB40, Reported); they are
+operating-system values.
+
+**Tessera (IB D3, D4).** Tessera takes *T*, *W* and *H* from the platform at run time: the
+client reads them (again when the window's scale factor changes) and hands them to its input
+mapper, which computes the timing per button. Tessera's own settings
+`[Input] double_click_ms` and `double_click_px` (defaults 500 and 4; the second is the
+rectangle's size in logical pixels) are the fallback where the platform publishes no values
+(for example a plain Wayland compositor), and they can also override the platform's values
+(IB D3). Pixel space, scaling, clamping and the reset of recorded press positions on a scale
+change are stated in IB D3. In Tessera the activation bits above become a per-binding
+activation filter (`press`, `release`, `tap`, `double`, `double_nearby`); IB D3 and D4 are
+the single statement of how each one is resolved, and the importer translates the original's
+bindings to it (KM).
+
+> **OPEN:** how a user's setting is told apart from the default so that it overrides the
+> platform values: decision 0014 D3 says the settings "can also override" them but not by
+> what signal (for example a key written explicitly in the settings file, or a separate
+> switch). This belongs to the settings file's rules; until it is settled, Tessera rule: a key
+> present in the settings file overrides the platform's value, and an absent key leaves it.
 
 > **OPEN:** whether a third press within *T* of the second press again counts as DblClickDown,
 > and whether any condition other than the time limit of step 3 can withhold DblClickDown.
+> Tessera's reading (IB D3): every press is compared with the previous press of the same
+> button, so a third press within *T* of the second is again a double press; only presses
+> that the mapper resolves are recorded (an operating-system auto-repeat press, a press of a
+> button already held and a press beyond the held-button cap are not).
 
 ---
 
@@ -426,6 +462,14 @@ The enter and leave messages are ordinary UI messages and travel up the parent c
 other (§12.1); the plugin events `MouseEnter` and `MouseLeave` fire only on the control that is
 the message's source (`lua-plugin-api.md` §9.7, §13.12.4).
 
+**Tessera (IB D7, D8).** Pointer moves reach `tessera-ui` **coalesced**: a pending move is
+offered before every other raw input event and once per frame, at the last reported position
+(IB D7, Known difference 15). The hit tests of the input step and the hover refresh of the
+UI tick read every element's **current** geometry (position, size, visibility, z-order as they
+stand when the hit test runs); painting never moves a box that a hit test reads (IB D8,
+"Geometry used for hit tests"). Hover changes push and pop `ScrollableControls_Mouse` through
+the UI band (IB D5).
+
 <a id="s4-5"></a>
 ### 4.5 Mouse capture (BIN, UB7)
 
@@ -498,6 +542,15 @@ that is being moved or resized follows the pointer (§8.1, §8.2).
 > input layer classifies as a special kind (an internal class value 2) take a separate
 > element entry that was not traced.
 
+**Tessera consumption rule (IB D7).** For the input bridge (§3.1), a mouse-button command
+counts as **consumed** when its press had a hit element (§4.2, including an element that only
+blocks clicks) or a capture (§4.5). So a click on a panel background does not fall through to
+the world. This is a Tessera rule: how the original decides whether a mouse-button command
+reaches game code is not stated in this spec. A press consumed this way makes the hold
+UI-owned; a button whose holds are all UI-owned does not complete a game chord (IB D7), and
+its release resolves release-class bindings only in UI-band and pass-through contexts (IB
+D4).
+
 <a id="s4-7"></a>
 ### 4.7 Wheel (BIN, UB9)
 
@@ -530,9 +583,21 @@ does (message `Scrollbar_line_decrement`, value 62) and `ScrollDown` what "line 
 does (`Scrollbar_line_increment`, value 51): one wheel notch is one line step of that bar. (A
 mode that code can switch on moves `UICore_Scrollbar_position` by one unit per notch instead.)
 
-> **OPEN:** the size of one line step of a scroll bar (part of the Scrollbar widget, UL §5.9
-> OPEN), and the code-set mode of the last sentence. Tessera rule until answered: one line step
-> = the height of one entry of the scrolled list, or 16 pixels for other content.
+> **OPEN:** the size of one line step of a scroll bar outside lists and trees (part of the
+> Scrollbar widget, UL §5.9 OPEN), and the code-set mode of the last sentence. For lists and
+> trees the line step is given by `ui-widgets.md` §5.6 (BIN there: the average cell size, at
+> most one view), which supersedes the earlier Tessera rule of this callout (UW §16; UR spec
+> question 4). Tessera rule until answered, for other content (Text and other scroll hosts):
+> one line step = 16 pixels.
+
+**Tessera (IB D5, D7).** The wheel commands exist only while a `ScrollableControls_Mouse`
+entry (UW §5.7, §6.9) is on the stack; in Tessera that is the UI-band context
+`ui.scroll_mouse`. A raw wheel event whose motion a UI-band context binds does not move the
+camera; elsewhere, including over a native panel that is not scrollable and over a scroll-bar
+capture whose pointer has left the thumb, the wheel zooms the camera (IB D7, "Wheel motion"
+and "Captures"). A wheel command counts as consumed when a scroll host stopped its message
+(above). Which plugin controls push the map is IB D5 OPEN (Tessera rule: every hovered plugin
+control).
 
 <a id="s4-8"></a>
 ### 4.8 Cursor (BIN, UB6)
@@ -547,6 +612,11 @@ The cursor shown is, in this order of preference:
 An element's cursor is set by a Cursor media item (UL §6.5: image and hot spot) and removed by
 one with DID 0. The cursor image is drawn scaled (§9.3).
 
+**Tessera (UR §2.5).** The cursor chosen here is shown as an operating-system cursor built at
+the physical size of §9.3 (a provisional size rule), or, with Tessera's setting
+`ui_cursor = software`, drawn by the renderer as the last draw of the frame. A change of the
+cursor image is not a repaint of any panel.
+
 <a id="s4-9"></a>
 ### 4.9 Pointer locked or outside the window (BIN, UB10)
 
@@ -557,6 +627,31 @@ one with DID 0. The cursor image is drawn scaled (§9.3).
 2. **Pointer left the window.** When the operating system reports that the pointer left the
    game window, nothing is hovered (tooltips go away, §6.6) and the UI stops hit-testing until
    an input event arrives whose position lies inside the screen root again.
+
+**Tessera (IB D7).** The pointer lock is the client's state and reaches `tessera-ui` through
+the client. It turns on only when the UI did **not** consume a `mouselook` Start
+(`CameraInstantMouseSteer`, a key command routed by §5.3) and no item drag is in progress
+(during every item drag the Start is consumed, by §5.3 step 4 or by the client, §7.4); it
+turns off after the End of the last `mouselook` hold that turned it on. The frozen position is
+the position carried by that Start (the press position). While the lock is on, the client
+feeds no pointer positions and no pointer-left reports to the input layer, so every offered
+event carries the frozen position; each offered event counts as "the next input event" of
+step 1. IB D7 ("Pointer lock", "How the position is frozen") is the single statement.
+
+> **OPEN:** whether the release of a mouse-button command that is in a captured element's
+> pressed set is delivered while the lock is on (step 1 says only that button commands reach
+> no element). Tessera rule (IB D7, Known difference 16): a press reaches no element during
+> the lock, even while a capture exists, and is not consumed; the release of a command in the
+> capturing element's pressed set is still applied to that element (§4.6 release steps 1 and
+> 3: it sends `Element_mouse_release`, and the capture ends when its set empties), but no
+> click or double click follows, because nothing is hovered during the lock. So no capture or
+> pressed set outlives its buttons.
+
+> **OPEN:** what the visible cursor does while the lock is on (step 1 states only what the UI
+> pointer does). Tessera rule (UR §2.5, aligned with IB D7) until an owner observation settles
+> it: the cursor is hidden (with the software cursor, it is not drawn) and grabbed (locked,
+> else confined to the window); when the lock ends the cursor is moved back to the frozen
+> position where the platform allows and shown again.
 
 ---
 
@@ -638,7 +733,20 @@ Census: `UICore_Element_activatable` is set on 370 elements (349 true), `activat
 > elements a root panel designates as its focus element; the "refuse to give up focus" rule;
 > whether an editable Text element takes focus when pressed (an engine "take focus" routine
 > exists and is reached from widget code that was not traced). Tessera rule until answered:
-> pressing an editable Text element gives it focus.
+> pressing an editable Text element gives it focus. Tessera rule for the maps of engine
+> widgets (IB D5): a focused editable Text element or plugin `TextBox` pushes `EditControls`
+> and then `CopyAndPasteControls`, both at priority 50; an engine dialog (§5.5) pushes
+> `DialogBoxes` at priority 0 while it is the active panel; scrollables and scroll bars push
+> `ScrollableControls_Mouse` as UW §5.7 and §6.9 say; the chat window pushes a Tessera-only
+> context, `ui.chat_log`, at priority 0 while it is the active panel (`chat-window.md` §6.2).
+
+**Tessera (IB D5, D6).** Tessera keeps the stack of step 2 as the **UI band** of its input
+layer's context stack: entries (map, element, priority) with exactly the ordering, duplicate
+and pop rules above, the ancestor walk done by `tessera-ui`. The band is consulted before every
+game context of Tessera's key map; the order of the original's maps beyond the UI's own pushes
+is KM §12.12 OPEN (IB Known difference 1). How a key that no UI map binds is kept from the
+game while a text field has focus is Tessera's mechanism (IB D6, Known difference 4). IB D5
+lists the InputMap → context table and the band limits.
 
 <a id="s5-3"></a>
 ### 5.3 Key routing (BIN, UB13)
@@ -658,6 +766,14 @@ For a command that is not routed by the pointer (§3.1):
 
 A message counts as consumed when the element's own handler or one of its listeners consumes
 it (§12.1). Plugin windows receive actions through this path (LPA §9.3, §14.4).
+
+**Tessera (IB D7, Consequences).** "Goes on to game code" is the **same** command:
+Tessera's mapper keeps the action it resolved and hands it to game code unchanged. A declined
+`EscapeKey` therefore reaches game code as Tessera's `menu` action and a declined
+`AcceptInput` as `open_chat`; with a UI attached `menu` is game code's handling of
+`EscapeKey`, never an immediate quit (IB Consequences, "Escape with a UI attached"). Step 4
+also decides one case of a right press during a drag; the other cases are a Tessera rule
+(§7.4, IB D7).
 
 <a id="s5-4"></a>
 ### 5.4 Text-entry keys (BIN, UB14)
@@ -695,7 +811,16 @@ Census: `editable` 128 elements (103 true), `selectable` 138 (126 true),
 
 > **OPEN:** the character path (window character messages to the focus element), caret-movement
 > details (word boundaries, the selection model and its mouse gestures, what a "page" is),
-> character filtering, IME handling, and the effect of `max_chars` on paste.
+> character filtering, IME handling, and the effect of `max_chars` on paste. Tessera rule for
+> the character path (IB D6, D7): typed characters are offered to `tessera-ui` while the UI
+> band holds a text-entry context of a focused field by the rule of IB D6, and reach game
+> code otherwise; IME composition stays uncovered (IB Known difference 13).
+
+**Tessera (IB D2).** The commands of this table are actions of Tessera's `text_entry`
+(`EditControls`) and `ui.clipboard` (`CopyAndPasteControls`) contexts. The caret, delete and
+backspace actions match with extra modifiers held (IB D2, "Modifier policies"), as the
+original's subset matching suggests (KM §12.12), and the element reads the modifiers from the
+delivery.
 
 <a id="s5-5"></a>
 ### 5.5 Confirmation-dialog keys (BIN, UB15)
@@ -729,7 +854,11 @@ The default key map's `DialogBoxes` input map binds Tab to `FocusNext`, Shift+Ta
 > the `UICore_Panel_pages` values of 49 element blocks, §15). Tessera rule
 > until answered: `FocusNext`/`FocusPrevious` cycle through the displayed, focusable elements
 > of the active panel in read order (UL §5.5), depth first; `FocusMove…` picks the nearest
-> focusable element in that direction by box centre.
+> focusable element in that direction by box centre. Which panels push `DialogBoxes` is also
+> unknown; Tessera rule (IB D5): only an engine dialog (§5.5) pushes it, at priority 0, while
+> it is the active panel. So the arrow keys give the focus commands only then, and a dialog
+> that declines them passes them to game code unchanged, which does not turn the character
+> (IB Consequences).
 
 ---
 
@@ -791,6 +920,11 @@ element's effective properties, UL §9.4), replaces `TooltipDelay` for that elem
 
 > **OPEN:** which widget classes replace the base hover handler of step 4, and what the
 > hover-ended notification of step 2 does in the widget classes that use it.
+
+**Tessera (IB D7, D8).** Pointer moves reach `tessera-ui` coalesced (§4.4), so the restart of
+step 1 happens when the UI notes an offered move (at the latest in the input step of the same
+frame), not at each operating-system movement; the delay may therefore end up to one frame
+later (IB Known difference 15). Step 3 runs in the UI tick (IB D8, frame-loop step 7).
 
 <a id="s6-3"></a>
 ### 6.3 Content and panel (Confirmed, UB19)
@@ -967,7 +1101,14 @@ Census: `container` on 200 elements (196 true); `drag_rollover` on 8 (all true);
 
 > **OPEN:** whether Escape or a right click cancels a drag; the payload types and the
 > acceptance rules of game widgets (the per-element accept check of §7.3 step 1 is set by
-> game code).
+> game code). Tessera rule for the right click (IB D7, Known difference 20): a right press
+> during any item drag (while a drag icon exists) neither turns the camera nor locks the
+> pointer. §5.3 step 4 swallows its `mouselook` command only for an icon made by the
+> container while there is a keyboard target; in every other drag the client consumes the
+> command itself, after the UI's routing of it. The drag is not cancelled, the cursor stays
+> hit-tested and the drop at the left release reaches its target. A right button held across
+> the drop does not start turning the camera until it is pressed again. What the original
+> does is an owner observation of IB.
 
 ---
 
@@ -1249,6 +1390,12 @@ test of §4.1–§4.2 tests, what the move clamp of §8.1 keeps on the screen, a
 clamps. Text inside is laid out and painted at 1 : 1 in the layout box and shown magnified
 (FO §6.3).
 
+**Tessera (UR §2.1).** A plugin `Window:SetScale` goes through these steps too
+(`lua-plugin-api.md` §13.21 rule 5). `lua-plugin-api.md` §13.21 rule 1 says that the children
+of a scaled window follow their own edge modes, while step 6 resizes scaler types in Stretch,
+where children are not laid out again (§9.2.1); until the two specs are reconciled (UR spec
+question 2), Tessera follows step 6 here.
+
 <a id="s9-2-1"></a>
 #### 9.2.1 Layout box and displayed box (BIN, UB41–UB43)
 
@@ -1311,6 +1458,19 @@ scaler, §9.2, by a resize bar, §8.2, or by code) runs these steps (BIN, UB47, 
 
 The limit pass of step 1 bounds the requested size in every mode.
 
+**Tessera (UR §2.1, Decision 1.1).** By `lua-plugin-api.md` §13.19 condition 1 an element
+whose object mode is 0 (None) owns no surface, so the None branch above is not reached for
+any element that the specs describe; Tessera applies step 3 (the no-surface rule: the layout
+box takes the size and the children are laid out again) to every element in mode 0. A shown
+root panel in mode 0 with no surface above it is drawn through a Tessera stand-in surface,
+which is not a surface for this rule. Tile surfaces keep their layout box as above.
+
+> **OPEN:** whether the original can reach the None branch at all (an element that keeps its
+> surface while its object mode is 0). The BIN reading above has a None case for
+> surface-owning elements, and LPA §13.19 says that a mode-0 element owns no surface; no
+> situation that combines the two was traced. Tessera rule: the paragraph above (UR spec
+> question 14).
+
 **Points inside a scaled panel.** Because each displayed box is derived with the scales above
 it, the hit test of §4.2 works entirely in displayed coordinates and needs no division. Text
 hit tests (FO §6.3 item 3) and the alpha threshold (§4.1 step 3) convert a point relative to
@@ -1329,6 +1489,15 @@ zero (§13.15).
 > unknown: the plugin-side combination of `Window:SetScale` with the group scale (LPA §13.3
 > OPEN), and the writer of the further per-element switch of element-resize step 2.
 
+**Tessera (UR §2.2, §2.4).** Until the drawing side is settled, Tessera draws every surface
+onto its displayed box with these defaults: an exact copy at scale 1; otherwise one
+resampling of the whole surface (its elements are not resampled one by one) with a bilinear
+filter on premultiplied texels, no mip chain, and Tessera's setting
+`ui_scale_filter = linear | nearest`. Because the whole surface is resampled while hit tests
+use the displayed boxes derived level by level with truncation, the drawn edge of an element
+inside a scaled surface and its hit-test box can differ by less than one pixel per nesting
+level below its surface (a recorded difference, UR §2.4 item 3); at scale 1 they are equal.
+
 <a id="s9-3"></a>
 ### 9.3 Cursor scale (BIN, UB33)
 
@@ -1336,6 +1505,10 @@ If `UIScale_Cursor` is ≤ 0 or > 4.0 it is reset to 1.0. The cursor image is re
 trunc(32 × `UIScale_Cursor`) pixels square (Probable: the hot spot of UL §6.5 is scaled with
 it; the scale is passed to the routine that installs the cursor). The displayed cursor size
 is the offset used for tooltips (§6.5).
+
+**Tessera (UR §2.5).** The image is resampled once to this size, with the filter setting of
+§9.2.1, and shown as an operating-system cursor at that physical size (a provisional rule; the
+setting `ui_cursor = software` draws it in the renderer at the exact size instead).
 
 <a id="s9-4"></a>
 ### 9.4 Screen size changes (BIN, UB34)
@@ -1353,6 +1526,11 @@ The UI registers for the render device's size-change notification. On a change:
 > depends on the screen size, or clamping saved positions, §8.3).
 
 This answers the OPEN of UL §8.5 (§16).
+
+**Tessera (UR §2.6).** The render size is the window's physical size. Tessera's choice is to
+apply no operating-system scale factor to the UI: users enlarge panels with `UIScale_Global`
+(§9.1), as in the original. What a root panel does on the resize is UL §8.4: one whose size
+does not change is only moved (UL §8.4 step 6).
 
 ---
 
@@ -1427,6 +1605,17 @@ own drawing surface:
 
 Census: 105 elements set `AutoFade` (101 with 0.1 s, 4 with 0.5 s).
 
+**Tessera (UR Decision 1.6–1.8).** Every surface is composed with its **own**
+`ObjectOpacity` only; the opacity of its ancestors is not multiplied in. Step 2's write into
+each child with its own surface is therefore what fades those children, once. Fade items and
+the plugin `SetOpacity` write the opacity of one element only, so under this rule they leave
+the element's nested surfaces unfaded (a Tessera rule; `ui-layout.md` §5.9 and §6.6 and
+`lua-plugin-api.md` §13.19 are asked by UR to state which children such an opacity reaches).
+The fade's clock, messages, opacity and hit-test exclusion follow the logical show (the
+moment code shows the element); a surface whose first paint is withheld (§11.2) first appears
+part-way through its fade, or at full opacity when the wait is as long as the fade (a recorded
+difference, UR Decision 1.8).
+
 <a id="s11-2"></a>
 ### 11.2 Showing and hiding (BIN, UB38)
 
@@ -1442,6 +1631,14 @@ in both cases unless the current focus element refuses to give up focus.
 
 In both cases, an element with `UICore_Element_enable_visibility_broadcast` (1 element) sends
 `Element_is_visible_changed` with the new visibility.
+
+**Tessera (UR Decision 1.1, 1.8).** Which elements own a surface, and the release and
+re-creation of surfaces, follow UR Decision 1.1 and 1.8. The **logical** show takes effect at
+once: hit tests, `activate_on_show` and `focus_on_show` see the shown element in the frame in
+which code shows it. The **drawn** picture of a newly created surface is withheld until its
+first paint is complete, for at most 100 ms (longer only for a nested surface shown while its
+window's resize is still painting); during that wait a click can reach a panel that is not
+drawn yet (a recorded difference).
 
 `UICore_Element_hide` (769 elements, 165 states) sets the visibility (hide = true → not
 visible); a state that sets it shows or hides the element when the state is entered (UL §9.4).
@@ -1865,22 +2062,23 @@ Engine widget counts (UL §11): Dragbar 135, ResizeBar 52.
 
 Every item has an in-section `> **OPEN:**` callout.
 
-1. Triple presses within the double-click time (§3.3).
+1. Triple presses within the double-click time (§3.3; Tessera reading in IB D3, revision 4).
 2. Hit-mask and alpha-threshold pass rules (§4.1).
 3. Type rules of ColorPicker, Menu, Tree, ComboBox and Browser; the list-box family's
    internal flag; further widget recomputation triggers (§4.3). (The flag model, the listener
    relation and `mouse_invisible` are closed in revision 2.)
 4. ~~Bounds of the enter/leave chain~~ (closed in revision 2, §4.4).
 5. Which elements accept double clicks; tap commands; the special binding class (§4.6).
-6. ~~Wheel bubbling~~ (closed in revision 2, §4.7). Remaining: the size of one scroll-bar line step and the code-set position mode (§4.7).
+6. ~~Wheel bubbling~~ (closed in revision 2, §4.7). Remaining: the size of one scroll-bar line step outside lists and trees (lists and trees: UW §5.6) and the code-set position mode (§4.7).
 7. Input maps of engine widgets; a panel's designated focus element; the focus-refusal rule
-   (§5.2).
+   (§5.2; Tessera push rules in IB D5, revision 4).
 8. Character path, caret, selection, IME and `max_chars` details of text entry (§5.4).
 9. Result handling of the other engine dialogs (§5.5).
-10. Keyboard navigation handler and tab order (§5.6).
+10. Keyboard navigation handler and tab order; which panels push `DialogBoxes` (§5.6; Tessera
+    push rule in IB D5).
 11. `max_height` of tooltips (§6.4).
 12. Tooltip detach and game tooltips (§6.6).
-13. Drag cancel and payload rules (§7.4).
+13. Drag cancel and payload rules (§7.4; Tessera rule for a right press in IB D7, revision 4).
 14. `resize_line` outline mode; caps for non-root targets; other readers of
     `force_match_parent_scale`; `clip_to_parent`; the displayed result of a resize-bar resize
     under a UI scale, with a Tessera rule (§8.2, revision 3).
@@ -1888,13 +2086,22 @@ Every item has an in-section `> **OPEN:**` callout.
 16. Storage of saved panel data and when game code applies it (§8.4).
 17. Commands that save and load `.layout` files; the identifier forms of UL §9.9; the location
     of the options XML (§8.5).
-18. Drawing of scaled Stretch panels; the exact division that sets a scale vector; plugin window scale; the writer of the further switch of element-resize step 2 (§9.2.1).
+18. Drawing of scaled Stretch panels (Tessera defaults in UR §2.2); the exact division that sets a scale vector; plugin window scale; the writer of the further switch of element-resize step 2 (§9.2.1).
 19. What game code does on the screen-resized notification (§9.4).
 20. ~~Fit rule at the truncation cut~~ (the rule is FO §7.6, where Q13 is closed; its enabling
     condition is Probable there).
 21. Widget classes that replace the hover handler; the hover-ended notification (§6.2).
 22. Whether a handled answer below the topmost ancestor keeps game-code handlers from running
     (§12.1).
+23. Whether releases of mouse-button commands in a capture's pressed set are delivered during
+    the pointer lock (§4.9; Tessera rule from IB D7, revision 4).
+24. What the visible cursor does during the pointer lock (§4.9; Tessera rule from UR §2.5,
+    revision 4).
+25. Whether the None branch of the element resize can be reached (§9.2.1; Tessera rule from
+    UR §2.1, revision 4).
+26. How a Tessera double-click setting is told apart from its default so that it overrides
+    the platform's values (§3.3; a Tessera question about IB D3, not about the original;
+    interim Tessera rule there, revision 4 corrections).
 
 ---
 
@@ -1906,3 +2113,5 @@ Every item has an in-section `> **OPEN:**` callout.
 | 2026-10-06 | **Revision 1** (answers the first review; status stays Review). **Corrected:** §6.3 census, UB19, UB20: each tooltip variant has two children, a background Field (0, 0, 512 × 512, z-level 1, edges 5) and the Text element (z-level 0), re-checked on all 4 variants; §6.4 step 2: both children follow the panel by their edges. UB-I9 restricted to the case without aspect ratio and without a cap change; §8.2 now says the limits of step 4.3 are not final; §13.5 extended with `min_height` 240 (350 × 233). §8.4 step 3 and §8.5 OPEN follow the M5 revision of UL (§9.2 step 5 is the listener registry; saved locations are UL §9.9); §12.2 row 46 updated. **Added (BIN, same build, re-traced):** §8.1 step 3 clamp order (near side, then far side, per axis; the far side wins), UB-I8 rewritten, §13.10; §5.2 steps 1–2 input-map stack rules (ancestor pushes at one priority lower per level, ordering, duplicate and removal rules, the active panel's push on clearing focus restores entries removed by the old focus element's pop), UB12, UB-I14, §13.9; §6.2 hover-handled flag, the handler's result, repetition on every frame when not handled, hover-ended notification, UB18, UB-I13, new OPEN (§17 item 21); §4.3 OPEN on the relation to UL's mouse-button flag (§17 item 3). UB40 (Reported) for the Windows defaults of §3.3. **Rephrased** as plain unknowns: §3.3 OPEN, §5.6 OPEN, §16 row 2. |
 | 2026-10-06 | **Revision 2** (status Accepted → Review; answers the M5 completeness critique items B1, B2, B3, B6, B9 and C4 for this spec; BIN on the same build, revision-2 questions 11–16). **One flag rule (§4.3, rewritten):** the hit test reads exactly mouse-visible and blocks clicks; UL's "mouse-button flag" is mouse-visible and its "second flag" is blocks clicks; mouse-visible has three writers (type-rule recomputation at post-creation and listed triggers, listener registration, direct code), last write wins, the sticky marker is never set in this build, so a listener registered before creation does not survive post-creation; base, Button, Text, scroll-host, list-box, scroll-bar and drag/resize-bar rules; `mouse_invisible` has no reader; Tessera rule; new OPEN for unidentified classes. The earlier statement "once code has set it explicitly, it is kept" and the provisional listener rule are withdrawn. **Closed OPENs:** enter/leave chain bounds (§4.4, §13.12); wheel bubbling and the wheel step (§4.7, §13.13). **Corrected:** §12.1 delivery now bubbles to the topmost ancestor and calls the game-code registry there (agrees with LPA §9.7); §4.6 the context-menu reaction stops the right press; §9.2 steps 3, 5, 6 and new §9.2.1 (layout box vs displayed box; resize in Stretch keeps the layout box; hit test and move clamp use displayed boxes; child layout uses layout boxes; §13.14); §4.1, §4.2, §8.1 name the displayed box. **Truncation:** §10.1 replaced by a pointer to FO §7.6 (the only statement of the rule); census reconciled to 325 values (§10.1, §15). **New:** UB41–UB45, terms (type rule, layout box, displayed box, topmost ancestor), §12.2 rows 51/62, examples §13.11–§13.14, invariants UB-I15–UB-I19; §16 rows for FO §6.3/§7.6, UL §9.2/§9.3/§8.5 (applied there) and LPA §9.7/§13.11 (for that spec's owner); §17 items 3, 4, 6, 18, 20 updated, 22 added. |
 | 2026-10-06 | **Revision 3** (answers the revision-2 review: two blocking, four minor items; status stays Review; BIN questions 17–19 on the same build). **Blocking 1:** §4.1 step 3 and §9.2.1 now say which scale a displayed point is divided by: the scale vector of the element's own display node, else of the nearest ancestor with one, (1, 1, 1) only when none (new UB46, UB3 updated); the alpha test compares all three components with 1 and divides when any differs by more than 0.0002; the text conversion always divides (FO §6.3, corrected in FO revision 6; §16 row). New §13.15, UB-I20. **Blocking 2:** §8.2 step 3 records the displayed size as *W0*, *H0*; step 4 uses the pointer offset in screen pixels unscaled; step 4.5 anchors on the layout box (and keeps both layout edges on the axis a handle does not resize); step 4.7 resizes through the element resize, whose limit pass (new in §9.2.1, UB47: heights, widths, then aspect ratio; parent-scale conversion; None and Tile keep the layout box) re-applies the limits. The paragraph on non-final limits is rewritten; new "Under a UI scale" paragraph and OPEN with a Tessera rule; UB28 updated; UB-I9 rewritten for targets without a UI scale; new UB-I21. **Correction found by the re-read:** §13.5 second case ends at 360 × 240, not 350 × 233. **Minor:** (a) §4.4 step 3: the candidate becomes the hovered element only if mouse-visible at that moment (UB6); the two capture edge cases are stated; UB-I16 restricted. (b) §6.3, §5.6 and §15 count values in element blocks with nested values included (`tooltip_entry` 1,777 direct + 3 nested; `UICore_Panel_tab_element` all 233 nested in `UICore_Panel_pages` values of 49 element blocks; (0, 0) in 46 element values and 1 state value; every other §15 row re-counted and held directly). (c) §6.1: a `TooltipDelay` change while the hover-handled flag is set has no visible effect; §14 now in numeric order. (d) §4.3: the override marker is described by behaviour only. Section numbers unchanged; new subsection §13.15. |
+| 2026-10-06 | **Revision 4** (status Accepted → Revised, awaiting review; applies the accepted decision records [0014](../decisions/0014-ui-input-bridge.md) (**IB**) and [0015](../decisions/0015-ui-rendering.md) (**UR**); no new research; no fact about the original changed; section numbers unchanged). **Header and §1:** companion entries and a provenance tag for IB and UR (Tessera rules only). **Tessera rules reworded:** §3.3 (*T*, *W*, *H* through the client, with Tessera's fallback settings and the scale-factor re-read; activation filter of IB D3–D4; the third-press OPEN gets IB's reading); §4.7 OPEN (the line step of lists and trees is UW §5.6, which supersedes the earlier Tessera rule; 16 pixels kept for other content, UR question 4); §5.2 OPEN (Tessera push rules of IB D5 for `EditControls`, `CopyAndPasteControls`, `DialogBoxes`, `ScrollableControls_Mouse` and the Tessera context `ui.chat_log`); §5.6 OPEN (`DialogBoxes` pushed only by engine dialogs). **Cross-references added (rule now in a decision):** §3.1 (commands as actions, offer protocol, verdict, same action to game code; IB D1, D2, D7), §3.2 (`pointer`, `ui.scroll_mouse`), §4.4 (coalesced moves, current geometry; IB D7, D8), §4.6 (Tessera consumption rule for mouse-button commands, IB D7), §4.7 (wheel motion and the band, IB D5, D7), §4.8 and §9.3 (OS or software cursor, UR §2.5), §4.9 (the lock as client state, IB D7), §5.2 (the UI band, IB D5, D6), §5.3 (same command to game code; Escape with a UI attached), §5.4 (character path, modifier policies), §6.2 (timer restart under coalescing), §9.2.1 (stand-in surface and the no-surface rule for mode 0; Tessera scale filter; hit-test rounding difference, UR §2.1, §2.2, §2.4), §9.4 (no OS scale factor, UR §2.6), §11.1 ("own opacity only", fade clock at the logical show, UR Decision 1.6–1.8), §11.2 (logical show at once, drawn picture withheld up to 100 ms, UR Decision 1.8). §9.2 (plugin `SetScale` follows step 6 until UR spec question 2 is reconciled with `lua-plugin-api.md` §13.21). **New OPEN callouts with Tessera rules:** §4.9 releases during the lock (IB Known difference 16) and the visible cursor during the lock (UR §2.5, UR question 9); §7.4 right press during a drag (IB D7, Known difference 20; the existing OPEN extended); §9.2.1 reachability of the None branch (UR question 14). §17 items 1, 6, 7, 10, 13, 18 updated; items 23–25 added. |
+| 2026-10-06 | **Revision 4, corrections after review** (status stays Revised, awaiting review; no fact about the original changed; section numbers kept). §3.3: Tessera's `[Input] double_click_ms` / `double_click_px` are the fallback when the platform publishes nothing **and can also override** the platform values (IB D3); the earlier "platform values always take precedence" contradicted D3 and is withdrawn; new OPEN on how an overriding setting is told apart from the default (interim Tessera rule: a key present in the settings file overrides), listed as §17 item 26. §3.1 and §5.3: "a declined command goes on to game code as the same action" now cites IB D7 instead of IB Options 4 (which only lists the options considered). §9.4: the UR §2.6 paragraph no longer states a fact about the original under the UR tag; not applying an OS scale factor is stated as Tessera's choice, and "a root panel whose size does not change is only moved" cites UL §8.4 step 6. |

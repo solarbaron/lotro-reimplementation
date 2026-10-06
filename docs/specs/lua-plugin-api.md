@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** |
-| Last updated | 2026-10-05 |
+| Status | **Accepted** (2026-10-06 re-review of the writer's second revision of 2026-10-06; this is a revision of the spec first Accepted on 2026-10-05, so implementers re-check the code listed under "Implementers re-check" in the last two change-log rows, per `CLEAN_ROOM.md` §5.2 "Revised") |
+| Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
-| Reviewer | Claude review session (spec-writer agent) |
-| Review record | Claude review session (spec-writer agent), 2026-10-05: changes requested (named-colour component values in §13.9/A.5 do not match the original, which uses byte/255 rounded to 3 decimals; the plugin-data key character rule in §10.2/P14/invariant 12 is locale-dependent in the original, not ASCII-only; O4 key count 472 should be 471; unsourced behaviour statements in §13.1, §13.10, §14.2, §14.5; OPEN count in change log is 22, not 23; naming note cites `LEGAL.md` §10, which has no interoperability record). Writer's revision 2026-10-05 addresses every item (change log). Re-review: Claude review session (spec-writer agent), 2026-10-05: **passed, Accepted** (every §5.3 item true; spot checks against the install, the owner's settings folder, S3 and targeted BIN all passed: 141 named colours / 423 components follow the 3-decimal rule, O4 and §15 counts, game-language setlocale and both `isalnum` checks, `GetScriptVersion` = 13, 0, 48 font records, Appendix A.1 vs S3, `PluginOptions.xml` structure; 25 precise OPENs, none blocking) |
+| Reviewer | Claude review session (spec-writer agent), 2026-10-06 (re-review of the writer's second revision of 2026-10-06: passed); the first 2026-10-06 revision was reviewed by a Claude review session (spec-writer agent), 2026-10-06 (changes requested); the 2026-10-05 text was reviewed by a Claude review session (spec-writer agent) |
+| Review record | Re-review of the writer's second revision of 2026-10-06: Claude review session (spec-writer agent), 2026-10-06: **passed, Accepted**. All five issues of the review below are resolved: (1) §9.6 states the clamp order (maximum, then minimum, unsigned), the defaults, the 64-bit truncation that keeps the low 32 bits, the unsigned scroll-bar getters, the range rules of `SetMinimum`/`SetMaximum`, the large/small change caps and the minimum-above-maximum case, and invariant 29 tests them; (2) §13.1 gives the 50 × 50 creation size (P64) and §13.16 the initial references and the creation mark that makes None take the current coordinate, with invariants 39 and 40; (3) §13.12.5 names the pointer-outside flag, the strict comparison and the restart at capture end (P49, P51, invariant 42); (4) P48 now covers the text-box key listener (invariant 43); (5) §13.12.1/§13.12.2 say that only type 2 is special and that types 0, 1, 3, 4, 5 follow the Momentary rules, with a precise OPEN on the input layer's sequences (invariant 41). Every §5.3 item holds: functional facts only; no code or pseudo-code (the new prose describes outcomes and orders, not listing structure); no copied prose; no game text, keys or hostnames; every new fact has a provenance row (P48–P51, P57, P58 extended; P64 added); the §14.1 layout is unchanged and complete; invariants 29 and 39–43 are concrete; 38 OPEN callouts before §19, each listed in §19; no closed gate touched (UI and scripting only). Spot checks (re-review, own probes): O6 re-read of 0x51000000 (364 entries, 91/250/16/4/3; 0xAB toggle type 2 and a key of the 471-key input-action chain; the nine mouse-button actions and 0x82/0x10 as in §13.12.1); BIN `ScrollBar:SetValue` (bound check, equality test, maximum clamp then minimum clamp unsigned, `ValueChanged` raised after the clamp regardless of the result, thumb fraction 0 when maximum equals minimum); BIN `SetMinimum`/`SetMaximum`/`SetLargeChange`/`SetSmallChange` (drag of the other bound, re-clamp through `SetValue`, caps in the stated order) and the constructor defaults 0/100/0/10/1; BIN number conversion (setters truncate to 64 bits and pass the low 32 bits; the five scroll-bar getters push the stored value zero-extended, the geometry getters sign-extended); BIN creation descriptors (every descriptor function writes width 50 and height 50; seven skinned-class functions add a layout element); BIN hover check (hovered mark, pointer-outside flag, capture and hover target tested, per-element delay or the 0.25 default, strict comparison against the last movement time; the flag is cleared at creation and every store to it writes clear); §9.6 worked example and invariant 29 recompute. Non-blocking remark for the next revision: the probe found one more creation-descriptor function, in a factory-created element table with a different slot layout, that also writes 50 × 50 and a layout element; whether that table belongs to a plugin control class was not settled, so the counts "25" and "seven" in P64 may need re-counting (the 50 × 50 rule and the §13.1 OPEN are unaffected). Earlier record, 2026-10-06 revision (second OPEN-closing pass): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. Checklist items 1–4, 6 and 9 hold (functional facts only; no code or pseudo-code; no copied prose; the Lua error text in §6.6 is stock Lua and the plugin-data failure text is described, not quoted; no game text; the only layout, §14.1, is complete; no closed gate touched). Spot checks passed: O6 (0x51000000 table A re-read: 364 entries, 91/250/16/4/3 by toggle type, the six select and double-select actions and 0x82/0x10 Momentary, the three tap actions Impulse), O4 (input-action chain 290 + 181 = 471 keys, chat-type chain 39 + 9 = 48, all 16 action keys of §13.12.1 and all 34 `ChatType` values are keys), O5 (owner's key map: left select default, left double-select `MouseDblClick`, left tap `Tap`, right select `Tap`, no middle binding, wheel Z positive/negative), S3 captures of P50/P62 (`MouseDoubleClick` `Button` 1, `MouseClick` `Button` 2, `AssistTargetRemoved` empty, `KeyUp` `Action` 19), P63 counts (62, 9 and 7 Lua files, none uses `newproxy` or `__gc`), and BIN for P51 (the hover check skips while the mouse is captured, uses a per-element delay or the default 0.25 as a 32-bit float, and sets the hovered mark from the handler's result); the 35 OPEN callouts match §19; the §13.15 and §13.16 worked examples and invariants 26–30 recompute correctly. **Issues:** (1) §9.6/`ScrollBar:SetValue` and invariant 29: the order of the minimum and maximum clamps under unsigned comparison is not stated; it decides the result whenever the minimum is negative (e.g. minimum −10, maximum 10, `SetValue(20)` gives 10 or −10), so state the order or add an OPEN, and say what happens when the minimum is above the maximum. (2) §13.16: a control that never captured references (no `AttachEdges` call) still goes through the layout step when its size is 0 × 0 ("None" then takes the reference coordinate), but the spec gives no initial reference values, and the default size of a new control is stated nowhere; give both or mark them OPEN. (3) §13.12.5: the hover check also tests one more manager-level flag besides capture and the hovered mark (seen in the spot check); state the condition or add an OPEN. (4) §13.13 step 2 (a focused plugin `TextBox` fires `KeyDown`/`KeyUp` from the key notification, whatever `GetWantsKeyEvents()`) has no provenance row that names it; extend P48 or P53. (5) §13.12.2 covers only Momentary and Impulse mouse-button actions; the toggle type is read at run time, so say what an AutoRepeat, Analog or Toggle mouse-button action does, or add an OPEN. None of these blocks the rest of the M5 work. Writer's second revision 2026-10-06 addresses every item (change log); re-reviewed above. Earlier record: Claude review session (spec-writer agent), 2026-10-05: changes requested (named-colour component values in §13.9/A.5 do not match the original, which uses byte/255 rounded to 3 decimals; the plugin-data key character rule in §10.2/P14/invariant 12 is locale-dependent in the original, not ASCII-only; O4 key count 472 should be 471; unsourced behaviour statements in §13.1, §13.10, §14.2, §14.5; OPEN count in change log is 22, not 23; naming note cites `LEGAL.md` §10, which has no interoperability record). Writer's revision 2026-10-05 addresses every item (change log). Re-review: Claude review session (spec-writer agent), 2026-10-05: **passed, Accepted** (every §5.3 item true; spot checks against the install, the owner's settings folder, S3 and targeted BIN all passed: 141 named colours / 423 components follow the 3-decimal rule, O4 and §15 counts, game-language setlocale and both `isalnum` checks, `GetScriptVersion` = 13, 0, 48 font records, Appendix A.1 vs S3, `PluginOptions.xml` structure; 25 precise OPENs, none blocking) |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
 | Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), `ui-layout.md` (native panels) |
 
@@ -37,10 +37,13 @@ plugins written for the original client, without reading any third-party code. I
 - `import`, package resolution and the per-package environments (§7);
 - the native object model that Lua code subclasses, argument passing and string encoding
   (§8);
-- the event model: handler forms, dispatch, argument tables (§9);
+- the event model: handler forms, dispatch, argument tables, delivery timing and re-entrancy
+  (§9);
 - plugin-data persistence: calls, timing, validation, location and the exact file format
   (§10);
-- the shell/chat, engine, UI and gameplay namespaces (§11–§15);
+- the shell/chat, engine, UI and gameplay namespaces (§11–§15), including how the UI routes
+  the mouse and keyboard to controls, keyboard focus, z-order and window activation, size
+  limits and the edge-attachment layout (§13.11–§13.16);
 - a complete API inventory of client build 4906.0071.1794.4035 (§16), implementation tiers
   (§17), invariants (§18) and the remaining open questions (§19).
 
@@ -56,7 +59,7 @@ Source keys:
 
 | Key | Source |
 |---|---|
-| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version **4906.0071.1794.4035** (`lotro_live`, built 2026-09-27), and its `x64/lua51.dll`, read in the dirty room on 2026-10-05 with a targeted capstone disassembly of individual functions (no whole-image dump kept). Code read: the Lua host (state creation, allocator, protected-call wrapper, error reporting, per-frame step), `import` and the package resolvers, plugin discovery and descriptor parsing, plugin load and unload, the plugin-data load/save/serialiser/path code, the shell and shell-command bindings, the engine functions, the event dispatcher and the control event-argument builders, the class and enumeration registration code (names, implementations, enum values), the text-markup tag parser, the `PluginOptions.xml` writer and the chat listener entry. A follow-up repair session on the same day read, again function by function: the start-up call that sets the C runtime locale (the only other locale calls switch the numeric category to the C locale for the duration of two value-conversion functions that the plugin code does not call, then restore it), the number formatter used by the plugin-data writer, the plugin-data key validator, the package-name check of the disk resolver, the named-colour registration, and the function bound as `GetScriptVersion` (questions: P5, P14, P35, P43, P45; M1–M3 could not answer them because they are code paths, and S3 shows only resulting values). **Questions:** everything marked BIN below (sandbox contents, resolution order, environments, re-import, load/unload sequence, dispatch, argument fields, plugin-data timing, key rules, file format, shell semantics, engine values, API surface and enum values). **Why M1–M3 were not enough:** all of these are code, not data (M1 can observe only the data files and the owner's settings folder, which holds no plugins); the published references (S2, S3) list names but not behaviour, and are older than this build; M3 would need the official client running third-party plugins on the owner's account, which is not available to this session and could not expose internal decisions (resolution order, sandbox contents, serialiser rules) exhaustively. Nothing about the network protocol, login, keys, the launcher or anti-tamper was read. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). |
+| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version **4906.0071.1794.4035** (`lotro_live`, built 2026-09-27), and its `x64/lua51.dll`, read in the dirty room on 2026-10-05 with a targeted capstone disassembly of individual functions (no whole-image dump kept). Code read: the Lua host (state creation, allocator, protected-call wrapper, error reporting, per-frame step), `import` and the package resolvers, plugin discovery and descriptor parsing, plugin load and unload, the plugin-data load/save/serialiser/path code, the shell and shell-command bindings, the engine functions, the event dispatcher and the control event-argument builders, the class and enumeration registration code (names, implementations, enum values), the text-markup tag parser, the `PluginOptions.xml` writer and the chat listener entry. A follow-up repair session on the same day read, again function by function: the start-up call that sets the C runtime locale (the only other locale calls switch the numeric category to the C locale for the duration of two value-conversion functions that the plugin code does not call, then restore it), the number formatter used by the plugin-data writer, the plugin-data key validator, the package-name check of the disk resolver, the named-colour registration, and the function bound as `GetScriptVersion` (questions: P5, P14, P35, P43, P45; M1–M3 could not answer them because they are code paths, and S3 shows only resulting values). A second follow-up session on 2026-10-06 (same build, same method: targeted capstone disassembly of single functions, address ranges only, no listing kept) read the client's general UI element framework as the plugin controls use it: the plugin control binding (its event table, notification handler, key and update subscriptions, size, position, size-limit, edge-attachment, z-order, focus, enable and window-activation methods, the scroll bar value setter), the UI element manager (notification posting and queueing, message broadcast and listener registration, pointer hit test, hover tracking, mouse capture, mouse-button and key action routing, keyboard focus, active window), the base element methods those call (resize with limits, move, show/hide, child ordering, edge-attachment layout, activate/deactivate), the plugin-data write step and the script-error listener of the game layer (questions: P47–P61). **Why M1–M3 were not enough for the second pass:** these are run-time behaviours of client code; the data files hold none of them, the owner's settings folder holds no plugins (O2), S2/S3 describe only names and a few captured argument tables, and M3 (running the official client with test plugins) was not available to this session. A third session on 2026-10-06 (same build, same method, address ranges only, no listing kept), answering the review of that day, read: the scroll bar's value, minimum, maximum, large-change and small-change setters and getters, its constructor and the integer conversions of the binding layer's argument and result wrappers; the control-creation step of the plugin layer (the initial element description of every control class) and the UI's element-creation path; the reference-capture step and the edge-attachment layout step again; the hover check, the pointer-movement and mouse-button handlers and the input-action entry of the UI element manager (the toggle-type test and the actions it ignores); and the text box's notification listener (questions: P48–P51, P57, P58, P64). **Why M1–M3 were not enough for the third pass:** the same as for the second; in addition, the clamp order and the creation defaults are code paths that no data file or published source records. **Questions:** everything marked BIN below (sandbox contents, resolution order, environments, re-import, load/unload sequence, dispatch, argument fields, plugin-data timing, key rules, file format, shell semantics, engine values, API surface and enum values). **Why M1–M3 were not enough:** all of these are code, not data (M1 can observe only the data files and the owner's settings folder, which holds no plugins); the published references (S2, S3) list names but not behaviour, and are older than this build; M3 would need the official client running third-party plugins on the owner's account, which is not available to this session and could not expose internal decisions (resolution order, sandbox contents, serialiser rules) exhaustively. Nothing about the network protocol, login, keys, the launcher or anti-tamper was read. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). |
 | **S1** | `research/notes/engine-client-re.md` §5 (dirty-room notes) |
 | **S2** | Official "Update 25" Lua API reference, HTML, © 2016 publisher, lotrointerface.com file 1054 (version 2500.0062.0883); mirrored in the `lunarwtr/lotro-api-docs` repository (`U25/`) |
 | **S3** | `lunarwtr/vscode-lotro-api` (MIT): `lotro-docs/TurbineDump.json` (a dump of the live in-game `Turbine` table, v1.0.18, 2026-03), `TurbineEventsDump.json` (event argument tables captured in game), `TurbineDumper.lua` (a lightly edited `.plugindata` file), `resources/xsds/lotroplugin.xsd`, EmmyLua stubs generated from S2 |
@@ -66,10 +69,12 @@ Source keys:
 | **O2** | Observed in the owner's settings folders (read-only). 2026-10-03: a `Plugins/` tree with two third-party plugins (descriptors, file names and call patterns read statically, nothing copied). 2026-10-05: that `Plugins/` tree is no longer present; `PluginData/<account>/<server>/PluginOptions.xml` exists for three worlds (folder names are the world display names, one with a bracketed prefix and a space) |
 | **O3** | Observed in user install data files 2026-10-03 (read-only probes): font records `0x42xxxxxx` in `client_local_English.dat` and `client_general.dat`; image records `0x41xxxxxx` in `client_surface.dat` |
 | **O4** | Observed in user install data files 2026-10-05 (read-only, M1): the named-enum-mapper DID map 0x28000001 (`records.md` §8) and the enum mappers it names (`records.md` §7), decoded with their base chains: input actions 0x230000AF (290 own keys) with base 0x23000176 (181 keys), 471 keys in all, no key in both; character classes 0x2300000E (no base, 212 keys); species 0x2300000B (no base, 123); languages 0x230000B1 (3 own keys) with base 0x23000186 (2), 5 in all; shortcut types 0x23000137 (no base, 13); item qualities 0x23000067 (no base, 6); item classes 0x23000036 (no base, 279); craft tiers 0x23000063 (no base, 18); chat text types 0x230002A8 (39 own keys) with base 0x230002A9 (9), 48 in all. Key 0 is present in every one of these chains. Counts re-taken 2026-10-05 by the repair session; they are observations of this install, read at run time |
-| **O5** | Observed 2026-10-05 (read-only): the owner's `lotro.keymap` in the Proton prefix binds the scroll-up input action to the mouse's Z axis in the positive direction and the scroll-down action to the negative direction |
+| **O5** | Observed 2026-10-05 (read-only): the owner's `lotro.keymap` in the Proton prefix binds the scroll-up input action to the mouse's Z axis in the positive direction and the scroll-down action to the negative direction. Observed 2026-10-06 in the same file: the left button is bound to the left select action (default activation), the left double-select action (`MouseDblClick` activation) and the left tap action (`Tap`); the right button's select action uses the `Tap` activation; no middle-button action is bound |
+| **O6** | Observed 2026-10-06 in user install data (read-only, M1): action-map record 0x51000000, table A (`keymap.md` §12.10), read afresh: toggle type 1 (Momentary) for the six select and double-select actions 0x56, 0x4C, 0xA4, 0x33, 0x2E, 0x93 and for the wheel actions 0x82, 0x10; toggle type 2 (Impulse) for the three tap actions 0x32, 0x73, 0x6E; 364 entries in all (91 Momentary, 250 Impulse, 16 AutoRepeat, 4 Analog, 3 Toggle, as in `keymap.md`). Re-read 2026-10-06 by the second revision: the same counts; action 0xAB is a key of the input-action chain (O4) and has toggle type 2; none of the nine mouse-button actions has toggle type 3, 4 or 5 |
 
 Marks: **Confirmed** = observed in the owner's install (data, settings folder or the client
-binary), with date; BIN facts are Confirmed by disassembly on 2026-10-05 and are marked
+binary), with date; BIN facts are Confirmed by disassembly on 2026-10-05 (P1–P46) or
+2026-10-06 (P47–P61, P64, and the third-pass extensions of P48–P51, P57 and P58) and are marked
 "BIN"; facts that rest only on BIN are flagged as such in the row. **Reported** = from
 published sources only.
 
@@ -121,6 +126,24 @@ published sources only.
 | P44 | Under the standard Windows locale data these four names select code page 1252; `English` and `english-uk` use `.` as decimal separator, `french` and `german` use `,`. In code page 1252 `isalnum` is true for some units 0x80–0xFF (accented letters such as 0xE9) | General platform knowledge (Windows C runtime locale names and code-page 1252 character classes), consistent with S3's reports of comma files | **Reported** |
 | P45 | The 141 named colours: each of R, G, B equals the colour's standard web byte value divided by 255 and rounded to 3 decimals, stored as a 32-bit float; A is 1, except `Transparent` (A 0, R/G/B 1) | BIN (repair session 2026-10-05: all 141 constructor calls of the colour registration read, 564 of 564 float constants match the rule); S3 (live dump: all 423 R/G/B values match the rule, 312 of them differ from byte/255) | **Confirmed** 2026-10-05 |
 | P46 | UI behaviour from the official reference: controls are transparent until given a background image or colour; `SetZOrder` higher draws on top; `Window:Activate` brings a window to the front; opacity is used by windows to blend with the game; a control that the mouse does not see passes mouse input to what is below; `IsDisplayed` rule; `SetParent` moves a control; `ContextMenu:ShowMenu` opens at the mouse, is moved back on screen when its right or bottom edge would fall off, and first closes any other open context menu; only one context menu shows at a time and input outside it closes it; the `Turbine.UI.Lotro` skinned classes are the game's silver (and gold) styled window, button, check box, text box and scroll bar; `ItemControl`/`ItemInfoControl` show an item the user can use as from any game panel; `EntityControl` gives the game's entity selection and context menu; `EffectDisplay` shows an effect applied to an actor; `EquipmentSlot` lets the user equip items | S2 (class and member pages of `Control`, `Window`, `ContextMenu` and the `Turbine.UI.Lotro` classes), S3 stubs (`EntityControl` flags) | **Reported** |
+| P47 | Notification delivery: synchronous when no notification is being delivered, otherwise appended to one FIFO queue that is drained before the outermost posting call returns; a notification reaches the source control's handlers and then its native ancestors; plugin events fire only on the source control (§9.7) | BIN (second pass, 2026-10-06) | **Confirmed** 2026-10-06 (BIN only) |
+| P48 | Broadcast messages: `Update` once per UI tick after hover processing, `KeyDown`/`KeyUp` for key actions the focus control or active window did not consume; subscribers called in subscription order with no visibility, focus or activation check (§9.4, §9.7, §13.13). Third pass: the plugin `TextBox` class (and the game-styled text box built on it) has its own notification listener that fires `KeyDown` (key-down notification) or `KeyUp` (key-up notification) on the text box whenever the text box itself is the notification's source, without consulting its wants-key-events flag; action 0xAB is ignored by the UI at its start and at its end (no key routing, no broadcast) (§13.13) | BIN (second and third pass); O6 (0xAB) | **Confirmed** 2026-10-06 (BIN only) |
+| P49 | Hit test (visibility gate, topmost child first, children only inside their parent's rectangle, mouse-invisible controls transparent but not their children) and the hover target; `MouseEnter`/`MouseLeave` sent along the non-shared ancestor chains, innermost first, leaves before enters (§13.11, §13.12). Third pass: pointer events skip the hit test and leave no hover target while the input layer holds the pointer locked, and while the manager's pointer-outside flag is set and the pointer lies outside the UI root; that flag is cleared at creation and by any pointer event inside the root, and no code in this build sets it (§13.11) | BIN (second and third pass) | **Confirmed** 2026-10-06 (BIN only; what locks the pointer, OPEN) |
+| P50 | Mouse capture and the button events: the nine mouse-button input actions, capture at the first press, `MouseUp` always to the pressing control, `MouseClick`/`MouseDoubleClick` only when released over it, the action-to-`MouseButton` table (§13.12). Third pass: the UI's only toggle-type test is "type 2 or not", looked up in the action map of the input context in force; every other type, including 0 for an action absent from that map, follows the Momentary rules at start and at end (§13.12.1, §13.12.2) | BIN (second and third pass); O4 (action keys); O6 (toggle types of the nine actions: Impulse actions never give button events); O5 (the owner's key map, worked example); S3 (captured `MouseDoubleClick` with `Button` 1 and `MouseClick` with `Button` 2 on plugin controls) | **Confirmed** 2026-10-06 (BIN, O6); Reported (S3 captures) |
+| P51 | `MouseHover`: checked once per UI tick, after the pointer rested 0.25 s on the hover target, never while the mouse is captured; re-armed when the hover target changes; it is marked delivered only when the notification is reported handled, which the plugin layer never does (§13.12). Third pass: the check also skips while the manager's pointer-outside flag is set (never set in this build, P49); the comparison is strict (more than the delay); the delay is measured from the last pointer movement or the end of the last capture (§13.12.5) | BIN (second and third pass); numeric constant under decision 0012 | **Confirmed** 2026-10-06 (BIN only; the resulting per-tick repetition is inferred, not observed, OPEN) |
+| P52 | `MouseWheel` goes to the captured control, else to the control under the pointer; only the scroll-up and scroll-down actions produce it; it does not activate windows (§13.12) | BIN (second pass), O4, O5 | **Confirmed** 2026-10-06 (BIN only) |
+| P53 | Keyboard focus: `Focus()` takes effect at once only in the active window, otherwise it is remembered for the window's next activation; `FocusLost` before `FocusGained`; deactivating a window removes focus (§13.13) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P54 | Window activation: a mouse-button press activates the window under the pointer (or deactivates the active window when the press hits no window); `Activate()` does nothing on an already active window; order Deactivated (old), FocusLost, Activated (new), FocusGained; activation raises the window above siblings of equal `ZOrder` (§13.14) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P55 | Z-order: `SetZOrder(n)` stores −n as the control's depth, siblings are kept sorted by depth, `GetZOrder` returns the value set (default 0) (§13.14) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P56 | Size limits are element properties applied at every later resize, maximum then minimum per axis; setting a limit does not resize; getters return 0 when unset (§13.15) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P57 | Edge attachments: argument and result order left, top, right, bottom; reference rectangles captured on attach, resize, move and re-parent; the per-type layout rules and the constant 0.5 (§13.16). Third pass: before the first capture the control's own reference is its creation rectangle and it has no parent reference (the layout then uses the parent's own reference rectangle); every control created through the client's element-creation path, which includes every plugin control, carries the mark that makes None edges always take the current coordinate (§13.16) | BIN (second and third pass); numeric constant under decision 0012 | **Confirmed** 2026-10-06 (BIN only) |
+| P58 | Which setters fire change events and when (§9.6): size, position and visibility only on an actual change and through the notification queue; `EnabledChanged` directly from `SetEnabled`; `ScrollBar:SetValue` clamping and `ValueChanged`. Third pass: the scroll bar's defaults, the clamp order (maximum, then minimum), the range rules of `SetMinimum`/`SetMaximum`, the large/small change caps, and the unsigned results of the scroll bar getters (§9.6) | BIN (second and third pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P59 | Script errors and warnings reported to the user are added to the chat window as chat text type 1 (`Turbine.ChatType.Error`) with the message text unchanged and no prefix, and also written to a client log channel (§6.6) | BIN (second pass: the game layer's error listener) | **Confirmed** 2026-10-06 (BIN only) |
+| P60 | Plugin-data write step: parent folders created, file opened for text writing, the serialised text written, the write result not checked; `onDone` called only while the issuing apartment still exists; no line end after the final value (§10.4, §10.6) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P61 | The plugin layer passes the command word and argument text to `ShellCommand:Execute` exactly as it receives them from the client's command-line parser (§11.2) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P62 | Captured argument tables: `Party.AssistTargetRemoved` carries an empty table; a `KeyUp` with `Action` 19 (a key below 0x100) occurs | S3 (`TurbineEventsDump.json`) | **Reported** |
+| P63 | Usage survey (counts only, no code read for expression): none of the 62 Lua files of the publisher's 2010 sample plugins (S4), the 9 Lua files of one third-party in-game plugin in the research clones (LotroCompanion's) and the 7 Lua files of S3 use `newproxy` or `__gc` | S4, S3, research clones (dirty room, 2026-10-06) | **Reported** (small sample) |
+| P64 | Initial geometry of plugin controls: the plugin layer describes every new control as left 0, top 0, width 50, height 50 (all 25 control class tables of this build; seven of them, matching the seven skinned classes of §14.2 in number and in their window and text-box variants, also name a client layout element) (§13.1) | BIN (third pass) | **Confirmed** 2026-10-06 (BIN only; whether the named layout element changes the size of game-styled controls, OPEN) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -174,20 +197,32 @@ published sources only.
   loops forever freezes the client. Tessera adds an instruction budget per host-to-Lua call
   (default 500 million VM instructions, coroutines included) — a deliberate safety
   deviation; when it trips, the call is aborted with an error reported like any other.
-  > **OPEN:** (implementer note, `crates/script`, 2026-10-06) Lua 5.1 runs `__gc`
-  > metamethods with debug hooks disabled, so a plugin finalizer (attached through
-  > `newproxy(true)`) would escape the budget, including at state close. Engineering choice:
-  > `newproxy(true)` returns a proxy whose metatable, as seen by `getmetatable`, is a view;
-  > writes through it reach the real metatable, except that `__gc` installs a host
-  > dispatcher which runs the plugin's finalizer in a fresh coroutine (metered) and
-  > re-raises its error, as 5.1 does for a finalizer error. Finalizers run at apartment
-  > close share one fresh budget. Observable differences from stock 5.1: `rawget`, `rawset`,
-  > `next`/`pairs` on a proxy's metatable see the (empty) view, and a `rawset` on it has no
-  > effect on the proxy. Question for the spec: is this deviation acceptable, or must the
-  > metatable be the raw table (which would need a different way to meter finalizers)?
+  **Finalizers (answer of 2026-10-06 to the implementer question of the same day,
+  `crates/script`).** Lua 5.1 runs `__gc` metamethods with debug hooks disabled, so a plugin
+  finalizer (attached through `newproxy(true)`) would escape the budget, including at state
+  close. The implementation's choice is accepted as a stated deviation: `newproxy(true)`
+  returns a proxy whose metatable, as seen by `getmetatable`, is a view; writes through it
+  reach the real metatable, except that assigning `__gc` installs a host dispatcher that runs
+  the plugin's finalizer in a fresh, metered coroutine and re-raises its error as 5.1 does
+  for a finalizer error; finalizers run at apartment close share one fresh budget. The
+  observable differences from stock 5.1 (`rawget`, `rawset`, `next`/`pairs` on the proxy's
+  metatable see the empty view; a `rawset` on it does not affect the proxy) are acceptable:
+  no surveyed plugin uses `newproxy` or `__gc` at all (P63). One condition: reading a field
+  through the view with normal indexing (including `getmetatable(p).__gc`) must return what
+  the plugin stored, not the host dispatcher.
 - **Garbage collection.** Once per frame the original runs one incremental collection step
   in every apartment (BIN). Tessera may do the same or rely on the default collector.
 - All plugin code runs on the main (UI) thread, between frames (Tessera architecture §18.1).
+- **UI tick (P48, P51).** Once per frame the UI element manager runs one tick, in this
+  order: (1) if the pointer needs re-evaluating, the hit test and hover target are refreshed
+  (§13.11); (2) the hover check, which may deliver `MouseHover` (§13.12); (3) the `Update`
+  broadcast to every subscribed control (§9.4); (4) the rest of the UI's per-frame work.
+  Input events (mouse movement, mouse-button and key actions) are delivered when the client
+  processes input, outside this tick. Deferred work of the plugin host (queued `LoadPlugin`
+  requests, asynchronous `PluginData.Load` handlers, plugin-data writes) runs between frames
+  too (§6.2, §10.6). > **OPEN:** the order of the plugin host's deferred work relative to
+  the UI tick within one frame. Tessera: input, then the UI tick, then the plugin host's
+  deferred work, then rendering.
 - Every host-to-Lua call is protected; an error in one callback never aborts the frame or
   affects other apartments (§6.6).
 
@@ -490,10 +525,27 @@ missing or unreadable, syntax error) are reported the same way.
 
 The original also reports, through the same listeners and without raising an error:
 allocation failures (§3.3) and a control resized beyond the graphics device's largest texture
-size (§13.2).
+size (§13.2). A protected call that fails with Lua's memory-error status is not reported by
+the protected-call step itself (the allocator's own report covers it); only the runtime-error
+and syntax-error statuses are (P25).
 
-Tessera format: plugin name, apartment, the Lua error message; a traceback may be added in
-the log only. > **OPEN:** the original's chat colour and prefix.
+**What the user sees (P59).** The game layer registers one listener that handles errors and
+warnings alike: it converts the reported text to the client's text, adds it to the chat
+window as one line of chat text type **1** (the value named `Error` in `Turbine.ChatType`,
+Appendix A.1), and writes the same text to a client log channel. The client adds **no
+prefix** (no plugin name, no apartment name, no label): the chat line is exactly the Lua
+message, e.g. `<chunk name>:12: attempt to call a nil value` for a runtime error in a file.
+The colour is whatever the chat window uses for chat type 1 (a user setting of the chat
+window, not part of the plugin API). A message containing line breaks is passed on as one
+text.
+
+Tessera: add the message to its chat output as an error-type line (chat type 1) with the
+same text and no added prefix, so that plugins that parse their own errors from chat keep
+working; put the plugin name, apartment and an optional traceback in the log only.
+
+> **OPEN:** whether the error line is also delivered to `Turbine.Chat.Received` handlers
+> (with `ChatType` 1). Tessera: deliver it like any other chat line, never re-entrantly
+> (§9.6).
 
 <a id="6-7"></a>
 ### 6.7 Plugin manager rows
@@ -756,7 +808,7 @@ Field names and the events that carry them (BIN; values observed in S3):
 | Event(s) | Fields of `A` |
 |---|---|
 | `Turbine.Chat.Received` | `ChatType` (number, §11.3), `Message` (string), and `Sender` (string) when the line has a sender; system lines have no `Sender` |
-| `Control.MouseDown`, `MouseUp`, `MouseClick`, `MouseDoubleClick` | `Button` (`MouseButton` value), `X`, `Y` (pixels, relative to the control) |
+| `Control.MouseDown`, `MouseUp`, `MouseClick`, `MouseDoubleClick` | `Button` (`MouseButton` value converted from the input action, §13.12; 0 for an action without a button), `X`, `Y` (pixels, relative to the control) |
 | `Control.MouseMove`, `MouseHover` | `X`, `Y` |
 | `Control.MouseWheel` | `X`, `Y`, `Direction`: **+1** for the scroll-up input action (key 0x82), **−1** for scroll-down (key 0x10) (P32). The sign follows the bound action, not the wheel. In the owner's keymap (O5; not shown to be the shipped default) scroll-up is bound to the wheel's positive Z direction, which on Windows is rotation away from the user. |
 | `Control.KeyDown`, `KeyUp` | `Action` (an input-action key, §14.4), `Alt`, `Control`, `Shift` (booleans) |
@@ -775,16 +827,39 @@ Field names and the events that carry them (BIN; values observed in S3):
 | `Window.UIScaleChanged` | `Index` (the `UIScalingGroupType` that changed), `Value` (the new scale, number) |
 | all other events (`Click`, `Load`, `Unload`, `Update`, every `…Changed` without a row above, `EffectsCleared`, `ItemsRefreshed`, …) | empty table |
 
-> **OPEN:** whether `Party.MemberAdded`/`MemberRemoved` and `AssistTargetRemoved` carry a
-> field (no field name is wired to them in the binary; Tessera: empty table).
+`Party.AssistTargetRemoved` was captured in game with an empty table (S3, P62), which
+agrees with the binary (no field name wired to it).
+
+> **OPEN:** whether `Party.MemberAdded`/`MemberRemoved` carry a field (no field name is
+> wired to them in the binary and no capture exists; Tessera: empty table).
 
 <a id="9-4"></a>
 ### 9.4 Per-frame update
 
 `Control:SetWantsUpdates(true)` subscribes the control to the UI's per-frame tick; the host
 then fires `Update` on it once per frame with an empty `A` (S2, BIN). It stays on until set
-false or the control is destroyed. > **OPEN:** whether hidden controls still receive
-`Update`. Recommended: yes (plugins use it for timers on hidden controls).
+false or the control is destroyed (P48):
+
+- `Update` is a **broadcast** (§9.7), not a notification: it is delivered in step 3 of the UI
+  tick (§3.3) to every subscribed control, whether or not the control is visible, displayed,
+  enabled, parented or inside an open window. Plugins rely on this for timers on hidden
+  controls.
+- Subscribers are called in subscription order: the order in which the controls turned
+  updates on. Calling `SetWantsUpdates` with the value it already has does nothing (no
+  re-subscription, no change of order).
+- A control that turns updates on while the broadcast is running is appended and receives
+  `Update` in the same tick. A control that turns updates off during the broadcast is not
+  called again, from that moment on (also later in the same tick).
+- `Update` carries no time value; plugins measure time with `Turbine.Engine.GetGameTime()`,
+  which is constant within one frame (§12).
+
+Worked example: controls A, B and C call `SetWantsUpdates(true)` in that order; during A's
+`Update` handler, C calls `SetWantsUpdates(false)` and D calls `SetWantsUpdates(true)`. In
+that tick the handlers run for A, B and D; in the next tick for A, B, D.
+
+> **OPEN:** when the original drops the list entry of a control that turned updates off
+> (removal is deferred; until then a control that turns updates back on keeps its old place
+> in the order). Tessera: turning updates back on appends the control at the end.
 
 <a id="9-5"></a>
 ### 9.5 Shared singletons
@@ -797,14 +872,144 @@ tables (§9.2 step 4) or private apartments; the host must support both.
 <a id="9-6"></a>
 ### 9.6 Re-entrancy and ordering
 
-- Events are delivered on the main thread. Events directly caused by a script call (e.g.
-  `Close()` firing `Closing`) are delivered synchronously before the call returns.
+- Events are delivered on the main thread. Events that the plugin layer fires itself
+  (`Closing`/`Closed` from `Close()`, `EnabledChanged`, `ScrollBar.ValueChanged`, the
+  `Load`/`Unload` events) are delivered synchronously before the call returns. Events that
+  come from native notifications (mouse, focus, size, position, visibility, activation and
+  the class-specific events listed in §9.7) follow the queueing rule of §9.7: synchronous
+  when no notification is being delivered, otherwise after the current one.
 - `Turbine.Chat.Received` is not re-entered: a chat line produced while a `Received`
   dispatch is running (for example by `Shell.WriteLine` in a handler) is not delivered to
   that apartment's `Received` handlers (BIN).
 - A handler that destroys or re-parents the sender must not crash the host; remaining
   handlers of that firing still run.
-- > **OPEN:** which setters fire their own change events (e.g. `SetText` → `TextChanged`).
+
+**Setters and their change events (P58).** "Fires" means the event is raised on the same
+control; "through the queue" means by a notification (§9.7).
+
+| Call | Event | Rule |
+|---|---|---|
+| `SetSize`, `SetWidth`, `SetHeight` | `SizeChanged` | Through the queue, only when the size after the limits of §13.15 differs from the size before. Not fired for resizes made by the immediate re-layout that follows a plugin resize of a control with edge attachments (§13.16). |
+| `SetPosition`, `SetLeft`, `SetTop` | `PositionChanged` | Through the queue, only when the control's position on screen changed. |
+| `SetVisible` | `VisibleChanged` | Through the queue, only when the control's own visibility flag changed; showing or hiding a parent does not fire it on the children. |
+| `SetEnabled` | `EnabledChanged` | Fired directly, only when the value changed. The plugin layer keeps the flag itself: on a plain `Control` it changes nothing else (mouse and key events keep arriving). |
+| `ScrollBar:SetValue(v)` | `ValueChanged` | `v` is converted to 32 bits (scroll-bar numbers, below) and compared with the current value; if equal, nothing happens. Otherwise it is clamped, comparing **as unsigned 32-bit numbers**, in this order: first, a value above the maximum becomes the maximum; then a value below the minimum becomes the minimum. The result is stored and `ValueChanged` fires directly, even when the clamped value equals the old one. So a negative `v` (a large unsigned number) clamps to the maximum. Raises an error while the scroll bar is bound (§13.7). |
+| `Window:Activate()` | `Activated` (and `Deactivated` on the previously active window) | Through the queue, only when the window was not already active (§13.14). |
+| `Control:Focus()` | `FocusLost`, `FocusGained` | Through the queue, only when focus actually moves (§13.13). |
+
+<a id="9-6-1"></a>
+**Scroll-bar numbers (P58).** A scroll bar keeps five 32-bit numbers: minimum, maximum,
+value, large change and small change. A new scroll bar has minimum 0, maximum 100, value 0,
+large change 10 and small change 1. All comparisons below are **unsigned**.
+
+- **Conversion.** Each of the five setters truncates its Lua number toward zero to a 64-bit
+  integer and keeps the low 32 bits: −5 is stored as 4294967291, exactly like 4294967291;
+  a number outside the 64-bit range (or NaN) is stored as 0. The five getters
+  (`GetMinimum`, `GetMaximum`, `GetValue`, `GetLargeChange`, `GetSmallChange`) return the
+  stored bits as an unsigned number, 0 to 4294967295; a stored −5 reads back as 4294967291.
+  (Control geometry getters such as `GetLeft` return signed numbers; the unsigned rule is
+  specific to these five.)
+- **`SetMinimum(m)`.** If `m` equals the current minimum, nothing happens. Otherwise it is
+  stored; if it is above the maximum, `SetMaximum(m)` runs with the rules below; then, if
+  the value is below the minimum, `SetValue(minimum)` runs (and fires `ValueChanged`).
+- **`SetMaximum(n)`.** If `n` equals the current maximum, nothing happens. Otherwise it is
+  stored; if it is below the minimum, `SetMinimum(n)` runs; then, if the value is above the
+  maximum, `SetValue(maximum)` runs (and fires `ValueChanged`).
+- **Consequence.** Through the API the order minimum ≤ value ≤ maximum (unsigned) always
+  holds: a minimum above the maximum cannot be reached, because each of the two setters
+  drags the other bound along. If such a state existed, `SetValue` would always give the
+  minimum, since the minimum clamp comes last. Negative bounds are not usable: they are huge
+  unsigned numbers.
+- **`SetLargeChange(n)`.** If equal to the current large change, nothing happens. Otherwise
+  it is stored; if it is above maximum − minimum (32-bit difference), it becomes
+  maximum − minimum; then, if it is below the small change, it becomes the small change.
+  **`SetSmallChange(n)`**: if equal, nothing happens; otherwise the smaller of `n` and the
+  large change is stored. Neither fires an event, and changing the minimum or maximum does
+  not re-check either change.
+- **Thumb.** The thumb position is the fraction (value − minimum) / (maximum − minimum),
+  set at creation and by every `SetValue` that gets past the equality test (also those run
+  by `SetMinimum`/`SetMaximum`); it is 0 when maximum equals minimum. A range change that
+  does not move the value leaves the position as it was. The thumb size is the fraction
+  large change / (maximum − minimum), set at creation and by every `SetMinimum`/`SetMaximum`
+  that changes a bound while maximum ≠ minimum; `SetLargeChange` does not update it. Both
+  fractions are 32-bit floats of the unsigned differences.
+
+Worked example (synthetic, a new scroll bar, not bound): `SetMinimum(-10)` stores the
+minimum 4294967286, which is above the maximum 100, so the maximum becomes 4294967286 too;
+the value 0 is below the minimum, so it becomes 4294967286 and `ValueChanged` fires once.
+`GetMinimum()`, `GetMaximum()` and `GetValue()` now return 4294967286. `SetMaximum(10)` then
+stores 10, which is below the minimum, so the minimum becomes 10 (inside that call the value
+4294967286 is not below 10, so nothing more happens); back in `SetMaximum`, the value is above
+10, so it becomes 10 and `ValueChanged` fires again. Result: minimum, maximum and value 10, two
+`ValueChanged` in all. A state "minimum −10, maximum 10" is therefore never reached. With
+minimum 5 and maximum 10, `SetValue(20)` gives 10 and `SetValue(-1)` (stored as 4294967295)
+gives 10 as well, while `SetValue(2)` gives 5.
+
+> **OPEN:** whether `TextBox:SetText` fires `TextChanged` (`TextChanged` comes from the text
+> box's native "text changed" notification, which user edits certainly produce), whether
+> `CheckBox:SetChecked` fires `CheckedChanged`, and whether `ListBox:SetSelectedIndex` /
+> `SetSelectedItem` and `TreeView:SetSelectedNode` fire `SelectedIndexChanged` /
+> `SelectedNodeChanged` (they pass a "notify" flag to the native list, whose effect was not
+> traced). Tessera: fire each of them, through the queue, when the value actually changes.
+
+<a id="9-7"></a>
+### 9.7 Delivery paths, queueing and order (P47, P48)
+
+The UI events of plugin controls reach Lua by two paths.
+
+**Notifications.** Every native control (UI element) reports what happens to it as a
+*notification*: pointer entered or left, button pressed, released, clicked or double-clicked,
+pointer moved, hovered, wheel turned, focus gained or lost, size or position changed,
+visibility changed, window activated or deactivated, drag events, and class-specific ones
+(button activated → `Button.Click`, text changed → `TextBox.TextChanged`, value or
+selection changes of lists, trees and scroll bars). Posting a notification works like this:
+
+1. The notification gets the next number of a global sequence.
+2. If no notification is being delivered at the moment, it is delivered now: first to the
+   native handling of its **source** control and the listeners attached to that control
+   (the plugin control's own listener among them), then, unless a listener stops it, to the
+   source's parent and its listeners, and so on up to the root. A listener that already saw
+   that sequence number is skipped. While this runs, the manager is "delivering".
+3. If a notification is being delivered already (because the code that posted this one runs
+   inside some handler of an earlier notification, for example a plugin `MouseClick` handler
+   that calls `SetSize`), the new notification is **appended to a single FIFO queue**. When
+   the outermost delivery finishes, the manager delivers the queued notifications one after
+   another, in queue order, including any that are appended while it drains the queue, and
+   only then returns to the code that posted the outermost notification.
+
+The plugin control's listener turns a notification into a Lua event **only when the control
+itself is the source**; notifications of child controls that travel up through a parent
+never fire events on the parent's Lua object. The plugin listener never stops a
+notification and never reports it as handled.
+
+Consequences implementers must reproduce:
+
+- Outside any event handler (for example in top-level code or an `Update` handler), a call
+  such as `SetSize` delivers `SizeChanged` before it returns.
+- Inside a handler of a notification-based event (`MouseClick`, `MouseDown`, `SizeChanged`,
+  `FocusGained`, …), the events caused by the handler's own calls are delivered after the
+  current event has been delivered to all of its handlers, in the order the calls were made,
+  but still before the input or tick processing that started the chain continues.
+- Broadcast events (`Update`, `KeyDown`, `KeyUp`, below) are not notifications; a call made
+  in an `Update` handler therefore delivers its notification synchronously.
+
+Worked example (synthetic): control C has handlers `MouseClick` (calls `C:SetSize(50, 20)`
+then `C:SetVisible(false)`), `SizeChanged` and `VisibleChanged`, each appending its name to a
+log. One click over C (its size was 40 × 20) gives the log `MouseClick`, `SizeChanged`,
+`VisibleChanged`. If `MouseClick` also calls `print(C:GetWidth())`, it prints 50: the size
+itself changes at once, only the event waits.
+
+**Broadcasts.** A few messages go from the manager to every subscribed control instead:
+`Update` (subscription by `SetWantsUpdates`, §9.4) and the key messages behind `KeyDown` and
+`KeyUp` (subscription by `SetWantsKeyEvents`, §13.13). A broadcast calls the subscribers in
+subscription order and checks nothing about the control (visibility, enabled state, focus,
+window activation). Subscriptions added during a broadcast are called in the same
+broadcast; a subscription removed during it is skipped from then on.
+
+**Several handlers, several controls.** Within one event on one object, handler order is
+§9.2. Between objects, the order is the notification order above, or subscription order
+for broadcasts. For the pointer, §13.12 gives the order of `MouseLeave`/`MouseEnter` across
+ancestors.
 
 ---
 
@@ -903,6 +1108,13 @@ CR LF (the file is written in text mode, which turns each line feed into CR LF):
    `\` as `\\`, and every other byte written unchanged. So numeric keys look like
    `[1.000000]`.
 5. An empty table is written as `{`, an empty line, `}` (because of rules 2 and 3).
+6. Nothing follows the value (P60): the file ends with the value's last character (`}` for a
+   table), with **no** final line end and no byte-order mark. The bytes of strings are written
+   as they are in Lua (UTF-8 from plugins, §3.4).
+
+Byte-exact examples (synthetic): saving the number 5 gives the 15 bytes `return 5.000000`;
+saving the string `a"b` gives `return "a\"b"`; saving `true` gives `return true`; saving an
+empty table gives `return ` CR LF `{` CR LF CR LF `}` (15 bytes).
 
 Example (synthetic): saving a table with key `"a"` → true and key 1 → the string `x"y`, at the
 top level, produces these lines (⇥ = tab, entry order as `next` returns it):
@@ -966,9 +1178,26 @@ Booleans, numbers, strings, nil and tables of those (BIN):
   (data saved in `Unload` handlers must reach disk), and write atomically (temporary file in
   the same folder, then rename).
 
-> **OPEN:** whether the original still calls an `onDone` callback for a write that was
-> queued before its apartment closed. Tessera: drop such callbacks after the apartment has
-> closed.
+**The write step (P60).** Whether run at once (state closing) or later, one write does:
+
+1. Create any missing folders of the path. If that fails, nothing is written and the result
+   is failure.
+2. Open the file for writing in text mode, truncating an existing file. If that fails, the
+   result is failure.
+3. Write the serialised text with one formatted write and close the file. The result is
+   success; the outcome of the write itself is **not** checked (a write that runs out of
+   disk space still reports success).
+4. If `onDone` is a Lua function **and the apartment that called `Save` still exists**, call
+   `onDone(success, message)` in protected mode: `message` is `""` on success and, on
+   failure, a fixed client message saying that an internal error prevented saving (the same
+   text for both failure causes; not reproduced here). Otherwise no callback is made.
+
+So a callback is never called into a closed apartment. Tessera: same rule; a callback whose
+apartment has closed is dropped.
+
+> **OPEN:** whether a write that was queued (not yet run) when its apartment closed is still
+> performed later; step 1–3 do not depend on the apartment. Tessera never has such writes,
+> because it flushes an apartment's writes before closing it (above).
 
 <a id="10-7"></a>
 ### 10.7 Tessera storage
@@ -1013,9 +1242,15 @@ methods on the command object, so plugins override them:
 
 `command` is the command word as typed (without `/`), `arguments` the text after it with the
 separating space removed; **both are always strings** — `arguments` is `""` when nothing
-follows (BIN). > **OPEN:** whether surrounding whitespace in `arguments` is trimmed and
-whether `command` keeps the user's letter case. Tessera: keep case, remove exactly one
-separating whitespace character, keep trailing whitespace.
+follows (BIN). The plugin layer converts both from the client's text to UTF-8 and passes
+them **unchanged**: it neither trims, nor splits, nor changes letter case (P61). Any such
+processing happens earlier, in the client's general chat command-line parser (its shell
+module contains a tokenizer that treats double quotes specially; whether it is applied to
+plugin command lines was not traced). > **OPEN:** the rules of that parser: whether surrounding
+whitespace of `arguments` is trimmed, whether runs of spaces are kept, what happens to
+double quotes, and whether `command` keeps the user's letter case or is the registered
+spelling. Tessera: keep case as typed, remove exactly one separating whitespace character,
+keep everything else (including quotes and trailing whitespace).
 
 <a id="11-3"></a>
 ### 11.3 `Turbine.Chat`
@@ -1056,6 +1291,12 @@ have not been observed in this build.
 
 - **Coordinates:** pixels; a control's position is relative to its parent's top-left; a
   `Window`'s position is relative to the screen (`Display`) (S2, Reported).
+- **Initial geometry (P64):** every new control, of every class, is created at left 0,
+  top 0 with width 50 and height 50 (BIN): `GetSize()` of a fresh `Turbine.UI.Control()`
+  returns 50, 50. The seven skinned classes of §14.2 also
+  name an element of the client's UI layout data when they are created. > **OPEN:** whether
+  that layout element gives the skinned controls a different initial size (it depends on the
+  layout data, `ui-layout.md`). Tessera: 50 × 50 for every class.
 - **Tree:** a control is shown only inside a `Window` chain (S2, Reported); top-level windows
   have no parent. `SetParent(nil)` detaches; parenting a control to itself is an error (BIN).
   Setting a new parent removes the control from the old one (S2, Reported).
@@ -1063,20 +1304,24 @@ have not been observed in this build.
   (S2/S4, Reported). `IsDisplayed()` = own visibility and every ancestor's (S2, Reported).
 - **Transparency:** a bare `Control` draws nothing until it gets a background image
   (`SetBackground`) or colour (`SetBackColor`) (S2, Reported).
-- **Stacking:** among siblings a higher `ZOrder` draws above a lower one (S2, Reported);
-  `Window:Activate()` brings a window to the front (S2, Reported).
+- **Stacking:** among siblings a higher `ZOrder` draws above a lower one and is hit first by
+  the mouse; `Window:Activate()` raises a window above the siblings of equal `ZOrder`
+  (S2; BIN, §13.14).
 - **Opacity:** 0.0 (fully transparent) to 1.0 (opaque). S2 says only some controls use it,
   namely windows, to decide how they blend with the game (Reported). > **OPEN:** whether a
   window's opacity also applies to its child controls, and whether opacity set on a
   non-window control has any visible effect. Tessera: a window's opacity multiplies the
   alpha of its whole content; on other controls it is stored and returned only.
 - **Mouse:** a control with `SetMouseVisible(false)` does not take mouse input; the controls
-  underneath handle it (S2, Reported).
-- **Keys:** only controls with `SetWantsKeyEvents(true)` receive `KeyDown`/`KeyUp` (S2,
-  Reported). Key events carry key-binding **actions**, not raw keys (BIN, §9.3, §14.4).
-- **Focus:** `Focus()` asks for focus within the control's window (S2, Reported);
-  `HasFocus()`, events `FocusGained`/`FocusLost` (BIN registration). Tessera: a text box
-  takes focus when clicked (a Tessera rule, not a sourced fact).
+  underneath handle it, but its own children still do (S2; BIN, §13.11). Capture, clicks,
+  hover and the wheel: §13.12.
+- **Keys:** only controls with `SetWantsKeyEvents(true)` receive `KeyDown`/`KeyUp`, and they
+  receive them whether or not they have focus (S2; BIN, §13.13). Key events carry
+  key-binding **actions**, not raw keys (BIN, §9.3, §14.4).
+- **Focus:** `Focus()` asks for keyboard focus; it takes effect at once only when the
+  control's window is the active window (S2; BIN, §13.13). `HasFocus()`, events
+  `FocusGained`/`FocusLost`. Tessera: a text box takes focus when clicked (a Tessera rule,
+  not a sourced fact).
 - **Drag and drop:** `SetAllowDrop(true)` makes the control handle drag-and-drop events
   `DragEnter`/`DragLeave`/`DragDrop` (S2, Reported); drags of game shortcuts produce
   `Turbine.UI.Lotro.DragDropInfo` (§14.6).
@@ -1089,8 +1334,8 @@ have not been observed in this build.
 | Group | Members (instance methods unless marked) |
 |---|---|
 | Geometry | `GetLeft/SetLeft`, `GetTop/SetTop`, `GetPosition()`→l,t / `SetPosition(l,t)`, `GetWidth/SetWidth`, `GetHeight/SetHeight`, `GetSize()`→w,h / `SetSize(w,h)`, `PointToClient(x,y)`→x,y, `PointToScreen(x,y)`→x,y, `GetMousePosition()`→x,y (relative to the control) |
-| Size limits | `Get/SetMinimumWidth`, `Get/SetMinimumHeight`, `GetMinimumSize()`→w,h / `SetMinimumSize(w,h)`, same for `Maximum` — members of **`Control`** in this build (earlier dumps list them on `Window`; windows inherit them, so existing plugins are unaffected) |
-| Edge attachment | `AttachEdges(a, b, c, d)` takes four `EdgeAttachmentType` numbers, one per edge; `GetEdgeAttachments()` returns four numbers. > **OPEN:** which edge each position means, and the layout rules of each attachment type. |
+| Size limits | `Get/SetMinimumWidth`, `Get/SetMinimumHeight`, `GetMinimumSize()`→w,h / `SetMinimumSize(w,h)`, same for `Maximum` — members of **`Control`** in this build (earlier dumps list them on `Window`; windows inherit them, so existing plugins are unaffected). Rules: §13.15. |
+| Edge attachment | `AttachEdges(left, top, right, bottom)` takes four `EdgeAttachmentType` numbers, one per edge, in that order; `GetEdgeAttachments()` returns the four in the same order. Rules: §13.16. |
 | Tree | `GetParent/SetParent(control or nil)`, `GetControls()`→ControlList (live view of children), `GetZOrder/SetZOrder(n)` |
 | State | `IsVisible/SetVisible(b)`, `IsDisplayed()`, `IsEnabled/SetEnabled(b)`, `GetOpacity/SetOpacity(0..1)`, `IsMouseVisible/SetMouseVisible(b)`, `GetWantsKeyEvents/SetWantsKeyEvents(b)`, `GetWantsUpdates/SetWantsUpdates(b)`, `GetAllowDrop/SetAllowDrop(b)`, `Focus()`, `HasFocus()` |
 | Look | `GetBackColor/SetBackColor(Color)`, `GetBackColorBlendMode/SetBackColorBlendMode(BlendMode)`, `GetBackground/SetBackground(path, DID or Graphic)` (§13.8), `GetBlendMode/SetBlendMode(BlendMode)` (applies to the background image), `GetStretchMode/SetStretchMode(n)` (§13.8). An invalid blend-mode number raises an error. |
@@ -1106,7 +1351,8 @@ control was created) to the error listeners; it does not clamp the size and rais
 ### 13.3 `Window` (extends `Control`)
 
 Top-level container with no frame of its own (S2). Members: `GetText/SetText(title)`,
-`Activate()` (brings the window to the front, S2), `Close()`, `GetRotation()`/`SetRotation(t)`, and the
+`Activate()` (makes it the active window and brings it to the front, S2; exact rules
+§13.14), `Close()`, `GetRotation()`/`SetRotation(t)`, and the
 global-scaling members `RegisterForGlobalScaling()`, `UnregisterForGlobalScaling()`,
 `SetUIScalingGroup(group)`/`GetUIScalingGroup()` (a `UIScalingGroupType`),
 `SetScale(n)`/`GetScale()`, `SetScalingOriginPoint(…)`/`GetScalingOriginPoint()` (BIN).
@@ -1162,8 +1408,12 @@ Editable text. Members: `IsReadOnly/SetReadOnly(b)`. Events: `TextChanged`,
 ### 13.6 `Button` and `CheckBox` (extend `Label`)
 
 `Button`: events `Click` (empty argument table, BIN), `EnabledChanged`. Unskinned;
-`Turbine.UI.Lotro.Button` is the skinned variant. > **OPEN:** which mouse buttons activate
-`Click`. Tessera: the left button, on release inside the button.
+`Turbine.UI.Lotro.Button` is the skinned variant. `Click` is not derived from `MouseClick`:
+the plugin button fires `Click` when its native button reports its own "activated"
+notification, and fires `MouseDown`/`MouseUp`/`MouseClick` independently by the rules of
+§13.12 (BIN). > **OPEN:** which mouse buttons (and keys) make the native button report
+"activated", and whether a disabled plugin button still does. Tessera: the left button, on
+release over the button, only when enabled.
 `CheckBox`: `IsChecked/SetChecked(b)`, `GetCheckAlignment/SetCheckAlignment(ContentAlignment)`;
 events `CheckedChanged`, `EnabledChanged`.
 
@@ -1175,7 +1425,9 @@ events `CheckedChanged`, `EnabledChanged`.
   replaceable parts `Get/SetDecrementButton`, `Get/SetIncrementButton` (Buttons),
   `Get/SetThumbButton` (Control). While a scroll bar is bound to a `ScrollableControl`,
   getting or setting its minimum, maximum, value or large change, and setting its small
-  change, raise errors (BIN). Events `ValueChanged`, `OrientationChanged`.
+  change, raise errors (BIN). Events `ValueChanged`, `OrientationChanged`. Defaults (0, 100,
+  0, large 10, small 1), number conversion, `SetValue` clamp order, the range rules of
+  `SetMinimum`/`SetMaximum` and `ValueChanged`: §9.6 (scroll-bar numbers).
 - `ScrollableControl` (extends `Control`): `Get/SetHorizontalScrollBar(ScrollBar or nil)`,
   `Get/SetVerticalScrollBar(…)` — attaches an external scroll bar that the control then
   drives.
@@ -1271,6 +1523,470 @@ byte/255 fails equality tests that plugins may make against `Color` fields.
   `IsChecked/SetChecked`, `GetItems()` (sub-menu), event `Click`.
 - Enums `BlendMode`, `ContentAlignment`, `EdgeAttachmentType`, `FontStyle`, `MouseButton`,
   `Orientation`, `HorizontalLayout`, `VerticalLayout`: Appendix A.
+
+The sections below (§13.11–§13.16) describe the client's general UI framework as plugin
+controls experience it. They rest on BIN (P47–P58) unless marked. Plugin windows and
+controls live in the same control tree as the client's own panels: the UI root has the
+top-level windows (the client's and the plugins') as children, each window has its controls
+as children, and so on. Every control's rectangle is relative to its parent's top-left
+corner; a rectangle covers the pixels left … left + width − 1 and top … top + height − 1.
+
+<a id="13-11"></a>
+### 13.11 Hit testing and the pointer target (P49)
+
+The **control under the pointer** is found by this search, starting at the UI root with the
+pointer position:
+
+1. A control that is not visible (its own `IsVisible()` is false) is not hit, and nothing
+   inside it is hit: the search reports "no hit" for it.
+2. Otherwise its children are tried from the topmost to the bottommost (the order of
+   §13.14). A child is tried only if the point lies inside the child's rectangle; trying it
+   means repeating these steps for that child, with the point made relative to it. The first
+   child that reports a hit ends the search with that hit.
+3. If no child reports a hit, the control itself is the hit when it is mouse-visible
+   (`IsMouseVisible()`); otherwise it reports "no hit", and its parent goes on with the next
+   lower sibling, and then with itself.
+
+Consequences: a part of a control that lies outside its parent's rectangle never receives
+the mouse (input is clipped by every ancestor); a mouse-invisible control is transparent to
+the mouse, but its children are not, and the control below it (or its parent) receives the
+mouse; among overlapping siblings the topmost wins; a hidden control and everything inside it
+is transparent.
+
+The search runs on every pointer movement, at the start and end of every mouse-button action
+(§13.12.2), and in the UI tick when the pointer needs re-evaluating (§3.3). Its result is the
+**pointer target**. The **hover target** is derived from it: when no control has captured
+the mouse (§13.12.2), the hover target is the pointer target (which is always
+mouse-visible); while a control has captured the mouse, the hover target is that control
+when the pointer target is that control, and none otherwise.
+
+Two states suppress the search (P49). When a pointer event (movement, or the start of a
+mouse-button or wheel action) arrives, the UI first tests whether the pointer lies inside
+the UI root's rectangle; if it does, it clears a manager-level **pointer-outside flag**. The
+search is then skipped, and the pointer target is none, when that flag is still set, or when
+the input layer reports the pointer **locked** (a state in which the input layer freezes the
+reported pointer position and refuses to move the cursor). With no pointer target, the hover
+target is none as well, which sends the `MouseLeave` events of §13.12.4. In this build the
+pointer-outside flag is cleared when the UI is created and every write to it stores "clear",
+so it never suppresses anything; Tessera may omit it. > **OPEN:** which client states lock
+the pointer (expected: the camera's mouse-look drag). Tessera: the pointer is locked exactly
+while the world camera is being turned with the mouse, so plugin controls see no hover,
+enter or move events during that drag.
+
+> **OPEN:** the client's own panels can use two refinements of the point test (a per-pixel
+> hit mask and a second geometric check) that the plugin API cannot set; whether a plugin
+> control can ever be subject to them. Tessera: plain rectangles.
+
+<a id="13-12"></a>
+### 13.12 Mouse events (P50–P52)
+
+<a id="13-12-1"></a>
+#### 13.12.1 Mouse-button actions and `MouseButton`
+
+The UI receives mouse buttons as **input actions** (keys of the input-action enum mapper,
+§14.4; which physical button events start and end them is set by the key map,
+`keymap.md` §12). Exactly nine actions are mouse-button actions for the UI:
+
+| Action keys | Meaning (our own words) | Toggle type in this install (O6) |
+|---|---|---|
+| 0x56, 0x4C, 0xA4 | select with the left, right, middle button | 1 (Momentary): starts when activated, ends when released |
+| 0x33, 0x2E, 0x93 | double-select with the left, right, middle button | 1 (Momentary) |
+| 0x32, 0x73, 0x6E | tap with the left, right, middle button | 2 (Impulse) |
+
+An action whose toggle type is 2 (Impulse) never produces `MouseDown`, `MouseUp`,
+`MouseClick` or `MouseDoubleClick` on a plugin control: the UI passes it to the control
+under the pointer as a separate one-shot notification that the plugin layer ignores, and
+its end is ignored. Read the toggle type from the action-map record at run time
+(`keymap.md` §12.10); do not hard-code which actions are Impulse.
+
+The UI's only toggle-type test is "type 2 or not" (P50). It looks the type up in the action
+map of the input context in force when the action arrives (`keymap.md` §12.10); an action
+that this map does not list counts as type 0. Every type other than 2 — 0, 1 (Momentary),
+3 (AutoRepeat), 4 (Analog) and 5 (Toggle) — follows the Momentary rules of §13.12.2, both
+when the action starts and when it ends; the button events carry no analog amount. In this
+install none of the nine actions has type 3, 4 or 5 (O6), so the case arises only with other
+action-map data.
+
+The `Button` field of the button events (§9.3) is converted from the action:
+
+| `Button` | Action keys |
+|---|---|
+| 1 (Left) | 0x32, 0x33, 0x56, 0x66, 0x72 |
+| 2 (Right) | 0x03, 0x2E, 0x43, 0x4C, 0x73 |
+| 4 (Middle) | 0x67, 0x6E, 0x93, 0xA4 |
+| 0 | any other action |
+
+(0x66, 0x72, 0x03, 0x43 and 0x67 are alternate tap and double-select variants that the table
+covers although the UI does not route them as mouse-button actions.)
+
+<a id="13-12-2"></a>
+#### 13.12.2 Capture, `MouseDown`, `MouseUp`, `MouseClick`, `MouseDoubleClick`
+
+The UI keeps: at most one **capturing** control, a set of mouse-button actions pressed
+while capturing, and for every control the set of actions pressed on it.
+
+**When a Momentary mouse-button action starts** (pointer at screen position P):
+
+1. Refresh the pointer target and hover target at P (§13.11).
+2. If no control is capturing:
+   1. If there is a hover target H, H starts capturing and the action is recorded as
+      pressed while capturing.
+   2. Window activation by the press (§13.14) is applied, from the pointer target; its
+      events therefore come before this press's `MouseDown`.
+3. If a control is capturing (normally H from step 2), and it is not already in that
+   control's pressed set: add it, and deliver **`MouseDown`** to the capturing control
+   (`Button` from §13.12.1, `X`, `Y` relative to the control). If the action was already in
+   its pressed set, the start is treated as a release on that control instead: step 4 of
+   the release rules below (`MouseUp`, possibly a click), and no `MouseDown`.
+4. With no hover target and no capture, nothing is delivered to plugin controls (the press
+   belongs to the game world).
+
+**When a Momentary mouse-button action ends:**
+
+1. The target is the capturing control, or, if none, the hover target.
+2. If a control is capturing, remove the action from the capture's pressed set; when that
+   set becomes empty, the capture ends now (before step 4).
+3. Refresh the pointer target and hover target (with the capture possibly ended).
+4. If the target has the action in its own pressed set: remove it and deliver **`MouseUp`**
+   to the target, **wherever the pointer is**. Then, only if the target is now the hover
+   target (the pointer is over it and it is mouse-visible):
+   - for a double-select action (0x33, 0x2E, 0x93), deliver **`MouseDoubleClick`** if the
+     control accepts double clicks; if it does not, deliver `MouseClick` with the matching
+     select action (0x56, 0x4C, 0xA4) instead;
+   - for any other action, deliver **`MouseClick`**.
+
+So `MouseUp` always goes to the control that got the `MouseDown`, even when the button is
+released outside it, and `MouseClick` needs the release to happen over that control. All
+these events are notifications (§9.7).
+
+**Actions of type 3, 4 or 5.** The UI applies the two rule sets above to whatever starts
+and ends the input layer delivers. Consequences: an action that is started again while it is
+still in the capturing control's pressed set (as a held AutoRepeat button might be) produces,
+at the repeated start, `MouseUp` and possibly `MouseClick` instead of a second `MouseDown`,
+so starts alternate between press and release behaviour; an action that starts at one
+physical press and ends at a later one (a Toggle latch) behaves as a button held in between,
+keeping the capture. > **OPEN:** which start and end sequence the input layer produces for
+mouse-button actions of types 3, 4 and 5 (repeat timing, latch, analog threshold);
+`keymap.md` does not give it for UI actions. Tessera: the input layer delivers one start at
+the press and one end at the release for a mouse-button action of any type other than 2.
+
+Plugin controls accept double clicks: S3 captured `MouseDoubleClick` (with `Button` 1) on a
+plugin control (Reported). > **OPEN:** whether every plugin control class accepts double
+clicks. Tessera: all do.
+
+Worked example (derived, owner's key map O5: left select = press and release, left
+double-select = a second press near the first and its release, left tap = Impulse): a left
+double click over a plugin control C gives, in this order, `MouseDown`(1), `MouseUp`(1),
+`MouseClick`(1) for the first click; for the second press, `MouseDown`(1) for the select
+action and `MouseDown`(1) for the double-select action; for the second release, `MouseUp`(1)
+and `MouseClick`(1) for the select action, then `MouseUp`(1) and `MouseDoubleClick`(1) for the
+double-select action (the capture ends with the last of them). > **OPEN:** the order in which
+the input layer starts and ends two actions triggered by one physical event (here select and
+double-select), and how it turns a `Tap` activation of a Momentary action (the owner's right
+select) into a start and an end (expected: both at the release, giving `MouseDown`,
+`MouseUp`, `MouseClick` together; S3 captured `MouseClick` with `Button` 2). Tessera: the
+order of the bindings in the effective key map; start and end both at the release.
+
+<a id="13-12-3"></a>
+#### 13.12.3 `MouseMove`
+
+On every pointer movement the UI notes the time, refreshes the pointer and hover targets
+(which may send `MouseLeave`/`MouseEnter`, §13.12.4) and then delivers **`MouseMove`** to the
+capturing control if there is one, otherwise to the hover target, with `X`, `Y` relative to
+that control. While the mouse is captured, the capturing control receives `MouseMove` even
+when the pointer is outside it.
+
+<a id="13-12-4"></a>
+#### 13.12.4 `MouseEnter`, `MouseLeave`
+
+Whenever the hover target changes from O (old, possibly none) to N (new, possibly none):
+
+1. List O and its ancestors, innermost first, and likewise N and its ancestors; drop the
+   ancestors the two lists share.
+2. Deliver **`MouseLeave`** to each remaining control of O's list, innermost first.
+3. Then deliver **`MouseEnter`** to each remaining control of N's list, innermost first.
+
+Ancestors receive these events whether or not they are mouse-visible. Examples: moving from
+a window's background onto a button inside it gives `MouseEnter` on the button only (the
+window was entered already); moving from the button out of the window gives `MouseLeave` on
+the button, then on the window; moving from outside straight onto the button gives
+`MouseEnter` on the button, then on the window. While the mouse is captured the hover
+target can only be the capturing control or none, so other controls get no enter/leave
+events until the capture ends.
+
+<a id="13-12-5"></a>
+#### 13.12.5 `MouseHover` (P51)
+
+In each UI tick (§3.3) the UI checks the hover target H. It delivers **`MouseHover`** to H,
+with the pointer position relative to H, when all of these hold:
+
+- H has not been marked as hovered;
+- the manager's pointer-outside flag (§13.11) is clear (always so in this build);
+- no control is capturing the mouse;
+- there is a hover target H;
+- **more than 0.25 s** of the UI's frame clock have passed since the last pointer movement
+  or the end of the last capture, whichever is later (the client's default hover delay, a
+  32-bit float; client panels may override it per control, the plugin API cannot). The
+  comparison is strict: exactly 0.25 s is not enough.
+
+Before delivering, the UI hides any tooltip it is showing. When H is already marked as
+hovered (or the pointer-outside flag is set), the check only looks after the client's own
+tooltip lifetime and delivers nothing.
+
+H is marked as hovered only when the hover notification is reported as handled. The plugin
+layer never reports it handled (§9.7), so, unless a native ancestor does, the conditions keep
+holding and `MouseHover` is delivered again in every following tick until the pointer moves
+(which restarts the 0.25 s) or the hover target changes (which clears the mark).
+
+> **OPEN:** confirm by observation (a test plugin counting `MouseHover` per second while the
+> pointer rests on a plain control in a plain window) whether the original repeats it every
+> frame. Tessera: repeat every tick, as described.
+
+<a id="13-12-6"></a>
+#### 13.12.6 `MouseWheel` (P52)
+
+The scroll-up (0x82) and scroll-down (0x10) actions are not mouse-button actions. When one
+starts, the UI refreshes the pointer target and delivers **`MouseWheel`** to the capturing
+control if there is one, otherwise to the pointer target, with `X`, `Y` relative to it and
+`Direction` +1 for 0x82, −1 for 0x10 (§9.3). Their end is ignored. The wheel never
+activates or deactivates windows. When no control is under the pointer, plugin controls get
+nothing. A `MouseWheel` notification that no native control consumes travels on to the
+ancestors' native handling (§9.7), where client panels may scroll; it never fires
+`MouseWheel` on a plugin ancestor.
+
+<a id="13-13"></a>
+### 13.13 Keyboard routing and focus (P48, P53)
+
+Every input action that is neither a mouse-button action (§13.12.1) nor a wheel action is a
+**key action**, with one exception: the UI ignores action **0xAB** entirely, at its start and
+at its end; it is neither offered to a control nor broadcast (P48; in this install 0xAB is a
+key of the input-action chain with toggle type 2, O6). Impulse key actions (toggle type 2)
+pass through the same path when they start; the end of an Impulse action is ignored. Key
+actions of any other type, including 0 for an action that the context's action map does not
+list (§13.12.1), also take the path below when they end.
+
+**Key action starts:**
+
+1. If a control has keyboard focus, it is offered the action; otherwise the active window
+   (§13.14) is offered it; if there is neither, go to step 3.
+2. Being offered means the control's native key handling runs and a key notification goes to
+   it and up its ancestors (§9.7). If any native listener consumes it, routing stops.
+   The plugin **`TextBox`** class (and the skinned text box of §14.2, which is built on it)
+   has a listener of its own: whenever the text box itself is the source of a key-down
+   notification it fires `KeyDown` with that action, and for a key-up notification `KeyUp`,
+   without consulting `GetWantsKeyEvents()` (P48). A key notification has a text box as its
+   source only when the text box holds the focus. Plugin listeners never consume.
+3. Not consumed: the **`KeyDown` broadcast** (§9.7) is sent: every control with
+   `SetWantsKeyEvents(true)`, in subscription order, gets `KeyDown` with `Action` and the
+   modifier flags. Focus, visibility, enabled state and window activation do not matter.
+
+**Key action ends:** the same with `KeyUp` (the focused TextBox fires `KeyUp` from its
+notification; the broadcast is `KeyUp`).
+
+A focused text box that has also called `SetWantsKeyEvents(true)` therefore receives
+`KeyDown` twice for an action that no native handling consumes: first from its notification
+(step 2), then from the broadcast (step 3); the same holds for `KeyUp`.
+
+So a plugin that wants global hot keys subscribes any control, even a hidden one, to key
+events; and keys typed into a client text field or a focused plugin text box that consumes
+them reach no plugin `KeyDown` broadcast. `SetWantsKeyEvents(true)` on a control that already
+wants them changes nothing; turning it off stops both `KeyDown` and `KeyUp` at once.
+
+> **OPEN:** which key actions a focused plugin TextBox (and the client's own text fields)
+> consume, and how character input (typed text, as opposed to key-binding actions) reaches a
+> text box. Tessera: a focused text box consumes the actions it uses for editing (characters,
+> cursor movement, deletion, selection, copy and paste) and lets every other action through.
+
+**Keyboard focus.** At most one control has keyboard focus.
+
+- `Control:Focus()`: find the control's top-level window W (the control itself if it is a
+  window); if there is none, nothing happens. Remember the control as W's focus control. If
+  W is the active window, move the focus to the control now.
+- Moving the focus from A to B (B ≠ A) delivers `FocusLost` to A (if any), then
+  `FocusGained` to B, both as notifications (§9.7). Moving it to the control that already has
+  it does nothing.
+- `HasFocus()` is true exactly when the control has keyboard focus.
+- When a window becomes active (§13.14), its remembered focus control, if any, receives the
+  focus. When a window is deactivated, the control that has focus loses it (`FocusLost`) and
+  no control has focus until a window with a remembered focus control is activated; the
+  remembered control stays remembered.
+
+Worked example: plugin windows W1 (active, focus on text box T1) and W2 (inactive). `T2:Focus()`
+on a text box of W2 only remembers T2 (no events; `T2:HasFocus()` is false). `W2:Activate()`
+then gives `Deactivated` on W1, `FocusLost` on T1, `Activated` on W2, `FocusGained` on T2.
+
+<a id="13-14"></a>
+### 13.14 Z-order and window activation (P54, P55)
+
+**Z-order.** `SetZOrder(n)` stores n (truncated to an integer); the UI keeps every control's
+children sorted so that a higher `ZOrder` is above a lower one: it is drawn later and is
+tried first by the hit test (§13.11). Changing the value removes the control from its
+parent's child order and inserts it again at its new place. `GetZOrder()` returns the value
+set; the default is 0. Top-level plugin windows are children of the UI root, so their
+`ZOrder` orders them among all top-level windows, the client's panels included. Among
+siblings with the same `ZOrder` the order is by an internal per-control sequence, and
+activation (below) moves a window above all its siblings of the same `ZOrder`.
+
+> **OPEN:** the `ZOrder` values of the client's own top-level panels, and which of two new
+> siblings with equal `ZOrder` is on top (the internal sequence was not traced). Tessera:
+> client panels at 0; among equal `ZOrder` the most recently added or activated is on top.
+
+**Active window.** At most one top-level window is active.
+
+`Window:Activate()` (and activation by a mouse press, below) on window W:
+
+1. If W is already active, nothing happens (in particular W is not raised again).
+2. If W cannot be activated, nothing happens. Plugin windows can be activated.
+   > **OPEN:** which client panels cannot be activated.
+3. W becomes the active window. The previously active window, if any, is deactivated: it
+   gets `Deactivated`, and the focus control loses the focus (§13.13).
+4. W is moved to the end of the client's activation history and raised above all its
+   siblings of the same `ZOrder`.
+5. W gets `Activated`.
+6. If W has a remembered focus control, it receives the focus (`FocusGained`).
+
+All of these events are notifications (§9.7). `Activate()` on a control that is not a
+window activates its top-level window. A guard makes a nested `Activate()` on the same
+window, made from a handler that its own activation triggered, do nothing.
+
+**Activation by a mouse press.** When a Momentary mouse-button action starts while no
+control is capturing (§13.12.2), the UI looks at the top-level window that contains the
+pointer target:
+
+- if it is the active window, nothing changes;
+- if there is such a window and it can be activated, it is activated as above (so clicking
+  any control of an inactive plugin window activates and raises that window);
+- otherwise (the press hit no window, for example the game world, or a window that cannot
+  be activated) the active window, if any, is deactivated: `Deactivated`, and the focus is
+  lost.
+
+The wheel does not activate. > **OPEN:** whether showing a window (`SetVisible(true)`)
+activates it, and whether a plugin window that is hidden while active stays the active
+window. Tessera: showing does not activate; hiding the active window deactivates it.
+
+<a id="13-15"></a>
+### 13.15 Size limits (P56)
+
+`SetMinimumWidth`, `SetMinimumHeight`, `SetMaximumWidth`, `SetMaximumHeight` (and the
+`…Size` pairs, which set width then height) store limits on the control. Values are
+truncated to integers. A limit that was never set does not exist; a limit set to any value,
+**including 0**, exists from then on. The getters return the stored value, or 0 when the
+limit was never set (so `GetMaximumWidth() == 0` cannot tell "no maximum" from "maximum 0").
+
+Setting a limit does **not** resize the control. Every later resize (by `SetSize`,
+`SetWidth`, `SetHeight`, or the edge-attachment layout of §13.16) applies the limits to the
+requested size, per axis:
+
+1. if a maximum exists and the requested value is greater, use the maximum;
+2. then, if a minimum exists and the value is smaller, use the minimum (so a minimum greater
+   than the maximum wins).
+
+`SetWidth(w)` resizes to (w, current height) and `SetHeight(h)` to (current width, h), so
+both clamp both axes. `SizeChanged` fires only when the clamped size differs from the old
+size (§9.6). Negative requests are not rejected; they are clamped like any value. The
+oversize warning of §13.2 is checked on the final size.
+
+Worked example: a control 100 × 50 gets `SetMaximumWidth(80)`; it stays 100 × 50, and
+`GetWidth()` is still 100. `SetHeight(60)` then makes it 80 × 60 (width clamped by the new
+maximum). `SetMinimumWidth(90)` followed by `SetWidth(10)` makes it 90 × 60.
+
+> **OPEN:** what the original does with a negative or zero size (drawing and hit testing of
+> an empty rectangle). Tessera: store it; a control with width or height ≤ 0 draws nothing
+> and is never hit.
+
+<a id="13-16"></a>
+### 13.16 Edge attachments (P57)
+
+`AttachEdges(left, top, right, bottom)` sets one `EdgeAttachmentType` (Appendix A.6) per edge
+of the control; values are truncated to integers and stored without checking.
+`GetEdgeAttachments()` returns the four in the same order (0 for never set). The attachments
+say how the control's edges follow its **parent's** size; they are applied by a layout step.
+
+**Reference rectangles.** A control with attachments keeps two reference rectangles: its own
+rectangle R (left `RL`, top `RT`, right `RR` = `RL` + width − 1, bottom `RB`) and its
+parent's rectangle Q (width `QW`, height `QH`), both as they were at the last capture. (In a
+window whose UI scale is not 1, R's width and height are the displayed ones divided by the
+scale.) A capture happens, when the control has a parent, on `AttachEdges`, and after every
+plugin call that resizes, moves or re-parents the control (`SetSize`, `SetWidth`,
+`SetHeight`, `SetPosition`, `SetLeft`, `SetTop`, `SetParent`); a control without any
+attachment call never captures, except a window that the plugin layer has marked for global
+UI scaling (§13.3), which captures on the same calls when it has a parent (with four None
+attachments that has no visible effect). After `AttachEdges` and after a plugin resize or re-parent
+(not after a pure move), the layout step runs once at once against the fresh references.
+Resizes made by that immediate layout fire no `SizeChanged` (on the control or on anything
+laid out below it during that step); `PositionChanged` is not suppressed. Because the
+references were just captured, this immediate layout changes nothing for None, Same,
+Opposite and Proportional edges, but it does re-apply Center, Mirror and RatioProportional.
+
+**Initial references (P57).** Until its first capture, a control's own reference R is its
+creation rectangle: `RL` 0, `RT` 0, `RR` 49, `RB` 49 (50 × 50, §13.1). It has no parent
+reference Q until then; a layout step that finds no Q uses the **parent's own** reference
+rectangle R instead (the parent's creation rectangle, or its rectangle at the parent's last
+capture), so `QW` and `QH` are the parent's reference width and height.
+
+**When the layout runs.** Whenever a control's size actually changes, the layout step runs
+for each of its children, in child order, and so recursively down the tree. Children whose
+four attachments are 0 and whose size is not 0 × 0 stay where they are; those of size 0 × 0
+go through the layout step, where four None edges keep them where they are. So a control
+without attachments is never moved or resized because its parent was.
+
+**The layout step** for a control with references R and Q, whose parent's current size is
+`PW` × `PH`:
+
+- Deltas and ratios: `dW` = `PW` − `QW`, `dH` = `PH` − `QH`; `sX` = `PW` / `QW` (0 if `QW` is
+  0), `sY` = `PH` / `QH` (0 if `QH` is 0), as 32-bit floats. `RW` = `RR` − `RL` + 1,
+  `RH` = `RB` − `RT` + 1. "Half(n)" is n divided by 2, truncated toward zero; "trunc" converts
+  a float to an integer by truncation toward zero.
+- Each edge gets a new coordinate from its own attachment type:
+
+| Type (value) | left | top | right | bottom |
+|---|---|---|---|---|
+| None (0) | current left | current top | current right | current bottom |
+| Center (1) | Half(`PW`) − Half(`RW`) | Half(`PH`) − Half(`RH`) | Half(`PW`) − 1 + Half(`RW`) | Half(`PH`) − 1 + Half(`RH`) |
+| Mirror (2) | `QW` − 1 − `RR` | `QH` − 1 − `RB` | `PW` − 1 − `RL` | `PH` − 1 − `RT` |
+| Proportional (3) | trunc(`RL` × `sX`) | trunc(`RT` × `sY`) | trunc(`RR` × `sX`) | trunc(`RB` × `sY`) |
+| Opposite (4) | `RL` + `dW` | `RT` + `dH` | `RR` | `RB` |
+| Same (5) | `RL` | `RT` | `RR` + `dW` | `RB` + `dH` |
+| RatioProportional (6) | trunc(Half(`PW`) − `RW` × `sY` × 0.5) | trunc(Half(`PH`) − `RH` × `sX` × 0.5) | trunc(`RW` × `sY` × 0.5 + Half(`PW`)) − 1 | trunc(`RH` × `sX` × 0.5 + Half(`PH`)) − 1 |
+| any other value | `RL` | `RT` | `RR` | `RB` |
+
+  "Same" keeps the edge's distance to the parent's edge on the **same** side, "Opposite" its
+  distance to the parent's **opposite** edge. Mirror uses the reference parent size Q for
+  left and top but the current size for right and bottom, as stated. None takes the
+  control's current coordinate (relative to the parent). (The client's layout step keeps the
+  reference coordinate instead for an element of size 0 × 0 that lacks a mark set by the
+  client's element-creation step; every plugin control is created through that step and
+  carries the mark, which nothing clears, so for plugin controls None always means the
+  current coordinate, P57.)
+- Second pass, for RatioProportional edges, in this order, each using the values computed so
+  far, with `aW` = `RW` / `RH` (1 if `RH` is 0) and `aH` = `RH` / `RW` (1 if `RW` is 0):
+  left: trunc(right − (bottom − top + 1) × `aW`); right: trunc(left + (bottom − top + 1) ×
+  `aW`) − 1; top: trunc(bottom − (right − left + 1) × `aH`); bottom: trunc(top + (right −
+  left + 1) × `aH`) − 1. This keeps the reference aspect ratio.
+- The control is then resized to (right − left + 1) × (bottom − top + 1), which applies the
+  size limits of §13.15, and moved to (left, top). Its `SizeChanged`/`PositionChanged` fire by
+  the rules of §9.6, and its own children are laid out in turn if its size changed.
+
+All arithmetic other than the float steps is 32-bit integer arithmetic; the float steps use
+32-bit floats.
+
+Worked examples (synthetic). Reference: parent Q = 200 × 100; control R: `RL` 10, `RT` 20,
+`RR` 59, `RB` 39 (50 × 20). The parent is resized to 300 × 150, so `dW` = 100, `dH` = 50,
+`sX` = `sY` = 1.5.
+
+| Attachments (left, top, right, bottom) | New left, top, right, bottom | New size |
+|---|---|---|
+| 0, 0, 0, 0 | 10, 20, 59, 39 (unchanged) | 50 × 20 |
+| 0, 0, 5, 0 (right Same) | 10, 20, 159, 39 | 150 × 20 |
+| 4, 4, 5, 5 (move with bottom-right) | 110, 70, 159, 89 | 50 × 20 |
+| 0, 0, 5, 5 (stretch) | 10, 20, 159, 89 | 150 × 70 |
+| 1, 1, 1, 1 (centre) | 125, 65, 174, 84 | 50 × 20 |
+| 3, 3, 3, 3 (proportional) | 15, 30, 88, 58 | 74 × 29 |
+
+> **OPEN:** how the layout treats a top-level window (a control whose parent is the UI root)
+> when the display size changes, and whether the client re-captures references when the
+> parent is moved rather than resized. Tessera: top-level windows are laid out against the
+> UI area like any child of the root; moving a parent does not re-capture.
 
 ---
 
@@ -1731,6 +2447,73 @@ third-party plugins) or against the user install.
     recursion, `Sort` with an inconsistent comparator, invalid DIDs and image files, cyclic
     tables passed to `Save`, and malformed `.plugindata` files all produce errors or empty
     results, never a panic.
+26. **Notification queueing (§9.7):** with the worked example of §9.7, the log is exactly
+    `MouseClick`, `SizeChanged`, `VisibleChanged`, and `GetWidth()` inside the `MouseClick`
+    handler returns 50. In top-level code, `c:SetSize(10, 10)` on a control of another size
+    has fired `SizeChanged` when it returns; `c:SetSize` with the current size fires nothing.
+27. **Update broadcast (§9.4):** a control that was never parented and is not visible, with
+    `SetWantsUpdates(true)`, receives `Update` once per tick. The worked example of §9.4
+    gives A, B, D in the first tick.
+28. **Size limits (§13.15):** the worked example of §13.15 holds step by step;
+    `GetMaximumWidth()` of a new control is 0; after `SetMaximumWidth(0)`, `SetWidth(10)`
+    gives width 0; after `SetMinimumWidth(30)` and `SetMaximumWidth(20)`, `SetWidth(25)`
+    gives 30.
+29. **Scroll bar value (§9.6):** with minimum 0, maximum 100 and value 100 (not bound),
+    `SetValue(100)` fires nothing; `SetValue(1000)` fires one `ValueChanged` and the value
+    stays 100; from value 50, `SetValue(-5)` gives 100. A new scroll bar reports minimum 0,
+    maximum 100, value 0, large change 10, small change 1. The worked example of §9.6 gives
+    exactly the getter results and the two `ValueChanged` stated there; after `SetMinimum(-5)`
+    on a new bar, `GetMinimum()`, `GetMaximum()` and `GetValue()` all return 4294967291. With
+    minimum 5 and maximum 10, `SetValue(20)` and `SetValue(-1)` give 10 and `SetValue(2)`
+    gives 5. After any sequence of the five setters, minimum ≤ value ≤ maximum and small
+    change ≤ large change hold as unsigned numbers.
+30. **Edge attachments (§13.16):** for a parent resized from 200 × 100 to 300 × 150 with the
+    child references of the worked example, each row of the §13.16 table gives the stated
+    rectangle; `GetEdgeAttachments()` returns the four values passed to `AttachEdges` in the
+    same order; a control without `AttachEdges` keeps its rectangle when its parent resizes.
+31. **Mouse buttons (§13.12.1):** the `Button` value is 1 for actions 0x56 and 0x33, 2 for
+    0x4C and 0x2E, 4 for 0xA4 and 0x93, 0 for 0x82; an action whose toggle type is 2 never
+    produces `MouseDown`, `MouseUp`, `MouseClick` or `MouseDoubleClick`.
+32. **Capture (§13.12.2):** press over control C, move the pointer off C, release: C gets
+    `MouseDown`, `MouseUp` and no `MouseClick`; `MouseMove` events between press and release
+    all go to C. Press and release over C give `MouseDown`, `MouseUp`, `MouseClick`.
+33. **Hit test (§13.11):** with control M (mouse-invisible) above sibling S, both under the
+    pointer, a press goes to S; a mouse-visible child of M under the pointer gets it instead;
+    the part of a child that lies outside its parent's rectangle never receives
+    `MouseEnter`.
+34. **Enter/leave order (§13.12.4):** moving the pointer from outside a window W straight
+    onto button B inside it gives `MouseEnter` on B, then on W; moving from B to W's
+    background gives only `MouseLeave` on B.
+35. **Keys (§13.13):** a hidden control without focus, with `SetWantsKeyEvents(true)`,
+    receives `KeyDown` and `KeyUp` for an action that no focused control consumes; two such
+    controls receive them in the order in which they subscribed.
+36. **Focus and activation (§13.13, §13.14):** the worked example of §13.13 produces exactly
+    that event order; `Activate()` on the active window produces no event; a press over a
+    control of an inactive plugin window produces that window's `Activated` before the
+    control's `MouseDown`.
+37. **Error to chat (§6.6):** a handler that calls `error("x")` produces exactly one chat
+    line of chat type 1 whose text is the Lua error message (chunk name, line, `x`), with
+    nothing added before or after it.
+38. **Plugin-data reader (§10.4):** the byte-exact original files of §10.4 (`return 5.000000`,
+    `return "a\"b"`, `return true`, the 15-byte empty table) load as 5, `a"b`, `true` and an
+    empty table.
+39. **Initial geometry (§13.1):** a fresh `Turbine.UI.Control()`, `Window()`, `Label()`,
+    `TextBox()`, `Button()` and `ScrollBar()` each report position 0, 0 and size 50, 50.
+40. **No attachments (§13.16):** a child without `AttachEdges`, sized 0 × 0 and placed at
+    (10, 10), is still 0 × 0 at (10, 10) after its parent is resized; so is one of size
+    20 × 20. Before any capture the child's references are the 50 × 50 creation rectangle.
+41. **Toggle types (§13.12.1):** with action data in which the left select action has
+    toggle type 0 (absent), 3, 4 or 5, one start and one end over control C give
+    `MouseDown`, `MouseUp`, `MouseClick`, exactly as with type 1; with type 2 they give none
+    of the four.
+42. **Hover timing (§13.12.5):** with the pointer resting on C since frame-clock time t and
+    no capture, no `MouseHover` is delivered in a tick at time t + 0.25 exactly, and one is
+    delivered in the first tick after it; ending a capture at time u restarts the delay from
+    u.
+43. **Text-box keys (§13.13):** a focused plugin text box with `GetWantsKeyEvents()` false
+    receives `KeyDown` and `KeyUp` for an action that its native handling does not consume;
+    with it true, it receives each of them twice. Action 0xAB produces no `KeyDown` or
+    `KeyUp` on any control.
 
 ---
 
@@ -1738,22 +2521,41 @@ third-party plugins) or against the user install.
 
 All `> **OPEN:**` callouts above:
 
-- Sandbox: whether any path sets an apartment memory limit (§3.3).
+- Sandbox and scheduling: whether any path sets an apartment memory limit (§3.3); order of
+  the plugin host's deferred work relative to the UI tick (§3.3).
 - Names: C-runtime class of package-name bytes 0x80–0xFF and of key units above 0xFF (§7.2).
-- Lifecycle: autoload order (§6.2); localized aliases of `/plugins` (§6.4); chat colour and
-  prefix of reported errors (§6.6).
-- Events: fields of `Party.MemberAdded/MemberRemoved`, `AssistTargetRemoved` (§9.3);
-  `Update` on hidden controls (§9.4); setters that fire their own change events (§9.6).
-- Plugin data: callbacks of writes queued before an apartment closed (§10.6).
-- Shell and chat: `WriteLine` lines and `Chat.Received` (§11.1); whitespace and case in
-  `Execute` arguments (§11.2); markup in chat `Message` (§11.3).
-- UI: opacity of child and non-window controls (§13.1); edge-attachment order and rules
-  (§13.2); window rotation units and pivot, scaling units and origin point, Escape (§13.3);
-  `Display.GetUIGroupScale` semantics (§13.10); label selection base and defaults (§13.4);
-  which buttons activate `Click` (§13.6); stretch modes (§13.8); skinned frame metrics and
-  parts (§14.2); interaction details of the game-object controls (§14.5).
+- Lifecycle: autoload order (§6.2); localized aliases of `/plugins` (§6.4); whether error
+  lines reach `Chat.Received` (§6.6).
+- Events: fields of `Party.MemberAdded/MemberRemoved` (§9.3); when an `Update` subscriber
+  that turned updates off is dropped (§9.4); whether `SetText`, `SetChecked`,
+  `SetSelectedIndex`/`SetSelectedItem` and `SetSelectedNode` fire their change events
+  (§9.6).
+- Plugin data: whether a write queued before its apartment closed is still performed
+  (§10.6).
+- Shell and chat: `WriteLine` lines and `Chat.Received` (§11.1); the client command-line
+  parser's whitespace, quote and case rules for `Execute` arguments (§11.2); markup in chat
+  `Message` (§11.3).
+- UI: opacity of child and non-window controls, initial size of the skinned controls (§13.1); window rotation units and pivot,
+  scaling units and origin point, Escape (§13.3); label selection base and defaults
+  (§13.4); which buttons and keys make a native button report "activated", and disabled
+  buttons (§13.6); stretch modes (§13.8); `Display.GetUIGroupScale` semantics (§13.10);
+  special point tests of client panels and which client states lock the pointer (§13.11); double-click acceptance of every control
+  class, the order of two actions from one physical event, the start/end of `Tap`
+  activations and the start/end sequences of mouse-button actions of toggle types 3–5
+  (§13.12.2); per-tick repetition of `MouseHover` (§13.12.5); keys consumed by
+  focused text boxes and character input (§13.13); `ZOrder` of client panels and equal-ZOrder
+  order (§13.14); non-activatable client panels, activation on show and on hide (§13.14);
+  negative or zero sizes (§13.15); layout of top-level windows and re-capture on a parent
+  move (§13.16); skinned frame metrics and parts (§14.2); interaction details of the
+  game-object controls (§14.5).
 - Lotro and gameplay: item shortcut companion value and `SetData` parsing (§14.6); which of
   the remaining enums follow a data enum (§15).
+
+The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
+`AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
+question of which setters fire change events (§9.6, now narrowed to four calls), callbacks
+of writes after an apartment closed (§10.6, narrowed), edge-attachment order and rules
+(§13.2, §13.16), and the implementer question on finalizers (§3.3).
 
 ---
 
@@ -1866,6 +2668,8 @@ AliceBlue #F0F8FF, AntiqueWhite #FAEBD7, Aqua #00FFFF, Aquamarine #7FFFD4, Azure
 
 None = 0, Center = 1, Mirror = 2, Proportional = 3, Opposite = 4, Same = 5, RatioProportional = 6
 
+Meaning of each value per edge: §13.16.
+
 ### A.7 `Turbine.UI.Lotro.UIScalingGroupType` (new in this build, 57 values)
 
 None = 0, QuickslotBars = 1, PetQuickslotBar = 2, PetVitals = 3, OpponentVitals = 4, Radar = 5, Toolbar = 6, QuestTracker = 10, Vitals = 11, Alerts = 14, FellowshipVitals1 = 15, FellowshipVitals2 = 16, FellowshipVitals3 = 17, FellowshipVitals4 = 18, ClassAbilities = 22, MountDisplay = 23, SoldierVitals = 24, EscortVitals = 25, AllegianceProgress = 26, InventoryBags = 27, Character = 29, Options = 30, Panels = 31, BarberShop = 32, Tooltips = 33, Deeds = 34, TraitTree = 36, HobbitPresents = 37, Wallet = 38, ItemWear = 39, MountedCombat = 40, BigBattles = 41, Skirmish = 43, Mail = 44, Chat = 45, DressingRoom = 46, Help = 47, Webstore = 48, Vault = 49, Inspect = 51, Wardrobe = 52, Barter = 53, ProgressBar = 54, Menus = 55, HudText = 56, Auction = 57, QuestBestow = 58, Global = 60, Pregame = 61, MapQuestGuideFrame = 62, QuestActionButton = 63, Tutorials = 64, TargetProgressBar = 65, Map = 66, TargetAssist = 67, FellowshipManoeuvres = 70, LootRoll = 71
@@ -1901,3 +2705,5 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-04 | First draft (observations made 2026-10-03). |
 | 2026-10-05 | Revision from method M4 (BIN, client 4906.0071.1794.4035, decision 0011) and new M1 observations (O4, O5); status Draft → Review. Of the 63 OPEN callouts of the first draft, 22 callouts remained (listed in §19; first stated as 23, which counted the §19 heading). New or changed: sandbox removals and `debug` hiding, stock 5.1.4 loader behaviour, no memory/time limits in the original (§3); discovery depth and duplicates (§4.3); descriptor rules and limits (§5.2); `PluginOptions.xml` structure (§5.4); load/unload sequences, `plugin` reset, deferred `LoadPlugin`, immediate `UnloadScriptState` (§6); `import` mechanics, folder-first resolution, run-once, native/disk merge, `_` package-name field (§7); positional arguments, list indices, UTF-8 (§3.4, §8); dispatcher and argument tables, wheel direction (§9); plugin-data timing, key rule (64), path, exact file format, saveable values (§10); shell rules and defaults (§11); engine values (§12); Control min/max sizes and edge attachments, Window scaling, markup tags, Color constructor, image errors (§13); action IDs and enum values against game data, shortcut data formats (§14, §15); money order (§15); inventory of this build (§16); new enums (Appendix A.6, A.7); answers to Appendix B; corrections to `plugin-descriptor.md` and `keymap.md` (§20). Corrections to this spec's first draft: key limit 63 → 64, resolution order (file-first → folder-first), `plugin` stays set → reset to nil, `Color()` default, `GetMoneyComponents` order, `LuaScriptLog` is not an event, `ComboBox`/`StoutAxeAttributes` not registered, `LotroPluginManager` is not a separate table. |
 | 2026-10-05 | Revision answering the review of 2026-10-05 (status stays Review). **Accuracy:** named colours are byte/255 rounded to 3 decimals and stored as 32-bit floats, not byte/255 (§13.9, A.5 note, invariant 19, P45; BIN 564/564 components, S3 423/423). **Overclaim:** the plugin-data key rule and the package-name rule are the C runtime's `isalnum` (plus `_`) in a locale the client sets from its game language, not ASCII-only; ASCII-only is now a stated Tessera deviation (§7.2, §10.2, invariant 12, P5, P14, P43, P44, §20 D14 row); the plugin-data decimal separator follows that game-language locale (§3.4, §10.4). **Minor:** O4 counts corrected (input actions 471 = 290 + 181; language mapper base 0x23000186 and chat-type base 0x230002A9 added; key 0 present in every chain); §15 table split into names / non-zero values / keys; §9.3 no longer calls the owner's keymap the default; sources or marks added for §13.1, §13.3 `Activate`, §13.10 `ContextMenu`, §14.2 and §14.5 (P46, Reported, from S2/S3), with unsourced claims removed or moved into OPEN callouts (opacity of children §13.1, close button §14.2, control interaction §14.5); naming note cites `LEGAL.md` §4.1 (*Google v. Oracle* row) and the pending ARCHITECTURE §18.2 legal item instead of `LEGAL.md` §10; `GetScriptVersion` = 13, 0 now traced (P35). OPEN callouts: 25 (22 before, plus §7.2 non-ASCII classification, §13.1 opacity, §14.5 control interaction); listed in §19. |
+| 2026-10-06 | Second OPEN-closing pass (spec writer, dirty room; BIN second pass on the same build, plus O5 addendum and new O6); status Accepted → Review (becomes Revised after re-review). **New sections:** §9.7 (notification delivery and FIFO queueing, broadcasts, order), §13.11 (hit test, pointer and hover targets), §13.12 (mouse-button actions and the `Button` table, capture, `MouseDown`/`MouseUp`/`MouseClick`/`MouseDoubleClick`, `MouseMove`, `MouseEnter`/`MouseLeave` chains, `MouseHover` timing with the 0.25 s delay, `MouseWheel` target), §13.13 (key routing, `KeyDown`/`KeyUp` broadcast independent of focus, keyboard focus), §13.14 (z-order, window activation by `Activate()` and by a mouse press), §13.15 (size limits), §13.16 (edge attachments: argument order, reference capture, per-type layout rules, worked examples). **Changed:** §3.3 (UI tick order; implementer question on finalizers answered: accepted with one condition), §6.6 (errors and warnings go to chat as chat type 1 with no prefix and to a log channel; memory-error status not reported by the protected call), §9.3 (`Button` 0 for other actions; `AssistTargetRemoved` empty per S3), §9.4 (`Update` is a broadcast: hidden and unparented controls receive it; subscription order; worked example), §9.6 (setter/change-event table, `EnabledChanged` direct, `ScrollBar:SetValue` unsigned clamping), §10.4 (no final line end; byte-exact examples), §10.6 (write step; callbacks only into a live apartment), §11.2 (plugin layer passes command and arguments unchanged), §13.1–§13.3, §13.6, §13.7 (pointers to the new sections; `Button.Click` is not `MouseClick`), Appendix A.6. **Provenance:** BIN key extended; rows P47–P63, O6 added. **Invariants** 26–38 added. **OPEN callouts:** 35 before §19 (26 before this pass including the implementer's finalizer question; closed or narrowed: error colour and prefix, `AssistTargetRemoved`, `Update` on hidden controls, the general setter question, post-close callbacks, edge attachments, finalizers; new precise ones on the UI tick order, `Update` entry removal, the client command-line parser, the error line and `Chat.Received`, button activation, double-click acceptance, two-action order and `Tap` start/end, `MouseHover` repetition, text-box key consumption, client-panel `ZOrder` and activation, activation on show/hide, empty sizes, layout of top-level windows, special point tests). **Implementers re-check:** event delivery timing in `crates/plugins`/`crates/ui` (§9.7), `Update` delivery to hidden controls (§9.4), the mouse, key, focus and activation routing (§13.11–§13.14), size limits (§13.15), and the finalizer condition (§3.3). |
+| 2026-10-06 | Second revision of the day (spec writer, dirty room; BIN third pass on the same build, O6 re-read), answering the review of 2026-10-06; section numbers unchanged, one anchor added (`9-6-1`). (1) §9.6: `ScrollBar:SetValue` clamps against the maximum first, then the minimum (unsigned); new "scroll-bar numbers" paragraph: defaults 0/100/0/10/1, 64-bit truncation keeping the low 32 bits, unsigned results of the five getters, `SetMinimum`/`SetMaximum` drag the other bound and re-clamp the value (so minimum above maximum cannot be reached; if it were, `SetValue` would give the minimum), large/small change caps, thumb fractions, worked example; §13.7 points to it; invariant 29 extended. (2) §13.1: every plugin control is created at 0, 0 with size 50 × 50 (new P64); §13.16: initial references (R = creation rectangle, no Q, the parent's own reference used instead), captures of windows marked for global scaling, and a correction: plugin controls carry the creation mark that makes None edges always take the current coordinate, so the 0 × 0 exception never applies to them and a control without attachments never moves with its parent. (3) §13.12.5: the hover check also requires the manager's pointer-outside flag to be clear (never set in this build) and a hover target; the delay comparison is strict; the delay restarts at the end of a capture; the tooltip is hidden first. §13.11: the pointer-outside flag and the input layer's pointer lock suppress the hit test. (4) §13.13: the text-box key listener is now sourced (P48 extended): it fires on any key notification whose source is the text box, for `TextBox` and the skinned text box; consequence: double delivery when the text box also subscribes; action 0xAB is ignored by the UI (O6, P48). (5) §13.12.1/§13.12.2: the UI only tests for toggle type 2 in the action map of the context in force; types 0, 1, 3, 4, 5 all follow the Momentary rules; consequences for repeated starts and latches; OPEN on the input layer's sequences. **Provenance:** BIN key extended with the third session; P48–P51, P57, P58, O6 extended; P64 added. **Invariants** 39–43 added. **OPEN callouts:** 38 before §19 (new: initial size of skinned controls §13.1, what locks the pointer §13.11, start/end sequences of type 3–5 mouse-button actions §13.12.2). **Implementers re-check:** scroll-bar arithmetic and getters (§9.6), initial control size (§13.1), the None rule and initial references of the edge layout (§13.16), the hover conditions (§13.12.5), toggle-type handling of mouse-button actions (§13.12.1) and text-box key events and action 0xAB (§13.13). |

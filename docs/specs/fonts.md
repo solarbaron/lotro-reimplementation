@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Accepted (revision 4; revision 3 was Accepted earlier, see the change log) |
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review of revision 3, 2026-10-06: **passed**, Status moved to Accepted. Every item of `CLEAN_ROOM.md` §5.3 holds: functional facts only; no code or listing-shaped text (the one fenced block is the byte dump of the synthetic record of §13.1); identifiers are stored property, enum, DID-map and element labels used for interoperability; no game text, assets, keys or hostnames; every fact has a provenance row with a mark, and BIN questions 1–12 carry build, question and the M1–M3 justification; byte layouts give offset, size, type, meaning and units; FN1–FN19 and the §13 examples are testable (all §13 arithmetic re-checked); unknowns are OPEN (Q1–Q3, Q6–Q11, Q13–Q15); no closed gate is touched. Issues (a) and (b) and the legend item are fixed: §7.3, F28, FN18 and §13.6 now agree on the wrap-off line count, and F10 matches §6.1. Spot checks on the install (2026-10-06, all records): 48 font records (3 general, 45 local), all of size 36 + 11·*n*, 28,315 glyphs; borders 4/3/2/1/0 in 32/8/3/4/1 records with *bx* = *by*; the 95 atlases are format 28, category 13, foreground and background of equal size; packing rule holds with 703 row breaks; 122 inkless glyphs (U+0020 48, U+00A0 48, U+F00D 8, U+F000 17, U+00AF 1), 28,193 inked, 27,563 tight; foreground ink inside the bordered boxes in all 48 and outside the plain boxes only in 0x42000027 (3,259 pixels); 0x420000FD background all zero; 0x42000168–0x4200016B background equal to foreground. BIN check of question 12 (same build): the final-newline line is appended after the character loop with no test of the wrap-off flag. Earlier record: Claude review session (spec-writer agent), re-review of revision 2, 2026-10-05: changes requested. All five earlier items are fixed and the data spot checks agree (48 records, 95 atlases, 28,193 inked and 27,563 tight glyphs, the counts of `UICore_Text_one_line`, `UICore_Text_outline`, `UICore_Text_extra_leading` and both justification properties, the locale font, and the BIN break-range constants). Two remaining issues: (a) FN18 says that text with wrapping off has exactly one line, but §7.3 says that a final newline still adds the §7.1 case-2 line in that mode; §7.3 itself says both "the whole text is one line" and "adds the extra line". (b) F10 says "layout clamps it to 0–255", but §6.1 says that layout uses the values unclamped and only the drawing pass clamps. Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §4.3: the count of glyphs with ink is wrong. (2) No rule and no OPEN for the metrics of an empty line (§7.1). (3) "Used" extent and the per-axis meaning of the far-side values are unclear in §7.4. (4) Probable statements without OPEN callouts: §7.3 wrap flag, §8.1 outline-flag default, §9.1 tag slot for markup, §9.3 font for each chat line. (5) The rules for consecutive spaces at a break and for the indent on wrapped lines are not stated (§7.2–§7.3). All five addressed in revision 2 (2026-10-05, see change log); awaiting re-review. Revision 3 (2026-10-06) answers (a), (b) and the minor legend item; awaiting re-review. |
+| **Review record** | Claude review session (spec-writer agent), review of revision 4, 2026-10-06: **passed**, Status moved to Accepted. Every item of `CLEAN_ROOM.md` §5.3 holds for the new material (§6.3, §6.1/F10, §7.5, §7.6, §8.4–§8.6, §9.1 rule 5 and the panel-font census, §9.3 local file form and game objects, §9.6, FN20–FN25, §13.8–§13.11, §14, §15): functional facts only; no code or listing-shaped text; the names used (`UIScale_*`, `GOP_UIScale_*`, `UIScaleDefinition_*`, `GetUIGroupScale`, the `UICore_Text_*` and `UICore_Element_*` properties, `ChatOptionFontMenu`, the XML element and attribute names of §9.3) are stored property, enum or element labels, plugin-API names or file-format names needed for interoperability; no game text, assets, keys or hostnames (string-table entries are counted, never quoted; settings values are not given); every new fact has a row (F35–F46) with a mark, Probable and Inferred parts carry OPENs (Q2, Q3, Q13 residue, Q16, Q17), and BIN questions 13–22 state build, question and the M1–M3 justification, with no network, login, launcher or anti-tamper code; section numbers of revision 3 are unchanged (new material in new subsections; §8.4 keeps its topic); invariants are testable; no closed gate is touched. All arithmetic of §13.8–§13.11 re-checked (compositing incl. partial alpha k = 162 → (161, 120, 60, 102), colour packing 0xFF7F3FFF, underline rows and columns, both truncation cases incl. cut indices and content extents, list-item advance and bullet position), and FN21, FN22, FN24 follow from §8.4, §8.5 and §7.6. Spot checks on the install (2026-10-06, all 302 layouts re-extracted read-only and byte-identical to the writer's copies): F40 15 `UICore_Text_bullet_image` values (two distinct 0x41 DIDs) and 2 `UICore_Text_bullet_spacing` (2 and 4); F41 325 `UICore_Text_truncate_text_to_fit` (320 naming three string-table entries, 5 null) and 271 `UICore_Text_auto_tooltip_truncated_text` (246 true); F42 one `UICore_Text_set_tag_font_by_property` = 0 and no other by-property value; F46 781 non-empty element-level font arrays with first entries 272/107/50/63/65/31 (588), 2,038 elements based on 0x22000002, 2,018 with a template font, inherited 177/696/403/369/76/63 (1,784), `TrajanPro18` in 16 of 75 templates; F45 all nine game objects are 101 bytes and hold one `GOP_ChatTextTypeFontColorStruct`; F44 the settings folder holds `UserPreferences.ini`, `lotro.keymap`, `PluginData` and a browser cache, with the three `UIScale_*` keys in `[UI]` and no chat-font key. BIN checks (same build): the XML element names of §9.3 and `GetUIGroupScale` occur in the executable; the underline routine computes ⌊(line height + leading)/20⌋ + 1 (at least 1), extends the right end by −*B* and fills an inclusive rectangle through a helper that overwrites, with byte → float → byte colour conversion preserving all 256 values (F38); the drawing loop adds *X* to the pen only for the first non-newline character of a line that carries the list-item flag, with or without a bullet image (F40). Non-blocking remarks for a later revision: (i) §7.5 step 1 says the flagged character "starts a line", which holds only with wrapping on; with `UICore_Text_one_line` it can sit mid-line, where the stated rules give *X* in the layout advance but not in the drawing pen (that is the client's behaviour; one sentence would make it explicit); (ii) the §1 legend dates Confirmed observations 2026-10-05, while the revision-4 OBS facts are from 2026-10-06 (the OBS row states this). Earlier records: Claude review session (spec-writer agent), re-review of revision 3, 2026-10-06: **passed**, Status moved to Accepted. Every item of `CLEAN_ROOM.md` §5.3 holds: functional facts only; no code or listing-shaped text (the one fenced block is the byte dump of the synthetic record of §13.1); identifiers are stored property, enum, DID-map and element labels used for interoperability; no game text, assets, keys or hostnames; every fact has a provenance row with a mark, and BIN questions 1–12 carry build, question and the M1–M3 justification; byte layouts give offset, size, type, meaning and units; FN1–FN19 and the §13 examples are testable (all §13 arithmetic re-checked); unknowns are OPEN (Q1–Q3, Q6–Q11, Q13–Q15); no closed gate is touched. Issues (a) and (b) and the legend item are fixed: §7.3, F28, FN18 and §13.6 now agree on the wrap-off line count, and F10 matches §6.1. Spot checks on the install (2026-10-06, all records): 48 font records (3 general, 45 local), all of size 36 + 11·*n*, 28,315 glyphs; borders 4/3/2/1/0 in 32/8/3/4/1 records with *bx* = *by*; the 95 atlases are format 28, category 13, foreground and background of equal size; packing rule holds with 703 row breaks; 122 inkless glyphs (U+0020 48, U+00A0 48, U+F00D 8, U+F000 17, U+00AF 1), 28,193 inked, 27,563 tight; foreground ink inside the bordered boxes in all 48 and outside the plain boxes only in 0x42000027 (3,259 pixels); 0x420000FD background all zero; 0x42000168–0x4200016B background equal to foreground. BIN check of question 12 (same build): the final-newline line is appended after the character loop with no test of the wrap-off flag. Earlier record: Claude review session (spec-writer agent), re-review of revision 2, 2026-10-05: changes requested. All five earlier items are fixed and the data spot checks agree (48 records, 95 atlases, 28,193 inked and 27,563 tight glyphs, the counts of `UICore_Text_one_line`, `UICore_Text_outline`, `UICore_Text_extra_leading` and both justification properties, the locale font, and the BIN break-range constants). Two remaining issues: (a) FN18 says that text with wrapping off has exactly one line, but §7.3 says that a final newline still adds the §7.1 case-2 line in that mode; §7.3 itself says both "the whole text is one line" and "adds the extra line". (b) F10 says "layout clamps it to 0–255", but §6.1 says that layout uses the values unclamped and only the drawing pass clamps. Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §4.3: the count of glyphs with ink is wrong. (2) No rule and no OPEN for the metrics of an empty line (§7.1). (3) "Used" extent and the per-axis meaning of the far-side values are unclear in §7.4. (4) Probable statements without OPEN callouts: §7.3 wrap flag, §8.1 outline-flag default, §9.1 tag slot for markup, §9.3 font for each chat line. (5) The rules for consecutive spaces at a break and for the indent on wrapped lines are not stated (§7.2–§7.3). All five addressed in revision 2 (2026-10-05, see change log); awaiting re-review. Revision 3 (2026-10-06) answers (a), (b) and the minor legend item; awaiting re-review. |
 | **Implements into** | `crates/formats` (font-record decoder, §3; fuzz target), `crates/material` or a new text/UI crate (glyph-atlas loading, §4; glyph lookup, §5; placement, line layout and outline rendering, §6–§8), the M5 UI crate (`tessera-ui` in the roadmap: font selection for layout elements, §9.1–§9.2), the chat panel of `apps/client` (§9.3), `crates/script` (plugin `Font` values, §9.4), `apps/explorer` (a font view: atlas with glyph boxes, metrics table), `apps/dattool` (optional font summary), `fuzz/` |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize, strings), §5 (render surfaces 0x41), §8 (DID maps). [`dat-container.md`](dat-container.md) §8 (routing of prefix 0x42: local, then general). [`property-system.md`](property-system.md) §4 (value encodings), §5 (property sets), §7.3 / V7 (bit *i* of a bitfield = enum key *i* + 1), §8 (root DID map), §9 (DB-object code 0x4C = font). [`texture-list.md`](texture-list.md) §6.2 (font atlases; **completed** here). [`lua-plugin-api.md`](lua-plugin-api.md) §14.1 and Appendix A.2 (plugin `Font` values; **corrected** here). [`string-table.md`](string-table.md) §4 (UTF-16 text, markup syntax). `ui-layout.md` (UI layout records, element inheritance and states; written in parallel). |
 
@@ -25,8 +25,10 @@ plus one or two single-channel glyph images. This spec lets an implementer:
 - find a glyph for a character, including the client's substitution rule for missing
   characters (§5);
 - place glyphs on a line, lay out lines, break them and align them the way the client does
-  (§6–§7);
-- draw text with and without the outline style (§8);
+  (§6–§7), including list-item bullets (§7.5) and truncation to fit (§7.6);
+- know how a UI scale affects text (§6.3);
+- draw text with and without the outline style, with underlines, and composite it with the
+  client's exact arithmetic (§8);
 - choose the font a given piece of text uses: UI layout elements, the quest text size
   buttons, chat by chat type, plugin labels and the client's diagnostic overlay (§9);
 - decide where Tessera needs fonts of its own (§11).
@@ -66,8 +68,8 @@ Legend:
 
 | Tag | Source |
 |---|---|
-| OBS | User install, Steam, data current on 2026-10-05. Read in full: all 48 records with prefix 0x42 (`client_general.dat` 3, `client_local_English.dat` 45); all 95 glyph-atlas surfaces they name (`client_surface*.dat`, headers and pixels); all 302 UI layouts (0x22); all 24 DID maps (0x28); the property dictionary 0x34000000; the enum mappers 0x23000026, 0x23000177, 0x2300018E, 0x230000D1, 0x230002A8/0x230002A9; the two property sets 0x7800000B and 0x78000006 in full; a scan of every record of `client_general.dat`, `client_local_English.dat` and `client_gamelogic.dat` (including all 384,950 property sets) for the property IDs of §9 stored with their echo. |
-| BIN | Client executable `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`), read with a disassembler (objdump on selected address ranges, plus small scripts that search the code for constants and call sites) on 2026-10-05. **Questions:** (1) how the client reads the font record and what each field means; (2) how a glyph is found, what happens to a missing character, and whether there is kerning; (3) how glyphs are placed and lines laid out, broken and aligned; (4) how the outline style is drawn and with which atlas; (5) how a UI text element, the quest text, chat and the diagnostic overlay choose their font. **Why M1–M3 were not enough:** the data gives the numbers but not their roles (for example, which trailer value is the baseline and which two are borders, whether the 5 metric bytes are bearings or offsets) and contains no rule for substitution, line breaking, outline drawing or font choice; no published source describes the LOTRO record correctly (PUB-RU below disagrees with the data); M3 (watching the running client) can show results but not the rules, and is not available in this session. Only offline text and UI code was read; nothing about network, login, launcher, keys or anti-tamper. **Revision 2 (same build, 2026-10-05), further questions:** (6) the metrics of a line without characters and of text that ends in a newline; (7) what a line break consumes, and whether the negative-bearing indent applies to wrapped lines; (8) the exact extents that horizontal and vertical justification compare; (9) the defaults of the wrap and outline flags and of the font slots; (10) which characters take the tag font slot; (11) whether each chat line is drawn in its chat type's font. **Why M1–M3 were not enough:** the data holds only property values (for example 246 `UICore_Text_one_line` values), not what the client does with them; these are layout and drawing rules that exist only in code, and M3 is not available. Read: the UI text element's property handler, constructor, character-list builder, line layout, alignment and drawing routines, and the chat-log routines that append a line. The break ranges of §7.3 are stored in the code as a 16-bit start plus a span (for example U+4E00 and 0x51BF), which is why a search for the range end values as immediates does not find them. **Revision 3 (same build, 2026-10-06), further question:** (12) whether the extra line after a final newline is also added when wrapping is off. **Why M1–M3 were not enough:** as for questions 6–11 (a layout rule with no trace in the data). Read: the end of the same line-layout routine; the final-newline check runs after the character loop and does not test the wrap-off flag. |
+| OBS | User install, Steam, data current on 2026-10-05. Read in full: all 48 records with prefix 0x42 (`client_general.dat` 3, `client_local_English.dat` 45); all 95 glyph-atlas surfaces they name (`client_surface*.dat`, headers and pixels); all 302 UI layouts (0x22); all 24 DID maps (0x28); the property dictionary 0x34000000; the enum mappers 0x23000026, 0x23000177, 0x2300018E, 0x230000D1, 0x230002A8/0x230002A9; the two property sets 0x7800000B and 0x78000006 in full; a scan of every record of `client_general.dat`, `client_local_English.dat` and `client_gamelogic.dat` (including all 384,950 property sets) for the property IDs of §9 stored with their echo. **Revision 4 (2026-10-06):** all 302 UI layouts again (census of `UICore_Text_truncate_text_to_fit`, `UICore_Text_auto_tooltip_truncated_text`, `UICore_Text_bullet_image`, `UICore_Text_bullet_spacing`, the "by property" font properties, and the first entry of every `UICore_Text_fonts` array, with inheritance from the text-style library); the nine game objects of §9.3 (0x70035169 …, read in full); the owner's settings folder inside the Steam prefix (`install-layout.md` §8.1), read only: file names and the key names of `UserPreferences.ini`, no values beyond the three `UIScale_*` keys. |
+| BIN | Client executable `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`), read with a disassembler (objdump on selected address ranges, plus small scripts that search the code for constants and call sites) on 2026-10-05. **Questions:** (1) how the client reads the font record and what each field means; (2) how a glyph is found, what happens to a missing character, and whether there is kerning; (3) how glyphs are placed and lines laid out, broken and aligned; (4) how the outline style is drawn and with which atlas; (5) how a UI text element, the quest text, chat and the diagnostic overlay choose their font. **Why M1–M3 were not enough:** the data gives the numbers but not their roles (for example, which trailer value is the baseline and which two are borders, whether the 5 metric bytes are bearings or offsets) and contains no rule for substitution, line breaking, outline drawing or font choice; no published source describes the LOTRO record correctly (PUB-RU below disagrees with the data); M3 (watching the running client) can show results but not the rules, and is not available in this session. Only offline text and UI code was read; nothing about network, login, launcher, keys or anti-tamper. **Revision 2 (same build, 2026-10-05), further questions:** (6) the metrics of a line without characters and of text that ends in a newline; (7) what a line break consumes, and whether the negative-bearing indent applies to wrapped lines; (8) the exact extents that horizontal and vertical justification compare; (9) the defaults of the wrap and outline flags and of the font slots; (10) which characters take the tag font slot; (11) whether each chat line is drawn in its chat type's font. **Why M1–M3 were not enough:** the data holds only property values (for example 246 `UICore_Text_one_line` values), not what the client does with them; these are layout and drawing rules that exist only in code, and M3 is not available. Read: the UI text element's property handler, constructor, character-list builder, line layout, alignment and drawing routines, and the chat-log routines that append a line. The break ranges of §7.3 are stored in the code as a 16-bit start plus a span (for example U+4E00 and 0x51BF), which is why a search for the range end values as immediates does not find them. **Revision 3 (same build, 2026-10-06), further question:** (12) whether the extra line after a final newline is also added when wrapping is off. **Why M1–M3 were not enough:** as for questions 6–11 (a layout rule with no trace in the data). Read: the end of the same line-layout routine; the final-newline check runs after the character loop and does not test the wrap-off flag. **Revision 4 (same build, 2026-10-06), further questions:** (13) how a UI scale reaches text (Q3); (14) the exact arithmetic that composites a glyph's coverage and colour into the paint canvas (Q6); (15) what the underline, bold and italic markup flags do when drawing; (16) where a list-item bullet is drawn and which character carries its extra width (Q15); (17) how `UICore_Text_truncate_text_to_fit` shortens text (Q13); (18) which object a "by property" font source reads (Q7); (19) what reads `UI_Options_Menu_FontIndex` (Q11); (20) whether the chat-type table has a local file form (Q9); (21) whether the nine chat-type game objects are named by the client (Q10); (22) whether the client draws any other text style (shadow) or uses system fonts. **Why M1–M3 were not enough:** the data holds only the property values; scaling, compositing, underline geometry, bullet placement and truncation exist only in code, and M3 (screenshots of the running client) is not available in this session. Read: the text element's paint and draw routines, its three mouse hit-test routines, the glyph blit, the two-operand image combiner and its A8-onto-32-bit pixel loop, the fill-rectangle helper, the character-list builder and markup-tag reader, the line layout (list-item path), the truncation routines, the font-from-struct routine and its per-slot property table, the gameplay-options XML writer, and the client's GDI imports. |
 | PUB-AC | Asheron's Call font record as decoded by the ACE server project and the DatReaderWriter library (both read for facts only): DID, max height, max width, count, 11-byte glyph descriptors, two border counts, a baseline offset, foreground and background surface DIDs. **Reported for AC only**; used as a naming hint. The LOTRO header and trailer match it; the LOTRO glyph entry stores its fields in a different order (§3.2). |
 | PUB-RU | The "mojo" font converter of the Elanor translation launcher (GPL repository, read for facts only), which writes LOTRO font records from bitmap-font files. Its writer puts 5 extra bytes after a 16-byte header and a 15-byte trailer. That arithmetic gives the right total size (36 + 11·*n*) but assigns every metric to the wrong character; observation contradicts it (F3). Superseded. |
 | SPEC | `lua-plugin-api.md` P12 (font enum values are the 48 font DIDs), `texture-list.md` T9, `records.md` §5.4 (category 13 occurs only on 95 A8 surfaces), `property-system.md` §9 (code 0x4C, 6 values), `string-table.md` §4.7–§4.8 (markup kinds) and §10.3 (locale record 0x58000000: a font DID, then a 32-bit value "read by UI text"). |
@@ -83,7 +85,7 @@ Legend:
 | F7 | Atlases are A8 surfaces of category 13; foreground = glyph coverage, background = outline coverage; same size (§4.1) | OBS (95 of 95; pixel census); BIN (outline pass reads the background atlas) | Confirmed |
 | F8 | Codes are UTF-16 code units, strictly ascending, first U+0020; every font has `?` (§3.3, §5) | OBS (48 of 48) | Confirmed |
 | F9 | Lookup by code unit; a missing code is replaced by `?` from the same font; if that is missing too, nothing is drawn and layout advances 1 pixel (§5) | BIN | Confirmed (BIN) |
-| F10 | Pen advance = left bearing + width + right bearing; line layout uses the three values unclamped; only the drawing pass stores the per-character sum clamped to 0–255; no kerning (§6.1) | BIN; OBS (all advances 0–37) | Confirmed (BIN) |
+| F10 | Pen advance = left bearing + width + right bearing; line layout and the drawing pen use the three values unclamped; the per-character sum clamped to 0–255 is stored for the underline extent and the truncation measure only; no kerning (§6.1; corrected in revision 4) | BIN; OBS (all advances 0–37) | Confirmed (BIN) |
 | F11 | Glyph box at pen + left bearing, line top + line baseline − font baseline + top offset (§6.2) | BIN | Confirmed (BIN) |
 | F12 | Line height, line baseline and leading rules (§7.1) | BIN | Confirmed (BIN) |
 | F13 | Indent of a line whose first glyph has a negative left bearing: 1 − bearing, on every line (first line, after a newline, after a wrap) (§7.2) | BIN | Confirmed (BIN) |
@@ -108,6 +110,18 @@ Legend:
 | F32 | Only text inside link markup takes the tag font slot and tag colour; a link's own colour wins (§9.1) | BIN (character-list builder) | Confirmed (BIN) |
 | F33 | Both font slots of a new text element start with the locale record's font (0x42000028 in English); a font DID of 0 or one that does not resolve leaves the slot's font unchanged (§9.1, closes Q12) | BIN; OBS (0x58000000 font field, `string-table.md` §10.3) | Confirmed (BIN); link from record field to locale-object field Inferred (as in `string-table.md` §10.3) |
 | F34 | Leading factor *f* = locale leading value + `UICore_Text_extra_leading`, raised to 0 if negative (§7.1, narrows Q2) | BIN; OBS (locale value 0 in English; `UICore_Text_extra_leading` occurs once, 0.0) | Confirmed (BIN); record field Inferred |
+| F35 | UI scale: text is laid out and painted at the fonts' own pixel sizes in the element's unscaled coordinates; the element's scale vector (default 1, 1, 1) is applied when the painted result is shown; mouse positions are divided by it for text hit tests; no font is swapped and no metric is scaled for a scale (§6.3) | BIN; OBS (`UIScale_*` keys in the settings file; `GOP_UIScale_*` and `UIScaleDefinition_*` properties) | Confirmed (BIN); display filter OPEN (Q3) |
+| F36 | Glyph and outline compositing arithmetic onto a 32-bit ARGB canvas, including the colour-alpha factor and the transparent-destination rule (§8.4) | BIN | Confirmed (BIN) |
+| F37 | Colour properties (four floats) are packed to ARGB bytes by multiplying by 255 and truncating (§8.4) | BIN | Confirmed (BIN) |
+| F38 | Underline (`<u>`): drawn in the fill pass before the glyph; thickness ⌊(line height + leading) / 20⌋ + 1, at least 1; rows from baseline + *t* to baseline + 2*t* − 1; columns from the pen to pen + advance (− *B* when *B* < 0), inclusive; overwrites the canvas (§8.5) | BIN | Confirmed (BIN); colour source partly OPEN (Q16) |
+| F39 | Bold (`<b>`) and italic (`<i>`) set character flags that no text routine tests: no visible effect; no shadow style exists; the text element never calls the system font functions (§8.6) | BIN (flag census of the builder, layout, paint and blit; GDI imports and their callers); OBS (no shadow property for text in the dictionary) | Confirmed (BIN); "no game text in a system font" Probable |
+| F40 | List items: the first character after `<li>` carries the bullet flag and an extra width = bullet image width (0 without image) + `UICore_Text_bullet_spacing`; layout adds it to that character's overflow test and advance; drawing puts the bullet image at the line start with its bottom row on the baseline (§7.5, closes Q15) | BIN; OBS (15 elements with a bullet image, 2 with a spacing: 2 and 4) | Confirmed (BIN) |
+| F41 | Truncation: suffix text from `UICore_Text_truncate_text_to_fit` (a StringInfo), measured once; the line that is cut, the cut index rule, the measured extents, the draw-time switch to the suffix; `UICore_Text_auto_tooltip_truncated_text` marks the element as truncated (§7.6, closes Q13) | BIN; OBS (325 values: 320 naming one of three string-table entries, 5 null; 271 auto-tooltip values, 246 true) | Confirmed (BIN); enabling condition Probable |
+| F42 | "By property" font sources read a member of the element's own font-struct property; the tag slot falls back to the normal struct; `UICore_Text_set_font_by_property` sets both slots (§9.1, closes Q7) | BIN (per-slot property table and font-from-struct routine); OBS (one value in the data: `UICore_Text_set_tag_font_by_property` = 0) | Confirmed (BIN) |
+| F43 | `UI_Options_Menu_FontIndex` is read from a menu item when the item is chosen (§9.6, narrows Q11) | BIN (about ten routines read it as an enum property of a UI element) | Confirmed (BIN); what the handler then sets OPEN |
+| F44 | The chat-type table can be written to and read from an XML options file (sections Aliases, Layouts, Options, ChatColors; one ChatFont element per entry with TextType, Color, Size); the settings folder holds no chat-font key (§9.3, narrows Q9) | BIN (writer and reader routines, element names); OBS (settings folder 2026-10-06) | Confirmed (BIN); file location and value encoding OPEN |
+| F45 | The nine game objects with a chat-type struct hold nothing else, and the client code names none of their DIDs (§9.3, narrows Q10) | OBS (all nine, 101 bytes each); BIN (immediate search) | Confirmed |
+| F46 | Fonts most used by native panels: first entries of the layouts' font arrays and fonts inherited from the text-style library (§9.1) | OBS | Confirmed |
 
 ---
 
@@ -124,8 +138,9 @@ Legend:
 | Diagnostic overlay | DID map `FONT` (root key 0x10) | §9.5 |
 
 The client rasterises text at the font's own pixel size; there are no scalable outlines in
-the data. Bold styles are separate records; there is no italic; the only style the renderer
-adds is the outline (§8).
+the data. Bold styles are separate records; there is no italic; the only styles the renderer
+adds are the outline and the underline (§8). The `<b>` and `<i>` markup tags change nothing
+visible (§8.6).
 
 ---
 
@@ -323,10 +338,12 @@ Consequences:
 <a id="s6-1"></a>
 ### 6.1 Advance and kerning (Confirmed (BIN))
 
-- The pen moves right by *A* + *W* + *B* after each glyph. Line layout (§7) uses the three
-  values as they are; the drawing pass uses the same sum stored per character and clamped
-  to 0–255 (a negative sum becomes 0). All observed advances are 0–37, so the clamp never
-  acts.
+- The pen moves right by *A* + *W* + *B* after each glyph. Line layout (§7) and the drawing
+  pen both use the three values as they are (the drawing pen takes the sum from the glyph
+  itself; a character without any glyph, §5 step 3, advances the drawing pen by 0). The
+  client also stores the sum per character clamped to 0–255 (a negative sum becomes 0);
+  that stored value is used only for the underline extent (§8.5) and for measuring
+  truncation (§7.6). All observed advances are 0–37, so the clamp never acts.
 - There is **no kerning**: no pair table exists in the data and the client adds nothing that
   depends on the neighbouring glyph. Overlap between neighbours comes only from negative
   bearings.
@@ -341,8 +358,42 @@ the pen be at *x*. A glyph of a font with baseline *b* is drawn:
 - size *W* × *H*, sampled 1 : 1 from the foreground atlas at (*X*, *Y*).
 
 So glyphs of different fonts on one line share the line's baseline. All positions are whole
-pixels; glyphs are never scaled or filtered during layout and drawing (see OPEN Q3 for UI
-scaling).
+pixels; glyphs are never scaled or filtered during layout and drawing. A UI scale acts
+later, on the painted result (§6.3).
+
+<a id="s6-3"></a>
+### 6.3 UI scale (Confirmed (BIN); display filter OPEN)
+
+The original offers UI scale options (the settings-file keys `UIScale_Global`,
+`UIScale_Cursor`, `UIScale_Pregame` in section `[UI]`, and per-panel-group gameplay options
+`GOP_UIScale_*` bounded by `UIScaleDefinition_*` records; plugins can read a group's scale
+through `GetUIGroupScale`; those names are interoperability identifiers). For text the
+client behaves as follows:
+
+1. Every UI element has a **scale vector** (x, y, z), held by its display node; an element
+   without a display node has the scale (1, 1, 1).
+2. A text element lays out and paints its text exactly as §5–§8 describe, at the fonts'
+   own pixel sizes and in the element's own **unscaled** pixel coordinates. Neither the
+   layout, nor the glyph blit, nor the font choice reads the scale: no larger font is
+   chosen for a larger scale, and no metric is multiplied.
+3. The scale is applied when the painted element is shown. The client's three mouse
+   hit-test routines of the text element (character under the mouse, link under the
+   mouse, selection) convert a mouse position relative to the element into text
+   coordinates by dividing *x* by the scale's *x* and *y* by its *y*, truncating towards
+   zero, and adding the element's scroll offset.
+4. Element geometry uses the same factor, outside the text code. Two examples were read:
+   the scaler component sets a panel's own size to its screen size ÷ scale (truncated),
+   and a child that follows its parent's scale (for example with
+   `UICore_Element_force_match_parent_scale`) gets the size (size + 1) × parent scale − 1
+   (truncated) on each axis. The full element-geometry rules belong to `ui-layout.md`.
+
+So scaled text is a magnified or reduced image of the 1 : 1 text, not text re-rendered at
+another size. **Tessera Decision:** render the text of a scaled panel at 1 : 1 into the
+panel's own target and scale the target; do not pick larger fonts.
+
+> **OPEN (Q3, narrowed):** the filter used when the scaled result is shown (nearest or
+> linear) and whether the whole panel or each element is resampled. Suggested method: M3,
+> an owner screenshot of the chat window at UI scale 1.0 and 1.5.
 
 ---
 
@@ -436,12 +487,8 @@ the line's last character), so a newline in a larger font makes the line it ends
   + *A* + *W*). The width includes the indent and the contribution of a newline that ends
   the line; a space consumed by a wrap (§7.3) belongs to neither line.
 
-> **OPEN (Q15):** list-item markup (`<li>`, `string-table.md` §4.7) makes the client add an
-> extra horizontal amount to one character of the item (the width of the element's
-> `UICore_Text_bullet_image` plus `UICore_Text_bullet_spacing`), which enters the pen, the
-> overflow test and the drawing position, and draws the bullet image. Which character
-> carries it and where the bullet is drawn were not traced. The rules of §7 hold for text
-> without list items.
+List-item markup (`<li>`) adds an extra amount to one character and draws a bullet; §7.5
+gives the rules (closes the former Q15).
 
 <a id="s7-3"></a>
 ### 7.3 Breaking lines
@@ -562,10 +609,100 @@ All values are 32-bit integers. The client halves "available" and "used" as unsi
 numbers, so a negative available extent (margins larger than the element) gives a
 meaningless offset. **Tessera Decision:** treat a negative available extent as 0.
 
-> **OPEN (Q13):** with `UICore_Text_truncate_text_to_fit` set, the client recomputes the
-> content extents after layout (it measures how many lines fit and may shorten the text,
-> using `UICore_Text_auto_tooltip_truncated_text`). That path was not traced; the
-> extents above hold for elements without truncation.
+With `UICore_Text_truncate_text_to_fit`, the content extents are replaced after layout as
+§7.6 describes (closes the former Q13).
+
+<a id="s7-5"></a>
+### 7.5 List items and the bullet (Confirmed (BIN))
+
+The markup reader (`string-table.md` §4.7) reports `<p>` with a "break" flag and `<li>` with
+the "break" flag plus a "list item" flag. A tag with the break flag becomes a newline
+character in the character list (§7.3 rule 1 then ends the line), except where the element
+option of `string-table.md` §4.7 drops it at the very start of the text or right after a
+newline. Then:
+
+1. **Which character.** The flags of a tag apply to the **next character emitted** after
+   it, and only to that one. After an `<li>` that became a newline, that is the first
+   character after the newline, so it starts a line. That character carries the list-item
+   flag and an **extra amount** *X*:
+   *X* = the width of the element's `UICore_Text_bullet_image` (a 0x41 image DID; 0 when
+   the element has none) + the element's Int property `UICore_Text_bullet_spacing` (0 when
+   absent).
+2. **Layout.** For a character with the list-item flag, *X* is added to the overflow test
+   of §7.3 rule 2 (pen + *X* + *A* + *W* compared with the available width) and to the
+   pen advance of that character (the pen moves by *X* + *A* + *W* + *B*). The bullet does
+   not enter the line metrics of §7.1 (line height and baseline come only from the
+   characters' fonts).
+3. **Drawing.** When the first character of a drawn line carries the list-item flag:
+   - if the element has a bullet image, the image is drawn at its own size (blended like
+     other UI art), its left edge at the line start (left margin + alignment offset +
+     indent, §7.2), its top at line top + *L* − image height (*L* = line baseline, §7.1),
+     so its bottom row is the bottom row of flat-bottomed capitals. This happens in each
+     drawing pass, so with the outline flag on (§8.1) the bullet is drawn twice at the same
+     place;
+   - then the pen moves right by *X* before the glyph is drawn, with or without an image.
+4. Closing `</li>` turns the list state off; it inserts nothing.
+
+Data (OBS): 15 text elements carry a bullet image (two distinct images), two carry a
+spacing (values 2 and 4).
+
+<a id="s7-6"></a>
+### 7.6 Truncation to fit (Confirmed (BIN); enabling condition Probable)
+
+`UICore_Text_truncate_text_to_fit` is a **StringInfo** property (`string-table.md`): the
+**suffix** shown where the text is cut (325 values in the layouts: 320 name one of three
+string-table entries, 5 are null). An element truncates when it has this property with a
+resolvable text; the client keeps truncation off for text elements that are editable or
+selectable (Probable: the switch is cleared when either of those element flags is set).
+
+> **OPEN (Q13, residue):** the exact condition under which the client switches truncation
+> on (the routine that sets the switch was found but its callers were not traced). Use
+> "property present, text resolves to at least one character, element neither editable
+> nor selectable" until answered.
+
+1. **Suffix.** When the element's text is (re)built, the suffix text is built as a
+   character list of its own with the element's font slots and styles (§9.1), and laid out
+   alone with wrapping off and an unlimited width (with the element's leading factor,
+   §7.1). This gives the **suffix width** *S* (its line width, §7.2) and height.
+2. **Lay out** the element's text normally (§7.1–§7.4), giving the content width and
+   height, both including the margins.
+3. **Does it fit?** With wrapping off (`UICore_Text_one_line`) compare the content width
+   with the element's width; with wrapping on compare the content height with the
+   element's height. If the content is not greater, nothing is truncated (stop here).
+4. If `UICore_Text_auto_tooltip_truncated_text` is true, the element is marked
+   "truncated" (a state flag that the tooltip logic reads; the tooltip itself is outside
+   this spec).
+5. **The line to cut.** With wrapping off it is line 0. With wrapping on: let
+   *H*ₐ = element height − top margin − bottom margin − 1; add up (line height + leading)
+   from line 0 onwards; the line to cut is the **last line whose running sum is still
+   ≤ *H*ₐ**; if line 0 alone exceeds *H*ₐ, it is line 0.
+6. **The cut index.** Budget *R* = element width − left margin − right margin − *S* −
+   the cut line's indent (§7.2). Walk the characters of the cut line from its first one,
+   using each character's stored advance (the clamped value of §6.1):
+   - while *R* is **greater than** the character's advance and the character is **not the
+     last character of the line**, subtract the advance from *R* and move past it;
+   - otherwise subtract its advance from *R* and stop.
+   The cut index is the index of the first character not moved past. Exception: if the
+   cut line is the last line of the text, *R* is still greater than 0 after the stop, and
+   the character where the walk stopped is not a newline, the cut index is the end of the
+   text (nothing is cut).
+7. **Extents after the cut.** Width of the cut line = its indent + the sum of the stored
+   advances of its characters before the cut index + *S*. With wrapping off the content
+   width becomes that + left and right margins. With wrapping on the content width becomes
+   the widest of lines 0 … cut line (with the cut line's new width) + margins, and the
+   content height the sum of (line height + leading) of lines 0 … cut line + top and
+   bottom margins. Alignment (§7.4) uses the cut line's new width for that line.
+8. **Drawing.** Characters are drawn in order up to the cut index; there the drawing
+   switches to the suffix's characters, which continue on the **same line** from the
+   current pen position (no line advance happens inside the suffix), each in its own font
+   and colour. Nothing after the cut index is drawn, including later lines.
+
+When the cut index is the end of the text (the exception of step 6), the drawing never
+reaches it, so no suffix is drawn, although the cut line's width of step 7 still includes
+*S*. With wrapping on, the cut line can be the last line of the text only when line 0
+alone exceeds *H*ₐ and the text has a single line: the sum of step 5 includes every
+leading, so if every line fitted *H*ₐ the content height would be below the element height
+and step 3 would not cut. (Example: §13.10.)
 
 ---
 
@@ -578,9 +715,12 @@ meaningless offset. **Tessera Decision:** treat a negative available extent as 0
 1. If the element's outline flag is set, draw the **outline** of every glyph of every line
    (§8.2 or §8.3).
 2. Then draw the **fill** of every glyph of every line: the glyph box of §6.2 from the
-   foreground atlas, coloured with the glyph's text colour.
+   foreground atlas, coloured with the glyph's text colour. In this pass, an underlined
+   character first gets its underline (§8.5), then its glyph.
 
-Because all outlines come first, an outline never covers a neighbouring glyph's fill.
+Both passes walk the lines and characters in text order and repeat the line positions of
+§7 (alignment, indent, list-item bullet of §7.5). Because all outlines come first, an
+outline never covers a neighbouring glyph's fill.
 
 The outline flag is the Bool property `UICore_Text_outline` (705 true and 26 false values
 in the layouts). When no element, template or state in the element's chain supplies it,
@@ -608,22 +748,109 @@ except (0, 0)), in the order dy = −1, 0, 1 and, within each, dx = −1, 0, 1. 
 pass draws the glyph normally on top.
 
 <a id="s8-4"></a>
-### 8.4 Colour and compositing
+### 8.4 Colour and compositing (Confirmed (BIN))
 
-- The visible result of each pass is the pass colour (fill: the glyph's text colour;
-  outline: the outline colour) with the atlas coverage (0–255) acting as alpha, laid over
-  what is below. Probable (BIN): the client's GPU font material uses ordinary source-alpha
-  blending, and its CPU compositing routine handles A8 and 24/32-bit images with separate
-  modes; whether the colour is applied while the glyphs are composited or when the finished
-  text image is drawn, and the exact rounding, were not traced (OPEN Q6).
-- The client renders an element's text into an image that belongs to the element and is
-  clipped to it, then draws that image like other UI art. **Tessera Decision:** draw glyph
-  quads on the GPU or composite on the CPU; the pixel positions of §6–§8 and the visible
-  colours are what must match.
-- Text colours, selection highlights and markup colours are outside this spec; the text
-  colour properties have the same four-way structure as the font properties of §9.1
-  (`UICore_Text_font_colors`, `UICore_Text_font_color_struct`, `UICore_Text_font_color`,
-  `UICore_Text_set_normal_font_color_by_property`, and the `tag_` equivalents).
+**Where.** A text element paints into the canvas that the UI paint pass hands it, after the
+element's own background art (the base element paint runs first), once per dirty
+rectangle, clipped to that rectangle and to the element. The glyphs are composited **on
+the CPU** into that canvas: the colour is applied while each glyph is composited, not
+later. How the canvas reaches the screen (and at which UI scale, §6.3) is outside the text
+code.
+
+> **OPEN (Q6, narrowed):** the format of the UI paint canvas (the rules below are those for
+> format 21) and how the finished canvas is blended onto the screen. Suggested method: M4
+> on the UI paint pass that creates the canvas, or M3 (frame capture).
+
+**Colours.** A Colour property holds four floats, red, green, blue, alpha (0.0–1.0). The
+client packs it into a 32-bit ARGB value by multiplying each component by 255 and
+truncating towards zero (so 0.999 gives 254). Text colours from markup are already ARGB
+(`string-table.md` §4.7). The default outline colour (0, 0, 0, 1) packs to 0xFF000000.
+
+**Compositing one pass of one glyph.** Source: the atlas coverage byte *c* (0–255) of each
+pixel of the box (foreground atlas for the fill and for the stamped outline, background
+atlas for the outline of §8.2). Colour: the pass colour, ARGB, with colour bytes
+*C*ᵣ, *C*ᵍ, *C*ᵇ and alpha *α*. Destination: the canvas pixel, here a 32-bit canvas with
+alpha (surface format 21, A8R8G8B8, bytes *D*ₐ, *D*ᵣ, *D*ᵍ, *D*ᵇ); the client has separate
+routines for canvases of format 20, 22 and 32, which were not read. For every pixel of the
+clipped box:
+
+1. **Effective coverage** *s*: if *α* = 255, *s* = *c*; if *α* = 0, *s* = 0; otherwise
+   *s* = ⌊*c* · (*α* + 1) / 256⌋.
+2. If *s* = 0, the pixel is left unchanged.
+3. Let *a* = *s* + 1.
+4. If *a* = 256 (full coverage), or *D*ₐ = 0 (transparent destination), the pixel becomes
+   alpha **= *c*** (the raw coverage, not *s*) and colour (*C*ᵣ, *C*ᵍ, *C*ᵇ).
+5. If *D*ₐ = 255 (opaque destination): each colour channel becomes
+   *D* − trunc((*D* − *C*) · *a* / 256), and the alpha stays 255.
+6. Otherwise (0 < *D*ₐ < 255): let *t* = *D*ₐ + 1 and
+   *k* = *t* + *a* − ⌊*t* · *a* / 256⌋. Each colour channel becomes
+   *D* − trunc((*D* − *C*) · *a* / *k*), and the alpha becomes *k* − 1.
+
+"trunc" rounds towards zero (the products can be negative); all arithmetic is in 32-bit
+signed integers. Channel results are bytes (they stay within 0–255 by construction).
+
+Consequences: an opaque text colour (*α* = 255, the usual case) uses the coverage directly;
+a translucent text colour reduces the coverage only where the canvas already has alpha;
+where the canvas is transparent the written alpha is the raw coverage even for a
+translucent colour. Examples: §13.8.
+
+**Tessera Decision:** reproduce these rules when compositing text on the CPU. A GPU path is
+acceptable when it reproduces the same bytes for the opaque-destination and
+transparent-destination cases, which cover nearly all UI text; any deviation for partial
+alpha must be recorded as a known difference.
+
+**Not covered here:** where the text colours come from (the colour properties have the
+same four-way structure as the font properties of §9.1: `UICore_Text_font_colors`,
+`UICore_Text_font_color_struct`, `UICore_Text_font_color`,
+`UICore_Text_set_normal_font_color_by_property`, and the `tag_` equivalents), the
+selection highlight and the text cursor of editable text.
+
+<a id="s8-5"></a>
+### 8.5 Underline (Confirmed (BIN); colour source partly OPEN)
+
+Characters inside `<u>` … `</u>` (`string-table.md` §4.7) carry an underline flag. In the
+fill pass (§8.1), before such a character's glyph, the client fills a rectangle:
+
+- **Thickness** *t* = ⌊(line height + leading) / 20⌋ + 1, and at least 1, using the line
+  height and leading of the character's line (§7.1).
+- **Rows**: from (line top + *L*) + *t* to (line top + *L*) + 2*t* − 1, inclusive, where
+  *L* is the line baseline (§7.1); that is, one thickness below the baseline row.
+- **Columns**: from the pen position before the character to pen + the character's stored
+  advance (§6.1), **inclusive**; when the glyph's right bearing *B* is negative, the right
+  end moves right by −*B*. Because the right end is inclusive, the underlines of
+  neighbouring characters overlap by one column and form a continuous line.
+- **Pixels**: the rectangle (clipped to the paint rectangle and the element) is
+  **overwritten** with the underline colour (no blending; the colour's alpha byte is
+  written as it is).
+- **Colour**: a second per-character colour. Inside a link that supplies its own colour
+  (§9.1) both the text colour and the underline colour are that colour.
+
+> **OPEN (Q16):** for text outside such links, which property supplies the underline colour
+> (it is a second colour field of the element's text style, not traced to a property).
+> Until answered, use the character's text colour.
+
+Example: §13.9.
+
+<a id="s8-6"></a>
+### 8.6 Bold, italic, shadow and system fonts (Confirmed (BIN))
+
+- `<b>` and `<i>` set character flags, but no routine of the text element (character-list
+  builder, line layout, paint, glyph blit) tests them: **bold and italic markup has no
+  visible effect**. Bold text in the UI comes only from choosing a bold font record
+  (`TrajanProBold*`, `BookAntiquaBold*`, `VerdanaBold16`).
+- There is **no shadow style** for text: the drawing has only the outline and fill passes
+  (§8.1) and the underline; the property dictionary has no text-shadow property (OBS).
+- The client imports Windows font-creation and text-drawing functions. They are used by a
+  separate drawing component that works on Windows device contexts; none of the text
+  element's routines (character-list builder, layout, paint, glyph blit) reaches them.
+  Probable (BIN): no game UI text is drawn with a system font; together with §5 this means
+  the original never shows a glyph from outside the font records. The embedded web browser
+  (the client starts a browser helper and keeps a browser cache in the settings folder,
+  OBS) renders web pages with its own font engine; that is outside this spec.
+
+> **OPEN (Q17):** whether any text drawer other than the UI text element (for example the
+> 3-D floating names and damage numbers) uses another code path or system fonts. Suggested
+> method: M4 on the floating-text renderer.
 
 ---
 
@@ -686,8 +913,17 @@ Rules:
    slot can be without any font only if the locale default font itself cannot be loaded.
    Text in a slot without a font is laid out with the 1 × 1 blank glyph of §5 step 3
    (advance 1 pixel per character, line height 0) and is not drawn.
-5. "By property" names another property (a PropertyId) whose value supplies the font.
-   It occurs once in the layouts, with value 0. (OPEN Q7: which object's property is read.)
+5. "By property" (Confirmed (BIN), closes the former Q7): the value is a PropertyId that
+   names a **member of the element's own font-struct property**: `UICore_Text_font_struct`
+   for the normal slot, `UICore_Text_tag_font_struct` for the tag slot (the tag slot falls
+   back to the normal struct when the element has no tag struct). The member is read
+   instead of the default member `UICore_Text_font`; it must hold a DID, which is then set
+   as in rule 3 and rule 4. If the struct or the member is missing, or the member is not a
+   DID, the slot is unchanged. `UICore_Text_set_normal_font_by_property` and
+   `UICore_Text_set_tag_font_by_property` act on one slot each;
+   `UICore_Text_set_font_by_property` acts on both. The client remembers the PropertyId
+   and uses it again when it re-applies fonts. In the data the only value is one
+   `UICore_Text_set_tag_font_by_property` = 0, which names no member and changes nothing.
 
 Element states may carry the same properties (52 state-level `UICore_Text_fonts`); how a
 state's properties override the element's belongs to `ui-layout.md`.
@@ -709,6 +945,26 @@ state's properties override the element's belongs to `ui-layout.md`.
   elements of all layouts name this layout and one of these templates as their base and so
   inherit its font (inheritance rules: `ui-layout.md`). Which elements use a given
   template is read from the base references, never from the template labels.
+- **Fonts of the native panels (observation, revision 4).** Counting the first entry of
+  every element-level `UICore_Text_fonts` array (781 non-empty arrays) and, separately,
+  the font that the 2,018 based elements whose template has a font array inherit from the
+  text-style library:
+
+  | Font (DID in this install) | Line height | First entry of an own array | Inherited from a template |
+  |---|---|---|---|
+  | `Verdana14` (0x42000001) | 14 | 272 | 177 |
+  | `TrajanPro14` (0x4200000C) | 14 | 107 | 696 |
+  | `TrajanPro16` (0x4200000B) | 16 | 50 | 403 |
+  | `TrajanPro18` (0x42000009) | 18 | 63 | 369 |
+  | `Verdana12` (0x42000008) | 12 | 65 | 76 |
+  | `TrajanPro20` (0x42000000) | 20 | 31 | 63 |
+
+  These six cover 75 % of the own arrays (588 of 781) and 88 % of the inherited fonts
+  (1,784 of 2,018); the text-style library's most common template font is `TrajanPro18`
+  (16 of its 75 templates with a font array). So native panels mostly draw `TrajanPro` at
+  14–20 pixels and `Verdana` at 12–14, with chat in `Verdana` 14–23 (§9.3). These are
+  observations of one install for checklists, not values to build in: a panel's font is
+  always read from its layout.
 
 <a id="s9-2"></a>
 ### 9.2 Font ladders and the quest text size (Confirmed (BIN))
@@ -774,8 +1030,23 @@ size step → font DID from it and skips entries whose DID is 0 (or whose DID fi
 it. The defaults are the property set labelled `GameplayOptionDefaults` (UNIQUEDB key 0x68,
 also labelled `Preferences_Gameplay_Option_Defaults` under key 0x10000012, and DBPC key 8;
 0x78000006 in gamelogic): 43 entries, 41 at Medium and 2 at XLarge (chat types 0x18
-`Global` and 0x21 `EventBroadcast`). A player's own choices replace the defaults;
-where they are stored is outside this spec (OPEN Q9).
+`Global` and 0x21 `EventBroadcast`). A player's own choices replace the defaults.
+
+**Local file form (revision 4).** The client can write the chat-type table to, and read it
+from, an XML options file (BIN: one writer and one reader routine). Among the element
+names the writer uses are `Aliases`, `Layouts`, `Options` and `ChatColors`; `ChatColors`
+holds one `ChatFont` element per entry of `GOP_ChatTextTypeFontColorArray`,
+with the attributes `TextType`, `Color` and `Size` (the chat type, the colour and the size
+step of §9.3). These names are interoperability identifiers. The owner's settings folder
+(OBS, 2026-10-06) holds `UserPreferences.ini`, `lotro.keymap`, `PluginData` and a browser
+cache only, and `UserPreferences.ini` has no chat-font key, so the live table is not kept
+in a local file in this install.
+
+> **OPEN (Q9, narrowed):** where the live table is kept (for example with the character
+> on the server, which this project does not study), the folder and file name of the XML
+> options file, and the text encoding of its `TextType`, `Color` and `Size` values.
+> Suggested method: M3 (save a UI layout or options profile in the original client and
+> read the written file), M4 on the writer routine for the value encoding.
 
 **Each chat line in its own font (Confirmed (BIN)).** Every routine found that adds a line
 to a chat log (three) does the following, in this order:
@@ -806,8 +1077,12 @@ also carry the same six fonts in the same order (§9.2); that array only gives t
 element's initial font, which every append replaces.
 
 Nine game objects (0x70035169, 0x70035199–0x7003519B, 0x70040072, 0x70047DC0–0x70047DC3)
-each carry one `GOP_ChatTextTypeFontColorStruct` (Medium, one chat type, one colour). Their
-role is OPEN (Q10).
+each carry one `GOP_ChatTextTypeFontColorStruct` (Medium, one chat type, one colour) and no
+other property (OBS: all nine read in full, 101 bytes each); the client code does not name
+any of their DIDs (BIN, immediate search). They play no part in the chat-font rules above.
+
+> **OPEN (Q10, narrowed):** which data record refers to them and why. Nothing in the font
+> choice depends on them.
 
 <a id="s9-4"></a>
 ### 9.4 Plugin labels
@@ -852,8 +1127,14 @@ These properties exist in the dictionary but have no value anywhere in the data
   trailer's border fields (§3.2) and the optional background atlas but play no part at run
   time.
 
-`UI_Options_Menu_FontIndex` (enum 0x23000026) has no value in any property set; its use is
-OPEN (Q11).
+`UI_Options_Menu_FontIndex` (enum 0x23000026, the size steps of §9.3) has no value in any
+property set or layout. The client reads it as a property of a **UI element** in about ten
+routines; the one read in detail runs when a menu item is chosen and reads the item's value
+(BIN). So the size step is attached to menu items at run time, not stored in the data.
+
+> **OPEN (Q11, narrowed):** which chat types a chosen size step is then applied to (one
+> type, a group, or all), and which panel builds those menus. Suggested method: M4 on the
+> menu-selection routine, M3 in the original client.
 
 ---
 
@@ -889,8 +1170,10 @@ of every record equals the number at the end of its plugin enum label.
    or chat text in scripts the game fonts lack (CJK, for example) shown as real glyphs
    instead of `?`. If offered, it must be an opt-in that leaves the default rendering
    identical to the original.
-4. **Scaling:** the data fonts exist only at fixed pixel sizes. When the UI is scaled
-   (`UIScale_*` options), text must be resampled; how the original does it is OPEN (Q3).
+4. **Scaling:** the data fonts exist only at fixed pixel sizes, and the original never
+   swaps fonts for a UI scale: it scales the painted 1 : 1 text (§6.3). Tessera's own
+   fonts (item 2) may be rasterised at the scaled size, since they are not part of the
+   original's look.
 5. **Licence rule:** any font Tessera ships must be original or under a licence compatible
    with the project (for example the SIL Open Font License). Game fonts and atlases are read
    from the user's install at run time and are never shipped or extracted
@@ -930,6 +1213,17 @@ Layout invariants (§7), for synthetic tests of a layout implementation:
 | FN17 | The characters of all lines, in order, plus the characters consumed by wraps, give back the whole text; each wrap consumes at most one character, and only a space, tab or carriage return. |
 | FN18 | Text with *k* newlines and wrapping off has exactly one line if it does not end in a newline, and exactly two lines if it does (all characters on the first, the second being the §7.1 case-2 line); with wrapping on and no line wider than the available width it has *k* + 1 lines, and if the text ends in a newline its last line has width 0, baseline 0, leading 0 and the height of the final newline's font. |
 | FN19 | Empty text has one line with all metrics 0 and text height 0. |
+
+Drawing and truncation invariants (§6.3, §7.5–§8.6), for synthetic tests:
+
+| # | Invariant |
+|---|---|
+| FN20 | Compositing (§8.4): with an opaque colour, coverage 0 leaves the pixel unchanged, coverage 255 writes the colour with alpha 255, and over a transparent pixel the written alpha equals the coverage. |
+| FN21 | Compositing over an opaque pixel keeps alpha 255, and each channel moves from *D* towards *C* by trunc((*C* − *D*) · (*s* + 1) / 256), never past *C*. |
+| FN22 | Underline thickness is ⌊(line height + leading) / 20⌋ + 1 ≥ 1; its first row is one thickness below the baseline row; it spans advance + 1 columns (more when *B* < 0). |
+| FN23 | A list-item character's pen advance exceeds its plain advance by exactly *X* = bullet image width + bullet spacing; line heights do not change. |
+| FN24 | Truncation: if the content fits (step 3 of §7.6), nothing is cut and no suffix is drawn; otherwise the drawn width of the cut line ≤ element width − margins whenever every advance is ≥ 0 and *S* ≤ element width − margins − cut-line indent. |
+| FN25 | Layout, line breaks and glyph positions of a text element are identical at every UI scale (§6.3); only the displayed image changes. |
 
 ---
 
@@ -1100,6 +1394,74 @@ max(14, 10) = 14.
 | 3 | 13 − 7 = 6 | 9 | 10 |
 | 0, 2, 5 | 0 | 3 | 4 |
 
+<a id="s13-8"></a>
+### 13.8 Compositing arithmetic (§8.4)
+
+Text colour *C* = (R 200, G 100, B 0), opaque (*α* = 255). Pixels written as
+(A, R, G, B):
+
+| Destination before | Coverage *c* | *s*, *a* | Rule | Destination after |
+|---|---|---|---|---|
+| (0, 0, 0, 0) | 128 | 128, 129 | step 4 (transparent) | (128, 200, 100, 0) |
+| (255, 0, 0, 255) | 128 | 128, 129 | step 5: R 0 − trunc(−200·129/256) = 100; G 0 − trunc(−100·129/256) = 50; B 255 − trunc(255·129/256) = 127 | (255, 100, 50, 127) |
+| (255, 0, 0, 255) | 0 | 0 | step 2 | unchanged |
+| (255, 0, 0, 255) | 255 | 255, 256 | step 4 (full) | (255, 200, 100, 0) |
+
+Partial alpha: destination (128, 200, 100, 0), colour (0, 0, 255) opaque, *c* = 64: *s* = 64,
+*a* = 65, *t* = 129, ⌊129 · 65 / 256⌋ = 32, *k* = 129 + 65 − 32 = 162. R = 200 −
+trunc(200 · 65 / 162) = 120; G = 100 − trunc(100 · 65 / 162) = 60; B = 0 −
+trunc(−255 · 65 / 162) = 102; A = 161. Result (161, 120, 60, 102).
+
+Translucent colour: white with *α* = 127 and *c* = 255 gives *s* = ⌊255 · 128 / 256⌋ = 127,
+*a* = 128. Over (255, 0, 0, 0) the result is (255, 127, 127, 127). Over a transparent pixel
+the result is (255, 255, 255, 255): step 4 writes the raw coverage as alpha.
+
+Colour packing: the Colour property (0.5, 0.25, 1.0, 1.0) packs to A 255, R 127, G 63,
+B 255, that is 0xFF7F3FFF.
+
+<a id="s13-9"></a>
+### 13.9 Underline (§8.5)
+
+Font of §13.1, line top 0, line height 10, baseline *L* = 8, leading 0: *t* = ⌊10 / 20⌋ + 1
+= 1. In "jA ?" of §13.2 with `A` underlined: `A` has pen 5 and advance 7, so the underline
+covers row 9 (8 + 1 to 8 + 2 − 1), columns 5 to 12. The `A` box ends at row 7.
+
+With leading 2 (*f* = 0.2): *t* = ⌊12 / 20⌋ + 1 = 1. A 20-pixel line with leading 2:
+*t* = ⌊22 / 20⌋ + 1 = 2, rows *L* + 2 to *L* + 3. A glyph with advance 5 and *B* = −1 at
+pen 10: columns 10 to 16.
+
+<a id="s13-10"></a>
+### 13.10 Truncation (§7.6)
+
+Font of §13.1, margins 0, *f* = 0. Suffix text "?": laid out alone, pen 5, width 5 − 1 =
+*S* = 4.
+
+**Wrapping off**, element width 30, text "AAAAA" (width 35 − 1 = 34 > 30, so it is cut).
+*R* = 30 − 4 − 0 = 26. First `A`: 26 > 7, not last, *R* = 19. Second: *R* = 12. Third: *R* =
+5. Fourth: 5 is not greater than 7, so the walk stops (*R* = −2). Cut index 3. Cut-line
+width = 0 + 21 + 4 = 25; content width 25. Drawn: `A` at pens 0, 7, 14, then the suffix `?`
+at pen 21 (box at (21, 1), 4 × 7). With element width 35 the text fits and nothing is cut.
+
+**Wrapping on**, element 30 × 25, text "AAA AAA AAA" (three lines "AAA", each width 20 and
+height 10; the two spaces are consumed by wraps), suffix "??" (*S* = 10 − 1 = 9). Content
+height 30 > 25, so it is cut. *H*ₐ = 25 − 0 − 0 − 1 = 24; running sums 10, 20, 30: the cut
+line is line 1. *R* = 30 − 9 − 0 = 21: first `A` of line 1, 21 > 7, *R* = 14; second,
+14 > 7, *R* = 7; third, 7 is not greater than 7, stop. The cut index is the third `A` of
+line 1. Drawn: line 0 "AAA", then on line 1 "AA" and the suffix "??" from pen 14; line 2
+is not drawn. Content width = max(20, 14 + 9) = 23, content height 20.
+
+<a id="s13-11"></a>
+### 13.11 List item with a bullet (§7.5)
+
+Font of §13.1, an element with a 5 × 4 bullet image and `UICore_Text_bullet_spacing` = 2,
+so *X* = 7. Text `<li>A`, with the opening break dropped at the start of the text (§7.5),
+margins 0, left alignment. `A` carries the list-item flag.
+
+- Layout: overflow test 0 + 7 + 0 + 6 = 13; pen after `A` = 7 + 7 = 14; line width
+  14 − 1 = 13; line height 10, baseline 8 (the bullet does not change them).
+- Drawing: bullet image at (0, 8 − 4 = 4), rows 4 to 7, columns 0 to 4; then the pen
+  moves to 7 and `A` is drawn at (7, 1), 6 × 7.
+
 ---
 
 <a id="s14"></a>
@@ -1114,6 +1476,9 @@ max(14, 10) = 14.
 | `property-system.md` §9 | DB-object code 0x4C, 6 values | Those 6 values are the `UI_ChatFont_FontDataID` entries of `UI_ChatFonts` (§9.3). UI layouts hold many more font DIDs (§9.1); they are not counted there because UI layouts are not property-set records. |
 | `string-table.md` §10.3 | Locale record fields "a font (0x42 prefix)" and "unknown (read by UI text)" | Addition (BIN): the locale object's font DID is the **initial font of both slots of every UI text element** (§9.1); the next 32-bit value is the **base leading factor** *f*₀ of every UI text element, used as an IEEE single (§7.1). This fits the field order assumed there and does not change its Inferred mark. |
 | `string-table.md` §4.7 and G33 | "Markup is interpreted by UI text elements whose markup option is on … In other elements every character is shown literally." | Refinement (BIN): `UICore_Text_parse_markup_tags` gates only colour, emphasis, paragraph and list markup. A tag is first offered to the link registry, and a recognised link kind is handled whether or not that property is set (§9.1). |
+| `string-table.md` §4.7 | Bold "turns bold on / off", italic "turns italic on / off"; OPEN "whether a list item draws a bullet glyph and how deep the indent is" | Addition (BIN, revision 4): bold and italic set flags that no text routine tests, so they have no visible effect in UI text elements (§8.6). Underline draws the rectangle of §8.5. The list-item OPEN is answered by §7.5: the bullet is the element's `UICore_Text_bullet_image`, and the extra amount is its width + `UICore_Text_bullet_spacing`, applied to the first character of the item. The element option that drops the break of `<p>` and `<li>` at the very start of the text also drops it right after a newline (§7.5). |
+| this spec, revision 3 | §6.1 and F10: "the drawing pass uses the same sum stored per character and clamped to 0–255" | Corrected in revision 4: the drawing pen uses the glyph's unclamped *A* + *W* + *B* (0 when there is no glyph); the clamped per-character value serves only the underline extent and the truncation measure. No visible difference with the fonts of this install (all advances 0–37). |
+| this spec, revision 3 | §8.4: "renders an element's text into an image that belongs to the element" | Corrected in revision 4: the element paints into the canvas the UI paint pass gives it, after its own background art; whose canvas it is stays OPEN (Q6). |
 | this spec, revision 1 | §7.2 "line width … equals the final pen position"; §9.1 rule 4 "a DID that is 0 or does not resolve leaves the slot without a font … zero width"; §13.2 width 21; §13.4 width 7 | Corrected in revision 2: line width = final pen − *T* of the last character (§13.2: 20, §13.4: 6); a DID of 0 or an unresolvable DID leaves the slot's font unchanged, and text without any font advances 1 pixel per character. |
 
 ---
@@ -1125,25 +1490,29 @@ max(14, 10) = 14.
 |---|---|---|---|
 | Q1 | Font records in other language archives (DE, FR) | §3.1 | M1 on an install with those archives |
 | Q2 | Narrowed in revision 2: *f* = *f*₀ + `UICore_Text_extra_leading` (BIN). Still open: confirm from the locale-record loader that the text element's default font and *f*₀ are the record's font DID and the field after it (only *f*₀ = 0 is observed) | §7.1 | M4 (locale-record loader), M1 on other language archives |
-| Q3 | How text is scaled when a UI scale option is not 1.0 (image resampled, or glyphs drawn larger) | §6.2, §11 | M3 (owner screenshot at 1.0 and 1.5) or M4 |
+| Q3 | **Narrowed in revision 4 (BIN):** text is painted 1 : 1 and the painted result is scaled; no font is swapped (§6.3). Still open: the filter used when the scaled result is shown, and whether each element or the whole panel is resampled | §6.3 | M3 (owner screenshot at 1.0 and 1.5), M4 on the UI display path |
 | Q4 | **Closed in revision 2 (BIN):** a tab that reaches a text element is laid out and drawn as `?` and is a break opportunity (§5, §7.3). Whether a given text source (plugin `SetText`, string-table whitespace handling) still passes tabs through is outside this spec. | §5 | — |
 | Q5 | **Closed in revision 2 (BIN):** forced break before the glyph that would overflow; no re-test of moved characters (§7.3) | §7.3 | — |
-| Q6 | Where the text colour is applied (into the element's text image, or when that image is drawn) and the exact rounding of coverage × colour | §8.4 | M3 (frame capture), M4 |
-| Q7 | Object whose property the "by property" font sources read | §9.1 | M4 |
+| Q6 | **Narrowed in revision 4 (BIN):** the colour is applied while glyphs are composited on the CPU, with the exact arithmetic of §8.4 for a format-21 canvas. Still open: the format of the UI paint canvas and how it is blended onto the screen | §8.4 | M4 (the UI paint pass), M3 (frame capture) |
+| Q7 | **Closed in revision 4 (BIN):** a member of the element's own font-struct property (§9.1 rule 5) | §9.1 | — |
 | Q8 | Quest journal index sharing; entry choice of the descending ladders | §9.2 | M4, M3 |
-| Q9 | Where a player's chat-type sizes and colours are stored (server, or a local file) | §9.3 | M3 (change a chat size, look at written files) |
-| Q10 | Role of the nine game objects with a chat-type font struct | §9.3 | M1 (their other properties), M4 |
-| Q11 | Use of `UI_Options_Menu_FontIndex` and the options panel's chat font menu (`ChatOptionFontMenu`) | §9.6 | M4, `ui-layout.md` |
+| Q9 | **Narrowed in revision 4:** not in a local file of this install; the client can export and import the table as XML (§9.3). Still open: where the live table is kept, the XML file's location and the value encoding | §9.3 | M3 (save a UI layout or options profile, change a chat size, look at written files), M4 on the XML writer |
+| Q10 | **Narrowed in revision 4:** they hold nothing else and the client does not name them (§9.3). Still open: which record refers to them | §9.3 | M1 (scan all records for their DIDs) |
+| Q11 | **Narrowed in revision 4 (BIN):** read from a chosen menu item (§9.6). Still open: which chat types the chosen size step is applied to, and which panel builds the menus (`ChatOptionFontMenu`) | §9.6 | M4 on the menu-selection routine, M3 |
 | Q12 | **Closed in revision 2 (BIN):** both slots start with the locale default font (0x42000028 in English); 0 or unresolvable DIDs leave it in place (§9.1) | §9.1 | — |
-| Q13 | Content extents and line handling when `UICore_Text_truncate_text_to_fit` is set (with `UICore_Text_auto_tooltip_truncated_text`) | §7.4 | M4 |
+| Q13 | **Closed in revision 4 (BIN):** §7.6. The exact condition that enables truncation (property present with a resolvable text; off for editable or selectable elements) is Probable | §7.6 | M4 (the routine that sets the switch) |
 | Q14 | The second text element that one chat-log routine appends each line to without a font change | §9.3 | M4, `ui-layout.md` (chat window layout 0x22000034) |
-| Q15 | Placement of the list-item bullet and its extra width | §7.2 | M4 |
+| Q15 | **Closed in revision 4 (BIN):** §7.5 | §7.5 | — |
+| Q16 | The property that supplies the underline colour of text outside a coloured link | §8.5 | M4 (the style set-up of the text element), M3 |
+| Q17 | Whether floating names, damage numbers or other text drawers outside the UI text element use another path or system fonts | §8.6 | M4 |
 
-Owner observations that would close Q3 and Q9 cheaply (not in the current owner
+Owner observations that would close Q3, Q9 and Q16 cheaply (not in the current owner
 checklist O1–O17; none of O1–O17 concerns fonts):
 
 - a screenshot of the chat window at UI scale 1.0 and at 1.5, to see whether glyph edges are
-  resampled;
+  resampled with a linear or a nearest filter;
+- a screenshot of underlined text (for example a quest heading) next to plain text of
+  another colour, to compare the underline colour with the text colour;
 - whether the quest text size chosen with the dispenser's buttons survives a client restart
   (§9.2 predicts it does not);
 - after changing one chat type's font size in the options, which files in the settings
@@ -1158,3 +1527,4 @@ checklist O1–O17; none of O1–O17 concerns fonts):
 | 2026-10-05 | First version: record layout and census of all 48 fonts and 95 atlases; glyph lookup, placement, line layout, breaking, alignment and outline drawing from the client (BIN); font choice for UI layouts, quest text, chat, plugins and the diagnostic overlay; fallback-font guidance; corrections and additions to `lua-plugin-api.md`, `texture-list.md`, `records.md` and `property-system.md`. |
 | 2026-10-05 | Revision 2, answering the review of 2026-10-05 (new M4 questions 6–11 in the BIN row; facts F25–F34). §4.3: glyphs with ink are 28,193, not 28,151 (122 inkless listed with counts). §5: newline, tab and carriage return take the `?` substitute; only the newline is skipped when drawing (closes Q4). §6.1: layout uses unclamped bearings. §7.1: leading factor *f* = *f*₀ + `UICore_Text_extra_leading` (narrows Q2); text height drops the last line's leading unless `UICore_Text_last_line_leading`; rules for blank lines, a final newline, empty text. §7.2: indent applies to every line; line width = final pen − trailing value *T* (corrects revision 1). §7.3: wrap switch is `UICore_Text_one_line` (Confirmed, default off; one-line mode ignores newlines); rule order; forced break inside over-long words (closes Q5); exactly one space/tab/CR consumed per wrap, runs of spaces. §7.2: Q15 (list-item bullet). §7.4: defaults Left/Top; both values 1 and 4 give the far side on either axis; exact used/available extents per axis, including the vertical margin rule; Q13. §8.1: outline flag defaults to off. §9.1: only link markup uses the tag slot, a link's own colour wins; slots start with the locale default font (closes Q12); a DID of 0 or an unresolvable DID leaves the font unchanged (corrects rule 4). §9.3: per-line chat font Confirmed (BIN) with the fallbacks for unmapped types and steps; Q14. §12: FN15–FN19. §13: §13.2 and §13.4 widths corrected; new §13.4 cases, §13.5 bullets, §13.6, §13.7. §14: notes to `string-table.md` §10.3 and §4.7. |
 | 2026-10-06 | Revision 3, answering the re-review of 2026-10-05 (BIN question 12). §7.3: with wrapping off all characters are on the first line and a final newline still adds the §7.1 case-2 line, so such text has two lines (replaces the contradictory "the whole text is one line"); FN18 and F28 agree with it; §13.6: two wrap-off examples. F10: line layout uses unclamped bearings, only the drawing pass clamps (matches §6.1). §1 legend: defines the qualifier Inferred used in F33 and F34. |
+| 2026-10-06 | Revision 4 (BIN questions 13–22; facts F35–F46; Status back to Review). New §6.3 (UI scale: 1 : 1 painting, scaled result, hit tests divide by the scale; narrows Q3). §6.1 and F10 corrected (the drawing pen uses unclamped advances). New §7.5 (list items and the bullet; closes Q15) and §7.6 (truncation to fit; closes Q13). §8.1: underline in the fill pass. §8.4 rewritten: CPU compositing arithmetic, colour packing, paint canvas (narrows Q6). New §8.5 (underline geometry; Q16 for its colour source) and §8.6 (bold and italic have no effect; no shadow; no system fonts). §9.1 rule 5: "by property" reads a member of the element's font struct (closes Q7); census of the fonts native panels use. §9.3: XML export form of the chat table and the settings-folder observation (narrows Q9); the nine game objects (narrows Q10). §9.6: `UI_Options_Menu_FontIndex` is read from menu items (narrows Q11). §11 item 4. §12: FN20–FN25. §13.8–§13.11. §14: notes to `string-table.md` §4.7 and corrections of revision 3. §15 updated. |

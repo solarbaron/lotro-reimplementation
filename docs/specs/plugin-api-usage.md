@@ -4,25 +4,25 @@
 
 | Field | Value |
 |---|---|
-| Status | **Review** |
+| Status | **Accepted** |
 | Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent) |
-| Review record | First version: 2026-10-06, Claude review session (spec-writer agent), against CLEAN_ROOM.md §5.3. **Result: changes required; stays Review.** Its four issues (examined-code scope of §3.3 rule 3 and the consequences for §9.2 #12, §11 Example 1, §3.5 and §7.2; the load-time language-detection wrappers under the §7.4 empty views; the `require` row of §6.4; the dirty-room-only invariant §10.1) are answered by the second version, see the change log. **Re-review of the second version: 2026-10-06, Claude review session (spec-writer agent), against CLEAN_ROOM.md §5.3. Result: changes required; stays Review.** All four earlier issues are resolved. Spot checks passed, all against the published plugin files: 35 distributions and 46 descriptors widened by §3.3 rule 3, and 91 distributions where the closure is every `.lua` file; Compass (#12): 11 `.lua` files, 37 names, computed imports, no class-N name and no `GetLanguage` replacement anywhere in the distribution, plus every §9.3 row-#12 feature; for all 14 primary and 6 reserve distributions, a whole-distribution text search finds no class-N access, only comments and plugin-own identifiers; 8 `Engine.GetLanguage` replacements (1 of them a type stub), groups of 2, 4 and 1, 6 called at load, and 1097 the group-B distribution that never calls its replacement; `require` 2 direct and 4 through `pcall`; 8 `MinstrelStance` overwrites; the §7.2 counts 13 and 56; `SetRotation` 14, `table.getn` 63, `math.mod` 18, `GetUsesGlobalScaling` 8, `RegisterForGlobalScaling` 6, `SetMarkupEnabled` 38 (40 for the whole distribution). Issues: (1) §7.4.1 group A: the text says "the test looks at the first two bytes of the UTF-8 name". That holds for only one of the two (LIX 1199). The other (LIX 901) matches the whole name against a byte set, {0x81, 0x8F, 0x90–0xD1}. Any byte in that set anywhere in the name gives `Language.Russian`, so any accented Latin letter (lead byte 0xC3) also triggers it. Groups A (1199) and B also use the first two bytes as a Lua *pattern* searched inside a Cyrillic string. If those bytes hold a pattern magic character (`^$()%.[]*+-?`), the test can match (for example a leading `.`) or raise a malformed-pattern error at load. So rule 1 and invariant 7 ("first character outside U+0400–U+04FF") do not ensure the native-value path or a clean load. State both tests. Then either constrain the placeholder (for example: at least its first two bytes are ASCII letters, and no byte is ≥ 0x80 when Tessera chooses it), or state, for names read from the install, that the result follows the plugin's own test exactly as in the original. Extend invariant 7 to match. (2) Minor scope label: the §6 lead-in says every §6 count uses the whole-distribution scope, but §6.10's `UnloadScriptState` 28 and `LoadPlugin` 31 are closure-scope counts (29 and 33 for the whole distribution). Label them, or use the whole-distribution values; §7.3 repeats 31/28. No other §5.3 checklist findings: no code, no copied prose, no game text, keys, hostnames or traffic; no closed gate; provenance covers every fact group; OPENs are precise; invariants other than 7 are testable as written. |
+| Review record | First version: 2026-10-06, Claude review session (spec-writer agent), against CLEAN_ROOM.md §5.3. **Result: changes required; stays Review.** Its four issues (examined-code scope of §3.3 rule 3 and the consequences for §9.2 #12, §11 Example 1, §3.5 and §7.2; the load-time language-detection wrappers under the §7.4 empty views; the `require` row of §6.4; the dirty-room-only invariant §10.1) are answered by the second version, see the change log. **Re-review of the second version: 2026-10-06, Claude review session (spec-writer agent), against CLEAN_ROOM.md §5.3. Result: changes required; stays Review.** All four earlier issues are resolved. Spot checks passed, all against the published plugin files: 35 distributions and 46 descriptors widened by §3.3 rule 3, and 91 distributions where the closure is every `.lua` file; Compass (#12): 11 `.lua` files, 37 names, computed imports, no class-N name and no `GetLanguage` replacement anywhere in the distribution, plus every §9.3 row-#12 feature; for all 14 primary and 6 reserve distributions, a whole-distribution text search finds no class-N access, only comments and plugin-own identifiers; 8 `Engine.GetLanguage` replacements (1 of them a type stub), groups of 2, 4 and 1, 6 called at load, and 1097 the group-B distribution that never calls its replacement; `require` 2 direct and 4 through `pcall`; 8 `MinstrelStance` overwrites; the §7.2 counts 13 and 56; `SetRotation` 14, `table.getn` 63, `math.mod` 18, `GetUsesGlobalScaling` 8, `RegisterForGlobalScaling` 6, `SetMarkupEnabled` 38 (40 for the whole distribution). Issues: (1) §7.4.1 group A: the text says "the test looks at the first two bytes of the UTF-8 name". That holds for only one of the two (LIX 1199). The other (LIX 901) matches the whole name against a byte set, {0x81, 0x8F, 0x90–0xD1}. Any byte in that set anywhere in the name gives `Language.Russian`, so any accented Latin letter (lead byte 0xC3) also triggers it. Groups A (1199) and B also use the first two bytes as a Lua *pattern* searched inside a Cyrillic string. If those bytes hold a pattern magic character (`^$()%.[]*+-?`), the test can match (for example a leading `.`) or raise a malformed-pattern error at load. So rule 1 and invariant 7 ("first character outside U+0400–U+04FF") do not ensure the native-value path or a clean load. State both tests. Then either constrain the placeholder (for example: at least its first two bytes are ASCII letters, and no byte is ≥ 0x80 when Tessera chooses it), or state, for names read from the install, that the result follows the plugin's own test exactly as in the original. Extend invariant 7 to match. (2) Minor scope label: the §6 lead-in says every §6 count uses the whole-distribution scope, but §6.10's `UnloadScriptState` 28 and `LoadPlugin` 31 are closure-scope counts (29 and 33 for the whole distribution). Label them, or use the whole-distribution values; §7.3 repeats 31/28. No other §5.3 checklist findings: no code, no copied prose, no game text, keys, hostnames or traffic; no closed gate; provenance covers every fact group; OPENs are precise; invariants other than 7 are testable as written. **Third version: 2026-10-06, spec writer (dirty room).** Answers both re-review issues (§7.4.1 tests stated byte by byte with the placeholder constrained, invariant 7 extended; every §6 and §7.3 count labelled with its scope, §6.10 and §7.3 made consistent) and adds the load-limit measurement (§6.12); awaiting re-review. **Third review: 2026-10-06, Claude review session (spec-writer agent), a different session from the author, against CLEAN_ROOM.md §5.3. Result: passed; status Accepted.** Both re-review issues are resolved. Checks: test P of §7.4.2 was re-enumerated with stock Lua 5.1 (`string.match` on the 132-byte string, which starts with 0xD0) over every first byte 0x00–0xFF and every second byte or none. 36,358 prefixes were classified by the outcome table and none disagreed, and no valid-UTF-8 prefix falls outside the table. Test S reduces to exactly 68 bytes, {0x81, 0x8F} ∪ 0x90–0xD1. Groups A1 (1199), A2 (901), B (640, 896, 993, 1097; the same 132-byte string, 66 letters) and C (1113) match their published files. The U1 settings-folder facts were re-checked read-only: no `Plugins/` and no `.plugin` file; three empty `PluginOptions.xml` files. The §6 recounts in both scopes match: `LoadPlugin` 33/31, `UnloadScriptState` 29/28, `Plugins` 88/86, `Plugins[…]` 73/71, `_G` 98/95, `table.getn` 64/63, `unpack` 52/49, the `Turbine.Chat` callback helper 32, `getfenv` 61/56, `setfenv` 11, stretch 1 58/57, stretch 2 56/50, `.jpg` 31/28, `.tga` 115/114, DID literals 73/72, `Server` 41/40, `WriteLine` colour tag 45/44. In §6.5, class calls 121, own definitions 90 (counting `function _G.class`), bundles 11, 31 + 28 → 37 dependents, and no §9.2/§9.4 distribution depends on the sample package. The U12 probe was re-run: #2 peaks at 160.2 MiB (live 125.1 MiB) and is refused during load at 159 MiB; #14 peaks at 75.2 MiB and is refused at 75 MiB; the largest call is 12.8 M instructions. Non-blocking notes for the next revision: (1) §4, §6.12 and §9.3 give 32.5 MB, 10.1 MB and 6.5 MB, which are MiB values (34.1, 10.6 and 6.9 MB decimal), while §6.12 finding 4 gives the same distribution as 34 MB and 131 MB; use one unit. (2) §6.5 `Turbine.Animation` 4 matches neither rule (3 by exact name, 6 counting sub-packages); the other sub-package counts are exact-name counts. (3) §11 Example 5 comes before Example 4. |
 | Implements into | `crates/plugins` (which API pieces to build first, which to stub), `crates/net` sandbox backend (which local-player values plugins read), the M5 exit-criterion-4 test plan |
 | Related specs | [`lua-plugin-api.md`](lua-plugin-api.md) (the API itself: names, behaviour, tiers; abbreviated **LPA** below), [`plugin-descriptor.md`](plugin-descriptor.md) (discovery, descriptors, apartments), [`install-layout.md`](install-layout.md) §8 (settings folder) |
 
 > **Naming note (interoperability).** The namespace, class, method, event, field and enum
 > member names in this document are the identifiers existing third-party plugins call. They
-> are reproduced only because a compatible host cannot run those plugins without them (see
-> `docs/ARCHITECTURE.md` §18.2 and the *Google v. Oracle* row of `docs/LEGAL.md` §4.1; the
-> written interoperability record that ARCHITECTURE §18.2 asks for is still pending as its
-> "OPEN (legal)" item). They must appear in Tessera only inside the plugin subsystem, never
-> as product names, crate names or UI strings. Plugin names and author names are used only
-> to identify which published files were counted and which ones the M5 test should install;
-> they are not product names. No plugin code, comment, documentation text, string table or
-> asset is reproduced: every statement below is a count or a description in our own words of
-> what the code relies on.
+> are reproduced only because a compatible host cannot run those plugins without them. The
+> project's interoperability record for these names is `docs/LEGAL.md` §17 (it answers the
+> "OPEN (legal)" item of `docs/ARCHITECTURE.md` §18.2); its §17.2 rules bind every use: the
+> names appear in Tessera only inside the plugin subsystem, as string data, never as product,
+> crate, module or UI names. Plugin names and author names are used only to identify which
+> published files were counted and which ones the M5 test should install; they are not
+> product names. No plugin code, comment, documentation text, string table or asset is
+> reproduced: every statement below is a count or a description in our own words of what the
+> code relies on.
 
 ---
 
@@ -60,6 +60,7 @@ Source keys:
 | **GH** | Thirteen public GitHub repositories of plugins not already covered by LIA, found through the community project list `Dromo/Lotro-Github-projects` (research clone), shallow-cloned 2026-10-06 into the dirty scratch area; repository and commit in Appendix A (method M2). |
 | **LPA** | [`lua-plugin-api.md`](lua-plugin-api.md) §16 (registration list of client build 4906.0071.1794.4035, itself BIN-confirmed) and Appendix A (enumeration member names). Used only as the **name set** against which plugin code was matched, and for the tier numbers of §17. |
 | **S3** | `lunarwtr/vscode-lotro-api` `TurbineDump.json` (research clone): the named-colour and enumeration member names, used to complete the name set where LPA lists only counts. |
+| **LUA** | General knowledge of the Lua 5.1 reference manual and the reference interpreter (MIT licence; not dirty, `docs/CLEAN_ROOM.md` §2 rule 4); used for the pattern-matching rules of §7.4.1 and as the interpreter of the U12 measurement |
 
 Marks: **Confirmed** = observed in the owner's install or settings folder, with date.
 **Reported** = taken from published third-party files only. Every census count is
@@ -78,7 +79,9 @@ anti-tamper was looked at.
 | U7 | Names plugins reference that this client build does not register (§5.7) | LIA, GH, LPA | Reported 2026-10-06 |
 | U8 | Coverage of candidate surfaces (§7.2) and the data classification (§8) | derived from U3 and LPA §17 | Reported 2026-10-06 |
 | U9 | The exit-criterion plugin set, versions, download counts, update dates and per-plugin needs (§9) | LIX, LIA | Reported 2026-10-06 (#12 replaced in the second version) |
-| U10 | Replacements of `Engine.GetLanguage` and the gameplay objects they reach while a plugin loads; which distributions call them at load (§7.4) | LIA, GH (whole-distribution read of the 8 distributions concerned) | Reported 2026-10-06 |
+| U10 | Replacements of `Engine.GetLanguage` and the gameplay objects they reach while a plugin loads; which distributions call them at load; the exact byte-level name tests of each group (§7.4.1, §7.4.2) | LIA, GH (whole-distribution read of the 8 distributions concerned); LUA (outcomes of the tests checked with stock Lua 5.1.5 in the C locale over every one-byte name and every two-byte prefix, first byte 0x00–0xFF, 2026-10-06) | Reported 2026-10-06 |
+| U11 | Scope of every §6 and §7.3 count (whole distribution, closure, or both), recounted 2026-10-06 over the same 143 distributions with comment-stripped token rules | LIA, GH | Reported 2026-10-06 |
+| U12 | Peak allocator bytes, live bytes after a full collection and Lua VM instruction counts of loading every §9.2 apartment (§6.12), measured with stock Lua 5.1.5 (64-bit) under a stub host API in the dirty scratch area; no client code was run and nothing of the client was read for it | LIA (the §9.2 archives), LUA (the reference interpreter) | Reported 2026-10-06 (measurement on published third-party files, not on the install) |
 
 ---
 
@@ -134,9 +137,17 @@ archive folders, tests, editor type-stub files, unused library files).
 Files are read as text; a leading UTF-8 byte-order mark is skipped. None of the sampled `.lua`
 files is a precompiled chunk.
 
-The global checks of §6.1–§6.5 and §6.7–§6.9 use a simpler scope unless a count says
-otherwise: every `.lua` file in the distribution, with comments removed (**whole-distribution
-scope**).
+The **whole-distribution scope** is every `.lua` file in the distribution, with comments
+removed. In the 91 distributions where the closure is the whole distribution the two scopes
+give the same answer; elsewhere a whole-distribution count can only be larger.
+
+Which scope a count uses:
+
+- every count in §5 is **closure scope**, with the rules of §3.4;
+- every count in §6 and §7.3 is **whole-distribution scope** unless it is marked "closure
+  scope"; where the closure-scope value differs, it follows in parentheses, for example "73
+  (closure 71)"; "both scopes" means the two values are equal;
+- a count that §6 or §7 copies from §5 keeps its closure scope and says so.
 
 <a id="3-4"></a>
 ### 3.4 Name set and counting rules
@@ -634,28 +645,29 @@ reaches the API as nil; LPA defines what each setter does with nil.
 <a id="6"></a>
 ## 6. Behaviours plugins rely on
 
-Each item is a count of distributions (whole-distribution scope, §3.3) plus the host behaviour it
-needs, with the LPA section that specifies that behaviour.
+Each item is a count of distributions plus the host behaviour it needs, with the LPA section
+that specifies that behaviour. Scope labels follow §3.3: whole-distribution unless marked, the
+closure-scope value in parentheses where it differs (recount U11).
 
 <a id="6-1"></a>
 ### 6.1 Attaching handlers
 
 | Form | Distributions | Host requirement |
 |---|---|---|
-| Method definition on a Lua subclass (`function MyWindow:MouseClick(...)`) or field assignment on an instance | the usual form; the §5.4 counts (`MouseDown` 123, `Update` 118, `KeyDown` 106, `Closing` 58) include it | normal-indexing lookup of the handler (LPA §9.2 step 2) |
-| Class-level `Turbine.Plugin.Load` / `Unload` assignment | 13 / 30 | handlers stored on the class table apply to every plugin object of the apartment (LPA §9.1) |
-| Instance `plugin.Load` / `Unload` / `GetOptionsPanel` assignment | 3 / 14 / 43 | the `plugin` global, set while the plugin loads (LPA §6.2) |
-| `Plugins["<name>"].Load`/`Unload`/`GetOptionsPanel` assignment | 51 (bracket form), 11 (dotted form) | the `Plugins` table keyed by descriptor `Name` (LPA §6.2) |
-| `Turbine.Chat.Received = …` or `function Turbine.Chat.Received(…)` | 16 / 10 | shared singleton, last writer wins (LPA §9.5) |
-| A plugin-defined helper that keeps several handlers per event, called with the event name as a string (`AddCallback`-style) | 56 define such a helper (41 also a matching remove helper); 32 pass `Turbine.Chat` to it | handler tables (LPA §9.2 step 4) |
+| Method definition on a Lua subclass (`function MyWindow:MouseClick(...)`) or field assignment on an instance | the usual form; it is included in the §5.4 counts (closure scope: `MouseDown` 124, `Update` 118, `KeyDown` 107, `Closing` 59) | normal-indexing lookup of the handler (LPA §9.2 step 2) |
+| Class-level `Turbine.Plugin.Load` / `Unload` assignment with `=` | 13 / 30 (both scopes); a further 1 / 3 define them with `function Turbine.Plugin.Load(…)` | handlers stored on the class table apply to every plugin object of the apartment (LPA §9.1) |
+| Instance `plugin.Load` / `Unload` / `GetOptionsPanel` assignment with `=` | 3 / 14 / 43 (both scopes); a further 2 / 1 / 3 use the `function plugin:…` definition form | the `plugin` global, set while the plugin loads (LPA §6.2) |
+| `Plugins["<name>"].Load`/`Unload`/`GetOptionsPanel` assignment | 51 (closure 49) in the bracket form, 11 (both scopes) in the dotted form | the `Plugins` table keyed by descriptor `Name` (LPA §6.2) |
+| `Turbine.Chat.Received = …` or `function Turbine.Chat.Received(…)` | 16 / 10 (both scopes) | shared singleton, last writer wins (LPA §9.5) |
+| A plugin-defined helper that keeps several handlers per event, called with the event name as a string (`AddCallback`-style; counted as a function definition whose name starts with "add" and contains "callback", case-insensitive) | 56 (closure 55) define such a helper, 41 (closure 40) also a matching remove helper; 32 (both scopes) call a function whose name contains "callback" with `Turbine.Chat` as its first argument | handler tables (LPA §9.2 step 4) |
 
 <a id="6-2"></a>
 ### 6.2 The `Plugins` and `_G` globals
 
-`Plugins[…]` indexing appears in 73 distributions (whole-distribution scope; 71 in closure
-scope) and the name `Plugins` in 86 (closure scope); `_G` in 94 (closure scope), with `_G[…]`
-indexing in 3.
-`getfenv` is called in 61 and `setfenv` in 12 distributions. The `plugin` global is set only
+Counted as a global name (not preceded by `.` or `:`): `Plugins[…]` indexing appears in 73
+distributions (closure 71) and the name `Plugins` in 88 (closure 86); `_G` in 98 (closure 95),
+with `_G[…]` indexing in 3 (both scopes). `getfenv` is used in 61 (closure 56) and `setfenv` in
+11 (both scopes). The `plugin` global is set only
 while a plugin loads (LPA §6.2), so the `plugin.…` assignments of §6.1 happen at load time.
 
 <a id="6-3"></a>
@@ -685,27 +697,30 @@ while a plugin loads (LPA §6.2), so the `plugin.…` assignments of §6.1 happe
 <a id="6-4"></a>
 ### 6.4 Standard library and globals
 
-Whole-distribution scope, comments removed:
+Comments removed; scope labels as in §3.3:
 
 | Use | Distributions | Note |
 |---|---|---|
-| `loadstring(` | 34 | provided (LPA §3.2) |
-| `collectgarbage(` | 13 | provided |
-| `print(` | 19 | output goes to the script log, never to chat (LPA §3.2) |
-| `table.getn` | 63 (closure scope) | Lua 5.0 compatibility function, present in stock 5.1 |
-| `math.mod` | 18 (closure scope) | as above |
-| `unpack` | 49 (closure scope) | base function in 5.1 |
-| Calls of `require` in any form | 6: 2 call it directly with a string argument and no parentheses (bundled bit-manipulation library files); 4 pass it as a value to a protected call (`pcall`). None uses the parenthesised form with a direct call. | nil in the original (LPA §3.2): a direct call raises when its file runs; a protected call returns false instead of raising. The 2 direct callers are outside the first surface (§7.2). |
-| `io.<member>` | 4 | nil in the original |
-| `os.<member>` | 2 | nil in the original |
-| `debug.<member>` | 2 | nil in the original |
+| `loadstring(` | 34 (both scopes) | provided (LPA §3.2) |
+| `collectgarbage(` | 13 (both scopes) | provided |
+| `print(` | 19 (both scopes) | output goes to the script log, never to chat (LPA §3.2) |
+| `table.getn` | 64 (closure 63) | Lua 5.0 compatibility function, present in stock 5.1 |
+| `math.mod` | 18 (both scopes) | as above |
+| `unpack` | 52 (closure 49) | base function in 5.1 |
+| Calls of `require` in any form | 6 (both scopes): 2 call it directly with a string argument and no parentheses (bundled bit-manipulation library files); 4 pass it as a value to a protected call (`pcall`). None uses the parenthesised form with a direct call. | nil in the original (LPA §3.2): a direct call raises when its file runs; a protected call returns false instead of raising. The 2 direct callers are outside the first surface (§7.2). |
+| `io.<member>` | 4 (both scopes) | nil in the original |
+| `os.<member>` | 2 (both scopes) | nil in the original |
+| `debug.<member>` | 2 (both scopes) | nil in the original |
 | `coroutine.<member>` | 0 | — |
 | `dofile(`, `loadfile(`, `string.dump`, `gcinfo(`, `string.gfind`, `table.setn` | 0 each | — |
-| Functions added to the `string` table (`trim`, `split`, …) | 12 | the string table is shared by every string's metatable in the apartment |
-| Functions added to `math` / `table` | 7 / 3 | — |
+| Functions added to the `string` table (`trim`, `split`, …; names the stock 5.1 library does not have) | 12 | the string table is shared by every string's metatable in the apartment |
+| Functions added to `math` / `table` (same rule) | 7 / 3 | — |
 
 <a id="6-5"></a>
 ### 6.5 The class helper and the 2010 sample package
+
+Whole-distribution scope (the counts of this section were taken over every `.lua` file of a
+distribution, U11):
 
 - 121 distributions call a global `class(…)` helper to subclass native classes (LPA §8.3).
   90 define it themselves (in their own package or a bundled copy), 11 bundle a copy of the
@@ -726,14 +741,15 @@ Whole-distribution scope, comments removed:
 <a id="6-6"></a>
 ### 6.6 Import patterns
 
-- Every distribution imports by string literal; 32 also build an import name at run time
-  (35 when `import` passed as a value is counted too, §3.3 rule 3).
+- Every distribution imports by string literal; 32 (closure 31) also build an import name at
+  run time, and 35 (closure 34) when `import` passed as a value is counted too (the trigger of
+  §3.3 rule 3).
 - Imports placed inside functions and wrapped in a protected call are used for optional
   dependencies (for example an optional import of another author's map package, and an import
   done only when the user asks for an update table). A failing `import` must therefore raise a
   catchable Lua error (LPA §7.1), never abort the apartment.
-- 16 distributions (one descriptor each) import at least one package that no file in the
-  distribution provides: in 9 it is a separately published UI helper library by another author
+- 16 distributions (one descriptor each; closure scope, since only reached imports are
+  resolved) import at least one package that no file in the distribution provides: in 9 it is a separately published UI helper library by another author
   (§6.11); in 2 the import is optional (protected call, or on demand); in 1 it is test-only; in
   4 the missing package is in the plugin's own or another author's namespace and was not
   classified further.
@@ -741,12 +757,13 @@ Whole-distribution scope, comments removed:
 <a id="6-7"></a>
 ### 6.7 Plugin-data call forms
 
-At least 65 distributions call `PluginData.Load` with two arguments (synchronous form) and at
-least 41 with three (with a completion handler); at least 69 call `PluginData.Save` with three
-arguments and at least 81 with four (with a completion handler). (Counted only where the call is
-written `PluginData.Load(` / `PluginData.Save(`; aliased calls are not counted.) Scopes
-referenced: `Character` 110, `Account` 56, `Server` 40 (§5.5). Both forms and all three
-scopes are LPA §10.1.
+At least 65 (closure 64) distributions call `PluginData.Load` with two arguments (synchronous
+form) and at least 41 (closure 40) with three (with a completion handler); at least 69 (both
+scopes) call `PluginData.Save` with three arguments and at least 81 (closure 80) with four (with
+a completion handler). (Counted only where the call is written `PluginData.Load(` /
+`PluginData.Save(`; aliased calls are not counted.) Scope values referenced as
+`Turbine.DataScope.<name>`: `Character` 110 (both scopes), `Account` 57 (both scopes), `Server`
+41 (closure 40); the closure values equal §5.5. Both forms and all three scopes are LPA §10.1.
 
 > **OPEN:** one distribution in the §9 set (Songbook) reads an account-scope key that a
 > helper program shipped in the same archive writes outside the game, into the original
@@ -757,13 +774,15 @@ scopes are LPA §10.1.
 <a id="6-8"></a>
 ### 6.8 Images and backgrounds
 
-- `SetBackground` with a numeric literal that is an image DID (`0x41xxxxxx`): 73
+- `SetBackground` with a numeric literal that is an image DID (`0x41xxxxxx`): 73 (closure 72)
   distributions. These need the install's render-surface records (LPA §13.8), not the server.
-- Image paths written as string literals: `.tga` in 115 distributions, `.jpg` in 31, `.png` in
-  1. Files shipped: `.tga` in 127 distributions, `.jpg` in 45, `.png` in 6, `.bmp` in 4.
-- `SetBackground(nil)` (clear): 20 distributions.
-- `SetStretchMode` literal arguments: 1 in 58 distributions, 2 in 56, 0 in 22, 3 in 13, 4 in
-  none. LPA §17.3 puts stretch modes 1–4 in tier 3; by use, modes 1 and 2 belong in the first
+- Image paths written as string literals: `.tga` in 115 (closure 114) distributions, `.jpg` in
+  31 (closure 28), `.png` in 1 (both scopes). Files shipped (a property of the archive, so
+  whole distribution by nature): `.tga` in 127 distributions, `.jpg` in 45, `.png` in 6, `.bmp`
+  in 4.
+- `SetBackground(nil)` (clear): 20 (both scopes).
+- `SetStretchMode` with a single numeric literal argument: 1 in 58 (closure 57) distributions,
+  2 in 56 (closure 50), 0 in 22 (both scopes), 3 in 13 (both scopes), 4 in none. LPA §17.3 puts stretch modes 1–4 in tier 3; by use, modes 1 and 2 belong in the first
   surface (§7.3).
 
 > **OPEN:** whether the original accepts `.png` files in `SetBackground` (LPA §13.8 names JPG
@@ -772,10 +791,10 @@ scopes are LPA §10.1.
 <a id="6-9"></a>
 ### 6.9 Text markup
 
-`Label:SetMarkupEnabled` is used by 38 distributions (closure scope; 40 in the whole
-distribution), but colour-tag strings (`<rgb=…>`) appear in 91 and underline tags in 13. 45
-distributions put a colour tag directly in the argument of a `WriteLine` call, 31 of them
-without ever enabling label markup: plugins expect `Shell.WriteLine` output in chat to be
+`Label:SetMarkupEnabled` is used by 40 (closure 38) distributions, but colour-tag strings
+(`<rgb=…>`) appear in 91 (closure 89) and underline tags in 13 (both scopes). 45 (closure 44)
+distributions put a colour tag in a string literal of the first argument of a `WriteLine` call,
+31 (both scopes) of them without ever enabling label markup: plugins expect `Shell.WriteLine` output in chat to be
 rendered with the markup of LPA §13.4.
 
 > **OPEN:** LPA §11.1 does not state whether the original renders markup in `WriteLine` text.
@@ -785,9 +804,10 @@ rendered with the markup of LPA §13.4.
 ### 6.10 Several descriptors, reloaders and shared apartments
 
 - 28 distributions ship several descriptors. 31 descriptors have names that mark them as
-  reloader or unloader helpers, which unload a plugin's apartment and load it again;
-  `PluginManager.UnloadScriptState` is called in 28 distributions and
-  `PluginManager.LoadPlugin` in 31.
+  reloader or unloader helpers, which unload a plugin's apartment and load it again (these two
+  counts are about descriptors and do not depend on the code scope).
+  `PluginManager.UnloadScriptState` is called in 29 (closure 28) distributions and
+  `PluginManager.LoadPlugin` in 33 (closure 31).
 - Apartment names shared by **different** distributions: one author's six reference plugins
   declare one apartment; four forks of one toolbar plugin share three apartment names (main,
   reloader, unloader); seven more names occur in 2 distributions each (four times two
@@ -798,17 +818,56 @@ rendered with the markup of LPA §13.4.
 <a id="6-11"></a>
 ### 6.11 Dependencies on other distributions
 
-9 distributions import a UI helper library (drag bars and draggable windows) that is
-published separately by another author and is not bundled; they fail to load without it. One
+9 distributions (closure scope: imports reached from the main packages) import a UI helper
+library (drag bars and draggable windows) that is published separately by another author and is
+not bundled; they fail to load without it. One
 distribution optionally uses another author's map package (§6.6).
 
 <a id="6-12"></a>
 ### 6.12 Size
 
 Three of the most downloaded distributions keep large databases as Lua tables: 32.5 MB,
-10.1 MB and 6.5 MB of Lua source. The original sets no memory or time limit on plugins (LPA
-§3.3); Tessera's limits (M5 exit criterion 5) must still let these load, which is why they are
-in the §9 set.
+10.1 MB and 6.5 MB of Lua source (whole distribution). The original sets no memory or time
+limit on plugins (LPA §3.3); Tessera's limits (M5 exit criterion 5) must still let these load,
+which is why they are in the §9 set.
+
+**Measured load cost (U12).** Each apartment of the §9.2 set was loaded as the host would load
+it (`import` of the main package as one host call, then the `Load` event, queued plugin-data
+callbacks and 1,000 ticks of `Update` delivery each followed by the per-tick collector step of
+`plugin-runtime.md` §9.2), with stock Lua 5.1.5 built for 64-bit and a stub host API. Bytes are
+what the Lua state requested from its allocator (the quantity the per-apartment cap counts,
+`plugin-runtime.md` §9.1); they include about 0.3 MiB for the stub API tables and exclude
+allocator overhead and native objects. Instructions are Lua VM instructions of one host call,
+counted by a count hook (± 10), including the few the stub API spent.
+
+| Apartment (§9.2 #) | Largest host call (VM instructions) | Peak bytes | Live bytes after a full collection |
+|---|---|---|---|
+| `Compendium` (#2), its four databases imported by the main package at load | 4.0 M (the plugin load) | **160.2 MiB** | 125.1 MiB |
+| `IRV` (#14) | 4.2 M (the plugin load) | **75.2 MiB** | 60.6 MiB |
+| `TMAnnot` (#1 helper), with every one of the 1,950 annotation cells requested at once (worst case; the main plugin normally requests a few) | 12.8 M (the plugin load) | 18.9 MiB | 9.1 MiB |
+| `TerrainMap` (#1) | 0.7 M (the plugin load) | 12.8 MiB | 7.5 MiB |
+| `TMSearch` (#1 helper), searching all 398 map data files, one per `Update` | 0.45 M (one `Update`) | 10.2 MiB | 7.7 MiB |
+| `Vinny` (#6 and #7 together) | 0.15 M | 4.3 MiB | 3.2 MiB |
+| `Default` (#3, #4, #10, the five descriptors of #11, #12, #13 together) | 0.25 M | 4.1 MiB | 2.9 MiB |
+| `LootLogs` (#5) | 0.29 M | 2.1 MiB | 1.6 MiB |
+| `RTPlugin` (#9), `StableGuy` and `Waypoint` (#8), `CompendiumReloader` (#2), `TMCust` (#1 helper) | ≤ 0.12 M | ≤ 1.1 MiB each | ≤ 1.0 MiB each |
+
+Findings:
+
+1. The per-host-call instruction budget of LPA §3.3 (500 million) fits every call with a
+   margin of at least 39 times.
+2. The per-apartment memory default of LPA §3.3 (64 MiB) does **not** fit: #2 is refused
+   during its load at 64 MiB (and still at 159 MiB), and #14 at 64 MiB (and still at 75 MiB).
+   Stock 5.1 has no emergency collection, so a cap must cover the peak including garbage not yet
+   collected, not only the live bytes. `plugin-runtime.md` §9.1 therefore sets the default to
+   512 MiB (its §9.4 gives the derivation); both distributions load under it.
+3. Compilation is not counted by the instruction budget: loading #2 compiles 33.7 MB of source
+   and takes 1.2–1.7 s of wall time on a 2020 laptop CPU while executing only about 4 M VM
+   instructions. Compiling needs memory too: the parser held 2.2 to 7.6 times the file size at
+   its peak for the 10 largest data files of #2, #1 and #14.
+4. Each of those 10 files, compiled and run alone, keeps 1.3 to 6.8 times its source size live
+   (the ratio depends on how many distinct strings and nested tables it builds); the whole of
+   #2 keeps 131 MB live from 34 MB of Lua source.
 
 ---
 
@@ -830,7 +889,11 @@ The **first API surface** is:
    `Turbine.UI.EdgeAttachmentType` and `Turbine.UI.Lotro.UIScalingGroupType` (values only);
 3. the behaviour items of §7.3.
 
-62 names in all. A shortcut of type `Alias` runs its text as a chat command through Tessera's own
+62 names in all. The first surface is a **build order inside** the tiers of LPA §17, not a
+different surface: every promoted name of item 2 is an LPA §16 name of tier 2 or 3, and no name
+outside LPA §16 is added. It therefore stays within `docs/LEGAL.md` §17.2 rule 5 ("only what
+plugins need", built in the LPA tiers); it only moves 13 names and 8 behaviour items earlier
+because the census shows plugins need them early. A shortcut of type `Alias` runs its text as a chat command through Tessera's own
 command handling; other shortcut types are accepted, stored, returned and drawn, and executing
 them needs game state (§8).
 
@@ -865,14 +928,14 @@ LPA §17 places these later; by use they are needed early:
 
 | Item | Use | LPA |
 |---|---|---|
-| Stretch modes 1, 2 and 3 | 58 / 56 / 13 distributions | §13.8 (tier 3) |
-| Writable class and enumeration tables with lookup of plugin-added functions by instances | 83 distributions | §8.1, §8.4; §6.3 here |
-| Handler tables and the `Plugins` table | 56 / 73 | §9.2, §6.2 |
-| Markup in `Shell.WriteLine` output | 45 (colour tags anywhere: 91) | §11.1, §13.4; §6.9 OPEN |
-| `PluginManager.LoadPlugin` and `UnloadScriptState` from plugin code | 31 / 28 | §6.2, §6.3 |
-| `Window.SetRotation` | 14 | §13.3 (tier 3) |
-| `Window.SetScale`, `RegisterForGlobalScaling`, `UnregisterForGlobalScaling`, `UIScaleChanged` | 6–10 | §13.3 (tier 3); a scale of 1 and no events are acceptable at first |
-| `Plugin.GetUsesGlobalScaling` | 8 | §16, §17.3 (tier 3) |
+| Stretch modes 1, 2 and 3 | 58 (closure 57) / 56 (closure 50) / 13 (both scopes) distributions, §6.8 | §13.8 (tier 3) |
+| Writable class and enumeration tables with lookup of plugin-added functions by instances | 83 distributions (whole distribution), §6.3 | §8.1, §8.4; §6.3 here |
+| Handler tables and the `Plugins` table | 56 (closure 55) define a handler-table helper; 73 (closure 71) index `Plugins`, §6.1, §6.2 | §9.2, §6.2 |
+| Markup in `Shell.WriteLine` output | 45 (closure 44); colour tags anywhere: 91 (closure 89), §6.9 | §11.1, §13.4; §6.9 OPEN |
+| `PluginManager.LoadPlugin` and `UnloadScriptState` from plugin code | 33 (closure 31) / 29 (closure 28), §6.10 | §6.2, §6.3 |
+| `Window.SetRotation` | 14 (closure scope, §5.3) | §13.3 (tier 3) |
+| `Window.SetScale`, `RegisterForGlobalScaling`, `UnregisterForGlobalScaling`, `UIScaleChanged` | 6–10 (closure scope, §5.3, §5.4) | §13.3 (tier 3); a scale of 1 and no events are acceptable at first |
+| `Plugin.GetUsesGlobalScaling` | 8 (closure scope, §5.3) | §16, §17.3 (tier 3) |
 
 Members of first-surface classes used by **no** distribution (§5.3, "used by none") may stay
 stubs at first: for example `Control.GetEdgeAttachments`, `GetMaximum*`, `GetMinimumSize`,
@@ -910,11 +973,12 @@ plugin never imports, so it has no run-time effect. In the other 7 the replaceme
 saved native function and then, to detect a client language that the native function does not
 report, reads the name of a game object:
 
-| Group | Distributions | Chain the replacement follows | Condition |
-|---|---|---|---|
-| A | 2 | `LocalPlayer.GetInstance` → `GetTrainedSkills` → `GetItem(1)` → `GetSkillInfo` → `GetName`; the result is `Language.Russian` (a value the plugin itself adds, §5.7) when the name begins with a Cyrillic letter (the test looks at the first two bytes of the UTF-8 name), otherwise the native value | on every call |
-| B | 4 | the same chain and test | only when the native function returns `Language.English` |
-| C | 1 | constructs an `Item`-type `Shortcut` from a fixed data string, then `GetItem` → `GetItemInfo` → `GetName`, and maps the name to a language; a name it does not know gives `Language.English` | on every call |
+| Group | Distributions | Chain the replacement follows | When it tests | Name test (§7.4.2) |
+|---|---|---|---|---|
+| A1 | 1 (LIX 1199) | `LocalPlayer.GetInstance` → `GetTrainedSkills` → `GetItem(1)` → `GetSkillInfo` → `GetName` | on every call | **P**: the result is `Language.Russian` (a value the plugin itself adds, §5.7) when test P matches, otherwise the native value |
+| A2 | 1 (LIX 901) | the same chain | on every call | **S**: `Language.Russian` when test S matches, otherwise the native value |
+| B | 4 | the same chain | only when the native function returns `Language.English` | **P**, as A1 |
+| C | 1 | constructs an `Item`-type `Shortcut` from a fixed data string, then `GetItem` → `GetItemInfo` → `GetName`, and maps the name to a language by exact comparison with fixed strings; a name it does not know gives `Language.English` | on every call | exact string equality only |
 
 6 of the 7 call the replacement **while loading** (top-level code of an imported file: the
 locale set-up, or a language-dependent data table); one distribution of group B defines it but
@@ -925,22 +989,75 @@ raises and the plugin fails to load. With the empty views above, an empty traine
 would make `GetItem(1)` fail (an out-of-range index) and the 5 load-time callers of groups A
 and B would not load.
 
+<a id="7-4-2"></a>
+#### 7.4.2 The two name tests
+
+Both tests run in the plugin's own Lua code, so they follow the Lua 5.1 pattern rules in the
+C locale (`plugin-runtime.md` §4.3: bytes 0x80–0xFF belong to no character class and are
+compared as plain bytes). Let *N* be the name the chain returns.
+
+**Test P (groups A1 and B).** Take the first two bytes of *N* (all of *N* if it is shorter).
+Use them, unescaped, as a Lua **pattern**, and search for it anywhere in a fixed string *R*
+held by the plugin: the 66 two-byte UTF-8 encodings of the Russian capital and small letters
+U+0410–U+044F, U+0401 and U+0451 (132 bytes; every byte of *R* is 0xD0, 0xD1 or in
+0x80–0xBF, so *R* has no byte below 0x80; *R* begins with the byte 0xD0, and the order of the
+letters changes none of the outcomes below). The test matches when the search finds something,
+**including an empty match**.
+
+Outcomes of P by the first two bytes *b1 b2* of *N* (enumerated over every *b1* from 0x00 to
+0xFF and every *b2*, 2026-10-06; a 0x00 byte ends a Lua 5.1 pattern, so *b1 b2* with *b2* =
+0x00 behaves as *b1* alone, and *b1* = 0x00 as the empty pattern):
+
+| *b1 b2* | Outcome of P |
+|---|---|
+| *N* empty, or *b1* = 0x00 | the empty pattern matches: **Russian** |
+| a two-byte UTF-8 letter of *R* (D0 81, D0 90–BF, D1 80–8F, D1 91) | match: Russian (the intended case) |
+| any other non-ASCII UTF-8 character (lead byte 0xC2–0xF4 followed by a continuation byte), for example an accented Latin letter or U+0400 | no match: native value |
+| *b1* an ASCII byte other than `$ % ( ) . [ ^`, and *b2* absent or not one of `* - ?` | no match: native value |
+| *b1* an ASCII byte other than `% ( ) [ ^` (or a byte of *R*), and *b2* one of `*`, `-`, `?` (zero repetitions match the empty string) | match: **Russian** |
+| `$` alone; `.` alone or followed by `$`, `+`, `.` or a byte of *R* (0x80–0xBF, 0xD0, 0xD1); `^` alone or followed by `.` or 0xD0; `%` followed by one of `A C D L P S U W X Z` or by a byte of *R*; `()` | match: **Russian** |
+| `%` alone or followed by a digit, `b` or `f`; `(` alone or followed by `$`, `%`, `(`, `.`, `[` or a byte of *R*; `)` or `[` alone or followed by any byte; `.` or `^` followed by `%`, `(`, `)` or `[` | malformed pattern or unfinished capture: the search **raises an error**, so the replacement raises and a load-time caller fails to load |
+| `$`, `%`, `(`, `.` or `^` followed by any byte not listed in the rows above (for example `$x`, `%a`, `(x`, `.x`, `^A`) | no match: native value |
+
+Names that are not valid UTF-8 at their start (a continuation byte first, or a lead byte followed by an ASCII byte) are not listed; none can come from a well-formed name.
+
+**Test S (group A2).** Search *N* with a one-character set pattern whose bytes, read as a Lua
+set, are {0x81, 0x8F} ∪ 0x90–0xD1 (the plugin wrote it as a range of Cyrillic letters, but
+Lua reads the set byte by byte). The test matches when **any byte anywhere** in *N* is in that
+set. It never matches a name of ASCII bytes only, and it matches every name that contains a
+two-byte UTF-8 character with lead byte 0xC2–0xD1 (U+0080–U+047F: accented Latin letters,
+Greek, Cyrillic and others) or any other character whose encoding has a byte in the set. It
+cannot raise.
+
 Tessera rule (proposal for the plugin host, not an observed original behaviour):
 
 1. Under a backend without skill data, the sandbox character's trained-skill list holds at
    least one skill. `GetItem(1)` returns a `Skill`; its `GetSkillInfo()` returns a `SkillInfo`;
-   that object's `GetName()` returns a non-empty string whose first character is **not** in the
-   Cyrillic block U+0400–U+04FF. The string is either read at run time from the install (the
-   name of a skill of the sandbox character's class, once a spec for skill records exists) or a
-   placeholder chosen by Tessera; it is never copied into Tessera's source.
-2. `Shortcut.GetItem()` on an `Item`-type shortcut whose item the backend does not know returns
+   that object's `GetName()` returns a **placeholder** chosen by Tessera that satisfies all of:
+   - it is not empty;
+   - every byte is an ASCII letter (0x41–0x5A, 0x61–0x7A), an ASCII digit (0x30–0x39) or a
+     space (0x20), so no byte is 0x80 or above;
+   - its first two bytes (its only byte, if it has one) are ASCII letters or digits.
+
+   Under these conditions test P finds no match and raises nothing (checked over every one- and
+   two-byte prefix the conditions allow), and test S finds no match. Groups A1, A2 and B
+   therefore return the native language and load. The placeholder text is Tessera's own and is
+   never a game string.
+2. When a backend has a skill name read from the install (once a spec for skill records
+   exists), Tessera passes it to the plugin unchanged and does **not** apply rule 1's
+   conditions. The plugin's own test then runs on Tessera's C-locale Lua with exactly the same
+   result as in the original for the same name: for example a name with an accented Latin
+   letter makes group A2 report `Language.Russian`, and a name starting with `(` followed by
+   `.` makes groups A1 and B raise. These are behaviours of the plugin, reproduced, not
+   corrected.
+3. `Shortcut.GetItem()` on an `Item`-type shortcut whose item the backend does not know returns
    an empty `Item` view whose `GetItemInfo()` returns an `ItemInfo` whose `GetName()` returns the
-   empty string, instead of nil.
+   empty string, instead of nil (group C then falls back to `Language.English`).
 
 > **OPEN:** what the original's `Shortcut.GetItem()` returns for an `Item`-type shortcut whose
 > data names an item that the character does not hold (nil, or an `Item` object). Group C
 > depends on it at load. An owner-written test plugin in the original client (M3) settles it;
-> if the answer is nil, rule 2 is a stated Tessera deviation.
+> if the answer is nil, rule 3 is a stated Tessera deviation.
 
 ---
 
@@ -1084,13 +1201,24 @@ incompatibility list that exit criterion 4 asks for.
    `Plugins` entries are present in it.
 6. "Distributions inside" (§7.2) never shrinks when names are added to a surface; with the
    §3.4 rules the counts are 13 (tier 1), 56 (first surface) and 143 (all names).
-7. Under the sandbox backend, the chain `LocalPlayer.GetInstance` → `GetTrainedSkills` →
-   `GetItem(1)` → `GetSkillInfo` → `GetName` returns a non-empty string whose first character
-   is outside U+0400–U+04FF, and the count of the trained-skill list is at least 1 (§7.4.1
-   rule 1). A synthetic test plugin can check this at load.
+7. Under the sandbox backend without skill data, the count of the trained-skill list is at
+   least 1, and the chain `LocalPlayer.GetInstance` → `GetTrainedSkills` → `GetItem(1)` →
+   `GetSkillInfo` → `GetName` returns a string *N* that (a) is not empty, (b) consists only of
+   the bytes 0x30–0x39, 0x41–0x5A, 0x61–0x7A and 0x20, and (c) has ASCII letters or digits as
+   its first two bytes (§7.4.2 rule 1). A synthetic test plugin (our own code) checks at load
+   that both tests of §7.4.2 return "no match" for *N* without raising: test P, by building the
+   132-byte string *R* from the code points U+0410–U+044F, U+0401, U+0451 with `string.char`
+   and calling `string.match(R, string.sub(N, 1, 2))` inside `pcall`; test S, by calling
+   `string.match` on *N* with a set pattern built from the bytes 0x81, 0x8F and the range
+   0x90–0xD1. Both must return nil, and `pcall` must return true.
 8. Under the sandbox backend, an `Item`-type `Shortcut` whose data names an item the backend
-   does not know returns a non-nil item from `GetItem`, and that item's `GetItemInfo` → `GetName` is a string (§7.4.1
-   rule 2).
+   does not know returns a non-nil item from `GetItem`, and that item's `GetItemInfo` →
+   `GetName` is a string (§7.4.2 rule 3).
+9. With the default limits of `plugin-runtime.md` §9.1 (512 MiB per apartment) and §10.1 (500
+   million VM instructions per host call), no apartment of the §9.2 set is refused memory and
+   no host call exhausts its budget while the set loads and runs 1,000 idle ticks (measured
+   margins in §6.12). This is checked by the exit-criterion-4 run, with the plugins the owner
+   installed (§9.5); implementers do not obtain them for unit tests.
 
 ---
 
@@ -1122,6 +1250,17 @@ reports 0 effects and the trained-skill list 1 skill (§7.4.1).
 `MenuItem`. A distribution that calls `x:SetText(…)` and uses `Label` and `Window` but never
 `MenuItem` is counted for `Label.SetText` and `Window.SetText` only (§3.4 rule 5).
 
+**Example 5 — the name tests of §7.4.2 (synthetic names).** Tessera's placeholder `Ab12`:
+test P searches the two-byte pattern `Ab` in *R*, whose bytes are all 0x80 or above, and finds
+nothing; test S finds no byte of 0x81, 0x8F or 0x90–0xD1. Groups A1, A2 and B return the native
+language. A name read from an install, beginning with the UTF-8 letter U+0411 (bytes D0 91):
+P finds D0 91 in *R*, S finds 0xD0; both report Russian, as intended. A name beginning with an
+accented Latin letter (lead byte 0xC3): P finds no C3 in *R* (native value), but S matches the
+lead byte 0xC3, so group A2 reports Russian in the original and in Tessera alike. A synthetic
+name `A*x`: P uses the pattern `A*`, which matches the empty string at the start of *R*, so
+groups A1 and B report Russian. A synthetic name `(.`: P raises a pattern error, so groups A1
+and B fail to load.
+
 **Example 4 — why rule 3 of §3.3 widens to the whole distribution.** A distribution holds a
 plugin folder `A/P` and a shared library folder `A/Common` of the same author. The main package
 `A.P.Main` is reached through `A/P/__init__.lua`, which reads its own package name (`_.Name`,
@@ -1149,7 +1288,7 @@ structure of the former §9.2 #12, Friend Alert.)
 | O7 | What gameplay getters return in the original before data arrives (nil or empty object) | §7.4 |
 | O8 | Owner confirms the plugin versions to test | §9.5 |
 | O9 | Does the original render markup in `Shell.WriteLine` text? | §6.9 |
-| O10 | What the original's `Shortcut.GetItem()` returns for an `Item`-type shortcut naming an item the character does not hold (nil or an `Item` object); one distribution's load-time language detection depends on it | §7.4.1 |
+| O10 | What the original's `Shortcut.GetItem()` returns for an `Item`-type shortcut naming an item the character does not hold (nil or an `Item` object); one distribution's load-time language detection depends on it | §7.4.2 |
 
 ---
 
@@ -1194,3 +1333,4 @@ Downloaded but excluded: 21, 256, 598, 676, 813, 820, 891, 939, 1124 (no descrip
 |---|---|
 | 2026-10-06 | First version (Review). Static census of 143 third-party plugin distributions (130 most-downloaded lotrointerface entries, 13 GitHub repositories) against the LPA §16 name set; rankings of classes, members, events, enumerations and argument fields; behaviours plugins rely on; first API surface (LPA tier 1 plus 13 promoted names and 8 behaviour items, 57 of 143 distributions inside); sandbox data classes; 14-distribution set and 6 reserves for M5 exit criterion 4; 9 OPENs. |
 | 2026-10-06 | Second version, answering the review of the same day (status stays Review). **Scope fix:** §3.3 rule 3 now widens the examined code of a descriptor with a computed import to every `.lua` file of the whole distribution (46 descriptors, 35 distributions) instead of the files under the package's top two path components; the single-file trigger is dropped (rule 4), because a literal-only closure loads nothing else; "closure scope" and "whole-distribution scope" are defined. Full recount: §5.2–§5.7 tables regenerated (33 class rows, 96 member counts, 38 event counts and 62 enumeration-value counts changed, all by 1–2), §3.5 spot checks, §5.3 `Equipment` note (26), §5.6, §6.2 (`Plugins[…]` 73 whole / 71 closure), §6.3 (12 enumeration overwrites, precise groups), §6.4, §7.2 (tier 1: 13 distributions, 3.5 %; first surface: 56, 25.8 %; 87 outside, with the blocking-class list), §7.3 (`SetRotation` 14, `Plugins` 73), §8 sandbox needs, invariant 6. §3.5 now states exactly what the counts bound and where they are not upper bounds. **Plugin set:** Friend Alert (LIX 901) no longer qualifies and is replaced as §9.2 #12 by the first reserve, Compass (LIX 946); EpicBattlePlugin (LIX 874) added as sixth reserve; §9.3 row #12 and the closing statement rewritten; §11 Example 1 now uses Compass; new Example 4 shows why the widening must cover the whole distribution. **Load-time language detection:** new §7.4.1 (provenance U10) describes the `Engine.GetLanguage` replacements (8; 7 effective, in three groups; 6 called at load) and adds two Tessera rules: a non-empty trained-skill list with a non-Cyrillic skill name, and a non-nil empty item behind an unknown `Item` shortcut; new OPEN O10; new invariants 7 and 8. **Other:** §6.4 `require` row restated as calls in any form (2 direct calls with a string argument and no parentheses, 4 protected calls; none parenthesised); §10 invariant 1 marked dirty-room only; `collectgarbage` 13, `table.getn` 63, `math.mod` 18. OPEN callouts: 10. |
+| 2026-10-06 | Third version, answering the re-review of the same day (status stays Review). **Issue 1 (language detection):** §7.4.1 now has four groups (A1, A2, B, C) and a new §7.4.2 states the two name tests byte by byte: test P (first two bytes used as a Lua pattern searched in a 132-byte string of Cyrillic letters; groups A1 and B) with an outcome table enumerated over every first byte 0x00–0xFF, including the empty-match, quantifier and malformed-pattern cases; test S (a byte set {0x81, 0x8F} ∪ 0x90–0xD1 searched anywhere in the name; group A2). Tessera rule 1 now constrains the placeholder (non-empty; only ASCII letters, digits and space; first two bytes letters or digits) instead of "first character outside U+0400–U+04FF"; new rule 2 says names read from the install are passed unchanged and follow the plugin's own test as in the original; the former rule 2 is rule 3. Invariant 7 rewritten to check both tests and the absence of errors; invariant 8 re-pointed; new Example 5; U10 extended. **Issue 2 (scope labels):** §3.3 states which scope every section uses; every count of §6 and §7.3 is labelled (whole distribution by default, closure value in parentheses where it differs) after a recount in both scopes (new U11). Corrections found by the recount: §6.1 row 1 now cites the §5.4 closure counts 124/118/107/59 (it quoted stale values); §6.1 class-level and instance rows state that they count `=` assignments and give the `function` forms separately; the helper row states its rule; §6.2 `Plugins` 88 (closure 86), `_G` 98 (closure 95), `getfenv` 61 (closure 56), `setfenv` 11 (was 12); §6.4 `table.getn` 64 (63), `unpack` 52 (49); §6.6 computed imports 32 (31) and 35 (34); §6.7 `Account` 57 (was 56, now equal to §5.5) and `Server` 41 (40); §6.8 DID literals 73 (72), `.tga` 115 (114), `.jpg` 31 (28), stretch 1 58 (57), stretch 2 56 (50); §6.9 `SetMarkupEnabled` 40 (38), colour tags 91 (89), `WriteLine` with a colour tag 45 (44); §6.10 and §7.3 `LoadPlugin` 33 (closure 31) and `UnloadScriptState` 29 (closure 28). **Limits (critique A7):** §6.12 adds the measured load cost of every §9.2 apartment (new U12): the 500 M instruction budget fits with a margin of at least 39 times; the 64 MiB memory default does not fit #2 (peak 160.2 MiB) or #14 (peak 75.2 MiB), so `plugin-runtime.md` §9.1 raises the default to 512 MiB; new invariant 9. **Other:** naming note now cites the interoperability record `docs/LEGAL.md` §17 (critique B10); §7.1 explains that the first surface is a build order inside the LPA tiers, so it stays within `docs/LEGAL.md` §17.2 rule 5; new source key LUA. Open questions unchanged: O1–O10 of §12 (9 callouts in the text; O5 is listed in §12 only). |

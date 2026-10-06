@@ -4,18 +4,18 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Accepted (revision 3, 2026-10-06) |
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | First review: Claude review session (spec-writer agent), review 2026-10-06: **changes requested** (three blocking items, four minor). Blocking 1 (§5.3 "each fact ... marked Confirmed"; UB19, UB20, §6.3 last sentence): the claim that each tooltip variant's "only child is a Text element" is false. All 4 top-level elements of the tooltip layout have **two** children: a Field (z-level 1, at (0, 0), 512 × 512, edges (5, 5, 5, 5)) behind the Text element (z-level 0). Everything else in that sentence matches. Fix the sentence, and say in §6.4 step 2 that the Field follows the panel by its edges as the Text element does. Blocking 2 (§5.3 "invariants concrete enough to test"; UB-I9 against §8.2 step 4): "min limits hold when set" does not follow from the algorithm. Steps 4.4 (aspect ratio) and 4.6 (screen caps) run after the minimums of step 4.3. Example: the §13.5 setup with `min_height` 240 gives *H* = trunc(350 ÷ 1.5) = 233 < 240. A correct implementation would fail the invariant. Restrict UB-I9 to what holds (for example: min limits hold when no aspect ratio is set and the caps do not apply), or change §8.2 if the BIN trace says otherwise. Blocking 3 (§5.3 "unknowns are marked OPEN"; §8.1 step 3, UB-I8): the move clamp lists four inequalities but no order. A target wider or taller than its parent (a root panel larger than a small window) cannot meet all four, so the result is undefined and UB-I8 cannot hold. State the order, as §9.2 step 5 does, or add an OPEN and limit UB-I8 to targets that fit inside their parent. Minor (not blocking): (a) §6.2 says nothing about elements whose hover handler shows no tooltip (`tooltips_on` false, no text, `TooltipEnable` false). Say whether the handler, and `Element_mouse_hover`, run again on every frame after the delay or once per hover, or add an OPEN. (b) §5.2 step 1: say whether giving focus to *F* pops the active panel's map. "Push again" on clearing focus otherwise reads as a second push. (c) §3.3: the Windows default values (500 ms, 4 × 4) have no provenance row. (d) §16 row 2 ("through a chain of subtractions, not an immediate"), the §5.6 OPEN ("no comparison with these IDs ... jump table") and the §3.3 OPEN ("tests a further flag before the comparison") describe machine-code structure, not behaviour. Rephrase them as plain unknowns. Every other §5.3 item passes. The algorithms are prose with numeric constants allowed under decision 0012. Nothing has code or listing structure, and no prose is copied. There is no game text, key, hostname or traffic. The example "level 5" is invented, the template text is not reproduced, and the property, enum, command, map and preference names are interop identifiers covered by the naming note. Every fact has a row UB1–UB39 with a mark (the BIN and Probable marks follow the Accepted `ui-layout.md`). Every §17 item has an in-section callout. No network, login or server material is involved, so no closed gate applies. The spec is implementable apart from the three items above. I recomputed every §13 example by hand and all of them match: 13.1 timing, 13.2 hit test, 13.3 placement 1704 / 1032 and size 216 × 18, 13.4 threshold, 13.5 resize 350 × 233, 13.6 order *Y*, *X*, *Z*, 13.7 scale (70, 80). They also agree with UL §9.3 sibling order and KM §12.5.7 bits. Spot checks, read-only on the install 2026-10-06, with independent probes. (1) UB39 / §15 over all 302 layout records: `HoverDelay` 243 (242 × 0.1, 1 × 300); `AutoFade` 105 (101 × 0.1, 4 × 0.5); `dragable` 10; `mouse_invisible` 27 (16 true); alpha threshold 3 × 128; resize-bar borders 30 / 39 / 3 / 3; `activatable` 370 (349 true) + 1 state; `blocks_clicks` 292 (247) + 1; `auto_tooltip_truncated_text` 271 (246); `KeepObjectWhenHidden` 35; `save_loc` 194 (192) + 1; aspect ratio 1 ≈ 1.2715; `tooltip_layout` 2,091 (2,076 / 0 in 3) + 41 states; `InputMapID` and `disallow_drag_in` on none; Dragbar 135, ResizeBar 52: all match. (2) UB-I1: 2,084 blocks set both properties, with 7 distinct pairs. 5 resolve to a Text descendant through `tooltip_text_ID`, (0, 0) occurs in 3 blocks, and one pair in 2 blocks names a missing element: matches. (3) UB31 / UB-I2: of the 1,616 0x78 sets, only one holds `UIScaleDefinition_Array`. It decodes to the end with 56 entries, all Min 0.4, Max 4.0 and 73 stops. Groups 60 and 61 carry the two preference keys and the other 54 carry a property; none has both or neither. `UpdateOnRelease` is 1 in 3 entries: matches. (4) UB35 / UB-I3: the REC §1.5 hash of the three identifiers gives 0x0AA521D0, 0x00058AD4 and 0x094418B0. `STRINGTABLE` maps `UI_Helper` with key 0x0F to a table with exactly one entry, with that token, both argument IDs and three pieces of lengths 0, 2 and 0: matches. (5) UB17 / UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25`, and all three `UIScale_*` = 1.00: matches. (6) UB20 tooltip layout: four 30 × 30 top-level elements at z-level −1500 with edges 0. Each Text child is at (2, 2), 26 × 26, with edges 5, left and right margins 6, top margin 0, `max_width` 508 and `max_height` 508 (808 in one variant): matches, except for the second child (Blocking 1). **Revision 1 by the spec writer, 2026-10-06**: every item above is addressed; see the change log. **Re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three blocking items are fixed. Blocking 1: §6.3, §6.4 step 2, UB19 and UB20 now describe both children. A fresh read-only check of all 4 variants confirms them: the Field is at (0, 0), 512 × 512, z-level 1, edges 5, 5, 5, 5; the Text element is at (2, 2), 26 × 26, z-level 0, edges 5, with margins 6 / 6 / 0 and `max_width` 508. Blocking 2: §8.2 now says the step 4.3 limits are not final. UB-I9 is restricted to the case with no aspect ratio and no cap change. I checked that this restricted form follows from steps 4.1–4.3, including the case where a minimum is above the maximum. The extended §13.5 recomputes to 350 × 233. Blocking 3: the §8.1 step 3 clamp order is stated. The rewritten UB-I8 follows from it on both branches, and §13.10 recomputes to x = −200 and y = 200. Minor items: (a) §6.2 steps 2–5 and UB-I13 are consistent. (b) §5.2 step 1 and UB-I14 are consistent, and §13.9 recomputes stack by stack. (c) UB40 is Reported with sources. (d) the three OPEN and §16 phrasings are now plain unknowns. The §5.3 checklist passes on every item. Further spot checks against the install (read-only, 2026-10-06), all matching: `min_width` / `min_height` / `max_width` / `max_height` 230 / 153 / 218 / 124; `Resizebar_Target_Element` 3; `IgnoreResizeHeightCap` 1 and `IgnoreResizeWidthCap` 0; `activate_on_show` 136 (134) + 1 state; `focus_on_show` 11; `UICoreDragbar_Ancestor_UIElementID` 4 (one label); `tooltips_on` 1,827 (1,787) + 42; `container` 200 (196); `save_size` 41 (34); `editable` / `selectable` 128 / 138; `hide` 769 (740) + 165 states (42 / 123); `tooltip_text_ID` 173 (98 zero); `UICore_Panel_tab_element` 233 occurrences. Non-blocking notes for a later revision: §14 lists UB-I13 and UB-I14 between UB-I9 and UB-I10. §6.1 says a change to `TooltipDelay` "runs the timer check again", but by §6.2 step 2 only a `TooltipEnable` change clears the hover-handled flag, so a delay change while the flag is set has no visible effect. Saying so would remove the ambiguity. |
+| **Review record** | **Revision 3 re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** Both blocking items of the revision-2 review are resolved. Blocking 1: §4.1 step 3, the last paragraph of §9.2.1, UB3, UB46 and UB-I20 name the scale (the nearest display node at or above the element, (1, 1, 1) only when none) and the three-component 0.0002 test, and agree with `fonts.md` revision 6. Blocking 2: §8.2 names the boxes; the displayed result under a UI scale is an OPEN with a Tessera rule, and UB-I9 is restricted to unscaled targets. BIN spot checks (decision 0011, build 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5): (1) the resize begin records the pointer and *W0*, *H0* as displayed right − left + 1 and bottom − top + 1 (UB-I21); (2) the resize step uses the recorded pointer offset unscaled and anchors on the layout box; on the axis a handle does not resize, both edges stay as they are (handle table §8.2 step 4.5, all 8 handles); (3) the order of step 4.3 is maximum, then minimum, and the aspect ratio of 0 is skipped; the caps are left and top ≥ 0, and right and bottom ≤ screen − 1 unless the matching Ignore flag is set; the target is then moved and resized; (4) the element-resize limit pass (UB47) runs `max_height`, `min_height`, `max_width`, `min_width` and then the aspect ratio. Width drives unless the last limit that changed a value was a height limit; this is the same as the spec's wording, because the width limits run last. A ratio of 0 is not skipped; (5) the text hit-test conversion of `fonts.md` §6.3 item 3 calls the same scale accessor as the point test. §13.5 recomputes to 350 × 233 and 360 × 240 (box (100, 50, 459, 289)), and §13.15 recomputes to (6, 5). All four minor items are resolved: UB-I16 is restricted to updates made without a capture; §6.1 covers a `TooltipDelay` change; the §15 and §6.3 nested-value counts are stated; §14 is in order; the §4.3 marker sentence is behavioural. Non-blocking notes for a later revision: §9.2.1 still calls the node scale vector (*sx*, *sy*), and its last paragraph says (1, 1), whereas §4.1 uses three components and (1, 1, 1). **Revision 3 (spec writer, 2026-10-06): submitted for review.** It answers both blocking items and the four minor items of the revision-2 review below, with BIN questions 17–19 on the same build (change log). Blocking 1: §4.1 step 3 and §9.2.1 now name the scale (the nearest display node at or above the element, (1, 1, 1) only when none) and the three-component tolerance test; `fonts.md` revision 6 makes the same correction. Blocking 2: §8.2 now names the boxes (the resize begins from the displayed size, the step anchors on the layout box, the pointer offset is used unscaled) and adds the limit pass that every element resize applies (§9.2.1); the displayed result for a target under a UI scale is OPEN and UB-I9 is restricted to targets without one. The BIN re-read also corrected §13.5 (the second case ends at 360 × 240, not 350 × 233). **Revision 2 review: Claude review session (spec-writer agent), 2026-10-06: changes requested** (two blocking items, four minor). Blocking 1 (§5.3 "unknowns are marked OPEN, not guessed"; §4.1 step 3, §9.2.1 last paragraph): the spec does not say which scale a displayed point is divided by. BIN spot check (decision 0011, same build): the element's scale accessor that the point-in-element test calls returns the scale of the element's own display node, otherwise that of the nearest ancestor that has one (following parents), and (1, 1, 1) only when none exists, so it is the (*ex*, *ey*) of §9.2.1, not the element's "own" scale. The test also compares all three components (x, y, z) with 1 and divides when any of them differs by more than 0.0002, not only "either of" two. Say both in §4.1 step 3 and §9.2.1. `fonts.md` §6.3 item 1 states the opposite (an element without a node has scale 1), and that review asks for the same fix there. Blocking 2 (§5.3 "unknowns are marked OPEN" and "invariants concrete enough to test"; §8.2, UB-I9): revision 2 introduces two boxes per element, but §8.2 does not say which box the resize step records (*W0*, *H0*), sets and caps (step 4.6) when the target is under a UI scale, or how the pointer offset in screen pixels relates to it. §8.1 names the displayed box for the move clamp. The resize step reads a different set of box fields from the ones the move clamp uses (BIN spot check), so the displayed box cannot be assumed. State the box, or add an OPEN and restrict UB-I9 to unscaled targets. Minor (not blocking): (a) UB-I16 second clause has an edge case. By §4.4 step 2 a captured element stays the candidate while it is the hit element, and an element that only blocks clicks can be the hit element. So a captured element whose mouse-visible flag was cleared during the capture (for example a Button made ghosted) and that blocks clicks stays hovered. Restrict the invariant, or make step 2 require mouse-visible. (b) §6.3 and §15 count `tooltip_entry` on "1,780 elements". 1,777 element blocks hold it directly, and 3 more values are nested inside struct or array values of element blocks. Likewise, all 233 `UICore_Panel_tab_element` values are nested. Say "values in element blocks, nested values included". (c) The revision-1 notes on §6.1 (a `TooltipDelay` change while the hover-handled flag is set has no visible effect) and on the order of §14 still apply. (d) §4.3 "the client reads a ... marker at the start of every type rule" could be phrased purely as behaviour (a never-set override marker that would freeze the flag). Every other §5.3 item passes. The new material is prose and tables with decision-0012 constants. There are no addresses or listing structure, and no game text, keys, hostnames or traffic. The identifiers are covered by the extended naming note, UB41–UB45 carry marks, and no closed gate applies. B1, B2, B6, B9 and C4 are answered consistently with `ui-layout.md` §9.2–§9.3 and `fonts.md` §7.6. Arithmetic re-checked: §13.11–§13.14 (displayed box (70, 80, 429, 319); child (12, 24)–(71, 35); pointer (20, 30) inside), §13.12 chains, and §13.13 stop. Spot checks (owner's install, read-only, 2026-10-06; fresh extraction of 316 records, byte-identical to the earlier review extraction; reviewer's own reader): (1) UB39/§15: `context_menu` 55 (52 true), `container` 200 (196), `dragable` 10, `AllowStretchOnDrag` 2 (1/1), `drag_rollover` 8, `editable` 128 (103) + 4 states, `selectable` 138 (126) + 4, `lose_focus_on_escape` 19, `_acceptinput` 56, `max_chars` 84, `KeepObjectWhenHidden` 35, `focus_on_show` 11, `enable_visibility_broadcast` 1, `mouse_invisible` 27 (16), `blocks_clicks` 292 (247) + 1 state, `disallow_drag_out` 2 (false); Dragbar 135, ResizeBar 52: all match. (2) UB35/§10.1: `truncate_text_to_fit` 325 values (324 elements + 1 state); 318 element values and the state value name one of two entries of one table, 1 names a second table and 5 are null; `auto_tooltip_truncated_text` 271 (246): match. (3) UB19/UB20: the default tooltip layout (named by 2,076 elements) has four variants, each 30 × 30, z −1500, edges 0. Each has a Field at (0, 0), 512 × 512, z 1, edges 5, and a Text at (2, 2), 26 × 26, z 0, edges 5, with margins 6/6/0, `max_width` 508 and `max_height` 508 (808 in one): match. (4) UB17/UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25` in `[Misc]`, and the three `UIScale_*` = 1.00 in `[UI]`: match. (5) UB4/UB5 BIN: the hit test recurses through the point test and then catches on exactly the mouse-visible and blocks-clicks bits. The Button rule returns the stored flag under the marker, else true unless ghosted, and a ghosted Button only with `broadcast_when_ghosted` or `click_when_ghosted`: match. **Revision 2 (spec writer, 2026-10-06): submitted for review.** It answers the M5 completeness critique items B1, B2, B3, B6, B9 and C4 for this spec (change log). Earlier records follow. First review: Claude review session (spec-writer agent), review 2026-10-06: **changes requested** (three blocking items, four minor). Blocking 1 (§5.3 "each fact ... marked Confirmed"; UB19, UB20, §6.3 last sentence): the claim that each tooltip variant's "only child is a Text element" is false. All 4 top-level elements of the tooltip layout have **two** children: a Field (z-level 1, at (0, 0), 512 × 512, edges (5, 5, 5, 5)) behind the Text element (z-level 0). Everything else in that sentence matches. Fix the sentence, and say in §6.4 step 2 that the Field follows the panel by its edges as the Text element does. Blocking 2 (§5.3 "invariants concrete enough to test"; UB-I9 against §8.2 step 4): "min limits hold when set" does not follow from the algorithm. Steps 4.4 (aspect ratio) and 4.6 (screen caps) run after the minimums of step 4.3. Example: the §13.5 setup with `min_height` 240 gives *H* = trunc(350 ÷ 1.5) = 233 < 240. A correct implementation would fail the invariant. Restrict UB-I9 to what holds (for example: min limits hold when no aspect ratio is set and the caps do not apply), or change §8.2 if the BIN trace says otherwise. Blocking 3 (§5.3 "unknowns are marked OPEN"; §8.1 step 3, UB-I8): the move clamp lists four inequalities but no order. A target wider or taller than its parent (a root panel larger than a small window) cannot meet all four, so the result is undefined and UB-I8 cannot hold. State the order, as §9.2 step 5 does, or add an OPEN and limit UB-I8 to targets that fit inside their parent. Minor (not blocking): (a) §6.2 says nothing about elements whose hover handler shows no tooltip (`tooltips_on` false, no text, `TooltipEnable` false). Say whether the handler, and `Element_mouse_hover`, run again on every frame after the delay or once per hover, or add an OPEN. (b) §5.2 step 1: say whether giving focus to *F* pops the active panel's map. "Push again" on clearing focus otherwise reads as a second push. (c) §3.3: the Windows default values (500 ms, 4 × 4) have no provenance row. (d) §16 row 2 ("through a chain of subtractions, not an immediate"), the §5.6 OPEN ("no comparison with these IDs ... jump table") and the §3.3 OPEN ("tests a further flag before the comparison") describe machine-code structure, not behaviour. Rephrase them as plain unknowns. Every other §5.3 item passes. The algorithms are prose with numeric constants allowed under decision 0012. Nothing has code or listing structure, and no prose is copied. There is no game text, key, hostname or traffic. The example "level 5" is invented, the template text is not reproduced, and the property, enum, command, map and preference names are interop identifiers covered by the naming note. Every fact has a row UB1–UB39 with a mark (the BIN and Probable marks follow the Accepted `ui-layout.md`). Every §17 item has an in-section callout. No network, login or server material is involved, so no closed gate applies. The spec is implementable apart from the three items above. I recomputed every §13 example by hand and all of them match: 13.1 timing, 13.2 hit test, 13.3 placement 1704 / 1032 and size 216 × 18, 13.4 threshold, 13.5 resize 350 × 233, 13.6 order *Y*, *X*, *Z*, 13.7 scale (70, 80). They also agree with UL §9.3 sibling order and KM §12.5.7 bits. Spot checks, read-only on the install 2026-10-06, with independent probes. (1) UB39 / §15 over all 302 layout records: `HoverDelay` 243 (242 × 0.1, 1 × 300); `AutoFade` 105 (101 × 0.1, 4 × 0.5); `dragable` 10; `mouse_invisible` 27 (16 true); alpha threshold 3 × 128; resize-bar borders 30 / 39 / 3 / 3; `activatable` 370 (349 true) + 1 state; `blocks_clicks` 292 (247) + 1; `auto_tooltip_truncated_text` 271 (246); `KeepObjectWhenHidden` 35; `save_loc` 194 (192) + 1; aspect ratio 1 ≈ 1.2715; `tooltip_layout` 2,091 (2,076 / 0 in 3) + 41 states; `InputMapID` and `disallow_drag_in` on none; Dragbar 135, ResizeBar 52: all match. (2) UB-I1: 2,084 blocks set both properties, with 7 distinct pairs. 5 resolve to a Text descendant through `tooltip_text_ID`, (0, 0) occurs in 3 blocks, and one pair in 2 blocks names a missing element: matches. (3) UB31 / UB-I2: of the 1,616 0x78 sets, only one holds `UIScaleDefinition_Array`. It decodes to the end with 56 entries, all Min 0.4, Max 4.0 and 73 stops. Groups 60 and 61 carry the two preference keys and the other 54 carry a property; none has both or neither. `UpdateOnRelease` is 1 in 3 entries: matches. (4) UB35 / UB-I3: the REC §1.5 hash of the three identifiers gives 0x0AA521D0, 0x00058AD4 and 0x094418B0. `STRINGTABLE` maps `UI_Helper` with key 0x0F to a table with exactly one entry, with that token, both argument IDs and three pieces of lengths 0, 2 and 0: matches. (5) UB17 / UB31, owner's `UserPreferences.ini`: `TooltipEnable=True`, `TooltipDelay=0.25`, and all three `UIScale_*` = 1.00: matches. (6) UB20 tooltip layout: four 30 × 30 top-level elements at z-level −1500 with edges 0. Each Text child is at (2, 2), 26 × 26, with edges 5, left and right margins 6, top margin 0, `max_width` 508 and `max_height` 508 (808 in one variant): matches, except for the second child (Blocking 1). **Revision 1 by the spec writer, 2026-10-06**: every item above is addressed; see the change log. **Re-review: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three blocking items are fixed. Blocking 1: §6.3, §6.4 step 2, UB19 and UB20 now describe both children. A fresh read-only check of all 4 variants confirms them: the Field is at (0, 0), 512 × 512, z-level 1, edges 5, 5, 5, 5; the Text element is at (2, 2), 26 × 26, z-level 0, edges 5, with margins 6 / 6 / 0 and `max_width` 508. Blocking 2: §8.2 now says the step 4.3 limits are not final. UB-I9 is restricted to the case with no aspect ratio and no cap change. I checked that this restricted form follows from steps 4.1–4.3, including the case where a minimum is above the maximum. The extended §13.5 recomputes to 350 × 233. Blocking 3: the §8.1 step 3 clamp order is stated. The rewritten UB-I8 follows from it on both branches, and §13.10 recomputes to x = −200 and y = 200. Minor items: (a) §6.2 steps 2–5 and UB-I13 are consistent. (b) §5.2 step 1 and UB-I14 are consistent, and §13.9 recomputes stack by stack. (c) UB40 is Reported with sources. (d) the three OPEN and §16 phrasings are now plain unknowns. The §5.3 checklist passes on every item. Further spot checks against the install (read-only, 2026-10-06), all matching: `min_width` / `min_height` / `max_width` / `max_height` 230 / 153 / 218 / 124; `Resizebar_Target_Element` 3; `IgnoreResizeHeightCap` 1 and `IgnoreResizeWidthCap` 0; `activate_on_show` 136 (134) + 1 state; `focus_on_show` 11; `UICoreDragbar_Ancestor_UIElementID` 4 (one label); `tooltips_on` 1,827 (1,787) + 42; `container` 200 (196); `save_size` 41 (34); `editable` / `selectable` 128 / 138; `hide` 769 (740) + 165 states (42 / 123); `tooltip_text_ID` 173 (98 zero); `UICore_Panel_tab_element` 233 occurrences. Non-blocking notes for a later revision: §14 lists UB-I13 and UB-I14 between UB-I9 and UB-I10. §6.1 says a change to `TooltipDelay` "runs the timer check again", but by §6.2 step 2 only a `TooltipEnable` change clears the hover-handled flag, so a delay change while the flag is set has no visible effect. Saying so would remove the ambiguity. |
 | **Implements into** | `crates/ui` (`tessera-ui`: pointer routing, hover, capture, activation and z-order, keyboard focus and key routing, tooltips, drag and drop, move and resize, auto-fade, UI scale, text truncation), `crates/input` (activation timing of mouse commands, §3.3), `crates/settings` (tooltip and scale preferences, §6.1, §9.1), `apps/client` (native panels, M5) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (layout records, element tree, run-time layout §8, sibling order and hit-test order §9.3, states §9.4, media §9.5, button state choice §9.7; called **UL** below), [`keymap.md`](keymap.md) §12 (commands, input maps, activations; **KM**), [`fonts.md`](fonts.md) §7–§9 (text layout and drawing; **FO**), [`string-table.md`](string-table.md) §4.7, §7.8, §9 (markup, StringInfo; **ST**), [`skin-definition.md`](skin-definition.md) §8 (panel overrides, scaler origin; **SK**), [`lua-plugin-api.md`](lua-plugin-api.md) §9, §13 (plugin controls; **LPA**), [`install-layout.md`](install-layout.md) §8 (settings folder, `UserPreferences.ini`; **IL**), [`property-system.md`](property-system.md) (property sets; **PS**), [`records.md`](records.md) §1.5 (name hash), §7–§8 (enum mappers, DID maps; **REC**) |
 
 > **Naming note (interoperability).** Property names (`UICore_…`, `UICoreDragbar_…`,
 > `UIComponent_UIScaler_…`, `UIScaleDefinition_…`, `GOP_UIScale_…`), enum labels (UI element
 > messages such as `Element_mouse_press`, state labels such as `normal_activated`, element
-> labels such as `DialogConfirmationYesButton`, scaling-group labels), input-command names
+> labels such as `DialogConfirmationYesButton`, scaling-group labels, widget-type labels such as `UIScaler`, `UIScalerPanel`, `ChatWindow` and `IBag`), input-command names
 > (`SelectLeft`, `FocusNext`, …), input-map names (`DialogBoxes`, `EditControls`, …),
 > preference keys (`Misc.TooltipDelay`, `UI.UIScale_Global`, …), the DID-map label `UI_Helper`,
 > the folder names `ui/layouts`, the extension `.layout`, the `%r` token, and the names
@@ -45,7 +45,8 @@ with those trees, so that Tessera's `tessera-ui` behaves the same way:
 - drag and drop of items (§7);
 - the window manager: moving, resizing, clamping, saved positions and the files involved (§8);
 - UI scale and resolution changes (§9);
-- text in the UI: truncation with a suffix and the automatic tooltip of truncated text (§10);
+- text in the UI: the automatic tooltip of truncated text, with the truncation rule itself in
+  `fonts.md` §7.6 (§10);
 - visibility transitions (auto-fade) (§11) and the UI message vocabulary (§12).
 
 Behaviour that individual game panels implement in game code (what the bag window does with a
@@ -63,7 +64,7 @@ and tests assert the invariants (§14), not the counts.
 | Tag | Source |
 |---|---|
 | OBS | The owner's Steam install, read in place and read-only on 2026-10-06 with throwaway probes in the dirty-room scratch area: all 302 UI layout records (prefix 0x22) decoded with the grammar of UL §4 (property census, tooltip layout structure); all 1,616 stand-alone property sets (prefix 0x78) of `client_gamelogic.dat` searched for UI-scale definitions (one holds them) and decoded; the named-string-table DID map (REC §8, label `STRINGTABLE`) and the table it names for key 0x0F; the enum mappers `UIElementMessage` (base mapper 0x230001AC, 77 labels), `UIStateID` (base 0x2300017B), `UIElementID` (base 0x2300013B), `UIElementType` (base 0x230001BC), the ObjectMode and ClampGameViewEdge mappers; the owner's settings folder in the Proton prefix (`UserPreferences.ini`, `lotro.keymap`, `PluginData/`; no `ui/` folder exists). |
-| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), disassembled with capstone and pefile in the dirty room on 2026-10-06, function by function (address ranges only). **Questions:** (1) how input commands reach UI elements, which commands are mouse buttons, and how a release, click, double click, tap and wheel step are delivered; (2) the hit test, the hover rule, mouse capture and the cursor choice; (3) activation, z-order among panels, keyboard focus, key routing and the text-entry and dialog keys; (4) the tooltip timer, content, panel construction, sizing and placement; (5) drag-and-drop start, icon, targets and drop; (6) moving and resizing panels with drag bars and resize bars, clamping, and what happens to saved positions; (7) how UI scale and screen size changes are applied; (8) text truncation with a suffix and the truncated-text tooltip; (9) auto-fade; (10) the click timing of the input layer. Numeric constants (thresholds, factors) are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). **Why M1–M3 were not enough:** the data gives property values and labels but no behaviour; no published source describes the engine's UI runtime (the plugin API documentation describes only the plugin surface, LPA); the owner's client cannot be observed running in this session (M3), and observation could not give thresholds, ordering or tie-break rules anyway. Only offline UI, input-command and text code was read; nothing about network, login, keys, launcher, patcher or anti-tamper. No address, listing or symbol appears in this spec. |
+| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), disassembled with capstone and pefile in the dirty room on 2026-10-06, function by function (address ranges only). **Questions:** (1) how input commands reach UI elements, which commands are mouse buttons, and how a release, click, double click, tap and wheel step are delivered; (2) the hit test, the hover rule, mouse capture and the cursor choice; (3) activation, z-order among panels, keyboard focus, key routing and the text-entry and dialog keys; (4) the tooltip timer, content, panel construction, sizing and placement; (5) drag-and-drop start, icon, targets and drop; (6) moving and resizing panels with drag bars and resize bars, clamping, and what happens to saved positions; (7) how UI scale and screen size changes are applied; (8) text truncation with a suffix and the truncated-text tooltip; (9) auto-fade; (10) the click timing of the input layer. Numeric constants (thresholds, factors) are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). **Why M1–M3 were not enough:** the data gives property values and labels but no behaviour; no published source describes the engine's UI runtime (the plugin API documentation describes only the plugin surface, LPA); the owner's client cannot be observed running in this session (M3), and observation could not give thresholds, ordering or tie-break rules anyway. Only offline UI, input-command and text code was read; nothing about network, login, keys, launcher, patcher or anti-tamper. No address, listing or symbol appears in this spec. **Revision 2 questions (same build and hash, read 2026-10-06):** (11) which per-element flags the hit test reads, which code writes each of them, and whether registering a game-code listener for a mouse-button message makes an element mouse-visible in a way that later recomputation keeps (the hit test, the hover update, the flag setters, the base and widget mouse-visible rules, the post-creation routine, the listener registration routine and the creation routine); (12) the exact members of the enter/leave chains (the chain-building and comparison routine); (13) how a UI message travels after its source has handled it, and where the game-code listener registry is consulted (the message post routine, the element's receive and dispatch routines, the top-of-chain handler); (14) whether a wheel message reaches a scrollable ancestor and what one wheel step does (the scrollable widget's receive routine, the scroll bar's wheel step); (15) which box hit tests, the move clamp and child layout use for a scaled panel (the UI-scaler routine, the base resize routine in each object mode, the displayed-box update, the move step); (16) where the text widget clears its truncation switch (the text widget's property-change handler). **Why M1–M3 were not enough:** the data holds only property values; flag ownership, propagation and the box model are code, and the running client is not observable in this session. **Revision 3 questions (same build and hash, read 2026-10-06):** (17) which scale the point-in-element test divides a displayed point by, and which components it compares with 1 (the point test, the element scale lookup in every UI element class, the ancestor search it calls); (18) which box the resize step records, anchors, caps and sets, and what the element resize then does with the requested size (the resize begin and step routines, the move begin routine for comparison, the base resize routine and the layout-size setter); (19) whether an element that loses its mouse-visible flag while captured stays hovered (the hover update). **Why M1–M3 were not enough:** the same as for questions 11–16; these are box and flag choices made in code that the data does not show. |
 | UL | [`ui-layout.md`](ui-layout.md) (Accepted): element tree, sibling list order, hit-test order, states, run-time layout, Button state choice. Facts taken from there keep its marks. |
 | KM | [`keymap.md`](keymap.md) §12: command names and IDs (InputActions mapper chain), input maps, activation words, the default bindings. |
 | FO, ST, SK, LPA, IL, PS, REC | The companion specs named in the header. |
@@ -77,13 +78,13 @@ callout in the section.
 |---|---|---|---|
 | UB1 | The UI receives input as **commands** from the input layer (KM §12), each with a press or a release; nine engine commands form the **mouse-button set** (§3.1); other commands are keys (§5.3) | BIN | BIN |
 | UB2 | Activation timing of the input layer: tap, double click and "nearby" thresholds come from the operating system's double-click time and double-click rectangle (§3.3) | BIN | BIN |
-| UB3 | Point-in-element test: inclusive box, hit mask, alpha threshold with scale correction (§4.1) | BIN; OBS (3 elements set the alpha threshold, all 128) | BIN |
-| UB4 | Hit-test walk: children front to back, depth first; an element catches the pointer only when it is **mouse-visible** or **blocks clicks**; hidden, fading and drag-icon elements are skipped (§4.2) | BIN; UL §9.3 | BIN |
-| UB5 | Mouse-visible rule of the base element and the widgets traced (§4.3) | BIN; OBS (property census §15) | BIN; per-widget rules OPEN |
-| UB6 | Hovered element, enter/leave messages and the cursor choice (§4.4, §4.8) | BIN | BIN |
+| UB3 | Point-in-element test: inclusive box, hit mask, alpha threshold with scale correction; the scale is that of the nearest display node at or above the element ((1, 1, 1) when none), and the division happens when any of its three components differs from 1 by more than 0.0002 (§4.1; scale and test corrected in revision 3) | BIN (revision 3: point test, scale lookup); OBS (3 elements set the alpha threshold, all 128) | BIN |
+| UB4 | Hit-test walk: children front to back, depth first, against each child's **displayed box**; an element catches the pointer only when it is **mouse-visible** or **blocks clicks** (exactly these two per-element flags are read); hidden, fading and drag-icon elements are skipped (§4.2) | BIN (revision 2 re-read: the two flags, the displayed box); UL §9.3 | BIN |
+| UB5 | Mouse-visible: one flag with three writers (type-rule recomputation, listener registration, direct code), last write wins, no sticky state in this build; the base rule and the Button, Text, Scrollbar, list-box and drag/resize-bar rules; the recomputation points (§4.3) | BIN (revision 2: flag setters, rule routines, post-creation, registration, creation); OBS (property census §15) | BIN; widget identification Probable; other widget classes OPEN |
+| UB6 | Hovered element, enter/leave messages with their exact chains (each element and all its ancestors up to the topmost, the shared upper part removed; leaves before enters, innermost first) and the cursor choice; on a change the candidate becomes the hovered element only if it is mouse-visible at that moment (§4.4, §4.8; the last point added in revision 3) | BIN (revision 2: chain routine; revision 3: hover update) | BIN |
 | UB7 | Mouse capture: begins on a press over a mouse-visible element, ends when every pressed button command is released; only the captured element can be hovered (§4.5) | BIN | BIN |
 | UB8 | Press, release, click, double-click and context-menu messages (§4.6) | BIN | BIN |
-| UB9 | Wheel delivery (§4.7) | BIN; KM (default bindings) | BIN |
+| UB9 | Wheel delivery; the scroll message bubbles to ancestors and the nearest scrollable ancestor with a usable scroll bar consumes it; one wheel step is one line step of that scroll bar (§4.7) | BIN (revision 2: scrollable receive routine, scroll-bar wheel step); KM (default bindings) | BIN |
 | UB10 | In the input layer's pointer-lock mode, and after the pointer left the window, the UI performs no hit testing and hovers nothing (§4.9) | BIN | BIN |
 | UB11 | Activation of root panels, the activation list, bring-to-front within the z-level group, state `normal_activated` (§5.1) | BIN; UL §9.3 | BIN |
 | UB12 | Keyboard focus, input-map stacking with priorities 0 (active panel) and 50 (focused element), the ancestor chain pushed one priority lower per level, the stack order, duplicate and removal rules, the active panel's push when focus is cleared, state `normal_focussed` (§5.2) | BIN (set-focus routine, the element's push and pop, the input layer's map-stack insert and remove; revision 1) | BIN |
@@ -102,19 +103,26 @@ callout in the section.
 | UB25 | Drop targets: `container` and not `disallow_drag_in`, plus the element's accept check; drag-over feedback states (§7.3) | BIN; OBS | BIN |
 | UB26 | Drop, cancel, `disallow_drag_out`, `DragAcceptedState`, messages; keys swallowed during a drag (§7.4) | BIN | BIN |
 | UB27 | Moving: drag bar moves the ancestor named by `UICoreDragbar_Ancestor_UIElementID` (else its parent); the moved element is clamped into its parent, near side first and far side second on each axis (§8.1) | BIN (move step; clamp order re-traced in revision 1); OBS (135 Dragbar elements, 4 name an ancestor) | BIN |
-| UB28 | Resizing: resize-bar border flags → handle 1–8; size limits, aspect ratio, screen caps (§8.2) | BIN; OBS (52 ResizeBar elements; border census) | BIN |
+| UB28 | Resizing: resize-bar border flags → handle 1–8; size limits, aspect ratio, screen caps; *W0*, *H0* are the displayed size, the anchored edges come from the layout box, the pointer offset is used unscaled; the requested box goes through the element resize and its limit pass (§8.2, §9.2.1; boxes and the final limit pass added in revision 3) | BIN (revision 3: resize begin and step re-read, base resize routine); OBS (52 ResizeBar elements; border census) | BIN; displayed result under a UI scale OPEN |
 | UB29 | Saved positions: `save_loc`, `save_size`, `save_visibility` register an element; the end of a move or resize notifies game code; applying a saved entry follows UL §9.9; the storage is not local (§8.4) | BIN; UL §9.9; OBS (no layout files in the settings folder) | BIN; storage OPEN |
 | UB30 | `ui/layouts` file-name resolution and the `%r` token (§8.5) | BIN | BIN; file content OPEN |
 | UB31 | UI-scale preferences, the `UIScaleDefinition_Array` (56 entries, range 0.4–4.0 in 73 stops) and scaling groups (§9.1) | OBS (one property set); BIN (preference binding) | Confirmed |
-| UB32 | Panel scale = group option × global scale; size = cached unscaled size × scale, limited to the screen; scaling origin kept fixed; clamped into the screen (§9.2) | BIN (game UI code) | BIN |
+| UB32 | Panel scale = group option × global scale; requested size = cached unscaled size × scale, limited to the screen; the resize is made in object mode Stretch, so the panel's layout box keeps its unscaled size and only its displayed box and scale vector change; scaling origin kept fixed; clamped into the screen with the scaled size (§9.2) | BIN (game UI code; revision 2: the resize-in-Stretch helper and the base resize routine) | BIN |
 | UB33 | Cursor scale: `UI.UIScale_Cursor` outside (0, 4] resets to 1; cursor drawn at ⌊32 × scale⌋ px (§9.3) | BIN | BIN |
 | UB34 | Screen size change: the screen root is resized to the new render size (1024 × 768 when no device) and root panels are laid out again (§9.4) | BIN; UL §8.3–§8.5 | BIN |
-| UB35 | Truncation with `UICore_Text_truncate_text_to_fit` and the truncated-text tooltip through the `UI_Helper` table token 0x0AA521D0 (§10) | BIN; OBS (token and its two arguments; property census) | Confirmed (token), BIN (rules) |
-| UB36 | Message delivery: element handler, then listeners; messages raised during delivery are queued (§12.1) | BIN | BIN |
+| UB35 | Truncated-text tooltip through the `UI_Helper` table token 0x0AA521D0 (§10.2); the truncation rule itself is owned by FO §7.6 (§10.1 is a pointer) | BIN; OBS (token and its two arguments; property census re-counted in revision 2: 325 values) | Confirmed (token, census), BIN (rules) |
+| UB36 | Message delivery: sequence number; source's own handler, then its listeners, then the same at each ancestor up to the topmost; a stop result ends the walk; at the topmost ancestor, if its listeners did not handle it, the game-code listener registry for (source element ID, message); messages raised during delivery are queued (§12.1) | BIN (revision 2: post, receive, dispatch and top-of-chain routines) | BIN |
 | UB37 | Auto-fade on show and hide (§11.1) | BIN; OBS (105 elements set `UICore_Element_AutoFade`) | BIN |
 | UB38 | Effects of showing and hiding an element: activation list, `activate_on_show`, `focus_on_show`, visibility broadcast, surface release (§11.2) | BIN | BIN |
 | UB39 | Census of the behaviour properties (§15) | OBS | Confirmed |
 | UB40 | Platform defaults quoted in §3.3: double-click time 500 ms, double-click rectangle 4 × 4 pixels. These are operating-system values, not values of the client, and Tessera reads the live values from the platform | Microsoft Learn, `SetDoubleClickTime` reference (the system default double-click time is 500 ms); Microsoft Windows 2000 registry reference, entries `DoubleClickWidth` and `DoubleClickHeight` (default 4 pixels each) | Reported |
+| UB41 | Two boxes per element: the **layout box** (UL §8) and the **displayed box** (position × the scale of the nearest display node above, size × the scale of the nearest display node at or above, by the formula of §9.2.1); with no display node anywhere above, the two are equal (§9.2.1) | BIN (displayed-box update routine) | BIN |
+| UB42 | Hit tests, the point-in-element test and the move clamp use displayed boxes; child layout uses layout boxes (§4.1, §8.1, §9.2.1) | BIN (hit test, point test, move step, run-time layout) | BIN |
+| UB43 | A resize of a surface-owning element in object mode Stretch keeps its layout box and changes its scale vector; in CanvasResize it changes the layout box and lays the children out again (§9.2.1) | BIN (base resize routine) | BIN; the exact division that sets the scale vector Probable |
+| UB44 | The text widget clears its truncation switch whenever `UICore_Text_editable` or `UICore_Text_selectable` becomes true (FO §7.6) | BIN (text widget property-change handler) | BIN |
+| UB45 | `UICore_Element_mouse_invisible` has no reader in the UI element code of this build; the meter widget sets it on children it creates (§4.3) | BIN (immediate search over all code, meter child creation) | BIN |
+| UB46 | An element's scale for converting points is the scale vector of its own display node, else of the nearest ancestor with one (following parents), else (1, 1, 1); every UI element class uses this rule (one class family carries an identical copy) (§4.1, §9.2.1) | BIN (revision 3: scale lookup in all classes, ancestor search) | BIN |
+| UB47 | Every element resize first applies a limit pass: `max_height`, `min_height`, `max_width`, `min_width` (minimums after maximums), then the aspect ratio with width driving unless a height limit changed the height and no width limit changed the width; a surface-owning element whose parent is in Stretch, or that has `UICore_Element_force_match_parent_scale`, has its requested size converted by the parent's scale first (§9.2.1) | BIN (revision 3: base resize routine) | BIN |
 
 ---
 
@@ -128,8 +136,12 @@ callout in the section.
 | **Displayed** | Visible, with every ancestor up to the screen root visible. |
 | **Command** | One input command of the InputActions chain (KM §12.11), delivered with a press or a release; analog sources deliver a value. |
 | **Mouse-button set** | The nine engine commands the UI treats as mouse buttons (§3.1). |
-| **Mouse-visible** | Per-element flag: the element can become the hovered element and receive pointer input (§4.3). |
-| **Blocks clicks** | Per-element flag from `UICore_Element_blocks_clicks`: the element stops the hit test (the pointer does not reach what is behind it) but does not become hovered unless also mouse-visible. |
+| **Mouse-visible** | Per-element flag: the element can be hit, can become the hovered element and receives pointer input (§4.3). `ui-layout.md` §9.2 step 5 sets it (earlier UL versions called it the "mouse-button flag"). |
+| **Blocks clicks** | Per-element flag from `UICore_Element_blocks_clicks` (or set by code): the element stops the hit test (the pointer does not reach what is behind it) but does not become hovered unless also mouse-visible. It is the "second flag" of `ui-layout.md` §9.3. |
+| **Type rule** | The element class's rule that computes the mouse-visible flag from the element's properties and state (§4.3). |
+| **Layout box** | The element's box as UL §8 lays it out, relative to its parent, in the parent's unscaled pixels (§9.2.1). |
+| **Displayed box** | The element's box as shown and as hit-tested, relative to its parent's displayed box; equal to the layout box unless a UI scale applies (§9.2.1). |
+| **Topmost ancestor** | The last element reached by following parents; for every displayed element this is the screen root. |
 | **Hit element** | The element returned by the hit test (§4.2). |
 | **Hovered element** | The mouse-visible element under the pointer, or the captured element (§4.4). |
 | **Captured element** | The element that receives pointer input while a button is held (§4.5). |
@@ -138,7 +150,8 @@ callout in the section.
 | **Focus element** | The element with keyboard focus (§5.2), typically a text entry. |
 | **Input map** | A section of the key map (KM §12.5.4). An element names one with `UICore_Element_InputMapID`; the engine also uses `DialogBoxes`, `EditControls`, `CopyAndPasteControls`, `ScrollableControls(_Mouse)`. |
 | **UI message** | An event an element sends to itself and its listeners, identified by a `UIElementMessage` value (§12). |
-| **Listener** | Game code, a plugin or a widget registered to receive an element's messages. |
+| **Listener** | An object attached to one element (a widget, a plugin control's listener) that receives the messages delivered to that element, including those bubbling up from its descendants (§12.1). |
+| **Listener registry** | The UI manager's table of game-code handlers keyed by element ID and message value (UL §9.2 step 5); consulted at the top of a message's walk (§12.1) and, for the four mouse-button messages, a writer of the mouse-visible flag (§4.3). |
 
 ---
 
@@ -227,15 +240,24 @@ must not be hard-coded in place of the platform's.
 
 A point (*x*, *y*) in the parent's coordinates is inside an element when all of these hold:
 
-1. **Box:** left ≤ *x* ≤ right and top ≤ *y* ≤ bottom, with the element's inclusive box
-   (UL §8.1) in parent coordinates.
+1. **Box:** left ≤ *x* ≤ right and top ≤ *y* ≤ bottom, with the element's inclusive
+   **displayed box** (§9.2.1) in the parent's displayed coordinates. Without a UI scale the
+   displayed box is the layout box of UL §8.1 (BIN, UB42).
 2. **Hit mask:** if the element has a hit mask (media kind 7, UL §6.9), the mask must not
    exclude the point, tested at (*x* − left, *y* − top).
 3. **Alpha threshold:** if `UICore_Element_mouse_visible_alpha_threshold` is set on the element
    (any value; default threshold 0) and the element has a base image (UL §9.6), the image's
-   alpha at the point must pass the threshold. The point is first made element-relative; when
-   either of the element's scale factors differs from 1 by more than 0.0002, each coordinate is
-   divided by its scale factor and truncated toward zero.
+   alpha at the point must pass the threshold. The point is first made element-relative
+   (subtract the left and top of the element's displayed box). Then the element's **scale**
+   (*ex*, *ey*, *ez*) is looked up: the scale vector of the element's own display node if it
+   has one, otherwise that of the nearest ancestor that has a display node (following
+   parents), and (1, 1, 1) only when neither the element nor any ancestor has one (BIN,
+   UB46). This is the (*ex*, *ey*) of §9.2.1, the scale that also sets the element's
+   displayed size; a child without a node of its own inside a scaled panel uses the panel's
+   scale. If **any** of the three components differs from 1 by more than 0.0002 (absolute
+   difference, 32-bit floats), *x* is divided by *ex* and *y* by *ey* and each is truncated
+   toward zero; if all three are within 0.0002 of 1 the point is used unchanged. *ez* takes
+   part only in this comparison (§13.15).
 
 > **OPEN:** the exact pass rules of the hit mask (which mask pixels exclude) and of the alpha
 > test (alpha ≥ threshold or > threshold; the tiled-image case of UL §9.6). Census: the
@@ -254,9 +276,12 @@ For an element *E* and a point relative to *E*'s parent:
    progress (§7.2), *E* catches nothing: return "not caught".
 2. Walk *E*'s children in **hit-test order**: from the end of the sibling list to its start
    (lowest z-level first, and among equal z-levels the highest read order first; UL §9.3).
-   For each child whose point-in-element test (§4.1) passes, run this procedure on the child
-   with the point made relative to *E*. If it returns a caught element, return it at once.
-3. Otherwise, if *E* is mouse-visible (§4.3) or blocks clicks, return *E* as caught.
+   Make the point relative to *E* (subtract the left and top of *E*'s displayed box; the
+   screen root's is (0, 0)). For each child whose point-in-element test (§4.1) passes with
+   that point, run this procedure on the child with that point. If it returns a caught
+   element, return it at once.
+3. Otherwise, if *E*'s mouse-visible flag (§4.3) or its blocks-clicks flag is set, return *E*
+   as caught. These are the only two per-element flags the hit test reads (BIN, UB4).
 4. Otherwise return "not caught".
 
 So a child that contains the point but catches nothing lets the search continue with the
@@ -264,42 +289,84 @@ next sibling behind it, and finally with *E* itself. The point-in-element test o
 is made by the caller (step 2 of *E*'s parent); the screen root is tested against the screen.
 
 <a id="s4-3"></a>
-### 4.3 Mouse-visible (BIN, UB5)
+### 4.3 Mouse-visible and blocks-clicks: the one rule (BIN, UB5, UB45)
 
-Every element starts **not** mouse-visible. Code can set the flag explicitly; once code has
-set it explicitly, it is kept. Otherwise the base element recomputes it whenever a relevant
-property changes, and it is true when any of these holds:
+The hit test (§4.2) reads two per-element flags and nothing else: **mouse-visible** and
+**blocks clicks**; the hover update (§4.4) reads only mouse-visible. `ui-layout.md` §9.2
+step 5 and §9.3 use the same two flags (earlier UL versions called them the "mouse-button
+flag" and "a second flag that widget code can set"); this section is the single statement of
+how both are written, and UL refers here.
 
-- `UICore_Element_context_menu` is true;
-- `UICore_Element_tooltips_on` is true and the element has tooltip text (a run-time tooltip
-  string set by code, or a non-empty resolved `UICore_Element_tooltip_entry`; §6.3);
-- the element accepts drops: `UICore_Element_container` is true and
-  `UICore_Element_disallow_drag_in` is not true (§7.3).
+**Blocks clicks.** Written only by the element's property `UICore_Element_blocks_clicks`
+(whenever its effective value changes, UL §9.4 step 5) and by code that sets it directly. No
+widget class changes this behaviour.
 
-Widget classes override the rule (code set explicitly still wins): the drag-bar and
-resize-bar widgets are always mouse-visible; many other widget classes are always
-mouse-visible, a few never, and some add their own conditions (one engine widget that picks a
-value from the pointer position is mouse-visible by the base rule or whenever its state is not
-`ghosted`, 0x12).
+**Mouse-visible** is one stored flag, false when the element is created. Three kinds of
+writer store into it, and the **last write wins**:
 
-`UICore_Element_blocks_clicks` sets the "blocks clicks" flag directly (§2).
+1. **Recomputation by the type rule.** The element's class computes a value from the
+   element's current properties and state (rules below) and stores it. This happens:
+   - at the end of the element's post-creation (UL §9.2 step 8), for every element, after its
+     default state and its properties have been applied;
+   - when `UICore_Element_context_menu` changes (base element);
+   - when code sets the element's run-time tooltip text (§6.3);
+   - in widget classes, when one of their own inputs changes: Button on
+     `UICore_Button_ghosted`; Text on `UICore_Text_editable`, `UICore_Text_selectable` and
+     `UICore_Text_auto_tooltip_truncated_text`;
+   - when game code asks for it.
+   A change of `UICore_Element_tooltips_on`, `UICore_Element_tooltip_entry`,
+   `UICore_Element_container` or `UICore_Element_disallow_drag_in` alone does **not**
+   recompute the flag in the base element; the new value takes effect at the next
+   recomputation.
+2. **Listener registration.** When game code registers a handler in the UI manager's listener
+   registry (UL §9.2 step 5) for one of the four mouse-button messages (0x0E
+   `Element_mouse_release`, 0x18 `Element_mouse_tap`, 0x1E `Element_mouse_click`, 0x32
+   `Element_mouse_press`) of an element ID, every live element with that ID gets the value
+   true. The same is done while an element is created (UL §9.2 step 5) when the registry
+   already holds such a handler for its ID; because post-creation (step 8) recomputes the flag
+   afterwards, that creation-time value never survives creation in this build: an element
+   created after the registration is mouse-visible only if its type rule says so.
+3. **Direct writes by code** (widget code, game code, the plugin layer), true or false.
 
-> **OPEN:** the per-type rules: which engine widget types (Button, ListBox, Scrollbar, Text
-> with `UICore_Text_editable` or `UICore_Text_selectable`, Menu, Tree, …) are mouse-visible.
-> Also unknown: which code reads `UICore_Element_mouse_invisible` (PID 0xC3, set on 27
-> elements, 16 true): no reader was found in the engine's property dispatch. Tessera rule
-> until answered: Button, Dragbar, ResizeBar, Scrollbar, ListBox, Tree, Menu, ComboBox,
-> ColorPicker, editable or selectable Text and every game-type element are mouse-visible; an
-> element with `mouse_invisible` = true is not.
+A registration or a direct write is therefore **not** sticky: the next recomputation of that
+element replaces it. The client has a per-element override marker that, if it were set,
+would make every type rule keep the stored value instead of recomputing it; nothing in this
+build sets it, so it has no effect and implementations do not model it (BIN, revision 2).
 
-> **OPEN:** the relation to UL §9.2 step 5 and §9.3 (M5 revision of `ui-layout.md`), which
-> describe a "mouse-button flag" that the client turns on when game code registers a listener
-> for one of the four mouse-button messages of an element ID, plus "a second flag that widget
-> code can set". The hit test reads exactly two per-element flags: the mouse-visible flag and the
-> blocks-clicks flag of this section. So the UL flags are these two, but which UL flag is
-> which, and whether registering a listener sets the mouse-visible flag "explicitly" in the sense
-> above, was not established. Tessera rule until answered: registering a game-side listener for a
-> mouse-button message makes the element mouse-visible.
+**Type rules** (BIN; which engine type each rule belongs to is identified from the properties
+its routines read, Probable):
+
+| Class | Mouse-visible when |
+|---|---|
+| Base element (Field, Panel, GroupBox, Meter, Viewport and every class without its own rule) | `UICore_Element_context_menu` is true; or `UICore_Element_tooltips_on` is true and the element has tooltip text (a run-time tooltip string set by code, or a non-empty resolved `UICore_Element_tooltip_entry`; §6.3); or the element accepts drops (`UICore_Element_container` true and `UICore_Element_disallow_drag_in` not true; §7.3) |
+| Button | `UICore_Button_ghosted` is not true; a ghosted button only when `UICore_Button_broadcast_when_ghosted` or `UICore_Button_click_when_ghosted` is true. The base rule is not consulted, so a ghosted button with a tooltip is not mouse-visible |
+| Text | the base rule; or the scroll-host rule below; or `UICore_Text_editable` or `UICore_Text_selectable` is on; or `UICore_Text_auto_tooltip_truncated_text` is true and the text is currently cut (FO §7.6) |
+| Scroll host (the engine Scrollable class; also used by Text and list boxes) | the element has a linked scroll bar part (its vertical or horizontal scroll-bar element ID names a descendant scroll bar that targets this element); otherwise the base rule |
+| List box family (two engine classes that read `UICore_ListBox_…` properties) | the scroll-host rule or a class-internal flag holds, and the element's state is not `ghosted` (0x12) |
+| Scrollbar, Dragbar, ResizeBar | always |
+| One further engine class (its routines read no class-specific property; Probable: the colour picker, a widget that picks a value from the pointer position) | the base rule, or its state is not `ghosted` (0x12) |
+
+`UICore_Element_mouse_invisible` (PID 0xC3, 27 elements, 16 true) is read by no UI element
+code in this build; the meter widget sets it on the children it creates, without effect
+(UB45). It plays no part in the rule.
+
+**Tessera rule.** Tessera keeps exactly these two flags and these writers: recompute with the
+type rule at post-creation and at the points listed in item 1, set mouse-visible to true on all
+live elements with an ID when its own panel code registers a mouse-button handler for that ID
+(item 2; Tessera's panel code registers after the panel is created, as the original's window
+classes do), and apply direct writes (the plugin layer's `SetMouseVisible`,
+`lua-plugin-api.md`). Elements of game-level widget types that use the fallback widget
+(UL §9.2 note) follow the base rule. Consequences (§13.11): a Button is a click target with or
+without a handler; a plain Field without tooltip, context menu or drop acceptance lets clicks
+through unless a handler was registered after it was created and no recomputation happened
+since; an element that only blocks clicks is hit (stops the search and receives the wheel,
+§4.7) but is never hovered and never receives presses.
+
+> **OPEN:** which rule belongs to the engine classes Menu, Tree, ComboBox and Browser (not
+> identified among the rule routines; ColorPicker is Probable above), the class-internal flag
+> of the list-box family, and further widget-specific recomputation triggers beyond those
+> listed in item 1. Tessera rule until answered: Menu, Tree, ComboBox, Browser and
+> ColorPicker are always mouse-visible; the list-box flag is treated as false.
 
 <a id="s4-4"></a>
 ### 4.4 Hover (BIN, UB6)
@@ -312,20 +379,52 @@ After every pointer move, button press and button release the manager runs the h
    hit element, otherwise nothing; when nothing is captured, the hit element if it is
    mouse-visible, otherwise nothing.
 3. If the candidate differs from the current hovered element:
-   - Every element on the ancestor chain of the old hovered element that is not on the chain
-     of the new one gets "pointer left" (message `Element_mouse_over`, value 0); every element
-     on the new chain that was not on the old one gets "pointer entered" (`Element_mouse_over`,
-     value 1).
+   - **Enter and leave** (BIN, UB6, revision 2). Build the **old chain**: the old hovered
+     element, its parent, and so on up to the topmost ancestor (the screen root), in that
+     order; build the **new chain** the same way from the candidate. Either chain is empty
+     when its element is nothing. Remove the shared upper part: compare the last element of
+     the old chain with the last of the new chain, and while both chains still have more
+     than one element left and those two are the same element, drop both and compare the
+     next pair from the end. Then every element left in the old chain gets "pointer left"
+     (`Element_mouse_over`, value 0), from its first element (the old hovered element)
+     upward; after that, every element left in the new chain gets "pointer entered"
+     (`Element_mouse_over`, value 1), from its first element (the candidate) upward. So
+     leaves come before enters and each list runs innermost first. Because the removal stops
+     when a chain is down to one element, an element that is an ancestor of the other one
+     keeps its place: when the pointer moves from a child onto its parent *P*, *P* gets
+     "pointer left" and then "pointer entered"; when it moves from *P* onto a child, *P*
+     also gets "pointer left" and then "pointer entered" (§13.12).
    - The old hovered element loses its tooltip (§6.6) and gets `Element_mouse_over_top` with
-     value 0; the new one gets `Element_mouse_over_top` with value 1.
+     value 0.
+   - **The new hovered element** is the candidate if the candidate's mouse-visible flag is set
+     at this moment; it gets `Element_mouse_over_top` with value 1. Otherwise the hovered
+     element becomes nothing and no `Element_mouse_over_top` is sent (BIN, revision 3). The
+     enter messages of the first bullet were still sent along the candidate's chain.
    - The cursor is chosen again (§4.8).
 4. If an item drag is in progress, the drop target is updated (§7.3).
 
 A Button uses "pointer over it" (*O*) and its pressed set (*P*) for its state choice (UL §9.7).
 
-> **OPEN (Probable):** whether the chain of step 3 includes the hovered element itself and
-> where it stops (screen root or root panel). The chain comparison was traced; its bounds were
-> not.
+Step 3 runs only on a change, so a pointer moving within one element sends nothing. The
+mouse-visible flag is tested only when an element becomes hovered (step 3) and, without a
+capture, when the candidate is chosen (step 2). Two edge cases follow, both only during a
+capture (§4.5) of an element whose mouse-visible flag is cleared by code while it is captured
+(for example a Button made ghosted, §4.3) and that blocks clicks, so that it stays the hit
+element:
+
+- while it stays the hovered element, the candidate equals the hovered element and step 3
+  does not run, so it **remains hovered with its flag cleared** until the hover changes;
+- if the pointer leaves it and comes back during the same capture, it becomes the candidate
+  again but not the hovered element (the hovered element stays nothing), so every later hover
+  update while the pointer is over it is again a change: it and each of its ancestors receive
+  "pointer entered" again on every pointer move, press and release, until the capture ends
+  or its flag is set again.
+
+Tessera reproduces both.
+
+The enter and leave messages are ordinary UI messages and travel up the parent chain like any
+other (§12.1); the plugin events `MouseEnter` and `MouseLeave` fire only on the control that is
+the message's source (`lua-plugin-api.md` §9.7, §13.12.4).
 
 <a id="s4-5"></a>
 ### 4.5 Mouse capture (BIN, UB7)
@@ -384,7 +483,8 @@ capture began). Coordinates passed to elements are relative to the element.
 **Context menu:** when an element with `UICore_Element_context_menu` = true receives its own
 `Element_mouse_press` with `SelectRight`, it sends `Element_open_context_menu` with
 `SelectRight` (the context-menu widget, 3 elements with `UICore_ContextMenu_open_delay` 0.5 s,
-belongs to the widget layer).
+belongs to the widget layer). That reaction answers **stop** (§12.1): the right press itself
+then reaches neither the element's listeners nor its ancestors nor game code (BIN, revision 2).
 
 **Pointer moves** go to the captured element, or, when nothing is captured and no item drag
 runs, to the hovered element. The base element sends `Element_mouse_move` with the position
@@ -403,11 +503,36 @@ that is being moved or resized follows the pointer (§8.1, §8.2).
 
 `ScrollUp`, `ScrollDown` and `Scroll` are delivered to the captured element, or, when nothing
 is captured, to the **hit element** (which may be an element that only blocks clicks). The
-base element sends `Element_mouse_scroll` with the command and the position. Scrollable
-widgets act on it; the default bindings put the wheel in `ScrollableControls_Mouse` (§3.2).
+receiving element sends `Element_mouse_scroll` (value 44) with the command and the position;
+the default bindings put the wheel in `ScrollableControls_Mouse` (§3.2).
 
-> **OPEN:** whether an unhandled scroll message reaches the scrollable ancestor (bubbling) or
-> scrollable widgets find their content by other means; how far one wheel step scrolls.
+**Bubbling (BIN, UB9, revision 2).** The scroll message travels up the parent chain like every
+UI message (§12.1). Each **scroll host** on the way (the engine Scrollable class, Text and the
+list-box family, §4.3) examines it, whatever its source, when the command is `ScrollUp` or
+`ScrollDown`:
+
+1. It looks up its linked scroll bar part (its scroll-bar element ID names a descendant scroll
+   bar that targets this host). Without one, or when that scroll bar is not visible, is in
+   state `ghosted` (0x12), or has a disabling flag set by code, the host does nothing and the
+   message continues upward.
+2. Otherwise it gives the command to the scroll bar's wheel step (below). If the step reports
+   that it acted, the host **stops** the message: no further ancestor, listener or game-code
+   handler sees it. Otherwise the message continues upward.
+
+So the wheel scrolls the **nearest** scrollable ancestor-or-self of the element under the
+pointer that has a usable scroll bar, and only that one (§13.13). `Scroll` (an analog
+command) is not handled by scroll hosts.
+
+**One wheel step.** The scroll bar's wheel step acts only for a vertical scroll bar, or for a
+horizontal one whose `UICore_Scrollbar_horizontal_allow_mouse_wheel` is true; otherwise it
+reports that it did not act. When it acts, `ScrollUp` does what the bar's "line decrement"
+does (message `Scrollbar_line_decrement`, value 62) and `ScrollDown` what "line increment"
+does (`Scrollbar_line_increment`, value 51): one wheel notch is one line step of that bar. (A
+mode that code can switch on moves `UICore_Scrollbar_position` by one unit per notch instead.)
+
+> **OPEN:** the size of one line step of a scroll bar (part of the Scrollbar widget, UL §5.9
+> OPEN), and the code-set mode of the last sentence. Tessera rule until answered: one line step
+> = the height of one entry of the scrolled list, or 16 pixels for other content.
 
 <a id="s4-8"></a>
 ### 4.8 Cursor (BIN, UB6)
@@ -600,7 +725,8 @@ The default key map's `DialogBoxes` input map binds Tab to `FocusNext`, Shift+Ta
 > **OPEN:** which part of the client handles `FocusNext`, `FocusPrevious` and `FocusMove…`: no
 > handler was found in the engine UI code that was read, so it probably belongs to a widget
 > class or to game code. Unknown: the tab order (read order? geometry?), which elements are
-> focusable, and whether `UICore_Panel_tab_element` (233 elements) takes part. Tessera rule
+> focusable, and whether `UICore_Panel_tab_element` takes part (233 values, all nested inside
+> the `UICore_Panel_pages` values of 49 element blocks, §15). Tessera rule
 > until answered: `FocusNext`/`FocusPrevious` cycle through the displayed, focusable elements
 > of the active panel in read order (UL §5.5), depth first; `FocusMove…` picks the nearest
 > focusable element in that direction by box centre.
@@ -619,8 +745,11 @@ The default key map's `DialogBoxes` input map binds Tab to `FocusNext`, Shift+Ta
 | `[Misc] TooltipDelay` | float, seconds | 0.25 | Time the pointer must rest before a tooltip appears |
 
 The owner's file holds `TooltipEnable=True` and `TooltipDelay=0.25`. Changing
-`TooltipEnable` hides any tooltip at once; changing either preference runs the timer check of
-§6.2 again at once.
+`TooltipEnable` hides any tooltip at once and clears the hover-handled flag (§6.2 step 2);
+changing either preference runs the timer check of §6.2 step 3 again at once. A change of
+`TooltipDelay` alone does not clear the flag, so while the flag is set (a tooltip was already
+handled for the current hover) it has no visible effect; the new delay applies from the next
+time the flag is clear (the next hover change, or a `TooltipEnable` change).
 
 An element's own `UICore_Element_HoverDelay` (float, seconds), when present (found through the
 element's effective properties, UL §9.4), replaces `TooltipDelay` for that element. Census:
@@ -682,8 +811,11 @@ element's effective properties, UL §9.4), replaces `TooltipDelay` for that elem
    Markup in the text is interpreted only if that Text element enables it (ST §4.7; one of the
    four tooltip variants in this install does).
 
-Census: `tooltips_on` on 1,827 elements (1,787 true) and 42 states; `tooltip_entry` on 1,780
-elements and 60 states; `tooltip_ID` on 2,044 elements (2,020 name the same element label;
+Census (values in element and state blocks; nested values, which sit inside a struct or
+array value of a block, are counted with the block): `tooltips_on` on 1,827 elements (1,787
+true) and 42 states; `tooltip_entry` 1,780 values in element blocks (1,777 held directly by
+an element block, 3 nested inside one array value of one element block) and 60 in state
+blocks; `tooltip_ID` on 2,044 elements (2,020 name the same element label;
 two blocks name an element that their tooltip layout does not contain, UB-I1);
 `tooltip_layout` on 2,091 elements (2,076 name the same layout, which holds four tooltip
 variants). Each variant is a 30 × 30 panel (edges 0, 0, 0, 0; z-level −1500) with two
@@ -856,8 +988,9 @@ Panels are moved by **drag-bar** elements (engine type Dragbar; UL §3.3).
 3. **Move:** on each `Element_mouse_move` of the drag bar while the target is moving, the
    target's new screen position (*x*, *y*) is its recorded position plus the pointer's offset
    from the recorded pointer position. It is then clamped into its parent, in screen
-   coordinates with inclusive boxes, with *w* × *h* the target's size and the parent's box
-   (*pl*, *pt*, *pr*, *pb*), in this order:
+   coordinates with inclusive boxes, with *w* × *h* the size of the target's **displayed
+   box** and (*pl*, *pt*, *pr*, *pb*) the parent's displayed box (§9.2.1; for an unscaled
+   panel these are its layout size and the screen), in this order:
    1. *x* = max(*x*, *pl*) (left edge not left of the parent's);
    2. *x* = min(*x*, *pr* − *w* + 1) (right edge not right of the parent's);
    3. *y* = max(*y*, *pt*);
@@ -900,10 +1033,13 @@ Panels are resized by **resize-bar** elements (engine type ResizeBar).
 2. **Target:** the element named by `UICore_Resizebar_Target_Element`, else the resize bar's
    parent.
 3. **Begin** (`Element_mouse_press` with `SelectLeft`, target not moving or resizing): the
-   target records the pointer position, its own width *W0* and height *H0* and the handle, and
-   enters **resizing**; the resize bar switches to `normal_pressed`.
+   target records the pointer position (screen pixels, as in §8.1), the width *W0* and height
+   *H0* of its **displayed box** (displayed right − left + 1 and bottom − top + 1, §9.2.1) and
+   the handle, and enters **resizing**; the resize bar switches to `normal_pressed`. (BIN,
+   revision 3: the begin reads the displayed box; without a UI scale it equals the layout
+   box.)
 4. **Step** (each pointer move while resizing), with *dx*, *dy* the pointer's offset from the
-   recorded position:
+   recorded position in screen pixels, used as they are (never divided by a scale):
    1. Raw size: handles 1, 7, 8: *W* = *W0* − *dx*; handles 3, 4, 5: *W* = *W0* + *dx*;
       handles 1, 2, 3: *H* = *H0* − *dy*; handles 5, 6, 7: *H* = *H0* + *dy*; the other axis
       keeps its recorded value.
@@ -914,20 +1050,52 @@ Panels are resized by **resize-bar** elements (engine type ResizeBar).
       drives). Minimums are applied after maximums, so they win.
    4. If `UICore_Element_resize_aspect_ratio` is set and not 0: when width drives,
       *H* = trunc(*W* ÷ ratio); else *W* = trunc(*H* × ratio) (32-bit floats).
-   5. The anchored side stays: handles 1, 7, 8 keep the right edge (left = right − *W* + 1);
-      handles 3, 4, 5 keep the left edge (right = left + *W* − 1); handles 1, 2, 3 keep the
-      bottom (top = bottom − *H* + 1); handles 5, 6, 7 keep the top (bottom = top + *H* − 1).
-   6. **Screen caps** (in the target's parent coordinates, compared with the screen size
+   5. **Anchoring, on the layout box** (BIN, revision 3): the edges (left, top, right, bottom)
+      start as the target's current **layout box** (§9.2.1), in its parent's layout
+      coordinates, not as its displayed box. Handles 1, 7, 8 keep the right edge
+      (left = right − *W* + 1); handles 3, 4, 5 keep the left edge (right = left + *W* − 1);
+      handles 1, 2, 3 keep the bottom (top = bottom − *H* + 1); handles 5, 6, 7 keep the top
+      (bottom = top + *H* − 1). On the axis a handle does not resize (vertical for handles 4
+      and 8, horizontal for 2 and 6) both edges keep their layout-box values, so a size that
+      steps 4.1–4.4 computed for that axis (for example by the aspect ratio) is not used here.
+   6. **Screen caps** (in the same layout coordinates, compared with the screen size
       *SW* × *SH*): left = max(left, 0); unless `UICore_Element_IgnoreResizeWidthCap`,
       right = min(right, *SW* − 1); top = max(top, 0); unless
-      `UICore_Element_IgnoreResizeHeightCap`, bottom = min(bottom, *SH* − 1).
-   7. The target is moved to (left, top) and sized (right − left + 1, bottom − top + 1); its
-      children are laid out again (UL §8.4).
+      `UICore_Element_IgnoreResizeHeightCap`, bottom = min(bottom, *SH* − 1). The result is
+      the **requested box**.
+   7. The target is moved to (left, top) and then resized to the requested size
+      (right − left + 1, bottom − top + 1) through the **element resize** of §9.2.1. That
+      resize first applies its own **limit pass** (UB47: `max_height`, `min_height`,
+      `max_width`, `min_width`, then the aspect ratio), which can change the size again, and
+      then acts by the target's object mode: in CanvasResize the layout box takes the size
+      (left and top stay, so only the right and bottom edges move) and the children are laid
+      out again (UL §8.4); in Stretch the layout box is kept and the scale changes (§9.2.1).
 
-   The size limits of step 4.3 are **not final**: the aspect-ratio step 4.4 and the screen caps
-   of step 4.6 run after them, and either can give a size below a minimum or above a maximum
-   (§13.5). Only when no aspect ratio is set and step 4.6 changes nothing does the final size
-   respect the limits (with a minimum winning over a smaller maximum).
+   So neither the limits of step 4.3 nor the caps of step 4.6 are final. The aspect ratio
+   (step 4.4) and the caps can break the limits; the limit pass of step 4.7 then re-applies
+   them in its own order (heights first, then widths, then the aspect ratio), which can push
+   an edge past a cap again or, with an aspect ratio, break a limit again (§13.5). Without an
+   aspect ratio the final size always respects the limits, a minimum winning over a smaller
+   maximum.
+
+   **Under a UI scale.** For a target with a display node at or above it whose scale is not 1
+   (a scaled root panel, §9.2), the step mixes the two boxes: *W0*, *H0* are displayed
+   (scaled) sizes and *dx*, *dy* are screen pixels, while the anchored edges and the caps use
+   the layout box, whose size is unscaled. The requested size, in displayed units, then goes to
+   the element resize in the panel's own object mode (normally CanvasResize, because the
+   scaler restores the object mode after its own resize, §9.2 step 6).
+
+> **OPEN:** the displayed result of a resize-bar resize of a target under a UI scale other than
+> 1: whether the panel's display node keeps its scale (so the displayed size becomes about
+> (requested size + 1) × scale − 1 by §9.2.1) or the node routine that receives the requested
+> size changes it, and whether game code of the scaler types re-applies §9.2 afterwards (they
+> cache the unscaled size). **Tessera rule until answered:** for a target with scale
+> (*ex*, *ey*) ≠ (1, 1), divide *W0*, *H0*, *dx* and *dy* by *ex* (widths, *dx*) and *ey*
+> (heights, *dy*), truncating, before step 4.1, so that the whole step works in layout
+> units, and keep the scale unchanged; at scale 1 this is exactly the original. Suggested
+> method: M3 (the owner resizes a resizable panel at UI scale 1.0 and 1.5 and reports its
+> size), or M4 on the display node's set-size routine. UB-I9 covers only targets without a
+> UI scale.
 5. **End** (`Element_mouse_release` with `SelectLeft`): the resize bar returns to `normal`; the
    target leaves resizing; if it has `UICore_Element_save_size`, game code is notified (§8.4).
 
@@ -942,7 +1110,8 @@ Census: 52 ResizeBar elements; border flags right 30, bottom 39, left 3, top 3 (
 > **OPEN:** the outline mode of `UICore_Element_resize_line` (no layout element sets it) and
 > whether the cap of step 6 uses the screen size also for targets that are not root panels
 > (it does in the code traced; such targets are rare). `UICore_Element_force_match_parent_scale`
-> (3 elements) and `UICore_Element_clip_to_parent` (1) were not traced.
+> (3 elements) is read by the element resize (§9.2.1, UB47); its other readers and
+> `UICore_Element_clip_to_parent` (1) were not traced.
 
 <a id="s8-3"></a>
 ### 8.3 Keeping panels on screen (BIN)
@@ -1054,26 +1223,111 @@ SK §8.4 sets them from a skin).
    `UIComponent_UIScaler_Cached_Width`/`_Height`) and the screen *SW* × *SH*,
    *s* = min(*s*, *SW* ÷ *CW*, *SH* ÷ *CH*) (32-bit floats), so a panel is never scaled larger
    than the screen.
-3. **Size:** width = trunc(*CW* × *s*), height = trunc(*CH* × *s*). The panel's `min_width`,
-   `max_width`, `min_height` and `max_height` are scaled by *s* (truncated) for this step and
-   bound the new size (minimum, then maximum), then restored.
+3. **Requested size:** width = trunc(*CW* × *s*), height = trunc(*CH* × *s*). The panel's
+   `min_width`, `max_width`, `min_height` and `max_height` are scaled by *s* (truncated) for
+   this step and bound the requested size (minimum, then maximum), then restored.
 4. **Origin kept fixed:** with *s0* the previous scale (`UIComponent_UIScaler_Cached_Scale`,
    default 1) and origin (*ox*, *oy*): new left = left + trunc(*ox* × *s0*) − trunc(*ox* × *s*),
    new top = top + trunc(*oy* × *s0*) − trunc(*oy* × *s*).
 5. **Clamp:** left = min(left, *SW* − width), then left = max(left, 0); the same for top with
-   *SH* − height.
-6. The panel gets the new size and position; *s* is stored as the cached scale.
+   *SH* − height. Width and height here are the **requested (scaled)** size of step 3.
+6. The panel is resized to the requested size. For panels of the game's scaler types
+   (`UIScaler`, `UIScalerPanel`, `ChatWindow`, the bag types `IBag`, `SingletonBag` and
+   `GraphicBag`, and four other game types; BIN) the resize is made **in object mode
+   Stretch**: if the panel's `UICore_Element_ObjectMode` is not Stretch, the scaler switches
+   it to Stretch and sets `max_width` and `max_height` to the requested size for the resize,
+   then restores all three. Any other element is resized in its own object mode (§9.2.1). The
+   panel is then moved to (left, top), and *s* is stored as the cached scale. A resize in
+   Stretch (§9.2.1) leaves the panel's **layout box unchanged** (its unscaled size, normally *CW* × *CH*),
+   changes its scale vector and makes its **displayed box** the scaled box.
 
-For a root panel in object mode Stretch (`UICore_Element_ObjectMode`; 301 layout elements set
-Stretch, UL §5.9) the children are not re-laid out (UL §8.4 step 1): the panel's surface keeps
-its unscaled canvas and is drawn stretched onto the scaled box. A panel in another object mode
-is simply resized, and its children follow their edge modes (UL §8.4).
+So after scaling, a root panel has two boxes: its layout box, at (left, top) with the unscaled
+size, in which UL §8 lays out its children exactly as at scale 1 (they are never re-laid out
+by a scale change, UL §8.4 step 1); and its displayed box, at the same (left, top) (the screen
+root has no scale) with about the requested size, which is what the screen shows, what the hit
+test of §4.1–§4.2 tests, what the move clamp of §8.1 keeps on the screen, and what step 5
+clamps. Text inside is laid out and painted at 1 : 1 in the layout box and shown magnified
+(FO §6.3).
 
-> **OPEN (Probable):** the drawing side of step 6 (Stretch surfaces drawn scaled) is inferred
-> from the tooltip and drag-icon code, which explicitly lay out in CanvasResize and then switch
-> to Stretch at the scaled size (§6.4, §7.2); the compositing code was not traced (UL §8.4
-> OPEN on object modes). Also unknown: the plugin-side combination of `Window:SetScale` with
-> the group scale (LPA §13.3 OPEN).
+<a id="s9-2-1"></a>
+#### 9.2.1 Layout box and displayed box (BIN, UB41–UB43)
+
+Every element keeps two inclusive boxes, both relative to its parent:
+
+- the **layout box**, computed by UL §8 and changed by moves and resizes (§8.1, §8.2, UL §9.9);
+- the **displayed box**, derived from the layout box and the scale vectors of **display
+  nodes**. A display node belongs to an element that has its own drawing surface and has
+  been given a scale (root panels and the tooltip and drag-icon panels; UL §6.6 OPEN for
+  other elements). The node's scale vector is (*sx*, *sy*), 1 by default.
+
+Derivation, whenever the layout box or a scale changes (Probable for the exact moments):
+
+1. If neither the element nor any ancestor has a display node, the displayed box equals the
+   layout box.
+2. Otherwise let (*px*, *py*) be the scale of the nearest display node at or above the
+   element's **parent** (1, 1 if none) and (*ex*, *ey*) the scale of the nearest display node
+   at or above the **element itself**. With the layout box (*l*, *t*, *r*, *b*), width
+   *w* = *r* − *l* + 1 and height *h* = *b* − *t* + 1, in 32-bit floats:
+   - displayed left = trunc(*l* × *px*), displayed top = trunc(*t* × *py*);
+   - displayed width = trunc(max(0, (*w* + 1) × *ex* − 1)), displayed height =
+     trunc(max(0, (*h* + 1) × *ey* − 1));
+   - displayed right = left + width − 1, bottom = top + height − 1.
+
+With all scales 1 this gives the layout box again. For a root panel the parent is the screen
+root, whose scale is 1, so the displayed position equals the layout position.
+
+**Element resize.** Every resize of an element to a requested size (*w*, *h*) (by the UI
+scaler, §9.2, by a resize bar, §8.2, or by code) runs these steps (BIN, UB47, revision 3):
+
+1. **Limit pass**, on the requested size, with the element's effective properties: if
+   `max_height` is set and *h* exceeds it, *h* = max_height; if `min_height` is set and *h*
+   is below it, *h* = min_height; then the same for *w* with `max_width` and `min_width`.
+   The driving axis is width unless a height limit changed *h* and no width limit changed
+   *w*. If `UICore_Element_resize_aspect_ratio` is set: when width drives,
+   *h* = trunc(*w* ÷ ratio), else *w* = trunc(*h* × ratio) (32-bit floats). Unlike the
+   resize-bar step (§8.2 step 4.4), this pass does not skip a ratio of 0. **Tessera rule:**
+   treat a ratio of 0 as unset here too (the only ratio in the data is ≈ 1.2715, §15).
+2. **Parent scale** (surface-owning elements that have a parent only): if the object mode of
+   the nearest surface-owning element at or above the parent (CanvasResize when there is
+   none or it sets no mode) is Stretch, or the element has
+   `UICore_Element_force_match_parent_scale` true, or a further per-element switch is set
+   (its writer was not traced; OPEN below), the size is converted by the parent's scale
+   (*px*, *py*) of the derivation above: *w* = trunc((*w* + 1) × *px* − 1),
+   *h* = trunc((*h* + 1) × *py* − 1). For a root panel the parent is the screen root, whose
+   scale is 1, so the conversion changes nothing.
+3. **By object mode**, as below. An element that does not own a surface always takes the size
+   into its layout box (left and top kept) and lays its children out again.
+
+**Resizing a surface-owning element** (a root panel) depends on its object mode:
+
+- **Stretch:** its layout box is **not** changed; instead its node's scale vector is set from
+  the requested size and its unscaled canvas size (Probable: requested ÷ canvas on each axis;
+  the node routine that receives both sizes was not read), and its displayed box is derived
+  again. Its children are not laid out again.
+- **CanvasResize** (the default for root panels): its layout box takes the requested size, the
+  children are laid out again (UL §8.4), and the element sends its size-changed message.
+- **None** and **Tile**: the element resize does not change the layout box (what these modes
+  do otherwise is UL §8.4 OPEN).
+
+The limit pass of step 1 bounds the requested size in every mode.
+
+**Points inside a scaled panel.** Because each displayed box is derived with the scales above
+it, the hit test of §4.2 works entirely in displayed coordinates and needs no division. Text
+hit tests (FO §6.3 item 3) and the alpha threshold (§4.1 step 3) convert a point relative to
+the element's displayed box back to the element's unscaled pixels by dividing *x* by *ex* and
+*y* by *ey*, where (*ex*, *ey*) is the scale of the nearest display node **at or above the
+element** (its own node, else the nearest ancestor's; (1, 1) only when there is none), the
+same scale that sets the element's displayed size above (BIN, UB46). The alpha test divides
+only when any of the three components of that scale (*x*, *y* and *z*) differs from 1 by more
+than 0.0002; the text conversion always divides (FO §6.3). Each result is truncated toward
+zero (§13.15).
+
+> **OPEN (Probable):** the drawing side (the Stretch surface drawn scaled onto the displayed
+> box, and its filter, FO Q3) is inferred from the tooltip and drag-icon code, which lay out in
+> CanvasResize and then switch to Stretch at the scaled size (§6.4, §7.2), and from the resize
+> routine above; the compositing code was not traced (UL §8.4 OPEN on object modes). Also
+> unknown: the plugin-side combination of `Window:SetScale` with the group scale (LPA §13.3
+> OPEN), and the writer of the further per-element switch of element-resize step 2.
 
 <a id="s9-3"></a>
 ### 9.3 Cursor scale (BIN, UB33)
@@ -1109,37 +1363,28 @@ Text drawing, wrapping, alignment, outline and font choice are specified in FO �
 ST §4.7–§4.8 and §7.8. This section adds the UI-level rules.
 
 <a id="s10-1"></a>
-### 10.1 Truncation with a suffix (BIN, UB35)
+### 10.1 Truncation with a suffix (pointer to FO §7.6)
 
-`UICore_Text_truncate_text_to_fit` is a **StringInfo**: the text of the suffix drawn where text
-is cut (resolved from the string table at run time; an empty or zero StringInfo disables
-truncation).
+The truncation rule of `UICore_Text_truncate_text_to_fit` (the suffix, when an element
+truncates, the overflow test, the line that is cut, the cut index, the extents after the cut
+and the drawing) is specified **only** in `fonts.md` §7.6, with worked examples in FO §13.10.
+Implement it from there; this spec adds only what happens at the UI level:
 
-1. When the element's text is laid out and the property resolves to non-empty text, the suffix
-   is laid out once with the element's font and its width *sw* is kept.
-2. **Overflow test:** the measured text extent including the text margins (§6.4 step 1) is
-   compared with the element's box: for single-line text (a text element that does not wrap)
-   the width with the element's width, for multi-line text the height with the element's
-   height. Not larger: no cut.
-3. **Last visible line:** for multi-line text, the last line whose bottom (the sum of the line
-   heights from the first line) is within the element's height minus the top and bottom
-   margins minus 1; single-line text uses line 0.
-4. **Cut position:** on that line, the character index at which the text of the line fits into
-   the element's width minus the left and right margins minus *sw*.
-5. **Drawing:** text is drawn up to the cut position; the suffix is drawn there instead of the
-   rest, and nothing after it.
+- an element that is cut and has `UICore_Text_auto_tooltip_truncated_text` = true gets the
+  tooltip of §10.2;
+- such an element is mouse-visible while it is cut (§4.3, Text row), so the tooltip can show;
+- the text widget clears its truncation switch whenever `UICore_Text_editable` or
+  `UICore_Text_selectable` becomes true (BIN, UB44; FO §7.6).
 
-Census: the property is set on 324 elements and 1 state; 318 values name one of two entries
-of one string table, 1 names a third entry, 5 are (0, 0).
-
-> **OPEN:** the fit rule of step 4 (whole glyphs only; whether trailing spaces are kept; how
-> kerning at the cut is handled) and how alignment (FO §7.4) treats the shortened line. This
-> also answers part of FO Q13 (§16).
+Census (OBS, all 302 layouts, re-counted 2026-10-06): the property has **325** stored values,
+324 on elements and 1 on a state; 319 of them name one of two entries of one string table
+(318 element values and the state value), 1 names an entry of a second table, and 5
+are null (table and token 0). So 320 values name one of three entries, as FO §7.6 says.
 
 <a id="s10-2"></a>
 ### 10.2 Tooltip of truncated text (Confirmed token; BIN rules)
 
-When a Text element with `UICore_Text_auto_tooltip_truncated_text` = true is cut by §10.1:
+When a Text element with `UICore_Text_auto_tooltip_truncated_text` = true is cut (FO §7.6):
 
 1. If the Text element has its own tooltip text (a tooltip string kept by the text widget;
    Probable: its resolved `UICore_Element_tooltip_entry`), its run-time tooltip (§6.3 step 1)
@@ -1209,10 +1454,44 @@ visible); a state that sets it shows or hides the element when the state is ente
 <a id="s12-1"></a>
 ### 12.1 Delivery (BIN, UB36)
 
-An element sends a message to itself: its own handler runs first (widgets react, for example
-the dialog keys of §5.5), then the element's registered listeners, and the message counts as
-consumed if any of them consumed it. A message raised while another message is being delivered
-is queued and delivered, in order, after the current one.
+An element **posts** a UI message about itself (it is the message's **source**). The message
+carries the source's element ID, the source, the message value, its argument and a sequence
+number.
+
+1. **Numbering and queueing.** Posting gives the message the next number of one global
+   sequence. If the UI manager is already delivering a message, the new one is appended to a
+   single first-in-first-out queue and posting returns; the queue is drained, in order and
+   including messages appended while draining, before the outermost delivery returns.
+   Otherwise the manager marks itself as delivering and delivers at once.
+2. **Delivery to an element** *X* (first the source):
+   1. *X*'s own handler runs. Built-in reactions of the base element (the context menu of
+      §4.6, the state changes of drag and drop, §7.3) happen only when *X* is the source;
+      widget classes may react to messages from their descendants (the scroll hosts of §4.7
+      do).
+   2. *X*'s attached listeners (widgets, plugin controls, other objects that attached
+      themselves to *X*) receive it in attachment order. A listener that has already seen
+      this sequence number is skipped.
+   3. Each handler or listener answers **not handled**, **handled** or **stop**. A stop ends
+      the whole delivery at once.
+   4. Unless stopped, the message is delivered to *X*'s parent by these same steps (an
+      ancestor that has already seen the sequence number is skipped), and so on up to the
+      topmost ancestor. A handled answer does not end the walk.
+3. **Game-code handlers.** At the topmost ancestor (the screen root for every displayed
+   element), after its own listeners, if none of them answered handled or stop, the UI
+   manager calls the game-code handlers registered in its listener registry for the pair
+   (the **source's** element ID, message value) (UL §9.2 step 5), in registration order; a
+   stop from one of them ends the list.
+
+So a message posted by a child reaches every ancestor's handler and listeners, and game code
+receives it by the element ID of the element where it happened. The plugin layer's listener
+turns a message into a Lua event only when its own control is the source
+(`lua-plugin-api.md` §9.7, which agrees with this section). A key or command that no element
+consumes goes to game code through the manager's separate notification (§5.3).
+
+> **OPEN:** whether a handled answer from an element below the topmost ancestor also keeps the
+> game-code handlers from running (the trace shows the check only on the topmost ancestor's
+> own listeners). Tessera rule until answered: game-code (Tessera panel) handlers run unless
+> the message was stopped.
 
 <a id="s12-2"></a>
 ### 12.2 Messages this spec uses
@@ -1244,6 +1523,7 @@ at run time, UL §3.3).
 | 47 | `Element_deactivated` | panel deactivated (§5.1) | — |
 | 48 | `Element_drag_global_begin` | drag icon created (§7.2) | 1 |
 | 50 | `Element_mouse_press` | button command pressed on the element (§4.6) | command, position |
+| 51 / 62 | `Scrollbar_line_increment` / `_decrement` | a scroll bar's line step, also caused by one wheel notch (§4.7) | — |
 | 53 | `Button_click` | a Button is clicked (UL §9.7); the dialog framework reacts to it (§5.5) | — |
 | 61 | `Element_activated` | panel activated (§5.1) | — |
 | 63 | `Element_key_press` | key command pressed (§5.3) | command, value |
@@ -1295,15 +1575,22 @@ Press at (100, 100). Move to (103, 102): 9 + 4 = 13 < 16, no drag. Move to (102,
 <a id="s13-5"></a>
 ### 13.5 Resize (§8.2)
 
-Target box (100, 50, 399, 249), so *W0* = 300, *H0* = 200; handle 5 (bottom-right); recorded
+A root panel without a UI scale (displayed box = layout box, object mode CanvasResize). Target
+box (100, 50, 399, 249), so *W0* = 300, *H0* = 200; handle 5 (bottom-right); recorded
 pointer (390, 240); `min_width` 200, `max_width` 350, aspect ratio 1.5; screen 1920 × 1080.
 Pointer at (450, 300): *dx* = *dy* = 60; raw *W* = 360, *H* = 260; width drives (handle 5);
 *W* = 350 (max); *H* = trunc(350 ÷ 1.5) = 233; left and top stay: right = 100 + 349 = 449,
-bottom = 50 + 232 = 282; caps hold. Result: position (100, 50), size 350 × 233.
+bottom = 50 + 232 = 282; caps hold. Requested box (100, 50, 449, 282). Element resize
+(§9.2.1): no height limit; *w* = 350 is not above `max_width`; width drives; *h* =
+trunc(350 ÷ 1.5) = 233. Result: position (100, 50), size 350 × 233.
 
 The same with `min_height` 240 added: step 4.3 leaves *H* = 260 (not below 240, so height does
-not drive), width still drives, and step 4.4 again gives *H* = 233. The result is 350 × 233,
-below the minimum height: the aspect ratio wins over the limits (§8.2, UB-I9).
+not drive), width still drives, and step 4.4 again gives *H* = 233; the requested box is again
+(100, 50, 449, 282), 350 × 233. The element resize then raises *h* to 240 (`min_height`), so
+height drives; *w* = 350 is within the width limits; the aspect ratio gives
+*w* = trunc(240 × 1.5) = 360. Result: position (100, 50), size 360 × 240, box
+(100, 50, 459, 289): the minimum height holds and the maximum width is broken (§8.2,
+UB-I9). (Revision 2 gave 350 × 233 here; it omitted the element resize's limit pass.)
 
 <a id="s13-6"></a>
 ### 13.6 Activation and z-order (§5.1)
@@ -1347,6 +1634,74 @@ unclamped position is (100, 300). Horizontally: *x* = max(100, 0) = 100, then
 the screen's right edge. Vertically: *y* = max(300, 0) = 300, then
 *y* = min(300, 599 − 400 + 1) = 200, so the panel spans 200 to 599.
 
+<a id="s13-11"></a>
+### 13.11 The mouse-visible flag (§4.3)
+
+A panel holds a Button *B* (not ghosted), a Field *F* with no tooltip, context menu or drop
+acceptance, and a Field *G* with `UICore_Element_context_menu` = true.
+
+1. After creation (post-creation recomputes every flag): *B* mouse-visible (Button rule), *F*
+   not, *G* mouse-visible (base rule). A click over *F* falls through to whatever is behind it.
+2. Panel code then registers a click handler for *F*'s element ID: *F* becomes mouse-visible
+   and the click now hits *F*; the click message bubbles to the screen root and the registered
+   handler runs (§12.1).
+3. Had the handler been registered **before** the panel was created, *F* would have been set at
+   creation step 5 and reset by post-creation: not mouse-visible.
+4. `UICore_Element_context_menu` of *F* then changes (for example through a state): the flag
+   is recomputed by the base rule and the value of step 2 is lost, whatever the new property
+   value is, unless the rule itself gives true.
+5. *B* becomes ghosted: recomputed to false (neither ghost flag set), even though *B* has a
+   tooltip.
+
+<a id="s13-12"></a>
+### 13.12 Enter and leave chains (§4.4)
+
+Screen root *S* holds panel *P*, which holds *A*; *A* holds *A1*. *P* also holds *C*.
+
+- Hovered *A1*, candidate *C*: old chain *A1*, *A*, *P*, *S*; new chain *C*, *P*, *S*. Remove
+  the shared upper part (*S*, then *P*): old left *A1*, *A*; new left *C*. Messages: leave *A1*,
+  leave *A*, enter *C*.
+- Hovered *A*, candidate *P*: old *A*, *P*, *S*; new *P*, *S*. After removing *S* the new chain
+  has one element left, so removal stops: leave *A*, leave *P*, enter *P*.
+- Hovered nothing, candidate *A1*: enter *A1*, *A*, *P*, *S*.
+
+<a id="s13-13"></a>
+### 13.13 Wheel over a list (§4.7)
+
+A list box *L* (with a visible, not ghosted vertical scroll bar part) holds entry *E*, which
+holds a Text *T* without a scroll bar; *L* sits in a scrollable panel body *Q* that also has a
+usable scroll bar. The wheel turns up over *T*: the hit element is *T* (say it is selectable),
+which posts `Element_mouse_scroll` with `ScrollUp`. *T* is a scroll host but has no scroll bar,
+so the message goes on to *E* (no reaction) and then *L*, which gives `ScrollUp` to its scroll
+bar; the bar acts (one line decrement) and *L* answers stop. *Q* never sees the message, and
+no game-code handler runs. If *L*'s scroll bar were hidden, *Q* would scroll instead.
+
+<a id="s13-14"></a>
+### 13.14 Displayed box of a scaled panel (§9.2, §9.2.1)
+
+A root panel of a scaler type with unscaled size 300 × 200 at (100, 100) is scaled with
+*s* = 1.2 (the §13.7 numbers): requested size 360 × 240, new position (70, 80). Resized in
+Stretch, its layout box is (70, 80, 369, 279) (still 300 × 200) and its scale is 1.2 (taking
+the Probable division of §9.2.1). Displayed box: left trunc(70 × 1) = 70, top 80, width
+trunc(301 × 1.2 − 1) = 360, height trunc(201 × 1.2 − 1) = 240: (70, 80, 429, 319). A child at
+layout (10, 20) of size 50 × 10 (no node of its own; the nearest node above it and above its
+parent is the panel's): displayed left trunc(10 × 1.2) = 12, top 24, width
+trunc(51 × 1.2 − 1) = 60, height trunc(11 × 1.2 − 1) = 12. A pointer at screen (90, 110) is at
+(20, 30) relative to the panel's displayed box and inside the child's displayed box
+(12–71, 24–35). The move clamp of §8.1 keeps the 360 × 240 displayed box on the screen.
+
+<a id="s13-15"></a>
+### 13.15 Alpha test point in a scaled panel (§4.1 step 3, §9.2.1)
+
+The child of §13.14 (no display node of its own) has a base image and sets
+`UICore_Element_mouse_visible_alpha_threshold`. Its scale is that of the panel's node,
+(1.2, 1.2, 1), not (1, 1, 1) (UB46). The pointer at (20, 30) relative to the panel's
+displayed box is (20 − 12, 30 − 24) = (8, 6) relative to the child's displayed box. The *x*
+component 1.2 differs from 1 by more than 0.0002, so the image point is
+(trunc(8 ÷ 1.2), trunc(6 ÷ 1.2)) = (trunc(6.67), trunc(5.0)) = (6, 5). With a panel scale of
+(1.0001, 1.0001, 1) no component differs by more than 0.0002 and (8, 6) is used unchanged; with
+(1, 1, 1.5) only *z* differs, and the point is divided by (1, 1): (8, 6) again.
+
 ---
 
 <a id="s14"></a>
@@ -1376,11 +1731,23 @@ Marked (OBS) where checkable against the install; the rest are behavioural test 
 - **UB-I8** After a move step, on each axis: if the moved element is no wider (no taller) than
   its parent, its screen box lies inside the parent's on that axis; otherwise its right
   (bottom) edge equals the parent's right (bottom) edge (§8.1, §13.10).
-- **UB-I9** After a resize step, left ≥ 0 and top ≥ 0, and right ≤ *SW* − 1 and
-  bottom ≤ *SH* − 1 unless the corresponding Ignore flag is set. When no aspect ratio is set
-  and the screen caps of §8.2 step 4.6 changed nothing, the final width and height also are at
-  least the minimums that are set, and at most the maximums that are set and are not smaller
-  than the matching minimum. (With an aspect ratio the limits may be broken, §13.5.)
+- **UB-I9** For every resize step (§8.2): the requested box of step 4.6 has left ≥ 0 and
+  top ≥ 0, and right ≤ *SW* − 1 and bottom ≤ *SH* − 1 unless the matching Ignore flag is set;
+  the target is moved to the requested left and top. For a target without a UI scale (no
+  display node with a scale other than 1 at or above it) that is resized into its layout box
+  (not surface-owning, or in object mode CanvasResize): the final layout box has the
+  requested left and top, and its size is the requested size after the limit pass of §9.2.1;
+  without an aspect ratio that size is at least every minimum that is set and at most every
+  maximum that is set and not smaller than the matching minimum; its right (bottom) edge is
+  at most *SW* − 1 (*SH* − 1), unless the Ignore flag is set, whenever the limit pass did not
+  enlarge the width (height). (With an aspect ratio the limits may be broken, §13.5. Targets
+  under a UI scale are OPEN, §8.2.)
+- **UB-I10** A tooltip's position satisfies *x* ≤ *SW* − *w* and *y* ≤ *SH* − *h*; it is ≥ 0 when
+  the tooltip fits on the screen.
+- **UB-I11** No drag starts while the pointer is within a squared distance below 16 of the
+  press position.
+- **UB-I12** There is at most one active panel and at most one focus element; the focus
+  element's input map is above the active panel's.
 - **UB-I13** While the pointer rests on one element (no pointer move, no hover change, no change
   of `TooltipEnable`), the base hover handler (§6.2 step 4) of an element that game code has not
   marked for hover messages runs at most once if `tooltips_on` and `TooltipEnable` are both true, and once per
@@ -1389,25 +1756,48 @@ Marked (OBS) where checkable against the install; the rest are behavioural test 
   stack unless the active panel is the old focus element or one of its ancestors; after focus is
   cleared, the active panel's own entry (map, panel, 0) is on the stack whenever the panel has
   a map (§5.2, §13.9).
-- **UB-I10** A tooltip's position satisfies *x* ≤ *SW* − *w* and *y* ≤ *SH* − *h*; it is ≥ 0 when
-  the tooltip fits on the screen.
-- **UB-I11** No drag starts while the pointer is within a squared distance below 16 of the
-  press position.
-- **UB-I12** There is at most one active panel and at most one focus element; the focus
-  element's input map is above the active panel's.
+- **UB-I15** Right after post-creation, every element's mouse-visible flag equals its type
+  rule's value (§4.3), whatever listeners were registered before creation (§13.11).
+- **UB-I16** The hit test catches an element only if its mouse-visible or blocks-clicks flag
+  is set. An element becomes the hovered element only while its mouse-visible flag is set
+  (§4.4 step 3); after every hover update made while nothing is captured, the hovered element
+  is nothing or has its flag set. (During a capture, a hovered element whose flag code clears
+  can stay hovered until the hover changes, §4.4.)
+- **UB-I17** For a hover change from *O* to *N*, every "pointer left" message is sent before
+  every "pointer entered" message; *O* receives "pointer left" (if not nothing) and *N*
+  receives "pointer entered" (if not nothing); an element strictly above the lowest common
+  ancestor of *O* and *N* receives neither (§4.4, §13.12).
+- **UB-I18** A UI message reaches each element of its source's ancestor chain at most once,
+  in order from the source upward, and none after a stop (§12.1); a wheel message that a
+  scroll host consumed reaches no element above that host (§4.7, §13.13).
+- **UB-I19** With no display node on an element or above it, its displayed box equals its
+  layout box; a resize of a surface-owning element in object mode Stretch leaves its layout
+  box unchanged (§9.2.1, §13.14).
+- **UB-I20** The scale used to convert a point for an element (§4.1 step 3, FO §6.3) equals
+  the scale of the nearest display node at or above it; it is (1, 1, 1) only when neither the
+  element nor any ancestor has a display node. The alpha test leaves the point unchanged
+  exactly when all three components are within 0.0002 of 1 (§13.15).
+- **UB-I21** At the start of a resize (§8.2 step 3), *W0* and *H0* equal the target's displayed
+  width and height; for a target without a UI scale they equal its layout width and height.
 
 ---
 
 <a id="s15"></a>
 ## 15. Census of behaviour properties (Confirmed, OBS, 2026-10-06)
 
-Counts of property values stored on element blocks and state blocks of all 302 layout records,
-before inheritance (UL §7). Values are the property values as stored.
+Counts of property values stored in element blocks and state blocks of all 302 layout
+records, before inheritance (UL §7). A value nested inside a struct or array value of a block
+is counted with that block (nested values included). Only two properties of this table occur
+nested at all: 3 of the 1,780 `tooltip_entry` values in element blocks (inside one array
+value of one element block; the other 1,777 are held directly) and all 233
+`UICore_Panel_tab_element` values (inside the `UICore_Panel_pages` values of 49 element
+blocks); every other count is of values held directly. Values are the property values as
+stored.
 
 | Property | Elements | States | Values |
 |---|---|---|---|
 | `UICore_Element_tooltips_on` | 1,827 | 42 | true 1,787, false 40 |
-| `UICore_Element_tooltip_entry` | 1,780 | 60 | 46 are (0, 0) |
+| `UICore_Element_tooltip_entry` | 1,780 (1,777 direct + 3 nested) | 60 | (0, 0) in 46 element values and 1 state value |
 | `UICore_Element_tooltip_ID` | 2,044 | 41 | one label 2,020 |
 | `UICore_Element_tooltip_layout` | 2,091 | 41 | one layout 2,076; 0 in 3 |
 | `UICore_Element_tooltip_text_ID` | 173 | 0 | 0 in 98 |
@@ -1436,12 +1826,12 @@ before inheritance (UL §7). Values are the property values as stored.
 | `UICore_Element_KeepObjectWhenHidden` | 35 | 0 | all true |
 | `UICore_Element_enable_visibility_broadcast` | 1 | 0 | true |
 | `UICore_Element_hide` | 769 | 165 | elements true 740; states true 42, false 123 |
-| `UICore_Text_truncate_text_to_fit` | 324 | 1 | two entries (318), empty 5 |
+| `UICore_Text_truncate_text_to_fit` | 324 | 1 | 325 values: one of two entries of one table 319 (318 element values + the state's), an entry of a second table 1, null 5 (§10.1) |
 | `UICore_Text_auto_tooltip_truncated_text` | 271 | 0 | true 246 |
 | `UICore_Text_editable` / `selectable` | 128 / 138 | 4 / 4 | true 103 / 126 |
 | `UICore_Text_lose_focus_on_escape` / `_acceptinput` | 19 / 56 | 0 | all true |
 | `UICore_Text_max_chars` | 84 | 0 | |
-| `UICore_Panel_tab_element` | 233 | 0 | |
+| `UICore_Panel_tab_element` | 233 (all nested, in 49 element blocks) | 0 | |
 | Not set on any layout element | | | `UICore_Element_InputMapID`, `_disallow_drag_in`, `_DragAcceptedState`, `_resize_line`, `_IgnoreResizeWidthCap`, `_constrain_move_to_parent`, `_ClampGameViewEdgeToObject`, `_BroadcastOnTooltipStop`, `_LuaOverrideID` |
 
 Engine widget counts (UL §11): Dragbar 135, ResizeBar 52.
@@ -1458,7 +1848,13 @@ Engine widget counts (UL §11): Dragbar 135, ResizeBar 52.
 | `ui-layout.md` §5.9 (engine properties named only) | Behaviour of the remaining engine-level properties OPEN | Behaviour now specified here for the tooltip, hover, activation, focus, mouse, drag, save, size-limit, resize-bar, drag-bar, auto-fade, visibility and text-truncation properties (§4–§11, census §15). | BIN, OBS |
 | `keymap.md` §12.5.7 and §12.19 (timings OPEN) | "The double-click and tap timings and the 'close' distance are OPEN" | Tap: release within half the OS double-click time; DblClick: press within the OS double-click time of the previous press of the same control; Nearby: also inside the half-open rectangle of ± half the OS double-click rectangle around the previous press position (§3.3). | BIN |
 | `keymap.md` §12.12 OPEN (map order) | When each input map is active | The UI pushes the active panel's input map with priority 0 and the focus element's with priority 50, each element's ancestors one priority lower per level; the stack is ordered by priority, newest first among equals, identical pushes are ignored and a pop removes an element's map at every priority (§5.2). The full input-layer order is still open there. | BIN |
-| `fonts.md` §7.4 OPEN (Q13) | Extents and line handling with `UICore_Text_truncate_text_to_fit` | Truncation rule in §10.1 (overflow test, last visible line, cut position, suffix drawing) and the truncated-text tooltip in §10.2; the fit rule at the cut stays OPEN. | BIN |
+| `fonts.md` §7.6 (truncation; Q13 closed there) | The full truncation rule | **Agreement (revision 2).** FO §7.6 is the only statement of the rule; §10.1 here now points to it and keeps only the UI-level effects. The earlier §10.1 text (line heights without leading, fit rule OPEN) is withdrawn. Census reconciled: 325 values, 319 + 1 naming three entries, 5 null (§10.1). Applied in FO by this revision. | BIN, OBS |
+| `fonts.md` §6.3 item 4 | "The scaler component sets a panel's own size to its screen size ÷ scale" | The scaler requests size = unscaled size × scale and resizes in object mode Stretch, which keeps the layout box and changes the scale vector; the displayed box is the scaled one (§9.2, §9.2.1). The "(size + 1) × scale − 1" formula there is the displayed-size formula of every element under a display node. Applied in FO by this revision. | BIN |
+| `fonts.md` §6.3 items 1 and 3, F35 | "An element without a display node has the scale (1, 1, 1)"; text hit tests divide by "the scale" | The scale is that of the nearest display node at or above the element, (1, 1, 1) only when none exists (UB46); text hit tests always divide *x* and *y* by it (§9.2.1). Applied in FO revision 6. | BIN |
+| `ui-layout.md` §9.2 step 5, §9.3, U28, U33, §14.6 | A "mouse-button flag" set by the listener hook, plus "a second flag that widget code can set"; Tessera lets elements without a handler pass clicks | The two flags are mouse-visible and blocks clicks; the hook writes mouse-visible through the same setter as the type rules, and post-creation recomputes it, so the creation-time value does not survive; Buttons and other widgets are click targets by their type rule (§4.3). Applied in UL by this revision. | BIN |
+| `ui-layout.md` §8.5 OPEN and §16 item 12 | What happens on a screen size change | Answered by §9.4 (row above). Applied in UL by this revision. | BIN |
+| `lua-plugin-api.md` §9.7 (P47) | Notifications reach the source's handlers, then its native ancestors | **Agreement**, with two additions for that spec's owner: the game-code registry by (source element ID, message) is consulted at the topmost ancestor (§12.1); a scroll host consumes wheel messages from its descendants (§4.7). | BIN |
+| `lua-plugin-api.md` §13.11–§13.12 (P49) | The control is the hit when mouse-visible; enter/leave along the non-shared chains | **Agreement for plugin controls**, with two refinements for that spec's owner: a native element is also hit when it only blocks clicks (§4.2); when one element is an ancestor of the other, that ancestor receives a leave and then an enter (§4.4, §13.12). | BIN |
 | `install-layout.md` §8.2 | Settings-folder contents list `ui/skins/…` | Add `ui/layouts/<name>.layout` (UI layout files, §8.5; content OPEN). | BIN |
 | `lua-plugin-api.md` §13.1 (focus) | Tessera rule: a text box takes focus when clicked | **Agreement, with a caveat.** The engine's click handling (§4.6 step 3) activates the root panel but does not itself move keyboard focus; focus moves through §5.2 (code, `focus_on_show`, a panel's designated focus element). Whether the engine's editable Text widget takes focus on its own press message was not traced (§5.2 OPEN), so the Tessera rule stands. | BIN |
 
@@ -1471,11 +1867,12 @@ Every item has an in-section `> **OPEN:**` callout.
 
 1. Triple presses within the double-click time (§3.3).
 2. Hit-mask and alpha-threshold pass rules (§4.1).
-3. Per-widget mouse-visible rules; the reader of `UICore_Element_mouse_invisible`; how the
-   mouse-button flag of UL §9.2 step 5 maps onto the two flags of the hit test (§4.3).
-4. Bounds of the enter/leave chain (§4.4).
+3. Type rules of ColorPicker, Menu, Tree, ComboBox and Browser; the list-box family's
+   internal flag; further widget recomputation triggers (§4.3). (The flag model, the listener
+   relation and `mouse_invisible` are closed in revision 2.)
+4. ~~Bounds of the enter/leave chain~~ (closed in revision 2, §4.4).
 5. Which elements accept double clicks; tap commands; the special binding class (§4.6).
-6. Wheel bubbling and scroll step (§4.7).
+6. ~~Wheel bubbling~~ (closed in revision 2, §4.7). Remaining: the size of one scroll-bar line step and the code-set position mode (§4.7).
 7. Input maps of engine widgets; a panel's designated focus element; the focus-refusal rule
    (§5.2).
 8. Character path, caret, selection, IME and `max_chars` details of text entry (§5.4).
@@ -1484,16 +1881,20 @@ Every item has an in-section `> **OPEN:**` callout.
 11. `max_height` of tooltips (§6.4).
 12. Tooltip detach and game tooltips (§6.6).
 13. Drag cancel and payload rules (§7.4).
-14. `resize_line` outline mode; caps for non-root targets; `force_match_parent_scale`,
-    `clip_to_parent` (§8.2).
+14. `resize_line` outline mode; caps for non-root targets; other readers of
+    `force_match_parent_scale`; `clip_to_parent`; the displayed result of a resize-bar resize
+    under a UI scale, with a Tessera rule (§8.2, revision 3).
 15. Clamping saved positions after a resolution change; `ClampGameViewEdgeToObject` (§8.3).
 16. Storage of saved panel data and when game code applies it (§8.4).
 17. Commands that save and load `.layout` files; the identifier forms of UL §9.9; the location
     of the options XML (§8.5).
-18. Drawing of scaled Stretch panels; plugin window scale (§9.2).
+18. Drawing of scaled Stretch panels; the exact division that sets a scale vector; plugin window scale; the writer of the further switch of element-resize step 2 (§9.2.1).
 19. What game code does on the screen-resized notification (§9.4).
-20. Fit rule at the truncation cut (§10.1).
+20. ~~Fit rule at the truncation cut~~ (the rule is FO §7.6, where Q13 is closed; its enabling
+    condition is Probable there).
 21. Widget classes that replace the hover handler; the hover-ended notification (§6.2).
+22. Whether a handled answer below the topmost ancestor keeps game-code handlers from running
+    (§12.1).
 
 ---
 
@@ -1503,3 +1904,5 @@ Every item has an in-section `> **OPEN:**` callout.
 |---|---|
 | 2026-10-06 | First complete draft (status Review): input commands and click timing (§3), hit test, mouse-visible rule, hover, capture, press/release/click/double-click, wheel, cursor and mouse-look (§4), activation and z-order, keyboard focus and input-map priorities, key routing, text-entry and dialog keys, navigation bindings (§5), tooltips (§6), drag and drop (§7), moving, resizing, clamping, saved positions and `ui/layouts` files (§8), UI-scale definitions, panel and cursor scale, screen size changes (§9), truncation and the truncated-text tooltip (§10), auto-fade and show/hide effects (§11), message table (§12), examples, invariants, census, corrections to `ui-layout.md`, `keymap.md`, `fonts.md`, `install-layout.md` and `lua-plugin-api.md`. BIN on client 4906.0071.1794.4035; OBS on the owner's install. |
 | 2026-10-06 | **Revision 1** (answers the first review; status stays Review). **Corrected:** §6.3 census, UB19, UB20: each tooltip variant has two children, a background Field (0, 0, 512 × 512, z-level 1, edges 5) and the Text element (z-level 0), re-checked on all 4 variants; §6.4 step 2: both children follow the panel by their edges. UB-I9 restricted to the case without aspect ratio and without a cap change; §8.2 now says the limits of step 4.3 are not final; §13.5 extended with `min_height` 240 (350 × 233). §8.4 step 3 and §8.5 OPEN follow the M5 revision of UL (§9.2 step 5 is the listener registry; saved locations are UL §9.9); §12.2 row 46 updated. **Added (BIN, same build, re-traced):** §8.1 step 3 clamp order (near side, then far side, per axis; the far side wins), UB-I8 rewritten, §13.10; §5.2 steps 1–2 input-map stack rules (ancestor pushes at one priority lower per level, ordering, duplicate and removal rules, the active panel's push on clearing focus restores entries removed by the old focus element's pop), UB12, UB-I14, §13.9; §6.2 hover-handled flag, the handler's result, repetition on every frame when not handled, hover-ended notification, UB18, UB-I13, new OPEN (§17 item 21); §4.3 OPEN on the relation to UL's mouse-button flag (§17 item 3). UB40 (Reported) for the Windows defaults of §3.3. **Rephrased** as plain unknowns: §3.3 OPEN, §5.6 OPEN, §16 row 2. |
+| 2026-10-06 | **Revision 2** (status Accepted → Review; answers the M5 completeness critique items B1, B2, B3, B6, B9 and C4 for this spec; BIN on the same build, revision-2 questions 11–16). **One flag rule (§4.3, rewritten):** the hit test reads exactly mouse-visible and blocks clicks; UL's "mouse-button flag" is mouse-visible and its "second flag" is blocks clicks; mouse-visible has three writers (type-rule recomputation at post-creation and listed triggers, listener registration, direct code), last write wins, the sticky marker is never set in this build, so a listener registered before creation does not survive post-creation; base, Button, Text, scroll-host, list-box, scroll-bar and drag/resize-bar rules; `mouse_invisible` has no reader; Tessera rule; new OPEN for unidentified classes. The earlier statement "once code has set it explicitly, it is kept" and the provisional listener rule are withdrawn. **Closed OPENs:** enter/leave chain bounds (§4.4, §13.12); wheel bubbling and the wheel step (§4.7, §13.13). **Corrected:** §12.1 delivery now bubbles to the topmost ancestor and calls the game-code registry there (agrees with LPA §9.7); §4.6 the context-menu reaction stops the right press; §9.2 steps 3, 5, 6 and new §9.2.1 (layout box vs displayed box; resize in Stretch keeps the layout box; hit test and move clamp use displayed boxes; child layout uses layout boxes; §13.14); §4.1, §4.2, §8.1 name the displayed box. **Truncation:** §10.1 replaced by a pointer to FO §7.6 (the only statement of the rule); census reconciled to 325 values (§10.1, §15). **New:** UB41–UB45, terms (type rule, layout box, displayed box, topmost ancestor), §12.2 rows 51/62, examples §13.11–§13.14, invariants UB-I15–UB-I19; §16 rows for FO §6.3/§7.6, UL §9.2/§9.3/§8.5 (applied there) and LPA §9.7/§13.11 (for that spec's owner); §17 items 3, 4, 6, 18, 20 updated, 22 added. |
+| 2026-10-06 | **Revision 3** (answers the revision-2 review: two blocking, four minor items; status stays Review; BIN questions 17–19 on the same build). **Blocking 1:** §4.1 step 3 and §9.2.1 now say which scale a displayed point is divided by: the scale vector of the element's own display node, else of the nearest ancestor with one, (1, 1, 1) only when none (new UB46, UB3 updated); the alpha test compares all three components with 1 and divides when any differs by more than 0.0002; the text conversion always divides (FO §6.3, corrected in FO revision 6; §16 row). New §13.15, UB-I20. **Blocking 2:** §8.2 step 3 records the displayed size as *W0*, *H0*; step 4 uses the pointer offset in screen pixels unscaled; step 4.5 anchors on the layout box (and keeps both layout edges on the axis a handle does not resize); step 4.7 resizes through the element resize, whose limit pass (new in §9.2.1, UB47: heights, widths, then aspect ratio; parent-scale conversion; None and Tile keep the layout box) re-applies the limits. The paragraph on non-final limits is rewritten; new "Under a UI scale" paragraph and OPEN with a Tessera rule; UB28 updated; UB-I9 rewritten for targets without a UI scale; new UB-I21. **Correction found by the re-read:** §13.5 second case ends at 360 × 240, not 350 × 233. **Minor:** (a) §4.4 step 3: the candidate becomes the hovered element only if mouse-visible at that moment (UB6); the two capture edge cases are stated; UB-I16 restricted. (b) §6.3, §5.6 and §15 count values in element blocks with nested values included (`tooltip_entry` 1,777 direct + 3 nested; `UICore_Panel_tab_element` all 233 nested in `UICore_Panel_pages` values of 49 element blocks; (0, 0) in 46 element values and 1 state value; every other §15 row re-counted and held directly). (c) §6.1: a `TooltipDelay` change while the hover-handled flag is set has no visible effect; §14 now in numeric order. (d) §4.3: the override marker is described by behaviour only. Section numbers unchanged; new subsection §13.15. |

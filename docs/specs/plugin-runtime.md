@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** |
+| Status | **Accepted** (revision 2, re-reviewed 2026-10-06; see the change log for what changed) |
 | Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent) |
-| Review record | 2026-10-06, Claude review session (spec-writer agent), a different session from the author: **passed** `docs/CLEAN_ROOM.md` §5.3, every item. Spot checks against the install (client 4906.0071.1794.4035 and its `lua51.dll`, read-only) and the C1 snapshot all matched. **R1:** 123 exports with the io/os/package openers, 64-bit, a 5.1.4 identification string, side-by-side assembly 8.0.50727.762. **R3:** 43 imports, and none of the listed functions. **R4:** only the interpreter and the XML library import `MSVCR80`, and only the interpreter imports its locale setter. **R6:** the formatter has two 32-bit conversions and one 64-bit conversion. **R7:** remainder 32767, divisor 32767.0, and the LCG gives 41, 18467, 6334. **R12:** one `lua_gc` call site with option 5, called from a loop over all apartments, and the step field is set to 20 in the manager constructor. **R25:** 155 / 7,722 / 218, 5,319 CRLF files, 168 descriptors with an apartment, `getfenv` 66, `setfenv` 12, `table.getn` 68, `newproxy` 2, 7 hexadecimal numerals above 32 bits. Non-blocking notes for the next revision: (1) the §4.4 hexadecimal row's "wrap a leading minus" applies only to text conversion (`tonumber`, coercion); a source `-0x10` is unary minus applied to 16, so it gives −16, and saturation is the only rule that applies to source numerals; (2) "Derived" is a third mark that §5.1 does not define; it is defined in §2 and used consistently, but each Derived row could also carry Confirmed or Reported; (3) the §9.2 rule to step the collector "after the tick's event dispatch" is Tessera's own choice and has no provenance row for the original's order; (4) invariant 2's `tostring(-0) == "-0"` depends on the chunk having no other zero constant, because 5.1 shares numerically equal constants |
+| Review record | 2026-10-06, Claude review session (spec-writer agent), a different session from the author: **passed** `docs/CLEAN_ROOM.md` §5.3, every item. Spot checks against the install (client 4906.0071.1794.4035 and its `lua51.dll`, read-only) and the C1 snapshot all matched. **R1:** 123 exports with the io/os/package openers, 64-bit, a 5.1.4 identification string, side-by-side assembly 8.0.50727.762. **R3:** 43 imports, and none of the listed functions. **R4:** only the interpreter and the XML library import `MSVCR80`, and only the interpreter imports its locale setter. **R6:** the formatter has two 32-bit conversions and one 64-bit conversion. **R7:** remainder 32767, divisor 32767.0, and the LCG gives 41, 18467, 6334. **R12:** one `lua_gc` call site with option 5, called from a loop over all apartments, and the step field is set to 20 in the manager constructor. **R25:** 155 / 7,722 / 218, 5,319 CRLF files, 168 descriptors with an apartment, `getfenv` 66, `setfenv` 12, `table.getn` 68, `newproxy` 2, 7 hexadecimal numerals above 32 bits. Non-blocking notes for the next revision: (1) the §4.4 hexadecimal row's "wrap a leading minus" applies only to text conversion (`tonumber`, coercion); a source `-0x10` is unary minus applied to 16, so it gives −16, and saturation is the only rule that applies to source numerals; (2) "Derived" is a third mark that §5.1 does not define; it is defined in §2 and used consistently, but each Derived row could also carry Confirmed or Reported; (3) the §9.2 rule to step the collector "after the tick's event dispatch" is Tessera's own choice and has no provenance row for the original's order; (4) invariant 2's `tostring(-0) == "-0"` depends on the chunk having no other zero constant, because 5.1 shares numerically equal constants. **Revision 2 (2026-10-06, spec writer):** applies notes (1)–(4), corrects the per-tick collector arithmetic (§9.2), sets Tessera's default memory cap from a measurement of the M5 plugin set (§9.1, §9.4) and updates the naming note; awaiting re-review. **Re-review of revision 2: 2026-10-06, Claude review session (spec-writer agent), a different session from the author, against `CLEAN_ROOM.md` §5.3. Result: passed; status Accepted.** All four earlier notes are applied. The collector arithmetic of §9.2 agrees with the stock 5.1 `lua_gc`/`luaC_step` rules: 20 KiB of debt paid in 1 KiB per basic step of 10 × 200 work units, about 20 steps, stopping at the end of a cycle. Install spot checks (read-only): R1 (`lua51.dll`: 123 exports including the io/os/package openers, AMD64, `Lua 5.1.4`, 8.0.50727.762, imports only `MSVCR80` and `KERNEL32`); R3 (the client imports 43 interpreter functions, none of the listed ones and no raw set); R4 (only `lua51.dll` and `xerces-c_2_6.dll` import `MSVCR80`; only the interpreter imports `setlocale`); R7 (`rand` result reduced modulo 0x7FFF and divided by 32767.0; the generator gives 41, 18467, 6334); R12 (one reference to the `lua_gc` import, through one thunk with one caller that passes option 5). Measurements re-run in the dirty scratch area: R26 (37, 572 and 4,571 ticks for 1.6, 25.1 and 201.6 MiB; heap at most 1.59 times live with 64 KiB of garbage per tick); R27 / §9.4 (#2 peaks at 167,942,126 bytes, live 131,198,857, refused during load at 159 MiB; #14 peaks at 78,862,389 bytes and is refused at 75 MiB; the synthetic 1,000,000-table file peaks at 170.8 MiB with 154.2 MiB live and 9.0 M instructions, and is refused at 128 MiB). Non-blocking note for the next revision: the §9.4 rows "smallest cap under which #2 / #14 loads" are about the load call only. At caps of 160 MiB and 75.2 MiB the load succeeds, but a later allocation in the same run is refused, because the run's peaks are 160.16 and 75.21 MiB. Say so, so that nobody reads those rows as caps that pass invariant 9 of `plugin-api-usage.md`. |
 | Implements into | `crates/script` (Lua host: interpreter build, number and string conversions, allocator, collector stepping, protected calls, error routing), `crates/plugins` (apartment lifecycle, autoload, file access) |
 | Related specs | [`lua-plugin-api.md`](lua-plugin-api.md) (API surface; its §3 sandbox, §6 lifecycle, §7 `import`, §9 dispatch, §10 plugin data and §12 engine functions are the detailed sources this spec builds on), [`plugin-descriptor.md`](plugin-descriptor.md) (discovery, descriptor, package grammar, `PluginOptions.xml`) |
 
@@ -17,13 +17,13 @@
 > `Turbine.PluginManager`, `Load`, `Unload`, `GetOptionsPanel`, `Default`, `Plugins/`,
 > `PluginData/`, `.plugindata`, `__init__.lua`, `Script.log`, `PluginOptions.xml`) are the
 > identifiers that existing third-party plugins and their files use. They are reproduced only
-> because a plugin cannot run without them (`docs/ARCHITECTURE.md` §18.2; the *Google v. Oracle*
-> row of `docs/LEGAL.md` §4.1; the written interoperability record that ARCHITECTURE §18.2 asks
-> for is still pending as its "OPEN (legal)" item). They must appear in Tessera only inside the
-> plugin subsystem, never as product, crate or UI names. Lua's own function names, C API names
-> and build options (`lua_gc`, `LUAI_MAXCCALLS`, …) are general knowledge of the MIT-licensed
-> reference interpreter. No client message text, documentation prose or plugin code is
-> reproduced: messages are described, never quoted.
+> because a plugin cannot run without them. The project's interoperability record for these
+> names is `docs/LEGAL.md` §17 (it answers the "OPEN (legal)" item of `docs/ARCHITECTURE.md`
+> §18.2); its §17.2 rules bind every use: the names appear in Tessera only inside the plugin
+> subsystem, as string data, never as product, crate, module or UI names. Lua's own function
+> names, C API names and build options (`lua_gc`, `LUAI_MAXCCALLS`, …) are general knowledge of
+> the MIT-licensed reference interpreter. No client message text, documentation prose or plugin
+> code is reproduced: messages are described, never quoted.
 
 ---
 
@@ -66,16 +66,18 @@ Source keys:
 
 Marks: **Confirmed** = observed in the owner's install (data, settings folder or the client
 binary) with date; facts resting only on BIN say so. **Reported** = published sources or
-general platform knowledge only. **Derived** = follows from Confirmed facts by the stated
-Lua/CRT rule; the row names both.
+general platform knowledge only. **Derived** = follows from other rows by the stated Lua/CRT
+rule; the row names both. For the review checklist of `docs/CLEAN_ROOM.md` §5.3 a Derived row
+counts as Confirmed when every row it rests on is Confirmed, and as Reported otherwise (each
+Derived row below says which applies).
 
 | # | Fact or group of facts | Sources | Mark |
 |---|---|---|---|
 | R1 | The interpreter is the reference Lua 5.1.4, built as a separate 64-bit DLL against the Visual C++ 2005 C runtime (`MSVCR80`, side-by-side assembly version 8.0.50727.762); it exports the stock 5.1 API (123 functions, `luaopen_io`, `luaopen_os`, `luaopen_package` included) | BIN (import, export and version resources of `lua51.dll`; its identification string names 5.1.4), LPA P1 | **Confirmed** 2026-10-06 |
 | R2 | No patch visible: every text literal in `lua51.dll` is a literal of the reference 5.1 sources, and the build limits checked equal the reference defaults: nested C calls 200, call-info entries 20000, pattern captures 32, upvalues per function 60, chunk-name buffer 60 bytes, collector pause 200 and step multiplier 200 | BIN (string table diffed against the reference source literals; the limit constants read in the functions that enforce them; `lua_newstate` initial collector parameters) | **Confirmed** 2026-10-06 (BIN only) |
 | R3 | The client links only 43 of the interpreter's functions; it never imports `lua_sethook`, `lua_resume`, `lua_yield`, `lua_setfenv`, `lua_load`, `luaL_loadbuffer`, `luaL_openlibs` or `luaopen_io/os/package` | BIN (import table of the client) | **Confirmed** 2026-10-06 |
-| R4 | Two C runtimes are in the process: the client and its own modules use the Universal C runtime; the interpreter uses `MSVCR80`. The client's start-up `setlocale` (LPA P43) acts on the Universal runtime only. No module calls `MSVCR80`'s `setlocale` (the interpreter imports it only for `os.setlocale`, which is never opened), so the interpreter's conversions and character classes run in the **C locale** whatever the game language | BIN (import tables of all modules in `x64/`: only `lua51.dll` and the XML library import `MSVCR80`, and the XML library imports no locale setter), CRT (a runtime starts in the C locale) | **Confirmed** 2026-10-06 (imports); Derived (behaviour) |
-| R5 | Lua-visible consequences of R4 and of `MSVCR80`: number-to-text uses `%.14g` with **three-digit exponents**; pointer text (`%p`) is 16 upper-case hexadecimal digits without prefix; text-to-number accepts no `inf`, `nan` or hexadecimal floating forms; hexadecimal integers go through a 32-bit unsigned conversion (values above 0xFFFFFFFF become 4294967295, a leading minus wraps modulo 2^32); character classes and case mapping are ASCII-only; string ordering is bytewise unsigned | R1, R4, LUA (`luaO_str2d`, `lua_number2str`, `l_strcmp`, `lstrlib` classes use the C library), CRT | **Derived**; exponent width, `%p` and non-finite text **Reported** (CRT) |
+| R4 | Two C runtimes are in the process: the client and its own modules use the Universal C runtime; the interpreter uses `MSVCR80`. The client's start-up `setlocale` (LPA P43) acts on the Universal runtime only. No module calls `MSVCR80`'s `setlocale` (the interpreter imports it only for `os.setlocale`, which is never opened), so the interpreter's conversions and character classes run in the **C locale** whatever the game language | BIN (import tables of all modules in `x64/`: only `lua51.dll` and the XML library import `MSVCR80`, and the XML library imports no locale setter), CRT (a runtime starts in the C locale) | **Confirmed** 2026-10-06 (imports); Derived (behaviour; rests on CRT: counts as Reported) |
+| R5 | Lua-visible consequences of R4 and of `MSVCR80`: number-to-text uses `%.14g` with **three-digit exponents**; pointer text (`%p`) is 16 upper-case hexadecimal digits without prefix; text-to-number accepts no `inf`, `nan` or hexadecimal floating forms; hexadecimal integers go through a 32-bit unsigned conversion (values above 0xFFFFFFFF become 4294967295, a leading minus wraps modulo 2^32); character classes and case mapping are ASCII-only; string ordering is bytewise unsigned | R1, R4, LUA (`luaO_str2d`, `lua_number2str`, `l_strcmp`, `lstrlib` classes use the C library), CRT | **Derived** (rests on CRT: counts as Reported); exponent width, `%p` and non-finite text **Reported** (CRT) |
 | R6 | `string.format` converts `%d`, `%i` and `%c` arguments to a **32-bit** signed integer (out-of-range values become −2147483648) and `%o`, `%u`, `%x`, `%X` arguments to a 64-bit integer of which the formatter uses the **low 32 bits** | BIN (the three conversion sites in the formatter: two 32-bit, one 64-bit), LUA (the formatter's `long` argument type), CRT (`long` is 32-bit on 64-bit Windows) | **Confirmed** 2026-10-06 (BIN) |
 | R7 | `math.random` uses `MSVCR80`'s `rand` with range 0–32767: the result is (`rand()` mod 32767) / 32767. The generator state is per OS thread and starts at seed 1; every apartment runs on the main thread, so all apartments share one generator | BIN (`math.random` divides by 32767 after a remainder by 32767; host calls run on the main thread, R13), CRT (per-thread state, initial seed 1, linear congruential step: multiply by 214013, add 2531011, result = bits 16–30) | **Confirmed** 2026-10-06 (range, BIN); **Reported** (generator constants and per-thread state, CRT) |
 | R8 | Around every protected call into Lua the host masks the floating-point divide-by-zero exception and clears pending floating-point status; after the call it unmasks it again only when a client configuration flag is set (the flag's meaning was not traced). Division by zero in plugin code therefore yields ±infinity or NaN, never a trap | BIN (protected-call wrapper and its floating-point helper) | **Confirmed** 2026-10-06 (BIN only) |
@@ -87,14 +89,16 @@ Lua/CRT rule; the row names both.
 | R14 | Protected-call wrapper: increments the apartment's running-code counter (which is what makes `UnloadScriptState` refuse, LPA §6.3), calls `lua_pcall` with no message handler, decrements the counter. If the status is a run-time error or a syntax error, and the caller did not ask for silence, the error value converted with `lua_tolstring` is passed to the apartment's error listeners. A memory error is not reported here (the allocator already reported it, R11); an error-in-error-handling status is not reported at all. A value that is neither a string nor a number is reported as an empty message | BIN | **Confirmed** 2026-10-06 (BIN only) |
 | R15 | Exactly one host call site asks for silence: the dispatcher's first attempt to call a table handler as a function (LPA §9.2 step 4.1) | BIN (10 call sites of the wrapper; one passes the silent flag) | **Confirmed** 2026-10-06 (BIN only) |
 | R16 | Errors raised by host API functions are raised with `luaL_error` from inside the C function, so they carry **no** `chunk:line:` prefix; the message is the host's text converted to UTF-8 | BIN (the error-raising helper), LUA (`luaL_where` at level 1 is empty for a C function) | **Confirmed** 2026-10-06 |
-| R17 | Errors in chunks carry Lua's position prefix; the chunk name of a file is its path, shortened by the stock rule with a 60-byte buffer: a path longer than 52 bytes is shown as `...` followed by its last 52 bytes | R2 (buffer 60), LUA (`luaO_chunkid`), LPA §6.6 | **Derived** |
-| R18 | The host's panic handler reports the error value (as text) to the apartment's error listeners. If a host error guard is active it then unwinds to that guard (the guarded host operation fails); if none is active it returns, and the stock interpreter then terminates the process. Guards are pushed by a small set of host operations (apartment creation, plugin loading and a few others); the per-tick collector step pushes none | BIN (panic handler, guard list and the functions that push it), LUA (`luaD_throw` after a returning panic handler) | **Confirmed** 2026-10-06 (BIN); termination **Derived** |
+| R17 | Errors in chunks carry Lua's position prefix; the chunk name of a file is its path, shortened by the stock rule with a 60-byte buffer: a path longer than 52 bytes is shown as `...` followed by its last 52 bytes | R2 (buffer 60), LUA (`luaO_chunkid`), LPA §6.6 | **Derived** (from R2, Confirmed: counts as Confirmed) |
+| R18 | The host's panic handler reports the error value (as text) to the apartment's error listeners. If a host error guard is active it then unwinds to that guard (the guarded host operation fails); if none is active it returns, and the stock interpreter then terminates the process. Guards are pushed by a small set of host operations (apartment creation, plugin loading and a few others); the per-tick collector step pushes none | BIN (panic handler, guard list and the functions that push it), LUA (`luaD_throw` after a returning panic handler) | **Confirmed** 2026-10-06 (BIN); termination **Derived** (from BIN and the unpatched interpreter of R2: counts as Confirmed) |
 | R19 | Host reads of plugin tables (event handler fields, the options-panel field, many API arguments) use normal indexing (`lua_gettable`) outside any protected call; the client links no raw-set function, so all its table writes go through `lua_settable` and honour `__newindex` | BIN (the generic field-read helper, 304 call sites, and its use by the dispatcher path; import table), LPA §9.2 step 2 | **Confirmed** 2026-10-06 (BIN only) |
 | R20 | `PluginData.Load` runs a `.plugindata` file through the interpreter's file loader and calls it with the thread's **current** global table as environment (the host sets no environment; `lua_setfenv` is not even linked). A load failure (syntax error or unreadable file) is reported to the error listeners **and** then raised as an error in the caller | BIN (the generic loader reports run-time, syntax and file errors; the plugin-data reader raises its own error afterwards), R3, LPA §10.1 | **Confirmed** 2026-10-06 (BIN only) |
-| R21 | Under the French and German game languages the plugin-data writer emits `,` as decimal separator (LPA P43, P44); the reader is the interpreter's compiler in the C locale (R4). So in the original such a file does not read back as written: a numeric key makes the whole file a syntax error, and a fractional value splits into two entries | R4, R20, LPA §10.4, LUA (numeral lexing stops at `,`) | **Derived**; consistent with LPA S3's reports of comma files |
+| R21 | Under the French and German game languages the plugin-data writer emits `,` as decimal separator (LPA P43, P44); the reader is the interpreter's compiler in the C locale (R4). So in the original such a file does not read back as written: a numeric key makes the whole file a syntax error, and a fractional value splits into two entries | R4, R20, LPA §10.4, LUA (numeral lexing stops at `,`) | **Derived** (from Confirmed rows: counts as Confirmed); consistent with LPA S3's reports of comma files |
 | R22 | Autoload choices read from `PluginOptions.xml` are kept in a hash map keyed by the plugin `Name` compared **exactly** (case-sensitive); a later `Plugin` element whose `Name` is already present is dropped (first wins). Scaling choices go to a second map | BIN (the options reader and the keyed container: look-up before insert, new entry discarded on a hit) | **Confirmed** 2026-10-06 (BIN only) |
 | R23 | Apartment close: the destructor marks the apartment as closing (the mark that makes `PluginData.Save` write synchronously, LPA §10.6), then calls `lua_close`, which runs every pending `__gc` finalizer; finalizer errors during close are discarded by the stock interpreter | BIN (destructor), LUA (`lua_close`) | **Confirmed** 2026-10-06 (sequence, BIN); discard **Reported** (LUA) |
 | R24 | Each control records the source position (`chunk:line`) of the Lua code that created it, for the client's diagnostic when a control is resized beyond the graphics device's texture limit (LPA §6.6) | BIN (creation-location helper using `lua_getstack`/`lua_getinfo` at level 1) | **Confirmed** 2026-10-06 (BIN only) |
+| R26 | The per-tick step of R12 under the stock 5.1.4/5.1.5 collector rules: one `LUA_GCSTEP` call with 20 lowers the threshold 20 KiB below the allocation and then runs basic collector steps until less than 1 KiB of that debt is left, about 20 basic steps of 2,000 work units each (step size 1 KiB ÷ 100, rounded down to 10, times the step multiplier 200); when the collector is idle the call starts a new cycle. Measured with stock Lua 5.1.5 (64-bit) on heaps of small tables: a full cycle with no new garbage took 37, 572 and 4,571 ticks for 1.6, 25.1 and 201.6 MiB of live heap (about 45 KiB of heap per tick); with 64 KiB of new garbage per tick the heap stayed below 1.6 times its live size | LUA (`lua_gc`, `luaC_step` and `singlestep` rules of the reference interpreter), measurement 2026-10-06 in the dirty scratch area | **Derived** (rests on R12, Confirmed, and LUA: counts as Reported for the arithmetic); measurement **Reported** |
+| R27 | Memory and instruction cost of loading every apartment of the M5 exit-criterion-4 plugin set (`plugin-api-usage.md` §9.2), measured with stock Lua 5.1.5 (64-bit), a stub host API and the apartment layout of the descriptors: largest peak 160.2 MiB (live 125.1 MiB after a full collection), second 75.2 MiB (live 60.6 MiB), all others below 19 MiB; largest host call 12.8 M VM instructions; a synthetic plugin building 1,000,000 two-element tables peaks at 170.8 MiB (154.2 MiB live) and executes 9.0 M instructions | `plugin-api-usage.md` §6.12 (U12), LUA; no client code was run | **Reported** 2026-10-06 (published third-party files and our own synthetic file, not the install) |
 | R25 | Corpus facts (C1): 168 of 218 descriptors (77 %) name an apartment; no Lua file starts with a UTF-8 byte-order mark, a `#` line or precompiled bytecode; 5,319 of 7,722 files use CRLF line ends; feature use in packages: `getfenv` 66, `setfenv` 12 (the dominant form gives a compiled chunk the caller's `getfenv(0)`), `loadstring` 35, `load` 4, `string.dump` 0, `coroutine` 1, `newproxy` 2 (one plugin, two versions, which only sets `__gc` on the proxy's metatable through `getmetatable`), `collectgarbage` 16 (2 of them call `"stop"` and `"restart"`), `math.randomseed` 6 (all seeded from a `Turbine.Engine` time), `math.random` 22, `table.getn` 68, `math.mod` 17, `unpack` 57, `string.format` with `%d`/`%i` 44 and with `%x`/`%X` 47, `Turbine.Engine.GetCallStack` 17, `ScriptLog` 6, `PluginManager.LoadPlugin` 37, `UnloadScriptState` 33, `import` with a computed name 30; 7 hexadecimal numerals above 0xFFFFFFFF occur in 4 packages | C1 | **Reported** (third-party census, 2026-10-06) |
 
 ---
@@ -195,7 +199,7 @@ reference interpreter. "Linux default" means PUC-Rio 5.1 built against glibc on 
 | Same, non-finite values | The runtime's own text, e.g. `1.#INF`, `-1.#INF`, and for NaN `-1.#IND` (the NaN that `0/0` yields) or `1.#QNAN` (Reported, CRT) | `inf`, `-inf`, `nan`, `-nan` | > **OPEN:** confirm the exact strings `tostring` gives for `1/0`, `-1/0`, `0/0` and `-(0/0)` (owner black-box check, §16). Until then Tessera uses the four strings shown. |
 | `tostring` of a table, function, userdata or thread | `<type>: ` followed by 16 upper-case hexadecimal digits, no `0x` (Reported, CRT) | `<type>: 0x…` lower case | **Should** use the original's form; plugins rely on uniqueness, not on the digits (54 of 155 C1 packages call `tostring(self)`). |
 | `tonumber(s)` and string-to-number coercion, decimal | C-locale `strtod`: no `inf`, `infinity`, `nan`, no hexadecimal floating form (`0x1p4`); surrounding ASCII white space allowed | glibc accepts `inf`, `nan`, `0x1p4` | **Must** reject the forms the original rejects. |
-| Same, hexadecimal (`"0x…"`, also numerals in source code) | After `strtod` stops at `x`, the text is converted with a 32-bit `strtoul`: `0x10` → 16; `0x100000000` → **4294967295** (saturated); `-0x10` → **4294967280** (wrapped) | 64-bit `strtoul` or glibc `strtod` hex: `0x100000000` → 4294967296, `-0x10` → −16 | **Must** reproduce the original's results: saturate at 4294967295, wrap a leading minus modulo 2^32. Applies to `tonumber`, coercion and source numerals alike. |
+| Same, hexadecimal (`"0x…"`, also numerals in source code) | After `strtod` stops at `x`, the text is converted with a 32-bit `strtoul`: `0x10` → 16; `0x100000000` → **4294967295** (saturated); `-0x10` → **4294967280** (wrapped) | 64-bit `strtoul` or glibc `strtod` hex: `0x100000000` → 4294967296, `-0x10` → −16 | **Must** reproduce the original's results: saturate at 4294967295 (in `tonumber`, string coercion and source numerals alike); wrap a leading minus modulo 2^32 (only in text conversion, `tonumber` and coercion, where the minus is part of the text). A source expression `-0x10` is the unary minus applied to the numeral 16 and gives −16. |
 | `string.format("%d" / "%i" / "%c", x)` | `x` truncated toward zero to a **32-bit** signed integer; outside −2^31…2^31−1 the value becomes −2147483648 | 64-bit `long`: exact up to 2^63 | **Must** reproduce the 32-bit result. |
 | `string.format("%o" / "%u" / "%x" / "%X", x)` | `x` truncated to a 64-bit signed integer, then only the **low 32 bits** are formatted: `%x` of −1 → `ffffffff`, of 2^32 + 5 → `5`; values beyond the 64-bit range give `0` | 64-bit unsigned long | **Must** reproduce the low-32-bit result. |
 | `math.random`, `math.randomseed` | §4.5 | glibc `rand`, range 0–2^31−1 | **Should** reproduce (§4.5). |
@@ -416,26 +420,51 @@ The load sequence is `lua-plugin-api.md` §6.2. Ordering facts:
   > **OPEN:** whether any path sets the limit, and its value (narrowed 2026-10-06: none in the
   > apartment creation path or in the plugin code region).
 - `collectgarbage("count")` reports the interpreter's own count for the calling apartment only.
-- **Tessera:** a configurable per-apartment cap (default 64 MiB, `lua-plugin-api.md` §3.3), a
-  deliberate safety deviation. On refusal: notify as an out-of-memory report for that apartment,
-  let Lua raise its memory error, and keep the client running.
+- **Tessera:** a configurable per-apartment cap, a deliberate safety deviation. On refusal:
+  notify as an out-of-memory report for that apartment, let Lua raise its memory error, and
+  keep the client running.
+  - The cap counts the bytes the apartment's Lua state requests from its allocator (block
+    sizes as passed to the allocator, new size minus old size on a resize), not allocator
+    overhead and not memory the host keeps outside the Lua state for native objects. Source
+    text the host reads before compiling counts only if the host stores it in the Lua state.
+  - **Default: 512 MiB per apartment** (Tessera choice, revision 2; it replaces the 64 MiB that
+    `lua-plugin-api.md` §3.3 names, which the M5 plugin set does not fit, §9.4). A user setting
+    may raise or lower it per apartment name.
+  - The limit must be checked against the peak, not the live size: Lua 5.1 has no emergency
+    collection, so garbage not yet collected counts until the collector reaches it (§9.4).
 
 <a id="9-2"></a>
 ### 9.2 Collector stepping (R12)
 
 - The automatic incremental collector runs with pause 200 and step multiplier 200 (§4.2).
 - In addition, on every tick the host performs `lua_gc(LUA_GCSTEP, 20)` in **every** apartment,
-  loaded plugins or not. Under the 5.1 rules this lowers the collection threshold by 20 KiB
-  below the current allocation and runs incremental steps until the threshold is above the
-  allocation again or a cycle completes; in practice one incremental step per apartment per
-  tick.
+  loaded plugins or not (R12). Under the 5.1 rules (R26) this call:
+  1. sets the collection threshold 20 KiB below the current allocation, which adds 20 KiB of
+     collector debt;
+  2. runs basic collector steps, each worth 2,000 work units (the step size of 1 KiB divided by
+     100, rounded down to 10, times the step multiplier 200), and after each step pays 1 KiB of
+     the debt, until less than 1 KiB of debt is left — about **20 basic steps per call**, not
+     one; it stops early if a cycle completes during the call;
+  3. starts a new cycle if the collector was idle, so with the host step cycles follow one
+     another without waiting for the pause threshold.
+
+  Measured effect with stock Lua 5.1.5 on heaps of small tables (R26): about 45 KiB of heap is
+  traversed per tick, so a full cycle over *L* KiB of live heap takes roughly *L* / 45 ticks
+  (37 ticks at 1.6 MiB, 572 at 25.1 MiB, 4,571 at 201.6 MiB); with 64 KiB of new garbage per
+  tick the heap stayed below 1.6 times its live size. These figures are informative; the rule
+  is the call itself.
 - The step runs **outside** any protected call and outside any host error guard (R18).
 - The host never stops or restarts the collector. A plugin's `collectgarbage("stop")` lasts only
   until the next tick: the host's step resets the threshold, so automatic collection resumes
   (stock 5.1 rule). `collectgarbage("collect")`, `"step"`, `"setpause"` and `"setstepmul"` from a
   plugin act on its own apartment only.
-- **Tessera:** must perform the same step (`LUA_GCSTEP` with 20) in every apartment once per
-  tick, after the tick's event dispatch, and must not otherwise change the collector parameters.
+- **Tessera:** must perform the same call, `lua_gc` with `LUA_GCSTEP` and 20, in every
+  apartment once per tick, and must not otherwise stop, restart, force or re-parameterise the
+  collector (pause 200, step multiplier 200 stay as in §4.2). `lua-plugin-api.md` §3.3 still
+  says Tessera "may rely on the default collector"; this section is authoritative for the
+  collector (§3.1) and that wording is superseded (§17).
+- Where in the tick the step runs is not known for the original. Tessera choice: after the
+  tick's event dispatch and deferred plugin-host work, before rendering.
 
 <a id="9-3"></a>
 ### 9.3 Finalizers
@@ -459,6 +488,46 @@ The load sequence is `lua-plugin-api.md` §6.2. Ordering facts:
   every plugin in C1; raw access to a proxy's metatable (`rawget`, `rawset`, `next`) does not
   occur in C1.
 
+<a id="9-4"></a>
+### 9.4 Limits measured against the M5 plugin set (R27)
+
+Method: every apartment of the exit-criterion-4 set (`plugin-api-usage.md` §9.2, its apartment
+layout from the descriptors) was loaded with stock Lua 5.1.5 built for 64-bit, the globals of
+§5.2, `import` as in `lua-plugin-api.md` §7.2 and a stub host API; then the `Load` event,
+queued plugin-data callbacks and 1,000 ticks of `Update` delivery, each tick followed by the
+§9.2 step. Bytes are allocator requests as defined in §9.1; instructions are VM instructions
+of one host call. Full table: `plugin-api-usage.md` §6.12.
+
+| Quantity | Largest value in the set | Where |
+|---|---|---|
+| Peak bytes of one apartment | 160.2 MiB (live 125.1 MiB after a full collection) | the apartment of #2, at its load, which imports four databases of 33.7 MB of Lua source in one host call |
+| Second-largest peak | 75.2 MiB (live 60.6 MiB) | #14, at its load |
+| Smallest cap under which #2 loads | between 159 and 160 MiB (refused at 159 MiB) | — |
+| Smallest cap under which #14 loads | between 75 and 75.2 MiB | — |
+| Every other apartment | below 19 MiB | — |
+| VM instructions of one host call | 12.8 M | a #1 helper's load with every annotation cell requested; #2's load executes 4.0 M |
+
+Derivation of the defaults:
+
+1. **Instruction budget: keep 500 million per host call** (`lua-plugin-api.md` §3.3). The
+   largest call uses 12.8 M, a margin of 39 times.
+2. **Memory cap: 512 MiB per apartment** (§9.1). 64 MiB refuses #2 and #14 during their load.
+   A cap must cover the peak including uncollected garbage (no emergency collection in 5.1).
+   After a load the collector's pause of 200 lets a heap grow to about twice its live size
+   before the next automatic cycle, and the §9.2 step bounds steady state lower (below 1.6
+   times live in R26); twice the largest live heap measured is 250 MiB. 512 MiB covers that
+   with a margin of 2, and the largest measured peak with a margin of 3.2.
+3. **Compilation is outside the budget.** Instructions are counted only while Lua code runs.
+   Compiling #2's 33.7 MB of source took 1.2–1.7 s of wall time on a 2020 laptop CPU (Intel
+   i9-10885H) for 4.0 M VM instructions, and the parser held up to 7.6 times a file's size at
+   its compile peak. The source a plugin can compile is bounded by its own files and by the
+   strings it builds, which the memory cap bounds; no separate compile limit is required for
+   the M5 set.
+
+> **OPEN:** steady-state memory after user interaction (searching #2's databases, browsing #14)
+> was not measured, because the stub host cannot drive those windows. The exit-criterion-4 run
+> records the peak per apartment; if any exceeds 256 MiB the 512 MiB default must be revisited.
+
 ---
 
 <a id="10-execution"></a>
@@ -471,6 +540,9 @@ The original has **no** instruction-count or time limit: no hook is ever install
 plugin that loops forever freezes the client. Tessera adds an instruction budget per host call
 (`lua-plugin-api.md` §3.3, ARCHITECTURE §18.1), a deliberate safety deviation; when it trips,
 the call fails with an error reported like a run-time error, and the apartment stays loaded.
+The default stays **500 million VM instructions per host call**; nested `import` calls and
+coroutines resumed inside a host call count towards that call's budget. The M5 plugin set uses
+at most 12.8 M in one call (§9.4).
 
 <a id="10-2"></a>
 ### 10.2 Depth
@@ -669,11 +741,14 @@ Checkable with synthetic plugins generated by test code (never shipped third-par
    error once about 200 levels are nested (the host call itself counts as one level); a pattern with 33 captures raises an error; a function using 61
    upvalues fails to compile.
 2. **Number text (both):** `tostring(1e20) == "1e+020"`, `tostring(1.5e-7) == "1.5e-007"`,
-   `tostring(0.1) == "0.1"`, `tostring(-0) == "-0"`, `tostring(2^53) == "9.007199254741e+015"`.
+   `tostring(0.1) == "0.1"`, `tostring(2^53) == "9.007199254741e+015"`, and `tostring(-0) == "-0"`
+   when evaluated in a chunk that has no other numeric constant equal to zero (5.1 folds `-0` to
+   the constant −0 and shares numerically equal constants within a function, so a chunk that
+   also contains `0` gives `"0"`).
 3. **Number parsing (both):** `tonumber("inf")`, `tonumber("nan")`, `tonumber("0x1p4")`,
    `tonumber("1,5")` are nil; `tonumber("0x10") == 16`; `tonumber("0x100000000") == 4294967295`;
    `tonumber("-0x10") == 4294967280`; `tonumber(" 12 ") == 12`; the source numeral
-   `0x100000000` evaluates to 4294967295.
+   `0x100000000` evaluates to 4294967295, and the source expression `-0x10` to −16.
 4. **Integer formats (both):** `string.format("%d", 2^31) == "-2147483648"`;
    `string.format("%d", -2.7) == "-2"`; `string.format("%x", -1) == "ffffffff"`;
    `string.format("%x", 2^32 + 5) == "5"`; `string.format("%X", 0x80000000) == "80000000"`.
@@ -704,6 +779,16 @@ Checkable with synthetic plugins generated by test code (never shipped third-par
     apartments running.
 15. **Tessera only, plugin data:** a `.plugindata` file whose content would call a function when
     executed loads as nil (it is never run) and is logged.
+16. **Tessera only, default limits:** a synthetic plugin whose main file builds a global table
+    of 1,000,000 entries, entry *i* being a new two-element table holding *i* and the string
+    `"s"` followed by the decimal digits of *i*, loads under the default limits (it peaks at
+    about 171 MiB of allocator bytes on a 64-bit build and executes about 9 M VM instructions);
+    with the per-apartment cap set to 128 MiB the same load is refused with Lua's memory error,
+    one out-of-memory report is produced for that apartment, and the client and every other
+    apartment keep running.
+17. **Collector step (both):** in an apartment holding about 25 MiB of live small tables and
+    producing no garbage, the per-tick step of §9.2 alone completes a collection cycle (the
+    `lua_gc` call reports the end of a cycle) within 1,000 ticks; R26 measured 572.
 
 ---
 
@@ -787,6 +872,7 @@ apartment `X`):
 | Q7 | Code page of the loader path | §12 | BIN on the disk resolver; does not affect Tessera. |
 | Q8 | Classification of bytes 0x80–0xFF in `import` names (carried from `lua-plugin-api.md` §7.2) | §7 | Narrowed: a property of the platform's Universal C runtime; Tessera's ASCII rule stands. |
 | Q9 | Whether a plugin whose load failed still receives `Unload` when its apartment is unloaded | §15.5 | BIN on the load-failure path; Tessera: no `Unload` for it. |
+| Q10 | Peak memory of the largest M5 apartments after user interaction | §9.4 | Exit-criterion-4 run records the peak per apartment; revisit the 512 MiB default if any exceeds 256 MiB. |
 
 ---
 
@@ -797,7 +883,9 @@ Recorded here, not applied, because this session owns only this file.
 
 | Target | Addition or correction | Basis |
 |---|---|---|
-| `lua-plugin-api.md` §3.3 "Garbage collection" | State the step precisely: `lua_gc(LUA_GCSTEP, 20)` per apartment per tick, outside any protected call; the host never changes collector parameters; a plugin's `"stop"` lasts one tick. Tessera's step "may rely on the default collector" should become "must perform the same step" (§9.2 here). | R12 |
+| `lua-plugin-api.md` §3.3 "Garbage collection" | State the step precisely: `lua_gc(LUA_GCSTEP, 20)` per apartment per tick, outside any protected call; it runs about 20 basic collector steps per call and starts a new cycle when the collector is idle; the host never changes collector parameters; a plugin's `"stop"` lasts one tick. Tessera's step "may rely on the default collector" must become "must perform the same step" (§9.2 here). Still not applied on 2026-10-06 (critique B7); until it is, §9.2 here governs. | R12, R26 |
+| `lua-plugin-api.md` §3.3 "Memory" and §20 table row on limits | Replace the 64 MiB default with 512 MiB per apartment and state what the cap counts (§9.1 here); keep 500 million instructions per host call. Until applied, §9.1 and §10.1 here govern. | R27 |
+| `lua-plugin-api.md` naming note | Cite the interoperability record `docs/LEGAL.md` §17 instead of the pending ARCHITECTURE §18.2 item (critique B10). | — |
 | `lua-plugin-api.md` §3.3 implementer OPEN on `newproxy(true)` | Answer: the metatable-view deviation is acceptable; the only observed use assigns `__gc` through `getmetatable`; no raw access occurs in C1 (§9.3 here). | R25 |
 | `lua-plugin-api.md` §3.4 | Add that Lua's own conversions, character classes and string ordering run in the interpreter's separate C runtime in the C locale, unaffected by the game-language locale (§4.3 here). | R4 |
 | `lua-plugin-api.md` §6.2 autoload OPEN | Narrow: the original keeps autoload choices in a hash map keyed by exact `Name`, first `Plugin` element wins; order is not file order (§8.2 here). | R22 |
@@ -813,3 +901,4 @@ Recorded here, not applied, because this session owns only this file.
 | Date | Change |
 |---|---|
 | 2026-10-06 | First version (status Review). New BIN reading of client 4906.0071.1794.4035 and its `lua51.dll` (R1–R24), census C1 (R25). Consolidates the runtime facts of `lua-plugin-api.md` §3, §6, §7, §9, §10 by reference and adds: interpreter build and limits, the two-runtime split and its plugin-visible conversions, `string.format` integer widths, the random generator, the floating-point mask, the collector step size and its consequences, allocator behaviour, protected-call filtering, API error form, chunk-name rule, panic handling and unprotected paths, plugin-data chunk environment and comma read-back, autoload container, close sequence, failing-plugin outcomes, the file-access list, corpus counts, 15 invariants, 5 worked examples. 9 open questions (§16), none blocking. |
+| 2026-10-06 | Revision 2 (spec writer, dirty room); status Accepted → Review. **Collector (critique B7):** §9.2 corrects "in practice one incremental step per tick": one `LUA_GCSTEP` call with 20 runs about 20 basic steps and starts a new cycle when the collector is idle, with measured cycle lengths (new R26); the step position in the tick is marked as Tessera's choice (review note 3); §17 restates that `lua-plugin-api.md` §3.3 must say "must". **Limits (critique A7):** §9.1 states what the cap counts and raises Tessera's default to 512 MiB per apartment; new §9.4 records the measurement of the M5 plugin set (new R27) and derives the defaults; §10.1 keeps 500 million instructions per host call; new invariants 16 (synthetic large heap, refused at 128 MiB) and 17 (step completes a cycle); new OPEN in §9.4 and Q10 in §16; §17 asks `lua-plugin-api.md` §3.3 to change its 64 MiB default. **Review notes of the Accepted version:** (1) §4.4 hexadecimal row: wrap of a leading minus applies to text conversion only, a source `-0x10` is −16, invariant 3 extended; (2) the Derived mark is mapped to Confirmed or Reported in §2 and on each Derived row; (3) see collector; (4) invariant 2 states the constant-sharing condition for `tostring(-0)`. **Naming note (critique B10):** cites `docs/LEGAL.md` §17. Interpreter facts R1–R25 unchanged. |

@@ -4,24 +4,28 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (2026-10-06 re-review of the writer's second revision of 2026-10-06; this is a revision of the spec first Accepted on 2026-10-05, so implementers re-check the code listed under "Implementers re-check" in the last two change-log rows, per `CLEAN_ROOM.md` §5.2 "Revised") |
+| Status | **Accepted** (re-review of the repaired third revision of 2026-10-06 passed on 2026-10-06; this text revises the spec Accepted earlier on 2026-10-06, so under `CLEAN_ROOM.md` §5.2 it is a **Revised** spec: implementers re-check the code listed under "Implementers re-check" in the last two change-log rows) |
 | Last updated | 2026-10-06 |
 | Author role | Spec writer (dirty room), AI-assisted |
-| Reviewer | Claude review session (spec-writer agent), 2026-10-06 (re-review of the writer's second revision of 2026-10-06: passed); the first 2026-10-06 revision was reviewed by a Claude review session (spec-writer agent), 2026-10-06 (changes requested); the 2026-10-05 text was reviewed by a Claude review session (spec-writer agent) |
-| Review record | Re-review of the writer's second revision of 2026-10-06: Claude review session (spec-writer agent), 2026-10-06: **passed, Accepted**. All five issues of the review below are resolved: (1) §9.6 states the clamp order (maximum, then minimum, unsigned), the defaults, the 64-bit truncation that keeps the low 32 bits, the unsigned scroll-bar getters, the range rules of `SetMinimum`/`SetMaximum`, the large/small change caps and the minimum-above-maximum case, and invariant 29 tests them; (2) §13.1 gives the 50 × 50 creation size (P64) and §13.16 the initial references and the creation mark that makes None take the current coordinate, with invariants 39 and 40; (3) §13.12.5 names the pointer-outside flag, the strict comparison and the restart at capture end (P49, P51, invariant 42); (4) P48 now covers the text-box key listener (invariant 43); (5) §13.12.1/§13.12.2 say that only type 2 is special and that types 0, 1, 3, 4, 5 follow the Momentary rules, with a precise OPEN on the input layer's sequences (invariant 41). Every §5.3 item holds: functional facts only; no code or pseudo-code (the new prose describes outcomes and orders, not listing structure); no copied prose; no game text, keys or hostnames; every new fact has a provenance row (P48–P51, P57, P58 extended; P64 added); the §14.1 layout is unchanged and complete; invariants 29 and 39–43 are concrete; 38 OPEN callouts before §19, each listed in §19; no closed gate touched (UI and scripting only). Spot checks (re-review, own probes): O6 re-read of 0x51000000 (364 entries, 91/250/16/4/3; 0xAB toggle type 2 and a key of the 471-key input-action chain; the nine mouse-button actions and 0x82/0x10 as in §13.12.1); BIN `ScrollBar:SetValue` (bound check, equality test, maximum clamp then minimum clamp unsigned, `ValueChanged` raised after the clamp regardless of the result, thumb fraction 0 when maximum equals minimum); BIN `SetMinimum`/`SetMaximum`/`SetLargeChange`/`SetSmallChange` (drag of the other bound, re-clamp through `SetValue`, caps in the stated order) and the constructor defaults 0/100/0/10/1; BIN number conversion (setters truncate to 64 bits and pass the low 32 bits; the five scroll-bar getters push the stored value zero-extended, the geometry getters sign-extended); BIN creation descriptors (every descriptor function writes width 50 and height 50; seven skinned-class functions add a layout element); BIN hover check (hovered mark, pointer-outside flag, capture and hover target tested, per-element delay or the 0.25 default, strict comparison against the last movement time; the flag is cleared at creation and every store to it writes clear); §9.6 worked example and invariant 29 recompute. Non-blocking remark for the next revision: the probe found one more creation-descriptor function, in a factory-created element table with a different slot layout, that also writes 50 × 50 and a layout element; whether that table belongs to a plugin control class was not settled, so the counts "25" and "seven" in P64 may need re-counting (the 50 × 50 rule and the §13.1 OPEN are unaffected). Earlier record, 2026-10-06 revision (second OPEN-closing pass): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. Checklist items 1–4, 6 and 9 hold (functional facts only; no code or pseudo-code; no copied prose; the Lua error text in §6.6 is stock Lua and the plugin-data failure text is described, not quoted; no game text; the only layout, §14.1, is complete; no closed gate touched). Spot checks passed: O6 (0x51000000 table A re-read: 364 entries, 91/250/16/4/3 by toggle type, the six select and double-select actions and 0x82/0x10 Momentary, the three tap actions Impulse), O4 (input-action chain 290 + 181 = 471 keys, chat-type chain 39 + 9 = 48, all 16 action keys of §13.12.1 and all 34 `ChatType` values are keys), O5 (owner's key map: left select default, left double-select `MouseDblClick`, left tap `Tap`, right select `Tap`, no middle binding, wheel Z positive/negative), S3 captures of P50/P62 (`MouseDoubleClick` `Button` 1, `MouseClick` `Button` 2, `AssistTargetRemoved` empty, `KeyUp` `Action` 19), P63 counts (62, 9 and 7 Lua files, none uses `newproxy` or `__gc`), and BIN for P51 (the hover check skips while the mouse is captured, uses a per-element delay or the default 0.25 as a 32-bit float, and sets the hovered mark from the handler's result); the 35 OPEN callouts match §19; the §13.15 and §13.16 worked examples and invariants 26–30 recompute correctly. **Issues:** (1) §9.6/`ScrollBar:SetValue` and invariant 29: the order of the minimum and maximum clamps under unsigned comparison is not stated; it decides the result whenever the minimum is negative (e.g. minimum −10, maximum 10, `SetValue(20)` gives 10 or −10), so state the order or add an OPEN, and say what happens when the minimum is above the maximum. (2) §13.16: a control that never captured references (no `AttachEdges` call) still goes through the layout step when its size is 0 × 0 ("None" then takes the reference coordinate), but the spec gives no initial reference values, and the default size of a new control is stated nowhere; give both or mark them OPEN. (3) §13.12.5: the hover check also tests one more manager-level flag besides capture and the hovered mark (seen in the spot check); state the condition or add an OPEN. (4) §13.13 step 2 (a focused plugin `TextBox` fires `KeyDown`/`KeyUp` from the key notification, whatever `GetWantsKeyEvents()`) has no provenance row that names it; extend P48 or P53. (5) §13.12.2 covers only Momentary and Impulse mouse-button actions; the toggle type is read at run time, so say what an AutoRepeat, Analog or Toggle mouse-button action does, or add an OPEN. None of these blocks the rest of the M5 work. Writer's second revision 2026-10-06 addresses every item (change log); re-reviewed above. Earlier record: Claude review session (spec-writer agent), 2026-10-05: changes requested (named-colour component values in §13.9/A.5 do not match the original, which uses byte/255 rounded to 3 decimals; the plugin-data key character rule in §10.2/P14/invariant 12 is locale-dependent in the original, not ASCII-only; O4 key count 472 should be 471; unsourced behaviour statements in §13.1, §13.10, §14.2, §14.5; OPEN count in change log is 22, not 23; naming note cites `LEGAL.md` §10, which has no interoperability record). Writer's revision 2026-10-05 addresses every item (change log). Re-review: Claude review session (spec-writer agent), 2026-10-05: **passed, Accepted** (every §5.3 item true; spot checks against the install, the owner's settings folder, S3 and targeted BIN all passed: 141 named colours / 423 components follow the 3-decimal rule, O4 and §15 counts, game-language setlocale and both `isalnum` checks, `GetScriptVersion` = 13, 0, 48 font records, Appendix A.1 vs S3, `PluginOptions.xml` structure; 25 precise OPENs, none blocking) |
+| Reviewer | Claude review session (spec-writer agent), 2026-10-06 (re-review of the repair of the third revision of 2026-10-06: **passed**; a different session from the writer). Earlier: Claude review session (spec-writer agent), 2026-10-06 (review of the third revision of 2026-10-06: changes requested); Claude review session (spec-writer agent), 2026-10-06 (re-review of the writer's second revision of 2026-10-06: passed); the first 2026-10-06 revision was reviewed by a Claude review session (spec-writer agent), 2026-10-06 (changes requested); the 2026-10-05 text was reviewed by a Claude review session (spec-writer agent) |
+| Review record | **Re-review of the repaired third revision: Claude review session (spec-writer agent), 2026-10-06: passed, Accepted.** All three items of the review of the third revision are resolved. (1) §14.2.1 step 3 now gives the full table of base-layer operation numbers (Replace 0, Mix colour 1, Over 2, Colorize 3, Multiply 4, Screen 5, Grayscale 6, "none" 7), the `SetBlendMode` value that produces each, and the blend mode and operation after one rebuild for every value; I recomputed every row and the chain example (8 → 7, 5, 1 with Screen, Mix colour, Colorize), the AlphaBlend example (2, Replace) and invariant 57; every chain except Grayscale reaches Replace (the longest, from operation 7, takes six rebuilds, within the stated "at most seven"). (2) §13.19 "Which elements have a surface" states one rule (wanted when the object-mode value is non-zero or, without a value, for a root panel; present only while wanted and own-visible or `UICore_Element_KeepObjectWhenHidden`), and §13.17, §13.18 and §13.20 steps 2–3 now agree with it; invariant 53 is split into shown, never-shown and plugin-mode cases, each with a stated `GetStretchMode()`, `GetRotation()` and drawing, and I checked each case against steps 2–3; invariant 58 follows from the rule. (3) P72 cites the new source key S6, which the source table defines. **§5.3 checklist:** functional facts only; no code, pseudo-code, listing structure or addresses (searched); no copied prose; no game text, keys or hostnames; numeric constants under decision 0012; P77 and P78 carry marks and sources; 42 OPEN callouts before §19, each in §19 (the narrowed §13.20 callout included); no closed gate touched. **Spot checks** (own probes, read-only, decision 0011 targeted reading with address ranges only, build 4906.0071.1794.4035; O7 from the earlier extraction of the install): (a) BIN P77: the plugin blend-mode setter rejects values above 8 (unsigned), stores the value for the getter, and converts 1→3, 2→0, 3→4, 4→2, 5→1, 6→6, 7→5, 8→7, 0→0 before calling the element's operation setter: match. (b) BIN P65/P77: the rebuild routine reads the old element's operation through the element's operation getter (the same field the operation setter writes) and passes it to the plugin blend-mode setter after restoring visibility, position, size, z-level and background: match. (c) BIN P78: the object-mode property handler passes "value non-zero" to the surface step, which sets the wanted mark (re-read from the property when present), and creates and installs a surface only when wanted and the own visibility flag or the `KeepObjectWhenHidden` flag is set, otherwise installs none: match. (d) BIN P72/§13.20: `SetRotation` on an element without a surface clears the saved state, reads the object mode and sets it to 1 unless the plugin mark is set and the value is non-zero, then targets the own surface or the nearest ancestor's, stores the angles for `GetRotation()` only when a surface was found, and remembers the rotation only from the element's own surface: match. (e) O7 P77/P78: `luaplugins` = key 0x100000C8 → 0x22000826, 13 top-level elements, none with media items of its own or after resolution (two button elements have media in states only, and buttons are never rebuilt); the scaler window containers carry object mode 3; 188 resolved elements, states included, none with `UICore_Element_KeepObjectWhenHidden` (property 0x1BA): match. Non-blocking remarks for the next revision: (i) the initial value of `GetRotation()` on a never-rotated window is not stated (BIN: the getter always returns the stored three-number record; the constructor's initial value was not checked, Probable 0, 0, 0); invariant 53(b) is phrased relative to it and stays testable; (ii) "after at most seven rebuilds" in §14.2.1 step 3 could say six. Earlier records follow. **Repair of the third revision (spec writer, dirty room, 2026-10-06): submitted for re-review.** It answers the three items of the review below (change log, last row): the full operation-number table and the blend mode after a rebuild (§14.2.1 step 3, P77, invariant 57); one rule for when a window has a surface, used by §13.17–§13.20 alike, with invariant 53 split into shown, never-shown and plugin-mode cases (§13.19, §13.20 steps 2–3, P78, invariants 53 and 58); source key S6 for the usage facts of P72. Earlier records follow. Review of the third revision of 2026-10-06 (game-styled controls, drawing, scale, rotation, markup in `WriteLine`, class-table writes; font-record correction): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. These `CLEAN_ROOM.md` §5.3 items hold. The text is functional facts only. The colour packing, title layout and scale rules are outcomes in words, with numeric constants under decision 0012; they contain no code, no listing structure and no addresses. There is no copied prose. The layout and dictionary labels are data identifiers under the naming note and `LEGAL.md` §17. There is no game text, key or hostname, and no closed gate is touched. The one byte layout, §14.1, is complete. Every new fact has a row (P65–P76, O7). There are 42 OPEN callouts before §19, as the change log says, and each is listed in §19. The worked examples of §13.17 (150/50/50 and the packed (127, 0, 0, 255), against `ui-layout.md` §9.6.2–§9.6.3), §13.21 and §14.2.3 recompute, and so do invariants 44, 45, 49 and 52. **Spot checks** (own probes, read-only, 2026-10-06; the dictionary was re-read from the install and is byte-identical to the earlier extraction): (1) O7/P65 data: `UILAYOUT` (0x28000003) entry `luaplugins` = key 0x100000C8 → 0x22000826, design 1024 × 768, 13 top-level elements. The labels and resolved types of the ten base IDs match the §14.2.1 table, and 0x10004CE3 has its own type `UIScaler`. The four window containers have min width 150 and min height 100, and the two scaler containers have group 72, origin 0, 0 and object mode 3. The 13 part rectangles, z-levels and edge modes give exactly the §14.2.3 formulas under `ui-layout.md` §8.2/§8.4. Descendants 0x100022AA, 0x100025B0 and 0x100025B1 are present: match. (2) O7 markup and dictionary: 203 elements and states set `UICore_Text_parse_markup_tags`, all true. `ChatLogElement` (and the IM log) names 0x10000309 = `ChatLogListboxItemTemplate`, which has the property true. Dictionary: `ObjectOpacity` default 1.0, min 0, max 1; `parse_markup_tags` default false; `ObjectMode`, `font_color` and the four size limits have no default: match. (3) P12, §14.1 and invariant 23: there are 48 records, 45 in `client_local_English` and 3 (0x42000027, 0x42000028, 0x420000FD) in `client_general`, all with directory flags 2. In every record, offset 4 equals the largest glyph height and offset 8 the widest glyph, and in all 48 offset 4 equals the trailing number of the S3 enum name: match. (4) BIN P65 creation descriptors: each of the seven class functions looks up map 4 key 0x100000C8, writes type 0 and the stated base element. `GoldButton` and `GoldWindow` first run the plain class's step and then override it. The scroll bar's element is 0x1000239E plus (orientation ≠ 0), so Horizontal = 0 gives 0x1000239E. `Window` tests its scaled mark and `GoldWindow` tests a different byte flag: match. (5) BIN P66/P67: in the title layout, *t* = min(*W* − 140, max(*m*, 120)), the lefts are halved toward zero, and the bars are *t* + 80 wide. The close-button listener calls the window's close method only for the source 0x10002298 and message 0x35. The text-box text-element override looks up descendant 0x100022AA: match. **Issues:** (1) **§14.2.1 step 3 and P65 (implementability; the unknown is not marked OPEN).** A rebuild "passes the old base-layer operation number to `SetBlendMode`", and Tessera is told to reproduce this. The only operation numbers given are the example's (Over = 2, Replace = 0), so an implementer cannot reproduce a rebuild after `SetBlendMode` 1, 3, 5, 6, 7 or 8. Fix: give the complete table that maps compositor operation to operation number (all seven operations and "none"; numeric constants under decision 0012), so that the blend mode after a rebuild is defined for every value, or mark the missing numbers OPEN with a Tessera default. (2) **§13.19, §13.20 steps 2–3 and invariant 53 (internal contradiction; invariant not concrete).** §13.19 says every window "always" has a surface. §13.20 step 3 says a surface exists only while the element is visible, so a never-shown window may have none. Step 2 says that setting object mode 1 "creates the surface", which step 3 contradicts for a hidden window. Invariant 53 then expects both a visible 90-degree turn and `GetStretchMode()` = 1 after the first `SetRotation`. Under step 2, a window that has been shown already has a surface, so its stretch mode stays 0; and a hidden window that gets mode 1 may find no surface, so its rotation is dropped. Fix: state when a window's surface exists (created at build, at first show, or by an object-mode change while hidden), make §13.19 and §13.20 agree, and split invariant 53 into a shown-window case and a never-shown case, each with its expected `GetStretchMode()`, `GetRotation()` and drawing. (3) Minor: P72 cites a source "S-usage" that the source-key table does not define. Cite `plugin-api-usage.md` or add a key. Everything else is implementable for M5 as written. Earlier records follow. Re-review of the writer's second revision of 2026-10-06: Claude review session (spec-writer agent), 2026-10-06: **passed, Accepted**. All five issues of the review below are resolved: (1) §9.6 states the clamp order (maximum, then minimum, unsigned), the defaults, the 64-bit truncation that keeps the low 32 bits, the unsigned scroll-bar getters, the range rules of `SetMinimum`/`SetMaximum`, the large/small change caps and the minimum-above-maximum case, and invariant 29 tests them; (2) §13.1 gives the 50 × 50 creation size (P64) and §13.16 the initial references and the creation mark that makes None take the current coordinate, with invariants 39 and 40; (3) §13.12.5 names the pointer-outside flag, the strict comparison and the restart at capture end (P49, P51, invariant 42); (4) P48 now covers the text-box key listener (invariant 43); (5) §13.12.1/§13.12.2 say that only type 2 is special and that types 0, 1, 3, 4, 5 follow the Momentary rules, with a precise OPEN on the input layer's sequences (invariant 41). Every §5.3 item holds: functional facts only; no code or pseudo-code (the new prose describes outcomes and orders, not listing structure); no copied prose; no game text, keys or hostnames; every new fact has a provenance row (P48–P51, P57, P58 extended; P64 added); the §14.1 layout is unchanged and complete; invariants 29 and 39–43 are concrete; 38 OPEN callouts before §19, each listed in §19; no closed gate touched (UI and scripting only). Spot checks (re-review, own probes): O6 re-read of 0x51000000 (364 entries, 91/250/16/4/3; 0xAB toggle type 2 and a key of the 471-key input-action chain; the nine mouse-button actions and 0x82/0x10 as in §13.12.1); BIN `ScrollBar:SetValue` (bound check, equality test, maximum clamp then minimum clamp unsigned, `ValueChanged` raised after the clamp regardless of the result, thumb fraction 0 when maximum equals minimum); BIN `SetMinimum`/`SetMaximum`/`SetLargeChange`/`SetSmallChange` (drag of the other bound, re-clamp through `SetValue`, caps in the stated order) and the constructor defaults 0/100/0/10/1; BIN number conversion (setters truncate to 64 bits and pass the low 32 bits; the five scroll-bar getters push the stored value zero-extended, the geometry getters sign-extended); BIN creation descriptors (every descriptor function writes width 50 and height 50; seven skinned-class functions add a layout element); BIN hover check (hovered mark, pointer-outside flag, capture and hover target tested, per-element delay or the 0.25 default, strict comparison against the last movement time; the flag is cleared at creation and every store to it writes clear); §9.6 worked example and invariant 29 recompute. Non-blocking remark for the next revision: the probe found one more creation-descriptor function, in a factory-created element table with a different slot layout, that also writes 50 × 50 and a layout element; whether that table belongs to a plugin control class was not settled, so the counts "25" and "seven" in P64 may need re-counting (the 50 × 50 rule and the §13.1 OPEN are unaffected). Earlier record, 2026-10-06 revision (second OPEN-closing pass): Claude review session (spec-writer agent), 2026-10-06: **changes requested, stays Review**. Checklist items 1–4, 6 and 9 hold (functional facts only; no code or pseudo-code; no copied prose; the Lua error text in §6.6 is stock Lua and the plugin-data failure text is described, not quoted; no game text; the only layout, §14.1, is complete; no closed gate touched). Spot checks passed: O6 (0x51000000 table A re-read: 364 entries, 91/250/16/4/3 by toggle type, the six select and double-select actions and 0x82/0x10 Momentary, the three tap actions Impulse), O4 (input-action chain 290 + 181 = 471 keys, chat-type chain 39 + 9 = 48, all 16 action keys of §13.12.1 and all 34 `ChatType` values are keys), O5 (owner's key map: left select default, left double-select `MouseDblClick`, left tap `Tap`, right select `Tap`, no middle binding, wheel Z positive/negative), S3 captures of P50/P62 (`MouseDoubleClick` `Button` 1, `MouseClick` `Button` 2, `AssistTargetRemoved` empty, `KeyUp` `Action` 19), P63 counts (62, 9 and 7 Lua files, none uses `newproxy` or `__gc`), and BIN for P51 (the hover check skips while the mouse is captured, uses a per-element delay or the default 0.25 as a 32-bit float, and sets the hovered mark from the handler's result); the 35 OPEN callouts match §19; the §13.15 and §13.16 worked examples and invariants 26–30 recompute correctly. **Issues:** (1) §9.6/`ScrollBar:SetValue` and invariant 29: the order of the minimum and maximum clamps under unsigned comparison is not stated; it decides the result whenever the minimum is negative (e.g. minimum −10, maximum 10, `SetValue(20)` gives 10 or −10), so state the order or add an OPEN, and say what happens when the minimum is above the maximum. (2) §13.16: a control that never captured references (no `AttachEdges` call) still goes through the layout step when its size is 0 × 0 ("None" then takes the reference coordinate), but the spec gives no initial reference values, and the default size of a new control is stated nowhere; give both or mark them OPEN. (3) §13.12.5: the hover check also tests one more manager-level flag besides capture and the hovered mark (seen in the spot check); state the condition or add an OPEN. (4) §13.13 step 2 (a focused plugin `TextBox` fires `KeyDown`/`KeyUp` from the key notification, whatever `GetWantsKeyEvents()`) has no provenance row that names it; extend P48 or P53. (5) §13.12.2 covers only Momentary and Impulse mouse-button actions; the toggle type is read at run time, so say what an AutoRepeat, Analog or Toggle mouse-button action does, or add an OPEN. None of these blocks the rest of the M5 work. Writer's second revision 2026-10-06 addresses every item (change log); re-reviewed above. Earlier record: Claude review session (spec-writer agent), 2026-10-05: changes requested (named-colour component values in §13.9/A.5 do not match the original, which uses byte/255 rounded to 3 decimals; the plugin-data key character rule in §10.2/P14/invariant 12 is locale-dependent in the original, not ASCII-only; O4 key count 472 should be 471; unsourced behaviour statements in §13.1, §13.10, §14.2, §14.5; OPEN count in change log is 22, not 23; naming note cites `LEGAL.md` §10, which has no interoperability record). Writer's revision 2026-10-05 addresses every item (change log). Re-review: Claude review session (spec-writer agent), 2026-10-05: **passed, Accepted** (every §5.3 item true; spot checks against the install, the owner's settings folder, S3 and targeted BIN all passed: 141 named colours / 423 components follow the 3-decimal rule, O4 and §15 counts, game-language setlocale and both `isalnum` checks, `GetScriptVersion` = 13, 0, 48 font records, Appendix A.1 vs S3, `PluginOptions.xml` structure; 25 precise OPENs, none blocking) |
 | Implements into | `crates/script` (Lua host, sandbox), `crates/plugins` (discovery, apartments, API surface), `crates/ui` (controls) |
-| Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), `ui-layout.md` (native panels) |
+| Related specs | [`plugin-descriptor.md`](plugin-descriptor.md) (disk side: discovery, descriptor, `PluginOptions.xml`; see §20 for corrections to it), dat container spec (block header, DID routing), `records.md` §5 (0x41 render surfaces), §7 (enum mappers), §8 (DID maps), [`keymap.md`](keymap.md) (input actions), [`ui-layout.md`](ui-layout.md) (layout records, inheritance, layout rules, image layers and compositor; the game-styled controls of §14.2 are built from it), [`ui-behaviour.md`](ui-behaviour.md) (UI scale §9.2, resize bars §8.2, moving §8.1), [`skin-definition.md`](skin-definition.md) (skins reach the game-styled controls), [`fonts.md`](fonts.md) (font records, text layout and colour packing), [`plugin-api-usage.md`](plugin-api-usage.md) (how real plugins use this surface) |
 
 > **Naming note (interoperability).** The namespace, class, method, event, field, enum member,
 > XML element/attribute and file names in this document are the identifiers that existing
 > third-party plugins and their files use. They are reproduced only because a plugin cannot
 > run without them (see `docs/ARCHITECTURE.md` §18.2 and the *Google v. Oracle* row of
-> `docs/LEGAL.md` §4.1; the written interoperability record that ARCHITECTURE §18.2 asks for
-> is still pending as its "OPEN (legal)" item). They must appear
+> `docs/LEGAL.md` §4.1; the written interoperability record is `docs/LEGAL.md` §17). They must appear
 > in Tessera only inside the plugin subsystem, never as product names, crate names or UI
 > strings. Descriptive text is our own summary. No documentation prose, client message text
 > or game text is reproduced: error conditions are described, never quoted, and game-data
-> enum entries are referred to by DID and key, not by their internal names.
+> enum entries are referred to by DID and key, not by their internal names. The UI layout
+> labels (`luaplugins`, `LotroWindow_Container` and the other element labels of §14.2) and
+> the property-dictionary names (`UICore_…`, `UIComponent_…`) used in §13 and §14 are
+> labels read from the user's own data files; they are named only so that an implementer can
+> find the same records at run time (`ui-layout.md` §3), the same way `ui-layout.md` and
+> `skin-definition.md` name them.
 
 ---
 
@@ -43,7 +47,10 @@ plugins written for the original client, without reading any third-party code. I
   (§10);
 - the shell/chat, engine, UI and gameplay namespaces (§11–§15), including how the UI routes
   the mouse and keyboard to controls, keyboard focus, z-order and window activation, size
-  limits and the edge-attachment layout (§13.11–§13.16);
+  limits and the edge-attachment layout (§13.11–§13.16), how plugin backgrounds, back
+  colours, stretch modes and opacity are drawn, and window rotation and scale
+  (§13.17–§13.21), and how the game-styled controls are built from the user's UI layout
+  data (§14.2);
 - a complete API inventory of client build 4906.0071.1794.4035 (§16), implementation tiers
   (§17), invariants (§18) and the remaining open questions (§19).
 
@@ -59,22 +66,25 @@ Source keys:
 
 | Key | Source |
 |---|---|
-| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version **4906.0071.1794.4035** (`lotro_live`, built 2026-09-27), and its `x64/lua51.dll`, read in the dirty room on 2026-10-05 with a targeted capstone disassembly of individual functions (no whole-image dump kept). Code read: the Lua host (state creation, allocator, protected-call wrapper, error reporting, per-frame step), `import` and the package resolvers, plugin discovery and descriptor parsing, plugin load and unload, the plugin-data load/save/serialiser/path code, the shell and shell-command bindings, the engine functions, the event dispatcher and the control event-argument builders, the class and enumeration registration code (names, implementations, enum values), the text-markup tag parser, the `PluginOptions.xml` writer and the chat listener entry. A follow-up repair session on the same day read, again function by function: the start-up call that sets the C runtime locale (the only other locale calls switch the numeric category to the C locale for the duration of two value-conversion functions that the plugin code does not call, then restore it), the number formatter used by the plugin-data writer, the plugin-data key validator, the package-name check of the disk resolver, the named-colour registration, and the function bound as `GetScriptVersion` (questions: P5, P14, P35, P43, P45; M1–M3 could not answer them because they are code paths, and S3 shows only resulting values). A second follow-up session on 2026-10-06 (same build, same method: targeted capstone disassembly of single functions, address ranges only, no listing kept) read the client's general UI element framework as the plugin controls use it: the plugin control binding (its event table, notification handler, key and update subscriptions, size, position, size-limit, edge-attachment, z-order, focus, enable and window-activation methods, the scroll bar value setter), the UI element manager (notification posting and queueing, message broadcast and listener registration, pointer hit test, hover tracking, mouse capture, mouse-button and key action routing, keyboard focus, active window), the base element methods those call (resize with limits, move, show/hide, child ordering, edge-attachment layout, activate/deactivate), the plugin-data write step and the script-error listener of the game layer (questions: P47–P61). **Why M1–M3 were not enough for the second pass:** these are run-time behaviours of client code; the data files hold none of them, the owner's settings folder holds no plugins (O2), S2/S3 describe only names and a few captured argument tables, and M3 (running the official client with test plugins) was not available to this session. A third session on 2026-10-06 (same build, same method, address ranges only, no listing kept), answering the review of that day, read: the scroll bar's value, minimum, maximum, large-change and small-change setters and getters, its constructor and the integer conversions of the binding layer's argument and result wrappers; the control-creation step of the plugin layer (the initial element description of every control class) and the UI's element-creation path; the reference-capture step and the edge-attachment layout step again; the hover check, the pointer-movement and mouse-button handlers and the input-action entry of the UI element manager (the toggle-type test and the actions it ignores); and the text box's notification listener (questions: P48–P51, P57, P58, P64). **Why M1–M3 were not enough for the third pass:** the same as for the second; in addition, the clamp order and the creation defaults are code paths that no data file or published source records. **Questions:** everything marked BIN below (sandbox contents, resolution order, environments, re-import, load/unload sequence, dispatch, argument fields, plugin-data timing, key rules, file format, shell semantics, engine values, API surface and enum values). **Why M1–M3 were not enough:** all of these are code, not data (M1 can observe only the data files and the owner's settings folder, which holds no plugins); the published references (S2, S3) list names but not behaviour, and are older than this build; M3 would need the official client running third-party plugins on the owner's account, which is not available to this session and could not expose internal decisions (resolution order, sandbox contents, serialiser rules) exhaustively. Nothing about the network protocol, login, keys, the launcher or anti-tamper was read. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). |
+| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, PE file version **4906.0071.1794.4035** (`lotro_live`, built 2026-09-27), and its `x64/lua51.dll`, read in the dirty room on 2026-10-05 with a targeted capstone disassembly of individual functions (no whole-image dump kept). Code read: the Lua host (state creation, allocator, protected-call wrapper, error reporting, per-frame step), `import` and the package resolvers, plugin discovery and descriptor parsing, plugin load and unload, the plugin-data load/save/serialiser/path code, the shell and shell-command bindings, the engine functions, the event dispatcher and the control event-argument builders, the class and enumeration registration code (names, implementations, enum values), the text-markup tag parser, the `PluginOptions.xml` writer and the chat listener entry. A follow-up repair session on the same day read, again function by function: the start-up call that sets the C runtime locale (the only other locale calls switch the numeric category to the C locale for the duration of two value-conversion functions that the plugin code does not call, then restore it), the number formatter used by the plugin-data writer, the plugin-data key validator, the package-name check of the disk resolver, the named-colour registration, and the function bound as `GetScriptVersion` (questions: P5, P14, P35, P43, P45; M1–M3 could not answer them because they are code paths, and S3 shows only resulting values). A second follow-up session on 2026-10-06 (same build, same method: targeted capstone disassembly of single functions, address ranges only, no listing kept) read the client's general UI element framework as the plugin controls use it: the plugin control binding (its event table, notification handler, key and update subscriptions, size, position, size-limit, edge-attachment, z-order, focus, enable and window-activation methods, the scroll bar value setter), the UI element manager (notification posting and queueing, message broadcast and listener registration, pointer hit test, hover tracking, mouse capture, mouse-button and key action routing, keyboard focus, active window), the base element methods those call (resize with limits, move, show/hide, child ordering, edge-attachment layout, activate/deactivate), the plugin-data write step and the script-error listener of the game layer (questions: P47–P61). **Why M1–M3 were not enough for the second pass:** these are run-time behaviours of client code; the data files hold none of them, the owner's settings folder holds no plugins (O2), S2/S3 describe only names and a few captured argument tables, and M3 (running the official client with test plugins) was not available to this session. A third session on 2026-10-06 (same build, same method, address ranges only, no listing kept), answering the review of that day, read: the scroll bar's value, minimum, maximum, large-change and small-change setters and getters, its constructor and the integer conversions of the binding layer's argument and result wrappers; the control-creation step of the plugin layer (the initial element description of every control class) and the UI's element-creation path; the reference-capture step and the edge-attachment layout step again; the hover check, the pointer-movement and mouse-button handlers and the input-action entry of the UI element manager (the toggle-type test and the actions it ignores); and the text box's notification listener (questions: P48–P51, P57, P58, P64). **Why M1–M3 were not enough for the third pass:** the same as for the second; in addition, the clamp order and the creation defaults are code paths that no data file or published source records. **Questions:** everything marked BIN below (sandbox contents, resolution order, environments, re-import, load/unload sequence, dispatch, argument fields, plugin-data timing, key rules, file format, shell semantics, engine values, API surface and enum values). **Why M1–M3 were not enough:** all of these are code, not data (M1 can observe only the data files and the owner's settings folder, which holds no plugins); the published references (S2, S3) list names but not behaviour, and are older than this build; M3 would need the official client running third-party plugins on the owner's account, which is not available to this session and could not expose internal decisions (resolution order, sandbox contents, serialiser rules) exhaustively. A fourth session on 2026-10-06 (same build, same file hash, same method: targeted capstone disassembly of single functions, address ranges only, no listing kept), answering the M5 completeness critique, read: the creation-descriptor functions of the seven game-styled classes and of the scaled plain window; the window classes' element-build, post-build, title, close-button, resize-bar, text, scale, scale-group, origin and registration methods and the scaling service they call; the check box, text box and scroll-bar overrides; the plugin setters and getters of background, blend modes, back colour, stretch mode, opacity, rotation, font, fore colour, text alignment and selection; the UI element's layer setters, surface creation and the surface's rotation setter and transform; the scaler element's scale methods; `Shell.WriteLine`; and the binding layer's instance and `IsA` lookup (questions: P65–P76). **Why M1–M3 were not enough for the fourth pass:** the data (M1, O7) give the layout elements but not which class uses which, nor the code-driven geometry, defaults, drawing operations and scale arithmetic; S2/S3 only describe names; M3 (official client running test plugins) was not available to this session. A repair session on 2026-10-06 (same build, same file hash, same method, address ranges only, no listing kept), answering the review of the third revision, read: the plugin blend-mode setter and its conversion of the eight values, the element's operation getter and setter, the rebuild routine of the plugin controls; the element's root-panel constructor step, the object-mode property handler, the visibility setter and the show/hide step, the surface creation, installation and release steps, the save of the surface state on hide, the window rotation setter and the ancestor-surface lookup (questions: P77, P78, and the corrections of P72). **Why M1–M3 were not enough for the repair:** the operation numbers and the surface lifetime are internal state of client code that no data file or published source records; M3 was not available. Nothing about the network protocol, login, keys, the launcher or anti-tamper was read. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). |
 | **S1** | `research/notes/engine-client-re.md` §5 (dirty-room notes) |
 | **S2** | Official "Update 25" Lua API reference, HTML, © 2016 publisher, lotrointerface.com file 1054 (version 2500.0062.0883); mirrored in the `lunarwtr/lotro-api-docs` repository (`U25/`) |
 | **S3** | `lunarwtr/vscode-lotro-api` (MIT): `lotro-docs/TurbineDump.json` (a dump of the live in-game `Turbine` table, v1.0.18, 2026-03), `TurbineEventsDump.json` (event argument tables captured in game), `TurbineDumper.lua` (a lightly edited `.plugindata` file), `resources/xsds/lotroplugin.xsd`, EmmyLua stubs generated from S2 |
 | **S4** | The publisher's 2010 beta sample plugins (`Turbine/` utility package and `TurbinePlugins/`), archived as `dist/Beta_LuaPlugins.zip` in `Goldbishop/Lotro_LUA`; S2 also mirrored there (U24) |
 | **S5** | lotro-wiki.com pages "Lua Plugins", "Lua Scripting", "Plugin manager" (Wayback copies), which quote the 2010–2011 developer forum posts; lotrointerface.com file page 1054 |
+| **S6** | Published third-party plugins downloaded for the M5 API census (dirty-room scratch; facts only: call counts and argument shapes, no code copied); the census results are published in [`plugin-api-usage.md`](plugin-api-usage.md) (§5.3 member counts, §9.3 per-plugin needs) |
 | **O1** | Observed in user install 2026-10-03, static inspection of files only: `lua51.dll` (32- and 64-bit) version string and export table; `x64/lotroclient64.exe` and `lotroclient.exe` import tables and literal strings |
 | **O2** | Observed in the owner's settings folders (read-only). 2026-10-03: a `Plugins/` tree with two third-party plugins (descriptors, file names and call patterns read statically, nothing copied). 2026-10-05: that `Plugins/` tree is no longer present; `PluginData/<account>/<server>/PluginOptions.xml` exists for three worlds (folder names are the world display names, one with a bracketed prefix and a space) |
 | **O3** | Observed in user install data files 2026-10-03 (read-only probes): font records `0x42xxxxxx` in `client_local_English.dat` and `client_general.dat`; image records `0x41xxxxxx` in `client_surface.dat` |
 | **O4** | Observed in user install data files 2026-10-05 (read-only, M1): the named-enum-mapper DID map 0x28000001 (`records.md` §8) and the enum mappers it names (`records.md` §7), decoded with their base chains: input actions 0x230000AF (290 own keys) with base 0x23000176 (181 keys), 471 keys in all, no key in both; character classes 0x2300000E (no base, 212 keys); species 0x2300000B (no base, 123); languages 0x230000B1 (3 own keys) with base 0x23000186 (2), 5 in all; shortcut types 0x23000137 (no base, 13); item qualities 0x23000067 (no base, 6); item classes 0x23000036 (no base, 279); craft tiers 0x23000063 (no base, 18); chat text types 0x230002A8 (39 own keys) with base 0x230002A9 (9), 48 in all. Key 0 is present in every one of these chains. Counts re-taken 2026-10-05 by the repair session; they are observations of this install, read at run time |
 | **O5** | Observed 2026-10-05 (read-only): the owner's `lotro.keymap` in the Proton prefix binds the scroll-up input action to the mouse's Z axis in the positive direction and the scroll-down action to the negative direction. Observed 2026-10-06 in the same file: the left button is bound to the left select action (default activation), the left double-select action (`MouseDblClick` activation) and the left tap action (`Tap`); the right button's select action uses the `Tap` activation; no middle-button action is bound |
 | **O6** | Observed 2026-10-06 in user install data (read-only, M1): action-map record 0x51000000, table A (`keymap.md` §12.10), read afresh: toggle type 1 (Momentary) for the six select and double-select actions 0x56, 0x4C, 0xA4, 0x33, 0x2E, 0x93 and for the wheel actions 0x82, 0x10; toggle type 2 (Impulse) for the three tap actions 0x32, 0x73, 0x6E; 364 entries in all (91 Momentary, 250 Impulse, 16 AutoRepeat, 4 Analog, 3 Toggle, as in `keymap.md`). Re-read 2026-10-06 by the second revision: the same counts; action 0xAB is a key of the input-action chain (O4) and has toggle type 2; none of the nine mouse-button actions has toggle type 3, 4 or 5 |
+| **O7** | Observed 2026-10-06 in user install data (read-only, M1, own decoder written from `ui-layout.md` §4–§7): the `UILAYOUT` DID map (root key 4) entry with key 0x100000C8 is labelled `luaplugins` and names layout 0x22000826 (design size 1024 × 768, 13 top-level elements: their labels, types, rectangles, edge modes, properties and the trees of the window containers as summarised in §14.2); the `chatwindow` layout (0x22000034) element `ChatLogElement` names the top-level element `ChatLogListboxItemTemplate` in its `UI_ChatLog_TextElement` property, and that template has `UICore_Text_parse_markup_tags` = true; 203 elements of all layouts set that property, all to true. Property dictionary 0x34000000 (read-only): `UICore_Element_ObjectOpacity` has default 1.0, minimum 0, maximum 1; `UICore_Element_ObjectMode`, `UICore_Text_font_color` and the four size-limit properties have no default; `UICore_Text_parse_markup_tags` has default false. Values are observations of this install, read at run time |
 
 Marks: **Confirmed** = observed in the owner's install (data, settings folder or the client
 binary), with date; BIN facts are Confirmed by disassembly on 2026-10-05 (P1–P46) or
-2026-10-06 (P47–P61, P64, and the third-pass extensions of P48–P51, P57 and P58) and are marked
+2026-10-06 (P47–P61, P64, the third-pass extensions of P48–P51, P57 and P58, the
+fourth-pass rows P65–P76 and the repair rows P77–P78) and are marked
 "BIN"; facts that rest only on BIN are flagged as such in the row. **Reported** = from
 published sources only.
 
@@ -91,7 +101,7 @@ published sources only.
 | P9 | The global `Plugins` maps a plugin's `Name` to its `Turbine.Plugin` object; the global `plugin` is the plugin being loaded, and is reset to nil when loading ends | O1, O2, BIN | **Confirmed** 2026-10-05 |
 | P10 | Apartments are separate Lua states; plugins without `Configuration` share the apartment `Default`; unloading is per apartment; an apartment cannot be unloaded while any of its Lua code is running (which includes a call from inside itself) | BIN; S2, S3 xsd, S5, O2 | **Confirmed** 2026-10-05 (BIN) |
 | P11 | Default apartment name `Default`; apartment names compare case-insensitively | BIN | **Confirmed** 2026-10-05 (BIN) |
-| P12 | Font enum values are DIDs of type `0x42`; all 48 non-zero values exist as records; each record's payload starts with its own DID then the point size | O3, S3, BIN (values) | **Confirmed** 2026-10-03 |
+| P12 | Font enum values are DIDs of type `0x42`; all 48 non-zero values exist as records; each record's payload starts with its own DID then the **line height in pixels** (the largest glyph height; in this install it equals the number at the end of the enum name). Corrected 2026-10-06: earlier text called the second field a "nominal point size" | O3, S3, BIN (values); `fonts.md` §3.2 and §14 (F4) | **Confirmed** 2026-10-03 (layout), 2026-10-06 (meaning, per `fonts.md`) |
 | P13 | Image DIDs passed to `SetBackground` are render-surface records in `client_surface.dat` | O3, O2, S2, BIN | **Confirmed** |
 | P14 | Plugin-data keys are 1 to 64 UTF-16 units, each passing the C runtime's `isalnum` test (unit value passed as is) or equal to `_`, stored as `<key>.plugindata`; account scope in `AllServers`, server scope in `<server>/AllCharacters`, character scope in `<server>/<character>` under `PluginData/<account>/` | BIN (key validator re-read 2026-10-05 by the repair session: length check, then one `isalnum` call per UTF-16 unit, `_` accepted), O2 | **Confirmed** 2026-10-05 (corrects the 63-character limit of the first draft; the first revision's "ASCII only" was an overclaim, see P43) |
 | P15 | `.plugindata` files are a Lua chunk `return …` in the layout of §10.4, CRLF line ends | BIN (writer and reader), S3 | **Confirmed** 2026-10-05 (BIN) |
@@ -143,7 +153,21 @@ published sources only.
 | P61 | The plugin layer passes the command word and argument text to `ShellCommand:Execute` exactly as it receives them from the client's command-line parser (§11.2) | BIN (second pass) | **Confirmed** 2026-10-06 (BIN only) |
 | P62 | Captured argument tables: `Party.AssistTargetRemoved` carries an empty table; a `KeyUp` with `Action` 19 (a key below 0x100) occurs | S3 (`TurbineEventsDump.json`) | **Reported** |
 | P63 | Usage survey (counts only, no code read for expression): none of the 62 Lua files of the publisher's 2010 sample plugins (S4), the 9 Lua files of one third-party in-game plugin in the research clones (LotroCompanion's) and the 7 Lua files of S3 use `newproxy` or `__gc` | S4, S3, research clones (dirty room, 2026-10-06) | **Reported** (small sample) |
-| P64 | Initial geometry of plugin controls: the plugin layer describes every new control as left 0, top 0, width 50, height 50 (all 25 control class tables of this build; seven of them, matching the seven skinned classes of §14.2 in number and in their window and text-box variants, also name a client layout element) (§13.1) | BIN (third pass) | **Confirmed** 2026-10-06 (BIN only; whether the named layout element changes the size of game-styled controls, OPEN) |
+| P64 | Initial geometry of plugin controls: the plugin layer describes every new control as left 0, top 0, width 50, height 50 (all 25 control class tables of this build; seven of them, matching the seven skinned classes of §14.2 in number and in their window and text-box variants, also name a client layout element) (§13.1) | BIN (third pass; fourth pass for the layout element) | **Confirmed** 2026-10-06 (BIN only). Fourth pass: the "layout element" is the **base** of the creation descriptor, whose own 50 × 50 rectangle replaces the base's (P65); the "25 + 1" count question of the earlier review is answered by P65 (the extra function belongs to the scaling service, not to a control class) |
+| P65 | Game-styled controls: the seven classes describe their element as a **based** descriptor: no type of its own, base element = a fixed element ID, base layout = the layout that the `UILAYOUT` map gives for entry key 0x100000C8 (labelled `luaplugins`), own rectangle 0, 0, 50 × 50 (P64). Class → element ID: `Button` 0x100022A7, `GoldButton` 0x100022A8, `CheckBox` 0x100025AF, `TextBox` 0x100022A9, `ScrollBar` 0x1000239E (horizontal) or 0x1000239F (vertical, chosen by the orientation at build time), `Window` 0x10002294, or 0x10004D37 when the window is marked as scaled (§13.21), `GoldWindow` 0x10002299, or 0x10004D38 when a second flag set at construction from the scaling service is set (OPEN). A plain `Turbine.UI.Window` marked as scaled is re-described by the scaling service with the type `UIScaler` (0x100000E8); the descriptor also names base element 0x10004CE3, but a descriptor with a type is never resolved through its base (`ui-layout.md` §7.1 step 1; BIN: the resolver tests the type first), so that element's properties are not inherited. The element is rebuilt from a new descriptor when the window is first marked as scaled and when a game-styled scroll bar changes orientation; a rebuild keeps visibility, position, size, z-level and background image, and passes the old base-layer operation number to `SetBlendMode` as if it were a blend-mode value (§14.2.1; numbers and the resulting modes: P77) | BIN (fourth pass: the creation-descriptor functions, the descriptor merge, the element-build path, the rebuild routine); O7 (labels, types and trees) | **Confirmed** 2026-10-06 |
+| P66 | Game-styled window behaviour: `SetText` sets the text of descendant 0x10002297 (title text) and measures it; the title text, the title-bar background (0x10002296) and the drag bar (0x10002DFB) are positioned by code from the window width (§14.2.3), after creation, after every `SetText` and after every size change (after `SizeChanged` handlers ran); a `Button_click` UI message (0x35) from descendant 0x10002298 (close button) calls the window's `Close()`; the eight resize bars 0x10002DFC–0x10002E03 are hidden (`UICore_Element_hide` true) unless `SetResizable(true)`; resizable defaults to false; `SetResizable` acts only on a change | BIN (fourth pass); O7 | **Confirmed** 2026-10-06 (BIN only for the behaviour) |
+| P67 | Game-styled text targets: `Label`, `TextBox` and `CheckBox` members of the game-styled text box and check box act on the text element 0x100022AA (text box) or 0x100025B1 (check box); the game-styled check box's check state is shown by its descendant 0x100025B0; the game-styled button's own element is the text target | BIN (fourth pass: the per-class "text element" and "check element" overrides) | **Confirmed** 2026-10-06 (BIN only) |
+| P68 | Drawing of plugin backgrounds and back colours: `SetBackground` sets the element's base image layer without changing its operation; `SetBlendMode(n)` sets the base layer's compositor operation through the same conversion as layout draw mode *n*; a new element's base operation is Replace; `SetBackColor` sets an overlay colour fill drawn after the base image with the operation of `SetBackColorBlendMode` (default 2); `SetBackColor(nil)` removes the fill; `SetBackColorBlendMode` re-applies the fill with the stored colour even when no colour was set; colour components are packed into bytes by ×255 and truncation, with no clamping; an invalid blend-mode number (above 8) raises an error | BIN (fourth pass: the four setters, the layer setters, the draw-mode converter, the colour-fill draw) | **Confirmed** 2026-10-06 (BIN only) |
+| P69 | `SetStretchMode(n)` stores *n* as the element's `UICore_Element_ObjectMode` and marks it as set by the plugin; a non-zero mode gives the element its own drawing surface (0 removes it); `GetStretchMode()` returns the property (0 when neither the plugin nor the layout set it); a Tile surface takes the base image's size and falls back to CanvasResize unless both sides are powers of two | BIN (fourth pass: the stretch setter and getter, the property-change handler, the surface-creation routine); O7 (no dictionary default) | **Confirmed** 2026-10-06 (BIN only); the visible effect of modes 1–4, OPEN in part (§13.18) |
+| P70 | `SetOpacity(f)` sets `UICore_Element_ObjectOpacity`, which acts only on an element that has its own surface: every shown window (each is a root panel) and any shown control with a non-zero stretch mode (when a surface exists: P78); `GetOpacity()` returns the property (dictionary default 1.0) | BIN (fourth pass: setter, getter, the window build path); O7 (default); `ui-layout.md` §5.9 (property effect) | **Confirmed** 2026-10-06 |
+| P71 | Label defaults and conversions: `GetFont()` is 0 until a `SetFont` with a DID that loads as a font record (others are ignored); the text is drawn in the text element's font (for a plain label the locale default font, `fonts.md` §9.1); `GetTextAlignment()` is 1 (TopLeft) until set; `SetTextAlignment` acts only on a change and maps the nine values to the two justification properties (§13.4); `GetForeColor()` without a colour property on the text element returns opaque black; selection positions are 1-based, clamped to 1 … text length, and counted in the client's UTF-16 units | BIN (fourth pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P72 | `Window:SetRotation{x, y, z}`: angles in **degrees**, each reduced modulo 360; the window's surface is rotated about its centre (the three angles build a 3D rotation of the surface quad); a window without a surface first gets object mode Stretch unless the plugin set a non-zero stretch mode; `GetRotation()` returns the last table values | BIN (fourth pass: the setter, the surface's rotation setter and the surface transform with the constants 360, π and 180); S6 and `plugin-api-usage.md` §5.3, §9.3 rows 8 and 12: plugins pass values such as 0, 90, 180, 270 and headings, mostly as `z` (counts and argument shapes only) | **Confirmed** 2026-10-06 (BIN); usage values Reported (S6); direction of positive angles and order of the three rotations, OPEN. Corrected 2026-10-06 (repair): the object-mode change and the surface it creates depend on whether the window is shown (§13.20 steps 2–3, P78) |
+| P73 | Window scale: `SetScale`, `SetUIScalingGroup`, `RegisterForGlobalScaling` mark a parentless window as scaled (rebuilding it as a scaler element, P65) and act through the client's scaling service; group 0 and 60 passed to `SetUIScalingGroup` become 72; the effective scale is the window's own scale (or its group's value, default 1) times `UIScale_Global` when the window takes part in the global scale, else the own scale alone; the scale is applied by the panel-scale rule of `ui-behaviour.md` §9.2, and deferred while the window is not shown; `GetScale()` is 1 for a window never marked, else the effective scale; `SetScalingOriginPoint(x, y)` sets the scaler origin properties and is ignored on unmarked windows; `Unregister…` stops taking part in the global scale but keeps the window a scaler | BIN (fourth pass: the window methods, the scaling service, the scaler element's scale methods) | **Confirmed** 2026-10-06 (BIN only) |
+| P74 | `UIScaleChanged` fires on a window when the changed scaling group is 60 (`Global`) or equals the window's own group; its argument table carries `Index` (the group) and `Value` | BIN (fourth pass) | **Confirmed** 2026-10-06 (BIN only) |
+| P75 | `Shell.WriteLine` text reaches the chat log unchanged (no escaping); the chat log's text elements are built from a template whose `UICore_Text_parse_markup_tags` is true, so §13.4 markup in a `WriteLine` line is rendered | BIN (fourth pass: `WriteLine`); O7 (template and property) | **Confirmed** 2026-10-06 (code path BIN, template data O7); not observed on screen (M3) |
+| P76 | Class tables are plain writable tables: the binding layer installs no `__newindex` anywhere, registers each class's own methods only on its own table, and finds methods (and evaluates `IsA`) through the ordinary `__index` chain; so a function stored on a class table is what every Lua lookup through that class finds, for existing and new instances; native client code never calls plugin methods through these tables | BIN (fourth pass: string references and the instance and `IsA` paths; first-pass registration code); P19 | **Confirmed** 2026-10-06 (BIN only); not observed in a running client |
+| P77 | Base-layer operation numbers: `SetBlendMode(n)` stores `n` and gives the element the operation number 3 for `n` = 1 (Colorize), 0 for 2 (Replace), 4 for 3 (Multiply), 2 for 4 (Over), 1 for 5 (Mix colour), 6 for 6 (Grayscale), 5 for 7 (Screen), 7 for 8 ("none") and 0 for `n` = 0; a new element's number is 0; the rebuild routine reads the old element's number and passes it to the same setter, so the blend mode after a rebuild follows the table of §14.2.1 step 3; the rebuilt top elements of the plugin layout carry no media items (O7) | BIN (repair of the fourth pass, 2026-10-06: the plugin blend-mode setter and its eight-way conversion, the element's operation getter, the rebuild routine; same build and method as the fourth pass, address ranges only); O7 (media census of the 13 top elements) | **Confirmed** 2026-10-06 (BIN; media census O7) |
+| P78 | When an element has its own surface: it **wants** one when its object-mode value is non-zero, or, without a value, when it is a root panel (every plugin window); the surface exists while it wants one **and** its own visibility flag is set or `UICore_Element_KeepObjectWhenHidden` is true; the client re-evaluates this on object-mode, root-flag and visibility changes; hiding saves the surface's rotation and showing restores it; a surface for an element without an object-mode value is CanvasResize; `SetRotation` on a window without a surface clears the saved state, sets object mode 1 unless the plugin set a non-zero mode, and then targets the nearest ancestor surface; no element of the 13 resolved trees of the plugin layout (188 elements, states included) sets `UICore_Element_KeepObjectWhenHidden` | BIN (repair of the fourth pass, 2026-10-06: the root-panel constructor, the object-mode property handler, the element's visibility setter and show/hide step, the surface creation and installation steps, the surface-state save on hide, the window rotation setter); O7 (property census, read-only, 2026-10-06); `ui-behaviour.md` §11.2 (agrees) | **Confirmed** 2026-10-06 (BIN; census O7); whether an unshown top-level window reaches the screen root's surface, OPEN (§13.20) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -759,6 +783,33 @@ An enumeration is a table of name → number (plus `IsA`). Several names may sha
 - Colours are `Turbine.UI.Color` objects (§13.9); blend modes, alignments, fonts and so on
   are enum numbers.
 
+<a id="8-6"></a>
+### 8.6 Writing to class and enumeration tables (P76)
+
+Plugins add fields to, and replace fields of, the native tables (`plugin-api-usage.md` §6.3).
+The original allows all of it and gives it ordinary Lua meaning:
+
+1. Namespace, class and enumeration tables accept writes like any table; no metamethod
+   intercepts them.
+2. Each class table holds only its **own** native methods (§16); inherited methods are found
+   through the `__index` chain at each lookup. Nothing is copied into subclasses or cached.
+3. Therefore a function stored as `Turbine.UI.Control.SetBackground` is what
+   `x:SetBackground(…)` finds for every instance `x` of `Control` and of every class below it
+   (`Label`, `Window`, `Turbine.UI.Lotro.Button`, Lua subclasses), existing or created later,
+   unless a class nearer to `x` (or `x` itself) has its own field of that name. A wrapper
+   that saved the old function first can call it, because the old value is an ordinary
+   function value.
+4. Replacing a method changes only Lua lookups. The client's own code never calls plugin
+   methods through these tables: for example a control rebuilt by the client (§14.2.1)
+   re-applies its blend mode natively, and `Close()` from the game-styled close button
+   (§14.2.3) runs the native close even if `Turbine.UI.Window.Close` was replaced.
+5. `IsA` follows the same `__index` chain, so replacing `IsA` on a class table changes it
+   for that class and the classes below it.
+6. Writes stay in the apartment that made them (§6.1). Overwriting an enumeration value
+   (for example `MinstrelStance.None`) changes what Lua code reads. Whether any host function
+   reads an enumeration table back was not traced; Tessera's host never does, and takes enum
+   arguments as plain numbers.
+
 ---
 
 ## 9. Event model
@@ -1220,7 +1271,7 @@ is allowed.
 | `RemoveCommand(cmd)` | ShellCommand → number | Unregisters every name `cmd` holds; returns how many were removed (0 if `cmd` was not registered). |
 | `IsCommand(name)` | string → boolean | True if `name` is any known command name, built-in or plugin, case-insensitive. Plugins probe localized built-in names to detect the client language (S5), so built-in names must be answered. |
 | `GetCommands()` | → array of strings | Every command name (built-in and plugin, aliases included), keys 1…n, unspecified order. |
-| `WriteLine(text)` | string → nothing | Adds a line to the chat window with chat text type 8 (a system-log type that has no name in `Turbine.ChatType`). |
+| `WriteLine(text)` | string → nothing | Adds a line to the chat window with chat text type 8 (a system-log type that has no name in `Turbine.ChatType`). The text is converted to the client's UTF-16 text and posted **unchanged**: nothing is escaped (P75). The chat log draws each line in a text element built from the template that the chat-log element names (`UI_ChatLog_TextElement`; in this install `ChatLogListboxItemTemplate`), and that template has `UICore_Text_parse_markup_tags` = true (O7). So the markup of §13.4 (`<rgb=#RRGGBB>…</rgb>`, `<u>`, `<p>`, `<li>`; `<b>` and `<i>` have no visible effect, `fonts.md` §8.6) **is rendered** in `WriteLine` lines, and link markup is handled as in `fonts.md` §9.1. Tessera: render it the same way; the line's base colour and font are those of chat type 8 (`fonts.md` §9.3). |
 
 Registrations of an apartment are removed when it unloads (§6.3).
 
@@ -1291,27 +1342,35 @@ have not been observed in this build.
 
 - **Coordinates:** pixels; a control's position is relative to its parent's top-left; a
   `Window`'s position is relative to the screen (`Display`) (S2, Reported).
-- **Initial geometry (P64):** every new control, of every class, is created at left 0,
+- **Initial geometry (P64, P65):** every new control, of every class, is created at left 0,
   top 0 with width 50 and height 50 (BIN): `GetSize()` of a fresh `Turbine.UI.Control()`
-  returns 50, 50. The seven skinned classes of §14.2 also
-  name an element of the client's UI layout data when they are created. > **OPEN:** whether
-  that layout element gives the skinned controls a different initial size (it depends on the
-  layout data, `ui-layout.md`). Tessera: 50 × 50 for every class.
+  returns 50, 50. The seven game-styled classes of §14.2 name a layout element as the
+  **base** of their element (P65). Inheritance replaces the base's rectangle by the
+  descriptor's own 0, 0, 50 × 50 (`ui-layout.md` §7.2 step 1), so the layout element does
+  **not** set the initial size; its inherited children are re-laid out from the base's design
+  size to 50 × 50 by the design-time rule (`ui-layout.md` §7.3 step 8, §8.2). The base's
+  **properties** are inherited, including size limits: the game-styled windows of this
+  install inherit `UICore_Element_min_width` 150 and `UICore_Element_min_height` 100, which
+  are the very limits of §13.15, so `GetMinimumWidth()` of a fresh game-styled window
+  returns 150 and its first `SetSize` is clamped to at least 150 × 100 (values read from the
+  layout at run time). > **OPEN:** whether the creation itself applies those limits (a
+  fresh game-styled window 50 × 50 or 150 × 100 before any resize). Tessera: 50 × 50 at
+  creation; the limits apply from the first resize, as §13.15 states for every limit.
 - **Tree:** a control is shown only inside a `Window` chain (S2, Reported); top-level windows
   have no parent. `SetParent(nil)` detaches; parenting a control to itself is an error (BIN).
   Setting a new parent removes the control from the old one (S2, Reported).
 - **Visibility:** new controls and windows start hidden; plugins call `SetVisible(true)`
   (S2/S4, Reported). `IsDisplayed()` = own visibility and every ancestor's (S2, Reported).
 - **Transparency:** a bare `Control` draws nothing until it gets a background image
-  (`SetBackground`) or colour (`SetBackColor`) (S2, Reported).
+  (`SetBackground`) or colour (`SetBackColor`) (S2; BIN: a new element has no base image
+  and no overlay, §13.17).
 - **Stacking:** among siblings a higher `ZOrder` draws above a lower one and is hit first by
   the mouse; `Window:Activate()` raises a window above the siblings of equal `ZOrder`
   (S2; BIN, §13.14).
-- **Opacity:** 0.0 (fully transparent) to 1.0 (opaque). S2 says only some controls use it,
-  namely windows, to decide how they blend with the game (Reported). > **OPEN:** whether a
-  window's opacity also applies to its child controls, and whether opacity set on a
-  non-window control has any visible effect. Tessera: a window's opacity multiplies the
-  alpha of its whole content; on other controls it is stored and returned only.
+- **Opacity:** 0.0 (fully transparent) to 1.0 (opaque); rules in §13.19 (P70): it is the
+  opacity of the control's own drawing surface, so on a window it fades the whole window
+  with all its children, and on another control it has a visible effect only while the
+  control has a non-zero stretch mode (§13.18).
 - **Mouse:** a control with `SetMouseVisible(false)` does not take mouse input; the controls
   underneath handle it, but its own children still do (S2; BIN, §13.11). Capture, clicks,
   hover and the wheel: §13.12.
@@ -1338,7 +1397,7 @@ have not been observed in this build.
 | Edge attachment | `AttachEdges(left, top, right, bottom)` takes four `EdgeAttachmentType` numbers, one per edge, in that order; `GetEdgeAttachments()` returns the four in the same order. Rules: §13.16. |
 | Tree | `GetParent/SetParent(control or nil)`, `GetControls()`→ControlList (live view of children), `GetZOrder/SetZOrder(n)` |
 | State | `IsVisible/SetVisible(b)`, `IsDisplayed()`, `IsEnabled/SetEnabled(b)`, `GetOpacity/SetOpacity(0..1)`, `IsMouseVisible/SetMouseVisible(b)`, `GetWantsKeyEvents/SetWantsKeyEvents(b)`, `GetWantsUpdates/SetWantsUpdates(b)`, `GetAllowDrop/SetAllowDrop(b)`, `Focus()`, `HasFocus()` |
-| Look | `GetBackColor/SetBackColor(Color)`, `GetBackColorBlendMode/SetBackColorBlendMode(BlendMode)`, `GetBackground/SetBackground(path, DID or Graphic)` (§13.8), `GetBlendMode/SetBlendMode(BlendMode)` (applies to the background image), `GetStretchMode/SetStretchMode(n)` (§13.8). An invalid blend-mode number raises an error. |
+| Look | `GetBackColor/SetBackColor(Color)`, `GetBackColorBlendMode/SetBackColorBlendMode(BlendMode)`, `GetBackground/SetBackground(path, DID or Graphic)` (§13.8), `GetBlendMode/SetBlendMode(BlendMode)` (applies to the background image), `GetStretchMode/SetStretchMode(n)` (§13.18). A blend-mode number above 8 raises an error. How these are drawn: §13.17. |
 | Static | `Control.IsAltKeyDown()`, `Control.IsControlKeyDown()`, `Control.IsShiftKeyDown()` |
 | Events | `MouseEnter`, `MouseLeave`, `MouseDown`, `MouseUp`, `MouseClick`, `MouseDoubleClick`, `MouseHover`, `MouseMove`, `MouseWheel`, `KeyDown`, `KeyUp`, `FocusGained`, `FocusLost`, `EnabledChanged`, `VisibleChanged`, `PositionChanged`, `SizeChanged`, `DragStart`, `DragEnter`, `DragLeave`, `DragDrop`, `Update` |
 
@@ -1359,15 +1418,17 @@ global-scaling members `RegisterForGlobalScaling()`, `UnregisterForGlobalScaling
 Events: `Activated`, `Deactivated`, `Closing`, `Closed`, `UIScaleChanged`.
 
 - **Rotation:** `SetRotation` takes a table with number fields `x`, `y`, `z` (lower case);
-  `GetRotation` returns the last value set (BIN). > **OPEN:** units and pivot.
-- **Scaling:** `SetScale` with a value that is not greater than 0 is an error. A window
-  registered for global scaling receives `UIScaleChanged` (§9.3) when the scale of its group
-  or of the `Global` group (60) changes. > **OPEN:** the units of `SetScale`/`GetScale`, the
-  form of the scaling origin point, and how a window's own scale combines with its group's.
+  `GetRotation` returns the last value set (BIN). Units (degrees), pivot (the window's
+  centre) and drawing: §13.20 (P72).
+- **Scaling:** `SetScale` with a value that is not greater than 0 is an error. Units (a
+  factor, 1 = unscaled), how the window's own scale combines with its group's and with the
+  global UI scale, the origin point, `GetScale`, the group members and `UIScaleChanged`:
+  §13.21 (P73, P74).
 
-`Close()` algorithm (S2): fire `Closing` with `Cancel = false`; if a handler set `Cancel`
-true, stop; otherwise make the window not visible and fire `Closed`. Closing does not destroy
-the window. > **OPEN:** whether Escape closes plugin windows automatically. Recommended: no;
+`Close()` algorithm (S2; BIN, fourth pass): only when `IsVisible()` is true (a hidden
+window ignores `Close()`, and fires nothing), fire `Closing` with
+`Cancel = false`; if a handler set `Cancel` true, stop; otherwise make the window not
+visible and fire `Closed`. Closing does not destroy the window. > **OPEN:** whether Escape closes plugin windows automatically. Recommended: no;
 plugins handle the `Escape` action themselves.
 
 <a id="13-4"></a>
@@ -1395,8 +1456,77 @@ case-insensitively:
 | `rgb=…` | text colour. With `#` the value is 6 hex digits `RRGGBB`; without `#` the value is read as a C integer literal (decimal, `0x` hex, or octal with a leading 0), so `<rgb=FF0000>` is **not** a colour. The colour is always opaque. Colours nest: `</rgb>` returns to the colour before the matching opening tag. A value that is not entirely a number makes the tag ignored. |
 
 Any other tag is not markup. Tessera renders unrecognised and malformed tags literally.
+`b` and `i` set flags that no text routine of the client tests, so they have no visible
+effect (`fonts.md` §8.6); link markup is recognised whether or not markup is enabled
+(`fonts.md` §9.1).
 
-> **OPEN:** whether selection offsets are 0- or 1-based; default font, colour and alignment.
+**Which element the members act on (P67).** A `Label`'s text, font, colours, alignment and
+selection belong to one **text element**: the control's own element for `Label`, `TextBox`,
+`Button`, `CheckBox` and the game-styled button, and a descendant for the game-styled text box
+and check box (§14.2.2).
+
+**Defaults and conversions (P71, BIN).**
+
+- **Font.** `GetFont()` returns 0 (`Font.Undefined`) until `SetFont` succeeds, even for the
+  game-styled controls whose layout gives their text element a font. `SetFont(f)` does
+  nothing when `f` equals the stored value, or when `f` is not the DID of a record that loads
+  as a font (record type 0x42; any other value, including 0, is ignored without an error);
+  otherwise it stores `f` and sets the text element's `UICore_Text_font` to it (normal
+  slot, `fonts.md` §9.1 rule 3). The font the text is **drawn** in is the text element's normal-slot font
+  (`fonts.md` §9.1): for a plain `Label`, `TextBox`, `Button` or `CheckBox` that has never had
+  `SetFont`, the locale default font (`fonts.md` §9.1, "Initial font"; 0x42000028 in the
+  English locale record of this install); for the game-styled controls, the font of their
+  layout element (read at run time).
+- **Fore colour.** `SetForeColor(c)` with nil (or a non-`Color` value) raises an error;
+  otherwise it sets the text element's `UICore_Text_font_color`. `GetForeColor()` reads the
+  text element's colour properties; when the text element has none, it returns opaque black
+  (R 0, G 0, B 0, A 1). The default outline colour is also opaque black (`fonts.md` §8.4).
+  > **OPEN:** the colour a text element **draws** with when it has no colour property (the
+  > dictionary gives `UICore_Text_font_color` no default, O7; the text widget's built-in
+  > value was not traced, `fonts.md` §8.4 "Not covered"). Tessera: draw with the value
+  > `GetForeColor()` reports (opaque black) until an owner screenshot of a plain label
+  > settles it.
+- **Alignment.** `GetTextAlignment()` returns 1 (`TopLeft`) for every new label. The value is
+  stored on the plugin control, not read back from the element, so a game-styled control
+  whose layout centres its text still reports 1. `SetTextAlignment(a)` does nothing when `a`
+  equals the stored value (so the first `SetTextAlignment(TopLeft)` on a new label changes
+  nothing, even on a game-styled control drawn centred); otherwise it stores `a` and sets the
+  text element's justification properties (`fonts.md` §7.4, values of enum mapper
+  0x23000177):
+
+  | `a` | Horizontal justification | Vertical justification |
+  |---|---|---|
+  | 1 `TopLeft` | 5 (left) | 2 (top) |
+  | 2 `TopCenter` | 3 (centre) | 2 |
+  | 3 `TopRight` | 4 (right) | 2 |
+  | 4 `MiddleLeft` | 5 | 3 (centre) |
+  | 5 `MiddleCenter` | 3 | 3 |
+  | 6 `MiddleRight` | 4 | 3 |
+  | 7 `BottomLeft` | 5 | 1 (bottom) |
+  | 8 `BottomCenter` | 3 | 1 |
+  | 9 `BottomRight` | 4 | 1 |
+  | 0 `Undefined` | 5 | 2 |
+  | above 9 (or negative, compared unsigned) | 5 | 2, and the stored value becomes 0 |
+
+  (The table is the client's; the drawn position then follows `fonts.md` §7.4, including its
+  rule that reads both axes through one table.)
+- **Selection** (all positions **1-based**, counted in the client's UTF-16 code units, the
+  same units as `GetTextLength()`; a character outside the Basic Multilingual Plane counts
+  as two):
+  - `GetSelectionStart()` = the first selected position (the text element's 0-based start
+    + 1); with no selection it reports whatever start the text element holds, + 1
+    (Probable: the caret position).
+  - `GetSelectionLength()` = the number of selected units (0 with no selection).
+  - `SetSelection(start, length)`: when `length` ≤ 0, deselect; otherwise the start is
+    max(`start`, 1), then min(that, text length), and the selection covers `length` units
+    from there.
+  - `SetSelectionStart(s)`: with no selection, it only deselects (nothing becomes
+    selected); otherwise it moves the selection to start at min(max(`s`, 1), text length) and
+    keeps its length.
+  - `SetSelectionLength(n)`: `n` ≤ 0 deselects; otherwise the selection keeps its start and
+    covers `n` units.
+  > **OPEN:** whether the end of a selection that runs past the text is clamped by the text
+  > element. Tessera: clamp the end to the text length.
 
 <a id="13-5"></a>
 ### 13.5 `TextBox` (extends `Label`)
@@ -1465,12 +1595,10 @@ events `CheckedChanged`, `EnabledChanged`.
   - If the loaded image has an unsupported format, the call **raises an error**.
 - `Turbine.UI.Graphic`: `Graphic()` empty, `Graphic(did)` or `Graphic(path)` (S2);
   accepted wherever a background is.
-- Stretch modes (S3 stubs, community-observed, Reported): 0 = no scaling, image cropped or
-  tiled to the control and clipped by the parent; 1 = scale the image by the ratio between
-  the control's size when the mode was set and its current size; 2 = resize the control to
-  the image's size when set, stretch afterwards; 3 = like 0 but not clipped by the parent;
-  4 = like 1 but the control ignores the mouse. > **OPEN:** confirm by observation; mode 0
-  reportedly also resets alpha.
+- Each call first removes the previous base image; the new image becomes the element's base
+  image layer, drawn with the operation set by `SetBlendMode` (Replace until then): §13.17.
+- Stretch modes: §13.18 (BIN, P69). The community descriptions that earlier revisions
+  carried as Reported (S3 stubs) are kept there for comparison.
 
 <a id="13-9"></a>
 ### 13.9 `Color` (P37)
@@ -1988,6 +2116,295 @@ Worked examples (synthetic). Reference: parent Q = 200 × 100; control R: `RL` 1
 > parent is moved rather than resized. Tessera: top-level windows are laid out against the
 > UI area like any child of the root; moving a parent does not re-capture.
 
+<a id="13-17"></a>
+### 13.17 Drawing backgrounds and back colours (P68)
+
+Every plugin control is a client UI element, so it has the two image layers of
+`ui-layout.md` §9.6 and is drawn by the same CPU compositor as the native panels
+(`ui-layout.md` §9.6.1–§9.6.3). The plugin calls map onto those layers as follows (BIN).
+
+| Plugin call | Layer and effect |
+|---|---|
+| `SetBackground(v)` | Removes the current base image, then makes the image of §13.8 the element's **base image**. It is drawn at its native pixel size from the control's top-left corner, repeated (tiled) to cover the control's rectangle and clipped to it; it is never scaled by the layer itself (`ui-layout.md` §9.6). The base layer's opacity factor (`UICore_Element_alphablendmod`) has no plugin setter and stays 1.0, so it never weakens a plugin background. `SetBackground` does not change the layer's operation. |
+| `SetBlendMode(n)` | Sets the **base layer's operation**. `n` is converted exactly like a layout draw mode `n` (`ui-layout.md` §9.6.1 table; the `BlendMode` values are the `DrawModeType` values): 1 `Color` → Colorize, 2 `Normal` → Replace, 3 `Multiply` → Multiply, 4 `AlphaBlend` → Over, 5 `Overlay` → Mix colour, 6 `Grayscale` → Grayscale (no base-layer routine: the image is not drawn), 7 `Screen` → Screen, 8 `None`/`Undefined` → a "none" operation (no routine was found; Tessera: draw nothing), 0 → Replace. A value above 8 raises an error and changes nothing. `GetBlendMode()` returns the last value set (2 for a new control). The element keeps the converted operation as an **operation number** (0–7), which is not the blend-mode value; the full table is in §14.2.1 step 3, where a rebuild reuses it. |
+| *(no call)* | A new control's base operation is **Replace**, the same as `Normal`: an image with transparent pixels **replaces** the pixels below it in the canvas, alpha included, instead of blending over them. Plugins that want transparency call `SetBlendMode(AlphaBlend)`. |
+| `SetBackColor(c)` | Makes `c` the element's **overlay** as a colour fill without an image (`ui-layout.md` §9.6.3, "Without an image"), drawn **after** the base image, with the operation of the stored back-colour blend mode. `c` is stored on the control and returned by `GetBackColor()`. |
+| `SetBackColor(nil)` | Removes the overlay and resets the stored colour to transparent black (A 0, R 0, G 0, B 0). The stored blend mode is kept. |
+| `SetBackColorBlendMode(n)` | Raises an error and changes nothing for `n` above 8. Otherwise stores `n` and then **re-creates the overlay fill** with the stored colour and the operation of draw mode `n` (same conversion as above; 8 gives the "none" operation). It does so even when no back colour was ever set: the fill then uses the stored transparent black, so with mode 2 (Replace) it **clears the whole rectangle to transparent black**, while with mode 4 (Over) it draws nothing. `GetBackColorBlendMode()` returns the stored value (2 for a new control). |
+
+**Colour conversion.** A `Color`'s four components (stored as 32-bit floats, §13.9) are turned
+into the overlay's ARGB value when it is drawn: each component is multiplied by 255.0 in
+32-bit floating point and converted to an integer by truncation toward zero (so 0.999 gives
+254, as for text, `fonts.md` §8.4); the four integers are then combined in 32-bit integer
+arithmetic: start with A, shift left by 8 bits and OR in R, shift left by 8 bits and OR in
+G, shift left by 8 bits and OR in B. Components are **not clamped**: a
+component above 1.0 or below 0.0 gives an integer outside 0–255 whose bits are OR-ed into the
+neighbouring channels (a NaN or out-of-range value converts to −2³¹). Tessera reproduces
+this packing exactly; it is deterministic.
+
+**Order within one control** (`ui-layout.md` §9.3, §9.6; `fonts.md` §8.4): base image, then
+the back-colour overlay, then the control's text (label-derived classes), then its children
+in z order. So a back colour drawn with the default Replace operation **hides the background
+image completely**, and a back colour with Multiply, Color (Colorize) or Screen tints it.
+A plugin control never draws its own content after its children (it has no setter for
+`UICore_Element_DrawAfterChildren`; game-styled controls may inherit it from their layout).
+
+**Where it is drawn.** Into the canvas of the nearest element, from the control upwards,
+that has its own drawing surface: the control itself when its stretch mode is not 0
+(§13.18), otherwise its window (a window has its own surface whenever it is shown, §13.19,
+and a hidden window draws nothing). Replace and
+the Replace back-colour fill therefore write their alpha into that canvas: a back colour of
+alpha 0.5 with the default mode makes that rectangle of the window half transparent, so the
+game scene shows through when the window's surface is composed onto the screen
+(`ui-layout.md` §9.6.1 OPEN on that composition; Tessera's rule there applies).
+
+**Skins.** A background set by DID is drawn unskinned until the next skin switch, then
+re-skinned (`skin-definition.md` §6.8, SK41); file images are never skinned.
+
+Worked example (synthetic). A window's canvas pixel is opaque (A 255, R 100, G 100, B 100). A
+child control covers it with a 32-bit image whose pixel is (A 128, R 200, G 0, B 0):
+
+1. Default operation (Replace): the canvas pixel becomes (128, 200, 0, 0); the window is
+   half transparent there.
+2. After `SetBlendMode(Turbine.UI.BlendMode.AlphaBlend)` (Over, `ui-layout.md` §9.6.2):
+   *a* = 128, *k* = 129, the destination is opaque, so each channel is
+   mix(*D*, *S*, 129): R = 100 − div256((100 − 200) × 129) = 100 − (−50) = 150,
+   G = B = 100 − div256(100 × 129) = 100 − 50 = 50; A stays 255: (255, 150, 50, 50).
+3. With additionally `SetBackColor(Turbine.UI.Color(0.5, 0, 0, 1))` (A 0.5, R 0, G 0, B 1,
+   §13.9 argument order) and the default back-colour mode: the colour packs to
+   (127, 0, 0, 255) and Replace writes (127, 0, 0, 255) over the image's result.
+
+<a id="13-18"></a>
+### 13.18 Stretch modes and own surfaces (P69)
+
+`SetStretchMode(n)` stores `n` (an integer, not checked) as the element's
+`UICore_Element_ObjectMode` property and records that the plugin set a stretch mode (used by
+§13.20). The property is the "object mode" of `ui-layout.md` §5.9 and §8.4: data enum
+0x2300017A, 0 None, 1 Stretch, 2 Tile, 3 CanvasResize. Setting it to a non-zero value gives
+the element **its own drawing surface**; setting it to 0 removes the surface (BIN: the
+property-change handler). If the control already has a surface, the surface is refreshed
+for the new mode. The surface exists only while the element is shown; the exact rule for
+when an element has a surface is in §13.19 ("Which elements have a surface"). `GetStretchMode()` returns the property: the plugin's value, otherwise
+the value from the element's layout (game-styled scaled windows, §14.2.1), otherwise **0**
+(the dictionary has no default, O7).
+
+| Mode | Own surface | Canvas | What changes for the control |
+|---|---|---|---|
+| 0 (default) | no | — | Drawn into its window's (or the nearest surfaced ancestor's) canvas, clipped to the control and its ancestors; images tiled at native size (§13.17). |
+| 1 Stretch | yes | the control's size when the surface is created | When the control is later resized, its children are **not** laid out again (`ui-layout.md` §8.4 step 1) and the canvas keeps its size; the surface is drawn scaled onto the new rectangle (`ui-behaviour.md` §9.2, Probable). A background set at size S therefore appears scaled by (new size ÷ S). |
+| 2 Tile | yes | the size of the control's base image (or a size set by client code) when the surface is created | If either side of that size is not a power of two, the client writes a diagnostic and uses mode 3 instead. How the canvas is repeated over the rectangle: `ui-layout.md` §8.4 OPEN. |
+| 3 CanvasResize | yes | follows the control's size | Drawn 1:1 as its own layer (Probable). |
+| 4 and other values | yes (any non-zero value) | the control's size; the surface is created with the value as given (the creation step special-cases only 2) | Stored and returned; no label in the data enum; any other effect not traced. |
+
+Community descriptions (S3 stubs; Reported, kept for comparison): 0 = no scaling, cropped or
+tiled and clipped by the parent; 1 = scaled by the ratio of the size when the mode was set
+to the current size (**agrees** with mode 1 above); 2 = the control takes the image's size
+and stretches afterwards (**disagrees**: BIN gives the canvas, not the control, the image's
+size); 3 = like 0 but not clipped by the parent (consistent with a separately composed
+surface, not traced); 4 = like 1 but the control ignores the mouse (not traced); "mode 0
+resets alpha" (explained by the default Replace operation of §13.17, which does not depend
+on the stretch mode).
+
+> **OPEN:** (1) how an own surface of a non-root element is composed into its parent's
+> canvas or onto the frame: clipping by intermediate parents, filtering when scaled, blending
+> (`ui-layout.md` §9.6.1 and §8.4 OPENs; `fonts.md` Q3); (2) the drawing of mode 2 and the
+> effects of mode 4; (3) the element flag that `SetStretchMode(1)` also sets on a control
+> that has a parent. Tessera: compose an own surface with straight source-over at the
+> control's rectangle, clipped to its window only; scale mode-1 surfaces with linear
+> filtering; treat 4 like 1 and leave mouse visibility unchanged; treat 2 as 3 unless both
+> image sides are powers of two, then repeat the canvas from the control's top-left corner.
+
+<a id="13-19"></a>
+### 13.19 Opacity (P70)
+
+`SetOpacity(f)` sets the element's `UICore_Element_ObjectOpacity` to `f` (a 32-bit float;
+the setter does not clamp). `GetOpacity()` returns the property; its dictionary default is
+1.0 (range 0–1, O7). The property is the opacity of the element's **own surface**
+(`ui-layout.md` §5.9): it fades that surface, with everything drawn into it, when the
+surface is composed.
+
+<a id="13-19-surfaces"></a>
+**Which elements have a surface** (BIN, fourth pass and its repair: the root-panel
+constructor, the object-mode property handler, the element's show/hide step and the
+surface-creation step; `ui-behaviour.md` §11.2). Two conditions decide it, and the client
+re-evaluates them whenever the object mode, the root flag or the element's visibility
+changes:
+
+1. **The element wants a surface.** If the element has a `UICore_Element_ObjectMode` value
+   (from its layout or from `SetStretchMode`, §13.18), it wants one exactly when that value
+   is not 0. If it has no value, it wants one exactly when it is a **root panel**. Every
+   window (`Turbine.UI.Window`, `Turbine.UI.Lotro.Window`, `GoldWindow`) is built as a root
+   panel (`ui-layout.md` §9.1 step 3; BIN: the window classes pass the root flag to the
+   shared control constructor); other controls are not root panels.
+2. **The element is shown**: its own visibility flag is set (`IsVisible()` true; the
+   ancestors' visibility, `IsDisplayed()`, does not enter), **or** its
+   `UICore_Element_KeepObjectWhenHidden` property is true. No element of the plugin layout
+   of §14.2.1 sets that property (O7: none of the 188 elements of its 13 resolved top-level
+trees, states included, has it in this install; read at run time) and
+   plugins have no setter for it, so for every plugin control this second condition is
+   simply "`IsVisible()` is true".
+
+The surface exists exactly while both conditions hold. Showing an element that wants a
+surface creates one; hiding it releases the surface; changing the object mode to 0 releases
+it; changing it to non-zero on a shown element creates (or refreshes) it. A surface created
+for an element without an object-mode value uses CanvasResize (§13.18, §20). Because new
+controls and windows **start hidden** (§13.1), a new window has **no surface until its first
+`SetVisible(true)`**, and loses it again each time it is hidden. A hidden element draws
+nothing, so the absence of a surface while hidden is not visible; it matters for
+`SetRotation` (§13.20).
+
+Therefore, for opacity:
+
+- **Windows** have a surface whenever they are shown, unless the plugin stored object mode
+  0. A window's opacity fades the window **and all its children**, its frame (game-styled
+  windows), backgrounds, back colours and text alike. An explicit `SetStretchMode(0)` on a
+  window stores object mode 0 and so removes its surface (condition 1), after which its
+  opacity has no effect. Where such a window is then drawn was not traced; Tessera draws
+  every shown window through a surface and ignores mode 0 **for drawing only**: the stored
+  mode, `GetStretchMode()` and the "has a surface" test of §13.20 step 2 still follow
+  conditions 1 and 2.
+- **Other controls** have a surface only while their stretch mode is not 0 (§13.18) and they
+  are shown. With mode 0, `SetOpacity` is stored and returned by `GetOpacity()` and has
+  **no visible effect**; after `SetStretchMode(1)` (or any non-zero mode) it fades the
+  control and its children; setting mode 0 again removes the effect.
+
+In every case `GetOpacity()` returns the stored property whether or not a surface exists.
+
+> **OPEN:** whether a child's own surface inside a window is faded by the window's opacity
+> as well (it depends on the composition of nested surfaces, §13.18 OPEN (1)), and whether
+> values outside 0–1 are clamped when drawing. Tessera: compose nested surfaces into their
+> window first, so the window's opacity applies to them; clamp to 0–1 when drawing and
+> return the stored value from `GetOpacity()`.
+
+<a id="13-20"></a>
+### 13.20 Window rotation (P72)
+
+`SetRotation(t)` (windows only):
+
+1. Reads `t.x`, `t.y`, `t.z` as numbers (angles in **degrees**).
+2. **Object mode.** The test "has its own surface" uses the rule of §13.19 ("Which elements
+   have a surface"): a window has one exactly while it is shown, unless the plugin stored
+   object mode 0. If the window has **no** surface at the moment of the call (it is hidden,
+   for example never shown yet, or its stored object mode is 0), then, unless the plugin
+   has set a **non-zero** stretch mode (§13.18), the window's object mode is set to 1
+   (Stretch), so `GetStretchMode()` reports 1 from now on. If the window is shown, this
+   creates its surface at once (in Stretch mode). If it is hidden, no surface is created
+   now; the window gets a Stretch surface when it is next shown. Either way, from then on
+   the window's children are not laid out again when it is resized (§13.18, mode 1). If the
+   window **has** a surface at the moment of the call, its object mode is left unchanged
+   (a plain window keeps reporting `GetStretchMode()` 0; a scaled game-styled window keeps
+   its layout value, §14.2.1).
+3. **Target surface.** The three angles go to the window's own surface if it has one now,
+   otherwise to the surface of the nearest ancestor that has one. Only when a surface was
+   found are the angles stored for `GetRotation()` (a table with `x`, `y`, `z`); otherwise
+   the call has no further effect (the object-mode change of step 2 stays). The surface
+   ignores a change when each angle differs from the previous one by at most 0.0002.
+   When the angles went to the window's own surface, the window also remembers the
+   resulting rotation: when the window is hidden and shown again, the new surface gets the
+   remembered rotation, so a rotation survives hide/show. A call made while the window had
+   no surface clears the remembered surface state of the last hide; the next surface then
+   gets the rotation the window remembered from its own surface (none, that is 0, 0, 0,
+   for a window that was never rotated while shown). So a `SetRotation` on a hidden window
+   **never rotates that window** when it is shown later: plugins must call it again after
+   `SetVisible(true)`. > **OPEN:** whether a top-level window that has no surface can reach
+   any ancestor surface (the screen root's, the window's parent after it is attached to
+   the screen, `ui-layout.md` §9.1 step 4), and so whether such a call rotates something
+   else or nothing. Tessera: it rotates nothing, `GetRotation()` keeps its previous value,
+   and the object-mode change of step 2 still happens.
+4. Drawing: each angle is reduced modulo 360 (C `fmod`, so the sign is kept) and converted
+   to radians as angle × π ÷ 180 (32-bit floats). The surface's rectangle is drawn as a
+   quad rotated **about its centre** by the three rotations (about the screen's horizontal
+   axis for `x`, the vertical axis for `y`, the axis out of the screen for `z`), so `z`
+   turns the window in the screen plane and `x`/`y` tilt it. When all three stored angles
+   are within 0.0002 of 0, the surface is drawn by the ordinary unrotated path.
+
+Plugin usage agrees: the values plugins pass are degrees, almost always as `z` (0, 90, 180,
+270, headings), with a few `x` tilts (S6 and `plugin-api-usage.md` §5.3, §9.3 rows 8 and
+12; usage counts, Reported).
+
+> **OPEN:** the direction in which a positive angle turns on screen, the order in which the
+> three rotations are combined, whether `x`/`y` tilts use a perspective projection, and
+> whether hit testing follows the rotated quad (the hit test of §13.11 uses unrotated
+> rectangles). Tessera (provisional, to be settled by an owner test plugin that rotates an
+> arrow image by `z` = 90): positive `z` turns counter-clockwise on screen; rotations apply
+> in the order `x`, `y`, `z` with an orthographic projection; hit testing ignores rotation.
+
+<a id="13-21"></a>
+### 13.21 Window scale and scaling groups (P73, P74)
+
+The scaling members act through the client's UI-scaling service on a **scaler** element
+(the `UIScaler` game types of `ui-behaviour.md` §9.2). Terms used below:
+
+- **marked**: the window has been made scalable. The first `SetScale`,
+  `SetUIScalingGroup` or `RegisterForGlobalScaling` on a window **without a parent** marks
+  it; nothing unmarks it. On a window with a parent these three calls do nothing.
+- **global**: the window takes part in the global UI scale (`UIScale_Global`,
+  `ui-behaviour.md` §9.1).
+
+Rules (BIN):
+
+1. **Marking rebuilds the element** (P65): a plain window becomes a bare `UIScaler` element
+   (no layout properties: no object mode, so its surface uses CanvasResize, §13.18; no size
+   limits; group and origin set by the scaling calls below); a game-styled window is rebuilt
+   from `LotroScalerWindow_Container` (§14.2.1), which in this install has object mode
+   CanvasResize, scaling group 72, origin 0, 0 and the window size limits (values read from
+   the layout at run time). In both cases the window is **resized** when scaled and its
+   children follow their own edge modes (plugin children without attachments keep their
+   positions, §13.16; the game-styled frame follows its layout edge modes). The title text
+   is set again.
+2. **Group.** `SetUIScalingGroup(g)` stores `g` as the element's
+   `UIComponent_UIScaler_Group`, after replacing it by 72 when it is 0 (both window kinds)
+   or 60 (plain windows only; a game-styled window keeps 60). `SetScale` sets the group to
+   72 **every time** it is called, on both window kinds, undoing an earlier
+   `SetUIScalingGroup`.
+   `GetUIScalingGroup()` returns 0 for an unmarked window, else the stored group. The
+   group's **value** is the window's own scale when one was set (rule 4), otherwise the
+   group's option value (`ui-behaviour.md` §9.1); a group without an entry in
+   `UIScaleDefinition_Array` (72 has none in this install) has the value 1.0.
+3. **Global.** Each window keeps a "global wanted" flag: false for a new plain window, set
+   true when a game-styled window is built as a scaler, set by `RegisterForGlobalScaling()`
+   and cleared by `UnregisterForGlobalScaling()` (which does nothing on an unmarked window
+   and leaves a marked one marked). `RegisterForGlobalScaling`, `UnregisterForGlobalScaling`
+   and `SetUIScalingGroup` apply the flag to the scaler at once; a plain window's `SetScale`
+   applies it too; a game-styled window's `SetScale` does not, so there the scaler keeps
+   its current state (after a first, marking `SetScale` that is the scaler element's
+   initial state, not traced). > **OPEN:** the initial global state of the game-styled
+   scaler element (`UIScalerPanel`). Tessera: global.
+4. **Effective scale** *s*. With *b* = the group's value (rule 2): a global window has
+   *s* = *b* × `UIScale_Global` (when this is recomputed by `RegisterForGlobalScaling` or
+   `SetUIScalingGroup` and `UIScale_Global` is 0, *s* keeps its previous value); a
+   non-global window has *s* = *b*. `SetScale(f)`: `f` ≤ 0 raises an error (on a parentless
+   window); otherwise the window is marked if needed, `f` becomes the window's own scale and
+   *s* = `f` × `UIScale_Global` when global, else `f`. So `SetScale` takes a **factor**
+   (1 = unscaled) and replaces the group's value for this window.
+5. **Applying** *s* uses the panel-scale rule of `ui-behaviour.md` §9.2 steps 2–6 (fit to
+   the screen, size = unscaled size × *s* with the size limits scaled, scaling origin kept
+   in place, clamp to the screen, cache *s*). While the window is not visible the
+   application is postponed and done when it is shown (Probable: a pending flag is set).
+6. `GetScale()`: 1.0 for an unmarked window; otherwise *s* (including the global factor).
+   Example: global window, `UIScale_Global` 1.25, `SetScale(2)` → `GetScale()` = 2.5.
+7. `SetScalingOriginPoint(x, y)`: on a marked window, stores `x`, `y` as
+   `UIComponent_UIScaler_Origin_X`/`_Y` (unscaled window pixels; the point that stays in
+   place, `ui-behaviour.md` §9.2 step 4); on an unmarked window it does nothing.
+   `GetScalingOriginPoint()` was not traced; Tessera returns the two stored values (0, 0 by
+   default).
+8. **`UIScaleChanged`** (P74) fires on a window when the scale of scaling group 60
+   (`Global`) changes, or the scale of the group equal to the window's own group (as rule 2
+   reports it). The argument table has `Index` = the group that changed and `Value` = its
+   new value (§9.3). > **OPEN:** which windows the client notifies (all windows or only
+   marked ones), and whether a `SetScale` on the window itself fires it. Tessera: notify
+   every marked window; `SetScale` does not fire it.
+
+Worked example (synthetic). A parentless plain window of unscaled size 300 × 200 at
+(100, 100), origin (0, 0), on a 1920 × 1080 screen, `UIScale_Global` 1.0:
+`RegisterForGlobalScaling()` marks it (rebuild) and makes it global, *s* = 1.0 (group 72,
+value 1.0); `SetScale(1.5)` gives *s* = 1.5 × 1.0 = 1.5; the fit test passes
+(1.5 ≤ 1920 ÷ 300 and 1.5 ≤ 1080 ÷ 200); the size becomes 450 × 300; with origin (0, 0) the
+position stays (100, 100); `GetScale()` returns 1.5. With `UIScale_Global` 0.8 instead,
+*s* = 1.2 and the size 360 × 240. Without the `RegisterForGlobalScaling()` call,
+`SetScale(1.5)` alone marks the window non-global and *s* = 1.5 whatever `UIScale_Global`
+is.
+
 ---
 
 ## 14. Game-styled UI (`Turbine.UI.Lotro`)
@@ -2005,8 +2422,8 @@ payload is what follows the 8-byte block header described in the dat container s
 | Offset | Size | Type | Meaning |
 |---|---|---|---|
 | 0 | 4 | u32 LE | The record's own DID (`0x42xxxxxx`) |
-| 4 | 4 | u32 LE | Nominal point size; equals the trailing number of the enum name (e.g. 20 for `TrajanPro20`) |
-| 8 | … | — | Glyph metrics and texture references: `fonts.md` |
+| 4 | 4 | u32 LE | **Line height** in pixels: the height of the line box, equal to the largest glyph height of the record (`fonts.md` §3.2). In this install it also equals the number at the end of the enum name (e.g. 20 for `TrajanPro20`); that is an observation, not a rule — read the field. (Corrected 2026-10-06: earlier revisions called it a "nominal point size".) |
+| 8 | … | — | Widest glyph, glyph count, glyph entries and the trailer with the atlas DIDs: `fonts.md` §3.2 (the complete layout) |
 
 Location: 45 font records in `client_local_English.dat`, 3 (`0x42000027`, `0x42000028`,
 `0x420000FD`) in `client_general.dat`. Records were stored uncompressed (directory flags 2).
@@ -2026,10 +2443,225 @@ Class and base names are BIN (registration); the look descriptions are S2 (Repor
 | `TextBox` | `Turbine.UI.TextBox` | The game's standard text box (S2). |
 | `ScrollBar` | `Turbine.UI.ScrollBar` | The game's standard scroll bar (S2); event `OrientationChanged` (S2, BIN). |
 
-Art comes from the client's UI skin data (see `ui-layout.md`). Tessera may draw them with its
-own neutral frame art of the same metrics. > **OPEN:** frame border widths and title-bar
-height (plugins lay out content assuming them), and which frame parts exist (for example
-whether the skinned window has a close button); no source describes them.
+The rest of this section (§14.2.1–§14.2.6) rests on BIN (fourth pass, P65–P67) and on the
+layout data (O7). Element IDs, the entry key and the layout labels are what the client
+uses; the layout DID, rectangles, edge modes, properties and art are **observations of this
+install** and must be read from the user's data at run time (`ui-layout.md` §3–§7).
+
+<a id="14-2-1"></a>
+#### 14.2.1 How the controls are built (P65)
+
+1. **Layout.** All seven classes use top-level elements of one layout: the one that the
+   `UILAYOUT` DID map (root map key 4, `ui-layout.md` §3.2) gives for entry key
+   **0x100000C8** (labelled `luaplugins`; 0x22000826 in this install, design size 1024 ×
+   768).
+2. **Element.** When the plugin layer creates the control's element (at construction), it
+   writes a **based** element descriptor: no type of its own, base layout = that layout,
+   base element = the ID below, rectangle 0, 0, 50 × 50 (P64), and a run-time element ID
+   (a counter of the plugin layer). That ID replaces the base's (`ui-layout.md` §7.3
+   step 2), so the control's top element carries the run-time ID; its inherited
+   descendants keep their layout IDs.
+   The client then builds it like any based descriptor: resolve the base
+   (`ui-layout.md` §7), merge (`ui-layout.md` §7.2–§7.3: the 50 × 50 rectangle replaces the
+   base's, the base's properties, states, media and children are inherited, the inherited
+   children are re-laid out from the base's size to 50 × 50 by the design-time rule),
+   create the tree (`ui-layout.md` §9.2), and for windows open it as a root panel
+   (`ui-layout.md` §9.1 steps 2–5).
+
+   | Class | Base element ID | Label in the layout (this install) | Engine or game type (resolved) |
+   |---|---|---|---|
+   | `Button` | 0x100022A7 | `LotroButton` | Button |
+   | `GoldButton` | 0x100022A8 | `LotroButtonGold` | Button |
+   | `CheckBox` | 0x100025AF | `LotroCheckBox` | Button |
+   | `TextBox` | 0x100022A9 | `LotroTextBox` | Field |
+   | `ScrollBar`, horizontal | 0x1000239E | `LotroScrollBar_Horizontal` | Scrollbar |
+   | `ScrollBar`, vertical | 0x1000239F | `LotroScrollBar_Vertical` | Scrollbar |
+   | `Window` | 0x10002294 | `LotroWindow_Container` | Field |
+   | `Window`, marked as scaled (§13.21) | 0x10004D37 | `LotroScalerWindow_Container` | `UIScalerPanel` (game type 0x10000272) |
+   | `GoldWindow` | 0x10002299 | `LotroWindowGold_Container` | Field |
+   | `GoldWindow`, second variant | 0x10004D38 | `LotroScalerWindowGold_Container` | `UIScalerPanel` |
+   | plain `Turbine.UI.Window` marked as scaled | none in effect: the descriptor has the type `UIScaler` (0x100000E8), which wins over the base reference 0x10004CE3 it also carries (`ui-layout.md` §7.1 step 1) | (`LuaWindow_Container`, not used) | `UIScaler` |
+
+   The scroll bar's element is chosen by its orientation when the element is built; the
+   window's by whether it is marked as scaled. A `GoldWindow` chooses its scaled variant by
+   a different flag, which the plugin layer sets in the control's constructor from a query
+   to the UI-scaling service; its meaning was not traced. > **OPEN:** what that query
+   answers (Probable: whether the plugin's manager option "use global scaling",
+   `Plugin:GetUsesGlobalScaling()`, §5.4, is on). Tessera: a `GoldWindow` uses its scaled
+   variant exactly when a `Window` in the same state would.
+3. **Rebuilds.** The element is destroyed and built again from a new descriptor when a window
+   is first marked as scaled (§13.21) and when a game-styled scroll bar's orientation changes
+   (it then fires `OrientationChanged`). A rebuild keeps visibility, position, size, z-level
+   and the background image, but passes the old element's base-layer **operation number**
+   (§13.17) to `SetBlendMode` as if it were a blend-mode value, so the operation can change.
+   Tessera reproduces this exactly.
+
+   The operation numbers (BIN, repair of the fourth pass: the plugin's blend-mode setter,
+   which stores the value and converts it, the element's operation setter and getter, and
+   the rebuild routine, which reads the old element's operation number and passes it to
+   that setter; numeric constants under decision 0012):
+
+   | Blend mode last set (`n`) | Operation (§13.17) | Operation number | After one rebuild: `GetBlendMode()` | Operation after one rebuild |
+   |---|---|---|---|---|
+   | never set (new control), 0 or 2 `Normal` | Replace | 0 | 0 | Replace |
+   | 5 `Overlay` | Mix colour | 1 | 1 | Colorize |
+   | 4 `AlphaBlend` | Over | 2 | 2 | Replace |
+   | 1 `Color` | Colorize | 3 | 3 | Multiply |
+   | 3 `Multiply` | Multiply | 4 | 4 | Over |
+   | 7 `Screen` | Screen | 5 | 5 | Mix colour |
+   | 6 `Grayscale` | Grayscale | 6 | 6 | Grayscale |
+   | 8 `None`/`Undefined` | "none" | 7 | 7 | Screen |
+
+   Rules:
+   - A new element's operation number is 0 (Replace), as §13.17 states; so a control that
+     never called `SetBlendMode` reports `GetBlendMode()` 2 before a rebuild and **0**
+     after it, with the same Replace drawing.
+   - Operation numbers are 0–7, so the call made by the rebuild never raises the
+     "above 8" error of §13.17.
+   - The number read is the old element's current base-layer operation, whoever set it.
+     The top elements that are rebuilt (the four window containers, the two scroll bars
+     and the plain window) carry no media items of their own in this install (O7), so the
+     number comes from the plugin's `SetBlendMode` or is the initial 0. Tessera reads the
+     number from its own element state, not from a cached blend-mode value.
+   - The mapping is applied again at **every** rebuild. A window is rebuilt at most once
+     (when first marked as scaled), but a game-styled scroll bar is rebuilt at every
+     orientation change, so repeated changes walk the table: for example `SetBlendMode(8)`
+     followed by three orientation changes gives `GetBlendMode()` 7, then 5, then 1, with
+     the operations Screen, Mix colour and Colorize; every chain except the one starting
+     at 6 (`Grayscale`, a fixed point) ends at 0 (Replace) after at most seven rebuilds.
+
+   Example: a plugin calls `SetBlendMode(Turbine.UI.BlendMode.AlphaBlend)` (4, Over,
+   operation 2) on a window and then `SetScale(1.5)`; the rebuild calls `SetBlendMode(2)`,
+   so `GetBlendMode()` reports 2 and the background is drawn with Replace.
+4. **Skins** reach these controls like any layout element: their Image items pass the
+   base-image setter (`skin-definition.md` §6.8, SK42). A skin's geometry override can never
+   change the control's own rectangle: the descriptor's 50 × 50 replaces the base's, and
+   the plugin's later sizes replace that. Whether a top-level override keyed by one of these
+   base IDs is applied at all was not traced (overrides match the ID path,
+   `ui-layout.md` §9.8, and the built top element carries the run-time ID of step 2); if it
+   is applied to the base, it changes only the size from which the inherited children are
+   re-laid out (`ui-layout.md` §7.3 step 8). Tessera: apply no top-level override to these
+   controls; overrides of their descendants by ID path apply as usual.
+5. **Fallback.** If the layout, the entry key or an element is missing (a modified install),
+   the client cannot build the element. Tessera: build a plain element of the base class
+   (as `Turbine.UI.Window`, `Button`, …) with its own neutral art, and log once per class.
+
+<a id="14-2-2"></a>
+#### 14.2.2 Text and state of the game-styled controls (P67)
+
+- **Button**, **GoldButton**: the button element itself is the label's text element (§13.4).
+  Its text properties, button states and art come from the layout (resolved through its
+  base chain); `Click`, `MouseClick` and the other events follow §13.6 and §13.12.
+- **TextBox**: the text element is the descendant with ID 0x100022AA (`LotroTextBox_Text`);
+  every `Label`/`TextBox` member acts on it. The control's own element only carries the
+  frame art (a box frame from its base chain).
+- **CheckBox**: the text element is the descendant 0x100025B1 (`LotroCheckBox_Text`); the
+  check mark is the descendant 0x100025B0 (`LotroCheckBox_CheckBox`, a two-state button
+  with `UICore_Button_boolean_button`), which shows the checked state.
+- **ScrollBar**: the layout's scroll-bar widget supplies its own buttons and thumb
+  (`UICore_Scrollbar_increment_button`, `_decrement_button`, the engine-level `widget`
+  child); the value rules are §9.6 and §13.7.
+- **Window**, **GoldWindow**: see §14.2.3.
+
+<a id="14-2-3"></a>
+#### 14.2.3 Game-styled windows: parts, title, close button, resizing (P66)
+
+**Parts** (descendants of the window's element; IDs are the client's, the geometry and art
+come from the layout). For a window of width *W* and height *H*, the layout of this install
+gives the following rectangles (relative to the window's top-left; they follow from the
+parts' design rectangles in the 300 × 300 container and their edge modes by
+`ui-layout.md` §8, applied through the 50 × 50 creation size):
+
+| Part (ID) | Label | Type | z-level | Rectangle (left, top, width × height) | Notes |
+|---|---|---|---|---|---|
+| 0x10002295 | `LotroWindow_Background` | Field | 100 | 0, 16, *W* × (*H* − 18) | The framed background (corners, edges and centre from its base chain) |
+| 0x10002296 | `LotroWindow_TitleBarBackground` | Field | 90 | by code, below | Title-bar art |
+| 0x10002297 | `LotroWindow_TitleBarText` | Text | 80 | by code, below | Caption; its text style comes from its base (a template of the text-style layout, `fonts.md` §9.1) |
+| 0x10002DFC–0x10002E03 | `LotroWindow_ResizeNW`, `…N`, `…NE`, `…W`, `…E`, `…SW`, `…S`, `…SE` | ResizeBar | 10 | NW 0, 16, 20 × 20; N 20, 16, (*W* − 40) × 10; NE *W* − 20, 16, 20 × 20; W 0, 36, 10 × (*H* − 56); E *W* − 10, 36, 10 × (*H* − 56); SW 0, *H* − 20, 20 × 20; S 20, *H* − 10, (*W* − 40) × 10; SE *W* − 20, *H* − 20, 20 × 20 | Resize handles (`ui-behaviour.md` §8.2); hidden unless resizable |
+| 0x10002298 | `LotroWindow_CloseButton` | Button | 5 | *W* − 21, 21, 16 × 16 | Close button |
+| 0x10002DFB | `LotroWindow_Dragbar` | Dragbar | 0 | by code, below | Lets the user move the window (`ui-behaviour.md` §8.1) |
+
+The container itself (the window's element) has no art; its layout properties make it
+activatable and give it the size limits of §13.1 (150 × 100 in this install). There is **no
+content child**: the plugin's child controls are children of the window's element, placed
+relative to the window's top-left corner. Sibling order follows `ui-layout.md` §9.3 (lower
+z-level in front): a child with the default `ZOrder` 0 has depth 0 (§13.14), so it is in
+front of the background, title bar, title text, resize bars and close button (z-levels 100,
+90, 80, 10, 5) and at the drag bar's level (0); a child with `ZOrder` −10 (depth 10) is
+behind the close button and level with the resize bars. Plugins therefore keep their
+content clear of the frame themselves. > **OPEN:** the read order the client gives to
+plugin-created elements, which decides whether a depth-0 plugin child or the drag bar is in
+front where they overlap. Tessera: plugin children are in front of every layout child of
+equal depth.
+
+**Title layout.** The client positions the title text, the title-bar background and the drag
+bar from the window's current width *W* and the measured width *m* of the caption (the width
+of the title text element's laid-out caption, in pixels, `fonts.md` §7):
+
+1. *t* = min(*W* − 140, max(*m*, 120)) (32-bit signed integers; *t* can be negative for a
+   window narrower than 140).
+2. Title text: left = (*W* − *t*) ÷ 2 truncated toward zero, width *t*; its top and height
+   are kept (5 and 24 in this install); its four text margins are set to 0.
+3. Title-bar background and drag bar: width *t* + 80, left = (*W* − (*t* + 80)) ÷ 2 truncated
+   toward zero; tops and heights kept (−8 and 41 in this install, so the title bar rises 8
+   pixels above the window's rectangle).
+
+The title layout runs when the element is built (with *m* = 0 for a new window, so
+*t* = min(*W* − 140, 120)), after every `SetText` (which first sets the caption and measures
+it), and after every size change of the window, **after** its `SizeChanged` handlers ran.
+The constants 140, 120 and 80 are the client's (decision 0012); the part heights and tops are
+data.
+
+**Close button.** When the close button reports the UI message `Button_click` (0x35,
+`UIElementMessage` key), the window runs its native `Close()` (§13.3): `Closing`, then hiding
+and `Closed`, unless cancelled. Which mouse gesture makes a button report `Button_click` is
+the button widget's rule (§13.6 OPEN; `ui-behaviour.md` §4.6).
+
+**Resizing.** `IsResizable()` is false for a new window. `SetResizable(b)` does nothing when
+`b` equals the stored value; otherwise it stores `b` and sets `UICore_Element_hide` on all
+eight resize bars to `not b`. Visible resize bars resize the window as `ui-behaviour.md`
+§8.2 describes (the target is the window's element, the bars' parent), with the window's
+size limits; each resize fires `SizeChanged` (§9.6) and re-runs the title layout.
+
+**Moving.** The drag bar moves the window (`ui-behaviour.md` §8.1).
+
+Worked example (synthetic layout values as above). A window sized 400 × 300 with caption
+width *m* = 96: *t* = min(260, max(96, 120)) = 120; title text left (400 − 120) ÷ 2 = 140,
+width 120; title bar and drag bar width 200, left 100; close button at 379, 21; background
+0, 16, 400 × 282; resize bar E at 390, 36, 10 × 244. After `SetSize(200, 300)`:
+*t* = min(60, 120) = 60, title text left 70, width 60; title bar width 140, left 30.
+
+<a id="14-2-4"></a>
+#### 14.2.4 What plugins can rely on
+
+- `GetSize()` of a new game-styled control is 50 × 50 (§13.1); plugins set their size.
+- The frame metrics a plugin sees are the layout's (§14.2.3): in this install the title bar
+  reaches down to y = 32, the framed background starts at y = 16 and fills the rest, and the
+  resize handles are 10 pixels deep along the edges. Tessera reads these from the layout and
+  never hard-codes them.
+- The game-styled controls accept every member of their base classes (§13.2–§13.7),
+  including `SetBackground` and `SetBackColor`, which draw on the control's own element
+  (§13.17) under its inherited children.
+
+<a id="14-2-5"></a>
+#### 14.2.5 Invariants of the layout data (check at run time, report on failure)
+
+- The `UILAYOUT` map has entry key 0x100000C8, and its layout has top-level elements with
+  the ten base IDs of §14.2.1 (0x100022A7, 0x100022A8, 0x100025AF, 0x100022A9, 0x1000239E,
+  0x1000239F, 0x10002294, 0x10004D37, 0x10002299, 0x10004D38), each of which resolves
+  (`ui-layout.md` §7.1).
+- In the window containers 0x10002294, 0x10002299, 0x10004D37 and 0x10004D38 the parts of
+  §14.2.3 exist as direct children (IDs 0x10002295–0x10002298, 0x10002DFB–0x10002E03).
+- The text box element has the descendant 0x100022AA; the check box element has the
+  descendants 0x100025B0 and 0x100025B1.
+
+<a id="14-2-6"></a>
+#### 14.2.6 Tessera neutral art
+
+Tessera builds these controls from the user's own layout and art (they are skinnable,
+`skin-definition.md` §6.8). Only when the data are missing (§14.2.1 step 5) does it draw
+its own neutral frame; that frame uses the same part rectangles and z-levels as §14.2.3 so
+that plugin layouts stay correct.
 
 <a id="14-3"></a>
 ### 14.3 Native panel control (`LotroUI`)
@@ -2438,9 +3070,10 @@ third-party plugins) or against the user install.
 21. **Shell:** `AddCommand("a; b :c,", cmd)` returns 3 and registers `a`, `b`, `c`;
     `IsCommand("A")` is then true; `RemoveCommand(cmd)` returns 3.
 22. **Date:** on a Sunday, `GetDate().DayOfWeek == 1`; on 1 January, `DayOfYear == 1`.
-23. **Fonts:** for every non-zero `Font` value `v`, the record `v` exists in the archive set
-    and its payload's first u32 equals `v` and second u32 equals the name's trailing number
-    (holds for all 48 in the user install, 2026-10-03).
+23. **Fonts:** for every non-zero `Font` value `v`, the record `v` exists in the archive set,
+    its payload's first u32 equals `v`, and its second u32 (the line height, §14.1) equals
+    the largest glyph height *H* in the record (`fonts.md` F4). In the user install it also
+    equals the name's trailing number for all 48 (observation 2026-10-03; not a rule).
 24. **Actions:** every non-zero `Action` value is a key of the input-action enum mapper read
     through EMAPPER (holds for all 269, 2026-10-05).
 25. **No crash on hostile input:** malformed descriptors, binary or huge Lua files, deep
@@ -2514,6 +3147,91 @@ third-party plugins) or against the user install.
     receives `KeyDown` and `KeyUp` for an action that its native handling does not consume;
     with it true, it receives each of them twice. Action 0xAB produces no `KeyDown` or
     `KeyUp` on any control.
+44. **Game-styled build (§14.2.1, synthetic layout):** a test layout registered under the
+    `UILAYOUT` entry key 0x100000C8 holds element 0x10002294 (300 × 300, properties
+    `UICore_Element_min_width` 150 and `UICore_Element_min_height` 100) with one child at
+    (279, 21), 16 × 16, edge modes (4, 5, 5, 4). A new `Turbine.UI.Lotro.Window()` reports
+    size 50 × 50 and `GetMinimumWidth()` 150; after `SetSize(400, 300)` the child is at
+    (379, 21), 16 × 16; `SetSize(100, 50)` gives 150 × 100. With the entry key missing, the
+    window is still created (Tessera fallback) and a diagnostic is logged once.
+45. **Title layout (§14.2.3):** with the worked example's widths, a window 400 × 300 and a
+    caption measuring 96 pixels has its title text at left 140, width 120, and its title
+    bar and drag bar at left 100, width 200; after `SetSize(200, 300)` the title text is at
+    70, width 60, and the title bar at 30, width 140. Inside the window's `SizeChanged`
+    handler for that resize the title parts still have their old geometry (the title
+    layout runs after the handlers).
+46. **Close button (§14.2.3, §13.3):** a `Button_click` message from the close button of a
+    visible game-styled window fires `Closing`, then `Closed`, and the window is hidden; a
+    handler that sets `Cancel` keeps it visible and fires no `Closed`; on a hidden window
+    `Close()` fires nothing.
+47. **Resizable (§14.2.3):** a new game-styled window has `IsResizable()` false and all eight
+    resize bars hidden; `SetResizable(true)` shows them; `SetResizable(true)` again changes
+    nothing.
+48. **Background and back colour (§13.17):** the three numbered results of the §13.17
+    worked example hold byte for byte. A new control reports `GetBlendMode()` 2 and
+    `GetBackColorBlendMode()` 2; `SetBlendMode(9)` and `SetBackColorBlendMode(9)` raise
+    errors; `SetBackColorBlendMode(2)` on a control that never had a back colour turns its
+    rectangle of the window canvas into (0, 0, 0, 0), while `SetBackColorBlendMode(4)`
+    leaves it unchanged; `SetBackColor(nil)` removes the fill.
+49. **Colour packing (§13.17):** `Color(1, 0.999, 0.5, 0)` (A, R, G, B) packs to A 255,
+    R 254, G 127, B 0; `Color(1, 1.5, 0, 0)` packs to 0xFF000000 OR (382 shifted left by 16
+    bits) = 0xFF7E0000 (the overflow sets A's lowest bit, already set).
+50. **Stretch mode and opacity (§13.18, §13.19):** a new control reports `GetStretchMode()`
+    0 and `GetOpacity()` 1; `SetStretchMode(5)` makes `GetStretchMode()` return 5.
+    `SetOpacity(0.5)` on a child with stretch mode 0 leaves every pixel of its window
+    unchanged; on the window it halves the window surface's contribution when composed;
+    on the child after `SetStretchMode(3)` it fades only that child's rectangle.
+51. **Label defaults (§13.4):** a new `Label` reports `GetFont()` 0, `GetTextAlignment()` 1
+    and `GetForeColor()` with A 1, R 0, G 0, B 0. `SetFont(0x41000001)` (not a font) leaves
+    `GetFont()` 0 without an error. `SetTextAlignment(5)` sets horizontal and vertical
+    justification 3 and 3; `SetTextAlignment(10)` makes `GetTextAlignment()` return 0 and
+    sets 5 and 2. A new game-styled button reports `GetTextAlignment()` 1 although its
+    layout centres the text.
+52. **Selection (§13.4):** in a label with text `abcdef` (selectable), `SetSelection(2, 3)`
+    gives `GetSelectedText()` `bcd`, `GetSelectionStart()` 2 and `GetSelectionLength()` 3;
+    `SetSelection(9, 1)` selects `f` (start 6); `SetSelection(0, 2)` selects `ab`;
+    `SetSelectionLength(0)` leaves nothing selected; with nothing selected,
+    `SetSelectionStart(3)` selects nothing.
+53. **Rotation (§13.20, §13.19).** All windows are plain `Turbine.UI.Window`s without a
+    parent window.
+    (a) *Shown window.* A window whose stretch mode was never set, after
+    `SetVisible(true)` and then `SetRotation{x = 0, y = 0, z = 450}`: `GetRotation().z` is
+    450, the window is drawn turned by 90 degrees about its centre, and `GetStretchMode()`
+    is still **0**. After `SetVisible(false)` and `SetVisible(true)` it is still drawn
+    turned by 90 degrees.
+    (b) *Never-shown window.* A new window whose stretch mode was never set, after
+    `SetRotation{x = 0, y = 0, z = 450}` while still hidden: `GetStretchMode()` is **1**;
+    under Tessera's rule for the §13.20 step 3 OPEN, `GetRotation()` returns the same
+    values as before the call; after `SetVisible(true)` the window is drawn **unrotated**
+    (and is not re-laid out when resized, mode 1). A second `SetRotation{x = 0, y = 0,
+    z = 450}` after `SetVisible(true)` turns it by 90 degrees and leaves `GetStretchMode()`
+    at 1.
+    (c) *Plugin stretch mode.* A hidden window with `SetStretchMode(3)` keeps
+    `GetStretchMode()` 3 after `SetRotation`; a shown window with `SetStretchMode(0)`
+    reports 1 after `SetRotation` and is drawn turned.
+54. **Scale (§13.21):** the worked example of §13.21 holds; `GetScale()` of a window never
+    marked is 1; `SetScale(0)` raises an error; on a window with a parent `SetScale(2)`
+    changes nothing and `GetScale()` stays 1; `SetUIScalingGroup(0)` then
+    `GetUIScalingGroup()` gives 72; on a plain window `SetUIScalingGroup(60)` gives 72, on a
+    game-styled window 60; after `SetUIScalingGroup(5)`, `SetScale(1.2)` makes
+    `GetUIScalingGroup()` 72.
+55. **`WriteLine` markup (§11.1):** `Shell.WriteLine("<rgb=#FF0000>x</rgb>")` shows one
+    chat line with the single character `x` in red and no visible tag;
+    `Shell.WriteLine("<rgb=FF0000>x</rgb>")` (no `#`) shows the tag text literally.
+56. **Class-table writes (§8.6):** after `Turbine.UI.Control.SetBackground = f`, a
+    `Turbine.UI.Label()` instance created before or after the write calls `f` from
+    `l:SetBackground(…)`; after also `Turbine.UI.Label.SetBackground = g`, labels call `g`
+    and plain controls still call `f`; `l:IsA(Turbine.UI.Control)` stays true.
+57. **Blend mode across a rebuild (§14.2.1 step 3):** for each row of the operation-number
+    table, a window given `SetBlendMode(n)` (no call for the first row) and then
+    `SetScale(1.5)` reports the row's "after one rebuild" `GetBlendMode()` value and draws
+    its background with the row's operation; a new window without `SetBlendMode` reports 2
+    before `SetScale` and 0 after it. A game-styled vertical scroll bar given
+    `SetBlendMode(8)` reports 7, 5 and 1 after one, two and three orientation changes.
+58. **Surfaces (§13.19):** a new window has no surface; after `SetVisible(true)` it has one
+    (CanvasResize, as it has no object mode); after `SetVisible(false)` it has none; a
+    child control with `SetStretchMode(1)` has a surface exactly while its own
+    `IsVisible()` is true; a shown child with stretch mode 0 has none.
 
 ---
 
@@ -2535,10 +3253,11 @@ All `> **OPEN:**` callouts above:
 - Shell and chat: `WriteLine` lines and `Chat.Received` (§11.1); the client command-line
   parser's whitespace, quote and case rules for `Execute` arguments (§11.2); markup in chat
   `Message` (§11.3).
-- UI: opacity of child and non-window controls, initial size of the skinned controls (§13.1); window rotation units and pivot,
-  scaling units and origin point, Escape (§13.3); label selection base and defaults
-  (§13.4); which buttons and keys make a native button report "activated", and disabled
-  buttons (§13.6); stretch modes (§13.8); `Display.GetUIGroupScale` semantics (§13.10);
+- UI: whether creation applies the inherited size limits of game-styled windows (§13.1);
+  Escape (§13.3); the drawn colour of a text element without a colour property, and
+  clamping of a selection end past the text (§13.4); which buttons and keys make a native
+  button report "activated", and disabled buttons (§13.6); `Display.GetUIGroupScale`
+  semantics (§13.10);
   special point tests of client panels and which client states lock the pointer (§13.11); double-click acceptance of every control
   class, the order of two actions from one physical event, the start/end of `Tap`
   activations and the start/end sequences of mouse-button actions of toggle types 3–5
@@ -2546,8 +3265,13 @@ All `> **OPEN:**` callouts above:
   focused text boxes and character input (§13.13); `ZOrder` of client panels and equal-ZOrder
   order (§13.14); non-activatable client panels, activation on show and on hide (§13.14);
   negative or zero sizes (§13.15); layout of top-level windows and re-capture on a parent
-  move (§13.16); skinned frame metrics and parts (§14.2); interaction details of the
-  game-object controls (§14.5).
+  move (§13.16); composition of own surfaces, mode 2 drawing, mode 4 and the extra flag of
+  mode 1 (§13.18); window opacity on nested surfaces and range clamping (§13.19); direction,
+  order and projection of rotations, hit testing of rotated windows and whether a rotation of a window that has no surface (hidden) reaches an ancestor's, the screen root's, surface (§13.20); initial
+  global state of the game-styled scaler and which windows receive `UIScaleChanged`
+  (§13.21); the scaling-service flag that picks the `GoldWindow` variant (§14.2.1); read
+  order of plugin-created elements against the drag bar (§14.2.3); interaction details of
+  the game-object controls (§14.5).
 - Lotro and gameplay: item shortcut companion value and `SetData` parsing (§14.6); which of
   the remaining enums follow a data enum (§15).
 
@@ -2556,6 +3280,14 @@ The 2026-10-06 revision closed: the chat colour and prefix of reported errors (�
 question of which setters fire change events (§9.6, now narrowed to four calls), callbacks
 of writes after an apartment closed (§10.6, narrowed), edge-attachment order and rules
 (§13.2, §13.16), and the implementer question on finalizers (§3.3).
+
+The third 2026-10-06 revision closed: the initial size of the skinned controls (§13.1,
+narrowed to whether creation applies the inherited limits), the opacity of child and
+non-window controls (§13.1, §13.19), rotation units and pivot (§13.3, §13.20; direction and
+order remain), scaling units, origin point and combination with groups (§13.3, §13.21),
+label selection base and defaults (§13.4; the drawn default colour remains), stretch modes
+(§13.8, §13.18; composition and modes 2 and 4 remain), skinned frame metrics and parts
+(§14.2), `WriteLine` markup (§11.1, usage O9) and class-table replacement (§8.6, usage O2).
 
 ---
 
@@ -2574,6 +3306,12 @@ recorded here, not applied, because this session owns only this file.
 | `plugin-descriptor.md` §10 OPEN, D13 | Inner structure of `PluginOptions.xml` OPEN | Structure resolved: `Plugin` elements with `Name` and `AllCharacters` (`true`/`false`) attributes and `Character` child elements with `Name` under `AutoloadOptions`; `Plugin` elements with `Name` and `UseScaling` (`True`/`False`) attributes under `ScalingOptions`. See §5.4 here. | BIN |
 | `plugin-descriptor.md` §11, D14 | Keys rejected when they contain "characters invalid in a file name" | The original accepts a key unit when it is `_` or passes the C runtime's `isalnum` in the locale the client sets from its game language (code page 1252 for all four languages, so accented letters such as U+00E9 pass); everything else is rejected. Tessera accepts only ASCII letters, ASCII digits and `_` (stated deviation). See §10.2 here. | BIN (P14, P43), P44 |
 | `keymap.md` OPEN (table mapping Tessera actions to the plugin API's action IDs) | OPEN | The plugin API's `Action` values are keys of the input-action enum mapper (EMAPPER label for input actions; 0x230000AF with base chain in this install; all 269 non-zero values present). The scroll-up and scroll-down actions are keys 0x82 and 0x10. See §14.4 here. | O4, BIN |
+| `skin-definition.md` §6.8 (note on plugin game-styled controls) | "a top-level panel override whose ID is one of these labels also changes the design rectangle of every plugin control built from it" | The `luaplugins` element is the **base** of the control's descriptor; the control's own 0, 0, 50 × 50 rectangle replaces the base's (`ui-layout.md` §7.2 step 1) and its top element carries a run-time ID, so an override never changes the control's size or position; at most it changes the base size from which the inherited children are re-laid out, and whether it applies at all was not traced (§14.2.1 step 4 here). | BIN (fourth pass) |
+| `ui-layout.md` §5.9 (`UICore_Element_ObjectMode`) and §8.4 | "default CanvasResize"; Tile and CanvasResize OPEN | Precision: the property has no dictionary default (O7); when the client creates an element's own surface and the element has no object mode, it uses CanvasResize. A Tile surface takes the size of the element's base image (or a code-set size) and falls back to CanvasResize unless both sides are powers of two. Any non-zero object mode gives the element its own surface; 0 removes it. The plugin API's `SetStretchMode` writes this property (§13.18 here). | BIN (fourth pass) |
+| `ui-layout.md` §5.9 (`UICore_Element_ObjectOpacity`) | "Opacity of the element's own drawing surface (root panels and elements that code gives a surface)" | Addition: the plugin API's `SetOpacity` writes this property; every plugin window is a root panel with a surface, other plugin controls have one only while their stretch mode is not 0; dictionary default 1.0, range 0–1 (§13.19 here, O7). | BIN (fourth pass), O7 |
+| `fonts.md` §9.4 | "The default font of a new plugin label is an OPEN of `lua-plugin-api.md` §13.4" | Answered: `GetFont()` is 0 until `SetFont`; the text is drawn in the text element's font, which for plain labels is the locale default font of `fonts.md` §9.1 and for game-styled controls the font of their layout element (§13.4 here). | BIN (fourth pass) |
+| `ui-behaviour.md` §9.2 OPEN ("the plugin-side combination of `Window:SetScale` with the group scale") | OPEN | Answered in §13.21 here: `SetScale(f)` sets the window's own scale, which replaces its group's value; the effective scale is `f` × `UIScale_Global` for windows that take part in the global scale, else `f`, and it is applied by the §9.2 rule. | BIN (fourth pass) |
+| `plugin-api-usage.md` §6.3 (OPEN, O2) and §6.9 (OPEN, O9) | Whether class-table replacements reach instances; whether `WriteLine` renders markup | Both answered yes: §8.6 and §11.1 here (P76, P75). | BIN (fourth pass), O7 |
 
 ---
 
@@ -2707,3 +3445,5 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-05 | Revision answering the review of 2026-10-05 (status stays Review). **Accuracy:** named colours are byte/255 rounded to 3 decimals and stored as 32-bit floats, not byte/255 (§13.9, A.5 note, invariant 19, P45; BIN 564/564 components, S3 423/423). **Overclaim:** the plugin-data key rule and the package-name rule are the C runtime's `isalnum` (plus `_`) in a locale the client sets from its game language, not ASCII-only; ASCII-only is now a stated Tessera deviation (§7.2, §10.2, invariant 12, P5, P14, P43, P44, §20 D14 row); the plugin-data decimal separator follows that game-language locale (§3.4, §10.4). **Minor:** O4 counts corrected (input actions 471 = 290 + 181; language mapper base 0x23000186 and chat-type base 0x230002A9 added; key 0 present in every chain); §15 table split into names / non-zero values / keys; §9.3 no longer calls the owner's keymap the default; sources or marks added for §13.1, §13.3 `Activate`, §13.10 `ContextMenu`, §14.2 and §14.5 (P46, Reported, from S2/S3), with unsourced claims removed or moved into OPEN callouts (opacity of children §13.1, close button §14.2, control interaction §14.5); naming note cites `LEGAL.md` §4.1 (*Google v. Oracle* row) and the pending ARCHITECTURE §18.2 legal item instead of `LEGAL.md` §10; `GetScriptVersion` = 13, 0 now traced (P35). OPEN callouts: 25 (22 before, plus §7.2 non-ASCII classification, §13.1 opacity, §14.5 control interaction); listed in §19. |
 | 2026-10-06 | Second OPEN-closing pass (spec writer, dirty room; BIN second pass on the same build, plus O5 addendum and new O6); status Accepted → Review (becomes Revised after re-review). **New sections:** §9.7 (notification delivery and FIFO queueing, broadcasts, order), §13.11 (hit test, pointer and hover targets), §13.12 (mouse-button actions and the `Button` table, capture, `MouseDown`/`MouseUp`/`MouseClick`/`MouseDoubleClick`, `MouseMove`, `MouseEnter`/`MouseLeave` chains, `MouseHover` timing with the 0.25 s delay, `MouseWheel` target), §13.13 (key routing, `KeyDown`/`KeyUp` broadcast independent of focus, keyboard focus), §13.14 (z-order, window activation by `Activate()` and by a mouse press), §13.15 (size limits), §13.16 (edge attachments: argument order, reference capture, per-type layout rules, worked examples). **Changed:** §3.3 (UI tick order; implementer question on finalizers answered: accepted with one condition), §6.6 (errors and warnings go to chat as chat type 1 with no prefix and to a log channel; memory-error status not reported by the protected call), §9.3 (`Button` 0 for other actions; `AssistTargetRemoved` empty per S3), §9.4 (`Update` is a broadcast: hidden and unparented controls receive it; subscription order; worked example), §9.6 (setter/change-event table, `EnabledChanged` direct, `ScrollBar:SetValue` unsigned clamping), §10.4 (no final line end; byte-exact examples), §10.6 (write step; callbacks only into a live apartment), §11.2 (plugin layer passes command and arguments unchanged), §13.1–§13.3, §13.6, §13.7 (pointers to the new sections; `Button.Click` is not `MouseClick`), Appendix A.6. **Provenance:** BIN key extended; rows P47–P63, O6 added. **Invariants** 26–38 added. **OPEN callouts:** 35 before §19 (26 before this pass including the implementer's finalizer question; closed or narrowed: error colour and prefix, `AssistTargetRemoved`, `Update` on hidden controls, the general setter question, post-close callbacks, edge attachments, finalizers; new precise ones on the UI tick order, `Update` entry removal, the client command-line parser, the error line and `Chat.Received`, button activation, double-click acceptance, two-action order and `Tap` start/end, `MouseHover` repetition, text-box key consumption, client-panel `ZOrder` and activation, activation on show/hide, empty sizes, layout of top-level windows, special point tests). **Implementers re-check:** event delivery timing in `crates/plugins`/`crates/ui` (§9.7), `Update` delivery to hidden controls (§9.4), the mouse, key, focus and activation routing (§13.11–§13.14), size limits (§13.15), and the finalizer condition (§3.3). |
 | 2026-10-06 | Second revision of the day (spec writer, dirty room; BIN third pass on the same build, O6 re-read), answering the review of 2026-10-06; section numbers unchanged, one anchor added (`9-6-1`). (1) §9.6: `ScrollBar:SetValue` clamps against the maximum first, then the minimum (unsigned); new "scroll-bar numbers" paragraph: defaults 0/100/0/10/1, 64-bit truncation keeping the low 32 bits, unsigned results of the five getters, `SetMinimum`/`SetMaximum` drag the other bound and re-clamp the value (so minimum above maximum cannot be reached; if it were, `SetValue` would give the minimum), large/small change caps, thumb fractions, worked example; §13.7 points to it; invariant 29 extended. (2) §13.1: every plugin control is created at 0, 0 with size 50 × 50 (new P64); §13.16: initial references (R = creation rectangle, no Q, the parent's own reference used instead), captures of windows marked for global scaling, and a correction: plugin controls carry the creation mark that makes None edges always take the current coordinate, so the 0 × 0 exception never applies to them and a control without attachments never moves with its parent. (3) §13.12.5: the hover check also requires the manager's pointer-outside flag to be clear (never set in this build) and a hover target; the delay comparison is strict; the delay restarts at the end of a capture; the tooltip is hidden first. §13.11: the pointer-outside flag and the input layer's pointer lock suppress the hit test. (4) §13.13: the text-box key listener is now sourced (P48 extended): it fires on any key notification whose source is the text box, for `TextBox` and the skinned text box; consequence: double delivery when the text box also subscribes; action 0xAB is ignored by the UI (O6, P48). (5) §13.12.1/§13.12.2: the UI only tests for toggle type 2 in the action map of the context in force; types 0, 1, 3, 4, 5 all follow the Momentary rules; consequences for repeated starts and latches; OPEN on the input layer's sequences. **Provenance:** BIN key extended with the third session; P48–P51, P57, P58, O6 extended; P64 added. **Invariants** 39–43 added. **OPEN callouts:** 38 before §19 (new: initial size of skinned controls §13.1, what locks the pointer §13.11, start/end sequences of type 3–5 mouse-button actions §13.12.2). **Implementers re-check:** scroll-bar arithmetic and getters (§9.6), initial control size (§13.1), the None rule and initial references of the edge layout (§13.16), the hover conditions (§13.12.5), toggle-type handling of mouse-button actions (§13.12.1) and text-box key events and action 0xAB (§13.13). |
+| 2026-10-06 | Third revision of the day (spec writer, dirty room; BIN fourth pass on the same build and file hash, new O7 data observations), answering the M5 completeness critique items A4/C2 (game-styled controls), A5/C3 (drawing, opacity, rotation, scale, label defaults, `WriteLine` markup, class-table writes) and B8 (font-record field); status Accepted → **Review** (becomes Revised after re-review). Section numbers 1–20 kept; **new sections and anchors:** §8.6, §13.17 (drawing backgrounds and back colours, with a byte-level worked example), §13.18 (stretch modes and own surfaces), §13.19 (opacity), §13.20 (window rotation), §13.21 (window scale and scaling groups, worked example), §14.2.1–§14.2.6 (how the game-styled controls are built from the `luaplugins` layout; text targets; window parts, title layout with worked example, close button, resize bars; layout invariants; neutral art). **Changed:** naming note (cites `LEGAL.md` §17; layout and dictionary labels are data labels), related specs, purpose; §11.1 `WriteLine` renders markup; §13.1 initial geometry of game-styled controls (layout element is the base; inherited size limits), transparency, opacity; §13.2 look row; §13.3 rotation, scaling, `Close()` only when visible; §13.4 text targets, defaults, alignment table, 1-based selection, `b`/`i` without effect; §13.8 points to §13.17/§13.18 (the community stretch-mode table moved there as Reported, with the disagreements marked); §14.1 offset 4 is the **line height in pixels** (B8; P12, invariant 23 corrected). **Provenance:** BIN key extended with the fourth session; O7 added; P12, P64 corrected; P65–P76 added. **Invariants** 44–56 added. **Corrections to other specs (§20):** `skin-definition.md` §6.8, `ui-layout.md` §5.9 (two rows), `fonts.md` §9.4, `ui-behaviour.md` §9.2, `plugin-api-usage.md` §6.3/§6.9. **OPEN callouts:** 42 before §19 (38 before; closed: initial size of skinned controls (narrowed to one new callout), opacity of children, rotation units and pivot, scaling units and combination, label defaults and selection base (replaced by two narrow callouts), stretch modes, skinned frame metrics; new: own-surface composition and modes 2/4, opacity on nested surfaces, rotation direction and order, rotation of a window without a surface, global state of the game-styled scaler, `UIScaleChanged` recipients, the `GoldWindow` variant flag, read order of plugin elements against the drag bar). **Implementers re-check:** control creation for the `Turbine.UI.Lotro` classes (§14.2.1–§14.2.3), the background/back-colour/blend-mode drawing and defaults (§13.17), stretch mode and opacity (§13.18, §13.19), `Close()` on hidden windows (§13.3), label defaults, alignment and selection (§13.4), rotation and scale (§13.20, §13.21), `WriteLine` markup (§11.1), and any code that read the font record's offset 4 as a point size (§14.1). |
+| 2026-10-06 | Repair of the third revision (spec writer, dirty room; BIN repair reading on the same build and file hash, O7 re-checked), answering the review of the third revision; status stays **Review** until re-review; section numbers unchanged, one anchor added (`13-19-surfaces`). (1) §14.2.1 step 3: the full table of base-layer operation numbers (Replace 0, Mix colour 1, Over 2, Colorize 3, Multiply 4, Screen 5, Grayscale 6, "none" 7) with the blend mode and operation that one rebuild produces for every `SetBlendMode` value; a control that never set a blend mode reports 0 after a rebuild; the mapping repeats at every scroll-bar rebuild (chains end at Replace except Grayscale); worked example; §13.17 points to the table. (2) §13.19 new paragraph "Which elements have a surface": an element wants a surface when its object mode is non-zero or, without one, when it is a root panel (every window); the surface exists only while it is wanted and the element's own visibility flag is set (or `UICore_Element_KeepObjectWhenHidden`, which no plugin element has); so a new window has no surface until it is first shown. This replaces "windows always have a surface" in §13.19 and §13.17, and §13.18 points to it. §13.20 steps 2–3 rewritten on that rule: the object-mode change happens only when the window has no surface at the call (hidden, or plugin mode 0), creates the surface at once only when shown, and a rotation set while hidden is never shown (it is not remembered; a rotation set while shown survives hide/show); the OPEN on ancestor surfaces is narrowed to the screen root. Invariant 53 split into (a) shown, (b) never shown and (c) plugin stretch mode; new invariants 57 (blend mode across a rebuild) and 58 (surface lifetime). (3) P72 cited an undefined source key: new source key S6 (the M5 API census of published plugins, results in `plugin-api-usage.md` §5.3 and §9.3). **Provenance:** BIN key extended with the repair reading; P65, P70 and P72 updated; P77 and P78 added. **OPEN callouts:** 42 before §19, unchanged (the §13.20 callout reworded, §19 updated). **Implementers re-check:** the blend mode applied after a rebuild (§14.2.1 step 3), the surface lifetime of windows and stretched controls (§13.19), and `SetRotation` on hidden windows (§13.20). |

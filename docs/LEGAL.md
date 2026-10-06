@@ -9,8 +9,8 @@
 > before any networked feature beyond the local sandbox, the project must obtain review by
 > a qualified IP lawyer** (see [§9](#9-gates-and-the-official-server-target)).
 
-Status: adopted 2026-10-03. Sources were fetched and read on 2026-10-03 unless another
-date is given. Quoted contract text is from the versions dated below; Daybreak can change
+Status: adopted 2026-10-03; §17 (plugin API names) added 2026-10-06. Sources were fetched
+and read on 2026-10-03 unless another date is given. Quoted contract text is from the versions dated below; Daybreak can change
 these documents at any time, so re-check them before relying on this page.
 
 Related documents: [CLEAN_ROOM.md](CLEAN_ROOM.md) (how we write code without copying),
@@ -139,7 +139,7 @@ change them. Quoted fragments are verbatim from the versions named.
 | *Sega v. Accolade*, 977 F.2d 1510 (9th Cir. 1992) | Disassembly as intermediate copying is fair use when it is the only way to reach functional elements and there is a legitimate reason. | Supports research, but the THJ court refused to apply it to a project that copied Daybreak's assets and avoided "its own creative work". |
 | *Sony v. Connectix*, 203 F.3d 596 (9th Cir. 2000) | Intermediate copies made while writing a from-scratch emulator were fair use; the final product contained no Sony code. | The final product must contain no Daybreak code. |
 | *Galoob v. Nintendo* (9th Cir. 1992); *Micro Star v. FormGen* (9th Cir. 1998) | A tool that alters display without incorporating the work is not a derivative work; distributing files that *describe* protected audiovisual content is. | The engine is fine. Shipping maps, quest text or item databases is not. |
-| *Google v. Oracle*, 593 U.S. 1 (2021) | Reimplementing API declarations for interoperability was fair use. | Supports a compatible Lua plugin API surface. Never copy the original `.lua` files or documentation prose. |
+| *Google v. Oracle*, 593 U.S. 1 (2021) | Reimplementing API declarations for interoperability was fair use. | Supports a compatible Lua plugin API surface. Never copy the original `.lua` files or documentation prose. Full record: [§17](#17-plugin-api-names-interoperability-record). |
 | 17 U.S.C. §102(b) | Ideas, procedures, methods of operation are not protected. | File formats and protocols as functional facts. |
 | *MDY v. Blizzard*, 629 F.3d 928 (9th Cir. 2010, amended 2011) | Breaching a licence term is copyright infringement only if the term is a *condition* with a nexus to an exclusive right; otherwise it is contract only. | **Open:** if ToS §12 is a scope condition, users' in-memory copies of game data in our engine could be infringing and the project could be a contributory infringer. |
 | *Vernor v. Autodesk* (9th Cir. 2010) | Licensees may not be "owners" for §117. | Do not rely on §117. |
@@ -376,7 +376,12 @@ objection from either rights holder (see [§14](#14-incident-response)).
    "compatible with data files from The Lord of the Rings Online™". No logos, game fonts,
    colours, trade dress, screenshots in branding, or wording that implies endorsement.
 4. Format-level technical terms ("DID", "landblock", "dat", "iteration") are fine.
-5. **Mandatory disclaimer.** This exact text must appear in the README, on any website, in
+5. **Interoperability identifiers.** The plugin API's namespace, class, member, event and file
+   names that existing third-party plugins call (some contain marks from rule 1) may appear
+   only inside the plugin subsystem, under the rules of
+   [§17](#17-plugin-api-names-interoperability-record). They are never product, crate, binary
+   or feature names and never appear in branding.
+6. **Mandatory disclaimer.** This exact text must appear in the README, on any website, in
    release notes, and in the application's About screen:
 
 > Tessera is an independent, unofficial project. It is not affiliated with, endorsed by, or
@@ -504,10 +509,154 @@ interaction.
    it?
 7. Does runtime loading of the full game database by a lawful user raise EU database-right
    issues?
+8. Is exposing the plugin API's names and signatures ([§17](#17-plugin-api-names-interoperability-record))
+   non-infringing in the EU/UK under *SAS Institute* and fair use in the US under *Google v.
+   Oracle*, given that the host is part of a client for a live game? Could the organisation
+   of the API inventory in our specs be a reproduction of the official reference as a work?
+9. Do the marks inside the API names (`Turbine`, `Lotro`) need permission from their holders
+   when used only as interoperability identifiers, and who holds `TURBINE` today?
 
 ---
 
-## 17. Sources
+## 17. Plugin API names (interoperability record)
+
+Added 2026-10-06. It answers the "OPEN (legal)" item of
+[ARCHITECTURE.md §18.2](ARCHITECTURE.md#plugins-host) and M5 exit criterion 6 in
+[ROADMAP.md](ROADMAP.md). Sources for this section were read on 2026-10-06 unless noted.
+
+### 17.1 What Tessera exposes, and why
+
+- M5's goal is to run the **existing third-party UI plugins** that a user has installed. They
+  are Lua 5.1 programs written by independent authors against the original client's plugin
+  API. A plugin reaches the host only through names: global tables, classes, methods,
+  events, fields, enum members, the `.plugin` descriptor's XML elements, and file and folder
+  names such as `.plugindata` and `PluginData`. If one name differs, the plugin fails.
+- The root of the API is the global table **`Turbine`**. Its native packages are `Turbine`,
+  `Turbine.Gameplay`, `Turbine.Gameplay.Attributes`, `Turbine.UI` and **`Turbine.UI.Lotro`**
+  ([lua-plugin-api.md](specs/lua-plugin-api.md) P7). These names contain two words on the
+  [§10](#10-naming-and-trademark-rules) list: *Turbine*, the name of the studio that first
+  developed the game, and *Lotro*, the abbreviation of MEE's game title. The studio has been
+  part of Warner Bros. since 2010 and was renamed WB Games Boston in 2018 (Wikipedia, read
+  2026-10-06). Any `TURBINE` mark may therefore belong to a **third rights holder**, distinct
+  from Daybreak and MEE ([§2](#2-who-owns-what)).
+- The full set of names, signatures, enums and event semantics is recorded as functional
+  facts in [lua-plugin-api.md](specs/lua-plugin-api.md) and
+  [plugin-descriptor.md](specs/plugin-descriptor.md). Each of them uses the names only
+  because a plugin cannot run without them.
+
+### 17.2 Rules (binding project policy)
+
+1. **Interop use only.** The original names appear only where a plugin can observe them:
+   Lua globals and tables, values passed to and from plugins, descriptor and plugin-data
+   parsing, and paths inside the user's plugin tree. The specs and the plugin subsystem's
+   tests may also use them. Crate, module, binary and Rust type names stay neutral, and the
+   original names enter the code as string data in the plugin subsystem only.
+2. **No branding.** The names are never a product name, feature name, logo, menu title or
+   marketing term. The plugin manager shows each plugin's own name and author. The feature
+   is described in plain text, for example "runs user-interface plugins written for the
+   original client's Lua API", and the game is named only as [§10](#10-naming-and-trademark-rules)
+   rule 3 allows. Lua error messages and stack traces may show the names, because they come
+   from the plugin's own code.
+3. **Names and signatures, not expression.** We reproduce identifiers, their nesting,
+   parameter order and types, enum values and observable behaviour. Descriptions in specs,
+   code comments, docs and error messages are our own words. No prose, examples, comments or
+   page structure from the publisher's API reference is copied.
+4. **Nothing of theirs is shipped.** Tessera ships no client Lua files, none of the
+   publisher's 2010 sample packages (`Plugins/Turbine/`, `Plugins/TurbinePlugins/`), no
+   third-party plugins, and no stubs, annotation files or dumps generated from the official
+   reference. If any of these is in the user's plugin folder, Tessera reads it **in place,
+   read-only**, like any other plugin ([§7](#7-what-these-facts-mean-for-project-design)).
+   Plugin data is written under Tessera's own data directory, never into the client's
+   folders.
+5. **Only what plugins need.** The surface is limited to what existing plugins call, built
+   in the tiers of [lua-plugin-api.md](specs/lua-plugin-api.md) §17. Gameplay namespaces
+   are read-only views, and the sandbox gives plugins no capability the original API does
+   not give them.
+6. **Separable.** The compatible names live in the plugin subsystem only. The compatibility
+   surface can be disabled or withdrawn without changing the rest of the engine, if counsel
+   or a rights holder requires it ([§14](#14-incident-response)).
+7. **Clean-room as usual.** Implementers work from the specs only
+   ([CLEAN_ROOM.md](CLEAN_ROOM.md)). Spec facts that rest on disassembly (`BIN`, under
+   [decision 0011](decisions/0011-standing-m4-authorisation.md)) are used only to make
+   Tessera work with users' plugins (Art 6(2)(a)).
+
+### 17.3 Copyright: EU and UK
+
+| Authority | What it says | Effect here |
+|---|---|---|
+| Directive 2009/24/EC, **recital 10** | The parts of a program that provide "interconnection and interaction" with other software "are generally known as 'interfaces'". Interoperability "can be defined as the ability to exchange information and mutually to use the information which has been exchanged." | The plugin API is an interface in this sense. Its purpose is the exchange of calls and data between the client and independently written programs. |
+| **Art 1(2)** and **recital 11** | Protection "shall apply to the expression in any form of a computer program. Ideas and principles which underlie any element of a computer program, including those which underlie its interfaces, are not protected." Recital 11: "to the extent that logic, algorithms and programming languages comprise ideas and principles", they are not protected. | The API's design, its calling conventions and its use as a programming environment are not protected as a program. The implementing code is, and we never copy it. |
+| **Art 6(1)–(2)** and **recital 15** | Decompilation is allowed where it is "indispensable to obtain the information necessary to achieve the interoperability of an independently created computer program with other programs". The information may not be used for other goals, or "for the development, production or marketing of a computer program substantially similar in its expression". Recital 15: the aim is "to connect all components of a computer system, including those of different manufacturers, so that they can work together." | Running users' plugins is a plain case of interoperability "with other programs": the plugins are independent programs by third-party authors. Unlike the server question in [§5](#5-eu-and-uk-law), it does not depend on Daybreak's servers. Most names were already public in the publisher's reference, so Art 6 is needed only for undocumented behaviour (rule 7). |
+| **Art 6(3)** | Must not "unreasonably prejudice the rightholder's legitimate interests" or conflict "with a normal exploitation of the computer program". | The plugin API is a free feature of the client and is not sold. The Art 6(3) question for a live game ([§5](#5-eu-and-uk-law)) is about the client as a whole, not about the names. |
+| CJEU *SAS Institute v World Programming*, C-406/10, 2 May 2012 (Grand Chamber), ruling 1 and paras 39–46 | "neither the functionality of a computer program nor the programming language and the format of data files used in a computer program in order to exploit certain of its functions constitute a form of expression of that program". Para 42: they are "elements of that program by means of which users exploit certain functions of that program". Para 40: protecting functionality "would amount to making it possible to monopolise ideas". | The plugin language surface, its behaviour and the `.plugin` and `.plugindata` formats are functionality, language and data-file format in this sense. WPL, like us, had no source access and worked by observing and studying (paras 44, 61). |
+| *SAS*, paras 66–67 and ruling 3 | "keywords, syntax, commands and combinations of commands, options, defaults and iterations consist of words, figures or mathematical concepts which, considered in isolation, are not, as such, an intellectual creation". Only "the choice, sequence and combination" of them can be, and copying elements of a user manual can infringe the manual if that reproduces the author's expression. | Supports the use of individual names. It is also why rule 3 bans the reference's prose and structure: the manual itself is protected. |
+| *SAS*, para 45 | The finding "cannot affect the possibility that the SAS language and the format of SAS Institute's data files might be protected, as works, by copyright under Directive 2001/29 if they are their author's own intellectual creation". | Residual risk ([§17.6](#176-remaining-risk)). |
+| *Navitaire v easyJet* [2004] EWHC 1725 (Ch) (Pumfrey J) | Para 79: "it is not possible to suggest that a copyright subsists in the individual command names as literary works." On the compilation point, the command set as a whole was "a computer language, not a program" and was not protected. | UK authority, decided before *SAS*, that individual command names are not protected. |
+
+### 17.4 Copyright: United States
+
+| Authority | Holding (summary) | Effect here |
+|---|---|---|
+| 17 U.S.C. §102(b) | No protection for any "idea, procedure, process, system, method of operation". | Names as operating instructions of an interface. |
+| *Lotus v. Borland*, 49 F.3d 807 (1st Cir. 1995); affirmed by an equally divided Court, 516 U.S. 233 (1996) | The menu command hierarchy was an uncopyrightable "method of operation". Borland's "Key Reader" let users run their existing Lotus macros. The court objected that otherwise a user would have to rewrite a macro "despite the fact that the macro is clearly the user's own work product" (at 818). | The closest facts to ours: an independent program runs the user's existing scripts by honouring the original command words. An equally divided affirmance sets no national precedent. |
+| *Oracle v. Google*, 750 F.3d 1339 (Fed. Cir. 2014) | Declaring code and the structure, sequence and organisation of the Java API were copyrightable. | The Supreme Court did not reverse this point. In the US, our position rests on fair use, not on non-copyrightability. |
+| *Google LLC v. Oracle America, Inc.*, 593 U.S. 1 (2021) | Copyrightability was assumed "purely for argument's sake" (slip op. 15). Held: where Google "reimplemented a user interface, taking only what was needed to allow users to put their accrued talents to work in a new and transformative program", its copying of about 11,500 lines of declaring code "was a fair use of that material as a matter of law" (slip op. 35). The Court cited testimony that "If the API labels change, then either the software wouldn't continue to work anymore or the developer … would have to learn a whole new language" (slip op. 26). | Our use is narrower (names and signatures from functional specs, not copied declaring code), non-commercial, and serves users' existing programs. Fair use is decided case by case, and the fourth factor (market effect) is the weak point for a client of a live game ([§17.6](#176-remaining-risk)). |
+
+### 17.5 Trademark
+
+- The names are used as **functional identifiers** inside a runtime, not as a sign of
+  Tessera's origin. They never appear in branding (rules 1–2), and the project is
+  non-commercial ([§12](#12-distribution-and-money)), which weakens any "use in commerce" or
+  "use in the course of trade" element.
+- **EU:** Regulation (EU) 2017/1001 Art 14(1)(c) and Directive (EU) 2015/2436 Art 14(1)(c)
+  do not let a proprietor prohibit use of the mark "for the purpose of identifying or
+  referring to goods or services as those of the proprietor …, in particular, where the use
+  … is necessary to indicate the intended purpose of a product or service", only "in
+  accordance with honest practices in industrial or commercial matters" (Art 14(2)).
+- **US:** nominative fair use, *New Kids on the Block v. News America Publishing*, 971 F.2d
+  302 (9th Cir. 1992): the thing is not readily identifiable without the mark, only as much
+  of the mark is used as is reasonably necessary, and nothing suggests sponsorship. *Sega v.
+  Accolade*, 977 F.2d 1510 (9th Cir. 1992), Lanham Act part: Accolade had to include the
+  "S-E-G-A" initialisation code for its games to run on the console. Because that code
+  regulated access and no feasible alternative was known, "Sega is primarily responsible for
+  any resultant confusion." The plugin names are a softer version of the same situation:
+  plugins name the namespace, so any compatible host must accept it.
+- The mandatory disclaimer ([§10](#10-naming-and-trademark-rules)) answers the "no implied
+  sponsorship" element. The Warner Bros. connection of `Turbine` is not yet covered by the
+  engagement plan ([§15](#15-engagement-strategy)); see [§16](#16-open-questions-for-counsel)
+  question 9.
+
+### 17.6 Remaining risk
+
+- **This is not a safe harbour.** None of these cases concerned a third-party client for a
+  live online game. Counsel must review this section before M5 ships publicly
+  ([§16](#16-open-questions-for-counsel) questions 8–9).
+- **US copyrightability is not settled.** The Federal Circuit's 2014 holding stands, and
+  *Google v. Oracle* decided only fair use, on its facts. A court weighing market effect may
+  look at the whole client as a substitute for the official one (the THJ reasoning,
+  [§6.1](#61-daybreak-v-takahashi-the-heroes-journey-2025-26)), not at the plugin names alone.
+- **The API as a work.** *SAS* para 45 leaves open that a language may be protected under
+  Directive 2001/29, and paras 66–70 protect the manual's selection and arrangement. Our
+  specs list the whole API inventory, which mirrors the reference's organisation. Mitigation:
+  our own wording and order, no copied text, and implementing only what plugins need.
+- **Contract is unchanged.** Interoperability does not cure ToS §12 ("stand-alone game") or
+  ToS §7.1 ("software tools related to"), and EU Art 8 voids contract terms only to the
+  extent of Arts 5(3) and 6 ([§3.3](#33-consequences), [§13](#13-contributor-risk-notice)).
+- **Disassembly-based facts.** BIN facts rest on EU Art 6 and the owner's acceptance in
+  [decision 0011](decisions/0011-standing-m4-authorisation.md). Outside the EU, and under
+  EULA §4.2 for US contributors, they carry the exposure described in
+  [§3](#3-contract-terms-that-bind-every-player-and-contributor).
+- **Third-party documentation.** The MIT licence of community API tooling covers that
+  project's own work, not the publisher's reference material in or behind it (the official
+  reference is © 2016 the publisher). Never vendor those stubs, dumps or mirrored pages.
+- **Plugins are their authors' works.** Tessera runs what the user has installed. It does not
+  host, bundle, download or redistribute plugins.
+- **Marks.** `Turbine` and `Lotro` stay inside the plugin subsystem. If a holder objects,
+  [§14](#14-incident-response) applies and rule 6 lets the surface be withdrawn.
+
+---
+
+## 18. Sources
 
 Read 2026-10-03 unless noted. The project's research notes hold the detailed citations.
 
@@ -521,6 +670,26 @@ Read 2026-10-03 unless noted. The project's research notes hold the detailed cit
 - 17 U.S.C. §1201; 37 CFR 201.40
 - Directive 2009/24/EC Arts 5, 6, 8; UK CDPA ss.50B, 50BA, 296A (legislation.gov.uk)
 - github/dmca repository (searched 2026-10-03)
-- Cases marked as summaries above (*Sega*, *Connectix*, *Galoob*, *Micro Star*, *Google v.
-  Oracle*, *Vernor*, *SAS Institute*, *Top System*) were not re-read from primary sources for
-  this document; verify before relying on them.
+- Cases marked as summaries above (*Sega*, *Connectix*, *Galoob*, *Micro Star*, *Vernor*,
+  *Top System*) were not re-read from primary sources for this document; verify before
+  relying on them.
+
+Read 2026-10-06 for [§17](#17-plugin-api-names-interoperability-record):
+
+- Directive 2009/24/EC, recitals 10, 11, 15 and Arts 1, 5, 6, 8 — legislation.gov.uk
+  (`eudr/2009/24`, the version as adopted)
+- CJEU C-406/10 *SAS Institute Inc. v World Programming Ltd*, judgment of 2 May 2012 (Grand
+  Chamber), EN text from the EU Publications Office (CELEX 62010CJ0406)
+- *Google LLC v. Oracle America, Inc.*, 593 U.S. 1 (2021), slip opinion No. 18-956 —
+  supremecourt.gov
+- *Lotus Development Corp. v. Borland International, Inc.*, 49 F.3d 807 (1st Cir. 1995) —
+  digital-law-online.info (34 USPQ2d 1014)
+- *Navitaire Inc v easyJet Airline Co* [2004] EWHC 1725 (Ch) — caselaw.nationalarchives.gov.uk
+- *Sega Enterprises Ltd. v. Accolade, Inc.*, 977 F.2d 1510 (9th Cir. 1992), Lanham Act part —
+  law.resource.org
+- Regulation (EU) 2017/1001 Art 14 (legislation.gov.uk, as adopted); Directive (EU)
+  2015/2436 Art 14 (EU Publications Office, CELEX 32015L2436)
+- Wikipedia, "WB Games Boston" (studio history)
+- Summaries only, not re-read for this document: *Lotus v. Borland*, 516 U.S. 233 (1996);
+  *Oracle America, Inc. v. Google Inc.*, 750 F.3d 1339 (Fed. Cir. 2014); *New Kids on the
+  Block v. News America Publishing*, 971 F.2d 302 (9th Cir. 1992).

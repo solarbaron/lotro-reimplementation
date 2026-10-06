@@ -1017,6 +1017,18 @@ The surfaces are DXT1, 128 × 128 (1.25 units per texel). Settled in
 > non-zero, a u32, the water list, a list of 23-byte entries and, for newer versions, further
 > counted lists). Not required by M3 or M4.
 
+> **OPEN (implementer, 2026-10-06):** The water list cannot be read positionally from this
+> section: its byte offset in the trailing section (equivalently, the grammar of the mode
+> byte, the mode-dependent sub-object and the u32 before it) is not given, nor is the encoding
+> of the per-landblock part (width of the "has water" byte's companion index, whether the nine
+> entries come before or after the list, and their landblock order, X-major or Y-major).
+> `tessera-formats` therefore keeps the section raw and offers only a byte search for a given
+> (type, height) pair (the WA5 check), which on this install finds 89,913 of the 89,914 pairs
+> predicted from the block maps by `water.md` §6.2 steps 5–7 when every non-zero type is
+> taken as wet (the one miss is consistent with the dry type 37 of `water.md` §6.1). Distant
+> water follows the Tessera rule of `water.md` §9 (derived from the block maps) until the
+> offsets are specified.
+
 ---
 
 <a id="s8"></a>
@@ -1178,6 +1190,11 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 > rather than require the size. The block-map descriptor is the key-0 entry of map 7 (the
 > client asks every map for key 0 only); the prefix rule gives the same DID in this
 > install.
+>
+> **Implemented (2026-10-06, implementer):** `tessera-formats` now parses that grammar (no
+> size check) and takes every table as the key-0 entry of its map (slot 8: the trailing DID).
+> Decoder limit (Tessera policy, not a fact about the data): at most 8 entries per DID map
+> (every observed map holds 0 or 1); a larger map is rejected as `Limit`.
 
 <a id="s10"></a>
 ## 10. Hostile-input notes

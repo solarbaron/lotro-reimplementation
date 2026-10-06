@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): Accepted |
-| **Last updated** | 2026-10-05 |
-| **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11–§12: Spec writer (dirty room) |
+| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): Accepted. §13–§14: M4.5 design (walk mode on collision; world fidelity), implemented |
+| **Last updated** | 2026-10-06 |
+| **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5). §15: change log |
 | **Reviewer** | §11: Claude review session (spec-writer agent) |
 | **Review record** | §11: Claude review session (spec-writer agent), 2026-10-05: changes requested (no-class LOD default contradicts `mesh.md` §8.5 without evidence; *G* step 3 condition incomplete; type 2–4 camera bodies lack offset tables; inline unknowns without OPEN callouts; provenance gaps). Re-review 2026-10-05, Claude review session (spec-writer agent): **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise, each with a Tessera Decision, non-blocking). Re-review spot checks: all 11 camera-state records re-decoded with the §11.5.3 tables (types 2, 3, 4 to the last byte; body offsets 94 and 95 zero in all four type-1 records); W21 census re-derived with an independent probe over all 2,380,699 Physics SEDs (81,425 / 333,933 / 38,849 / 1,665,106 / 12,993 / 248,393; instance and own set never disagree; 2,802 distinct objects without a class); 607 of 7,625 descriptors find a class via the parent chain; no descriptor holds `Entity_Camera_ForceUnderwater`; the §11.9 `Render_FarViewDistance` buckets (384,355 Physics SEDs); BIN (same build, d22363eb9aff0fb5): the render component's initial values 200, 60, 16, 80, 1000, 1000, 1100, −1 and `Render_LODClass` in its watch list. Non-blocking notes for a later revision: the untraced correspondence of the component's last two initial values to `d6`/`d7` (§11.4 step 4) deserves its own OPEN callout; the change log lacks a row for the repair round (W20–W26). |
 | **Implements into** | `apps/client/src/walker/` (M4: `walker/characters/` — layer, `figure.rs`, `catalog.rs`, `motion.rs` — and `walker/figures.rs`), `apps/client/src/walker_host.rs`, `apps/client/src/headless.rs`, `apps/client/src/avatar.rs`, `apps/client/src/net.rs`, `crates/net` (sandbox figures, crowd, entity events), `crates/world` (bundle figures), `fuzz/fuzz_targets/client_walker_text.rs`, `client_avatar_spec.rs`, `net_npc_events.rs`, `world_bundle.rs` |
@@ -41,6 +41,7 @@ extent and the login camera, so the walker can match it at default graphics sett
 | `--duration SECS` | Run this long after the spawn settled, with a frame log, then exit (timing runs). |
 | `--autorun walk\|run` | Move the avatar forward on its own from the start. |
 | `--unpaced`, `--no-vsync` | Headless runs unpaced (not 60 frames per second); windowed runs without vsync. |
+| `--walk-path FILE`, `--walk-log CSV` | Scripted walks on collision, headless without a GPU (§13.6): a walk file or the checklist's walk table; the movement log per 1/60 s step. |
 | `--showcase` | The M0 texture showcase instead of the walker. |
 
 Without an install the client shows the M0 test scene (`--no-data`), as before.
@@ -551,6 +552,12 @@ The built-in initial values equal preset 3 except `ObjectDrawDistance` (built-in
 > presets' display names. Until an owner observation of a fresh settings file exists,
 > "default graphics settings" in this spec means the **built-in initial values**.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` draw-distance module):** the table above
+> has no `StencilShadows` row, so the built-in initial value of `StencilShadows` (and so
+> *M_s* of `mesh.md` §8.7 at default settings) is not stated anywhere; `mesh.md` §8.7 uses 3
+> only in a synthetic example. Tessera (Decision): 3 (*M_s* = 1.0) until the spec owner
+> adds the row.
+
 <a id="s11-3"></a>
 ### 11.3 Landscape extent and the global distance limit *G* (BIN)
 
@@ -636,6 +643,12 @@ For an object drawn through an entity descriptor with LOD-class entry `d0` … `
    object, these same initial values).
 
 At the built-in defaults *M* = *M_d* = 1, so *D* = min(*G*, `d0`) and *R_d* = `d1`.
+
+> **OPEN (implementer, 2026-10-06, `tessera-world` draw-distance module):** step 1 says the
+> draw test uses the **smoothed** distance of `mesh.md` §8.6, but `mesh.md` §8.6 says the
+> smoothed *d_s* serves only the detail factor and §8.7 (row M25, BIN) says the draw, fade
+> and shadow tests use the **unsmoothed** *d*. Spec owner to converge the two. Tessera
+> follows `mesh.md` (BIN): `DrawFade` is fed the unsmoothed nearest-point distance.
 
 <a id="s11-4-1"></a>
 #### 11.4.1 LOD classes in use (observation; read at run time)
@@ -814,6 +827,12 @@ camera entity's DID.
 
 Offsets below are from the start of the body (record offset 24). Multi-byte fields are not
 aligned; read them byte-wise.
+
+> **OPEN:** Whether the client rejects a "u8 bool" byte other than 0 or 1 in the header and
+> bodies (not stated by BIN-W). The `tessera-formats` decoder (M4.5) rejects such bytes, like
+> every other flag byte of the crate; all 11 records of this install hold 0 or 1. Note also
+> that the record has no own DID (`records.md` §1.6), so its decoder cannot check the DID
+> it was looked up by.
 
 **Type 2, first person (65 bytes; record size 89; W25):**
 
@@ -1156,8 +1175,548 @@ clear: with *P* clear, yaw = 0; with *P* set, yaw = 10 + 90 = 100°. *R* set, *X
 *P* set, *Q* clear: base 0 (the initial yaw is used only when *R* is clear), heading not
 added, yaw = 0. *X* set: heading always added; with *P* clear the yaw is 0 + 90 = 90°.
 
+---
+
+<a id="s13"></a>
+## 13. Walk mode on collision (M4.5; clean-room implementer)
+
+Tessera's design (no format facts). Code: `apps/client/src/walker/movement/` (walker,
+mover, scripted walks, soak), `apps/client/src/walk_path.rs` (walk format),
+`apps/client/src/walker/controls.rs` (walk mode). It supersedes, for walk mode with
+collision, the "controllers (30 Hz fixed step)" of §2 and the terrain-height walk mode of
+§5 ([decision 0013](../decisions/0013-physics-crate.md)).
+
+<a id="s13-1"></a>
+### 13.1 Controller and step
+
+- When the world builds collision sets (`BundleOptions::build_collision`) and the mover has
+  loaded (§13.2, on its own thread at start-up), walk mode runs the `tessera-physics`
+  character controller (`collision.md` §12) on its own accumulator of exactly
+  `STEP_SECONDS` = 1/60 s, at most `MAX_STEPS_PER_FRAME` = 5 steps per frame; time beyond
+  the cap is dropped (ARCHITECTURE §20.3). The jump press is latched until a step takes it;
+  keyboard turning is applied per step at the walk controller's turn rate (2.5 rad/s), mouse
+  look once per frame. The avatar and the follow camera use the pose interpolated between
+  the last two controller states.
+- Otherwise (collision off, or before the mover is ready) walk mode is the `tessera-input`
+  terrain-height controller on the 30 Hz step, as in M3–M4. The free-fly controller is
+  unchanged.
+- Positions are f64 region-frame positions; each step runs against the streamer's
+  collision view around the feet (its landblock and eight neighbours, plus owners of cells
+  reaching there), whose frame origin is the feet's landblock corner.
+- **Placement (Decision, 2026-10-06 review).** Whenever the walk-mode controller is placed
+  (entering walk mode from fly mode, a placement or a correction by the session, the mover
+  becoming ready), the first step that can run (§13.3: its sets installed) first checks
+  the feet: outside every interior cell (lookup at the feet + 0.05 m) and more than
+  0.05 m below the terrain height, they are put on the highest walkable support that the
+  capsule, swept 4 m down from 3 m above the terrain, finds (as the soak's start search,
+  §13.7); on the terrain + 0.01 m when the sweep finds none, finds a ceiling, or starts
+  in an overlap. Reason: the controller does not recover a capsule that starts 1 m or
+  more below the terrain (it falls without end), and fly mode or the follow camera can
+  be below the terrain. Scripted walks and soak walks are placed by their own rules and
+  are not checked. Mouse look turns both ends of the interpolated pose, so a turn shows
+  in the frame it is made.
+- The HUD shows the movement state (`collision.md` §10.4), the cell and the water depth.
+
+<a id="s13-2"></a>
+### 13.2 The mover
+
+- Capsule: the single capsule of the avatar's setup (`--avatar`, default `human,m`) times
+  its model scale (`collision.md` §10.6; `appearance.md` §6.1). A body that does not
+  assemble, or a setup without exactly one usable capsule, falls back on radius 0.35,
+  lower cap 0.35, length 1.10 (the capsule every playable species ends up with, §10.6).
+- Movement record: the first 0x79 property set of the game-logic archives (ascending DID)
+  that holds `PlayerPhysicsControl_BasePlayerParameters` (`collision.md` §10.3); about 5 s
+  in a release build. Without it, the built-in record of `tessera-physics`.
+- Conditions (§11.1, float height §11.2): the properties of the avatar's 0x47 entity chain
+  (`setup.md` §3.1), the nearest level winning; the avatar is a player character (§11.3).
+  On the owner's install: setup 0x04000553, scale 1.0, radius 0.35, height 1.81, float
+  height 1.42.
+
+<a id="s13-3"></a>
+### 13.3 Collision-set residency (Decisions)
+
+- **Needed landblocks.** A step runs only when every landblock that the controller's query
+  box overlaps (decision 0013) **and** the feet's landblock with its eight neighbours have
+  installed sets. Reason: placed and generated objects of a landblock reach across its
+  edge; with only the query box required, a neighbour's set installed while the mover
+  stands next to it put geometry around the capsule, and the push-out then moved the
+  feet 0.18–0.40 m below the terrain (two soak fall-throughs before this rule). The rule
+  also makes a step's view independent of how far the streamer has got.
+- **Cell owners (2026-10-06 review).** A cell's physics mesh belongs to its owner
+  landblock, which may lie up to 6 landblocks from the cell (`collision.md` §5.8.1; on
+  the owner's install 3,856 of 104,269 cells of regions 1–5 and 14 lie 4–6 landblocks
+  away). A step therefore also needs the owner of the mover's current cell, and a
+  scripted walk requires its own landblock (the owner of its cells) at every step. The
+  walk streamer keeps these landblocks resident wherever they lie (one small streamer per
+  pinned landblock) and every view of a step holds them.
+
+> **OPEN (implementer, 2026-10-06 review):** the 3 × 3 rule does not cover cells placed
+> far from their owner before the mover has entered them: the walker cannot name an
+> owner that is not resident, so whether such a cell's floor is in a step's view still
+> depends on residency (the walk rings keep owners up to about 3 landblocks away; the
+> interactive streamer about 10). Fix: a world-side index of the cell owners whose cell
+> bounds reach each landblock, built from landblock info at boot (`tessera-world`), so
+> that `needed` can name them.
+- **Waiting.** While a needed set is missing the walker does not step: the frame's
+  accumulated time is dropped, the latched input kept, the state unchanged.
+- **Absent landblocks.** A landblock the streamer resolved as failed (no data, or a data
+  error), a bundle without collision, and positions off the grid count as installed and
+  empty, and are a solid boundary: a step that moves the capsule's footprint (feet ± radius)
+  into such a landblock, when it was not already in one, is undone with the velocity
+  zeroed.
+
+<a id="s13-4"></a>
+### 13.4 Cells
+
+The walker tracks its cell after every step at the feet raised by 0.05 m (the checklist's
+CELL rule): it keeps the current cell while that still contains the point (in a doorway
+both cells do), else takes a cell that the current cell's portals lead to and that contains
+it (`collision.md` §5.5, §5.8), else the lookup of §5.8.1 over the view (the lowest cell
+number of the first set; outdoors when none).
+
+<a id="s13-5"></a>
+### 13.5 Water
+
+The controller's water state (`water.md` §7.4) reads the water planes and liquid boxes of
+the view's sets, which `tessera-world` fills when it builds them. Inside an interior cell
+(the cell lookup at the feet + 0.05 m) there is no landscape water (Decision; OPEN in
+`water.md` §7.4): without the mask the dungeon of walk IN1, 660 m under a lake's plane,
+was inside the lake's volume boxes and the walker swam up out of its cell.
+
+<a id="s13-6"></a>
+### 13.6 Scripted walks (`--walk-path FILE`, `--walk-log CSV`)
+
+- `FILE` is one walk in the file form of `m4-5-visual.md` §2.1, or a Markdown text holding
+  the walk table (the checklist itself runs its walks). The run is headless and needs no
+  GPU: it opens the install, the world context with scenery, water and collision (no sky,
+  figures or area names), and a streamer with rings of 2–3 landblocks. The exit status is
+  non-zero when a walk fails or cannot run.
+- Per walk: the feet are put at `start` 0.01 m up (a start rounded to the centimetre never
+  begins inside its support), facing `heading`; a walk whose `cell` is not 0 starts in
+  that cell of its landblock (the tracker of §13.4 keeps it while it contains the feet);
+  the walker waits until the walk's own landblock (the owner of its cells; required by
+  every step and pinned, §13.3) and the 3 × 3 landblocks around the feet are installed;
+  30 steps without input (0.5 s settle), then `duration` in steps, each with the command
+  of the walk script. Inputs are given per step; worker timing changes only when a step
+  runs. A cell after the settle that differs from the row's `cell` is reported as a note.
+- `inputs` with waypoints and a `stop` or `turn` token are refused (the waypoints steer
+  forward and heading every step, so those tokens would have no effect; OPEN in
+  `m4-5-visual.md` §2.1). The walk file is read through an 8 MiB limit (a pipe or device
+  reports no length); a parsed walk whose `inputs` or `expect`, written back in the file
+  form, would exceed 4,096 bytes is refused, so every accepted walk's file form parses
+  back.
+- Waypoint steering decides the release every step (OPEN in `m4-5-visual.md` §2.1): a
+  walker that coasts past the last waypoint after the release (about 0.4 m at walking
+  speed) is steered back.
+- Pass conditions as §2.2, with these readings: penetration is the deepest negative
+  separation of the capsule's contacts after each step, settle steps included; so are
+  `follow`'s and `pass`'s per-step terrain and object-contact checks ("at every step");
+  `follow`'s end condition is horizontal only, as §2.2 gives it; "start"
+  cell is the cell after the settle (the last settle step); `follow`'s "never blocked" is: no step with forward
+  held, at least 0.5 s into the inputs and more than 1 m from the end point, whose
+  horizontal speed is below half the layer's forward speed; `pass`'s "object contact" is
+  a static or generated body within 0.01 m. A failure within twice its tolerance is
+  reported as a near miss (§2.2: for the spec writer). `blocked` walks also report the
+  first stop (where the walker first came to rest with forward held).
+- Movement log (CSV, one row per step): `walk, step, t, x, y, z` (feet, frame of the
+  walk's landblock), `vx, vy, vz, heading_deg, state` (`collision.md` §10.4), `support`,
+  `cell` (`0xXXYY:N` or 0), `water_depth, forward, strafe, jump, walking, stepped_up,
+  jumped, snapped, planes, pushed_out, penetration, boundary, terrain` (terrain height
+  under the feet), `contacts` (up to 8, `kind@separation`).
+
+<a id="s13-7"></a>
+### 13.7 The soak (`m4-5-visual.md` §2.5)
+
+`apps/client/tests/walk_soak_real_data.rs`. Readings (OPEN in §2.5): the draw order is
+landblock, x, y, heading, the redraws of step 4 (x, y), then per segment its length, kind
+and heading change; a landblock with no valid start within 256 (x, y) draws is passed
+over and the next walk planned. Step 4 sweeps the capsule 4 m down from 3 m above the
+terrain; the support must be walkable (§11.3) and not a cell, the capsule must not overlap
+geometry at the top or on the support. A start with no walkable support is redrawn too.
+Step 6's cell floor: a cell physics mesh crossing the capsule's axis more than 0.05 m above
+the feet. Walks are planned in order on one thread (one streamer) and run on several,
+each with its own streamer (rings 1.5 landblocks) over the shared workers; a digest of the
+end positions compares runs.
+
+<a id="s13-8"></a>
+### 13.8 Results (2026-10-06, owner's install, release build)
+
+- Soak: 1,000 walks of 60 s (3,600,000 steps) over 15,881 / 17,694 / 14,489 / 19,548 /
+  8,435 / 1,981 land landblocks of regions 1, 2, 3, 4, 5, 14: 0 fall-throughs, 0 non-finite
+  states; deepest below the terrain 0.0005 m; 1,357 start redraws, 3 landblocks passed
+  over; the same digest in two runs; 23 s with 8 runners.
+- Checklist walks: 19 of 32 pass, every one with 0.0000 m penetration (all walls,
+  undrawn blockers, water entries, IN1–IN4, CV3, ST1, ST3, FR2). The 13 others are listed
+  with their causes in the OPEN of `m4-5-visual.md` §2.4. After the controller fixes of the
+  M4.5 exit verification (`collision.md` §12.3 OPEN (n)–(p)) ST2 and FR3 pass too: 21 of 32;
+  the soak still has 0 fall-throughs and 0 non-finite states.
+
+<a id="s13-9"></a>
+### 13.9 Open questions
+
+> **Answered (implementer, 2026-10-06, review round):** the host (`walker_host.rs`) now
+> passes `--avatar` to `WalkerConfig::avatar`, so the mover takes the float height of the
+> avatar shown (the capsule is the same for every playable species).
+
+---
+
+<a id="s14"></a>
+## 14. World fidelity in the walker (M4.5; clean-room implementer)
+
+Tessera's design for drawing the M4.5 world systems (no format facts; every rule cited is
+the spec's). Code: `apps/client/src/walker/` — `terrain.rs` (texture layers, ceilings,
+far band), `farband.rs` (the far band's bake), `objects.rs` (LOD classes, fades, detail
+levels, lit surfaces, instancing), `env.rs` (clock, sky, sun, fog, lights), `water.rs`,
+`frills.rs`, `resolver.rs` (background lookups), `fxparse.rs` (switches, camera loops,
+clock arithmetic), `geometry.rs` (`MaterialPlan::lit`); `walker/mod.rs` wires them.
+Every M4.5 system draws into **one lit world pass** (`docs/specs/render.md` §4–§5).
+
+<a id="s14-1"></a>
+### 14.1 Frame
+
+Per frame, after the controllers and the streamer (§2): the frill ring follows the eye and
+the player (`scenery.md` §8.2); the resolver's answers are collected; the environment
+advances (§14.3) and the light table is built; terrain, objects, characters, water, sky
+and frills upload within the frame's budget and record into the pass. The main thread
+still reads no archive: 0x47 objects (sky objects, frills) and water surfaces are
+resolved on a `tessera-resolver` thread, terrain blocks, layer resolution, masks, light
+maps and far-band bakes on the terrain workers (a quarter of the hardware threads, 2 to
+6), parts and textures (with their mip chains, `texture-list.md` §5.5) on the asset
+workers. Queued terrain jobs are re-ranked every frame, nearest block first, and the jobs
+of blocks that left are dropped (a fast camera otherwise leaves the workers on blocks
+long passed). The upload budget's time (§4) runs from the start of the upload phase, not
+of the frame.
+
+<a id="s14-2"></a>
+### 14.2 Switches (profiling)
+
+`--disable LIST` switches systems off: `layers` (texture layers; the M3 height-shaded
+meshes instead), `lit` (the M2/M3 studio lighting; it also turns off every system that
+needs a lit pass: layers, shadows, lights, water, sky, instancing, frills), `shadows`,
+`lights` (point lights), `water`, `sky` (sky objects and the environment's lighting; the
+defaults of `lighting.md` §8.1 instead), `fog`, `scenery` (generated objects), `instancing`
+(every object as single mesh draws), `frills`, `lod` (per-class distances, fades and
+detail levels; every object to the distance cap at its finest level); `all` gives the
+M3/M4 walker. At run time F5–F11 toggle layers, shadows, water, sky, scenery, frills and
+LOD. The HUD names the systems that are off. The walker reads these keys and those of
+§14.3 as raw key codes; a key that a keymap binding uses (any context, alone or in a
+chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
+
+<a id="s14-3"></a>
+### 14.3 Environment, clock and lighting (Decisions)
+
+- **Clock.** The epoch is OPEN (`environment.md` §6), so the walker starts the game clock
+  at day *n* = 12,240 (the day the clock reads at *G* = 0, `environment.md` §14) and time
+  of day 0.5 (the checklist's performance time) unless `--day N` and `--time-of-day T` set
+  them (*G* from *n* and *t* by §11.1 run backwards); `--time-rate R` (default 1) and
+  `--day-type D` (default 2, §11.2). `--day` takes ±20,000,000 at most (days whose *G*
+  the game clock holds, ±10¹² s, with any calendar of days up to 50,000 s); a day the
+  clock still cannot hold starts the clock on day 12,240 with a warning. Keys: `[` and
+  `]` move the time by 1/24 day, `\` stops and restarts the clock (a clock stopped at
+  rate 0 restarts at rate 1), `-` and `=` halve and double the rate, never past 1/64 or
+  the `--time-rate` maximum of 100,000 and never in the wrong direction; while the clock
+  is stopped they change the rate it restarts at.
+- **Sky key** under the eye's landblock (`environment.md` §7.1); **interior fog** of the
+  cell holding the eye: the cell's own `InteriorFog*` properties, else its landblock
+  info's (`environment.md` §7.2, §12; `m4-5-visual.md` Y5).
+- **Frame lighting** from the blended values (`lighting.md` §8.1, Tessera Decision there):
+  ambient ½ (*X* + *Y*), hemispheric ½ (*X* − *Y*), sun toward −travel with colour *Cd* ×
+  *bd* and specular *Cs*, distance fog near/far/colour after the limits of §10, the time
+  input = seconds since start (`material.md` §5.3.1). Without a sky library or with `sky`
+  off, the defaults of §8.1 and no fog.
+- **Sun shadow** (`lighting.md` §9 simple form): one map of 2,048 texels over a sphere of
+  radius 90 m centred 54 m ahead of the eye (horizontal view direction), fading out by a
+  view depth of 150 m, cast only while the sun's elevation exceeds asin 0.05. Terrain
+  chunks within 430 m cast; objects within their shadow distance min(*G*, `d2` × *M_d* ×
+  *M_s*) (`mesh.md` §8.7); characters within the render component's initial `d2` (16 m).
+- **Clear colour** = the fog colour (the background meets the fog at the horizon); the sky
+  objects draw over it (§14.8).
+- **Global limit** *G* = `global_limit(E, fog far)` (§11.3, Tessera Decision there: clipped
+  whenever fog is on).
+- **Light table:** the Light entities within 200 m of the eye, nearest first, at most 255
+  (interior lights only with `--interiors`); range and on/off by the day/night rule of
+  `lighting.md` §8.3, intensity curves evaluated on the material clock, *σ* = 1. Objects
+  and water use the renderer's automatic selection (`render.md` §4.3, the Tessera Decision
+  of `lighting.md` §8.5); terrain and ceiling chunks with a light map (one of their
+  layers has one) receive only the lights that are not `Light_BakedLandscapeLight` (§8.3
+  Decision), nearest first; chunks without one use the automatic selection, baked lights
+  included.
+
+<a id="s14-4"></a>
+### 14.4 Terrain
+
+- **Layers.** The block job resolves the terrain and ceiling chunks against the region's
+  0x19 table (`terrain-texturing.md` §4; the table the scenery tables loaded, else read
+  from the region descriptor), checks each mask (A8, §5.1: a rejected mask is dropped and
+  the layer drawn as if it had none; masks above 1,024 texels a side, twice the largest
+  in the data, are rejected too) and decodes the masks and light maps (§10). Masks wait
+  for their upload as their A8 texels and are expanded to (255, 255, 255, *a*) only when
+  uploaded (a far block keeps its masks on the CPU until it nears). A mesh
+  job builds the chunk's vertices (§6.1–§6.4, the per-block offset of §6.2 with Tessera's
+  fixed region coordinates) and every layer's triangles at the block's level and stitched
+  edges (`ChunkLayers::layer_indices_for`, the Tessera Decision there); the chunk is
+  uploaded when its shared layer textures (diffuse, normal, emissive, glow, through the
+  object layer's store) have arrived. A block that draws nothing yet is uploaded at once
+  with what is there and rebuilt when the rest arrives. The crack-free promotion of §3 is
+  unchanged. Blocks are recorded nearest first (early depth rejection).
+- **Ceilings** (`terrain-texturing.md` §4.8): level 0 from the stored triangles, with the
+  ceiling light map, no shadow casting.
+- **Scrolling layers** (§6.3): the offset curves of the layers that have them are
+  evaluated every frame on the material clock and handed to the renderer.
+- **Far band (Decision; the original's distance bands are OPEN, `terrain-texturing.md`
+  §12).** A block farther than 480 m (`--far-band M`, 0 = off; 40 m hysteresis) is drawn
+  with one opaque layer: its layer stack composited on the CPU, once per block, into a
+  256 × 256 image with a mip chain (`farband.rs`): each layer's albedo × `diffuse_scale`,
+  sampled from the texture's small CPU levels (≤ 64 texels, the level matching the texel
+  footprint), blended "over" by its opacity rule after the discard test (§7–§8); missing
+  masks and textures follow the renderer's rules. The far layer is lit like the others
+  (2 × *C′* × Σ, the light map still added); per-layer normal maps and specular
+  highlights are not kept. Reason: one draw per far block instead of one per layer (the
+  walker drew 1,800 layer draws in a forest view; the far band leaves about 200), which
+  the frame budget of criterion 5 needs; at the band's start a baked texel (0.625 m) is
+  about 1.7 pixels at 1080p. Bakes run ahead of need (320 m inside the band) on the
+  terrain workers. Visually the same view with and without the band matched on
+  2026-10-06 (default spawn, 60 m above the ground). A block in the band keeps only its
+  light map on the GPU; its masks are uploaded when it comes within the band's edge (a
+  chunk waits only for its own masks and light maps, so the ceiling of a far cave block
+  completes while the terrain masks wait). A
+  block that enters the band with no full-layer chunk drawn and no bake yet (a fast
+  flight) is drawn height-shaded until the bake arrives.
+- Without layers (switched off, no table, a chunk that does not resolve, or a terrain
+  chunk that resolves to no drawn layer) the M3 height-and-slope mesh is drawn, lit with
+  its vertex colours. What the original draws for a terrain chunk without layers is OPEN
+  (`terrain-texturing.md` §4.5); a ceiling is drawn with its layers either way.
+
+<a id="s14-5"></a>
+### 14.5 Objects (§11.4, `mesh.md` §8.4–§8.7)
+
+- The block job turns the bundle's drawable entities and generated objects into objects
+  (one per placement, with its part instances) and gives each its LOD-class values: the
+  class of the placement in the order of §11.4.3 (`LandblockBundle::lod_class_of`), the
+  table entry or the component's initial values (§11.4 step 4).
+- **Draw distance** *D* = min(*G*, `d0` × *M_d*), capped by the object distance cap
+  (`--object-distance`, default the landscape extent; it shrinks while the GPU budget is
+  exceeded, §4). An object's parts are requested once it is within *D* + 60 m (nearer
+  than 200 m at visible priority, else at prefetch priority: parts never outrank the near
+  ring's landblocks, which load at immediate priority) and released beyond *D* + 140 m;
+  the activation pass of a landblock reruns after 12 m of camera travel, a change of *G*
+  of more than 1 m, a change of the distance cap, or of the `lod`, `scenery` or
+  `instancing` switch or the distance settings (so a cap that shrinks with the camera
+  still releases parts, and F9 and F11 act at once). Generated objects are not drawn
+  while `scenery` is off; switching `instancing` on asks for the models of the parts in
+  use.
+- **Fade** (`mesh.md` §8.7): `DrawFade` on the unsmoothed distance to the object's box (a
+  box around the sphere of its uploaded parts); a block not drawn in the previous frame
+  resets its objects' fades. A fading surface blends by its output alpha × the opacity
+  with depth write (`AlphaMode::TestBlend`, `render.md` §4.3; Decision: the original's
+  fade blending is not specified) and casts no shadow.
+- **Detail levels** (`mesh.md` §8.4): every kind-1 level of a part is uploaded; the level
+  follows the smoothed distance (§8.6) and *R_d* = `d1` × *M*.
+- **Surfaces** go through the lit pipeline with the inputs of `lighting.md` §4.1
+  (`MaterialPlan::lit`): material colour 2000 as stored, the alpha mode of `material.md`
+  §11.3 (lit `ColorAndOpacity` blends with depth write, unlit blend records without,
+  additive records additively), normal map (3011), specular colour and power, gloss from
+  the base or normal alpha by role (§10.2; an opaque `ColorAndGloss` texture keeps its
+  alpha), emissive (3018) and glow mask (3013) with glow colour 2014, fog, shadow casting.
+  Characters use the same rules (with their dye in stored values). Texture transforms and
+  second colour layers are not drawn (the lit pipeline has none yet, `render.md` §4.1).
+- **Instancing** (`render.md` §5.5): fully faded-in objects whose surfaces need no
+  emissive, glow or dye draw as instanced batches, one per landblock, part, detail level
+  and shadow flag; the part's world models are built once its textures are on the GPU.
+  Fading objects and the other surfaces stay single mesh draws.
+- **Characters** (§11.4, §11.4.2): drawn to *D* = min(*G*, 80 × *M_d*) (the `d0` of
+  `PlayerAvatar`, `Creature` and `Creature2Deg`; × 3 for the player's own character),
+  with the 1.5 s `DrawFade` across *D* (blended like a fading object, no shadow while
+  fading); `--character-distance` (default 400 m) only caps *D*. Placed figures beyond
+  *D* are handed to the object layer (§10.2). Each character's own class is not resolved
+  yet (OPEN §14.11). The player's own character is hidden in free-fly mode (the
+  checklist's camera, `m4-5-visual.md` §4.0).
+
+<a id="s14-6"></a>
+### 14.6 Water (`water.md` §8–§9)
+
+Each resident wet landblock within the landscape extent is one 160 × 160 quad at *h*
+(§8.1 Tessera rule); quads are grouped by surface into one draw with the surface's water
+parameters (§8.2, resolved on the resolver thread at rest; one normal layer when the
+record declares none of 1059–1062, 1064, 1065) and normal map. *O* is the anchor's origin,
+so the normal layers use region coordinates (§8.3 Tessera rule). Surfaces with vertex
+waves are subdivided 16 × 16 per quad. Distant water is the landblock water of the
+resident landblocks out to the extent (§9 Tessera rule: derived from the block maps).
+Placed water meshes (§8.5) are ordinary objects.
+
+<a id="s14-7"></a>
+### 14.7 Frills (`scenery.md` §8)
+
+The streamer's frill ring (level 2 by default, `--frill-distance 0–5`) is drawn instanced.
+Each ready sector's instances are grouped by object, in the sector's landblock frame (so
+a moving anchor never rebuilds them); new sectors are built nearest first, at most 96 per
+frame. The geometry is the first part of the object's part list and, of its detail level
+0, only the first draw entry (`scenery.md` §8.5 step 3; the object layer builds that
+model for a level with more than one entry). The sectors of a 4 × 4-sector cell (40 m)
+are merged into one batch per object part and frill values (Decision: one draw per 16
+sectors), translated into the anchor's render frame and merged again when a member
+changes or the anchor moves; sectors whose terrain-colour intensity differs (one without
+its colour yet) stay in separate batches. The distance rules stay per sector, as the
+original's groups are (§8.3 rules 2 and 4, §8.5 step 4): a sector whose box (its
+instance origins ± 4 m) lies at *D* or beyond draws nothing, and the reduction count is
+taken from each sector's own distance, keeping a prefix of that sector's instances; the
+walker hands the renderer the reduced list (rebuilt only when a count changes). Trade-off
+of the merge: the fade-in runs from the time the cell first appeared, not each sector.
+**Terrain colour** (§8.3 rule 7, formula OPEN; Decision): the mean colour of the smallest
+level of the top terrain layer's diffuse texture at the sector's centre × its
+`diffuse_scale`; while unknown the sector's terrain-colour intensity is 0. Cells out of
+view or beyond *D* are not queued.
+
+<a id="s14-8"></a>
+### 14.8 Sky (`environment.md` §11.4, §12)
+
+The visible sky objects of the day description in use, each part of its 0x47 object as a
+`SkyObject` with the object's angles and keyframe tint (`render.md` §5.4 placement), in
+the stored order; objects whose models are not built yet are left out. The parts stay
+referenced for the walker's life (the data has at most 136 objects per description).
+
+<a id="s14-9"></a>
+### 14.9 Default-settings profile (§11.8)
+
+| Quantity | The walker now |
+|---|---|
+| Landscape extent | the far ring is *E* of `--landscape-distance` (High: 2,080 m) unless `--view-blocks` sets it; near and mid rings 3 and 6 landblocks |
+| Residency | default budget 4,096 MiB: about 600 landblocks are resident, and with their scenery and collision sets they hold 0.85 MiB (region 1, Kingsfell) to 4.6 MiB (region 5) each, 2.7 GiB in all at the densest spot seen |
+| Object distances | per class (§14.5), `--object-draw-distance` and `--model-detail` levels (§11.2) |
+| Fade, detail levels | §14.5 |
+| Other characters | min(*G*, 80 × *M_d*) with the 1.5 s fade (§14.5); `--character-distance` caps it |
+| Frills | level 2 |
+| Field of view, near plane | 45° vertical, 0.1 m |
+| Camera state, login placement, zoom range, look-at point, target fade | not adopted: the walker keeps its own third-person camera (§5); OPEN below |
+
+<a id="s14-10"></a>
+### 14.10 Automated runs and logs
+
+- `--camera-loop R:X:Y:x,y;x,y[;…]` (with `--loop-speed`, `--loop-height`,
+  `--loop-pitch`; defaults 6.5 m/s, 2 m above the higher of terrain and water, −10°)
+  flies the checklist's closed loops (`m4-5-visual.md` §3); `--turn-rate DEG` turns a
+  free-fly camera on the spot. Both wait at their start until a `--duration` run starts.
+- `--no-hud` hides the HUD and minimap (clean screenshots).
+- New frame-log columns (after `x, y, z`): `env_ms, frills_ms` (main thread), `time_of_day,
+  g, fog_far`, `terrain_layered, ceilings, objects_drawn, fading, instanced, batches,
+  water_quads, frill_groups, frill_instances, lights`, the renderer's counters of the
+  frame (`gpu_draw_calls, gpu_terrain_layers, gpu_instances, gpu_water_quads,
+  gpu_sky_objects, gpu_shadow_draws, gpu_lit_draws`), in headless runs
+  `end_frame_ms, gpu_wait_ms` (submission and the wait for the GPU), and the main
+  thread's phases `terrain_update_ms, objects_update_ms, minimap_update_ms,
+  terrain_draw_ms, objects_draw_ms, water_draw_ms, sky_draw_ms, frills_draw_ms`. A
+  screenshot that times out names what was still loading.
+- `apps/client/tests/visual_rows_real_data.rs` checks the expected facts of the visual
+  rows (`m4-5-visual.md` §4) on the world model the walker draws from.
+
+<a id="s14-10a"></a>
+### 14.10a Checklist rows rendered (criterion 6, Tessera side, 2026-10-06)
+
+Every row of `m4-5-visual.md` §4 was rendered headless at its eye, heading, pitch and time
+(1600 × 900, free-fly, no HUD, avatar hidden; private images, not committed) and checked
+against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
+`TESSERA_GAME_DIR` set).
+
+| Rows | Facts (test) | Image | Notes |
+|---|---|---|---|
+| T1–T3, T6–T11, T13, T14 | pass (every layer stack) | pass | the expected surfaces: cobbles, snow, cliff top, city paving, brick and paved roads, light-mapped tiled floors |
+| T4, T12 | pass | target hidden | a placed object (T4) and a generated rock (T12, gone with `--disable scenery`) stand between the eye and the target; the terrain under them draws |
+| T5, T15, T16 | pass | too dark to judge | T15 and T16 (cave ceilings) draw their layers, visible with `--disable sky`; under the sky's lighting the downward-facing ceilings are almost black (OPEN below) |
+| S2, S3, S4, S7, S9, S11 | pass (every listed object) | pass | |
+| S1, S5, S6, S8, S10 | not asserted (§14.11 OPEN) | the objects the walker generates draw | |
+| F1 | pass (exact counts) | fails (review, 2026-10-06) | the terrain chunks of the whole 13 × 13-block square around F1 (region 1, 0x4C66) resolve to no layer: they drew nothing, so the grass floated over the clear colour; they are now drawn height-shaded (§14.4; re-rendered 2026-10-06: ground and frills drawn) until the original's behaviour is known (OPEN below) |
+| F2–F6 | pass (exact counts) | pass, with a defect | frills draw instanced; in F2 a few groups draw near-white (OPEN below) |
+| W1–W9 | pass | pass | sea, lakes, river step, lava, placed water (W8) and distant water to the extent (W9) |
+| Y1, Y3, Y4 | pass | pass | noon clouds, evening, night sky with stars and lamps |
+| Y2 | pass | not judged | the eye faces a building wall at dawn |
+| Y5 | pass (interior fog values) | fails | interior cell meshes are not drawn (§14.11) |
+| L1, L3, L4, L6 | L2 checked by the test | pass | sun shadow of the barn, bonfire emissive, glowing crystals, blended cobweb |
+| L2, L7 | L2 pass | not conclusive | the night scenes are lit, but pools of point light (L2) and the warm light-map texels (L7) are not distinct |
+| L5 | – | fails | no broad specular highlight on layer 67's paving toward the sun (OPEN below) |
+
+<a id="s14-11"></a>
+### 14.11 Open questions
+
+> **OPEN (implementer, 2026-10-06):** the original's far landscape (`terrain-texturing.md`
+> §12, `DistantImposters`): the far band of §14.4 is Tessera's own; per-layer normal maps
+> and specular highlights are not drawn beyond 480 m, and the seam between the bands is
+> not blended.
+
+> **OPEN (implementer, 2026-10-06):** how the original blends an object fading across its
+> draw distance (`mesh.md` §8.7 gives the 1.5 s opacity ramp, not the blend): Tessera
+> blends by alpha with depth write and casts no shadow while fading.
+
+> **OPEN (implementer, 2026-10-06):** the render meshes of interior cells (0x01) are not
+> drawn; interiors show their interior entities (`--interiors`) only.
+
+> **OPEN (implementer, 2026-10-06):** the camera rows of §11.8 (camera-state record, login
+> placement, zoom range, look-at point, target fade) are not adopted yet.
+
+> **OPEN (implementer, 2026-10-06):** characters' draw distance uses `d0` = 80 m (the
+> three character classes agree, §11.4.2) and their shadow distance the render
+> component's initial `d2` (16 m), instead of each character entity's own LOD class.
+
+> **OPEN (implementer, 2026-10-06, for the spec writer and the scenery implementer):** the
+> walker's generated lists (`tessera-world` scenery) do not hold six of the 22 objects the
+> scenery rows of `m4-5-visual.md` §4.2 list: S1 both (0x470035F7 at (127.035, 66.551),
+> 0x470035F4 at (128.162, 70.238)), S5 0x4700720F at (60.130, 78.403), S6 0x47005A5F at
+> (72.770, 21.815), S8 0x4700720F at (120.468, 106.733), S10 0x47007AA2 at (59.987,
+> 43.137) (0.70 m from a generated 0x47007CB0, so possibly a spacing or clearance
+> difference). The other 16 objects match to 0.01 m, 0.1° and 0.0001 in scale.
+> `apps/client/tests/visual_rows_real_data.rs` reports these rows without failing.
+
+> **OPEN (implementer, 2026-10-06):** cave ceilings (T15, T16) are almost black under the
+> sky's frame lighting: a face pointing down receives ambient − hemispheric = the ground
+> term *Y* (`lighting.md` §8.1) plus its light map. Whether the original adds more to
+> ceilings (interior lights, a different ambient under a ceiling) is not specified.
+
+> **OPEN (implementer, 2026-10-06):** row L5 shows no broad highlight on terrain layer 67
+> toward the sun; the layer's specular switch, gloss source and the sun's specular colour
+> need checking against the original (owner item for `m4-5-visual.md` L5).
+
+> **Answered (M4.5 exit verification, 2026-10-06):** the near-white groups were the
+> sun's specular with gloss 1: instanced surfaces could not take the gloss from a
+> normal-and-gloss texture's alpha (`GlossFrom::NormalAlpha`), so `WorldSurface` gained
+> `gloss_from_normal_alpha` and F2 now draws its heather pink and its flowers pale, with no
+> near-white pixels. The original note follows.
+>
+> **OPEN (implementer, 2026-10-06; narrowed in review):** in row F2 a few frill groups
+> draw near-white (overbright), as bright at *t* = 0.0 (night) as at 0.5, so the shading
+> saturates whatever the light. They are frills (gone with `--disable frills`, kept with
+> `--disable scenery`), and every frill object of block 3/0x7A69 (74 objects, 22,945
+> records) is on lit surfaces, mostly alpha-blended `ColorAndOpacity` with a
+> `TSNormalAndGloss` normal map and specular power 0: the unlit flag, specular and the
+> terrain-colour intensity are ruled out. What is left is the renderer's instanced lit
+> path for normal-mapped frill models (their tangent frame, or the ambient or sun terms).
+> Next step: draw F2 with the normal map ignored for frill batches; if the clumps go,
+> check the tangents of the frill models and the normal-frame fallbacks of the instanced
+> shader (`tessera-render`). Cells merging sectors of different terrain-colour intensity,
+> a candidate cause, no longer happen (§14.7).
+
+> **OPEN (implementer, 2026-10-06, `terrain-texturing.md` §4.5):** what the original
+> draws for a terrain chunk that has no layers. In region 1 alone 17,020 landblock-data
+> records have none while their heights vary (703 of them with a landblock info), and
+> the 13 × 13 blocks around row F1 are among them; region 2 has 11,359 and region 5
+> 42,807 (reviewer's probe). The walker draws them height-shaded (§14.4); `m4-5-visual.md`
+> row F1 needs the owner's look at the original there.
+
+> **OPEN (implementer, 2026-10-06):** the walker's keys of §14.2–§14.3 are read as raw
+> key codes, outside `tessera-input`'s actions and contexts: a keymap binding on one of
+> them wins, but they cannot be rebound and a future text-entry context (chat, M5) would
+> not make them opaque. Registering them as actions needs the input registry and the
+> walker's controls (`controls.rs`).
+
+> **OPEN (implementer, 2026-10-06, for the world implementer):** flight M3-b (3,000 m/s)
+> shows one near-ring landblock missing for 13–21 frames near the end of the path in every
+> run, also with every M4.5 system off and with the M3 ring size: the bundle (with its
+> collision set, generated scenery and water) arrives late. Criterion 5's "no near-ring
+> holes" is not met there (`docs/perf/reference-machine.md`).
+
+---
+
 <a id="s12"></a>
-## 12. Change log
+<a id="s15"></a>
+## 15. Change log
 
 | Date | Change |
 |---|---|
@@ -1165,3 +1724,6 @@ added, yaw = 0. *X* set: heading always added; with *P* clear the yaw is 0 + 90 
 | 2026-10-05 | §8.1, §10: M4 characters (clean-room implementer). |
 | 2026-10-05 | Spec writer (dirty room): new §11 (the original's preference levels and built-in defaults, quality presets, landscape extent and the global distance limit, per-class object and character draw distances with fade and detail ranges, camera-state record layout and census, camera-state selection, third-person login placement and behaviour, default-settings profile for the walker, OPENs, corrections to other specs, invariants, worked examples); §9 draw-distance OPEN marked answered; header gains the §11 status and reviewer rows. §11 status: Review. |
 | 2026-10-05 | Spec writer (dirty room), answering the review of §11 (changes requested): §11.1 BIN-W gains a second M4 session with questions (g)–(i) and OBS-W the placement-level census; W1 extended (FrillDensity, PlayerCrowdQuality, DialBackGraphics), W5 cites (h), new rows W20–W26. §11.2: case-insensitive reading marked Tessera Decision. §11.3 step 3: the missing flag condition (*S* off, or *F* set and *V* > 0.99), where *F* and *V* come from, OPEN extended. §11.4 step 4 and §11.4.1: the no-class values now rest on BIN (render-component initial values, not the dictionary default); new §11.4.3 (how the class reaches the render component; census over all Physics SEDs; OPEN on SED versus 0x47 precedence with a Tessera Decision). §11.4.2: NPC class statement reworded with the census. §11.5.3: byte-layout tables for the type-2, type-3 and type-4 bodies. §11.7 steps 1–2: look-at height fallback, under-water switch *U* and the yaw rule with flags *R*, *X*, *P*, *Q* (BIN), three new OPEN callouts. §11.8 rows updated. §11.9: OPEN list extended; `Render_FarViewDistance` census corrected (384,845 SEDs, not 8). §11.10: corrections to `mesh.md` §8.5/§8.8 and `scenery.md` §9. §11.11: W-I7–W-I9. §11.12: fog-clip, class-resolution and yaw examples. §11 status stays Review. |
+| 2026-10-06 | New §14: world fidelity in the walker (M4.5; clean-room implementer): the lit world pass with texture layers, ceilings and the far band, objects by LOD class with fades, detail levels, lit surfaces and instancing, water, frills, sky, the clock and its controls, the switches, the default-settings profile as adopted, new frame-log columns and options, the checklist rows as rendered (§14.10a; performance in `docs/perf/reference-machine.md`), and the terrain job ranking, upload-budget start and far-band mask deferral found by the M3 flights. |
+| 2026-10-06 | New §13: walk mode on collision (M4.5; clean-room implementer): the physics walker on its fixed 1/60 s step, the mover, collision-set residency (the feet's 3 × 3 landblocks; absent landblocks as a solid boundary), cell tracking through portals, water masked inside cells, scripted walks (`--walk-path`, `--walk-log`) and the 1,000-walk soak, with their first results. Supersedes §2's "controllers (30 Hz fixed step)" and §5's terrain-height walk mode when collision is built. |
+| 2026-10-06 | Review round of §14 (clean-room implementer): the change log moves to §15 (anchor `s12` kept); §14.2 walker keys yield to keymap bindings; §14.3 pause and rate keys, `--day` range, baked lights on ceilings without a light map; §14.4 chunks without layers drawn height-shaded, masks kept A8 until upload and capped at 1,024, a chunk waits only for its own images (a far cave block's ceiling never completed, so the walker never settled near one); §14.5 part priorities (visible/prefetch), the activation pass reruns on a cap, switch or setting change, characters by class distance with a fade; §14.7 frills: anchor-free sector groups, nearest-first builds, cells merged per frill values, distance rules per sector, the first part's first draw entry; §14.9 characters row; §14.10a F1 no longer passes (OPEN); §14.11 OPENs updated; §13.9 avatar OPEN answered. |

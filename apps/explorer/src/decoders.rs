@@ -1092,6 +1092,9 @@ pub struct RecordProduct {
     pub columns: Vec<&'static str>,
     /// Table rows.
     pub rows: Vec<RecordRow>,
+    /// The column whose cells link to [`RecordRow::link`]; `None`: the columns named
+    /// `value`, `data` or `surface`.
+    pub link_column: Option<usize>,
 }
 
 /// Decodes the records `tessera-formats` knows into tables (DID maps with navigable
@@ -1106,12 +1109,39 @@ pub fn record_product(
     did: u32,
     bytes: &[u8],
 ) -> Result<RecordProduct, ExplorerError> {
+    record_product_stamped(ctx, did, bytes, None)
+}
+
+/// Whether the record view has a decoder for `did`: every prefix of
+/// [`AnyRecord::is_decodable`] and cell geometry (0x01), which needs the property schema.
+#[must_use]
+pub fn is_record_decodable(did: u32) -> bool {
+    AnyRecord::is_decodable(did) || did >> 24 == 0x01
+}
+
+/// [`record_product`] with the record's directory stamp, which decides the tree layout of
+/// collision meshes (0x66) and cell geometry (0x01) (`collision.md` §3.1; `None` uses the
+/// spec's fallback). Cell geometry is decoded with the install's property registry.
+pub fn record_product_stamped(
+    ctx: &DataContext,
+    did: u32,
+    bytes: &[u8],
+    stamp: Option<u16>,
+) -> Result<RecordProduct, ExplorerError> {
     let mut p = RecordProduct {
         did,
         type_name: Did(did).kind().name().to_owned(),
         ..RecordProduct::default()
     };
-    let Some(rec) = AnyRecord::decode(did, bytes)? else {
+    let decoded = if did >> 24 == 0x01 {
+        let registry = ctx.game.registry()?;
+        AnyRecord::decode_with_stamp(did, bytes, stamp, &**registry)?
+    } else if did >> 24 == 0x66 {
+        AnyRecord::decode_with_stamp(did, bytes, stamp, &tessera_formats::NoSchema)?
+    } else {
+        AnyRecord::decode(did, bytes)?
+    };
+    let Some(rec) = decoded else {
         p.summary.push((
             "decoder".into(),
             "none for this type; see the hex view".into(),
@@ -1119,6 +1149,9 @@ pub fn record_product(
         return Ok(p);
     };
     p.type_name = rec.type_name().to_owned();
+    if crate::world_records::world_record(&mut p, &rec) {
+        return Ok(p);
+    }
     let resolve = |si: &StringInfo| -> String {
         ctx.strings.as_ref().map_or_else(
             || string_info_text(si),
@@ -1250,7 +1283,7 @@ impl Decoder for RecordDecoder {
     ) -> Result<RecordProduct, ExplorerError> {
         let member = key.variant.checked_sub(1).map(|m| m as usize);
         let raw = read_raw(&self.0, key.did, member)?;
-        record_product(&self.0, key.did, &raw.bytes)
+        record_product_stamped(&self.0, key.did, &raw.bytes, Some(raw.entry.stamp))
     }
 
     fn size_of(&self, v: &RecordProduct) -> usize {

@@ -19,8 +19,11 @@
 //!
 //! Results are cached per object DID, so a landblock with thousands of placements of a
 //! few hundred objects reads each chain once. The cache is bounded by entry count and is
-//! shared by every worker.
+//! shared by every worker. A resolution that stopped because a record could not be read
+//! *now* (a full queue, a shut-down pipeline: not the data's fault) is returned with
+//! [`ResolvedObject::transient`] set and is not cached, so the next lookup reads again.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -167,6 +170,9 @@ pub struct ResolvedObject {
     pub bones: Option<u32>,
     /// Why resolution stopped, if it did.
     pub error: Option<String>,
+    /// Resolution stopped because a record could not be read now, for a reason that is
+    /// not the data's: the result is not the data's and was not cached.
+    pub transient: bool,
 }
 
 impl ResolvedObject {
@@ -284,7 +290,14 @@ impl ObjectResolver {
             self.hits.fetch_add(1, Ordering::Relaxed);
             return Arc::clone(hit);
         }
-        let r = Arc::new(self.resolve_uncached(object));
+        let transient = Cell::new(false);
+        let mut r = self.resolve_uncached(object, &transient);
+        if transient.get() {
+            r.transient = true;
+            tracing::debug!(object = %format_args!("{:#010x}", object.0), "object not readable now; not cached");
+            return Arc::new(r);
+        }
+        let r = Arc::new(r);
         if r.error.is_some() {
             self.failed.fetch_add(1, Ordering::Relaxed);
             tracing::debug!(object = %format_args!("{:#010x}", object.0), error = r.error.as_deref().unwrap_or(""), "object did not resolve");
@@ -299,11 +312,11 @@ impl ObjectResolver {
         r
     }
 
-    fn resolve_uncached(&self, object: Did) -> ResolvedObject {
+    fn resolve_uncached(&self, object: Did, transient: &Cell<bool>) -> ResolvedObject {
         let mut weenie_type = None;
         let physics = match object.prefix() {
             ENTITY_PREFIX | TEMPLATE_PREFIX | SETUP_PREFIX => object,
-            0x70..=0x77 => match self.phys_obj_of(object) {
+            0x70..=0x77 => match self.phys_obj_of(object, transient) {
                 Ok((p, w)) => {
                     weenie_type = w;
                     p
@@ -321,7 +334,11 @@ impl ObjectResolver {
         // Keep the entity-descriptor payloads seen on the way for the draw flags.
         let mut entities: Vec<(Did, Vec<u8>)> = Vec::new();
         let fetch = |did: Did| -> Result<Option<Vec<u8>>, tessera_assets::AssetError> {
-            let bytes = self.source.read(did)?;
+            let bytes = self.source.read(did).inspect_err(|e| {
+                if !e.is_data_error() {
+                    transient.set(true);
+                }
+            })?;
             if let Some(b) = &bytes
                 && did.prefix() == ENTITY_PREFIX
                 && entities.len() < tessera_formats::setup::MAX_CHAIN_HOPS + 1
@@ -366,12 +383,17 @@ impl ObjectResolver {
             draw,
             weenie_type,
             error: None,
+            transient: false,
         }
     }
 
     /// The `PhysObj` and `WeenieType` of a game object, from its property set at DID +
     /// 0x09000000.
-    fn phys_obj_of(&self, object: Did) -> Result<(Did, Option<u32>), String> {
+    fn phys_obj_of(
+        &self,
+        object: Did,
+        transient: &Cell<bool>,
+    ) -> Result<(Did, Option<u32>), String> {
         let pid = self
             .pids
             .phys_obj
@@ -381,7 +403,12 @@ impl ObjectResolver {
         let bytes = self
             .source
             .read(set_did)
-            .map_err(|e| e.to_string())?
+            .map_err(|e| {
+                if !e.is_data_error() {
+                    transient.set(true);
+                }
+                e.to_string()
+            })?
             .ok_or_else(|| format!("property set {:#010x} is missing", set_did.0))?;
         let rec = PropertySetRecord::parse_expecting(&bytes, set_did, &*self.schema)
             .map_err(|e| e.to_string())?;

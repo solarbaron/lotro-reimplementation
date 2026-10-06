@@ -205,7 +205,7 @@ specs (§4.3).
 | Our `.ksy` files (`tools/kaitai/`) | same role as the hexpat files; one per spec page | clean (committed) | GPL-3.0-or-later (ours) | in repo | M1 |
 | 010 Editor | commercial hex editor with `.bt` templates; only if a researcher already owns it | dirty | proprietary | upstream Linux build | opt |
 | Python probes | one-off throwaway scripts (stdlib `struct`, `zlib`, `mmap`) that test a hypothesis across a whole archive | dirty | n/a (never committed) | system Python + `uv run` in the session scratchpad | now |
-| `tessera-dattool` (ours, `apps/dattool`) | `info`, `ls`, `stat`, `cat`, `strings`, `extract`, `validate` against the user's install; becomes the oracle that specs are checked against | clean (code) / output on real data is dirty | GPL-3.0-or-later | `cargo run -p tessera-dattool --` | now |
+| `tessera-dattool` (ours, `apps/dattool`) | `detect`, `info`, `ls`, `stat`, `cat`, `strings`, `show`, `census`, `extract`, `validate`, `snapshot`, `diff` against the user's install (§4.4); becomes the oracle that specs are checked against | clean (code) / output on real data is dirty | GPL-3.0-or-later | `cargo run -p tessera-dattool --` | now |
 | `dattool manifest` / `dattool diff` (planned) | per-archive manifest (ID, version, iteration, sizes, flags, hash of decoded bytes) in SQLite; manifest-to-manifest diff by record type | clean (code) | GPL-3.0-or-later | planned subcommands | M1 |
 | reflink snapshots | near-free copies of the archive set before each game patch, so we can diff patch N against N+1 | dirty (data) | n/a | `cp --reflink=always` on a reflink-capable file system (XFS, Btrfs) holding `$TESSERA_RE_DIR` | M1 |
 | diffoscope, sqlitebrowser | deep diffs of two snapshots; browsing manifests | dirty (on real data) | GPL-3.0-or-later; MPL-2.0 / GPL-3.0 | `dev-util/diffoscope`, `dev-db/sqlitebrowser` | M1 |
@@ -234,6 +234,22 @@ implementation of that spec. When it disagrees with the Rust parser on the same 
 spec is ambiguous or one of the implementations is wrong. That disagreement is exactly what we
 want to find. A pattern drafted during research is dirty and stays in the scratchpad until the spec
 exists.
+
+### 4.4 Record inspection and censuses with `dattool` {#b-dattool}
+
+Every `tessera-dattool` command opens the archives read-only and never writes into the install;
+`--json` gives machine-readable output for each. Two commands work on decoded records rather
+than on the container:
+
+| Command | What it does |
+|---|---|
+| `show <dir\|archive> <did> [--max-list N]` | Decodes one record and prints its fields: terrain type tables, terrain-scene and scene-choice tables, scenes, water and fog-zone tables, the sky description, day descriptions, game time, LOD classes, camera states, collision meshes and cell geometry, region descriptors with their eight table slots (and whether each named table is in the input), and landblock records (terrain and ceiling trees with a structural walk, ceilings, the box list, surface layers, light maps). Text output lists at most `N` rows per list (default 20, `0` for all). JSON lists every row, but gives property sets and the embedded render mesh of cell geometry as counts, and summarises landblock info, block maps, block-map descriptors and distant-landscape sectors as counts, as the text does. Other decodable records get a one-line summary (`cat` also names the decoded type, and points at `show` where it prints the fields) |
+| `census <dir\|archive> [--prefix 0xHH]... [--max-failures N]` | Decodes every record of the selected DID prefixes with its directory stamp and the property dictionary, and counts records, decoded and failed records (by failure category), payload bytes and a per-kind item count. A 0x01 record counts as decoded only with its embedded render mesh (`collision.md` §5.7). It also walks every collision tree of the selected records and checks its keys (`collision.md` §3.5, CO4): 0x66 records, cell physics meshes, the levels of the 0x01 embedded render meshes, 0x06 mesh levels and landblock terrain and ceiling trees; mesh levels with §3.5's renumbering are counted, not failed. Without `--prefix` it covers the record kinds of the M4.5 decode criterion (the new world records and the M2 material family); `--prefix 06` adds the meshes (the criterion's mesh levels; large, so not in the default) and `--prefix 80` the landblock family. Exit status 1 when a record does not decode or a tree fails its walk or key check, so it serves as the decode criterion of a milestone |
+
+The property dictionary is taken from the input, else from the `gamelogic` archive next to a
+single-archive input, else from the game directory (`--game-dir`, `$TESSERA_GAME_DIR`,
+detection). As §4.1 says for the tool as a whole, their output on real data is dirty-room
+material.
 
 ---
 

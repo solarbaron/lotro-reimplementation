@@ -3,13 +3,21 @@
 //! its own coordinate space, clear behaviour and draw lists. Nothing touches
 //! the GPU until [`crate::Renderer::end_frame`] records and submits them.
 
+use std::sync::Arc;
+
 use glam::{Mat4, Vec3};
 
 use crate::error::Result;
+use crate::instanced::InstanceBatch;
+use crate::lighting::FrameLighting;
 use crate::material::{Lighting, MeshDebug, MeshDraw};
+use crate::pass_hook::PassHook;
 use crate::pipelines::LineVertex;
 use crate::skin::{PaletteData, SkinPalette};
+use crate::sky::SkyDraw;
+use crate::terrain_layers::TerrainDraw;
 use crate::texture::TextureId;
+use crate::water::WaterDraw;
 
 /// Linear RGBA colour.
 pub type Rgba = [f32; 4];
@@ -109,6 +117,31 @@ pub struct Pass {
     pub(crate) lighting: Lighting,
     pub(crate) mesh_debug: MeshDebug,
     pub(crate) eye: Option<Vec3>,
+    /// Set: the pass is lit (M4.5 lit pipeline).
+    pub(crate) frame_lighting: Option<Box<FrameLighting>>,
+    /// Draw recorders of the render-world modules ([`crate::pass_hook`]).
+    pub(crate) hooks: Vec<Arc<dyn PassHook>>,
+    /// Draws of the render-world pipelines (terrain layers, water, sky, instanced
+    /// scenery), turned into hooks by `Renderer::end_frame` (`docs/specs/render.md` §5).
+    pub(crate) world: WorldDraws,
+}
+
+/// The render-world draws queued on one pass (`docs/specs/render.md` §5).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WorldDraws {
+    pub terrain: Vec<TerrainDraw>,
+    pub water: Vec<WaterDraw>,
+    pub sky: Vec<SkyDraw>,
+    pub instanced: Vec<InstanceBatch>,
+}
+
+impl WorldDraws {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.terrain.is_empty()
+            && self.water.is_empty()
+            && self.sky.is_empty()
+            && self.instanced.is_empty()
+    }
 }
 
 impl Pass {
@@ -124,7 +157,18 @@ impl Pass {
             lighting: Lighting::default(),
             mesh_debug: MeshDebug::default(),
             eye: None,
+            frame_lighting: None,
+            hooks: Vec::new(),
+            world: WorldDraws::default(),
         }
+    }
+
+    /// Add a draw recorder (render-world modules, [`crate::pass_hook`]). Hooks run in
+    /// insertion order in every stage. Ignored by screen passes.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn hook(&mut self, hook: Arc<dyn PassHook>) -> &mut Self {
+        self.hooks.push(hook);
+        self
     }
 
     /// Debug label.
@@ -195,6 +239,23 @@ impl Pass {
     pub fn lighting(&mut self, lighting: Lighting) -> &mut Self {
         self.lighting = lighting;
         self
+    }
+
+    /// Make this world pass **lit** (M4.5): its meshes are drawn with the lit pipeline
+    /// under `lighting` (sun or moon with shadow, ambient and hemispheric terms, fog, the
+    /// light table; `docs/specs/lighting.md` §5, `docs/specs/render.md` §4), using each
+    /// draw's [`crate::LitSurface`]. Debug shadings other than
+    /// [`crate::MeshShading::Lit`] still use the studio [`Lighting`]. Ignored by screen
+    /// passes.
+    pub fn frame_lighting(&mut self, lighting: FrameLighting) -> &mut Self {
+        self.frame_lighting = Some(Box::new(lighting));
+        self
+    }
+
+    /// The pass's frame lighting, when it is lit.
+    #[must_use]
+    pub fn frame_lighting_ref(&self) -> Option<&FrameLighting> {
+        self.frame_lighting.as_deref()
     }
 
     /// Set the debug view of this pass's meshes.

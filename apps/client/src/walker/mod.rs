@@ -7,14 +7,19 @@
 //!
 //! The main thread never reads archives or decodes. It runs, once per frame:
 //!
-//! 1. input → controllers (fixed 30 Hz step, `controls`);
-//! 2. the landblock streamer of `tessera-world` (bundles decoded on the asset workers);
-//! 3. new or released bundles → the terrain layer (`terrain`: blocks and meshes built on
-//!    its own workers), the object layer (`objects`: parts and textures decoded on the
-//!    asset workers) and the minimap (`minimap`);
-//! 4. GPU uploads of finished products within a per-frame byte and time budget
+//! 1. input → controllers (`controls`: free-fly and terrain walking on a fixed 30 Hz step,
+//!    walk mode on collision on its own fixed 1/60 s step, `movement`);
+//! 2. the landblock streamer of `tessera-world` (bundles decoded on the asset workers) and
+//!    its frill ring;
+//! 3. new or released bundles → the terrain layer (`terrain`: blocks, texture layers and
+//!    meshes built on its own workers), the object layer (`objects`: parts and textures
+//!    decoded on the asset workers) and the minimap (`minimap`);
+//! 4. the environment (`env`: game clock, sky, sun, ambient, fog, lights; `walker.md`
+//!    §14.3);
+//! 5. GPU uploads of finished products within a per-frame byte and time budget
 //!    ([`UploadBudget`]);
-//! 5. culling and draw recording.
+//! 6. culling and draw recording into one lit world pass: terrain layers, objects (by LOD
+//!    class, faded, instanced), characters, water, sky and frills (`walker.md` §14).
 //!
 //! Start-up work that reads the archives (world context, area names: `boot`; the place
 //! index: `places`) runs on its own threads.
@@ -32,18 +37,25 @@
 pub(crate) mod boot;
 pub mod characters;
 pub(crate) mod controls;
+pub mod env;
+pub mod farband;
 pub mod figures;
 pub(crate) mod framelog;
+pub mod frills;
+pub mod fxparse;
 pub(crate) mod geometry;
 pub(crate) mod hud;
 pub(crate) mod jobs;
 pub(crate) mod minimap;
+pub mod movement;
 pub(crate) mod objects;
 pub mod parse;
 pub(crate) mod places;
+pub(crate) mod resolver;
 pub(crate) mod source;
 pub(crate) mod terrain;
 pub(crate) mod view;
+pub mod water;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -56,27 +68,34 @@ use tessera_input::RawEvent;
 use tessera_net::{EntityId, Event, LocationCause, RegionId};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    Camera, Frame, Lighting, Material, MeshConfig, MeshData, MeshDraw, MeshId, PassSpace,
-    Perspective, Renderer, Rgba,
+    Camera, Frame, FrameStats, Light, Lighting, Material, MeshConfig, MeshData, MeshDraw, MeshId,
+    PassSpace, Perspective, Renderer, Rgba,
 };
 use tessera_terrain::LodSelector;
+use tessera_world::environment::InteriorFog;
 use tessera_world::{
-    LANDBLOCK_SIZE, LandblockKey, StreamConfig, WorldContext, WorldPos, WorldStreamer,
+    DistanceSettings, LANDBLOCK_SIZE, LandblockKey, StreamConfig, WorldContext, WorldPos,
+    WorldStreamer,
 };
 
 use self::characters::catalog::CharacterCatalog;
 use self::characters::figure::{ClipStore, FigureContext};
 use self::characters::{CharacterConfig, CharacterLayer};
 use self::controls::{Controls, MoveMode};
+use self::env::{ClockConfig, FrameEnv, WorldEnv};
 use self::framelog::{FrameLog, FrameRow, Rolling, rss_bytes};
+use self::frills::FrillLayer;
+use self::fxparse::{CameraLoop, System, Systems};
 use self::hud::TextPanel;
 use self::minimap::{MinimapLayer, MinimapView};
-use self::objects::{ObjectConfig, ObjectLayer};
+use self::objects::{ObjectConfig, ObjectFrame, ObjectLayer};
 use self::parse::FlyPath;
 use self::places::PlaceBuild;
+use self::resolver::Resolver;
 use self::source::{FigureBlock, Places, SourceShared, describe, loc_text, lock};
-use self::terrain::TerrainLayer;
+use self::terrain::{BlockInputs, TerrainFrame, TerrainLayer, TerrainLight};
 use self::view::{Anchor, Frustum};
+use self::water::WaterLayer;
 use crate::net::PlayerLocation;
 
 /// What the walker needs of a world session: the player's authoritative position and a
@@ -110,12 +129,12 @@ pub trait WalkerSession {
 /// the next frames.
 pub const MAX_ENTITY_EVENTS_PER_FRAME: usize = 4096;
 
-/// Sky colour (linear).
-pub const SKY: Rgba = [0.42, 0.58, 0.80, 1.0];
-/// Vertical field of view.
-pub const FOV_Y: f32 = 1.0;
-/// Near clip plane.
-pub const NEAR: f32 = 0.5;
+/// Sky colour (linear) when no environment is drawn.
+pub const SKY: Rgba = env::NO_SKY;
+/// Vertical field of view: 45° (`walker.md` §11.8, camera-state record 0x08000002).
+pub const FOV_Y: f32 = std::f32::consts::FRAC_PI_4;
+/// Near clip plane (`walker.md` §11.8: 0.1 m).
+pub const NEAR: f32 = 0.1;
 /// Smallest mesh-arena share of the terrain.
 pub const MIN_TERRAIN_ARENA: u64 = 64 << 20;
 /// Mesh-arena bytes allowed per resident terrain block (a measured average of about
@@ -332,6 +351,47 @@ pub struct WalkerConfig {
     pub bench: Option<BenchPlan>,
     /// Move forward on its own from the start: `Some(true)` walking, `Some(false)` running.
     pub autorun: Option<bool>,
+    /// Walk on collision (`tessera-physics`, ROADMAP M4.5) when the world builds collision
+    /// sets; otherwise, or when false, walk mode follows terrain heights.
+    pub collision_walk: bool,
+    /// The avatar whose capsule and float height the collision walk mode uses
+    /// (`collision.md` §10.6, §11.2).
+    pub avatar: crate::avatar::AvatarSpec,
+    /// The M4.5 systems switched on (`walker.md` §14.2).
+    pub systems: Systems,
+    /// The game clock's start and rate (`walker.md` §14.3).
+    pub clock: ClockConfig,
+    /// The distance preferences (`walker.md` §11.2; the built-in defaults of §11.8).
+    pub distances: DistanceSettings,
+    /// A scripted camera for timing runs (`m4-5-visual.md` §3).
+    pub camera: Option<CameraPlan>,
+    /// Terrain blocks farther than this (metres) draw their baked layer stack
+    /// (`walker.md` §14.4); 0 draws full layers at every distance.
+    pub far_band: f32,
+    /// Draw the HUD and the minimap.
+    pub hud: bool,
+}
+
+/// A scripted free-fly camera of a timing run (`m4-5-visual.md` §3): a loop flown at a
+/// constant speed and height above the higher of terrain and water, or a turn on the spot.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CameraPlan {
+    /// Fly the loop.
+    Loop {
+        /// The path.
+        path: CameraLoop,
+        /// Speed, m/s.
+        speed: f64,
+        /// Height above the terrain or water surface, m.
+        height: f64,
+        /// Pitch, radians (negative looks down).
+        pitch: f32,
+    },
+    /// Turn on the spot.
+    Turn {
+        /// Turn rate, radians per second (positive: clockwise seen from above).
+        rate: f32,
+    },
 }
 
 impl Default for WalkerConfig {
@@ -343,7 +403,11 @@ impl Default for WalkerConfig {
             stream: StreamConfig::default(),
             objects: ObjectConfig::default(),
             pixel_tolerance: 1.5,
-            terrain_threads: 2,
+            // Block jobs resolve texture layers and read masks since M4.5, and far
+            // blocks are baked: a quarter of the hardware threads, at least 2.
+            terrain_threads: std::thread::available_parallelism()
+                .map_or(2, |n| n.get() / 4)
+                .clamp(2, 6),
             interiors: false,
             keymap: None,
             flight: None,
@@ -357,9 +421,21 @@ impl Default for WalkerConfig {
             characters: CharacterConfig::default(),
             bench: None,
             autorun: None,
+            collision_walk: true,
+            avatar: crate::avatar::AvatarSpec::default(),
+            systems: Systems::all(),
+            clock: ClockConfig::default(),
+            distances: DistanceSettings::default(),
+            camera: None,
+            far_band: DEFAULT_FAR_BAND,
+            hud: true,
         }
     }
 }
+
+/// Where the terrain's far band starts by default, metres (`walker.md` §14.4, Tessera
+/// Decision).
+pub const DEFAULT_FAR_BAND: f32 = 480.0;
 
 /// What the frame asks of the host.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -372,6 +448,50 @@ pub struct WalkerEvents {
     pub screenshot: bool,
     /// The scripted flight reached its end.
     pub flight_done: bool,
+}
+
+/// The walker's own keys, read as raw key codes (`walker.md` §14.2–§14.3): `[`, `]`,
+/// `\`, `-`, `=` and F5–F11.
+pub const WORLD_KEYS: [tessera_input::KeyCode; 12] = {
+    use tessera_input::KeyCode as K;
+    [
+        K::BracketLeft,
+        K::BracketRight,
+        K::Backslash,
+        K::Minus,
+        K::Equal,
+        K::F5,
+        K::F6,
+        K::F7,
+        K::F8,
+        K::F9,
+        K::F10,
+        K::F11,
+    ]
+};
+
+/// The [`WORLD_KEYS`] that some binding of `keymap` uses (any context, alone or in a
+/// chord): the walker leaves them to the keymap, so a user's binding never fires twice.
+#[must_use]
+pub fn keys_taken_by(keymap: &tessera_input::Keymap) -> HashSet<tessera_input::KeyCode> {
+    let mut taken = HashSet::new();
+    for (_, _, bindings) in keymap.iter() {
+        for b in bindings {
+            let tessera_input::BindingSpec::Digital { chord, .. } = b else {
+                continue;
+            };
+            for stroke in chord.strokes() {
+                for button in stroke.buttons() {
+                    if let tessera_input::Button::Key(k) = button
+                        && WORLD_KEYS.contains(k)
+                    {
+                        taken.insert(*k);
+                    }
+                }
+            }
+        }
+    }
+    taken
 }
 
 /// The walker (module docs).
@@ -403,6 +523,8 @@ pub struct Walker {
     flight: Option<Flight>,
     far: f32,
     help: String,
+    /// Walker keys ([`WORLD_KEYS`]) a keymap binding uses: left to the keymap.
+    taken_keys: HashSet<tessera_input::KeyCode>,
     avatar: Option<MeshId>,
     move_sent: Option<Instant>,
     viewport: (u32, u32),
@@ -415,6 +537,36 @@ pub struct Walker {
     player_region: u8,
     /// Main-thread time of the character layer this frame (events, figures, animation).
     chars_ms: f64,
+    /// The collision walk mode's mover, loading on its own thread.
+    mover_job: Option<std::thread::JoinHandle<movement::setup::MoverSetup>>,
+    /// The M4.5 systems in effect (`walker.md` §14.2).
+    systems: Systems,
+    /// Game clock, sky, sun, fog and lights.
+    env: WorldEnv,
+    /// Background lookups of sky and frill objects and water surfaces.
+    resolver: Resolver,
+    water: WaterLayer,
+    frills: FrillLayer,
+    /// The environment of this frame.
+    frame_env: Option<FrameEnv>,
+    /// The frame's light table (render frame) and the same lights as the terrain sees them.
+    lights: Vec<Light>,
+    terrain_lights: Vec<TerrainLight>,
+    /// Start of the material and light clock (`material.md` §5.3.1).
+    clock_start: Instant,
+    /// The eye of the previous frame (camera travel for fades).
+    last_eye: Option<WorldPos>,
+    /// Main-thread time of the environment and lights this frame.
+    env_ms: f64,
+    /// Main-thread time of the frill ring update this frame.
+    frills_ms: f64,
+    /// The renderer's statistics of the previous frame.
+    render_stats: FrameStats,
+    /// The scripted camera's start time.
+    camera_started: Option<Instant>,
+    /// Main-thread phases of this frame, ms: terrain, object and minimap updates; terrain,
+    /// object, water, sky and frill recording.
+    phase_ms: [f64; 8],
 }
 
 impl std::fmt::Debug for Walker {
@@ -477,6 +629,7 @@ impl Walker {
             LodSelector::from_fov(720.0, FOV_Y, config.pixel_tolerance),
             mesh_cfg,
             config.interiors,
+            Arc::new(BlockInputs::from_context(&ctx)),
         )?;
         let objects = ObjectLayer::new(
             Arc::clone(&set),
@@ -515,8 +668,15 @@ impl Walker {
         if let Some(walk) = config.autorun {
             controls.set_autorun(true, walk);
         }
-        let help = controls::help_text(&keymap);
+        let taken_keys = keys_taken_by(&keymap);
+        let help = format!(
+            "{}; [ ] time, \\ clock, -/= rate, F5-F11 layers/shadows/water/sky/scenery/frills/lod",
+            controls::help_text(&keymap)
+        );
         tracing::info!("walker controls: {help}");
+        if !taken_keys.is_empty() {
+            tracing::info!(keys = ?taken_keys, "walker keys bound by the keymap; the keymap wins");
+        }
         let avatar = match renderer.upload_mesh(&MeshData::uv_sphere(0.5, 16, 8)) {
             Ok(m) => Some(m),
             Err(e) => {
@@ -537,12 +697,29 @@ impl Walker {
             budget_mib = config.stream.residency_budget >> 20,
             "world walker ready"
         );
+        // The collision walk mode: the mover (capsule, movement record, conditions) loads on
+        // its own thread (locating the movement record reads the 0x79 sets).
+        let mover_job = if config.collision_walk && ctx.options().build_collision {
+            let catalog = Arc::clone(&catalog);
+            let avatar = config.avatar.clone();
+            std::thread::Builder::new()
+                .name("tessera-walk-mover".into())
+                .spawn(move || movement::setup::MoverSetup::load(&catalog, &avatar))
+                .map_err(|e| tracing::warn!("walk mover thread: {e}; walking on terrain heights"))
+                .ok()
+        } else {
+            None
+        };
         let far = far_plane(config.stream.rings.far);
         let config_region = config.region;
         let config_bench = config.bench;
+        let env = WorldEnv::new(ctx.systems().sky.clone(), &config.clock);
+        let resolver = Resolver::new(Arc::clone(&ctx), objects.materials())?;
+        let systems = config.systems;
         Ok(Self {
             far,
             help,
+            taken_keys,
             log: config.frame_log.then(FrameLog::default),
             config,
             ctx,
@@ -584,12 +761,105 @@ impl Walker {
             char_draws: Vec::new(),
             player_region: config_region,
             chars_ms: 0.0,
+            mover_job,
+            systems,
+            env,
+            resolver,
+            water: WaterLayer::default(),
+            frills: FrillLayer::default(),
+            frame_env: None,
+            lights: Vec::new(),
+            terrain_lights: Vec::new(),
+            clock_start: now,
+            last_eye: None,
+            env_ms: 0.0,
+            frills_ms: 0.0,
+            render_stats: FrameStats::default(),
+            camera_started: None,
+            phase_ms: [0.0; 8],
         })
     }
 
-    /// Forwards a raw input event.
+    /// Forwards a raw input event. The walker's own keys ([`WORLD_KEYS`], `walker.md`
+    /// §14.2–§14.3): `[` and `]` move the time of day by a 24th of a day, `\` stops and
+    /// restarts the clock, `-` and `=` halve and double its rate; F5–F11 switch the
+    /// terrain layers, shadows, water, sky, generated scenery, frills and per-class
+    /// distances. A key that the keymap binds to an action is left to the keymap.
     pub fn input(&mut self, event: &RawEvent) {
+        use tessera_input::KeyCode as K;
+        if let RawEvent::Key {
+            key,
+            pressed: true,
+            repeat: false,
+        } = event
+            && !self.taken_keys.contains(key)
+        {
+            match key {
+                K::BracketLeft => self.env.step_time(-1.0),
+                K::BracketRight => self.env.step_time(1.0),
+                K::Backslash => {
+                    let paused = self.env.toggle_pause();
+                    self.notice(if paused {
+                        "clock stopped"
+                    } else {
+                        "clock running"
+                    });
+                }
+                K::Minus => self.env.scale_rate(0.5),
+                K::Equal => self.env.scale_rate(2.0),
+                K::F5 => self.toggle_system(System::TerrainLayers),
+                K::F6 => self.toggle_system(System::Shadows),
+                K::F7 => self.toggle_system(System::Water),
+                K::F8 => self.toggle_system(System::Sky),
+                K::F9 => self.toggle_system(System::Scenery),
+                K::F10 => self.toggle_system(System::Frills),
+                K::F11 => self.toggle_system(System::Lod),
+                _ => {}
+            }
+        }
         self.controls.handle(event);
+    }
+
+    /// Switches system `s` on or off at run time.
+    pub fn toggle_system(&mut self, s: System) {
+        let on = self.systems.toggle(s);
+        self.apply_frill_switch();
+        self.notice(format!("{} {}", s.name(), if on { "on" } else { "off" }));
+    }
+
+    /// The systems in effect.
+    #[must_use]
+    pub fn systems(&self) -> Systems {
+        self.systems
+    }
+
+    /// Hands the frill switch to the streamer's frill ring.
+    fn apply_frill_switch(&mut self) {
+        let want = self.systems.on(System::Frills);
+        let mut s = self.streamer.config().frills;
+        if s.draw_frills != want {
+            s.draw_frills = want;
+            self.streamer.set_frill_settings(s);
+            if !want {
+                self.frills.clear(&mut self.objects);
+            }
+        }
+    }
+
+    /// Records how long the frame's submission (`end_frame`) and the wait for the GPU took
+    /// (frame-log columns; headless runs).
+    pub fn record_frame_timing(&mut self, end_frame_ms: f64, gpu_wait_ms: f64) {
+        if let Some(log) = &mut self.log {
+            log.set_frame_timing(end_frame_ms, gpu_wait_ms);
+        }
+    }
+
+    /// Records the renderer's statistics of the frame just ended (frame-log columns).
+    pub fn record_render_stats(&mut self, stats: &FrameStats) {
+        self.render_stats = *stats;
+        if let Some(log) = &mut self.log {
+            log.set_render_stats(stats);
+        }
     }
 
     /// Sets the viewport size (LOD selection, projected-size culling, HUD layout).
@@ -629,6 +899,50 @@ impl Walker {
             && self.terrain.settled()
             && self.objects.settled()
             && self.characters.settled()
+            && (!self.systems.on(System::Water) || self.water.settled())
+            && (!self.systems.on(System::Frills) || self.frills.settled())
+            && (!self.systems.on(System::Sky) || self.env.sky_settled(&self.objects))
+            && self.resolver.pending() == 0
+    }
+
+    /// What keeps [`Walker::settled`] false (diagnostics), empty when settled.
+    #[must_use]
+    pub fn unsettled(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if !self.controls.placed() {
+            out.push("not placed");
+        }
+        if self.last_report.loading > 0 {
+            out.push("landblocks loading");
+        }
+        if self.last_report.near_missing > 0 {
+            out.push("near ring missing");
+        }
+        if self.last_report.deferred > 0 {
+            out.push("landblocks deferred");
+        }
+        if !self.terrain.settled() {
+            out.push("terrain");
+        }
+        if !self.objects.settled() {
+            out.push("objects");
+        }
+        if !self.characters.settled() {
+            out.push("characters");
+        }
+        if self.systems.on(System::Water) && !self.water.settled() {
+            out.push("water");
+        }
+        if self.systems.on(System::Frills) && !self.frills.settled() {
+            out.push("frills");
+        }
+        if self.systems.on(System::Sky) && !self.env.sky_settled(&self.objects) {
+            out.push("sky");
+        }
+        if self.resolver.pending() > 0 {
+            out.push("resolver");
+        }
+        out
     }
 
     /// The character layer (tests and diagnostics).
@@ -715,10 +1029,25 @@ impl Walker {
         );
         let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
-        // Input and movement.
+        // Input and movement: walk mode on collision once the mover has loaded.
+        if self
+            .mover_job
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished)
+            && let Some(job) = self.mover_job.take()
+        {
+            match job.join() {
+                Ok(mover) => {
+                    self.controls.enable_physics(mover);
+                    self.notice("walking on collision");
+                }
+                Err(_) => tracing::error!("walk mover thread panicked; walking on terrain heights"),
+            }
+        }
         let tiles = self.terrain.tiles().clone();
         let ground = |gx: f64, gy: f64| tiles.height_at(gx, gy);
-        let ce = self.controls.frame(dt, &ground);
+        let collision = movement::StreamedCollision(&self.streamer);
+        let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
         events.screenshot = ce.screenshot;
         if ce.toggle_debug {
@@ -730,6 +1059,7 @@ impl Walker {
         if let Some(done) = self.fly(now) {
             events.flight_done = done;
         }
+        self.script_camera(now, dt);
 
         // Streaming focus: the viewer, or where the sandbox needs data (module docs of
         // `source`).
@@ -747,6 +1077,14 @@ impl Walker {
             self.last_report = self.streamer.update(focus);
             self.stream_ms = t.elapsed().as_secs_f64() * 1e3;
         }
+        // The frill ring follows the camera and the player (`scenery.md` §8.2).
+        let t_frills = Instant::now();
+        if self.systems.on(System::Frills) && self.controls.placed() {
+            let (eye, _) = self.view();
+            let player = self.controls.focus();
+            let _ = self.streamer.update_frills(&eye, &player);
+        }
+        self.frills_ms = t_frills.elapsed().as_secs_f64() * 1e3;
         self.sync_bundles(renderer);
 
         // Render anchor follows the eye.
@@ -763,19 +1101,92 @@ impl Walker {
             self.anchor = Some(a);
         }
 
-        let mut budget = UploadBudget::new(self.config.upload_bytes, self.config.upload_time, now);
+        // The environment of the frame: clock, sky, sun, fog, lights (`walker.md` §14.3).
+        let t_env = Instant::now();
+        self.resolver.poll();
+        if let (Some(anchor), Some(eye_w)) = (self.anchor, eye) {
+            let (_, dir) = if self.controls.placed() {
+                self.view()
+            } else {
+                (eye_w, Vec3::X)
+            };
+            let cam = anchor.to_render(&eye_w).unwrap_or(Vec3::ZERO);
+            let sky_key = self.streamer.sky_key_at(&eye_w);
+            let interior = self.interior_fog(&eye_w);
+            let time = self.material_time();
+            let fe = self.env.update(
+                f64::from(dt),
+                sky_key,
+                interior,
+                &self.systems,
+                self.extent(),
+                cam,
+                dir,
+                time as f32,
+            );
+            if self.systems.on(System::Lights) {
+                let (lights, tl) = self.env.lights(
+                    &self.streamer,
+                    &anchor,
+                    &eye_w,
+                    fe.night,
+                    time,
+                    self.config.interiors,
+                );
+                self.lights = lights;
+                self.terrain_lights = tl;
+            } else {
+                self.lights.clear();
+                self.terrain_lights.clear();
+            }
+            self.frame_env = Some(fe);
+        }
+        self.env_ms = t_env.elapsed().as_secs_f64() * 1e3;
+
+        // The upload time budget runs from here: the work above (streaming, environment)
+        // would otherwise leave the uploads one item a frame on a busy frame.
+        let mut budget = UploadBudget::new(
+            self.config.upload_bytes,
+            self.config.upload_time,
+            Instant::now(),
+        );
         if let (Some(anchor), Some(eye)) = (self.anchor, eye) {
             let cam = anchor.to_render(&eye).unwrap_or(Vec3::ZERO);
-            self.terrain.update(renderer, &anchor, cam, &mut budget);
+            let tframe = self.terrain_frame();
+            let t0 = Instant::now();
+            self.terrain.update(
+                renderer,
+                &anchor,
+                cam,
+                &tframe,
+                &mut self.objects,
+                &mut budget,
+            );
             for (key, product) in self.terrain.take_finished() {
-                self.objects.insert(key, product.instances);
+                self.objects.insert(key, product.instances, product.objects);
                 self.minimap.set_overview(renderer, key, &product.overview);
             }
-            self.objects.update(renderer, eye.xy(), &mut budget);
+            let t1 = Instant::now();
+            let oframe = self.object_frame(&eye, dt);
+            self.objects
+                .update(renderer, [eye.x, eye.y, eye.z], &oframe, &mut budget);
+            self.characters.set_distances(characters::CharacterFrame {
+                g: oframe.g,
+                multiplier: oframe.settings.object_multiplier(),
+                dt: oframe.dt,
+                camera_moved: oframe.camera_moved,
+                lod: oframe.lod,
+            });
+            self.last_eye = Some(eye);
+            let t2 = Instant::now();
             if let Some(k) = eye.landblock() {
                 let radius = (self.config.minimap_radius / LANDBLOCK_SIZE).ceil() as u32 + 1;
                 self.minimap.update(renderer, k, radius, &mut budget);
             }
+            let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
+            self.phase_ms[0] = ms(t0, t1);
+            self.phase_ms[1] = ms(t1, t2);
+            self.phase_ms[2] = ms(t2, Instant::now());
         }
         // Characters: the avatar follows the walk controller; figures, animation.
         let pose = self.controls.avatar().map(|(feet, yaw)| {
@@ -903,6 +1314,122 @@ impl Walker {
         Some(false)
     }
 
+    /// The landscape extent in force (`walker.md` §11.3): the far ring's radius, which the
+    /// host sets to *E* of the distance preferences unless `--view-blocks` overrides it.
+    fn extent(&self) -> f32 {
+        self.config.stream.rings.far as f32
+    }
+
+    /// Seconds on the material and light clock (`material.md` §5.3.1: since the start).
+    fn material_time(&self) -> f64 {
+        self.clock_start.elapsed().as_secs_f64()
+    }
+
+    /// How the terrain is drawn this frame.
+    fn terrain_frame(&self) -> TerrainFrame {
+        TerrainFrame {
+            layered: self.systems.on(System::TerrainLayers),
+            lit: self.systems.on(System::Lit),
+            shadow_radius: if self.systems.on(System::Shadows) {
+                3.0 * env::SHADOW_RADIUS + LANDBLOCK_SIZE as f32
+            } else {
+                0.0
+            },
+            extent: self.extent(),
+            far_band: self.config.far_band,
+            time: self.material_time(),
+        }
+    }
+
+    /// How objects are chosen and drawn this frame (`walker.md` §11.4, §14.5).
+    fn object_frame(&self, eye: &WorldPos, dt: f32) -> ObjectFrame {
+        let (fps, _, _) = self.rolling.stats();
+        let moved = self.last_eye.map_or(f32::INFINITY, |l| {
+            if l.region == eye.region {
+                ((l.x - eye.x).powi(2) + (l.y - eye.y).powi(2) + (l.z - eye.z).powi(2)).sqrt()
+                    as f32
+            } else {
+                f32::INFINITY
+            }
+        });
+        ObjectFrame {
+            g: self.frame_env.as_ref().map_or(self.extent(), |f| f.g),
+            settings: self.config.distances,
+            lod: self.systems.on(System::Lod),
+            instancing: self.systems.on(System::Instancing),
+            scenery: self.systems.on(System::Scenery),
+            lit: self.systems.on(System::Lit),
+            shadows: self.systems.on(System::Shadows),
+            dt,
+            fps: if fps > 0.0 { fps as f32 } else { 60.0 },
+            camera_moved: moved,
+        }
+    }
+
+    /// The interior fog of the cell holding `eye` (`environment.md` §7.2, §12): the
+    /// cell's own properties, else its landblock info's.
+    fn interior_fog(&self, eye: &WorldPos) -> Option<InteriorFog> {
+        let (key, cell) = self.streamer.cell_at(eye)?;
+        let info = self.streamer.bundle(key)?.info.as_ref()?;
+        let pids = &self.ctx.systems().pids.environment;
+        let own = info
+            .cells
+            .as_ref()
+            .and_then(|c| c.items.iter().find(|x| x.index == cell.index))
+            .and_then(|c| c.properties.as_ref())
+            .and_then(|p| InteriorFog::from_set(p, pids));
+        own.or_else(|| InteriorFog::from_set(&info.properties, pids))
+    }
+
+    /// The scripted camera of a timing run (`m4-5-visual.md` §3): it waits at its start
+    /// until the timing run starts (or at once without one), then flies the loop at its
+    /// speed and height over the higher of terrain and water, or turns on the spot.
+    fn script_camera(&mut self, now: Instant, dt: f32) {
+        let Some(plan) = self.config.camera.clone() else {
+            return;
+        };
+        if !self.controls.placed() {
+            return;
+        }
+        let running = self.bench.is_none_or(|b| b.started.is_some());
+        let t = if running {
+            let start = *self.camera_started.get_or_insert(now);
+            now.saturating_duration_since(start).as_secs_f64()
+        } else {
+            0.0
+        };
+        match plan {
+            CameraPlan::Loop {
+                path,
+                speed,
+                height,
+                pitch,
+            } => {
+                let (p, heading) = path.at(t * speed);
+                let g = path.global(p);
+                let ground = self.terrain.tiles().height_in(path.region, g[0], g[1]);
+                let water = self
+                    .streamer
+                    .landblock_water(&WorldPos::new(path.region, g[0], g[1], 0.0))
+                    .map(|w| w.height);
+                let base = match (ground, water) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (a, b) => a.or(b),
+                };
+                let z = base.map_or_else(|| self.controls.focus().z, |h| f64::from(h) + height);
+                let pos = WorldPos::new(path.region, g[0], g[1], z);
+                self.controls.set_fly_pose(&pos, heading as f32, pitch);
+            }
+            CameraPlan::Turn { rate } => {
+                let (eye, dir) = self.controls.eye();
+                let yaw = dir.y.atan2(dir.x);
+                let pitch = dir.z.clamp(-1.0, 1.0).asin();
+                let step = if running && dt.is_finite() { dt } else { 0.0 };
+                self.controls.set_fly_pose(&eye, yaw - rate * step, pitch);
+            }
+        }
+    }
+
     /// Tracks new and released bundles.
     fn sync_bundles(&mut self, renderer: &mut Renderer<'_>) {
         let layers = self.ctx.options().active_content_layers.clone();
@@ -959,7 +1486,10 @@ impl Walker {
             }
         }
         for (key, bundle) in fresh {
-            if self.terrain.insert(key, &bundle, renderer) {
+            if self
+                .terrain
+                .insert(key, &bundle, renderer, &mut self.objects)
+            {
                 self.minimap
                     .set_image(key, bundle.minimap_image(active).map(|d| d.0));
                 if let Some(a) = &bundle.area {
@@ -973,15 +1503,21 @@ impl Walker {
             .filter(|k| !resident.contains(k))
             .collect();
         for key in gone {
-            self.terrain.remove(key, renderer);
+            self.terrain.remove(key, renderer, &mut self.objects);
             self.objects.remove(key);
             self.minimap.remove(renderer, key);
             lock(&self.shared).areas.remove(&key);
         }
     }
 
+    /// Drops everything drawn (a region change, shutdown). Every user of the object layer
+    /// releases its references first, so it acquires them again on the next frame (the
+    /// water surfaces and sky parts would otherwise stay pending for ever).
     fn clear_all(&mut self, renderer: &mut Renderer<'_>) {
-        self.terrain.clear(renderer);
+        self.terrain.clear(renderer, &mut self.objects);
+        self.frills.clear(&mut self.objects);
+        self.water.release(&mut self.objects);
+        self.env.release(&mut self.objects);
         let keys: Vec<LandblockKey> = self.objects.keys().collect();
         for k in keys {
             self.objects.remove(k);
@@ -1110,6 +1646,48 @@ impl Walker {
         out.push((format!("Map {map}"), WHITE));
         let heading = self.controls.heading();
         out.push((loc_text(&pos, heading), GREY));
+        if self.controls.mode() == MoveMode::Walk
+            && let Some(w) = self.controls.physics()
+        {
+            let st = w.state();
+            let cell = w.cell().map_or_else(
+                || "outdoors".to_owned(),
+                |(k, c)| format!("cell {c} of {k}"),
+            );
+            let water = st
+                .water
+                .map_or_else(String::new, |w| format!(", water {:.2} m deep", w.depth));
+            out.push((
+                format!(
+                    "Walk on collision: state {} ({:?}), {cell}{water}",
+                    st.element.key(),
+                    st.element
+                ),
+                GREY,
+            ));
+        }
+        if let Some(f) = &self.frame_env {
+            let hours = f.time_of_day * 24.0;
+            out.push((
+                format!(
+                    "Day {} {:02}:{:02} (t {:.3}, rate {:.2}){}  sky key {}  day {}  G {:.0} m{}",
+                    f.day,
+                    hours.floor() as u32 % 24,
+                    ((hours.fract()) * 60.0).floor() as u32,
+                    f.time_of_day,
+                    self.env.rate(),
+                    if f.night { " night" } else { "" },
+                    f.sky_key
+                        .map_or_else(|| "-".to_owned(), |k| format!("{k:#x}")),
+                    f.day_description
+                        .map_or_else(|| "-".to_owned(), |d| format!("{d}")),
+                    f.g,
+                    f.fog_far
+                        .map_or_else(String::new, |far| format!(", fog to {far:.0} m")),
+                ),
+                GREY,
+            ));
+        }
         if let Some(k) = pos.landblock() {
             let l = pos.to_local().map_or([0.0; 3], |l| l.local);
             out.push((
@@ -1180,11 +1758,12 @@ impl Walker {
             ));
             out.push((
                 format!(
-                    "Objects {} blocks ({:.0} m), {} instances, parts {} ready / {} pending / {} failed, \
+                    "Objects {} blocks ({:.0} m cap), {} active of {}, parts {} ready / {} pending / {} failed, \
                      textures {} / {} pending",
                     os.active_blocks,
                     os.distance,
-                    os.instances,
+                    os.active_objects,
+                    os.objects,
                     os.parts_ready,
                     os.parts_pending,
                     os.parts_failed,
@@ -1205,6 +1784,30 @@ impl Walker {
                     mib(self.uploaded),
                     self.pool.workers(),
                     self.pool.queue_len()
+                ),
+                GREY,
+            ));
+            let ws = self.water.stats();
+            let fs = self.frills.stats();
+            out.push((
+                format!(
+                    "Layers {} blocks ({} waiting for textures), {} ceilings; objects {} drawn ({} fading, \
+                     {} instanced in {} batches, {} models); water {} quads; frills {} groups / {} \
+                     instances; lights {}; sky {}; off: {}",
+                    ts.layered,
+                    ts.incomplete,
+                    ts.ceilings,
+                    os.objects_drawn,
+                    os.fading,
+                    os.instanced,
+                    os.batches,
+                    os.models,
+                    ws.quads,
+                    fs.groups,
+                    fs.instances,
+                    self.lights.len(),
+                    self.frame_env.as_ref().map_or(0, |f| f.sky_objects),
+                    self.systems.disabled_text(),
                 ),
                 GREY,
             ));
@@ -1266,6 +1869,13 @@ impl Walker {
             let frustum = Frustum::from_view_proj(camera.view_proj(aspect));
             let mut char_draws = std::mem::take(&mut self.char_draws);
             char_draws.clear();
+            self.characters.set_shading(
+                self.systems.on(System::Lit),
+                self.systems.on(System::Shadows),
+            );
+            // The free-fly camera hides the avatar (`m4-5-visual.md` §4.0).
+            self.characters
+                .set_hide_player(self.controls.mode() == MoveMode::Fly);
             self.characters.prepare_draws(
                 frame,
                 &anchor,
@@ -1274,13 +1884,40 @@ impl Walker {
                 &self.objects,
                 &mut char_draws,
             );
+            let lit = self.systems.on(System::Lit);
+            let fe = self.frame_env.clone();
+            let clear = fe.as_ref().map_or(SKY, |f| f.clear);
             let pass = frame.world_pass("walker-world", &camera);
-            pass.clear(SKY).lighting(Lighting {
-                direction: Vec3::new(0.35, -0.45, 0.82),
-                color: [1.0, 0.97, 0.9],
-                ambient: [0.36, 0.38, 0.42],
-            });
-            self.terrain.draw(renderer, pass, &anchor, &frustum);
+            pass.clear(clear);
+            let sun = if lit {
+                let mut fl = fe
+                    .as_ref()
+                    .map_or_else(tessera_render::FrameLighting::default, |f| {
+                        f.lighting.clone()
+                    });
+                fl.lights.clone_from(&self.lights);
+                let sun = fl.sun.is_some();
+                pass.frame_lighting(fl);
+                sun
+            } else {
+                pass.lighting(Lighting {
+                    direction: Vec3::new(0.35, -0.45, 0.82),
+                    color: [1.0, 0.97, 0.9],
+                    ambient: [0.36, 0.38, 0.42],
+                });
+                false
+            };
+            let t0 = Instant::now();
+            self.terrain.draw(
+                renderer,
+                pass,
+                &anchor,
+                &frustum,
+                eye,
+                &self.terrain_lights,
+                sun,
+            );
+            let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
             self.objects.draw(
                 pass,
@@ -1289,31 +1926,76 @@ impl Walker {
                 &frustum,
                 self.characters.shown_figures(),
             );
+            let t2 = Instant::now();
             for d in char_draws.drain(..) {
                 pass.mesh(d);
             }
             self.char_draws = char_draws;
             if let (Some(mesh), Some((feet, yaw))) = (self.avatar, self.controls.avatar())
                 && !self.characters.player_ready()
+                && self.controls.mode() == MoveMode::Walk
                 && let Some(p) = anchor.to_render(&feet)
             {
                 let tf = Mat4::from_translation(p + Vec3::Z * 0.9)
                     * Mat4::from_rotation_z(yaw)
                     * Mat4::from_scale(Vec3::new(0.7, 0.5, 1.8));
-                pass.mesh(MeshDraw::new(
-                    mesh,
-                    tf,
-                    Material::color([0.95, 0.55, 0.12, 1.0]),
-                ));
+                let color = if lit {
+                    [0.98, 0.76, 0.38, 1.0]
+                } else {
+                    [0.95, 0.55, 0.12, 1.0]
+                };
+                pass.mesh(MeshDraw::new(mesh, tf, Material::color(color)));
             }
+            let t3 = Instant::now();
+            if self.systems.on(System::Water) {
+                self.water.draw(
+                    pass,
+                    &self.streamer,
+                    &anchor,
+                    eye,
+                    self.extent(),
+                    &mut self.resolver,
+                    &mut self.objects,
+                );
+            }
+            let t4 = Instant::now();
+            if self.systems.on(System::Sky)
+                && let Some(sky) = self.env.sky(&mut self.resolver, &mut self.objects)
+            {
+                pass.sky(sky);
+            }
+            let t5 = Instant::now();
+            if self.systems.on(System::Frills) {
+                let settings = self.streamer.config().frills;
+                self.frills.draw(
+                    pass,
+                    &self.streamer,
+                    &anchor,
+                    &settings,
+                    &mut self.resolver,
+                    &self.terrain,
+                    &mut self.objects,
+                    &frustum,
+                    eye,
+                    Instant::now(),
+                );
+            }
+            let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
+            self.phase_ms[3] = ms(t0, t1);
+            self.phase_ms[4] = ms(t1, t2);
+            self.phase_ms[5] = ms(t3, t4);
+            self.phase_ms[6] = ms(t4, t5);
+            self.phase_ms[7] = ms(t5, Instant::now());
         } else {
             frame
                 .world_pass("walker-world", &Camera::default())
                 .clear(SKY);
         }
         let overlay = frame.pass("walker-hud", PassSpace::Screen);
-        self.hud.draw(overlay, 10.0, 10.0);
-        if let (Some(pos), Some(anchor)) = (self.focus(), self.anchor) {
+        if self.config.hud {
+            self.hud.draw(overlay, 10.0, 10.0);
+        }
+        if let (true, Some(pos), Some(anchor)) = (self.config.hud, self.focus(), self.anchor) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
                 x: w as f32 - size - 14.0,
@@ -1344,6 +2026,31 @@ impl Walker {
         let os = self.objects.stats();
         let cs = self.characters.stats();
         let r = &self.last_report;
+        let ws = self.water.stats();
+        let fs = self.frills.stats();
+        let fx_row = framelog::FxRow {
+            env_ms: self.env_ms,
+            frills_ms: self.frills_ms,
+            time_of_day: self.frame_env.as_ref().map_or(0.0, |f| f.time_of_day),
+            g: self.frame_env.as_ref().map_or(0.0, |f| f.g),
+            fog_far: self
+                .frame_env
+                .as_ref()
+                .and_then(|f| f.fog_far)
+                .unwrap_or(0.0),
+            terrain_layered: ts.layered,
+            ceilings: ts.ceilings,
+            objects_drawn: os.objects_drawn,
+            fading: os.fading,
+            instanced: os.instanced,
+            batches: os.batches,
+            water_quads: ws.quads,
+            frill_groups: fs.groups,
+            frill_instances: fs.instances,
+            lights: self.lights.len(),
+            phase_ms: self.phase_ms,
+            ..framelog::FxRow::default()
+        };
         let Some(log) = &mut self.log else { return };
         log.push(FrameRow {
             t: start
@@ -1371,6 +2078,7 @@ impl Walker {
             x: p.x,
             y: p.y,
             z: p.z,
+            fx: fx_row,
         });
     }
 
@@ -1420,6 +2128,9 @@ impl Walker {
     /// Frees GPU resources and stops the workers.
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>) {
         self.characters.shutdown(renderer, &mut self.objects);
+        self.water.release(&mut self.objects);
+        self.env.release(&mut self.objects);
+        self.resolver.shutdown();
         self.terrain.shutdown();
         self.clear_all(renderer);
         self.hud.release(renderer);
@@ -1434,6 +2145,30 @@ impl Walker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_the_keymap_binds_are_left_to_it() {
+        use tessera_input::{BindingSpec, KeyCode, Keymap, default_keymap};
+        assert!(
+            keys_taken_by(&default_keymap()).is_empty(),
+            "the built-in bindings leave the walker keys free"
+        );
+        let mut user = Keymap::new();
+        user.set(
+            tessera_input::contexts::GLOBAL,
+            "toggle_debug",
+            vec![BindingSpec::parse("F9").unwrap()],
+        )
+        .unwrap();
+        user.set(
+            tessera_input::contexts::CAMERA,
+            "zoom",
+            vec![BindingSpec::parse("Ctrl+Equal").unwrap()],
+        )
+        .unwrap();
+        let taken = keys_taken_by(&default_keymap().overlay(&user));
+        assert_eq!(taken, HashSet::from([KeyCode::F9, KeyCode::Equal]));
+    }
 
     #[test]
     fn upload_budget_admits_first_and_stops_when_spent() {

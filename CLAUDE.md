@@ -80,14 +80,20 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
-- **Next:** M4.5, world fidelity (owner decision 2026-10-06: it runs before M5; M5–M8 keep
-  their numbers): terrain texturing, scenery and grass, collision and the walk controller
-  (new crate `tessera-physics`), water, materials and the lit pipeline, sky, time of day
-  and fog. Plan and exit criteria: `docs/ROADMAP.md` M4.5. Run it with
-  `.claude/workflows/tessera-milestone.js` (milestone "M4.5").
+- **M4.5 (world fidelity), in progress; exit verification 2026-10-06** (`docs/ROADMAP.md`
+  M4.5 status): every deliverable exists (new decoders, `tessera-physics` with the 1/60 s
+  controller, decision 0013; scenery, frills, water, sky/clock, lighting, draw distances
+  in `tessera-world`; lit, terrain-layer, water, sky and instanced pipelines; walker
+  `--walk-path`, switches, clock; explorer/dattool views). Criteria 1, 2, 3, 7, 8 pass.
+  Not met: 4 (21 / 32 walks: GN1–GN4, SL1–SL3, CV1, CV2 fail, WL2 and FR1 near misses),
+  5 (flight M3-b: one near-ring landblock late, bundle latency), 6 (S1/S5/S6/S8/S10 miss
+  generated objects: `scenery.md` §7.4 step 14b OPEN, the checklist matches only without
+  footprints of depth-1 nodes; Y5 interiors not drawn; L5 highlight; dark cave ceilings),
+  9 (`walker.md` §13–§14 and `render.md` §4–§5 unreviewed). Continue M4.5 with
+  `.claude/workflows/tessera-milestone.js` (milestone "M4.5") on those items; M5 waits.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
-  M3 reference locations, frame-capture questions from M2, M4 items O8–O17). These do not
-  block M5.
+  M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
+  O18–O27). They do not block the Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
@@ -121,6 +127,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/wstate` — WLib class library and WState object graph
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
+- `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here); depends only on `formats` and `props`, `world` may depend on it (decision 0013)
 - `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions

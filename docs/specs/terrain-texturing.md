@@ -362,6 +362,16 @@ Collision keeps all 2,048 triangles of every landblock (`collision.md` §6.5).
 > the OPEN of `collision.md` §6.5. Drawing does not depend on the answer (the original does not
 > draw them, BIN (b)); only what the player sees there does.
 
+> **OPEN (clean-room implementer, 2026-10-06, walker review):** what the original draws for
+> a **terrain chunk with no layers at all**. The census above counts only the 86,726
+> landblocks whose terrain chunk has layers. A review probe found many landblock-data
+> records whose terrain chunk has none while the heights are not constant: 17,020 in
+> region 1 (703 of them with a landblock info), 11,359 in region 2 and 42,807 in region 5,
+> among them the 13 × 13 landblocks around `m4-5-visual.md` row F1 (region 1, 0x4C66). Is
+> such a chunk drawn at all, drawn by the distant-landscape path (§12), or in some other
+> way? Tessera Decision meanwhile (`walker.md` §14.4): the walker draws it like a chunk
+> that does not resolve (height-shaded), not as nothing.
+
 <a id="s4-6"></a>
 ### 4.6 Quad grid (answers `landblock.md` §3.8.4 OPEN; Probable)
 
@@ -570,6 +580,13 @@ then *n*′ is normalised. For positive scales this is the rotation of (*n*.x, *
 negative scale flips the matching axis. *n*′ is used in the frame (**T**, −**B**, **N**) of
 `lighting.md` §5.2.4: light, view and up vectors are taken into that frame per vertex and
 interpolated, and the lighting of §9.2 is evaluated with *n*′.
+
+> **OPEN:** (implementer, 2026-10-06) "each normalised over its four components" leaves
+> open which components the client's 4 × 4 texture matrix holds in those two columns. If
+> the matrix convention puts the translation (the `u_offset`/`v_offset` curves) into the
+> same columns, a non-zero or scrolling offset would change *n*′. Tessera follows the
+> proportionality stated above (*c*₀, *c*₁ from scale and rotation only; translation not
+> included). Please confirm, or give the four components.
 
 ---
 

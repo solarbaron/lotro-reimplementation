@@ -649,7 +649,12 @@ The table of this install has 32 classes (keys 1, 2, 3 from the base mapper and 
 > The same question decides `Render_LODCrossFade` (dictionary default true) in §8.8.
 > Decision for Tessera until settled: use the dictionary default (class 2). `walker.md`
 > §11.4 item 4 assumes the opposite (the component's own 200 m and 60 m); the two specs must
-> converge when this is settled (§19). The 7,625 descriptors concerned are mostly static
+> converge when this is settled (§19).
+>
+> **Note (implementer, 2026-10-06):** `tessera-world` (`draw_distance`) follows
+> `walker.md` §11.4 step 4 and §11.4.3 (W20, BIN, the newer statement): no class → the
+> component's initial values 200, 60, 16, 80, …; the dictionary default is not used. This
+> OPEN still needs its convergence edit. The 7,625 descriptors concerned are mostly static
 > placed objects (`Entity_CreationType` shared or unique static immobile in 4,108 of them).
 
 **Interior cell geometry** (the render meshes inside the cell records 0x01, `collision.md`

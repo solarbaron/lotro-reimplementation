@@ -20,7 +20,7 @@ const _: () = assert!(MAX_FLY_SPEED * 5.0 <= tessera_net::sandbox::MAX_SPEED);
 #[command(name = "tessera-client", version, about)]
 #[command(group(
     clap::ArgGroup::new("headless_task")
-        .args(["screenshot", "fly_path", "duration"])
+        .args(["screenshot", "fly_path", "duration", "walk_path"])
         .multiple(true)
 ))]
 pub struct Args {
@@ -135,12 +135,14 @@ pub struct Args {
     #[arg(long, value_name = "PNG")]
     pub screenshot: Option<PathBuf>,
 
-    /// Run the walker offscreen without a window (implied by `--screenshot`; needs
-    /// `--screenshot` or `--fly-path`, which end the run).
+    /// Run the walker offscreen without a window (implied by `--screenshot` and
+    /// `--walk-path`; needs `--screenshot`, `--fly-path`, `--duration` or `--walk-path`, which
+    /// end the run).
     #[arg(long, requires = "headless_task")]
     pub headless: bool,
 
-    /// Seconds `--screenshot` and `--fly-path` wait for the area to load (1 to 86,400).
+    /// Seconds `--screenshot`, `--fly-path` and `--duration` wait for the area to load, and
+    /// the longest a `--walk-path` walk waits for a collision set (1 to 86,400).
     #[arg(long, default_value_t = 90, value_parser = clap::value_parser!(u64).range(1..=MAX_TIMEOUT_SECS))]
     pub settle_timeout: u64,
 
@@ -148,22 +150,99 @@ pub struct Args {
     #[arg(long, value_name = "FILE")]
     pub keymap: Option<PathBuf>,
 
-    /// Residency budget of landblock bundles in MiB.
-    #[arg(long, default_value_t = 512, value_parser = clap::value_parser!(u64).range(16..=65_536))]
+    /// Residency budget of landblock bundles in MiB (bundles carry their scenery, water and
+    /// collision; the default rings out to 2,080 m hold about 600 landblocks, up to about
+    /// 4.6 MiB each in dense areas, 2.7 GiB in all).
+    #[arg(long, default_value_t = 4096, value_parser = clap::value_parser!(u64).range(16..=65_536))]
     pub residency_mib: u64,
 
-    /// Terrain view distance in landblocks (far ring radius).
-    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(2..=30))]
-    pub view_blocks: u8,
+    /// Terrain view distance in landblocks (far ring radius). Default: the landscape extent
+    /// of `--landscape-distance` (2,080 m at the built-in level High, `walker.md` §11.3).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(2..=30))]
+    pub view_blocks: Option<u8>,
 
-    /// Static objects are drawn up to this distance in metres.
-    #[arg(long, default_value_t = 900.0, value_parser = parse_positive_f64)]
-    pub object_distance: f64,
+    /// Cap on every object's draw distance in metres (the per-class distances of
+    /// `walker.md` §11.4 apply below it). Default: the landscape extent.
+    #[arg(long, value_parser = parse_positive_f64)]
+    pub object_distance: Option<f64>,
 
-    /// GPU memory for object meshes and textures in MiB (terrain meshes get their own
-    /// share, scaled with `--view-blocks`).
-    #[arg(long, default_value_t = 768, value_parser = clap::value_parser!(u64).range(64..=65_536))]
+    /// GPU memory for object meshes, models and textures (terrain layer textures
+    /// included) in MiB (terrain meshes get their own share, scaled with the view).
+    #[arg(long, default_value_t = 1536, value_parser = clap::value_parser!(u64).range(64..=65_536))]
     pub gpu_mib: u64,
+
+    /// `LandscapeDrawDistance` (`walker.md` §11.2): VeryLow, Low, Medium, High (built-in)
+    /// or VeryHigh.
+    #[arg(long, value_name = "LEVEL", value_parser = parse_landscape_level)]
+    pub landscape_distance: Option<tessera_world::draw_distance::LandscapeLevel>,
+
+    /// `ObjectDrawDistance` (`walker.md` §11.2): Low, Medium, High (built-in), VeryHigh or
+    /// UltraHigh.
+    #[arg(long, value_name = "LEVEL", value_parser = parse_detail_level)]
+    pub object_draw_distance: Option<tessera_world::DetailLevel>,
+
+    /// `ModelDetail` (`walker.md` §11.2): Low, Medium, High (built-in), VeryHigh or
+    /// UltraHigh.
+    #[arg(long, value_name = "LEVEL", value_parser = parse_detail_level)]
+    pub model_detail: Option<tessera_world::DetailLevel>,
+
+    /// `FrillDistance` level 0–5 (`scenery.md` §8.3; built-in 2).
+    #[arg(long, value_name = "LEVEL", value_parser = clap::value_parser!(u8).range(0..=5))]
+    pub frill_distance: Option<u8>,
+
+    /// Switch M4.5 systems off for profiling (`walker.md` §14.2), comma-separated:
+    /// layers, lit, shadows, lights, water, sky, fog, scenery, instancing, frills, lod;
+    /// `all` for the M3/M4 walker.
+    #[arg(long, value_name = "LIST", value_parser = parse_systems_arg)]
+    pub disable: Option<crate::walker::fxparse::SystemList>,
+
+    /// Game day number the clock starts on (`environment.md` §11.1; default 12,240).
+    /// At most ±20,000,000 (`walker::env::MAX_START_DAY`: days the game clock holds).
+    #[arg(long, value_name = "N", allow_negative_numbers = true, value_parser = clap::value_parser!(i64).range(-crate::walker::env::MAX_START_DAY..=crate::walker::env::MAX_START_DAY))]
+    pub day: Option<i64>,
+
+    /// Time of day the clock starts at, 0–1 (0.5 is noon; default 0.5).
+    #[arg(long, value_name = "T", value_parser = parse_unit)]
+    pub time_of_day: Option<f64>,
+
+    /// Game seconds per real second (0 stops the clock; default 1).
+    #[arg(long, value_name = "RATE", value_parser = parse_rate)]
+    pub time_rate: Option<f64>,
+
+    /// Day type *D* (`environment.md` §11.2; default 2).
+    #[arg(long, value_name = "D")]
+    pub day_type: Option<u32>,
+
+    /// Fly the camera around a closed loop for a timing run (`m4-5-visual.md` §3):
+    /// `R:X:Y:x,y;x,y[;…]`, block-local waypoints of landblock (X, Y) in region R.
+    #[arg(long, value_name = "LOOP", value_parser = parse_camera_loop_arg, conflicts_with = "fly_path")]
+    pub camera_loop: Option<crate::walker::fxparse::CameraLoop>,
+
+    /// Terrain blocks farther than this (metres) are drawn with their texture layers baked
+    /// into one image (`walker.md` §14.4); 0 draws every layer at every distance.
+    #[arg(long, value_name = "M", default_value_t = crate::walker::DEFAULT_FAR_BAND, value_parser = parse_far_band)]
+    pub far_band: f32,
+
+    /// Hide the HUD and the minimap (clean screenshots).
+    #[arg(long)]
+    pub no_hud: bool,
+
+    /// `--camera-loop` speed in m/s.
+    #[arg(long, default_value_t = 6.5, value_parser = parse_positive_f64)]
+    pub loop_speed: f64,
+
+    /// `--camera-loop` height above the higher of terrain and water, metres.
+    #[arg(long, default_value_t = 2.0, value_parser = parse_positive_f64)]
+    pub loop_height: f64,
+
+    /// `--camera-loop` pitch in degrees (negative looks down).
+    #[arg(long, default_value_t = -10.0, allow_negative_numbers = true, value_parser = parse_pitch)]
+    pub loop_pitch: f32,
+
+    /// Turn the camera on the spot at this rate (degrees per second, clockwise) during a
+    /// timing run (`m4-5-visual.md` §3 stationary spots).
+    #[arg(long, value_name = "DEG", allow_negative_numbers = true, value_parser = parse_degrees, conflicts_with_all = ["fly_path", "camera_loop"])]
+    pub turn_rate: Option<f32>,
 
     /// Largest texture edge used for objects.
     #[arg(long, default_value_t = 512, value_parser = clap::value_parser!(u32).range(16..=4096))]
@@ -214,9 +293,11 @@ pub struct Args {
     #[arg(long, value_name = "M", default_value_t = 200.0, value_parser = parse_positive)]
     pub anim_distance: f32,
 
-    /// Characters further than this (metres) are not drawn.
-    #[arg(long, value_name = "M", default_value_t = 400.0, value_parser = parse_positive)]
-    pub character_distance: f32,
+    /// Cap on the characters' draw distance (metres). Below it characters are drawn to
+    /// min(*G*, 80 × *M_d*) with a 1.5 s fade (`PlayerAvatar` and `Creature` `d0`,
+    /// `walker.md` §11.4.2); default 400.
+    #[arg(long, value_name = "M", value_parser = parse_positive)]
+    pub character_distance: Option<f32>,
 
     /// Also draw weenie markers (housing hooks, distant-battle units) as static figures.
     #[arg(long)]
@@ -235,6 +316,66 @@ pub struct Args {
     /// Headless runs: render as fast as possible instead of pacing at 60 frames per second.
     #[arg(long)]
     pub unpaced: bool,
+
+    /// Run scripted walks headless, without a GPU, on the collision walk mode, then exit:
+    /// a walk file (`docs/checklists/m4-5-visual.md` §2.1 file form) or a Markdown text
+    /// holding the walk table (the checklist itself runs all its walks). Fails when a walk
+    /// fails its expected outcome.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["screenshot", "fly_path", "duration", "showcase", "smoke", "no_data"])]
+    pub walk_path: Option<PathBuf>,
+
+    /// Write the `--walk-path` movement log (one CSV row per 1/60 s step: position, state,
+    /// cell, contacts) to this file.
+    #[arg(long, value_name = "CSV", requires = "walk_path")]
+    pub walk_log: Option<PathBuf>,
+}
+
+fn parse_systems_arg(s: &str) -> Result<crate::walker::fxparse::SystemList, String> {
+    crate::walker::fxparse::parse_systems(s).map(crate::walker::fxparse::SystemList)
+}
+
+fn parse_camera_loop_arg(s: &str) -> Result<crate::walker::fxparse::CameraLoop, String> {
+    crate::walker::fxparse::parse_camera_loop(s)
+}
+
+fn parse_landscape_level(s: &str) -> Result<tessera_world::draw_distance::LandscapeLevel, String> {
+    tessera_world::draw_distance::LandscapeLevel::from_name(s)
+        .ok_or_else(|| "expected VeryLow, Low, Medium, High or VeryHigh".to_owned())
+}
+
+fn parse_detail_level(s: &str) -> Result<tessera_world::DetailLevel, String> {
+    tessera_world::DetailLevel::from_name(s)
+        .ok_or_else(|| "expected Low, Medium, High, VeryHigh or UltraHigh".to_owned())
+}
+
+fn parse_far_band(s: &str) -> Result<f32, String> {
+    let v: f32 = s.trim().parse().map_err(|e| format!("{e}"))?;
+    if v.is_finite() && (0.0..=100_000.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err("must be a number in 0..=100000".into())
+    }
+}
+
+fn parse_unit(s: &str) -> Result<f64, String> {
+    let v: f64 = s.trim().parse().map_err(|e| format!("{e}"))?;
+    if v.is_finite() && (0.0..=1.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err("must be a number in 0..=1".into())
+    }
+}
+
+fn parse_rate(s: &str) -> Result<f64, String> {
+    let v: f64 = s.trim().parse().map_err(|e| format!("{e}"))?;
+    if v.is_finite() && (0.0..=crate::walker::env::MAX_TIME_RATE).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!(
+            "must be a number in 0..={}",
+            crate::walker::env::MAX_TIME_RATE
+        ))
+    }
 }
 
 fn parse_spacing(s: &str) -> Result<f32, String> {
@@ -285,10 +426,10 @@ impl Args {
         !self.showcase && !self.no_data && !self.smoke
     }
 
-    /// Whether the walker renders offscreen.
+    /// Whether the walker renders offscreen (or, for `--walk-path`, runs without a GPU).
     #[must_use]
     pub fn walker_headless(&self) -> bool {
-        self.walker() && (self.headless || self.screenshot.is_some())
+        self.walker() && (self.headless || self.screenshot.is_some() || self.walk_path.is_some())
     }
 }
 
@@ -489,6 +630,73 @@ mod tests {
             Args::try_parse_from(["t", "--headless", "--duration", "60", "--crowd", "50"]).unwrap();
         assert!(a.walker_headless());
         assert!(Args::try_parse_from(["t", "--duration", "0"]).is_err());
+    }
+
+    #[test]
+    fn walk_path_args() {
+        let a = Args::try_parse_from(["t", "--walk-path", "w.txt", "--walk-log", "w.csv"])
+            .expect("walk path");
+        assert!(a.walker_headless());
+        assert!(Args::try_parse_from(["t", "--headless", "--walk-path", "w.txt"]).is_ok());
+        assert!(Args::try_parse_from(["t", "--walk-log", "w.csv"]).is_err());
+        assert!(Args::try_parse_from(["t", "--walk-path", "w", "--screenshot", "a.png"]).is_err());
+        // The walks need the install: never silently the windowed test scene instead.
+        assert!(Args::try_parse_from(["t", "--no-data", "--walk-path", "w"]).is_err());
+    }
+
+    #[test]
+    fn world_fidelity_args() {
+        use crate::walker::fxparse::System;
+        let a = Args::try_parse_from(["t"]).unwrap();
+        assert_eq!(
+            (a.view_blocks, a.object_distance, a.disable.clone()),
+            (None, None, None)
+        );
+        assert_eq!(a.character_distance, None);
+        let a = Args::try_parse_from([
+            "t",
+            "--disable",
+            "water,frills",
+            "--day",
+            "12240",
+            "--time-of-day",
+            "0.25",
+            "--time-rate",
+            "60",
+            "--landscape-distance",
+            "veryhigh",
+            "--object-draw-distance",
+            "UltraHigh",
+            "--frill-distance",
+            "5",
+            "--camera-loop",
+            "2:119:68:30,30;130,30;130,125;30,125",
+            "--duration",
+            "60",
+            "--headless",
+        ])
+        .expect("world fidelity options");
+        assert_eq!(
+            a.disable.map(|d| d.0),
+            Some(vec![System::Water, System::Frills])
+        );
+        assert_eq!(
+            (a.day, a.time_of_day, a.time_rate),
+            (Some(12_240), Some(0.25), Some(60.0))
+        );
+        assert!(a.camera_loop.is_some());
+        assert!(Args::try_parse_from(["t", "--disable", "bogus"]).is_err());
+        assert!(Args::try_parse_from(["t", "--time-of-day", "1.5"]).is_err());
+        assert!(Args::try_parse_from(["t", "--day", "-20000000"]).is_ok());
+        assert!(Args::try_parse_from(["t", "--day", "1000000000"]).is_err());
+        assert!(Args::try_parse_from(["t", "--time-rate", "100000"]).is_ok());
+        assert!(Args::try_parse_from(["t", "--time-rate", "100001"]).is_err());
+        assert!(Args::try_parse_from(["t", "--landscape-distance", "x"]).is_err());
+        assert!(Args::try_parse_from(["t", "--frill-distance", "6"]).is_err());
+        assert!(
+            Args::try_parse_from(["t", "--turn-rate", "6", "--camera-loop", "1:2:3:1,1;2,2"])
+                .is_err()
+        );
     }
 
     #[test]

@@ -636,6 +636,16 @@ Census of the 73,711 Light SEDs in all landblock-info records (OBS, 2026-10-05):
 > terrain (their light is in the landblock light maps, `terrain-texturing.md` §10).
 > **Tessera Decision:** do not apply them to terrain layers that have a light map.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` lighting module):** two inputs of the
+> light record are not specified. (a) The "offset" added to the entity's world position:
+> its source was not traced; `tessera-world` uses the SED's placement position (offset 0).
+> (b) The day and night variants: the names quoted in `environment.md` §7.3 are
+> `Light.Script@Entity.Night.m_fLightRange` and `…Day.m_bLightActivated` "and similar";
+> the full list of varying fields and which value applies when a variant is absent are not
+> given. `tessera-world` reads only `…Day.` / `…Night.m_fLightRange` and
+> `…m_bLightActivated` (absent: the light's own range, and on), and only for lights with
+> `Light_DrivenByDayCycle`; night is the rule of `sound.md` §10.3.5.
+
 <a id="s8-4"></a>
 ### 8.4 Projector lights
 
@@ -667,6 +677,13 @@ shipped colour is black (an engine value that may change at run time).
 > **OPEN:** How the object's light list is built (which lights are considered near an
 > object and in which order). **Tessera Decision:** the lights whose range sphere touches the
 > object's bounding sphere, nearest first.
+
+> **OPEN (implementer, 2026-10-06, `tessera-world` lighting module):** whether the default
+> directional light added when there is no main light occupies the directional light-0
+> slot, and whether it counts toward the 8 lights in all. Tessera (Decision): it stands in
+> for the main light: it holds the directional light-0 slot unless a per-pixel directional
+> light from the object's list takes that slot (then no default light is added), and it
+> counts toward the 8.
 
 ---
 

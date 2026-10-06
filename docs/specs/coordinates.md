@@ -770,6 +770,8 @@ h and prints `p45.0 b30.0`) while its model +Y axis projects to a bearing of 26.
 > **Correction (implementation choice withdrawn):** `tessera-world` takes the yaw of the
 > projected model +Y axis (ψ = atan2(−f_x, f_y)). That equals the client's ψ for pure turns
 > and for a pitch or bank alone, but not for combined tilts; use §11.3 for compatibility.
+> **Done (implementer, 2026-10-06):** `tessera-world`'s `yaw` and `heading_degrees` now
+> use the z-y-x decomposition of §11.3 (the same f32 evaluation as `tessera-formats`).
 
 <a id="s11-5"></a>
 ### 11.5 Worked examples (synthetic)

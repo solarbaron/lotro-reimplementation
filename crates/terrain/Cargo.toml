@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-terrain"
-description = "Landblock terrain: heightmap meshing with LODs and stitched seams, seamless normals, height/slope shading, splatting inputs and CPU height queries"
+description = "Landblock terrain: heightmap meshing with LODs and stitched seams, seamless normals, texture layers resolved against terrain type tables (masks, texture coordinates, tangent frames, opacity, ceilings, light maps), fallback height/slope shading and CPU height queries"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 tessera-formats.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

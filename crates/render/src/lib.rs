@@ -80,6 +80,75 @@
 //! # Ok(()) }
 //! ```
 //!
+//! Lit world passes (M4.5): [`Pass::frame_lighting`] makes a world pass draw its meshes
+//! with the lighting of `docs/specs/lighting.md` §5 under a [`FrameLighting`] (sun or moon
+//! with its [`SunShadow`], ambient and hemispheric terms, distance [`Fog`], a table of
+//! point and directional [`Light`]s), in the original's stored-value colour space. The
+//! inputs only lit passes use are a [`LitSurface`] on each [`MeshDraw`]
+//! ([`MeshDraw::with_lit`]): glow and emissive, gloss and opacity sources, vertex colours,
+//! fog, shadow casting and light selection. [`Renderer::upload_texture_mips`] uploads a
+//! texture's stored mip chain ([`MipChainUpload`]). [`lighting::reference`] is a CPU twin of
+//! the shader equations.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), tessera_render::RenderError> {
+//! use tessera_render::glam::{Mat4, Vec3};
+//! use tessera_render::*;
+//! let mut r = Renderer::new_headless(&RendererConfig::default())?;
+//! let ground = r.upload_mesh(&MeshData::plane(40.0, 40.0, 1, 1))?;
+//! let target = r.create_offscreen_target(320, 240, OffscreenFormat::Rgba8Srgb)?;
+//! let toward_sun = Vec3::new(0.3, -0.2, 0.9);
+//! let mut frame = r.begin_offscreen_frame(&target)?;
+//! frame
+//!     .world_pass("world", &Camera::default())
+//!     .frame_lighting(FrameLighting {
+//!         sun: Some(SunLight { direction: toward_sun, color: [0.6; 3], specular: [1.0; 3] }),
+//!         shadow: Some(SunShadow::fit(toward_sun, Vec3::ZERO, 20.0, 80.0, 2048)),
+//!         fog: Some(Fog { near: 20.0, far: 200.0, color: [0.6, 0.65, 0.7] }),
+//!         lights: vec![Light::point(Vec3::new(0.0, 0.0, 2.0), 8.0, 0.1, [1.0, 0.8, 0.5])],
+//!         ..FrameLighting::default()
+//!     })
+//!     .mesh(
+//!         MeshDraw::new(ground, Mat4::IDENTITY, Material::color([0.5, 0.45, 0.4, 1.0]))
+//!             .with_lit(LitSurface { opacity: Opacity::One, ..LitSurface::default() }),
+//!     );
+//! r.end_frame(frame)?;
+//! # Ok(()) }
+//! ```
+//!
+//! World pipelines (M4.5, `docs/specs/render.md` §5) draw into lit passes:
+//! [`Pass::terrain`] draws a [`TerrainChunk`] uploaded with
+//! [`Renderer::upload_terrain_chunk`] (layers blended per `terrain-texturing.md` §7–§9),
+//! [`Pass::water`] draws [`WaterQuad`]s refracting the scene drawn before them
+//! (`water.md` §8), [`Pass::sky`] draws [`SkyObject`]s around the camera
+//! (`environment.md` §12) and [`Pass::instanced`] draws thousands of instances of a
+//! [`WorldModel`] per call, with the frill rules of `scenery.md` §8.3 for [`FrillParams`]
+//! batches.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), tessera_render::RenderError> {
+//! use tessera_render::glam::{Mat4, Vec3};
+//! use tessera_render::*;
+//! let mut r = Renderer::new_headless(&RendererConfig::default())?;
+//! let rock = r.upload_world_model(&MeshData::cube(1.0), &[WorldSurface::default()])?;
+//! let instances: Vec<Instance> = (0..1_000)
+//!     .map(|i| Instance::new(Mat4::from_translation(Vec3::new(i as f32, 5.0, 0.0))))
+//!     .collect();
+//! let target = r.create_offscreen_target(320, 240, OffscreenFormat::Rgba8Srgb)?;
+//! let mut frame = r.begin_offscreen_frame(&target)?;
+//! frame
+//!     .world_pass("world", &Camera::default())
+//!     .frame_lighting(FrameLighting::default())
+//!     .instanced(InstanceBatch::new(rock, instances))
+//!     .water(WaterDraw::new(
+//!         [WaterQuad::landblock([0.0, 0.0], 2.0)],
+//!         None,
+//!         WaterParams::default(),
+//!     ));
+//! r.end_frame(frame)?;
+//! # Ok(()) }
+//! ```
+//!
 //! Adapter selection honours `WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and
 //! `WGPU_POWER_PREF` (see [`ContextOptions`]); asynchronous GPU errors are
 //! captured and returned as [`RenderError::Gpu`] instead of panicking.
@@ -89,14 +158,21 @@ mod camera;
 mod context;
 mod error;
 mod frame;
+mod instanced;
+pub mod lighting;
+mod lit_pipelines;
 mod material;
 mod mesh;
 mod mesh_pipelines;
+mod pass_hook;
 mod pipelines;
 mod renderer;
 mod shapes;
 mod skin;
+mod sky;
+mod terrain_layers;
 mod texture;
+mod water;
 
 pub use arena::{ArenaStats, MeshConfig, MeshId, RangeAllocator};
 pub use camera::{Camera, OrbitCamera, OrbitConfig, Perspective, UpAxis};
@@ -106,9 +182,18 @@ pub use context::{
 };
 pub use error::{RenderError, Result};
 pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};
+pub use instanced::{
+    FRILL_FADE_IN_SECONDS, FRILL_SECTOR, FRILL_SWAY_MIN, FrillParams, FrillReduction, Instance,
+    InstanceBatch, MAX_INSTANCES_PER_PASS, MAX_MODEL_SURFACES, WorldModel, WorldSurface,
+    frill_distances, frill_fade_in, frill_radius_sectors, frill_reduced_count,
+};
+pub use lighting::{
+    FRAME_SHADING_WGSL, FRAME_WGSL, Fog, FrameLighting, Light, LightFields, LightKind, LightRecord,
+    MAX_DRAW_LIGHTS, MAX_FRAME_LIGHTS, SunLight, SunShadow,
+};
 pub use material::{
-    AlphaMode, Dye, DyeMask, Lighting, Material, MeshDebug, MeshDraw, MeshShading, NormalLines,
-    Specular,
+    AlphaMode, Dye, DyeMask, Gloss, LightSelection, Lighting, LitSurface, Material, MeshDebug,
+    MeshDraw, MeshShading, NormalLines, Opacity, Specular,
 };
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,
@@ -120,7 +205,18 @@ pub use renderer::{
 };
 pub use shapes::MAX_SEGMENTS as MAX_SHAPE_SEGMENTS;
 pub use skin::{MAX_PALETTE_BONES, MeshSkin, SkinInfo, SkinPalette, WEIGHT_SUM_TOLERANCE};
-pub use texture::{ColorSpace, Filter, TextureId, TextureUpload, Wrap};
+pub use sky::{MAX_SKY_OBJECTS, SkyDraw, SkyObject};
+pub use terrain_layers::{
+    MAX_TERRAIN_LAYERS, MAX_TERRAIN_TRIANGLES, MAX_TERRAIN_VERTICES, TerrainChunk,
+    TerrainChunkData, TerrainChunkInfo, TerrainDraw, TerrainGloss, TerrainLayer,
+    TerrainLayerTextures, TerrainOpacity, TerrainProjection, TerrainSpecular, TerrainTransform,
+    TerrainVertices,
+};
+pub use texture::{ColorSpace, Filter, MipChainUpload, MipLevel, TextureId, TextureUpload, Wrap};
+pub use water::{
+    MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES, WATER_BLOCK, WaterDraw,
+    WaterParams, WaterQuad, fresnel as water_fresnel, wave_height as water_wave_height,
+};
 
 /// Re-export of the math library used in the public API.
 pub use glam;

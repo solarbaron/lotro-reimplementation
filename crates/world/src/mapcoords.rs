@@ -18,18 +18,23 @@ use crate::error::{Result, WorldError};
 /// Longest text the parsers of this module accept, in bytes.
 pub const MAX_TEXT_LEN: usize = 256;
 
-/// The map-coordinate constants of a region (§8.1): origin in world units and map units
-/// per world unit. Read from the region descriptor at run time, never hard-coded.
+/// The map-coordinate constants of a region (§8.1): origin in world units, map offsets
+/// and map units per world unit. Read from the region descriptor at run time, never
+/// hard-coded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MapConstants {
-    /// (G_x0, G_y0): the world position of map (0.0, 0.0).
+    /// (G_x0, G_y0): the world position where the map coordinates equal the offsets.
     pub origin: [f64; 2],
     /// Map units per world unit (0.005 in every observed descriptor).
     pub scale: f64,
+    /// (ΔL, Δφ): map units added to the longitude and the latitude (descriptor offsets 24
+    /// and 28; 0.0 in every observed descriptor, but read, not assumed).
+    pub offset: [f64; 2],
 }
 
 impl MapConstants {
-    /// Validated constants.
+    /// Validated constants without map offsets (ΔL = Δφ = 0; see
+    /// [`MapConstants::with_offset`]).
     ///
     /// # Errors
     ///
@@ -44,38 +49,58 @@ impl MapConstants {
                 "map scale is not a positive finite number",
             ));
         }
-        Ok(Self { origin, scale })
+        Ok(Self {
+            origin,
+            scale,
+            offset: [0.0; 2],
+        })
     }
 
-    /// The constants stored in a region descriptor (§8.1: origin in 20-unit landcells at
-    /// offsets 16 and 20, scale at offset 32).
-    ///
-    /// The stored scale is an `f32`; it is widened through its shortest round-trip decimal
-    /// ([`widen_f32`]), so the stored 0.005 becomes exactly the `f64` 0.005 and positions on
-    /// a half tenth round as §8.3 says instead of toward zero.
+    /// These constants with map offsets `offset` = (ΔL, Δφ) (§8.1, §8.2).
     ///
     /// # Errors
     ///
-    /// As [`MapConstants::new`].
-    pub fn from_region_descriptor(d: &RegionDescriptor) -> Result<Self> {
-        Self::new(d.map_origin_units(), widen_f32(d.map_scale))
+    /// [`WorldError::Config`] when an offset is not finite.
+    pub fn with_offset(self, offset: [f64; 2]) -> Result<Self> {
+        if !(offset[0].is_finite() && offset[1].is_finite()) {
+            return Err(WorldError::Config("map offset is not finite"));
+        }
+        Ok(Self { offset, ..self })
     }
 
-    /// Map coordinates of region-global (G_x, G_y) (§8.2).
+    /// The constants stored in a region descriptor (§8.1: origin in 20-unit landcells at
+    /// offsets 16 and 20, the map offsets ΔL and Δφ at offsets 24 and 28, scale at offset
+    /// 32).
+    ///
+    /// The stored scale and offsets are `f32`; they are widened through their shortest
+    /// round-trip decimal ([`widen_f32`]), so the stored 0.005 becomes exactly the `f64`
+    /// 0.005 and positions on a half tenth round as §8.3 says instead of toward zero.
+    ///
+    /// # Errors
+    ///
+    /// As [`MapConstants::new`] and [`MapConstants::with_offset`].
+    pub fn from_region_descriptor(d: &RegionDescriptor) -> Result<Self> {
+        Self::new(d.map_origin_units(), widen_f32(d.map_scale))?
+            .with_offset([widen_f32(d.map_offset[0]), widen_f32(d.map_offset[1])])
+    }
+
+    /// Map coordinates of region-global (G_x, G_y) (§8.2): longitude = ΔL + (G_x − G_x0) ·
+    /// s, latitude = Δφ + (G_y − G_y0) · s.
     #[must_use]
     pub fn to_map(&self, g: [f64; 2]) -> MapCoords {
         MapCoords {
-            latitude: (g[1] - self.origin[1]) * self.scale,
-            longitude: (g[0] - self.origin[0]) * self.scale,
+            latitude: self.offset[1] + (g[1] - self.origin[1]) * self.scale,
+            longitude: self.offset[0] + (g[0] - self.origin[0]) * self.scale,
         }
     }
 
-    /// Region-global (G_x, G_y) of map coordinates `m` (§8.2 inverse).
+    /// Region-global (G_x, G_y) of map coordinates `m` (§8.2 inverse): G_x = G_x0 +
+    /// (longitude − ΔL) / s, G_y = G_y0 + (latitude − Δφ) / s.
     #[must_use]
     pub fn to_region(&self, m: MapCoords) -> [f64; 2] {
         [
-            self.origin[0] + m.longitude / self.scale,
-            self.origin[1] + m.latitude / self.scale,
+            self.origin[0] + (m.longitude - self.offset[0]) / self.scale,
+            self.origin[1] + (m.latitude - self.offset[1]) / self.scale,
         ]
     }
 
@@ -740,6 +765,35 @@ mod tests {
         );
         let bad = MinimapTile { scale: 0.0, ..tile };
         assert_eq!(minimap_region_to_pixel(&bad, [0.0, 0.0]), None);
+    }
+
+    #[test]
+    fn descriptor_map_offsets_shift_map_coordinates() {
+        let bytes =
+            crate::testkit::region_descriptor(0x0F00_0001, 1, [1468, 1244], 0.005f32, 0x1800_0001);
+        use tessera_formats::Record;
+        let mut d =
+            RegionDescriptor::parse_expecting(&bytes, tessera_formats::Did(0x0F00_0001)).unwrap();
+        d.map_offset = [1.5, -2.25];
+        let c = MapConstants::from_region_descriptor(&d).unwrap();
+        assert_eq!(c.offset, [1.5, -2.25]);
+        // At the origin the map coordinates are the offsets (§8.2: (ΔL − b) + a with a = b).
+        let m = c.to_map([29_360.0, 24_880.0]);
+        assert_eq!((m.longitude, m.latitude), (1.5, -2.25));
+        // 200 units east and north: one map unit more on each axis.
+        let m = c.to_map([29_560.0, 25_080.0]);
+        assert!((m.longitude - 2.5).abs() < 1e-12 && (m.latitude + 1.25).abs() < 1e-12);
+        // The inverse subtracts them again.
+        let back = c.to_region(m);
+        assert!((back[0] - 29_560.0).abs() < 1e-9 && (back[1] - 25_080.0).abs() < 1e-9);
+        // The formats crate's own (f32) map coordinates agree.
+        let f = d.map_coordinates([184, 156], [120.0, 120.0]);
+        assert!((f64::from(f[0]) - m.longitude).abs() < 1e-4, "{f:?} {m:?}");
+        assert!((f64::from(f[1]) - m.latitude).abs() < 1e-4, "{f:?} {m:?}");
+        // A non-finite offset is rejected.
+        d.map_offset = [f32::NAN, 0.0];
+        assert!(MapConstants::from_region_descriptor(&d).is_err());
+        assert!(constants().with_offset([0.0, f64::INFINITY]).is_err());
     }
 
     #[test]

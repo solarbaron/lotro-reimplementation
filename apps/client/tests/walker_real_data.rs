@@ -12,14 +12,23 @@
 //!   over 50 ms (ROADMAP M3 exit criterion 2); a debug build flies 20 landblocks and only
 //!   checks that the flight completes and residency stays bounded.
 //!
-//! Only counts, timings and sizes are printed; images go to a temporary directory.
+//! Only counts, timings and sizes are printed; images go to a temporary directory. The
+//! three walkers run one at a time (a lock in `run`), so the flight's frame times are not
+//! measured while the other tests stream and render in parallel.
 
 use clap::Parser as _;
 use tessera_client::Args;
 use tessera_client::headless::{self, HeadlessReport};
 use tessera_render::RenderError;
 
+/// Serialises the walkers of this binary (the test harness runs tests in parallel).
+static WALKER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn run(extra: &[&str]) -> Option<HeadlessReport> {
+    // A panic in another test poisons the lock; the walker itself is still usable.
+    let _one_at_a_time = WALKER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(dir) = std::env::var_os("TESSERA_GAME_DIR").filter(|d| !d.is_empty()) else {
         eprintln!("TESSERA_GAME_DIR not set; skipping");
         return None;

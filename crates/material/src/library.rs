@@ -15,15 +15,18 @@ use crate::cache::BoundedCache;
 use crate::dims::surface_dims;
 use crate::dye::{DyeColors, DyeLayer, apply_dye};
 use crate::error::{MaterialError, Result};
+use crate::inputs::{ObjectInputs, SurfaceInputs};
 use crate::interface::ShaderInterface;
 use crate::records::{
-    MATERIAL_PREFIX, MaterialRecord, SHADER_PREFIX, SURFACE_RECORD_PREFIX, ShaderRecord,
-    SurfaceRecord, TEXTURE_LIST_PREFIX,
+    CurveStates, MATERIAL_PREFIX, MaterialRecord, SHADER_PREFIX, SURFACE_RECORD_PREFIX,
+    ShaderRecord, SurfaceRecord, TEXTURE_LIST_PREFIX,
 };
 use crate::resolve::{ResolvedMaterial, SkippedMaterial, last_occurrences};
 use crate::source::RecordSource;
 use crate::texture::{LevelDims, LevelHeader, MipPlan, plan_upload};
+use crate::transform::{EvaluatedMatrix, TextureMatrixLayout};
 use crate::vocab::{AlphaUse, ids};
+use crate::water::WaterMaterial;
 
 /// Prefix of render surfaces (texture levels).
 const RENDER_SURFACE_PREFIX: u8 = 0x41;
@@ -187,12 +190,15 @@ pub struct MaterialLibrary<S> {
     config: LibraryConfig,
     surfaces: BoundedCache<Did, Arc<SurfaceRecord>>,
     materials: BoundedCache<Did, Arc<MaterialRecord>>,
-    shaders: BoundedCache<Did, Arc<ShaderInterface>>,
+    shaders: BoundedCache<Did, ShaderEntry>,
     lists: BoundedCache<Did, Arc<TextureList>>,
     headers: BoundedCache<Did, LevelHeader>,
     resolved: BoundedCache<Did, Arc<ResolvedMaterial>>,
     images: BoundedCache<Did, (Arc<RgbaImage>, SurfaceFormat)>,
 }
+
+/// A cached shader record: its interface and its texture-matrix bindings.
+type ShaderEntry = (Arc<ShaderInterface>, Arc<TextureMatrixLayout>);
 
 /// The payload of the level read last during a chain walk, so the level chosen is not
 /// read twice.
@@ -321,13 +327,77 @@ impl<S: RecordSource> MaterialLibrary<S> {
 
     /// The analysed interface of shader record `did`, through the cache.
     pub fn shader(&self, did: Did) -> Result<Arc<ShaderInterface>> {
+        Ok(self.shader_entry(did)?.0)
+    }
+
+    /// The texture-matrix bindings of shader record `did` (`material.md` §7.3, §8.4),
+    /// through the cache (analysed together with [`MaterialLibrary::shader`]).
+    pub fn texture_matrices(&self, did: Did) -> Result<Arc<TextureMatrixLayout>> {
+        Ok(self.shader_entry(did)?.1)
+    }
+
+    fn shader_entry(&self, did: Did) -> Result<ShaderEntry> {
         if let Some(hit) = self.shaders.get(&did) {
             return Ok(hit);
         }
-        let iface = Arc::new(ShaderInterface::from_record(&self.shader_record(did)?));
-        let size = size_of::<ShaderInterface>() + iface.heap_bytes();
-        self.shaders.insert(did, Arc::clone(&iface), size);
-        Ok(iface)
+        let record = self.shader_record(did)?;
+        let iface = Arc::new(ShaderInterface::from_record(&record));
+        let layout = Arc::new(TextureMatrixLayout::from_record(&record));
+        let size = size_of::<ShaderInterface>()
+            + iface.heap_bytes()
+            + size_of::<TextureMatrixLayout>()
+            + layout.heap_bytes();
+        self.shaders
+            .insert(did, (Arc::clone(&iface), Arc::clone(&layout)), size);
+        Ok((iface, layout))
+    }
+
+    /// The per-surface lighting inputs of `material` at time `t` seconds
+    /// (`lighting.md` §4.1, [`SurfaceInputs::evaluate`]), with the texture-matrix
+    /// bindings of its shader record read through the cache. Fails only when that shader
+    /// record cannot be read or decoded.
+    pub fn surface_inputs(
+        &self,
+        material: &ResolvedMaterial,
+        object: &ObjectInputs,
+        t: f64,
+        states: &mut CurveStates,
+    ) -> Result<SurfaceInputs> {
+        let layout = self.texture_matrices(material.shader.did)?;
+        Ok(SurfaceInputs::evaluate(
+            material, &layout, object, t, states,
+        ))
+    }
+
+    /// The texture matrices that permutation `permutation` of `material`'s shader record
+    /// binds (`material.md` §7.3: a binding's `slot` belongs to one permutation),
+    /// evaluated at time `t` ([`TextureMatrixLayout::evaluate_for`]). For a pass whose
+    /// permutation binds other parameters than the record-wide table of
+    /// [`SurfaceInputs::texture_matrices`] (a glow pass in a few records). Empty when the
+    /// permutation binds none (identity). Fails only when the shader record cannot be
+    /// read or decoded.
+    pub fn permutation_texture_matrices(
+        &self,
+        material: &ResolvedMaterial,
+        permutation: u32,
+        t: f64,
+        states: &mut CurveStates,
+    ) -> Result<Vec<EvaluatedMatrix>> {
+        let layout = self.texture_matrices(material.shader.did)?;
+        Ok(layout.evaluate_for(permutation, &material.params, t, states))
+    }
+
+    /// The water material of surface record `did` (`water.md` §8.2) at time `t`, or
+    /// `None` when its shader reads no water parameter
+    /// ([`WaterMaterial::reads_water_params`]).
+    pub fn water_material(
+        &self,
+        did: Did,
+        t: f64,
+        states: &mut CurveStates,
+    ) -> Result<Option<WaterMaterial>> {
+        let resolved = self.resolve_surface(did)?;
+        Ok(WaterMaterial::evaluate(&resolved, t, states))
     }
 
     /// The texture list `did` (prefix 0x40), through the cache.

@@ -726,6 +726,11 @@ the base-colour layer uses matrix 0 and the second colour layer matrix 1, both a
 the same vertex UV pair; the normal map uses the base-colour coordinates (`lighting.md`
 §5.2.1, BIN).
 
+> **OPEN:** The matrix used by the other samplers in the colour passes (3013 `Glow`, 3018
+> `Emissive` / `EmissiveAndOpacity`) is not stated, and in four records some permutations
+> (glow, depth, shadow-depth, view-normal passes) bind the second set to their own matrix 0
+> (§7.3: `slot` belongs to one permutation). See §18 (texture-matrix index per permutation).
+
 **Composition (BIN-T (a), MA27).** The client builds each texture matrix from its seven
 values (§7.3), each a float curve evaluated at the clock of §5.3.1. From the input
 coordinates (u, v), in this order:
@@ -1411,6 +1416,17 @@ Added by the clean-room implementation of the 2026-10-05 revisions (`crates/mate
 > source without a texture). Such a surface goes to the transparent pass. "Opaque by
 > construction" is: no §11.2 source and effective 2000 alpha ≥ 1 (a non-finite alpha counts
 > as below 1). Undeclared 2000 counts as alpha 1.
+>
+> **OPEN (for §20.1, raised in review 2026-10-06):** does the 3020 `OpacityAlpha` or 3018
+> `EmissiveAndOpacity` alpha reach the lit base pass's output alpha (`lighting.md` §5.12)
+> when the 3000 role carries no opacity? §11.3's literal text puts a lit surface with an
+> opaque 3000 role (`Color`, `ColorAndGloss`, `ColorAndDye`) and 2000 alpha 1 in the opaque
+> pass, the cut-out coming from the alpha test alone; the Decision above sends it to the
+> sorted transparent pass. A reviewer census (not re-checked by the implementer) counts
+> 134 such surface records: 130 with 3020 and base `ColorAndDye` (0x2B00072C 60,
+> 0x2B000754 24, 0x2B000A1F 19, 0x2B000A17 13, 0x2B00076E 9, 0x2B00080E 5), all
+> alpha-tested, and 4 with 3018 and base `ColorAndGloss` (0x2B000772), 2 of them without
+> alpha test. The code keeps the Decision until §20.1 answers.
 
 > **OPEN (Decision):** Two colour layers (§11.2): the second opacity slot is 3001 when the
 > opacity (or the blend's source alpha) comes from slot 3000, the 3000 role contains
@@ -1430,6 +1446,53 @@ Added by the clean-room implementation of the 2026-10-05 revisions (`crates/mate
 > zero or non-finite `period`) is treated like *p* ≤ 0 (*p* = 0.1). The |*t*| > 3,600
 > reduction of step 1 is applied to mode 10 as well, as the section's structure says
 > ("for the other modes").
+
+Added by the clean-room implementation of M4.5 (`crates/material` modules `transform`,
+`inputs`, `water`, 2026-10-06). Each is an engineering choice where the text is silent:
+
+> **OPEN:** The texture-matrix index of §7.3 (the binding `slot`) is per permutation, but
+> §8.4 and `lighting.md` §5.2.1 describe one matrix layout per record. On the reference
+> install four records (0x2B000765, 0x2B000772, 0x2B0009CE, 0x2B0009CF) have permutations
+> (one without programs whose only sampler is a glow texture, and others) that bind the
+> second set's parameters (1003, 1004, 1019, 1020, 1034, 1072, 1073) to their matrix 0,
+> while their colour passes bind the first set there: 35 (matrix, value) pairs have two
+> candidates. Permutations whose own table differs from the record-wide one: 0x2B000765 7
+> (1, 19, 39, 85, 131, 149, 169), 0x2B000772 20 (pass codes 0x08 glow, 0x09 depth, 0x0A
+> shadow depth, 0x42 view normal; in 0x42 set 0 is also bound to matrix 1), 0x2B0009CE 6,
+> 0x2B0009CF 6. The implementation (revised after review, 2026-10-06) keeps one table per
+> permutation (`TextureMatrixLayout::for_permutation` / `evaluate_for`, and
+> `MaterialLibrary::permutation_texture_matrices`), so a pass can use the transform its own
+> permutation binds. It also keeps a record-wide table for callers that do not track
+> permutations: per (matrix, value), the parameter named by the most bindings (ties to the
+> one met first in stored order), which gives the first set on matrix 0 in all four (the
+> colour passes). Open: whether the per-permutation reading is the client's (it follows
+> §7.3, where `slot` belongs to one permutation), and which matrix each non-colour sampler
+> uses **in the colour passes**: §8.4 states only base colour → matrix 0 and second colour
+> layer → matrix 1; 3013 `Glow` (`lighting.md` §5.9) and 3018 `Emissive` /
+> `EmissiveAndOpacity` are not covered. In 9 of the 10 surface records that use these four
+> shader records, set 0 and set 1 differ (for example 0x3100422A: set 0 identity, set 1
+> scale 0.5 with sine-animated 1019/1020), so the answer changes what is drawn. 407
+> matrices carry semantics 38–44 (as §7.3 says), 393 of them in permutations with
+> programs.
+
+> **OPEN (Decision):** Values handed to a renderer are finite. A non-finite clock leaves a
+> mode-10 curve's state untouched (a running curve returns its last value, a fresh one the
+> value at its start), so one bad tick neither restarts nor freezes it and a start time
+> cannot become NaN; the other modes are evaluated at 0 (revised after review,
+> 2026-10-06: reading the clock as 0 made a running loop-0 curve look like a clock going
+> backwards and froze it at its start value). An animated 1043 whose value is non-finite
+> falls back like a non-finite constant one (§18, alpha-test threshold), not to 0. A NaN
+> curve result becomes 0
+> and an infinite one the largest finite f32 of its sign; colours are treated the same
+> way. §5.3.1 lets mode 8 overflow on finite data: with `w[9]` ≠ 0, *G* grows with time
+> and the weights 2^(−*H*·*i*) reach infinity (an amplitude of 0 then gives NaN). What the
+> original does then is not stated; on the reference install no effective curve of a
+> surface record is non-finite at 0, 1.5, 37.25 or 3,700 s.
+
+> **OPEN (Decision):** Specular colour when a shader record declares 1000 but not 2001
+> (never observed, §8.3 says they are always declared together): white × the per-object
+> tint, then black below power 0.5 as usual. The program time of `lighting.md` §4.2 E20
+> is 0 for a negative or non-finite clock.
 
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)

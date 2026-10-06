@@ -327,6 +327,14 @@ of a landblock-frame point *p* is *p*.z − *h*.
   consumer that needs "water at this point" compares *h* with the terrain height there
   (scenery does, `scenery.md` §7.5).
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` water module):** with the Inferred
+> second step (liquid volumes), a point within 0.0002 below *h*, or exactly at *h*, is
+> "under water" after all: the volume entity's surface box (§7.1) reaches up to *h*
+> inclusive. Whether the client's physics-world query uses inclusive box bounds, and so
+> whether the 0.0002 tolerance of the plane test has any effect on the full query, is not
+> known. `tessera-world` keeps both steps as stated (plane test, then boxes with inclusive
+> bounds, the containment rule of `tessera-physics`).
+
 <a id="s6-4"></a>
 ### 6.4 Census: where this install has water (Confirmed, 2026-10-05)
 
@@ -402,6 +410,18 @@ WaterWadeVolume; labels are data).
 Relative to the water surface *h*: the surface zone is the top 0.5 units, the wading zone
 0.5–1 unit below the surface, the deep zone from 1 unit down to 1,600 units below.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` water module):** three monitor fields
+> are not covered here: (a) `Monitor_Offset` (vec3, on 382 of 464 monitors per `sound.md`
+> §10.3.4): whether and how it moves the box. Tessera (Decision): the box is
+> (min + offset, max + offset) in the entity frame, before the entity's scale, rotation and
+> position. With this rule the boxes of all three landblock volume entities of this install
+> still cover the whole 160 × 160 block from *h* down (checked by the `tessera-world` test
+> `volume_entities_cover_their_landblock`). (b) A monitor without
+> `Monitor_ScaleWithEntity`: Tessera treats it as true (scales with the entity).
+> (c) Whether `Entity_Monitors` is inherited along the 0x47 parent chain: Tessera reads it
+> from the nearest level of the chain like other object properties (`scenery.md` §9.2); in
+> this install no placed volume entity inherits its monitors.
+
 <a id="s7-2"></a>
 ### 7.2 Volume property sets (Confirmed)
 
@@ -432,6 +452,15 @@ are common), drawn with the entity (`Translucent` true and render phase 2 on the
 ones). They are placed by their static-entity frame (`entity-descriptor.md`) and scaled with
 the entity when `Monitor_ScaleWithEntity` is true.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` real-data census):** the three coin sets
+> of §7.2 also carry `Volume_IsLiquid` (their flags read as liquid without a water or lava
+> depth flag). Two placed 0x47 objects use them (19 placements). Counting every placed
+> Physics entity whose object has monitors applying a `Volume_IsLiquid` set gives 3,914
+> entities and 39 objects; without the coin sets it gives the 3,895 and 37 above. Whether a
+> coin volume counts as water for movement (§7.4) and for the "under water" query is not
+> known. Tessera (Decision): every `Volume_IsLiquid` box is liquid, as the rule of §7.4
+> states.
+
 <a id="s7-4"></a>
 ### 7.4 From volumes to movement states (partly OPEN)
 
@@ -442,6 +471,43 @@ traced (`collision.md` Q9). **Tessera rule (Decision):** a mover is in water whe
 inside any liquid box; it swims (state 2) when the water surface is more than its float height
 above its feet (`collision.md` §11.2), otherwise it wades (state 1, or 3 on steep support).
 
+> **OPEN (implementer, 2026-10-06, `tessera-physics` controller):** the rule above does not
+> say which state a mover in water **without** support takes when the surface is less than
+> its float height above its feet (jumping or stepping off a ledge into shallow water).
+> Tessera chooses state 2 (swimming) whenever there is no support. The feet are the
+> mover's position (the bottom of its capsule, `collision.md` §10.6). While swimming, the
+> controller keeps the feet from rising above the surface minus the float height and lets a
+> swimmer above that line sink to it (with gravity −20 the swimming layer would otherwise
+> lift the mover out of the water); the surface is the water plane's level where the liquid
+> boxes end there, else the top of the liquid boxes above the feet.
+
+> **OPEN (implementer, 2026-10-06, controller review):** `collision.md` §11.1 step 9 applies
+> the Swimming layer (gravity −20) in states 1, 2 and 3. How its upward gravity interacts
+> with support in states 1 and 3 is not traced (`collision.md` Q9). Tessera (Decision): in
+> state 1 the mover stands on walkable support, so its vertical speed is 0. In states 2 and 3
+> the controller uses a **float line**, the surface minus the float height. Below the line
+> or on it, the layer's gravity applies and the feet stop at the line, with the upward speed
+> zeroed. Above the line, the magnitude of the gravity (at least 1 m/s²) pulls the mover down,
+> and the feet stop at the line with the speed zeroed, so a swimmer does not overshoot it.
+> As a result, a mover dropping or stepping into deep water settles at the line without
+> sinking below it, and a mover on steep support in water shallower than its float height
+> slides down instead of being lifted. The original's buoyancy and its integration are not
+> known.
+
+
+> **OPEN (implementer, 2026-10-06, walker walk mode):** whether a mover inside an interior
+> cell (`collision.md` §5.8.1) can be in landscape water is not stated. The landblock volume
+> entity's boxes reach far below the water plane (§7.1), so a dungeon cell under a lake lies
+> inside them: walk IN1 of `m4-5-visual.md` (a cell 660 m below a lake's plane) swam up out
+> of its cell. Tessera (Decision, `walker.md` §13.5): no landscape water while the cell
+> lookup at the feet + 0.05 m finds a cell. Please state the client's rule (BIN), and
+> whether placed volumes inside cells (§7.3) still apply there.
+
+> **OPEN (M4.5 exit verification, clean room, 2026-10-06):** how the original slows a mover
+> that enters deep water at speed is not stated. Tessera (Decision, `collision.md` §12.3 OPEN
+> (p)): below the float line the downward speed is cancelled at once, so a mover sliding
+> into a lake at 15 m/s stops within one step instead of diving about 4 m before the lift
+> turns it.
 ---
 
 <a id="s8"></a>
@@ -528,6 +594,14 @@ Materials of individual surfaces override these as usual. Other declared water p
 (1170–1173, 1182–1190, 2004, 2005, 2007, 2008) are read by the flow, foam and depth permutations; their
 formulas were not traced (OPEN).
 
+> **OPEN:** Three of the six water shader records do not declare every parameter of the
+> table above (clean-room M4.5 real-data run, 2026-10-06): 0x2B0005EC and 0x2B000810 lack
+> 1044–1046 (waves), 1059–1062 and 1064, 1065 (normal layers 1 and 2); 0x2B0007FD lacks
+> 1044–1046. `tessera-material` (`WaterMaterial`) fills an undeclared id with the
+> 0x2B0000A8 default of this table and lists it as undeclared. Whether those records' programs
+> use a single normal layer and no vertex waves (so a renderer following §8.3–§8.4 should
+> skip layers 1 and 2 and the waves for them) is not stated.
+
 <a id="s8-3"></a>
 ### 8.3 Vertex stage (SH, shader record 0x2B0000A8)
 
@@ -602,6 +676,20 @@ alpha; all write depth; all but the low-detail ones draw both faces.
 > 0x2B0007FD and 0x2B0005EC, and the draw order of water relative to other translucent
 > objects.
 
+> **OPEN (implementer, 2026-10-06, `tessera-render` water pipeline):** step 1 rotates the
+> normal-map sum "into world space with the surface frame" without saying which way the
+> tangent-space axes point on the landscape plane, i.e. whether the world normal is
+> *n*.x · **T** + *n*.y · **B** + *n*.z · **N** or uses the −*n*.y of `lighting.md` §5.2.4
+> (**T** along +x, **B** along +y, the directions in which the layer coordinates of §8.3
+> grow). Tessera uses the `lighting.md` §5.2.4 sign (`docs/specs/render.md` §5.3). The sign
+> mirrors the ripples' shading and the refraction offset; it does not change the Fresnel or
+> sparkle magnitudes.
+
+> **OPEN (implementer, 2026-10-06):** step 6 needs the fake light's direction and specular
+> colour when the main light is not directional; `lighting.md` E18 names "a default
+> direction" and "an engine specular colour" without values. Tessera uses straight down with
+> a black specular colour (no highlight) in that case (`docs/specs/render.md` §5.3).
+
 **Tessera rule (Decision), until those are settled:** draw water after opaque geometry with a
 copy of the colour buffer as the refraction source, implement steps 1–7 with the reflection
 replaced by the refraction sample (the original's no-reflection path), and use alpha 1.
@@ -636,6 +724,11 @@ the 32-bit result of §6.2 step 6 (OBS). The rest of the record's layout is OPEN
 **Tessera rule (Decision):** derive distant water from the block maps with §6.2, which gives
 the same pairs, instead of decoding kind 5.
 
+> **OPEN (implementer, 2026-10-06):** the sector pair stores the water type as one byte,
+> while the block-map type value is a u16. How the client narrows a type value above 255 is
+> not stated (none occurs: the largest observed type is 47). `tessera-world` keeps the low
+> 8 bits.
+
 ---
 
 <a id="s10"></a>
@@ -665,6 +758,14 @@ the same pairs, instead of decoding kind 5.
 Hostile input: bound every count by the bytes left; reject flag bytes other than 0 and 1;
 treat a non-finite `value` or fog float as malformed; never index the entry list by key
 without checking it exists.
+
+> **OPEN:** Which fog-zone floats "fog float" covers, and whether the client itself rejects
+> non-finite values (no BIN statement). The `tessera-formats` decoder (M4.5) rejects a
+> non-finite value in every f32 of a fog-zone entry (`near`, `far`, `amount`, `value_60`,
+> `light_a`, `light_b`) and in the water entry's `value`; all 10 entries and 125 water
+> entries of this install are finite. It keeps `active` (§5.2 field 7, typed u8, not bool8)
+> as a raw byte and treats any non-zero value as active, and keeps the override `mode`
+> bytes raw.
 
 ---
 

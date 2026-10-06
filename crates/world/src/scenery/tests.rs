@@ -1,0 +1,1962 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Unit tests of the scenery module: the worked example of `scenery.md` §14, SC8, SC11,
+//! SC12 and the rules of §7.4 on synthetic fixtures.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use tessera_formats::landblock::{HeightGrid, VertexFlags};
+use tessera_formats::scenery::{
+    FloatRange, PlacementNode, Scene, SceneChild, SceneChoice, SceneChoiceEntry, SceneChoiceTable,
+    SceneGroup, ScenePair, TerrainSceneEntry, TerrainSceneTable,
+};
+use tessera_formats::setup::Quaternion;
+use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+use tessera_formats::{Did, LandblockData, PropertyEntry, PropertySet, PropertyValue};
+use tessera_physics::geometry::{GridMesh, Plane};
+
+use super::hash::{self, SALT_HEADING};
+use super::*;
+use crate::coords::LandblockKey;
+use crate::frills::{DensityThinner, generate_sector};
+use crate::source::MemoryWorldSource;
+use crate::testkit;
+
+const OBJ_X: Did = Did(0x4700_0010);
+const OBJ_Y: Did = Did(0x4700_0011);
+const OBJ_ALIGN: Did = Did(0x4700_0020);
+const OBJ_PLAIN: Did = Did(0x4700_0021);
+const EMPTY: Did = Did(0x0200_0000);
+const VERTEX_SCENE: Did = Did(0x0200_1000);
+
+fn key() -> LandblockKey {
+    LandblockKey::new(2, 48, 80).expect("key")
+}
+
+fn word(terrain: u32, slot: u32) -> u32 {
+    terrain | (slot << 8)
+}
+
+fn approx(a: f32, b: f32, tol: f32) -> bool {
+    (a - b).abs() <= tol
+}
+
+fn assert_q(q: Quaternion, e: [f32; 4], tol: f32) {
+    let got = q.to_wxyz();
+    assert!(
+        got.iter().zip(e).all(|(a, b)| approx(*a, b, tol)),
+        "{got:?} vs {e:?}"
+    );
+}
+
+/// A node with the install's common values: always placed, no displacement, scale 1,
+/// any slope, any height above ground, no clearance test, spacing 0.1.
+fn node(children: Vec<SceneChild>) -> PlacementNode {
+    PlacementNode {
+        frequency: 1.0,
+        scale_min: [1.0; 3],
+        scale_max: [1.0; 3],
+        stretch_ref: 1.0,
+        slope_max_cos: 1.0,
+        slope_min_cos: 0.0,
+        above_ground: FloatRange {
+            min: -0.0002,
+            max: 0.0002,
+        },
+        above_water: FloatRange {
+            min: -0.0002,
+            max: 0.0002,
+        },
+        below_water: FloatRange {
+            min: -0.0002,
+            max: 0.0002,
+        },
+        water_depth: FloatRange {
+            min: -0.0002,
+            max: 0.0002,
+        },
+        below_ground_min: -0.0002,
+        below_ground_max: 0.0002,
+        z_range: FloatRange {
+            min: -f32::MAX,
+            max: f32::MAX,
+        },
+        spacing: 0.1,
+        clearance_scaled: true,
+        clear_max_cos: 1.0,
+        clear_min_cos: 6.1e-17,
+        clear_min_dot: -1.0,
+        clear_aspect_tol: 360.0,
+        unknown_163: 1.0,
+        disp_scaled: true,
+        inherit_scale: true,
+        disp_relative: true,
+        orient_relative: true,
+        spacing_scaled: true,
+        scale_mode: 4,
+        above_ground_mode: 1,
+        above_water_mode: 1,
+        below_water_mode: 1,
+        water_depth_mode: 1,
+        below_ground_mode: 2,
+        children,
+        ..PlacementNode::default()
+    }
+}
+
+/// The node of the §14 example: displacement ±5, heading 0–359, scale 0.8–1.2.
+fn example_node(children: Vec<SceneChild>) -> PlacementNode {
+    PlacementNode {
+        disp_min: [-5.0, -5.0, 0.0],
+        disp_max: [5.0, 5.0, 0.0],
+        heading: FloatRange {
+            min: 0.0,
+            max: 359.0,
+        },
+        scale_min: [0.8; 3],
+        scale_max: [1.2; 3],
+        ..node(children)
+    }
+}
+
+fn scene(did: Did, children: Vec<SceneChild>, frill: Option<PlacementNode>) -> Scene {
+    Scene {
+        reserved: 0,
+        did,
+        flag_a: true,
+        frill_layer: frill,
+        groups: vec![SceneGroup {
+            group_id: 1,
+            children,
+        }],
+    }
+}
+
+/// Region tables: terrain id 5 slot 1 → key 10 → choices (EMPTY 1.0, VERTEX_SCENE 1.0,
+/// EMPTY 2.0), so the §14 vertex picks VERTEX_SCENE; keys 1 and 2 → EMPTY. Terrain type
+/// 1 forbids procedural content.
+fn tables() -> SceneryTables {
+    let one = ScenePair {
+        scene_key: 1,
+        slot: 0,
+    };
+    let default = TerrainSceneEntry {
+        name: "default".into(),
+        kind: 1,
+        id: 0,
+        unknown_f: std::f32::consts::FRAC_1_SQRT_2,
+        default_pair: Some(one),
+        pairs: vec![one],
+    };
+    let listed = TerrainSceneEntry {
+        name: "zone".into(),
+        kind: 2,
+        id: 5,
+        unknown_f: std::f32::consts::FRAC_1_SQRT_2,
+        default_pair: None,
+        pairs: vec![
+            ScenePair {
+                scene_key: 2,
+                slot: 0,
+            },
+            ScenePair {
+                scene_key: 10,
+                slot: 1,
+            },
+        ],
+    };
+    let ts = TerrainSceneTable::new(Did(0x1200_0001), 0, Some(default), vec![listed]).unwrap();
+    let choice = |scene, weight| SceneChoice {
+        scene,
+        weight,
+        flag: 1,
+    };
+    let entries = vec![
+        SceneChoiceEntry {
+            key: 1,
+            choices: vec![choice(EMPTY, 1.0)],
+        },
+        SceneChoiceEntry {
+            key: 2,
+            choices: vec![choice(EMPTY, 1.0)],
+        },
+        SceneChoiceEntry {
+            key: 10,
+            choices: vec![
+                choice(EMPTY, 1.0),
+                choice(VERTEX_SCENE, 1.0),
+                choice(EMPTY, 2.0),
+            ],
+        },
+    ];
+    let sc = SceneChoiceTable::new(0, Did(0x1100_0001), entries).unwrap();
+    let tt = TerrainTypeTable::new(
+        Did(0x1900_0001),
+        vec![
+            TerrainType {
+                key: 0,
+                procedural: true,
+                ..TerrainType::default()
+            },
+            TerrainType {
+                key: 1,
+                procedural: false,
+                ..TerrainType::default()
+            },
+        ],
+    )
+    .unwrap();
+    SceneryTables::new(2, Arc::new(ts), Arc::new(sc), Some(Arc::new(tt)))
+}
+
+fn scenes(list: Vec<Scene>) -> HashMap<Did, Arc<Scene>> {
+    let mut m: HashMap<Did, Arc<Scene>> = list.into_iter().map(|s| (s.did, Arc::new(s))).collect();
+    m.entry(EMPTY)
+        .or_insert_with(|| Arc::new(scene(EMPTY, vec![], None)));
+    m
+}
+
+/// Flat data (height 0) with the scenery word only at vertex (3, 7).
+fn data_one_vertex() -> LandblockData {
+    let mut d = LandblockData::from_heights(key().data_did(), HeightGrid::flat(0));
+    d.coarse[17 * 3 + 7] = word(5, 1);
+    d
+}
+
+struct Fixture {
+    data: LandblockData,
+    terrain: GridMesh,
+    tables: SceneryTables,
+    scenes: HashMap<Did, Arc<Scene>>,
+    statics: Vec<StaticClearance>,
+    water: FixedWater,
+    limits: SceneryLimits,
+}
+
+impl Fixture {
+    fn new(data: LandblockData, list: Vec<Scene>) -> Self {
+        let terrain = GridMesh::terrain(&data);
+        Self {
+            data,
+            terrain,
+            tables: tables(),
+            scenes: scenes(list),
+            statics: Vec::new(),
+            water: FixedWater(None),
+            limits: SceneryLimits::default(),
+        }
+    }
+
+    fn input(&self) -> SceneryInput<'_> {
+        SceneryInput {
+            key: key(),
+            data: &self.data,
+            terrain: &self.terrain,
+            tables: &self.tables,
+            scenes: &self.scenes,
+            water: &self.water,
+            statics: &self.statics,
+            limits: self.limits,
+        }
+    }
+
+    fn run(&self) -> GeneratedScenery {
+        generate_landblock(&self.input())
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// §14 worked example
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn worked_example_hashes() {
+    let (a, b) = (hash::seed_a(2, 48, 80), hash::seed_b(3, 7));
+    assert_eq!(b, 0x0035_5731);
+    assert_eq!(a, 135);
+    // Scene pick.
+    let (gx, gy) = (16 * 48 + 3, 16 * 80 + 7);
+    assert_eq!((gx, gy), (771, 1287));
+    assert_eq!(hash::vertex_hash(gx, gy), 0x7237_E00C);
+    let u = hash::vertex_fraction(gx, gy);
+    assert_eq!(u, f32::from(0x7237u16) / 65_536.0);
+    assert!(approx(u, 0.44615, 1e-5));
+    let t = tables();
+    let entry = t.scene_choices.get(10).unwrap();
+    assert!(approx(u * entry.total_weight(), 1.7846, 1e-4));
+    assert_eq!(entry.choose(u).unwrap().scene, VERTEX_SCENE);
+    assert_eq!(t.choose_scene(48, 80, 3, 7, word(5, 1)), Some(VERTEX_SCENE));
+    // Seeds.
+    let s = hash::scene_seed(hash::SCENE_SEED);
+    assert_eq!(s, 0x876B_E061);
+    let c = hash::child_seed(s, 0);
+    assert_eq!(c, 0x876B_E061);
+    // Frequency.
+    assert_eq!(c.wrapping_add(hash::SALT_FREQUENCY), 0x8884_FEC8);
+    assert_eq!(hash::node_hash(a, b, 0x8884_FEC8), 0xEC94_9086);
+    let freq = hash::node_random(a, b, c.wrapping_add(hash::SALT_FREQUENCY));
+    assert!(approx(freq, 0.924_133, 1e-6));
+    // Displacement, heading, scale.
+    let rx = hash::node_random(a, b, c.wrapping_add(hash::SALT_DISP_X));
+    let ry = hash::node_random(a, b, c.wrapping_add(hash::SALT_DISP_Y));
+    assert!(approx(rx, 0.611_084, 1e-6));
+    assert!(approx(ry, 0.134_033, 1e-6));
+    assert!(approx(-5.0 + rx * 10.0, 1.110_84, 1e-5));
+    assert!(approx(-5.0 + ry * 10.0, -3.659_67, 1e-5));
+    let rh = hash::node_random(a, b, c.wrapping_add(SALT_HEADING));
+    assert!(approx(rh, 0.233_948, 1e-6));
+    assert!(approx(rh * 359.0, 83.99, 0.005));
+    let rs = hash::node_random(a, b, c.wrapping_add(hash::SALT_SCALE));
+    assert!(approx(rs, 0.306_381, 1e-6));
+    assert!(approx(0.8 + rs * 0.4, 0.922_55, 1e-5));
+    // Second child and frill layer.
+    let c1 = hash::child_seed(s, 1);
+    assert_eq!(c1, 0xB4AD_9F7A);
+    assert!(approx(
+        hash::node_random(a, b, c1.wrapping_add(hash::SALT_FREQUENCY)),
+        0.752_548,
+        1e-6
+    ));
+    assert_eq!(s.wrapping_add(hash::FRILL_LAYER_SALT), 0x8AEC_236B);
+}
+
+#[test]
+fn worked_example_orientation() {
+    let h = 0.233_948f32 * 359.0;
+    let q = math::rot_z(-h);
+    assert_q(q, [0.74322, 0.0, 0.0, -0.66905], 2e-5);
+    let fwd = q.rotate([0.0, 1.0, 0.0]);
+    assert!(approx(fwd[0], 0.99450, 2e-5) && approx(fwd[1], 0.10475, 2e-5));
+    let bearing = fwd[0].atan2(fwd[1]).to_degrees();
+    assert!(approx(bearing, 83.987, 0.001));
+    assert!(approx(q.heading_degrees(), 83.987, 0.001));
+
+    let n = [0.2f32, -0.3, 0.93274];
+    let qa = math::align_to_normal(n);
+    assert_q(qa, [0.98292, 0.15418, 0.09929, 0.01558], 2e-5);
+    let x = qa.rotate([1.0, 0.0, 0.0]);
+    let y = qa.rotate([0.0, 1.0, 0.0]);
+    assert!(approx(x[0], 0.97980, 2e-5) && approx(x[1], 0.06124, 2e-5));
+    assert!(approx(x[2], -0.19039, 2e-5));
+    assert!(approx(y[0], 0.0, 2e-5) && approx(y[1], 0.95197, 2e-5));
+    assert!(approx(y[2], 0.30619, 2e-5));
+    let full = math::mul(qa, q);
+    assert_q(full, [0.74094, 0.04816, 0.17695, -0.64604], 2e-5);
+    let z = full.rotate([0.0, 0.0, 1.0]);
+    for k in 0..3 {
+        assert!(approx(z[k], n[k], 1e-4), "{z:?}");
+    }
+}
+
+#[test]
+fn worked_example_plane_band_and_diagonal_tie() {
+    let data = LandblockData::from_heights(key().data_did(), HeightGrid::flat(0));
+    let mesh = GridMesh::terrain(&data);
+    let clear = VertexFlags::filled(0);
+    assert_eq!(mesh.client_key_at(17.5, 37.0, &clear), Some(455));
+    assert_eq!(mesh.client_key_at(16.0, 36.0, &clear), Some(454));
+    assert_eq!(mesh.client_key_at(19.0, 38.5, &clear), Some(455));
+    let set = VertexFlags::filled(VertexFlags::SPLIT_SW_NE);
+    assert_eq!(mesh.client_key_at(17.5, 37.5, &set), Some(454));
+    assert_eq!(mesh.key_under(17.5, 37.5, &set), Some(455));
+}
+
+#[test]
+fn worked_example_clearance_query() {
+    assert_eq!(GridMesh::client_keys_near(12.0, 13.0, 0.5), [133]);
+    assert_eq!(GridMesh::client_keys_near(12.0, 12.2, 0.5), [132, 133]);
+    assert_eq!(GridMesh::client_keys_near(13.0, 12.0, 0.5), [132]);
+}
+
+#[test]
+fn worked_example_placement() {
+    let f = Fixture::new(
+        data_one_vertex(),
+        vec![scene(
+            VERTEX_SCENE,
+            vec![SceneChild::Node(Box::new(example_node(vec![
+                SceneChild::Object(OBJ_X),
+            ])))],
+            None,
+        )],
+    );
+    let g = f.run();
+    // Words of 0 select the default entry, whose key 1 names the empty scene (§4.2).
+    assert_eq!(g.stats.vertices_with_scene, 289);
+    assert_eq!(g.objects.len(), 1, "{:?}", g.stats);
+    let o = g.objects[0];
+    assert_eq!(o.object, OBJ_X);
+    assert_eq!(o.vertex, [3, 7]);
+    let base = [3.0 * (10.0 - 0.0002f32), 7.0 * (10.0 - 0.0002f32)];
+    assert!(approx(o.position[0], base[0] + 1.110_84, 2e-4), "{o:?}");
+    assert!(approx(o.position[1], base[1] - 3.659_67, 2e-4), "{o:?}");
+    assert!(approx(o.position[2], 0.0, 1e-6));
+    assert_q(o.rotation, [0.74322, 0.0, 0.0, -0.66905], 2e-5);
+    for s in o.scale {
+        assert!(approx(s, 0.922_55, 1e-5));
+    }
+    assert_eq!(g.stats.nodes_placed, 1);
+}
+
+#[test]
+fn frequency_below_the_draw_skips_the_node() {
+    let mk = |freq| {
+        Fixture::new(
+            data_one_vertex(),
+            vec![scene(
+                VERTEX_SCENE,
+                vec![SceneChild::Node(Box::new(PlacementNode {
+                    frequency: freq,
+                    ..example_node(vec![SceneChild::Object(OBJ_X)])
+                }))],
+                None,
+            )],
+        )
+        .run()
+    };
+    let skipped = mk(0.9);
+    assert!(skipped.objects.is_empty());
+    assert_eq!(skipped.stats.rejections(Rejection::Frequency), 1);
+    assert_eq!(mk(1.0).objects.len(), 1);
+    assert_eq!(mk(0.93).objects.len(), 1);
+}
+
+// ---------------------------------------------------------------------------------------
+// SC11 and SC8
+// ---------------------------------------------------------------------------------------
+
+/// Uneven terrain with mixed diagonals and a scene word on every vertex.
+fn rough_data() -> LandblockData {
+    let heights = HeightGrid::from_fn(|i, j| {
+        #[allow(clippy::cast_possible_truncation)]
+        let v = (i * 311 + j * 173 + (i * j * 37) % 251) as u16;
+        v.wrapping_mul(7)
+    });
+    let mut d = LandblockData::from_heights(key().data_did(), heights);
+    for (k, f) in d.vertex_flags.raw_mut().iter_mut().enumerate() {
+        if (k * 7) % 3 == 0 {
+            *f = VertexFlags::SPLIT_SW_NE;
+        }
+    }
+    for w in d.coarse.iter_mut() {
+        *w = word(5, 1);
+    }
+    d
+}
+
+fn sc11_scenes() -> Vec<Scene> {
+    let align = PlacementNode {
+        align_to_slope: true,
+        no_spacing: true,
+        ..example_node(vec![SceneChild::Object(OBJ_ALIGN)])
+    };
+    let plain = PlacementNode {
+        no_spacing: true,
+        ..example_node(vec![SceneChild::Object(OBJ_PLAIN)])
+    };
+    vec![scene(
+        VERTEX_SCENE,
+        vec![
+            SceneChild::Node(Box::new(align)),
+            SceneChild::Node(Box::new(plain)),
+        ],
+        None,
+    )]
+}
+
+#[test]
+fn sc11_orientations() {
+    let f = Fixture::new(rough_data(), sc11_scenes());
+    let g = f.run();
+    let a = hash::seed_a(2, 48, 80);
+    let s = hash::scene_seed(hash::SCENE_SEED);
+    let (mut aligned, mut plain) = (0, 0);
+    for o in &g.objects {
+        assert!(math::is_unit(o.rotation, 1e-5), "{o:?}");
+        let b = hash::seed_b(u32::from(o.vertex[0]), u32::from(o.vertex[1]));
+        if o.object == OBJ_ALIGN {
+            let n = f
+                .terrain
+                .client_plane_at(o.position[0], o.position[1], &f.data.vertex_flags)
+                .normal;
+            assert!(n[2] < 1.0, "terrain is not flat");
+            let z = o.rotation.rotate([0.0, 0.0, 1.0]);
+            for k in 0..3 {
+                assert!(approx(z[k], n[k], 1e-4), "{z:?} vs {n:?}");
+            }
+            aligned += 1;
+        } else {
+            let c = hash::child_seed(s, 1);
+            let h = hash::node_random(a, b, c.wrapping_add(SALT_HEADING)) * 359.0;
+            let y = o.rotation.rotate([0.0, 1.0, 0.0]);
+            let bearing = y[0].atan2(y[1]).to_degrees().rem_euclid(360.0);
+            assert!(
+                math::bearing_difference(bearing, h) < 0.01,
+                "{bearing} vs {h}"
+            );
+            plain += 1;
+        }
+    }
+    // About a quarter of the vertices pick VERTEX_SCENE (weights 1, 1, 2).
+    assert!(aligned > 40 && plain > 40, "{aligned} {plain}");
+}
+
+#[test]
+fn sc8_deterministic() {
+    let f = Fixture::new(rough_data(), sc11_scenes());
+    let a = f.run();
+    let b = f.run();
+    assert_eq!(a, b);
+    let bits = |g: &GeneratedScenery| {
+        g.objects
+            .iter()
+            .flat_map(|o| {
+                o.position
+                    .into_iter()
+                    .chain(o.rotation.to_wxyz())
+                    .chain(o.scale)
+                    .map(f32::to_bits)
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(bits(&a), bits(&b));
+}
+
+// ---------------------------------------------------------------------------------------
+// §7.4 rules
+// ---------------------------------------------------------------------------------------
+
+fn one_node(n: PlacementNode) -> Vec<Scene> {
+    vec![scene(
+        VERTEX_SCENE,
+        vec![SceneChild::Node(Box::new(n))],
+        None,
+    )]
+}
+
+#[test]
+fn terrain_type_forbids_procedural_content() {
+    let mut data = data_one_vertex();
+    data.terrain.quads = Some(Box::new([1u16; 1024]));
+    let f = Fixture::new(
+        data,
+        one_node(example_node(vec![SceneChild::Object(OBJ_X)])),
+    );
+    let g = f.run();
+    assert!(g.objects.is_empty());
+    assert_eq!(g.stats.rejections(Rejection::TerrainType), 1);
+    // `no_checks` skips the test.
+    let mut data = data_one_vertex();
+    data.terrain.quads = Some(Box::new([1u16; 1024]));
+    let f = Fixture::new(
+        data,
+        one_node(PlacementNode {
+            no_checks: true,
+            ..example_node(vec![SceneChild::Object(OBJ_X)])
+        }),
+    );
+    assert_eq!(f.run().objects.len(), 1);
+    // A quad value that is not a key is ignored.
+    let mut data = data_one_vertex();
+    data.terrain.quads = Some(Box::new([7u16; 1024]));
+    let f = Fixture::new(
+        data,
+        one_node(example_node(vec![SceneChild::Object(OBJ_X)])),
+    );
+    assert_eq!(f.run().objects.len(), 1);
+}
+
+#[test]
+fn slope_bounds() {
+    let f = Fixture::new(
+        rough_data(),
+        one_node(PlacementNode {
+            slope_min_cos: 1.0,
+            ..example_node(vec![SceneChild::Object(OBJ_X)])
+        }),
+    );
+    let g = f.run();
+    assert!(g.objects.is_empty());
+    assert!(g.stats.rejections(Rejection::Slope) > 0);
+}
+
+#[test]
+fn water_height_mode_and_ranges() {
+    let n = PlacementNode {
+        height_mode: 1,
+        ..example_node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let mut f = Fixture::new(data_one_vertex(), one_node(n));
+    let g = f.run();
+    assert!(g.objects.is_empty());
+    assert_eq!(g.stats.rejections(Rejection::NoWater), 1);
+    f.water = FixedWater(Some(level_plane(3.5)));
+    let g = f.run();
+    assert_eq!(g.objects.len(), 1);
+    assert!(approx(g.objects[0].position[2], 3.5, 1e-6));
+
+    // `water_depth_mode` 0 refuses water-covered ground; a dry landblock passes.
+    let n = PlacementNode {
+        water_depth_mode: 0,
+        ..example_node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let mut f = Fixture::new(data_one_vertex(), one_node(n));
+    assert_eq!(f.run().objects.len(), 1);
+    f.water = FixedWater(Some(level_plane(2.0)));
+    let g = f.run();
+    assert!(g.objects.is_empty());
+    assert_eq!(g.stats.rejections(Rejection::HeightRange), 1);
+    // Water below the ground is not "water over ground".
+    f.water = FixedWater(Some(level_plane(-2.0)));
+    assert_eq!(f.run().objects.len(), 1);
+}
+
+#[test]
+fn height_offset_sinks_objects_and_ranges_apply() {
+    let n = PlacementNode {
+        disp_min: [-5.0, -5.0, -2.0],
+        disp_max: [5.0, 5.0, -2.0],
+        ..example_node(vec![SceneChild::Object(OBJ_X)])
+    };
+    // Below ground by 2 with `below_ground_mode` 2 and (−0.0002, 0.0002): rejected.
+    let f = Fixture::new(data_one_vertex(), one_node(n.clone()));
+    assert!(f.run().objects.is_empty());
+    // Mode 1 allows any depth.
+    let f = Fixture::new(
+        data_one_vertex(),
+        one_node(PlacementNode {
+            below_ground_mode: 1,
+            ..n
+        }),
+    );
+    let g = f.run();
+    assert_eq!(g.objects.len(), 1);
+    assert!(approx(g.objects[0].position[2], -2.0, 1e-6));
+}
+
+#[test]
+fn footprints_space_later_nodes() {
+    let n = |no_spacing| PlacementNode {
+        spacing: 1.0,
+        no_spacing,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let two = |a, b| {
+        vec![scene(
+            VERTEX_SCENE,
+            vec![
+                SceneChild::Node(Box::new(n(a))),
+                SceneChild::Node(Box::new(n(b))),
+            ],
+            None,
+        )]
+    };
+    let g = Fixture::new(data_one_vertex(), two(false, false)).run();
+    assert_eq!(g.objects.len(), 1);
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+    let g = Fixture::new(data_one_vertex(), two(false, true)).run();
+    assert_eq!(g.objects.len(), 2);
+    // A nested node is not spaced against its own (still open) ancestor.
+    let nested = PlacementNode {
+        spacing: 1.0,
+        ..node(vec![SceneChild::Node(Box::new(n(false)))])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(nested)).run();
+    assert_eq!(g.objects.len(), 1);
+}
+
+#[test]
+fn static_clearance_volumes_space_nodes() {
+    let mut f = Fixture::new(
+        data_one_vertex(),
+        one_node(node(vec![SceneChild::Object(OBJ_X)])),
+    );
+    let p = [3.0 * (10.0 - 0.0002f32), 7.0 * (10.0 - 0.0002f32), 0.0];
+    f.statics = vec![StaticClearance {
+        position: [p[0] + 1.0, p[1], 0.0],
+        rotation: Quaternion::IDENTITY,
+        boxes: Vec::new(),
+        cylinders: vec![ClearanceCylinder {
+            low_point: [0.0; 3],
+            radius: 0.95,
+            height: 2.0,
+        }],
+    }];
+    let g = f.run();
+    assert!(g.objects.is_empty());
+    assert_eq!(g.stats.rejections(Rejection::StaticSpacing), 1);
+    // A box under a rotated entity frame: the point maps inside it.
+    f.statics = vec![StaticClearance {
+        position: [p[0] + 3.0, p[1], 0.0],
+        rotation: math::rot_z(90.0),
+        boxes: vec![ClearanceBox {
+            min: [-1.0, 2.5, -1.0],
+            max: [1.0, 3.5, 1.0],
+        }],
+        cylinders: Vec::new(),
+    }];
+    assert!(f.run().objects.is_empty());
+    // A degenerate box is skipped.
+    f.statics[0].boxes[0] = ClearanceBox {
+        min: [0.0; 3],
+        max: [0.0001; 3],
+    };
+    f.statics[0].position = p;
+    assert_eq!(f.run().objects.len(), 1);
+}
+
+#[test]
+fn clearance_requires_flat_consistent_ground() {
+    let n = PlacementNode {
+        clearance: 3.0,
+        clear_min_cos: 0.9999,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(rough_data(), one_node(n.clone())).run();
+    assert!(g.objects.is_empty());
+    assert!(g.stats.rejections(Rejection::Clearance) > 0);
+    let g = Fixture::new(data_one_vertex(), one_node(n)).run();
+    assert_eq!(g.objects.len(), 1);
+    // Pairwise test on rough ground.
+    let n = PlacementNode {
+        clearance: 3.0,
+        clear_min_dot: 0.99999,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(rough_data(), one_node(n)).run();
+    assert!(g.stats.rejections(Rejection::Clearance) > 0);
+}
+
+#[test]
+fn outside_block_and_unsupported_scale_modes() {
+    let n = PlacementNode {
+        disp_min: [-100.0, 0.0, 0.0],
+        disp_max: [-100.0, 0.0, 0.0],
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(n)).run();
+    assert_eq!(g.stats.rejections(Rejection::Outside), 1);
+    let n = PlacementNode {
+        scale_mode: 5,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(n)).run();
+    assert_eq!(g.stats.rejections(Rejection::ScaleMode), 1);
+}
+
+#[test]
+fn scene_references_and_child_seeds() {
+    // A group object sits at the vertex frame; a referenced scene's node gets the seed of
+    // the reference (C_k multiplied again).
+    let inner = Did(0x0200_2000);
+    let f = Fixture::new(
+        data_one_vertex(),
+        vec![
+            scene(
+                VERTEX_SCENE,
+                vec![SceneChild::Object(OBJ_Y), SceneChild::Scene(inner)],
+                None,
+            ),
+            scene(
+                inner,
+                vec![SceneChild::Node(Box::new(example_node(vec![
+                    SceneChild::Object(OBJ_X),
+                ])))],
+                None,
+            ),
+        ],
+    );
+    let g = f.run();
+    assert_eq!(g.objects.len(), 2);
+    assert_eq!(g.objects[0].object, OBJ_Y);
+    assert_eq!(g.objects[0].rotation, Quaternion::IDENTITY);
+    let (a, b) = (hash::seed_a(2, 48, 80), hash::seed_b(3, 7));
+    let c = hash::scene_seed(hash::child_seed(hash::scene_seed(hash::SCENE_SEED), 1));
+    let h = hash::node_random(a, b, c.wrapping_add(SALT_HEADING)) * 359.0;
+    assert!(approx(g.objects[1].rotation.heading_degrees(), h, 0.01));
+}
+
+#[test]
+fn max_objects_stops_children() {
+    let n = PlacementNode {
+        max_objects: 2,
+        ..node(vec![
+            SceneChild::Object(OBJ_X),
+            SceneChild::Object(OBJ_X),
+            SceneChild::Object(OBJ_X),
+        ])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(n)).run();
+    assert_eq!(g.objects.len(), 2);
+}
+
+#[test]
+fn hostile_cycles_depth_and_fanout_are_bounded() {
+    // A scene that references itself.
+    let g = Fixture::new(
+        data_one_vertex(),
+        vec![scene(
+            VERTEX_SCENE,
+            vec![SceneChild::Scene(VERTEX_SCENE), SceneChild::Object(OBJ_X)],
+            None,
+        )],
+    )
+    .run();
+    assert_eq!(g.stats.cycles, 1);
+    assert_eq!(g.objects.len(), 1);
+    // A chain deeper than the cap.
+    let mut list = Vec::new();
+    for k in 0..40u32 {
+        let did = Did(VERTEX_SCENE.0 + k);
+        list.push(scene(
+            did,
+            vec![SceneChild::Scene(Did(did.0 + 1)), SceneChild::Object(OBJ_X)],
+            None,
+        ));
+    }
+    let g = Fixture::new(data_one_vertex(), list).run();
+    assert_eq!(g.stats.depth_capped, 1);
+    assert_eq!(g.objects.len(), DEFAULT_MAX_SCENE_DEPTH);
+    // Exponential fan-out: 300³ objects requested on every vertex.
+    let (q, z) = (Did(0x0200_3000), Did(0x0200_3001));
+    let mut f = Fixture::new(
+        rough_data(),
+        vec![
+            scene(VERTEX_SCENE, vec![SceneChild::Scene(q); 300], None),
+            scene(q, vec![SceneChild::Scene(z); 300], None),
+            scene(z, vec![SceneChild::Object(OBJ_X); 300], None),
+        ],
+    );
+    f.limits.max_work_per_landblock = 1 << 20;
+    let start = std::time::Instant::now();
+    let g = f.run();
+    assert!(g.stats.budget_cut > 0);
+    assert!(g.stats.truncated());
+    assert!(g.objects.len() <= f.limits.max_objects_per_landblock as usize);
+    assert!(start.elapsed().as_secs() < 30);
+}
+
+#[test]
+fn missing_pairs_keys_and_scenes_are_counted() {
+    let mut d = data_one_vertex();
+    d.coarse[0] = word(5, 9); // slot 9 not in entry 5, no default pair
+    d.coarse[1] = word(0, 4); // default entry, default pair (1, 0) → EMPTY
+    let g = Fixture::new(d, vec![]).run();
+    assert_eq!(g.stats.vertices_without_pair, 1);
+    // VERTEX_SCENE is not in the scene source; every other vertex gets the empty scene.
+    assert_eq!(g.stats.missing_scenes, 1);
+    assert_eq!(g.stats.vertices_with_scene, 288);
+    assert!(g.objects.is_empty());
+}
+
+// ---------------------------------------------------------------------------------------
+// Frill pass (SC12)
+// ---------------------------------------------------------------------------------------
+
+#[test]
+fn sc12_late_group_objects_are_not_frills() {
+    let f_scene = Did(0x0200_4000);
+    let g_scene = Did(0x0200_4001);
+    let layer = PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Scene(g_scene)])
+    };
+    let fx = Fixture::new(
+        data_one_vertex(),
+        vec![
+            scene(
+                VERTEX_SCENE,
+                vec![SceneChild::Scene(f_scene), SceneChild::Object(OBJ_X)],
+                None,
+            ),
+            scene(f_scene, vec![], Some(layer)),
+            scene(g_scene, vec![SceneChild::Object(OBJ_Y)], None),
+        ],
+    );
+    // Static pass: X is an entity; the frill layer is ignored.
+    let g = fx.run();
+    assert_eq!(
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
+        [OBJ_X]
+    );
+    // Frill pass: Y inside the layer, X late.
+    let (records, _) = frill_vertex(&fx.input(), 3, 7);
+    assert_eq!(records.len(), 2);
+    assert_eq!((records[0].object.object, records[0].late), (OBJ_Y, false));
+    assert_eq!((records[1].object.object, records[1].late), (OBJ_X, true));
+    let sector = generate_sector(&fx.input(), 3, 7, 1.0, &mut DensityThinner::with_seed(1));
+    assert_eq!(
+        sector
+            .instances
+            .iter()
+            .map(|i| i.object)
+            .collect::<Vec<_>>(),
+        [OBJ_Y]
+    );
+    assert_eq!(sector.late_discarded, 1);
+    // Other sectors of the block see nothing.
+    let other = generate_sector(&fx.input(), 4, 7, 1.0, &mut DensityThinner::with_seed(1));
+    assert!(other.instances.is_empty());
+}
+
+#[test]
+fn frill_density_thins() {
+    let g_scene = Did(0x0200_4001);
+    let layer = PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Scene(g_scene); 200])
+    };
+    let fx = Fixture::new(
+        data_one_vertex(),
+        vec![
+            scene(VERTEX_SCENE, vec![], Some(layer)),
+            scene(g_scene, vec![SceneChild::Object(OBJ_Y)], None),
+        ],
+    );
+    let all = generate_sector(&fx.input(), 3, 7, 1.0, &mut DensityThinner::new());
+    assert_eq!(all.instances.len(), 200);
+    let half = generate_sector(&fx.input(), 3, 7, 0.5, &mut DensityThinner::with_seed(9));
+    assert!(
+        (60..140).contains(&half.instances.len()),
+        "{}",
+        half.instances.len()
+    );
+    assert_eq!(half.instances.len() + half.thinned as usize, 200);
+}
+
+// ---------------------------------------------------------------------------------------
+// Property chain (§9.2) and the static list
+// ---------------------------------------------------------------------------------------
+
+const PID_F: u32 = 0x1000_7001;
+const PID_BOXES: u32 = 0x1000_7002;
+const PID_BOX: u32 = 0x1000_7003;
+const PID_MIN: u32 = 0x1000_7004;
+const PID_MAX: u32 = 0x1000_7005;
+
+fn schema() -> HashMap<u32, tessera_formats::PropertyType> {
+    let mut s = testkit::schema();
+    for (pid, code) in [
+        (PID_F, 9),
+        (PID_BOXES, 12),
+        (PID_BOX, 11),
+        (PID_MIN, 6),
+        (PID_MAX, 6),
+    ] {
+        s.insert(pid, tessera_formats::PropertyType::from_code(code));
+    }
+    s
+}
+
+fn entity_with_extra(
+    did: u32,
+    parent: u32,
+    entries: &[(u32, testkit::TestValue)],
+    extra: &[u32],
+    schema: &dyn tessera_formats::PropertySchema,
+) -> Vec<u8> {
+    let plain = testkit::entity_descriptor(did, parent, entries, schema);
+    let mut desc = tessera_formats::EntityDescriptor::parse(&plain, schema).unwrap();
+    desc.extra_sets = extra.iter().map(|d| Did(*d)).collect();
+    desc.to_bytes_with(&testkit::property_set(entries)).unwrap()
+}
+
+#[test]
+fn sc14_chain_lookup() {
+    use testkit::TestValue as V;
+    let s = schema();
+    let mut src = MemoryWorldSource::new();
+    let parent = 0x4700_0100;
+    src.insert(
+        parent,
+        testkit::entity_descriptor(parent, 0x1F00_0001, &[(PID_F, V::Float(0.2))], &s),
+        None,
+    );
+    src.insert(
+        0x7800_0001u32,
+        testkit::property_set_record(0x7800_0001, &[(PID_F, V::Float(0.3))]),
+        None,
+    );
+    // (object, own entries, extra sets, template, expected value)
+    type Case = (u32, Vec<(u32, V)>, Vec<u32>, u32, Option<f32>);
+    let cases: [Case; 5] = [
+        (0x4700_0101, vec![], vec![], parent, Some(0.2)),
+        (
+            0x4700_0102,
+            vec![(PID_F, V::Float(0.1))],
+            vec![],
+            parent,
+            Some(0.1),
+        ),
+        (
+            0x4700_0103,
+            vec![(PID_F, V::Float(0.1))],
+            vec![0x7800_0001],
+            parent,
+            Some(0.1),
+        ),
+        (0x4700_0104, vec![], vec![0x7800_0001], parent, Some(0.3)),
+        (0x4700_0105, vec![], vec![], 0x1F00_0001, None),
+    ];
+    for (did, entries, extra, tpl, _) in &cases {
+        src.insert(
+            *did,
+            entity_with_extra(*did, *tpl, entries, extra, &s),
+            None,
+        );
+    }
+    let cache = ObjectPropertyCache::default();
+    for (did, _, _, _, want) in &cases {
+        let p = cache
+            .get(&src, &s, Did(*did))
+            .expect("read")
+            .expect("object");
+        assert_eq!(p.float(PID_F), *want, "{did:#x}");
+        assert!(!p.incomplete);
+    }
+    assert_eq!(cache.len(), cases.len());
+    // A looping chain is cut and reported.
+    src.insert(
+        0x4700_0200u32,
+        testkit::entity_descriptor(0x4700_0200, 0x4700_0201, &[], &s),
+        None,
+    );
+    src.insert(
+        0x4700_0201u32,
+        testkit::entity_descriptor(0x4700_0201, 0x4700_0200, &[], &s),
+        None,
+    );
+    let p = ObjectProperties::load(&src, &s, Did(0x4700_0200)).unwrap();
+    assert!(p.incomplete);
+    assert_eq!(p.levels.len(), 2);
+}
+
+#[test]
+fn clearance_volumes_from_property_values() {
+    let pids = ClearancePids {
+        box_list: Some(PID_BOXES),
+        box_min: Some(PID_MIN),
+        box_max: Some(PID_MAX),
+        ..ClearancePids::default()
+    };
+    let element = |min, max| PropertyEntry {
+        pid: PID_BOX,
+        value: PropertyValue::Struct(tessera_formats::PropertyStruct {
+            size: tessera_formats::TSize::default(),
+            fields: vec![
+                PropertyEntry {
+                    pid: PID_MIN,
+                    value: PropertyValue::Vector3(min),
+                },
+                PropertyEntry {
+                    pid: PID_MAX,
+                    value: PropertyValue::Vector3(max),
+                },
+            ],
+        }),
+    };
+    let list = PropertyValue::Array(tessera_formats::PropertyArray {
+        count: 3,
+        elements: vec![
+            element([0.0; 3], [1.0; 3]),
+            element([f32::NAN; 3], [1.0; 3]),
+            PropertyEntry {
+                pid: PID_BOX,
+                value: PropertyValue::Float(1.0),
+            },
+        ],
+    });
+    let (boxes, cylinders) = volumes_from_values(Some(&list), None, &pids);
+    assert_eq!(boxes.len(), 1);
+    assert!(cylinders.is_empty());
+    let set = PropertySet {
+        entries: vec![PropertyEntry {
+            pid: PID_BOXES,
+            value: list,
+        }],
+        ..PropertySet::default()
+    };
+    assert!(set.get(PID_BOXES).is_some());
+}
+
+#[test]
+fn water_trait_forms() {
+    let k = key();
+    assert_eq!(NoWater.water_plane(k), None);
+    assert_eq!(
+        FixedWater(Some(level_plane(4.0))).water_plane(k),
+        Some(level_plane(4.0))
+    );
+    let f = |key: LandblockKey| (key.x() == 48).then(|| level_plane(1.0));
+    assert_eq!(f.water_plane(k), Some(level_plane(1.0)));
+    let p: Plane = level_plane(2.5);
+    assert_eq!(p.height_at(10.0, 20.0), Some(2.5));
+}
+
+// ---------------------------------------------------------------------------------------
+// Hostile-input regressions (review findings)
+// ---------------------------------------------------------------------------------------
+
+/// Statics that never overlap anything near the block: `n` entities of `boxes` boxes each,
+/// far outside the block.
+fn far_statics(n: usize, boxes: usize) -> Vec<StaticClearance> {
+    (0..n)
+        .map(|_| StaticClearance {
+            position: [10_000.0, 10_000.0, 0.0],
+            rotation: Quaternion::IDENTITY,
+            boxes: vec![
+                ClearanceBox {
+                    min: [-1.0; 3],
+                    max: [1.0; 3],
+                };
+                boxes
+            ],
+            cylinders: Vec::new(),
+        })
+        .collect()
+}
+
+#[test]
+fn static_scan_is_charged_to_the_work_budget() {
+    // Four sibling nodes per vertex, none rejected before step 14, on every vertex.
+    let n = PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let mut data = data_one_vertex();
+    for w in data.coarse.iter_mut() {
+        *w = word(5, 1);
+    }
+    let list = vec![scene(
+        VERTEX_SCENE,
+        vec![SceneChild::Node(Box::new(n)); 4],
+        None,
+    )];
+    let mut f = Fixture::new(data, list);
+    let free = f.run();
+    assert!(!free.stats.truncated());
+    assert!(free.objects.len() > 40);
+    // 1,000 entities of 15 boxes: 16,000 items, 1,000 work units per scan.
+    f.statics = far_statics(1_000, 15);
+    f.limits.max_work_per_landblock = 1 << 14;
+    let start = std::time::Instant::now();
+    let g = f.run();
+    assert!(g.stats.budget_cut > 0, "{:?}", g.stats);
+    assert!(g.stats.truncated());
+    assert!(g.objects.len() < free.objects.len());
+    assert!(start.elapsed().as_secs() < 30);
+    // A small static list costs one unit per scan and changes nothing here.
+    f.statics = far_statics(3, 2);
+    f.limits = SceneryLimits::default();
+    let g = f.run();
+    assert_eq!(g.objects, free.objects);
+    assert!(!g.stats.truncated());
+}
+
+#[test]
+fn negative_spacing_never_places_outside_the_block() {
+    let n = PlacementNode {
+        spacing: -1e6,
+        disp_min: [5000.0, -3000.0, 0.0],
+        disp_max: [5000.0, -3000.0, 0.0],
+        no_checks: true,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let mut data = data_one_vertex();
+    for w in data.coarse.iter_mut() {
+        *w = word(5, 1);
+    }
+    let g = Fixture::new(data, one_node(n)).run();
+    assert!(g.objects.is_empty(), "{:?}", g.objects.first());
+    assert!(g.stats.rejections(Rejection::Outside) > 0);
+    // A negative spacing with a position inside the block still places (ρ < 0 only
+    // widens the client's bound; the 0 ≤ p < 160 guard leaves it inside).
+    let n = PlacementNode {
+        spacing: -5.0,
+        no_checks: true,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(n)).run();
+    assert_eq!(g.objects.len(), 1);
+    for o in &g.objects {
+        assert!((0.0..160.0).contains(&o.position[0]) && (0.0..160.0).contains(&o.position[1]));
+    }
+}
+
+#[test]
+fn sum_stats_saturates() {
+    let mut a = SceneryStats {
+        nodes_tested: u32::MAX - 1,
+        scenes_unavailable: u32::MAX,
+        ..SceneryStats::default()
+    };
+    a.rejected[Rejection::Footprint.index()] = u32::MAX;
+    let b = SceneryStats {
+        nodes_tested: 5,
+        scenes_unavailable: 1,
+        rejected: [7; Rejection::COUNT],
+        ..SceneryStats::default()
+    };
+    let s = sum_stats([&a, &b, &b]);
+    assert_eq!(s.nodes_tested, u32::MAX);
+    assert_eq!(s.scenes_unavailable, u32::MAX);
+    assert_eq!(s.rejections(Rejection::Footprint), u32::MAX);
+    assert_eq!(s.rejections(Rejection::Slope), 14);
+}
+
+#[test]
+fn rejection_indices_cover_every_variant() {
+    // Exhaustive inside the crate: a new variant fails to compile here until it is given
+    // an index and added to `ALL`.
+    let index = |r: Rejection| match r {
+        Rejection::Frequency => 0,
+        Rejection::ScaleMode => 1,
+        Rejection::Outside => 2,
+        Rejection::TerrainType => 3,
+        Rejection::Slope => 4,
+        Rejection::NoWater => 5,
+        Rejection::HeightRange => 6,
+        Rejection::Clearance => 7,
+        Rejection::StaticSpacing => 8,
+        Rejection::Footprint => 9,
+    };
+    assert_eq!(Rejection::ALL.len(), Rejection::COUNT);
+    for (k, r) in Rejection::ALL.iter().enumerate() {
+        assert_eq!(r.index(), k);
+        assert_eq!(index(*r), k);
+        assert!(r.index() < SceneryStats::default().rejected.len());
+    }
+}
+
+/// A record source that fails with a pipeline error (not the data's) the first `fails`
+/// times a DID is read.
+struct Flaky {
+    inner: MemoryWorldSource,
+    fails: std::sync::Mutex<u32>,
+}
+
+impl crate::source::WorldSource for Flaky {
+    fn read_stamped(
+        &self,
+        did: Did,
+    ) -> Result<Option<crate::source::StampedRecord>, tessera_assets::AssetError> {
+        {
+            let mut f = self.fails.lock().unwrap();
+            if *f > 0 {
+                *f -= 1;
+                return Err(tessera_assets::AssetError::Shutdown);
+            }
+        }
+        self.inner.read_stamped(did)
+    }
+}
+
+#[test]
+fn transient_read_failures_are_not_cached() {
+    let s = scene(VERTEX_SCENE, vec![SceneChild::Object(OBJ_X)], None);
+    let mut inner = MemoryWorldSource::new();
+    inner.insert(VERTEX_SCENE.0, s.to_bytes(), None);
+    let flaky = Arc::new(Flaky {
+        inner,
+        fails: std::sync::Mutex::new(1),
+    });
+    let lib = SceneLibrary::new(flaky.clone());
+    let e = lib.scene(VERTEX_SCENE).expect_err("pipeline failure");
+    assert!(!e.is_data_error());
+    assert!(lib.is_empty(), "a pipeline failure is not cached");
+    assert!(lib.scene(VERTEX_SCENE).expect("read").is_some());
+    // A missing scene is a data failure: `Ok(None)`, cached.
+    assert!(lib.scene(Did(0x0200_7777)).expect("read").is_none());
+    assert_eq!(lib.len(), 2);
+
+    // Generation reports the failure as an incomplete result.
+    *flaky.fails.lock().unwrap() = 1;
+    let lib = SceneLibrary::new(flaky.clone());
+    let data = data_one_vertex();
+    let terrain = GridMesh::terrain(&data);
+    let t = tables();
+    let input = SceneryInput {
+        key: key(),
+        data: &data,
+        terrain: &terrain,
+        tables: &t,
+        scenes: &lib,
+        water: &NoWater,
+        statics: &[],
+        limits: SceneryLimits::default(),
+    };
+    // Vertex (0, 0) reads EMPTY first; it is missing from the source (a data failure)
+    // only after the one pipeline failure has been spent on it.
+    let first = generate_landblock(&input);
+    assert_eq!(first.stats.scenes_unavailable, 1);
+    assert!(!first.stats.is_complete());
+    let again = generate_landblock(&input);
+    assert!(again.stats.is_complete());
+    assert_eq!(again.objects.len(), 1);
+
+    // Object properties: the same rule.
+    let sch = schema();
+    let mut inner = MemoryWorldSource::new();
+    inner.insert(
+        0x4700_0101u32,
+        testkit::entity_descriptor(
+            0x4700_0101,
+            0x1F00_0001,
+            &[(PID_F, testkit::TestValue::Float(0.5))],
+            &sch,
+        ),
+        None,
+    );
+    let flaky = Flaky {
+        inner,
+        fails: std::sync::Mutex::new(1),
+    };
+    let cache = ObjectPropertyCache::default();
+    assert!(cache.get(&flaky, &sch, Did(0x4700_0101)).is_err());
+    assert!(cache.is_empty());
+    let p = cache
+        .get(&flaky, &sch, Did(0x4700_0101))
+        .expect("read")
+        .expect("object");
+    assert_eq!(p.float(PID_F), Some(0.5));
+    assert!(
+        cache
+            .get(&flaky, &sch, Did(0x4700_0999))
+            .expect("read")
+            .is_none()
+    );
+    assert_eq!(cache.len(), 2);
+}
+
+#[test]
+fn object_cache_follows_its_source() {
+    let sch = schema();
+    let make = |v: f32| {
+        let mut m = MemoryWorldSource::new();
+        m.insert(
+            0x4700_0101u32,
+            testkit::entity_descriptor(
+                0x4700_0101,
+                0x1F00_0001,
+                &[(PID_F, testkit::TestValue::Float(v))],
+                &sch,
+            ),
+            None,
+        );
+        m
+    };
+    let (one, two) = (make(1.0), make(2.0));
+    let cache = ObjectPropertyCache::default();
+    let get = |src: &MemoryWorldSource| {
+        cache
+            .get(src, &sch, Did(0x4700_0101))
+            .unwrap()
+            .unwrap()
+            .float(PID_F)
+    };
+    assert_eq!(get(&one), Some(1.0));
+    assert_eq!(get(&two), Some(2.0));
+    assert_eq!(get(&one), Some(1.0));
+}
+
+/// A chain of `n` scenes, each holding a `nest`-deep node nest whose innermost node
+/// references the next scene.
+fn deep_chain(n: u32, nest: usize) -> Vec<Scene> {
+    (0..n)
+        .map(|k| {
+            let did = Did(VERTEX_SCENE.0 + k);
+            let mut inner = PlacementNode {
+                no_spacing: true,
+                ..node(vec![
+                    SceneChild::Scene(Did(did.0 + 1)),
+                    SceneChild::Object(OBJ_X),
+                ])
+            };
+            for _ in 1..nest {
+                inner = PlacementNode {
+                    no_spacing: true,
+                    ..node(vec![SceneChild::Node(Box::new(inner))])
+                };
+            }
+            scene(did, vec![SceneChild::Node(Box::new(inner))], None)
+        })
+        .collect()
+}
+
+#[test]
+fn deep_recursion_fits_a_small_stack() {
+    // The std default for spawned threads (the asset workers set no stack size), in the
+    // debug build the tests run in.
+    let run = |list: Vec<Scene>, depth: usize| {
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || {
+                let mut f = Fixture::new(data_one_vertex(), list);
+                f.limits.max_scene_depth = depth;
+                f.run()
+            })
+            .unwrap()
+            .join()
+            .expect("no stack overflow")
+    };
+    // Raising the scene-depth limit past the hard limit is clamped.
+    let g = run(deep_chain(100, 16), 105);
+    assert!(g.stats.depth_capped > 0);
+    assert_eq!(g.objects.len(), MAX_SCENE_DEPTH_LIMIT);
+    // A node nest deeper than any decoder produces is cut by the recursion bound.
+    let g = run(deep_chain(1, 2 * MAX_RECURSION_DEPTH), 16);
+    assert!(g.stats.depth_capped > 0);
+    assert!(g.objects.is_empty());
+    // The default limits are unchanged: 16 scenes.
+    let g = run(deep_chain(40, 16), DEFAULT_MAX_SCENE_DEPTH);
+    assert_eq!(g.objects.len(), DEFAULT_MAX_SCENE_DEPTH);
+}
+
+#[test]
+fn non_finite_static_frames_never_overlap() {
+    let base = StaticClearance {
+        position: [10.0, 10.0, 0.0],
+        rotation: Quaternion::IDENTITY,
+        boxes: vec![ClearanceBox {
+            min: [-1.0; 3],
+            max: [1.0; 3],
+        }],
+        cylinders: vec![ClearanceCylinder {
+            low_point: [0.0; 3],
+            radius: 1.0,
+            height: 1.0,
+        }],
+    };
+    assert!(base.overlaps([10.5, 10.0, 0.0], 0.0, false));
+    assert!(!base.overlaps([150.0, 150.0, 0.0], 0.0, false));
+    for rotation in [
+        Quaternion {
+            w: f32::NAN,
+            ..Quaternion::IDENTITY
+        },
+        Quaternion {
+            w: 1e30,
+            x: 1e30,
+            y: 0.0,
+            z: 0.0,
+        },
+    ] {
+        let s = StaticClearance {
+            rotation,
+            ..base.clone()
+        };
+        assert!(!s.overlaps([150.0, 150.0, 0.0], 0.0, false), "{rotation:?}");
+    }
+    let nan_pos = StaticClearance {
+        position: [f32::NAN, 0.0, 0.0],
+        ..base.clone()
+    };
+    assert!(!nan_pos.overlaps([150.0, 150.0, 0.0], 0.0, false));
+    // The static list drops non-finite rotations and normalises far-from-unit ones.
+    use super::clearance::usable_rotation;
+    assert_eq!(
+        usable_rotation(Quaternion {
+            w: f32::NAN,
+            ..Quaternion::IDENTITY
+        }),
+        None
+    );
+    assert_eq!(
+        usable_rotation(Quaternion {
+            w: 0.0,
+            ..Quaternion::IDENTITY
+        }),
+        None
+    );
+    let doubled = usable_rotation(Quaternion {
+        w: 2.0,
+        ..Quaternion::IDENTITY
+    })
+    .unwrap();
+    assert_eq!(doubled, Quaternion::IDENTITY);
+    let s = StaticClearance {
+        rotation: doubled,
+        ..base.clone()
+    };
+    assert!(s.overlaps([10.6, 10.0, 0.0], 0.0, false));
+    let near = Quaternion {
+        w: 1.0 + 1e-5,
+        ..Quaternion::IDENTITY
+    };
+    assert_eq!(usable_rotation(near), Some(near), "stored as is");
+}
+
+#[test]
+fn static_list_is_capped() {
+    use testkit::{TestEntity, TestValue as V};
+    let sch = schema();
+    let pids = ClearancePids {
+        box_list: Some(PID_BOXES),
+        box_min: Some(PID_MIN),
+        box_max: Some(PID_MAX),
+        ..ClearancePids::default()
+    };
+    let one_box = (
+        PID_BOX,
+        V::Struct(vec![
+            (PID_MIN, V::Vec3([-1.0; 3])),
+            (PID_MAX, V::Vec3([1.0; 3])),
+        ]),
+    );
+    let list = vec![(PID_BOXES, V::Array(vec![one_box.clone(); 300]))];
+    // 70 entities of 256 boxes (the per-entity cap) each, and one whose boxes come from
+    // its object.
+    let mut entities: Vec<TestEntity> = (0..70)
+        .map(|k| TestEntity::physics(k, 0x4700_0300, [20.0, 20.0, 0.0], list.clone()))
+        .collect();
+    entities.insert(
+        0,
+        TestEntity::physics(99, 0x4700_0301, [30.0, 30.0, 0.0], vec![]),
+    );
+    let mut src = MemoryWorldSource::new();
+    src.insert(
+        0x4700_0301u32,
+        testkit::entity_descriptor(
+            0x4700_0301,
+            0x1F00_0001,
+            &[(PID_BOXES, V::Array(vec![one_box; 3]))],
+            &sch,
+        ),
+        None,
+    );
+    let bytes = testkit::landblock_info(key(), &entities);
+    let info = tessera_formats::LandblockInfo::parse(&bytes, Some(31), &sch).unwrap();
+    let cache = ObjectPropertyCache::default();
+    let list = static_clearances(&info, &src, &sch, &pids, &cache).unwrap();
+    let total: usize = list.iter().map(StaticClearance::volume_count).sum();
+    assert_eq!(total, MAX_STATIC_VOLUMES);
+    assert_eq!(list[0].boxes.len(), 3, "from the object");
+    assert!(
+        list[1..]
+            .iter()
+            .all(|s| s.boxes.len() <= MAX_VOLUMES_PER_ENTITY)
+    );
+    assert_eq!(
+        list.len(),
+        1 + (MAX_STATIC_VOLUMES - 3).div_ceil(MAX_VOLUMES_PER_ENTITY)
+    );
+}
+
+#[test]
+fn pairwise_clearance_pairs_triangles_with_equal_normals() {
+    // Flat ground: every collected triangle has the normal (0, 0, 1), self-dot 1.
+    let n = |dot| PlacementNode {
+        clearance: 3.0,
+        clear_min_dot: dot,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(n(1.0))).run();
+    assert_eq!(g.objects.len(), 1);
+    let g = Fixture::new(data_one_vertex(), one_node(n(1.5))).run();
+    assert!(g.objects.is_empty());
+    assert_eq!(g.stats.rejections(Rejection::Clearance), 1);
+}
+
+// ---------------------------------------------------------------------------------------
+// Spec branches without earlier coverage
+// ---------------------------------------------------------------------------------------
+
+/// Data with height rising along +X only (raw 400 per sample) and the scenery word at
+/// vertex (3, 7).
+fn ramp_data() -> LandblockData {
+    #[allow(clippy::cast_possible_truncation)]
+    let heights = HeightGrid::from_fn(|i, _| (i * 400) as u16);
+    let mut d = LandblockData::from_heights(key().data_did(), heights);
+    d.coarse[17 * 3 + 7] = word(5, 1);
+    d
+}
+
+fn fixed(v: f32) -> FloatRange {
+    FloatRange { min: v, max: v }
+}
+
+/// The vertex (3, 7) base position.
+fn base_xy() -> [f32; 2] {
+    [3.0 * (10.0 - 0.0002f32), 7.0 * (10.0 - 0.0002f32)]
+}
+
+fn assert_q_sign(q: Quaternion, e: [f32; 4], tol: f32) {
+    let got = q.to_wxyz();
+    let same = got.iter().zip(e).all(|(a, b)| approx(*a, b, tol));
+    let neg = got.iter().zip(e).all(|(a, b)| approx(*a, -b, tol));
+    assert!(same || neg, "{got:?} vs ±{e:?}");
+}
+
+#[test]
+fn face_direction_turns_the_heading_by_the_slope_bearing() {
+    let n = |align| PlacementNode {
+        face_direction: true,
+        align_to_slope: align,
+        heading: fixed(30.0),
+        angle2: fixed(20.0),
+        angle3: fixed(40.0),
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    // Flat ground: no bearing term; h = 30 + 180; a2, a3 not applied.
+    let g = Fixture::new(data_one_vertex(), one_node(n(false))).run();
+    assert_q_sign(g.objects[0].rotation, [-0.25882, 0.0, 0.0, -0.96593], 2e-5);
+    // Ground rising to +X: the normal leans to −X, atan2(−n.x, n.y) = 90°, h = 300.
+    let f = Fixture::new(ramp_data(), one_node(n(false)));
+    let g = f.run();
+    let o = g.objects[0];
+    let nrm = f
+        .terrain
+        .client_plane_at(o.position[0], o.position[1], &f.data.vertex_flags)
+        .normal;
+    assert!(nrm[0] < -0.01 && nrm[1].abs() < 1e-6, "{nrm:?}");
+    assert_q_sign(o.rotation, [-0.86603, 0.0, 0.0, -0.5], 2e-5);
+    // With `align_to_slope`: Q_align(n) · Rz(−300); model Z goes to the normal.
+    let g = Fixture::new(ramp_data(), one_node(n(true))).run();
+    let q = g.objects[0].rotation;
+    assert_q_sign(
+        q,
+        math::mul(math::align_to_normal(nrm), math::rot_z(-300.0)).to_wxyz(),
+        2e-5,
+    );
+    let z = q.rotate([0.0, 0.0, 1.0]);
+    for k in 0..3 {
+        assert!(approx(z[k], nrm[k], 1e-4), "{z:?}");
+    }
+    // Absolute: a parent orientation is not composed even with `orient_relative`.
+    let parent = PlacementNode {
+        heading: fixed(77.0),
+        no_spacing: true,
+        ..node(vec![SceneChild::Node(Box::new(PlacementNode {
+            no_spacing: true,
+            ..n(false)
+        }))])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(parent)).run();
+    assert_q_sign(g.objects[0].rotation, [-0.25882, 0.0, 0.0, -0.96593], 2e-5);
+}
+
+#[test]
+fn tilt_angles_compose_after_the_heading() {
+    // Q_local = Rz(−30) · Ry(40) · Rx(20), hand-computed.
+    let n = PlacementNode {
+        heading: fixed(30.0),
+        angle2: fixed(20.0),
+        angle3: fixed(40.0),
+        orient_relative: false,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(n)).run();
+    assert_q_sign(
+        g.objects[0].rotation,
+        [0.87851, 0.24479, 0.28311, -0.29688],
+        2e-5,
+    );
+    // With `orient_relative`, the parent's orientation is applied first.
+    let child = PlacementNode {
+        heading: fixed(30.0),
+        angle2: fixed(20.0),
+        angle3: fixed(40.0),
+        no_spacing: true,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let parent = PlacementNode {
+        heading: fixed(90.0),
+        no_spacing: true,
+        ..node(vec![SceneChild::Node(Box::new(child))])
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(parent)).run();
+    let want = math::mul(
+        math::rot_z(-90.0),
+        Quaternion {
+            w: 0.87851,
+            x: 0.24479,
+            y: 0.28311,
+            z: -0.29688,
+        },
+    );
+    assert_q_sign(g.objects[0].rotation, want.to_wxyz(), 5e-5);
+}
+
+#[test]
+fn height_modes_two_to_eight_nine_and_others() {
+    // Ground at raw 1000 everywhere (z ≈ 30.5); no checks so height ranges do not apply.
+    let mut data = data_one_vertex();
+    data.heights = HeightGrid::flat(1000);
+    let ground = data.heights.height(6, 14).unwrap();
+    assert!(ground > 30.0);
+    let mk = |mode: u8, dz: (f32, f32)| PlacementNode {
+        height_mode: mode,
+        no_checks: true,
+        disp_min: [0.0, 0.0, dz.0],
+        disp_max: [0.0, 0.0, dz.1],
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let z = |mode, dz| {
+        Fixture::new(data.clone(), one_node(mk(mode, dz)))
+            .run()
+            .objects[0]
+            .position[2]
+    };
+    let (a, b) = (hash::seed_a(2, 48, 80), hash::seed_b(3, 7));
+    let c = hash::child_seed(hash::scene_seed(hash::SCENE_SEED), 0);
+    let r = |salt: u32| hash::node_random(a, b, c.wrapping_add(salt));
+    for mode in 2..=8 {
+        assert_eq!(z(mode, (0.0, 0.0)), 0.0, "mode {mode}");
+        // The step-11 offset (salt 0x28D0642D) is still added.
+        let want = 1.0 + r(hash::SALT_DISP_X) * 2.0;
+        assert!(approx(z(mode, (1.0, 3.0)), want, 1e-5), "mode {mode}");
+    }
+    // Mode 9: the z displacement of step 4 (salt SALT_DISP_Z) from the parent height, and
+    // no step-11 offset.
+    let want = ground + 1.0 + r(hash::SALT_DISP_Z) * 2.0;
+    assert!(approx(z(9, (1.0, 3.0)), want, 1e-4));
+    assert!((r(hash::SALT_DISP_Z) - r(hash::SALT_DISP_X)).abs() > 1e-3);
+    // Any other value keeps the parent height, then adds the offset.
+    let mut ramp = ramp_data();
+    ramp.coarse[17 * 3 + 7] = word(5, 1);
+    let parent_z = ramp.heights.height(6, 14).unwrap();
+    let n = PlacementNode {
+        disp_min: [3.0, 0.0, 0.5],
+        disp_max: [3.0, 0.0, 0.5],
+        ..mk(11, (0.5, 0.5))
+    };
+    let g = Fixture::new(ramp, one_node(n)).run();
+    assert!(approx(g.objects[0].position[2], parent_z + 0.5, 1e-5));
+    assert!(approx(g.objects[0].position[0], base_xy()[0] + 3.0, 1e-4));
+}
+
+#[test]
+fn spacing_3d_measures_height_in_markers_and_boxes() {
+    // Two nodes at the same x, y; the second 10 units higher (height mode 9).
+    let pair = |three_d: bool| {
+        let n = |dz: f32| PlacementNode {
+            spacing: 1.0,
+            spacing_3d: three_d,
+            height_mode: 9,
+            disp_min: [0.0, 0.0, dz],
+            disp_max: [0.0, 0.0, dz],
+            above_ground_mode: 3,
+            ..node(vec![SceneChild::Object(OBJ_X)])
+        };
+        vec![scene(
+            VERTEX_SCENE,
+            vec![
+                SceneChild::Node(Box::new(n(0.0))),
+                SceneChild::Node(Box::new(n(10.0))),
+            ],
+            None,
+        )]
+    };
+    let g = Fixture::new(data_one_vertex(), pair(false)).run();
+    assert_eq!(g.objects.len(), 1);
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+    let g = Fixture::new(data_one_vertex(), pair(true)).run();
+    assert_eq!(g.objects.len(), 2);
+
+    // A box 5–6 units above the candidate: overlaps in 2D only.
+    let n = |three_d| PlacementNode {
+        spacing: 1.0,
+        spacing_3d: three_d,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let [x, y] = base_xy();
+    let statics = vec![StaticClearance {
+        position: [x, y, 0.0],
+        rotation: Quaternion::IDENTITY,
+        boxes: vec![ClearanceBox {
+            min: [-1.0, -1.0, 5.0],
+            max: [1.0, 1.0, 6.0],
+        }],
+        cylinders: Vec::new(),
+    }];
+    let mut f = Fixture::new(data_one_vertex(), one_node(n(false)));
+    f.statics.clone_from(&statics);
+    assert!(f.run().objects.is_empty());
+    let mut f = Fixture::new(data_one_vertex(), one_node(n(true)));
+    f.statics = statics;
+    assert_eq!(f.run().objects.len(), 1);
+}
+
+#[test]
+fn frill_pass_markers() {
+    // §8.2 item 5: a group node (state clear) leaves a marker that spaces the frill layer.
+    let layer = |no_spacing| PlacementNode {
+        spacing: 1.0,
+        no_spacing,
+        ..node(vec![SceneChild::Object(OBJ_Y)])
+    };
+    let group = |spacing| PlacementNode {
+        spacing,
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let fx = |spacing, no_spacing| {
+        Fixture::new(
+            data_one_vertex(),
+            vec![scene(
+                VERTEX_SCENE,
+                vec![SceneChild::Node(Box::new(group(spacing)))],
+                Some(layer(no_spacing)),
+            )],
+        )
+    };
+    let (records, stats) = frill_vertex(&fx(1.0, false).input(), 3, 7);
+    assert!(records.is_empty());
+    assert_eq!(stats.rejections(Rejection::Footprint), 1);
+    // A radius-0 marker never overlaps; `no_spacing` skips the marker test.
+    assert_eq!(frill_vertex(&fx(0.0, false).input(), 3, 7).0.len(), 1);
+    assert_eq!(frill_vertex(&fx(1.0, true).input(), 3, 7).0.len(), 1);
+
+    // Nodes placed while the state is set leave no marker: two spaced siblings under the
+    // layer at the same position are both placed.
+    let sib = PlacementNode {
+        spacing: 1.0,
+        ..node(vec![SceneChild::Object(OBJ_Y)])
+    };
+    let layer = PlacementNode {
+        no_spacing: true,
+        ..node(vec![
+            SceneChild::Node(Box::new(sib.clone())),
+            SceneChild::Node(Box::new(sib)),
+        ])
+    };
+    let f = Fixture::new(
+        data_one_vertex(),
+        vec![scene(VERTEX_SCENE, vec![], Some(layer))],
+    );
+    let (records, stats) = frill_vertex(&f.input(), 3, 7);
+    assert_eq!(records.len(), 2);
+    assert_eq!(stats.rejections(Rejection::Footprint), 0);
+
+    // Frill-pass markers are discarded per vertex: vertices (15, 7) and (16, 7) place
+    // group nodes 9.9998 apart with radius 5. The static pass spaces the second against
+    // the first; the frill pass of sector (15, 7) does not.
+    let g5 = PlacementNode {
+        spacing: 5.0,
+        disp_min: [-5.0, 0.0, 0.0],
+        disp_max: [-5.0, 0.0, 0.0],
+        ..node(vec![])
+    };
+    let mut data = LandblockData::from_heights(key().data_did(), HeightGrid::flat(0));
+    data.coarse[17 * 15 + 7] = word(5, 1);
+    data.coarse[17 * 16 + 7] = word(5, 1);
+    // Both vertices must pick VERTEX_SCENE: make it the only choice of key 10.
+    let mut f = Fixture::new(data, one_node(g5));
+    let mut t = tables();
+    let entries = vec![
+        SceneChoiceEntry {
+            key: 1,
+            choices: vec![SceneChoice {
+                scene: EMPTY,
+                weight: 1.0,
+                flag: 1,
+            }],
+        },
+        SceneChoiceEntry {
+            key: 10,
+            choices: vec![SceneChoice {
+                scene: VERTEX_SCENE,
+                weight: 1.0,
+                flag: 1,
+            }],
+        },
+    ];
+    t.scene_choices = Arc::new(SceneChoiceTable::new(0, Did(0x1100_0001), entries).unwrap());
+    f.tables = t;
+    let g = f.run();
+    assert_eq!(g.stats.nodes_placed, 1);
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+    let s = generate_sector(&f.input(), 15, 7, 1.0, &mut DensityThinner::with_seed(3));
+    assert_eq!(s.stats.nodes_placed, 2);
+    assert_eq!(s.stats.rejections(Rejection::Footprint), 0);
+}
+
+#[test]
+fn frill_layer_of_a_scene_reached_through_a_node() {
+    // §8.2 item 3: the referenced scene's frill layer runs in the frill pass.
+    let r = Did(0x0200_5000);
+    let layer = PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Object(OBJ_Y)])
+    };
+    let f = Fixture::new(
+        data_one_vertex(),
+        vec![
+            scene(
+                VERTEX_SCENE,
+                vec![SceneChild::Node(Box::new(PlacementNode {
+                    no_spacing: true,
+                    ..node(vec![SceneChild::Scene(r)])
+                }))],
+                None,
+            ),
+            scene(r, vec![], Some(layer)),
+        ],
+    );
+    assert!(f.run().objects.is_empty(), "frill layers are not entities");
+    let (records, _) = frill_vertex(&f.input(), 3, 7);
+    assert_eq!(records.len(), 1);
+    assert_eq!((records[0].object.object, records[0].late), (OBJ_Y, false));
+}
+
+#[test]
+fn no_spacing_passes_through_scene_references() {
+    // Tessera Decision of §7.4 step 2: the referenced scene's node inherits `no_spacing*`
+    // and so is not spaced against the earlier sibling at the same position.
+    let r = Did(0x0200_6000);
+    let spaced = |obj| PlacementNode {
+        spacing: 1.0,
+        ..node(vec![SceneChild::Object(obj)])
+    };
+    let list = |pass: bool| {
+        vec![
+            scene(
+                VERTEX_SCENE,
+                vec![
+                    SceneChild::Node(Box::new(spaced(OBJ_X))),
+                    SceneChild::Node(Box::new(PlacementNode {
+                        no_spacing: pass,
+                        ..node(vec![SceneChild::Scene(r)])
+                    })),
+                ],
+                None,
+            ),
+            scene(r, vec![SceneChild::Node(Box::new(spaced(OBJ_Y)))], None),
+        ]
+    };
+    let g = Fixture::new(data_one_vertex(), list(true)).run();
+    assert_eq!(
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
+        [OBJ_X, OBJ_Y]
+    );
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 0);
+    // Without the switch the inner node overlaps the first one's marker.
+    let g = Fixture::new(data_one_vertex(), list(false)).run();
+    assert_eq!(
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
+        [OBJ_X]
+    );
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+}
+
+#[test]
+fn pids_from_a_context_dictionary() {
+    let mut src = MemoryWorldSource::new();
+    src.insert(
+        crate::context::PROPERTY_DICTIONARY_DID,
+        testkit::dictionary(&[
+            (0x207, "Entity_Clearance_BoxList", 12),
+            (0x4CF, "Entity_Clearance_CylinderList", 12),
+            (0x300, "Render_Frill_IsOpaque", 21),
+        ]),
+        None,
+    );
+    let ctx =
+        crate::WorldContext::load(Arc::new(src), crate::BundleOptions::default()).expect("context");
+    let c = ClearancePids::from_context(&ctx).unwrap();
+    assert_eq!(
+        (c.box_list, c.cylinder_list, c.radius),
+        (Some(0x207), Some(0x4CF), None)
+    );
+    let f = crate::frills::FrillPids::from_context(&ctx).unwrap();
+    assert_eq!((f.opaque, f.allow_reduction), (Some(0x300), None));
+}

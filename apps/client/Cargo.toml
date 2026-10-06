@@ -30,6 +30,8 @@ tessera-install.workspace = true
 tessera-material.workspace = true
 tessera-mesh.workspace = true
 tessera-net.workspace = true
+# Walk mode on collision (ROADMAP M4.5, decision 0013): the character controller.
+tessera-physics.workspace = true
 tessera-props.workspace = true
 tessera-render.workspace = true
 tessera-script.workspace = true

@@ -202,6 +202,12 @@ Record:
 | 5 | `count` | u32 | 3 – 99 terrain entries |
 | 6 | entries | `count` × terrain entry | |
 
+> **OPEN:** whether the presence bytes `has_default` (record) and `has_default_pair`
+> (terrain entry) are bool8 (`records.md` §1.1), so that a reader rejects 2 or more, or a u8
+> where any non-zero value means present. Every observed value is 0 or 1. Tessera's decoder
+> currently reads both as bool8 and rejects other values (implementer's choice, not a
+> Confirmed fact; `crates/formats/src/scenery.rs`).
+
 Terrain entry (the default entry and every entry of the list have this one layout):
 
 | Offset | Field | Type | Meaning |
@@ -553,6 +559,14 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
    `no_checks*` or N.`no_checks`; both are handed to all descendants. The checks below
    consult only the node's **own** `no_checks` and the combined `no_spacing*`: the client
    passes `no_checks*` down the tree but never reads it.
+
+   > **OPEN (raised by the `world` implementation, 2026-10-06):** whether "all descendants"
+   > includes the nodes of scenes reached through a scene reference (a child of a node, or
+   > the frill layer's references), that is, whether instantiating a scene (§7.3) carries
+   > the incoming `no_spacing*` into its group's nodes or starts it again at false. How
+   > many observed nodes set `no_spacing` and have a scene reference below them was not
+   > counted. **Tessera Decision** until traced: the switches pass through scene
+   > references unchanged (`tessera_world::scenery`).
 3. **Scale.** Start from σ if `inherit_scale`, else (1, 1, 1). If `scale_min` and
    `scale_max` differ by more than 0.0002 on some axis, draw t = R(A, B, C + 0x00515E71)
    and multiply each axis *a* by `scale_min`[a] + t · (`scale_max`[a] − `scale_min`[a])
@@ -719,6 +733,23 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
        horizontally unless both the candidate's and the marker's `spacing_3d` are set.
        Markers with ρ_m ≤ 0 never overlap. Generated **objects** carry no volume and never
        cause a rejection.
+
+       > **OPEN (M4.5 exit verification, clean room, 2026-10-06):** the expected generated
+       > lists of `m4-5-visual.md` §4.2 (rows S1–S11) and walk GN1 contradict this rule as
+       > `tessera_world::scenery` implements it. With step 14b as written, 6 of the 22
+       > listed objects are rejected by a closed footprint marker (S1 both, S5, S6, S8, S10)
+       > and every row's landblock total is lower than the row's (for example S2 315 against
+       > 344, S10 80 against 102). With a probe that ignores every marker created by a node
+       > processed directly in a vertex scene (scene depth 1), all 22 objects match to the
+       > listed tolerances and the totals of S1–S8, S10 and S11 match exactly (36, 344, 173,
+       > 364, 252, 176, 471, 361, 102, 201); S9 (nested scene references) gives 249–272
+       > against 362 under every variant tried (also: no footprint test at all 1,532; markers
+       > closed at the end of the vertex or of the scene instance: S1, S5, S6, S8 still
+       > fail). In S10 all 22 rejections are between sibling nodes of one vertex scene
+       > (for example 0x47007AA2's node at 1.961 m from a sibling's marker with ρ + ρ_m =
+       > 2.098). Which markers the client really tests (and whether the checklist's
+       > generator matches this section) needs a BIN re-check; the code keeps the rule as
+       > written until then.
 15. **Children.** The node is placed at frame (p, Q) with scale σ′. Unless the node is
     processed while the frill pass's "under a frill layer" state is set (§8.2) or by the
     encounter pass (§7.7), the client first appends
@@ -853,6 +884,15 @@ Tessera does not draw the records of source (b) (§8.6).
   is kept; lower densities thin frills randomly, differently each session.
 - Sectors are processed in a spiral around the centre sector, which lies between the camera
   and the player by the player-position-blend option (Probable).
+
+> **OPEN (raised by the `world` implementation, 2026-10-06):** the shape of the set of
+> sectors the frill engine keeps for a radius of *n* sectors (square, circle, or the
+> spiral's own extent) and when a sector leaves it. §8.3 gives the radius only.
+> **Tessera Decision** until traced: every sector whose centre is within
+> *n* + `FrillEngine.ExtraPreCacheRadiusLevels` sectors (centre to centre) of the centre sector
+> is generated, nearest first ring by ring; a sector is dropped once it is more than one
+> further sector away (`tessera_world::frills::FrillRing`). Drawing still stops at the
+> far distance D of §8.3 rule 2.
 
 > **OPEN:** whether the static pass's closed footprint markers are still in the generated
 > list when the frill pass runs, and whether the frill pass's own markers are removed after
@@ -1350,6 +1390,32 @@ record, shared edges counted twice):
   instantiation path and refuse a repeat; cap the depth (5 is the observed maximum; Tessera
   Decision: a cap of 16) and the total objects per vertex.
 - Treat NaN or infinite floats in node fields as malformed except the ±FLT_MAX `z_range`.
+
+> **OPEN (raised by the `formats` implementation, 2026-10-06):** ±FLT_MAX is finite, so the
+> exception above does not say whether a `z_range` bound may be ±infinity. No record has one
+> (always ±FLT_MAX). The decoder (`tessera_formats::scenery`) accepts ±infinity in
+> `z_range`, which reads as "no bound" under §7.5 step 1, and rejects NaN there and NaN or
+> ±infinity in every other node float, `below_ground_max` included. Floats of the 0x11
+> choices (`weight`) and of 0x12 entries (`unknown_f`) are not checked; §4.3 says nothing
+> about non-positive or non-finite weights. As implemented, the pick of §7.2 takes the last
+> choice whenever no running sum compares greater than T (for example when a weight is NaN).
+
+> **OPEN (raised by the `world` implementation, 2026-10-06):** hostile values the spec does
+> not cover. (1) A negative `spacing` (any finite value decodes; every record has
+> `spacing` ≥ 0) makes ρ negative, and the bound of §7.4 step 6, ρ ≤ p.x < 160 − ρ, then
+> accepts points outside the block; step 8's "step 6 rules out an i or j outside 0 … 32"
+> no longer holds. The client's behaviour is not traced. **Tessera Decision:** step 6
+> also requires 0 ≤ p.x < 160 and 0 ≤ p.y < 160, which changes nothing for ρ ≥ 0;
+> negative ρ is otherwise used as the steps state (ρ² in step 14a, ρ + ρ_m in step 14b).
+> (2) A static entity whose rotation (§7.4 step 14a) is not finite, has zero length, or is
+> far from unit length: the inverse rotation is the conjugate only for a unit quaternion.
+> **Tessera Decision:** such an entity is left out of the static list when its position
+> or rotation is not finite or the rotation has zero length; a finite rotation further
+> than 0.001 from unit length is normalised first; a mapped point that is not finite
+> overlaps nothing. (3) A landblock-info record may name tens of thousands of static
+> entities with up to 256 volumes each. **Tessera Decision:** the static list keeps at
+> most 16,384 volumes per landblock and each step-14a scan is charged to the generation
+> work budget (`tessera_world::scenery`).
 
 ---
 

@@ -1420,6 +1420,8 @@ dependencies = [
  "tessera-dat",
  "tessera-formats",
  "tessera-install",
+ "tessera-material",
+ "tessera-mesh",
  "thiserror",
  "tracing",
  "tracing-subscriber",
@@ -1449,6 +1451,7 @@ dependencies = [
  "tessera-material",
  "tessera-mesh",
  "tessera-net",
+ "tessera-physics",
  "tessera-props",
  "tessera-render",
  "tessera-script",
@@ -1521,6 +1524,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-physics"
+version = "0.1.0"
+dependencies = [
+ "tessera-formats",
+ "tessera-props",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "tessera-props"
 version = "0.1.0"
 dependencies = [
@@ -1569,6 +1582,7 @@ version = "0.1.0"
 dependencies = [
  "tessera-formats",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -1589,6 +1603,7 @@ dependencies = [
  "tessera-dat",
  "tessera-formats",
  "tessera-havok",
+ "tessera-physics",
  "tessera-props",
  "tessera-text",
  "tessera-wstate",

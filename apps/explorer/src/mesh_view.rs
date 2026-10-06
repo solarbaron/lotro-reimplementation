@@ -21,7 +21,9 @@ use crate::app::{Current, Loaded, Nav};
 use crate::cli::{ShadingArg, ViewKind};
 use crate::hex::thousands;
 use crate::scene::{AlphaKind, SceneMaterial, SceneProduct, SceneRequest};
-use crate::viewport::{DrawRequest, DyeChannel, DyeOverride, OrbitView, Viewport, fit_viewport};
+use crate::viewport::{
+    CollisionDraw, DrawRequest, DyeChannel, DyeOverride, OrbitView, Viewport, fit_viewport,
+};
 use crate::views::{Action, ensure};
 
 /// Display settings of the mesh view; they persist while browsing from DID to DID.
@@ -54,6 +56,12 @@ pub struct MeshSettings {
     pub explode: f32,
     /// Camera angles (yaw, pitch in degrees) applied when a scene is first framed.
     pub angles: Option<[f32; 2]>,
+    /// Collision overlays (M4.5) shown.
+    pub collision: bool,
+    /// Collision triangles filled translucently, not only their edges.
+    pub collision_fill: bool,
+    /// Collision overlays drawn over the scene instead of depth-tested.
+    pub collision_xray: bool,
 }
 
 impl Default for MeshSettings {
@@ -72,6 +80,9 @@ impl Default for MeshSettings {
             dye_channel: DyeChannel::Primary,
             explode: 0.0,
             angles: None,
+            collision: true,
+            collision_fill: false,
+            collision_xray: false,
         }
     }
 }
@@ -169,6 +180,9 @@ pub struct MeshState {
     pub hidden: HashSet<(usize, u32)>,
     /// The scene id the viewport gave the shown scene.
     pub scene_id: Option<u64>,
+    /// Hidden collision overlays; `None` until the first scene sets the defaults
+    /// ([`crate::collision_overlay::OverlayKind::shown_by_default`]).
+    pub hidden_overlays: Option<HashSet<usize>>,
 }
 
 impl MeshState {
@@ -191,10 +205,13 @@ impl MeshState {
     }
 
     /// Shows alternative `choice` (clears the selection and the hidden draws and parts).
+    /// Another alternative has its own collision overlays, so the hidden overlays are
+    /// reset too: the next scene sets their defaults again.
     pub fn set_choice(&mut self, choice: u8) {
         if self.request.choice != choice {
             self.request.choice = choice;
             self.clear_selection();
+            self.hidden_overlays = None;
         }
     }
 
@@ -396,6 +413,15 @@ fn toolbar(
             cur.mesh.orbit.reset_angles();
             cur.mesh.reframe = true;
         }
+        if !scene.collision.is_empty() {
+            ui.separator();
+            ui.toggle_value(&mut settings.collision, "Collision")
+                .on_hover_text("Collision overlays (collision.md; the list is in the inspector)");
+            ui.toggle_value(&mut settings.collision_fill, "fill")
+                .on_hover_text("Fill collision triangles translucently");
+            ui.toggle_value(&mut settings.collision_xray, "x-ray")
+                .on_hover_text("Draw collision over the scene instead of depth-tested");
+        }
         if scene.parts.len() > 1 {
             ui.add(
                 egui::Slider::new(&mut settings.explode, 0.0..=2.0)
@@ -539,6 +565,29 @@ fn viewport_widget(
 
     let id = vp.set_scene(scene);
     m.scene_id = Some(id);
+    let overlay_hidden = m
+        .hidden_overlays
+        .get_or_insert_with(|| {
+            scene
+                .collision
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| !o.kind.shown_by_default())
+                .map(|(i, _)| i)
+                .collect()
+        })
+        .clone();
+    // A scene of collision only (a 0x66 record) always shows it.
+    let only_collision = scene.parts.iter().all(|p| p.prepared.is_none());
+    let collision = (settings.collision || only_collision).then(|| {
+        let mut hidden: Vec<usize> = overlay_hidden.into_iter().collect();
+        hidden.sort_unstable();
+        CollisionDraw {
+            hidden,
+            fill: settings.collision_fill,
+            xray: settings.collision_xray,
+        }
+    });
     let mut hidden: Vec<(usize, u32)> = m.hidden.iter().copied().collect();
     hidden.sort_unstable();
     let mut hidden_parts: Vec<usize> = m.hidden_parts.iter().copied().collect();
@@ -551,7 +600,8 @@ fn viewport_widget(
         shading: settings.shading,
         wireframe: settings.wireframe,
         normals: settings.normals,
-        grid: settings.grid,
+        // A landblock lies far above the origin's ground grid (z is absolute).
+        grid: settings.grid && scene.source != crate::scene::SceneSource::Landblock,
         highlight: settings.highlight,
         isolate: settings.isolate,
         hidden_parts,
@@ -568,6 +618,7 @@ fn viewport_widget(
             0.0
         },
         pose: None,
+        collision,
     });
 
     let painter = ui.painter_at(rect);
@@ -625,6 +676,44 @@ fn viewport_widget(
     }
 }
 
+/// The collision overlays with a visibility box each.
+fn collision_list(ui: &mut Ui, cur: &mut Current, scene: &SceneProduct) {
+    ui.separator();
+    ui.label(RichText::new("Collision").strong());
+    let hidden = cur.mesh.hidden_overlays.get_or_insert_with(|| {
+        scene
+            .collision
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| !o.kind.shown_by_default())
+            .map(|(i, _)| i)
+            .collect()
+    });
+    for (i, o) in scene.collision.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let mut shown = !hidden.contains(&i);
+            if ui.checkbox(&mut shown, "").changed() {
+                if shown {
+                    hidden.remove(&i);
+                } else {
+                    hidden.insert(i);
+                }
+            }
+            let c = o.kind.color();
+            let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(r, 2.0, srgb_color([c[0], c[1], c[2], 1.0]));
+            ui.label(RichText::new(&o.caption).small())
+                .on_hover_text(format!(
+                    "{} · {} triangles · {} lines",
+                    o.kind.name(),
+                    o.triangles,
+                    o.lines.len()
+                ));
+        });
+    }
+}
+
 fn inspector(
     ui: &mut Ui,
     cur: &mut Current,
@@ -663,6 +752,9 @@ fn inspector(
                         .small()
                         .color(Color32::from_rgb(0xE0, 0xB0, 0x60)),
                 );
+            }
+            if !scene.collision.is_empty() {
+                collision_list(ui, cur, scene);
             }
             if !scene.dyes.is_empty() {
                 dye_table(ui, settings, scene);
@@ -1076,6 +1168,26 @@ mod tests {
         m.set_choice(3);
         assert_eq!(m.request.choice, 3);
         assert!(m.selected.is_none());
+    }
+
+    #[test]
+    fn a_choice_change_resets_the_hidden_overlays() {
+        // Regression: overlay indices of one alternative hid or showed overlays of another.
+        let mut m = MeshState::new(SceneRequest::default());
+        m.hidden_overlays = Some(HashSet::from([0]));
+        m.set_choice(0);
+        assert_eq!(
+            m.hidden_overlays,
+            Some(HashSet::from([0])),
+            "same choice: kept"
+        );
+        m.set_lod(2);
+        assert!(
+            m.hidden_overlays.is_some(),
+            "a level shows the same collision"
+        );
+        m.set_choice(1);
+        assert!(m.hidden_overlays.is_none());
     }
 
     #[test]

@@ -10,8 +10,10 @@
 > ([M4 status](#m4-status)): every criterion passes on Tessera's side (criterion 4 on
 > the reference machine, the owner's laptop, [decision 0010](decisions/0010-reference-machine-laptop.md);
 > criterion 2 since the River-hobbit fix of the same day); the remaining owner comparisons
-> are listed in its status. **M4.5 (world fidelity) is next** ([M4.5](#m4-5)): the owner
-> inserted it on 2026-10-06 to run before M5; M5–M8 keep their numbers. Milestones are ordered by
+> are listed in its status. **M4.5 (world fidelity)** ([M4.5](#m4-5)), inserted by the
+> owner on 2026-10-06 to run before M5 (M5–M8 keep their numbers), was verified on
+> 2026-10-06 ([M4.5 status](#m4-5-status)): criteria 1, 2, 3, 7 and 8 pass; 4, 5 (flight
+> M3-b), 6 and 9 do not yet, so M4.5 stays open. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -682,8 +684,9 @@ depends only on `formats` and `props` (L1–L2) and has no GPU, asset-server or 
 dependency. `tessera-world` gets an explicit sibling allowance to depend on it: scenery
 generation reads the terrain collision mesh and its queries, and bundles carry collision
 sets built on the workers. Reasons: the controller can then be unit-tested and fuzzed
-without streaming, and the M7 test server can reuse it for server-side movement without
-pulling in `world`'s asset, animation and text dependencies. The quantised-tree reader
+without streaming, and the M7 test server can reuse the controller and the collision-set
+types for server-side movement (building the sets from install data stays `world`'s work;
+[decision 0013](decisions/0013-physics-crate.md) keeps that question OPEN for M7). The quantised-tree reader
 and the 0x66 and 0x01 decoders stay in `tessera-formats`, like every record decoder.
 Scenery, frills, water state and the game clock are modules of `tessera-world`, as their
 specs say. No other new crate.
@@ -696,23 +699,23 @@ which need the terrain collision mesh. (6) Water. (7) Sky, clock and fog. (8) Wa
 integration, the default-settings profile and the performance runs.
 
 <a id="m4-5-specs"></a>
-**Specs needed** (status at drafting, 2026-10-06; spec writers may be revising some of them)
+**Specs needed** (status as of the M4.5 verification, 2026-10-06)
 
 | Spec | Covers | Status |
 |---|---|---|
-| `terrain-texturing.md` | 0x19, layers, masks, texture coordinates, opacity, blending, light maps | Review; re-review requested changes (narrow the §4.5 holes sentence and cite `collision.md` §6.5's OPEN; §8 layer count) |
-| `scenery.md` | 0x11, 0x12, 0x02, hashes and seeds, generation, frills, LOD classes, wind | Review; re-review requested changes (§8.1–§8.3 frill records of non-frill objects; inline unknowns in §4.2, §5.1, §8.3 need OPEN callouts) |
+| `terrain-texturing.md` | 0x19, layers, masks, texture coordinates, opacity, blending, light maps | **Accepted** (2026-10-06, fourth revision re-reviewed) |
+| `scenery.md` | 0x11, 0x12, 0x02, hashes and seeds, generation, frills, LOD classes, wind | **Accepted** (2026-10-06, fifth review) |
 | `collision.md` | Quantised trees, 0x66, 0x01, cells and portals, terrain and ceiling collision, setup volumes, movement data, Tessera's controller | **Accepted** |
-| `water.md` | 0x16, 0x17, landblock water, water volumes, drawing water | Review; re-review requested changes (§8.4 step 6 specular sentence; §8.2 permutation table) |
-| `material.md` | 0x31, 0x30, 0x2B, float curves, transforms, feature flags, dyes | Review; re-review requested changes (§20.1 unlit row; the one flag-1 parameter that has a binding; §8.4 pair count) |
-| `lighting.md` | Passes, lighting equation, light sources, sun shadow, fog | Review; re-review requested small changes (change-log constant name; §4.1 binding of 2013) |
-| `environment.md` | 0x0F, 0x15, 0x1A, 0x35, 0x32, game clock, keyframe blending, sky | **Accepted**. §10 still lists the 0x08 layout as OPEN, although `walker.md` §11.5 decodes the camera-state records; to be aligned |
-| `landblock.md` | Height rule, ceiling grid, vertex flags, tree blocks, light maps, kind 5 | Review; the revision answering the second re-review (§3.6, §8 step 1) is not yet re-reviewed |
+| `water.md` | 0x16, 0x17, landblock water, water volumes, drawing water | **Accepted** |
+| `material.md` | 0x31, 0x30, 0x2B, float curves, transforms, feature flags, dyes | **Accepted** (2026-10-06; revised 2026-10-06, §20.2) |
+| `lighting.md` | Passes, lighting equation, light sources, sun shadow, fog | **Accepted** (2026-10-06; revised 2026-10-06, §16) |
+| `environment.md` | 0x0F, 0x15, 0x1A, 0x35, 0x32, game clock, keyframe blending, sky | **Accepted**. §10 now cites `walker.md` §11.5 for the 0x08 camera-state layout (no longer listed as OPEN) |
+| `landblock.md` | Height rule, ceiling grid, vertex flags, tree blocks, light maps, kind 5 | **Accepted** (re-review 2026-10-06 after the second repair) |
 | `records.md` | Prologues and DB types of every prefix above, VLE, TSize | **Accepted** |
-| `walker.md` | §11 distances, LOD classes, default-settings profile, camera states; §1–§10 Tessera design | §11 **Accepted**; an M4.5 design section to be added by the implementer |
-| `terrain.md`, `texture-list.md`, `mesh.md`, `entity-descriptor.md`, `setup.md`, `property-system.md` | Meshing; mip chains; detail levels; light properties and the draw rule; collision volumes and physics bounds; property values | **Accepted** |
-| `coordinates.md` | Rotations and axes used by scenery and collision | Review; re-review requested changes (§9.7 test vector, §11.4 placement) |
-| `render.md` | Tessera's renderer design; to be extended for the new pipelines | Implementer's design file |
+| `walker.md` | §11 distances, LOD classes, default-settings profile, camera states; §1–§10 Tessera design | §11 **Accepted**; §1–§10 implemented M3–M4 design; the M4.5 design section is not yet written (implementer) |
+| `terrain.md`, `texture-list.md`, `mesh.md`, `entity-descriptor.md`, `setup.md`, `property-system.md` | Meshing; mip chains; detail levels; light properties and the draw rule; collision volumes and physics bounds; property values | **Accepted** (all six) |
+| `coordinates.md` | Rotations and axes used by scenery and collision | **Accepted** (third re-review 2026-10-06) |
+| `render.md` | Tessera's renderer design; to be extended for the new pipelines | Implementer's design file (not reviewed); its status line now includes the M4.5 lit pipelines, shared frame uniform and mip chains (§4) |
 
 Every spec above must be Accepted before M4.5 exits. None has a blocking `> **OPEN:**` item
 at drafting time: each open point either has a Tessera Decision or is not needed offline.
@@ -866,6 +869,62 @@ results recorded as pass/fail and counts)
    step against hostile geometry. `tools/fuzz-smoke.sh -t 60` finds nothing.
 9. **Specs and docs.** Every spec in the table above is Accepted with no blocking OPEN.
    ARCHITECTURE §3.1, §10 and §20.3 are updated as listed in the deliverables.
+
+<a id="m4-5-status"></a>
+**Status (verified 2026-10-06 against the owner's install, release builds, rustc 1.99.0, on
+the reference machine: the owner's laptop, i9-10885H, RTX 2070 Super Max-Q / Vulkan,
+[decision 0010](decisions/0010-reference-machine-laptop.md)): criteria 1, 2, 3, 7 and 8
+pass. Criteria 4, 5, 6 and 9 are not met yet; M4.5 stays open.** Every deliverable exists:
+the new `tessera-formats` decoders (0x19, 0x12, 0x11, 0x02, 0x66, 0x01 and the quantised
+tree reader, 0x16, 0x17, 0x15, 0x1A, 0x35, 0x32, 0x0F with all slots, 0x08) and the landblock
+additions; `tessera-terrain` layer resolution, masks, texture coordinates and ceilings; the
+new crate `tessera-physics` (collision sets, capsule sweeps, the controller,
+[decision 0013](decisions/0013-physics-crate.md)); `tessera-world` scenery, frills, water,
+environment, lighting, draw distances and collision in the bundles; the `tessera-material`
+curves, transforms, lighting inputs and water chain; the `tessera-render` lit, terrain-layer,
+water, sky and instanced pipelines with mip chains and shadows; the walker on physics with
+`--walk-path`, the clock controls, the per-system switches and the default-settings profile
+(`walker.md` §13–§14); the explorer's world views and `tessera-dattool show` / `census`;
+`docs/checklists/m4-5-visual.md`; owner items O18–O27 in
+[owner-observations.md](checklists/owner-observations.md); ARCHITECTURE §3.1, §10 and §20.3.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-dattool --test real_data` (`census_decodes_every_world_record`): 0x19 5 / 5 (4,688 entries), 0x12 5 / 5, 0x11 5 / 5, 0x02 3,402 / 3,402, 0x66 16,819 / 16,819, 0x01 1,057 / 1,057, 0x16 5 / 5 (125 listed entries), 0x17 5 / 5, 0x15 1 / 1 (30,184 bytes, `environment_real_data`), 0x1A 963 / 963, 0x35 1 / 1 (180 bytes), 0x32 1 / 1 (32 classes), 0x0F 7 / 7 with all eight slots, 0x08 11 / 11; the M2 decoders still give 0x31 13,781, 0x30 24,094, 0x2B 510. CO4 tree walks with no unknown opcode or jump out of range: 16,819 0x66 trees, 1,010 cell physics meshes, 58,546 terrain and 1,095 ceiling trees, 1,280 embedded and 70,956 0x06 mesh levels (3 and 12 renumbered, as `collision.md` §3.5 lists). The M3 landblock tests and `reference_locations` pass with the new height rule (no erratum; largest change 0.030 m at M3-13). |
+| 2 | ✅ | Gated real-data tests, all passing: terrain-texturing §3.5 (1–6) on 5 tables / 4,688 entries; SC7 on 390,150 records (912,038 layers, 88,807,424 quads, all keys); 646,073 drawn-layer masks, all A8; 5,441 light-map properties naming 5,422 DXT1 surfaces. SC1–SC6, SC9, SC10 (3,402 scenes, acyclic, longest path 5; 4,261 objects; 66,191 nodes) and the §12 census exactly (11,921,024 / 11,854,954 / 7,295). CO1–CO11: 5,310,848 ceiling triangles on the bit-0 diagonal, 2,750,134 hole triangles, CO3 393,842 reciprocal links, CO9 one movement record. §9.3: 82,139 undrawn mesh blockers among 97,688 undrawn blocking SEDs, reproduced when the content-layer filter is left out (88,749 with the shared-world filter of §9.3 as written; `collision.md` §9.3 OPEN). Terrain render triangles equal collision triangles in all 390,150 landblocks (and all 6,867 ceilings). WA1–WA5: 89,913 wet, 67,175 fully submerged, 12,925 / 12,925 distant sectors agree. EV1–EV6 hold. |
+| 3 | ✅ | `determinism_real_data`: all 78,114 landblocks with a non-zero coarse grid built twice through the bundle store (1 worker ascending, 14 workers descending), water and collision included: 9,496,701 generated objects, 0 lists differ, 0 incomplete; `scenery_real_data`: 10,121,082 objects, 1 worker 49.3 s, 16 workers 6.9 s, 0 differ. Worked examples reproduced as tests: `scenery.md` §14 and SC11, `collision.md` §14.1–§14.8, `water.md` §12, `environment.md` §14, `terrain-texturing.md` §14, `lighting.md` §14 (CPU and GPU). Controller runs repeat bit for bit (`controller`, `controller_real_data`, the soak's digest); water state and blended sky values are pure functions of their inputs (tests in `tessera-world`). |
+| 4 | ❌ data-side, owner observation pending | `walk_checklist_real_data` / `--walk-path docs/checklists/m4-5-visual.md`: **21 of 32 walks pass**, every walk with 0.0000 m penetration. Met minimums: walls 4 (WL1, WL3–WL5), undrawn blockers 3, steps 3 (ST1–ST3), interiors 4 with the expected cells, water entries 4 (wade then swim at the §7.4 depth), frill areas 2 (FR2, FR3). Not met: generated trees or rocks 0 of 3 (GN1: the tree is missing, see criterion 6; GN2–GN4 first stop within 0.04–0.20 m of P, then slide round the trunk), steep slopes 0 of 2 (SL1–SL3 never climb but never enter state 6: `collision.md` §12.3 OPEN (e)), caves 1 of 2 (CV1, CV2 start or end on terrain steeper than walkable). WL2 and FR1 are near misses (0.104 m against d = 0.10; 0.131 m above the terrain on a 43° slope against 0.05 m). Soak (`walk_soak_real_data`): 1,000 walks of 60 s over the land landblocks of regions 1, 2, 3, 4, 5, 14: 0 fall-throughs, 0 non-finite states, deepest 0.0005 m below the terrain. This verification fixed two controller faults (ST2 and FR3 now pass; `collision.md` §12.3 OPEN (n)–(p)). Comparison with the original: O18, O19. |
+| 5 | ❌ (M3-b) | Reference machine, release build of this tree, nothing heavy running besides a browser and btop ([reference-machine.md](perf/reference-machine.md)): walk spots P1–P5, `--headless --unpaced --duration 60 --size 1920x1080`, p99 10.8 / 14.4 / 10.0 / 14.3 / 7.8 ms, 0 frames over 50 ms; M4 crowd of 50 with everything on: 105.8 fps mean, p99 13.7 ms, 51 characters drawn every frame, 1 frame over 16.7 ms. M3 flights with every M4.5 system on (paced 60 fps): M3-a 0 over 50 ms (longest 28.8 ms), 0 holes, peak 1,111 MiB bundles; M3-d 0 over 50 ms (longest 34.5 ms), 0 holes, peak 2,684 MiB of the 4,096 MiB budget; **M3-b 0 over 50 ms (longest 25.8 ms) but one near-ring landblock missing for 5–8 frames near the end of the path in each of 3 runs** (bundles with collision sets and scenery arrive late at 3,000 m/s; `walker.md` §14.11 OPEN). Scenery, water and collision are built on the asset workers, frill sectors as worker tasks. |
+| 6 | ❌ Tessera side; owner observation pending | All 54 rows of `m4-5-visual.md` §4 were rendered (1600 × 900, private) and viewed in this verification; `visual_rows_real_data` checks every row's expected facts. Pass on the image: T1–T3, T6–T11, T13, T14; S2–S4, S7, S9, S11; F2–F6; W1–W9; Y1, Y3, Y4; L1, L3, L4, L6. Fail: S1, S5, S6, S8, S10 (6 of the 22 listed generated objects missing: the expected lists match only if footprint markers of nodes directly in a vertex scene never reject, `scenery.md` §7.4 step 14b OPEN), Y5 (interior cell meshes not drawn), L5 (no specular highlight on the paving), F1 (its 13 × 13 blocks have no terrain layers and draw height-shaded, `terrain-texturing.md` §4.5 OPEN; S10 and F3 look the same). Not judgeable: T4, T12 (an object hides the target), T5, T15, T16 (cave ceilings nearly black), Y2 (the eye faces a wall), L2, L7 (point-light pools and light-map texels not distinct). Fixed in this verification: F2's near-white frill clumps (instanced surfaces now take the gloss from a normal-and-gloss texture). Comparison with the original: O20, O23–O27. |
+| 7 | ✅ | `terrain_layers.png` (3 × 3 splatted patch with masks and a normal map), `water.png`, `sky_morning.png` / `sky_evening.png`, `frill_sector.png` and `lit_mesh.png` (point light, shadow, fog), plus `lit_surfaces.png`: all pass on the RTX 2070 Super Max-Q (Vulkan) and on Mesa lavapipe 24.2 (`VK_DRIVER_FILES`, `TESSERA_REQUIRE_GPU=1`: 44 golden tests over the 8 golden suites, old images unchanged). |
+| 8 | ✅ | `tools/fuzz-smoke.sh -t 60` (stable libFuzzer path) on the 25 new M4.5 targets and the 5 changed ones (`formats_block_map`, `formats_landblock_data`, `formats_landblock_properties`, `formats_records`, `world_bundle`): no crash; 13 k (`explorer_collision_overlay`) to 25.9 M (`formats_lod_classes`) executions. Every new decoder (0x19, 0x11/0x12, 0x02, 0x66, 0x01, 0x16, 0x17, 0x15, 0x1A, 0x35, 0x32, 0x08, 0x0F), the tree reader, scenery generation from hostile tables (`world_scenery`) and a controller step against hostile geometry (`physics_controller_step`, re-run after the controller fixes: 82 k executions, ok) has a target. |
+| 9 | ❌ | Every spec of the table is Accepted, and ARCHITECTURE §3.1, §10 and §20.3 are updated. Not met: `walker.md` §13–§14 and `render.md` §4–§5 are implementer design sections without a review record; and OPEN items found during the work now bear on criteria 4 and 6 (`scenery.md` §7.4 step 14b, `collision.md` §12.3 (e) for SL1–SL3, `terrain-texturing.md` §4.5 for chunks without layers). |
+
+Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo clippy
+--workspace --all-targets --all-features --locked -D warnings` and on `fuzz/`, `cargo doc
+--workspace --no-deps -D warnings`, `cargo deny check bans licenses sources` (both
+manifests), `tools/check-content.sh` and its self-test, `tools/check-spdx.sh` and the relative
+links and anchors of the Markdown docs pass. `cargo test --workspace --release` with
+`TESSERA_GAME_DIR` set: 2,556 passed, 5 ignored, 1 failed (`flight_across_a_region`, 3 frames
+over 50 ms while two other walkers ran beside it; it passes alone and its binary now runs
+its walkers one at a time); after the fixes, `cargo test --release` of the changed crates
+(physics, render, client, world) with the install: 752 passed, 2 ignored, the same flight
+test failing once more under load (7 frames over 50 ms with at most 27.5 ms of main-thread
+work) and passing in 5 later runs on a quieter machine, so it stays load-sensitive; `cargo
+test --workspace` (debug, no install): 2,562 passed, 0 failed, 4 ignored.
+
+Fixed during this verification: the fuzz targets' clippy lints; a trademark identifier in a
+physics test; F2's near-white frills (`WorldSurface::gloss_from_normal_alpha`); controller
+faults at terrain creases (FR3) and chamfered step edges (ST2), and movers diving below the
+float line after sliding into water (`collision.md` §12.3 OPEN (n)–(p)); rustdoc links to
+private items in the walker; the `fuzz/README.md` row for `client_world_fx`; the dattool rows
+of ARCHITECTURE §24; the owner items O18–O27 completed against the planner's list.
+
+Remaining for M4.5 to close: the scenery footprint question (`scenery.md` §7.4 step 14b, S1,
+S5, S6, S8, S10, GN1); the steep-slope reading of `collision.md` §12.3 (e) and the
+pass conditions of GN2–GN4, WL2, CV1, CV2 and FR1 (`m4-5-visual.md` §2.4 OPEN); M3-b bundle
+latency; interior cell meshes (Y5); the L5 highlight and the dark cave ceilings; a review of
+`walker.md` §13–§14 and `render.md` §4–§5; then the owner's observations O18–O27.
 
 ---
 

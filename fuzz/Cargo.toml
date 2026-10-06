@@ -34,6 +34,7 @@ tessera-world = { path = "../crates/world" }
 tessera-terrain = { path = "../crates/terrain" }
 tessera-havok = { path = "../crates/havok" }
 tessera-anim = { path = "../crates/anim" }
+tessera-physics = { path = "../crates/physics" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -378,6 +379,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "formats_region_descriptor"
+path = "fuzz_targets/formats_region_descriptor.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-terrain (docs/specs/terrain.md) ---
 
 [[bin]]
@@ -518,6 +526,198 @@ bench = false
 [[bin]]
 name = "net_npc_events"
 path = "fuzz_targets/net_npc_events.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats: terrain type tables and scenery records (terrain-texturing.md §3, scenery.md §4–§5; M4.5) ---
+
+[[bin]]
+name = "formats_terrain_type"
+path = "fuzz_targets/formats_terrain_type.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_scene_tables"
+path = "fuzz_targets/formats_scene_tables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_scene"
+path = "fuzz_targets/formats_scene.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats: environment records and water/fog-zone tables (environment.md §5, §6, §9.1; water.md §4–§5; walker.md §11.5; M4.5) ---
+
+[[bin]]
+name = "formats_sky"
+path = "fuzz_targets/formats_sky.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_day_desc"
+path = "fuzz_targets/formats_day_desc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_game_time"
+path = "fuzz_targets/formats_game_time.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_lod_classes"
+path = "fuzz_targets/formats_lod_classes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_water_table"
+path = "fuzz_targets/formats_water_table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_fog_zone"
+path = "fuzz_targets/formats_fog_zone.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_camera_state"
+path = "fuzz_targets/formats_camera_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_collision_tree"
+path = "fuzz_targets/formats_collision_tree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_collision_mesh"
+path = "fuzz_targets/formats_collision_mesh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_cell_geometry"
+path = "fuzz_targets/formats_cell_geometry.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-material over time (material.md §5.3.1, §8.4; lighting.md §4.1; water.md §8.2) ---
+
+[[bin]]
+name = "material_curves"
+path = "fuzz_targets/material_curves.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-terrain layer resolution (terrain-texturing.md §4–§7, §10) ---
+
+[[bin]]
+name = "terrain_layers"
+path = "fuzz_targets/terrain_layers.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-physics collision sets and sweeps (collision.md §5–§9, §12.1) ---
+
+[[bin]]
+name = "physics_collision_set"
+path = "fuzz_targets/physics_collision_set.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-physics character controller (collision.md §10–§12, water.md §7.4) ---
+
+[[bin]]
+name = "physics_controller_step"
+path = "fuzz_targets/physics_controller_step.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-world scenery generation and frill sectors (scenery.md §7, §8.2) ---
+
+[[bin]]
+name = "world_scenery"
+path = "fuzz_targets/world_scenery.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-world water, environment, lighting and draw distances (water.md §6–§9, environment.md §11, lighting.md §8.3–§8.5, walker.md §11.3–§11.4) ---
+
+[[bin]]
+name = "world_water"
+path = "fuzz_targets/world_water.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_environment"
+path = "fuzz_targets/world_environment.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-explorer collision overlays (apps/explorer/src/collision_overlay.rs, included by path; collision.md §4, §5.3–§5.6, §8) ---
+
+[[bin]]
+name = "explorer_collision_overlay"
+path = "fuzz_targets/explorer_collision_overlay.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-explorer sky timelines and world-record tables (apps/explorer/src/timeline.rs, world_records.rs, included by path; environment.md §11.2–§11.4) ---
+
+[[bin]]
+name = "explorer_world"
+path = "fuzz_targets/explorer_world.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-client scripted walks (apps/client/src/walk_path.rs, included by path; m4-5-visual.md §2.1–§2.2) ---
+
+[[bin]]
+name = "client_walk_path"
+path = "fuzz_targets/client_walk_path.rs"
+test = false
+doc = false
+bench = false
+
+# --- M4.5: tessera-client world-fidelity inputs (apps/client/src/walker/fxparse.rs, included by path; walker.md §14, environment.md §11.1) ---
+
+[[bin]]
+name = "client_world_fx"
+path = "fuzz_targets/client_world_fx.rs"
 test = false
 doc = false
 bench = false

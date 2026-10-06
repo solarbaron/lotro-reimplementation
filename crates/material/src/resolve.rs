@@ -14,7 +14,8 @@ use tessera_formats::Did;
 
 use crate::interface::{ShaderInterface, SlotInterface};
 use crate::records::{
-    BlendFactor, BlendOp, FloatCurve, MaterialRecord, ParamEntry, ParamValue, SamplerState,
+    BlendFactor, BlendOp, CurveStates, FloatCurve, MaterialRecord, ParamEntry, ParamValue,
+    SamplerState,
 };
 use crate::vocab::{AlphaUse, ChannelPacking, SlotKind, ids};
 
@@ -200,6 +201,13 @@ impl ParameterSet {
             ParamValue::Float(c) => Some(c),
             _ => None,
         }
+    }
+
+    /// The effective float `id` at time `t` seconds (`material.md` §5.3.1), with the
+    /// instance's curve state for `id` from `states`; always finite
+    /// ([`FloatCurve::evaluate_finite`]). `None` when `id` is not a declared float.
+    pub fn float_at(&self, id: u32, t: f64, states: &mut CurveStates) -> Option<f32> {
+        Some(states.evaluate(id, self.curve(id)?, t))
     }
 
     /// The effective colour `id`.

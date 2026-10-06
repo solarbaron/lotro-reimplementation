@@ -211,8 +211,11 @@ fn did_kinds() {
     assert_eq!(Did(0x2300_0001).kind(), DidKind::EnumMapper);
     assert_eq!(Did(0x2800_0000).kind(), DidKind::DataIdMap);
     assert_eq!(Did(0x0A00_0FE4).kind(), DidKind::Sound);
-    assert_eq!(Did(0x0200_0000).kind(), DidKind::Unknown(0x02));
-    assert_eq!(Did(0x0200_0000).kind().evidence(), Evidence::Unknown);
+    assert_eq!(Did(0x0200_0000).kind(), DidKind::Scene);
+    assert_eq!(Did(0x1400_0000).kind(), DidKind::EncounterTable);
+    assert_eq!(Did(0x1400_0000).kind().evidence(), Evidence::DbType);
+    assert_eq!(Did(0x0300_0000).kind(), DidKind::Unknown(0x03));
+    assert_eq!(Did(0x0300_0000).kind().evidence(), Evidence::Unknown);
     assert_eq!(Did(0xFFFF_0001).kind(), DidKind::ArchiveMetadata);
     assert_eq!(
         Did(0x8021_0A0B).kind(),
@@ -220,7 +223,121 @@ fn did_kinds() {
     );
     assert_eq!(Did(0x4100_0000).prefix(), 0x41);
     assert_eq!(Did(0x4112_3456).serial(), 0x12_3456);
+}
+
+/// The world-fidelity kinds of `records.md` §2.1 (M4.5): named, decoded, and still in the
+/// spec's table.
+#[test]
+fn world_record_kinds_are_decoded() {
+    let kinds = [
+        (
+            0x0100_0001,
+            DidKind::CollisionGeometry,
+            "collision geometry",
+        ),
+        (0x0200_0001, DidKind::Scene, "scene"),
+        (0x0800_0001, DidKind::CameraState, "camera state"),
+        (0x1100_0001, DidKind::SceneChoiceTable, "scene-choice table"),
+        (
+            0x1200_0001,
+            DidKind::TerrainSceneTable,
+            "terrain-scene table",
+        ),
+        (0x1500_0007, DidKind::SkyDescription, "sky description"),
+        (0x1600_0001, DidKind::WaterTable, "water table"),
+        (0x1700_0001, DidKind::FogZoneTable, "fog-zone table"),
+        (0x1900_0001, DidKind::TerrainTypeTable, "terrain type table"),
+        (0x1A00_0001, DidKind::DayDescription, "day description"),
+        (0x3200_0000, DidKind::LodClassTable, "LOD-class table"),
+        (0x3500_0000, DidKind::GameTime, "game time"),
+        (0x6600_0001, DidKind::CollisionMesh, "collision mesh"),
+    ];
+    for (did, kind, name) in kinds {
+        let did = Did(did);
+        assert_eq!(did.kind(), kind, "{did}");
+        assert_eq!(kind.evidence(), Evidence::Decoded, "{did}");
+        assert_eq!(kind.name(), name);
+        assert_eq!(kind.to_string(), name);
+        assert!(tessera_formats::is_catalogued_prefix(did.prefix()), "{did}");
+    }
+    // Prefixes of the table whose layout is still OPEN are named from their DB type (status
+    // BIN) and catalogued.
+    let bin = [
+        (0x14u8, DidKind::EncounterTable, "encounter table"),
+        (0x21, DidKind::UiScene, "UI scene"),
+        (0x27, DidKind::ImposterTable, "imposter table"),
+        (0x2A, DidKind::SoundInfo, "sound info"),
+        (0x2D, DidKind::ComputeShader, "compute shader"),
+        (
+            0x39,
+            DidKind::ParticleSystemDescriptor,
+            "particle-system descriptor",
+        ),
+        (0x43, DidKind::ScriptChannels, "script channels"),
+        (0x44, DidKind::ParticleSystem, "particle system"),
+        (0x58, DidKind::StringState, "string state"),
+    ];
+    for (p, kind, name) in bin {
+        let did = Did(u32::from(p) << 24);
+        assert_eq!(did.kind(), kind, "{did}");
+        assert_eq!(kind.evidence(), Evidence::DbType, "{did}");
+        assert_eq!(kind.name(), name);
+        assert!(tessera_formats::is_catalogued_prefix(p), "{p:#04x}");
+    }
     assert_eq!(format!("{}", Did(0x41AB_CDEF)), "0x41ABCDEF");
+}
+
+/// The status column of `records.md` §2.1: kinds specified in another spec and decoded by
+/// another crate (C), labelled ones (L), and DB-type-only ones (R, BIN).
+#[test]
+fn evidence_follows_the_status_column() {
+    for (p, kind) in [
+        (0x05u8, DidKind::Animation),
+        (0x06, DidKind::Mesh),
+        (0x2B, DidKind::ShaderProgram),
+        (0x30, DidKind::Material),
+        (0x31, DidKind::SurfaceDescriptor),
+        (0x56, DidKind::ScriptLibrary),
+        (0x70, DidKind::ScriptStateObject),
+        (0x76, DidKind::ScriptStateVariant),
+    ] {
+        let did = Did(u32::from(p) << 24 | 1);
+        assert_eq!(did.kind(), kind, "{did}");
+        assert_eq!(kind.evidence(), Evidence::Specified, "{did}");
+    }
+    for p in [0x0Eu8, 0x1D, 0x33, 0x42, 0x51] {
+        let did = Did(u32::from(p) << 24 | 1);
+        assert_eq!(did.kind().evidence(), Evidence::Labelled, "{did}");
+    }
+    for p in [0x22u8, 0x26] {
+        let did = Did(u32::from(p) << 24 | 1);
+        assert_eq!(did.kind().evidence(), Evidence::DbType, "{did}");
+    }
+    // Registered-only prefixes and unused range members have no record: unknown.
+    for p in [
+        0x0Du8, 0x24, 0x46, 0x53, 0x71, 0x75, 0x77, 0x7A, 0x7F, 0x90, 0x9F,
+    ] {
+        assert_eq!(Did(u32::from(p) << 24).kind(), DidKind::Unknown(p));
+        assert!(!tessera_formats::is_catalogued_prefix(p), "{p:#04x}");
+    }
+    // Every prefix with a named kind is catalogued, and no named kind is `Unknown` evidence
+    // except archive metadata and the unnamed landblock sub-kinds.
+    for p in 0..=0xFFu8 {
+        let kind = Did(u32::from(p) << 24 | 0x0001_0101).kind();
+        let named = !matches!(kind, DidKind::Unknown(_));
+        assert_eq!(named, tessera_formats::is_catalogued_prefix(p), "{p:#04x}");
+        if named && !matches!(kind, DidKind::ArchiveMetadata) {
+            assert_ne!(kind.evidence(), Evidence::Unknown, "{p:#04x}");
+        }
+    }
+    // Landblock K = 5 is named after its DB type (`records.md` §2.2).
+    let sector = Did(0x8051_0303).kind();
+    assert_eq!(sector, DidKind::Landblock(LandblockKind::Other(5)));
+    assert_eq!(sector.name(), "distant-landscape sector");
+    assert_eq!(Did(0x8061_0303).kind().name(), "landblock (other)");
+    // The derived order is by prefix.
+    assert!(DidKind::CollisionGeometry < DidKind::Scene);
+    assert!(DidKind::Landblock(LandblockKind::Heightmap) < DidKind::ArchiveMetadata);
 }
 
 #[test]

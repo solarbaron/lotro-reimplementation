@@ -148,6 +148,16 @@ Every host stores the same fields; only the presence byte differs.
 The `build_byte` rule held in every host: in 0x01 records, all 214 physics-mesh trees with
 `stamp` ≥ 38 carry it and the 796 others do not; the embedded mesh follows the mesh rule.
 
+> **OPEN (implementation choice, 2026-10-06):** this spec gives no stamp-less fallback for
+> the `build_byte` of 0x66 records and 0x01 physics meshes (`mesh.md` §10.4 and
+> `landblock.md` §3.9 give one for their hosts). `tessera-formats` uses, without a stamp
+> or with an unobserved stamp 34–37: for 0x66, present exactly when one byte remains after
+> the code (the tree ends the record); for a 0x01 physics mesh, present unless the four
+> bytes after the code are one of the three plane tags of §5.4. Run on the owner's install
+> (2026-10-06), this agrees with the stamp rule on all 16,819 0x66 records and all 1,010
+> physics meshes. A record with `has_code` = 0 (never observed; the layout without a
+> tree is not known) is rejected as unsupported. Please confirm or replace.
+
 <a id="s3-2"></a>
 ### 3.2 Origin and scale (Confirmed)
 
@@ -324,6 +334,22 @@ positions, grown by the radius; then sweep the shape against each reported trian
 example 64 × code length), refuse operand reads past the end of the code, refuse jumps
 outside the code, and cap the branch stack (for example 4,096 entries). Treat an unknown
 opcode as malformed.
+
+> **OPEN (implementation choice, 2026-10-06):** what a reader does when *b* + *k* (or *b* +
+> the 0x09/0x0A operand) exceeds 32 bits is not stated; `tessera-formats` treats it as
+> malformed. It also treats a jump or child offset that lands exactly at the end of the code
+> as outside the code, and a branch that runs off the end without an ending instruction as
+> truncated. Rescaled coordinates saturate at the 64-bit range instead of wrapping.
+
+> **OPEN (implementation choice, 2026-10-06):** a budget proportional to the code length
+> alone lets a short code followed by unreachable padding buy work and memory in proportion
+> to the padding (an exponential DAG of splits that share their children). `tessera-formats`
+> therefore also caps every query at 2²² instructions and every structural walk (each
+> (offset, *b*) state once) at 2²¹ states, whatever the code length, and keeps each key once
+> while walking. A query over the whole integer range takes every branch; the largest such
+> query in the observed data (a render-mesh level of 778,485 code bytes) executes 263,380
+> instructions, and the largest walk visits as many states. Whether the original bounds its
+> walks at all is not known.
 
 <a id="s3-8"></a>
 ### 3.8 What Tessera does with the code (Decision)
@@ -555,6 +581,11 @@ portal leads outside, §5.8) and none is needed. Portals link cells to each othe
 cells contain the same point the result depends on the broad phase's order; Tessera
 Decision: take the lowest cell number.
 
+> **OPEN (implementation, 2026-10-06):** two landblock-info cells carry no x, y, z offset
+> (`landblock.md` §4.4 OPEN). `tessera-physics` cannot place them and leaves them out of
+> the lookup and of collision (104,269 of 104,271 cells placed); the census runs above
+> count all of them.
+
 > **OPEN:** The client runs this lookup when it places entities (its placement routine).
 > Whether a moving character's cell is re-evaluated with it after every step, or only when
 > the character's own phantom starts or stops overlapping a cell phantom, was not traced.
@@ -753,6 +784,20 @@ and the physics bounds; §4 above completes the 0x66 record. Facts added here (C
   rejects mobile entities with any other collision as a configuration error). Static objects
   may use the mesh.
 
+> **OPEN (implementation, 2026-10-06):** how a non-uniform `Physics_AdjustableScale`
+> (never observed: every SED's scale is uniform, `entity-descriptor.md` §7) applies to
+> spheres and capsules is not stated. `tessera-physics` transforms their centres exactly and
+> multiplies their radius by the largest scale component (conservative); triangles and
+> boxes (12 triangles each) take any scale exactly.
+
+> **OPEN (implementation, 2026-10-06):** whether a setup's box volumes are solid (a mover
+> whose centre line is inside one is pushed out) or only their six faces collide is not
+> stated; spheres and capsules are solid by their nature. `tessera-physics` treats boxes as
+> solid, like the other volumes: their 12 triangles stop a mover from outside, and a capsule
+> whose core is inside a box gets one contact for the face it leaves by most easily, with
+> the penetration depth, instead of being held by the inner faces. Please confirm (BIN) or
+> state the client's rule.
+
 ---
 
 <a id="s9"></a>
@@ -775,6 +820,16 @@ the 0x47 chain from the named object upward.
 | `Physics_SurfacePropertiesToApply` | DID (0x78) | 0x47 52; 0x01 655 | Surface material set: `Base_Surface_Type`, `Content_IAmMadeOf`, `SND_Footstep_Surfaces` |
 | `Physics_CanLedgeClimb` | boolean (default true) | 0x47 28; 0x01 53 | Ledge climbing allowed |
 | `Entity_Clearance_*` boxes and cylinders | struct arrays | SEDs 510,356 boxes, 144,071 cylinders | Placement and path clearance; **not** movement collision (Probable) |
+
+> **OPEN (implementation review, 2026-10-06):** the "Where (count)" column counts each 0x47
+> record's embedded property set only. `tessera-physics` resolves the §9.1 properties of
+> every chain level from its own set as `scenery.md` §9.2 rule 1 (BIN) defines it (its 0x78
+> extra sets in list order, the embedded set on top), the same lookup the draw flags use. A
+> read-only review probe over the 40,643 0x47 records of the owner's install found 20,274
+> records naming extra sets; in 20,216 of them the extra sets carry a §9.1 property (only
+> `Physics_SurfacePropertiesToApply`), which changes the resolved flags of 20,164 records.
+> Please confirm that the physics lookup includes extra sets (BIN) and recount the column
+> with them.
 
 The ethereality mapper's labels (keys 1–30): Default, Camera, Cosmetic, LineOfSight,
 DarkSidePlayer, Corpse, OpenDoor, Missile, ClosedDoor, Creature, LightSidePlayer, NPC,
@@ -822,6 +877,24 @@ position, it passes the content-layer filter (`entity-descriptor.md` §4.5.1), i
 undrawn SEDs block movement. This rule is a Tessera Decision resting on the census above
 and on the BIN fact that a mover with `Physics_NoPhysics` has no shape (§9.1).
 Procedurally generated scenery: §9.4.
+
+> **OPEN (implementation, 2026-10-06):** `tessera-physics` reproduces 82,139 undrawn mesh
+> blockers and 97,688 undrawn blocking SEDs only when the content-layer filter is left out
+> of the count; with the rule as written (the shared-world test of `entity-descriptor.md`
+> §4.5.1, *L* = 1, *I* = 0) 88,749 undrawn SEDs block. With the draw rule E22 of
+> `entity-descriptor.md` §9.2 the drawn rows of the table come out 143 higher in all (mesh,
+> false, yes, no: 1,409,569; none, false, yes, no: 400,666; volumes, false, yes, no: 143,859;
+> mesh, true, yes, no: 68,075) and "other combinations" 143 lower (24,319); every undrawn
+> row and the 44,144 match. Please state the population (content layers or not) and the
+> draw rule behind the table. Tessera applies the rule as written (with the filter).
+
+> **OPEN (implementation review, 2026-10-06):** §9.4 (BIN) says the client drops
+> landblock-info statics whose `Entity_CreationType` is UniqueDynamicMobile or
+> UniqueDynamicImmobile (7 or 8; the server creates those) on the path that gives statics
+> their collision, but the collision rule above has no creation-type filter, so
+> `tessera-physics` gives such SEDs a body offline. Please say whether the rule should drop
+> creation types 7 and 8 (resolved along the chain as in `scenery.md` §9.2 rule 2) and add
+> the creation type to the census above. Tessera follows the rule as written until then.
 
 <a id="s9-4"></a>
 ### 9.4 Procedurally generated scenery
@@ -877,6 +950,17 @@ UniqueStaticImmobile 524, SharedClientOnlyImmobile 36.
 
 > **OPEN:** whether the client gives a physics body to generated objects of the client-only
 > creation types (SharedClientOnlyImmobile and similar). Tessera Decision: it does.
+
+> **OPEN (implementation, `tessera-world` streaming, 2026-10-06):** (a) the instance ID
+> that the client synthesizes for a generated object "from the landblock and the object's
+> index in the generated list" has no formula here or in `scenery.md` §7.6. Offline
+> nothing reads it; Tessera gives generated objects no instance ID and identifies them by
+> landblock and list index. (b) "From there, generated objects and statics take the same
+> path" leaves open whether a generated object whose 0x47 chain carries liquid monitors
+> creates liquid volumes like a placed static (`water.md` §7.3 speaks of placed statics
+> only). **Tessera Decision:** it does; the landblock's liquid boxes are those of its
+> statics followed by those of its generated objects, in generated-list order. Please state
+> both (BIN) and, for (b), count the scene objects whose chains carry liquid monitors.
 
 ---
 
@@ -1152,6 +1236,63 @@ gap left OPEN above it says so; it must be revised when the gap closes.
    it every step is a Decision (§5.8.1 OPEN).
 
 Fixed step 1/60 s with at most 5 steps per frame.
+
+> **OPEN (implementer, 2026-10-06, `tessera-physics` controller):** readings the
+> implementation had to choose where the words above allow more than one; each is a Tessera
+> choice until owner measurements (Q9) settle it. (a) Step 1, "never faster than reaching
+> it within the ramp time": per local axis the rate is min(control acceleration, the axis'
+> larger target speed / ramp time), never past the target (BasePlayer forward: min(65,
+> 6.5 / 0.13) = 50 m/s²). (b) Step 3 after step 1 makes the steady speed target ×
+> damper^(1/60), e.g. 6.5 × 0.2^(1/60) ≈ 6.33 m/s forward for players, not 6.5. (c) Step 2:
+> "applies the jump acceleration for one ramp time" is applied as its integral in the
+> jump's own step (5.2 m/s at once), which gives the stated apex ≈ 0.9 m and ≈ 0.7 s; spread
+> over 0.13 s without gravity the apex would be ≈ 1.24 m. The jump's parameters are those of
+> the layer in effect when it starts (Falling has jump 0). (d) Step 5: a capsule resting
+> against a riser that rises by the step-up height and moves only one step's distance lands
+> on the step's edge with its centre up to r − |v|·dt from it, which §11.3 classifies as steep
+> at walking speeds; the raised move therefore covers at least 0.5 · r. (e) Steps 4–5: on
+> walkable support a contact that is not walkable is treated as a vertical wall (its
+> normal's horizontal part), so walls and step risers never lift the mover by the slide.
+> (f) Step 6: no snap while jumping, rising in the air or swimming; contacts give no support
+> while rising in the air. (g) Overlaps at the start of a step are pushed out along the
+> shortest push that clears every contact plane (at most 0.5 m per step). (h) The exact
+> names of the `MoveToController_*` fields other than `MoveToController_FloatHeight` are not
+> given in §10.1; the MoveTo structs are layered by property ID without naming them.
+
+> **OPEN (implementer, 2026-10-06, controller review):** further Tessera readings, each to be
+> settled by owner measurements (Q9). (i) Step 2: the jump's "one ramp time (0.13 s for
+> players)" is taken from the BasePlayer layer for every layer. With the composed layer's
+> ramp time instead, the Walking, Mounted, Warsteed and MountedWalking layers (ramp 0.25 s,
+> jump acceleration 40 from BasePlayer) would launch at 10 m/s with an apex of about 3.3–3.5 m
+> under the falling gravity of 15. Which ramp time the original uses is not known. (j) Step 6:
+> "when the mover was on walkable support and moving down a slope" is read as follows. On walkable support the
+> snap reaches further by the drop of a walkable slope over the step's horizontal motion
+> (horizontal distance × tan of the walkable limit, at most the step-up height), plus the
+> 0.05 m. So the mover follows walkable downhill slopes and briefly falls off steps steeper
+> than that, e.g. a 0.3 m step at run speed. (k) Step 5: a step-up is taken only when it
+> climbs more than 0.01 m. When the raised move covered more than the move's own length (the
+> 0.5 · r minimum of (d)), the same climb with the move's own length is preferred where it also
+> lands walkable, so sliding along a wall is never sped up. (l) Steps 1 and 4: with the
+> per-axis approach of (a), a mover pushing diagonally into a wall slides along it slower
+> than the wall-parallel part of its speed. The wall removes the velocity into it each step,
+> and the side axis then brakes the rest toward its target of 0. At 0.5 rad from the wall
+> normal, a player settles near 0.5 m/s instead of 6.33 × sin 0.5 ≈ 3.0 m/s. Whether the
+> original approaches the target per axis or as a vector, and whether it keeps the velocity a
+> wall removes, is not known. (m) (f)'s "no support while rising" applies only out of water,
+> because in water the swimming gravity of −20 lifts the mover (see `water.md` §7.4).
+
+> **OPEN (M4.5 exit verification, clean room, 2026-10-06):** three more Tessera readings,
+> made to fix controller faults found by walks ST2 and FR3 of `m4-5-visual.md`. (n) Step 4:
+> on walkable support, when a sweep's contact normal (an edge or corner of the triangle)
+> does not oppose the motion but the triangle's face does, the motion slides along the face;
+> otherwise the same hit repeats at the same place every step and the mover stops dead on a
+> slight terrain crease (FR3). (o) Step 5: when the raised move's landing is not walkable
+> (the capsule's foot rests on a chamfered step edge, whose steep face decides the class by
+> §11.3), the raised move is retried once covering the full capsule radius (ST2: a 0.32 m
+> riser is now climbed). (p) Below the float line of `water.md` §7.4 the water takes up any
+> downward speed, so a mover that slides or falls into deep water at speed stops at once
+> instead of diving several metres below the line before the lift turns it (the real-data
+> controller walks found a slide into a lake at 15 m/s once (n) let walkers get further).
 
 ---
 

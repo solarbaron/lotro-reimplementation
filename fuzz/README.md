@@ -103,9 +103,14 @@ With [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) and a nightly toolcha
 
 ```sh
 cd fuzz
-cargo +nightly fuzz build
-cargo +nightly fuzz run dat_node -- -max_total_time=600 -rss_limit_mb=2048 -malloc_limit_mb=1024
+host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+cargo +nightly fuzz build --target "$host"
+cargo +nightly fuzz run --target "$host" dat_node -- -max_total_time=600 -rss_limit_mb=2048 -malloc_limit_mb=1024
 ```
+
+Pass `--target` with the host triple: a prebuilt `cargo-fuzz` (the Linux release is a static
+musl binary) otherwise builds for musl and fails with "can't find crate for `core`".
+`tools/fuzz-smoke.sh` does this itself.
 
 Without nightly, `tools/fuzz-smoke.sh` builds the same targets on stable with libFuzzer's
 coverage instrumentation (no AddressSanitizer, which `unsafe_code = "deny"` makes less

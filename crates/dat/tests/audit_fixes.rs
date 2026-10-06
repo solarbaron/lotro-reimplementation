@@ -509,14 +509,26 @@ fn case_variants_of_one_archive_open_once() {
     let mut g = Builder::new();
     g.stored(0x0100_0001, payload(1, 10));
     write(&dir, "client_general.dat", &g);
-    let mut g2 = Builder::new();
-    g2.stored(0x0100_0001, payload(2, 10));
-    write(&dir, "CLIENT_GENERAL.DAT", &g2);
+    // Two names that differ only in case cannot both exist on a case-insensitive file
+    // system (the default on Windows and macOS): writing the second would overwrite the
+    // first. Probe the temp dir at run time; Linux temp dirs are case-sensitive, so the
+    // strict half of the test must run there.
+    let case_sensitive = !dir.0.join("CLIENT_GENERAL.DAT").exists();
+    if cfg!(target_os = "linux") {
+        assert!(case_sensitive, "temp dir {:?} is case-insensitive", dir.0);
+    }
+    if case_sensitive {
+        let mut g2 = Builder::new();
+        g2.stored(0x0100_0001, payload(2, 10));
+        write(&dir, "CLIENT_GENERAL.DAT", &g2);
+        assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 2);
+    } else {
+        eprintln!("case-insensitive temp dir: skipping the second case variant");
+    }
     let set = ArchiveSet::open(&dir.0, SetOptions::default()).unwrap();
-    // On a case-insensitive file system only one of the two files exists.
-    if std::fs::read_dir(&dir.0).unwrap().count() == 2 {
-        assert_eq!(set.members().len(), 1);
-        assert!(set.members()[0].path.ends_with("client_general.dat"));
+    assert_eq!(set.members().len(), 1);
+    assert!(set.members()[0].path.ends_with("client_general.dat"));
+    if case_sensitive {
         assert!(
             set.problems()
                 .iter()
@@ -524,6 +536,8 @@ fn case_variants_of_one_archive_open_once() {
             "{:?}",
             set.problems()
         );
+    } else {
+        assert!(set.problems().is_empty(), "{:?}", set.problems());
     }
     assert_eq!(set.read(0x0100_0001).unwrap(), payload(1, 10));
 }

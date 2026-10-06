@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
 | **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (first round; addressed). Re-review 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; spot checks: all 7 region descriptors 114 bytes with the §3.1/§3.2 values, 0x15000007 header, all 963 0x1A records, 0x35000000, 0x32000000 1,160 bytes and its d0–d7 ranges, the §14 hash values, LC region-loader slot order). |
@@ -49,6 +49,7 @@ Values quoted from the install are observations; implementations read them at ru
 | AC | Asheron's Call lineage (published AC format descriptions in the research clones) used only as a naming analogy for "sky description", "day group", "sky object", "time-of-day keyframe". No AC layout is assumed: every layout below was checked against this install. |
 | BIN-R | **M4 under decision 0011**, second pass on 2026-10-05, same client build (4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5). **Questions:** (a) which DB object type the client registers for each DID range (to replace the content-based kind hypotheses of §4 and §9); (b) the region descriptor's deserialiser and the order of its DID maps, and which code asks which map; (c) how the client turns a position into map coordinates with the region's fields; (d) the exact comparisons of the keyframe search of §11.3 at a keyframe's own time. **Why M1–M3 were not enough:** the region fields at offsets 8–32 and the empty maps cannot be told apart from content; the record kinds are named nowhere in the data except through these registrations; the boundary behaviour of §11.3 is code only; no running client is available for M3. |
 | OBS3 | Observed in user install 2026-10-05: all 7 region descriptors parsed with §3.1 (zero leftover bytes); the offset-8 DIDs resolved; 0x32000000 parsed (§9); the record-prologue census of `records.md` §1.6. |
+| OBS4 | Observed in user install 2026-10-06 (re-check for E16): all **11** prefix-0x08 records (only in `client_general.dat`, 1,007 bytes together) read with the header of [`walker.md`](walker.md) §11.5.1; each record's size is the one §11.5.3 gives for its controller type (161, 89, 36, 94 bytes for types 1, 2, 3, 4: 4, 1, 5 and 1 records); the first u32 is 0x47000002 or 0x47001A7C; near clip 0.1 and far clip 2,000 in all 11. |
 | LC | LotroCompanion `lotro-tools` (readable source, its region loader; facts only, no code, comments or identifiers taken): reads region-descriptor offset 8 as an image DID and takes slots 1–6 of §3.1 as the scene, terrain, encounter, sky, water and fog tables, in that order. Reported only; the layout here rests on BIN-R and OBS3. |
 
 | Mark | Meaning |
@@ -76,6 +77,7 @@ Values quoted from the install are observations; implementations read them at ru
 | E13 | Region offset 8 is the DID of a 0x41 map image; offsets 16–32 are the map-coordinate origin (in 20-unit steps), two map offsets and the map scale (§3.1) | BIN-R (b), (c); OBS3 (both offset-8 DIDs exist: 512 × 512 user-interface images); LC (names) | BIN; image DIDs Confirmed |
 | E14 | The keyframe search of §11.3 uses exactly the comparisons stated there, so a time equal to an interior keyframe's time blends its two neighbours (§11.3) | BIN-R (d) | BIN |
 | E15 | Prefix 0x32 is the render LOD-class table: DID, count, entries of (class key, 8 × f32) (§9) | BIN-R (a); OBS3 (1 of 1, zero leftover bytes) | Confirmed layout; field meanings OPEN |
+| E16 | The camera-state layout (prefix 0x08) is the one of [`walker.md`](walker.md) §11.5; its first u32 is the camera entity's DID (a 0x47 descriptor), the three f32 that follow are the collision pull-in smoothing time, the near clip and the far clip (§9) | `walker.md` W9, W25, W-I1, W-I2 (OBS-W, BIN-W); OBS4 | Confirmed (layout owned by `walker.md`) |
 
 ---
 
@@ -496,6 +498,13 @@ keeps a separate "is night" state).
 - Path to visuals (Confirmed, §5.1, §11.2): sky key → sky entry of 0x15000007 (a day group's,
   else the local default table's) → weighted list → one 0x1A day description per game day.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` environment module):** which sky key wins
+> when several sources apply (the player's `Environment_PlayerLocalSkyOverride`, a monitor
+> set the player is inside, the cell's `Environment_IndoorAmbiance` or
+> `Environment_LocalSky`, the landblock-info property set, the block map), and whether
+> `Environment_IndoorAmbiance` replaces the sky key indoors at all (§7.2). Tessera
+> (Decision): first present in that order.
+
 <a id="s7-2"></a>
 ### 7.2 Interior fog and ambience (Confirmed census)
 
@@ -565,7 +574,7 @@ values, not properties.
 | Prefix | Records | DB type | Observed | Spec |
 |---|---|---|---|---|
 | 0x02 | 3,402 (general) | 0x3C SCENE | u32 0, then own DID; placement nodes | `scenery.md` §5 (decoded) |
-| 0x08 | 11 (general) | 0x0D CAMERASTATE | No own DID in the first 8 bytes; the first u32 is a 0x47-like DID, then floats (0.15, 0.1, 2000.0) | Layout OPEN (camera settings; not needed by the world) |
+| 0x08 | 11 (general) | 0x0D CAMERASTATE | No own DID: the first u32 is the camera entity's DID (a 0x47 descriptor), then f32 collision smoothing time, near clip, far clip, four flag bytes, the controller type and a body by type (E16) | [`walker.md`](walker.md) §11.5 (decoded) |
 | 0x2D | 3 (general) | 0x62 COMPUTESHADER | A DXBC shader container | Not needed |
 | 0x32 | 1 (general) | 0x3B RENDER_LOD_CLASSES | LOD-class distance table, decoded below | §9.1 |
 | 0x39 | 11,155 (general) | 0x1E PSDESC | Particle-system descriptors; no own DID in the first 8 bytes | OPEN |
@@ -618,6 +627,19 @@ There is no `length` field and no second copy of the DID in the payload.
 > Tessera uses the local default table, or optionally simulates day types from `chance` and
 > the follow lists (Tessera Decision).
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` environment module):** what a sky key
+> gets that only the day groups list while the day type matches no group. With *D* = 2,
+> §11.2 steps 1–2 find no entry for such keys and step 3 gives no description, so their
+> landblocks would be lit by the §11.3 step 8 defaults. On the install of 2026-10-06, 101 of
+> the 482 sky keys in the block-map palettes (key 0x1000000F) have no entry in the local
+> default table; 81 of them are listed by the day groups (78 by all four, e.g. 0x10000248,
+> 0x10000249, 0x10000260–0x10000263, 0x10000273–0x10000277) and 20 by no table.
+> (A code review sampled 1,350 landblocks of regions 1–5 and 14 and reported 59 of them
+> lit by the defaults for this reason.) Tessera (Decision, `choose_day_with_fallback`): when steps 1 and 2 find no
+> entry, use the entry of the day group with the highest `chance` that lists the key (the
+> first in stored order on a tie), picked by step 4; a listed entry that picks nothing
+> still gives no description.
+
 > **OPEN:** Keyframe fields `fog_extra`, `colour_3`, `colour_4`, the four curves, `values_a`,
 > `value_b`, `effect` (§5.3); sky-object fields 9–14, 16–22 and the axes of the two angles
 > (§5.4, §11.4); how two keyframes' tints and curves are blended exactly.
@@ -630,7 +652,8 @@ There is no `length` field and no second copy of the DID in the payload.
 > **OPEN:** Sky rendering details: draw order, depth, scale and orientation of sky objects,
 > the clear colour, and how fog applies to the sky (§12).
 
-> **OPEN:** Layouts of 0x08, 0x39 and 0x44; the meaning of the LOD-class fields (§9).
+> **OPEN:** Layouts of 0x39 and 0x44; the meaning of the LOD-class fields (§9). (The 0x08
+> camera-state layout is decoded in [`walker.md`](walker.md) §11.5; it is not open.)
 
 ---
 
@@ -742,6 +765,20 @@ For each sky object at time of day *t*:
    untinted look (Inferred).
 5. Draw the object's geometry (§5.4 `object`) rotated by the two angles (axes OPEN, §12).
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` environment module):** step 4 does not
+> say what happens when only one of *kₐ* and *k_b* has an entry for the object, nor which
+> keyframe's `replacement` wins. Tessera (Decision): the side without an entry counts as
+> untinted (white, opacity 1) with zero angle offsets, so tint and offsets are blended by
+> *f* toward or away from those values; the replacement is *kₐ*'s when non-zero, else
+> *k_b*'s. The keyframes' four float curves (§5.3 field 17) are not blended by Tessera
+> while their use is OPEN.
+
+> **OPEN (implementer, 2026-10-06):** the cross-fade of `lighting.md` §8.1 interpolates
+> "every value linearly"; for `sun_heading` and `sun_pitch` that would sweep the long way
+> round when the two states lie on either side of north. Tessera (Decision): angles take
+> the shortest way of §11.3 step 5 during a cross-fade too, and the `effect` switches at
+> *f* = ½.
+
 ---
 
 <a id="s12"></a>
@@ -759,6 +796,11 @@ For each sky object at time of day *t*:
 - Interiors: cells with `InteriorFogType` "Linear" use their own fog values (§7.2) instead of
   the keyframe fog.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` environment module):** what
+> `InteriorFogType` "None" (2) and "Invalid" (0) do: "no interior override" (the outdoor
+> keyframe fog of the sky key stays in force) or "no fog at all" indoors. Tessera
+> (Decision): no override; the stored near, far and colour are used only for "Linear".
+
 ---
 
 <a id="s13"></a>
@@ -775,6 +817,14 @@ For each sky object at time of day *t*:
 
 Hostile-input rules: reject unknown float-curve modes (their length is unknown), flags ≥ 2,
 counts larger than the bytes left, and a sky-description `version` other than 1.
+
+> **OPEN (implementer, 2026-10-06, `tessera-world` environment module):** no rule covers
+> non-finite floats in day descriptions (keyframe times, fog, sun and ambient values,
+> `values_a`, `value_b`; sky-object times and angles; keyframe-object angle offsets). Should
+> the decoder reject them, as `water.md` §5.4 does for fog-zone entries? Tessera (Decision,
+> until answered): the decoder accepts them; the blender skips keyframes whose time is not
+> finite, replaces any non-finite blended or cross-faded value by its §11.3 step 8 default,
+> hides a sky object with a non-finite time and counts its non-finite angles as 0.
 
 ---
 
@@ -821,3 +871,4 @@ A = −90 + 0.25 × 360 = 0.
 | 2026-10-05 | §1 provenance extended (OBS2, BIN). §2: prefix ↔ type pairings for 0x15, 0x1A, 0x35; day-type and sky-key mappers. §5 rewritten: sky description (§5.1), day description (§5.2), keyframe (§5.3), sky object (§5.4), coverage (§5.5), colours (§5.6), all Confirmed to the last byte; the first-look readings of §5.2 (keyframe count at offset 8, fog distances at 16 and 20) are confirmed and extended. §6 rewritten with the full game-time layout. §10 updated. New §11–§15. §3, §4, §7, §8, §9 unchanged. |
 | 2026-10-05 (second revision) | Sweep against `scenery.md`, `terrain-texturing.md` and the new `water.md`, with new BIN facts (BIN-R, OBS3, E11–E15). §2: complete prefix ↔ DB type table for this spec's records (from the client's DID-range registration; full table in `records.md` §2.1). §3 rewritten: the region descriptor's full grammar (fixed fields, nine DID maps, trailing terrain-type-table DID), offset 8 is a map-image DID (not an f32), offsets 16–32 are the map-coordinate parameters with the client's formula, version rules. §4 rewritten: every per-region table's kind and the spec that decodes it; the first-look hypotheses for 0x11, 0x12, 0x16, 0x17 and 0x19 corrected (0x17 holds no texture list). §5.1.4: the named-list counts are VLEs (OPEN closed). §7.4: water note. §8 replaced by a pointer to `water.md`. §9: kinds of 0x02, 0x08, 0x2D, 0x32, 0x39, 0x44; new §9.1 LOD-class table. §10 updated. §11.3: the keyframe-search comparisons confirmed by BIN, boundary behaviour stated; §14 boundary example. Mark "Tessera Decision" added to the legend. |
 | 2026-10-05 (third revision, after review) | Status Draft → Review. §1: source tag LC defined (cited by E13 and §3.1 field 3). §5.3: `fog_near` and `fog_far` in world units (one unit is by convention a metre, `coordinates.md` §3). §9.1: stale pointer to `scenery.md` §9 replaced by a cross-reference; this section named the single owner of the 0x32 layout (payload 1,160 bytes: DID, count, 32 × 36 bytes; re-checked on the install); correction note for `scenery.md` §9.1 and SC9 (`length`, `did_echo` and the 1,168 figure to be removed). |
+| 2026-10-06 | Alignment with [`walker.md`](walker.md) §11.5, no other change; status stays Accepted. §9: the 0x08 row no longer calls the camera-state layout OPEN; it points to `walker.md` §11.5 and replaces the first-look reading ("a 0x47-like DID, then floats (0.15, 0.1, 2000.0)") with the decoded header (camera entity DID, collision smoothing time, near clip, far clip; 0.15 was the smoothing time of one record only). §10: 0x08 removed from the last OPEN. §1: OBS4 and E16 added (11 of 11 records re-checked against `walker.md` §11.5.1 and the per-type record sizes). |

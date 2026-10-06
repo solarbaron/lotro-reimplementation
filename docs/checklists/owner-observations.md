@@ -52,11 +52,17 @@ marks the item **done** here.
 | [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3 | Frame capture | open (M4, low priority); colour byte order settled (`property-system.md`: B, G, R, A) |
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §16 | Look, explorer side by side | open (M4) |
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7 | In-game `/loc`, look | open (M4; informal look at Tessera fine, 2026-10-05) |
+| [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | open (M4.5) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O14, O16; criterion 3 (worn and held
 items): O10, O13; the sandbox's static NPCs: O12, O17. Criterion 4 (performance) passed
 on the reference machine and needs no observation.
+
+M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md#m4-5-status)):
+criterion 4 (walking on collision): O18, O19; criterion 6 (visual checklist): O20 (terrain,
+scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
+fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
 
 ---
 
@@ -398,3 +404,242 @@ metre, facing, pose such as sitting or standing, held item).
 **2026-10-05 (informal):** the owner looked at characters in Tessera on the laptop and found
 their positions fine by eye. No `/loc` readings or facings were taken, so the record above
 is still wanted.
+
+---
+
+<a id="m4-5-summary"></a>
+<a id="m4-5-items"></a>
+## M4.5 items (world fidelity, added 2026-10-06)
+
+The spots, walks and rows these items refer to are in
+[`m4-5-visual.md`](m4-5-visual.md). Every item compares the original client at its default
+graphics settings (record any setting you changed) with the expected facts listed there.
+
+| ID | Question | Spec | Needs | Status |
+|---|---|---|---|---|
+| [O18](#o18) | Movement: jump, speeds, highest step, steepest slope, wading and swimming depth | `collision.md` §10–§12 (Q9, Q11), `water.md` §7.4 | In-game `/loc`, stopwatch, short video | open |
+| [O19](#o19) | Outcome of the 32 scripted walks in the original | `m4-5-visual.md` §2 | In-game `/loc`, look | open |
+| [O20](#o20) | Side-by-side look at the terrain, scenery and frill rows | `m4-5-visual.md` §4.1–§4.3 | Look, private screenshots | open |
+| [O21](#o21) | Game clock: time of day, day length, epoch | `environment.md` §6, §11.1 | Clock in the UI or `/loc`, stopwatch | open |
+| [O22](#o22) | Default draw distances: landscape extent, object pop-in, fog clipping | `walker.md` §11.3–§11.4, `mesh.md` §8 | Look, `/loc` | open |
+| [O23](#o23) | Sun shadows and point lights | `lighting.md` §8–§9, `m4-5-visual.md` §4.6 | Look at a set time, frame capture optional | open |
+| [O24](#o24) | Water look: surface, lava, placed water, distant water | `water.md` §8–§9, `m4-5-visual.md` §4.4 | Look, frame capture optional | open |
+| [O25](#o25) | Frills: radius, fade, density, sway, terrain tint | `scenery.md` §8.3–§8.4 | Look, short video | open |
+| [O26](#o26) | Sky and fog at four times of day; the day type; interior fog | `environment.md` §11.2–§12, `lighting.md` §10 | Look at set times | open |
+| [O27](#o27) | Terrain near and far bands, and the seam between them | `terrain-texturing.md` §12 | Look, short video | open |
+
+<a id="o18"></a>
+## O18. Movement measurements (M4.5)
+
+**Spec:** `collision.md` §10.3 (movement records), §11 (layering, walkable 45°), §12.3
+(Tessera's controller, built where the original's integration is OPEN, Q9 and Q11);
+`water.md` §7.4 (Tessera's wade/swim rule, OPEN in the original). Tessera's values for a
+Human male: run 6.5 m/s, walk 5 m/s, backward 3.25 m/s, strafe 5 m/s, swim 3.2 m/s; step-up
+0.5 m; jump about 0.9 m high and 0.7 s in the air (a Tessera Decision); wading until the
+water surface is 1.42 m above the feet, swimming beyond.
+
+**First, see ours:** `tessera-client --walk-path` with walks ST1, SL1 and WA1 of
+`m4-5-visual.md` §2.3, and `--spawn 1,161,151,127.81,89.59` (walk WL1's start) for open
+ground.
+
+**What to do** (a Human male character, no mount, no speed buffs; flat open ground such as
+the start of walk WL1):
+
+1. **Speeds.** Type `/loc`, hold one movement key for a timed 10 s, type `/loc` again; once
+   each for run forward, walk forward (walk toggle on), backward, strafe left, and swimming
+   forward in deep water (WA1, after the swim point). If a character of another species is
+   at hand, repeat run and walk with it and note whether the speeds differ.
+2. **Jump.** Jump on flat ground next to a wall with known height (any SED of the walk
+   table) and film it from the side at 60 fps; or jump onto ever higher steps until it
+   fails. Count the frames from take-off to landing for the airtime.
+3. **Highest step.** At ST1–ST3 walk up the platform steps; then find a ledge you cannot
+   walk onto without jumping and one you can, and type `/loc` on the ground before each and
+   on top (the difference in `oz` is the step height).
+4. **Steepest slope.** At SL1–SL3 run straight uphill: note whether the character climbs,
+   stops or slides back, and type `/loc` at the highest point reached.
+5. **Wading and swimming.** At WA1–WA4 walk slowly into the water and type `/loc` at the
+   moment the swimming animation starts.
+
+**Record:** metres per second per gait (one decimal); jump height (to 0.1 m) and airtime
+(to 0.1 s); the `oz` values of step 3; for each SL walk the highest `oz` and whether the
+character slid; for each WA walk the `/loc` where swimming started (compare with the
+`swim=` point of the row; the depth there is the original's swim depth).
+
+<a id="o19"></a>
+## O19. Scripted walks in the original (M4.5)
+
+**Spec:** `m4-5-visual.md` §2.3 (32 walks with expected outcomes) and §2.2 (pass
+conditions).
+
+**First, see ours:** `tessera-client --walk-path <id>` for any row (the table form of the
+checklist is accepted directly).
+
+**What to do:** for every walk you can reach (`n/a` otherwise; interiors IN1–IN4 lie in
+instanced spaces), go to the start (`loc` column), face the heading, and do what the
+`inputs` column says by hand (hold forward, or walk to the listed end point). Type `/loc`
+at the end.
+
+**Record:** per walk: the final `/loc` numbers (no server name, no time stamp); `blocked`
+/ `reached` / `slid back` / `wading then swimming` in your own words; for WL, UB and GN
+whether the character stopped at the object (and roughly how far from it, that is how
+deep the body seems to sink into the wall or how wide a gap it keeps); for UB whether
+anything is visible there; for GN whether the tree or rock is there at all (it is
+generated from the data, so its absence would mean a generation difference).
+
+<a id="o20"></a>
+## O20. Terrain, scenery and frill rows side by side (M4.5)
+
+**Spec:** `m4-5-visual.md` §4.1 (terrain layers, T1–T16), §4.2 (generated scenery,
+S1–S11), §4.3 (frills, F1–F6).
+
+**First, see ours:** `tessera-client --screenshot ours.png --spawn R,X,Y,x,y --heading H
+--pitch P --fly` with each row's eye; the explorer's terrain and scenery views list the
+layer stack and the generated objects.
+
+**What to do:** stand at each row's eye position in the original (time of day around
+noon), look in the row's direction, and compare with Tessera's screenshot of the same
+row. For S rows count the trees and rocks in view; for T rows look at the ground texture
+under the target (roads, snow, paving, normal-mapped relief, highlights); for F rows look
+at the grass and ground cover near the target.
+
+**Record:** per row `same` / `different` (pass / fail); a difference in your own words (for
+example "road edge softer", "extra rock at the left", "grass sparser"). Screenshots stay
+private. The other rows of `m4-5-visual.md` are compared the same way under O24 (water,
+W1–W9), O26 (sky and fog, Y1–Y5) and O23 (lighting, L1–L7), so that together these items
+give a pass or fail for every row of criterion 6.
+
+<a id="o21"></a>
+## O21. Game clock and epoch (M4.5)
+
+**Spec:** `environment.md` §6 (day length 11,160 s, 360 days per year, zero offset
+3,600 s, zero year 34) and §11.1 (the clock); the epoch of the clock is OPEN, so Tessera's
+clock has a settable start. The `/loc` reply names the game time (game text; record only
+numbers).
+
+**What to do:**
+
+1. Note the in-game time the client shows (clock or the `/loc` sentence, or the sun's
+   position if nothing else shows it) and the real date and time (UTC), twice, at least an
+   hour apart.
+2. Note the in-game date if the client shows one (day of the month, month number, year
+   number, as numbers only).
+3. If possible, note the real time at which dusk visibly starts (the light turns orange)
+   and at which night starts.
+4. Day type: at one fixed spot (row Y1), note the weather (clear, overcast, rain, fog) on
+   several in-game days, together with the in-game date of each (see also O26).
+
+**Record:** the pairs (in-game time, UTC) with the date; the in-game date numbers. From
+two pairs the spec writer derives the rate (expected: one game day per 11,160 s, 3.1 h) and
+the epoch.
+
+<a id="o22"></a>
+## O22. Default draw distances (M4.5)
+
+**Spec:** `walker.md` §11.3 (landscape extent 2,080 m at the built-in High setting; the
+global limit *G* is the fog far distance when that is shorter), §11.4 (object distances by
+LOD class, 1.5 s fades), §11.8 (default profile).
+
+**What to do** (default graphics settings; record them):
+
+1. At perf spot P5 (`m4-5-visual.md` §3), look along heading 190: is the sea visible out to
+   the horizon, and where does the landscape end?
+2. Walk slowly toward a lone building from 400 m away (any WL row's building) and note the
+   distance (from `/loc`) at which it appears, and whether it fades in or pops.
+3. Do the same with a small object (a barrel or crate) and with a tree.
+4. At night in the town of row L2 (fog far 300 m in the data), look along a long street:
+   do buildings beyond about 300 m disappear?
+5. Do the same as in 2 with another character (an NPC or another player): the distance at
+   which it appears and finishes fading in.
+6. How far grass and other frills reach and how dense they look (details under O25).
+
+**Record:** the graphics preset in use; distances in metres (to 10 m); fade or pop; for 4,
+yes/no and the distance; the farthest visible landscape (from 1).
+
+<a id="o23"></a>
+## O23. Sun shadows and point lights (M4.5)
+
+**Spec:** `lighting.md` §8.1 (sun from the day description), §8.3 (point lights and their
+attenuation), §9 (sun shadows; colour, cascades and fade OPEN); `m4-5-visual.md` §4.6.
+
+**What to do:**
+
+1. Row L1 around noon: note the direction the barn's shadow points (compass) and roughly
+   how far it reaches from the wall; the shadow's colour (black, blue-grey, tinted);
+   whether the shadow edge is sharp or soft; at what distance from the camera shadows stop
+   being drawn, and whether they fade out or end at a line.
+2. Row L2 at night: are the lamps lit; do they light the walls and the ground around them;
+   roughly how far does the light reach (the data says range 10 m); is the colour orange?
+3. Rows L3 and L4: do the fire and the crystals glow (bright regardless of the darkness,
+   with a halo or bloom)?
+4. Optional frame capture at L1: the shadow-map size and cascade count, and the shadow
+   colour constants (`lighting.md` §9 OPEN).
+
+**Record:** compass bearing (±10°) and length (±5 m) of the shadow; sharp/soft; shadow
+distance; per lamp question yes/no and the reach; glow yes/no and halo yes/no; capture
+values if taken.
+
+<a id="o24"></a>
+## O24. Water look (M4.5)
+
+**Spec:** `water.md` §8 (drawing water; reflection, flow, foam and depth OPEN), §9
+(distant water), §7.3 (placed water); `m4-5-visual.md` §4.4 rows W1–W9.
+
+**What to do:** at each W row (daytime), look at the water and note: colour and
+transparency (can you see the bed?), reflections (sky, shore), waves or flow direction,
+foam at the shore, and any edge where two water heights meet (W6). At W7 note whether lava
+glows and moves. At W8 note whether the pool surface is see-through. At W9 note whether
+distant water looks like the near water. Optionally dive under at W4 and note the
+under-water look (fog colour, distance).
+
+**Record:** per row a few words per aspect; `n/a` where not reachable.
+
+<a id="o25"></a>
+## O25. Frills (M4.5)
+
+**Spec:** `scenery.md` §8.3–§8.4 (frill radius 97 m at the default level 2, fade from
+67 m, reduction from 40 m, fade-in 1.5 s, terrain tint; shader formulas OPEN);
+`m4-5-visual.md` §4.3 and walks FR1–FR3.
+
+**What to do:** at rows F2 and F4 (dense grass), stand still and look along the ground:
+estimate where grass ends and whether it fades out or shrinks; walk forward and watch new
+grass appear (fade or pop); watch it in wind (does it sway, how much). Compare the colour
+of grass with the ground under it (tinted toward the ground?). At walk FR1 note whether
+the character walks through the ground cover without stopping.
+
+**Record:** end distance (to 10 m), fade/shrink/pop, sway yes/no and strength in your own
+words, tint yes/no; FR walks pass/fail.
+
+<a id="o26"></a>
+## O26. Sky and fog; day type; interior fog (M4.5)
+
+**Spec:** `environment.md` §11.2 (the day type *D* is OPEN; Tessera starts with 2, which
+selects only the local default table, `m4-5-visual.md` §1.1 item 3), §11.3 (blending),
+§12 (sky); `lighting.md` §10 (fog); rows Y1–Y5.
+
+**What to do:** at rows Y1–Y4 (or any spot with the same sky key) at the four times of day
+of the rows (night 0.0, dawn 0.25, noon 0.5, dusk 0.78; use O21 to know when), look at the
+sky, the sun or moon (its path and apparent size), clouds and stars, the fog colour and the
+fog distance (where distant hills fade out). Do this under at least three sky keys
+(regions). On two different real days note whether the weather at Y1 differs (rain,
+overcast). At Y5 (IN1's dungeon) and in one cave, note the fog colour, its density and
+the distance at which walls fade.
+
+**Record:** per row: sky colour and fog colour in your own words, fog distance (to 50 m),
+sun/moon position (compass and height above the horizon); weather per day; interior fog
+distance and colour.
+
+<a id="o27"></a>
+## O27. Terrain near and far bands (M4.5)
+
+**Spec:** `terrain-texturing.md` §12 (distance bands and the near/far seam OPEN; Reported:
+full detail to about 14 blocks, medium to about 24, then distant imposters).
+
+**What to do:** at perf spot P5 and at row T3 (a high cliff top), look over a wide
+landscape: note the distance at which ground textures lose detail or change colour, whether
+a line or band is visible where they change, and whether it moves with the camera. A short
+video while walking forward helps. At rows T1–T16 also note how sharp road edges are,
+whether wet or rocky ground shows a specular sheen, and whether the landscape itself casts
+shadows onto the terrain (hills shading valleys).
+
+**Record:** distances (to 100 m) of each visible change; visible seam yes/no; moves with the
+camera yes/no; road edge sharp/soft; sheen yes/no per row; landscape shadow yes/no.

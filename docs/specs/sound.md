@@ -299,6 +299,20 @@ This replaces the earlier reading of this section ("the last audio packet ends b
 residue data", with permission to drop that packet): the earlier census probe took the
 empty packet for a truncated audio packet.
 
+> **OPEN:** (clean-room implementation, `tessera_audio::decode`, 2026-10-07) Cases §3.3.2
+> steps 1–5 do not cover; none occurs in this install, so `tessera-audio` handles them
+> conservatively until the spec says otherwise: (1) page *a* has granule −1 (it completes
+> no packet): *P* = 0, as if page *a* did not exist; (2) the last page has granule −1:
+> *L* = *T* and *N* = *T*; (3) a zero-length packet on page *a* is skipped and is not "the
+> packet before" the next one in step 3; (4) a packet with the header bit set after the
+> three headers fails the decode; (5) page *a* does not exist (the setup header and every
+> audio packet complete on the last page): steps 2 and 5 are applied as written, so
+> *A* = *D*(*h*) = *T* and *M* = 0, the played range is empty and a looping voice has
+> nothing to loop over (its source refuses to rewind); `tessera-audio` reports the stream
+> (`OggIssue::NoPageAfterSetup`). Please confirm what the 1.0.1 libraries do in (1)–(5),
+> in particular whether in (5) they play from sample 0 (*A* = 0, *M* = *N*) instead.
+> Synthetic tests pin (1)–(5) (`crates/audio/tests/decode_synthetic.rs`, `open_case_*`).
+
 <a id="s3-4"></a>
 ### 3.4 RIFF WAVE payloads (Confirmed, 3,455 of 3,455)
 
@@ -556,6 +570,13 @@ treated as 0. There is no fade-in for sounds: a new sound starts at its full gai
   distance law but stay centred.
 - Source positions come from the request's positioner (§9.2 step 6).
 
+> **OPEN:** (clean-room implementation, 2026-10-07) The panning law is not stated: how the
+> audio library turns a camera-relative position into per-speaker gains (pan curve, centre
+> level, front/back handling, elevation), and whether gain changes are stepped or smoothed.
+> `tessera_audio::engine` uses a constant-power pan on the lateral component of the source
+> direction (centre 0.7071 per side), ignores front/back and elevation, and spreads each gain
+> change over 64 samples. Please state the original's law if it can be observed.
+
 <a id="s6-8"></a>
 ### 6.8 Requests that are not played (BIN, BIN2; P7)
 
@@ -676,6 +697,13 @@ master volume ("Sound.MasterVolume") multiplies all channels (§6.1).
 > **OPEN:** How the environment's intensity is applied (presumably as the reverb send or
 > effect gain). Tessera: scale the reverb send by it (Decision).
 
+> **OPEN:** (clean-room implementation, 2026-10-07) The parameters of the 26 presets
+> (decay time, damping, reflection and reverb levels and delays, diffusion, density) are
+> not in this spec; "the standard EAX environment preset of the same name" names them but
+> does not give the values. `tessera_audio::engine` uses its own placeholder values with a
+> generic comb/all-pass reverb (decision 0019) until the values are specified. Also open:
+> the send level of a flag-0x04 voice into the reverb (Tessera: the voice's own gain).
+
 ---
 
 <a id="s9"></a>
@@ -773,8 +801,17 @@ re-read in BIN2):
 > the voice limit, a distance cull or the entity's removal ends it was not traced. Tessera
 > stops it when its entity is removed (Decision).
 
+> **OPEN:** (clean-room implementation, 2026-10-06) Step 5 clamps the random distances to
+> ≥ 0 but does not say what happens to a stored value that is not finite (NaN or
+> ±infinity; none in this install, only hostile data). A uniform draw in [*x*, +∞] is
+> undefined and would give an infinite or NaN source position. `tessera-formats`
+> (`SoundNode::random_distance_range`) treats every non-finite bound as 0, as it does NaN.
+> Please confirm or state the original's behaviour.
+
 <a id="s9-3"></a>
 ### 9.3 Intensity of a node instance (BIN; applies to every node kind)
+
+See [`script-runtime.md`](script-runtime.md) §4 for the settled rule (clamp only when the variance is not 0; `instruments.md` Q8) and for driven multiplier changes.
 
 When any node starts, its instance intensity is:
 
@@ -973,6 +1010,14 @@ descriptors (`landblock.md` §5.4).
 > indices give no value, `landblock.md` §5.4); inside a cell, the cell's own values replace
 > them; a monitor volume containing the player replaces both (§10.3.4).
 
+> **OPEN:** (clean-room implementation, 2026-10-07) The Decision does not say whether
+> "the cell's own values replace them" replaces the three block-map values as a whole or
+> only those the cell sets, nor the same for a monitor. `tessera-client`
+> (`apps/client/src/audio/props.rs`) replaces them as a whole inside a cell (a property the
+> cell lacks has no value) and per property for a monitor (only the properties its set
+> carries). The offline walker has no cell test yet, so the cell rule is exercised by unit
+> tests only. Please state the intended rule.
+
 <a id="s10-3-3"></a>
 #### 10.3.3 Race-labelled music scripts (Confirmed for the tables walked, M6)
 
@@ -1018,6 +1063,13 @@ monitors) with `Monitor_BoxMin` and `Monitor_BoxMax` (vec3, entity frame, metres
 > **OPEN:** The exact inside test, and the precedence between overlapping monitors and
 > against block-map and cell values. That part of the client was not decoded.
 
+> **OPEN:** (clean-room implementation, 2026-10-07) Pending the rule above,
+> `tessera-client` transforms the player position into the entity frame (inverse rotation,
+> then divided by the entity scale when `Monitor_ScaleWithEntity`), tests it against
+> `Monitor_BoxMin` + `Monitor_Offset` … `Monitor_BoxMax` + `Monitor_Offset` with the bounds
+> included, takes the monitor list of the first descriptor in the parent chain that has
+> one, and among overlapping monitors applies the one with the smallest box.
+
 <a id="s10-3-5"></a>
 #### 10.3.5 World state
 
@@ -1031,6 +1083,11 @@ monitors) with `Monitor_BoxMin` and `Monitor_BoxMax` (vec3, entity frame, metres
 > **OPEN:** The original's rule for `World_IsNight` (which clock values and boundaries),
 > and the sources of `Volume_IsOutside` and `Volume_ContentLayer`. None of the three is
 > stored in data.
+
+> **OPEN:** (clean-room implementation, 2026-10-07) The Decision compares the day fraction
+> with the stored f32 `value_54` and `value_58`; `tessera-client` compares at f32
+> precision (the f64 time of day rounded to f32), so a stored 0.8 starts the night at 0.8
+> exactly. The clock's epoch is the local system clock (`environment.md` §11.1 Decision).
 
 <a id="s10-4"></a>
 ### 10.4 Music programs (Confirmed census)
@@ -1133,6 +1190,15 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 > other static entities; positional one-shots beyond `max_distance` are refused anyway
 > (§6.8 item 11).
 
+> **OPEN:** (clean-room implementation, 2026-10-07) The Decision above conflicts with the
+> 250-request bound (§6.8 item 3): a looping emitter sound out of range goes to the pending
+> list and counts as waiting, so with every emitter of the resident landblocks alive the
+> pending list fills and later requests, music included, are refused. `tessera-client`
+> therefore scans the landblocks within two landblocks of the viewer and spawns an emitter
+> only while the listener is within its *reach* + 30 m (reach: the largest `max_distance`
+> of the sound infos its start-up scripts reach, plus the node's random distance and
+> offset), despawning it beyond reach + 90 m. Please confirm or state the original's rule.
+
 ---
 
 <a id="s12"></a>
@@ -1145,6 +1211,12 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 2. Read the Pascal string (`records.md` §1.4); reject a length that runs past the end.
 3. Require that no bytes remain.
 4. Report flags bits other than 0x01, 0x02, 0x04, 0x10, 0x40 as unknown (keep them).
+
+> **OPEN:** (clean-room implementation, 2026-10-06) Step 1 asks for at least 36 bytes, but
+> 32 fixed bytes plus a Pascal string need only 33 (an empty name), and the synthetic
+> record of `instruments.md` §14.1 is 34 bytes and must decode. The observed minimum of 36
+> bytes (§4.1) is a census, not a rule. `tessera-formats` requires only the 32 fixed bytes,
+> a complete name and nothing after it. Please confirm or state a minimum.
 
 <a id="s12-2"></a>
 ### 12.2 Decoding a 0x0A record
@@ -1389,3 +1461,4 @@ truncated (§3.3.2–§3.3.3).
 |---|---|
 | 2026-10-05 | First version (Review): 0x0A and 0x2A layouts with censuses over all records; 100% decode validation; playback, channel, reverb and sound-node rules from BIN (build 4906.0071.1794.4035); music and ambience as data-driven graphs with property sources; positional emitters; corrections X1–X7. |
 | 2026-10-05 | Revision after review (changes requested), status stays Review. Header: the client-internal class name quoted in the review record redacted. §1: new tags BIN2 and REFDEC, new rows A7, A8, A9, I4, P7, N3, N4, M5, M6, M7; A4 rewritten. §3.1, §3.5, §4.3, §5, §6.3, §6.6, §6.8, §9.2, §10.3.2, §10.3.5, §10.6: every inline unknown turned into a `> **OPEN:**` callout with a Decision. §3.3.2–§3.3.3 rewritten: the Vorbis I length *N* = min(*G*, *T*) with a granule census over all 40,874 streams ("every stream starts at granule 0" replaced by the checked properties), and one normative played range, the original's (skipped lead *A*, length *L*, *M* = min(*L*, *T* − *A*)), derived from how the client drives its shipped Vorbis 1.0.1 libraries (BIN2) and confirmed over all streams with the released 1.0.1 source; the 15 "truncated" streams in fact end with a zero-length packet and run 63–84 samples ahead in their granules, so nothing is zero-filled and no packet is dropped. §3.4: chunk counts corrected (`ovwf`, `elmo` in 3 files each; first-chunk split), `smpl` facts corrected (5 files, 2 with a loop, one of them behind a looping sound info) and the OPEN resolved (loop points not used, BIN2). §4.3: loop-flag median length corrected to 62.6 s (64.2 s over distinct payloads). §6.8: renumbered in check order and completed from BIN2 (filter, 250-request bound, suppression table, DID range, voice limit, gate codes, exclusive-channel queueing). §9.2 steps 1–4 made precise (BIN2); new §9.6 (outcome of a node start) and correction X8 for `script-table.md`. §10.3.2: per-region census with palettes and out-of-range indices. §10.3.3 rewritten (race-labelled scripts, no race logic needed). §10.3.4: client-internal class name removed. §10.7: Run-node census completed. §12.2, §13 (SN3a), new §14.5–§14.6, §17 updated. |
+| 2026-10-06 | §9.3: one-line cross-reference to `script-runtime.md` §4 added; no fact changed here (the correction is recorded there as X1). |

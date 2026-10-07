@@ -757,6 +757,7 @@ River-hobbit tables. An implementation that runs the `Startup` script of every c
 Structure and payloads are Confirmed (§4–§5); the run-time behaviour below is Reported:
 inferred from the field and enum names and from how the data uses them. Tessera must
 implement it this way until an owner observation says otherwise.
+For the run-time semantics of these kinds, as the client runs them, see [`script-runtime.md`](script-runtime.md) (BIN; it supersedes this section where they differ, its §25).
 
 <a id="s7-1"></a>
 ### 7.1 Switch (12)
@@ -1476,3 +1477,4 @@ table). Points for the spec owner:
 | Date | Sections | Change | Role |
 |---|---|---|---|
 | 2026-10-05 | §1 (BIN2, RH, T19–T22), §6.1, §6.2, §6.5, new §6.7–§6.9, §8.3, §12 (SI11–SI12), new §13.2, §15, §16 | Held clips (`ManualUpdate`/`ManualTime`), layer combination, the layer-110 `scale_blend` clips of River-hobbit and DwarfStoutAxe, the deformer nodes 18 and 81 and the per-avatar species tables, from data and the client (BIN2, decision 0011); idle-emote layers per body corrected (implementation OPEN answered). | Spec writer (dirty room) |
+| 2026-10-06 | §7 | One-line cross-reference to `script-runtime.md` added to the lead-in; no fact changed. | Spec writer (dirty room) |

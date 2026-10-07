@@ -156,6 +156,19 @@ material only; **Probable** = BIN evidence that was not traced to the end.
 > joined path; the helper was not traced. A reader that **replaces** the last extension
 > matches the observed two-step lookup.
 
+> **OPEN (implementation, 2026-10-07):** whether the original lets a name leave the `Music`
+> folder (an absolute name, or `..` components). Tessera (`tessera_audio::abc::find_song`)
+> keeps lookups inside the folder: such names, and the empty name, are **file not found**.
+
+> **OPEN (implementation, 2026-10-07):** letter case on a case-sensitive file system. The
+> original runs on a file system that ignores letter case, and §11 lists `.ABC`/`.TXT` files
+> too, so `/play Tune` finds `Tune.ABC` there. Tessera's `find_song` tries the exact path for
+> each extension, then the first entry of that folder (in sort order) whose name equals it
+> ignoring ASCII letter case, keeping the `.abc`-then-`.txt` order; only the last component
+> is matched this way. Which file the original picks when several spellings exist was not
+> traced. Tessera's listing gives a stem that itself contains a `.` as the whole file name,
+> so that replacing the last extension finds the listed file again.
+
 <a id="s3-2"></a>
 ### 3.2 Opening and the byte-order mark (Confirmed (BIN))
 
@@ -282,6 +295,11 @@ Combinations are decided by the single character that follows:
 So `|2` is a bar followed by the number 2, `:|1` is a repeat end followed by the number 1,
 `[3` is a chord open followed by the number 3, `||1` is a double bar followed by the number 1,
 and `:|:` is a repeat end followed by a colon. §7 says what each of these does.
+
+> **OPEN (implementation, 2026-10-07):** which non-ASCII characters the C runtime's
+> wide-character tests count as white space and as letters. Tessera uses Unicode's
+> White_Space property for non-ASCII white space and Unicode's Alphabetic property for
+> non-ASCII letters (so U+00A0 is white space, `é` a letter, `§` illegal).
 
 <a id="s4-1"></a>
 ### 4.1 Number tokens (Confirmed (BIN))
@@ -510,6 +528,13 @@ Reading a K: value:
    value. The first item that is not such a pair ends the value; the rest of the line is
    ignored.
 
+> **OPEN (implementation, 2026-10-07):** (1) step 4 with fewer than three letters: whether the
+> one or two letters are consumed before step 6 (this decides whether `K:Am =c` gets the
+> explicit natural). Tessera leaves them, so step 6 sees a letter and the value ends there.
+> (2) Step 6 with an accidental that no note letter follows (`K:G ^ c`, `K:G ^_c`): whether
+> the value just ends or the accidental reader of §7.3 refuses the part (unexpected symbol).
+> Tessera ends the value without an error.
+
 | Mode prefix | Offset |
 |---|---|
 | `maj`, `ion` | 0 |
@@ -734,6 +759,11 @@ marks or broken rhythm inside. Rules:
    **shortest** entry, rests included (§8.4).
 7. A chord counts as one event towards the limit of §7.12.
 
+> **OPEN (implementation, 2026-10-07):** (1) whether rule 2 is checked when the seventh kept
+> entry is read or at the `]` (this decides between **too many notes in chord** and **chord not
+> closed** for `[CDEFGAB c|`). Tessera checks when the seventh kept entry is read. (2) An empty
+> chord `[]` as an element of a tuplet (§7.9): Tessera refuses it with **non-note in tuplet**.
+
 <a id="s7-8"></a>
 ### 7.8 Broken rhythm (Confirmed (BIN + MA))
 
@@ -752,6 +782,10 @@ One to three `>` or `<` written directly after a single note or rest (no space b
    after a space, a bar, a slur's `)`, a grace group, or at the start of a line — cannot start
    an element and refuses the part with **unexpected symbol** (§7.1).
 5. A pending factor left at the end of the part is dropped silently.
+
+> **OPEN (implementation, 2026-10-07):** a mixed run such as `G><A`: whether the symbols are
+> counted together or the second kind starts a new (refused) element. Tessera counts only the
+> run of the first symbol, so `<` after `>` cannot start an element (unexpected symbol).
 
 <a id="s7-9"></a>
 ### 7.9 Tuplets (Confirmed (BIN))
@@ -772,6 +806,11 @@ A tuplet is `(` *p* [`:` [*q*] [`:` [*r*]]] or `(` *p* `::` *r*, written without
 5. The multiplied length is the one checked against the limits of §8.3.
 
 `(` followed by anything but a number is a slur start and is ignored.
+
+> **OPEN (implementation, 2026-10-07):** the position reported for **non-note in tuplet**
+> when prefixes come first (`(3~ G A B|`). Tessera follows §10.2 and reports the token after
+> the prefixes (the space), and an empty chord `[]` in a tuplet at its `[`; the original's
+> choice was not traced.
 
 <a id="s7-10"></a>
 ### 7.10 Prefixes (Confirmed (BIN))
@@ -811,6 +850,10 @@ after the first `+` (a space, a digit, a second `+`) → **unknown volume mark**
 `+` after the letters → **closing plus expected**. A volume mark inside a chord or a tuplet is
 refused by those rules (§7.7, §7.9). The mapping of the values to loudness belongs to
 `sound.md`.
+
+> **OPEN (implementation, 2026-10-07):** which error wins when an unknown name also lacks its
+> closing `+` (`+xyz G`). Tessera reads the letters, then requires the `+` (**closing plus
+> expected**), then looks the name up (**unknown volume mark**).
 
 <a id="s7-12"></a>
 ### 7.12 Event limit (Confirmed (BIN + MA))
@@ -929,6 +972,14 @@ count as equal; equal times keep the order in which the events were created. Eve
 created per note in reading order: the note-on, then at once its note-off — or, for a tied
 note, its pending note-off, which keeps this creation place even though it is released
 later (§9.1).
+
+> **OPEN (implementation, 2026-10-07):** the sort algorithm. "Closer than 0.0001 s counts as
+> equal" is not transitive (0, 0.00006 and 0.00012 s), so the result depends on the algorithm,
+> which is not described. Tessera sorts by exact time (then creation order), then puts each
+> run of events lying within 0.0001 s of the run's first event into creation order. Within
+> such a run a time may be up to 0.0001 s below its predecessor. Also, a full sort
+> never lets output times decrease, but INV10 (§14.1) allows a decrease after an empty
+> chord. Is the original's sort partial, for example a bounded backward insertion?
 
 <a id="s9-3"></a>
 ### 9.3 Re-attacks (Confirmed (BIN))
@@ -1129,6 +1180,44 @@ the command syntax below is Reported (WEB, ER):
 > number is in the game-script data and was not read. (2) The `/playlist` filter syntax and
 > whether sub-folders are listed. (3) Where the synced start time comes from and the meaning
 > of the second start value (0.7 s for a solo start).
+
+> **OPEN (implementation, 2026-10-07):** how the listing reads the X: values (decimal as for
+> the first X: of §5.3, or with base detection as for later ones) and which T: it shows (the
+> first one after the X:, or the first non-empty one). Tessera's `list_songs`: a line counts
+> when it starts, after optional white space, with a letter and a colon. X: values use base
+> detection (what a request matches), and the first non-empty, trimmed T: before the next X:
+> is shown. Sub-folders are not entered, and files that cannot be read list no parts.
+
+> **OPEN (implementation, client commands, 2026-10-07):** the client's player-music commands
+> (`apps/client/src/audio/player_music.rs`) had to choose where this section is silent.
+> Please confirm or state the original's behaviour:
+> (a) **Stop command name.** The spec names no stop command; Tessera uses `/playstop`
+> (cancels the local player's queued and sounding notes, `instruments.md` §8.5, and
+> withdraws a waiting synced part).
+> (b) **`/playlist` filter** (OPEN (2) above): Tessera lists a song when the filter text
+> occurs, ignoring ASCII letter case, in its file name, its file-level title or one of its
+> part titles.
+> (c) **Music folders.** Tessera looks in the original's settings-folder `Music` first and
+> then in its own data folder's `Music`, reporting **file not found** with the first
+> folder's `.txt` path; the original has only the first.
+> (d) **Command arguments.** The part must be a decimal number in the 32-bit range (no base
+> detection, unlike X: values); `sync` is accepted in any letter case; anything else after
+> the name refuses the command with Tessera's own usage text (the original's script
+> behaviour is not in this spec).
+> (e) **When the 0.7 s starts.** Tessera reads the file (and decodes the samples it needs)
+> off the frame thread and starts the solo performance 0.7 s after that read has finished
+> ("after the command is processed", §8.5).
+> (f) **Synchronised group in the sandbox.** Without fellowships, the group is every local
+> player (one); `/playstart` shows the synced-start notice of §10.4 whenever it is processed,
+> also when nothing waits.
+> (g) **Command order.** Tessera processes the commands strictly in the order given: a
+> command waits until every earlier one has finished, including an earlier `/play`'s file
+> read, so `/playstop` or `/playstart` given while a `/play` is still being read acts after
+> it, and of two `/play`s the later one plays. This assumes the original processes each
+> command completely before the next (its reader runs inside the play call); whether its
+> chat layer can reorder or drop commands typed in quick succession was not traced.
+> The music folders are tested on every command, so a `Music` folder created while the
+> client runs is used at once.
 
 ---
 
@@ -1364,6 +1453,10 @@ File (one item per line): `% synthetic`, `T:Example set`, `M:3/4`, `L:1/8`, `Q:9
 - **Request 2:** fields before X:1 apply; part 1 is skipped; part 2 sets L:1/4, so a quarter
   lasts 0.6667 s. Note-ons: 0 D,(50), 0.6667 A,(57), 1.3333 D,(50), 2.0 G,(55) lasting
   1.3333 s.
+
+> **OPEN (implementation, 2026-10-07):** `G,3` is three quarters, so by §6.2 and §8.2 it
+> lasts 3 × 0.6667 = **2.0 s**, not 1.3333 s (the note-on times above agree with the rules).
+> The conformance tests follow the rules (2.0 s). Please confirm or correct the text.
 - **Request 3:** refused: part not found.
 
 <a id="s13-2"></a>

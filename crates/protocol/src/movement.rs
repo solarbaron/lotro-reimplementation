@@ -5,9 +5,9 @@
 use std::time::Duration;
 
 use crate::limits::{
-    ALLOWANCE_WINDOW, DEFAULT_RUN_SPEED, DEFAULT_TICK_RATE, EXTENT_MAX, EXTENT_MIN, GRID_EXTENT,
-    HORIZONTAL_TOLERANCE_FACTOR, LANDBLOCK_SIZE, MAX_CORRECTIONS_PER_SECOND, MAX_DOWN_SPEED,
-    MAX_LANDBLOCK, MAX_UP_SPEED, REST_REDUNDANCY,
+    ALLOWANCE_WINDOW, DEFAULT_TICK_RATE, EXTENT_MAX, EXTENT_MIN, GRID_EXTENT, LANDBLOCK_SIZE,
+    MAX_CORRECTIONS_PER_SECOND, MAX_DOWN_SPEED, MAX_HORIZONTAL_SPEED, MAX_LANDBLOCK, MAX_UP_SPEED,
+    REST_REDUNDANCY,
 };
 use crate::message::{LocationCause, LocationReport, MoveInput};
 use crate::rate::SlidingWindow;
@@ -77,8 +77,8 @@ impl MoveScheduler {
 /// them).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MovementLimits {
-    /// The player's `RUN_SPEED`, m/s; *V*ₕ = 1.25 × this.
-    pub run_speed: f32,
+    /// *V*ₕ, m/s. Independent of `WALK_SPEED` and `RUN_SPEED` (§7.3).
+    pub horizontal_speed: f64,
     /// *V*ᵤ, m/s.
     pub up_speed: f64,
     /// *V*_d, m/s.
@@ -89,26 +89,34 @@ pub struct MovementLimits {
     pub extent_min: f64,
     /// Highest x or y accepted, metres.
     pub extent_max: f64,
+    /// The descent credit of `test-server.md` §8.3 with its reserve *S* in metres, or
+    /// `None` for the protocol's §8.3 procedure exactly (the default).
+    ///
+    /// With a credit, step 5 rejects when *d*ₕ > *A*ₕ + *d*_d, an accepted move leaves
+    /// *A*ₕ = min(*A*ₕ + *d*_d − *d*ₕ, *V*ₕ · *W* + *S*), and *A*ₕ refills at *V*ₕ only while
+    /// below *V*ₕ · *W*. A negative or NaN reserve counts as 0.
+    pub descent_credit: Option<f64>,
 }
 
 impl Default for MovementLimits {
     fn default() -> Self {
         Self {
-            run_speed: DEFAULT_RUN_SPEED,
+            horizontal_speed: MAX_HORIZONTAL_SPEED,
             up_speed: MAX_UP_SPEED,
             down_speed: MAX_DOWN_SPEED,
             window: ALLOWANCE_WINDOW,
             extent_min: EXTENT_MIN,
             extent_max: EXTENT_MAX,
+            descent_credit: None,
         }
     }
 }
 
 impl MovementLimits {
-    /// *V*ₕ in m/s.
-    #[must_use]
-    pub fn horizontal_speed(&self) -> f64 {
-        HORIZONTAL_TOLERANCE_FACTOR * f64::from(self.run_speed)
+    /// The descent-credit reserve *S* in metres (0 without a credit or for a negative or
+    /// NaN value).
+    fn reserve(&self) -> f64 {
+        self.descent_credit.map_or(0.0, |s| s.max(0.0))
     }
 }
 
@@ -174,13 +182,13 @@ impl MovementValidator {
         self.velocity = Vec3::ZERO;
         self.motion = Motion::STANDING;
         let w = self.limits.window.as_secs_f64();
-        self.allow_h = self.limits.horizontal_speed() * w;
+        self.allow_h = self.limits.horizontal_speed * w;
         self.allow_up = self.limits.up_speed * w;
         self.allow_down = self.limits.down_speed * w;
         self.last_time = now;
     }
 
-    /// Changes the limits (for example a new `RUN_SPEED`).
+    /// Changes the limits (for example the settling grace of `test-server.md` §8.3).
     pub fn set_limits(&mut self, limits: MovementLimits) {
         self.limits = limits;
     }
@@ -213,14 +221,19 @@ impl MovementValidator {
         let dt = now.saturating_sub(self.last_time) as f64 / 1e6;
         self.last_time = self.last_time.max(now);
         let w = self.limits.window.as_secs_f64();
-        let vh = self.limits.horizontal_speed();
-        self.allow_h = (self.allow_h + vh * dt).min(vh * w);
+        let vh = self.limits.horizontal_speed;
+        // Refill only below V_h · W; a descent credit may hold it above, up to + S.
+        if self.allow_h < vh * w {
+            self.allow_h = (self.allow_h + vh * dt).min(vh * w);
+        }
+        self.allow_h = self.allow_h.min(vh * w + self.limits.reserve());
         self.allow_up = (self.allow_up + self.limits.up_speed * dt).min(self.limits.up_speed * w);
         self.allow_down =
             (self.allow_down + self.limits.down_speed * dt).min(self.limits.down_speed * w);
     }
 
-    /// Runs steps 2–7 of §8.3 for `input` received at server time `now` (µs). Step 1 (not
+    /// Runs steps 2–7 of §8.3 for `input` received at server time `now` (µs), step 5 with
+    /// the descent credit when [`MovementLimits::descent_credit`] is set. Step 1 (not
     /// InWorld) is the caller's. The caller MAY run further checks of its own after
     /// `Accepted`.
     pub fn check(&mut self, input: &MoveInput, now: u64) -> MoveVerdict {
@@ -242,10 +255,20 @@ impl MovementValidator {
         let dh = p.distance_xy(&new);
         let dz = new.z - p.z;
         let (du, dd) = (dz.max(0.0), (-dz).max(0.0));
-        if !(dh <= self.allow_h && du <= self.allow_up && dd <= self.allow_down) {
+        let credit = if self.limits.descent_credit.is_some() {
+            dd
+        } else {
+            0.0
+        };
+        if !(dh <= self.allow_h + credit && du <= self.allow_up && dd <= self.allow_down) {
             return self.reject(now);
         }
-        self.allow_h -= dh;
+        self.allow_h = if self.limits.descent_credit.is_some() {
+            let w = self.limits.window.as_secs_f64();
+            (self.allow_h + dd - dh).min(self.limits.horizontal_speed * w + self.limits.reserve())
+        } else {
+            self.allow_h - dh
+        };
         self.allow_up -= du;
         self.allow_down -= dd;
         self.last_seq = Some(input.seq);
@@ -255,7 +278,7 @@ impl MovementValidator {
             heading: input.heading,
             anchor,
         };
-        let vh = self.limits.horizontal_speed() as f32;
+        let vh = self.limits.horizontal_speed as f32;
         let mut v = input.velocity;
         let h = v.horizontal_length();
         if h > vh && h > 0.0 {
@@ -366,13 +389,13 @@ mod tests {
             anchor: Some(Anchor::new(6, 6, 3)),
         };
         let mut v = MovementValidator::new(MovementLimits::default(), 1, pose, 0);
-        // 7.5 m allowance at start.
+        // 8.5 m allowance at start.
         assert_eq!(
             v.check(&input(10, 1, 1007.0, 1000.0, 10.0), 0),
             MoveVerdict::Accepted
         );
-        assert_eq!(v.velocity().x, 7.5);
-        assert_eq!(v.velocity().z, -60.0);
+        assert_eq!(v.velocity().x, 8.5);
+        assert_eq!(v.velocity().z, -100.0);
         assert!(v.pose().anchor.is_some());
         assert_eq!(
             v.check(&input(10, 1, 1007.0, 1000.0, 10.0), 0),
@@ -382,7 +405,7 @@ mod tests {
             v.check(&input(11, 0, 1007.0, 1000.0, 10.0), 0),
             MoveVerdict::StaleEpoch
         );
-        // Half a second later: 0.5 + 3.75 m available.
+        // Half a second later: 1.5 + 4.25 m available.
         assert_eq!(
             v.check(&input(11, 1, 1011.0, 1000.0, 10.0), 500_000),
             MoveVerdict::Accepted
@@ -419,6 +442,168 @@ mod tests {
             v.check(&input(1, 5, 1011.0, 1000.0, 3.0), 2_000_000),
             MoveVerdict::Accepted
         ));
+    }
+
+    const SEND_US: u64 = 66_667;
+
+    fn flat_pose() -> Pose {
+        Pose {
+            location: Location::new(1, 10_000.0, 10_000.0, 1_000.0),
+            heading: 0.0,
+            anchor: None,
+        }
+    }
+
+    fn server_limits() -> MovementLimits {
+        MovementLimits {
+            descent_credit: Some(16.0),
+            ..MovementLimits::default()
+        }
+    }
+
+    /// Feeds 15 Hz `MoveInput`s east from `v`'s pose, one per (horizontal, vertical)
+    /// speed pair in m/s, from server time `now`. Returns the index of the first input
+    /// not accepted, if any, and the time after the last one.
+    fn drive(
+        v: &mut MovementValidator,
+        seq: &mut u32,
+        mut now: u64,
+        speeds: impl IntoIterator<Item = (f64, f64)>,
+    ) -> (Option<usize>, u64) {
+        let dt = SEND_US as f64 / 1e6;
+        for (i, (h, vz)) in speeds.into_iter().enumerate() {
+            now += SEND_US;
+            *seq += 1;
+            let p = v.pose().location;
+            let m = MoveInput {
+                seq: *seq,
+                epoch: v.epoch(),
+                location: Location::new(1, p.x + h * dt, p.y, p.z + vz * dt),
+                heading: 0.0,
+                velocity: Vec3::new(h as f32, 0.0, vz as f32),
+                motion: Motion::new(Gait::Running, false),
+            };
+            if v.check(&m, now) != MoveVerdict::Accepted {
+                return (Some(i), now);
+            }
+        }
+        (None, now)
+    }
+
+    /// `n` sends at constant speeds.
+    fn steady(n: usize, h: f64, vz: f64) -> impl Iterator<Item = (f64, f64)> {
+        std::iter::repeat_n((h, vz), n)
+    }
+
+    /// A slide at the default terminal velocity of 50 m/s down a 47° face for 3 s, then
+    /// the run-out on walkable ground braking at 38.5 m/s² down to 6.5 m/s, then 3 s of
+    /// running at 6.5 m/s (`test-server.md` §4.5, §8.3).
+    fn slide() -> Vec<(f64, f64)> {
+        let a = 47f64.to_radians();
+        let (h, vz) = (50.0 * a.cos(), -50.0 * a.sin());
+        let mut out: Vec<(f64, f64)> = steady(45, h, vz).collect();
+        let dt = SEND_US as f64 / 1e6;
+        let mut speed = h;
+        while speed > 6.5 {
+            let next = (speed - 38.5 * dt).max(6.5);
+            out.push(((speed + next) / 2.0, 0.0));
+            speed = next;
+        }
+        out.extend(steady(45, 6.5, 0.0));
+        out
+    }
+
+    #[test]
+    fn fast_legitimate_slide_is_accepted_with_the_descent_credit() {
+        let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
+        let mut seq = 0;
+        let (fail, _) = drive(&mut v, &mut seq, 0, slide());
+        assert_eq!(fail, None);
+        assert_eq!(v.epoch(), 1, "no correction");
+        // The relayed velocity is still clamped to V_h.
+        assert!(v.velocity().horizontal_length() <= 8.5);
+        // The protocol's procedure without the credit corrects the same slide at once.
+        let mut v = MovementValidator::new(MovementLimits::default(), 1, flat_pose(), 0);
+        let mut seq = 0;
+        let (fail, _) = drive(&mut v, &mut seq, 0, slide());
+        assert!(fail.is_some_and(|i| i < 10), "{fail:?}");
+    }
+
+    #[test]
+    fn fastest_controlled_run_is_accepted() {
+        for limits in [MovementLimits::default(), server_limits()] {
+            let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+            let mut seq = 0;
+            // 6.5 m/s on the flat and up a 45° slope (6.5 m/s along it), for 10 s each.
+            let up = 6.5 * 45f64.to_radians().sin();
+            let (fail, now) = drive(&mut v, &mut seq, 0, steady(150, 6.5, 0.0));
+            assert_eq!(fail, None);
+            let (fail, _) = drive(&mut v, &mut seq, now, steady(150, up, up));
+            assert_eq!(fail, None);
+        }
+    }
+
+    #[test]
+    fn too_fast_move_is_corrected() {
+        for limits in [MovementLimits::default(), server_limits()] {
+            // Sustained 10 m/s on the flat: the 8.5 m burst drains at 1.5 m/s (about 5.3 s).
+            let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+            let mut seq = 0;
+            let (fail, _) = drive(&mut v, &mut seq, 0, steady(150, 10.0, 0.0));
+            assert!(fail.is_some_and(|i| (75..=90).contains(&i)), "{fail:?}");
+            assert_eq!(v.epoch(), 2);
+            // One 9 m jump right after the epoch starts.
+            let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+            let mut m = input(1, 1, 10_009.0, 10_000.0, 1_000.0);
+            m.velocity = Vec3::ZERO;
+            assert!(matches!(v.check(&m, 0), MoveVerdict::Corrected(_)));
+            // Rising faster than V_u.
+            let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+            let mut seq = 0;
+            let (fail, _) = drive(&mut v, &mut seq, 0, steady(60, 0.0, 15.0));
+            assert!(fail.is_some(), "rise at 15 m/s");
+        }
+    }
+
+    #[test]
+    fn descent_credit_is_capped() {
+        // A long fall fills the credit up to V_h · W + S = 24.5 m, no more.
+        let mut v = MovementValidator::new(server_limits(), 1, flat_pose(), 0);
+        let mut seq = 0;
+        let (fail, now) = drive(&mut v, &mut seq, 0, steady(30, 0.0, -50.0));
+        assert_eq!(fail, None);
+        let p = v.pose().location;
+        let burst = |seq: u32, dx: f64| MoveInput {
+            seq,
+            epoch: 1,
+            location: Location::new(1, p.x + dx, p.y, p.z),
+            heading: 0.0,
+            velocity: Vec3::ZERO,
+            motion: Motion::new(Gait::Running, false),
+        };
+        let mut w = v.clone();
+        assert!(matches!(
+            w.check(&burst(seq + 1, 24.6), now),
+            MoveVerdict::Corrected(_)
+        ));
+        assert_eq!(v.check(&burst(seq + 1, 24.4), now), MoveVerdict::Accepted);
+        // Spent: the next metre right away is too much.
+        let p = v.pose().location;
+        let mut m = burst(seq + 2, 0.0);
+        m.location.x = p.x + 1.0;
+        assert!(matches!(v.check(&m, now), MoveVerdict::Corrected(_)));
+        // A negative reserve counts as no reserve.
+        let limits = MovementLimits {
+            descent_credit: Some(-5.0),
+            ..MovementLimits::default()
+        };
+        let mut v = MovementValidator::new(limits, 1, flat_pose(), 0);
+        let mut seq = 0;
+        let (_, now) = drive(&mut v, &mut seq, 0, steady(30, 0.0, -50.0));
+        let p = v.pose().location;
+        let mut m = burst(seq + 1, 0.0);
+        m.location = Location::new(1, p.x + 8.6, p.y, p.z);
+        assert!(matches!(v.check(&m, now), MoveVerdict::Corrected(_)));
     }
 
     #[test]

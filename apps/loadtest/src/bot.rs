@@ -473,7 +473,7 @@ pub const CHEAT_POSE_TOLERANCE: f64 = 1.5;
 /// Observers are watched for the refused target this long after the cheat: hold, answer
 /// time, the interpolation delay and a second of margin.
 pub const CHEAT_WATCH: Duration = Duration::from_millis(200 + 2_000 + 1_500);
-/// Distance of a cheating move, metres (far above the 7.5 m/s × 1 s allowance, §8.3).
+/// Distance of a cheating move, metres (far above the 8.5 m/s × 1 s allowance, §8.3).
 pub const CHEAT_DISTANCE: f64 = 40.0;
 
 /// One bot.
@@ -1318,7 +1318,7 @@ impl Bot {
                 .get_or_insert_with(|| now + iv.mul_f64(self.rng.range(0.3, 1.0)));
             if now >= next {
                 self.next_cheat = Some(now + jitter(&mut self.rng, iv));
-                // 40 m in one move: far above the 7.5 m allowance (§8.3), pointed into the
+                // 40 m in one move: far above the 8.5 m allowance (§8.3), pointed into the
                 // area so the clamp never shortens it much.
                 let (cx, cy) = (
                     (ctx.area.min_x + ctx.area.max_x) / 2.0,

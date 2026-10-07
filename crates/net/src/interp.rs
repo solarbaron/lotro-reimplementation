@@ -36,6 +36,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::f64::consts::{PI, TAU};
 use std::time::Duration;
 
+use tessera_protocol::limits::MAX_HORIZONTAL_SPEED;
 pub use tessera_protocol::types::{Gait, Motion};
 
 use crate::NetError;
@@ -47,9 +48,9 @@ pub const DEFAULT_DELAY: Duration = Duration::from_millis(150);
 /// How long a sample may run past the newest snapshot on its velocity before it holds
 /// (§8.6).
 pub const DEFAULT_MAX_EXTRAPOLATION: Duration = Duration::from_millis(250);
-/// The horizontal speed bound *V*ₕ of §8.3 with the default `RUN_SPEED` (1.25 × 6 m/s), used
+/// The horizontal speed bound *V*ₕ of §8.3 (8.5 m/s; independent of `RUN_SPEED`, §7.3), used
 /// by the teleport test of §8.6.
-pub const DEFAULT_SNAP_SPEED: f32 = 7.5;
+pub const DEFAULT_SNAP_SPEED: f32 = MAX_HORIZONTAL_SPEED as f32;
 /// The fixed margin of the teleport test of §8.6, in metres.
 pub const DEFAULT_SNAP_MARGIN: f32 = 5.0;
 /// How much history a buffer keeps behind its newest snapshot (§8.6: "the snapshots
@@ -138,16 +139,6 @@ impl InterpConfig {
             Duration::from_micros(1_000_000u64.div_ceil(u64::from(snapshot_rate.max(1))));
         let wanted = (self.delay + interval).min(MAX_CONFIG_DURATION * 2);
         self.history = self.history.max(wanted);
-        self
-    }
-
-    /// The configuration with *V*ₕ = 1.25 × `run_speed` (§8.3), for an entity whose run
-    /// speed is known. Non-finite or non-positive speeds keep the current value.
-    #[must_use]
-    pub fn with_run_speed(mut self, run_speed: f32) -> Self {
-        if run_speed.is_finite() && run_speed > 0.0 {
-            self.snap_speed = 1.25 * run_speed;
-        }
         self
     }
 }
@@ -594,7 +585,7 @@ mod tests {
         let cfg = InterpConfig::default();
         let mut b = SnapshotBuffer::new();
         b.push(snap(0, 0.0, 0.0, 0.0), &cfg);
-        // 100 ms later 500 m away: far above 7.5 · 0.1 + 5.
+        // 100 ms later 500 m away: far above 8.5 · 0.1 + 5.
         b.push(snap(100, 500.0, 0.0, 0.0), &cfg);
         let s = b.sample(50_000, &cfg).unwrap();
         assert_eq!(s.kind, SampleKind::Snapped);
@@ -664,7 +655,7 @@ mod tests {
             ..InterpConfig::default()
         };
         assert!(bad.validate().is_err());
-        assert_eq!(InterpConfig::default().with_run_speed(8.0).snap_speed, 10.0);
+        assert_eq!(InterpConfig::default().snap_speed, 8.5);
         // The documented rule is the checked one: history equal to the delay is enough.
         let edge = InterpConfig {
             delay: Duration::from_millis(500),

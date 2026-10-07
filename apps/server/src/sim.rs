@@ -21,9 +21,8 @@ use tessera_protocol::codes::{
 };
 use tessera_protocol::frame::{encode_datagram, frame_to_vec};
 use tessera_protocol::limits::{
-    DEFAULT_TICK_RATE, HORIZONTAL_TOLERANCE_FACTOR, MAX_CHARACTERS,
-    MAX_MOTION_DATAGRAMS_PER_SNAPSHOT, MAX_MOTION_ENTRIES, WORLD_BACKLOG_FATAL,
-    WORLD_BACKLOG_GRACE, WORLD_BACKLOG_PAUSE, WORLD_BACKLOG_RESUME,
+    DEFAULT_TICK_RATE, MAX_CHARACTERS, MAX_MOTION_DATAGRAMS_PER_SNAPSHOT, MAX_MOTION_ENTRIES,
+    WORLD_BACKLOG_FATAL, WORLD_BACKLOG_GRACE, WORLD_BACKLOG_PAUSE, WORLD_BACKLOG_RESUME,
 };
 use tessera_protocol::message::{
     ChatChannel, ChatMessage, ChatSend, DestroyReason, EntityAppearance, EntityCreate,
@@ -373,19 +372,22 @@ impl Sim {
             stats,
         } = parts;
         let m = &config.movement;
-        // V_h = tolerance × run speed (§4.5); the validator's V_h is
-        // HORIZONTAL_TOLERANCE_FACTOR × its run speed, so give it V_h / that factor.
-        let run_eff = (m.tolerance / HORIZONTAL_TOLERANCE_FACTOR * f64::from(m.run_speed)) as f32;
+        // §4.5 and §8.3: the limits do not depend on the walk and run speeds; the descent
+        // credit lets slides down steep faces pass.
         let limits = MovementLimits {
-            run_speed: run_eff,
+            horizontal_speed: m.max_horizontal_speed,
             up_speed: m.max_up_speed,
             down_speed: m.max_down_speed,
             window: Duration::from_secs_f64(m.window_s),
+            descent_credit: Some(m.slide_reserve),
             ..MovementLimits::default()
         };
+        // During the settling grace descents are not checked, so they earn no credit
+        // either (otherwise a claimed descent would lift the horizontal check).
         let grace_limits = MovementLimits {
             up_speed: GRACE_VERTICAL,
             down_speed: GRACE_VERTICAL,
+            descent_credit: None,
             ..limits
         };
         let mut name_index = HashMap::new();

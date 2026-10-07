@@ -171,12 +171,13 @@ pub const DEFAULT_RUN_SPEED: f32 = 6.0;
 pub const MAX_MOVE_SPEED: f32 = 100.0;
 /// Horizontal speed below which a grounded avatar is Standing, m/s (§8.1).
 pub const STANDING_SPEED: f32 = 0.15;
-/// *V*ₕ as a factor of `RUN_SPEED` (§8.3).
-pub const HORIZONTAL_TOLERANCE_FACTOR: f64 = 1.25;
+/// *V*ₕ, m/s (§8.3): the fastest controlled speed of the character controller, 6.5 m/s,
+/// plus 30 %. It does not depend on `WALK_SPEED` or `RUN_SPEED` (§7.3).
+pub const MAX_HORIZONTAL_SPEED: f64 = 8.5;
 /// *V*ᵤ, m/s (§8.3).
 pub const MAX_UP_SPEED: f64 = 10.0;
-/// *V*_d, m/s (§8.3).
-pub const MAX_DOWN_SPEED: f64 = 60.0;
+/// *V*_d, m/s (§8.3): the controller's speed cap, above its terminal velocities.
+pub const MAX_DOWN_SPEED: f64 = 120.0;
 /// *W*, the allowance window (§8.3).
 pub const ALLOWANCE_WINDOW: Duration = Duration::from_secs(1);
 /// Lowest x or y of the movement extent, metres (§8.3).

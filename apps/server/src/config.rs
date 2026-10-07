@@ -134,18 +134,25 @@ pub struct WorldSection {
 }
 
 /// `[movement]` (§4.5).
+///
+/// The validation defaults follow the character controller (`collision.md` §12), not the
+/// walk and run speeds, which only drive gait and animation: *V*ₕ = 8.5 m/s (fastest
+/// controlled speed 6.5 m/s + 30 %), *V*ᵤ = 10 m/s, *V*_d = 120 m/s (the controller's speed
+/// cap), and a descent credit with *S* = 16 m so slides down steep faces pass (§8.3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MovementSection {
-    /// `WALK_SPEED`, m/s.
+    /// `WALK_SPEED` sent to each player, m/s; gait and animation only.
     pub walk_speed: f32,
-    /// `RUN_SPEED`, m/s.
+    /// `RUN_SPEED` sent to each player, m/s; gait and animation only.
     pub run_speed: f32,
-    /// *V*ₕ = tolerance × run speed.
-    pub tolerance: f64,
-    /// *V*ᵤ, m/s.
+    /// *V*ₕ, m/s (6.5–120, default 8.5).
+    pub max_horizontal_speed: f64,
+    /// *V*ᵤ, m/s (6.5–120, default 10).
     pub max_up_speed: f64,
-    /// *V*_d, m/s.
+    /// *V*_d, m/s (50–200, default 120).
     pub max_down_speed: f64,
+    /// *S*, metres of descent credit kept for a slide's run-out (0–100, default 16, §8.3).
+    pub slide_reserve: f64,
     /// *W*, seconds.
     pub window_s: f64,
     /// Settling grace after ground spawns and `Ground` teleports, seconds.
@@ -264,9 +271,10 @@ impl Default for Config {
             movement: MovementSection {
                 walk_speed: 2.0,
                 run_speed: 6.0,
-                tolerance: 1.25,
+                max_horizontal_speed: 8.5,
                 max_up_speed: 10.0,
-                max_down_speed: 60.0,
+                max_down_speed: 120.0,
+                slide_reserve: 16.0,
                 window_s: 1.0,
                 settle_grace_s: 3.0,
             },
@@ -801,9 +809,10 @@ fn parse_movement(r: &mut Reader<'_, '_>, v: View<'_, '_>, m: &mut MovementSecti
         &[
             "walk_speed",
             "run_speed",
-            "tolerance",
+            "max_horizontal_speed",
             "max_up_speed",
             "max_down_speed",
+            "slide_reserve",
             "window_s",
             "settle_grace_s",
         ],
@@ -831,26 +840,34 @@ fn parse_movement(r: &mut Reader<'_, '_>, v: View<'_, '_>, m: &mut MovementSecti
     float_key(
         r,
         v,
-        "tolerance",
-        |f| (1.0..=3.0).contains(&f),
-        "1.0–3.0",
-        &mut m.tolerance,
+        "max_horizontal_speed",
+        |f| (6.5..=120.0).contains(&f),
+        "6.5–120",
+        &mut m.max_horizontal_speed,
     );
     float_key(
         r,
         v,
         "max_up_speed",
-        |f| (7.0..=100.0).contains(&f),
-        "7–100",
+        |f| (6.5..=120.0).contains(&f),
+        "6.5–120",
         &mut m.max_up_speed,
     );
     float_key(
         r,
         v,
         "max_down_speed",
-        |f| (20.0..=200.0).contains(&f),
-        "20–200",
+        |f| (50.0..=200.0).contains(&f),
+        "50–200",
         &mut m.max_down_speed,
+    );
+    float_key(
+        r,
+        v,
+        "slide_reserve",
+        |f| (0.0..=100.0).contains(&f),
+        "0–100",
+        &mut m.slide_reserve,
     );
     float_key(
         r,
@@ -1021,6 +1038,48 @@ mod tests {
 
         let (_, f) = Config::parse("[accounts]\nhash_workers = 8\nargon2_memory_kib = 1048576\n");
         assert_eq!(f.len(), 1, "{f:?}");
+    }
+
+    #[test]
+    fn movement_defaults_and_ranges() {
+        // §4.5: the defaults follow the character controller, not the walk and run speeds.
+        let m = Config::default().movement;
+        assert_eq!((m.walk_speed, m.run_speed), (2.0, 6.0));
+        assert_eq!(m.max_horizontal_speed, 8.5);
+        assert_eq!(m.max_up_speed, 10.0);
+        assert_eq!(m.max_down_speed, 120.0);
+        assert_eq!(m.slide_reserve, 16.0);
+        assert_eq!((m.window_s, m.settle_grace_s), (1.0, 3.0));
+
+        let (c, f) = Config::parse(
+            "[movement]
+max_horizontal_speed = 120.0
+max_up_speed = 6.5
+max_down_speed = 50.0
+slide_reserve = 0.0
+",
+        );
+        assert!(f.is_empty(), "{f:?}");
+        assert_eq!(c.movement.max_horizontal_speed, 120.0);
+        assert_eq!(c.movement.max_up_speed, 6.5);
+        assert_eq!(c.movement.max_down_speed, 50.0);
+        assert_eq!(c.movement.slide_reserve, 0.0);
+
+        // Out of range, and the retired `tolerance` key, are findings on their lines.
+        let (c, f) = Config::parse(
+            "[movement]
+max_horizontal_speed = 6.4
+max_up_speed = 121.0
+max_down_speed = 49.0
+slide_reserve = 100.5
+tolerance = 1.25
+",
+        );
+        let lines: Vec<_> = f.iter().map(|f| (f.line, f.rule)).collect();
+        for line in 2..=6 {
+            assert!(lines.contains(&(line, Rule::Config)), "line {line}: {f:?}");
+        }
+        assert_eq!(c.movement, Config::default().movement);
     }
 
     #[test]

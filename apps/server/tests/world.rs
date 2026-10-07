@@ -28,8 +28,141 @@ fn plain_content() -> Content {
 fn fast_config() -> tessera_server::Config {
     let mut c = TestServer::config();
     c.movement.run_speed = 100.0;
-    c.movement.tolerance = 3.0;
+    c.movement.max_horizontal_speed = 120.0;
+    c.movement.window_s = 5.0;
     c
+}
+
+/// The default `[movement]` limits without the settling grace, so the vertical checks and
+/// the descent credit apply from the first move (`test-server.md` §4.5, §8.3).
+fn strict_config() -> tessera_server::Config {
+    let mut c = TestServer::config();
+    c.movement.settle_grace_s = 0.0;
+    c
+}
+
+/// One `MoveInput` send interval at 15 Hz (`tessera-protocol.md` §8.2).
+const SEND: Duration = Duration::from_micros(66_667);
+
+/// Sends one 15 Hz `MoveInput` per (horizontal east, vertical) speed pair in m/s, moving
+/// from `from` by speed × [`SEND`] each, and waits [`SEND`] after each. Returns the last
+/// location sent and the first `LocationReport(CORRECTED)` seen, if any.
+async fn send_moves(
+    c: &mut RawClient,
+    from: Location,
+    speeds: &[(f64, f64)],
+) -> (Location, Option<LocationReport>) {
+    let dt = SEND.as_secs_f64();
+    let mut l = from;
+    for &(h, vz) in speeds {
+        l.x += h * dt;
+        l.z += vz * dt;
+        c.move_to(
+            l,
+            Vec3::new(h as f32, 0.0, vz as f32),
+            Motion::new(Gait::Running, false),
+        );
+        if let Some(r) = correction(c).await {
+            return (l, Some(r));
+        }
+    }
+    (l, None)
+}
+
+/// Waits [`SEND`] and returns the first `LocationReport(CORRECTED)` received meanwhile.
+async fn correction(c: &mut RawClient) -> Option<LocationReport> {
+    c.drain(SEND).await.into_iter().find_map(|r| match r {
+        Received::World(Message::LocationReport(r)) if r.cause == LocationCause::Corrected => {
+            Some(r)
+        }
+        _ => None,
+    })
+}
+
+/// A slide down a face at `angle` degrees from horizontal at `speed` m/s along it, for
+/// `sends` 15 Hz sends.
+fn slide(angle: f64, speed: f64, sends: usize) -> Vec<(f64, f64)> {
+    let a = angle.to_radians();
+    vec![(speed * a.cos(), -speed * a.sin()); sends]
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn fast_legitimate_slide_is_not_corrected() {
+    let s = TestServer::start(strict_config(), plain_content(), &["alice"]);
+    let (mut a, w) = s.player("alice", "Aldith").await;
+    // A 2 s slide at the default terminal velocity of 50 m/s down a 47° face (34 m/s
+    // horizontally, far above V_h = 8.5 m/s), the run-out on walkable ground braking at
+    // 38.5 m/s² down to 6.5 m/s, 1 s of running, then a 2 s Slide-layer slide at 100 m/s
+    // down an 80° face (98.5 m/s down, above the old V_d of 60 m/s).
+    let mut speeds = slide(47.0, 50.0, 30);
+    let dt = SEND.as_secs_f64();
+    let mut v = speeds[0].0;
+    while v > 6.5 {
+        let next = (v - 38.5 * dt).max(6.5);
+        speeds.push(((v + next) / 2.0, 0.0));
+        v = next;
+    }
+    speeds.extend(std::iter::repeat_n((6.5, 0.0), 15));
+    speeds.extend(slide(80.0, 100.0, 30));
+    speeds.extend(std::iter::repeat_n((0.0, 0.0), 4));
+    let (end, corrected) = send_moves(&mut a, w.pose.location, &speeds).await;
+    assert!(corrected.is_none(), "{corrected:?}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    a.send(&Message::QueryLocation { request_id: 7 }).await;
+    let r = a
+        .world_msg(|m| match m {
+            Message::LocationReport(r) if r.cause == LocationCause::Requested => Some(r.clone()),
+            _ => None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(r.epoch, w.epoch, "no correction started a new epoch");
+    assert!(
+        (r.pose.location.x - end.x).abs() < 1e-6,
+        "{:?}",
+        r.pose.location
+    );
+    assert!(
+        (r.pose.location.z - end.z).abs() < 1e-6,
+        "{:?}",
+        r.pose.location
+    );
+    assert!(end.x - w.pose.location.x > 100.0 && w.pose.location.z - end.z > 250.0);
+    assert_eq!(s.handle().stats().corrections, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn too_fast_move_is_corrected() {
+    let s = TestServer::start(strict_config(), plain_content(), &["alice"]);
+    let (mut a, w) = s.player("alice", "Aldith").await;
+    // 6.5 m/s, the fastest controlled speed, for 2 s: accepted.
+    let (l, corrected) = send_moves(&mut a, w.pose.location, &[(6.5, 0.0); 30]).await;
+    assert!(corrected.is_none(), "{corrected:?}");
+    // 14 m/s on the flat with no descent, positions taken from the elapsed time so late
+    // sends do not slow it down: the 8.5 m burst drains at 5.5 m/s, gone after about 1.5 s.
+    let start = tokio::time::Instant::now();
+    let mut corrected = None;
+    for _ in 0..75 {
+        let mut next = l;
+        next.x += 14.0 * start.elapsed().as_secs_f64();
+        a.move_to(
+            next,
+            Vec3::new(14.0, 0.0, 0.0),
+            Motion::new(Gait::Running, false),
+        );
+        corrected = correction(&mut a).await;
+        if corrected.is_some() {
+            break;
+        }
+    }
+    let r = corrected.expect("a sustained 14 m/s run is corrected");
+    assert_eq!(r.epoch, w.epoch.wrapping_add(1));
+    assert_eq!(r.request_id, 0);
+    assert!(
+        r.pose.location.x > l.x,
+        "corrected to the last accepted position"
+    );
+    assert!(s.handle().stats().corrections >= 1);
 }
 
 #[tokio::test(flavor = "current_thread")]

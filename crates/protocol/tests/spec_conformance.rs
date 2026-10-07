@@ -4013,7 +4013,7 @@ fn open_review_anchor_outlives_the_interior() {
         anchor: Some(anchor),
     };
     let mut v = MovementValidator::new(MovementLimits::default(), 1, start, 0);
-    // East at 6 m/s (below the 7.5 m/s tolerance), one MoveInput per 15 Hz send.
+    // East at 6 m/s (below the 8.5 m/s V_h), one MoveInput per 15 Hz send.
     let step_us = 66_667_u64;
     let mut x = 20_250.5_f64;
     let mut now = 0_u64;

@@ -54,7 +54,8 @@
 //! | [`texture_list`] | texture lists / mip chains (0x40), level selection | `texture-list.md` |
 //! | [`enum_mapper`] | enum mappers (0x23) | §7 |
 //! | [`did_map`] | DID maps (0x28) | §8 |
-//! | [`sound`] | sound records (0x0A) and container sniffing | §9 |
+//! | [`sound`] | sound payload records (0x0A): container sniffing, storage format, SN1/SN2 check, WAV chunks | §9, `sound.md` §3, §12.2 |
+//! | [`sound_info`] | sound infos (0x2A): flags, priority, distances, payload, SI1–SI3 check | `sound.md` §4 |
 //! | [`setup`] | entity descriptors (0x47), visual templates (0x1F), setups (0x04), chain resolution | `setup.md` §2–§7 |
 //! | [`appearance`] | appearance records (0x20), block choice, part priorities, slot table, appearance lists | `setup.md` §8, `appearance.md` §3–§4 |
 //! | [`avatar`] | race table, avatar bodies, bone-slider definitions | `appearance.md` §2–§3, §6 |
@@ -80,6 +81,7 @@ mod record;
 pub mod script_table;
 pub mod setup;
 pub mod sound;
+pub mod sound_info;
 pub mod string_info;
 pub mod string_table;
 pub mod surface;
@@ -97,8 +99,8 @@ pub use decode::{
     decode_enum_mapper, decode_landblock_data, decode_landblock_group, decode_landblock_info,
     decode_landblock_properties, decode_property_dictionary, decode_property_set,
     decode_property_value, decode_region_descriptor, decode_script_table, decode_scriptlet,
-    decode_setup, decode_sound, decode_string_info, decode_string_table, decode_surface,
-    decode_texture_list, decode_visual_template,
+    decode_setup, decode_sound, decode_sound_info, decode_string_info, decode_string_table,
+    decode_surface, decode_texture_list, decode_visual_template,
 };
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
@@ -129,7 +131,8 @@ pub use setup::{
     EntityDescriptor, EntityHeader, ResolveError, Setup, SetupChain, VisualTemplate, resolve_setup,
     resolve_setup_did,
 };
-pub use sound::{AudioContainer, SoundRecord, WaveInfo};
+pub use sound::{AudioContainer, SoundIssue, SoundRecord, StorageFormat, WaveInfo};
+pub use sound_info::{SoundInfo, SoundInfoFlags, SoundInfoIssue};
 pub use string_info::{StringArg, StringArgValue, StringArgs, StringInfo, StringSource};
 pub use string_table::{
     MessagePart, MessageParts, StringTable, StringTableEntry, StringTableIssue,

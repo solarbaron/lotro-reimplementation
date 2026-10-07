@@ -39,7 +39,12 @@ owner's in-game readings. **M4 (characters and animation) is done on Tessera's s
 ([M4 status](docs/ROADMAP.md#m4-status)): every skeleton and clip decodes,
 characters of all 14 playable bodies assemble with worn and held items and play idle, walk
 and run with GPU skinning, and 50 of them animate at over 250 fps on the reference machine.
-Still open are the owner's comparisons with the original client. Nothing here is playable
+Still open are the owner's comparisons with the original client. **M6 (audio and player
+music) passes on Tessera's side** ([M6 status](docs/ROADMAP.md#m6-status)): all 44,329 sound
+payloads decode, area music cross-fades at area borders in the walker, an ABC conformance
+suite of original tunes passes (156 / 156 rows), and a 10-minute flight had no audio
+underruns (indicative, to be repeated on the idle reference machine); the owner's listening
+comparisons are pending. Nothing here is playable
 yet: the walker flies and walks over the world offline, with an animated avatar and the NPCs the data places.
 
 | Area | State |
@@ -59,7 +64,8 @@ yet: the walker flies and walks over the world offline, with an animated avatar 
 | Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
 | Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run (42 / 42 checklist rows, River-hobbit height and body-shape controls included); a 48-item worn/held checklist matches |
 | `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 257 fps headless (p99 6.6 ms) on the reference machine |
-| UI and plugins, audio, own test server | planned (M5–M7) |
+| Sound payloads (Ogg Vorbis, WAV), sound infos, script-table sound nodes; script-graph runtime (`tessera-scriptgraph`); audio engine on cpal with our own mixer (decision 0019); world audio in the walker (area music, ambience, emitters); ABC player music (`/play`, `/playstart`, `/playlist`, `/playstop`) with instruments and synchronised start | done on Tessera's side (M6): 44,329 / 44,329 payloads decode; area-music cross-fade at borders; ABC conformance 156 / 156; 0 underruns in a 603 s flight (indicative); owner's listening checks pending |
+| UI and plugins, own test server | planned (M5, M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

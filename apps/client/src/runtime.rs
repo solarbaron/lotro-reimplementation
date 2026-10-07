@@ -202,7 +202,10 @@ impl Runtime {
                 tracing::info!(dir = %plugins_dir.display(), "no plugins folder (use --plugins)");
             }
         }
-        let plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        let mut plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        plugins.set_music(crate::audio::player_music::PlayerMusic::new(
+            crate::audio::player_music::MusicConfig::from_args(args, &root),
+        ));
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -300,6 +303,9 @@ impl Runtime {
                 self.texture_settled = true;
             }
             LoaderEvent::Opened { root, set, stats } => {
+                if let Some(m) = self.plugins.music_mut() {
+                    m.attach_data(Arc::clone(&set), &root);
+                }
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
             }

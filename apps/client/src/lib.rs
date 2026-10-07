@@ -10,8 +10,11 @@
 //! - [`walker`]: the offline world walker (ROADMAP M3, M4 characters); [`walker_host`]
 //!   wires it into the runtime, [`headless`] runs it offscreen (`--screenshot`,
 //!   `--fly-path --headless`, `--duration --headless`); [`avatar`] parses `--avatar`.
+//! - [`audio`]: world audio for the walker (ROADMAP M6): the audio engine driven by the
+//!   script graphs (area music, ambience, positional emitters).
 
 pub mod app;
+pub mod audio;
 pub mod avatar;
 pub mod cli;
 pub mod data;

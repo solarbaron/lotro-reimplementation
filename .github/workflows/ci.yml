@@ -138,6 +138,10 @@ jobs:
             .
             fuzz
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: ALSA headers for the audio device backend (tessera-audio feature `device`, decision 0019)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: all features
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -174,6 +178,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          # ALSA headers for builds that enable tessera-audio's `device` feature (decision
+          # 0019): `--all-features`, or the client's opt-in `audio-device` feature. A plain
+          # workspace build does not need them.
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - name: Build
         run: cargo build --workspace --all-targets --locked
       # Golden images (crates/render/tests/golden/, apps/client/tests/golden/) are the
@@ -219,6 +227,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.msrv.outputs.workspace }}
+      - name: ALSA headers for the audio device backend (tessera-audio feature `device`, decision 0019)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - name: cargo check on the workspace MSRV (without the explorer)
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.workspace }}

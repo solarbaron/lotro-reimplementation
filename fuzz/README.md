@@ -70,6 +70,14 @@ stable without libFuzzer.
 | `explorer_character_spec` | the explorer's character-view options (`apps/explorer/src/charspec.rs`, included by path): `--character`, `--wear`, `--clip`, `--time`, `--sliders`, `--times`, `--angles`, `--tile`, `--focus`, the word-list round trip, and `mesh_skin` in `geometry.rs` | `appearance.md` §2.2, §6.3, `skeleton-anim.md` §4 |
 | `client_avatar_spec` | the walker's `--avatar` grammar (`apps/client/src/avatar.rs`, included by path): item and figure prefixes, dye codes, item limits, print/parse round trip | `docs/specs/walker.md` §10 |
 | `net_npc_events` | sandbox character events under a hostile world source (figures with arbitrary appearances, avatar, wanderers, crowd) and arbitrary moves and clock steps: `EntityCreated`/`AppearanceChanged` validity, unique live IDs, `StaticsCleared`, crowd bounds | `tessera-net` `sandbox`, `walker.md` §10.1 |
+| `formats_sound_info` | sound-info (0x2A) and sound-payload (0x0A) decoding, `AnyRecord` routing, `SoundInfo::validate`, the strict WAV parse; Sound and SoundEnvironment nodes inside a synthetic scriptlet | `docs/specs/sound.md` §3, §4, §9.1, §9.4, §12 |
+| `audio_decode` | `tessera_audio::decode` on raw container bytes and 0x0A records, on Ogg streams built from the input with valid CRCs, and on those streams behind valid Vorbis headers (setup-header walk, played range, streaming and buffered paths) | `sound.md` §3, §12.2 |
+| `audio_engine` | the audio engine on the offline backend driven by arbitrary operations: hostile requests, stops, scheduled starts and stops, settings, listener and positioners, reverb environments, payload loads, renders, reopen; the pitch law | `sound.md` §6–§8, decision 0019 |
+| `audio_abc` | `tessera_audio::abc::parse` on arbitrary bytes (part-request byte, optional reference header), §14.1 invariant checks on accepted parts | `docs/specs/abc-dialect.md` §3–§9, §14 |
+| `audio_instruments` | the instrument-table builder on script tables decoded from the input or built as script trees, and the music player driven by arbitrary events | `docs/specs/instruments.md` §5–§10 |
+| `scriptgraph_runtime` | the script-graph runtime on decoded tables and scriptlets or on generated graphs (every control-flow kind, sounds, environments, driven pairs) under arbitrary operations and clock steps | `docs/specs/script-runtime.md` |
+| `client_audio` | the walker's world-audio inputs (`apps/client/src/audio/clock.rs` and `props.rs`, included by path): game-time decoding, area-music and monitor-volume rules, and the read-only `[Sound]` import of `tessera-settings` | `sound.md` §10.3, `environment.md` §6, `install-layout.md` §8.3 |
+| `client_player_music` | the player-music chat commands (`apps/client/src/audio/player_music/command.rs`, included by path) on arbitrary text | `abc-dialect.md` §11 |
 
 ## Running
 

@@ -122,7 +122,8 @@ constraints that show up as structure:
      render  audio*  ui*  input*  settings*  plugins*(→script)  net(backends)  entity*
         │      │      │     │                   │               │
  L3 world & assets   world*  terrain*  anim*  mesh*  material*  │
-        └──────┴──────┴──────┬─────────────────────────────────┘
+                     scriptgraph*                               │
+        └──────┴──────┴──────┬──────────────────────────────────┘
  L2 asset system          assets*   props*/wstate*/text*
                              │
  L1 record decoders       formats  (+ havok*)
@@ -163,7 +164,8 @@ Rules:
 | `tessera-material` (`crates/material`) | L3 | M2 | Surface → material → texture-list → texture chains, shader-feature classification, dye rules (§12). |
 | `tessera-entity` (`crates/entity`) | L4 | M4 | Main-thread entity store: generational entity IDs, sparse-set component columns, the client's component sets (transform, network ID, render and animation handles as type parameters, landblock membership of streamed statics), per-frame change and despawn lists, deferred removal ([0008](decisions/0008-entity-storage.md)). Depends on no other Tessera crate; L4 because it holds the client's game state, which lower layers never see. |
 | `tessera-render` (`crates/render`) | L4 | M0 | wgpu renderer: device and surface, frame graph, pipelines and WGSL shaders, texture/mesh uploads, headless mode (§13). |
-| `tessera-audio` (`crates/audio`) | L4 | M6 | Mixer, 3D sound, music regions, Vorbis/WAV decoding, player-music (ABC) synthesis (§14). |
+| `tessera-audio` (`crates/audio`) | L4 | M6 | Output backend (cpal behind the `device` feature; null and offline backends otherwise) and the project-owned mixer: channels and volumes, positional voices, gain chain, distance law, voice limit, request gates, reverb environments, sample-accurate scheduling; Vorbis/WAV decoding; player music (ABC dialect, instruments) (§14, [0019](decisions/0019-audio-backend.md)). |
+| `tessera-scriptgraph` (`crates/scriptgraph`) | L3 | M6 | Continuous script-graph runtime: keeps script-table and scriptlet node instances alive over time (Switches, Sequences, Timers, Randoms, driven properties, intensities) and hands sound and sound-environment effects to sinks that the client wires to `tessera-audio`. Depends on `formats` only, not on `audio`. |
 | `tessera-ui` (`crates/ui`) | L4 | M5 | Retained widget tree built from UI layout records, user skins and plugin controls; text layout; 2D batching (§15). |
 | `tessera-input` (`crates/input`) | L4 | M3 | Raw input → actions via a keymap; input contexts; gamepad (§16). |
 | `tessera-settings` (`crates/settings`) | L4 | M1 | Tessera's own settings file (INI-shaped), with a read-only importer for the original client's preferences file (§17). |
@@ -660,9 +662,31 @@ surfaces (0x41), with a reference to a compiled shader record (0x2B).
 <a id="audio"></a>
 ## 14. Audio and music (`tessera-audio`)
 
-- **Output:** kira on cpal (Decision, to be confirmed by an ADR at M6). Requirements:
-  streamed playback for music, many short positional sounds, per-bus volumes, smooth
-  crossfades between music regions.
+- **Output:** cpal behind the `tessera-audio` feature `device`, with a project-owned mixer
+  (Decision, [0019](decisions/0019-audio-backend.md); kira was considered and not used).
+  Without the feature, the crate builds with no system audio libraries and offers a null
+  backend (wall-clock mixing, output discarded; `--headless`) and an offline backend
+  (renders into a buffer; tests and tools). Requirements: streamed playback for music, many
+  short positional sounds, per-channel volumes, smooth crossfades between music regions.
+- **Engine (`tessera_audio::engine`, Decision 0019):**
+  - **Main thread:** `AudioEngine` takes `SoundRequest`s and applies the request gates of
+    `sound.md` §6.8. Once per frame it computes each voice's gain (gain chain §6.1, distance
+    law §6.2), panning relative to the camera (§6.7), the gain-0 rule and the voice limit
+    (§6.6).
+  - **Audio thread:** the mixer receives the results through a wait-free command ring
+    (§21). It resamples by pitch, loops, starts and stops at audio-clock frames with sample
+    accuracy (`instruments.md` §12), fades out linearly (§6.5) and feeds the reverb of the
+    active environment (§8). It never allocates, frees or locks.
+  - **Back to the main thread:** finished voices return through an event ring, and tracked
+    requests produce completion events for their script nodes.
+  - **Payloads:** decoded payloads come from the asset workers through a one-shot payload
+    channel. Streamed sources are decoded by a feeder thread (device and null backends;
+    inline between blocks for the offline backend), never by the audio thread; the first
+    4,096 frames of a new stream are decoded on the main thread when its voice starts.
+  - **Back-end loss:** a lost device completes every live request and refuses new ones
+    until the client calls `AudioEngine::reopen()` (decision 0019).
+  - **Stats:** active and virtualised voices, device xruns, mixer overloads and mixer load
+    (M6 exit criterion 4).
 - **Decoding:** Ogg Vorbis and WAV payloads (Reported) decoded by pure-Rust decoders on
   worker threads; long tracks streamed.
 - **Spatial:** listener follows the camera; emitters attached to entities; distance
@@ -907,7 +931,8 @@ subtracts its camera anchor in `f64` and narrows to `f32` (the §9.1 render posi
 |---|---|---|
 | **Main** (winit event loop thread) | Window, input, entity store, streamer, UI tree, Lua states, wgpu queue submission and resource creation | Request queue to workers; completion channel from workers; command channel to audio; event channel from network |
 | **Asset workers** (N = available cores − 2, at least 1) | Nothing long-lived; run jobs: read, inflate, decode, transcode, mesh/terrain generation, animation decompression and sampling | Priority job queue in; completion channel out; cancellation tokens |
-| **Audio** (owned by the audio backend) | Mixer state, voices, streams | Lock-free command queue from main |
+| **Audio** (owned by the audio backend) | Mixer state, voices, streams | Lock-free command queue from main; event ring back to main (finished voices are dropped there) |
+| **Audio feeder** (`tessera-audio`, device and null backends) | Stream decoders of playing streamed voices | Job channel from main; wait-free sample rings to the audio thread |
 | **Network** (when a socket backend is active) | Sockets, protocol state machine, crypto | Bounded channels to and from main |
 | **Index builder** (tools only) | Full DID index build | Result handed to the UI thread |
 

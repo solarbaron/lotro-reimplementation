@@ -56,6 +56,14 @@ pub struct FrameRow {
     pub anim_upload_ms: f64,
     /// Worker time of the sampling jobs collected this frame, ms.
     pub anim_worker_ms: f64,
+    /// Main thread: world audio update (graph, engine, properties), ms.
+    pub audio_ms: f64,
+    /// Audible voices (playing or fading).
+    pub audio_voices: usize,
+    /// Device underruns so far (cumulative).
+    pub audio_underruns: u64,
+    /// Mixer load of the last mixer call (render time over audio time).
+    pub mixer_load: f64,
     /// Viewer position (region-global).
     pub x: f64,
     /// Viewer position.
@@ -109,6 +117,16 @@ pub struct Summary {
     pub anim_worker_ms: f64,
     /// Longest main-thread time of the whole character layer in one frame, ms.
     pub max_characters_ms: f64,
+    /// Mean main-thread audio update per frame, ms.
+    pub audio_ms: f64,
+    /// Longest main-thread audio update, ms.
+    pub max_audio_ms: f64,
+    /// Device underruns during the log (last row's count minus the first's).
+    pub audio_underruns: u64,
+    /// Highest mixer load seen in a row.
+    pub max_mixer_load: f64,
+    /// Most audible voices in one frame.
+    pub max_audio_voices: usize,
 }
 
 impl Summary {
@@ -166,6 +184,17 @@ impl std::fmt::Display for Summary {
                 self.max_characters_ms,
             )?;
         }
+        if self.max_audio_ms > 0.0 {
+            write!(
+                f,
+                "; audio {:.3} ms/frame (max {:.2} ms), up to {} voices, {} underruns, mixer load max {:.1} %",
+                self.audio_ms,
+                self.max_audio_ms,
+                self.max_audio_voices,
+                self.audio_underruns,
+                100.0 * self.max_mixer_load,
+            )?;
+        }
         Ok(())
     }
 }
@@ -206,17 +235,20 @@ impl FrameLog {
     /// I/O errors.
     pub fn write_csv(&self, path: &Path) -> std::io::Result<()> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
+        // The audio columns (M6) are appended after `x,y,z` so that readers of the earlier
+        // columns keep working (walker.md §7, OPEN on documenting them).
         writeln!(
             w,
             "frame,t_s,frame_ms,cpu_ms,stream_ms,uploaded_bytes,resident_blocks,resident_bytes,\
              loading,near_missing,gpu_bytes,rss_bytes,object_draws,terrain_draws,characters,\
-             character_draws,characters_ms,anim_collect_ms,anim_submit_ms,anim_upload_ms,anim_worker_ms,x,y,z"
+             character_draws,characters_ms,anim_collect_ms,anim_submit_ms,anim_upload_ms,anim_worker_ms,x,y,z,\
+             audio_ms,audio_voices,audio_underruns,mixer_load"
         )?;
         for (i, r) in self.rows.iter().enumerate() {
             writeln!(
                 w,
                 "{i},{:.4},{:.3},{:.3},{:.3},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},\
-                 {:.2},{:.2},{:.2}",
+                 {:.2},{:.2},{:.2},{:.4},{},{},{:.4}",
                 r.t,
                 r.frame_ms,
                 r.cpu_ms,
@@ -239,7 +271,11 @@ impl FrameLog {
                 r.anim_worker_ms,
                 r.x,
                 r.y,
-                r.z
+                r.z,
+                r.audio_ms,
+                r.audio_voices,
+                r.audio_underruns,
+                r.mixer_load
             )?;
         }
         if self.dropped > 0 {
@@ -281,6 +317,10 @@ pub fn summarize(rows: &[FrameRow]) -> Summary {
         s.max_anim_main_ms = s.max_anim_main_ms.max(main);
         s.max_characters_ms = s.max_characters_ms.max(r.characters_ms);
         s.max_characters = s.max_characters.max(r.characters);
+        s.audio_ms += r.audio_ms / n;
+        s.max_audio_ms = s.max_audio_ms.max(r.audio_ms);
+        s.max_mixer_load = s.max_mixer_load.max(r.mixer_load);
+        s.max_audio_voices = s.max_audio_voices.max(r.audio_voices);
         if r.characters > 0 {
             s.min_character_draws = s.min_character_draws.min(r.character_draws);
         }
@@ -294,6 +334,10 @@ pub fn summarize(rows: &[FrameRow]) -> Summary {
         s.peak_rss = s.peak_rss.max(r.rss);
         s.near_missing_frames += usize::from(r.near_missing > 0);
     }
+    s.audio_underruns = rows
+        .last()
+        .map_or(0, |r| r.audio_underruns)
+        .saturating_sub(rows.first().map_or(0, |r| r.audio_underruns));
     if s.min_character_draws == usize::MAX {
         s.min_character_draws = 0;
     }
@@ -412,6 +456,26 @@ mod tests {
             s.to_string()
                 .contains("80.0 % of the animation work on workers")
         );
+    }
+
+    #[test]
+    fn audio_summary() {
+        let rows: Vec<FrameRow> = (0..4)
+            .map(|i| FrameRow {
+                t: f64::from(i),
+                frame_ms: 16.0,
+                audio_ms: 0.5,
+                audio_voices: i as usize,
+                audio_underruns: if i == 3 { 7 } else { 2 },
+                mixer_load: 0.1 * f64::from(i),
+                ..FrameRow::default()
+            })
+            .collect();
+        let s = summarize(&rows);
+        assert_eq!((s.audio_underruns, s.max_audio_voices), (5, 3));
+        assert!((s.audio_ms - 0.5).abs() < 1e-12 && (s.max_mixer_load - 0.3).abs() < 1e-12);
+        assert!(s.to_string().contains("5 underruns"));
+        assert!(!summarize(&rows[..0]).to_string().contains("audio"));
     }
 
     #[test]

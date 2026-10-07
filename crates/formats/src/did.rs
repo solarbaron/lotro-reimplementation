@@ -215,6 +215,9 @@ pub enum DidKind {
     StringTableReported,
     /// 0x28: DID maps.
     DataIdMap,
+    /// 0x2A: sound infos (playback parameters naming a 0x0A payload; `sound.md` §4),
+    /// decoded by [`crate::SoundInfo`].
+    SoundInfo,
     /// 0x2B: compiled shader programs.
     ShaderProgram,
     /// 0x30: materials.
@@ -295,6 +298,7 @@ impl DidKind {
             0x25 => Self::StringTable,
             0x26 => Self::StringTableReported,
             0x28 => Self::DataIdMap,
+            0x2A => Self::SoundInfo,
             0x2B => Self::ShaderProgram,
             0x30 => Self::Material,
             0x31 => Self::SurfaceDescriptor,
@@ -323,6 +327,7 @@ impl DidKind {
     pub fn evidence(self) -> Evidence {
         match self {
             Self::Sound
+            | Self::SoundInfo
             | Self::EnumMapper
             | Self::StringTable
             | Self::DataIdMap
@@ -382,6 +387,7 @@ impl DidKind {
             Self::StringTable => "string table",
             Self::StringTableReported => "string table (reported)",
             Self::DataIdMap => "DID map",
+            Self::SoundInfo => "sound info",
             Self::ShaderProgram => "shader program",
             Self::Material => "material",
             Self::SurfaceDescriptor => "surface descriptor",

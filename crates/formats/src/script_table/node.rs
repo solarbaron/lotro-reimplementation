@@ -396,11 +396,145 @@ pub struct TimerNode {
     pub tools_animation_override: Did,
 }
 
+/// Property IDs of the Sound node's fields (`sound.md` §9.1), as named by a node's driven
+/// map ([`BaseBlock::driven`]) and by scriptlet parameters.
+pub mod sound_pid {
+    /// `SoundScript_SoundID`.
+    pub const SOUND_ID: u32 = 0x8C;
+    /// `SoundScript_FireAndForget`.
+    pub const FIRE_AND_FORGET: u32 = 0x2C3;
+    /// `SoundScript_MoveWithEntity`.
+    pub const MOVE_WITH_ENTITY: u32 = 0x1D3;
+    /// `SoundScript_UseCameraPosition`.
+    pub const USE_CAMERA_POSITION: u32 = 0x702;
+    /// `SoundScript_MinRandomDistance`.
+    pub const MIN_RANDOM_DISTANCE: u32 = 0x2C2;
+    /// `SoundScript_MaxRandomDistance`.
+    pub const MAX_RANDOM_DISTANCE: u32 = 0x1D2;
+    /// `SoundScript_Offset`.
+    pub const OFFSET: u32 = 0x44F;
+    /// `SoundScript_Channel`.
+    pub const CHANNEL: u32 = 0x4EA;
+    /// `SoundScript_RampOutTime`.
+    pub const RAMP_OUT_TIME: u32 = 0xEC;
+    /// `SoundScript_Pitch`.
+    pub const PITCH: u32 = 0x583;
+    /// `SoundScript_PitchVariance`.
+    pub const PITCH_VARIANCE: u32 = 0x3A2;
+    /// `SoundEnvironmentScript_Name` (SoundEnvironment node, `sound.md` §9.4).
+    pub const ENVIRONMENT_NAME: u32 = 0x21F;
+    /// `SoundEnvironmentScript_Priority` (SoundEnvironment node, `sound.md` §9.4).
+    pub const ENVIRONMENT_PRIORITY: u32 = 0x3F1;
+}
+
+/// Data of a Sound node (kind 48; 43 bytes, `sound.md` §9.1, `script-table.md` §5.3).
+///
+/// Stored values are kept as they are: the dictionary limits (`Pitch` −1–1,
+/// `PitchVariance` 0–1, `RampOutTime` 0–4 s, random distances 0–250 m) are exceeded by some
+/// nodes and the minimum random distance may exceed the maximum. The start algorithm
+/// (`sound.md` §9.2) clamps only the random distances
+/// ([`SoundNode::random_distance_range`]) and the pitch floor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoundNode {
+    /// `SoundScript_SoundID`: the sound info to play (a 0x2A DID). The null DID marks a
+    /// placeholder, or a node whose value comes from a driven property.
+    pub sound: Did,
+    /// `SoundScript_FireAndForget`: true: start and complete at once; false: the node runs
+    /// until the sound completes and stops the sound when the node stops.
+    pub fire_and_forget: bool,
+    /// `SoundScript_MoveWithEntity`: true: the source follows the entity every frame; false:
+    /// fixed at the entity's position when the sound starts.
+    pub move_with_entity: bool,
+    /// `SoundScript_UseCameraPosition`: the source is the camera position (live).
+    pub use_camera_position: bool,
+    /// `SoundScript_MinRandomDistance`: lower bound of the random offset distance, metres.
+    pub min_random_distance: f32,
+    /// `SoundScript_MaxRandomDistance`: upper bound of the random offset distance, metres.
+    pub max_random_distance: f32,
+    /// `SoundScript_Offset`: offset from the entity origin in the entity frame, metres.
+    pub offset: [f32; 3],
+    /// `SoundScript_Channel`: the `SoundChannel` enum value (`sound.md` §7; 0–8 observed).
+    pub channel: u32,
+    /// `SoundScript_RampOutTime`: fade-out seconds when the sound is stopped.
+    pub ramp_out_time: f32,
+    /// `SoundScript_Pitch`: pitch shift (`sound.md` §6.3).
+    pub pitch: f32,
+    /// `SoundScript_PitchVariance`: random pitch spread (`sound.md` §6.3).
+    pub pitch_variance: f32,
+}
+
+impl Default for SoundNode {
+    /// The constructor defaults (`instruments.md` §15): fire-and-forget and move-with-entity
+    /// on, everything else 0 and no sound info.
+    fn default() -> Self {
+        Self {
+            sound: Did(0),
+            fire_and_forget: true,
+            move_with_entity: true,
+            use_camera_position: false,
+            min_random_distance: 0.0,
+            max_random_distance: 0.0,
+            offset: [0.0; 3],
+            channel: 0,
+            ramp_out_time: 0.0,
+            pitch: 0.0,
+            pitch_variance: 0.0,
+        }
+    }
+}
+
+impl SoundNode {
+    /// Stored size of the data (§9.1).
+    pub const SIZE: usize = 43;
+
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(Self {
+            sound: r.did()?,
+            fire_and_forget: r.bool8()?,
+            move_with_entity: r.bool8()?,
+            use_camera_position: r.bool8()?,
+            min_random_distance: r.f32()?,
+            max_random_distance: r.f32()?,
+            offset: [r.f32()?, r.f32()?, r.f32()?],
+            channel: r.u32()?,
+            ramp_out_time: r.f32()?,
+            pitch: r.f32()?,
+            pitch_variance: r.f32()?,
+        })
+    }
+
+    /// Whether the **stored** `SoundScript_SoundID` is the null DID.
+    ///
+    /// This is a fact about the stored bytes only: a node whose `SoundScript_SoundID` is
+    /// driven from an entity property gets its value at run time and may well play
+    /// (`sound.md` §9.1, §9.2 step 1). Use [`Node::is_sound_placeholder`] to find the nodes
+    /// that never play.
+    #[must_use]
+    pub fn stored_sound_is_null(&self) -> bool {
+        self.sound.0 == 0
+    }
+
+    /// The random offset distance range of `sound.md` §9.2 step 5: both bounds clamped to
+    /// ≥ 0, and the minimum lowered to the maximum when it is larger.
+    ///
+    /// A bound that is not finite (NaN or ±infinity, which only hostile data stores) counts
+    /// as 0, so both returned bounds are always finite, non-negative and ordered, and a
+    /// uniform draw between them is well defined (the spec does not say how the original
+    /// treats such values; `sound.md` §9.2 OPEN). Large finite values are kept.
+    #[must_use]
+    pub fn random_distance_range(&self) -> (f32, f32) {
+        let clamp = |v: f32| if v.is_finite() { v.max(0.0) } else { 0.0 };
+        let max = clamp(self.max_random_distance);
+        let min = clamp(self.min_random_distance).min(max);
+        (min, max)
+    }
+}
+
 /// Kind-specific node data (§5, §6).
 ///
-/// Kinds that clip selection uses are decoded into typed variants; every other kind is
-/// walked field by field (so the record can be decoded to its end) and kept as
-/// [`NodeData::Opaque`].
+/// Kinds that clip selection and the sound runtime use are decoded into typed variants;
+/// every other kind is walked field by field (so the record can be decoded to its end) and
+/// kept as [`NodeData::Opaque`].
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum NodeData {
@@ -499,6 +633,15 @@ pub enum NodeData {
         time: f32,
         /// `…_UseBoneWeights`.
         use_bone_weights: bool,
+    },
+    /// Sound (48): play a sound info (`sound.md` §9.1–§9.2).
+    Sound(Box<SoundNode>),
+    /// SoundEnvironment (62): register a reverb environment while running (`sound.md` §9.4).
+    SoundEnvironment {
+        /// `SoundEnvironmentScript_Name`: the environment preset (enum 0x23000080).
+        name: u32,
+        /// `SoundEnvironmentScript_Priority`.
+        priority: i32,
     },
     /// SliderMeshDeformer (81): the bone sliders of a figure (§6.9).
     SliderMeshDeformer {
@@ -719,6 +862,28 @@ impl Node {
         }
     }
 
+    /// The sound data, if this is a Sound node (kind 48).
+    #[must_use]
+    pub fn sound(&self) -> Option<&SoundNode> {
+        match &self.data {
+            NodeData::Sound(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Whether this is a Sound node that can never play: its stored `SoundScript_SoundID`
+    /// is the null DID **and** no driven property supplies one (`sound.md` §9.1 "92
+    /// placeholders"). Such a node's start fails and counts as completed at once (§9.2 step
+    /// 1, §9.6). A node with a null stored ID whose ID is driven
+    /// ([`sound_pid::SOUND_ID`] in [`BaseBlock::driven`]) is not a placeholder: whether it
+    /// plays depends on the driven value. False for every other kind.
+    #[must_use]
+    pub fn is_sound_placeholder(&self) -> bool {
+        self.sound().is_some_and(|s| {
+            s.stored_sound_is_null() && self.base.driven_source(sound_pid::SOUND_ID).is_none()
+        })
+    }
+
     /// Ports of type `ty`.
     pub fn ports_of(&self, ty: PortType) -> impl Iterator<Item = &Port> {
         self.ports.iter().filter(move |p| p.port_type == ty)
@@ -802,7 +967,6 @@ const MESH_FX_FIXED: &[F] = &[
 ];
 const FIRE_MISSILE_FIXED: &[F] = &[U, U, V3, W4, W4, W4, W4, W4, W4, B, B, B, B, U];
 const DETECT: &[F] = &[U, U, U, V3, V3, B, W4, B, B, B, B, U, B, B, U, B, B];
-const SOUND: &[F] = &[U, B, B, B, W4, W4, V3, U, W4, W4, W4];
 const MOVE_TO: &[F] = &[
     B, B, V3, B, B, W4, B, W4, W4, W4, W4, B, B, B, B, B, B, B, B, W4, B, W4, W4, B, B, U, B, B,
     Pos,
@@ -840,7 +1004,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         39 => &[B, Rgba, W4],
         44 => &[U, U, W4, W4],
         46 => DETECT,
-        48 => SOUND,
         49 => &[U],
         51 => MOVE_TO,
         53 => &[U, U, U, U],
@@ -848,7 +1011,6 @@ fn fixed_layout(kind: u8) -> Option<&'static [F]> {
         56 => &[U, U, U, B],
         59 => PARTICLE,
         60 => EDIT_MATERIAL,
-        62 => &[U, W4],
         81 => &[Str, U],
         _ => return None,
     })
@@ -1077,6 +1239,15 @@ impl<'s, S: PropertySchema + ?Sized> NodeDecoder<'s, S> {
                 key: r.u32()?,
                 modifier: r.f32()?,
                 persistent: r.bool8()?,
+            },
+            48 => {
+                let s = SoundNode::read(r)?;
+                r.charge(std::mem::size_of::<SoundNode>())?;
+                NodeData::Sound(Box::new(s))
+            }
+            62 => NodeData::SoundEnvironment {
+                name: r.u32()?,
+                priority: r.i32()?,
             },
             61 => NodeData::Goto {
                 name: r.pascal_string()?,

@@ -103,6 +103,17 @@ else
   warn "Mesa lavapipe not found — software golden checks run via llvmpipe GL instead (crates/render/tests/golden/README.md)"
 fi
 
+echo "== Audio (tessera-audio feature \`device\`, decision 0019)"
+if [[ "$(uname -s)" == Linux ]]; then
+  if have pkg-config && pkg-config --exists alsa 2>/dev/null; then
+    ok "ALSA headers (alsa.pc) for the cpal device backend"
+  else
+    warn "ALSA headers not found (Debian/Ubuntu: libasound2-dev; Fedora: alsa-lib-devel; Arch: alsa-lib; Gentoo: media-libs/alsa-lib) — needed only for builds with audio output (the client with --features audio-device, or --all-features); tests use the offline backend"
+  fi
+else
+  ok "audio device backend needs no system headers on $(uname -s)"
+fi
+
 echo "== Dirty-room research (spec writers only)"
 clones="${TESSERA_CLONES_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tessera/clones}"
 if [[ "$fetch" == 1 ]]; then

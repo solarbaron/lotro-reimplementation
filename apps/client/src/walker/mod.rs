@@ -332,6 +332,8 @@ pub struct WalkerConfig {
     pub bench: Option<BenchPlan>,
     /// Move forward on its own from the start: `Some(true)` walking, `Some(false)` running.
     pub autorun: Option<bool>,
+    /// World audio (ROADMAP M6); off by default.
+    pub audio: crate::audio::AudioConfig,
 }
 
 impl Default for WalkerConfig {
@@ -357,6 +359,7 @@ impl Default for WalkerConfig {
             characters: CharacterConfig::default(),
             bench: None,
             autorun: None,
+            audio: crate::audio::AudioConfig::default(),
         }
     }
 }
@@ -415,6 +418,8 @@ pub struct Walker {
     player_region: u8,
     /// Main-thread time of the character layer this frame (events, figures, animation).
     chars_ms: f64,
+    /// World audio (`None` with audio off).
+    audio: Option<crate::audio::WorldAudio>,
 }
 
 impl std::fmt::Debug for Walker {
@@ -537,6 +542,15 @@ impl Walker {
             budget_mib = config.stream.residency_budget >> 20,
             "world walker ready"
         );
+        let audio =
+            (config.audio.backend != crate::audio::backend::BackendChoice::Off).then(|| {
+                crate::audio::WorldAudio::new(
+                    config.audio.clone(),
+                    Arc::clone(&set),
+                    pool.clone(),
+                    ctx.options().active_content_layers.clone(),
+                )
+            });
         let far = far_plane(config.stream.rings.far);
         let config_region = config.region;
         let config_bench = config.bench;
@@ -584,6 +598,7 @@ impl Walker {
             char_draws: Vec::new(),
             player_region: config_region,
             chars_ms: 0.0,
+            audio,
         })
     }
 
@@ -798,6 +813,27 @@ impl Walker {
         chars_ms += t_chars.elapsed().as_secs_f64() * 1e3;
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
+
+        // World audio: listener at the camera, the avatar at the player (ROADMAP M6).
+        if self.audio.is_some() {
+            let placed = self.controls.placed();
+            let eye = placed.then(|| {
+                let (e, d) = self.view();
+                (e, [d.x, d.y, d.z])
+            });
+            let player = self
+                .controls
+                .avatar()
+                .or_else(|| placed.then(|| (self.controls.focus(), self.controls.heading())));
+            if let Some(audio) = self.audio.as_mut() {
+                audio.update(crate::audio::AudioInput {
+                    dt: f64::from(dt),
+                    streamer: &self.streamer,
+                    eye,
+                    player,
+                });
+            }
+        }
 
         if let Some(w) = world {
             self.report_move(w, now);
@@ -1226,6 +1262,9 @@ impl Walker {
                 ),
                 GREY,
             ));
+            if let Some(a) = &self.audio {
+                out.push((a.hud_line(), GREY));
+            }
             if self.flight.is_none() {
                 out.push((
                     format!("{} (fly {:.0} m/s)", self.help, self.controls.fly_speed()),
@@ -1344,6 +1383,8 @@ impl Walker {
         let os = self.objects.stats();
         let cs = self.characters.stats();
         let r = &self.last_report;
+        let audio = self.audio.as_ref().map(|a| a.stats());
+        let engine = audio.and_then(|a| a.engine);
         let Some(log) = &mut self.log else { return };
         log.push(FrameRow {
             t: start
@@ -1368,6 +1409,10 @@ impl Walker {
             anim_submit_ms: cs.submit_ms,
             anim_upload_ms: cs.palette_ms,
             anim_worker_ms: cs.worker_ms,
+            audio_ms: audio.map_or(0.0, |a| a.update_ms),
+            audio_voices: engine.map_or(0, |e| e.active_voices),
+            audio_underruns: engine.map_or(0, |e| e.underruns),
+            mixer_load: engine.map_or(0.0, |e| f64::from(e.mixer_load)),
             x: p.x,
             y: p.y,
             z: p.z,
@@ -1417,8 +1462,17 @@ impl Walker {
         Some(describe(&lock(&self.shared), &pos, self.controls.heading()))
     }
 
+    /// World audio, when on.
+    #[must_use]
+    pub fn audio(&self) -> Option<&crate::audio::WorldAudio> {
+        self.audio.as_ref()
+    }
+
     /// Frees GPU resources and stops the workers.
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>) {
+        if let Some(a) = self.audio.as_mut() {
+            a.shutdown();
+        }
         self.characters.shutdown(renderer, &mut self.objects);
         self.terrain.shutdown();
         self.clear_all(renderer);

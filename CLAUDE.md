@@ -80,6 +80,13 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
+- **M6 audio and player music (branch m6, verified 2026-10-07):** done on Tessera's side.
+  Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
+  listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
+  decision 0010). Owner items: `docs/checklists/owner-observations.md` O18. Player music
+  (`/play`, `/playstart`, `/playlist`, `/playstop`, `/instrument`) is in
+  `apps/client/src/audio/player_music.rs`, reached through `tessera-client --music-command
+  "<line>"` (no chat input yet). M4.5, M5 and M7 run in parallel worktrees; M8 is gated.
 - **Next:** M4.5, world fidelity (owner decision 2026-10-06: it runs before M5; M5–M8 keep
   their numbers): terrain texturing, scenery and grass, collision and the walk controller
   (new crate `tessera-physics`), water, materials and the lit pipeline, sky, time of day

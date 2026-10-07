@@ -431,7 +431,7 @@ fn node_kinds_and_payloads_round_out() {
         base(3),
         &[when_test],
     );
-    // A Sound node (fixed layout, skipped as opaque) and a Particle node with its extra byte.
+    // A Sound node (typed, `sound.md` §9.1) and a Particle node with its extra byte.
     let sound = node(
         48,
         B::new()
@@ -547,7 +547,10 @@ fn node_kinds_and_payloads_round_out() {
         }
         p => panic!("{p:?}"),
     }
-    assert!(matches!(roots[2].data, NodeData::Opaque { len: 43, .. }));
+    match &roots[2].data {
+        NodeData::Sound(s) => assert_eq!(s.sound.0, 0x2A00_0001),
+        d => panic!("{d:?}"),
+    }
     assert_eq!(roots[3].particle_flag, Some(true));
     match &roots[4].data {
         NodeData::Run(r) => assert_eq!(r.script, 0x1000_0042),

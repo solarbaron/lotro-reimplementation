@@ -8,6 +8,8 @@
 #     TESSERA_GAME_DIR when it is set (CI never has an install); unset = synthetic only
 #   - TESSERA_REQUIRE_GPU is left as it is in your environment (CI sets 1 on Linux);
 #     --require-gpu sets it
+#   - TESSERA_PERF (frame-time assertions of real-data tests, docs/DEVELOPMENT.md §5) is
+#     passed through as it is in your environment; --perf sets it to 1
 #   - CARGO_INCREMENTAL, CARGO_PROFILE_DEV_DEBUG and CARGO_TERM_COLOR are not overridden,
 #     so the local build cache stays valid for plain `cargo` runs
 #   - jobs whose tools are missing (MSRV toolchains, cargo-deny, reuse, a DCO base) are
@@ -30,7 +32,7 @@
 #   fuzz             tools/fuzz-smoke.sh -t SECS -j 2
 #
 # Usage: tools/ci-local.sh [--quick] [--jobs N] [--skip JOB[,JOB...]]... [--base REF]
-#                          [--fuzz-secs N] [--synthetic] [--require-gpu] [--list]
+#                          [--fuzz-secs N] [--synthetic] [--require-gpu] [--perf] [--list]
 #   --quick          only fmt, clippy (workspace, default features) and unit tests
 #                    (cargo test --lib --bins, release, --no-fail-fast)
 #   --jobs N         parallel compile jobs (exports CARGO_BUILD_JOBS=N)
@@ -39,6 +41,7 @@
 #   --fuzz-secs N    run time per fuzz target (default 10, as CI on pushes)
 #   --synthetic      unset TESSERA_GAME_DIR for this run (real-data tests skip)
 #   --require-gpu    export TESSERA_REQUIRE_GPU=1 (a missing GPU adapter fails, as in CI)
+#   --perf           export TESSERA_PERF=1 (assert frame-time budgets; needs an idle machine)
 #   --list           print the job names and exit
 # Exit status: 0 every job passed, warned or was skipped; 1 a job failed; 2 usage error.
 
@@ -90,6 +93,7 @@ while [ $# -gt 0 ]; do
             fuzz_secs="$2"; shift 2 ;;
         --synthetic) unset TESSERA_GAME_DIR; shift ;;
         --require-gpu) export TESSERA_REQUIRE_GPU=1; shift ;;
+        --perf) export TESSERA_PERF=1; shift ;;
         --list) printf '%s\n' "${all_jobs[@]}"; exit 0 ;;
         -h|--help) sed -n '4,/^# Exit status/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) usage_error "unknown argument '$1'" ;;
@@ -198,6 +202,7 @@ job_clippy() {
 job_test() {
     if [ -n "${TESSERA_GAME_DIR:-}" ]; then
         note="with game data"
+        [ "${TESSERA_PERF:-}" = 1 ] && note="$note, timing asserted"
     else
         note="synthetic only"
     fi
@@ -297,6 +302,7 @@ fi
 echo "  build jobs: ${CARGO_BUILD_JOBS:-cargo default}"
 echo "  game data: ${TESSERA_GAME_DIR:-unset (real-data tests skip)}"
 echo "  TESSERA_REQUIRE_GPU: ${TESSERA_REQUIRE_GPU:-unset}"
+echo "  TESSERA_PERF: ${TESSERA_PERF:-unset (frame-time assertions off)}"
 
 results=()
 notes=()

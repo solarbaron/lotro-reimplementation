@@ -17,7 +17,7 @@
 use tessera_formats::Did;
 
 use crate::records::{CullMode, CurveStates, ParamValue, curve_finite, program_time};
-use crate::resolve::ResolvedMaterial;
+use crate::resolve::{ResolvedMaterial, fallback_alpha_threshold};
 use crate::transform::{EvaluatedMatrix, TextureMatrixLayout};
 use crate::vocab::ids;
 
@@ -169,14 +169,15 @@ impl SurfaceInputs {
                 .alpha_test
                 .map(|at| match params.curve(ids::ALPHA_THRESHOLD) {
                     // One fallback rule for §11.2: a non-finite value of an animated
-                    // 1043 falls back like a non-finite constant one (the feature
-                    // flags' threshold), not to 0.
+                    // 1043 falls back like a non-finite constant one (§18: the shader's
+                    // `alpha_ref`, then 0.5), not to 0 and not to the curve's own t = 0
+                    // value (which is what the feature flags' threshold holds).
                     Some(c) if c.is_animated() => {
                         let v = c.evaluate_at(t, states.state(ids::ALPHA_THRESHOLD));
                         if v.is_finite() {
                             v
                         } else {
-                            curve_finite(at.threshold)
+                            fallback_alpha_threshold(&material.shader)
                         }
                     }
                     _ => curve_finite(at.threshold),

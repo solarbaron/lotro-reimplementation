@@ -14,6 +14,12 @@ use crate::skeleton::{Skeleton, check_len};
 /// treated as broken"); the track then takes the skeleton's reference transform.
 pub const BROKEN_TRANSLATION: f32 = 1.0e4;
 
+/// A sampled scale component whose magnitude exceeds this marks the track as broken as
+/// well. Tessera Decision (`skeleton-anim.md` implementer notes, broken sample values): the
+/// spec gives no bound for scales, but scales multiply down the bone chain (§5.4), so a
+/// finite but huge value overflows the model and skinning matrices to infinity.
+pub const BROKEN_SCALE: f32 = 1.0e3;
+
 /// How play time maps to clip time (`skeleton-anim.md` §6.3). Clips carry no loop flag;
 /// the playing system decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -106,9 +112,13 @@ pub struct BoundClip {
 /// What one sampling call did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SampleReport {
-    /// Tracks whose sampled value was not finite or beyond [`BROKEN_TRANSLATION`] and was
-    /// replaced by the bone's reference transform.
+    /// Tracks whose sampled value was not finite, had a translation beyond
+    /// [`BROKEN_TRANSLATION`] or a scale beyond [`BROKEN_SCALE`], and was replaced by the
+    /// bone's reference transform.
     pub replaced: u32,
+    /// Bones whose composed model transform was not finite and fell back to the parent's
+    /// ([`crate::Skeleton::compose_counted`]); set by the scheduler, 0 from sampling.
+    pub model_fallbacks: u32,
 }
 
 impl BoundClip {
@@ -233,9 +243,9 @@ impl BoundClip {
     /// Samples every track at clip time `t` (seconds; clamped to `0 ..= duration` by the
     /// decoder) into `out`, one local transform per bone.
     ///
-    /// Rotations are normalised. A track whose value is not finite, or whose translation
-    /// exceeds [`BROKEN_TRANSLATION`], takes the bone's reference transform and is counted
-    /// in the report. Does not allocate.
+    /// Rotations are normalised. A track whose value is not finite, whose translation
+    /// exceeds [`BROKEN_TRANSLATION`] or whose scale exceeds [`BROKEN_SCALE`], takes the
+    /// bone's reference transform and is counted in the report. Does not allocate.
     ///
     /// # Errors
     ///
@@ -298,8 +308,22 @@ impl BoundClip {
     }
 }
 
+/// Whether a sampled local transform is usable: finite, translation within
+/// [`BROKEN_TRANSLATION`] and scale within [`BROKEN_SCALE`] in every component.
 fn usable(t: &Transform) -> bool {
-    t.is_finite() && t.translation.iter().all(|v| v.abs() <= BROKEN_TRANSLATION)
+    t.rotation.iter().all(|v| v.is_finite())
+        && translation_usable(&t.translation)
+        && scale_usable(&t.scale)
+}
+
+/// Every component finite and within [`BROKEN_TRANSLATION`] (NaN fails).
+pub(crate) fn translation_usable(t: &[f32; 3]) -> bool {
+    t.iter().all(|v| v.abs() <= BROKEN_TRANSLATION)
+}
+
+/// Every component finite and within [`BROKEN_SCALE`] (NaN fails).
+pub(crate) fn scale_usable(s: &[f32; 3]) -> bool {
+    s.iter().all(|v| v.abs() <= BROKEN_SCALE)
 }
 
 fn normalise(q: [f32; 4]) -> [f32; 4] {
@@ -405,6 +429,13 @@ impl BakedClip {
             return n;
         }
         let t = tessera_havok::clamp_time(t, self.duration);
+        if !(self.duration.is_finite() && t < self.duration) {
+            // `havok-data.md` §7.8 step 1: t ≥ D is the last frame exactly (the division
+            // below can round to just below it).
+            let last = (self.frames - 1) * self.tracks;
+            out[..n].copy_from_slice(&self.samples[last..last + n]);
+            return n;
+        }
         let delta = self.duration / (self.frames - 1) as f32;
         let x = t / delta;
         let x = if x.is_finite() { x.max(0.0) } else { 0.0 };

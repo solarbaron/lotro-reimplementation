@@ -15,13 +15,21 @@
 //!   a `mesh_triangles` count that may exceed them, spheres and capsules with non-finite
 //!   or huge values) and for direct triangle and line overlays;
 //! - mode 3: a collision set built from the input (bodies of every source, movement or
-//!   detail, some ethereal to Player, triangles from the rest as f32s) becomes the
-//!   landblock overlays (`collision_set_overlays`, §9.2–§9.4): every group within the
-//!   triangle bound, its caption counting the triangles left out.
+//!   detail, some ethereal to Player, triangles from the rest as f32s) and the portals of
+//!   hand-built cells (`CellPortals`, §5.8: up to 15 cells of up to 4 portals of up to 6
+//!   corners, the corners from the same f32s, so NaN, infinite and huge; for byte 0 ≥ 0xC0
+//!   64 cells of 32 portals of 24 corners, past the line bound) become the landblock
+//!   overlays (`collision_set_overlays`, §9.2–§9.4).
 //!
 //! Nothing may panic. Every overlay stays within its triangle and line bounds, keeps only
 //! finite lines and a finite, ordered bounding box, and has prepared streams only when it
-//! has triangles.
+//! has triangles. In mode 3 each group's caption counts its bodies (at least one) and its
+//! triangles: the drawn ones plus those it says were left out are at most that count, and
+//! all groups together count no more triangles than the set's bodies hold; the portal
+//! overlay draws at most one line per corner of the portals with two or more corners and
+//! names the number of cells and portals. (Groups past `MAX_OVERLAY_TRIANGLES`, the only
+//! way to leave triangles out, need sets far larger than a fuzzing run builds; the
+//! explorer's unit test `oversized_groups_count_what_is_left_out` covers them.)
 
 #![no_main]
 
@@ -40,6 +48,7 @@ use tessera_physics::geometry::{
     BodyPurpose, BodySource, Capsule, CollisionFlags, CollisionLimits, CollisionSetBuilder,
     ETHEREAL_CAMERA, ETHEREAL_PLAYER, ShapeTemplate, Sphere,
 };
+use tessera_world::{CellPortals, Portal};
 
 fn check(o: &CollisionOverlay) {
     assert!(o.triangles <= MAX_OVERLAY_TRIANGLES);
@@ -72,6 +81,115 @@ fn floats(data: &[u8]) -> Vec<f32> {
 fn p3(f: &[f32], i: usize) -> [f32; 3] {
     let g = |k: usize| f.get(i + k).copied().unwrap_or(0.0);
     [g(0), g(1), g(2)]
+}
+
+/// Hand-built cells with portals whose corners come from `f` (cyclically).
+fn cells(mode: u8, f: &[f32]) -> Vec<CellPortals> {
+    let stress = mode >= 0xC0;
+    let (cells, portals, corners) = if stress {
+        (64, 32, 24)
+    } else {
+        (usize::from(mode >> 2) % 16, 4, 6)
+    };
+    let mut at = 0usize;
+    let mut next = |n: usize| -> Vec<[f32; 3]> {
+        (0..n)
+            .map(|_| {
+                let g = |k: usize| {
+                    if f.is_empty() {
+                        0.0
+                    } else {
+                        f[(at + k) % f.len()]
+                    }
+                };
+                let p = [g(0), g(1), g(2)];
+                at = at.wrapping_add(3);
+                p
+            })
+            .collect()
+    };
+    (0..cells)
+        .map(|c| {
+            // Varying counts per cell and portal unless stressed.
+            let n = if stress { portals } else { c % (portals + 1) };
+            CellPortals {
+                index: u16::try_from(c).unwrap_or(0),
+                geometry: tessera_formats::Did(0x0100_0001),
+                placement: None,
+                geometry_available: c % 3 != 0,
+                portals: (0..n)
+                    .map(|k| Portal {
+                        ordinal: u16::try_from(k).unwrap_or(0),
+                        neighbour: u16::try_from(c + 1).unwrap_or(0),
+                        back_portal: 0,
+                        flag: 0,
+                        corners: next(if stress {
+                            corners
+                        } else {
+                            (c + k) % (corners + 1)
+                        }),
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
+/// The numbers in `caption`, in order, without a trailing "(refused: …)" note (the
+/// renderer's message may hold numbers of its own).
+fn numbers(caption: &str) -> Vec<usize> {
+    let caption = caption.split(" (refused").next().unwrap_or(caption);
+    caption
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|w| w.parse().ok())
+        .collect()
+}
+
+/// The overlays of a collision set and cells, checked against their sources.
+fn check_set(overlays: &[CollisionOverlay], body_triangles: usize, cells: &[CellPortals]) {
+    let mut counted = 0usize;
+    for o in overlays {
+        check(o);
+        let n = numbers(&o.caption);
+        match o.kind {
+            OverlayKind::Portals => {
+                // "portals of C cells: P" and maybe "(L lines left out)".
+                let portals: usize = cells.iter().map(|c| c.portals.len()).sum();
+                let (c, p, left) = match n[..] {
+                    [c, p] => (c, p, 0),
+                    [c, p, l] => (c, p, l),
+                    _ => panic!("caption {:?}", o.caption),
+                };
+                assert_eq!((c, p), (cells.len(), portals), "{}", o.caption);
+                let segments: usize = cells
+                    .iter()
+                    .flat_map(|c| &c.portals)
+                    .map(|p| {
+                        if p.corners.len() >= 2 {
+                            p.corners.len()
+                        } else {
+                            0
+                        }
+                    })
+                    .sum();
+                assert!(o.lines.len().saturating_add(left) <= segments);
+                assert!(left == 0 || o.lines.len() == MAX_OVERLAY_LINES);
+            }
+            OverlayKind::Volumes => {}
+            _ => {
+                // "<name>: B bodies, T triangles" and maybe "(L triangles left out)".
+                let (bodies, total, left) = match n[..] {
+                    [b, t] => (b, t, 0),
+                    [b, t, l] => (b, t, l),
+                    _ => panic!("caption {:?}", o.caption),
+                };
+                assert!(bodies >= 1, "{}", o.caption);
+                assert!(o.triangles.saturating_add(left) <= total, "{}", o.caption);
+                counted = counted.saturating_add(total);
+            }
+        }
+    }
+    assert!(counted <= body_triangles, "{counted} > {body_triangles}");
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -155,9 +273,17 @@ fuzz_target!(|data: &[u8]| {
                 let _ = b.add_shape(source, flags, purpose, &t);
             }
             let set = b.build();
-            for o in collision_set_overlays(&set, &[]) {
-                check(&o);
-            }
+            let body_triangles = set
+                .bodies()
+                .iter()
+                .map(|b| b.triangle_count as usize)
+                .fold(0usize, usize::saturating_add);
+            let cells = cells(mode, &f);
+            check_set(
+                &collision_set_overlays(&set, &cells),
+                body_triangles,
+                &cells,
+            );
         }
         _ => {
             let f = floats(rest);

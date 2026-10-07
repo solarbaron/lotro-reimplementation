@@ -750,9 +750,25 @@ fn sector_pairs_are_distinct_and_indexed() {
         f32::from_le_bytes([b[1], b[2], b[3], b[4]]),
         water_height(38)
     );
-    // A sector at the grid edge has only the landblocks that exist.
-    let edge = SectorWater::build(key(254, 254), |_| None);
-    assert!(!edge.has_water());
+    // The grid edge: 255 landblocks per side is a multiple of 3, so the last sector
+    // (252–254 on both axes) is complete. All nine landblocks are asked for, X-major, and
+    // every one of them gets its pair.
+    let mut asked = Vec::new();
+    let edge = SectorWater::build(key(254, 254), |k| {
+        asked.push((k.x(), k.y()));
+        decide_water(Some(&t), &map(k, &[(7, 1), (4, 38)]), &h).ok()
+    });
+    let want: Vec<(u8, u8)> = (252..=254)
+        .flat_map(|x| (252..=254).map(move |y| (x, y)))
+        .collect();
+    assert_eq!(asked, want);
+    assert_eq!(edge.origin, Some(key(252, 252)));
+    assert_eq!(edge.pairs.len(), 1);
+    assert_eq!(edge.blocks, [[Some(0); 3]; 3]);
+    // A sector whose landblocks are all dry or absent has no water.
+    let dry = SectorWater::build(key(254, 254), |_| None);
+    assert!(!dry.has_water());
+    assert_eq!(dry.blocks, [[None; 3]; 3]);
 }
 
 fn staircase_box(z: f32, height: f32) -> tessera_physics::geometry::LiquidBox {

@@ -449,7 +449,14 @@ fn sky_objects_visibility_tints_and_replacements() {
         keyframes: vec![
             Keyframe {
                 time: 0.0,
-                object_entries: vec![entry(1, 0, 0.0, 0), entry(2, 255, 10.0, 0)],
+                object_entries: vec![
+                    entry(1, 0, 0.0, 0),
+                    // Object 2: offsets 10 and a red, transparent tint on kₐ only.
+                    KeyframeObjectEntry {
+                        tint: colour(255, 0, 0, 0),
+                        ..entry(2, 255, 10.0, 0)
+                    },
+                ],
                 ..Keyframe::default()
             },
             Keyframe {
@@ -478,7 +485,29 @@ fn sky_objects_visibility_tints_and_replacements() {
     assert!(!s[1].visible);
     assert!(animate_sky_objects(&day, 0.1)[1].visible);
     assert!(animate_sky_objects(&day, 0.9)[1].visible);
-    assert_eq!(s[1].tint, UNTINTED);
+    // The keyframe factor at 0.25 is 0.5 (keyframes at 0.0 and 0.5): the 10° offsets of
+    // kₐ blend with 0 to 5, and the tint (1, 0, 0, 0) with untinted (1, 1, 1, 1) to
+    // (1, 0.5, 0.5, 0.5).
+    let o2 = sky_object(2, 0.8, 0.2);
+    let f2 = object_progress(&o2, 0.25);
+    let base_a = object_angle(o2.angle_a_begin, o2.angle_a_end, false, f2);
+    let base_b = object_angle(o2.angle_b_begin, o2.angle_b_end, false, f2);
+    assert!(approx(
+        f64::from(s[1].angle_a),
+        f64::from(base_a) + 5.0,
+        1e-4
+    ));
+    assert!(approx(
+        f64::from(s[1].angle_b),
+        f64::from(base_b) + 5.0,
+        1e-4
+    ));
+    // Spelled out: f = 0.45 / 0.4 over the midnight span, A = −90 + 1.125 · 360 = 315.
+    assert!(approx(f64::from(s[1].angle_a), 320.0, 1e-4), "{:?}", s[1]);
+    assert!(approx(f64::from(s[1].angle_b), 80.0, 1e-4), "{:?}", s[1]);
+    for (got, want) in s[1].tint.iter().zip([1.0, 0.5, 0.5, 0.5]) {
+        assert!(approx(f64::from(*got), want, 1e-6), "{:?}", s[1].tint);
+    }
     assert_eq!(s[1].object, Did(0x4700_0102));
     // Object 3 (begin = end): always visible with its begin angles.
     assert!(s[2].visible);

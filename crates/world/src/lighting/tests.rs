@@ -80,6 +80,29 @@ fn worked_example_light_record() {
 }
 
 #[test]
+fn huge_finite_range_keeps_a_finite_square() {
+    // A finite range whose square overflows f32 (hostile data): §8.3 gives
+    // a = 1 / (1 + 10 F d² / R²) → 1 everywhere, not darkness everywhere.
+    let p = LightParams {
+        falloff: 0.5,
+        ..LightParams::default()
+    };
+    for range in [1e20_f32, f32::MAX] {
+        let r = LightRecord::point(&p, [0.0; 3], range, 1.0, 1.0);
+        assert!(r.range_sq.is_finite() && r.k.is_finite(), "{r:?}");
+        assert_eq!(r.range, MAX_RANGE);
+        for d2 in [0.0, 1.0, 1e6, 1e12] {
+            assert!(approx(r.attenuation(d2, true), 1.0, 1e-5), "{range} {d2}");
+            assert!(approx(r.attenuation(d2, false), 1.0, 1e-5), "{range} {d2}");
+        }
+    }
+    // The largest range kept is itself unchanged.
+    let r = LightRecord::point(&p, [0.0; 3], MAX_RANGE, 1.0, 1.0);
+    assert_eq!(r.range, MAX_RANGE);
+    assert!(r.range_sq.is_finite());
+}
+
+#[test]
 fn defaults_of_a_new_light() {
     let d = LightParams::default();
     assert_eq!(d.range, 25.0);

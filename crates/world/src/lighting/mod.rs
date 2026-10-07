@@ -16,7 +16,8 @@
 //! # Hostile input
 //!
 //! Property values of the wrong type or non-finite floats fall back to the defaults of a
-//! new light; ranges are kept at least [`MIN_RANGE`]; attenuation of non-finite inputs is 0;
+//! new light; ranges are kept within [`MIN_RANGE`] – [`MAX_RANGE`] (so *R*² stays finite);
+//! attenuation of non-finite inputs is 0;
 //! selections never hold more than [`MAX_LIGHTS`] lights.
 
 mod entities;
@@ -28,7 +29,8 @@ pub use entities::{
     LightPids, light_entities, waveform_curve,
 };
 pub use record::{
-    FADE_START, FALLOFF_SCALE, LightKind, LightRecord, MIN_RANGE, WHITE_TOLERANCE, attenuation,
+    FADE_START, FALLOFF_SCALE, LightKind, LightRecord, MAX_RANGE, MIN_RANGE, WHITE_TOLERANCE,
+    attenuation,
 };
 pub use select::{
     LightReach, LightRef, LightSelection, MAX_LIGHTS, SelectionOptions, object_light_list,

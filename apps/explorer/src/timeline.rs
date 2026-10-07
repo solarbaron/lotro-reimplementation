@@ -2,9 +2,15 @@
 //! Sky timelines (pure): the blended keyframes of a day description over one game day
 //! (`environment.md` §11.3), sky-object visibility (§11.4) and the day description a sky
 //! description chooses (§11.2), computed from decoded records only. Nothing here reads
-//! the archive, and the work and memory of every function are bounded independently of
-//! the record's size: at most [`MAX_TIMELINE_SAMPLES`] samples and [`MAX_TRACKS`] object
+//! the archive. Apart from one pass over the record, the work and memory of every function
+//! are bounded independently of the record's size: at most [`MAX_TIMELINE_SAMPLES`]
+//! samples, keyframes blended among at most [`MAX_KEYFRAMES`] and [`MAX_TRACKS`] object
 //! tracks, with object entries looked up among at most [`MAX_TRACKS`] per keyframe.
+//!
+//! A day description with more than [`MAX_KEYFRAMES`] keyframes whose time is finite
+//! (hostile input: at most 21 are observed, `environment.md` §1 OBS2) is shown with its
+//! first [`MAX_KEYFRAMES`] such keyframes only, so its timeline is that of a shorter day;
+//! the sky view counts the keyframes left out in its header.
 //!
 //! The explorer computes day timelines on its workers (`world::SkyDecoder`); the sky view
 //! only draws them. This module depends on `tessera-formats` and `tessera-world` only, so
@@ -28,6 +34,9 @@ pub const TIMELINE_SAMPLES: usize = 288;
 pub const MAX_TIMELINE_SAMPLES: usize = 4_096;
 /// Most sky objects a timeline tracks (the first of each index, stored order).
 pub const MAX_TRACKS: usize = 256;
+/// Most keyframes a timeline blends among (the first with a finite time, stored order):
+/// every sample searches them twice (`environment.md` §11.3 steps 1–2).
+pub const MAX_KEYFRAMES: usize = 256;
 
 /// The day type the sky view starts with (`environment.md` §11.2: initially 2).
 pub const START_DAY_TYPE: u32 = INITIAL_DAY_TYPE;
@@ -52,7 +61,9 @@ pub struct Timeline {
     pub values: Vec<SkyValues>,
     /// Sky objects and their visibility (at most [`MAX_TRACKS`]).
     pub objects: Vec<ObjectTrack>,
-    /// Keyframe times of the day description shown (at most [`MAX_TIMELINE_SAMPLES`]).
+    /// The finite keyframe times of the day description shown (at most
+    /// [`MAX_KEYFRAMES`]); keyframes without a finite time are left out, as the §11.3
+    /// search skips them.
     pub keyframes: Vec<f32>,
     /// The day description chosen (sky descriptions) or shown (day descriptions).
     pub day: Option<Did>,
@@ -121,13 +132,16 @@ fn keyframe_with(k: &Keyframe, entries: Vec<KeyframeObjectEntry>) -> Keyframe {
     }
 }
 
-/// `day` reduced to what the tracks need, or `None` when it is already small: the first
-/// [`MAX_TRACKS`] objects with distinct indices, and per keyframe only the first object
-/// entry of each of their indices (what `Keyframe::object_entry` finds). Keyframe times
-/// and values are kept, so the blended values and the object states of the kept objects
-/// are those of `day`.
+/// `day` reduced to what the timeline needs, or `None` when it is already small: the first
+/// [`MAX_KEYFRAMES`] keyframes whose time is finite (keyframes without one are skipped by
+/// the §11.3 search anyway), the first [`MAX_TRACKS`] objects with distinct indices, and
+/// per kept keyframe only the first object entry of each of their indices (what
+/// `Keyframe::object_entry` finds). Keyframe times and values are kept, so for a day of at
+/// most [`MAX_KEYFRAMES`] finite keyframes the blended values and the object states of the
+/// kept objects are those of `day`.
 fn tracked_day(day: &DayDescription) -> Option<DayDescription> {
-    let small = day.objects.len() <= MAX_TRACKS
+    let small = day.keyframes.len() <= MAX_KEYFRAMES
+        && day.objects.len() <= MAX_TRACKS
         && day
             .keyframes
             .iter()
@@ -148,6 +162,8 @@ fn tracked_day(day: &DayDescription) -> Option<DayDescription> {
     let keyframes = day
         .keyframes
         .iter()
+        .filter(|k| k.time.is_finite())
+        .take(MAX_KEYFRAMES)
         .map(|k| {
             let mut taken = HashSet::new();
             let entries = k
@@ -177,7 +193,8 @@ pub fn day_timeline(day: &DayDescription, n: usize) -> Timeline {
 
 /// [`day_timeline`] that gives up (`None`) as soon as `cancelled` turns true; it is asked
 /// once per sample. Work: one pass over the record, then per sample the §11.3 keyframe
-/// pair and at most [`MAX_TRACKS`] objects × [`MAX_TRACKS`] entries.
+/// pair among at most [`MAX_KEYFRAMES`] keyframes and at most [`MAX_TRACKS`] objects ×
+/// [`MAX_TRACKS`] entries.
 #[must_use]
 pub fn day_timeline_with(
     day: &DayDescription,
@@ -210,11 +227,11 @@ pub fn day_timeline_with(
     Some(Timeline {
         values,
         objects,
-        keyframes: day
+        keyframes: d
             .keyframes
             .iter()
-            .take(MAX_TIMELINE_SAMPLES)
             .map(|k| k.time)
+            .filter(|t| t.is_finite())
             .collect(),
         day: Some(day.did),
         choice: None,
@@ -484,7 +501,7 @@ mod tests {
     fn huge_days_are_reduced_and_bounded() {
         // Regression: every object was animated at every sample, each with a linear scan
         // of every keyframe entry, and every state was kept: objects × entries × samples
-        // of work and objects × samples of memory on the UI thread.
+        // of work and objects × samples of memory per timeline.
         let mut d = day();
         d.objects = (0..1_500).map(|i| object(i, 0.2, 0.6)).collect();
         // A duplicate index: the first object of an index is the one tracked.
@@ -524,6 +541,44 @@ mod tests {
         let full: Vec<SkyObjectState> = animate_sky_objects(&d, t.times[0]);
         assert_eq!(full[0].index, 5);
         assert_eq!(t.values[0], SkyValues::at(Some(&d), t.times[0]));
+    }
+
+    #[test]
+    fn days_with_many_keyframes_are_cut_to_the_keyframe_bound() {
+        // Regression: every sample scanned (and copied the times of) every keyframe twice,
+        // so a hostile record with a million keyframes cost samples × keyframes.
+        let mut d = day();
+        d.keyframes = (0..20_000u16)
+            .map(|i| keyframe(f32::from(i) / 20_000.0, f32::from(i % 7), 0xFF00_0000))
+            .collect();
+        // A keyframe without a finite time is skipped before the cut.
+        d.keyframes.insert(1, keyframe(f32::NAN, 0.0, 0));
+        let reduced = tracked_day(&d).expect("reduced");
+        assert_eq!(reduced.keyframes.len(), MAX_KEYFRAMES);
+        assert!(reduced.keyframes.iter().all(|k| k.time.is_finite()));
+        let t = day_timeline(&d, 16);
+        assert_eq!(t.keyframes.len(), MAX_KEYFRAMES);
+        // The values are those of the first MAX_KEYFRAMES finite keyframes.
+        let mut first = day();
+        first.keyframes = d
+            .keyframes
+            .iter()
+            .filter(|k| k.time.is_finite())
+            .take(MAX_KEYFRAMES)
+            .cloned()
+            .collect();
+        for (i, s) in t.times.iter().enumerate() {
+            assert_eq!(t.values[i], SkyValues::at(Some(&first), *s));
+        }
+        // A day within the bound is used as it is.
+        assert!(tracked_day(&day()).is_none());
+        // Its keyframe times are the finite ones too, as on the reduced path.
+        let mut small = day();
+        small.keyframes.insert(0, keyframe(f32::INFINITY, 0.0, 0));
+        assert!(tracked_day(&small).is_none());
+        let t = day_timeline(&small, 16);
+        assert_eq!(t.keyframes.len(), small.keyframes.len() - 1);
+        assert!(t.keyframes.iter().all(|k| k.is_finite()));
     }
 
     #[test]

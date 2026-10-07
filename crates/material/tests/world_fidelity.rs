@@ -934,6 +934,62 @@ fn animated_threshold_falls_back_like_a_constant_one() {
     );
 }
 
+/// material.md §19 / §18: an animated 1043 that is finite at t = 0 but not at the current
+/// time falls back like a non-finite constant one (most common `alpha_ref`, then 0.5), not
+/// to the curve's own t = 0 value.
+#[test]
+fn animated_threshold_finite_at_start_falls_back_like_a_constant_one() {
+    let mut store = BTreeMap::new();
+    store.insert(0x2B00_0020, lit_specular_shader());
+    store.insert(
+        0x3000_0023,
+        material(0x3000_0023, &[entry(1043, V::Const(f32::NAN), &[], 0)]),
+    );
+    // Mode 2: 0.3 at t = 0, overflowing to +inf by t = 2.
+    store.insert(
+        0x3000_0025,
+        material(
+            0x3000_0025,
+            &[entry(
+                1043,
+                V::Wave(2, [0.3, 0., 0., 0., 0., 0., f32::MAX, 0., 0., 0.]),
+                &[],
+                0,
+            )],
+        ),
+    );
+    store.insert(
+        0x3100_0023,
+        surface_record(0x3100_0023, 0x2B00_0020, &[0x3000_0023]),
+    );
+    store.insert(
+        0x3100_0025,
+        surface_record(0x3100_0025, 0x2B00_0020, &[0x3000_0025]),
+    );
+    let lib = library(store);
+    let object = ObjectInputs::default();
+    let constant = lib.resolve_surface(Did(0x3100_0023)).unwrap();
+    let animated = lib.resolve_surface(Did(0x3100_0025)).unwrap();
+    let mut states = CurveStates::new();
+    let threshold = |m, t, states: &mut CurveStates| {
+        lib.surface_inputs(m, &object, t, states)
+            .unwrap()
+            .alpha_test
+            .expect("alpha test on")
+    };
+    let c = threshold(&constant, 2.0, &mut states);
+    assert!(c.is_finite() && c > 0.0, "{c}");
+    // Finite at t = 0: the curve's own value.
+    let start = threshold(&animated, 0.0, &mut states);
+    assert!((start - 0.3).abs() < 1e-6, "{start}");
+    // Non-finite later: the constant fallback, not 0.3.
+    let late = threshold(&animated, 2.0, &mut states);
+    assert_eq!(
+        late, c,
+        "an animated 1043 that overflows falls back like a NaN constant one"
+    );
+}
+
 #[test]
 fn water_ids_declared_with_another_type_are_not_undeclared() {
     let mut store = BTreeMap::new();

@@ -32,8 +32,9 @@ pub struct SectorWater {
 
 impl SectorWater {
     /// Builds the sector of `key` (any landblock of it): `water(k)` gives each landblock's
-    /// water (§6.2), `None` for dry or absent landblocks. Landblocks of the group beyond the
-    /// grid edge (X or Y above 254) are dry.
+    /// water (§6.2), `None` for dry or absent landblocks. It is called once for each of the
+    /// nine landblocks, X-major. The grid has 255 landblocks per side, a multiple of 3, so
+    /// every sector (the last one is 252–254) lies wholly on the grid.
     pub fn build(
         key: LandblockKey,
         mut water: impl FnMut(LandblockKey) -> Option<LandblockWater>,
@@ -45,6 +46,7 @@ impl SectorWater {
         };
         for dx in 0..SECTOR_SIDE {
             for dy in 0..SECTOR_SIDE {
+                // Never `None` (see above); skipped rather than unwrapped all the same.
                 let Some(k) = origin.offset(i32::from(dx), i32::from(dy)) else {
                     continue;
                 };

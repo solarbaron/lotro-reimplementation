@@ -359,6 +359,8 @@ pub fn template_overlays(t: &ShapeTemplate, caption: &str) -> Vec<CollisionOverl
                 .chain(t.capsules.iter().flat_map(capsule_lines)),
         );
         o.lines = rounds.lines;
+        // The rings' caption is only their " (N lines left out)" suffix, if any.
+        o.caption.push_str(&rounds.caption);
         if let Some((lo, hi)) = rounds.aabb {
             grow(&mut o.aabb, lo);
             grow(&mut o.aabb, hi);
@@ -615,6 +617,33 @@ mod tests {
         assert_eq!(o[1].kind, OverlayKind::Volumes);
         assert_eq!(o[1].lines.len(), 3 * RING_SEGMENTS + 2 * RING_SEGMENTS + 6);
         assert!(template_overlays(&ShapeTemplate::default(), "x").is_empty());
+    }
+
+    #[test]
+    fn volume_captions_count_the_rings_left_out() {
+        // Regression: the sphere and capsule rings were capped but the count of lines left
+        // out was dropped with the rings' own caption.
+        let spheres = 1_400;
+        let t = ShapeTemplate {
+            spheres: vec![
+                Sphere {
+                    centre: [0.0; 3],
+                    radius: 1.0,
+                };
+                spheres
+            ],
+            ..ShapeTemplate::default()
+        };
+        let o = template_overlays(&t, "setup");
+        assert_eq!(o.len(), 1);
+        assert_eq!(o[0].lines.len(), MAX_OVERLAY_LINES);
+        assert_eq!(
+            o[0].caption,
+            format!(
+                "volumes: 0 boxes, {spheres} spheres, 0 capsules ({} lines left out)",
+                spheres * 3 * RING_SEGMENTS - MAX_OVERLAY_LINES
+            )
+        );
     }
 
     #[test]

@@ -479,6 +479,102 @@ fn terrain_height_stays_within_the_corner_samples() {
     }
 }
 
+/// Checks both seams of a global grid (`global(gi, gj)` gives the raw height sample) for
+/// every pairing of the two diagonals at the given offsets along the edge.
+fn assert_seams_agree(global: &dyn Fn(usize, usize) -> u16, samples: &[f32], label: &str) {
+    let block = |oi: usize, oj: usize| {
+        LandblockData::from_heights(
+            Did(DATA),
+            HeightGrid::from_fn(|i, j| global(i + oi, j + oj)),
+        )
+    };
+    for (near, far) in [(0x80u8, 0x80u8), (0x80, 0), (0, 0x80), (0, 0)] {
+        // West/east: x = 160 in the west block is x = 0 in the east block.
+        let (mut west, mut east) = (block(0, 0), block(32, 0));
+        // South/north: y = 160 in the south block is y = 0 in the north block.
+        let (mut south, mut north) = (block(0, 0), block(0, 32));
+        for k in 0..32 {
+            west.vertex_flags.raw_mut()[33 * 31 + k] = near;
+            east.vertex_flags.raw_mut()[k] = far;
+            south.vertex_flags.raw_mut()[33 * k + 31] = near;
+            north.vertex_flags.raw_mut()[33 * k] = far;
+        }
+        for &t in samples {
+            assert_eq!(
+                west.terrain_height(160.0, t).map(f32::to_bits),
+                east.terrain_height(0.0, t).map(f32::to_bits),
+                "{label}: x seam, splits {near:#x}/{far:#x}, y = {t:e}"
+            );
+            assert_eq!(
+                south.terrain_height(t, 160.0).map(f32::to_bits),
+                north.terrain_height(t, 0.0).map(f32::to_bits),
+                "{label}: y seam, splits {near:#x}/{far:#x}, x = {t:e}"
+            );
+        }
+    }
+}
+
+/// landblock.md §3.11 and §3.3 (HM7): neighbouring blocks share their edge samples, so the
+/// surface heights along the shared edge must agree bit for bit, for every pairing of the
+/// two diagonals, including fractions so small that `1 + f` rounds (the first row or
+/// column of quads, below 5 units).
+#[test]
+fn neighbouring_blocks_agree_bit_for_bit_along_the_shared_edge() {
+    // A steep, irregular global grid; each block is a 33 x 33 window onto it.
+    let hashed = |gi: usize, gj: usize| -> u16 {
+        let k = (gi * 7_919 + gj * 104_729) as u32;
+        (k.wrapping_mul(2_654_435_761) >> 16) as u16
+    };
+    let mut samples: Vec<f32> = (1..500).map(|k| k as f32 * 0.01).collect();
+    samples.extend((0..2_000).map(|k| k as f32 * 0.0025));
+    samples.extend([
+        0.0,
+        f32::MIN_POSITIVE,
+        1.0e-30,
+        1.0e-8,
+        2f32.powi(-24),
+        2f32.powi(-25),
+        2f32.powi(-23) * 3.0,
+        4.999_999_5,
+        5.0,
+        77.7,
+        155.0,
+        159.999_99,
+        160.0,
+    ]);
+    assert_seams_agree(&hashed, &samples, "hashed");
+}
+
+/// The same seam property where the shared edge is flat (equal adjacent edge samples, as
+/// is common in real terrain) and the interior samples on either side straddle the edge
+/// height, one block's above it and the other's below. An edge sum rounded 1 ulp past the
+/// edge height must be clamped back identically in both blocks.
+#[test]
+fn neighbouring_blocks_agree_bit_for_bit_along_a_flat_edge_between_straddling_interiors() {
+    // Global index 32 is the shared edge; 31 lies in the first block, 33 in the second.
+    let straddle = |a: u16, b: u16| {
+        move |g: usize| -> u16 {
+            match g {
+                31 => a,
+                33 => b,
+                _ if g < 32 => a / 2,
+                _ if g > 32 => b / 2,
+                _ => 30_000,
+            }
+        }
+    };
+    let samples: Vec<f32> = (1..=20_000).map(|k| k as f32 * 0.008).collect();
+    for (a, b) in [(60_000u16, 1_000u16), (1_000, 60_000)] {
+        let col = straddle(a, b);
+        // Columns vary across the x seam, constant along it.
+        let columns = |gi: usize, _gj: usize| col(gi);
+        assert_seams_agree(&columns, &samples, &format!("columns {a}/30000/{b}"));
+        // Rows vary across the y seam, constant along it.
+        let rows = |_gi: usize, gj: usize| col(gj);
+        assert_seams_agree(&rows, &samples, &format!("rows {a}/30000/{b}"));
+    }
+}
+
 /// landblock.md §3.8.2: a `whole` layer covers all 2,048 grid triangles of its surface
 /// (bit 7 and counter-clockwise in a terrain chunk, bit 0 and clockwise in a ceiling chunk).
 #[test]

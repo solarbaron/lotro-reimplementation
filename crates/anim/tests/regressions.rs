@@ -495,3 +495,88 @@ fn content_key_ignores_names() {
     assert_eq!(named.find_bone(b"rig_bone2"), Some(2));
     assert_eq!(numbered.find_bone(b"rig_bone2"), None);
 }
+
+/// Audit finding (fix2 0): finite but huge clip scales passed the broken-sample check, and
+/// the scales multiplied down the chain to inf, giving a non-finite skinning palette.
+#[test]
+fn huge_clip_scales_never_reach_the_palette() {
+    let s = skeleton(&SkeletonSpec::chain(3));
+    let rec = spline_clip(5, 3, 30.0, |_, j| Transform {
+        scale: if j < 2 { [1e20; 3] } else { [1.0; 3] },
+        ..s.reference_local()[j]
+    });
+    let c = bind(&rec, &s);
+    let mut local = vec![Transform::IDENTITY; 3];
+    let report = c.sample(0.05, &mut local).unwrap();
+    assert_eq!(report.replaced, 2, "huge scales are broken samples");
+    assert_eq!(&local[..2], &s.reference_local()[..2]);
+
+    // A hand-built pose with the same values (compose is public): model and skinning
+    // matrices stay finite.
+    let local: Vec<Transform> = (0..3)
+        .map(|j| Transform {
+            scale: [1e20; 3],
+            ..s.reference_local()[j]
+        })
+        .collect();
+    let mut model = vec![glam::Mat4::IDENTITY; 3];
+    let fallbacks = s.compose_counted(&local, &mut model).unwrap();
+    assert!(fallbacks > 0);
+    assert!(model.iter().all(glam::Mat4::is_finite), "{model:?}");
+    let mut triples = vec![Transform::IDENTITY; 3];
+    s.compose_triples(&local, &mut triples).unwrap();
+    assert!(triples.iter().all(Transform::is_finite), "{triples:?}");
+    let mut skin = vec![glam::Mat4::IDENTITY; 3];
+    tessera_anim::skinning_matrices(&s, &model, &mut skin).unwrap();
+    assert!(skin.iter().all(glam::Mat4::is_finite), "{skin:?}");
+
+    // Through the layered evaluator and the averaged result as well.
+    let mut out = vec![Transform::IDENTITY; 3];
+    let mut anim = Animator::new(s.clone());
+    anim.play(0, Playback::new(c, Wrap::Loop), 0.0, false)
+        .unwrap();
+    let mut snap = Vec::new();
+    anim.snapshot(&mut snap);
+    let r = evaluate(&s, &snap, &mut EvalScratch::new(), &mut out).unwrap();
+    assert_eq!(r.replaced, 2);
+    let mut model = vec![glam::Mat4::IDENTITY; 3];
+    s.compose(&out, &mut model).unwrap();
+    assert!(model.iter().all(glam::Mat4::is_finite));
+}
+
+/// Audit finding (fix2 1): the skeleton decoder's cache size missed the reference triples,
+/// counted `Option<u16>` parents as 2 bytes and ignored the name bytes.
+#[test]
+fn skeleton_cache_size_counts_every_vector() {
+    use tessera_assets::Decoder;
+    let s = skeleton(&tree_spec(248));
+    let names: usize = (0..248).map(|i| s.name(i).map_or(0, <[u8]>::len)).sum();
+    assert!(names > 0);
+    // parents, reference, reference triples, two matrices, name handles, name bytes.
+    let floor = 248 * (4 + 40 + 40 + 64 + 64 + 16) + names;
+    let charged = tessera_anim::SkeletonDecoder.size_of(&s);
+    assert!(charged >= floor, "{charged} < {floor}");
+    assert_eq!(charged, s.heap_size());
+}
+
+/// Audit finding (fix2 3), the baked path: t = duration gives the last frame exactly
+/// (`havok-data.md` §7.8 step 1), not a blend a hair short of it.
+#[test]
+fn baked_clip_at_the_duration_is_the_last_frame() {
+    let s = skeleton(&SkeletonSpec::chain(3));
+    let rec = interleaved_clip(8, 3, 1.0, |f, j| Transform {
+        translation: [0.3 + 1.1 * f as f32, -0.7 * f as f32, 0.1 * j as f32],
+        ..s.reference_local()[j]
+    });
+    let c = bind(&rec, &s);
+    let baked = BakedClip::bake(c.clip(), usize::MAX).unwrap();
+    let mut last = vec![Transform::IDENTITY; 3];
+    c.clip().animation.sample_frame(7, &mut last);
+    let mut out = vec![Transform::IDENTITY; 3];
+    for t in [1.0, 1.5] {
+        assert_eq!(baked.sample(t, &mut out), 3);
+        assert_eq!(out, last, "t = {t}");
+        assert_eq!(c.clip().sample(t, &mut out), 3);
+        assert_eq!(out, last, "t = {t}");
+    }
+}

@@ -504,3 +504,114 @@ fn spline_helpers_reject_overflowing_arguments() {
     ));
     assert_eq!(out, [0.5, 0.5]);
 }
+
+/// Audit finding (fix2 2): a curve whose control points are all finite but near `f32::MAX`
+/// summed to infinity between frames (basis weights summing a hair above 1), while the
+/// §9.2 check, which samples whole frames only, passed.
+#[test]
+fn spline_blends_of_extreme_finite_points_stay_finite_between_frames() {
+    use tessera_havok::testkit::{RotationSpec, VectorSpec};
+    let big = |v: f32| {
+        VectorSpec::spline(
+            3,
+            vec![0, 0, 0, 0, 4, 4, 4, 4],
+            &[[v, -v, v]; 4],
+            0b111,
+            [None; 3],
+        )
+    };
+    let spec = SplineClipSpec {
+        duration: 4.0 / 30.0,
+        num_frames: 5,
+        max_frames_per_block: 256,
+        blocks: vec![BlockSpec {
+            tracks: vec![TrackSpec::new(
+                big(f32::MAX),
+                RotationSpec::Identity,
+                big(f32::MAX),
+            )],
+        }],
+    };
+    let rec = ClipRecordSpec::new(AnimationSpec::new(AnimationKindSpec::Spline(spec))).to_bytes();
+    let clip = Clip::parse(&rec).expect("decodes");
+    assert!(clip.animation.check_samples_finite(&mut Vec::new()).is_ok());
+    let mut out = [Transform::IDENTITY];
+    let d = clip.animation.duration;
+    for i in 0..=4000 {
+        let t = d * i as f32 / 4000.0;
+        assert_eq!(clip.sample(t, &mut out), 1);
+        assert!(out[0].is_finite(), "t = {t}: {:?}", out[0]);
+        // Within the window's range (all points equal): f32::MAX up to rounding.
+        for v in out[0].translation.iter().chain(&out[0].scale) {
+            assert!((v.abs() / f32::MAX - 1.0).abs() < 1e-5, "t = {t}: {v}");
+        }
+    }
+}
+
+/// Audit finding (fix2 3): §7.8 step 1 and §4.5 step 1, t ≥ D gives the last frame exactly;
+/// t / (D / (N − 1)) rounded just below N − 1 for many (D, N), and a duration of 0 gave the
+/// first frame.
+#[test]
+fn sampling_at_the_duration_gives_the_last_frame_exactly() {
+    let frame = |f: usize| Transform {
+        translation: [0.3 + 1.1 * f as f32, -0.7 * f as f32, 0.1],
+        rotation: tessera_havok::testkit::quat_from_angles(0.37 * f as f32, 0.1, -0.2),
+        scale: [1.0 + 0.013 * f as f32; 3],
+    };
+    let normalised = |q: [f32; 4]| tessera_havok::quat_nlerp(q, q, 0.0);
+    for n in [8usize, 14, 31] {
+        for d in [1.0f32, 0.7, 2.3, 1.0 / 3.0] {
+            let anim = InterleavedAnimation {
+                tracks: 1,
+                frames: n,
+                duration: d,
+                transforms: (0..n).map(frame).collect(),
+            };
+            let last = Transform {
+                rotation: normalised(frame(n - 1).rotation),
+                ..frame(n - 1)
+            };
+            let mut out = [Transform::IDENTITY];
+            for t in [d, d * 2.0, d + 1e3] {
+                assert_eq!(anim.sample(t, &mut out), 1);
+                assert_eq!(out[0], last, "n = {n}, d = {d}, t = {t}");
+            }
+            let whole = Animation {
+                type_code: 1,
+                duration: d,
+                tracks: 1,
+                data: AnimationData::Interleaved(anim.clone()),
+                annotation_tracks: Vec::new(),
+                extracted_motion: None,
+            };
+            assert_eq!(whole.sample_track(0, d), Some(last), "n = {n}, d = {d}");
+
+            let samples: Vec<[f32; 4]> = (0..n)
+                .map(|f| [0.2 + 0.31 * f as f32, 0.0, 1.0, 0.11 * f as f32])
+                .collect();
+            let rf = ReferenceFrame {
+                up: [0.0, 0.0, 1.0, 0.0],
+                forward: [1.0, 0.0, 0.0, 0.0],
+                duration: d,
+                components: 4,
+                samples: samples.clone(),
+            };
+            assert_eq!(rf.sample(d), samples[n - 1], "n = {n}, d = {d}");
+            assert_eq!(
+                rf.sample_on_grid(d, n, d),
+                samples[n - 1],
+                "n = {n}, d = {d}"
+            );
+        }
+    }
+    // A duration of 0 (or not finite): every t is at or past the end.
+    let anim = InterleavedAnimation {
+        tracks: 1,
+        frames: 3,
+        duration: 0.0,
+        transforms: (0..3).map(frame).collect(),
+    };
+    let mut out = [Transform::IDENTITY];
+    anim.sample(0.0, &mut out);
+    assert_eq!(out[0].translation, frame(2).translation);
+}

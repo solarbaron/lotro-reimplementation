@@ -151,8 +151,11 @@ fn sample_pose(inputs: &JobInputs, b: &mut Buffers) {
         }
     };
     let composed = skeleton
-        .compose(&out.local, &mut out.model)
-        .and_then(|()| skinning_matrices(skeleton, &out.model, &mut out.skin));
+        .compose_counted(&out.local, &mut out.model)
+        .and_then(|fallbacks| {
+            out.report.model_fallbacks = fallbacks;
+            skinning_matrices(skeleton, &out.model, &mut out.skin)
+        });
     if let Err(e) = composed {
         out.error.get_or_insert(e);
     }

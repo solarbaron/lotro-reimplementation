@@ -174,14 +174,40 @@ impl<'b> Curve<'b> {
 
     /// Evaluates the curve at local frame `u` (§7.5) into `out[..dims]` (componentwise
     /// basis blend). Extra entries of `out` are left alone; a shorter `out` gets a prefix.
+    ///
+    /// The blend is a convex combination of the window's control points, but the `f32`
+    /// basis weights can sum a hair above 1, so finite points near the `f32` range limit
+    /// can sum to infinity between frames. When the `f32` sum is not finite, the component
+    /// is recomputed in `f64` and limited to the range of the window's points, so finite
+    /// control points always give a finite value (other values are bit-identical).
     pub fn evaluate(&self, u: f32, out: &mut [f32]) {
         let mut w = [0.0f32; MAX_DEGREE + 1];
         let first = self.weights(u, &mut w);
         let dims = self.dims;
+        let window = || {
+            w.iter()
+                .take(self.degree + 1)
+                .enumerate()
+                .map(move |(k, &wk)| (first + k, wk))
+        };
         for (d, o) in out.iter_mut().enumerate().take(dims) {
+            let point = |k: usize| self.points[k * dims + d];
             let mut acc = 0.0f32;
-            for (k, wk) in w.iter().enumerate().take(self.degree + 1) {
-                acc += wk * self.points[(first + k) * dims + d];
+            for (k, wk) in window() {
+                acc += wk * point(k);
+            }
+            if !acc.is_finite() {
+                let (mut sum, mut lo, mut hi) = (0.0f64, f64::INFINITY, f64::NEG_INFINITY);
+                for (k, wk) in window() {
+                    let p = f64::from(point(k));
+                    sum += f64::from(wk) * p;
+                    lo = lo.min(p);
+                    hi = hi.max(p);
+                }
+                // `clamp` keeps NaN (non-finite points); lo ≤ hi for finite points.
+                if lo <= hi {
+                    acc = sum.clamp(lo, hi) as f32;
+                }
             }
             *o = acc;
         }

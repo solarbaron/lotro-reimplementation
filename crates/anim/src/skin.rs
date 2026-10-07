@@ -21,6 +21,11 @@ pub const PALETTE_CAPACITY: usize = 256;
 
 /// Skinning matrices **P**_b · **B**_b⁻¹ for a model pose (§4.4): `out[b]` for every bone.
 ///
+/// Tessera Decision (`skeleton-anim.md` implementer notes, broken sample values): a product
+/// that is not finite (a hand-built model pose, or one whose scale overflows against the
+/// inverse bind) is written as the identity, so the bone's vertices stay in the bind pose
+/// and no infinity or NaN reaches a GPU palette.
+///
 /// # Errors
 ///
 /// [`AnimError::BufferTooSmall`] when `model` or `out` is shorter than the bone count.
@@ -29,7 +34,8 @@ pub fn skinning_matrices(skeleton: &Skeleton, model: &[Mat4], out: &mut [Mat4]) 
     check_len("model pose", n, model.len())?;
     check_len("skinning matrices", n, out.len())?;
     for ((o, p), inv) in out.iter_mut().zip(model).zip(skeleton.inverse_bind()) {
-        *o = *p * *inv;
+        let m = *p * *inv;
+        *o = if m.is_finite() { m } else { Mat4::IDENTITY };
     }
     Ok(())
 }

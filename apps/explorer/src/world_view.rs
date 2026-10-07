@@ -845,6 +845,19 @@ pub(crate) fn sky_view(ui: &mut Ui, l: &Loaded, cur: &mut Current, actions: &mut
                     day.objects.len(),
                     day.transition_seconds
                 ));
+                // The timeline keeps the first MAX_KEYFRAMES keyframes with a finite time;
+                // say how many it leaves out, as the other captions do.
+                let left_out = day.keyframes.len().saturating_sub(timeline.keyframes.len());
+                if left_out > 0 {
+                    ui.label(
+                        RichText::new(format!(
+                            "{left_out} keyframes left out of the timeline (no finite time, \
+                             or past the first {})",
+                            crate::timeline::MAX_KEYFRAMES
+                        ))
+                        .color(Color32::GRAY),
+                    );
+                }
             });
             Arc::clone(timeline)
         }

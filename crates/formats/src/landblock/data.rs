@@ -1221,19 +1221,50 @@ pub(crate) fn triangulated_height(
     // that f32 rounding cannot leave the range of the three corner heights, and a query at
     // a grid sample returns that sample exactly (a corner weight of 1, the others 0), as
     // the neighbouring landblock does at the shared edge.
+    //
+    // Along a block edge one fraction is exactly 0 or 1 and the neighbour evaluates the
+    // same edge with that fraction at 1 or 0. Every weight is therefore written so that
+    // it is computed exactly (or as the same rounded `1 - f`) when the other fraction is
+    // 0 or 1; `fx + fy - 1` would round away the low bits of a small fraction, and
+    // `fx + fy <= 1` could pick the wrong triangle when `1 + f` rounds to 1.
     let tri = if flags.surface_split_sw_ne(surface, i, j) {
         if fx >= fy {
             [(1.0 - fx, h00), (fx - fy, h10), (fy, h11)]
         } else {
             [(1.0 - fy, h00), (fx, h11), (fy - fx, h01)]
         }
-    } else if fx + fy <= 1.0 {
-        [(1.0 - fx - fy, h00), (fx, h10), (fy, h01)]
     } else {
-        [(fx + fy - 1.0, h11), (1.0 - fx, h01), (1.0 - fy, h10)]
+        let (lo_f, hi_f) = (fx.min(fy), fx.max(fy));
+        // `1 - hi_f` is exact when hi_f ≥ 0.5 (Sterbenz); when hi_f < 0.5 the sum is
+        // below 1 and the rounded `1 - hi_f` (≥ 0.5) still exceeds lo_f. So this is the
+        // exact test fx + fy ≤ 1.
+        if lo_f <= 1.0 - hi_f {
+            [(1.0 - fx - fy, h00), (fx, h10), (fy, h01)]
+        } else {
+            // Upper triangle: hi_f > 0.5, so `1 - hi_f` is exact, and the weight is lo_f
+            // itself on the edge where hi_f is 1.
+            [(lo_f - (1.0 - hi_f), h11), (1.0 - fx, h01), (1.0 - fy, h10)]
+        }
     };
-    let lo = tri.iter().map(|t| t.1).fold(f32::INFINITY, f32::min);
-    let hi = tri.iter().map(|t| t.1).fold(f32::NEG_INFINITY, f32::max);
+    // Clamp to the range of the corners that actually contribute. On a block edge the
+    // third corner has weight exactly 0 and is an interior sample that differs between the
+    // two blocks; including it would let one block keep a sum rounded 1 ulp past equal edge
+    // samples while the other clamps it back. Restricted to the positive-weight corners,
+    // both blocks clamp the same two-term edge sum to the same two shared samples.
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for &(w, v) in &tri {
+        if w > 0.0 {
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    }
+    if lo > hi {
+        // No positive weight (unreachable for finite fractions): fall back to all three.
+        for &(_, v) in &tri {
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    }
     let sum: f32 = tri.iter().map(|&(w, v)| w.max(0.0) * v).sum();
     Some(sum.clamp(lo, hi))
 }

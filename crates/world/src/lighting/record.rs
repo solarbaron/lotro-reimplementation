@@ -5,6 +5,11 @@ use super::entities::LightParams;
 
 /// Smallest range a light record keeps, metres (`lighting.md` §8.3: max(Range, 0.0002)).
 pub const MIN_RANGE: f32 = 0.0002;
+/// Largest range a light record keeps, metres. Not a client rule: a finite range above
+/// about 1.8 · 10¹⁹ would overflow *R*² to infinity in f32 (hostile data only; the install's
+/// ranges are a few hundred metres at most), so ranges are capped here, where *R*² = 10³⁶
+/// is finite and §8.3 already gives *a* ≈ 1 at every finite distance (Tessera choice).
+pub const MAX_RANGE: f32 = 1e18;
 /// Tolerance per channel of the "specular equals white" test (`lighting.md` §8.3).
 pub const WHITE_TOLERANCE: f32 = 0.0002;
 /// Factor of the attenuation constant: *k* = 10 × Falloff / *R*² (`lighting.md` §8.3).
@@ -31,7 +36,7 @@ pub struct LightRecord {
     pub colour: [f32; 3],
     /// Specular colour (RGB).
     pub specular: [f32; 3],
-    /// Range *R* = max(Range, 0.0002).
+    /// Range *R* = max(Range, 0.0002), capped at [`MAX_RANGE`].
     pub range: f32,
     /// *R*², as uploaded.
     pub range_sq: f32,
@@ -73,7 +78,7 @@ impl LightRecord {
             params.specular
         };
         let range = if range.is_finite() {
-            range.max(MIN_RANGE)
+            range.clamp(MIN_RANGE, MAX_RANGE)
         } else {
             MIN_RANGE
         };

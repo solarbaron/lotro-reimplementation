@@ -624,6 +624,13 @@ text); the full grammar, its error handling and the default of a missing `c` wer
 traced, and Tessera does not need them: Tessera's own parser (above) accepts the tokens of
 §9.1, separated by any of the same four characters.
 
+> **OPEN (implementer, 2026-10-07):** §9.1 and §9.3 say the original writes the `ox oy oz`
+> group whole or not at all, and the client's inverse parser takes each of them as
+> optional, but the default of a missing member is not traced. `tessera-world` reads a
+> missing group as (0, 0, 0) (the block corner, §9.3) and rejects text that gives only one
+> or two of the three, since the original never writes that (Tessera choice, conservative).
+> It also requires `r`, although the client's inverse parser defaults it to region 1.
+
 ---
 
 <a id="s10"></a>

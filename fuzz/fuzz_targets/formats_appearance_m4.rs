@@ -11,7 +11,15 @@
 //! - the same helpers on a property set *built* from the input with PIDs whose `total` type
 //!   is the one each helper reads (raw bytes almost never form typed lists of structs), and
 //!   the race table and avatar bodies in a small world serving that set as every object's
-//!   set and every entity's embedded set, with a visual template leading to a setup.
+//!   set and every entity's embedded set, with a visual template leading to a setup;
+//! - the appearance-record and setup checks above also on an appearance record and a setup
+//!   *built* from the input and encoded (raw bytes almost never decode to a record with
+//!   entries or frames): entries with blocks of base, style and dye variants (also NaN),
+//!   material groups and parts with NaN, infinite and fractional priorities, extras, a key
+//!   table that may disagree with the selection counts; bone frames anchored at the origin,
+//!   at bones or below −1, attachments, placements, named frames and collision volumes with
+//!   hostile floats, repeated keys now and then. The encoded bytes must decode again and
+//!   re-encode to the same bytes.
 //!
 //! Nothing may panic; derived values must stay consistent with their sources.
 //!
@@ -23,7 +31,10 @@
 use std::convert::Infallible;
 
 use libfuzzer_sys::fuzz_target;
-use tessera_formats::appearance::{AppearanceListPids, SlotTable};
+use tessera_formats::appearance::{
+    AppearanceBlock, AppearanceEntry, AppearanceExtra, AppearanceListPids, AppearancePart,
+    EXTRA_KIND_DID, MaterialGroup, SLOT_ALL, SlotTable,
+};
 use tessera_formats::avatar::{
     AvatarPids, BoneSliderDefinition, BoneSliderPids, MAX_RACE_ENTRIES, RacePids, RaceTable,
     parse_slider_values, resolve_avatar_body, slider_positions, slider_value_pairs,
@@ -33,8 +44,9 @@ use tessera_formats::item::{
     npc_held_items,
 };
 use tessera_formats::setup::{
-    ENTITY_FLAGS_REQUIRED, SETUP_SECTION_DID_LIST, SetupSection, SetupSectionEntry,
-    TemplateAppearance,
+    Aabb, BoneFrame, CollisionBox, CollisionCapsule, CollisionSphere, ENTITY_FLAGS_REQUIRED, Frame,
+    NamedFrame, PhysicsBounds, Placement, Quaternion, SETUP_SECTION_DID_LIST, SetupSection,
+    SetupSectionEntry, TAGFILE_MAGIC, TemplateAppearance,
 };
 use tessera_formats::{
     AppearanceRecord, Did, EntityDescriptor, EntityHeader, PropertySet, PropertyType, Record,
@@ -433,53 +445,280 @@ impl World {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
-    if let Ok(a) = AppearanceRecord::parse(data) {
-        let _ = a.first_unusual_field();
-        let _ = a.key_table_matches_selection_counts();
-        let mut slots = SlotTable::new();
-        for (i, e) in a.entries.iter().enumerate() {
-            let _ = e.selection_count();
-            for m in [0.0f32, 0.01, 0.5, 1.0, -1.0, f32::NAN] {
-                if let Some(b) = e.block_for_modifier(m) {
-                    assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b)));
-                }
-                let _ = e.dye_block(m);
+/// Block choice, dye blocks, selection counts, group priorities and the slot table.
+fn check_appearance(a: &AppearanceRecord) {
+    let _ = a.first_unusual_field();
+    let _ = a.key_table_matches_selection_counts();
+    let mut slots = SlotTable::new();
+    for (i, e) in a.entries.iter().enumerate() {
+        let n = e.selection_count();
+        assert!(n as usize <= e.blocks.len());
+        for m in [0.0f32, 0.01, 0.5, 1.0, -1.0, f32::NAN] {
+            if let Some(b) = e.block_for_modifier(m) {
+                assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b)));
+            } else {
+                assert!(e.blocks.is_empty());
             }
-            for b in &e.blocks {
-                let n = b.groups_with_priority().count();
-                assert_eq!(n, b.groups.len());
-                for g in 0..=b.groups.len() {
-                    assert_eq!(b.group_priority(g).is_some(), g < b.groups.len());
-                }
-                let _ = b.groups_end();
-                slots.offer_block(b, i as u32);
+            match e.dye_block(m) {
+                Some(b) => assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b))),
+                None => assert!(e.blocks.is_empty() || m.is_nan()),
             }
         }
+        if let Some(b) = e.base_block() {
+            assert!(e.blocks.iter().any(|x| std::ptr::eq(x, b)));
+        }
+        for b in &e.blocks {
+            let n = b.groups_with_priority().count();
+            assert_eq!(n, b.groups.len());
+            for g in 0..=b.groups.len() {
+                assert_eq!(b.group_priority(g).is_some(), g < b.groups.len());
+            }
+            let _ = b.groups_end();
+            #[allow(clippy::cast_possible_truncation)] // a handful of entries
+            slots.offer_block(b, i as u32);
+        }
+    }
+    let parts: Vec<&AppearancePart> = a
+        .entries
+        .iter()
+        .flat_map(|e| &e.blocks)
+        .flat_map(|b| &b.parts)
+        .collect();
+    assert!(slots.len() <= parts.len());
+    // Every slot holds a part offered for it.
+    for sp in slots.iter() {
         assert!(
-            slots.len()
-                <= a.entries
-                    .iter()
-                    .flat_map(|e| &e.blocks)
-                    .map(|b| b.parts.len())
-                    .sum::<usize>()
+            parts.iter().any(|p| p.slot == sp.slot && p.mesh == sp.mesh),
+            "slot {:#x} holds a part never offered",
+            sp.slot
         );
     }
+}
+
+/// Attachments, holding locations, viewport frames and bone checks.
+fn check_setup(s: &Setup) {
+    let _ = s.first_unusual_field();
+    for n in [0usize, 1, 62, 89, 256] {
+        let _ = s.bone_issue(n);
+    }
+    assert!(s.holding_locations().count() <= s.bone_frames.len());
+    for f in &s.bone_frames {
+        if let Some(h) = s.holding_location(f.key) {
+            assert_eq!(h.key, f.key);
+        }
+    }
+    for a in s.attachments() {
+        assert!(s.bone_for(a.bone_type).is_some());
+    }
+    for f in &s.named_frames {
+        assert!(s.viewport_frame(f.key).is_some());
+    }
+    let _ = s.volume_bounds();
+    let _ = s.has_collision();
+}
+
+/// A frame with hostile values now and then.
+fn synth_frame(src: &mut Src<'_>) -> Frame {
+    if src.below(3) == 0 {
+        return Frame::IDENTITY;
+    }
+    Frame {
+        position: [src.float(), src.float(), src.float()],
+        scale: [src.float(), src.float(), src.float()],
+        rotation: Quaternion {
+            w: src.float(),
+            x: src.float(),
+            y: src.float(),
+            z: src.float(),
+        },
+    }
+}
+
+/// Priorities: whole numbers 0–100 as observed, and fractions, negatives, NaN, infinity.
+fn priority(src: &mut Src<'_>) -> f32 {
+    match src.below(10) {
+        0 => f32::NAN,
+        1 => f32::INFINITY,
+        2 => -1.0,
+        3 => 0.5,
+        _ => f32::from(src.below(101)),
+    }
+}
+
+/// An appearance record (`setup.md` §8) built from `src`.
+fn synth_appearance(src: &mut Src<'_>) -> AppearanceRecord {
+    let mut entries: Vec<AppearanceEntry> = Vec::new();
+    for _ in 0..src.below(5) {
+        let key = 0x1000_0000 | u32::from(src.below(8));
+        if entries.iter().any(|e| e.key == key) {
+            continue; // keys are unique
+        }
+        let blocks = (0..src.below(5))
+            .map(|_| {
+                let groups: Vec<MaterialGroup> = (0..src.below(4))
+                    .map(|_| MaterialGroup {
+                        shader: Did(if src.below(2) == 0 { 0 } else { 0x2B00_0001 }),
+                        material: Did(0x3000_0000 | u32::from(src.u8())),
+                        a: match src.below(3) {
+                            0 => SLOT_ALL,
+                            _ => 0x1000_0010 + u32::from(src.below(4)),
+                        },
+                        binding_key: u32::from(src.below(4)),
+                        g: priority(src),
+                    })
+                    .collect();
+                AppearanceBlock {
+                    variant: match src.below(8) {
+                        0..=2 => 1.0,
+                        3 => 0.0,
+                        4 => 0.01,
+                        5 => 0.02,
+                        6 => f32::NAN,
+                        _ => src.float(),
+                    },
+                    group_param: if groups.is_empty() {
+                        0.0
+                    } else {
+                        priority(src)
+                    },
+                    groups,
+                    parts: (0..src.below(5))
+                        .map(|_| AppearancePart {
+                            part_param: priority(src),
+                            slot: 0x1000_0010 + u32::from(src.below(4)),
+                            mesh: Did(if src.below(8) == 0 {
+                                0x0400_0001
+                            } else {
+                                0x0600_0000 | u32::from(src.u8())
+                            }),
+                        })
+                        .collect(),
+                    extras: (0..src.below(2))
+                        .map(|_| AppearanceExtra {
+                            kind: EXTRA_KIND_DID,
+                            slot: 0x1000_0010,
+                            did: Did(SETUP),
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        entries.push(AppearanceEntry { key, blocks });
+    }
+    // One key-table pair per entry: mostly the entry's key and selection count.
+    let key_table = entries
+        .iter()
+        .map(|e| match src.below(8) {
+            0 => (e.key, e.selection_count() + 1),
+            1 => (0x1000_00FF, 0),
+            _ => (e.key, e.selection_count()),
+        })
+        .collect();
+    AppearanceRecord {
+        did: Did(APPEARANCE),
+        section: src.below(7),
+        entries,
+        key_table,
+    }
+}
+
+/// A setup (`setup.md` §6) built from `src`.
+fn synth_setup(src: &mut Src<'_>) -> Setup {
+    let key = |src: &mut Src<'_>| 0x1000_0000 | u32::from(src.below(6));
+    let mut tagfile = Vec::new();
+    if src.below(4) != 0 {
+        tagfile.extend_from_slice(&TAGFILE_MAGIC);
+    }
+    for _ in 0..src.below(8) {
+        tagfile.push(src.u8());
+    }
+    let has_volumes = src.below(2) == 0;
+    Setup {
+        did: Did(SETUP),
+        tagfile,
+        attach_map_size: TSize { hint: 1, count: 0 },
+        attach_map: (0..src.below(6))
+            .map(|_| (u32::from(src.below(8)), u32::from(src.below(100))))
+            .collect(),
+        bone_frames_hint: 1,
+        bone_frames: (0..src.below(6))
+            .map(|_| {
+                let k = key(src);
+                BoneFrame {
+                    key: k,
+                    key2: if src.below(8) == 0 { k + 1 } else { k },
+                    bone: match src.below(6) {
+                        0 => -1,
+                        1 => -2,
+                        2 => i32::MAX,
+                        _ => i32::from(src.below(90)),
+                    },
+                    frame: synth_frame(src),
+                }
+            })
+            .collect(),
+        placements: (0..src.below(3))
+            .map(|i| Placement {
+                id: u32::from(i),
+                frame: synth_frame(src),
+            })
+            .collect(),
+        named_frames_hint: 1,
+        named_frames: (0..src.below(4))
+            .map(|_| {
+                let k = u32::from(src.below(5));
+                NamedFrame {
+                    key: k,
+                    key2: k,
+                    frame: synth_frame(src),
+                }
+            })
+            .collect(),
+        boxes: if has_volumes {
+            (0..src.below(3))
+                .map(|_| CollisionBox {
+                    min: [src.float(), src.float(), src.float()],
+                    max: [src.float(), src.float(), src.float()],
+                    frame: synth_frame(src),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        spheres: (0..src.below(3))
+            .map(|_| CollisionSphere {
+                centre: [src.float(), src.float(), src.float()],
+                radius: src.float(),
+            })
+            .collect(),
+        capsules: (0..src.below(3))
+            .map(|_| CollisionCapsule {
+                base: [src.float(), src.float(), src.float()],
+                length: src.float(),
+                radius: src.float(),
+            })
+            .collect(),
+        collision_mesh: Did(if src.below(2) == 0 { 0 } else { 0x6600_0001 }),
+        physics_bounds: PhysicsBounds {
+            aabb: Aabb {
+                min: [src.float(), src.float(), src.float()],
+                max: [src.float(), src.float(), src.float()],
+            },
+            height: src.float(),
+            radius: src.float(),
+        },
+        parts: (0..src.below(5))
+            .map(|_| Did(0x0600_0000 | u32::from(src.u8())))
+            .collect(),
+    }
+}
+
+fuzz_target!(|data: &[u8]| {
+    if let Ok(a) = AppearanceRecord::parse(data) {
+        check_appearance(&a);
+    }
     if let Ok(s) = Setup::parse(data) {
-        let _ = s.first_unusual_field();
-        for n in [0usize, 1, 62, 89, 256] {
-            let _ = s.bone_issue(n);
-        }
-        assert!(s.holding_locations().count() <= s.bone_frames.len());
-        for f in &s.bone_frames {
-            let _ = s.holding_location(f.key);
-        }
-        for a in s.attachments() {
-            assert!(s.bone_for(a.bone_type).is_some());
-        }
-        for f in &s.named_frames {
-            assert!(s.viewport_frame(f.key).is_some());
-        }
+        check_setup(&s);
     }
     if let Ok(set) = PropertySet::parse(data, &total) {
         check_set(&set);
@@ -502,4 +741,23 @@ fuzz_target!(|data: &[u8]| {
     }
     let world = World::new(set, &mut src);
     check_world(|d| world.fetch(d));
+    // A structured appearance record and setup.
+    let bytes = synth_appearance(&mut src).to_bytes();
+    match AppearanceRecord::parse(&bytes) {
+        Ok(a) => {
+            assert_eq!(a.to_bytes(), bytes, "appearance re-encoding");
+            check_appearance(&a);
+        }
+        Err(e) => panic!("synthetic appearance record rejected: {e}"),
+    }
+    let bytes = synth_setup(&mut src)
+        .to_bytes()
+        .expect("synthetic setup encodes");
+    match Setup::parse(&bytes) {
+        Ok(s) => {
+            assert_eq!(s.to_bytes().ok(), Some(bytes), "setup re-encoding");
+            check_setup(&s);
+        }
+        Err(e) => panic!("synthetic setup rejected: {e}"),
+    }
 });

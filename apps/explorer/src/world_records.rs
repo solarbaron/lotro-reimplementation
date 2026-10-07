@@ -388,7 +388,8 @@ fn scene(p: &mut RecordProduct, s: &tessera_formats::Scene) {
             link: None,
         });
     }
-    for c in s.descendants().take(MAX_ROWS) {
+    // The root row counts toward the bound too.
+    for c in s.descendants().take(MAX_ROWS.saturating_sub(p.rows.len())) {
         let site = match c.site {
             SceneSite::FrillLayer => "frill layer".to_owned(),
             SceneSite::Group(g) => format!("group {g}"),
@@ -844,5 +845,50 @@ mod tests {
         assert_eq!(p.rows.len(), MAX_ROWS);
         assert_eq!(p.rows[0].cells[0], "weekday");
         assert!(p.rows.capacity() < MAX_ROWS * 2);
+
+        // A cell with more planes, portals and walls together than the bound: the rows are
+        // cut while they are built, planes first. The walls alone are twice the bound, so a
+        // cell() that collected every row and cut the table afterwards would leave a
+        // capacity past MAX_ROWS * 2.
+        use tessera_formats::collision::{CellPlane, CellPortal, PlaneListEnd, WallPolygon};
+        let third = MAX_ROWS / 3 + 1;
+        let c = tessera_formats::CellGeometry {
+            did: Did(0x0100_0001),
+            physics_mesh: None,
+            planes: vec![CellPlane::default(); third],
+            plane_list_end: PlaneListEnd::Bpfl,
+            portals: vec![CellPortal::default(); third],
+            walls: vec![WallPolygon::default(); 2 * MAX_ROWS],
+            hull: Vec::new(),
+            properties: tessera_formats::PropertySet::default(),
+            render_mesh: Vec::new(),
+            layout_rule: tessera_formats::landblock::LayoutRule::default(),
+        };
+        let mut p = product();
+        assert!(world_record(&mut p, &AnyRecord::CellGeometry(Box::new(c))));
+        assert_eq!(p.rows.len(), MAX_ROWS);
+        assert_eq!(p.rows[0].cells[0], "plane");
+        assert_eq!(p.rows[third].cells[0], "portal");
+        assert_eq!(p.rows[MAX_ROWS - 1].cells[0], "wall");
+        assert!(p.rows.capacity() < MAX_ROWS * 2);
+    }
+
+    #[test]
+    fn scenes_with_a_frill_layer_stop_at_the_row_bound() {
+        // Regression: the frill-layer root row came on top of MAX_ROWS descendant rows.
+        let s = tessera_formats::Scene {
+            did: Did(0x0200_0001),
+            frill_layer: Some(PlacementNode::default()),
+            groups: vec![tessera_formats::scenery::SceneGroup {
+                group_id: 1,
+                children: vec![SceneChild::Object(Did(0x4700_0001)); MAX_ROWS + 3],
+            }],
+            ..tessera_formats::Scene::default()
+        };
+        let mut p = product();
+        assert!(world_record(&mut p, &AnyRecord::Scene(s)));
+        assert_eq!(p.rows.len(), MAX_ROWS);
+        assert_eq!(p.rows[0].cells[2], "node (root)");
+        assert_eq!(p.rows[1].cells[0], "group 0");
     }
 }

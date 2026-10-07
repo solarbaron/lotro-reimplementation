@@ -2,13 +2,23 @@
 //! Landblock water and water volumes (`docs/specs/water.md` §6–§7, §9) from hostile
 //! inputs: water tables with arbitrary keys, duplicate entries and missing defaults; block
 //! maps with arbitrary keys and values; random height grids; monitor property sets decoded
-//! from arbitrary bytes; liquid boxes with arbitrary corners, rotations and scales; query
-//! points anywhere (NaN, ±∞, far off the block).
+//! from arbitrary bytes or written by the harness (§7.1: an array of monitor structs with
+//! hostile corners, offsets, flags, names and property DIDs, some elements not structs,
+//! some fields missing, sometimes more monitors than `MAX_MONITORS_PER_OBJECT`); liquid
+//! boxes with arbitrary corners, rotations and scales; query points anywhere (NaN, ±∞, far
+//! off the block).
+//!
+//! Input layout: byte 0 selects the monitor set's form (even: the section as it is, odd:
+//! written from the section's bytes), byte 1 is the length of that section, which follows;
+//! the rest drives the water decision, the boxes, the queries and the fog-zone table. The
+//! set sits at a fixed place, so its decoding does not depend on every earlier read.
 //!
 //! Nothing may panic. Invariants: a wet decision has *h* = `water_height(level)` bit for bit
 //! and *h* > the lowest sample (§6.2); deciding twice gives bit-identical results (WA6); a
 //! water sample's surface is at or above the query point and finite; "under the plane"
-//! implies "under water"; the sector of a landblock lists each of its pairs once.
+//! implies "under water"; the sector of a landblock lists each of its pairs once; at most
+//! `MAX_MONITORS_PER_OBJECT` monitors are read, each with a finite box and no zero
+//! property DID.
 //!
 //! Run with e.g. `cargo fuzz run world_water -- -rss_limit_mb=1024`.
 
@@ -27,8 +37,8 @@ use tessera_physics::WaterQuery;
 use tessera_physics::geometry::LiquidFlags;
 use tessera_world::LandblockKey;
 use tessera_world::water::{
-    BlockWater, MonitorPids, SectorWater, VolumeBox, VolumeTemplate, decide_water,
-    fog_zone_corners, monitors_from_value, water_height,
+    BlockWater, MAX_MONITORS_PER_OBJECT, MonitorPids, SectorWater, VolumeBox, VolumeTemplate,
+    decide_water, fog_zone_corners, monitors_from_value, water_height,
 };
 
 struct Bytes<'a>(&'a [u8]);
@@ -65,12 +75,6 @@ impl Bytes<'_> {
     }
     fn v3(&mut self) -> [f32; 3] {
         [self.f32(), self.f32(), self.f32()]
-    }
-    fn take(&mut self, n: usize) -> &[u8] {
-        let n = n.min(self.0.len());
-        let (a, b) = self.0.split_at(n);
-        self.0 = b;
-        a
     }
 }
 
@@ -195,8 +199,79 @@ fn schema() -> HashMap<u32, PropertyType> {
     .collect()
 }
 
+/// A monitor property set (TSize, then PID, echo and value; `schema`): PID 1, the monitor
+/// array, whose elements are mostly PID-2 structs of box corners (3, 4), offset (5), flag
+/// (6), property DID (7) and name (8), each field present or not.
+fn monitor_set(b: &mut Bytes<'_>) -> Vec<u8> {
+    let mut out = vec![0, 1]; // TSize: hint 0, one entry
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    let n: u32 = if b.u8().is_multiple_of(16) {
+        u32::try_from(MAX_MONITORS_PER_OBJECT).unwrap_or(64) + u32::from(b.u8() % 8)
+    } else {
+        u32::from(b.u8() % 5)
+    };
+    out.extend_from_slice(&n.to_le_bytes());
+    for _ in 0..n {
+        let kind = b.u8();
+        if kind % 8 == 7 {
+            // An element that is not a struct.
+            out.extend_from_slice(&3u32.to_le_bytes());
+            for c in b.v3() {
+                out.extend_from_slice(&c.to_le_bytes());
+            }
+            continue;
+        }
+        out.extend_from_slice(&2u32.to_le_bytes());
+        // Fields 3 and 4 mostly present, the others now and then.
+        let fields: Vec<u32> = (3..=8u32)
+            .filter(|f| {
+                let bit = 1u8 << (f - 3);
+                if *f <= 4 {
+                    kind & bit == 0 || kind & 0x40 == 0
+                } else {
+                    kind & bit != 0
+                }
+            })
+            .collect();
+        out.push(0);
+        out.push(u8::try_from(fields.len()).unwrap_or(0));
+        for f in fields {
+            out.extend_from_slice(&f.to_le_bytes());
+            out.extend_from_slice(&f.to_le_bytes());
+            match f {
+                3..=5 => {
+                    for c in b.v3() {
+                        out.extend_from_slice(&c.to_le_bytes());
+                    }
+                }
+                6 => out.push(b.u8() % 2),
+                7 => {
+                    let d = if b.u8().is_multiple_of(2) {
+                        0
+                    } else {
+                        0x7800_0073
+                    };
+                    out.extend_from_slice(&u32::to_le_bytes(d));
+                }
+                _ => out.extend_from_slice(&b.u32().to_le_bytes()),
+            }
+        }
+    }
+    out
+}
+
 fuzz_target!(|input: &[u8]| {
-    let mut b = Bytes(input);
+    let [form, len, rest @ ..] = input else {
+        return;
+    };
+    let (section, rest) = rest.split_at(usize::from(*len).min(rest.len()));
+    let set_bytes = if form.is_multiple_of(2) {
+        section.to_vec()
+    } else {
+        monitor_set(&mut Bytes(section))
+    };
+    let mut b = Bytes(rest);
     let key = LandblockKey::new(1, b.u8() % 255, b.u8() % 255).expect("valid key");
     let t = table(&mut b);
     let map = block_map(&mut b, key);
@@ -242,9 +317,7 @@ fuzz_target!(|input: &[u8]| {
                 .any(|q| q.water_type == p.water_type && q.height.to_bits() == p.height.to_bits())
         );
     }
-    // Monitors from an arbitrary property set.
-    let set_len = usize::from(b.u8());
-    let set_bytes = b.take(set_len).to_vec();
+    // Monitors from the property set of the input's monitor section.
     if let Ok(set) = PropertySet::parse(&set_bytes, &schema())
         && let Some(v) = set.get(1)
     {
@@ -257,9 +330,13 @@ fuzz_target!(|input: &[u8]| {
             properties: Some(7),
             name: Some(8),
         };
-        for m in monitors_from_value(v, &pids) {
-            let (lo, hi) = m.local_box();
-            let _ = (lo, hi);
+        let monitors = monitors_from_value(v, &pids);
+        assert!(monitors.len() <= MAX_MONITORS_PER_OBJECT);
+        for m in &monitors {
+            assert!(m.min.iter().chain(&m.max).all(|c| c.is_finite()));
+            assert!(m.offset.iter().all(|c| c.is_finite()));
+            assert!(m.properties.is_none_or(|d| d.0 != 0));
+            let _ = m.local_box();
         }
     }
     // Fog-zone corners of an arbitrary table.

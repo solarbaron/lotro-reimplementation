@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; spot checks against the install: record prologues of every prefix in `client_general.dat` and `client_gamelogic.dat`, prefix counts of `client_general.dat`, the 4-byte VLE example and hint of 0x34000000, bucket order and group count of all 24 DID maps, the 0x0F/0x15/0x16/0x17/0x1A/0x32/0x35 prologues). Re-review 2026-10-05: passed, unchanged (spot checks: own-DID prologue of every 0x0F, 0x14, 0x16, 0x17, 0x28, 0x32, 0x35 record; 0x2B count 510, 0x31 count 13,781, 0x28 count 24). |
+| **Review record** | 2026-10-05: **passed**; re-review 2026-10-05: **passed**, unchanged. Full record moved to the review log (decision 0018). |
 | **Companion spec** | `docs/specs/dat-container.md` (archive header, block/extent layer, B-tree directory, zlib, DID routing). This spec starts where that one ends: with a fully reassembled and, if needed, decompressed subfile payload. |
 
 ## Purpose

@@ -8,50 +8,9 @@
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author; re-review by a second separate dirty-room reviewer session, AI-assisted, not the author |
-| **Review record** | **Re-review 2026-10-07, `CLEAN_ROOM.md` §5.3: passed, status Accepted.** All nine checklist items hold: functional facts only; no code, no pseudo-code, nothing that follows a listing's structure; no copied prose, and labels used only as interoperability identifiers; no game text, keys or hostnames (the §3.2 debug-dump labels are now paraphrased, and the locale names of §3.3.1 are described, not quoted); every fact has a provenance row (MD24–MD27 cover §3.3.1, §4.4.1, §4.4.2 and §4.7); the BIN second use (q6–q9) names build, questions and why M1–M3 were not enough, within decision 0011; units are stated (§4.2); the invariants (MI8, MI15) are testable; unknowns are OPEN with Tessera rules; no closed gate. All six issues of the first review are resolved as the resolution note below says. Data re-checked over all records with the reviewer's own read-only probe (not the writer's): every position of the three tables and every `link_position` passes §4.4.1 (13,485, 9,025, 5,638 and 2,754; largest \|w² + x² + y² + z² − 1\| 2.4 · 10⁻⁷); all 10,731 non-link texts are references without arguments, all resolve in the English tables, 87 to empty text; the 2,754 link rows have null text and `level` 0, and `level` is 0 in no other row; 2,590 link rows qualify for a zone entry and 164 lead into their own dungeon, none has target 0; the eleven range pairs of §4.5 and no row with `min_range` − `max_range` > 0.0002; place names: 296,009 code units, maximum 0x7A, none 0, five 0x1F, 168 names with upper case, 9,025 distinct ignoring case, bucket order 9,024 of 9,024 under the lowered hash and 165 failures under the stored name; §4.3 link-position flag bytes and the 412 same-landblock rows (region, X and Y; 416 if the region is ignored). Five further Confirmed facts, all reproduced exactly: §4.5 (area, dungeon, entity classes, `layers` lengths and the 2,780 elements, flag bytes, regions, `icon`, `level`, the `type` bit counts, `flag_b`, `discovery`, `extra` 12,814/671 with 663 world-event arrays, 12,532 ascending pairs); §5.2 (5,460/178 entries, hint 0, 3,363 role constraints, 2,453 active-quest arrays, 16,124 quests and 16,121 role names, lengths 1–146, 720 of length 1); §5.3 (flag bytes, every row indoors and every `dungeon` of class 691, `area` 5,248/354/36, regions, entity classes, layer lengths); §3.5 (flag bytes, 7,351 orientations, no instance, regions, slot classes, 2,330 interior places); §4.1 (*n* = 13,485 with 0 bytes left, and the 53-byte minimum row). BIN spot check in a private copy of the analysis project (same build, decision 0011): the position test of §4.4.1 (the four CO §4 tests, finite x, y, z, finite orientation, f32 sum in stored order, tolerance 0.0002) and §3.3.1 (per-unit wide lower-casing with the full 16-bit unit in the hash, stop at unit 0, locale set for all categories from the game language with four locales and English as default) agree with the spec; q7 and q9 were not re-traced. Non-blocking notes for a later revision: §13.2 writes the `type` value as "1 << 37", which reads as code notation (say "bit 37 set, 2³⁷"); MD27's fact text does not mention §4.7 step 4 (rim placement, horizontal distance); the Tessera rules of §3.3.1, §4.4.2 and §4.7 carry no Decision mark (as in §14). *First review, 2026-10-07:* changes requested (issues below), with spot checks of MD1–MD3, MD5–MD7, MD9, MD12, MD13, MD16, MD18 and §13 that all agreed with the data. |
-| **First review record** | 2026-10-07, `CLEAN_ROOM.md` §5.3: **changes requested**, status stayed Review. Spot checks over all records of the install (own read-only probes), all of which agree with the spec: MD1 and §2.2 (the UNIQUEDB and WEENIECONTENT entries, the payload sizes, no 0x0E000002); MD2, MD3 and MD5 (9,025 entries with 0 bytes left over, lower-cased-name bucket order holds for 9,024 of 9,024 pairs while the name as stored fails 165, `area` = `dungeon` everywhere, the flag, region and zone-class counts); MD6, MD7 and MD9 (13,485 rows with 0 bytes left over, the link block in exactly the 2,754 rows with bit 0, every census line of §4.3 and §4.5); MD12 and MD13 (5,638 rows, all interior, every `dungeon` of class 691, every census line of §5); MD16 and MD18 (the class counts of §2.3, the route destination and mode classes, the 18,878/3,058/234 actions, the whole §8.4.2 pattern table, the costs, and all 73 pads resolving). All 10,731 non-link row texts also resolve in the English string tables. Issues listed below the header table. |
+| **Review record** | Re-review 2026-10-07: **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for the three singleton tables of §3–§5), `crates/world` (place lookup §3.4, map-note index §4.6, travel and housing graphs §8–§9), `apps/explorer` (world-map overlays: places, notes, links, travel routes, neighbourhoods), `apps/client` (walker place lookup), `crates/net` sandbox backend (travel and housing data for a local server) |
 | **Companion specs** | [`records.md`](records.md) (**RC**: §1.2 VLE, §1.3 TSize and bucket order, §1.4 strings, §1.5 name hash, §2.1 DID table, §4 StringInfo); [`property-system.md`](property-system.md) (**PS**: §4.6 positions, §4.8 StringInfo, §5 property sets and list/table entry forms, §6.2 the +0x09000000 rule, §7.3 bit-to-key rule, §8.1 DID maps, §17.4 StringInfo reader); [`wstate.md`](wstate.md) (**WS**: object-state header and root class, §11 areas, territories, regions, dungeons); [`landblock.md`](landblock.md) (**LB**: §4.6 links, §6 landblock properties and minimap tiles); [`entity-descriptor.md`](entity-descriptor.md) (**ED**: SED types, §4.5.1 content layers); [`game-panels.md`](game-panels.md) (**GP**: §8 minimap, §9 world map, map georeference); [`coordinates.md`](coordinates.md) (**CO**: §5–§8 frames and map coordinates, §9 `/loc` text); [`string-table.md`](string-table.md) (**ST**: §9 rendering a StringInfo) |
-
-> **Review issues (2026-10-07), as raised by the first reviewer (all resolved; accepted on re-review, see the review record above):**
-> 1. **§4.4 and §4.6, "valid position" is not defined.** Step 1 of §4.4 and the filing rule for a
->    link row's `link_position` both depend on it, and so does MI8. State the test (if it is the
->    four-part test of CO §4, cite it) or add an OPEN.
-> 2. **§4.4, "`text` does not render to a valid string" is ambiguous.** It could mean a null
->    reference, a token missing from the active locale's table, an empty result, or an empty
->    literal. Say which, or what is known from BIN, and mark the rest OPEN. MI8 depends on it.
-> 3. **§3.2, the client's debug-dump labels are quoted.** The two quoted words are strings taken
->    from the client binary and are not needed for interoperability. Paraphrase them, for
->    example: "the client's debug dump of the table names the first field as the area and the
->    second as the dungeon".
-> 4. **§4.2, no units for `min_range` and `max_range`.** §5.3 requires units. State them, or add
->    an explicit OPEN for the unit (the §4.6 OPEN covers only what the values limit).
-> 5. **§3.3 and §3.4, lower-casing of code units outside ASCII is not specified.** BIN q3 says each
->    code unit is lower-cased, but not by which mapping (ASCII only, Latin-1, or full UTF-16).
->    State it, or mark it OPEN. A reader of other installs, or of hostile input, needs the rule
->    to place and find keys.
-> 6. *(minor)* The sentence in §3.4 about "one further routine … note-shaped object … its caller
->    was not traced" describes the binary's internals, not a behaviour an implementer can use.
->    Rephrase it as a functional fact or drop it. The provenance legend defines a
->    **Probable** mark that no row uses; remove it or use it.
->
-> **Resolution (spec writer, revision of 2026-10-07; awaiting re-review):**
-> 1. §4.4.1 now states the position test (the four tests of CO §4, finite x, y, z, and a finite
->    orientation of unit length within 0.0002), from BIN q6; §4.6 says that a link row needs both
->    its own position and `link_position` to pass it. Checked on every position of the three
->    tables (MD24).
-> 2. §4.4.2 now states the text test from BIN q7: a literal always passes, even an empty one; a
->    reference needs a non-zero token and table, the table in the active locale and the token in
->    it, and each argument must pass its own check. The text is never rendered, so an entry with
->    empty text passes (87 rows here). The per-kind argument rule is OPEN (MD25).
-> 3. §3.2 paraphrases the debug dump.
-> 4. §4.2 gives the unit (world units, CO §3); new §4.7 gives the radar's range test from BIN q9
->    (MD27).
-> 5. New §3.3.1 states what BIN q8 shows: each code unit is lower-cased on its own by the C
->    runtime's locale-dependent mapping, under the locale the client selects at start-up from the
->    game language; the full 16-bit unit enters the hash; a code unit 0 ends the key. The exact
->    mapping of non-ASCII units is OPEN and a Tessera rule is given (MD26).
-> 6. The §3.4 sentence is dropped. The unused **Probable** mark is removed from the legend.
 
 > **Naming note (interoperability).** Property names (`MapNote_…`, `Travel…`, `House_…`,
 > `Neighborhood…`, `HousingHook_…`, `UI_Map_…`, …), DID-map labels (`PlacesTable`, `MapNotes`,

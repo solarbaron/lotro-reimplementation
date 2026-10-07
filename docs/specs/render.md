@@ -4,15 +4,17 @@
 
 | | |
 |---|---|
-| **Status** | §1–§2: **M2 design** (meshes, materials and shared buffers), §2.4 **M4 skinning**, implemented. §4: **M4.5 lit pipelines, shared frame uniform and mip chains**, §5: **M4.5 render-world pipelines** (terrain layers, water, sky, instanced scenery and frills), implemented; §4–§5 Review (first review 2026-10-07: **changes requested**; re-review 2026-10-07: **changes requested**, not Accepted, see review record) |
-| **Last updated** | 2026-10-07 (header and review records; the body last changed 2026-10-07 by the implementer: §4.3 light selection, §5.2 rows, §6 change log) |
-| **Author role** | Clean-room implementer of `tessera-render` (all sections) |
-| **Reviewer** | §4–§5: Claude review session (spec-writer agent, M4.5 criterion 9) |
-| **Review record** | §4–§5: Claude review session (spec-writer agent), first review 2026-10-07 against CLEAN_ROOM.md §5.3 and the specs they implement (`lighting.md`, `material.md`, `texture-list.md`, `terrain-texturing.md`, `water.md`, `environment.md`, `scenery.md`, `mesh.md`): **changes requested**. Blocking: (1) The file had no §5.1 header (status, date, author role, reviewer; added by the reviewer with this record) and has no change log; add one listing the §4 and §5 additions and the M4.5 verification changes (for example the `WorldSurface` gloss from the normal texture's alpha). (2) §5.1 contradicts itself on the translucent stage: the "Hooks" row (and the renderer's `world_hooks`) runs instanced scenery before water in every stage, but the "Stages" row and the last OPEN of §5.7 say water is drawn first, then the blended instances. As built, blended instances draw before the scene copy is used and water (source ONE, destination ZERO, depth test) then overwrites any `Blend`-mode instance in front of it that wrote no depth. State one order and make the text and the code agree. (3) §5.4 attributes "unlit and unfogged" to "the Tessera Decision of §12", but `environment.md` §12 decides only the axes of *A* and *B* (fog is OPEN there; lighting is not mentioned): mark it as this file's Decision. "Drawn in the given order (back to front)": `environment.md` does not say the stored order is back to front; say it is assumed. (4) Revisions in progress upstream (Revised, not yet re-accepted) replace Tessera Decisions that §4–§5 implement: `lighting.md` §8.5 (selection radius ρ = Range × (1 − 0.15 × min(Falloff, 1)), or Range for global lights; squared distance from the light to the object's world box; key lights at the front; `Light_OnlyInfluenceParent`/`Light_NeverInfluenceParent`; only the scene's walk order still OPEN) against `LightSelection::Auto` of §4.3 (range sphere against bounding sphere, nearest first); `lighting.md` §8.3 row L30 (baked-landscape lights never reach terrain or ceiling chunks) for the chunk selection of §5.2. Add a pointer or OPEN for each. Non-blocking: (5) §4.4 is headed "Tessera Decision simple form", but the `lighting.md` §9 simple form is one tap and a fade to 0 at the shadow distance; §4.4 uses five taps and a fade over the last fifth. Say that it departs from that Decision. Also state which depth bias applies when: 0.006 × radius set by `fit`, or the field default 0.0015. (6) §4.1 "Per-pixel lists": giving every table light the per-pixel fade and the clamped specular departs from `lighting.md` §5.6 and §8.3 step 3 (per-vertex lists: hard cut-off, no specular); mark it Decision as is done for directional lights. (7) §5.3 evaluates the waves on the world x, y of the render frame, while `water.md` §8.3 uses the vertex's model x, y. Mark it as a Decision and say which frame is meant (with an anchor-relative frame the wave phase jumps when the anchor moves). (8) §5.5 has unlabelled choices: non-opaque frill groups are drawn blended with depth write in the translucent stage, and frill batches cast no shadow by default (`scenery.md` §8.3 rule 6 gives only the shader variant). Label both Decision. (9) §4.6's last sentence is stale (`walker.md` §14.1 uploads mip chains), and §3 OPENs answered by §4–§5 (mip chains, normal-map green sign for lit passes, per-draw cost and instancing) are not marked answered. CLEAN_ROOM §5.3: no code or pseudo-code (the WGSL and Rust names are Tessera's own clean-room identifiers; the §4.2 table is a byte layout; the sway formula is Tessera's own); no copied prose, game text, keys, hostnames or traffic; material and property labels are data labels used for interoperability, as in the source specs; nothing under a closed gate. Spot checks that matched: `FrameUniform` size 12,624 = 336 + 256 × 48 (under 16 KiB) and the draw uniform 224 + 32 = 256 bytes; 8 lights in all with the sun counted (`lighting.md` §8.5); output alpha and the alpha test before vertex alpha (§5.12–§5.13); the normal-map sign (§5.2.4); no specular below power 0.5 (§5.8); emissive added before fog (§5.9); E20 modulo 3,600; fog values after the §10 limits; terrain opacity rules, discard, first-layer alpha, specular and gloss switches, mask row 0 in the south, the non-A8 mask Decision (`terrain-texturing.md` §5.1, §5.2, §7, §8.1, §9.4 as revised: specular not × N · L, albedo or 2); water steps 1–7, shoreline weight, render state, fake-light Decision (`water.md` §8.3–§8.4); mip chain upload (`texture-list.md` §5.5); frill rules 2–5, *D* = 97, *F* = 30 at level 2, sway weight from the stored box (`scenery.md` §8.3–§8.5). **Re-review** 2026-10-07, Claude review session (spec-writer agent, M4.5 criterion 9; an independent session, not the first reviewer), of the text after the implementer's 2026-10-07 revision (§4.3 light selection, §5.2 "Decision: table lights" and "Stored normal" rows, the "Colour (§9)" row, new §6 change log): **changes requested**; §4–§5 stay Review. Fixed: item (4) (§4.3 now follows `lighting.md` §8.5 as revised: ρ = Range × (1 − 0.15 × min(Falloff, 1)), Range for `Light_GlobalLight`; squared distance to the world box, strict; key lights first, then the others, each nearest first as the §8.5 Decision orders them; the parent switches; L30 for terrain and ceiling chunks; the three unspecified inputs carried as Decisions and listed in the `lighting.md` §8.5 implementer OPEN). Item (1) in part: a change log exists. Still open: (1) the §6 change log has only the 2026-10-07 row and sends the reader to the ROADMAP for the §4 and §5 additions; the spec's log has to carry them itself (rows for §4, for §5 and for the M4.5 verification changes such as the `WorldSurface` gloss from the normal texture's alpha). (2) unchanged: the §5.1 "Hooks" row (and the renderer: terrain, instanced, sky, water) contradicts the "Stages" row and the last §5.7 OPEN (water before the blended instances). (3) unchanged (§5.4 "Tessera Decision of §12" for unlit and unfogged; "back to front" stated as a fact). (5) the §4.4 heading still calls five taps with a fade over the last fifth the `lighting.md` §9 "simple form" (one tap, fade to 0 at the shadow distance); the depth-bias part is settled by the "Fit" and "Pass" rows (0.006 × radius from `fit`, else the field default 0.0015). (6)–(9) unchanged. New: (10) the header's "body unchanged since 2026-10-06" was not true after the 2026-10-07 revision (corrected by the reviewer in the header only). (11) §4.3 "Decision: unattached lights" is contradicted by a BIN finding recorded in the `lighting.md` review record (second review of its fifth revision, item 2: the client tests the only-parent switch for every object other than the parent whether or not the light has a parent, so an unattached light with `Light_OnlyInfluenceParent` set reaches no object); that spec's text does not carry it yet, so add a pointer now and adopt the rule when `lighting.md` is revised. (12) The L30 conclusion that §5.2 "Decision: table lights" cites is itself under revision (`lighting.md` review record, blocking item 1: above the lowest landscape-lighting setting the original draws the baked-landscape lights that reach a chunk into that chunk's baked-lighting texture, parameter 3019, for blocks that name a stored light map); the light-list rule stays, but the stored light map will not be the only source of their light on the ground; add a pointer. (13) Unlabelled choices in the new §4.3 text: "a light without an entry has ρ = *R* and no switches" and "(`List`) the list is kept as given, baked lights included" are Tessera's; label them Decision. Non-blocking: (14) §5.2 "Stored normal" is right against `terrain-texturing.md` §4.10 and §9.4, but it reaches the §4.10 effect only when the caller supplies §4.10 normals; the walker's chunks carry unit central-difference normals (`walker.md` §14.4, `terrain.md` §5), so say what the row assumes of its input. Spot checks that matched: ρ and its constant 0.85 (decision 0012), the strict box test and key-first order against `lighting.md` §8.5 and rows L31–L32; the chunk exclusion against L30 and `terrain-texturing.md` T43 as currently written; the stored-normal use against §4.10 (hemispheric term and the sun's N · L₀ unnormalised, the point-light sum normalised) and §9.4 (highlight not × N · L, albedo or 2; *n* the unit vertex normal without a normal map); the L5 sheen of about 0.09 against T44; 8 lights in all with the sun counted. CLEAN_ROOM §5.3 for the new text: no code or pseudo-code (Rust names are Tessera's own clean-room identifiers), no copied prose, no game text, keys, hostnames or traffic; property names are data labels used for interoperability; nothing under a closed gate. |
+| **Status** | §1–§2: **M2 design** (meshes, materials and shared buffers), §2.4 **M4 skinning**, implemented. §4: **M4.5 lit pipelines, shared frame uniform and mip chains**, §5: **M4.5 render-world pipelines** (terrain layers, water, sky, instanced scenery and frills), implemented; §4–§5 and §7 **Accepted** (2026-10-07, re-review of the second revision passed) |
+| **Last updated** | 2026-10-07 (spec writer, dirty room: §3, §4.1, §4.3, §4.4, §4.6, §5.1–§5.5, §5.7 revised; new §7 client facts and provenance; §6 change log completed; second revision of §4.3, §5.5 and §7 after the re-review) |
+| **Author role** | §1–§6: Clean-room implementer of `tessera-render`; §4–§5 revised 2026-10-07 by a spec writer (dirty room), who also wrote §7 |
+| **Reviewer** | §4–§5, §7: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
+| **Review record** | §4–§5: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision (§4–§5, §7): **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **passed, Accepted**. Details in the dirty-room review log (decision 0018). |
 
 The clean-room implementer of `tessera-render` wrote this file. It holds Tessera's own design
-decisions and the open questions that need spec facts. It contains no facts taken from
-dirty-room material. Spec writers may replace or extend any section.
+decisions and the open questions that need spec facts. The client facts that §4–§5 rely on
+come from the specs they cite; §7, written by a spec writer in the dirty room, restates them
+with their provenance and lists every place where the renderer departs from the client. Spec
+writers may replace or extend any section.
 
 ## 1. Current design (Tessera's own choices, not format facts)
 
@@ -120,11 +122,11 @@ equal the static path pixel for pixel. Golden images: `crates/render/tests/skinn
 > ranges together cover more indices than the mesh has; a decoder meeting such data would have
 > to duplicate the shared triangles into their own range.
 
-> **OPEN:** Per-draw cost for M3 world rendering. Each `MeshDraw` takes its own 256-byte
-> dynamic-offset uniform and one `draw_indexed` per submesh and face side, with no instancing.
-> ARCH §13 calls for instancing of repeated static objects; the plan is an instanced path
-> (per-instance transforms in a storage or vertex buffer, keyed by mesh, submesh and material,
-> one `draw_indexed(.., 0..n)` per key) added with the M3 world renderer.
+> **Answered (M4.5, §5.5):** per-draw cost and instancing: repeated static objects and
+> frills draw as instance batches (one `draw_indexed` per batch and submesh). The original
+> question: each `MeshDraw` takes its own 256-byte dynamic-offset uniform and one
+> `draw_indexed` per submesh and face side, with no instancing; ARCH §13 calls for
+> instancing of repeated static objects.
 
 > **OPEN:** Whether the renderer should accept BC1/BC2/BC3 (DXT1/3/5, records.md §5) blocks
 > directly when the adapter supports `TEXTURE_COMPRESSION_BC`, instead of the formats crate decoding
@@ -132,9 +134,9 @@ equal the static path pixel for pixel. Golden images: `crates/render/tests/skinn
 > RGBA8 as the fallback. The renderer needs to know whether any surface needs CPU-side processing
 > before upload, such as the BC1 1-bit alpha question in records.md §5.3.
 
-> **OPEN:** Mip chains (0x40 records list separate 0x41 levels): is level 0 always the largest,
-> and does each level halve exactly (rounding down, minimum 1, or minimum 4 for DXT)? The upload API
-> takes a single level today. A `mips` field will be added once this is specified.
+> **Answered (M4.5, §4.6, `texture-list.md` §4.2–§5.5):** mip chains: one mip per stored
+> level, level 0 the largest, a level whose stored size differs from its slot copied clipped.
+> The original question: is level 0 always the largest, and does each level halve exactly?
 
 > **OPEN:** The colour space of each surface format and category: which are sRGB-encoded colour
 > data and which are linear data (normal maps, masks). This decides `ColorSpace::Srgb` vs
@@ -148,9 +150,11 @@ equal the static path pixel for pixel. Golden images: `crates/render/tests/skinn
 > counter-clockwise front faces; the mesh spec must state the source convention so the decoder
 > knows whether to call `flip_winding`.
 
-> **OPEN:** Green-channel convention of game normal maps (along +v / "Y-down", or the opposite)
-> and whether normal maps use two channels with Z reconstructed. Default here: three channels,
-> green along +v.
+> **Answered for lit passes (M4.5, §4.1, `lighting.md` §5.2.4):** three channels, no Z
+> reconstruction, positive green tilts the normal toward the top of the image
+> (*N* = *n*.x **T** − *n*.y **B** + *n*.z **N₀**). The M2 pipelines keep their own
+> convention (`normal_green_up`). The original question: green-channel convention of game
+> normal maps and whether they use two channels with Z reconstructed.
 
 > **OPEN:** The dye rule. The renderer implements a multiplicative tint by a mask
 > (`material.md` is expected to state the real mask source, ARCH §12 reports "diffuse alpha",
@@ -215,7 +219,7 @@ bindings, draw order) and every row marked **Decision** are this crate's choices
 |-------|--------|
 | Lit pass | A world pass becomes lit with `Pass::frame_lighting(FrameLighting)`. Its mesh draws with `MeshShading::Lit` go through the lit pipeline; debug shadings keep the M2 pipelines and the studio `Lighting` (§2.3). Passes without frame lighting draw exactly as in M2 (the M2 and M4 golden images are unchanged). |
 | Light passes | **One base pass loops over all lights** (`lighting.md` §2.1 allows it): ambient + hemispheric, the sun with its shadow, and table lights, all per pixel: at most 8 lights per draw **in all, the main light included** (`lighting.md` §8.5), so 7 table lights when the pass has a sun and 8 without. The additive light passes 0x01–0x03 are folded in; since the base pass is lerp(Σ, fog, *f*) and each additive pass adds (…) × (1 − *f*), the sum is the same. Deviation: on translucent texels the folded light is weighted by the base pass's output alpha (§4.3), where the original's additive passes use *M*.alpha; the two differ only for base-texture opacity. |
-| Per-pixel lists | Every table light uses the newer back end's per-pixel form: smooth fade over the last quarter of *R²* (§8.3 step 3) and the clamped specular of §5.8. Extra directional lights (§8.2) get diffuse and specular too (Decision; per-vertex in the original). |
+| **Decision**: per-pixel lists | Every table light uses the newer back end's per-pixel form: smooth fade over the last quarter of *R²* (`lighting.md` §8.3 step 3) and the clamped specular of `lighting.md` §5.8. This departs from the original, which sums the lights of the per-vertex lists (every light but light 0) per vertex with the hard cut-off of `lighting.md` §8.3 steps 1–2 and no specular (`lighting.md` §5.6). Extra directional lights (`lighting.md` §8.2) get diffuse and specular too (per-vertex in the original). |
 | Colour space | Lit shaders compute on **stored values** (§5.1: no back end decodes sRGB). A material texture uploaded with `ColorSpace::Srgb` is re-encoded after sampling (per-texture flag in the draw uniform), so both upload kinds give the stored value (filtering then happens on decoded values, a rounding-level difference). Material, light, fog and vertex colours are taken as given. On an sRGB target the final colour is decoded before output so the stored pixel equals the computed value; blending on sRGB targets therefore happens on decoded values (Decision). |
 | Unlit pass | `Material::unlit` in a lit pass: texture × *M* (× vertex colour when `LitSurface::vertex_colors`), fog when `LitSurface::fog` (§7 code 0x00). |
 | Emissive and glow | *Em*.rgb × *G* added before fog (§5.9). Glow mask (slot 3013) × *G* is added the same way (**Decision**: the bloom composition is OPEN in §5.9). |
@@ -279,7 +283,7 @@ modulo 3,600 once it exceeds 3,600 before upload, so callers pass the raw global
 | 144 | `ambient` | rgb frame ambient ½(*X* + *Y*) (§8.1) |
 | 160 | `hemispheric` | rgb frame hemispheric ½(*X* − *Y*) |
 | 176 | `fog_color` | rgb fog colour; w = 1 fog on, 0 off |
-| 192 | `fog` | near, 1 / (far − near), far, far − near, after the §10 limits |
+| 192 | `fog` | near, 1 / (far − near), far, far − near, after the `lighting.md` §10 limits (`Fog::limited`: far in 20–10,000, near in −10,000 … far − 20; applied to every fog, see §7 departure R-D2) |
 | 208 | `shadow_view_proj` (`mat4x4`) | world → shadow clip (orthographic, depth 0..1, 0 nearest the light) |
 | 272 | `shadow` | quality (0 none, 1 one tap, 2 five taps), fade start, fade scale, texel size (1 / map size) |
 | 288 | `shadow_color` | rgb landscape shadow colour; w = depth bias subtracted from the comparison depth |
@@ -331,23 +335,43 @@ takes the point lights whose squared distance to the draw's world box is below �
 where ρ is the light's selection radius; it leaves out lights flagged as baked into the
 landscape on terrain and ceiling chunks (§5.2) and applies the parent switches; it orders key
 lights first, then the others, each group nearest first by the squared box distance (the
-Tessera Decision of §8.5; ties by table index); then it appends the directional table lights in
+Tessera Decision of `lighting.md` §8.5; ties by table index); then it appends the directional table lights in
 table order; at most 8 lights in all with the sun counted (7 table lights when the pass has a
 sun). The reach of each table light comes from `Pass::light_reach` (a `LightReach` per
 `FrameLighting::lights` entry: ρ, `KeyLight`, `Light_BakedLandscapeLight`, the parent's object
 handle and the two parent switches; `LightReach::from_fields` computes ρ = Range × (1 − 0.15 ×
-min(Falloff, 1)), or Range for `Light_GlobalLight`). A light without an entry has ρ = *R* and no
-switches. A draw's object handle is `MeshDraw::light_object`; terrain chunks and instance
-batches have none. The world crate can pass its own choice with `LightSelection::List` (the
-same cap applies, and the list is kept as given, baked lights included). The renderer builds
-the selection data once per pass (directional indices; point lights sorted along x, so a draw
-tests only the lights whose x range can reach it) and selects without allocating.
+min(Falloff, 1)), or Range for `Light_GlobalLight`). **Decision:** a light without an entry
+has ρ = *R* (its record's range), is not a key light, reaches terrain and ceiling chunks and
+has no parent switch (the client always has the light's fields; an entry-less light is a
+caller that supplies none, as the walker does today, `walker.md` §14.3). A draw's object
+handle is `MeshDraw::light_object`; terrain chunks and instance batches have none. The world
+crate can pass its own choice with `LightSelection::List`: the same cap applies and,
+**Decision**, the list is kept as given, in its order and with baked lights included (the
+caller owns the rule). The renderer builds the selection data once per pass (directional
+indices; point lights sorted along x, so a draw tests only the lights whose x range can
+reach it) and selects without allocating. The client considers only objects drawn in the
+current frame and skips objects that carry any of three scene flags (§7 row R-L3); the
+renderer selects only for the draws it is given.
 
 | Topic | Choice |
 |---|---|
-| **Decision**: world box | A mesh draw's box is the box around the eight corners of the mesh's model-space box (bind pose for skinned meshes) after the draw's transform; a terrain chunk's is the box of its vertices after its transform; an instance batch is one object whose box encloses the bounding spheres of its instances drawn in colour. A box that is not finite receives no point light. |
-| **Decision**: unattached lights | The parent switches apply only to a light with a parent handle; an unattached light reaches every object (`lighting.md` §8.5 OPEN of 2026-10-07). |
-| **Decision**: directional table lights | Extra directional lights (`lighting.md` §8.2) have no position; they reach every draw and follow the point lights. |
+| **Decision**: world box (`lighting.md` §8.5 OPEN (b), how an object's box is formed) | A mesh draw's box is the box around the eight corners of the mesh's model-space box (bind pose for skinned meshes) after the draw's transform; a terrain chunk's is the box of its vertices after its transform. A box that is not finite receives no point light. |
+| **Decision** (departs from the client): one list per instance batch | An instance batch is treated as **one** light-list object: one selection is made for the whole batch, against the box that encloses the bounding spheres of its instances drawn in colour, and every instance uses it. The client builds a list for **each** object against that object's own box (`lighting.md` §8.5, row L32; §7 row R-L6); `lighting.md` §8.5 OPEN (b) asks only how an object's box is formed, not whether objects may share a list, so it does not cover this. Effect: a batch whose box spans many lights gets those lights at squared distance 0, ordered key lights first and then by table index, so the instances receive lights chosen for the batch as a whole, not the ones nearest each instance; lights that reach only some instances light all of them, and with at most 8 per draw others are left out (departure R-D9). |
+| **Decision** (departs from the client): unattached lights | The parent switches apply only to a light with a parent handle; an unattached light reaches every object. The client tests, for every object other than the light's parent, the only-parent switch whether or not the light has a parent, so a light with `Light_OnlyInfluenceParent` set and no parent reaches **no** object (§7 row R-L2, BIN; `lighting.md` §8.5 step 3 and row L34, which answer part (a) of its implementer OPEN and withdraw this Decision). No Light entity of this install's landblock infos sets that switch, so the difference does not show here. |
+| **Decision**: directional table lights (`lighting.md` §8.5 OPEN (c)) | Extra directional lights (`lighting.md` §8.2) have no position; they reach every draw and follow the point lights. |
+
+> **OPEN (spec writer, 2026-10-07, for the `tessera-render` implementer):** apply the
+> only-parent switch to every object other than the light's parent, also when the light has
+> no parent (row R-L2), so an unattached light with `Light_OnlyInfluenceParent` reaches no
+> object; then retire the "unattached lights" Decision.
+
+> **OPEN (spec writer, 2026-10-07, second revision, for the `tessera-render` implementer):**
+> select the lights of an instanced draw **per instance**, by the rules above against the
+> instance's own world box (its parent switches by the instance's object handle where the
+> caller gives one), so that each instance receives the list the client would build for that
+> object (row R-L6); then retire the "one list per instance batch" Decision. How the
+> per-instance lists reach the GPU (instance data, a storage buffer, or splitting a batch
+> into groups that share a list) is Tessera's choice.
 
 Draw uniform: the M2 `DrawUniform` (224 bytes, §2) grows by two vectors to 256 bytes, still one
 256-byte dynamic-offset slot: `lit` (offset 224: rgb *G*, w specular power *p*) and
@@ -358,7 +382,14 @@ bits 7–8, sRGB re-encode bits 9–15 per material texture). Group 2 holds seve
 or unresolved texture binds the white texture.
 
 <a id="s4-4"></a>
-### 4.4 Sun shadow (`lighting.md` §9, Tessera Decision "simple form")
+### 4.4 Sun shadow (`lighting.md` §9; departs from the Tessera Decision "simple form" there)
+
+The equations are those of `lighting.md` §9 (steps 2, 4–7). The engine values are OPEN there
+and its Tessera Decision (simple form) is one cascade, one tap, shadow colour 0, colour range
+1 and *φ* fading linearly to 0 at the shadow distance. **Decision:** the renderer keeps one
+cascade, colour 0 and range 1, but uses five taps (quality 2) and a linear fade over the
+last fifth of the shadow distance; the depth bias is 0.006 × the fitted sphere's radius when
+`SunShadow::fit` builds the shadow, else the field default 0.0015.
 
 | Topic | Choice |
 |-------|--------|
@@ -388,8 +419,8 @@ max(1, size ≫ *i*) is copied clipped to the smaller width and height, as the o
 full pyramid are ignored. Samplers filter between mips (`Filter::Linear` is trilinear,
 `Nearest` picks the nearest mip); single-level textures sample as before. Mip textures
 cannot be updated in place. This supersedes the "one level" row of §1 and answers the
-mip-chain OPEN of §3 (`texture-list.md` §4.2–§5.5); the walker still has to upload its
-chains to close the aliasing OPEN of `walker.md` §9.
+mip-chain OPEN of §3 (`texture-list.md` §4.2–§5.5). The walker uploads the chains of its
+object and terrain textures (`walker.md` §14.1).
 
 <a id="s4-7"></a>
 ### 4.7 Tests
@@ -427,6 +458,13 @@ and on llvmpipe GL (Mesa 26.1.8), and the M2 and M4 golden images are unchanged.
 > the additive passes are OPEN in `lighting.md` §6 and §9; the renderer uses the Tessera
 > Decisions there and makes every value a `SunShadow` field.
 
+> **OPEN (spec writer, 2026-10-07, for the `tessera-render` and walker implementers):** the
+> renderer applies the fog limits of `lighting.md` §10 to every fog it uploads, so an
+> interior override of the fog end above 10,000 is capped, which the client does not do
+> (row R-F1, departure R-D2). Let the caller apply the 10,000 cap to the keyframe's end
+> before the override, and keep only the lower limits (end ≥ 20, start in −10,000 … end − 20)
+> in the renderer. No stored `InteriorFogFar` of this install exceeds 7,000 (R-F2).
+
 > **OPEN:** Blending on sRGB targets happens on decoded values, so translucent and additive
 > surfaces differ slightly from the original, which blends stored values. Rendering lit passes
 > into an `Rgba8Unorm` target and presenting it unconverted would match exactly; not done
@@ -452,7 +490,7 @@ records into the render-owned input types below.
 | Queuing | Per pass: `Pass::terrain(TerrainDraw)`, `Pass::water(WaterDraw)`, `Pass::sky(SkyDraw)`, `Pass::instanced(InstanceBatch)`. The draws are plain data held by the pass (`WorldDraws` in `frame.rs`). |
 | Lit passes only | The four pipelines draw only in passes with `Pass::frame_lighting` (they need the shared group 0 of §4.2). In other passes their draws are skipped with one warning per frame; screen passes ignore them. |
 | Hooks | `Renderer::end_frame` turns each pass's world draws into `PassHook`s (§4.2) during the gather phase, with renderer access (textures, the scene copy, pipeline caches), and inserts them before any other hook of the pass. Order in each stage: terrain layers, instanced scenery, sky, water. |
-| Stages | `Shadow`: terrain chunks and opaque or alpha-tested instanced surfaces of batches that cast. `Opaque` (after the opaque and alpha-tested meshes): terrain layers, opaque and alpha-tested instanced surfaces, then the sky. `Translucent` (after overlays, before the sorted blended meshes): water, then blended instanced surfaces. Hook draws are not sorted with blended meshes. |
+| Stages (**Decision**) | `Shadow`: terrain chunks and opaque or alpha-tested instanced surfaces of batches that cast. `Opaque` (after the opaque and alpha-tested meshes): terrain layers, opaque and alpha-tested instanced surfaces, then the sky. Then the scene copy (§5.3). `Translucent` (after overlays, before the sorted blended meshes): **blended instanced surfaces, then water**, in the hook order of the row above. Hook draws are not sorted with blended meshes. Consequences: the water's refraction (the scene copy) does not contain blended instances; and water, which writes with source ONE, destination ZERO under the depth test (§5.3), replaces a blended instanced surface that lies in front of the water but wrote no depth (`AlphaMode::Blend`); one that wrote depth (`TestBlend`, the non-opaque frill groups of §5.5) is kept. The original's order of water among translucent surfaces is not specified. |
 | Group 0 | The pass's frame uniform (§4.2) with its dynamic offset; the shadow stage uses the shadow-pass frame group. Every world shader prepends `FRAME_WGSL` and `FRAME_SHADING_WGSL`, so lighting, fog, shadows and the sRGB output rule (§4.1) are those of the lit mesh pipeline. |
 | Retained vs per frame | Terrain chunks (`Renderer::upload_terrain_chunk` → `TerrainChunk`) and world models (`Renderer::upload_world_model` → `WorldModel`) own their GPU buffers and bind groups; handles are cheap `Arc` clones. A texture destroyed (`Renderer::destroy_texture`) while a retained object still uses it is dropped from that object when the object is next drawn: the affected bind group is rebuilt as if the texture had never resolved (white, its switch off), because a bind group holding a destroyed texture makes the GPU reject the whole frame's submission. Water quads, instances, sky objects and per-draw transforms and light lists are per-frame data packed into a few buffers per pass and frame. |
 | Textures | Resolved when a retained object is created (terrain, models) or when the frame is built (water). Unknown or destroyed ids are treated as absent and logged once; registered render targets are never bound by retained objects (a later frame could render into them) and not by the frame that renders into them. Textures uploaded `ColorSpace::Srgb` are re-encoded after sampling, as in §4.1. |
@@ -489,8 +527,9 @@ emissive, glow, mask). The terrain crate's `DrawLayer`, `LayerVertices`, `LayerF
 | Opacity and discard | §7 per pixel; discarded when α ≤ τ except on the first drawn layer. |
 | Colour (§9) | Σ = light map RGB (baked-light switch) + `frame_ambient(N, M)` + sat(*N* · *L₀*) *S* *E₀* *M* + the table lights' diffuse × *M*; colour = 2 *C* Σ + *g* sat(*N* · *H*)^*p* *S* × sun specular × *Ms* + *Em* × *G* (emissive) + glow × *G* × *M* (glow), then the per-vertex fog. The highlight is not multiplied by *N* · *L*, the albedo or 2 (§9.4 as revised), so a gloss from a diffuse alpha of about 0.09 (row L5) gives a sheen of about 0.09, not a broad highlight. |
 | Normal map | *n*′ = the texel turned by *c*₀, *c*₁ (§6.4), normalised, used in the frame (**T**, −**B**, **N**): *N* = *n*′.x **T** − *n*′.y **B** + *n*′.z **N**. A zero frame leaves *N* = **N**. |
-| **Decision**: table lights | Per pixel with the smooth fade (as §4.1; the original sums them per vertex), diffuse only: §9.4 gives a specular term for light 0 alone. Selected once per chunk by its world box (`LightSelection`, §4.3); with `Auto`, lights whose `LightReach::baked_landscape` is set never reach a chunk, whether or not it has a light map (`lighting.md` §8.3, L30; `terrain-texturing.md` §10, T43). |
-| Stored normal (`terrain-texturing.md` §4.10) | Layers without a normal map use the interpolated vertex normal **as stored, not normalised**, for the ambient (hemispheric) term and the sun's *N* · *L₀*; the table lights and the highlight use the unit normal. A ceiling chunk's downward normals therefore receive *A₀* − *H₀* and no sun from above. The chunk's normal matrix (inverse transpose) is scaled to determinant ±1 so a uniform scale keeps the stored length. Layers with a normal map use the mapped unit normal everywhere. |
+| **Decision**: table lights | Per pixel with the smooth fade (as §4.1; the original sums them per vertex), diffuse only: §9.4 gives a specular term for light 0 alone. Selected once per chunk by its world box (`LightSelection`, §4.3); with `Auto`, lights whose `LightReach::baked_landscape` is set never reach a chunk, whether or not it has a light map (`lighting.md` §8.3, L30; §7 row R-L4). |
+| Baked-landscape lights on the ground (`lighting.md` §8.6, Tessera Decision there) | The baked-lighting texture is the stored light map as given; the renderer has no light-map bake. The client's bake (pass code 0x41 into the chunk's baked-lighting texture, §7 row R-L5) runs only in a special client mode, Inferred not in normal play (`lighting.md` L36). |
+| Stored normal (`terrain-texturing.md` §4.10) | Layers without a normal map use the interpolated vertex normal **as stored, not normalised**, for the ambient (hemispheric) term and the sun's *N* · *L₀*; the table lights and the highlight use the unit normal. A ceiling chunk's downward normals therefore receive *A₀* − *H₀* and no sun from above. The chunk's normal matrix (inverse transpose) is scaled to determinant ±1 so a uniform scale keeps the stored length. Layers with a normal map use the mapped unit normal everywhere. The row reproduces the client only when the caller supplies the normals of `terrain-texturing.md` §4.10 (averages of unit triangle normals, shorter than 1 at creases); the renderer takes the normals it is given. The walker currently supplies unit normals (`walker.md` §14.4 Decision and OPEN), so with its chunks the length effect does not occur. |
 | **Decision**: glow | Added like emissive (the bloom target is OPEN, `lighting.md` §5.9), with the §9.5 glow-pass colour glow × *G* × *M*. |
 | **Decision**: baked shadow | White (the landscape-shadow feature is off, §9.5 Tessera Decision): *S* is the shadow factor of `lighting.md` §9. |
 | Layer offsets | `TerrainDraw::layer_offsets` replaces the translations of the layers (scrolling `u_offset`/`v_offset` curves evaluated by the caller at the material clock, §6.3): one entry per layer in stored order (a list of another length applies to the layers it covers, logged once per pass). When the frame is built, only the layers whose rows changed are written, with one buffer write per chunk covering them; the last value written in a frame applies to all its passes. |
@@ -507,7 +546,7 @@ emissive, glow, mask). The terrain crate's `DrawLayer`, `LayerVertices`, `LayerF
 | Geometry | No retained mesh: one instance per quad (origin, size, height; 32 bytes) and `6 n²` generated vertices per instance (`n` cells per side, two counter-clockwise triangles per cell), so any number of quads of one surface is one draw. Hostile quads (non-finite, size ≤ 0) are dropped; at most 65,536 quads per pass (`LimitExceeded`). **Per-pass vertex budget:** all draws of a pass together generate at most 2²⁴ vertices: in queue order each draw's grid is halved until it fits in what the earlier draws left, minus one cell per quad for every later draw (one cell per quad always fits). |
 | GPU layout | Per pass: one buffer of all quads, one uniform buffer with a 176-byte slot per draw at a dynamic offset, one bind group per distinct normal map (with the scene copy). One `draw` per `WaterDraw`. 4,096 single-quad draws at the largest grid cost 3.2 ms of `end_frame` CPU time on the reference machine (release, `water_golden.rs` `one_draw_per_quad_stays_bounded`, other builds running). |
 | Distant water (§9) | The caller derives the wet landblocks of distant 3 × 3 sectors from the block maps (§9 Tessera rule) and draws them as more landblock quads (with one cell each); the pipeline treats near and distant quads alike. The sector texture coordinates of §8.1 feed only the low-detail permutations, which Tessera does not draw (the water permutations read only the position, §8.3). |
-| Vertex stage | §8.3: waves Σ *A*ₖ sin *s*ₖ with *s*ₖ reduced to [−π, π), using the world x, y (the quads are generated in world space); the surface tilted by the wave derivatives; normal-layer coordinates *B* · Scaleₖ + Speedₖ · *T* with *B* = (*P*.xy − *O*) / 160; per-vertex fog. *T* is the frame's time input (`FrameLighting::time`, E20). |
+| Vertex stage | `water.md` §8.3: waves Σ *A*ₖ sin *s*ₖ with *s*ₖ reduced to [−π, π); the surface tilted by the wave derivatives; normal-layer coordinates *B* · Scaleₖ + Speedₖ · *T* with *B* = (*P*.xy − *O*) / 160; per-vertex fog. *T* is the frame's time input (`FrameLighting::time`, E20). **Decision (departs from `water.md` §8.3):** the waves take the x, y of the vertex in the pass's world frame (the quads are generated in that frame), where the client uses the vertex's model x, y. With a caller whose world frame is relative to a moving anchor (the walker, `walker.md` §2), the wave phase therefore jumps when the anchor moves; the normal layers do not, because the caller passes the anchor's origin as *O* (`walker.md` §14.6). |
 | Scene copy | Water refracts the colour target as it is before the pass's translucent stage: `end_frame` ends the pass's render pass after the overlays, copies the target into a renderer-owned texture of the same size and format (`scene_copies` counts it), and continues in a new render pass that loads colour and depth. Surfaces are configured with `COPY_SRC` where the surface offers it; a target that cannot be copied draws the refraction as the water fog colour (logged once). An sRGB copy is re-encoded after sampling so the shader sees stored values. |
 | Pixel stage | §8.4 steps 1–7: the three normal-map samples (re-encoded to the stored texels when the map was uploaded `ColorSpace::Srgb`, §5.1) mapped to 2(rgb − 0.5), summed and normalised; screen coordinates; refraction *F* of the scene copy offset by the world normal's x, y × `RefractionBumpDistortionAmount`, the under-water tint *U*, the shoreline blend with *w* = clamp((distance − 5) × 0.1, 0, 1); reflection = the unmodified *F* (§8.4 Tessera rule: no reflection texture); Fresnel; specular sat(*n* · normalize(*v* − *L*))^power + the sparkle term; colour × `WaterColor` × overbright + *s* × fake specular × `SpecularColor`; fog. |
 | Render state | Source ONE, destination ZERO, alpha 1, depth test and write, both faces (§8.4 Tessera rule). |
@@ -521,9 +560,9 @@ emissive, glow, mask). The terrain crate's `DrawLayer`, `LayerVertices`, `LayerF
 | Topic | Choice |
 |---|---|
 | Inputs | `SkyDraw { objects }`: each `SkyObject` is a `WorldModel` (the geometry of the object's 0x47 record, uploaded by the caller with its surfaces), angles *A* and *B* in degrees, the keyframe tint (alpha = opacity) and a uniform scale. Visibility, angles and tints come from the caller's environment blending (§11.3–§11.4). At most 4,096 objects per pass. |
-| **Decision**: placement | A model vertex *v* is drawn at eye + R_z(−*B*) · R_x(*A*) · (scale · *v*): *A* turns about the east axis (+y toward +z), *B* then turns clockwise seen from above (north toward east), like the heading of §11.3 step 6. With *A* = *B* = 0 the model keeps its axes (x east, y north, z up). `SkyObject::rotation` returns the matrix. (Which axes the original turns about is OPEN, §12; this realises the Tessera Decision "B is the azimuth of the arc, A the rotation along it".) |
+| **Decision** (departs from the client): placement | A model vertex *v* is drawn at eye + R_z(−*B*) · R_x(*A*) · (scale · *v*): *A* turns about the east axis (+y toward +z), *B* then turns clockwise seen from above (north toward east). With *A* = *B* = 0 the model keeps its axes (x east, y north, z up). `SkyObject::rotation` returns the matrix. This realised the former Tessera Decision of `environment.md` §12 ("B is the azimuth of the arc, A the rotation along it"), which `environment.md` §11.4 step 5 (BIN-E, Accepted) has replaced by a fact: the client turns a model point first about +Z (up) by −*B*, then about +Y (north) by −*A* (§7 row R-S1). The two agree only when *A* = 0. |
 | Depth | Drawn at the far plane (clip z = 0 under reversed depth) with `GreaterEqual` and no depth write, so the sky covers only pixels nothing else has drawn, whether it is queued in the same pass as the world (it draws after the opaque geometry, saving fill) or in an earlier pass. |
-| Shading | Unlit and unfogged (Tessera Decision of §12): base texture × *M* × tint (× vertex colour when the surface reads it); output alpha = (base alpha unless the surface is opaque) × *M*.alpha × tint alpha. Alpha blending for every surface (additive for `Additive` surfaces), the alpha test for `Mask`/`TestBlend` surfaces, both faces. Objects are drawn in the given order (back to front); an object with opacity ≤ 0 is skipped. |
+| Shading (**Decision** of this file) | Unlit and unfogged: base texture × *M* × tint (× vertex colour when the surface reads it); output alpha = (base alpha unless the surface is opaque) × *M*.alpha × tint alpha. `environment.md` §12 leaves the lighting of sky objects unstated and their fog OPEN; it gives one fog fact, which is the caller's to apply: when fog is on and `fog_extra` > 0.99 the sky objects are not drawn (`environment.md` §11.7 step 10). Alpha blending for every surface (additive for `Additive` surfaces), the alpha test for `Mask`/`TestBlend` surfaces, both faces. Objects are drawn in the given order (later over earlier); the caller passes the day description's stored order, and that this order is back to front is assumed (`environment.md` §12: whether lower draw numbers draw first is OPEN). An object with opacity ≤ 0 is skipped. |
 
 <a id="s5-5"></a>
 ### 5.5 Instanced scenery and frills (`scenery.md` §8.3, §8.5, §9)
@@ -531,11 +570,11 @@ emissive, glow, mask). The terrain crate's `DrawLayer`, `LayerVertices`, `LayerF
 | Topic | Choice |
 |---|---|
 | Models | `Renderer::upload_world_model(&MeshData, &[WorldSurface])`: the mesh is validated and packed as for `upload_mesh` (§2.1, the 40-byte vertex, no wireframe edges) into buffers of the model's own; submesh *i* uses surface min(*i*, len − 1). `WorldSurface`: *M*, base and normal textures (the upload's own samplers), `AlphaMode` (as for lit meshes, §4.3), two-sided, specular (colour, power), gloss from the base alpha or from the normal texture's alpha (a normal-and-gloss texture, when it resolves; added in the M4.5 verification: without it such surfaces took gloss 1 and frills of row F2 drew near-white), vertex colours, unlit. At most 4,096 surfaces. A texture that does not resolve (unknown, destroyed, a render target) is absent: the base binds white, and the normal-map switch is set only for a normal texture that resolved (and a mesh with tangents). |
-| Batches | `InstanceBatch`: a model, `Arc<[Instance]>` (`Instance`: affine transform, tint multiplying *M*, the terrain colour beneath), the light selection (once per batch, by the box around its drawn instances), shadow casting, an optional per-instance distance limit (`scenery.md` §9.1 Decision: `d0` of the LOD class) and optional `FrillParams`. |
+| Batches | `InstanceBatch`: a model, `Arc<[Instance]>` (`Instance`: affine transform, tint multiplying *M*, the terrain colour beneath), the light selection (once per batch, by the box around its drawn instances: a Decision that departs from the client's per-object lists, §4.3, R-D9), shadow casting, an optional per-instance distance limit (`scenery.md` §9.1 Decision: `d0` of the LOD class) and optional `FrillParams`. |
 | GPU layout | Per instance 80 bytes (three rows of the affine matrix, tint, terrain colour with a sway phase from the instance origin) in one vertex buffer per pass and frame; per batch a 48-byte uniform (light list, flags, *D*, *F*, animation and terrain-colour intensities, the model's z_min and sway height, fade-in) at a dynamic offset; group 2 the model surface's retained bind group. **One `draw_indexed` per batch and submesh** (and one more per casting submesh in the shadow stage). At most 1,048,576 instances per pass (`MAX_INSTANCES_PER_PASS`, lower if the device's buffer limit is): instances beyond it are **dropped** in queue order, counted in `instances_culled` and logged once per pass, so a dense view cannot fail the frame. The batch uniforms are bounded per queued batch (§5.1 Per-pass buffers). |
 | Culling | Per instance: non-finite transforms dropped, the distance limit (sphere start beyond it), and the model's bounding sphere × transform against the view frustum. Instances outside the view are not drawn in colour (`instances_culled`), but in a batch that casts they still cast when their sphere meets the shadow map's volume (the frame's shadow `view_proj`): they follow the batch's colour instances in the instance buffer, and the shadow stage draws both (§4.4: casters outside the view still cast into it; the same rule as terrain chunks, §5.2). |
 | Lighting | As the lit mesh pipeline (§4.1): ambient and hemispheric, sun with shadow, up to the table lights of the batch, specular, fog, alpha test, the same five alpha modes. Normals: the inverse transpose of the instance matrix (× the sign of its determinant) for scenery. |
-| Frill rules (§8.3, §8.5) | Rule 2–3: a group whose bounding box is at least *D* from the camera is skipped. Rule 4: `frill_reduced_count` draws the first *g* × max(1, trunc((1 − *f*) *n* / *g*)) instances. Rule 5: `frill_fade_in(age)`. Rules 1–3 helpers: `frill_radius_sectors`, `frill_distances` (*D*, *F*). §8.5 step 5: the sway weight *w* = clamp((*v*.z − z_min) / *h*, 0, 1) from the vertex block's stored bounding box, `FrillParams::sway_z_range` (z_min, z_max), or the box computed from the model's vertices when it is `None` (equal on all observed data, `mesh.md` M7); no sway when the box is at most 0.01 high; normals rotated, not scaled (the instance matrix's normalised columns). Non-opaque groups (`Render_Frill_IsOpaque` false) draw their opaque and alpha-tested surfaces blended with depth write in the translucent stage. Frill batches cast no shadow by default. `FrillParams::default()` is the engine default: level 2 = 10 sectors, *D* = 97, *F* = 30. Frill instances must carry the terrain colour beneath them (`Instance::new` gives white). |
+| Frill rules (§8.3, §8.5) | Rule 2–3: a group whose bounding box is at least *D* from the camera is skipped. Rule 4: `frill_reduced_count` draws the first *g* × max(1, trunc((1 − *f*) *n* / *g*)) instances. Rule 5: `frill_fade_in(age)`. Rules 1–3 helpers: `frill_radius_sectors`, `frill_distances` (*D*, *F*). §8.5 step 5: the sway weight *w* = clamp((*v*.z − z_min) / *h*, 0, 1) from the vertex block's stored bounding box, `FrillParams::sway_z_range` (z_min, z_max), or the box computed from the model's vertices when it is `None` (equal on all observed data, `mesh.md` M7); no sway when the box is at most 0.01 high; normals rotated, not scaled (the instance matrix's normalised columns). **Decision:** non-opaque groups (`Render_Frill_IsOpaque` false) draw their opaque and alpha-tested surfaces blended with depth write in the translucent stage (`scenery.md` §8.3 rule 6 gives only the shader variant). **Decision:** frill batches cast no shadow by default (not specified for the original). `FrillParams::default()` is the engine default: level 2 = 10 sectors, *D* = 97, *F* = 30. Frill instances must carry the terrain colour beneath them (`Instance::new` gives white). |
 | **Decision**: distance fade | Frills **scale** toward their origin between *D* − *F* (full size) and *D* (nothing), per vertex from the instance origin's distance, times the fade-in factor (the shader formula is OPEN, §8.3). Scaling needs no blending or sorting of alpha-tested cards. |
 | **Decision**: sway | Animated when the intensity exceeds 0.0002: the model-space vertex moves by *a* · (sin(φ + 1.7 *t*), ½ sin(1.3 φ + 1.1 *t*), 0) with *a* = intensity × *h* × *w*², φ the instance's phase and *t* the frame time (`scenery.md` §10 Decision: Tessera's own formula). |
 | **Decision**: terrain colour | The albedo blends toward the terrain colour beneath the instance by intensity × (1 − *w*): the base of a clump takes the ground's colour, the tips keep their own (§8.3 rule 7, formula OPEN). |
@@ -595,21 +634,93 @@ and on lavapipe):
 > **OPEN:** The frill shaders' fade, sway and terrain-colour formulas (§5.5 Decisions;
 > `scenery.md` §8.3 OPEN).
 
-> **OPEN:** The sky objects' rotation axes, scale and fog (§5.4 Decision; `environment.md` §12
-> OPEN).
+> **OPEN (updated 2026-10-07):** the sky objects' scale and fog (§5.4; `environment.md` §12
+> OPEN). Their rotation is now a client fact (`environment.md` §11.4 step 5).
+
+> **OPEN (spec writer, 2026-10-07, for the `tessera-render` implementer):** place sky
+> objects with the client's rotation of `environment.md` §11.4 step 5 (first about +Z by
+> −*B*, then about +Y by −*A*) and retire the §5.4 placement Decision; the golden images of
+> `sky_golden.rs` will change.
 
 > **OPEN:** Terrain layers beyond the full-detail band and the near/far seam
 > (`terrain-texturing.md` §12): every chunk is drawn with all its layers at any distance.
 
 > **OPEN:** Water reflection, the depth-texture (soft shoreline), flow and foam permutations
 > and the low-detail permutation are not drawn (`water.md` §8.2–§8.4 OPEN). The draw order of
-> water relative to other translucent surfaces is Tessera's (§5.1): water is the first
-> translucent draw of its pass, before blended instances and the sorted blended meshes, and
-> it is not sorted with them.
+> water relative to other translucent surfaces is Tessera's (§5.1 Stages, Decision): in the
+> translucent stage blended instances draw first, then water, then the sorted blended
+> meshes; water is not sorted with them. (Corrected 2026-10-07: the text said water drew
+> first; the hooks have always drawn it after the blended instances.)
+
+> **OPEN (spec writer, 2026-10-07, for the `tessera-render` implementer):** decide whether
+> water should draw before the blended instanced surfaces, so that a `Blend`-mode instance in
+> front of water (frills over a shore, scenery with blended parts) is not replaced by the
+> water's ONE/ZERO write (§5.1 Stages). Either order is a Tessera choice; the original's is
+> not specified.
 
 <a id="s6"></a>
 ## 6. Change log
 
 | Date | Change |
 |---|---|
+| 2026-10-04 | §1–§3: M2 design (meshes, materials, shared buffers, pipelines) and open questions (clean-room implementer). (Row added 2026-10-07.) |
+| 2026-10-05 | §2.4: M4 skinned meshes (clean-room implementer). (Row added 2026-10-07.) |
+| 2026-10-06 | §4: lit pipelines on one frame uniform (one base pass looping over the lights, light selection, sun shadow, fog, the alpha modes `TestBlend` and `Additive`, mip-chain upload); §5: render-world pipelines (terrain layers, water with the scene copy, sky objects, instanced scenery and frills, their tests) (clean-room implementer, M4.5). (Row added 2026-10-07.) |
+| 2026-10-06 | M4.5 exit verification (clean-room implementer): `WorldSurface` takes the gloss from a normal-and-gloss texture's alpha (`gloss_from_normal_alpha`, §5.5), which removed row F2's near-white frills. (Row added 2026-10-07.) |
 | 2026-10-07 | §4.3, §5.2 (implementer, `tessera-render`): automatic light selection follows the revised `lighting.md` §8.5 (selection radius ρ, squared distance to the world box, key lights first, parent switches; `Pass::light_reach`, `LightReach`, `MeshDraw::light_object`, `TerrainChunkInfo::aabb`) and L30 (baked-landscape lights never reach terrain or ceiling chunks under `Auto`); terrain layers without a normal map shade the ambient and sun terms with the stored, unnormalised vertex normal (`terrain-texturing.md` §4.10), and the terrain normal matrix keeps the normal's length under a uniform scale. New tests: `stored_normals_shade_as_they_are`, `specular_is_a_sheen_scaled_by_the_gloss`, `baked_lights_skip_terrain_chunks` (GPU) and the selector's unit tests. No golden image changed. Earlier §4–§5 additions (M4.5) are listed in the ROADMAP M4.5 status. |
+| 2026-10-07 | Spec writer (dirty room), answering the first review and the re-review of §4–§5 and incident 0018 (decision 0018, owner decision A): header review record shortened (details moved to the dirty-room review log); §3: the mip-chain, green-channel and per-draw-cost OPENs marked answered; §4.1 per-pixel lists labelled a Decision that departs from `lighting.md` §5.6, §8.3; §4.2 fog row names the limits; §4.3: the entry-less light and the `List` behaviour labelled Decisions, the unattached-light Decision marked as departing from the client (BIN, row R-L2) with an OPEN, the world-box and directional Decisions tied to the `lighting.md` §8.5 OPEN; §4.4 heading and text: departs from the simple-form Decision (five taps, fade over the last fifth, depth bias); §4.6 stale sentence replaced; §5.1 Stages corrected to the built order (blended instances, then water) with its consequences, labelled a Decision; §5.2: the baked-landscape light row (no bake, `lighting.md` §8.6 Decision; row R-L5) and the stored-normal row's assumption about its input; §5.3 wave frame labelled a Decision that departs from `water.md` §8.3; §5.4 placement marked as departing from `environment.md` §11.4 step 5 (BIN-E), shading labelled this file's Decision with the `fog_extra` fact, draw order stated as assumed; §5.5 frill Decisions labelled; §5.7 OPENs updated and two new implementer OPENs (sky rotation, water order); new §7 (client facts with provenance; table of departures). Status of §4–§5: Review. |
+| 2026-10-07 | Spec writer (dirty room), second revision answering the re-review of §4–§5 and §7 (changes requested): §4.3 the world-box Decision split in two: the box rule stays tied to `lighting.md` §8.5 OPEN (b); treating an instance batch as one light-list object is a new Decision labelled as departing from the client's per-object lists (L32), with its effect and an implementer OPEN; §5.5 Batches row points to it; §7: new rows R-E3 (the light record and attenuation of `lighting.md` §8.3: range floor 0.0002, colour, specular and attenuation rules, used by the light-record builder, the range floor of uploaded point lights and the CPU reference) and R-L6 (per-object lists), new departure R-D9. Status of §4–§5 and §7: Review. |
+
+<a id="s7"></a>
+## 7. Client facts §4–§5 rely on, and their provenance (spec writer, dirty room, 2026-10-07)
+
+Every fact about the original client that the code of §4–§5 relies on, restated with its
+source. Marks: **BIN** = read from the client (decision 0011); **Confirmed** = observed in
+the user's install; **Spec** = taken from the cited spec, whose own provenance applies.
+"Re-checked" means this spec writer verified it again on 2026-10-07 in a private copy of the
+Ghidra project of the installed client (`x64/lotroclient64.exe`, SHA-256 prefix
+d22363eb9aff0fb5, the build of `walker.md` §11.1), or with an own read-only probe over all
+49,636 landblock-info records. **BIN questions** (the same session as `walker.md` §14.13):
+(k) where the fog limits stand relative to the interior override; (l) how the light-list
+builder applies the parent switches to a light without a parent, which objects it considers,
+and how it treats baked-landscape lights; (m) whether baked-landscape lights are also drawn
+into a chunk's baked-lighting texture, with which pass code and target size. **Why M1–M3 were
+not enough:** these are run-time rules with no trace in the data; no running client or frame
+capture was available; and the specs under revision disagreed on (k) and (l). Only offline
+rendering and environment code was read; no network, login, launcher or anti-tamper code.
+
+| Row | Fact | Used in | Source | Mark |
+|---|---|---|---|---|
+| R-E1 | Lighting equations of the lit base pass: ambient and hemispheric terms, main light with *N* · *L₀*, normal-map sign *N* = *n*.x **T** − *n*.y **B** + *n*.z **N₀**, no specular below power 0.5, emissive added before fog, output alpha and the alpha test before vertex alpha, time input modulo 3,600 | §4.1–§4.3 | `lighting.md` §4–§5, `material.md` §5.3.1, §11 | Spec (BIN) |
+| R-E2 | At most 8 lights per object in all, the main light included | §4.2, §4.3 | `lighting.md` §8.5 | Spec (BIN) |
+| R-E3 | Light record of a placed light: colour = Diffuse × clamp(DiffuseIntensity(*t*) × *σ*, 0, 1); specular = Specular × clamp(2 × *σ* × DiffuseIntensity(*t*), 0, 1), with the Diffuse colour in place of a white Specular (within 0.0002 per channel) when KeyLight is off; range *R* = max(Range, 0.0002), uploaded as *R²*; attenuation *k* = 10 × Falloff / *R²*; the field defaults (Range 25, Diffuse and Specular white, intensity 0.5, Falloff 1, *σ* 1); attenuation 1 / (1 + *k* *d²*) inside *R*, nothing at or beyond it, with the smoothstep fade above 0.75 *R²* for the newer back end's light 0 and per-pixel lists | §4.2 (the light table: the record built from a placed light's fields, the range floor of every uploaded point light; the CPU reference of the frame functions) | `lighting.md` §8.3 (attenuation, light record, L19) | Spec (BIN) |
+| R-L1 | Selection radius ρ = Range × (1 − (1 − 0.85) × min(Falloff, 1)), Range for `Light_GlobalLight` (0.85 a client constant, decision 0012) | §4.3 | `lighting.md` §8.5 step 1 | Spec (BIN) |
+| R-L2 | A light reaches an object when the squared distance from the light's position to the object's world-space axis-aligned box (0 inside) is below ρ², strict; key lights are inserted at the front, the others appended; the never-parent switch is tested for the light's parent, the only-parent switch for every other object whether or not the light has a parent (one special light record's parent is looked up separately, not traced). No Light SED of this install's landblock infos sets `Light_OnlyInfluenceParent` true (136 store false) | §4.3 | `lighting.md` §8.5 steps 2–4, row L34; census own probe | BIN, re-checked 2026-10-07; census Confirmed 2026-10-07 |
+| R-L3 | Only objects drawn in the current frame are candidates; objects with any of three scene flags are skipped | §4.3 | `lighting.md` §8.5 step 2, row L34 | BIN, re-checked 2026-10-07 |
+| R-L6 | The client builds a light list **for each** drawn object, against that object's own world box; no list is shared between objects | §4.3, §5.5 (departure R-D9) | `lighting.md` §8.5, row L32 | Spec (BIN) |
+| R-L4 | A `Light_BakedLandscapeLight` light is skipped for the object kind that terrain and ceiling chunks are created as, light map or not (L30) | §4.3, §5.2 | `lighting.md` §8.3, §8.5 step 3 | BIN, re-checked 2026-10-07 |
+| R-L5 | The client's light-map bake draws each baked-landscape light that reaches a chunk with pass code 0x41 into an off-screen target of at most 1,024 × 1,024 (smaller when the device's limit is) and sums the results into the chunk's baked-lighting texture; it runs only after a re-bake flag that a special client mode raises (Inferred: not in normal play) | §5.2 | `lighting.md` §8.6, rows L35, L36 | BIN; the 0x41 draw and the target size re-checked 2026-10-07, the trigger as `lighting.md` reports |
+| R-F1 | Fog: per-vertex factor, base pass lerps to the fog colour, additive passes × (1 − *f*); limits: the keyframe's end capped at 10,000 first, an interior override of the end not capped, then end ≥ 20, start in −10,000 … end − 20 | §4.2, §4.3 | `lighting.md` §10, `landblock.md` §4.13 | Spec (BIN); the order of cap and override re-checked 2026-10-07 |
+| R-F2 | The interior fog ends of this install lie in 0–7,000 (775 cells, 540 landblock-info sets) | §4.2 (departure R-D2) | own probe | Confirmed 2026-10-07 |
+| R-SH | Sun shadow: light clip matrix, split map, one or five taps (0.36 / 0.16), shadow colour = landscape colour + range × *s*, fade *φ*, factor 1 + *φ* (colour − 1); engine values OPEN | §4.4 | `lighting.md` §9 | Spec (BIN) |
+| R-T1 | Terrain layers: opacity rules, discard at τ except the first layer, "over" blending, the §8.1 switches, mask row 0 in the south, light map added to Σ, highlight not × *N* · *L*, the albedo or 2 | §5.2 | `terrain-texturing.md` §5, §7–§10 (§9.4, T44) | Spec (BIN) |
+| R-T2 | Layers without a normal map take the stored vertex normal unnormalised for the hemispheric term and the sun's *N* · *L₀*, normalised for the point-light sum; the stored normal is the average of the unit triangle normals (shorter than 1 at creases), downward for ceilings | §5.2 | `terrain-texturing.md` §4.8, §4.10 | Spec (BIN (s), BIN-S) |
+| R-W1 | Water: waves Σ *A*ₖ sin *s*ₖ on the vertex's **model** x, y; normal layers; refraction, shoreline weight, Fresnel, specular and sparkle; no table light, only the fake light | §5.3 | `water.md` §8.2–§8.4, §9 | Spec (BIN) |
+| R-S1 | Sky object rotation: first about +Z by −*B*, then about +Y (north) by −*A* | §5.4 (departure R-D6) | `environment.md` §11.4 step 5 | Spec (BIN-E, Accepted) |
+| R-S2 | With fog on and `fog_extra` > 0.99 the sky objects are not drawn; each object's colour and opacity are `Render_Color` and `Render_Opacity` from the keyframe tint; whether lower draw numbers draw first is OPEN | §5.4 | `environment.md` §11.4, §11.7 step 10, §12 | Spec (BIN-E) |
+| R-FR | Frill groups: radius, *D* and *F* (level 2: 10 sectors, 97, 30), reduction *g* × max(1, trunc((1 − *f*) *n* / *g*)), fade-in, the sway weight from the stored box | §5.5 | `scenery.md` §8.3–§8.5 | Spec (BIN) |
+| R-M1 | Mip chains: one level per stored level, level 0 largest, a level of the wrong size copied clipped | §4.6 | `texture-list.md` §4.2–§5.5 | Spec |
+
+**Departures, in one place** (each is labelled where it occurs):
+
+| Row | Where | The renderer | The client | Resolution |
+|---|---|---|---|---|
+| R-D1 | §4.3 unattached lights | parent switches only for attached lights | only-parent switch for every non-parent object, attached or not | OPEN for the implementer (§4.3) |
+| R-D2 | §4.2 fog | caps every fog end at 10,000, an interior override too | caps only the keyframe's end, before the override | OPEN (§4.8; `walker.md` §14.3, `landblock.md` §4.15); no effect on this install (R-F2) |
+| R-D3 | §4.1 per-pixel lists | every table light per pixel with the smooth fade and specular | per-vertex lists with the hard cut-off, no specular | Decision |
+| R-D4 | §4.4 shadow | five taps, fade over the last fifth | engine values OPEN; `lighting.md` simple form: one tap, fade to 0 | Decision |
+| R-D5 | §5.3 waves | world x, y of the pass | model x, y | Decision |
+| R-D6 | §5.4 sky placement | R_z(−*B*) · R_x(*A*) | R_Y(−*A*) ⊗ R_Z(−*B*) | OPEN for the implementer (§5.7) |
+| R-D7 | §5.4 sky shading | unlit, unfogged | lighting unstated, fog OPEN; `fog_extra` > 0.99 hides the sky (caller) | Decision |
+| R-D8 | §5.1 translucent order | blended instances, then water | not specified | Decision; OPEN for the implementer (§5.7) |
+| R-D9 | §4.3, §5.5 light lists of instance batches | one selection per batch, against the box around all its instances drawn in colour | one list per object, against its own box (R-L6) | OPEN for the implementer (§4.3); the walker's batches are one per landblock, part, detail level and shadow flag (`walker.md` §14.3) |

@@ -4,9 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | Expected values complete (2026-10-06); walker side and owner observations pending |
-| **Last updated** | 2026-10-06 |
+| **Status** | Expected values complete (2026-10-06); scenery rows S1–S11 and walks GN1–GN4 re-derived 2026-10-07 ([§8](#s8)); walker side and owner observations pending |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
+| **Review record** | Claude review session (spec-reviewer agent), 2026-10-07, of the re-derivation of 2026-10-07 (§1 GEN row, §2.3–§2.4 GN1–GN4, §4.2 rows S1–S11 and callout, §4.3 intro, §8): **passed.** The rule the rows now follow (`scenery.md` §7.4 step 14b, S36) was re-checked in a separate copy of the Ghidra project. The totals of all 11 landblocks and the list indices of GN1–GN4 (16, 33, 176, 138) agree with the clean-room implementation's generated lists in the writer's scratch output, as do GN1's new tree and position. No game text, keys or code. The companion `scenery.md` revision has changes requested on §7.4 step 15 only (failure causes and frill-layer containment), which no row of this checklist depends on. Second review, Claude review session (spec-reviewer agent, a different session), 2026-10-07: **passed again.** S36 re-checked in a fresh copy of the Ghidra project. Independently of the writer's output, a fresh read-only build of the repository's crates generated the 11 landblocks of §4.2 on the install: totals 25, 315, 165, 309, 151, 111, 445, 166, 221, 80 and 186 as listed; GN1–GN4 at 0-based list indices 16, 33, 176 and 138 with the listed DIDs, positions, headings and scales; the changed nearest objects of S1, S2, S5, S6, S8 and S10 at the listed positions (S8's second at x 126.421, within rounding). The in-view counts and the frill rows were not re-measured. The open issues of `scenery.md` §7.4 step 15 still do not affect any row. |
 | **Serves** | [ROADMAP M4.5](../ROADMAP.md#m4-5-exit) exit criterion 4 (scripted walks on collision and the 1,000-walk soak, [§2](#s2)), criterion 5 (five performance walk spots, [§3](#s3)) and criterion 6 (visual rows, [§4](#s4)); the M3 reference-location check asked for by criterion 1 ([§5](#s5)) |
 | **Companion specs** | [`collision.md`](../specs/collision.md) §5–§6, §9–§12; [`scenery.md`](../specs/scenery.md) §4–§8; [`water.md`](../specs/water.md) §6–§7; [`terrain-texturing.md`](../specs/terrain-texturing.md) §3–§4, §8, §10; [`environment.md`](../specs/environment.md) §5–§7, §11; [`lighting.md`](../specs/lighting.md) §8–§9; [`landblock.md`](../specs/landblock.md) §3–§6; [`coordinates.md`](../specs/coordinates.md) §5, §7, §9, §11 (normative) |
 | **Owner list** | Items [O18–O27](owner-observations.md#o18) of the owner list compare these rows with the original client |
@@ -30,7 +31,7 @@ either client stay private in a scratch directory (same rules as
 | Tag | Source |
 |---|---|
 | OBS | The owner's install, data current on 2026-10-06, read in place and read-only by throwaway dirty-room probes. Records decoded for this file: landblock data, block maps, landblock info and landblock properties of regions 1–5 and 14 (all records); 0x66 (all 16,819); 0x01 (all 1,057); 0x02, 0x11, 0x12, 0x19 (all); 0x16; 0x15000007, 0x1A (all 963), 0x35000000; the block-map descriptors 0x18; 0x31/0x30/0x2B for the lighting rows. |
-| GEN | A dirty-room re-implementation of `scenery.md` §6–§7 (static pass) and §8.2 with the Tessera Decision of §8.2 and §8.6 (frill pass), written from the spec text only. It reproduces the synthetic worked example of `scenery.md` §14 exactly (vertex hash 0x7237E00C, the frequency, displacement, heading and scale draws, both quaternions). It reads the landblock's statics and their clearance volumes from landblock info (`scenery.md` §7.4 step 14a). |
+| GEN | A dirty-room re-implementation of `scenery.md` §6–§7 (static pass) and §8.2 with the Tessera Decision of §8.6 (frill pass), written from the spec text only. It reproduces the synthetic worked example of `scenery.md` §14 exactly (vertex hash 0x7237E00C, the frequency, displacement, heading and scale draws, both quaternions). It reads the landblock's statics and their clearance volumes from landblock info (`scenery.md` §7.4 step 14a). **Corrected 2026-10-07:** until then its footprint test (`scenery.md` §7.4 step 14b) was inverted: it tested only the open markers and skipped the closed ones. The corrected generator follows step 14b, which a BIN re-check confirmed unchanged. Its static-pass lists equal those of the clean-room implementation object for object in all 11 landblocks of [§4.2](#s4-2). Its frill pass keeps the static pass's markers (`scenery.md` §8.2 item 5). The frill records of the six landblocks of [§4.3](#s4-3) are identical under the old and the corrected generator. Rows re-derived: [§8](#s8). |
 | SWEEP | A geometric sweep of the Human male capsule (`collision.md` §10.6: radius 0.35 m, cap centres 0.35 m and 1.45 m above the feet) along a straight horizontal path, with the feet on the terrain (`landblock.md` §3.11) or on the highest walkable surface no more than the step-up height (0.5 m, BasePlayer, `collision.md` §10.3) above the current feet. A contact counts as blocking only when it lies above the step-up height. The collision set is `collision.md` §12.1: all terrain triangles, the 0x66 meshes of every blocking SED (§9.3) and every blocking generated object (§9.4) of the landblock and its eight neighbours, and, for interiors, the cell physics meshes (§5.3) and interior SEDs. Not Tessera's controller: it gives the geometric fact the controller must reproduce. |
 | CELL | The point-in-cell rule of `collision.md` §5.4 and §5.8.1 (tolerance −0.0002), evaluated at the feet raised by 0.05 m. Where two cells contain the point, both are listed. |
 | WAT | `water.md` §6.2 (landblock water), §7.1 (volume entity) and the Tessera rule of §7.4. |
@@ -191,7 +192,7 @@ at least three walks.
 | UB1 | undrawn | 2 | 0x3B91 | 0 | 59.64,64.39,578.19 | `r2 lx474 ly1163 ox59.64 oy64.39 oz578.19` | 0.0 | run | `0:fwd` | 3 | `blocked P=59.64,69.04,578.19 d=0.10` |
 | UB2 | undrawn | 4 | 0x7CBC | 0 | 78.03,89.18,165.80 | `r4 lx995 ly1508 ox78.03 oy89.18 oz165.80 h225.0` | 225.0 | run | `0:fwd` | 3 | `blocked P=74.74,85.89,165.80 d=0.10` |
 | UB3 | undrawn | 14 | 0x1506 | 0 | 36.06,16.63,204.10 | `r14 lx169 ly48 ox36.06 oy16.63 oz204.10 h225.0` | 225.0 | run | `0:fwd` | 3 | `blocked P=32.78,13.35,204.10 d=0.10` |
-| GN1 | generated | 1 | 0x669A | 0 | 126.90,81.39,561.58 | `r1 lx822 ly1236 ox126.90 oy81.39 oz561.58` | 0.0 | run | `0:fwd` | 3 | `blocked P=126.90,86.54,561.97 d=0.15` |
+| GN1 | generated | 1 | 0x669A | 0 | 130.61,77.52,558.62 | `r1 lx822 ly1235 ox130.61 oy77.52 oz558.62` | 0.0 | run | `0:fwd` | 3 | `blocked P=130.61,82.61,559.19 d=0.15` |
 | GN2 | generated | 4 | 0x1A23 | 0 | 40.97,40.97,192.11 | `r4 lx210 ly282 ox40.97 oy40.97 oz192.11` | 0.0 | run | `0:fwd` | 3 | `blocked P=40.97,46.19,192.12 d=0.15` |
 | GN3 | generated | 5 | 0x655A | 0 | 117.96,37.66,441.31 | `r5 lx813 ly721 ox117.96 oy37.66 oz441.31 h90.0` | 90.0 | run | `0:fwd` | 3 | `blocked P=120.52,37.66,441.69 d=0.15` |
 | GN4 | generated | 14 | 0x1FE2 | 0 | 117.03,136.97,435.00 | `r14 lx253 ly1814 ox117.03 oy136.97 oz435.00 h180.0` | 180.0 | run | `0:fwd` | 3 | `blocked P=117.03,131.97,435.76 d=0.15` |
@@ -243,10 +244,10 @@ the object's yaw (`coordinates.md` §11.3–§11.4). A = X + Y + R + 5 (`scenery
 
 | Walk | Landblock (A) | Object list index | Vertex (i, j) | Path | Object → setup → collision mesh | Position x, y, z | Rotation (w, x, y, z); heading | Scale | Kind (our words); collision extent (m) |
 |---|---|---|---|---|---|---|---|---|---|
-| GN1 | 1, 0x669A (262); no landblock info, so no statics | 27 | (13, 9) | 0x02000152 > 6 > 0 | 0x470035F3 → 0x04000670 → 0x66003EF3 | 126.899, 87.394, 562.072 | (0.32049, 0, 0, 0.94725); 217.39° | 1.0100 | tall tree; trunk 1.6 × 1.9, 29.4 high |
-| GN2 | 4, 0x1A23 (70); 24 statics with clearance volumes | 40 | (4, 5) | 0x020009D1 > 2 > 0 | 0x4700988D → 0x04006806 → 0x6600395A | 40.970, 46.965, 192.134 | (0.99017, 0, 0, −0.13984); 16.08° | 1.0176 | tree; 2.5 × 3.7, 20.1 high |
-| GN3 | 5, 0x655A (201); 4 statics with clearance volumes | 283 | (13, 4) | 0x02000E92 > 0 > 0 > 0x02000EF9 > 17 > 0 | 0x4700D780 → 0x04007CA0 → 0x66004813 | 123.961, 37.660, 440.486 | (0.99149, 0.04956, −0.11506, 0.03534), tilted to the slope; 356.54° | 1.0304 | rock outcrop with a steep face; 5.9 × 4.8, 3.65 high |
-| GN4 | 14, 0x1FE2 (276); 25 statics with clearance volumes | 149 | (12, 13) | 0x0200030F > 3 > 0 | 0x47003B84 → 0x04002B43 → 0x660015B8 | 117.026, 130.965, 435.875 | (0.14215, 0, 0, 0.98985); 196.34° | 0.9556 | tree; 2.9 × 2.7, 12.0 high |
+| GN1 | 1, 0x669A (262); no landblock info, so no statics | 16 | (13, 8) | 0x02000152 > 2 > 0 | 0x470035F4 → 0x04000671 → 0x66003EF4 | 130.612, 83.519, 559.263 | (0.98286, 0, 0, 0.18435); 338.75° | 1.1701 | tall tree; trunk 2.6 × 1.9, 36.0 high |
+| GN2 | 4, 0x1A23 (70); 24 statics with clearance volumes | 33 | (4, 5) | 0x020009D1 > 2 > 0 | 0x4700988D → 0x04006806 → 0x6600395A | 40.970, 46.965, 192.134 | (0.99017, 0, 0, −0.13984); 16.08° | 1.0176 | tree; 2.5 × 3.7, 20.1 high |
+| GN3 | 5, 0x655A (201); 4 statics with clearance volumes | 176 | (13, 4) | 0x02000E92 > 0 > 0 > 0x02000EF9 > 17 > 0 | 0x4700D780 → 0x04007CA0 → 0x66004813 | 123.961, 37.660, 440.486 | (0.99149, 0.04956, −0.11506, 0.03534), tilted to the slope; 356.54° | 1.0304 | rock outcrop with a steep face; 5.9 × 4.8, 3.65 high |
+| GN4 | 14, 0x1FE2 (276); 25 statics with clearance volumes | 138 | (12, 13) | 0x0200030F > 3 > 0 | 0x47003B84 → 0x04002B43 → 0x660015B8 | 117.026, 130.965, 435.875 | (0.14215, 0, 0, 0.98985); 196.34° | 0.9556 | tree; 2.9 × 2.7, 12.0 high |
 
 On every row the first contact on the path is the listed object, and no object with
 collision volumes (boxes, spheres, capsules) lies within 3 m of the path.
@@ -313,6 +314,12 @@ them; the row checks that none of them was turned into an entity.
 > - **GN1**: nothing blocks the path; the walker passes P and runs on (no generated object
 >   body within reach). A generation difference (the block has no landblock info) or a
 >   world-side gap; to be compared with the explorer's generated list as §2.4 says.
+>   **Answered 2026-10-07 (spec writer, [§8](#s8)):** a generation difference on the
+>   checklist's side. The former tree (0x470035F3 at 126.899, 87.394) came from a
+>   generator with an inverted footprint test, and the client does not place it
+>   (`scenery.md` §7.4 step 14b). GN1 now walks into another tree of the same landblock,
+>   which the walker's generated list holds at index 16. GN2–GN4 keep their objects and
+>   stop points; only the list indices changed (33, 176, 138).
 > - **CV2**: the start lies on terrain steeper than walkable for the 0.35 m capsule
 >   (support classified steep from the first step); the walker slides 11 m down before
 >   the input begins.
@@ -467,32 +474,36 @@ the original.
 
 | Row | Region, landblock | Eye x, y (ground z) | Heading | In view (total in block) | Most common DIDs | Two nearest: DID, position, heading, scale, vertex, path |
 |---|---|---|---|---|---|---|
-| S1 | 1, 0x669A | 123.88, 62.62 (559.55) | 30 | 11 (36) | 0x470035F4 ×4, 0x470035F3 ×2, 0x470035F7, 0x470035F6 | 0x470035F7 (127.035, 66.551, 558.282) 217.16° 1.2236 (13, 7) 0x02000152 > 12 > 0; 0x470035F4 (128.162, 70.238, 558.528) 204.77° 1.3629 (13, 7) 0x02000152 > 2 > 0 |
-| S2 | 1, 0xA197 | 96.27, 42.08 (408.96) | 90 | 41 (344) | 0x470021A0 ×10, 0x470092DC ×9, 0x470092DF ×6, 0x470008C5 ×4 | 0x470092DC (101.636, 43.146, 404.978) 170.70° 0.7830 (10, 4) 0x02000CC1 > 14 > 0; 0x470008C5 (102.067, 41.334, 405.268) 200.52° 1.1077 (10, 4) 0x02000CC1 > 0 > 0 |
-| S3 | 2, 0xAEBC | 24.43, 43.55 (672.29) | 120 | 11 (173) | 0x47006181 ×6, 0x47006180 ×5 | 0x47006181 (33.282, 36.418, 673.242) 84.89° 0.7148 (3, 4) 0x0200090A > 0 > 0; 0x47006181 (35.800, 43.432, 669.749) 156.23° 1.1352 (4, 4) 0x0200090A > 0 > 0 |
-| S4 | 2, 0x7744 | 57.18, 124.28 (158.89) | 270 | 19 (364) | 0x4700617F ×7, 0x47005A5C ×4, 0x47005FB6 ×3, 0x47005FD1 | 0x47005A62 (54.338, 122.030, 158.063) 64.84° 1.0634 (5, 12) 0x02000340 > 2 > 0; 0x47005A5C (50.475, 128.619, 159.243) 11.21° 0.9836 (5, 13) 0x02000340 > 0 > 0 |
-| S5 | 3, 0x79AD | 66.49, 77.24 (311.99) | 240 | 29 (252) | 0x47006A36 ×3, 0x47006851 ×3, 0x47007213 ×2, 0x4700079F ×2 | 0x47007213 (61.890, 74.593, 311.986) 18.84° 0.8633 (6, 7) 0x020005BA > 16 > 0; 0x4700720F (60.130, 78.403, 311.986) 317.21° 1.2434 (6, 8) 0x020005B6 > 8 > 0 |
-| S6 | 3, 0x7A69 | 76.48, 26.84 (190.22) | 180 | 17 (176) | 0x47006BE9 ×3, 0x47006BEA ×3, 0x47006180 ×2, 0x47006BE7 ×2 | 0x47005A5F (72.770, 21.815, 189.857) 141.11° 1.2845 (7, 2) 0x02000424 > 11 > 0; 0x47006BEA (83.824, 18.210, 189.609) 100.84° 1.0760 (8, 2) 0x02000425 > 22 > 0 |
-| S7 | 4, 0x1A23 | 85.68, 93.43 (188.55) | 150 | 47 (471) | 0x47008202 ×6, 0x47008207 ×6, 0x47008203 ×6, 0x47008206 ×6 | 0x47008203 (85.939, 86.901, 187.329) 225.05° 0.9025 (9, 9) 0x020009CA > 4 > 0; 0x47007F5A (92.493, 91.001, 187.369) 311.70° 1.0031 (9, 9) 0x020009CA > 2 > 0 |
-| S8 | 4, 0x7ADD | 119.52, 103.74 (252.65) | 60 | 34 (361) | 0x4700720E ×4, 0x47006A36 ×3, 0x4700165E ×3, 0x470007CA ×3 | 0x4700720F (120.468, 106.733, 251.971) 320.10° 1.0878 (12, 11) 0x020005BA > 8 > 0; 0x47006A36 (122.779, 107.565, 252.148) 122.83° 1.1231 (12, 11) 0x020005BA > 25 > 0 |
-| S9 | 5, 0x655A | 123.83, 31.49 (442.10) | 30 | 35 (362) | 0x4700617F ×3, 0x47008481 ×3, 0x47006185 ×2, 0x47006187 ×2 | 0x4700D780 (123.961, 37.660, 440.486) 356.54° 1.0304 (13, 4) 0x02000E92 > 0 > 0 > 0x02000EF9 > 17 > 0 (tilted, GN3); 0x47008481 (130.043, 34.487, 444.051) 81.28° 0.4816 (13, 3) 0x02000E92 > 3 > 0 > 0x02000EFC > 1 > 0 |
-| S10 | 5, 0x6FD9 | 59.39, 48.53 (174.25) | 150 | 29 (102) | 0x47007AA5 ×8, 0x47007AA8 ×6, 0x47007AA0 ×5, 0x47007AA1 ×5 | 0x47007AA2 (59.987, 43.137, 174.387) 49.42° 1.0798 (6, 4) 0x0200071A > 7 > 0; 0x47007CB0 (59.346, 42.853, 174.406) 128.72° 1.2184 (6, 4) 0x0200071A > 15 > 0 |
-| S11 | 14, 0x1FE2 | 113.69, 66.56 (450.63) | 300 | 22 (201) | 0x470009A6 ×4, 0x47005B1E ×3, 0x470009A9 ×3, 0x470009A8 ×2 | 0x470009A6 (109.528, 66.155, 450.852) 291.40° 0.5993 (11, 7) 0x02000310 > 18 > 0; 0x47005B1E (106.341, 65.737, 450.953) 88.19° 0.7630 (11, 7) 0x02000310 > 38 > 0 |
+| S1 | 1, 0x669A | 123.88, 62.62 (559.55) | 30 | 6 (25) | 0x470035F4 ×2, 0x470035F6, 0x470035F3, 0x47003675 | 0x470035F6 (134.757, 76.422, 555.839) 222.29° 1.2196 (13, 8) 0x02000152 > 4 > 0; 0x470035F4 (130.612, 83.519, 559.263) 338.75° 1.1701 (13, 8) 0x02000152 > 2 > 0 (GN1) |
+| S2 | 1, 0xA197 | 96.27, 42.08 (408.96) | 90 | 35 (315) | 0x470092DC ×9, 0x470021A0 ×8, 0x470092DF ×6, 0x470008C5 ×4 | 0x470092DC (101.636, 43.146, 404.978) 170.70° 0.7830 (10, 4) 0x02000CC1 > 14 > 0; 0x470008C5 (102.067, 41.334, 405.268) 200.52° 1.1077 (10, 4) 0x02000CC1 > 0 > 0 |
+| S3 | 2, 0xAEBC | 24.43, 43.55 (672.29) | 120 | 11 (165) | 0x47006181 ×6, 0x47006180 ×5 | 0x47006181 (33.282, 36.418, 673.242) 84.89° 0.7148 (3, 4) 0x0200090A > 0 > 0; 0x47006181 (35.800, 43.432, 669.749) 156.23° 1.1352 (4, 4) 0x0200090A > 0 > 0 |
+| S4 | 2, 0x7744 | 57.18, 124.28 (158.89) | 270 | 16 (309) | 0x4700617F ×7, 0x47005A5C ×3, 0x47005FB6 ×3, 0x47005FEC | 0x47005A62 (54.338, 122.030, 158.063) 64.84° 1.0634 (5, 12) 0x02000340 > 2 > 0; 0x47005A5C (50.475, 128.619, 159.243) 11.21° 0.9836 (5, 13) 0x02000340 > 0 > 0 |
+| S5 | 3, 0x79AD | 66.49, 77.24 (311.99) | 240 | 9 (151) | 0x47006A36 ×2, 0x4700720E, 0x47007212, 0x470007CC | 0x47007213 (61.890, 74.593, 311.986) 18.84° 0.8633 (6, 7) 0x020005BA > 16 > 0; 0x47005FEC (55.744, 77.442, 311.986) 344.47° 0.6526 (6, 8) 0x020005B6 > 30 > 0 |
+| S6 | 3, 0x7A69 | 76.48, 26.84 (190.22) | 180 | 6 (111) | 0x47006180 ×2, 0x47006BEB, 0x47000796, 0x47006BEA | 0x47006BEA (83.824, 18.210, 189.609) 100.84° 1.0760 (8, 2) 0x02000425 > 22 > 0; 0x47006BEB (68.317, 13.195, 189.385) 158.61° 1.2235 (7, 1) 0x02000425 > 15 > 0 |
+| S7 | 4, 0x1A23 | 85.68, 93.43 (188.55) | 150 | 47 (445) | 0x47008202 ×6, 0x47008207 ×6, 0x47008203 ×6, 0x47008206 ×6 | 0x47008203 (85.939, 86.901, 187.329) 225.05° 0.9025 (9, 9) 0x020009CA > 4 > 0; 0x47007F5A (92.493, 91.001, 187.369) 311.70° 1.0031 (9, 9) 0x020009CA > 2 > 0 |
+| S8 | 4, 0x7ADD | 119.52, 103.74 (252.65) | 60 | 14 (166) | 0x47006A36 ×3, 0x470007CA ×3, 0x4700079E, 0x47000620 | 0x47006A36 (122.779, 107.565, 252.148) 122.83° 1.1231 (12, 11) 0x020005BA > 25 > 0; 0x47000620 (126.422, 101.922, 254.398) 163.79° 1.1500 (13, 10) 0x020005B6 > 5 > 0 |
+| S9 | 5, 0x655A | 123.83, 31.49 (442.10) | 30 | 18 (221) | 0x47000CAA ×4, 0x47008481, 0x4700C56C, 0x4700C85D | 0x4700D780 (123.961, 37.660, 440.486) 356.54° 1.0304 (13, 4) 0x02000E92 > 0 > 0 > 0x02000EF9 > 17 > 0 (tilted, GN3); 0x47008481 (130.043, 34.487, 444.051) 81.28° 0.4816 (13, 3) 0x02000E92 > 3 > 0 > 0x02000EFC > 1 > 0 |
+| S10 | 5, 0x6FD9 | 59.39, 48.53 (174.25) | 150 | 22 (80) | 0x47007AA5 ×6, 0x47007AA8 ×5, 0x47007AA0 ×4, 0x47007AA1 ×4 | 0x47007CB0 (59.346, 42.853, 174.406) 128.72° 1.2184 (6, 4) 0x0200071A > 15 > 0; 0x47007AA0 (58.741, 41.622, 174.458) 17.71° 1.0178 (6, 4) 0x0200071A > 1 > 0 |
+| S11 | 14, 0x1FE2 | 113.69, 66.56 (450.63) | 300 | 22 (186) | 0x470009A6 ×4, 0x47005B1E ×3, 0x470009A9 ×3, 0x470009A8 ×2 | 0x470009A6 (109.528, 66.155, 450.852) 291.40° 0.5993 (11, 7) 0x02000310 > 18 > 0; 0x47005B1E (106.341, 65.737, 450.953) 88.19° 0.7630 (11, 7) 0x02000310 > 38 > 0 |
 
-> **OPEN (M4.5 exit verification, clean room, 2026-10-06):** Tessera's generator, which
-> follows `scenery.md` §7.4 step 14b as written, misses 6 of the 22 objects above (S1 both,
-> S5, S6, S8, S10) and places fewer objects per landblock than the "total in block" column.
-> A probe that ignores footprint markers of nodes processed directly in the vertex scene
-> reproduces every listed object and the totals of every row except S9 (see the OPEN under
-> `scenery.md` §7.4 step 14b). Either the rows were generated with a different footprint
-> rule than the spec states, or the spec's rule needs correcting; walk GN1 (same landblock
-> as S1) depends on the same question.
+> **Answered 2026-10-07 (spec writer):** the verification of 2026-10-06 found that
+> Tessera's generator, which follows `scenery.md` §7.4 step 14b, missed 6 of the 22 listed
+> objects and gave lower totals than this table. The table was wrong. It had been made with
+> a generator whose footprint test was inverted ([§1](#s1), GEN). A BIN re-check
+> confirmed step 14b as written (`scenery.md` S36). With the corrected generator, the
+> rows above match the clean-room implementation's generated lists object for object in
+> all 11 landblocks. Every row's total changed (S9: 221 instead of 362). The in-view
+> counts and most common DIDs are unchanged in S3, S7 and S11 and changed in the other
+> rows. The six objects that Tessera missed (both of S1, one each of S5, S6, S8 and S10)
+> are not placed by the client and have left the rows. The next nearest objects take their
+> place ([§8](#s8)).
 
 <a id="s4-3"></a>
 ### 4.3 Frills
 
-Frill records of the GEN frill pass (`scenery.md` §8.2 with the Tessera Decisions of §8.2
-and §8.6; density 1.0, so the counts are exact). The eye is 1.8 m above the target, pitch
+Frill records of the GEN frill pass (`scenery.md` §8.2, with item 5 as revised on
+2026-10-07, and the Tessera Decision of §8.6; density 1.0, so the counts are exact). The
+records of all six landblocks are identical under the earlier Tessera Decision of §8.2 ([§8](#s8)). The eye is 1.8 m above the target, pitch
 −20°, *t* = 0.5. Expected drawing at the default level 2 (`scenery.md` §8.3–§8.4): frills
 out to 97 units, fading from 67 units, distance reduction from 40 units; frills tinted
 toward the terrain colour (intensity 1.0 unless the object says otherwise).
@@ -607,3 +618,11 @@ screenshots in the repository.
 > **OPEN:** The interior doorway rows cross portals between cells only, because no cell of
 > this install adjoins the landscape ([§1.1](#s1-1) item 1). If a later install adds
 > walk-in interiors, add a row that enters one from outdoors (`collision.md` §5.8.1).
+
+<a id="s8"></a>
+## 8. Change log
+
+| Date | Change |
+|---|---|
+| 2026-10-06 | First version: walks, performance spots, visual rows, M3 reference locations. |
+| 2026-10-07 | **Generated objects re-derived** (spec writer; `scenery.md` footprint revision). The GEN generator of [§1](#s1) had the footprint test of `scenery.md` §7.4 step 14b inverted: it tested only open markers and skipped closed ones. A BIN re-check confirmed step 14b as written. With the corrected generator, the static-pass lists of the 11 landblocks of [§4.2](#s4-2) equal the clean-room implementation's object for object. **§4.2:** every row re-derived with the same eye, heading and cone. Totals: S1 36 → 25, S2 344 → 315, S3 173 → 165, S4 364 → 309, S5 252 → 151, S6 176 → 111, S7 471 → 445, S8 361 → 166, S9 362 → 221, S10 102 → 80, S11 201 → 186. In view: S1 11 → 6, S2 41 → 35, S4 19 → 16, S5 29 → 9, S6 17 → 6, S8 34 → 14, S9 35 → 18, S10 29 → 22 (S3, S7, S11 unchanged). New nearest objects: S1 (both; the second is GN1's tree), S5 (second), S6 (first becomes the former second), S8 (first becomes the former second), S10 (first becomes the former second); S2–S4, S7, S9 and S11 keep both. The OPEN under §4.2 is answered. **§2.3–§2.4:** GN1's former tree (0x470035F3, list index 27) is not placed by the client. GN1 now runs north into tree 0x470035F4 of the same landblock (list index 16), from (130.61, 77.52) to the stop point (130.61, 82.61, 559.19). The terrain on the way slopes 30–34° across the path, below the 45° walkable limit. No object with collision volumes lies within 3 m of the path, and the first contact is the tree. GN2–GN4 keep their object, start and stop point; their list indices change: 40 → 33, 283 → 176, 149 → 138. The GN1 item of the implementer's OPEN in §2.4 is answered. **Unchanged** (checked with the corrected generator): the first contact of every other outdoor walk (WL, UB, ST, SL, CV, WA, FR) and the count of generated objects within 3 m of their paths; the frill records of the six landblocks of [§4.3](#s4-3), identical record for record under the frill rule of `scenery.md` §8.2 item 5 as revised; hence rows F1–F6 and walks FR1–FR3. |

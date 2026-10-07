@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Status** | Draft |
-| **Last updated** | 2026-10-06 |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (design; one terrain height observed for the default spawn, §1) |
 | **Reviewer** | none yet |
 | **Implements into** | `apps/server` (`tessera-server` library and binary), `apps/loadtest` (`tessera-loadtest`), `fuzz/` (content-file and accounts-file parsers) |
-| **Companion documents** | `tessera-protocol.md` (the wire format; this spec never restates it), `server-content.md` (what content a server may hold), [decision 0030](../decisions/0030-tessera-protocol-transport.md) (QUIC, threads), `walker.md` §10.5 and §10.7, `coordinates.md` §4 and §7, `docs/ARCHITECTURE.md` §19–§20, [LEGAL.md](../LEGAL.md) §11.1 |
+| **Companion documents** | `tessera-protocol.md` (the wire format; this spec never restates it), `server-content.md` (what content a server may hold), [decision 0030](../decisions/0030-tessera-protocol-transport.md) (QUIC, threads), `walker.md` §10.5 and §10.7, `collision.md` §10.3, §11.3, §12.3–§12.4, `coordinates.md` §4 and §7, `docs/ARCHITECTURE.md` §19–§20, [LEGAL.md](../LEGAL.md) §11.1 |
 
 This spec describes everything about Tessera's own test server that is **not** on the wire:
 its command line, files, configuration, content format, world instances, simulation
@@ -42,7 +42,8 @@ Legend as in `tessera-protocol.md` §1: **Design** (decided here), **Standard**,
 |---|---|---|
 | Everything not listed below: commands, files, formats, defaults, limits, policies, the desync and leak definitions | Original design, 2026-10-06 (spec writer, design role). No other server's behaviour was consulted | Design |
 | Wire behaviour referred to (states, codes, budgets, validation, interest, chat, time) | `tessera-protocol.md` v1.0 draft of 2026-10-06 | Project |
-| Walk 2 m/s, run 6 m/s, jump 7 m/s, terminal fall 60 m/s | `walker.md` §10.5, §10.7; `tessera-protocol.md` §1 | Project |
+| `WALK_SPEED` 2 m/s and `RUN_SPEED` 6 m/s (animation and gait only) | `walker.md` §10.5, §10.7; `tessera-protocol.md` §1 | Project |
+| Movement limits of §4.5: fastest target speed 6.5 m/s, walkable limit 45°, steep faces 45°–85°, jump push 5.2 m/s, ground braking ≥ 38.5 m/s², terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s, step-up 0.5 m | `collision.md` §10.3, §11.3, §12.3, §12.4 (a)–(c), (i), (p) (Accepted 2026-10-07); `tessera_physics::controller::params` (`MovementParams::BUILTIN`, `MAX_SPEED`), read 2026-10-08 | Project |
 | 30 Hz tick; network thread with a single-threaded async runtime; bounded channels | ARCH §19.4, §20.3; decision 0030 item 4 | Project |
 | Landblock 160 m, indices 0–254, ±1,280 m anchor ownership, region 0 = no data | `coordinates.md` §4, §7; `tessera_net::model` | Project |
 | Terrain heights lie in 0–2,000 m (stored u16 × 2,000 / 65,535) | `landblock.md` §3.4 | Project |
@@ -406,16 +407,39 @@ configurable.
 
 | Key | Type | Default | Range | Meaning |
 |---|---|---|---|---|
-| `walk_speed` | float | 2.0 | (0, 100], ≤ `run_speed` | `WALK_SPEED` sent to each player (`tessera-protocol.md` §7.3) |
-| `run_speed` | float | 6.0 | (0, 100] | `RUN_SPEED`; the base of *V*ₕ |
-| `tolerance` | float | 1.25 | 1.0–3.0 | *V*ₕ = `tolerance` × `run_speed` (default 7.5 m/s) |
-| `max_up_speed` | float | 10.0 | 7.0–100 | *V*ᵤ (above the 7 m/s jump) |
-| `max_down_speed` | float | 60.0 | 20–200 | *V*_d (terminal fall) |
+| `walk_speed` | float | 2.0 | (0, 100], ≤ `run_speed` | `WALK_SPEED` sent to each player (`tessera-protocol.md` §7.3); animation and gait only |
+| `run_speed` | float | 6.0 | (0, 100] | `RUN_SPEED`; animation and gait only |
+| `max_horizontal_speed` | float | 8.5 | 6.5–120 | *V*ₕ |
+| `max_up_speed` | float | 10.0 | 6.5–120 | *V*ᵤ |
+| `max_down_speed` | float | 120.0 | 50–200 | *V*_d |
+| `slide_reserve` | float | 16.0 | 0–100 | *S*, metres of descent credit kept for a slide's run-out (§8.3) |
 | `window_s` | float | 1.0 | 0.25–5.0 | *W*, the allowance window |
 | `settle_grace_s` | float | 3.0 | 0–10 | §8.3 settling grace |
 
-The defaults are the protocol's §8.3 defaults. The walk and run speeds are those of
-`walker.md` §10.5.
+The defaults are the protocol's §8.3 defaults. They follow the character controller of
+`collision.md` §12 (Tessera's client, `crates/physics`), whose speeds come from the player
+movement record (`collision.md` §10.3), not from `WALK_SPEED`/`RUN_SPEED`; the walk and run
+speeds stay those of `walker.md` §10.5 and no longer set a limit. Reasoning:
+
+- ***V*ₕ = 8.5 m/s** (6.5 m/s + 30 %). No controlled motion is faster than the BasePlayer
+  forward speed of 6.5 m/s (steady 6.33 m/s after the damper, `collision.md` §12.4 (b)):
+  the input pair is scaled to length 1 (`collision.md` §12.3 step 1), strafe (5) and back
+  (3.25; Troll 6) are slower, and the air layers brake toward 5 m/s or less. The margin
+  covers send-time jitter, push-outs (≤ 0.5 m per step, `collision.md` §12.4 (g)) and
+  step-up raised moves (§12.4 (d)). Faster horizontal motion comes only from sliding,
+  covered by the descent credit of §8.3 here.
+- ***V*ᵤ = 10 m/s** (6.5 m/s + about 50 %). The fastest sustained rise is walking up the
+  steepest walkable slope (45°, `collision.md` §11.3) at 6.5 m/s; a jump starts at 5.2 m/s
+  (`collision.md` §12.4 (c), (i)). The margin and the burst *V*ᵤ · *W* = 10 m cover
+  step-ups (up to 0.5 m in one 1/60 s step, `collision.md` §12.3 step 5) and buoyancy
+  lifting a swimmer to the float line (§12.4 (p)).
+- ***V*_d = 120 m/s** (the Slide layer's 100 m/s + 20 %). Falls end at the terminal
+  velocity of 50 m/s (BasePlayer; Falling lists none, `collision.md` §10.3), slides at 100
+  m/s (Slide layer), and every speed is capped at 120 m/s (`collision.md` §12.3 step 3), so
+  no legitimate descent exceeds it.
+- **Cheats still rejected.** A teleport or sustained speed beyond these is corrected. The
+  descent credit lets a client that alternates rising and falling reach at most *V*ₕ + *V*ᵤ
+  = 18.5 m/s horizontally, and only in bursts of *V*ₕ · *W* + *S* = 24.5 m.
 
 <a id="s4-6"></a>
 ### 4.6 `[chat]`
@@ -742,7 +766,7 @@ instance and region.
 ### 8.3 Movement validation
 
 The protocol's procedure (`tessera-protocol.md` §8.3) with the `[movement]` parameters, plus
-one server rule:
+two server rules:
 
 - **Settling grace.** The server has no terrain (`server-content.md` §3.2), so a spawn or
   teleport height may differ from the ground a client sees. For `settle_grace_s` of server
@@ -750,13 +774,26 @@ one server rule:
   or at a `Ground` destination, the up and down allowances are not applied: only the
   horizontal allowance and the extent check are. The vertical velocity clamp still applies
   to what is relayed.
+- **Descent credit (slides).** Horizontal speed above *V*ₕ arises only from gravity on
+  steep faces (normals 45°–85° from up, `collision.md` §11.3, §12.4 (q), (t)) and in the air after
+  leaving one, so it comes with at least as much descent (horizontal ≤ vertical on a face
+  of 45° or steeper). Step 5's horizontal test is therefore *d*ₕ > *A*ₕ + *d*_d, and on
+  acceptance *A*ₕ becomes min(*A*ₕ + *d*_d − *d*ₕ, *V*ₕ · *W* + *S*); *A*ₕ refills at *V*ₕ
+  only while below *V*ₕ · *W*. *S* = 16 m covers the run-out on walkable ground: a slide
+  under the default terminal velocity reaches at most 50 × cos 45° ≈ 35.4 m/s horizontally
+  and the ground brakes it toward 6.5 m/s at 38.5 m/s² or more (`collision.md` §12.4 (a)),
+  over about 15.7 m. The Slide layer's run-out (up to about 70.7 m/s, braking at 6.4 m/s²
+  or less) is not covered; it applies only while `Physics_OnSlide` is set (`collision.md`
+  §11.1 step 5), a property that no Tessera server sends.
 
-> **OPEN (tessera-protocol.md):** §8.3 there describes the vertical checks without such a
-> grace, and lets a server add checks but not relax them. Either that spec allows a
+> **OPEN (tessera-protocol.md):** §8.3 there describes the checks without such a grace or
+> credit, and lets a server add checks but not relax them. Either that spec allows a
 > server-defined settling grace after `Ground`-type epochs (preferred: it changes no bytes),
 > or the protocol needs a "settle" hint so clients snap to their terrain before the first
 > `MoveInput`. Until it is settled, servers with `settle_grace_s` = 0 follow §8.3 there
-> exactly, and content spawns should give heights close to the terrain (as §5.7 does).
+> exactly, and content spawns should give heights close to the terrain (as §5.7 does). The
+> descent credit needs the same allowance there (or a place in that procedure); without it,
+> long slides down steep faces are corrected.
 
 The server adds no terrain or collision checks of its own in v1.
 
@@ -1152,6 +1189,31 @@ reviewer should confirm or correct it.
 > 10 µs a second from the schedule and could repeat tick numbers. The finding's wording
 > question (what `server_time` a tick reports) is still open there.
 
+> **OPEN:** (implementer note, 2026-10-08) §8.3 settling grace and descent credit: during
+> the grace the down allowance is not applied, so a claimed descent of any size would lift
+> the horizontal test *d*ₕ > *A*ₕ + *d*_d without bound. The server therefore applies no
+> descent credit while the grace runs (step 5's horizontal test is *d*ₕ > *A*ₕ, as in
+> `tessera-protocol.md` §8.3); a slide that starts within `settle_grace_s` of a ground spawn
+> or a `Ground` teleport is corrected. Spec writer: confirm, or say how the credit is
+> bounded during the grace.
+
+> **OPEN:** (implementer note, 2026-10-08) §8.3 "*S* = 16 m covers the run-out" holds only
+> once the credit has filled. *A*ₕ grows by *d*_d − *d*ₕ per move, which is close to 0 on a
+> face just steeper than 45°, so after such a slide at 50 m/s *A*ₕ is still about
+> *V*ₕ · *W* = 8.5 m; the run-out of about 15.7 m in about 0.75 s then has about
+> 8.5 + 8.5 × 0.75 ≈ 14.9 m and is corrected near its end. The tests use a 47° face, where
+> the run-out fits. Spec writer: is that edge accepted, or should the credit rule change?
+
+> **OPEN:** (implementer note, 2026-10-08) API shape for the §4.5 defaults:
+> `tessera_protocol::movement::MovementLimits` carries *V*ₕ directly (`horizontal_speed`,
+> default `limits::MAX_HORIZONTAL_SPEED` = 8.5; the old `run_speed` field and
+> `HORIZONTAL_TOLERANCE_FACTOR` are gone) and an opt-in `descent_credit: Option<f64>`
+> holding *S*. `None` (the default) is `tessera-protocol.md` §8.3 exactly; `tessera-server`
+> sets `Some(slide_reserve)`. *A*ₕ is additionally capped at *V*ₕ · *W* + *S* whenever the
+> limits change. A negative or NaN *S* counts as 0. `tessera-net`'s §8.6 snap speed default
+> is the same 8.5 m/s, and its `InterpConfig::with_run_speed` was removed (§7.3: run speed no
+> longer sets *V*ₕ).
+
 ### 15.2 Implementer notes (`tessera-loadtest`, 2026-10-07)
 
 Readings the clean-room implementation of `apps/loadtest` had to choose where §13 is silent,
@@ -1322,3 +1384,4 @@ should confirm or correct it.
 | Date | Change |
 |---|---|
 | 2026-10-06 | First draft (M7, spec writer, design). Companion to `tessera-protocol.md` v1.0 and `server-content.md` |
+| 2026-10-08 | §1, §4.5, §8.3: movement limits follow the `collision.md` §12 controller instead of the walk 2 / run 6 m/s controller: *V*ₕ 8.5 m/s (`max_horizontal_speed` replaces `tolerance`; no longer derived from `run_speed`), *V*ᵤ 10 m/s (reasoned anew), *V*_d 120 m/s (was 60); new descent credit with `slide_reserve` *S* = 16 m. Spec writer (design) |

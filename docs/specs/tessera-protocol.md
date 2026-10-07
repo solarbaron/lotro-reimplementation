@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Accepted (independent review 2026-10-07, no blocking findings; non-blocking `> **OPEN:** (review)` notes remain, see [Review](#review)) |
 | **Protocol version** | 1.0 (major 1 in ALPN `tessera/1`, minor 0 in `Hello`) |
-| **Last updated** | 2026-10-06 |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (design) |
 | **Reviewer** | reviewer (did not write the code), 2026-10-07; second round 2026-10-07 ([R.7](#review-r7)). Method and results: [Review](#review) |
 | **Implements into** | `crates/protocol` (schema, framing, encode/decode, version negotiation, fingerprint text; no I/O), `crates/net` (test-server backend), `apps/server` (`tessera-server`), `apps/loadtest`, `fuzz/` |
@@ -83,7 +83,8 @@ background only and not normative.
 | Regions, landblocks (160 m, indices 0–254), interiors owned by an anchor block, ±1,280 m anchor ownership, Chebyshev block distance | `coordinates.md` §4 and §7; `tessera_net::model` (`LANDBLOCK_SIZE`, `MAX_LANDBLOCK`, `MAX_LOCAL_OFFSET`, `Anchor::owns`, `Landblock::chebyshev`), read 2026-10-06 | Project |
 | Limits: chat text 1,024 bytes, names 64 bytes, place names 256 bytes, 32 equipped items, appearance scale (0, 100], dye codes [0, 1], coordinates within ±10⁷ m; text sanitising (control characters → space, cut on a character boundary) | `tessera_net::model` (`MAX_CHAT_LEN`, `MAX_NAME_LEN`, `MAX_PLACE_NAME_LEN`, `MAX_EQUIPMENT`, `MAX_APPEARANCE_SCALE`, `MAX_DYE_CODE`, `MAX_LOCATION_COORDINATE`, `is_valid_name`, `sanitize_text`), read 2026-10-06 | Project |
 | Heading convention (radians, 0 = +X east, counter-clockwise from above) | `tessera_net::model` module documentation | Project |
-| Movement constants: walk 2 m/s, run 6 m/s, gravity 20 m/s², jump 7 m/s, terminal fall 60 m/s | `walker.md` §10.5 and §10.7; `tessera_input` walk-controller defaults, read 2026-10-06. Tessera's own constants, not new observations | Project |
+| `WALK_SPEED` 2 m/s and `RUN_SPEED` 6 m/s defaults | `walker.md` §10.5 and §10.7; `tessera_input` walk-controller defaults, read 2026-10-06. Tessera's own constants, not new observations | Project |
+| §8.3 limits: fastest target speed 6.5 m/s, walkable limit 45°, jump push 5.2 m/s, terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s; reasoning and margins in `test-server.md` §4.5 | `collision.md` §10.3, §11.3, §12.3–§12.4 (Accepted 2026-10-07); `tessera_physics::controller::params`, read 2026-10-08 | Project |
 | 30 Hz simulation tick; network thread with a single-threaded async runtime and bounded channels | `docs/ARCHITECTURE.md` §20.3, §19.4 | Project |
 | Property value kinds mirrored in §7.2 | `tessera_props::Value` (21 kinds), read 2026-10-06 | Project |
 | quinn 0.11 defaults (CUBIC congestion control, 30 s idle timeout, worst-case 1-RTT datagram overhead) | quinn-proto 0.11.19 source in the local cargo registry, 2026-10-06 | Reported (background only; §2 states the normative values) |
@@ -1168,7 +1169,7 @@ Count at most 256.
 |---|---|---|---|---|---|
 | 0x0001 | `STANCE` | Enum | All observers | 0 | 0 Relaxed, 1 Ready (held items drawn), 2 Seated. Clients treat unknown values as 0. Set by `StanceSet` |
 | 0x0002 | `EMOTE` | Struct | All observers | No emote | Fields: 1 `anim` Enum (opaque animation key from the data, §7.5), 2 `started` Time, 3 `looping` Bool. Set by `EmoteSet` (anim ≠ 0). Removed by `EmoteSet(0)`, when the entity starts moving (gait ≠ Standing, §8.1), or 60 s after `started` if `looping` is false |
-| 0x0003 | `WALK_SPEED` | Float32 | Owner only | 2.0 | The player's walking speed in m/s, (0, 100]. The client's controller uses it, and the server validates against it (§8.3) |
+| 0x0003 | `WALK_SPEED` | Float32 | Owner only | 2.0 | The player's walking speed in m/s, (0, 100]. Clients use it for gait and locomotion animation (§8.1); the §8.3 limits do not depend on it |
 | 0x0004 | `RUN_SPEED` | Float32 | Owner only | 6.0 | Running speed in m/s, (0, 100] |
 
 "Owner only" properties are sent only to the connection that controls the entity (in
@@ -1270,9 +1271,9 @@ Parameters (defaults here; `test-server.md` may make them configurable):
 
 | Parameter | Default | Note |
 |---|---|---|
-| *V*ₕ | 1.25 × `RUN_SPEED` = 7.5 m/s | Horizontal tolerance over the run speed |
-| *V*ᵤ | 10 m/s | Above the jump speed of 7 m/s |
-| *V*_d | 60 m/s | Terminal fall speed |
+| *V*ₕ | 8.5 m/s | Fastest controlled speed 6.5 m/s (`collision.md` §10.3) + 30 % |
+| *V*ᵤ | 10 m/s | Rise up a 45° walkable slope at 6.5 m/s (`collision.md` §11.3); jump 5.2 m/s; + about 50 % |
+| *V*_d | 120 m/s | The controller's speed cap (`collision.md` §12.3 step 3), above the terminal velocities 50 and 100 m/s (§10.3 there) |
 | *W* | 1.0 s | Allowance window (burst) |
 | Extent | Each of x and y in [−1,280, 40,800 + 1,280] | The grid plus the anchor margin |
 
@@ -2353,6 +2354,7 @@ them.
 | Date | Change |
 |---|---|
 | 2026-10-06 | v1.0 draft (spec writer, design). Transport per decision 0030. Awaiting review by someone who did not write it (ROADMAP M7 exit criterion 2) |
+| 2026-10-08 | §1, §7.3, §8.3: default limits follow the `collision.md` §12 controller: *V*ₕ 8.5 m/s (was 1.25 × `RUN_SPEED` = 7.5), *V*ᵤ 10 m/s (unchanged, reasoned anew), *V*_d 120 m/s (was 60); `WALK_SPEED`/`RUN_SPEED` no longer set a limit. No bytes change. Reasoning in `test-server.md` §4.5. Spec writer (design); needs a reviewer's confirmation |
 
 
 > **OPEN:** (review, non-blocking, round 2) The status row says Accepted after the

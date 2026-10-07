@@ -31,6 +31,7 @@
 
 pub(crate) mod boot;
 pub mod characters;
+pub mod chat;
 pub(crate) mod controls;
 pub mod figures;
 pub(crate) mod framelog;
@@ -102,6 +103,27 @@ pub trait WalkerSession {
     /// call. The default has none.
     fn drain_entity_events(&mut self, out: &mut Vec<Event>, max: usize) {
         let _ = (out, max);
+    }
+    /// The interpolated state of a networked entity at `now` (a remote session,
+    /// `tessera-protocol.md` §8.6); `None` keeps the walker's extrapolation of its moves
+    /// (the sandbox, the default).
+    fn sample_entity(&self, id: EntityId, now: Instant) -> Option<tessera_net::interp::Sample> {
+        let _ = (id, now);
+        None
+    }
+    /// Connection state for the HUD. The default has none.
+    fn net_status(&self) -> Option<crate::net::NetStatus> {
+        None
+    }
+    /// Appends the chat lines received since the last call. The default has none.
+    fn drain_chat(&mut self, out: &mut Vec<crate::net::ChatLine>) {
+        let _ = out;
+    }
+    /// Says `text` on the local channel; `false` when it was not sent (not in the world).
+    /// The default sends nothing.
+    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
+        let _ = (now, text);
+        false
     }
 }
 
@@ -415,6 +437,10 @@ pub struct Walker {
     player_region: u8,
     /// Main-thread time of the character layer this frame (events, figures, animation).
     chars_ms: f64,
+    /// Chat overlay and input (M7).
+    chat: chat::ChatOverlay,
+    /// The HUD's network line (M7).
+    net_line: Option<String>,
 }
 
 impl std::fmt::Debug for Walker {
@@ -584,12 +610,14 @@ impl Walker {
             char_draws: Vec::new(),
             player_region: config_region,
             chars_ms: 0.0,
+            chat: chat::ChatOverlay::default(),
+            net_line: None,
         })
     }
 
     /// Forwards a raw input event.
     pub fn input(&mut self, event: &RawEvent) {
-        self.controls.handle(event);
+        chat::route(&mut self.chat, &mut self.controls, event);
     }
 
     /// Sets the viewport size (LOD selection, projected-size culling, HUD layout).
@@ -713,6 +741,15 @@ impl Walker {
             self.player_region,
             now,
         );
+        if let Some(w) = world.as_deref() {
+            self.characters
+                .apply_samples(&|id| w.sample_entity(id, now), self.player_region, now);
+            // Remote sessions only: the sandbox's HUD (and its screenshots) stay as they were.
+            self.net_line = w
+                .net_status()
+                .filter(|s| s.link.is_some())
+                .map(|s| hud::net_line(&s));
+        }
         let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
         // Input and movement.
@@ -799,6 +836,30 @@ impl Walker {
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
 
+        let mut chat_in = Vec::new();
+        let mut unsent = None;
+        if let Some(w) = world.as_deref_mut() {
+            w.drain_chat(&mut chat_in);
+            while let Some(text) = self.chat.take_outgoing() {
+                if !w.send_chat(now, &text) {
+                    unsent = Some("Not in the world: chat not sent");
+                }
+            }
+        } else if self.chat.take_outgoing().is_some() {
+            unsent = Some("Not connected: chat not sent");
+        }
+        let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
+        if self
+            .chat
+            .receive(&chat_in, self.net_line.is_some(), notice, now)
+        {
+            self.notice = None;
+        }
+        if let Some(text) = unsent {
+            self.chat.push_local(text, now);
+        }
+        let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
+        self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {
             self.report_move(w, now);
         }
@@ -1072,6 +1133,9 @@ impl Walker {
             ),
             WHITE,
         ));
+        if let Some(net) = &self.net_line {
+            out.push((net.clone(), GREY));
+        }
         let Some(pos) = self.focus() else {
             let s = lock(&self.shared);
             let what = match (&s.places, s.focus_request) {
@@ -1313,6 +1377,7 @@ impl Walker {
         }
         let overlay = frame.pass("walker-hud", PassSpace::Screen);
         self.hud.draw(overlay, 10.0, 10.0);
+        self.chat.draw(overlay, 10.0, h as f32 - 10.0);
         if let (Some(pos), Some(anchor)) = (self.focus(), self.anchor) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
@@ -1423,6 +1488,7 @@ impl Walker {
         self.terrain.shutdown();
         self.clear_all(renderer);
         self.hud.release(renderer);
+        self.chat.release(renderer);
         if let Some(m) = self.avatar.take() {
             renderer.destroy_mesh(m);
         }

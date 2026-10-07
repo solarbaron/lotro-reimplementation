@@ -11,7 +11,11 @@
 > the reference machine, the owner's laptop, [decision 0010](decisions/0010-reference-machine-laptop.md);
 > criterion 2 since the River-hobbit fix of the same day); the remaining owner comparisons
 > are listed in its status. **M4.5 (world fidelity) is next** ([M4.5](#m4-5)): the owner
-> inserted it on 2026-10-06 to run before M5; M5–M8 keep their numbers. Milestones are ordered by
+> inserted it on 2026-10-06 to run before M5; M5–M8 keep their numbers. M7 (own test server
+> and protocol) was built in parallel on branch `m7` and verified on 2026-10-07
+> ([M7 status](#m7-status)): criteria 2–4 pass (4 waits for the owner's confirmation before
+> any public test build), criterion 1 passes on one machine and waits for a run between two
+> machines on a LAN. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -990,6 +994,54 @@ speeds, interpolation feel), observed in the original client.
 3. Every protocol parser is fuzzed; malformed or hostile packets cannot crash client or
    server.
 4. `docs/LEGAL.md` confirms the server's content rules before any public test build.
+
+<a id="m7-status"></a>
+**Status (verified 2026-10-07 on the reference laptop of
+[decision 0010](decisions/0010-reference-machine-laptop.md), branch `m7`, uncommitted working
+tree, release builds, machine loaded by the parallel M4.5–M6 work, so every timing number is
+indicative): criteria 2, 3 and 4 pass (4: the rules are written; the owner's confirmation is
+still to be recorded before any public test build); criterion 1 passes on one machine
+(loopback and a container network), and a run between two machines on a real LAN is
+open.** Every deliverable exists: `docs/specs/tessera-protocol.md` (v1.0, Accepted after an
+independent review), [decision 0030](decisions/0030-tessera-protocol-transport.md) (QUIC with
+quinn and rustls on ring), `tessera-protocol` (`crates/protocol`), `tessera-server`
+(`apps/server`, built-in original default world), the `tessera-net` test-server backend
+(`remote`, with snapshot interpolation) wired into the client (`--server`), and
+`tessera-loadtest` (`apps/loadtest`). Specs: `tessera-protocol.md` (Accepted),
+`server-content.md` and `test-server.md` (Draft), LEGAL.md §11.1. No `> **OPEN:**` item blocks
+a criterion; the ones to settle before someone writes a second implementation from the spec
+are the four round-2 review notes at `tessera-protocol.md` §4.5, §8.3, §8.7 and §13.3.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ one machine; LAN between two machines pending | One-hour soaks with `tessera-loadtest` (16 clients, each a `tessera_net::Session` over the test-server backend, walking and running across landblocks, teleporting, changing appearance and stance, chatting and reconnecting; [m7-soak.md](perf/m7-soak.md), third series): **S60d** (in-process, loopback) and **L60d** (server on the host's Docker bridge address, clients in a container with their own network stack) both PASS: 0 desync episodes of every kind over 5,185,495 and 4,272,246 position comparisons (240 observer–entity pairs, 236–240 of them left interest range and came back), 13,649 / 13,649 and 13,434 / 13,434 chat deliveries, 0 unexpected disconnects, 22 reconnections each; no memory growth after warm-up (S60d max 68.6 MiB; L60d server process 47.6 MiB, client process 10.7 MiB), every count back to its baseline. This verification found and fixed the client-side growth that failed the earlier hours (a thread, runtime and 2.9 MiB quinn endpoint per session; now one network thread and one shared endpoint, `tessera-net`), the tool's provisioning against a LAN address, and a drift of the server's tick schedule. Two release clients against a test server on the install, screenshots viewed: each sees the other's character and the default world's wanderers drawn and animated, network HUD (`interp 167 ms`, `4 remote`), message of the day in the chat overlay; `apps/client/tests/net_server.rs` (5 tests): both clients see each other move with smooth interpolation and receive each other's chat. Animation is compared as heading, gait and stance (0 episodes); `test-server.md` §13.2 has no animation rule yet (§15.2 OPEN). |
+| 2 | ✅ | `tessera-protocol.md` reviewed in two rounds by a reviewer who did not write the code (its Review section, R.1–R.7): Status Accepted, no blocking finding. The reviewer wrote a second codec from the spec text alone (`crates/protocol/tests/spec_conformance.rs`, 15 tests): it and the crate agree byte for byte on all 42 message vectors of §16.2–§16.5, the 16 tagged values of §16.6 and the handshake vectors of §16.1, both reject the 124 malformed inputs (every §16.7 negative vector) and accept the 23 boundary inputs. Every message type round-trips over 2,048 property-test cases (`proptests.rs`). Non-blocking OPEN notes remain (70 in the spec, most implementer notes); the four round-2 notes named above should be settled before a third party implements it. |
+| 3 | ✅ | Ten fuzz targets cover every parser of the protocol, the client backend and the server: `protocol_frame`, `protocol_message`, `protocol_datagram`, `protocol_handshake`, `protocol_fingerprint`, `net_remote_inbound`, `net_remote_world`, `server_connection`, `server_world`, `server_files`. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer): no crash, 0.11 M (`server_world`) to 26.8 M (`protocol_message`) executions each; the two `net_remote` targets re-run after the endpoint change (0.47 M and 0.06 M, no crash). Hostile soaks: H5d (final build, 1,924 attacks of ten kinds, 12,480 raw datagrams) and the earlier H5-16, H15-16, H5b, HR15: 0 panics, honest clients unaffected (0 desync, 0 unexpected disconnects), every count back to baseline, server process memory flat (HR15). Plus `apps/server/tests/hostile.rs`, `crates/net/tests/remote_hostile.rs` and the protocol state-machine tests. |
+| 4 | ✅ rules written; owner confirmation pending | [LEGAL.md §11.1](LEGAL.md#111-servers) states the seven server rules (no game data on a server, opaque references relayed but never collected, at most 16 bare positions per content file, an original default world, no gameplay reproduction, private or LAN use only, licensed committed content), with `server-content.md` as the checkable version, and says that the owner's dated confirmation is needed before any public test build (none exists). `tessera-server` links no data-decoding crate (`cargo tree -p tessera-server`), its built-in world has no opaque references, `check-content` enforces the automatic rules, and registration refuses non-private listen addresses. Open for the owner: confirm §11.1, the coordinate rule and the reading of the LEGAL.md banner (`server-content.md` §12). |
+
+Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets [--all-features] --locked -D warnings` and on `fuzz/`,
+`cargo test --workspace` with `TESSERA_GAME_DIR` set (2,227 passed, 0 failed, 3 ignored: one machine-specific install
+test, one doc example, the server's release soak test, which was run separately), `cargo doc --workspace
+--no-deps --all-features -D warnings`, `cargo deny check bans licenses sources` (both
+manifests; no `aws-lc-sys` or `openssl-sys` in the tree), `tools/check-content.sh` and its
+self-test, `tools/check-spdx.sh` (0 errors) and the relative links and anchors of the
+Markdown docs all pass. The ignored release soak test of `tessera-server` passes (16 bots,
+20 s, 0 overruns).
+
+Fixed during this verification: `tessera-net` runs every session on one network thread per
+process with one shared quinn endpoint per address family (the in-process hour soaks failed
+the leak check before; regression test `sessions_share_one_network_thread`); the load tool
+provisions at most four accounts at once (a server on a LAN address refused its batches of
+eight); the server derives each tick deadline from `tick_start(k)` (`tessera-protocol.md`
+review R.7 finding 3); `fuzz/README.md` rows for the ten M7 targets; ARCH §19.4.
+
+Remaining for M7 to close: a soak between two machines on a real LAN (criterion 1), the
+owner's recorded confirmation of LEGAL.md §11.1 (criterion 4, before any public test build),
+re-running S60d and L60d from the merge commit, and the spec writer's decisions on the
+review notes (`tessera-protocol.md` §17, `test-server.md` §15). Owner observations O70–O73
+([owner-observations.md](checklists/owner-observations.md#m7-items): movement speeds,
+interpolation feel, interest distance, say range) tune defaults; no criterion waits on them.
 
 ---
 

@@ -39,6 +39,9 @@
 //! Positions are region-frame `f64` in the store; simulated characters, whose moves arrive
 //! at the sandbox's tick rate, are extrapolated along their last velocity (for at most
 //! [`EXTRAPOLATE`]) and put on the terrain; placed figures keep the data's height.
+//! Characters of a remote session (a Tessera test server) are instead placed every frame
+//! at their interpolated state ([`CharacterLayer::apply_samples`],
+//! `tessera-protocol.md` §8.6), still on the terrain and still animated by ground speed.
 
 pub mod catalog;
 pub mod figure;
@@ -1002,6 +1005,49 @@ impl CharacterLayer {
         }
     }
 
+    /// Puts every networked character (not the player, not placed figures) that `sample`
+    /// knows at its interpolated state (`tessera-protocol.md` §8.6): position, heading and
+    /// the velocity that drives its locomotion (zero ground speed and velocity when the
+    /// motion byte says Standing, or when the sample is `SampleKind::Held`: updates late
+    /// past the extrapolation limit stand the character still). Characters `sample` does not know keep the extrapolation of their
+    /// last move. Positions are in `region`, the player's current region (as for moves).
+    pub fn apply_samples(
+        &mut self,
+        sample: &dyn Fn(EntityId) -> Option<tessera_net::interp::Sample>,
+        region: u8,
+        now: Instant,
+    ) {
+        let player = self.player;
+        for a in self.actors.values_mut() {
+            if a.tag.is_some() || Some(a.net) == player {
+                continue;
+            }
+            let Some(s) = sample(a.net) else { continue };
+            if !(s.position.is_finite() && s.heading.is_finite() && s.velocity.is_finite()) {
+                continue;
+            }
+            a.base = [
+                f64::from(s.position.x),
+                f64::from(s.position.y),
+                f64::from(s.position.z),
+            ];
+            a.region = region;
+            a.at = now;
+            a.heading = s.heading;
+            // Held: the entity's updates are late (past the extrapolation limit, §8.6), so
+            // it stands where the sampler holds it instead of walking on the spot.
+            let still = s.motion.gait == tessera_net::interp::Gait::Standing
+                || s.kind == tessera_net::interp::SampleKind::Held;
+            if still {
+                a.velocity = [0.0; 3];
+                a.speed = 0.0;
+            } else {
+                a.velocity = [s.velocity.x, s.velocity.y, s.velocity.z];
+                a.speed = s.velocity.x.hypot(s.velocity.y);
+            }
+        }
+    }
+
     /// Places the avatar (walk mode): feet, heading (0 = east, counter-clockwise) and ground
     /// speed; `None` hides it (fly mode).
     pub fn set_player_pose(&mut self, pose: Option<(WorldPos, f32, f32)>) {
@@ -1524,6 +1570,94 @@ mod tests {
         let a2 = l.actors.get(e2).unwrap();
         assert_eq!(a2.base, [50.0, 60.0, 7.0]);
         assert_eq!((a2.heading, a2.speed), (1.0, 5.0));
+    }
+
+    #[test]
+    fn samples_place_networked_characters_only() {
+        use tessera_net::interp::{Gait, Motion, Sample, SampleKind};
+        let mut l = layer();
+        apply(
+            &mut l,
+            vec![
+                created(1, 0x7900_0001, None),
+                created(2, 0x7900_0002, Some(9)),
+            ],
+            Some(EntityId(3)),
+        );
+        let now = Instant::now();
+        let sample = |id: EntityId| {
+            (id.0 != 3).then_some(Sample {
+                position: tessera_net::Vec3::new(10.0 + id.0 as f32, 20.0, 3.0),
+                heading: 0.5,
+                velocity: tessera_net::Vec3::new(3.0, 4.0, 0.0),
+                motion: Motion::new(Gait::Walking, false),
+                kind: SampleKind::Interpolated,
+            })
+        };
+        l.apply_samples(&sample, 1, now);
+        let actor = |l: &CharacterLayer, id: u64| {
+            let e = l.store.entity_for(NetId(id)).expect("entity");
+            l.actors.get(e).cloned().expect("actor")
+        };
+        let a = actor(&l, 1);
+        assert_eq!(a.base, [11.0, 20.0, 3.0]);
+        assert_eq!((a.heading, a.speed, a.at), (0.5, 5.0, now));
+        let placed = actor(&l, 2);
+        assert_ne!(
+            placed.base[0], 12.0,
+            "placed figures keep the data's position"
+        );
+        // Standing means no locomotion, whatever the interpolated velocity.
+        let standing = |_: EntityId| {
+            Some(Sample {
+                position: tessera_net::Vec3::new(1.0, 2.0, 3.0),
+                heading: 0.0,
+                velocity: tessera_net::Vec3::new(0.1, 0.0, 0.0),
+                motion: Motion::STANDING,
+                kind: SampleKind::Held,
+            })
+        };
+        l.apply_samples(&standing, 1, now);
+        assert_eq!(actor(&l, 1).speed, 0.0);
+        // Held with a walking gait (updates late, §8.6): no walk cycle on the spot and no
+        // frame-to-frame extrapolation either.
+        let held = |_: EntityId| {
+            Some(Sample {
+                position: tessera_net::Vec3::new(5.0, 6.0, 7.0),
+                heading: 0.25,
+                velocity: tessera_net::Vec3::new(3.0, 0.0, 0.0),
+                motion: Motion::new(Gait::Walking, false),
+                kind: SampleKind::Held,
+            })
+        };
+        l.apply_samples(&sample, 1, now);
+        assert_eq!(actor(&l, 1).speed, 5.0);
+        l.apply_samples(&held, 1, now);
+        let a = actor(&l, 1);
+        assert_eq!((a.base, a.heading), ([5.0, 6.0, 7.0], 0.25));
+        assert_eq!((a.speed, a.velocity), (0.0, [0.0; 3]));
+        // Extrapolated keeps the locomotion.
+        let extrapolated = |id: EntityId| {
+            sample(id).map(|s| Sample {
+                kind: SampleKind::Extrapolated,
+                ..s
+            })
+        };
+        l.apply_samples(&extrapolated, 1, now);
+        assert_eq!(actor(&l, 1).speed, 5.0);
+        l.apply_samples(&standing, 1, now);
+        // Non-finite samples are ignored.
+        let bad = |_: EntityId| {
+            Some(Sample {
+                position: tessera_net::Vec3::new(f32::NAN, 0.0, 0.0),
+                heading: 0.0,
+                velocity: tessera_net::Vec3::ZERO,
+                motion: Motion::STANDING,
+                kind: SampleKind::Held,
+            })
+        };
+        l.apply_samples(&bad, 1, now);
+        assert_eq!(actor(&l, 1).base, [1.0, 2.0, 3.0]);
     }
 
     #[test]

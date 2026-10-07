@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-loadtest"
+description = "Load and soak test tools for the Tessera protocol and test server (headless bot clients)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "tessera_loadtest"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tessera-loadtest"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tessera-net.workspace = true
+tessera-protocol = { workspace = true, features = ["transport"] }
+tessera-server.workspace = true
+# Raw QUIC clients for provisioning characters and for the hostile mode (test-server.md
+# §13.1), on their own current_thread runtime (decision 0030).
+quinn.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "net", "macros", "sync"] }
+
+[lints]
+workspace = true

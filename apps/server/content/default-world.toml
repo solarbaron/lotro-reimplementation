@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Tessera's default test world (docs/specs/test-server.md §5.7, docs/specs/server-content.md §6).
+# Original project content written for Tessera: no game text, no opaque references, and the
+# two positions the specs name. Validate changes with `tessera-server check-content`.
+format = 1
+
+[world]
+id = "default"
+title = "Tessera test world"
+motd = "This is a Tessera test server, for testing Tessera only. Tessera is an independent, unofficial project and is not affiliated with any game publisher. Each player needs their own legally obtained installation of the game to see the world; this server sends no game content."
+default_spawn = "start"
+
+# Open ground for movement tests, in the block the walker starts in by default. The height
+# is a little above the terrain there, so a client settles onto its own terrain.
+[[spawn]]
+name = "start"
+region = 1
+block = [126, 140]
+offset = [80.0, 20.0, 440.0]
+facing = 0.0
+ground = true
+
+# The middle of the grid of a world without data: for clients without an installation and
+# for the load tester.
+[[spawn]]
+name = "void"
+region = 0
+block = [127, 127]
+offset = [80.0, 80.0, 0.0]
+ground = false
+
+# A few generic test actors walking circles around the start. They copy the appearance of
+# the first player who enters, so this file holds no opaque references.
+[[wanderers]]
+spawn = "start"
+count = 3
+radius = 6.0
+speed = 1.5
+name = "Wanderer {n}"
+appearance = "first-player"
+
+[clock]
+start = 0.0
+rate = 1.0

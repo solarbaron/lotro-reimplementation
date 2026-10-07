@@ -169,12 +169,13 @@ Rules:
 | `tessera-settings` (`crates/settings`) | L4 | M1 | Tessera's own settings file (INI-shaped), with a read-only importer for the original client's preferences file (§17). |
 | `tessera-script` (`crates/script`) | L4 | M0 | Sandboxed Lua 5.1 host: state creation, library allow-list, limits, binding helpers (§18). |
 | `tessera-plugins` (`crates/plugins`) | L4 | M5 | Plugin discovery (`.plugin` XML), apartments, lifecycle, the compatible Lua API surface, plugin-data persistence (§18). |
-| `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend; later the test-server backend (§19). |
-| `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol: message schema, framing, versioning. Shared by the client backend and the test server. |
+| `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend, test-server backend (`remote`, decision 0030; M7), snapshot interpolation (§19). |
+| `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol (`docs/specs/tessera-protocol.md`): message schema, framing, versioning, the sans-IO client and server connection state machines, property values, movement and time-sync helpers, key fingerprints and connect strings. No I/O and no async code; feature `transport` adds the server key files and the rustls/quinn configurations of decision 0030. Shared by the `tessera-net` test-server backend, the test server and the load tools. |
 | `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). |
 | `tessera-dattool` (`apps/dattool`) | app | M0 | CLI: `detect`, `info`, `ls`, `stat`, `cat`, `extract`, `strings`, `validate`, later `diff` (§24). |
 | `tessera-explorer` (`apps/explorer`) | app | M1 | GUI asset browser: archives, strings, textures, icons, later meshes and maps (§24). |
-| `tessera-server` (`apps/server`) | app | M7 | Project-owned test server speaking the Tessera protocol with original test content (§19). |
+| `tessera-server` (`apps/server`) | app | M7 | Project-owned headless test server speaking the Tessera protocol over QUIC (decision 0030), with original test content only (`docs/specs/server-content.md`, `test-server.md`): accounts with Argon2id, characters, world instances, the 30 Hz simulation, interest management by landblock, chat relay (§19). A library plus a binary, so tests and the load tools run it in-process. |
+| `tessera-loadtest` (`apps/loadtest`) | app | M7 | Headless bot clients built on the `tessera-net` test-server backend: connect storms, walking, chat, churn, cheating and soak scenarios against an in-process or remote `tessera-server`, with desync, leak and latency reports (`test-server.md` §13). |
 
 > **OPEN:** whether `props`, `text` and `wstate` stay separate crates or become modules of
 > one `tessera-gamedata` crate. Decide in M1 when `props` is written; the module boundaries
@@ -807,8 +808,41 @@ The client never talks to sockets directly. It talks to a `Session` that wraps a
 | Backend | Status | Description |
 |---|---|---|
 | **Sandbox** | M0 skeleton, grows each milestone | In-process, no sockets. Spawns the local avatar at a chosen position in the user's data and serves a static world: landblock-placed static entities only. This is the offline world walker of M3. |
-| **Test server** | M7 | `tessera-server` + `tessera-protocol`: a protocol designed and documented by this project (spec `docs/specs/tessera-protocol.md`), with its own handshake, its own encryption (standard, documented algorithms) and its own content: original test content, or the server operator's own data limited to what LEGAL.md allows. |
+| **Test server** | M7 (`tessera_net::remote::RemoteBackend`, feature `remote`, on by default) | `tessera-server` + `tessera-protocol`: a protocol designed and documented by this project (spec `docs/specs/tessera-protocol.md`, transport per [0030](decisions/0030-tessera-protocol-transport.md)), with its own handshake (QUIC v1 + TLS 1.3, the server's own Ed25519 key pinned by SHA-256 fingerprint or recorded in the client's `known_servers` file), its own encryption (standard, documented algorithms) and its own content: original test content, or the server operator's own data limited to what LEGAL.md allows. See below. |
 | **Compatibility** | M8, **gated** | See §19.3. |
+
+The test-server backend implements the same `Backend` trait, so `Session` and everything
+above it work unchanged:
+
+- **Configuration** (`RemoteConfig`): a connect string `tessera://host:port[?pin=sha256:…]`,
+  the trust policy (known-servers file in Tessera's own settings directory, never the game
+  install, nor below one; trust on first use only when explicitly enabled, and never when
+  the file exists but cannot be read completely), the account name and a password
+  supplied by the caller (never logged, sent only after the server key was verified), the
+  `Hello` parameters, statics streaming and interpolation parameters.
+- **Events** follow the protocol spec's Appendix A: `LoginOk` → `Connected`; `WorldEnter` →
+  `WorldEntered`, `AppearanceChanged`, `LocationReport`; entities → `EntityCreated` (with
+  appearance), `EntityMoved` (with velocity), `AppearanceChanged`, `EntityDespawned`; chat,
+  notices and refusals → `ChatMessage`; every way a connection ends → exactly one
+  `Disconnected` with a reason (`RemoteBackend::failure` gives the detail: key mismatch,
+  login code, server code, violation). Everything from the network is decoded strictly and
+  checked by the protocol's client state machine first (`tessera-protocol.md` §13).
+- **Statics are not replicated.** As in the sandbox, the client may hand the backend its own
+  `WorldSource`; the backend streams the statics of the player's neighbourhood from the
+  user's install with the sandbox's streaming code (`StaticSpawned`, `StaticsCleared`).
+- **Movement**: `Command::Move` updates a single "newest move" slot; the network thread sends
+  `MoveInput` by the client send rules (15 Hz moving, 1 Hz heartbeat, immediate on gait
+  changes, teleports and corrections) and never sends a move the client made before it saw
+  a teleport or correction.
+- **Remote entities** are interpolated by `tessera_net::interp` (snapshot buffers on server
+  timestamps, render time = estimated server time − *D*, bounded extrapolation, snap across
+  teleports; *D* and the kept history grow together to the server's snapshot rate). `RemoteBackend::sample` gives an entity's state at the current render time;
+  `RemoteBackend::stats` gives RTT, clock offset, traffic and drop counters for the HUD and
+  the load tools. Replicated properties (stance, emote, speeds) are read with
+  `RemoteBackend::entity_state`; commands beyond the neutral `Command` set (emote, stance,
+  appearance) go through `RemoteBackend::handle`.
+- A network-free `InboundHarness` runs the same driver and mapper from a script of server
+  bytes; it backs the `net_remote_*` fuzz targets.
 
 <a id="net-compat"></a>
 ### 19.3 The gated compatibility tier
@@ -836,10 +870,28 @@ Architecturally this means:
 <a id="net-threading"></a>
 ### 19.4 Network threading
 
-Socket I/O runs on a dedicated network thread (a single-threaded async runtime inside
-`tessera-net`), which decodes messages into `Event`s and posts them over a bounded
-channel. The main thread drains the channel in `Session::poll_into`. The sandbox backend runs
-inline on the main thread.
+Socket I/O runs on a dedicated network thread inside `tessera-net`
+([decision 0030](decisions/0030-tessera-protocol-transport.md)): one thread per process,
+started by the first `Command::Connect` and kept for the life of the process, runs a tokio
+`current_thread` runtime and one quinn client endpoint per address family. Each
+test-server backend is a task on it with its own connection, the protocol's client state
+machine and a 30 Hz tick (timeouts, time sync, ping, the movement schedule). (A thread,
+runtime and endpoint per session, as first built, left memory behind in the allocator at
+every reconnection; see `docs/perf/m7-soak.md`.) The main thread and the network thread share only:
+
+| Direction | Channel | Bound | When full |
+|---|---|---|---|
+| Main → network | commands (enter world, teleport, chat, emote, ...) | 256 | `submit` returns `NetError::SendQueueFull`; never blocks |
+| Main → network | newest player move (a `watch` slot) | 1 | Replaced; moves can never fill a queue |
+| Main → network | shutdown flag (`Disconnect`, or the backend dropped) | 1 | — |
+| Network → main | decoded, validated items | 1,024 | The network thread stops reading the world, chat and control streams (QUIC flow control then holds the server back) and drops movement; reliable state is never lost. Reading stops once 256 items wait, but one read (8 KiB) that started below that is decoded in full, so at the peak about 1,620 items (256 + 8,192 / 6, the smallest world frame being 6 bytes) wait on the network thread |
+| Network → main | statistics snapshot (mutex, `try_lock` on the main thread) | 1 | The main thread keeps its previous copy |
+
+`Session::poll_into` drains the channel without waiting and maps items to `Event`s on the
+main thread, where the entity table, interpolation buffers and statics streaming live (the
+`WorldSource` is the client's and stays on the main thread). Dropping the backend asks the
+session task to say `Disconnect` and end; nothing waits for it. The sandbox backend runs
+inline on the main thread, as before.
 
 ---
 

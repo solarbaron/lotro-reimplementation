@@ -40,7 +40,12 @@ owner's in-game readings. **M4 (characters and animation) is done on Tessera's s
 characters of all 14 playable bodies assemble with worn and held items and play idle, walk
 and run with GPU skinning, and 50 of them animate at over 250 fps on the reference machine.
 Still open are the owner's comparisons with the original client. Nothing here is playable
-yet: the walker flies and walks over the world offline, with an animated avatar and the NPCs the data places.
+yet: the walker flies and walks over the world offline, with an animated avatar and the NPCs the data places. **M7 (Tessera's own
+protocol and test server) is done on one machine** ([M7 status](docs/ROADMAP.md#m7-status)):
+several clients share a world through `tessera-server` over Tessera's own QUIC protocol,
+seeing each other move, animate and chat, with one-hour soaks free of desync and leaks; a
+run between two machines on a LAN and the owner's confirmation of the server content rules
+are still open.
 
 | Area | State |
 |---|---|
@@ -59,7 +64,8 @@ yet: the walker flies and walks over the world offline, with an animated avatar 
 | Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
 | Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run (42 / 42 checklist rows, River-hobbit height and body-shape controls included); a 48-item worn/held checklist matches |
 | `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 257 fps headless (p99 6.6 ms) on the reference machine |
-| UI and plugins, audio, own test server | planned (M5–M7) |
+| Tessera's own protocol (`tessera-protocol`, QUIC, decision 0030), `tessera-server` with an original default world, the client's test-server backend (`tessera-client --server`), `tessera-loadtest` | done on one machine (M7): one-hour soaks with 16 clients, 0 desync, no leak; protocol spec Accepted after an independent review; 10 fuzz targets; LAN run between two machines pending |
+| UI and plugins, audio | planned (M5, M6) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -198,7 +204,8 @@ from game data is ever written into the repository.
 | `crates/install` | Install detection and version identification |
 | `crates/render` | wgpu renderer (mesh, material, terrain and skinned pipelines) |
 | `crates/script` | Sandboxed Lua 5.1 host |
-| `crates/net` | Transport-agnostic session layer with a local sandbox backend |
+| `crates/net` | Transport-agnostic session layer with a local sandbox backend and the test-server backend (QUIC, snapshot interpolation) |
+| `crates/protocol` | Tessera's own network protocol (`docs/specs/tessera-protocol.md`): messages, framing, encode/decode, session state machines, key pinning, QUIC setup |
 | `crates/props` | Property registry, property sets, enum labels, DID maps |
 | `crates/text` | String tables, variable substitution, grammar tags, locale selection |
 | `crates/assets` | Asset worker pool with priorities, cancellation and a decoded cache |
@@ -215,6 +222,8 @@ from game data is ever written into the repository.
 | `apps/dattool` | `tessera-dattool` inspection CLI |
 | `apps/client` | `tessera-client`, the game client (currently the offline world walker with an animated avatar and placed NPCs) |
 | `apps/explorer` | `tessera-explorer`, the GUI asset browser |
+| `apps/server` | `tessera-server`, the headless test server for Tessera's own protocol, with an original default world (private and LAN testing only) |
+| `apps/loadtest` | `tessera-loadtest`, load, soak and hostile-input tests against a test server |
 | `fuzz/` | Fuzz targets, one per parser |
 | `tools/` | Machine setup (`dev-setup.sh`), checks run by CI (`check-content.sh`, `check-spdx.sh`, `check-dco.sh`, `fuzz-smoke.sh`), research-clone fetcher, ImHex patterns and Kaitai schemas written from our specs ([tools/README.md](tools/README.md)) |
 | `docs/` | Architecture, roadmap, legal, clean-room process, tooling, specs |

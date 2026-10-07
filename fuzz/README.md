@@ -70,6 +70,16 @@ stable without libFuzzer.
 | `explorer_character_spec` | the explorer's character-view options (`apps/explorer/src/charspec.rs`, included by path): `--character`, `--wear`, `--clip`, `--time`, `--sliders`, `--times`, `--angles`, `--tile`, `--focus`, the word-list round trip, and `mesh_skin` in `geometry.rs` | `appearance.md` §2.2, §6.3, `skeleton-anim.md` §4 |
 | `client_avatar_spec` | the walker's `--avatar` grammar (`apps/client/src/avatar.rs`, included by path): item and figure prefixes, dye codes, item limits, print/parse round trip | `docs/specs/walker.md` §10 |
 | `net_npc_events` | sandbox character events under a hostile world source (figures with arbitrary appearances, avatar, wanderers, crowd) and arbitrary moves and clock steps: `EntityCreated`/`AppearanceChanged` validity, unique live IDs, `StaticsCleared`, crowd bounds | `tessera-net` `sandbox`, `walker.md` §10.1 |
+| `protocol_frame` | `FrameDecoder` on arbitrary stream bytes for every stream and sender, in arbitrary chunk sizes: never more than one frame buffered, every yielded message re-encodes and decodes to itself | `docs/specs/tessera-protocol.md` §5.4 |
+| `protocol_message` | `Message::decode_body` for every message type on arbitrary bodies; accepted messages re-encode byte for byte | `tessera-protocol.md` §6 |
+| `protocol_datagram` | `decode_datagram` from either side and tagged property values; accepted input re-encodes byte for byte | `tessera-protocol.md` §5.5, §6.5, §7.2 |
+| `protocol_handshake` | the client and server session state machines on arbitrary control, world, chat and datagram bytes, stream ends, local calls and time steps; closed sessions stay closed and send nothing | `tessera-protocol.md` §12, §13 |
+| `protocol_fingerprint` | fingerprint text, connect strings, the known-servers file and the certificate key walker; what parses prints back to the same value | `tessera-protocol.md` §4.2–§4.5 |
+| `net_remote_inbound` | the test-server backend's driver and mapper without a network: arbitrary stream bytes, stream opens and ends, datagrams, clock steps and commands, through `Session`'s checks; at most one `Disconnected` | `tessera-protocol.md` §13, ARCH §19 |
+| `net_remote_world` | the test-server backend after a valid login and `WorldEnter`, on arbitrary world, chat and datagram bytes; no event for an entity it did not create | `tessera-protocol.md` §6.3–§6.5, §13 |
+| `server_connection` | `tessera-server`'s `ConnectionCore` (decoding, session state machine, `SERVER_FULL` admission) on arbitrary control bytes, datagrams, stream ends, timeouts and simulation requests; its end reported at most once | `docs/specs/test-server.md` §10.1 |
+| `server_world` | up to four `ConnectionCore`s feeding the simulation (logins, characters, movement validation, interest, chat, teleports, flow control) with raw and well-formed fuzzed messages; everything the server sends decodes | `test-server.md` §5–§10, `tessera-protocol.md` §8–§10 |
+| `server_files` | the server's file parsers: `check-content` (with and without the SPDX rule), configuration, accounts file, PHC hash strings, character files, world state; what parses writes back to the same value | `test-server.md` §3.4–§3.6, §4, §5 |
 
 ## Running
 

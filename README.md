@@ -44,8 +44,11 @@ is in progress** ([M4.5 status](docs/ROADMAP.md#m4-5-status)): terrain is drawn 
 own texture layers, scenery and grass are generated from the data, the avatar walks on
 collision geometry (walls, objects, caves, interiors, wading and swimming), and water, sky,
 the game clock, lights, shadows and fog are drawn; decoding, invariants, determinism, golden
-images and fuzzing pass, while some scripted walks, one flight's streaming and some visual
-rows still fail. Nothing here is playable yet: the walker flies and walks over the world
+images and fuzzing pass. The re-verification of 2026-10-07 still finds failing
+generated-object and cave walks (25 of 32 walks pass; the 1,000-walk soak has no
+fall-through), visual rows that fail or cannot be judged (45 of 54 pass on the image), a
+clippy lint, and design specs with changes requested; the M3-b flight passed an indicative
+run and awaits a quiet-machine re-measure. Nothing here is playable yet: the walker flies and walks over the world
 offline, with an animated avatar and the NPCs the data places.
 
 | Area | State |
@@ -65,7 +68,7 @@ offline, with an animated avatar and the NPCs the data places.
 | Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
 | Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run (42 / 42 checklist rows, River-hobbit height and body-shape controls included); a 48-item worn/held checklist matches |
 | `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 257 fps headless (p99 6.6 ms) on the reference machine |
-| Terrain texture layers, generated scenery and grass, collision and the walk controller (`tessera-physics`), water, sky and game clock, lit pipeline with shadows and lights, draw distances | in progress (M4.5): every new record kind decodes (3,402 scenes, 16,819 collision meshes, 1,057 cells, …); scenery of 78,114 landblocks deterministic; 21 / 32 scripted walks and a 1,000-walk soak with no fall-through |
+| Terrain texture layers, generated scenery and grass, collision and the walk controller (`tessera-physics`), water, sky and game clock, lit pipeline with shadows and lights, draw distances | in progress (M4.5): every new record kind decodes (3,402 scenes, 16,819 collision meshes, 1,057 cells, …); scenery of 78,114 landblocks deterministic; 25 / 32 scripted walks and a 1,000-walk soak with no fall-through; 45 / 54 visual rows pass on the image (re-verified 2026-10-07) |
 | UI and plugins, audio, own test server | planned (M5–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
@@ -244,7 +247,7 @@ plugin host on top of `crates/script`); see
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Running and testing the walker, explorer and dattool on your own install |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Testing Tessera on your own install: the walker, explorer and dattool, their options and controls, the keymap file, where files go, reporting problems |
 | [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server gate, Bevy, multi-device workflow) |
 | [docs/checklists/](docs/checklists/) | Visual checklists and items only the owner can observe in the original client |
 | [DISCLAIMER.md](DISCLAIMER.md) | Non-affiliation statement and warranty disclaimer |

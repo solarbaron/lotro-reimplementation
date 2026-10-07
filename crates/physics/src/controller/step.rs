@@ -1329,7 +1329,7 @@ fn keep_heading(c: [f32; 3], orig: [f32; 3], planes: &Planes) -> [f32; 3] {
         return c;
     };
     let len = (c[0] * c[0] + c[1] * c[1]).sqrt();
-    if !(len > 1e-9) || c[0] * dir[0] + c[1] * dir[1] <= 0.0 {
+    if len.is_nan() || len <= 1e-9 || c[0] * dir[0] + c[1] * dir[1] <= 0.0 {
         return c;
     }
     let h = [dir[0] * len, dir[1] * len];

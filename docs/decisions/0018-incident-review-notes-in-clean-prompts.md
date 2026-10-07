@@ -2,8 +2,8 @@
 
 # 0018 — Incident: dirty-room reports in clean-room implementer prompts
 
-**Status:** Accepted as an incident record, 2026-10-07. Two owner decisions are pending (see
-Decision). Recorded under `docs/CLEAN_ROOM.md` §10.
+**Status:** Accepted as an incident record, 2026-10-07. Recorded under `docs/CLEAN_ROOM.md` §10.
+The owner decided both open points on 2026-10-07 (see "Owner decisions" below).
 
 ## Context
 On 2026-10-07 the orchestrating session ran a hand-written workflow, "M4.5 close-out". Its
@@ -83,3 +83,19 @@ is preserved with the held material (below).
   - the other specs whose headers hold detailed findings.
 - The exposed sessions are tainted for those subsystems. They were transient and are not
   reused.
+
+## Owner decisions (2026-10-07)
+- **A: release.** The owner chose to release the held close-out work, against the
+  recommendation to discard it and re-implement. The held patch was re-applied and
+  committed. To bring code and specs back into line:
+  - dirty-room spec writers add to the spec bodies every fact the released code relies on,
+    and the specs go through review to Accepted (`scenery.md`, `collision.md`,
+    `landblock.md`, `lighting.md`, `terrain-texturing.md`);
+  - from then on, only fresh, unexposed clean-room sessions review and change that code,
+    and they work from the Accepted specs alone.
+- **B: audit `9d5eaed`.** A clean-room auditor checks that the River-hobbit code implements
+  nothing beyond the Accepted text of `script-table.md`, `skeleton-anim.md` and
+  `appearance.md`. The code is kept if it is clean. Anything that goes beyond the specs is
+  either added to them through the spec lifecycle or removed.
+- The process rules above stay in force.
+

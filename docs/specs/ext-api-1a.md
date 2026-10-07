@@ -7,8 +7,8 @@
 | Status | **Review** |
 | Last updated | 2026-10-07 |
 | Author role | Design (Tessera's own API, written from the accepted decision 0017 and Tessera's own specs; no dirty-room input), AI-assisted |
-| Reviewer | Independent clean-room review session, 2026-10-07 (first review, re-review of revision 2 and re-review of revision 3): **changes requested**, status stays Review |
-| Review record | Independent review (clean room: D17, 0004, 0014–0016, the ext, plugin, keymap and UI specs, LEGAL §18), 2026-10-07: **changes requested**, status stays Review. (1) Authority: the spec cites a non-existent `ext-api.md` for its general rules and never cites `ext-threat-model.md`, whose §7–§8 rules are declared normative for D17's open items and "other improvements". This spec closes items 2, 5 and 6 with different rules. Either adopt the threat model's rules or record an agreed amendment in both specs, and say whether this file is `ext-api.md` (ext-api-1b calls it "EA"). (2) Open item 2 (§7.6–§7.7) conflicts with TM §7.2. Under TM a "solid press" excludes text and borders, a non-solid press deactivates the active window like a world click, notifications carry `gesture = false`, and focus under case 1 is refused outside a gesture turn. This spec allows a timer to focus during case 1. (3) The gesture window is narrowed to one call (§2.1, §7.7). TM §8.13 and D17 "Other improvements" define it as the whole turn that delivers the gesture. (4) Composition-area bound: §7.10 gives 2.0/6.0 screens, TM §7.1 gives 1.25/2.0 (the badge counts, and nested entries count again), and 1b §6.4 gives 2·S/3·S physical pixels. The spec has no rule for user drags or for host resizes and UI-scale changes, and no GPU budget row or E9. (5) Entity filtering (§10.3) differs from TM §7.5: per-subscription delivery calls versus one batched filter call that queues notifications, `dropped` versus `unfiltered`, a different cost formula, and a different handling of suspension. The 15 MiB retained-record bound is not mentioned. (6) `Store` read-your-writes (§5.2) disagrees with both TM §7.6 and 1b §8.6 on whether a read of a pending value is an I/O-queue job and whether it counts as an outstanding request. The rule that a wipe clears the pending map and the counting of pending entries toward size totals are missing. (7) A refused `Get` reservation raises here but returns `nil, "out of memory"` in TM §8.14/L28. (8) The `Store` byte write rate here is 1 MiB/s and 4 MiB/s, but TM §8.7/L44 applies 32 KiB/s and 128 KiB/s with buckets until the owner decides. Temporary-file counting and crash-leftover removal are missing. (9) The ownership badge here shows only while a field is focused. TM §8.3 requires it on every shown frame that has a catching node or a field. (10) A busy image decode answers `Loaded{ok = false}` here but `nil, "busy"` in TM §8.5. (11) OPEN-9 says there is no liveness floor, but TM §7.4 already defines one (and ext-manifest O-5 asks this spec to carry it). The gate's clock origin (TM §8.12) is missing. (12) Retained snapshot memory (TM §8.10, ext-manifest O-4) is undecided, and the §11 memory row omits it. (13) Missing rules: what `Ext.Use` does with the manifest's `[modules]` and minor versions, including an undeclared module (ext-manifest §4.8, O-2), and how ext context priorities are assigned (O-3). (14) §2.8 "Order" says "in the order they arose" but puts this frame's step-1 input ahead of notifications caused in the previous frame's 6b. (15) `World.Clock` and `World.Sky` pass through values computed by algorithms marked BIN (environment.md §11 "BIN unless stated", sound.md §10.3.5), yet §0 names only two such results. Give them contract limits like OPEN-3 (LEGAL §18.3 rule 1). (16) The log record format (§4.3) differs from TM §8.1 (prefix, `\xNN` escaping, cut mark). Minor: the value of `V` is 295,112 units, not 295,000; `Input.Standard("mouselook")` is ambiguous because KM §8 binds it in both `camera` and `movement`; state the angle and quaternion conventions and the handler pattern as general rules so that 1b's OPENs can align. **Revision 2 (2026-10-07)** answers every point by adopting `ext-threat-model.md` (TM) revision 2 and closing EM OPEN O-2 and O-3 (change log, §16); awaiting re-review. **Re-review of revision 2** (clean room: D17 in full, TM revision 2 §0–§14, EM and EA1b revision 2, KM §3 and §8–§9.1, `coordinates.md` §4), 2026-10-07: **changes requested**, status stays Review. All sixteen points and the minor items of the first review are fixed: TM is cited as normative throughout, every repeated figure matches TM §10 (L3–L12, L17, L18, L22–L31, L33–L45, L48–L51, L55–L62, L68–L71, L81), every cited X-number exists with matching scope, and every EA1a row of TM §13 is carried. Remaining issues: (1) **Blocking, consistency with EA1b.** §2.10 makes yaw and pitch radians and "no argument is ever a heading" a general rule, and says "this is the form EA1b's `Camera` takes"; EA1b §3.1 (which defers to EA1a on general rules) takes a compass **heading in degrees** (any finite value, modulo 360), pitch and field of view in degrees, builds the view direction from the heading, and cites a non-existent "EA1a §9 'Heading'". A script passing `World.Here().yaw` to `Camera` gets a different direction under each spec. Settle one form in §2.10 and make EA1b follow, or correct §2.10's claim. (2) Consistency with EA1b, smaller: EA1b still names `Core.OnUnload` and `Core.OnTick`, which revision 2 renamed to `Core.On("Unload" \| "Tick", fn)`; EA1b §14 asks EA1a §0/§3 to name the generated reference `docs/specs/ext-api-reference.md`, which this spec does not (§2.5 says only "generates the reference"). (3) **Fairness (§2.6, 1a rule "the group position").** A split turn resumes as the first script of its group. A script whose own calls fill the 2 ms cap (for example a 1,024-entry delivery set) is split again every frame and so runs first in every frame until its turn ends, and other scripts of its group get no 6b time in those frames, against D17 §4's rotating round robin and TM X17 ("others starved beyond round robin"); the rolling-time throttle reacts only after its 1 s window. Resume the turn at the script's ordinary round-robin position, or give the head position only when another script's calls or the gate split the turn. (4) Locale suspension: D17 §1.5 ("The process locale stays C") suspends every ext script when the locale is not "C", and EM §10.5 points to EA1a §7.11 and §2.9 for it, but §7.11 lists only watchdog, panic chord and revocation, and `Resumed.reason` (§4.1) has no value for it. (5) TM §13 asks the API specs to carry TM §8.15 (the ext profile's standard-library tables, the removed compatibility names, `math.max`/`math.min` charged by argument count; X8); this spec, the home of the general rules, neither states nor cites it (nor D17 §1.2's environment, e.g. `print`'s replacement). (6) §2.8 does not say what happens when a state notification's coalesced entry is already in the current turn's delivery set and the script's own call changes the value again: updating that entry would deliver a self-caused value in the same turn (against D17 §4, "next turn"); a new entry would break "one entry per node and kind". State which, since invariant 38's traces depend on it. (7) D17 §3's stated exception says the user removes a pointer-catching ext window "with the panic chord, the script manager or by closing the window"; this spec gives the user no host route to close or hide one frame (no host close control; the badge is never a pointer target). Define one (for example a "hide windows" action per script in the manager) or state that the routes are the chord and the manager. Minor: §2.6's 250 ms floor condition counts from the **start** of the last frame in which ext ran, and a floor frame also runs 6c with its 1 ms slice (TM rule 7.4.1); a read answered from the pending map is delivered in the script's **next** turn (TM rule 7.6.3), not "a later turn" (§5.2); TM §8.24 also wipes on an **unreadable** owner tag (§5.2); invariant 8 cites TM X24 for the 33rd command, but X24 does not cover commands. **Revision 3 (2026-10-07)** answers every point of this re-review and carries TM revision 3 (the §8.7 re-dirtying rule for `Store` writes, the at-most-once head position of §8.13, the reset of rule 7.4.1, the per-apartment file-index charge of rule 7.6.1, the store no-follow rule of §8.8 and the grant-store re-read route of §8.23); change log, §16. Awaiting re-review. **Re-review of revision 3** (clean room: D17 in full, including "Open security and design items", "Other improvements" and the M5.5 deliverables; TM revision 3 §0–§14; EM and EA1b revision 3; KM §3, §8, §9.1), 2026-10-07: **changes requested**, status stays Review. Every point of the re-review of revision 2 is fixed. §2.10's angle form is now the one EA1b §3.1, §4 and §7.2 follow. EA1b uses `Core.On("Tick" \| "Unload")` and `docs/specs/ext-api-reference.md`. The split-turn head position is at most once (TM §8.13, X17; invariant 42). The locale suspension and `Resumed.reason = "locale"` are in place (invariant 43). §2.11 carries D17 §1.2 and TM §8.15 (invariant 46). Frozen delivery-set entries are fixed (invariant 44). The window-removal routes are in §7.11. The floor-frame reset, the next-turn pending read, the unreadable owner tag and invariant 8 are corrected. TM revision 3 is carried: the taken/untaken pending entries and full re-payment of §8.7/L44 (invariant 41, X57); the per-apartment file-index charge of rule 7.6.1; the no-follow store directory of §8.8 (X94); and the grant-store re-read route of §8.23 (invariant 45, X91). Every repeated figure checked matches TM §10 (L3–L12, L17, L18, L22–L31, L33–L45, L48–L51, L55, L57–L62, L68–L71, L81). Every cited X-number exists with matching scope. The worked examples' arithmetic holds (heading 270.3 for yaw 3.1364; 10,240 and 2,560 units per filter batch; invariant 12's ≤ 20 KiB per flush under 32 KiB/s). Remaining issues: (1) **Blocking, consistency with TM §0.1 rule 5 and this spec's own §0 ("Every numeric limit is TM's").** TM rule 5 (revision 3) says every count, size or range of extended scripting has an L-number. A companion spec that needs one requests it as an OPEN; EA1b does this for its `Overlay.Lines` cap. This spec states caps that have no L-number and makes no request: command arguments at most 1,024 bytes (§6.2, invariant 17) and `help` at most 96 bytes (§6.1); at most 16 edges per action per frame (§8.2); `Entity.Read` at most 512 handles, a `near` or `around_self` radius of at most 500 and a `box` side of at most 1,000 (§10.2); a timer delay of at most 10^6 s (§4.2); position magnitudes of at most 10^7 (§2.3); node `x`, `y`, `width` and `height` of at most 16,384 and `name` of at most 64 bytes (§7.4); world-label width 512, `region` 1…255, offsets of at most 256 and `max_distance` 1…500 (§7.9); `LocText` at most 256 bytes (§9.1, §9.2); a ray over at most 25 landblocks (§9.1). Fix: add an OPEN asking TM §10.6 to register these (or the subset TM counts as limits), then cite their L-numbers; or have TM state which argument ranges rule 5 leaves to the API specs, and correct §0's sentence to match. (2) §7.11 says "the grant dialog's text and the user documentation name the chord and the manager", but EM §6.1's `ui` dialog text ("Show its own windows and labels. They take clicks and the mouse wheel where they lie.") names neither, and this spec records no change request to EM. Either drop the claim or request the wording from EM. (3) §7.10 "Frame budget" and the §11 L56 row describe the TM L56 row as 1.0 ms of GPU time. TM L56 and rule 7.1.6 give the row as 1.6 ms (0.6 ms overlay encoding plus 1.0 ms GPU). Say "the 1.0 ms GPU part of the 1.6 ms row", so that the repeated figure matches TM §10 (TM §0.1 rule 1). Minor: `e(n)` counts keys and values (§2.5), yet `Store.Usage` (5 fields) charges `e(8)`, `World.Here` (7 fields) `e(9)` and `World.Clock` (7 fields) `e(7)`. Count fields in one consistent way even though the figures are provisional (OPEN-1). |
+| Reviewer | Independent clean-room review session, 2026-10-07 (first review, re-review of revision 2, re-review of revision 3 and its follow-up, re-review of revision 4): **changes requested**, status stays Review; the re-review of revision 4 awaits a revision 5 |
+| Review record | Independent review (clean room: D17, 0004, 0014–0016, the ext, plugin, keymap and UI specs, LEGAL §18), 2026-10-07: **changes requested**, status stays Review. (1) Authority: the spec cites a non-existent `ext-api.md` for its general rules and never cites `ext-threat-model.md`, whose §7–§8 rules are declared normative for D17's open items and "other improvements". This spec closes items 2, 5 and 6 with different rules. Either adopt the threat model's rules or record an agreed amendment in both specs, and say whether this file is `ext-api.md` (ext-api-1b calls it "EA"). (2) Open item 2 (§7.6–§7.7) conflicts with TM §7.2. Under TM a "solid press" excludes text and borders, a non-solid press deactivates the active window like a world click, notifications carry `gesture = false`, and focus under case 1 is refused outside a gesture turn. This spec allows a timer to focus during case 1. (3) The gesture window is narrowed to one call (§2.1, §7.7). TM §8.13 and D17 "Other improvements" define it as the whole turn that delivers the gesture. (4) Composition-area bound: §7.10 gives 2.0/6.0 screens, TM §7.1 gives 1.25/2.0 (the badge counts, and nested entries count again), and 1b §6.4 gives 2·S/3·S physical pixels. The spec has no rule for user drags or for host resizes and UI-scale changes, and no GPU budget row or E9. (5) Entity filtering (§10.3) differs from TM §7.5: per-subscription delivery calls versus one batched filter call that queues notifications, `dropped` versus `unfiltered`, a different cost formula, and a different handling of suspension. The 15 MiB retained-record bound is not mentioned. (6) `Store` read-your-writes (§5.2) disagrees with both TM §7.6 and 1b §8.6 on whether a read of a pending value is an I/O-queue job and whether it counts as an outstanding request. The rule that a wipe clears the pending map and the counting of pending entries toward size totals are missing. (7) A refused `Get` reservation raises here but returns `nil, "out of memory"` in TM §8.14/L28. (8) The `Store` byte write rate here is 1 MiB/s and 4 MiB/s, but TM §8.7/L44 applies 32 KiB/s and 128 KiB/s with buckets until the owner decides. Temporary-file counting and crash-leftover removal are missing. (9) The ownership badge here shows only while a field is focused. TM §8.3 requires it on every shown frame that has a catching node or a field. (10) A busy image decode answers `Loaded{ok = false}` here but `nil, "busy"` in TM §8.5. (11) OPEN-9 says there is no liveness floor, but TM §7.4 already defines one (and ext-manifest O-5 asks this spec to carry it). The gate's clock origin (TM §8.12) is missing. (12) Retained snapshot memory (TM §8.10, ext-manifest O-4) is undecided, and the §11 memory row omits it. (13) Missing rules: what `Ext.Use` does with the manifest's `[modules]` and minor versions, including an undeclared module (ext-manifest §4.8, O-2), and how ext context priorities are assigned (O-3). (14) §2.8 "Order" says "in the order they arose" but puts this frame's step-1 input ahead of notifications caused in the previous frame's 6b. (15) `World.Clock` and `World.Sky` pass through values computed by algorithms marked BIN (environment.md §11 "BIN unless stated", sound.md §10.3.5), yet §0 names only two such results. Give them contract limits like OPEN-3 (LEGAL §18.3 rule 1). (16) The log record format (§4.3) differs from TM §8.1 (prefix, `\xNN` escaping, cut mark). Minor: the value of `V` is 295,112 units, not 295,000; `Input.Standard("mouselook")` is ambiguous because KM §8 binds it in both `camera` and `movement`; state the angle and quaternion conventions and the handler pattern as general rules so that 1b's OPENs can align. **Revision 2 (2026-10-07)** answers every point by adopting `ext-threat-model.md` (TM) revision 2 and closing EM OPEN O-2 and O-3 (change log, §16); awaiting re-review. **Re-review of revision 2** (clean room: D17 in full, TM revision 2 §0–§14, EM and EA1b revision 2, KM §3 and §8–§9.1, `coordinates.md` §4), 2026-10-07: **changes requested**, status stays Review. All sixteen points and the minor items of the first review are fixed: TM is cited as normative throughout, every repeated figure matches TM §10 (L3–L12, L17, L18, L22–L31, L33–L45, L48–L51, L55–L62, L68–L71, L81), every cited X-number exists with matching scope, and every EA1a row of TM §13 is carried. Remaining issues: (1) **Blocking, consistency with EA1b.** §2.10 makes yaw and pitch radians and "no argument is ever a heading" a general rule, and says "this is the form EA1b's `Camera` takes"; EA1b §3.1 (which defers to EA1a on general rules) takes a compass **heading in degrees** (any finite value, modulo 360), pitch and field of view in degrees, builds the view direction from the heading, and cites a non-existent "EA1a §9 'Heading'". A script passing `World.Here().yaw` to `Camera` gets a different direction under each spec. Settle one form in §2.10 and make EA1b follow, or correct §2.10's claim. (2) Consistency with EA1b, smaller: EA1b still names `Core.OnUnload` and `Core.OnTick`, which revision 2 renamed to `Core.On("Unload" \| "Tick", fn)`; EA1b §14 asks EA1a §0/§3 to name the generated reference `docs/specs/ext-api-reference.md`, which this spec does not (§2.5 says only "generates the reference"). (3) **Fairness (§2.6, 1a rule "the group position").** A split turn resumes as the first script of its group. A script whose own calls fill the 2 ms cap (for example a 1,024-entry delivery set) is split again every frame and so runs first in every frame until its turn ends, and other scripts of its group get no 6b time in those frames, against D17 §4's rotating round robin and TM X17 ("others starved beyond round robin"); the rolling-time throttle reacts only after its 1 s window. Resume the turn at the script's ordinary round-robin position, or give the head position only when another script's calls or the gate split the turn. (4) Locale suspension: D17 §1.5 ("The process locale stays C") suspends every ext script when the locale is not "C", and EM §10.5 points to EA1a §7.11 and §2.9 for it, but §7.11 lists only watchdog, panic chord and revocation, and `Resumed.reason` (§4.1) has no value for it. (5) TM §13 asks the API specs to carry TM §8.15 (the ext profile's standard-library tables, the removed compatibility names, `math.max`/`math.min` charged by argument count; X8); this spec, the home of the general rules, neither states nor cites it (nor D17 §1.2's environment, e.g. `print`'s replacement). (6) §2.8 does not say what happens when a state notification's coalesced entry is already in the current turn's delivery set and the script's own call changes the value again: updating that entry would deliver a self-caused value in the same turn (against D17 §4, "next turn"); a new entry would break "one entry per node and kind". State which, since invariant 38's traces depend on it. (7) D17 §3's stated exception says the user removes a pointer-catching ext window "with the panic chord, the script manager or by closing the window"; this spec gives the user no host route to close or hide one frame (no host close control; the badge is never a pointer target). Define one (for example a "hide windows" action per script in the manager) or state that the routes are the chord and the manager. Minor: §2.6's 250 ms floor condition counts from the **start** of the last frame in which ext ran, and a floor frame also runs 6c with its 1 ms slice (TM rule 7.4.1); a read answered from the pending map is delivered in the script's **next** turn (TM rule 7.6.3), not "a later turn" (§5.2); TM §8.24 also wipes on an **unreadable** owner tag (§5.2); invariant 8 cites TM X24 for the 33rd command, but X24 does not cover commands. **Revision 3 (2026-10-07)** answers every point of this re-review and carries TM revision 3 (the §8.7 re-dirtying rule for `Store` writes, the at-most-once head position of §8.13, the reset of rule 7.4.1, the per-apartment file-index charge of rule 7.6.1, the store no-follow rule of §8.8 and the grant-store re-read route of §8.23); change log, §16. Awaiting re-review. **Re-review of revision 3** (clean room: D17 in full, including "Open security and design items", "Other improvements" and the M5.5 deliverables; TM revision 3 §0–§14; EM and EA1b revision 3; KM §3, §8, §9.1), 2026-10-07: **changes requested**, status stays Review. Every point of the re-review of revision 2 is fixed. §2.10's angle form is now the one EA1b §3.1, §4 and §7.2 follow. EA1b uses `Core.On("Tick" \| "Unload")` and `docs/specs/ext-api-reference.md`. The split-turn head position is at most once (TM §8.13, X17; invariant 42). The locale suspension and `Resumed.reason = "locale"` are in place (invariant 43). §2.11 carries D17 §1.2 and TM §8.15 (invariant 46). Frozen delivery-set entries are fixed (invariant 44). The window-removal routes are in §7.11. The floor-frame reset, the next-turn pending read, the unreadable owner tag and invariant 8 are corrected. TM revision 3 is carried: the taken/untaken pending entries and full re-payment of §8.7/L44 (invariant 41, X57); the per-apartment file-index charge of rule 7.6.1; the no-follow store directory of §8.8 (X94); and the grant-store re-read route of §8.23 (invariant 45, X91). Every repeated figure checked matches TM §10 (L3–L12, L17, L18, L22–L31, L33–L45, L48–L51, L55, L57–L62, L68–L71, L81). Every cited X-number exists with matching scope. The worked examples' arithmetic holds (heading 270.3 for yaw 3.1364; 10,240 and 2,560 units per filter batch; invariant 12's ≤ 20 KiB per flush under 32 KiB/s). Remaining issues: (1) **Blocking, consistency with TM §0.1 rule 5 and this spec's own §0 ("Every numeric limit is TM's").** TM rule 5 (revision 3) says every count, size or range of extended scripting has an L-number. A companion spec that needs one requests it as an OPEN; EA1b does this for its `Overlay.Lines` cap. This spec states caps that have no L-number and makes no request: command arguments at most 1,024 bytes (§6.2, invariant 17) and `help` at most 96 bytes (§6.1); at most 16 edges per action per frame (§8.2); `Entity.Read` at most 512 handles, a `near` or `around_self` radius of at most 500 and a `box` side of at most 1,000 (§10.2); a timer delay of at most 10^6 s (§4.2); position magnitudes of at most 10^7 (§2.3); node `x`, `y`, `width` and `height` of at most 16,384 and `name` of at most 64 bytes (§7.4); world-label width 512, `region` 1…255, offsets of at most 256 and `max_distance` 1…500 (§7.9); `LocText` at most 256 bytes (§9.1, §9.2); a ray over at most 25 landblocks (§9.1). Fix: add an OPEN asking TM §10.6 to register these (or the subset TM counts as limits), then cite their L-numbers; or have TM state which argument ranges rule 5 leaves to the API specs, and correct §0's sentence to match. (2) §7.11 says "the grant dialog's text and the user documentation name the chord and the manager", but EM §6.1's `ui` dialog text ("Show its own windows and labels. They take clicks and the mouse wheel where they lie.") names neither, and this spec records no change request to EM. Either drop the claim or request the wording from EM. (3) §7.10 "Frame budget" and the §11 L56 row describe the TM L56 row as 1.0 ms of GPU time. TM L56 and rule 7.1.6 give the row as 1.6 ms (0.6 ms overlay encoding plus 1.0 ms GPU). Say "the 1.0 ms GPU part of the 1.6 ms row", so that the repeated figure matches TM §10 (TM §0.1 rule 1). Minor: `e(n)` counts keys and values (§2.5), yet `Store.Usage` (5 fields) charges `e(8)`, `World.Here` (7 fields) `e(9)` and `World.Clock` (7 fields) `e(7)`. Count fields in one consistent way even though the figures are provisional (OPEN-1). **Follow-up review of revision 3** (same day, against TM revision 4, EM and EA1b revision 3): **changes requested**, status stays Review. Items (1)–(4) of the re-review of revision 3 are still open, and: (5) **security**, a handle kept after an optional revocation can reach another module's native (EA1b §4.7's `lease:Follow`); state one rule for handles across modules, an invariant and X91's sub-case; (6) **security**, the visible-focus rule ignores the script's own higher content, and a press that falls through a non-catching picture counts as solid; (7) only a solid press may raise a script's block; (8) "counted outward" depends on sub-pixel phase, so invariant 27 is false; the badge's counted box depends on fonts; an `Add` that gives a frame its badge has no refusal; (9) which notification opens a gesture window, and whether a press on a disabled node is a gesture; (10) **security**, the gesture window has no length bound; (11) what suspension does to the script's input contexts; (12) dropped notifications cannot be reported for most tables, and a dropped `Store.Get` result leaves the script waiting forever; define `Resumed.counts`' keys; (13) the validation order and the extra-argument rule belong here, not in EA1b §10.3, and `Store.Set`'s refusals have no precedence; (14) invariant 29 claims more than D17 §5.5 and IB D6 allow (only key and pad presses stop at `opaque_keys`); (15) give every invariant a harness code; several cannot run under `scripttool test`; (16) X31's slice-1a scope; (17) entity-subscription semantics (lagging cursor, no player, Find's candidates; "delivered", not "matched"); (18) when layout runs; (19) "512 per frame" reads as a rate; which nodes take an ext surface; (20) **security**, a pending `Store.Get` copy is uncharged; (21) the `help` text's display rule, and an `/ext:` line for a suspended script; (22) unspecified results (`Field` text over `max_bytes`, `Slider` `min ≥ max`, a `List` selection out of range, focus lost to a consent prompt, what Input's rate counts); (23) companion consistency (EA1b's region range, EM's walk-file `heading`, EM §9.8's reload notices, §13.2's `[modules]`); (24) the all-scripts log rate; (25) OPEN-3 confirmed by the reviewer. **Revision 4 (2026-10-07)** answers all twenty-five points and carries TM revision 4 (rule 6 of TM §0.1, L91, L93, L30's reserved room, rule 7.1.2's counting by size, rule 7.2.1's topmost painted element, rule 7.2.2's own-content cover, §8.3's fixed badge box and placement, §8.4's displayed-text copy, rule 7.5.2's subscription start, §8.13's window opening and bound, §8.14's reservation formula, §8.23's effective set, minting capability and suspension of input); change log, §16. **Re-review of revision 4** (clean room: D17 in full, including "Open security and design items" and "Other improvements"; TM revision 4 §0–§14, with §10 and every EA1a row of §13; EM and EA1b revision 4), 2026-10-07: **changes requested**, status stays Review. All twenty-five points of the re-review of revision 3 and its follow-up are fixed. Every resource cap is cited as TM L91 or marked "domain" or "grammar" under TM §0.1 rule 6. Every repeated figure checked matches TM §10 (L3–L12, L17, L18, L22–L31, L33–L45, L48–L51, L55–L62, L68–L71, L81, L91, L93). Every cited X-number exists with matching scope and slice. The §7.11 dialog text matches EM §6.1. The fixed-shape costs follow §2.5's counting rule. The worked arithmetic holds (`V` = 295,112; §13.1's 15,642 pixels; heading 270.3; 4,992 records and 163,840 units; invariant 12's ≤ 20 KiB per flush). Remaining issues: (1) **Blocking, security; consistency with TM §8.4, TM §13 ("the API specs carry … §8.4") and D17 "Other improvements" (pastejacking).** §7.8 carries only the first half of TM §8.4: copy clears on a text change. It omits "a copy takes only text that was on screen": the whole selected range displayed from the selection to the copy, not clipped, not scrolled out, uncovered as for focus (L58), and drawn at alpha × effective opacity ≥ 0.5. It also omits the stripping of Cc, Cf, Zl and Zp characters from copied text (LF and tab kept only where displayed). This header claims revision 4 carries "§8.4's displayed-text copy", but the text does not. Invariant 25 covers only the changed-text part of TM X52. So `Ctrl+A`, `Ctrl+C` in a `Field` holding "ls" plus 300 spaces and a command scrolled out of view copies the hidden command under this spec. Fix: state both rules in §7.8 and extend invariant 25 to X52's clipped, scrolled-out, transparent, covered and Cc/Cf cases. (2) **Blocking, bounded memory and queue (§2.8 "What is never dropped", §5.3, §2.4, §11 L27).** §2.8 says the never-dropped reserved room holds "the `done` of `Set` and `Delete`", bounded by TM L27's 32 results. But a `Set` or `Delete` with `done` is not an outstanding request anywhere: §2.4's `Store.Set` order has no outstanding-request check, and §11's L27 row lists only reads and image decodes. §5.3 also keeps the `done` of every replaced value until the replacing write completes. A replacement that does not grow debits no bucket, so `Store.Set(k, v, done)` called 10^5 times in one turn on one key queues 10^5 never-dropped `done` deliveries, all owed on one flush. Fix: count each pending `done` as one outstanding request (L27, `nil, "busy"` at its place in §2.4's order, and in §11's L27 row); or keep at most one pending `done` per key (a newer `done` replaces the older, which is delivered at once with a stated result), bounded by L40, with the bound requested of TM as an OPEN (TM §0.1 rule 5). (3) **Focus visibility (§7.1, §7.7).** The caret and the focus mark are drawn in the badge layer, but their order against badges is not stated. Badges are not covering content under visible-focus item 3. So a frame at y = 5, whose own badge is placed inside it along its top edge, or another script's badge attached above that script's frame, can lie over a focused field's caret or mark, against D17 §4 ("with the box uncovered, both are on screen"). State that the caret and the mark are drawn above every badge, or that a badge inside the focus area covers it (and add the case to invariant 24 or 48). Minor: (4) §7.9 limits a label's `VisibilityChanged` to "the script's own `visible` changes", but §7.10's host-change hide and §7.11's resume notify labels with `by = "host"`. (5) `e:Get(field)` charges `B` + `b(bytes)` only, yet `rotation` and `landblock` return tables, which §2.5's general counting rule charges (`e(8)`, `e(4)`). (6) §5.2 defines the file index as "key → counted size", but §5.3 and TM rule 7.6.1 also use its exact byte size (the reservation and the read bound). (7) §4.1 makes `Resumed` "the first call of the first turn", while §2.1 and §10.3 make the filter call the start of every turn; state the order. (8) `Entity.Subscribe`'s `around_self` radius has no lower bound (`Find`'s is 0 … 500), and neither function says what `box` with x1 > x2 means (normalised or refused). (9) Whether a removed `Image`'s decode in flight still counts toward L27 until its worker job ends is unstated; TM X26 depends on it. (10) Where a `Store.Set` whose pending bytes would pass the memory cap fails in §2.4's order, and in which form (raised, per §2.4 item 1), is unstated. (11) §13.3 row *S* shows `info` without `dropped`. |
 | Implements into | `crates/ext` (`tessera-ext`: the binding descriptions of these modules, argument validation, the value model, scheduling), `crates/ext-host` (`tessera-ext-host`: the ports of these modules over `world`, `physics`, `entity`, `input`, `ui`, `settings`; `Store` file I/O; the headless harness), `apps/client` (feature `ext`: the frame steps, the heavy-frame gate and its floor, the reserved layer, ext UI routing, the ownership badge), `crates/ui` (the solid-press test, selection and copy, composition coverage of ext entries), `crates/input` (the ext context priority), `apps/scripttool` (`check`, `test`) |
 | Related records and specs | [decision 0017](../decisions/0017-extended-scripting.md) (abbreviated **D17**; the architecture this spec details, including its "Open security and design items" and "Required follow-ups"); [`ext-threat-model.md`](ext-threat-model.md) (**TM**: **normative** for every limit, cited as TM L*n*, for every rule of its §7–§9, cited as TM §*n.m*, and for the escape tests, cited as TM X*n*; TM §0.1); [`ext-manifest.md`](ext-manifest.md) (**EM**: manifest grammar, folder rules, grant store, backend gate states, the script tool); [`ext-api-1b.md`](ext-api-1b.md) (**EA1b**: the slice-1b modules); [decision 0014](../decisions/0014-ui-input-bridge.md) (**IB**: frame steps D8, UI band D5, `opaque_keys` D6); [decision 0015](../decisions/0015-ui-rendering.md) (**UR**: surfaces, composition, U1); [decision 0004](../decisions/0004-server-strategy.md) (server scope); [decision 0016](../decisions/0016-plugin-class-helper.md) item 2; [`keymap.md`](keymap.md) (**KM**: names, actions, contexts, bindings, resolution, KM §9.1 angle conventions); [`plugin-runtime.md`](plugin-runtime.md) (**PR**: the shared runtime core only); [`coordinates.md`](coordinates.md) (frames); [`environment.md`](environment.md) §11 (game clock and sky, BIN); `docs/ARCHITECTURE.md` (**ARCH** §9.1 coordinates, §20.3 frame loop, §21 threading); `docs/LEGAL.md` §18 |
 
@@ -43,9 +43,17 @@ calibrated cost, the spec wins and the registry has a defect.
 **Authority.** TM is normative for the subjects it delegates (TM §0 "Normative status",
 §0.1):
 
-- **Limits.** Every numeric limit is TM's, cited as "TM L*n*". A number repeated here next
-  to its citation is for the reader only; if it differs from TM §10, TM wins and this spec
-  has a defect.
+- **Limits.** Every **resource limit** is TM's, cited as "TM L*n*" (TM §0.1 rule 6: a
+  count, size, rate, time or per-call cap that bounds work, memory, disk, GPU time, queue
+  length or the user's control). This spec's own per-call and per-object caps are TM L91.
+  A number repeated here next to its citation is for the reader only; if it differs from
+  TM §10, TM wins and this spec has a defect. Two kinds of number stay here and need no
+  L-number (TM §0.1 rule 6): **argument-validity domains** (the range of one scalar
+  argument or field that bounds no cost by itself: position magnitudes, §2.3; a timer's
+  longest delay, §4.2; node positions and sizes, §7.4; a world label's width, `region`,
+  offsets and `max_distance`, §7.9) and **grammar lengths** (a node's `name`, §7.4). Each
+  is marked "domain" or "grammar" where it is stated. A new resource limit is requested of
+  TM as an OPEN first (TM §0.1 rule 5).
 - **Rules.** For D17's open security and design items and its "other improvements", the
   rules of TM §7–§9 apply. This spec states their script-visible form (names, arguments,
   results, notifications) in its own words and cites the rule; it may make a rule
@@ -75,7 +83,8 @@ which are recorded from the original (BIN): the map-coordinate value, the `/loc`
 game clock (`environment.md` §11.1, "BIN unless stated", and the night rule of `sound.md`
 §10.3.5) and the sky state (the day-description choice of `environment.md` §11.2 and the
 blending of §11.3). For each, the ext contract promises only units, ranges and directions
-(§9.2), never a formula, a rounding, a threshold or a format (LEGAL §18.3 rule 1, OPEN-3).
+(§9.2), never a formula, a rounding, a threshold or a format (LEGAL §18.3 rule 1; OPEN-3,
+closed by the reviewer's confirmation).
 
 **Names.** `Ext`, the module names and every function, property, notification and element
 kind name in this spec are Tessera's own choices. Element kinds deliberately avoid every
@@ -96,13 +105,14 @@ there.
 |---|---|---|
 | Module set of slice 1a, capabilities, groups, backends, apply steps (§3–§10 headers); the API rules: chunky calls, region frame in f64, stale handles raise, every argument validated, per-frame caps answer `nil, "busy"` (§2) | D17 §3 table, "API rules" | Decision (D17, accepted 2026-10-07) |
 | Frame steps 6a–6c, turns, notification order, self-caused notifications in the next turn, conversion inside metered calls, intents and their apply steps (§2.6, §2.8) | D17 §4 | Decision (D17) |
-| Every numeric limit (§11 and wherever a number is cited as TM L*n*) | TM §10, from D17 §8 and TM's changes | Decision (TM, normative) |
-| The rules for D17's open items 1 (composition part), 2, 4, 5, 6 and 8 and the "other improvements" this slice ships: composition coverage (§7.10), solid presses and gesture-window focus (§7.6–§7.7), the liveness floor and the gate's clock origin (§2.6), entity filtering (§10.3), `Store` read-your-writes, reservations, disk rates and the no-follow store directory (§5), world labels (§7.6), log format (§4.3), the ownership badge (§7.7), selection and copy (§7.8), image decodes (§7.10), the sticky abort (§2.4), split turns, their place in the round robin and gesture windows (§2.6), the ext profile's library tables (§2.11), revocation and the grant-store re-read (§2.9) | TM §7.1, §7.2, §7.4, §7.5, §7.6, §7.8, §8.1, §8.3–§8.5, §8.7, §8.8, §8.10–§8.15, §8.23, §8.24 | Decision (TM, normative); the script-visible form is this spec's |
+| Every resource limit (§11 and wherever a number is cited as TM L*n*), this spec's per-call caps included (TM L91) | TM §10, from D17 §8 and TM's changes | Decision (TM, normative) |
+| Argument-validity domains and grammar lengths marked "domain" or "grammar" (§2.3, §4.2, §7.4, §7.9) | This spec, under TM §0.1 rule 6 | Decision (this spec) |
+| The rules for D17's open items 1 (composition part), 2, 4, 5, 6 and 8 and the "other improvements" this slice ships: composition coverage (§7.10), solid presses and gesture-window focus (§7.6–§7.7), the liveness floor and the gate's clock origin (§2.6), entity filtering (§10.3), `Store` read-your-writes, reservations, disk rates and the no-follow store directory (§5), world labels (§7.6), log format (§4.3), the ownership badge (§7.7), selection and copy (§7.8), image decodes (§7.10), the sticky abort (§2.4), split turns, their place in the round robin, gesture windows, what opens them and their bound (§2.6), the ext profile's library tables (§2.11), revocation, the effective set, handles checked against their minting module, suspension of input and the grant-store re-read (§2.7, §2.9, §8.1), results of outstanding requests never dropped (§2.8) | TM §7.1, §7.2, §7.4, §7.5, §7.6, §7.8, §8.1, §8.3–§8.5, §8.7, §8.8, §8.10–§8.15, §8.23, §8.24; L30, L91, L93 | Decision (TM, normative); the script-visible form is this spec's |
 | The ext environment: the globals and libraries of an apartment, `print` to the script log, `tostring` without addresses, per-apartment random numbers (§2.11); the process locale pinned to "C" and the suspension when it is not (§2.9) | D17 §1.2, §1.5 | Decision (D17) |
 | Activation and focus cases 1 and 2, the visible-and-uncovered focus rule, the ext z-range, pointer notifications only over the script's own catching nodes (§7.6–§7.7) | D17 §4, §5.6, as TM §7.2 tightens them | Decision (D17, TM) |
 | Ext keymap names `ext.<id>.<name>`, contexts in the ext partition, resolution after every non-ext context (§8) | D17 §2, §5.5; KM §2, §3, §7 | Decision (D17); KM rules as KM marks them |
 | Region frame: f64 (160 · X + x, 160 · Y + y, z), +X east, +Y north, +Z up, unit = 1 m by convention; yaw counter-clockwise from +X (§2.10) | ARCH §9.1; `coordinates.md` §2–§3; KM §9.1 | as marked there (Confirmed; KM Decision) |
-| Function names, argument shapes, result tables, notification names, element kinds and their properties, reason strings, provisional unit costs, the handler pattern, `"not declared"` and the ext context priority (closing EM OPEN O-2 and O-3), and every rule marked **(1a rule)** | This spec, 2026-10-07 (revisions 2 and 3 the same day): designed to satisfy D17 and to state TM's rules in script-visible form | Decision (this spec; subject to review) |
+| Function names, argument shapes, result tables, notification names, element kinds and their properties, reason strings, provisional unit costs, the handler pattern, `"not declared"` and the ext context priority (closing EM OPEN O-2 and O-3), and every rule marked **(1a rule)** | This spec, 2026-10-07 (revisions 2–4 the same day): designed to satisfy D17 and to state TM's rules in script-visible form | Decision (this spec; subject to review) |
 
 ---
 
@@ -119,9 +129,9 @@ there.
 | **Turn** | The script's share of 6b for one round-robin visit (TM §2): its filter call (§10.3), its queued notifications in order, its due timers, then `Tick`. Every item of a turn is its own call. A turn can be **split** between frames (§2.6, TM §8.13). |
 | **Notification** | A queued event for the script, delivered as one call in a turn (D17 §4, §2.8). |
 | **Intent** | A queued effect that a later frame step applies (D17 §4). In slice 1a the only intents are `Input` context changes (§8). |
-| **Gesture** | One of the user's own inputs that D17 roots trust in (TM §2): a **solid press** (§7.6) on one of the script's frames, the start of one of its own actions (§8.2), or an `/ext:` line for it (§6). |
-| **Gesture window** | The whole turn that delivers a gesture, from the start of the call that delivers the gesture's notification to the end of that turn's `Tick`, whatever frames a split turn spans (TM §2, §8.13). Every API spec uses exactly this window. |
-| **Solid press** | A user press whose catching node draws its own background at the press point with alpha × effective opacity ≥ 0.5 (TM rule 7.2.1, L57; §7.6 says what "own background" covers for each kind). |
+| **Gesture** | One of the user's own inputs that D17 roots trust in (TM §2): a **solid press** (§7.6) on one of the script's frames that delivers a `Pressed` notification, the start of one of its own actions (§8.2), or an `/ext:` line for it (§6). |
+| **Gesture window** | Opened **only** by the delivery of a gesture's own notification: the `Pressed` of a solid press, an action's `"start"`, or an `/ext:` line's call (TM §8.13, L93). The `gesture` flag of the matching `Released` and `Clicked` is information only; their delivery opens nothing, so a press held for 10 s opens one window, at the press. A press on an `enabled = false` node delivers no notification and so opens no window (§7.6). The window runs from the start of the delivering call and closes at the **first** of: the end of that turn's `Tick`, whatever frames a split turn spans; the user's first key press, pointer press or wheel step after the gesture that resolves outside this script's own frames and actions; **1 s** of wall time after the delivering call started (**60 frames** in deterministic mode) (TM §8.13, L93). Every API spec uses exactly this window. |
+| **Solid press** | A user press whose catching node draws its own background at the press point with alpha × effective opacity ≥ 0.5 and is the **topmost painted node** there, so that no other node of any ext frame paints over it at that point (TM rule 7.2.1, L57; §7.6 says what "own background" covers for each kind). |
 | **Node** | One element of the script's UI: a frame, a control inside a frame, or a world label (§7). |
 | **Frame** | A top-level ext window (element kind `Frame`). The word "window" in D17 means a frame. |
 | **Catching node** | A node that catches the pointer at a point (§7.6). D17 and UB call this "mouse-visible". |
@@ -129,7 +139,8 @@ there.
 | **Region frame** | Positions as f64 (x, y, z) in metres: x = 160 · X + local x, y = 160 · Y + local y, z up, in **the player's current region** (ARCH §9.1). |
 | **Resident** | Present in memory now: a landblock streamed and integrated, a collision set installed, an entity in the store (D17 §8, "Natives never wait"). |
 | **Screen**, **coverage** | As TM §2 defines them: one full viewport in physical pixels (in deterministic mode the harness's virtual surface, 1920 × 1080 unless the walk file sets another, EM §11.5), and a conservative pixel count divided by one screen. |
-| **Steps** | The frame steps of ARCH §20.3 as IB D8 and D17 §4 refine them: step 1 input; steps 2–6 session, simulation, streaming, completions, animation; step 7 items 1–6 (UI tick and plugins), then **6a** (ext queue), **6b** (ext tick), **6c** (ext collector), then item 7 (the outbox drain, "**item-7 drain**"); step 8 layout and paint; step 10 render. |
+| **Steps** | The frame steps of ARCH §20.3 as IB D8 and D17 §4 refine them: step 1 input; steps 2–6 session, simulation, streaming, completions, animation; step 7 items 1–6 (UI tick and plugins), then **6a** (ext queue), **6b** (ext tick), **6c** (ext collector), then item 7 (the outbox drain, "**item-7 drain**"); step 8 paint (for ext: painting and world-label placement only; ext layout runs inside the call that changes it, §7.1); step 10 render. |
+| **Effective set** | The capabilities an apartment runs with: those granted when it was loaded, shrunk by every revocation since, **never grown** during its life (TM §8.23). Every grant check of this spec reads it, never the live grant table. |
 
 <a id="s2-2"></a>
 ### 2.2 How the tables read
@@ -144,7 +155,7 @@ there.
   state as it stood after steps 1–6 of this frame (D17 §4, "Reads"), or the script's own
   state at the moment of the call.
 - **Capability.** The grant the module needs (D17 §3). A function of a module whose table the
-  script holds always re-checks the grant (§2.9).
+  script holds always re-checks it against the apartment's effective set (§2.1, §2.9).
 
 <a id="s2-3"></a>
 ### 2.3 Value types
@@ -157,7 +168,7 @@ there.
 | `string` | a Lua string. Text that the host interprets (labels, names, command text) is UTF-8; an invalid sequence is replaced by U+FFFD **when the host reads it**, never an error (D17 §3) | a non-string, unless the row allows a number |
 | `boolean` | `true`, `false` | anything else, including `nil` where a boolean is required |
 | `colour` | a string `#RRGGBB` or `#RRGGBBAA` (hexadecimal digits, either case); RGB is sRGB, AA is straight alpha, omitted = FF | any other form |
-| `position` | three numbers `x, y, z` passed as separate arguments (region frame, §2.1), each with absolute value at most 10^7 | non-finite or larger values |
+| `position` | three numbers `x, y, z` passed as separate arguments (region frame, §2.1), each with absolute value at most 10^7 (domain, TM §0.1 rule 6) | non-finite or larger values |
 | `handle` | a handle of the stated kind (§2.7) | another kind; a non-handle |
 | `function` | a Lua function | a callable table (no metamethod is called by the host) |
 | `table` | a Lua table walked with raw access only (D17 §8, "The bounded value model") | a non-table; a table over the native's declared caps is refused with `nil, "too large"` where the row says so, otherwise a Lua error |
@@ -171,9 +182,11 @@ there.
 <a id="s2-4"></a>
 ### 2.4 Three ways to fail
 
-1. **Lua error** (catchable with `pcall`): a programming error. Wrong type, a value out of
+1. **Lua error** (catchable with `pcall`): a programming error. Wrong type, a missing or
+   extra argument, a value out of
    range, an unknown name (property, context, action, setting), a call on a stale handle
-   (§2.7), a call on a module whose grant was revoked (§2.9), a ray longer than 500 m, a
+   (§2.7), a call on a module whose grant was revoked or with a handle whose minting
+   module's grant was revoked (§2.7, §2.9), a ray longer than 500 m, a
    native whose cost exceeds what is left of the call (§2.5), and a refused allocation or
    host-object creation over the memory cap ("not enough memory", TM L22, L23). A result
    **reservation** the memory cap refuses is not an error but a soft failure (below). The
@@ -205,6 +218,53 @@ there.
    log record naming the call (source `error`, §4.3). Three aborts in 10 s suspend the
    script (TM L18).
 
+**Order of checks (general rule, 1a rule; every API spec follows it, EA1b §10.3 included).**
+Every native, of every slice, checks in this order, and the first check that fails
+decides:
+
+1. **Grant and backend.** The module's capability is in the apartment's effective set and
+   the backend class admits the module (§2.9). Otherwise a Lua error `"not granted"` or
+   "unavailable on this backend".
+2. **Arity and types.** No required argument is missing and **no extra argument** is
+   passed: a call with more arguments than the signature lists raises, an explicit
+   trailing `nil` included (the native sees how many arguments were passed), so a script
+   written for a later minor fails loudly on an older host. Every argument has its type
+   (§2.3). A handle argument is of the stated kind, is not stale (§2.7), and the module
+   that minted it still has its capability in the effective set (§2.7, raising
+   `"not granted"`).
+3. **Constraints.** Domains and ranges, finiteness, lengths, enumerations, unknown names
+   and option fields, and the element caps of table arguments that are known without
+   walking a value. A failure is a Lua error. Then the soft constraint a row lists before
+   any cap (`"reserved key"`).
+4. **Caps.** Count caps, per-frame and per-second caps and the outstanding-request cap:
+   `nil, "limit"` or `nil, "busy"` (or the row's form, for example `false, "busy"`).
+5. **Charge.** The row's cost or reservation (§2.5). A cost over what is left of the call
+   raises before any work; a memory reservation the cap refuses answers
+   `nil, "out of memory"` (TM §8.14).
+6. **The operation**, with the soft failures only it can find (`"not loaded"`, a `false`
+   result, a refused coverage check, the walk's `"too large"`, `"cyclic"` and `"invalid"`).
+
+Steps 1–4 are paid by `B`. A refusal at steps 1–4 charges `B` only and changes nothing.
+
+**Exceptions, where a cap needs what only the walk finds (1a rule).**
+
+- `Store.Set(key, value [, done])`: steps 1–3 (the key grammar raises; then
+  `"reserved key"`); step 5 reserves `V`; then the walk serialises the value and answers
+  the **first** of `"too large"`, `"cyclic"` or `"invalid"` it meets (the walk's visiting
+  order is not part of the contract: a value with several faults may report any of them);
+  then `"full"` (TM L40, L41, with the new counted size); then `"busy"` (the key bucket,
+  then the script's byte bucket, then the all-scripts byte bucket, TM L43, L44); then the
+  value enters the pending map, the buckets are debited and the reservation is refunded
+  down to the real walk. A refusal after the walk changes nothing in the store and debits
+  no bucket; the units of the walk stay charged.
+- `Store.Delete(key [, done])`: `"reserved key"`, then `"busy"` (the buckets, a deletion
+  counting 4 KiB).
+- `Store.Get(key, fn)`: `"reserved key"`, then `"busy"` (the read rate, TM L42, then the
+  outstanding-request cap, TM L27), then `"out of memory"` (the reservation, TM L28).
+- `World.Ray`: a segment over 500 m raises at step 3; `"busy"` at step 4; the step-5
+  reservation covers 25 landblocks (TM L91) and is refunded to the landblocks overlapped;
+  `"not loaded"`, `false` or the hit at step 6.
+
 <a id="s2-5"></a>
 ### 2.5 Costs
 
@@ -222,12 +282,24 @@ calibrated costs into the registry, which then generates the reference
 |---|---|---|
 | `B` | 200 | Every native call: argument checks, grant check, scalar results (E2's 1 µs) |
 | `b(n)` | ⌈n / 8⌉ | `n` bytes of string crossing the boundary in either direction, including the UTF-8 check |
-| `e(n)` | 20 · n | `n` elements (keys and values) of a table built or walked |
-| `h(n)` | 50 · n | `n` handles returned (the interned handle lookup of §2.7) |
+| `e(n)` | 20 · n | `n` elements of a table built or walked, counted by the rule below |
+| `h(n)` | 50 · n | `n` handles returned (the interned handle lookup of §2.7); the array holding them is counted by `e` as well |
 | `N` | 2,000 | Creating one node (element-tree insert, accounting) |
-| `P(n)` | 100 · n | Setting or reading `n` node properties (plus `b` for strings) |
+| `P(n)` | 100 · n | Setting or reading `n` node properties, walking each property's key and scalar value in the argument table included (plus `b` for strings; a property whose value is a table adds `e` for that table) |
 | `Q` | 500 | One point query of `World` |
 | `V` | 295,112 | The reservation of one maximal value: `e(8,192)` + `b(1 MiB)` + `B` = 163,840 + 131,072 + 200 (TM L34, L35). Refunded down to the real size after the walk |
+
+**Counting elements (general rule, 1a rule; every row of every API spec follows it).** `n`
+in `e(n)` counts **every key and every value** of every table built or walked, nested tables
+included, exactly as the bounded value model counts elements (D17 §8, §5.1): a record of *k*
+fields is *2k*, an array of *m* entries is *2m*, and a nested table is one value of its
+parent whose own keys and values count again. So `{x, y, z}` is `e(6)`, an array of 4 such
+records is `e(8 + 4 · 6)` = `e(32)`, and an entity entry with `rotation` adds `e(2 + 8)` for
+that field. A result of **fixed shape** is charged for every field of the shape, including a
+field that is `nil` in this answer, and its row states the figure. A table whose size varies
+is charged its real count, reserved at the cap where the size is not known before the walk
+(§2.5, first paragraph). Argument tables are counted the same way when they are walked (a
+filter, an option table), unless the row charges them through `P(n)`.
 
 <a id="s2-6"></a>
 ### 2.6 Timing
@@ -238,7 +310,7 @@ calibrated costs into the registry, which then generates the reference
 | **next turn** | A notification the change causes is appended to the script's queue and delivered in its **next** turn, normally the next frame's 6b, never re-entrantly in the same call or turn. |
 | **same-frame 6b** | A notification produced by native work before 6b of this frame (step 1 routing of the user's input; the hit test and hover refresh of step 7 item 1) is delivered in this frame's turn (D17 §4). |
 | **item-7 drain** | Queued as an intent and applied at IB D8's item 7 of this frame, with the band requests (D17 §4, intents table). |
-| **step 8** | Laid out and painted in step 8 of this frame. |
+| **step 8** | Painted in step 8 of this frame (world labels are also placed there). Layout is not deferred to step 8: geometry changes apply **at once** (§7.1). |
 | **worker** | Queued as a job on an asset worker; its result is a notification delivered in the first turn after the job completes. |
 
 **Split turns** (TM §8.13). D17 §4 checks the 2 ms per-frame cap (TM L5) before each call.
@@ -250,18 +322,23 @@ notifications of the turn's delivery set in order, §2.8, then timers not yet ru
 **Where a split turn resumes in the round robin** (TM §8.13). The round robin visits the
 groups in order (lease holders first, then the others; D17 §4) and rotates within each
 group. A split turn may resume as the **first script of its group at most once**: in the
-next frame that runs 6b, it goes before the group's ordinary rotation. If that resumed
-part is split again, the rest of the turn waits until the ordinary rotation next reaches
-the script, and never takes the head again. So a script whose own calls fill the 2 ms cap
-every frame (for example a 1,024-entry delivery set) runs first in at most one frame of
-that turn, and every other script of its group gets its turn in rotation (TM X17). A script resumed at the head is not visited again at its rotation place in that
-frame, and the rotation itself (D17 §4: it starts one script later each frame) is not
-changed by the resumption.
+next frame that runs 6b, it goes before the group's ordinary rotation. If that resumed part
+is split again, the rest of the turn waits until the ordinary rotation next reaches the
+script, and never takes the head again. So a script whose own calls fill the 2 ms cap every
+frame (for example a 1,024-entry delivery set) runs first in at most one frame of that turn,
+and every other script of its group gets its turn in rotation (TM X17). A script resumed at
+the head is not visited again at its rotation place in that frame, and the rotation itself
+(D17 §4: it starts one script later each frame) is not changed by the resumption.
 
 `Tick`'s `dt` is the time since the last `Tick` the script received, so a split or skipped
-turn gives the summed time. A gesture's **gesture window** (§2.1) is the whole delivering
-turn, across the frames a split turn spans, so a split turn never loses a gesture's effect
-(TM X89).
+turn gives the summed time. A gesture's **gesture window** (§2.1) lasts to the end of the
+delivering turn, across the frames a split turn spans, so a split turn never loses a
+gesture's effect (TM X89), but never past the user's next input elsewhere or 1 s (60
+frames in deterministic mode) after the delivering call started (TM §8.13, L93). The 1 s
+covers a turn split by the 2 ms cap and resumed at the next floor frame (below), so a
+note-taker's split gesture turn still focuses its field under gating, while a call late
+in a slow turn cannot focus one more than 1 s after the gesture, or after the user has
+pressed `W` and is walking.
 
 **The heavy-frame gate** (TM L8, §8.12). The gate skips 6a–6c in a frame whose step 7 is
 reached more than 22 ms after the frame's **work start**: the start of the frame's redraw
@@ -307,6 +384,22 @@ suspension or the expiry of leases (TM rule 7.4.3).
   as a new userdata later; it still compares equal only to handles held at the same time.
 - **Owned by the apartment.** A handle passed to another apartment is impossible (there is no
   route), and a handle kept across an unload is gone with its apartment.
+- **Handles carry their module's capability (general rule, TM §8.23; every API spec follows
+  it).** Every handle records the module that **minted** it (`UI` for nodes and labels,
+  `Core` for timers, `Entity` for entities and subscriptions, and so on for later slices).
+  After that module's capability leaves the apartment's effective set (an optional
+  revocation followed by a resume, §2.9), the handle stays a valid Lua object (it still
+  compares equal and serves as a table key, which needs no native), but **every native of
+  every module that takes it as an argument or as `self`**, `Exists()` and `Kind()`
+  included (an `Exists()` answer would still tell the script whether an entity
+  despawned), raises a Lua error `"not granted"` (§2.4, step 2), whatever the module of that native
+  and whatever capabilities that module needs itself. An intent that holds a handle is
+  re-checked the same way at its apply step and discarded if the minting capability is
+  gone. So a kept entity handle can never reach EA1b's `lease:Follow`, or any later
+  native, after `entity.read` is revoked. Modules without a capability (`Core`, `Store`,
+  `Commands`) mint handles that this rule never stops. Escape test: TM X91 (its sub-case
+  of a kept entity handle passed to a native after an `entity.read` revocation and a
+  resume: in slice 1a `Entity.Read` and `e:Get`, from slice 1b `lease:Follow`).
 
 <a id="s2-8"></a>
 ### 2.8 Handlers and notifications
@@ -328,9 +421,10 @@ suspension or the expiry of leases (TM rule 7.4.3).
   handler). One handler per name per module or object; a second `On` replaces the first.
   Handlers are never table fields read by the host.
 - **What is queued.** A module or object notification is queued only if a handler for it is
-  set when it arises, with one exception: a **gesture** (§2.1) is always queued, so that its
-  gesture window opens at its place in the turn; without a handler its delivery makes no
-  call. Per-request callbacks are always queued.
+  set when it arises, with one exception: a notification that **opens a gesture window**
+  (§2.1: the `Pressed` of a solid press, an action's `"start"`, an `/ext:` line) is always
+  queued, so that its window opens at its place in the turn; without a handler its
+  delivery makes no call. Per-request callbacks are always queued.
 - **One call per notification** (D17 §4). The host builds the argument table, charges its
   conversion first, and calls the handler. An error in a handler is logged and ends only that
   call; the next notification is delivered normally. An abort counts toward suspension
@@ -359,34 +453,65 @@ suspension or the expiry of leases (TM rule 7.4.3).
   it), a self-caused value is always delivered in the next turn (D17 §4), and the handler
   may see the frozen value and then the newer one.
 - **Queue cap and coalescing.** At most 1,024 queued notifications per script, all kinds
-  together (TM L30). **State notifications** (§7.5 marks them) are coalesced per node and kind
-  to one entry with the latest value (outside the current delivery set, above); the handler may therefore see a value equal to the one
-  it saw last. While the queue is full, new notifications are dropped and counted per kind,
-  and the next delivered notification of that kind carries `dropped = n` (D17 §8).
+  together (TM L30). **State notifications** (§7.5 marks them) are coalesced per node and
+  kind to one entry with the latest value (outside the current delivery set, above); the
+  handler may therefore see a value equal to the one it saw last. A coalesced change is not
+  a drop.
+- **What is never dropped (TM L30).** Beyond the 1,024 entries the queue keeps **reserved
+  room** for the results of the script's outstanding requests (TM L27: `Store.Get`'s `fn`,
+  the `done` of `Set` and `Delete`, an `Image`'s `Loaded`) and for its due timers. These
+  are never dropped, by a full queue or by a suspension (below): every outstanding
+  request ends with exactly one delivered result (a `Loaded` with no handler set is not
+  queued, as any object notification, and its request ends all the same), and no script
+  waits forever for one.
+  Their room is bounded by TM L27 (32 results) and TM L30 (64 timers, each queued at most
+  once).
+- **What is dropped, and how it is reported (1a rule, making D17 §8's "counted" exact).**
+  Every other notification that arises while the queue is full is dropped and counted.
+  **Every queued module and object notification table carries `dropped`** (an integer ≥ 0, 0
+  when nothing was lost; `Tick`, `Unload` and `Resumed` are turn items, never queued or
+  dropped, and carry none): the number of notifications of the **same name, for the same
+  module or object**, dropped since the last one of that name for it was delivered. The
+  other forms carry their count in a field of their own: an `/ext:` command's `info.dropped`
+  (command lines for this script dropped since the last delivered one, whatever their
+  command word), an action's `ev.dropped` (§8.2: its edges past 16 in a frame and the edges
+  of its dropped notifications), and a subscription batch's `dropped` (§10.3: its events). A
+  count whose notification never comes (a node removed, a handler cleared) is lost with it;
+  a count still held when the script is suspended moves into `Resumed.counts`.
 - **Suspension.** A script is suspended by exactly these causes: the watchdog (the time
   throttle or three aborts, TM L17, L18), the panic chord (D17 §5.5), a grant revocation
   by any route (§2.9, TM §8.23) and a process locale other than "C" (§2.9, D17 §1.5). A
-  suspended script accrues nothing: no notifications, no timers, no subscription events.
-  Its pending notifications are dropped with counts, and its first turn after the user
-  resumes it begins with `Resumed` (§4.1) carrying the counts and the cause (D17 §4).
+  suspended script accrues nothing: no notifications, no timers, no subscription events,
+  no command lines, no action edges and no gestures. Its ext contexts are deactivated and
+  their holds released in the frame of the suspension (§8.1, TM §8.23). Its pending
+  notifications are dropped with counts, **except** the results of outstanding requests,
+  which are kept with their reservations and delivered after `Resumed` in the first turn
+  after the resume (a `done` whose write completes meanwhile is kept the same way). Its
+  first turn after the user resumes it begins with `Resumed` (§4.1) carrying the counts
+  and the cause (D17 §4).
 
 <a id="s2-9"></a>
 ### 2.9 Capability checks
 
 - `Ext.Use(name, 1)` hands out a module table only for a granted capability (§3).
-- Every native of a granted module **re-checks the grant and the backend class on every
-  call** (D17 §5.1), so a module table kept in a global, a closure or a table fails closed.
+- Every native of a granted module **re-checks the capability against the apartment's
+  effective set (§2.1) and the backend class on every call** (D17 §5.1, TM §8.23), so a
+  module table kept in a global, a closure or a table fails closed, and so does a handle
+  that module minted (§2.7). The apply step of every intent re-checks the same way. No
+  check reads the live grant table: a capability revoked and then widened again in the
+  script manager stays refused until the script's next load.
 - **Revocation** (TM §8.23). Revoking a grant of a loaded script, required or optional, by
   any route, suspends it in that frame: pending intents are discarded and nothing accrues.
   If the revoked capability is required, the script cannot be resumed and is unloaded (a
   close item, no `Unload` handler; D17 §2, "Refusal is whole"). If it is optional, the user
   may resume the script; from then on every function of the revoked module raises a Lua
-  error `"not granted"`, `Ext.Has` answers `false` for it, and the host has removed what the
-  module made **(1a rule for what is removed)**: for `ui`, every node and world label, whose
-  handles are stale; for `input`, the contexts are deactivated and the action handlers
-  cleared; for `entity.read`, every subscription, whose handles are stale (entity handles
-  stay valid objects but every method raises `"not granted"`); for `world.read`, nothing.
-  Escape test: TM X91.
+  error `"not granted"`, `Ext.Has` answers `false` for it, every handle the module minted
+  is refused by every native (§2.7), and the host has removed what the module made **(1a
+  rule for what is removed)**: for `ui`, every node and world label, whose handles are
+  stale; for `input`, the action handlers are cleared (its contexts are already inactive,
+  as after every suspension, §8.1); for `entity.read`, every subscription, whose handles
+  are stale (entity handles stay Lua objects, refused by every native, §2.7); for
+  `world.read`, nothing. Escape test: TM X91.
 - **The grant-store re-read is a route** (TM §8.23). When the script manager re-reads
   `ext-grants.toml` (EM §8.5) and the result leaves a **loaded** script with fewer grants
   than it runs with (its record removed, made invalid under EM §8.3, or narrowed by a
@@ -545,7 +670,7 @@ settings.
 |---|---|---|
 | `"Tick"` | `{dt}` | Once per turn, after the script's notifications and due timers (D17 §4). `dt` (seconds, ≥ 0) is the time since the last `Tick` the script received (TM §8.13; deterministic mode: simulated time); the first `Tick` gets the time since the start of the frame of the top-level run. A throttled script is ticked at half rate (TM L17) and gets the summed `dt`. |
 | `"Unload"` | `{reason}` | Runs as the `Unload` item before the state closes (D17 §4, "Unload items"), with its own 4 ms deadline (TM L3). `reason`: `"user"` (the user or the script unloaded it), `"reload"` (a reload, hot or full, D17 §10; EA1b §8.4 adds `Core.SetHandOff` for a hot reload), `"session"` (backend switch or session end), `"exit"` (client exit). It is **not** called for a suspended script (D17 §5.5), for a script whose required grant was revoked (§2.9), or for an apartment closed by the switch timeout (TM rule 7.4.2, §2.6); a call already running when the timeout passes finishes within its deadline. Its return value is ignored. `Store.Set` calls made in it are flushed by the unload's final flush (§5). |
-| `"Resumed"` | `{counts, reason}` | The first call of the first turn after the user resumes the suspended script. `counts` maps each dropped notification kind (for example `"TextChanged"`, `"command"`, `"timer"`, and `"entity"`, the subscription records skipped while suspended, §10.3) to the number dropped; `reason` is the cause of the suspension (§2.8): `"panic"`, `"watchdog"` (the time throttle or three aborts, TM L17, L18), `"grant"` (a revocation by any route, D17 §4, TM §8.23, §2.9) or `"locale"` (the process locale was not "C", D17 §1.5, §2.9). |
+| `"Resumed"` | `{counts, reason}` | The first call of the first turn after the user resumes the suspended script. `counts` maps each kind of loss to its number, with **exactly these keys**, each present only when its number is above 0 **(1a rule)**: a **notification name** of §4.1, §7.2, §7.5, §7.7–§7.9 (CamelCase, for example `"TextChanged"`, `"Pressed"`, `"SettingsChanged"`), counting the module and object notifications of that name dropped at or during the suspension, over all objects, plus the drop counts still held for that name (§2.8); `"action"`, the action edges dropped (past 16 per frame, or with their notifications) whose counts were still held or that were discarded at the suspension, all actions together (§8.2; while suspended, no edge is recorded and none is counted, §8.1); `"command"`, the `/ext:` lines for the script dropped at the suspension or refused while it was suspended (§6.2); `"entity"`, the subscription records skipped by the cursor's jump (§10.3) plus the events of dropped batches; `"timer"`, the timer firings that did not happen while suspended, beyond the one each due timer makes after the resume (§4.2). Lowercase keys cannot collide with notification names, which are CamelCase. Results of outstanding requests are never counted: they are delivered (§2.8). `reason` is the cause of the suspension (§2.8): `"panic"`, `"watchdog"` (the time throttle or three aborts, TM L17, L18), `"grant"` (a revocation by any route, D17 §4, TM §8.23, §2.9) or `"locale"` (the process locale was not "C", D17 §1.5, §2.9). |
 | `"SettingsChanged"` | `{keys}` | In the turn after the user applies a change on the script's settings page; `keys` is an array of the changed setting keys in manifest order. |
 
 <a id="s4-2"></a>
@@ -556,7 +681,7 @@ settings.
 | `Core.Time()` | number | `B` | read | Seconds from the start of the frame in which the script's top-level run ran, to the start of this frame (step 1). **One value per frame**: every call in one frame returns the same number (D17 §3). Never decreases. In deterministic mode (`scripttool test`) it is the sum of the walk file's frame times. |
 | `Core.Frame()` | integer | `B` | read | Frames since the frame of the top-level run (that frame is 0). |
 | `Core.Remaining()` | integer | `B` | read | Work units left in the current call: the smaller of the units left and the remaining wall time ÷ 5 ns. In deterministic mode, units only. Lets a script cut long work into pieces. **(1a rule)** |
-| `Core.After(seconds, fn)` | timer \| `nil, "limit"` | `B` + `h(1)` | at once | A one-shot timer. `seconds` ≥ 0 and ≤ 10^6. `fn(timer)` runs in the first turn whose `Core.Time()` is at least the creation time + `seconds`, and never in the turn that created it. |
+| `Core.After(seconds, fn)` | timer \| `nil, "limit"` | `B` + `h(1)` | at once | A one-shot timer. `seconds` ≥ 0 and ≤ 10^6 (domain, TM §0.1 rule 6). `fn(timer)` runs in the first turn whose `Core.Time()` is at least the creation time + `seconds`, and never in the turn that created it. |
 | `Core.Every(seconds, fn)` | timer \| `nil, "limit"` | `B` + `h(1)` | at once | A repeating timer, same rules. After it fires, its next due time is the larger of (due + `seconds`) and (now + `seconds` ÷ 2), so a late timer never fires twice in one turn (no catch-up bursts). `seconds` = 0 fires once in every turn. |
 | `timer:Cancel()` | nothing | `B` | at once | The handle becomes stale. Cancelling inside its own call is allowed. |
 | `timer:Exists()` | boolean | `B` | read | |
@@ -586,9 +711,16 @@ settings.
   aborts the host reports use source `error`; the host's own records (such as "N records
   dropped") use `host`. So no script text can end a line, start a forged record or carry a
   terminal escape sequence (TM X51).
-- **Limits** (TM L45): 64 KiB per second per script, beyond which records are dropped and
-  counted, then one host record "N records dropped" when the rate allows; one file of at most
-  1 MiB rotated once. The developer console shows records as EA1b §9.2 and TM §8.1 say.
+- **Limits** (TM L45, §8.1): two token buckets of escaped record bytes, each holding one
+  second of its rate: **64 KiB per second per script** and **128 KiB per second for all
+  scripts together**. A record is written only when both buckets hold its bytes; otherwise
+  it is dropped and counted in that script's drop count, and when both buckets next allow
+  it the host writes that script's record "N records dropped" (source `host`, paid from
+  both buckets). So all script logs together write at most 128 KiB × (*t* + 1) in *t*
+  seconds, whatever the number of scripts (TM invariant 33, X56). The all-scripts rate
+  changes D17 §8's script-log row and awaits the owner's confirmation (TM OPEN O-3); until
+  then it applies. One file of at most 1 MiB, rotated once. The developer console shows
+  records as EA1b §9.2 and TM §8.1 say.
 
 <a id="s4-4"></a>
 ### 4.4 Settings and identity
@@ -596,8 +728,8 @@ settings.
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
 | `Core.Setting(key)` | boolean \| number \| string | `B` + `b(n)` | read | The current value of a manifest `[[settings]]` entry: `bool` → boolean, `number` → number in its range, `choice` → the chosen option's string, `text` → string within its length cap. An unknown key raises. Values are set only by the user; no call writes them (D17 §5.2). |
-| `Core.Settings()` | table | `B` + `e(n)` + `b(bytes)` | read | All settings as a new table key → value. |
-| `Core.Script()` | table | `B` + `b(bytes)` | read | `{id, kind, name, version, api}`: the script id, `"installed"` or `"developer"`, the manifest's `name` and `version`, and the `Ext` major it targets. No path, no user or host name (D17 §5.6). |
+| `Core.Settings()` | table | `B` + `e(2n)` + `b(bytes)` | read | All *n* settings as a new table key → value. |
+| `Core.Script()` | table | `B` + `e(10)` + `b(bytes)` | read | `{id, kind, name, version, api}`: the script id, `"installed"` or `"developer"`, the manifest's `name` and `version`, and the `Ext` major it targets. No path, no user or host name (D17 §5.6). |
 
 ---
 
@@ -661,8 +793,12 @@ This section states TM §7.6 (D17 open item 6) and TM §8.14 in script-visible f
   map over the file index, without I/O.
 - **Read-your-writes** (TM rule 7.6.3). `Store.Get(key, fn)` answers the value of the
   **latest `Set` or `Delete` of that key made before the `Get` call, in program order**:
-  - if the key has a pending entry, the answer is a **copy of that entry taken at the call**;
-    a pending deletion answers "absent" (`fn(nil)`). No worker job and no file read is made;
+  - if the key has a pending entry, the answer is **that entry's bytes as they are at the
+    call**: the host keeps every pending value's bytes immutable (a newer `Set` makes new
+    bytes, never changes the shared ones), and the `Get` **shares** them, copying nothing
+    (TM rule 7.6.3). An implementation that copies instead charges the copied bytes,
+    `b(stored size)`, at the call before it copies (D17 §8, "charge before work"). A
+    pending deletion answers "absent" (`fn(nil)`). No worker job and no file read is made;
   - otherwise the read is a job on the store's I/O queue, behind every earlier flush of that
     key, so the file it reads is current.
 
@@ -686,12 +822,12 @@ This section states TM §7.6 (D17 open item 6) and TM §8.14 in script-visible f
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `Store.Get(key, fn)` | `true` \| `nil, reason` | `B` + `b(key)`; at delivery, the conversion `e(n)` + `b(bytes)` charged first in the delivery call | the pending map (`fn` in the next turn) or worker (`fn` in the first turn after the job completes), §5.2 | `fn(value)` on success, with `nil` when the key does not exist or its deletion is pending; `fn(nil, reason)` on failure with `"invalid"`, `"too large"` or `"io"`. Reasons at the call: `"busy"` (the read rate, TM L42, or the outstanding-request cap, TM L27), `"out of memory"` (the result reservation, below), `"reserved key"`. A refusal queues nothing. |
-| `Store.Set(key, value [, done])` | `true` \| `nil, reason` | `B` + `b(key)` + reservation `V`, refunded to the real walk | at once in the pending map; file within about 1 s (worker) | Serialises the value **inside this call** (D17 §8, "Value conversion is not a residual"). Reasons: `"too large"`, `"cyclic"`, `"invalid"`, `"full"`, `"busy"` (the write buckets, below), `"reserved key"`. A refusal changes nothing and debits nothing. `value = nil` is `Delete`. `done(true)` is delivered in the turn after this value, or a later value of the same key, is on disk; `done(false, "io")` if that write failed. A `done` of a value replaced before its write is called when the replacing write completes. |
+| `Store.Get(key, fn)` | `true` \| `nil, reason` | `B` + `b(key)` (a pending entry's bytes are shared, not copied, §5.2); at delivery, the conversion `e(n)` + `b(bytes)` charged first in the delivery call | the pending map (`fn` in the next turn) or worker (`fn` in the first turn after the job completes), §5.2 | `fn(value)` on success, with `nil` when the key does not exist or its deletion is pending; `fn(nil, reason)` on failure with `"invalid"` (a file that does not parse, or whose size on the handle differs from the file index, below), `"too large"` (a parsed result over its reservation, never delivered) or `"io"`. Reasons at the call, in this order (§2.4): `"reserved key"`, `"busy"` (the read rate, TM L42, or the outstanding-request cap, TM L27), `"out of memory"` (the result reservation, below). A refusal queues nothing. `fn` is never dropped (§2.8). |
+| `Store.Set(key, value [, done])` | `true` \| `nil, reason` | `B` + `b(key)` + reservation `V`, refunded to the real walk | at once in the pending map; file within about 1 s (worker) | Serialises the value **inside this call** (D17 §8, "Value conversion is not a residual"). Reasons, in the order of §2.4's `Store.Set` exception: `"reserved key"`; the first of `"too large"`, `"cyclic"` and `"invalid"` the walk meets; `"full"`; `"busy"` (the write buckets, below). A refusal changes nothing and debits no bucket. `value = nil` is `Delete`. `done(true)` is delivered in the turn after this value, or a later value of the same key, is on disk; `done(false, "io")` if that write failed. A `done` of a value replaced before its write is called when the replacing write completes. |
 | `Store.Delete(key [, done])` | `true` \| `nil, reason` | `B` + `b(key)` | as `Set` | Removes the key's file. Deleting an absent key succeeds. |
 | `Store.Has(key)` | boolean | `B` + `b(key)` | read (index) | The pending map over the file index. |
-| `Store.Keys()` | array of strings | `B` + `e(n)` + `b(bytes)` | read (index) | Every key, sorted byte-wise. |
-| `Store.Usage()` | table | `B` + `e(8)` | read (index) | `{keys, bytes, max_keys, max_bytes, pending}`: keys held, counted bytes (each key file, pending entry and temporary file counted as TM §8.7 says), the caps (TM L40, L41: 1,024 and 16 MiB), and the number of pending entries. |
+| `Store.Keys()` | array of strings | `B` + `e(2n)` + `b(bytes)` | read (index) | Every key (*n* of them), sorted byte-wise. |
+| `Store.Usage()` | table | `B` + `e(10)` | read (index) | `{keys, bytes, max_keys, max_bytes, pending}`: keys held, counted bytes (each key file, pending entry and temporary file counted as TM §8.7 says), the caps (TM L40, L41: 1,024 and 16 MiB), and the number of pending entries. |
 
 - **Write-behind** (D17 §8, TM L43): a script's dirty keys are flushed at most once per
   second, each to its temporary file `t_<key>.tmp` in the store's directory, created
@@ -720,13 +856,18 @@ This section states TM §7.6 (D17 open item 6) and TM §8.14 in script-visible f
   of its calls against the flushes.
 - **Read rate** (TM L42): per script 64 reads and 4 MiB per second (buckets holding 10 s),
   and 16 MiB per second for all scripts; the bytes counted are the stored size TM §8.14 names.
-- **Result reservations** (TM §8.14, L28). A `Get` reserves, against the script's memory cap
-  at the call, the stored size of the value (from the pending entry, otherwise from the file
-  index) times the neutral reader's declared expansion ratio (TM OPEN O-4), never the 1 MiB
-  maximum; a key with neither reserves nothing. A reservation the cap refuses answers
-  `nil, "out of memory"` (**returned, not raised**) and queues nothing. So 32 outstanding
-  reads of small values do not exhaust a 32 MiB script, and the 33rd answers `nil, "busy"`
-  (TM X25).
+- **Result reservations** (TM §8.14, L28). A `Get` of *n* stored bytes (from the pending
+  entry, otherwise the file index's exact size) reserves, against the script's memory cap
+  at the call, **ρ × *n* + ε × min(*n*, 8,192)**, where ρ and ε are the neutral reader's
+  declared worst-case parsed bytes per stored byte and host memory per element (TM OPEN
+  O-4), never the 1 MiB maximum; a key with neither reserves nothing. A reservation the cap
+  refuses answers `nil, "out of memory"` (**returned, not raised**) and queues nothing.
+  The worker checks the file's size on the handle against the file index and reads at most
+  that size plus one byte; a mismatch answers `fn(nil, "invalid")` without parsing. The
+  parse runs under the reservation: a result that would pass it answers
+  `fn(nil, "too large")` and is never delivered (TM §8.14, TM invariant 32). So 32
+  outstanding reads of small values do not exhaust a 32 MiB script, and the 33rd answers
+  `nil, "busy"` (TM X25).
 - **Space** (TM L40, L41): 1,024 keys and 16 MiB per script, 16,384 keys and 256 MiB for all
   scripts with orphans included; temporary files of flushes in progress and pending entries
   count. A write refused by the all-scripts total is reported in the script manager naming
@@ -763,9 +904,9 @@ plugins and is **never sent to a backend** (D17 §3, "`Commands` in detail"; TM 
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `Commands.Register(name, fn [, help])` | `true` \| `nil, "limit"` | `B` + `b(help)` | at once (the next step 1 dispatches to it) | `name`: KM name grammar without `.`, 1–32 bytes of `a-z`, `0-9`, `_` (D17 §3); outside it raises. Registering an existing name replaces its handler and help. `help`: a string of at most 96 bytes shown by `/ext:help <id>` (longer raises). At most 32 commands per script (TM L68). |
+| `Commands.Register(name, fn [, help])` | `true` \| `nil, "limit"` | `B` + `b(help)` | at once (the next step 1 dispatches to it) | `name`: KM name grammar without `.`, 1–32 bytes of `a-z`, `0-9`, `_` (D17 §3); outside it raises. Registering an existing name replaces its handler and help. `help`: a string of at most 96 bytes (TM L91; longer raises) shown by `/ext:help <id>` in the script manager. It is script text, so it is drawn as reserved-layer text through TM §8.2's steps 1–5, with the cap of "an error or log line" (256 code points and 1,024 bytes), which a 96-byte string never reaches (OPEN-11 asks TM §8.2 to name this category for it). At most 32 commands per script (TM L68). |
 | `Commands.Unregister(name)` | nothing | `B` | at once | An unknown name does nothing. |
-| `Commands.List()` | array of strings | `B` + `e(n)` + `b(bytes)` | read | Registered names, sorted. |
+| `Commands.List()` | array of strings | `B` + `e(2n)` + `b(bytes)` | read | The *n* registered names, sorted. |
 
 <a id="s6-2"></a>
 ### 6.2 Dispatch and delivery
@@ -773,30 +914,37 @@ plugins and is **never sent to a backend** (D17 §3, "`Commands` in detail"; TM 
 - **Matching.** `ext:`, the id and the command name are matched ASCII case-insensitively, so
   `/EXT:Notes Add milk` reaches the command `add` of script `notes` (D17 §3).
 - **Arguments.** The text after the command word, with leading and trailing ASCII
-  whitespace removed and invalid UTF-8 replaced; at most 1,024 bytes, cut at a UTF-8
-  boundary beyond that **(1a rule)**. The host does not split it: the script parses it.
+  whitespace removed and invalid UTF-8 replaced; at most 1,024 bytes (TM L91), cut at a
+  UTF-8 boundary beyond that. The host does not split it: the script parses it.
   Arguments may come from a shortcut a plugin built, so a handler treats them as hostile
   input (D17 §7).
 - **The call.** `fn(args, info)` in the script's turn of the same frame (the dispatch is
-  native work in step 1, delivered **same-frame 6b**). `info` = `{command, truncated}`.
+  native work in step 1, delivered **same-frame 6b**). `info` = `{command, truncated,
+  dropped}` (`dropped`: the script's command lines lost since the last delivered one,
+  §2.8).
   The line is a **gesture**: the turn that delivers it is a gesture window (§2.1, §7.7).
 - **No command word.** `/ext:<id>` alone opens the script manager at the script's help page,
   as `/ext:help <id>` does; the script gets nothing **(1a rule)**.
 - **Unknown or unloaded.** A line naming no loaded script, or a command the script has not
   registered at the time of dispatch, shows a notice in the reserved layer (its text through
-  TM §8.2, L66, L67) and a script-log entry, never a chat line (D17 §3; TM X73). A command unregistered between dispatch and delivery is
-  dropped with a log entry.
+  TM §8.2, L66, L67) and a script-log entry, never a chat line (D17 §3; TM X73). A command
+  unregistered between dispatch and delivery is dropped with a log entry.
+- **Suspended (1a rule).** A line for a loaded script that is **suspended** is not queued
+  (a suspended script accrues nothing, §2.8) and is not a gesture. It shows the
+  reserved-layer notice "⟨id⟩ is suspended: resume it first" (the wording of EM §9.8, its
+  text through TM §8.2, rate-limited by TM L67) and counts once under
+  `Resumed.counts.command` (§4.1).
 - **Queue.** Command lines are notifications: they count toward the 1,024-entry queue and are
   never coalesced.
 - **Management words.** `/ext:list`, `/ext:reload <id>` and `/ext:help [<id>]` belong to the
   host; ids `list`, `reload` and `help` are reserved (D17 §2–§3). Their output goes to the
   script manager and, in developer mode, the developer console, never to chat (D17 §3).
-  `/ext:reload` works only in developer mode; with developer mode off it is refused with a
-  reserved-layer notice "Developer mode is off" (D17 §3, EA1b §8.1). In developer mode,
-  `/ext:reload` of an id that is not loaded queues nothing and shows a reserved-layer
-  notice that the script is not loaded; a reload never starts a first load **(1a rule)**.
-  Which reloads are hot or full is EA1b §8's. No management word is delivered to any
-  script.
+  `/ext:reload` follows EM §9.8, which this spec does not restate: it works only in
+  developer mode (otherwise the notice "Developer mode is off", D17 §3, EA1b §8.1); an id
+  that names no **loaded** script queues nothing and shows "No loaded extended script
+  '⟨id⟩'" (a reload never starts a first load); a loaded but **suspended** script is not
+  reloaded and shows "⟨id⟩ is suspended: resume it first". Which reloads are hot or full
+  is EA1b §8's and EM §9.8's. No management word is delivered to any script.
 
 ---
 
@@ -821,24 +969,47 @@ is §7.11.
   their z-order, and below the developer overlay and the reserved layer (D17 §4, §5.3). An ext
   frame can never cover a plugin window or a native panel.
 - **Order inside the ext range (1a rule).** The frames of one script form a **block**. Blocks
-  are ordered by the last user press on any frame of that script (most recent on top); a newly
-  loaded script's block goes on top. Inside a block, frames are ordered by the script's own
-  `Raise`, shows and the user's presses. A script's call can reorder only its own block, so no
-  script can raise its frame over another script's frame.
+  are ordered by the last user **solid** press (§7.6) on any frame of that script (most
+  recent on top); a newly loaded script's block goes on top. Only a solid press raises a
+  block or a frame: a non-solid press raises nothing in the ext z-order (TM rule 7.2.1), so
+  a transparent full-screen catching frame cannot climb to the top of the range on every
+  world click and take the clicks meant for other scripts' frames (TM X38). Inside a block,
+  frames are ordered by the script's own `Raise`, shows and the user's solid presses. A
+  script's call can reorder only its own block, so no script can raise its frame over
+  another script's frame.
 - **World labels** lie below every ext frame, in the order they were created (§7.9).
-- **Ownership badges** (§7.7) are the top layer of the ext range: every badge is drawn above
-  every ext frame of every script, badges among themselves in the z-order of their frames
-  (TM §8.3). Plugin windows, native panels, the developer overlay and the reserved layer
-  stay above them.
+- **Ownership badges** (§7.7) are the top layer of the ext range, the **badge layer**: every
+  badge is drawn above every ext frame of every script, badges among themselves in the
+  z-order of their frames (TM §8.3). The caret and focus mark of a focused `Field` are drawn
+  in the same layer (§7.7). Plugin windows, native panels, the developer overlay and the
+  reserved layer stay above them.
 - **Units.** Geometry is in UI units (§2.1). Frame positions are relative to the screen;
   control positions are relative to their parent's top-left corner. Children are clipped to
   their parent's box.
-- **Changes apply at once** in the element tree; they are painted in step 8 of this frame
-  (D17 §4, intents table). Geometry a getter returns is the geometry the next hit test uses
-  (IB D8, "Geometry used for hit tests").
+- **Changes apply at once, layout included (1a rule, IB D8, TM §7.8).** A call that changes
+  a node's geometry, or anything a layout depends on (a `Group`'s `layout`, `gap` or
+  `padding`, a child's size or visibility, a `List`'s `rows` or font), recomputes the
+  affected layout **inside that call**: the `Group` positions of §7.5 and the `Scroll`
+  and `List` offset clamping. A getter called right after returns the new
+  geometry, which is the geometry the next hit test uses (IB D8, "Geometry used for hit
+  tests"). The `Moved` and `Resized` this causes are self-caused (`by = "script"`) and
+  arrive in the next turn (§2.6). User changes (a drag, a resize grip) and host changes
+  (a screen resize, a UI-scale change) lay out in the step that makes them (step 1)
+  and are notified **same-frame 6b**. Step 8 only paints the tree and places world labels
+  (§7.9); it never moves a box that a hit test reads. Text wrapping and `List` row heights
+  change only what is drawn inside a box, never a box.
+- **Surfaces (TM L49, L50).** Each frame takes one ext surface from its creation to its
+  removal, shown or hidden, and one composition entry while shown. Controls draw into
+  their frame's surface. A world label takes **no** surface of its own: the host paints
+  shown labels into the ext label layer, and each shown label takes one composition entry
+  (TM L50) and counts toward coverage (§7.10).
 - **While a consent prompt shows**, ext frames and world labels are neither drawn nor
-  hit-tested; the script keeps running and its nodes keep their state; nothing is notified
-  (D17 §4).
+  hit-tested; the script keeps running and its nodes keep their state and visibility, and
+  no `VisibilityChanged` is sent for it (D17 §4). The prompt takes the keyboard focus: a
+  focused `Field` loses it, and the script gets `FocusChanged{focused = false,
+  by = "host"}` in its next turn **(1a rule)**. The focus does **not** come back when the
+  prompt closes; the field stays its frame's remembered focus, and only the user's solid
+  press or a request in a gesture window (§7.7) focuses it again.
 
 <a id="s7-2"></a>
 ### 7.2 Module functions
@@ -850,7 +1021,7 @@ is §7.11.
 | `UI.Screen()` | width, height, scale | `B` | read | The game window's client area in UI units and the user's UI scale. |
 | `UI.On(name, fn)` | nothing | `B` | at once | Sets or clears the handler of `UI`'s one module notification (§2.8, form 1): `"ScreenChanged"`, `fn({width, height, scale, by = "host"})` in the turn after the screen size or UI scale changes. State notification. Any other name raises. |
 | `UI.MeasureText(text, font [, wrap])` | width, height | `B` + `b(text)` | read | The box `text` needs in `font` (§7.4); with `wrap` (a width in UI units) it wraps at word boundaries as a `Text` node does. Results depend on the fonts available (OPEN-6) and are not stable across installs. Text over 16 KiB raises. |
-| `UI.Frames()` | array of frames | `B` + `h(n)` | read | The script's frames in their z-order, bottom first. |
+| `UI.Frames()` | array of frames | `B` + `h(n)` + `e(2n)` | read | The script's frames in their z-order, bottom first. |
 | `UI.Usage()` | table | `B` + `e(12)` | read | `{nodes, nodes_max, labels, labels_max, area, area_max}`: the script's node and label counts and caps (§7.10), and its composition coverage and its bound in screens (§7.10, TM L55). |
 
 <a id="s7-3"></a>
@@ -858,12 +1029,12 @@ is §7.11.
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `node:Set(props)` | `true` \| `false [, "busy"]` | `B` + `P(n)` + `b(bytes)` | at once | Sets the listed properties in one step; an unknown property or a value of the wrong type raises, and then nothing is changed. Returns `false`, changing nothing, when the change would pass a composition-coverage bound or the composition pool (§7.10; no reason, the script log says why), and `false, "busy"`, changing nothing, when it sets an `Image`'s `file` while the outstanding-request cap is reached (§7.10, TM §8.5). |
-| `node:Get(name)` | the property's value | `B` + `P(1)` + `b(bytes)` | read | The current value; geometry after this frame's layout of that node (§7.4). |
+| `node:Set(props)` | `true` \| `false [, "busy"]` | `B` + `P(n)` + `b(bytes)`, plus `e(2 · #rows)` when it sets a `List`'s `rows` | at once (layout included, §7.1) | Sets the listed properties in one step; an unknown property, a value of the wrong type or out of its range (judged on the node's state after the whole `Set`, so `Set{min = 5, max = 10}` is one valid step) raises, and then nothing is changed. Returns `false`, changing nothing, when the change would pass a composition-coverage bound or the composition pool (§7.10: a size change of a shown frame or label, `catch = true` or a `Field` that gives a shown frame its badge; no reason, the script log says why), and `false, "busy"`, changing nothing, when it sets an `Image`'s `file` while the outstanding-request cap is reached (§7.10, TM §8.5). |
+| `node:Get(name)` | the property's value | `B` + `P(1)` + `b(bytes)`, plus `e(2 · #rows)` for a `List`'s `rows` | read | The current value; for geometry, the value the next hit test uses, with layout already applied (§7.1). |
 | `node:On(name, fn)` | nothing | `B` | at once | Sets or clears (`fn = nil`) the handler of a notification the kind has (§7.5; §2.8, form 2). A name the kind does not have raises. `fn(node, args)`. |
-| `node:Add(kind, props)` | node \| `nil, "limit"` \| `nil, "busy"` | `B` + `N` + `P(n)` + `b(bytes)` | at once | Creates a child; `"busy"` only for an `Image` with a `file` while the outstanding-request cap is reached (§7.10), and then nothing is created. Only `Frame`, `Group` and `Scroll` hold children; any other parent raises. `kind` is a kind name of §7.5 other than `Frame` and `WorldLabel`. |
+| `node:Add(kind, props)` | node \| `nil, "limit"` \| `nil, "busy"` | `B` + `N` + `P(n)` + `b(bytes)` (plus `e(2 · #rows)` for a `List`'s `rows`) | at once (layout included, §7.1) | Creates a child. `"limit"`: the element counts or pools (§7.10), or a child that would give a **shown** frame its badge (its first catching node or `Field`) when the badge's coverage would pass a bound (§7.10, TM rule 7.1.5); then nothing is created. `"busy"` only for an `Image` with a `file` while the outstanding-request cap is reached (§7.10), and then nothing is created. Only `Frame`, `Group` and `Scroll` hold children; any other parent raises. `kind` is a kind name of §7.5 other than `Frame` and `WorldLabel`. |
 | `node:Remove()` | nothing | `B` + `N` per node removed | at once | Removes the node and its descendants; their handles become stale. Removing the focused `Field` or the active frame applies §7.7. |
-| `node:Children()` | array of nodes | `B` + `h(n)` | read | In drawing order, bottom first. |
+| `node:Children()` | array of nodes | `B` + `h(n)` + `e(2n)` | read | In drawing order, bottom first. |
 | `node:Parent()` | node \| `nil` | `B` + `h(1)` | read | `nil` for frames and labels. |
 | `node:Box()` | x, y, width, height | `B` | read | The node's box on screen in UI units after layout and clipping are applied, as the hit test sees it; `nil` when it is not shown. |
 | `node:Exists()` | boolean | `B` | read | |
@@ -877,15 +1048,15 @@ causes a state notification (coalesced, §2.8).
 
 | Property | Type | Default | Meaning |
 |---|---|---|---|
-| `x`, `y` | number, \|v\| ≤ 16,384 | 0 | Position relative to the parent (the screen for a frame). A `Group` with a layout (below) sets its children's `x` or `y`. |
-| `width`, `height` | number, 0 … 16,384 | kind's default | Size. Changing it causes `Resized` (state). |
+| `x`, `y` | number, \|v\| ≤ 16,384 (domain, TM §0.1 rule 6) | 0 | Position relative to the parent (the screen for a frame). A `Group` with a layout (below) sets its children's `x` or `y`. |
+| `width`, `height` | number, 0 … 16,384 (domain) | kind's default | Size. Changing it causes `Resized` (state). |
 | `visible` | boolean | `true` (controls), `false` (frames, until shown) | Whether the node and its subtree are shown. A frame's `visible` is set through `Show`/`Hide` or `Set`, with the same rules. Changing it causes `VisibilityChanged` (state). |
 | `opacity` | number 0 … 1 | 1 | Multiplies the node's and its subtree's drawing. The **effective opacity** is the product along the path from the frame. |
 | `enabled` | boolean | `true` | A disabled node is drawn dimmed, still catches the pointer if it would otherwise, but has no native behaviour and sends no pointer notifications. |
 | `background` | colour or `nil` | `nil` | Fill of the node's box. |
 | `border` | colour or `nil` | `nil` | A 1-UI-unit frame line inside the box. |
 | `catch` | boolean | `true` for `Frame`, `PushButton`, `Toggle`, `Slider`, `Field`, `List`, `Scroll`; `false` for `Group`, `Text`, `Gauge`, `Image` | Whether the node catches the pointer (§7.6). |
-| `name` | string ≤ 64 bytes or `nil` | `nil` | A free label for the script's own use; the host never shows it. |
+| `name` | string ≤ 64 bytes (grammar, TM §0.1 rule 6) or `nil` | `nil` | A free label for the script's own use; the host never shows it. |
 
 Text-bearing kinds also take:
 
@@ -903,21 +1074,21 @@ Pointer notifications (§7.6) exist on every **catching** node: `PointerEntered`
 `PointerLeft`, `PointerMoved` (state), `Pressed`, `Released`, `Clicked`. Every node except a
 world label has `Moved` (state, `{x, y}`), `Resized` (state, `{width, height}`) and
 `VisibilityChanged` (state, `{visible}`). The table lists the rest. Every args table also
-has `by` (§2.8). The args of `Pressed`, `Released` and `Clicked` also have `gesture`
-(§7.6).
+has `by` and `dropped` (§2.8). The args of `Pressed`, `Released` and `Clicked` also have
+`gesture` (§7.6).
 
 | Kind | Own properties (type, default) | Native behaviour | Own notifications |
 |---|---|---|---|
 | `Frame` | `movable` (boolean, `false`); `resizable` (boolean, `false`); `min_width`, `min_height` (number, 48, 32); `max_width`, `max_height` (number, the screen) | A frame that is `movable` follows a drag that starts with the primary button on a point where the frame itself is the catching node (not a catching descendant) and moves at least 4 UI units; it is kept so that its top 24 units and at least 24 units of its width stay on screen. A `resizable` frame gets a host-drawn grip of 12 × 12 units in its bottom-right corner; dragging it resizes within the min and max, and stops growing at the largest size that keeps both composition-coverage bounds (§7.10, TM rule 7.1.5). A drag that moves a frame is never limited by coverage. | `ActiveChanged` (state, `{active}`) |
 | `Group` | `layout` (`"none"`, `"column"`, `"row"`; `"none"`); `gap` (number ≥ 0, 0); `padding` (number ≥ 0, 0) | A container. With `"column"`, each shown child in order gets `y` = `padding` for the first and the previous child's `y` + `height` + `gap` for the next; its `x` stays as set. `"row"` does the same along `x`. A child's own `y` (column) or `x` (row) is then overwritten, and `Moved` reports it. | — |
 | `Text` | `text` (string ≤ 16 KiB, `""`); `wrap` (boolean, `false`) + text properties | Draws the text in the box, clipped; with `wrap`, breaks lines at spaces, or inside a word that does not fit. No editing, no selection. | — |
-| `Field` | `text` (string, `""`); `max_bytes` (integer 1 … 4,096, 256); `multiline` (boolean, `false`); `placeholder` (string ≤ 256 bytes, `""`); `read_only` (boolean, `false`) + text properties | Single- or multi-line text entry with the editing behaviour of §7.8. Takes the keyboard focus only under §7.7. | `TextChanged` (state, `{text}`); `FocusChanged` (state, `{focused}`); `Submitted` (`{text}`, single-line only) |
+| `Field` | `text` (string, `""`); `max_bytes` (integer 1 … 4,096, 256); `multiline` (boolean, `false`); `placeholder` (string ≤ 256 bytes, `""`); `read_only` (boolean, `false`) + text properties | Single- or multi-line text entry with the editing behaviour of §7.8. Takes the keyboard focus only under §7.7. `text` must fit `max_bytes` on the node's state after the whole `Set` **(1a rule)**: a `Set` whose resulting text is longer raises and changes nothing, so lowering `max_bytes` below the current text's length raises unless the same `Set` also gives a text that fits; the host never cuts a script's text. | `TextChanged` (state, `{text}`); `FocusChanged` (state, `{focused}`); `Submitted` (`{text}`, single-line only) |
 | `PushButton` | `text` (string ≤ 256 bytes, `""`) + text properties | Drawn by the host in the ext theme with a hover and a pressed look. | (its `Clicked` is the pointer notification) |
 | `Toggle` | `text` (string ≤ 256 bytes); `checked` (boolean, `false`) + text properties | A box with a check mark and its text; a `Clicked` with the primary button flips `checked`. | `Toggled` (state, `{checked}`) |
-| `Slider` | `min`, `max` (number, 0, 1; `min` < `max`); `step` (number ≥ 0, 0 = continuous); `value` (number, clamped into [min, max] and rounded to `min` + k · `step`); `vertical` (boolean, `false`) | A track and a thumb drawn by the host. A press on the track moves the thumb to the point; a drag moves it. No wheel and no keys. | `ValueChanged` (state, `{value}`) |
+| `Slider` | `min`, `max` (number, 0, 1; `min` < `max`); `step` (number ≥ 0, 0 = continuous); `value` (number, clamped into [min, max] and rounded to `min` + k · `step`); `vertical` (boolean, `false`) | A track and a thumb drawn by the host. A press on the track moves the thumb to the point; a drag moves it. No wheel and no keys. **(1a rule)** `min` ≥ `max` on the node's state after the whole `Set` raises and changes nothing. A `Set` of `min`, `max` or `step` clamps and rounds the current `value` again; a change of it is a self-caused `ValueChanged` (`by = "script"`, next turn). | `ValueChanged` (state, `{value}`) |
 | `Gauge` | `value` (number 0 … 1, 0); `fill` (colour, theme); `vertical` (boolean, `false`) | A bar filled to `value` of its length, from the left (or the bottom). No input. | — |
 | `Image` | `file` (string: a path relative to the script folder, `nil`); `tint` (colour, `#FFFFFFFF`); `fit` (`"stretch"`, `"contain"`, `"none"`; `"stretch"`) | Shows a picture from the script's folder snapshot (§7.10, "Images"). Draws nothing until decoded. | `Loaded` (`{ok, reason}`; `reason` `"too large"`, `"invalid"` or `"limit"` when `ok` is `false`) |
-| `List` | `rows` (array of strings, at most 1,024 rows of at most 256 bytes; `{}`); `selected` (integer 1 … #rows or `nil`); `offset` (number ≥ 0, 0) + text properties | Rows of one line each, row height = the font's line height + 4 units, scrolled by `offset` (UI units). A primary-button click on a row selects it. While the pointer is over it, the wheel scrolls it by 3 rows per notch instead of zooming the camera (D17 §4, "The wheel over ext scrollables"). A host-drawn thumb on the right edge when the rows overflow; dragging it scrolls. | `SelectionChanged` (state, `{index}`); `Scrolled` (state, `{offset}`) |
+| `List` | `rows` (array of strings, at most 1,024 rows of at most 256 bytes; `{}`); `selected` (integer 1 … #rows or `nil`); `offset` (number ≥ 0, 0) + text properties | Rows of one line each, row height = the font's line height + 4 units, scrolled by `offset` (UI units, clamped to the rows' height). A primary-button click on a row selects it. **(1a rule)** A `Set` of `selected` outside 1 … #`rows` (after the whole `Set`) raises; a `Set` of `rows` that leaves the current selection past the new #`rows` clears it to `nil`, a self-caused `SelectionChanged{index = nil, by = "script"}` in the next turn, and clamps `offset` again. While the pointer is over it, the wheel scrolls it by 3 rows per notch instead of zooming the camera (D17 §4, "The wheel over ext scrollables"). A host-drawn thumb on the right edge when the rows overflow; dragging it scrolls. | `SelectionChanged` (state, `{index}`); `Scrolled` (state, `{offset}`) |
 | `Scroll` | `content_width`, `content_height` (number ≥ 0, the box size); `scroll_x`, `scroll_y` (number, clamped to the content) | A container whose children lie on a content area of the given size, shown through the box at (`scroll_x`, `scroll_y`) and clipped to it inside its frame's surface (not a nested composition surface, §7.10). The wheel scrolls `scroll_y` by 40 units per notch while the pointer is over it (with Shift held, `scroll_x`); host-drawn thumbs on the right and bottom edges when the content overflows. | `Scrolled` (state, `{x, y}`) |
 | `WorldLabel` | §7.9 | §7.9 | none |
 
@@ -951,7 +1122,9 @@ Default sizes **(1a rule)**: `Frame` 320 × 200; `Text`, `PushButton`, `Toggle` 
   - `Pressed` and `Released` (`{button, x, y, gesture}`): `button` is `"primary"`,
     `"secondary"`, `"middle"` or `"other"`, for the pointer presses that reach the node;
     `gesture` is `true` for a solid press (below) and `false` otherwise (TM rule 7.2.1); a
-    `Released` carries its press's value;
+    `Released` carries its press's value. Only the delivery of the `Pressed` of a solid
+    press opens a gesture window; the flag on `Released` and `Clicked` is information
+    only (§2.1, TM §8.13);
   - `Clicked` (`{button, x, y, gesture}`): a press and a release of the same button both on
     the same node, with no drag of a frame or slider in between; `gesture` as its press.
 - **Capture.** After a press on a node, that node receives the pointer's moves and its
@@ -960,8 +1133,16 @@ Default sizes **(1a rule)**: `Frame` 320 × 200; `Text`, `PushButton`, `Toggle` 
 - **Solid presses** (TM §7.2, D17 open item 2; L57). A user's press on an ext frame is a
   **solid press** only when the catching node at the press draws **its own background** at
   that point with alpha × effective opacity ≥ 0.5, where effective opacity is the product of
-  the node's `opacity` and every ancestor's, the frame's included. "Its own background" is
-  **(1a rule, the per-kind form of TM rule 7.2.1)**:
+  the node's `opacity` and every ancestor's, the frame's included, **and** that node is the
+  **topmost painted node** at the point: no other node of any ext frame paints over it
+  there, whether or not that node catches the pointer (the script's own later siblings and
+  their subtrees, later siblings of any ancestor, its own higher frames and other scripts'
+  frames all included; TM rule 7.2.1). "Paints" means draws anything at that point with
+  alpha × effective opacity above 0: a background, an image texel, text, a border or a
+  host-drawn face. So a press that falls through a non-catching `Image` or `Group` onto a
+  catching `Field` below it is **not** solid, even where the picture is opaque and the
+  field's face is too (TM X38). "Its own background" is **(1a rule, the per-kind form of TM
+  rule 7.2.1)**:
   - its `background` colour over its box;
   - for an `Image`, the alpha of the decoded texel under the point times the alpha of
     `tint` (where texel alpha is not available without a second decode, the image's
@@ -980,6 +1161,11 @@ Default sizes **(1a rule)**: `Frame` 320 × 200; `Text`, `PushButton`, `Toggle` 
   does not make that press solid after the fact (TM rule 7.2.3). So a transparent
   full-screen catching node can stop world clicks (D17's stated exception) but cannot win
   the keyboard through them (TM X38).
+- **Disabled nodes** (TM rule 7.2.1). A press on a catching node with `enabled = false` is
+  solid or not by the same test, and a solid one activates its frame and raises its
+  script's block by the same rule as any solid press. It delivers **no** notification, so
+  it opens no gesture window (§2.1), and it has no native behaviour: a disabled `Field` is
+  never focused by it, and a disabled `Frame` is not dragged.
 
 <a id="s7-7"></a>
 ### 7.7 Activation and focus
@@ -1004,8 +1190,8 @@ so a script learns nothing about what covers its field.
 **The user's own input** (step 1, native, D17 §4) moves activation and focus as for any
 window: a **solid** press (§7.6) on an ext frame activates it and raises the script's block
 to the top of the ext range, and the active plugin window or native panel is deactivated in
-step 1, as plugin time; a solid press on a `Field` that passes the visible-focus rule below
-also focuses it. A press elsewhere (the world, a plugin window, a native panel, another
+step 1, as plugin time; a solid press on an enabled `Field` that passes the visible-focus
+rule below also focuses it. A press elsewhere (the world, a plugin window, a native panel, another
 script's frame), and a non-solid press anywhere, deactivates the script's frame as it would
 any window.
 
@@ -1050,30 +1236,49 @@ while:
 2. its effective opacity, and its frame's, is at least 0.5;
 3. its **focus area** (its box grown by the width of the focus mark) is **not covered**: no
    shown element of a plugin window or a native panel (at any opacity), no part of the
-   developer overlay, no surface of the reserved layer and **no frame of another script
-   (1a rule)** draws anything inside it or catches the pointer there. The transparent,
-   non-catching area of a full-screen native root does not cover; world labels never cover
-   (TM §7.8).
+   developer overlay, no surface of the reserved layer, **no frame of another script (1a
+   rule)** and **none of the script's own content drawn above the field** draws anything
+   inside it or catches the pointer there. The script's own content above the field is
+   (TM rule 7.2.2, L58): every node of the field's frame that is drawn after it (a later
+   sibling of the field or of any of its ancestors, with its subtree), and every higher
+   frame of the same script, whether or not it catches the pointer; a node counts as
+   drawing inside the area where it paints anything with alpha × effective opacity above 0
+   (§7.6). The transparent, non-catching area of a full-screen native root does not cover;
+   world labels never cover (TM §7.8);
+4. its frame's **ownership badge** (below) lies wholly on screen and is not covered by any
+   plugin window, native panel or reserved-layer surface (TM §8.3, L58). A press on the
+   field while its badge is hidden is still a press, but the focus stays where it was.
 
 The host checks the rule again at the end of every step that can change it (step 1's user
-drags and toggles, step 7's plugin items, 6b, the item-7 drain, step 8's layout). A field
-that fails it loses the focus at once, as a hide does; from that moment no key is routed to
-it (D17 §4; TM X39).
+drags, toggles and host changes, step 7's plugin items, 6b, the item-7 drain). Layout
+never runs in step 8 (§7.1), so step 8 cannot change it. A field that fails it loses the
+focus at once, as a hide does; from that moment no key is routed to it (D17 §4; TM X39,
+X49).
 
 **What the host draws, not the script** (D17 §4; TM §8.3):
 
 - the caret, and a focus mark (a border in Tessera's focus colour) around the focused field,
-  drawn over the script's own drawing;
+  drawn in the **badge layer**, the top layer of the ext range (§7.1), above every ext
+  frame of every script **(1a rule, stricter than TM rule 7.2.2)**. Together with item 3
+  of the visible-focus rule this means no content of the script, its own included, can
+  draw over the caret or the mark of a field that holds the focus;
 - an **ownership badge** on **every shown frame that has at least one catching node (the
-  frame itself included) or any `Field`**: the script id and the words "ext script" (for
-  example "notes · ext script") in Tessera's fixed badge style, attached outside the frame's
-  top edge (inside the frame when that edge is off screen), at full opacity whatever the
-  frame's opacity. It is shown whenever the frame is shown, not only while a field has
-  focus, and is drawn in Tessera's focus colour as well while a `Field` of that frame has
-  the keyboard focus. Badges are the top layer of the ext range (§7.1), so no ext frame of
-  any script can be placed over one. The script cannot style, move, cover, hide or measure
-  the badge; it is not a node, never a pointer target, and not part of any `node:Box()`.
-  Its area counts toward the frame's composition coverage (§7.10). Escape test: TM X49.
+  frame itself included) or any `Field`**: the text "⟨id⟩ · ext script" (for example "notes
+  · ext script") in Tessera's fixed badge style, at full opacity whatever the frame's
+  opacity, clipped to a **fixed box 20 UI units high and 16 + 8 × (*n* + 13) UI units
+  wide**, *n* the id's length in bytes (at most 376 units, TM §8.3). The host attaches the
+  box outside the frame's top edge, left-aligned with the frame, when that position lies
+  wholly inside the screen; otherwise (a frame at y = 5, or partly off screen at the top,
+  left or right) **inside** the frame along its top edge, shifted horizontally so that the
+  whole box lies on screen; where the frame is too small or too far off screen for that, the
+  badge counts as **off screen** (and no field of that frame can hold the focus, rule item
+  4). It is shown whenever the frame is shown, not only while a field has focus, and is
+  drawn in Tessera's focus colour as well while a `Field` of that frame has the keyboard
+  focus. Badges are the top layer of the ext range (§7.1), so no ext frame of any script can
+  be placed over one. The script cannot style, move, cover, hide or measure the badge; it is
+  not a node, never a pointer target, and not part of any `node:Box()`. Its fixed box, never
+  its drawn glyphs, counts toward the frame's composition coverage (§7.10), so the count
+  does not depend on fonts. Escape test: TM X49.
 
 **Notifications.** `ActiveChanged` and `FocusChanged` are state notifications delivered in
 the script's next turn when its own request caused them, and in the same frame's 6b when
@@ -1087,7 +1292,10 @@ in step 1, as plugin time (D17 §7).
 - **What the keyboard reaches.** While a field has focus it pushes `text_entry` and
   `ui.clipboard` into the UI band (IB D5 as D17 extends it), so the user's text-editing
   bindings drive it and every other key or pad press is swallowed at the band end
-  (`opaque_keys`, IB D6); ext and game bindings do not fire while the user types (D17 §5.5).
+  (`opaque_keys`, IB D6), so no ext or game binding fires on a **key or pad press** while
+  the user types (D17 §5.5). Mouse buttons, the wheel and axes are not stopped by
+  `opaque_keys` (IB D6) and pass to the game band, so an ext binding on a mouse button can
+  still fire while a field has the focus.
   The script never receives raw keys: it sees only the field's text (D17 §3).
 - **Editing operations (Tessera's own set, 1a rule).** Insert typed text at the caret,
   replacing the selection; delete the character or selection before or after the caret; move
@@ -1120,11 +1328,11 @@ A world label is a short text placed at a point of the world.
 
 | Property | Type | Default | Meaning |
 |---|---|---|---|
-| `text` | string ≤ 256 bytes | `""` | One line; cut at the end with an ellipsis when wider than 512 UI units. |
+| `text` | string ≤ 256 bytes (TM L81) | `""` | One line; cut at the end with an ellipsis when wider than 512 UI units (domain, TM §0.1 rule 6). |
 | `x`, `y`, `z` | number (region frame) | required | The point. |
-| `region` | integer 1 … 255 | the player's region at creation | The label is shown only while the player is in this region. |
-| `offset_x`, `offset_y` | number, \|v\| ≤ 256 | 0, 0 | A screen offset in UI units after projection. |
-| `max_distance` | number 1 … 500 | 100 | Hidden beyond this distance (metres) from the camera. |
+| `region` | integer 1 … 255 (domain; 0 means "no region" in `coordinates.md` §4 and is refused) | the player's region at creation | The label is shown only while the player is in this region. |
+| `offset_x`, `offset_y` | number, \|v\| ≤ 256 (domain) | 0, 0 | A screen offset in UI units after projection. |
+| `max_distance` | number 1 … 500 (domain) | 100 | Hidden beyond this distance (metres) from the camera. |
 | `font`, `color`, `background` | as §7.4 | | |
 | `visible` | boolean | `true` | |
 
@@ -1145,8 +1353,8 @@ A world label is a short text placed at a point of the world.
 
 | Limit | Value | When reached |
 |---|---|---|
-| Nodes (frames, controls, labels) | TM L30: 2,048 per script, of which at most 512 in one frame and 256 world labels; 8,192 for all ext scripts, of which 1,024 world labels | creation answers `nil, "limit"` |
-| Ext surfaces, composition entries, UI memory | TM L49–L51: 128 surfaces, 256 entries and a quarter of each memory pool per script; 512, 1,024 and 32/64/64 MiB for all, on top of UR's caps | creation answers `nil, "limit"`; a show answers `false` |
+| Nodes (frames, controls, labels) | TM L30: 2,048 per script, of which at most 512 per `Frame` (in one ext window, its own node included; not a rate per time frame) and 256 world labels; 8,192 for all ext scripts, of which 1,024 world labels | creation answers `nil, "limit"` |
+| Ext surfaces, composition entries, UI memory | TM L49–L51: 128 surfaces, 256 entries and a quarter of each memory pool per script; 512, 1,024 and 32/64/64 MiB for all, on top of UR's caps. Only a `Frame` takes a surface (TM L49); a world label takes none, and a shown frame, its badge and a shown label each take one entry (§7.1) | creation answers `nil, "limit"`; a show answers `false` |
 | Composition coverage | TM L55, rule 7.1.3: **1.25 screens** per script, **2.0 screens** for all ext scripts | below |
 | Text | TM L81: `Text` 16 KiB, `Field` `max_bytes` ≤ 4,096, `List` 1,024 rows × 256 bytes, labels and buttons 256 bytes, `placeholder` 256 bytes, `UI.MeasureText` 16 KiB | longer raises a Lua error |
 | Notifications | the 1,024-entry queue and coalescing of §2.8 (TM L30) | dropped and counted |
@@ -1159,19 +1367,30 @@ states its script-visible form).
   as a nested surface (none scales, rotates or stretches its content; a `Scroll` clips
   inside its frame's surface); a later kind that is composed as one counts again, as TM rule
   7.1.2 says for nested entries.
-- **Counting.** Each entry counts min(one screen, its displayed rectangle counted outward),
-  in physical pixels (UI units × the UI scale) divided by one screen, **unclipped and
-  independent of its position** (TM rule 7.1.2). So moving a frame or a label, by the
-  script, by the user's drag or by step 8's projection, never changes coverage, and a frame
-  created mostly off screen costs as much as one on screen. `UI.Usage().area` reports the
-  script's sum.
+- **Counting by size** (TM rule 7.1.2, L55). An entry of displayed width *w* and height
+  *h*, in physical pixels (UI units × the UI scale), counts min(one screen,
+  (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1)) pixels (0 when *w* or *h* is 0), divided by one screen,
+  **unclipped**. The count depends only on the entry's size, never on its position or its
+  sub-pixel phase, and it is never below the pixels the entry can cover at any position.
+  So moving a frame or a label, by the script, by the user's drag or by step 8's
+  projection, by whole or fractional pixels and at any UI scale (1.25 included), never
+  changes coverage, and a frame created mostly off screen costs as much as one on screen.
+  A frame's displayed size is its `width` and `height`; a label's is its drawn text box
+  (its text cut to 512 UI units, §7.9, in its `font`); a **badge** counts its fixed box of
+  §7.7, 20 × (16 + 8 × (*n* + 13)) UI units, never its glyphs, so its count does not
+  depend on fonts (TM §8.3). `UI.Usage().area` reports the script's sum; for frames and
+  badges it is deterministic, and it depends on the fonts (OPEN-6) only through shown
+  labels.
 - **Check points** (TM rule 7.1.5): a frame or label created shown, `Show`, `visible = true`
   on a frame or label, a change of a shown frame's `width` or `height` or of a shown label's
-  displayed size, a frame gaining its badge (its first catching node or `Field`, or `catch`
-  turned on), and every screen resize or UI-scale change. Position changes are not checked.
+  displayed size, a shown frame gaining its badge (a `node:Add` of its first catching node
+  or `Field`, or a `Set` that turns `catch` on), and every screen resize or UI-scale
+  change. Position changes are not checked.
 - **A script call** that would take the script past 1.25 screens or all ext scripts past 2.0
   is refused and changes nothing: `Show` returns `false` and the frame stays hidden; a
-  creation answers `nil, "limit"`; a `Set` returns `false`. The script log says why.
+  creation answers `nil, "limit"`; a `node:Add` that would give a shown frame its badge
+  answers `nil, "limit"` and adds nothing; a `Set` returns `false`. The script log says
+  why.
 - **A user resize** of a `resizable` frame stops at the largest size that keeps both bounds;
   a user drag is never limited.
 - **A host change** (a screen resize, a UI-scale change) that puts a script or the total
@@ -1180,12 +1399,17 @@ states its script-visible form).
   Each hidden node's script gets `VisibilityChanged{visible = false, by = "host"}` in its
   next turn (TM rule 7.1.5 calls it `VisibleChanged`), and the script log records it.
 - **Frame budget** (TM rule 7.1.6, L56). The GPU time of ext composition at these bounds is
-  part of the "Ext overlays and composition" row (1.0 ms of GPU time for overlays and
-  composition together, measured as E9 at the reference display's native 3840 × 2160;
-  slice 1a measures the composition part). If E9 measures more, the bounds shrink in
-  proportion (TM OPEN O-1). While the row's funding is open (TM OPEN O-2) the ext Lua
-  ceiling of slice 1a is 12 ms (TM L12).
-- Escape test: TM X31 (with E9).
+  part of **the 1.0 ms GPU part of the 1.6 ms "Ext overlays and composition" row** (the
+  row is 0.6 ms of overlay encoding, from slice 1b, plus 1.0 ms of GPU time for overlays
+  and composition together, measured as E9 at the reference display's native 3840 ×
+  2160; slice 1a measures the composition part). If E9 measures more, the bounds shrink in
+  proportion (TM OPEN O-1). While the row's funding is open (TM OPEN O-2) the interim ext
+  ceiling of TM L12 applies.
+- Escape test: TM X31, its **slice-1a part** (frames, world labels and badges: windows
+  created off screen and moved on, user drags by fractional pixels at UI scale 1.25, a user
+  resize at the bound, a labels-only script at a host change), with E9. X31's parts for
+  nested surfaces and for scale and rotation changes belong to the slice that adds them
+  (TM revision 4): slice 1a has none of them, so they cannot be set up here.
 
 **Images** (TM §8.5). `file` names a file of the script's folder snapshot (D17 §2); a missing
 file or a path outside the folder grammar raises. Decoding runs on an asset worker at the
@@ -1204,8 +1428,9 @@ tests: TM X26, X33.
 ### 7.11 Suspension, unload and the panic chord
 
 - When a script is suspended (watchdog, panic chord, grant revocation, a locale other than
-  "C"; §2.8), the host hides all its frames and labels at once; its focused field loses the focus and its frame is
-  deactivated. Nothing is notified while it is suspended (§2.8). When the user resumes it,
+  "C"; §2.8), the host hides all its frames and labels at once; its focused field loses
+  the focus and its frame is deactivated, and its ext contexts are deactivated with their
+  holds released (§8.1). Nothing is notified while it is suspended (§2.8). When the user resumes it,
   frames and labels that were shown are shown again in their earlier show order, each
   subject to the coverage check of §7.10 (one that does not fit stays hidden), and the
   first turn carries `Resumed` (§4.1) followed by the coalesced state notifications with
@@ -1218,8 +1443,10 @@ tests: TM X26, X33.
   **script manager**, where the user unloads the script or revokes its `ui` grant (§2.9,
   EM §9.7), either of which removes every frame of that script in the frame the action is
   applied. D17 §3's "by closing the window" is available only when the script offers a
-  control of its own that hides the frame; nothing in this spec guarantees one, so the
-  grant dialog's text and the user documentation name the chord and the manager.
+  control of its own that hides the frame; nothing in this spec guarantees one. The grant
+  dialog's `ui` text names both routes: "To remove them, press ⟨chord⟩ (stops every
+  extended script) or unload the script in the script manager." (EM §6.1, the `ui` row,
+  EM revision 4). The user documentation names them too.
 - The suspension notice and every other reserved-layer surface are hit-transparent, so a
   notice over a plugin button never stops its click or hover (TM X50, slice-1a part).
 - At unload every node is removed with the apartment. No geometry or visibility is kept for
@@ -1244,9 +1471,9 @@ script names its own actions and contexts by their **short** names (`<name>`).
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `Input.Activate(context)` | `true` \| `nil, "busy"` | `B` | item-7 drain | `context` is a short name the manifest declares; another name raises. Rate: 4 activations or deactivations per script per second (TM L62); changes of one frame are coalesced, only the last state of each context is applied, and all ext registry changes of one frame are applied as one recompilation (TM §8.18). Counts as one pending intent (TM L30: 256 per script per frame). |
+| `Input.Activate(context)` | `true` \| `nil, "busy"` | `B` | item-7 drain | `context` is a short name the manifest declares; another name raises. Rate: 4 activations or deactivations per script per second (TM L62), counted in **calls, not in applied changes** **(1a rule)**: every call that returns `true` takes one token from a bucket that holds 4 and refills at 4 per second, also a call that changes nothing (activating an active context) or whose change is later coalesced away; a refused call takes nothing. Changes of one frame are coalesced, only the last state of each context is applied, and all ext registry changes of one frame are applied as one recompilation (TM §8.18). Counts as one pending intent (TM L30: 256 per script per frame). |
 | `Input.Deactivate(context)` | `true` \| `nil, "busy"` | `B` | item-7 drain | As above. Deactivating releases the context's holds (KM §3); a pending sequence is dropped only if it belongs to this context (D17 §5.5). |
-| `Input.IsActive(context)` | boolean | `B` | read | The state the script last asked for, including a change not yet applied. |
+| `Input.IsActive(context)` | boolean | `B` | read | The state the script last asked for, including a change not yet applied, **unless the host has deactivated the context since** (a suspension, below): then `false` until the script activates it again. |
 
 - At load every context of the script is **inactive**; the script activates what it needs,
   typically in its top-level run (D17 §10).
@@ -1265,16 +1492,27 @@ script names its own actions and contexts by their **short** names (`<name>`).
 - An intent made before a suspension, unload or backend switch is discarded and never applied;
   the applying step re-checks the apartment, the session generation, the backend class and the
   grant (D17 §4).
+- **Suspension and input** (TM §8.23; every cause of §2.8, the panic chord included). In the
+  frame of the suspension the host deactivates **every** ext context of the script and
+  releases their holds (TM L61), and discards its pending context intents. While the
+  script is suspended its bindings consume no input and record no action edges and no
+  gestures: a press of one of its strokes resolves as if the binding did not exist, so it
+  reaches whatever lies after the ext partition (usually nothing). The panic chord is
+  resolved before every ext binding (TM L64), so no ext context can hold it. On resume the
+  contexts are **not** restored: they stay inactive, `Input.IsActive` answers `false` for
+  each, and the script activates them again itself, within the rate above (for example in
+  its `Resumed` handler). Edges lost meanwhile are not counted (nothing accrues); edges
+  dropped before the suspension count under `Resumed.counts.action` (§4.1).
 
 <a id="s8-2"></a>
 ### 8.2 The script's own actions
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `Input.On(action, fn)` | nothing | `B` | at once | Sets or clears the handler of a declared action (§2.8, form 1: `Input`'s notification names are the script's declared short action names; any other name raises). `fn(ev)` with `ev = {action, kind, value, dropped}`: `kind` `"start"` or `"end"`; `value` the action's value at that edge (1 or 0 for a button; for an axis the value after the edge). Edges are recorded in step 1 in the order they happened, at most 16 per action per frame (more are counted in `dropped`), and delivered **same-frame 6b**. A `"start"` is a **gesture**: its turn is a gesture window (§2.1, §7.7). |
-| `Input.State(action)` | table | `B` + `e(5)` | read | This frame's snapshot (KM §7.1): `{pressed, presses, releases, value, delta}` (KM §2). |
-| `Input.Actions()` | array of tables | `B` + `e(n)` + `b(bytes)` | read | One `{name, kind, context}` per declared action, in manifest order; `kind` `"button"` or `"axis"`. |
-| `Input.Bindings(action)` | array of strings | `B` + `e(n)` + `b(bytes)` | read | The binding texts (KM §5) now in effect for the action: the user's from the ext keymap document, or the suggested default when registration did not withhold it. So a script can say "press F7". Empty when unbound. |
+| `Input.On(action, fn)` | nothing | `B` | at once | Sets or clears the handler of a declared action (§2.8, form 1: `Input`'s notification names are the script's declared short action names; any other name raises). `fn(ev)` with `ev = {action, kind, value, dropped}`: `kind` `"start"` or `"end"`; `value` the action's value at that edge (1 or 0 for a button; for an axis the value after the edge). Edges are recorded in step 1 in the order they happened, at most 16 per action per frame (TM L91; more are counted in `dropped`), and delivered **same-frame 6b**. A `"start"` is a **gesture**: its turn is a gesture window (§2.1, §7.7). |
+| `Input.State(action)` | table | `B` + `e(10)` | read | This frame's snapshot (KM §7.1): `{pressed, presses, releases, value, delta}` (KM §2). |
+| `Input.Actions()` | array of tables | `B` + `e(8n)` + `b(bytes)` | read | One `{name, kind, context}` per declared action (*n* of them), in manifest order; `kind` `"button"` or `"axis"`. |
+| `Input.Bindings(action)` | array of strings | `B` + `e(2n)` + `b(bytes)` | read | The *n* binding texts (KM §5) now in effect for the action: the user's from the ext keymap document, or the suggested default when registration did not withhold it. So a script can say "press F7". Empty when unbound. |
 
 - **Start and end.** For a button action, `"start"` is a transition to pressed and `"end"` a
   transition to released (KM §7.3). For an axis action, the same transitions of `pressed`
@@ -1288,7 +1526,7 @@ script names its own actions and contexts by their **short** names (`<name>`).
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `Input.Standard(name)` | table | `B` + `e(5)` | read | This frame's snapshot of one standard action, as `Input.State`. `name` must be on the list below; any other name raises. |
+| `Input.Standard(name)` | table | `B` + `e(10)` | read | This frame's snapshot of one standard action, as `Input.State`. `name` must be on the list below; any other name raises. |
 
 The readable list is **closed in major 1** (additions only within the major, D17 §2)
 **(1a rule)**: `move_forward`, `strafe`, `turn`, `jump`, `walk`, `autorun`, `mouselook`
@@ -1327,16 +1565,16 @@ data** (D17 §3, §8). Positions are in the region frame of the player's current
 
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
-| `World.Here()` | table \| `nil, "not loaded"` | `B` + `e(9)` | read | `{region, x, y, z, yaw, heading, mode}`: the player character's position and facing (§2.10) as of step 3 of this frame, `mode = "walk"`; in fly mode without a character, the free-fly viewpoint, `mode = "fly"` (OPEN-7). `nil, "not loaded"` before the player is placed. |
-| `World.Landblock(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` | read | `{region, bx, by, cell, indoors}`: the landblock (X, Y) and, from the resident collision data, the interior cell index containing the point or `nil` outdoors (`collision.md` §5.8.1); `indoors` is `cell ~= nil`. Counts as a point query. |
-| `World.Area(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` + `b(bytes)` | read | `{area, territory, region}`: the names of the area at the point and of its parents, each a string or `nil`, in the client's language, from the area lookup over resident data (ARCH §9.2, "Lookups"). |
-| `World.MapCoords(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` + `b(bytes)` | read | `{north, east, text}`: the point's map coordinates as Tessera's own map display computes them. **Contract:** `north` grows toward +Y and `east` toward +X, both are finite numbers, and `text` is the string Tessera's client shows for them. Their formula, rounding and the format of `text` are **not** part of the ext contract (§9.2, OPEN-3); scripts display `text` and must not parse it. |
-| `World.LocText()` | string \| `nil, "not loaded"` | `B` + `b(bytes)` | read | The position text that Tessera's own `/loc` command reports for the player now, at most 256 bytes. Same contract limit as `MapCoords.text`: display it, do not parse it. |
+| `World.Here()` | table \| `nil, "not loaded"` | `B` + `e(14)` | read | `{region, x, y, z, yaw, heading, mode}`: the player character's position and facing (§2.10) as of step 3 of this frame, `mode = "walk"`; in fly mode without a character, the free-fly viewpoint, `mode = "fly"` (OPEN-7). `nil, "not loaded"` before the player is placed. |
+| `World.Landblock(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` + `e(10)` | read | `{region, bx, by, cell, indoors}`: the landblock (X, Y) and, from the resident collision data, the interior cell index containing the point or `nil` outdoors (`collision.md` §5.8.1); `indoors` is `cell ~= nil`. Counts as a point query. |
+| `World.Area(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` + `e(6)` + `b(bytes)` | read | `{area, territory, region}`: the names of the area at the point and of its parents, each a string or `nil`, in the client's language, from the area lookup over resident data (ARCH §9.2, "Lookups"). |
+| `World.MapCoords(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` + `e(6)` + `b(bytes)` | read | `{north, east, text}`: the point's map coordinates as Tessera's own map display computes them. **Contract:** `north` grows toward +Y and `east` toward +X, both are finite numbers, and `text` is the string Tessera's client shows for them. Their formula, rounding and the format of `text` are **not** part of the ext contract (§9.2, OPEN-3); scripts display `text` and must not parse it. |
+| `World.LocText()` | string \| `nil, "not loaded"` | `B` + `b(bytes)` | read | The position text that Tessera's own `/loc` command reports for the player now, at most 256 bytes (TM L91). Same contract limit as `MapCoords.text`: display it, do not parse it. |
 | `World.Height(x, y)` | number \| `nil, "not loaded"` | `B` + `Q` | read | The terrain surface's z at (x, y), from the resident terrain of the point's landblock (`tessera-terrain` height query). Ignores objects and interiors. |
-| `World.Water(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` | read | `{surface, under}`: the z of the water surface above or at (x, y) or `nil` when there is none, and whether (x, y, z) is under water (ARCH §9.2, "Lookups"; `water.md`). |
-| `World.Ray(x1, y1, z1, x2, y2, z2 [, opts])` | table \| `false` \| `nil, reason` | `B` + 2,000 + 2,000 per landblock the segment's bounding box overlaps (at most 25) | read | Casts a segment against the **installed collision sets** (ARCH §20.3, "Collision-set residency"). Its length must be ≤ 500 m (longer raises). `opts.water` (boolean, `false`) includes water surfaces. Returns the nearest hit `{x, y, z, nx, ny, nz, distance, what}` with `what` one of `"terrain"`, `"object"`, `"cell"`, `"water"`; `false` when nothing is hit; `nil, "not loaded"` when any landblock the segment's bounding box overlaps has no installed set; `nil, "busy"` past the ray caps. |
-| `World.Clock()` | table | `B` + `e(7)` | read | The game clock Tessera's client uses in this frame: `{seconds, time_of_day, day, year, day_of_year, month, night}`. Only the contract of §9.2 is promised. |
-| `World.Sky()` | table | `B` + `e(12)` | read | The sky state Tessera's client computed for this frame: `{sun_x, sun_y, sun_z, sun_color, ambient_color, fog_near, fog_far, fog_color, day}`. Only the contract of §9.2 is promised. A field Tessera does not compute in a frame (no sky loaded) is `nil`. |
+| `World.Water(x, y, z)` | table \| `nil, "not loaded"` | `B` + `Q` + `e(4)` | read | `{surface, under}`: the z of the water surface above or at (x, y) or `nil` when there is none, and whether (x, y, z) is under water (ARCH §9.2, "Lookups"; `water.md`). |
+| `World.Ray(x1, y1, z1, x2, y2, z2 [, opts])` | table \| `false` \| `nil, reason` | `B` + 2,000 + 2,000 per landblock the segment's bounding box overlaps (at most 25, TM L91), + `e(16)` + `b(bytes)` for a hit | read | Casts a segment against the **installed collision sets** (ARCH §20.3, "Collision-set residency"). Its length must be ≤ 500 m (TM L69; longer raises). `opts.water` (boolean, `false`) includes water surfaces. Returns the nearest hit `{x, y, z, nx, ny, nz, distance, what}` with `what` one of `"terrain"`, `"object"`, `"cell"`, `"water"`; `false` when nothing is hit; `nil, "not loaded"` when any landblock the segment's bounding box overlaps has no installed set; `nil, "busy"` past the ray caps. |
+| `World.Clock()` | table | `B` + `e(14)` | read | The game clock Tessera's client uses in this frame: `{seconds, time_of_day, day, year, day_of_year, month, night}`. Only the contract of §9.2 is promised. |
+| `World.Sky()` | table | `B` + `e(18)` + `b(bytes)` | read | The sky state Tessera's client computed for this frame: `{sun_x, sun_y, sun_z, sun_color, ambient_color, fog_near, fog_far, fog_color, day}`. Only the contract of §9.2 is promised. A field Tessera does not compute in a frame (no sky loaded) is `nil`. |
 
 - **Facing.** `yaw` and `heading` follow §2.10 (yaw in radians counter-clockwise from +X;
   heading the compass bearing in degrees). They are Tessera's own definitions; `heading`
@@ -1374,7 +1612,9 @@ part of the ext contract. The contract is only **(1a rule)**:
 A script may display these values, compare them with each other in the same frame, and
 react to their changes; it must not depend on any figure in the right column. The values
 may change between Tessera releases without a major version change of `World`. The
-reviewer's confirmation of this reading is OPEN-3.
+re-review of revision 3 confirmed that this promise-only contract satisfies D17 §12 and
+LEGAL §18.3 rule 1 for all four functions (OPEN-3, closed); OPEN-3 keeps the fallback in
+case the owner decides otherwise.
 
 ---
 
@@ -1418,13 +1658,13 @@ Client-local entities of a later slice never appear (D17 §3, `Entity.Local`).
 | Signature | Returns | Cost | Applies | Notes |
 |---|---|---|---|---|
 | `Entity.Self()` | entity \| `nil` | `B` + `h(1)` | read | The user's character, or `nil` when there is none (before placement, free fly without a character). |
-| `Entity.Find(filter)` | array of entities, truncated \| `nil, "busy"` | `B` + 20 per candidate + (100 + `h(1)`) per result; the candidates are reserved from the counts known at the call's start and refunded | read | Batched query. `filter = {kinds, near, box, limit}`: `kinds` an array of kind names (default all three); exactly one of `near = {x, y, z, radius}` (radius 0 … 500) or `box = {x1, y1, z1, x2, y2, z2}` (each side ≤ 1,000), or neither (every entity of those kinds); `limit` 1 … 512 (default 512). Results are sorted by distance from `near`'s point (or from the box's centre, or from the player), ties in a stable order that deterministic mode repeats. Second result `truncated` is `true` when more entities matched than were returned (D17 §3, "API rules"). Caps (TM L71): 8 queries per script per frame, 32 for all scripts. The candidates are the entities of the landblocks the area overlaps (all resident ones without an area), so a query whose reservation exceeds the call's remaining units raises before it starts (§2.5): narrow it with `near` or `box`, or leave out `"static"`. |
-| `Entity.Read(list, fields)` | array of tables | `B` + per entry (`e(#fields)` + `b(bytes)`) | read | Batched read: `list` an array of at most 512 entity handles, `fields` an array of field names (§10.1). Entry *i* is a table of the requested fields of `list[i]`, or `false` when that handle is stale. An unknown field name raises. |
+| `Entity.Find(filter)` | array of entities, truncated \| `nil, "busy"` | `B` + `e(n)` for the walked filter + 20 per candidate + (60 + `e(2)` + `h(1)`) per result (60 for the distance and the sort); the candidates are reserved from the counts known at the call's start and refunded | read | Batched query. `filter = {kinds, near, box, limit}`: `kinds` an array of kind names (default all three); exactly one of `near = {x, y, z, radius}` (radius 0 … 500, TM L91) or `box = {x1, y1, z1, x2, y2, z2}` (each side ≤ 1,000, TM L91), or neither (every entity of those kinds); `limit` 1 … 512 (default 512). Results are sorted by distance from `near`'s point, or from the box's centre, or, with neither, from the player's character; ties, and every result when there is neither an area nor a placed character, in the stable order of the entity store, which deterministic mode repeats **(1a rule)**. Second result `truncated` is `true` when more entities matched than were returned (D17 §3, "API rules"). Caps (TM L71): 8 queries per script per frame, 32 for all scripts. **Candidates (1a rule):** the resident entities **of the requested kinds** in the landblocks the area overlaps (in every resident landblock without an area); an entity of another kind is never a candidate and costs nothing. A `"self"` or `"character"` entity belongs to the landblock that holds its position in this frame, a `"static"` to its own landblock. So a query whose reservation exceeds the call's remaining units raises before it starts (§2.5): narrow it with `near` or `box`, or leave out `"static"`, usually by far the most numerous kind. |
+| `Entity.Read(list, fields)` | array of tables | `B` + `e(2 · #fields)` for walking `fields`, then per entry `e(2)` (its array slot) + `e(2 · #fields)` + `e(8)` when `rotation` is requested + `e(4)` when `landblock` is requested + `b(bytes)`, by §2.5's counting rule (a nested table's keys and values count again; a fixed-shape field is charged even when it is `nil`); the whole is reserved from `#list` at the call and refunded for stale entries | read | Batched read: `list` an array of at most 512 entity handles (TM L91), `fields` an array of field names (§10.1). Entry *i* is a table of the requested fields of `list[i]`, or `false` when that handle is stale. An unknown field name raises. |
 | `e:Get(field)` | the field's value | `B` + `b(bytes)` | read | One field of one entity; raises on a stale handle. |
 | `e:Position()` | x, y, z | `B` | read | Raises on a stale handle. |
 | `e:Exists()` | boolean | `B` | read | |
 | `e:Kind()` | string | `B` | read | Works on a stale handle. |
-| `Entity.Subscribe(filter, fn)` | subscription \| `nil, "limit"` | `B` + `h(1)` | next turn onward | `filter = {kinds, near, around_self, box}`: `kinds` as above; at most one of `near = {x, y, z, radius}`, `around_self = radius` (radius ≤ 500, measured from the player at the frame of the event), `box`. `fn(sub, batch)` per §10.3 (a per-request callback, §2.8). At most 16 subscriptions per script, 64 for all scripts (TM L30). |
+| `Entity.Subscribe(filter, fn)` | subscription \| `nil, "limit"` | `B` + `h(1)` + `e(n)` for the walked filter | records of frames **after** this one (§10.3) | `filter = {kinds, near, around_self, box}`: `kinds` as above; at most one of `near = {x, y, z, radius}`, `around_self = radius` (radius ≤ 500, TM L91, measured from the player's character in the frame of each record; a record of a frame without a placed character matches no `around_self` subscription), `box` (each side ≤ 1,000, TM L91). It matches only records of frames after the frame in which it was created, however far the script's cursor lags (TM rule 7.5.2). `fn(sub, batch)` per §10.3 (a per-request callback, §2.8). At most 16 subscriptions per script, 64 for all scripts (TM L30). |
 | `sub:Cancel()` | nothing | `B` | at once | Stale afterwards; undelivered events are discarded. |
 | `sub:Exists()`, `sub:Kind()` | boolean, `"Subscription"` | `B` | read | |
 
@@ -1448,27 +1688,40 @@ This section states TM §7.5 (D17 open item 5) in script-visible form.
   charging before each batch 64 × (the script's number of subscriptions) × `c_f` units
   (`c_f` the declared cost of one record-filter pair, TM OPEN O-4). It stops, keeping the
   cursor, when the next batch's charge would pass the call's remaining units or deadline,
-  when the script's events matched in this frame reach **1,024** (TM L31), or at the end of
-  the retained records. No filter work runs outside this call: not in steps 2–5 and not in
-  6c. A record older than 60 frames when the cursor reaches it is skipped and counted as
-  dropped.
-- **What matches.** A spawn record matches a subscription when its kind is in `kinds` and
-  its position at spawn is inside the area (if any; `around_self` measured from the player's
-  position in the record's frame); a despawn record the same with the position at despawn.
-  Moving into or out of an area is not an event; scripts query for that.
+  when the script's events **delivered** in this frame reach **1,024** (TM L31, rule 7.5.2;
+  the events of the batches this frame's filter calls append count as delivered in this
+  frame), or at the end of the retained records. No filter work runs outside this call:
+  not in steps 2–5 and not in 6c. A record older than 60 frames when the cursor reaches it
+  is skipped and counted as dropped.
+- **The filter call is never an abort** (TM rule 7.5.2a). A filter call that ends by its
+  own stopping rule is not an abort and never counts toward the three aborts of TM L18;
+  its time is **excluded** from the rolling mean, the throttle and the suspension of TM
+  L17, because its amount is set by the world's record rate, not by the script. It still
+  counts against the 2 ms cap (TM L5) and the frame's ext time (TM L12), and the profiler
+  shows it apart from the script's own time. A throttled script's turns, its filter call
+  included, run at half rate; its cursor then lags, and records older than 60 frames are
+  dropped and counted, never filtered late.
+- **What matches.** A spawn record matches a subscription when the record's frame is
+  **later than the frame in which the subscription was created** (TM rule 7.5.2: a
+  subscription made while the cursor lags never matches an older record), its kind is in
+  `kinds`, and its position at spawn is inside the area (if any; `around_self` measured
+  from the player's character's position in the record's frame, and never matched by a
+  record of a frame without a placed character); a despawn record the same with the
+  position at despawn. Moving into or out of an area is not an event; scripts query for
+  that.
 - **Matches become notifications.** At the end of the filter call, each subscription that
   has matches, or a count to report, gets **one** batch notification appended to the queue
   (§2.8; it is part of the turn's delivery set, so it is delivered later in the same turn if
   the cap allows). Each batch notification takes one entry of the 1,024-entry queue; while
   the queue is full, the batch is dropped and its events are counted.
 - **The batch.** `fn(sub, batch)` with `batch = {spawned, despawned, dropped, unfiltered}`:
-  arrays of handles in record order (converted inside the delivery call, `h(n)` charged
-  first); `dropped`, the events lost since this subscription's last delivery (queue cap,
-  records older than 60 frames); and `unfiltered`, the overflow counts of every frame the
-  cursor passed since that delivery (the script cannot know whether those records would
-  have matched, so every subscription of the script reports them). Handles in `despawned`
-  are stale on delivery; they compare equal to handles the script still holds (§2.7), so it
-  can remove them from its own tables.
+  arrays of handles in record order (converted inside the delivery call, `h(n + 1)` and `e(8
+  + 2n)` charged first, *n* the handles of both arrays, §2.5); `dropped`, the events lost
+  since this subscription's last delivery (queue cap, records older than 60 frames); and
+  `unfiltered`, the overflow counts of every frame the cursor passed since that delivery
+  (the script cannot know whether those records would have matched, so every subscription of
+  the script reports them). Handles in `despawned` are stale on delivery; they compare equal
+  to handles the script still holds (§2.7), so it can remove them from its own tables.
 - **Suspension** (TM rule 7.5.4). A suspended script records nothing. When the user resumes
   it, its cursor jumps to the newest frame, and the records it skipped are counted once, as
   `counts.entity` of its `Resumed` notification (§4.1), not in a batch.
@@ -1500,15 +1753,16 @@ column gives what the script sees.
 | Worst ext time per frame | L12 | 13 ms; 12 ms in slice 1a while TM OPEN O-2 is open | fallback lowers caps |
 | Rolling mean per script | L17 | ≤ 1 ms per frame over 1 s | throttled to half rate; suspended after 5 s over within 10 s |
 | Aborts | L18 | 3 in 10 s | suspended |
-| Queued notifications, timers, subscriptions, nodes, pending intents | L30 | queue 1,024 per script (state notifications coalesced); timers 64; subscriptions 16 per script, 64 for all; nodes 2,048 per script (512 per frame, 256 labels), 8,192 for all (1,024 labels); intents 256 per script per frame | dropped and counted; `nil, "limit"`; `nil, "busy"` |
+| Queued notifications, timers, subscriptions, nodes, pending intents | L30 | queue 1,024 per script (state notifications coalesced); timers 64; subscriptions 16 per script, 64 for all; nodes 2,048 per script (512 per `Frame`, that is per ext window, not per time frame; 256 labels), 8,192 for all (1,024 labels); intents 256 per script per frame; reserved queue room for the results of outstanding requests (L27) and for due timers, which are never dropped | dropped and counted; `nil, "limit"`; `nil, "busy"` |
 | Commands | L68 | 32 per script; names 1–32 bytes | `nil, "limit"`; a bad name raises |
 | Actions, contexts | L60 | 64 actions and 2 contexts per script; 256 and 16 for all; priority −500 (§8.1) | the load is refused |
 | Context changes | L62 | 4 per script per second, coalesced per frame | `nil, "busy"` |
 | Ext holds | L61 | 64 for all ext scripts | the hold does not start |
 | Ext UI pools | L49–L51 | 128 surfaces, 256 entries, a quarter of each memory pool per script; 512, 1,024, 32/64/64 MiB for all | `nil, "limit"` or `false` |
-| Composition coverage | L55 | 1.25 screens per script, 2.0 for all; per entry min(one screen, unclipped displayed rectangle); badges and labels count | `false` / `nil, "limit"`; a user resize stops; a host change hides (§7.10) |
-| Ext overlay and composition row | L56 | 1.0 ms GPU at 3840 × 2160 (E9; composition part in slice 1a) | the bounds shrink |
-| Solid press, focus box, case 1 | L57–L59 | alpha × effective opacity ≥ 0.5; the visible-focus rule; case 1's three conditions and gesture-window focus | not a gesture; `false` |
+| Composition coverage | L55 | 1.25 screens per script, 2.0 for all; per entry min(one screen, (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1) of its unclipped displayed rectangle); badges (fixed box) and labels count | `false` / `nil, "limit"`; a user resize stops; a host change hides (§7.10) |
+| Ext overlay and composition row | L56 | the 1.0 ms GPU part of the 1.6 ms row (0.6 ms overlay encoding from slice 1b + 1.0 ms GPU at 3840 × 2160, E9; slice 1a measures the composition part) | the bounds shrink |
+| Solid press, focus box, case 1 | L57–L59 | alpha × effective opacity ≥ 0.5 on the topmost painted node; the visible-focus rule, the script's own higher content and the badge's placement included; case 1's three conditions and gesture-window focus | not a gesture; `false` |
+| Gesture window | L93 | the delivering turn, closed earlier by the user's next input outside the script's frames and actions or 1 s after the delivering call started (60 frames deterministic); opened only by a solid press's `Pressed`, an action start or an `/ext:` line | requests treated as outside a gesture window |
 | UI text | L81 | `Text` 16 KiB, `Field` ≤ 4,096 bytes, `List` 1,024 × 256 bytes, labels, buttons, `placeholder` 256 bytes | Lua error |
 | Images | L48 | ≤ 4,096 px per axis, charged before decode | `Loaded{ok = false, reason = "too large"}` |
 | Outstanding worker requests | L27 | 32 per script, 256 for all (`Store` reads, pending reads included, and image decodes) | `nil, "busy"` (`Get`, image creation); `false, "busy"` (image `Set`) |
@@ -1518,12 +1772,13 @@ column gives what the script sees.
 | `Store` reads | L42 | 64 reads and 4 MiB per second per script; 16 MiB per second for all | `nil, "busy"` |
 | `Store` writes, keys | L43 | 64 newly dirty keys per second per script (10 s bucket); one flush per script per second | `nil, "busy"` |
 | `Store` writes, bytes | L44 | 32 KiB/s with a 10 MiB bucket per script; 128 KiB/s with a 40 MiB bucket for all; debited at the call, in full when a call makes a clean key dirty (no entry, or an entry a flush has taken), growth only over an untaken value (TM OPEN O-3) | `nil, "busy"` at the call |
-| Script log | L45 | 64 KiB per second per script; 1 MiB file rotated once; record ≤ 4,096 bytes | dropped and counted; cut with `…[cut]` |
+| Script log | L45 | 64 KiB per second per script and 128 KiB per second for all scripts (TM OPEN O-3); 1 MiB file rotated once; record ≤ 4,096 bytes | dropped and counted; cut with `…[cut]` |
 | `World` rays | L69 | 64 per script per frame, 256 for all; ≤ 500 m | `nil, "busy"`; longer raises |
 | `World` point queries | L70 | 256 per script per frame | `nil, "busy"` |
 | `Entity` queries | L71 | 8 per script per frame, 32 for all; ≤ 512 results | `nil, "busy"`; `truncated` |
 | Entity events | L31 | 1,024 per script per frame; 4,096 records per frame; 60 frames retained; filter batch 64 | dropped, `unfiltered` and counted |
 | Retained entity records | L25 | ≤ 245,760 records, ≤ 15 MiB host-wide | overflow counted |
+| Per-call and per-object caps of this spec | L91 | command arguments 1,024 bytes; `help` 96 bytes; 16 action edges per action per frame; `Entity.Read` 512 handles; a `near` or `around_self` radius 500 m and a `box` side 1,000 m; a ray over 25 landblocks; `LocText` 256 bytes | cut, Lua error, or dropped and counted, as each section states |
 
 ---
 
@@ -1563,7 +1818,7 @@ Manifest: capabilities `ui` and `world.read`; `[modules]` `Core = 1`, `UI = 1`, 
 
 | Frame | What happens |
 |---|---|
-| *L* (load) | 6a runs the top-level run. It takes `Core`, `UI` and `World` with `Ext.Use`; creates a frame of 220 × 56 units at the top-left, `movable = true`, with a `Group` (`layout = "column"`) holding two `Text` nodes; calls `frame:Show()`, which returns `true` (coverage about 0.007 screens at 1920 × 1080 and UI scale 1: the frame's 12,320 pixels plus its badge, §7.10). It registers `Core.Every(0.25, …)`. It has no `VisibilityChanged` handler, so nothing is queued for it (§2.8). Step 8 paints the frame and its badge "hud · ext script". |
+| *L* (load) | 6a runs the top-level run. It takes `Core`, `UI` and `World` with `Ext.Use`; creates a frame of 220 × 56 units at the top-left, `movable = true`, with a `Group` (`layout = "column"`) holding two `Text` nodes; calls `frame:Show()`, which returns `true` (coverage about 0.0075 screens at 1920 × 1080 and UI scale 1, counted by size, §7.10: the frame's (220 + 1) × (56 + 1) = 12,597 pixels plus its badge "hud · ext script", whose fixed box of 20 × (16 + 8 × (3 + 13)) = 20 × 144 units counts (144 + 1) × (20 + 1) = 3,045, together 15,642 of 2,073,600). It registers `Core.Every(0.25, …)`. It has no `VisibilityChanged` handler, so nothing is queued for it (§2.8). Step 8 paints the frame and its badge "hud · ext script". |
 | *L* + 1 | No timer is due yet; the turn is empty. |
 | *L* + 15 (0.25 s at 60 fps) | The timer call runs: `World.Here()` returns `{region = 1, x = 20,240.0, y = 22,420.0, z = 312.5, yaw = 3.1364, heading = 270.3, mode = "walk"}`; `World.MapCoords(x, y, z)` returns a table whose `text` the script puts in the first `Text`; it formats `heading` as "W" (the nearest of eight compass points) in the second. Two `Set` calls change text; they paint in this frame's step 8. |
 | any frame while a plugin window overlaps the frame | Nothing changes for the script; the plugin window is drawn above it and takes the pointer there (§7.1). |
@@ -1572,15 +1827,19 @@ Manifest: capabilities `ui` and `world.read`; `[modules]` `Core = 1`, `UI = 1`, 
 <a id="s13-2"></a>
 ### 13.2 Nearest-entity tracker
 
-Manifest: `ui`, `world.read`, `entity.read`, with the matching `[modules]`. The grant dialog
-shows the `entity.read` + `ui` warning (D17 §5.2).
+Manifest: `ui`, `world.read`, `entity.read`, with `[modules]` `Core = 1`, `UI = 1`,
+`World = 1` and `Entity = 1` (§3: `Core` must be declared like any module, or
+`Ext.Use("Core", 1)` answers `nil, "not declared"`). The grant dialog shows the
+`entity.read` + `ui` warning (D17 §5.2).
 
 - The top-level run creates a frame with a `List` and one `WorldLabel` (hidden), subscribes
   with `Entity.Subscribe({kinds = {"character"}, around_self = 60}, fn)`, and sets
   `Core.Every(0.5, refresh)`.
 - `refresh` calls `Entity.Find({kinds = {"character"}, near = {x, y, z, 60}, limit = 10})`
   with the position from `World.Here()`. Say it returns 4 handles and `truncated = false`; the
-  cost is `B` + 20 × (the candidates in the overlapping landblocks) + 4 × 150 units. It then
+  cost is `B` + `e(16)` for the filter (its 3 fields, the 1-entry `kinds` and the 4-entry
+  `near`) + 20 × (the `"character"` candidates in the overlapping landblocks) + 4 × 150
+  units. It then
   calls `Entity.Read(list, {"name", "x", "y", "z"})` once, builds 4 row strings with the
   distances and sets `rows`. It moves the label to the nearest entity's position and shows
   it.
@@ -1635,139 +1894,208 @@ none.
 <a id="s14"></a>
 ## 14. Invariants
 
-These are this spec's functional checks, run with `scripttool test` (deterministic mode) or
-the unit tests of `tessera-ext` and `tessera-ext-host`. They are **not** an escape
-catalogue: where an invariant covers ground of an escape case, the case is TM's and is named
-in brackets; its procedure and "Fails if" are TM §11's, and EM's `escape` runner runs it
-under that number (TM §0.1 rule 3).
+These are this spec's functional checks. They are **not** an escape catalogue: where an
+invariant covers ground of an escape case, the case is TM's and is named in brackets; its
+procedure and "Fails if" are TM §11's, and EM's `escape` runner runs it under that number
+(TM §0.1 rule 3).
 
-1. `Ext.Use` of `UI`, `Input`, `World` or `Entity` without the grant answers
+**Harness codes** (as TM §11 uses them). Every invariant carries one or more:
+
+- **U**: a unit test of `tessera-ext`, `tessera-ext-host`, `tessera-input` or `tessera-ui`
+  (the crate is named where it is not `tessera-ext`);
+- **ST**: `scripttool test` in deterministic mode with EM §11.5's walk file. The walk file
+  has no plugins, plugin windows or native panels, moves the pointer only together with a
+  press, has no drag or held button, and allows at most 4,096 synthetic entities per run
+  (TM L86); an invariant that needs more is not ST;
+- **CI**: the client's integration tests (EM's `client` runner), with plugins, native
+  panels, pointer moves, drags, held buttons and golden images;
+- **FZ**: a fuzz target in `fuzz/`; **RM**: the reference machine (E6, E9).
+
+An invariant with several codes passes only when every part passes. Two ST parts need
+harness hooks that EM does not yet define (OPEN-12): the record-flood hook of TM rule
+7.5.2's tests (invariants 36 and 37) and the walk file's `start.heading` form (invariant
+40).
+
+1. **ST.** `Ext.Use` of `UI`, `Input`, `World` or `Entity` without the grant answers
    `nil, "not granted"`; with it, two calls in one apartment return the same table; for a
    module the manifest does not declare it answers `nil, "not declared"`.
-2. After a grant is revoked the script is suspended in that frame and runs no code until the
-   user resumes it; after an optional revocation every function of a module table of that
-   capability that the script kept raises `"not granted"`; after a required one the script
-   is unloaded without its `Unload` handler [TM X91].
-3. Every function of §4–§10 raises a Lua error, never panics, for: a NaN or infinite number
-   where a finite one is required, a non-integer where an integer is required, a DID outside
-   0 … 2^32 − 1, a value of the wrong type, an unknown property, context, action, setting,
-   notification or field name (fuzz target "Lua-side argument validation").
-4. A handle compares equal to every other handle of the same live object held at the same
-   time; after removal, `Exists()` is `false`, `Kind()` still answers, and every other method
-   raises.
-5. `getmetatable` of any handle returns a string, never a table [TM X2].
-6. `Core.Time()` returns the same number for every call within one frame and never
+2. **ST** (the walk file's `manager` input). After a grant is revoked the script is
+   suspended in that frame and runs no code until the user resumes it; after an optional
+   revocation every function of a module table of that capability that the script kept
+   raises `"not granted"`; after a required one the script is unloaded without its `Unload`
+   handler [TM X91].
+3. **U, FZ.** Every function of §4–§10 raises a Lua error, never panics, for: a NaN or
+   infinite number where a finite one is required, a non-integer where an integer is
+   required, a DID outside 0 … 2^32 − 1, a value of the wrong type, an unknown property,
+   context, action, setting, notification or field name, a missing argument and an extra
+   argument (an explicit trailing `nil` included); and the first failing check of §2.4's
+   order decides the result (fuzz target "Lua-side argument validation").
+4. **ST.** A handle compares equal to every other handle of the same live object held at
+   the same time; after removal, `Exists()` is `false`, `Kind()` still answers, and every
+   other method raises.
+5. **U.** `getmetatable` of any handle returns a string, never a table [TM X2].
+6. **ST.** `Core.Time()` returns the same number for every call within one frame and never
    decreases; `Core.Frame()` rises by one per frame.
-7. A timer created in a turn never fires in that turn; a repeating timer fires at most once
-   per turn.
-8. A 65th timer, a 33rd command (TM L68) and a 17th subscription answer `nil, "limit"`
-   [TM X24, which covers `/ext:` commands at L68].
-9. A log call whose text holds CR, LF, ESC, a C1 control or U+2028 produces exactly one
-   record in TM §8.1's format, in which none of those characters appears unescaped
-   [TM X51].
-10. No function or report of these modules produces a chat line or a plugin chat event; an
-    `/ext:` line, known or unknown, in any letter case, produces none either [TM X73, X66].
-11. `Store.Get(k)` called after `Store.Set(k, v)` answers `v`, whether or not the flush ran,
-    including in the call of the `Set`; a `Set` after a `Get` does not change what the `Get`
-    answers; after `Store.Delete(k)` it answers absent [TM X88].
-12. A script that sets one key to a value under 16 KiB in every frame for 10 s causes at
-    most 11 writes of that key's file and is never answered `"busy"` for it.
-13. A value with a NaN, a cycle, a 33rd level, an 8,193rd element or more than 1 MiB
-    serialised answers `"invalid"`, `"cyclic"` or `"too large"`, and nothing is stored
-    [TM X20].
-14. 32 outstanding `Store.Get` calls for 1-KiB values succeed in a script with a 32 MiB cap,
-    whether answered from the pending map or from disk; the 33rd answers `nil, "busy"`; a
-    reservation over the cap answers `nil, "out of memory"` and raises nothing [TM X25].
-15. A `Store` file edited to hold a NaN key, a nil key or 10^6 entries is answered
-    `fn(nil, "invalid")` or `fn(nil, "too large")` from the worker, without a panic
-    [TM X20, X59].
-16. `Commands.Register` of a name with `.`, an upper-case letter or over 32 bytes raises.
-17. A command line's arguments over 1,024 bytes arrive cut at a UTF-8 boundary with
-    `truncated = true`.
-18. An ext frame is never drawn above, and never catches a point of, a plugin window or a
-    native panel, whatever their z-orders.
-19. A script's `Raise`, `Show` or `Activate` never moves its frame above another script's
-    frame.
-20. `frame:Activate()` and `field:Focus()` return `false`: with no window active outside a
-    gesture window; with the chat window active in the turn of an `/ext:` line; after the
-    user's solid press on the frame followed by a key press elsewhere, by the pointer leaving
-    the script's frames, or by 5 s without input there. `field:Focus()` (and the focus part
-    of `Activate`) also fails under case 1 outside a gesture window, and for a hidden,
-    zero-size, off-screen, clipped, below-0.5-opacity or covered field (under the chat
-    window, an opaque plugin window or another script's frame) [TM X37, X39].
-21. In the turn that delivers the `"start"` of the script's own action with no window active,
-    `Focus` on a visible, uncovered field returns `true`, from the action's handler, from a
-    later handler of that turn or from its `Tick`, also when the turn is split [TM X89].
-22. A press on a catching node whose own background at the press point is absent or has
-    alpha × effective opacity below 0.5 (text and borders only, opacity 0.49, an image texel
-    of alpha 0) delivers `Pressed`, `Released` and `Clicked` with `gesture = false`,
-    activates nothing, deactivates the window that was active, and a timer `Focus`
+7. **ST.** A timer created in a turn never fires in that turn; a repeating timer fires at
+   most once per turn.
+8. **ST.** A 65th timer, a 33rd command (TM L68) and a 17th subscription answer
+   `nil, "limit"` [TM X24, which covers `/ext:` commands at L68].
+9. **U** (`tessera-ext-host`). A log call whose text holds CR, LF, ESC, a C1 control or
+   U+2028 produces exactly one record in TM §8.1's format, in which none of those
+   characters appears unescaped [TM X51].
+10. **CI.** No function or report of these modules produces a chat line or a plugin chat
+    event; an `/ext:` line, known or unknown, in any letter case, produces none either
+    [TM X73, X66].
+11. **ST.** `Store.Get(k)` called after `Store.Set(k, v)` answers `v`, whether or not the
+    flush ran, including in the call of the `Set`; a `Set` after a `Get` does not change
+    what the `Get` answers; after `Store.Delete(k)` it answers absent [TM X88].
+12. **ST.** A script that sets one key to a value under 16 KiB in every frame for 10 s
+    causes at most 11 writes of that key's file and is never answered `"busy"` for it.
+13. **ST.** A value with a NaN, a cycle, a 33rd level, an 8,193rd element or more than
+    1 MiB serialised answers `"invalid"`, `"cyclic"` or `"too large"`, and nothing is
+    stored and no bucket is debited [TM X20].
+14. **ST.** 32 outstanding `Store.Get` calls for 1-KiB values succeed in a script with a
+    32 MiB cap, whether answered from the pending map or from disk; the 33rd answers
+    `nil, "busy"`; a reservation over the cap answers `nil, "out of memory"` and raises
+    nothing [TM X25].
+15. **U** (`tessera-ext-host`), **FZ.** A `Store` file edited to hold a NaN key, a nil key
+    or 10^6 entries is answered `fn(nil, "invalid")` or `fn(nil, "too large")` from the
+    worker, without a panic [TM X20, X59].
+16. **ST.** `Commands.Register` of a name with `.`, an upper-case letter or over 32 bytes
+    raises.
+17. **ST.** A command line's arguments over 1,024 bytes (TM L91) arrive cut at a UTF-8
+    boundary with `truncated = true`.
+18. **CI.** An ext frame is never drawn above, and never catches a point of, a plugin
+    window or a native panel, whatever their z-orders [TM X95].
+19. **ST, CI.** A script's `Raise`, `Show` or `Activate` never moves its frame above
+    another script's frame; a non-solid press never raises a script's block or frame, so
+    repeated world clicks on a transparent full-screen catching frame leave another
+    script's higher frame above it and catching its clicks (CI part) [TM X38].
+20. **CI.** `frame:Activate()` and `field:Focus()` return `false`: with no window active
+    outside a gesture window; with the chat window active in the turn of an `/ext:` line;
+    after the user's solid press on the frame followed by a key press elsewhere, by the
+    pointer leaving the script's frames, or by 5 s without input there. `field:Focus()`
+    (and the focus part of `Activate`) also fails under case 1 outside a gesture window,
+    and for a hidden, zero-size, off-screen, clipped, below-0.5-opacity or covered field
+    (under the chat window, an opaque plugin window, another script's frame, its own later
+    sibling or its own higher frame), and for a field whose frame's badge is off screen or
+    under a native panel or plugin window [TM X37, X39, X49].
+21. **ST.** In the turn that delivers the `"start"` of the script's own action with no
+    window active, `Focus` on a visible, uncovered field returns `true`, from the action's
+    handler, from a later handler of that turn or from its `Tick`, also when the turn is
+    split [TM X89].
+22. **CI.** A press on a catching node whose own background at the press point is absent
+    or has alpha × effective opacity below 0.5 (text and borders only, opacity 0.49, an
+    image texel of alpha 0), or that lies under another painted node of any ext frame (an
+    opaque non-catching `Image` of the same script over a `Field`), delivers `Pressed`,
+    `Released` and `Clicked` with `gesture = false`, activates nothing, raises nothing,
+    deactivates the window that was active, focuses no field, and a timer `Focus`
     afterwards returns `false` [TM X38].
-23. A focused field over which a plugin window is moved loses the focus before the next key
-    is routed; the next key reaches the plugin window or the game [TM X39].
-24. Every shown frame with a catching node or a field carries the host-drawn badge with its
-    script id and "ext script", whether or not a field has focus; no ext frame of any script
-    draws over a badge; while a field has the focus the caret, the focus mark and the
-    focus-coloured badge are drawn [TM X49].
-25. A script's `Set{text = …}` on a field clears its selection, and a copy after a text
-    change copies nothing [TM X52].
-26. World labels are never hit-tested: a world label over a plugin button changes neither
-    the button's hover nor its click, and receives no notification [TM X45].
-27. A show, creation or size change that would take a script's composition coverage over
-    1.25 screens, or all ext over 2.0, is refused and changes nothing; moving a shown frame
-    never changes coverage; a user resize stops at the bound; a screen resize that passes a
-    bound hides frames in reverse order of their last show [TM X31].
-28. An `Input.Activate` made in 6b of the frame before a backend switch is never applied;
-    nor is one made before a suspension or unload (D17 §6.6, the slice-1a intent test)
-    [TM X80].
-29. An ext binding never fires while a text field (chat, plugin or ext) has the focus, and
-    never for an input that a non-ext binding takes in either pass (D17 exit criterion 2)
-    [TM X34, X36].
-30. `Input.Standard` of any name off the list of §8.3 raises; `Input.Standard("mouselook")`
-    is pressed exactly while the `mouselook` action has a hold from either context.
-31. A script that toggles its context every frame never cancels a pending sequence of a
-    non-ext context (D17 exit criterion 2) [TM X40].
-32. Every `World` function answers `nil, "not loaded"` for a point in a landblock that is
-    not resident, and never causes that landblock to be requested.
-33. `World.Ray` answers `nil, "not loaded"` when any landblock its bounding box overlaps
-    has no installed collision set, and never a partial result.
-34. The 65th ray, the 257th point query and the 9th entity query of a script in one frame
-    answer `nil, "busy"`; the next frame they succeed.
-35. `Entity.Find` never returns more than `limit` results and sets `truncated` exactly when
-    more matched.
-36. With 10,000 spawns in one frame, 4,096 are recorded, every subscription's next batch
-    reports `unfiltered = 5,904`, and no filter work happens outside a filter call
-    [TM X19].
-37. A script starved for 10 s while 1,024 entity events arrive per frame keeps its memory
-    within its cap and its frames within the ext ceiling of TM L12 [TM X19, X24].
-38. In deterministic mode, two runs with the same seed and walk give the same calls in the
-    same frames, the same notification order (§2.8) and the same answers to every query,
-    while real worker timing varies (D17 exit criterion 7).
-39. Under the "every frame is heavy" hook in deterministic mode, a queued `/ext:` line is
-    delivered within 16 frames (plus the round robin) [TM X85].
-40. `World.Here().heading` equals (90 − `yaw` · 180 / π) wrapped into [0, 360), and every
-    `yaw` the host returns lies in (−π, π].
-41. A `Store.Set` of a key whose previous value a flush has taken and is still writing
-    (the harness holds the flush in flight) debits one key token and the new value's full
-    counted size; a script rewriting 1,024 keys every frame for 60 s, with every flush
-    held in flight, writes at most the bound of TM X57 [TM X57].
-42. A script whose own calls fill the 2 ms cap every frame resumes its split turn first
-    in its group at most once per turn; every later part of that turn runs at the
+23. **CI.** A focused field over which a plugin window is moved loses the focus before the
+    next key is routed; the next key reaches the plugin window or the game [TM X39].
+24. **CI** (golden image). Every shown frame with a catching node or a field carries the
+    host-drawn badge with "⟨id⟩ · ext script" in its fixed box, wholly on screen (inside
+    the frame for a frame at y = 5), whether or not a field has focus; no ext frame of any
+    script draws over a badge; while a field has the focus the caret, the focus mark and
+    the focus-coloured badge are drawn, and no node of the script, its own included, draws
+    over the caret or the mark [TM X49].
+25. **CI.** A script's `Set{text = …}` on a field clears its selection, and a copy after a
+    text change copies nothing [TM X52].
+26. **CI.** World labels are never hit-tested: a world label over a plugin button changes
+    neither the button's hover nor its click, and receives no notification [TM X45].
+27. **U** (`tessera-ui`), **CI.** A show, creation, size change or `node:Add` that would
+    take a script's composition coverage over 1.25 screens, or all ext over 2.0, is
+    refused and changes nothing; every entry counts (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1) physical
+    pixels capped at one screen, and a badge its fixed box under any font (U); moving a
+    shown frame, by the script or by the user's drag, by whole or fractional pixels at UI
+    scale 1.25, never changes coverage; a user resize stops at the bound; a screen resize
+    that passes a bound hides frames and labels in reverse order of their last show (CI)
+    [TM X31, slice-1a part].
+28. **CI.** An `Input.Activate` made in 6b of the frame before a backend switch is never
+    applied; nor is one made before a suspension or unload (D17 §6.6, the slice-1a intent
+    test) [TM X80].
+29. **CI.** An ext binding on a **key or pad** stroke never fires while a text field (chat,
+    plugin or ext) has the focus, and no ext binding fires for an input that a non-ext
+    binding takes in either pass (D17 exit criterion 2). An ext binding on a mouse button
+    may fire while a field has the focus (IB D6, §7.8) [TM X34, X36].
+30. **ST.** `Input.Standard` of any name off the list of §8.3 raises;
+    `Input.Standard("mouselook")` is pressed exactly while the `mouselook` action has a
+    hold from either context.
+31. **U** (`tessera-input`). A script that toggles its context every frame never cancels a
+    pending sequence of a non-ext context (D17 exit criterion 2) [TM X40].
+32. **ST.** Every `World` function answers `nil, "not loaded"` for a point in a landblock
+    that is not resident, and never causes that landblock to be requested.
+33. **ST.** `World.Ray` answers `nil, "not loaded"` when any landblock its bounding box
+    overlaps has no installed collision set, and never a partial result.
+34. **ST.** The 65th ray, the 257th point query and the 9th entity query of a script in one
+    frame answer `nil, "busy"`; the next frame they succeed.
+35. **ST.** `Entity.Find` never returns more than `limit` results and sets `truncated`
+    exactly when more matched.
+36. **ST** (record-flood hook, OPEN-12). With 10,000 spawns in one frame, 4,096 are
+    recorded, every subscription's next batch reports `unfiltered = 5,904`, no filter work
+    happens outside a filter call, and a subscription created while its script's cursor
+    lags matches no record of its own or an earlier frame [TM X19].
+37. **ST** (record-flood hook, OPEN-12), **RM.** A script starved for 10 s while 1,024
+    entity events arrive per frame keeps its memory within its cap and its frames within
+    the ext ceiling of TM L12, and its filter calls alone never throttle, suspend or abort
+    it [TM X19, X24].
+38. **ST.** In deterministic mode, two runs with the same seed and walk give the same calls
+    in the same frames, the same notification order (§2.8) and the same answers to every
+    query, while real worker timing varies (D17 exit criterion 7).
+39. **ST.** Under the "every frame is heavy" hook in deterministic mode, a queued `/ext:`
+    line is delivered within 16 frames (plus the round robin) [TM X85].
+40. **ST** (`start.heading` form, OPEN-12). `World.Here().heading` equals
+    (90 − `yaw` · 180 / π) wrapped into [0, 360), and every `yaw` the host returns lies in
+    (−π, π].
+41. **ST.** A `Store.Set` of a key whose previous value a flush has taken and is still
+    writing (the harness holds the flush in flight) debits one key token and the new
+    value's full counted size; a script rewriting 1,024 keys every frame for 60 s, with
+    every flush held in flight, writes at most the bound of TM X57 [TM X57].
+42. **ST.** A script whose own calls fill the 2 ms cap every frame resumes its split turn
+    first in its group at most once per turn; every later part of that turn runs at the
     script's ordinary rotation place, so the other scripts of its group are never starved
     beyond the round robin [TM X17].
-43. With the process locale set to a non-"C" value in a test build, every loaded ext
-    script is suspended in the frame of the next check, no load or resume succeeds until
-    the locale is "C" again, and the first turn after a resume carries
+43. **CI.** With the process locale set to a non-"C" value in a test build, every loaded
+    ext script is suspended in the frame of the next check, no load or resume succeeds
+    until the locale is "C" again, and the first turn after a resume carries
     `Resumed{reason = "locale"}` [TM X22].
-44. A state notification frozen in a turn's delivery set is delivered with the value it
-    had when the turn started; a change the script's own call makes during that turn is
-    delivered as a separate entry in the next turn, never in the same turn.
-45. A re-read of the grant store that removes, invalidates or narrows a loaded script's
-    record suspends it in the frame the result is applied; one that widens it changes
-    nothing until the next load [TM X91].
-46. In the ext profile, `table.foreach`, `table.foreachi`, `table.getn`, `table.setn`,
-    `string.gfind` and `math.mod` are `nil`, and every global and library function outside
-    §2.11's lists is absent [TM X8].
+44. **ST.** A state notification frozen in a turn's delivery set is delivered with the
+    value it had when the turn started; a change the script's own call makes during that
+    turn is delivered as a separate entry in the next turn, never in the same turn.
+45. **ST** (the walk file's `manager` input). A re-read of the grant store that removes,
+    invalidates or narrows a loaded script's record suspends it in the frame the result is
+    applied; one that widens it changes nothing until the next load [TM X91].
+46. **U.** In the ext profile, `table.foreach`, `table.foreachi`, `table.getn`,
+    `table.setn`, `string.gfind` and `math.mod` are `nil`, and every global and library
+    function outside §2.11's lists is absent [TM X8].
+47. **ST** (the walk file's `manager` input). After an optional `entity.read` revocation and
+    a resume, a kept entity handle passed to `Entity.Read`, `e:Get`, `e:Exists()` or
+    `e:Kind()` raises `"not granted"` while still comparing equal to itself as a table key;
+    after an optional `ui` revocation every node handle is stale; an intent holding a handle
+    whose minting capability is gone is never applied (from slice 1b also `lease:Follow`)
+    [TM X91, its kept-handle sub-case].
+48. **CI.** After a solid press, the script's turn may reorder, show or hide its own
+    frames and nodes, but no node of the script drawn above a focused field (a later
+    sibling, a later sibling of an ancestor, a higher frame of the script), whether it
+    catches the pointer or not, can overlap the field's focus area without the field
+    losing the focus before the next key; a `Focus` request while such a node overlaps it
+    returns `false` [TM X38, X39].
+49. **ST.** A script suspended by any cause (the panic chord included) has every ext
+    context inactive and its holds released in that frame; a stroke bound only by it then
+    records no edge and opens no gesture window; after the resume `Input.IsActive` answers
+    `false` for every context until the script activates it again [TM X91, its suspended-
+    context sub-case].
+50. **ST, CI.** A gesture window closes at the end of its turn, at the user's first key,
+    press or wheel step resolved outside the script's frames and actions (a `W` to the
+    world), or 60 frames after the delivering call started in deterministic mode,
+    whichever comes first; a `Focus` request after it returns `false` (ST); a solid press
+    held for 10 s opens one window, at its `Pressed`, and its `Released` and `Clicked`
+    open none (CI: the walk file has no held button) [TM X89].
+51. **ST.** With the notification queue full (1,024 entries) and 32 `Store.Get` requests
+    outstanding, every request's `fn` is delivered exactly once, also across a suspension
+    and resume, and no other dropped notification goes unreported: every delivered table
+    of that name carries `dropped`, or `Resumed.counts` carries it under its key (§2.8,
+    §4.1).
 
 ---
 
@@ -1785,15 +2113,14 @@ Numbers are never reused; a closed item stays listed with the place that closed 
 **OPEN-2 (Store reservation ratio): closed here, tracked as TM OPEN O-4.** The reservation
 rule is TM §8.14 (§5.3); the neutral reader's declared expansion ratio is measured in E5.
 
-> **OPEN-3 (values Tessera computes):** `World.MapCoords`, `World.LocText`, `World.Clock`
-> and `World.Sky` pass through values Tessera's client computes with rules some of which
-> rest on disassembly (`coordinates.md` §8–§9; `environment.md` §11, "BIN unless stated";
-> `sound.md` §10.3.5). §9.2 promises only units, ranges and directions, so no such rule
-> becomes part of the ext contract. The reviewer is asked to confirm that this satisfies
-> D17 §12 and LEGAL §18.3 rule 1. If not: `MapCoords` keeps `north` and `east` from a
-> Tessera-defined linear function of the region frame and drops `text`; `LocText` is
-> withdrawn from the major; `Clock` keeps only `seconds` and `time_of_day`; `Sky` keeps only
-> the sun vector and drops `day`.
+**OPEN-3 (values Tessera computes): closed by the reviewer's confirmation** (re-review of
+revision 3): §9.2's promise-only contract (units, ranges, directions; no formula, rounding
+or format) satisfies D17 §12 and LEGAL §18.3 rule 1 for `World.MapCoords`,
+`World.LocText`, `World.Clock` and `World.Sky`. The fallback stays recorded as the plan if
+the owner disagrees: `MapCoords` keeps `north` and `east` from a Tessera-defined linear
+function of the region frame and drops `text`; `LocText` is withdrawn from the major;
+`Clock` keeps only `seconds` and `time_of_day`; `Sky` keeps only the sun vector and drops
+`day`.
 
 **OPEN-4 (composited-area bound): closed by TM §7.1** (1.25 and 2.0 screens, TM L55;
 §7.10). E9 and the bounds' possible shrinking are TM OPEN O-1; the budget row's funding is
@@ -1833,6 +2160,33 @@ take `yaw` and `pitch` as §2.10 states (EA1b's citation of an "EA1a §9 'Headin
 §2.10). EA1b's handler names follow §2.8 (`Core.On("Tick")`, `Core.On("Unload")`), and the
 generated reference is named in §0.
 
+
+> **OPEN-11 (display category of `help`, request to TM §8.2):** `Commands.Register`'s
+> `help` (§6.1, at most 96 bytes, TM L91) is script text drawn in the script manager by
+> `/ext:help`, a reserved-layer surface, so it goes through TM §8.2's steps 1–5. Step 4
+> names no category for it; until TM names one, this spec applies the cap of "an error
+> or log line" (256 code points and 1,024 bytes), which a 96-byte string never reaches,
+> so only steps 1–3 and 5 change it. Requested of TM: name `help` in step 4 (or a
+> "script help line" category).
+
+> **OPEN-12 (requests to the companion specs, TM §0.1 rule 5's form):**
+> (a) **EA1b §3.1** gives `Region` as an integer 0–255; this spec's `region` is
+> 1 … 255 (§7.9) and `coordinates.md` §4 makes 0 "no region". EA1b is asked to refuse
+> 0 for a destination region or to state what 0 means there.
+> (b) and (c), **answered by EA1b revision 4**: EA1b now refuses a kept entity handle
+> in `Follow` at the call and at every apply under §2.4 step 2 and §2.7 (no longer "the
+> entity handles are gone"), and EA1b §10.3 cites §2.4's order of checks and
+> extra-argument rule instead of restating them. EA1b's citation "EA1a §2.9" for the
+> handle rule should read §2.7, where the rule lives (§2.9 points to it).
+> (d) **EM §11.5** gives the walk file's `[world] start` "heading" in degrees without
+> its form; §2.10 is the one home of angle forms, and invariant 40 and §13.1 depend on
+> it. EM is asked to state whether it is a compass bearing (0 = north, clockwise, as
+> `heading` results) or a yaw, or to replace it with `yaw` in radians.
+> (e) **EM §11.5 and §11.8** have no record-flood hook, which TM rule 7.5.2's tests (X19's
+> ST part) and invariants 36 and 37 need because L86 caps walk-file entities at 4,096 per
+> run. EM is asked to define the hook (a walk-file key or a harness option that adds
+> spawn and despawn records to steps 2–5's list, as many per frame as the test asks).
+
 ---
 
 <a id="s16"></a>
@@ -1843,3 +2197,4 @@ generated reference is named in §0.
 | 2026-10-07 | First version (design, from accepted decision 0017): §0–§16. The slice-1a module reference for `Core`, `Store`, `Commands`, `UI`, `Input`, `World` and `Entity`, with types, results, failures, costs, timing and capabilities; closes for these modules D17's open items 2 (presses that do not activate), 5 (subscription filtering inside metered calls with a cursor and a recorded-list cap), 6 (`Store` read-your-writes with a per-(kind, id) pending map), 8 (world labels never catch the pointer) and the composition half of item 1 (composited-area bound), and the "Other improvements" on log escaping, the ownership badge, clipboard selection clearing, image decodes as outstanding requests, sticky aborts, split turns and gesture calls, and `Store` reservations from the recorded size. |
 | 2026-10-07 | Revision 2 (Review), answering the independent review by adopting `ext-threat-model.md` revision 2 as normative. **Authority** (§0, header): TM cited for every limit (TM L*n*, §11 rewritten with an L column), every rule of its §7–§9 and every escape test (TM X*n*); this spec and EA1b together are D17's `ext-api.md`, and the general rules live here; no escape catalogue of its own (§14's invariants name the TM tests they overlap). **Open item 2** (§7.6, §7.7): "visible painter" replaced by TM's solid press (own background or image only, with a per-kind form for host-drawn faces); a non-solid press is a world click for activation and focus; `Pressed`, `Released`, `Clicked` carry `gesture`; under case 1 a `Field` is focused only inside a gesture window. **Gesture window** (§2.1, §2.6, §7.7): the whole delivering turn (TM §8.13), not one call; solid presses are gestures. **Composition** (§7.10, §7.9, §7.2, §11): 1.25 and 2.0 screens, unclipped and position-independent per-entry counting, badges and labels counted, no nested surfaces in slice 1a, user resizes stop at the bound, host changes hide in reverse show order, the TM L56 budget row and E9; OPEN-4 closed. **Entity filtering** (§10.3): one batched filter call per turn costing 64 × subscriptions × `c_f`, matches queued as batch notifications, overflow reported as `unfiltered`, cursor to the newest frame at resume with the gap in `Resumed`, the 15 MiB retained bound. **`Store`** (§5): TM §7.6 read-your-writes (pending reads answered from a copy at the call, no worker job but counted as outstanding and against the read rate, delivered in a later turn; pending deletion answers absent; wipes clear the map; pending entries count to the totals and the writer's cap); TM §8.14 reservations from the pending entry or file index, refusals return `nil, "out of memory"` (new reason, §2.4); TM §8.7 byte buckets (32 KiB/s and 10 MiB per script, 128 KiB/s and 40 MiB for all, debited at the call, per session), temporary files counted and removed at open; the owner tag of TM §8.24. **Badge** (§7.1, §7.7): on every shown frame with a catching node or a field, "ext script", top layer of the ext range, counted in coverage, no longer part of a field's focus area. **Images** (§7.10, §7.3): a decode at the cap answers `nil, "busy"` / `false, "busy"` at the call. **Liveness** (§2.6, §4.1): floor frames, the switch timeout (close without `Unload`) and the gate's clock origin; OPEN-9 closed. **Memory** (§11): kept snapshot data files, the file index and pending entries in the per-script row. **New general rules** (§2.8, §2.10, §3): one handler pattern (`Module.On`, `obj:On`, per-request callbacks; `Core.OnTick`/`OnUnload`/`OnResumed`/`OnSettingsChanged` became `Core.On("Tick"|"Unload"|"Resumed"|"SettingsChanged")`, `UI.OnScreenChanged` became `UI.On("ScreenChanged")`, `Input.On` handlers take one table); notifications queued only with a handler, gestures always; a FIFO queue with a fixed delivery set per turn (the §2.8 order contradiction fixed); yaw in radians per KM §9.1 beside `heading` in degrees, quaternions `{w, x, y, z}` (`yaw` added to `World.Here` and entity fields); `Ext.Use` checks the manifest's module tables and answers `"not declared"` for an undeclared module (closing EM OPEN O-2); every ext context has priority −500 (closing EM OPEN O-3). **BIN pass-through** (§0, §9.2, OPEN-3): `World.Clock` and `World.Sky` get contract limits like `MapCoords`. **Log** (§4.3): TM §8.1's one format. **Minor**: `V` = 295,112; `Input.Standard("mouselook")` defined as the one registry action; revocation removes subscriptions too (§2.9); OPEN-2 and OPEN-10 closed; examples §13 and invariants §14 updated (invariants 39 and 40 added). |
 | 2026-10-07 | Revision 3 (Review), answering the re-review of revision 2 and carrying TM revision 3. **Angles** (§2.10, blocking): one rule for every API spec: every direction angle (yaw, pitch, an angle about +Z relative to a yaw) is in radians per KM §9.1, `heading` is a result only, no argument is ever a heading or takes degrees for a direction; the claim about EA1b restated as a requirement EA1b follows (`Camera` pose, `Follow`, key frames, `Sandbox.Teleport`); a field of view is an extent, stated by its module; §0 names §2.10 as the only angle section. **Generated reference** (§0, §2.5): `docs/specs/ext-api-reference.md` (EA1b §10.4, §10.6), derived, never hand-edited, adds no rule. **Fairness** (§2.6): a split turn resumes first in its group at most once; a part split again waits for its ordinary rotation place (TM §8.13, X17); invariant 42. **Locale** (§2.8, §2.9, §4.1, §7.11): a process locale other than "C" suspends every ext script (D17 §1.5, TM T22, X22); no load or resume until it is "C" again (1a rule); `Resumed.reason = "locale"`; §2.8 lists the four suspension causes; invariant 43. **Ext environment** (new §2.11): D17 §1.2's globals, absent names and replacements (`print`, `tostring`, per-apartment random numbers) and TM §8.15's library tables, removed compatibility names and `math.max`/`math.min` charged by argument count (X8); invariant 46. **Coalescing** (§2.8): entries of a turn's fixed delivery set are frozen; a later change, self-caused or from the next frame's input in a split turn, is a new entry after the set, so self-caused values arrive in the next turn and at most one entry per node and kind waits outside the set; invariant 44. **Window removal** (§7, §7.11): no host close control; the host routes are the panic chord and the script manager (unload, revoke `ui`); D17 §3's "closing the window" only through the script's own control. **`Store`** (§5, §11, §13.3; TM §8.7, L44, X57, rules 7.6.1–7.6.3, §8.8, §8.24): taken and untaken pending entries; a key is clean once a flush has taken its value, even in flight, so a `Set` or `Delete` landing during an in-flight flush pays a key token and the full counted size, and only a replacement of an untaken value pays growth alone (invariant 41); the file index charged in full to every apartment that has the store open; reads from the pending map are delivered in the **next** turn, disk reads in the first turn after their job; an unreadable owner tag also wipes; the store directory opened without following links, temporary files named `t_<key>.tmp` (EM §3.1, §3.6, §8.8, TM X94). **Floor** (§2.6, §11): 250 ms counted from the start of the last frame in which ext ran; a floor frame resets both conditions and runs 6c with its 1 ms slice. **Revocation** (§2.9): the grant-store re-read is a route (narrowing suspends, widening waits for the next load; TM §8.23); invariant 45. **Smaller** (§2.1, §6.2, §10.3, §14): "Call" includes REPL runs (TM §2, L85); `/ext:reload` refused with "Developer mode is off" outside developer mode, and for an id not loaded queues nothing with a notice (1a rule); the entity worked example and X19 within L30 (4 × 16 and 16 × 4); invariant 8 cites L68 with X24, which now covers commands. |
+| 2026-10-07 | Revision 4 (Review), answering the re-review of revision 3 and its follow-up review (items 1–25) and carrying TM revision 4. **(1) Register** (§0, §1, §2.3, §4.2, §6.1, §6.2, §7.4, §7.9, §8.2, §9.1, §10.2, §11, invariant 17): under TM §0.1 rule 6 every resource limit is TM's; this spec's per-call and per-object caps are TM L91 (command arguments, `help`, action edges, `Entity.Read` handles, query radius and box side, ray landblocks, `LocText`) and are cited so; positions, timer delay, node positions and sizes, label width, `region`, offsets and `max_distance` are marked "domain", node `name` "grammar"; §11 gains the L91 and L93 rows. **(2) Removal routes** (§7.11): the `ui` dialog text of EM §6.1 (EM revision 4) names the chord and the manager; cited. **(3) L56** (§7.10, §11): "the 1.0 ms GPU part of the 1.6 ms row". **(4) Costs** (§2.5 and every row): one counting rule, every key and every value, nested tables again, fixed shapes charged in full: `Store.Usage` and `Core.Script` `e(10)`, `World.Here` and `World.Clock` `e(14)`, `World.Sky` `e(18)`, `Input.State` and `Input.Standard` `e(10)`, `UI.Usage` `e(12)`; arrays `e(2n)` (`Core.Settings`, `Store.Keys`, `Commands.List`, `Input.Bindings`), `Input.Actions` `e(8n)`; `World` point-query results and ray hits charged; `node:Set`/`Get`/`Add` of `rows` `e(2 · #rows)`; `Entity.Read` per entry `e(2)` + `e(2 · #fields)` + `e(8)` for `rotation` + `e(4)` for `landblock`; walked filters charged; batch tables `h(n + 1)` + `e(8 + 2n)`; §13.2's cost restated. **(5) Handles across modules** (§2.4, §2.7, §2.9): every handle records its minting module; after that module's capability leaves the effective set every native that takes it raises `"not granted"` (`Exists`, `Kind` included) and every apply re-checks it (TM §8.23); invariant 47, X91's kept-handle sub-case. **(6) Own content** (§7.6, §7.7): a solid press is judged by the topmost painted node (TM rule 7.2.1); the visible-focus rule counts the script's own later nodes and higher frames as covering and requires the badge wholly on screen and uncovered (TM rule 7.2.2, §8.3, L58); the caret and focus mark are drawn in the badge layer (1a rule, stricter); the re-check list no longer names step 8; invariants 20, 22, 48. **(7) Block order** (§7.1): only a solid press raises a block or frame; invariants 19, 22. **(8) Coverage** (§7.3, §7.7, §7.10, §11, §13.1, invariant 27): entries counted by size, (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1), independent of position and sub-pixel phase (TM rule 7.1.2); the badge's fixed box 20 × (16 + 8 × (*n* + 13)) UI units and its on-screen placement (TM §8.3); `node:Add` that gives a shown frame its badge answers `nil, "limit"` past a bound; §13.1 recomputed (about 0.0075 screens). **(9) What opens a gesture window** (§2.1, §2.8, §7.6): only the `Pressed` of a solid press, an action start or an `/ext:` line; `gesture` on `Released` and `Clicked` is information only; a press on a disabled node is solid or not by the same test, activates by the same rule and opens no window. **(10) Window bound** (§2.1, §2.6): closed at the user's next input outside the script's frames and actions or 1 s (60 frames) after the delivering call (TM L93, which answers the request to TM); invariant 50. **(11) Suspension and input** (§2.8, §7.11, §8.1): contexts deactivated and holds released in the frame of the suspension, no input consumed and no edge or gesture recorded while suspended, the panic chord resolved first, contexts not restored on resume and `Input.IsActive` answering `false` (TM §8.23); invariant 49. **(12) Drops** (§2.8, §4.1, §5.3, §7.5): reserved queue room for results of outstanding requests and due timers, never dropped (TM L30); `dropped` on every queued module and object notification table; `Resumed.counts`' exact keys; invariant 51. **(13) Order of checks** (§2.4): the general order (grant and backend, arity and types with no extra argument, constraints, caps, charge, operation) and its exceptions for `Store.Set`, `Store.Delete`, `Store.Get` and `World.Ray`, with `Store.Set`'s precedence (walk faults, then `"full"`, then `"busy"`); EA1b §10.3 cites it. **(14)** Invariant 29 and §7.8 narrowed to key and pad presses (IB D6). **(15) Harness codes** (§14): U, ST, CI, FZ, RM on every invariant; the walk file's limits named; invariants needing plugins, drags or held buttons are CI; X19's ST part needs EM's record-flood hook (OPEN-12). **(16) X31** (§7.10): its slice-1a part only; nested, scale and rotation parts belong to the slice that adds them (TM revision 4). **(17) Entity subscriptions** (§10.2, §10.3): a subscription matches only records of frames after its creation (TM rule 7.5.2); `around_self` never matches a record without a placed character; `Find` without an area sorts from the character, or in the store's stable order without one; candidates are the entities of the requested kinds only; "delivered", not "matched"; the filter call is never an abort and is outside L17 (TM rule 7.5.2a). **(18) Layout** (§2.1, §2.6, §7.1, §7.3): layout runs inside the call that changes it; step 8 only paints and places labels. **(19)** "512 per `Frame` (window)" (§7.10, §11); only frames take a surface (TM L49). **(20) Pending reads** (§5.2, §5.3): a pending `Get` shares immutable bytes, or charges `b(stored size)` before copying (TM rule 7.6.3). **(21)** `help` drawn through TM §8.2 (OPEN-11 asks TM for its category); an `/ext:` line for a suspended script is not queued, shows EM §9.8's notice and counts under `Resumed.counts.command` (§6.2). **(22) Unspecified results** (§7.1, §7.5, §8.1): `Field` text must fit `max_bytes` (raise, never cut); `Slider` `min` ≥ `max` raises and `value` is re-clamped; a `List` selection past the new rows clears to `nil`; a consent prompt takes the focus with `FocusChanged{by = "host"}` and does not give it back; `Input`'s rate counts calls. **(23) Companions**: OPEN-12 asks EA1b for its region range and EM for the walk file's `start.heading` form and a record-flood hook; §6.2 cites EM §9.8's reload notices; §13.2 lists `Core` in `[modules]`. **(24)** The all-scripts log rate of 128 KiB/s (§4.3, §11; TM L45, OPEN O-3). **(25)** OPEN-3 closed by the reviewer's confirmation, the fallback kept (§0, §9.2, §15). |

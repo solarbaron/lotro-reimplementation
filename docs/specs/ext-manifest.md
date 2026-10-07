@@ -7,7 +7,7 @@
 | Status | **Review** |
 | Last updated | 2026-10-07 |
 | Author role | Design (clean room). Everything here is **Tessera's own design**, written from [decision 0017](../decisions/0017-extended-scripting.md) and Tessera's own specs. It describes no other program, and no dirty-room material, disassembly or third-party source was read to write it |
-| Reviewer | Independent clean-room review, 2026-10-07: **changes requested** (consistency with `ext-threat-model.md`, `ext-api-1a.md`, `ext-api-1b.md` and D17; prompt pointer-entry wording; hot-reload declaration set; re-ask table composition; grant-store I/O thread; `keymap-ext.toml` location; escape-catalogue IDs; and smaller items). **Revision 2** (the same day) answers every returned issue and aligns this spec with TM revision 2 (change log, §16). **Re-review of revision 2, 2026-10-07: changes requested**, status stays Review. Every issue of the first review is resolved and the content-hash vectors of §5.2 reproduce. Still open: (1) the store open and wipe (§8.8) and the log paths (§3.1) state no no-follow or entry-kind rule for `s_<id>/` and its entries, and do not name the temporary files, so TM invariant 15 is not concrete and a wipe through a linked store directory is not excluded; (2) `test` (§11.4) does not say how grants and dialogs behave at loads after the first (reloads, full reloads, `manager` loads), there is no trace event for a dialog, and nothing seeds a grant store, so the ST parts of TM X62, X90 and X92 cannot be built; (3) `no_file_outside` (§11.8) omits the settings crate's persistent lock file, and "the settings crate's lock file" (§8.5) is ambiguous; (4) invariants 9 and 13 contradict the re-read of valid hand-edited records (§8.5, TM §4.3 assumption 3), and a re-read that narrows or invalidates a loaded script's record is not said to suspend it (TM §8.23); plus smaller items (`/ext:reload` with developer mode off, autoload order for records outside `order`, the store size for the content notice, a phase-B load waiting on its write at a switch, `escape` results for mixed ST/CI tests, the O-11 list, the `dump-api` spelling against D17 §10, the L9 citation in §10.3). **Revision 3** (the same day) answers every point of this re-review and aligns this spec with TM revision 3: the store and log no-follow and entry-kind rules with a named temporary-file pattern (§3.6, §8.8, TM §8.8, X94); the harness's dialog policy, `reply` and `grants` walk events, `--grants`, a `dialog` trace event and expectation (§11.4–§11.6); the named lock and temporary files (§8.5, §11.8); the grant-store re-read as a revocation route and invariants 9 and 13 restated (§8.5, TM §8.23); the smaller items (change log, §16). Status stays Review. **Re-review of revision 3, 2026-10-07: changes requested**, status stays Review. Every point of the re-review of revision 2 is answered. §3.6 and §8.8 match TM §8.8 items 1–5, §8.5 and §8.4 match TM §8.23, §9.8 matches TM §8.24 and EA1b §8.1, §10.3–§10.4 match TM §7.4 and §8.21, and §11.4–§11.8 give X62, X91, X92 and X94 their ST routes. The §5.2 vectors reproduce again. Still open: (1) **security, liveness:** §3.4 step 3 (the snapshot walk, also used by `check`) checks each entry's kind only after opening it, and states no non-blocking open, so a FIFO in an unpacked folder (TM X54) blocks an asset worker on its open. The same holds for the log file's write open in §3.6 (`O_NOFOLLOW | O_APPEND`). Fix: open non-blocking, or classify first with `fstatat(…, AT_SYMLINK_NOFOLLOW)`, for both; TM X54's "Fails if" should name a blocked worker; (2) **§8.5:** a re-read replaces the grant table and re-applies only the changes submitted after the read was queued. So session-only decisions are lost. In a newer-document session (§8.6), every manager open re-reads an all-ignored document, which empties the table and, by the re-read rule, suspends every loaded script. A manager revocation whose write failed ("keeps the narrower state for the session") is undone by the next re-read, so a grant the user removed returns without a dialog. Fix: keep the session-only and failed-write changes as an overlay that every re-read result is narrowed by; (3) **testability:** `test` (§11.4) applies `--kind` to every FOLDER, ties developer mode to `--kind developer`, and does not say what starts the first load of each FOLDER (a user-started load at `Open`? in which frame? in command-line order?), nor how that load interacts with the autoload of a `--grants` record that has `autoload = true`. So D17 exit criterion 5's second-copy case (one id in both kinds) and its `/ext:reload` of an installed script with developer mode on cannot be expressed. That leaves the X90 ST part unbuildable, and "turning developer mode off unloads developer scripts" (§9.8) untestable; (4) **§8.5/§8.6 writes:** "replaces … exactly those records, keeping every other record" does not say what a write for a (kind, id) does to duplicate or invalid records of the same key, or when "the first write that would drop them" (§8.6) happens. Nor does it say what an Allow does when the document already holds 256 records or 256 `order` entries (TM L79). Writing a 257th would make the next start-up ignore records; (5) a manager revocation, Reset, Remove or local-only switch, and a narrowing re-read, during a load in progress (phases B–D, the apartment not yet loaded) are unspecified. §9.7 and §8.5 cover only loaded or suspended apartments, so a required grant revoked in phase C or D can still let the script finish loading without it, against D17 §2 "never loads degraded"; (6) **TM §0.1 rule 5 / O-11:** §4's preamble claims that every count, size and range has a TM L-number. Several do not: settings `min`/`max` ±1e15, setting key 1–32 bytes, capability names 1–32 bytes, module-name segments and version digits, the action and context name length, the walk file's `[[entity]] name` 48 cp, the grant-record integer bound 2^53, and the `--grants` copy bound. Register them in TM (or have TM exempt grammar lengths) and cite the rows; (7) **notices:** §9.8's "No loaded extended script '<id>'" differs from EA1b §8.2's "⟨id⟩ is not loaded". §10.5 maps every `/ext:` line outside `Open` to "No loaded extended script", which includes `/ext:list` and `/ext:help`. D17 §3 says those open the script manager, and §10.3 makes the manager available read-only in `Off`. It also includes `/ext:reload` with developer mode off, which §9.8 answers "Developer mode is off". Plus smaller items: §8.8 step 5's "created exclusively" marker when a plain marker is already present; §3.6 "never removes a log entry that is not a plain file" against a rotation that renames over a non-plain `s_<id>.1.log`; and TM §11's intro, which says `escape` reports unrun parts as `CLIENT`, where §11.8 also uses `ELSEWHERE` (a TM wording fix) |
+| Reviewer | Independent clean-room review, 2026-10-07: **changes requested** (consistency with `ext-threat-model.md`, `ext-api-1a.md`, `ext-api-1b.md` and D17; prompt pointer-entry wording; hot-reload declaration set; re-ask table composition; grant-store I/O thread; `keymap-ext.toml` location; escape-catalogue IDs; and smaller items). **Revision 2** (the same day) answers every returned issue and aligns this spec with TM revision 2 (change log, §16). **Re-review of revision 2, 2026-10-07: changes requested**, status stays Review. Every issue of the first review is resolved and the content-hash vectors of §5.2 reproduce. Still open: (1) the store open and wipe (§8.8) and the log paths (§3.1) state no no-follow or entry-kind rule for `s_<id>/` and its entries, and do not name the temporary files, so TM invariant 15 is not concrete and a wipe through a linked store directory is not excluded; (2) `test` (§11.4) does not say how grants and dialogs behave at loads after the first (reloads, full reloads, `manager` loads), there is no trace event for a dialog, and nothing seeds a grant store, so the ST parts of TM X62, X90 and X92 cannot be built; (3) `no_file_outside` (§11.8) omits the settings crate's persistent lock file, and "the settings crate's lock file" (§8.5) is ambiguous; (4) invariants 9 and 13 contradict the re-read of valid hand-edited records (§8.5, TM §4.3 assumption 3), and a re-read that narrows or invalidates a loaded script's record is not said to suspend it (TM §8.23); plus smaller items (`/ext:reload` with developer mode off, autoload order for records outside `order`, the store size for the content notice, a phase-B load waiting on its write at a switch, `escape` results for mixed ST/CI tests, the O-11 list, the `dump-api` spelling against D17 §10, the L9 citation in §10.3). **Revision 3** (the same day) answers every point of this re-review and aligns this spec with TM revision 3: the store and log no-follow and entry-kind rules with a named temporary-file pattern (§3.6, §8.8, TM §8.8, X94); the harness's dialog policy, `reply` and `grants` walk events, `--grants`, a `dialog` trace event and expectation (§11.4–§11.6); the named lock and temporary files (§8.5, §11.8); the grant-store re-read as a revocation route and invariants 9 and 13 restated (§8.5, TM §8.23); the smaller items (change log, §16). Status stays Review. **Re-review of revision 3, 2026-10-07: changes requested**, status stays Review. Every point of the re-review of revision 2 is answered. §3.6 and §8.8 match TM §8.8 items 1–5, §8.5 and §8.4 match TM §8.23, §9.8 matches TM §8.24 and EA1b §8.1, §10.3–§10.4 match TM §7.4 and §8.21, and §11.4–§11.8 give X62, X91, X92 and X94 their ST routes. The §5.2 vectors reproduce again. Still open: (1) **security, liveness:** §3.4 step 3 (the snapshot walk, also used by `check`) checks each entry's kind only after opening it, and states no non-blocking open, so a FIFO in an unpacked folder (TM X54) blocks an asset worker on its open. The same holds for the log file's write open in §3.6 (`O_NOFOLLOW | O_APPEND`). Fix: open non-blocking, or classify first with `fstatat(…, AT_SYMLINK_NOFOLLOW)`, for both; TM X54's "Fails if" should name a blocked worker; (2) **§8.5:** a re-read replaces the grant table and re-applies only the changes submitted after the read was queued. So session-only decisions are lost. In a newer-document session (§8.6), every manager open re-reads an all-ignored document, which empties the table and, by the re-read rule, suspends every loaded script. A manager revocation whose write failed ("keeps the narrower state for the session") is undone by the next re-read, so a grant the user removed returns without a dialog. Fix: keep the session-only and failed-write changes as an overlay that every re-read result is narrowed by; (3) **testability:** `test` (§11.4) applies `--kind` to every FOLDER, ties developer mode to `--kind developer`, and does not say what starts the first load of each FOLDER (a user-started load at `Open`? in which frame? in command-line order?), nor how that load interacts with the autoload of a `--grants` record that has `autoload = true`. So D17 exit criterion 5's second-copy case (one id in both kinds) and its `/ext:reload` of an installed script with developer mode on cannot be expressed. That leaves the X90 ST part unbuildable, and "turning developer mode off unloads developer scripts" (§9.8) untestable; (4) **§8.5/§8.6 writes:** "replaces … exactly those records, keeping every other record" does not say what a write for a (kind, id) does to duplicate or invalid records of the same key, or when "the first write that would drop them" (§8.6) happens. Nor does it say what an Allow does when the document already holds 256 records or 256 `order` entries (TM L79). Writing a 257th would make the next start-up ignore records; (5) a manager revocation, Reset, Remove or local-only switch, and a narrowing re-read, during a load in progress (phases B–D, the apartment not yet loaded) are unspecified. §9.7 and §8.5 cover only loaded or suspended apartments, so a required grant revoked in phase C or D can still let the script finish loading without it, against D17 §2 "never loads degraded"; (6) **TM §0.1 rule 5 / O-11:** §4's preamble claims that every count, size and range has a TM L-number. Several do not: settings `min`/`max` ±1e15, setting key 1–32 bytes, capability names 1–32 bytes, module-name segments and version digits, the action and context name length, the walk file's `[[entity]] name` 48 cp, the grant-record integer bound 2^53, and the `--grants` copy bound. Register them in TM (or have TM exempt grammar lengths) and cite the rows; (7) **notices:** §9.8's "No loaded extended script '<id>'" differs from EA1b §8.2's "⟨id⟩ is not loaded". §10.5 maps every `/ext:` line outside `Open` to "No loaded extended script", which includes `/ext:list` and `/ext:help`. D17 §3 says those open the script manager, and §10.3 makes the manager available read-only in `Off`. It also includes `/ext:reload` with developer mode off, which §9.8 answers "Developer mode is off". Plus smaller items: §8.8 step 5's "created exclusively" marker when a plain marker is already present; §3.6 "never removes a log entry that is not a plain file" against a rotation that renames over a non-plain `s_<id>.1.log`; and TM §11's intro, which says `escape` reports unrun parts as `CLIENT`, where §11.8 also uses `ELSEWHERE` (a TM wording fix). A follow-up review of revision 3 the same day added: natives must check the apartment's effective set, not the grant table; one id loaded **or loading** across both kinds; overlapping suggested defaults (KM §7.2); Remove of a loaded orphan; developer records shown as orphans while developer mode is off; the store-root scan for orphan totals; grant-store reads, backups, lock and I/O errors as hostile input; settings values checked at a re-read; the `ui` dialog text naming the chord and the manager; `input` for `[[actions]]` and `[[contexts]]`; `--json` escaping and non-UTF-8 names; the tool root's removal; harness inputs and settings; §14.1's probe and file count; and smaller items. **Revision 4** (the same day) answers every point of the re-review of revision 3 and of that follow-up, aligned with TM revision 4 (§8.7 store-root scan and L92, §8.8 classify-before-open and Tessera's own files, §8.16 overlap rule, §8.23 effective set, session overlay, loads in progress and one id loaded or loading, §0.1 rule 6); change log, §16. Status stays Review. **Re-review of revision 4, 2026-10-07 (independent clean-room review against D17, TM revision 4, EA1a and EA1b revision 4): changes requested**, status stays Review. Every point of the re-review of revision 3 and of its follow-up is answered: classify-before-open and non-blocking opens (§3.4, §3.6) match TM §8.8; §7.4, §7.5 and §10.4 match TM §8.21, §8.23 and L26; the store-root scan (§8.7) matches TM §8.7 and L92; §4.11 and M17 match TM §8.16 and L61; every cited L-number (L5–L11, L23–L26, L36–L41, L47, L60, L61, L64, L65, L67, L79, L80, L86–L89, L92) matches TM §10 and its repeated figures; the §5.2 vectors reproduce again. Still open: (1) **§8.5, the session overlay (contradicts TM §8.23).** A completed write is applied as a read result with P the previous document view, so the write's **own** records count as "narrowings by the document" and are moved into `denied` in any **later** overlay entry of that key. A manager revocation of `b` followed by a manager widen (or a "first enable again" Allow) of `b` before the revocation's write completes loses the user's Allow: the grant table denies `b`, a load deciding on it is cancelled by §7.5, and if the second write fails the Allow is gone for the session. Reset or Remove followed by a first-enable Allow of the same key does the same to the new record (and suspends the newly loaded script, §8.5 step 4). TM §8.23 says the overlay's widenings (an Allow this session) apply over every re-read. Fix: when applying a write's completion, exclude the keys (or the records) the write carried from step 2, so only changes by another process narrow; add the case to X91's ST part (walk: `manager` `revoke` and `widen` in one frame with `--latency` 2, `[[expect]] granted`). (2) **TM §13 (EM §11.1, §11.5, §11.8 row) and EA1a OPEN-12(e): no record-flood hook.** TM §7.5 and X19's ST part feed spawn and despawn records through the harness's record-flood hook because L86 caps walk entities at 4,096; §11.8's list of harness-only hooks has none, so X19's ST part and EA1a's ST tests 36 and 37 cannot be built. Define it (a walk key or a harness option: records added to steps 2–5's list, how many per frame, which frames). (3) **EA1a OPEN-12(d), unanswered:** §11.5's `[world] start` gives `heading` in "degrees" without its convention; EA1a §2.10 is the one home of angle forms and makes no direction argument a heading. State compass bearing (0 = north, clockwise) or replace it with `yaw` in radians. (4) **§8.5 step 2 against TM §8.23's last sentences.** EM narrows every record when a re-read finds the document unreadable or damaged as a whole; TM says only a re-read of a document Tessera reads can narrow, and that one it does not understand as a whole changes nothing. Either rule is defensible (EM's is the fail-closed one), but the two must say the same; note that a transient `EACCES`/`EIO` (on Windows a sharing violation by an editor or scanner) at a script-manager open would then suspend every loaded script and turn every session decision into `denied` for the rest of the session. Settle it in TM and EM together. (5) **Reset and Remove timing.** §7.5 applies every narrowing in one frame, while §8.7 and §9.6 remove the record only after the store deletion completes; say in which frame the "no record" decision enters the overlay, that its write is submitted only after the deletion, and what a user-started load or autoload of that (kind, id) does in between (refused, or decided under the old record and then cancelled by §7.5). (6) **Stale O-12:** EA1b revision 4 §8.2 already uses "No loaded extended script '⟨id⟩'"; close O-12 and correct §9.8's sentence. Smaller: (a) `/ext:<id>` with no command word outside `Open` gets the notice in §10.5, but EA1a §6.2 says it opens the script manager as `/ext:help <id>` does, which §10.5 allows in every state; align. (b) The trace's `grants` event (§11.6) has no `what` for settings, `autoload` or `order` changes, a failed load write taken back out of the overlay, or the overlay narrowing a completed write causes, though each changes the grant table; list them or say they emit no event. (c) §4.1's datetime and non-finite-number refusals have no finding code in §11.3 (M03?). |
 | Implements into | `crates/ext` (`tessera-ext`: manifest parser and validation, folder rules applied to entries it is handed, content hash, grant-store format, the grant decision pipeline of §9.2, walk-file parser); `crates/ext-host` (`tessera-ext-host`: the folder walk, the grant-store queue and persistence, the store open with its owner tag and marker, the load pipeline, the script manager's grant pages, the headless harness); `apps/scripttool` (`tessera-scripttool`); `apps/client` (the backend gate states, consent prompts); `crates/net` (`Session::class()`, D17 §6.1); `fuzz/` (targets of §11.7) |
 | Related documents | Decision [0017](../decisions/0017-extended-scripting.md) (abbreviated **D17**; §n means its section n); [`ext-threat-model.md`](ext-threat-model.md) (**TM**: normative for every limit, cited as TM L*n*, for the rules of its §7–§9, cited as TM §*n.m*, and for the escape tests, cited as TM X*n*; TM §0.1); [`ext-api-1a.md`](ext-api-1a.md) (**EA1a**) and [`ext-api-1b.md`](ext-api-1b.md) (**EA1b**), which together are D17's `ext-api.md` for slices 1a and 1b ("the API specs"); [0004](../decisions/0004-server-strategy.md); [0014](../decisions/0014-ui-input-bridge.md) (**IB**); [0015](../decisions/0015-ui-rendering.md) (**UR**); [`keymap.md`](keymap.md) (**KM**); [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**); [`plugin-runtime.md`](plugin-runtime.md) (**PR**); [`docs/LEGAL.md`](../LEGAL.md) §9.5 and §18; `docs/ARCHITECTURE.md` (**ARCH**) §17, §18, §21 |
 
@@ -70,13 +70,13 @@ document's schema and reading rules (KM, D17 §2).
 | Backend classes, fail-closed gate, slice-1a admission, backend switch | D17 §4 "Lifecycle", §6 | Decision |
 | `check`, `test`, `init`, `pack`, deterministic mode, headless harness | D17 §8 "Deterministic mode", §10 | Decision |
 | Module majors, deprecation window, `Ext.Has`, `Ext.Version` | D17 §2 "Versioning" | Decision |
-| Snapshot-root no-follow rule (TM §8.8), one suggested default per stroke (TM §8.16), retained snapshot charged to the script (TM §8.10), display strings refused at parse time with TM's mark rule (TM §8.2), the liveness floor and switch timeout (TM §7.4), partial loads at a switch (TM §8.21), `keymap-ext.toml` location (TM §8.19), revocation suspends, a grant-store re-read included (TM §8.23), no store or hand-off across an `author` change and the store owner tag (TM §8.24), consent pointer entry (TM §8.25), the store-directory and log-file no-follow rule (TM §8.8), loads waiting on a record write or store probe at a switch (TM §8.21), every limit, the manifest's per-field counts, the walk file, the folder listing and the owner tag included (TM §10, L86–L89), every escape case and per-part reporting (TM §11) | TM revision 3, from D17 "Open security and design items" and "Other improvements" | Decision (TM) |
+| Snapshot-root no-follow rule (TM §8.8), one suggested default per stroke (TM §8.16), retained snapshot charged to the script (TM §8.10), display strings refused at parse time with TM's mark rule (TM §8.2), the liveness floor and switch timeout (TM §7.4), partial loads at a switch (TM §8.21), `keymap-ext.toml` location (TM §8.19), revocation suspends, a grant-store re-read included (TM §8.23), no store or hand-off across an `author` change and the store owner tag (TM §8.24), consent pointer entry (TM §8.25), the store-directory and log-file no-follow rule (TM §8.8), loads waiting on a record write or store probe at a switch (TM §8.21), classify-before-open and non-blocking opens for the walk, the store, the log and Tessera's own files, bounded grant-store reads and backups, a lock taken without blocking, the tool root's no-follow removal (TM §8.8), overlapping suggested defaults (TM §8.16), the apartment's effective set, the session overlay, narrowings during a load and one id loaded or loading (TM §8.23), the store-root scan (TM §8.7, L92), every limit, the manifest's per-field counts, the walk file, the folder listing and the owner tag included (TM §10, L86–L89, L92), what the register holds (TM §0.1 rule 6), every escape case and per-part reporting (TM §11) | TM revision 4, from D17 "Open security and design items" and "Other improvements" | Decision (TM) |
 | `Ext.Use` and the manifest's module tables, including `"not declared"` | EA1a §3 | Decision (EA1a) |
 | Name grammar, stroke syntax, keymap limits, saving rules | KM §2, §4, §5, §6 | Decision (KM) |
 | Activation filter `on` | IB D3 | Decision (IB) |
 | Settings file location, atomic save, lock file, install guard, tolerant loading with backups | `crates/settings` rustdoc (the settings file has no spec; its rustdoc is its definition) | Decision (code) |
 | Settings-crate lock and temporary-file names (`.<file name>.lock`, `.<file name>.tmp-…`) | `crates/settings` rustdoc of `SettingsStore::update` and the atomic write | Decision (code) |
-| Everything else here (TOML shapes, the grant-store schema and queue, the store's file names and per-entry actions, the decision pipeline, dialog kinds and texts, gate state names, CLI syntax, walk file, the harness's dialog policy, trace format, `escape` runner, exit codes) | This document, 2026-10-07 (revisions 2 and 3 the same day) | Design |
+| Everything else here (TOML shapes, the grant-store schema and queue, the store's file names and per-entry actions, the decision pipeline, dialog kinds and texts, gate state names, CLI syntax, walk file, the harness's dialog policy, trace format, `escape` runner, exit codes) | This document, 2026-10-07 (revisions 2 to 4 the same day) | Design |
 
 No fact here comes from the original client, its data or any third-party tool.
 
@@ -97,8 +97,11 @@ No fact here comes from the original client, its data or any third-party tool.
 | **Admitted class** | A backend class on which ext apartments may exist (§10.1) |
 | **Developer mode** | Tessera's setting `[ext] developer_mode` (§9.8) |
 | **Display string** | A manifest string shown to the user (§4.4) |
-| **Grant table** | The ext host's in-memory copy of the grant store, kept on the main thread (§8.5) |
-| **Grant-store queue** | The one serial worker queue that performs every read and write of the grant store (§8.5) |
+| **Grant table** | The ext host's in-memory view of the grants, kept on the main thread: the last document read or written, combined with the session overlay (§8.5). Phase B, the dialogs and the script manager read it; natives never do |
+| **Grant-store queue** | The one serial worker queue that performs every read and write of the grant store, and the store-root scan (§8.5, §8.7) |
+| **Effective set** | The capabilities an apartment may use: decided at its load (§7.1), shrunk by every revocation during its life, never grown (TM §8.23). Natives check it, never the grant table |
+| **Session overlay** | The user's decisions of this client session that the grant store document does not hold; every re-read result is combined with it (§8.5, TM §8.23) |
+| **Classify, then open** | An existing entry is classified with `fstatat(…, AT_SYMLINK_NOFOLLOW)` relative to its directory handle (Windows: the listing's attributes and reparse tag) before it is opened; only an entry of the expected kind is opened, non-blocking, and checked again on the handle (§3.4, §3.6; TM §8.8) |
 | **Owner tag** | The host file `owner` in a store directory, naming the `author` the store belongs to (§8.8, TM §8.24) |
 | **Byte order** | Ordering by unsigned byte values, the shorter string first when one is a prefix of the other |
 | **cp** | Unicode code points |
@@ -188,15 +191,29 @@ directory changes nothing (it counts only toward the entry and directory caps).
 The reading rules close every time-of-check gap (D17 §2):
 
 1. The ext host keeps an open directory handle of `data/scripts` (or `data/scripts-dev`).
-2. **The script folder itself** is opened relative to that handle with `O_NOFOLLOW |
-   O_DIRECTORY` on POSIX; on Windows, relative to the parent handle with
+2. **The script folder itself** is classified as in step 3 and opened relative to that
+   handle with `O_NOFOLLOW | O_DIRECTORY | O_NONBLOCK` on POSIX; on Windows, relative to the parent handle with
    `FILE_FLAG_OPEN_REPARSE_POINT`, and a reparse point is refused (TM §8.8). So a symbolic
    link named `data/scripts/<id>` (from an unpacked archive, say) never brings outside
    files into the snapshot. The data directory itself may be a link (it is the user's
    configuration).
-3. The walk proceeds only through directory-relative opens that refuse links, checks every
-   entry's type and link count on the open handle (never on the path), counts every entry
-   it reads, and stops reading a listing as soon as the entry cap is reached.
+3. The walk proceeds only through directory handles, and **classifies every entry before
+   opening it** (TM §8.8): `fstatat(dirfd, name, AT_SYMLINK_NOFOLLOW)` relative to the
+   handle of the directory being listed (Windows: the listing's attributes and reparse
+   tag). An entry classified as a symbolic link, a reparse point, a FIFO, a socket, a
+   device node or any other kind that is neither a regular file nor a directory refuses
+   the script **without being opened**, so no open ever waits on a FIFO and no device is
+   opened with side effects. A directory is then opened with `O_RDONLY | O_DIRECTORY |
+   O_NOFOLLOW | O_NONBLOCK`, a regular file with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`
+   (Windows: relative to the parent handle with `FILE_FLAG_OPEN_REPARSE_POINT`, a reparse
+   point refused), and each is checked again **on the opened handle** (`fstat`): the same
+   kind, a link count of 1 for a file, and the same file as classified (device and inode;
+   Windows: volume serial and file id). Any difference (an entry swapped between the two
+   checks) refuses the script. The walk counts every entry it reads, and stops reading a
+   listing as soon as the entry cap is reached. `scripttool check` uses this same walk
+   (§11.3). TM X54 tests it: a symbolic link, a hard link, a FIFO, a device node, a
+   swapped entry and a linked script folder each refuse the script, and no asset worker
+   blocks.
 4. Every file is read to its end through the caps: the per-file cap, the source cap and
    the 8 MiB total are counted on the bytes actually read. A file that grows past a cap
    while it is read refuses the script.
@@ -223,9 +240,15 @@ Relative paths use `/` and contain no leading `/`.
   lists `data/scripts/` and, with developer mode on, `data/scripts-dev/`, on a worker.
   Each listing reads at most 512 entries (TM L88) **(design addition**, the folder entry
   cap of TM L36 applied to the listing); past that the manager shows "Too many entries in
-  `data/scripts`" and lists what it read. An entry that is not a directory, or whose name
-  is not a valid id, is listed as "Not a script folder" with its name shown as plain text
-  (TM §8.2's display rule), and is never loaded.
+  `data/scripts`" and lists what it read. Each entry is classified with `fstatat(…,
+  AT_SYMLINK_NOFOLLOW)` and never opened by the listing. An entry that is not a directory
+  (a link included), or whose name is not a valid id, is listed as "Not a script folder"
+  with its name shown as plain text (TM §8.2's display rule), and is never loaded.
+- With developer mode off, `data/scripts-dev/` is not listed, so the host does not know
+  which developer folders exist. Records of kind `scripts-dev` are then shown as
+  "Developer script (developer mode is off)" and are **never** classified as orphans
+  (§8.7); they offer no Remove until developer mode is on and the listing shows that
+  their folder is missing.
 - A folder that is listed is not yet read: its manifest is read only by a load (§7.3) or by
   the script manager's details page (which reads `script.toml` alone, through the same
   64 KiB cap and the same parser, on a worker).
@@ -257,16 +280,24 @@ of §8.8, the store probe, flushes, reads, wipes, Remove and Reset) and to the l
    (below).
 
 **Entries of `s_<id>/`.** Every entry is opened, created, renamed or removed relative to
-the `s_<id>` handle, never by a path. An open uses `O_NOFOLLOW` (POSIX) or
-`FILE_FLAG_OPEN_REPARSE_POINT` with a reparse-point refusal (Windows), and is
-non-blocking for reading, so a FIFO never blocks a worker. The entry's kind and link
-count are checked **on the opened handle** (and, when a listing classifies an entry before
-opening it, with `fstatat(…, AT_SYMLINK_NOFOLLOW)` first). A **plain file** is a regular
-file whose link count is 1. New files are created exclusively (`O_CREAT | O_EXCL`, or
-`CREATE_NEW`); a rename (`renameat`) only replaces a directory entry. A **no-follow
-removal** removes the entry itself (`unlinkat` without `AT_REMOVEDIR`; on Windows, deleting
-the reparse point or file opened with `FILE_FLAG_OPEN_REPARSE_POINT`), so a link's target
-and a hard link's other names are never touched.
+the `s_<id>` handle, never by a path. An existing entry is **classified before it is
+opened** (`fstatat(…, AT_SYMLINK_NOFOLLOW)`; Windows: the listing's attributes and reparse
+tag), and only a regular file is ever opened. **Every** open, for reading or for writing,
+uses `O_NOFOLLOW | O_NONBLOCK` (POSIX) or `FILE_FLAG_OPEN_REPARSE_POINT` with a
+reparse-point refusal (Windows), so a FIFO swapped in after the classification never
+blocks a worker (a non-blocking read open of a FIFO returns at once; a non-blocking write
+open of a FIFO with no reader fails with `ENXIO`) and a device node is never opened on
+purpose. The entry's kind, link count and identity (the same file as classified) are
+checked again **on the opened handle**; a mismatch is handled as the entry's row below
+says for an entry that is not a plain file. A **plain file** is a regular file whose link
+count is 1. New files are created exclusively (`O_CREAT | O_EXCL | O_NOFOLLOW |
+O_NONBLOCK`, or `CREATE_NEW`); a rename (`renameat`) only replaces a directory entry and
+never writes through it. A flush's rename of `t_<key>.tmp` over `k_<key>.store` first
+classifies the destination: a destination that exists and is not a plain file is removed
+first (no-follow), as the table says for such an entry. A **no-follow removal** removes
+the entry itself (`unlinkat` without `AT_REMOVEDIR`; on Windows, deleting the reparse
+point or file opened with `FILE_FLAG_OPEN_REPARSE_POINT`), so a link's target and a hard
+link's other names are never touched.
 
 | Entry found in `s_<id>/` | At the open (§8.8 step 2) | Elsewhere (probe, flush, read) |
 |---|---|---|
@@ -285,20 +316,39 @@ at the open it is removed as the table says; in a read it is skipped (absent); i
 the temporary file is created exclusively, so a swapped-in entry makes the create fail as
 above. No entry that the table does not keep is ever listed into the file index or read.
 
-**Log files.** `s_<id>.log` is opened relative to the `logs/scripts/<kind>` handle with
-`O_NOFOLLOW | O_APPEND` (POSIX) or with `FILE_FLAG_OPEN_REPARSE_POINT` and append access
-(Windows), and used only if it is a plain file; when it is missing it is created
-exclusively. Rotation renames `s_<id>.log` over `s_<id>.1.log` relative to the same handle
-(a rename never writes through the old `s_<id>.1.log`; if that name is a directory, the
-rename fails). When the `<kind>` directory is unusable, or a log file is not a plain file,
-or a create or rotation fails, the log is **unavailable** for that script until the next
-load: nothing is written, the entry is left alone, the script still loads and runs, and
-the script manager reports "The log of notes · installed cannot be written:
-logs/scripts/scripts/s_notes.log". Tessera never removes a log entry that is not a plain
-file.
+**Log files.** Every log file is classified, opened, created and renamed relative to the
+`logs/scripts/<kind>` handle, on the log writer's worker:
 
-**Tests.** TM X94 (the ST part through `escape`, §11.8, the U part in `tessera-ext-host`);
-TM X54 for the script folder.
+1. **Open.** `s_<id>.log` is classified first (`fstatat(…, AT_SYMLINK_NOFOLLOW)`). If it
+   is missing, it is created with `O_WRONLY | O_CREAT | O_EXCL | O_APPEND | O_NOFOLLOW |
+   O_NONBLOCK`. If it is a regular file, it is opened with `O_WRONLY | O_APPEND |
+   O_NOFOLLOW | O_NONBLOCK` (Windows: `FILE_FLAG_OPEN_REPARSE_POINT`, append access, a
+   reparse point refused). Any other kind is never opened. The opened handle is checked
+   again: a plain file, the same file as classified. So a FIFO at that name never blocks
+   the log writer: it is not opened when classified as a FIFO, and one swapped in after
+   the classification makes the non-blocking write open fail with `ENXIO` (or, if a
+   reader holds it open, fails the check on the handle, and the handle is closed unused).
+2. **Rotation.** Before renaming `s_<id>.log` over `s_<id>.1.log`, the writer classifies
+   `s_<id>.1.log`. If it exists and is not a plain file (a link, a reparse point, a FIFO,
+   a device node, a directory, more than one link), the rotation is **not made**: the
+   entry is left alone and the log becomes unavailable. Otherwise (missing, or a plain
+   file) the rename is made; a rename replaces only the directory entry, never writes
+   through it and never follows it.
+3. **Unavailable log.** When the `<kind>` directory is unusable, or a log file is not a
+   plain file, or a create, open or rotation fails, the log is **unavailable** for that
+   script until the next load: nothing is written, the entry is left alone, the script
+   still loads and runs, and the script manager reports "The log of notes · installed
+   cannot be written: logs/scripts/scripts/s_notes.log".
+
+Tessera never opens, writes, follows or removes a log entry that it classified as not a
+plain file. The one entry a rotation can replace without having classified it as plain is
+an `s_<id>.1.log` swapped in between the classification and the rename; the rename then
+replaces that directory entry itself (a link is replaced as a link, never followed, and
+nothing behind it is touched).
+
+**Tests.** TM X94 (the ST part through `escape`, §11.8, the U part in `tessera-ext-host`;
+it includes a log file and a rotated log file that are FIFOs or device nodes, and fails if
+the log writer blocks); TM X54 for the script folder.
 
 ---
 
@@ -307,10 +357,13 @@ TM X54 for the script folder.
 
 The resource bounds of the manifest are TM L37 (size, nesting, keys), L38 (ids), L60
 (actions and contexts), L80 (display strings) and L87 (the per-field counts: capabilities,
-modules, settings, choices, `max_length`, `version` and `license`). The character sets of
-each field's grammar are this spec's; every count, size and range has its TM L-number (TM
-§0.1 rule 5), and a number repeated below is for the reader only. (This closes the former
-OPEN O-11.)
+modules, settings, choices, `max_length`, `version` and `license`); a number repeated
+next to such a citation is for the reader only. TM registers only resource limits (TM
+§0.1 rule 6). The other numbers of this section stay here and carry no L-number:
+**argument-validity domains** (the settings' `min`/`max` bound of ±1e15) and **grammar
+lengths** (setting keys 1–32 bytes, capability names 1–32 bytes, module-name segments
+and version parts, action and context names up to 59 − the length of `id`), together with
+each field's character set. (OPEN O-11 is closed by TM rule 6, §15.)
 
 <a id="s4-1"></a>
 ### 4.1 Format and parsing
@@ -343,14 +396,14 @@ this spec's.
 
 | Key | Type | Required | Rule |
 |---|---|---|---|
-| `manifest` | integer | yes | **(Design addition.)** The manifest format version this file uses (§12.1). First release: `1` |
+| `manifest` | integer | yes | **(Design addition.)** The manifest format version this file uses (§12.1), at least 1. First release: `1` |
 | `id` | string | yes | §3.2; equals the folder name (§4.5) |
 | `name` | display string | yes | at most 48 cp (§4.4) |
 | `version` | string | yes | Semantic Versioning 2.0.0 (`1.4.0`, `2.0.0-beta.1`, `1.0.0+build.5`); at most 64 bytes; every numeric identifier at most 9 digits and without leading zeros (TM L87). Informational only (§12.4) |
 | `author` | display string | yes | at most 48 cp. It **pins grants and the store**: a change re-asks every grant and empties the `Store` (§9.5) |
 | `description` | display string | no | at most 512 cp; may contain line feeds (U+000A), at most 8 lines |
 | `license` | string | no | at most 64 bytes (TM L87) of printable ASCII (0x20–0x7E). An SPDX licence expression is recommended; `check` warns when it is absent (W04) |
-| `api` | integer | yes | The major version of the `Ext` global's own entries (`Use`, `Has`, `Load`, `Version`; EA1a §3) the script targets (§12.2). First release: `1` |
+| `api` | integer | yes | The major version of the `Ext` global's own entries (`Use`, `Has`, `Load`, `Version`; EA1a §3) the script targets (§12.2), at least 1. First release: `1` |
 | `entry` | string | yes | The main source file, a relative path (§4.6) |
 | `capabilities` | table | no | Required capabilities: quoted capability name → reason (§4.7) |
 | `optional_capabilities` | table | no | Optional capabilities: quoted capability name → reason (§4.7) |
@@ -557,6 +610,16 @@ step 3).
   ext context's priority in KM's reserved range −1,000 to −1 (TM L60) as EA1a §8.1 says.
   (This closes the former OPEN O-3.)
 - Contexts start inactive; the script activates them through `Input` (D17 §10, EA1a §8.1).
+- **`input` is required to declare (design addition).** A manifest that declares any
+  `[[contexts]]` or `[[actions]]` must list `input` in `[capabilities]` or
+  `[optional_capabilities]`; otherwise it is refused ("actions and contexts need
+  capability `input`", M14 or M15). The host **registers** the script's contexts and
+  actions (as `ext.<id>.<name>`, counting toward TM L60's caps for all scripts), shows
+  them in the binding UI and applies their suggested defaults (§4.11) **only when `input`
+  is in the apartment's effective set** at load. With `input` optional and not granted
+  (denied, undecided, or withheld by §7.1 layers 2–5), nothing is registered, nothing
+  counts toward L60, and the binding UI does not list them. A later revocation of `input`
+  suspends the script (§9.7); what `Input` made is then gone as EA1a §2.9 says.
 
 <a id="s4-11"></a>
 ### 4.11 `[[actions]]`
@@ -583,10 +646,32 @@ At most 64 actions per script (TM L60).
   **button** action and a stroke with exactly one button that is not a wheel click.
   Otherwise the script is refused.
 - `value` follows KM §5.3 (in −1..=1; ignored for button actions).
-- **One suggested default per stroke per script** (TM §8.16, TM L61): two actions of one
-  manifest whose suggested strokes are equal after KM §5.1's normalisation refuse the
-  script ("two actions suggest the same stroke"), whatever their `on` values. So one press
-  can never start more than one hold from one script's suggested defaults.
+- **No two overlapping suggested defaults per script and context** (TM §8.16, TM L61).
+  Two actions of one manifest in the **same context** whose suggested strokes
+  **overlap** refuse the script ("two actions suggest overlapping strokes"), whatever
+  their `on` values. Two strokes overlap when one press can complete both: when there is
+  a set of held buttons and modifiers and one button press under which KM §7.2's
+  "completed by" holds for both strokes, each under its own action's modifier policy
+  (exact for buttons, subset for axes, KM §2), with the modifiers that a stroke's own
+  buttons contribute ignored as KM §5.1 says. Because KM §7.2 fires every complete
+  matching binding of the consuming context, a chord and a single-button binding in one
+  context both fire when the chord completes. So, for example:
+  - equal strokes after KM §5.1's normalisation (`Ctrl+N` twice) overlap;
+  - `A+B` and `B`, and `A+B` and `B+C` (press `B` while `A` and `C` are held), overlap:
+    any two strokes that share a button can both be completed by a press of it, unless
+    their modifier conditions exclude each other;
+  - `Ctrl+B` and `B`, both button actions (exact): no overlap (no held modifier set
+    equals both `{Ctrl}` and `{}`); `LCtrl+B` and `Ctrl+B` overlap (the `Ctrl` that `LCtrl`
+    contributes is ignored for the first and meets the second);
+  - for axis actions (subset policy): `Shift+Wheel` and `Wheel` overlap, because holding
+    `Shift` meets both; and a button action `Ctrl+B` with an axis action `B` overlaps;
+  - strokes with no button in common never overlap.
+
+  The check is a finite one over the two strokes' buttons and the modifier sets.
+  Defaults in **different** contexts of one script are not compared (KM §7.2: only the
+  higher context fires), nor are a script's defaults compared with another script's or
+  with the user's bindings. So one press can never start more than one hold from one
+  script's suggested defaults.
 - Whether a suggested default is **applied** is decided at registration (D17 §5.5,
   "Collision"): a stroke that a built-in or plugin binding would match in either pass, in an
   active context or not, whatever either `on`, is withheld. `check` predicts the
@@ -620,9 +705,15 @@ marked **(design addition)** are this spec's.
   (§4.4) except that it may be empty.
 - A key that does not belong to the setting's type (`choices` on a `bool`) refuses the
   script, as every unknown key does.
+- **Valid for the schema.** A stored value is valid for a setting when: for `bool`, a
+  boolean; for `number`, a number in `min..=max`, and an integer when `integer` is true;
+  for `choice`, a string equal to one of the `choices` values; for `text`, a string of at
+  most `max_length` bytes that follows the display-string character rules (§4.4, empty
+  allowed). Anything else is invalid, a value of another type included.
 - **Stored values** are kept in the grant record (§8.3). When a load finds a stored value
   that is no longer valid for the current schema (the type changed, the range shrank, the
-  choice vanished), the value reverts to the default, with one line in the script log.
+  choice vanished, or a hand edit put an out-of-range number or an over-long text in the
+  record), the value reverts to the default, with one line in the script log.
   Such values, and stored values of keys the schema no longer has, are **dropped by that
   load's record write** (§9.2 step 6): the key is removed from the record's `settings`.
   A load that has nothing else to update writes the record for this alone, so the drop
@@ -634,6 +725,15 @@ marked **(design addition)** are this spec's.
   forbidden characters as they are typed.
 - A change the user applies is written as §8.5 says and reaches a loaded script through
   `Core.Setting` and its settings-changed handler (EA1a §4.1, §4.4).
+- **At a re-read** of the grant store (§8.5), every changed `settings` value of a loaded
+  script's record is checked against the **running apartment's** manifest schema by the
+  rule above before the script sees it. A valid value is delivered as a change the user
+  applied. An invalid one (for example a hand-edited `max_notes = 1e15`, or a text longer
+  than its `max_length`) is never delivered: the setting takes its manifest default, one
+  line goes to the script log, and the script gets a settings change only if the default
+  differs from the value it last read, carrying the default. So `Core.Setting` always
+  answers a number in its range and a string within its cap, as EA1a §4.4 requires. A
+  re-read writes nothing; the next load's record write drops the invalid value as above.
 
 <a id="s4-13"></a>
 ### 4.13 `[server]`: server hints **(design addition)**
@@ -752,7 +852,7 @@ shows (Tessera's own strings).
 
 | Capability | Group | Backends | Local-only | Slice | Dialog text |
 |---|---|---|---|---|---|
-| `ui` | O | Offline, TesseraProtocol | no | 1a | Show its own windows and labels. They take clicks and the mouse wheel where they lie. |
+| `ui` | O | Offline, TesseraProtocol | no | 1a | Show its own windows and labels. They take clicks and the mouse wheel where they lie. To remove them, press ⟨chord⟩ (stops every extended script) or unload the script in the script manager. |
 | `input` | O | Offline, TesseraProtocol | no | 1a | Add its own key bindings. They only fire for keys that no built-in binding uses. |
 | `world.read` | O | Offline, TesseraProtocol | no | 1a | Read where you are: region, map position, terrain, water, time of day and sky. |
 | `entity.read` | O | Offline, TesseraProtocol | no | 1a | See the characters and objects the game knows about near you: names, kinds and positions. |
@@ -774,6 +874,10 @@ shows (Tessera's own strings).
   is "unknown" to an earlier build (§4.7).
 - The two group headings the dialog shows are **"Observe and show"** (group O) and **"Act
   for you"** (group A).
+- ⟨chord⟩ in the `ui` text is the panic chord as currently bound in Tessera's settings
+  (default `Ctrl+Shift+F12`, TM L64), in KM §5.1's written form. The text names the
+  user's two routes to remove ext windows that catch the pointer, as EA1a §7.11 requires
+  of the grant dialog.
 
 <a id="s6-2"></a>
 ### 6.2 Combination warnings
@@ -807,10 +911,13 @@ removes:
 
 A required capability removed by layers 2–5 refuses the script **before** any dialog:
 asking the user for something that could not be used would be pointless. Layer 6 is
-where the dialog may ask (§9). The effective set is fixed for the apartment's life. A
-narrowing during its life, by the script manager (§9.7) or by a re-read of the grant store
-(§8.5), suspends the script in that frame (TM §8.23), and natives re-check the grant on
-every call (D17 §5.1); a widening, by any route, applies only at the next load.
+where the dialog may ask (§9). The result is the apartment's **effective set** (§2). It
+is never grown during the apartment's life. A narrowing during its life, by the script
+manager (§9.7) or by a re-read of the grant store (§8.5), removes the revoked capabilities
+from it and suspends the script in that frame (TM §8.23). Natives and the apply step of
+every intent check the capability on every call (D17 §5.1) against this effective set,
+**never** against the grant table, so a widening, by any route, applies only at the next
+load (TM §8.23 "What natives check").
 
 <a id="s7-2"></a>
 ### 7.2 Exclusions, in a fixed order
@@ -831,15 +938,19 @@ every call (D17 §5.1); a widening, by any route, applies only at the next load.
 ### 7.3 The load pipeline
 
 A **load** starts from the user (the script manager's "Load" or "Enable", `/ext:reload`)
-or from autoload at world entry (D17 §4, "Lifecycle"). Autoload loads the records whose
-`autoload` is true and whose folder exists, in the **script-list order**; a script without
-a valid record is never autoloaded. The script-list order (used by autoload, the script
+or from autoload at world entry (D17 §4, "Lifecycle"). Autoload loads the records of the grant table
+(§8.5) whose `autoload` is true and whose folder the listing of §3.5 found (so a
+`scripts-dev` record only with developer mode on), in the **script-list order**; a script
+without a valid record is never autoloaded. The script-list order (used by autoload, the script
 manager's list and the dialog queue of §9.1) is: first the valid records that `order`
 names, in `order`'s sequence; then the valid records that `order` does not name, in byte
 order of `"<kind>/<id>"`. A record created by an Allow is appended to the end of `order`
 by that Allow's write; "Move in the list" (§9.7) rewrites `order` with every valid record.
-`order` entries of records that are invalid or absent stay in place (§8.4) and are
-skipped. Every load runs these phases. The gate state (§10) must be
+`order` entries of records that are invalid stay in place and are skipped, so a repaired
+record keeps its place; entries that are malformed, repeat an earlier entry, or name a key
+with no `[[script]]` table at all are skipped and dropped by the next write (§8.5 write
+step 5), so `order` never names more keys than the document has tables (TM L79). Every load runs these
+phases. The gate state (§10) must be
 `Open` when a load starts and stay `Open` until it ends; otherwise the load is cancelled
 as §10.4 says.
 
@@ -858,7 +969,7 @@ TM §8.10, EA1b §8.)
 | **A. Read** | asset worker | The walk (§3.4), the content hash (§5), the manifest parse and field validation (§4.1–§4.13). Result: the snapshot, the hash, the parsed manifest, or the folder or manifest findings |
 | **B. Decide** | main thread, native, outside ext time; its file work on workers | Registry checks (§4.7, §4.8); "one loaded script per id" (§7.4); the effective set before the grant (§7.1 layers 1–5); the decision pipeline of §9.2: no dialog, or a dialog that waits for the user. Ends with the record written (§8.5) or the load refused or cancelled. The main thread does no file I/O: the record write is a job on the grant-store queue, and the store probe (§8.8, needed by §9.2 step 2 and §9.3 "Stored values") a job on the store's I/O queue; phase B waits for their completions |
 | **C. Open the store** | the (kind, id) store's I/O queue, on a worker | The store open of §8.8: the directory handles and the entry sweep of §3.6 (leftover temporary files and unexpected entries removed), the owner-tag check and the wipes, the durable owner tag and `local-only` marker, the file index (TM rule 7.6.1). Queued only after phase B's record write has completed, and after every earlier job of that store (D17 §8, "`Store` I/O") |
-| **D. Snapshot result** | ext queue item (6a) | Delivered only after phase C completed. Then one compilation item per source file, then the top-level run (D17 §2, §4). A compilation failure ends the load as §4.14 says |
+| **D. Snapshot result** | ext queue item (6a) | Delivered only after phase C completed. Then one compilation item per source file, then the top-level run (D17 §2, §4). The delivery and the top-level item each first **re-check** the load's decided set against the (kind, id)'s record in the grant table (§7.5); a narrowing cancels the load. A compilation failure ends the load as §4.14 says |
 
 - Phases A to C together are D17's "snapshot job": the marker, the owner tag and the wipe
   are never a main-thread step or a 6a item. Phase B sits between them because the store's
@@ -870,11 +981,49 @@ TM §8.10, EA1b §8.)
 <a id="s7-4"></a>
 ### 7.4 One loaded script per id
 
-At most one script per id is loaded at a time, across both kinds (D17 §2, TM L26). Phase B
-refuses a load whose id is already loaded from the other kind, with "notes · developer is
-loaded; unload it first", and the script manager offers that unload. A second load of the
+At most one script per id is loaded at a time, across both kinds (D17 §2, TM L26). A load
+of an id is refused while the same id of the **other** kind is **loaded or loading**: from
+the moment that other load took its memory reservation (at the start of phase A, §7.3)
+until its close item has run, or until it was refused or cancelled and released its
+reservation (TM §8.23 "One id, one apartment"). The check is made when the new load takes
+its own reservation, on the main thread, and again in phase B; so of two loads of one id
+from both kinds that start in the same frame (for example two `autoload = true` records
+`scripts/notes` and `scripts-dev/notes` at world entry with developer mode on), the one
+started first in that frame's order (here the script-list order) proceeds and the other is
+refused before phase A. The refusal says "notes · developer is loaded; unload it first"
+(or "… is loading"), and the script manager offers that unload. A second load of the
 **same** (kind, id) while it is loaded or loading is ignored, except `/ext:reload`, which
-is a reload (§9.8).
+is a reload (§9.8). TM X90's ST part tests both cases (§11.8).
+
+<a id="s7-5"></a>
+### 7.5 A narrowing during a load
+
+A **narrowing** of a (kind, id) is any of: a manager revocation (§9.7), Reset (§9.6),
+Remove (§8.7), a local-only switch (§9.4), and a re-read whose combined result narrows
+the record (§8.5). Each is applied to the grant table in one frame on the main thread.
+For a load of that (kind, id) that is in progress, the rule is TM §8.23 "Loads in
+progress": a load never proceeds without a capability revoked after its decision (D17 §2,
+"never loads degraded"). The load's **decided set** is the effective set phase B decided.
+
+| Where the load is when the narrowing is applied | What happens |
+|---|---|
+| Phase A running or its result not yet consumed | Nothing yet: phase B has not decided. It runs §9.2 against the narrowed grant table (after Reset or Remove: no record, a first enable) |
+| Phase B before its dialog, or with its dialog showing or queued | The dialog closes as "Not now", or is never shown; nothing is written; the load is cancelled. A store probe already submitted completes and its result is discarded |
+| Phase B past its dialog, waiting on its record write or store probe | The write or probe completes in order on its queue (the narrowing's own write follows it on the grant-store queue, so the document ends narrowed). Then the load is cancelled with its reservation released, before phase C |
+| Phase C queued or running | It completes on the store's queue; its result is discarded and the load is cancelled. Reset's or Remove's store deletion is queued behind it on the same queue |
+| Phase D: snapshot result or compilation items, top-level run not started | The re-check at the delivery or at the top-level item finds the narrowing: remaining items are dropped and, if the apartment's state exists, it gets **one close item** (no `Unload` handler; no script code ran) |
+| Top-level run finished (the script is loaded) | Not a load in progress: the narrowing suspends the script as §9.7 says |
+
+**The re-check.** Phase D's delivery and the top-level item each compare the decided set
+with the `granted` list of the (kind, id)'s record in the grant table (after the session
+overlay, §8.5). If the record is gone, or any capability of the decided set is no longer
+granted, the load is cancelled as the table says. A widening of the record changes
+nothing for the load. A narrowing applied in the same frame before the item runs is seen
+by it; one applied after the top-level item has run meets a loaded script.
+
+Every cancelled load is reported "Not loaded · notes · installed: its permissions changed
+while it loaded" and appears in the trace as `load` with `r` = `cancelled` (§11.6). TM X91
+tests a required grant revoked while a load is past its dialog and before its top level.
 
 ---
 
@@ -949,13 +1098,13 @@ One record (`[[script]]`):
 | `kind` | string | `"scripts"` or `"scripts-dev"` |
 | `id` | string | §3.2 |
 | `author` | string | The manifest's `author` when the record was last decided, exactly; display-string rules (§4.4) |
-| `required`, `optional` | arrays of strings | The manifest's capability lists when the record was last decided (the **pinned capability list**): capability-name grammar (§6.1), each at most 16 entries, sorted in byte order, unique, disjoint |
+| `required`, `optional` | arrays of strings | The manifest's capability lists when the record was last decided (the **pinned capability list**): capability-name grammar (§6.1), each at most 16 entries (TM L79: the reader's bound per list; a record Tessera writes holds at most 16 together, as the manifest does, TM L87), sorted in byte order, unique, disjoint |
 | `granted`, `denied` | arrays of strings | The user's decisions: sorted, unique, disjoint, each a subset of `required` ∪ `optional`. A capability in neither is **undecided** |
 | `memory_mib` | integer | 32–64: the memory the user accepted |
 | `content_hash` | string | 64 lowercase hexadecimal digits (§5) |
 | `content_hash_version` | integer | `1` |
 | `autoload` | boolean | The user's "Load automatically" choice |
-| `settings` | table | The `[[settings]]` values the user set: key (settings-key grammar) → boolean, number or string (at most 256 bytes, display-string character rules, may be empty); at most 32 entries. A number is a finite TOML float, or a TOML integer of magnitude at most 2^53, read as the equal float; the writer always writes numbers as floats (`200.0`). Absent keys take the manifest's default |
+| `settings` | table | The `[[settings]]` values the user set: key (settings-key grammar) → boolean, number or string (at most 256 bytes, TM L79; display-string character rules, may be empty); at most 32 entries (TM L79). A number is a finite TOML float, or a TOML integer of magnitude at most 2^53 (an argument-validity domain, TM §0.1 rule 6), read as the equal float; the writer always writes numbers as floats (`200.0`). Absent keys take the manifest's default. This is the record's own validity; whether a value fits the script's current schema is checked at load and at a re-read (§4.12) |
 | `signing_key` | string | Reserved for slice 4 (D17 §5.7): `"ed25519:"` and 64 lowercase hexadecimal digits. A build before slice 4 keeps it unchanged and does not use it |
 
 - **Invariant of every valid record:** `granted` never holds `session.server` together
@@ -974,14 +1123,23 @@ Users edit files, so the document is read bounded and strictly per record, and h
 target (§11.7):
 
 - at most 4 MiB, nesting at most 4 levels below the root (as §4.1 counts), at most 256
-  records, the per-field caps above (TM L79);
+  records, the per-field caps above (TM L79). A document with more than 256 `[[script]]`
+  tables or more than 256 `order` entries is damaged as a whole (§8.6), as an oversized
+  one is;
+- the document is read only through §8.5's read rule (non-blocking, a regular file checked
+  on the handle, at most 4 MiB + 1 bytes);
 - unknown keys at the root and in a record are **kept** and written back unchanged (so a
   newer Tessera's fields survive an older one), but never interpreted;
 - a record is **invalid** when any rule of §8.3 fails, including the invariant above. An
   invalid record is ignored for the session, as if absent, and reported once in the script
   manager ("The saved permissions of notes · installed are damaged and were ignored");
-- two records with the same (kind, id) are **both** invalid;
-- `order` entries that name no record, or are malformed, are ignored.
+- two records with the same (kind, id) are **both** invalid. A `[[script]]` table
+  **belongs to** the (kind, id) its `kind` and `id` strings name when both are present
+  and valid; a table without such a key belongs to none (it is invalid, and every write
+  keeps it unchanged, §8.5 write step 4). It still counts toward the 256 tables;
+- `order` entries that name no valid record, or are malformed, are ignored; those that
+  name no table at all, are malformed or repeat an earlier entry are dropped by the next
+  write (§8.5 write step 5).
 
 A **valid** record is honoured however it was written; Tessera cannot tell, and does not
 try to tell, a record the user edited by hand from one it wrote. A hand edit therefore
@@ -998,74 +1156,146 @@ names the loading manifest's `author`; otherwise the store open wipes it (§8.8,
 and the dialog says which of the two will happen (§9.3, "Stored values").
 
 <a id="s8-5"></a>
-### 8.5 Reading and writing: the grant table and the grant-store queue
+### 8.5 Reading and writing: the grant table, the session overlay and the grant-store queue
 
 No blocking file I/O happens on the main thread after start-up (ARCH §21), and D17 keeps
-all ext file I/O on workers. So:
+all ext file I/O on workers. Nothing on the grant-store queue ever waits on another
+program (TM §8.8 "Tessera's own files"). So:
 
-- **The grant table.** The ext host keeps, on the main thread, an in-memory copy of the
-  document's valid records, `order` and unknown keys. Phase B, the dialogs, the script
-  manager and the natives' per-call grant checks read only the grant table. A change
-  (a dialog's Allow, a load's record update, a manager action) is applied to the grant
-  table at once and submitted as a write job.
-- **The grant-store queue.** Every read and write of `ext-grants.toml` is a job on one
-  serial queue that runs on an asset worker, one job at a time, in submission order.
+- **The grant-store queue.** Every read and write of `ext-grants.toml`, and the store-root
+  scan of §8.7, is a job on one serial queue that runs on a worker of the ext host (never
+  the main thread, and never as an asset-worker job, so it never delays asset decoding),
+  one job at a time, in submission order.
+- **Three views, kept on the main thread.**
+  - The **document view**: the valid records, `order`, unknown keys and the number of
+    `[[script]]` tables of the last document a job read or wrote (empty before the first
+    read, and for a missing, unreadable or damaged document, §8.6), and whether the
+    document is **writable** (it is not when its `version` is newer, §8.6).
+  - The **session overlay** (§2, TM §8.23): for each (kind, id), the record the user last
+    decided in this client session, or "no record" after Reset or Remove. An entry is
+    added when a decision is applied and dropped when a write that holds it completes
+    successfully (unless a later decision of the same key was applied meanwhile). It
+    stays for the rest of the session when that write fails (below), and every decision
+    stays in it while the document is not writable.
+  - The **grant table**: the document view combined with the overlay. For a (kind, id)
+    with an overlay entry it holds the overlay's record (or none); otherwise the document
+    view's valid record (or none). Phase B, the dialogs, the script manager and the
+    re-checks of §7.5 read the grant table. **Natives never read it:** every native and
+    every intent's apply step checks the apartment's **effective set** (§2, §7.1; TM
+    §8.23 "What natives check"), which a revocation shrinks and nothing grows during the
+    apartment's life. So after the user revokes optional `camera`, resumes the script and
+    widens `camera` again in the manager, the grant table grants `camera` but the kept
+    `Camera` natives still raise `"not granted"` until the next load (TM X91).
+- **A decision** (a dialog's Allow, a load's record update of §9.2 step 6, a manager
+  action of §9.7) is applied to the overlay, and so to the grant table, at once, in that
+  frame, and is submitted as a write job unless the document is not writable.
 - **Reads.** The document is read at start-up (the gate does not leave `Starting` before
   the result is applied, §10.3) and each time the script manager opens (to pick up hand
-  edits). A read result replaces the grant table; the changes the main thread submitted
-  after that read was queued are applied again on top, so a read never loses a decision.
-- **A re-read is a revocation route (TM §8.23).** When a read result is applied while
-  scripts are loaded, the host compares, for each loaded or suspended apartment, its
-  effective set with the `granted` list of its (kind, id)'s record in the new grant table:
-  - **Narrowed:** a capability of the effective set is no longer granted, because the
-    record was removed, became invalid (§8.4, including a duplicate, or every record of a
-    damaged or newer document, §8.6) or no longer grants it. That is a revocation of those
-    capabilities: the script is **suspended in the frame the result is applied**, exactly
-    as §9.7's "Uncheck" says (a revoked required capability: unloaded with one close item
-    and no `Unload` handler; only optional ones revoked: the user may resume it, and the
-    revoked modules then raise `"not granted"`). The script manager says "The saved
-    permissions of notes · installed changed; the script was suspended".
-  - **Widened** (a capability granted that the effective set lacks) or otherwise changed
-    (`author`, pinned lists, hash, memory): nothing changes for the running apartment.
-    The new record is used from the script's next load, which runs §9.2 against it.
-  - A changed `settings` value reaches a loaded script as a change the user applied
-    (§4.12); `autoload` and `order` take effect at their next use.
-- **A write job** carries only what changed: whole records set or removed, `order`. It
-  takes the grant store's own lock (below), reads the current document (with §8.4's
-  bounds), replaces, inserts or removes exactly those records and entries (keeping every
-  other record, every unknown key and other Tessera processes' changes), writes a
-  temporary file in the destination's directory, flushes it to disk, renames it over the
-  document, flushes the directory entry, releases the lock and reports completion to the
-  main thread. A reader never sees a half-written document, and a completed write survives
-  a crash.
+  edits). The configured path is first classified (`stat`, following the symbolic links
+  in the path, at most 40, as a write does) and opened only when it is a regular file,
+  so a device is never opened on purpose; it is then opened **non-blocking** (`O_RDONLY |
+  O_NONBLOCK`), the handle is checked again to be a **regular file**, the same one (`fstat`
+  on the handle; a FIFO, socket, device or directory swapped in is never read and never
+  waited on), and at most 4 MiB + 1 bytes are read
+  (TM L79, TM §8.8 "Tessera's own files"). A missing file reads as missing; a failed open
+  or read (`EACCES`, `EIO`, `EISDIR`, a file that is not regular) reads as **unreadable**.
+  The bytes are then classified by §8.4 and §8.6.
+- **Applying a read result.** On the main thread, in the frame its completion is seen,
+  with P the previous document view and R the result:
+  1. **A newer document** (§8.6). The document becomes not writable for the session, and
+     every record of the current grant table enters the overlay as it is. Nothing else
+     changes: such a read narrows nothing, widens nothing and suspends nothing (TM §8.23
+     "The session overlay"), whatever records it holds.
+  2. **Narrowings by the document.** Otherwise, for each (kind, id), the capabilities that
+     P's record grants and R's record does not are **narrowed by the document**: all of
+     P's when R has no valid record of that key (removed, made invalid, a duplicate, or
+     the document missing, unreadable or damaged as a whole, §8.6). In an overlay entry of
+     that key, those capabilities are moved from `granted` to `denied`. So a hand edit that
+     narrows always narrows, and the document never undoes a decision of this session: a
+     revocation whose write failed stays revoked, whatever a later read finds.
+  3. R becomes the document view, and the grant table is recomputed.
+  4. **Loaded apartments.** For each loaded or suspended apartment, its effective set is
+     compared with the `granted` list of its (kind, id)'s record in the new grant table:
+     - **Narrowed** (a capability of the effective set is no longer granted): a
+       revocation by another route. The script is **suspended in this frame**, exactly as
+       §9.7's "Uncheck" says (a revoked required capability: unloaded with one close item
+       and no `Unload` handler; only optional ones revoked: the user may resume it, and the
+       revoked modules then raise `"not granted"`). The script manager says "The saved
+       permissions of notes · installed changed; the script was suspended".
+     - **Widened** (a capability granted that the effective set lacks) or otherwise
+       changed (`author`, pinned lists, hash, memory): nothing changes for the running
+       apartment. The record is used from the script's next load, which runs §9.2 against
+       it.
+     - A changed `settings` value is checked against the running apartment's schema and
+       delivered, or replaced by the default, as §4.12 "At a re-read" says.
+     - `autoload` and `order` take effect at their next use.
+  5. **Loads in progress.** A narrowing of a (kind, id) whose load is in progress is §7.5's.
+- **A write job** carries the overlay entries it writes (whole records, or "no record" for
+  a removal) and, after "Move in the list", the new `order`. On the queue it:
+  1. **Locks.** It takes the grant store's lock (below) without blocking: a lock that
+     another process holds is retried for at most 1 s, then the write **fails** (TM §8.8).
+  2. **Reads** the current document by the read rule above. If it is unreadable, nothing
+     is written and the write fails. If its `version` is newer, nothing is written, the
+     write fails, and its result is applied as step 1 above says.
+  3. **Backs up** the document first (§8.6) when it is damaged as a whole, or when this
+     job replaces or removes an invalid table (step 4); a damaged document is then
+     replaced by an empty one.
+  4. **Replaces by key.** A `[[script]]` table **belongs to** a (kind, id) as §8.4 says.
+     For each key the job carries, **every** table that belongs to it (its valid record,
+     an invalid one, or each of two or more duplicates) is removed, and the job's record,
+     if any, is inserted once. Every other table, invalid ones and tables that belong to
+     no key included, is kept with its keys and values unchanged, and so is every unknown
+     key. This is the only way an invalid table leaves the document.
+  5. **Checks the caps (TM L79).** A record whose key has no table in the document is
+     inserted only if the document then holds at most 256 `[[script]]` tables; otherwise
+     the write fails with "256 scripts have saved permissions; remove one in the script
+     manager". `order` is rewritten: an entry that is malformed, repeats an earlier entry,
+     or names a key with no table in the resulting document is dropped; the key of each
+     inserted record that `order` does not name is appended (a "Move in the list" job
+     writes its own sequence, filtered the same way). So `order` never names more keys
+     than the document has tables, and never exceeds 256 entries, and a written document
+     never breaks §8.4's caps.
+  6. **Commits.** It writes a temporary file in the destination's directory, flushes it to
+     disk, renames it over the document, flushes the directory entry, releases the lock,
+     and reports completion together with the document it wrote. The main thread first
+     applies that document as a read result (above; another process's changes found in
+     step 2 are honoured, and narrow, like a hand edit) and then drops the overlay
+     entries that the write held.
+
+  A reader never sees a half-written document, and a completed write survives a crash.
+- **A failed write.** A load's own record write (§9.2 step 6, including a dialog's Allow)
+  that fails is taken back out of the overlay, the load is cancelled, and the script
+  manager reports "Permissions could not be saved: <reason>". Every other decision whose
+  write fails (a manager action, a manager-started dialog's Allow) **stays in the
+  overlay** for the session, so a revocation keeps acting and is never undone by a later
+  read, and the manager reports the failure. While the document is not writable, no write
+  job is submitted, every decision lives in the overlay for this session only (§8.6), and
+  phase C follows the overlay.
 - **Lock and temporary file (named).** The lock is the file `.ext-grants.toml.lock` in the
   directory of the **resolved** `ext-grants.toml` (the settings crate's lock naming,
   `.<file name>.lock`, applied to this document; never the settings file's own
   `.settings.toml.lock`, so a grant write and a settings save never wait on each other).
-  It is an advisory lock taken on that file's handle; the file is created if missing, is
-  never opened through a symbolic link, passes the install guard, and is **never
-  removed** (removing it would race with other lockers), so it persists after the first
-  write. The temporary file is created exclusively beside the resolved document with the
-  settings crate's atomic-write naming, `.ext-grants.toml.tmp-<pid>-<nanos>-<n>`; it is
-  renamed over the document on success and removed when the write fails, so only a crash
-  leaves one behind. Backups follow §8.6.
+  It is an advisory lock taken on that file's handle with a non-blocking attempt (step 1);
+  the file is created if missing (`O_CREAT | O_NOFOLLOW | O_NONBLOCK`, a regular file
+  checked on the handle), is never opened through a symbolic link, passes the install
+  guard, and is **never removed** (removing it would race with other lockers), so it
+  persists after the first write. The temporary file is created exclusively beside the
+  resolved document with the settings crate's atomic-write naming,
+  `.ext-grants.toml.tmp-<pid>-<nanos>-<n>`; it is renamed over the document on success and
+  removed when the write fails, so only a crash leaves one behind. Backups follow §8.6.
 - **Links and the install guard.** Symbolic links in the final path component are
   followed (at most 40) to the file that is really replaced, and the settings crate's
   read-only install guard must accept the resolved destination before anything is written
-  (KM §6.5's rules).
-- **Output form.** Records are written sorted by kind, then id, in byte order; lists
-  sorted; numbers of `settings` as floats. A document that Tessera wrote, read and written
-  again without change, gives the same bytes apart from unknown keys' formatting.
+  (KM §6.5's rules). "Beside the document" always means the directory of that resolved
+  destination.
+- **Output form.** Records are written sorted by kind, then id, in byte order (tables that
+  belong to no key last, in their document order); lists sorted; numbers of `settings` as
+  floats. A document that Tessera wrote, read and written again without change, gives the
+  same bytes apart from unknown keys' formatting.
 - **Before the store is opened.** A load's record write (§9.2 step 6) must **complete**
   before phase C is queued, so a crash never leaves a store opened under a grant that the
-  document does not hold. If the write fails (an I/O error, the install guard, the lock),
-  the change is taken back out of the grant table, the load is cancelled, and the manager
-  reports "Permissions could not be saved: <reason>".
-- **Newer document** (§8.6): no write job is ever submitted; changes live in the grant
-  table for this session only, and phase C follows the change to the grant table.
-- **Manager actions** (§9.7) take effect in the grant table at once (so a revocation acts
-  in that frame) and are written in the background; a failed write is reported and the
-  grant table keeps the narrower state for the session.
+  document does not hold. With a document that is not writable, the decision applied to
+  the overlay is what phase C follows.
 
 <a id="s8-6"></a>
 ### 8.6 Damaged, missing and newer documents
@@ -1073,35 +1303,99 @@ all ext file I/O on workers. So:
 | Case | Reading | Writing |
 |---|---|---|
 | Missing | Empty: no records | Created by the first write |
-| Not UTF-8, not TOML, over 4 MiB, wrong `format`, nesting too deep | Every record ignored (fail closed) | Before the first write, the damaged file is copied to `ext-grants.toml.corrupt-<unix seconds>[-n].bak` beside it (at most 8 such backups, the oldest removed first, as the settings crate keeps its own; TM L79), then a fresh document is written |
-| `version` newer than the build reads | Every record ignored; the script manager says "Permissions were saved by a newer Tessera and are not used" | **Never written** by this build, so the newer build's data is kept. Dialogs still show; their decisions apply to this session only (§8.5) |
-| Some records invalid | Those ignored (§8.4) | The file is backed up once as above before the first write that would drop them |
+| Unreadable: the open or the read fails (`EACCES`, `EIO`, `EISDIR`, …), or the path is not a regular file (a FIFO, socket, device or directory, never waited on, §8.5) | Every record ignored (fail closed); the script manager says "Permissions could not be read: <reason>". At start-up the gate still leaves `Starting` (§10.3) | A write job reads the document first (§8.5 step 2) and fails while it is unreadable, so nothing is ever written over a document Tessera could not read; decisions stay in the session overlay (§8.5) |
+| Not UTF-8, not TOML, over 4 MiB, wrong `format`, nesting too deep, more than 256 `[[script]]` tables or `order` entries | Every record ignored (fail closed) | The first write backs the document up (below), then starts from an empty document |
+| `version` newer than the build reads | Every record ignored; the script manager says "Permissions were saved by a newer Tessera and are not used". Such a read never narrows or suspends anything (§8.5) | **Never written** by this build, so the newer build's data is kept. Dialogs still show; their decisions apply to this session only, in the session overlay (§8.5) |
+| Some records invalid | Those ignored (§8.4) | Kept as they are, except by a write of their own key (§8.5 step 4), which first backs the document up |
+
+**Backups (TM L79, TM §8.8 "Tessera's own files").** A backup is named
+`ext-grants.toml.corrupt-<unix seconds>[-n].bak` and lies in the directory of the
+**resolved** document, beside the lock and temporary file (§8.5), never behind the
+configured path's link. Its bytes are bounded:
+
+- a document that the write job read whole (at most 4 MiB) is backed up by writing
+  **exactly the bytes it read** to a backup file created exclusively (`O_CREAT | O_EXCL |
+  O_NOFOLLOW`) and flushed to disk;
+- a document over 4 MiB (the read stopped at 4 MiB + 1 bytes) is backed up by **renaming**
+  the resolved document to the backup name, before the fresh document is renamed into
+  its place.
+
+Nothing ever copies more than 4 MiB of a damaged document, and nothing reads one past
+4 MiB + 1 bytes, so a huge file or a link to an endless device costs a bounded amount of
+time and disk (the read open is non-blocking and checked to be a regular file, §8.5). Each
+write job makes at most one backup. At most 8 backups are kept: making a ninth removes the
+oldest (by its name's time and counter) with a no-follow removal of that entry itself, as
+the settings crate keeps its own.
 
 <a id="s8-7"></a>
 ### 8.7 Records, stores and orphans
 
 - A (kind, id) has one record and one `Store` (D17 §5.2). The store directory is created by
   phase C's first open after the record exists; they are removed together.
-- **Orphan record:** a record whose folder `data/<kind>/<id>/` does not exist or is not a
-  directory when the script manager lists scripts. It is listed with its stored-value size
-  and a "Remove" button.
-- **Orphan store:** a store directory `data/script-store/<kind>/s_<id>/` with no valid
-  record. It is listed the same way.
-- **Remove** (TM §8.24) first queues the store's deletion on its I/O queue; when that job
-  has completed, it removes the record (a grant-store write) and the id's bindings from
-  `keymap-ext.toml`, unless a record of the other kind with the same id remains (D17 §2).
-  A crash between the two leaves a record with no store, which is harmless. The store's
-  deletion is the wipe of §8.8 followed by a removal of the then empty `s_<id>` directory
-  relative to its `<kind>` handle; an unusable store directory (§3.6) is reported and
-  nothing is removed, and the record stays.
+- **Orphan record:** a valid record of the grant table whose folder `data/<kind>/<id>/` the
+  latest listing of §3.5 did not find as a directory. Records of kind `scripts-dev` are
+  **never** orphans while developer mode is off, because `data/scripts-dev/` is not listed
+  then (§3.5); and no record of a kind is an orphan while that kind's listing stopped at its
+  cap (TM L88). An orphan record is listed with its stored-value size and a "Remove"
+  button.
+- **Orphan store:** a store directory that the store-root scan (below) found as
+  `data/script-store/<kind>/s_<id>/` with no valid record of its (kind, id) in the grant
+  table. It is listed the same way.
+- **Remove** (TM §8.24). An orphan may still be loaded (its folder was deleted after its
+  snapshot was read) or loading. So Remove first ends it: a **loading** (kind, id) is
+  handled as §7.5 says (cancelled once past its grant decision); a **loaded** one gets the ordinary unload (its `Unload` handler
+  item, then its close item with the final flush; a suspended one its close item only).
+  Then the store's deletion is queued on the store's I/O queue, behind the final flush and
+  every earlier job of that store, so no apartment's flush ever meets a removed
+  directory. When the deletion has completed, Remove removes the record (a grant-store
+  write) and the id's bindings from `keymap-ext.toml`, unless a record of the other kind
+  with the same id remains (D17 §2). A crash between the two leaves a record with no
+  store, which is harmless. The store's deletion is the wipe of §8.8 followed by a removal
+  of the then empty `s_<id>` directory relative to its `<kind>` handle; an unusable store
+  directory (§3.6) is reported and nothing is removed, and the record stays. Reset (§9.6)
+  ends a loaded or loading script the same way.
 - **The bindings' removal** **(design addition)** is a read-modify-write of
   `keymap-ext.toml` on a worker, made as §8.5's write job is, with KM §6.3's strict reader
   and KM §6.5's saving rules: the lock `.keymap-ext.toml.lock` in the directory of the
-  resolved document (persistent, never removed, as in §8.5), and a temporary file
+  resolved document (persistent, never removed, taken without blocking and retried for at
+  most 1 s, as in §8.5), the document read with a non-blocking open checked on the handle
+  and bounded at its cap + 1 bytes (TM L47, TM §8.8), and a temporary file
   `.keymap-ext.toml.tmp-<…>` beside it, renamed on success and removed on failure. The
   binding UI's own saves follow KM §6.5 and create the same temporary-file form.
-- Orphans count toward the `Store` totals (TM L40, L41); a write refused by a total names
-  them (D17 §5.2).
+
+**Totals and the store-root scan (TM §8.7, TM L40, L41, L92).** The all-scripts `Store`
+totals count every store of a (kind, id), orphans and scripts not loaded included (D17
+§5.2). A loaded or loading store contributes its file index and pending entries (TM rules
+7.6.1, 7.6.5). Every other store contributes the figures of the **store-root scan**:
+
+- **When.** On the grant-store queue (§8.5), once while the gate is `Starting`, after the
+  start-up read and before any load (the gate does not leave `Starting` before it has
+  completed, §10.3), and again after every Reset, Remove and orphan removal has
+  completed. A store leaves the scanned set when a load's phase C opens it (its file index
+  counts from then) and joins it again, with its file index's last figures, when its
+  apartment's final flush has completed. So the totals are current without rescanning
+  stores that are open.
+- **How.** The scan opens `data/script-store/` and each `<kind>` directory as §3.6 steps
+  1–2 say, but never creates one (a missing one has no stores). It lists the `<kind>`
+  directory through its handle and classifies each entry with `fstatat(…,
+  AT_SYMLINK_NOFOLLOW)`. An entry named `s_<id>` with a valid id (§3.2) that is a
+  directory is opened relative to the `<kind>` handle with `O_RDONLY | O_DIRECTORY |
+  O_NOFOLLOW | O_NONBLOCK` (Windows: `FILE_FLAG_OPEN_REPARSE_POINT`, a reparse point
+  refused), checked on the handle, and listed. Each of its entries is classified with
+  `fstatat` without following and counted: a regular file by its size rounded up to a
+  multiple of 4 KiB, plus 4 KiB (TM §8.7, L41), any other entry as 4 KiB; each regular file whose name
+  is a key file (§3.1) counts one key. Nothing in a store is opened, read, created or
+  removed by the scan.
+- **Entries that are not stores.** An entry of `<kind>` that is not such a directory (a
+  link, a reparse point, a file, a special file, a name that is not `s_` and a valid id)
+  counts nothing and is shown in the script manager as "Not a stored-values folder:
+  data/script-store/scripts/<name>", the name as plain text (TM §8.2).
+- **Caps (TM L92).** At most 1,024 entries are read from each `<kind>` listing and at most
+  2,064 from each store directory. Past a store's cap that store counts as full (16 MiB
+  and 1,024 keys, TM L40, L41); past a `<kind>` listing's cap the totals count as full
+  until the next scan. Either way the totals stay conservative, and the script manager
+  reports "Too many entries in data/script-store/scripts".
+- Orphans count toward the totals; a write refused by a total names them (D17 §5.2).
 
 <a id="s8-8"></a>
 ### 8.8 The store open, the store probe, the owner tag and the marker
@@ -1128,11 +1422,15 @@ per-entry rules of §3.6:
    apartment's effective set holds `session.server`, the store is wiped (D17 §5.2 rule 3).
 5. **Durable tags.** If the directory is new or was wiped, the owner tag is created
    exclusively and written durably (written, flushed to disk with its directory entry):
-   the `author`'s UTF-8 bytes, nothing else. If the effective set holds a local-only
-   capability, or the sweep removed a `local-only` entry that was not a plain file and the
-   store was not wiped, a plain `local-only` marker is created exclusively and written
-   durably. Both are written before the open completes, so before the top-level run and
-   before any value file of the new apartment can be flushed.
+   the `author`'s UTF-8 bytes, nothing else. The store must then carry a plain
+   `local-only` marker when the effective set holds a local-only capability, or when the
+   sweep removed a `local-only` entry that was not a plain file and the store was not
+   wiped. A plain marker that the sweep kept (step 2) and the wipe did not remove is
+   **kept as it is**; only when none is present (a new or wiped directory, or the sweep
+   removed a non-plain one) is a plain marker created exclusively and written durably, so
+   the exclusive create never meets an existing marker. The tags are written before the
+   open completes, so before the top-level run and before any value file of the new
+   apartment can be flushed.
 6. **File index.** The key files the sweep kept are listed into the file index (TM rule
    7.6.1), each with its counted size (TM §8.7).
 
@@ -1168,7 +1466,9 @@ counted size. The open of steps 1–6 re-checks everything and is what decides.
 - **Only the user grants**, through the consent dialog in the reserved layer, under D17
   §5.3's rules and TM §8.25 (TM L65): plain text (TM §8.2), the id and kind beside every
   script string, Escape only refuses, `ui.dialog` and `ui.eat_keyboard` pushed while it
-  shows, ext windows, labels and overlays neither drawn nor hit-tested while it shows.
+  shows, ext windows, labels and overlays neither drawn nor hit-tested while it shows,
+  and the developer console (EA1b §9) hidden and taking no input while it shows (D17
+  §5.3), so no text a script prints can sit beside or over the dialog.
 - **The pointer-only "Allow".** A press on "Allow" counts only when all of these hold: the
   press comes at least 500 ms after the dialog appeared; the pointer **entered** the
   button, as a pointer move from outside the button to inside it **observed after the
@@ -1243,6 +1543,12 @@ capabilities that are undecided. If no kind is set yet:
 - otherwise, step 3 asks for memory: **memory** dialog;
 - otherwise: no dialog.
 
+**Record cap (TM L79).** A dialog whose Allow would add a record for a key that has no
+`[[script]]` table in the document view (§8.5), while the document already holds 256
+tables, is not shown: the load is refused with "256 scripts have saved permissions; remove
+one in the script manager", and nothing is written. (The write job checks the cap again
+against the document it reads, §8.5 write step 5.)
+
 Any dialog also asks for the memory of step 3. An optional capability that is **denied**
 is never in the asked set of the last three kinds; the user can change it in the manager
 (§9.7). An undecided capability that is not offered (for example `world.read` while it is
@@ -1273,7 +1579,7 @@ names differ. All texts except the script's display strings are Tessera's own.
 | Part | Content |
 |---|---|
 | Title | First enable and first enable again: "Allow this extended script?" · Changed script: "This extended script has changed. Allow it again?" · Update: "This extended script was updated. Allow it to act for you again?" · More permissions: "This extended script asks for more." · Memory: "This extended script asks for more memory." |
-| Script line | name, version, then the fixed-style id and kind ("notes · installed", "hud · developer"); author; description (at most 8 lines). A developer script also shows the developer badge |
+| Script line | name, version, then the fixed-style id and kind ("notes · installed", "hud · developer"); author; description (at most 8 lines). A developer script also shows the developer badge. At a load these come from the manifest that phase A read. A dialog started from the script manager (§9.7; no load) reads the folder's current `script.toml` alone, as the details page does (§3.5); it uses name, version and description only when that manifest is valid and its `author` and pinned capability lists equal the record's. Otherwise (missing, invalid, another author or other lists) the line shows only the id and kind and the record's `author` (§8.3), and the capability rows show their dialog texts without reasons |
 | "Observe and show" | Each group-O capability asked, with the dialog text of §6.1 and the manifest's reason |
 | "Act for you" | Each group-A capability asked, the same way |
 | Kept grants | In an update dialog: "Still allowed: …" with the kept group-O names (read-only) |
@@ -1353,9 +1659,10 @@ list cannot be told from an update, so it keeps group-O grants and the store; th
   every notice (TM L67).
 - "Review" is not on the notice (notices take no clicks): it is the script's page in the
   script manager, which the notice names. The page lists the kept grants and the store size
-  and has **Reset**, which unloads the script first if it is loaded, then empties the store
-  (on its I/O queue) and, when that has completed, removes the record. The next load is a
-  first enable.
+  and has **Reset**, which first ends the script if it is loaded (the ordinary unload,
+  with the final flush) or loading (as §7.5 says), then empties the store (on its I/O
+  queue, behind that flush) and, when that has completed, removes the record and queues a
+  store-root scan (§8.7). The next load is a first enable.
 
 <a id="s9-7"></a>
 ### 9.7 The script manager's grant pages
@@ -1367,13 +1674,13 @@ and the settings page.
 
 | User action | Effect |
 |---|---|
-| Uncheck a granted capability (revoke) | The grant table changes at once, the write follows (§8.5). On a loaded script, required or optional, the script is **suspended in that frame** (TM §8.23; D17 §4; a re-read of the grant store that narrows a loaded script's record does the same, §8.5): its pending intents are discarded, its leases end (TM §8.17), nothing accrues, and no call runs until the user resumes it. A revoked **required** capability cannot be resumed: the script is unloaded (one close item, no `Unload` handler; D17 §2), and its next user-started load asks again (§9.2 step 4). After a revoked **optional** capability the user may resume the script; from then every native of that module raises `"not granted"`, `Ext.Has` answers false, and what the module made is gone (EA1a §2.9) |
+| Uncheck a granted capability (revoke) | The capability moves from `granted` to `denied` (not to undecided, so §9.2 step 4 and step 5's "denied optional" rule apply to it). The grant table changes at once through the session overlay, the write follows, and a failed write keeps the revocation for the session (§8.5). During a load of that (kind, id), §7.5 applies. On a loaded script, required or optional, the script is **suspended in that frame** (TM §8.23; D17 §4; a re-read of the grant store that narrows a loaded script's record does the same, §8.5): its pending intents are discarded, its leases end (TM §8.17), nothing accrues, and no call runs until the user resumes it. A revoked **required** capability cannot be resumed: the script is unloaded (one close item, no `Unload` handler; D17 §2), and its next user-started load asks again (§9.2 step 4). After a revoked **optional** capability the user may resume the script; from then every native of that module raises `"not granted"`, `Ext.Has` answers false, and what the module made is gone (EA1a §2.9) |
 | Check a denied or undecided capability (widen) | Opens the more-permissions dialog for it (§9.3, "Started from the script manager"). It asks only for capabilities of the record's pinned list, each with its dialog text and, when the folder's current manifest has the same pinned list, its reason. On a loaded script the new grant applies at the **next load** |
 | Switch between a local-only capability and `session.server` | §9.4 |
 | Change "Load automatically" | Written at once |
 | Move in the list | Writes `order` |
-| Reset | §9.6 |
-| Remove (orphans) | §8.7 |
+| Reset | §9.6; a loaded script is unloaded first, and a load in progress is handled as §7.5 says |
+| Remove (orphans) | §8.7; a loaded orphan is unloaded first, and a load in progress is handled as §7.5 says, before its store is deleted |
 | Change a setting value | Written at once; a loaded script sees it as §4.12 says |
 
 <a id="s9-8"></a>
@@ -1400,6 +1707,12 @@ and the settings page.
     D17 §10). Any difference makes it **full**: an unload, the pipeline of §9.2, and a
     load without a hand-off table; an `author` difference also wipes the store before the
     new apartment opens it (§8.8 step 3);
+  - a **hot** reload writes nothing to the grant store (EA1b §8.3 has no such write): the
+    record keeps the hash of the last full load, which is harmless because a developer
+    script's content change keeps every decision (§9.2 step 2); stored settings values
+    that the new schema makes invalid are replaced by their defaults for the new
+    apartment (EA1b §8.1, §4.12) and dropped by the next full load's record write;
+    a **full** reload writes as §9.2 step 6 says;
   - the developer console's REPL binds only to developer apartments (D17 §10).
 - **`/ext:reload` of an installed script** (developer mode on) is always a full reload:
   unload, phase A, the pipeline of §9.2 (so a changed hash re-asks group A before new code
@@ -1409,8 +1722,11 @@ and the settings page.
   "Developer mode is off"; nothing is unloaded, read or loaded. With developer mode on, an
   `/ext:reload <id>` whose id names no **loaded** script (not loaded, unloaded after a
   suspension, only listed, or unknown) produces the notice "No loaded extended script
-  '<id>'" (D17 §3; the id shown as plain text, TM §8.2) and starts no load: a reload never
-  loads a script that was not running, and the user loads it from the script manager. A
+  '<id>'" (D17 §3; the id shown as plain text, TM §8.2) and starts no load. This is the
+  one text for every "not loaded" case, the `/ext:` command line's (EA1a §6.2) included,
+  because D17 §3 states it; EA1b §8.2's "⟨id⟩ is not loaded" is to be aligned with it
+  (OPEN O-12). A reload never loads a script that was not running; the user loads it from
+  the script manager. A
   loaded script that is **suspended** is not reloaded: the notice is "notes is suspended:
   resume it first" (a suspension during a reload cancels it, EA1b §8). The file watcher
   follows the same rules (EA1b §8.2: events for a script that is not loaded queue
@@ -1455,15 +1771,17 @@ The ext host is always in exactly one gate state:
 | State | Entered when | Apartments | Loads | Ext steps 6a / 6b / 6c | Dialogs | Script manager |
 |---|---|---|---|---|---|---|
 | **Off** | At start-up; when `Draining` ends; for the whole life of a session whose class is not admitted | none exist | none start; a user's Load is refused with "Extended scripts are not available with this connection" | not run | none shown; none queued | lists scripts and records read-only, shows the gate state |
-| **Starting** | An admitted session has connected (start-up step 8: its class is known), and the UI is not yet ready or the grant table has not yet been read (§8.5) | none | user-started loads wait (queued in order) | not run | none shown | as Off, with "starting" |
-| **Open** | `Starting`, the UI is ready (start-up step 9) and the grant table has been read | loaded and loading ones | allowed (§7.3); autoload queued at **world entry** (the session's first entry into the world after its `Connect`, once per session) | run, under the per-frame rules of EA1a §2.6 and TM L5–L9 (cap and slices, L5–L7; heavy-frame gate, L8; floor frames, L9 and TM rule 7.4.1) | allowed | full |
+| **Starting** | An admitted session has connected (start-up step 8: its class is known), and the UI is not yet ready, or the start-up read of the grant store (§8.5) or the store-root scan (§8.7) has not yet been applied | none | user-started loads wait (queued in order) | not run | none shown | as Off, with "starting" |
+| **Open** | `Starting`, the UI is ready (start-up step 9), and the start-up read and the store-root scan have been applied (an unreadable, damaged or newer document counts as read, §8.6) | loaded and loading ones | allowed (§7.3); autoload queued at **world entry** (the session's first entry into the world after its `Connect`, once per session; if that entry came while the state was still `Starting`, at the entry into `Open`) | run, under the per-frame rules of EA1a §2.6 and TM L5–L9 (cap and slices, L5–L7; heavy-frame gate, L8; floor frames, L9 and TM rule 7.4.1) | allowed | full |
 | **Draining** | A backend switch is queued, or the session disconnects | existing ones are being unloaded | none start; loads in progress end as §10.4 says | 6a runs the unload and close items at the head of the ext queue, under the 6a slice (TM L6), the heavy-frame gate (TM L8) and its floor frames (TM rule 7.4.1, TM L9); **6b does not run**; 6c runs | the shown dialog closes as "Not now"; queued ones are dropped | read-only, "unloading" |
 
 Transitions:
 
 - `Off` → `Starting`: the new session is connected and its class is admitted.
-- `Starting` → `Open`: the UI is ready and the grant table has been read. Waiting
-  user-started loads start, in order.
+- `Starting` → `Open`: the UI is ready, and the start-up read and the store-root scan have
+  been applied. Both are jobs of the grant-store queue, which never waits on another
+  program (§8.5), so this transition cannot be held back by a FIFO, a device or a lock
+  at the grant store's path. Waiting user-started loads start, in order.
 - `Open` → `Draining`: a switch is queued (`Command::Connect` for any backend) or the session
   disconnects. This is the moment TM rule 7.4.2 calls "queued". In that frame the session
   generation rises (at every `Connect` and every disconnect, D17 §4), every pending intent
@@ -1501,6 +1819,14 @@ run exactly one 6a item each and the timeout closes the rest, so a switch comple
 TM L11 (2 s + 17 × (250 ms + one frame), about 6.25 s; 392 frames in deterministic mode).
 TM X85 and X87 test this. (This closes the former OPEN O-5.)
 
+**Narrowings during a load.** A manager revocation, Reset, Remove, a local-only switch or a
+narrowing re-read of the grant store that reaches a (kind, id) while its load is in
+progress is not a gate transition. §7.5 states it with the same rows as the table above
+(phase A; phase B before, at and past its dialog; phase C; phase D before the top-level
+run; loaded), and phase D's delivery and the top-level item re-check the record, so no
+load reaches its top-level run without a capability revoked after its decision (TM §8.23
+"Loads in progress", X91).
+
 <a id="s10-5"></a>
 ### 10.5 What the gate does not change
 
@@ -1508,8 +1834,15 @@ TM X85 and X87 test this. (This closes the former OPEN O-5.)
 - Per-script suspension (watchdog, aborts, panic chord, revocation, a changed process
   locale) is not a gate state; it is defined in EA1a §7.11 and §2.9, TM §8.23 and D17
   §4–§5.
-- An `/ext:` line in any state other than `Open` produces the notice "No loaded extended
-  script '<id>'" (D17 §3), never a chat line, and is never sent to a backend.
+- An `/ext:` line in any state other than `Open` is never a chat line and is never sent to
+  a backend. Outside `Open` no script takes lines (none is loaded in `Off` and `Starting`;
+  in `Draining` 6b does not run). So:
+  - `/ext:list` and `/ext:help [<id>]` open the script manager at the matching page, as in
+    `Open` (D17 §3), read-only in the states where §10.3's table makes it so;
+  - `/ext:reload <id>` with developer mode off gives "Developer mode is off" (§9.8);
+  - every other `/ext:` line (`/ext:reload <id>` with developer mode on, `/ext:<id>` with or
+    without a command word) gives the notice "No loaded extended script '<id>'" (D17 §3,
+    §9.8), the id shown as plain text (TM §8.2), rate-limited as every notice (TM L67).
 
 ---
 
@@ -1523,23 +1856,48 @@ TM X85 and X87 test this. (This closes the former OPEN O-5.)
   and it never reads `TESSERA_GAME_DIR`.
 - **It never touches the user's own Tessera directories.** Every command that loads a
   script works in a fresh temporary **tool root** (a directory with `data/`, `logs/` and a
-  config directory), removed at exit unless `--keep-root` is given. `--root DIR` uses a
-  given empty directory instead; a non-empty one is refused.
+  config directory). `--root DIR` uses a given empty directory instead; a non-empty one is
+  refused (exit status 2).
+- **Removing the tool root (TM §8.8 "The harness's tool root").** A tool root that the tool
+  made is removed at exit unless `--keep-root` is given. A user-given `--root DIR` is
+  **never** removed or emptied: the tool leaves it as `--keep-root` would and prints its
+  path. The removal is a **no-follow recursive removal through directory handles**: each
+  entry is classified with `fstatat(…, AT_SYMLINK_NOFOLLOW)` relative to its directory's
+  handle; a directory is opened relative to that handle with `O_RDONLY | O_DIRECTORY |
+  O_NOFOLLOW | O_NONBLOCK`, checked on the handle, emptied the same way and then removed
+  (`unlinkat` with `AT_REMOVEDIR`); every other entry (a symbolic link, a junction or other
+  reparse point, a FIFO, a device node, a file) is removed as an entry (`unlinkat`; on
+  Windows, deleting the reparse point opened with `FILE_FLAG_OPEN_REPARSE_POINT`), never
+  opened and never followed. So X94's links and junctions are removed as links, their
+  targets and the canaries outside the root are never touched, and nothing outside the
+  root is removed. An entry that cannot be removed this way is left, and the tool reports
+  it (exit status 3).
 - **Script text reaching a terminal is escaped (design addition**, adopting D17 "Other
-  improvements", script log): every string that comes from a script, a manifest, a walk
-  file or a path is written with C0 and C1 control characters (U+0000–U+001F except TAB,
-  U+007F–U+009F), U+2028, U+2029, a backslash, and the characters §4.4 refuses replaced by
-  `\u{XXXX}` escapes (a backslash as `\\`), and every line the tool prints starts with its
-  own prefix, so no output can carry terminal escape sequences or forge a line. (The
-  script **log file** has its own format, TM §8.1.)
+  improvements", script log). Every string that comes from a script, a manifest, a walk
+  file, a grant store or a path is first turned into **escaped text**: a byte that is not
+  part of valid UTF-8 (a POSIX file name need not be UTF-8) becomes `\xNN` (the byte's value in two
+  upper-case hexadecimal digits; characters are always written as `\u{XXXX}`, so a byte
+  escape and a character escape never mix up); C0 and C1 control characters (U+0000–U+001F except
+  TAB, U+007F–U+009F), U+2028, U+2029, and every character §4.4 refuses (Cf with every
+  bidirectional control, Zl, Zp, Cs, Co, Cn, noncharacters, variation selectors) become
+  `\u{XXXX}`; a backslash becomes `\\`. The text form prints the escaped text, and every
+  line the tool prints starts with its own prefix, so no output can carry terminal escape
+  sequences, reorder a line or forge one. (The script **log file** has its own format, TM
+  §8.1.)
 - **Exit status:** 0 success; 1 findings or failures (an error finding of `check`, a failed
   test, a failed escape case); 2 usage or input error (an unreadable path, an invalid walk
   file, a bad option); 3 internal error.
 - **`--json`** (every command) writes one JSON object per line instead of text, UTF-8, no
   white space outside strings, keys in the order the table below lists them. A key that
-  does not apply to an object is **omitted**, never `null`. Strings carry the same text as
-  the text form, unescaped, and JSON's own escaping (`\u00XX` for every control character)
-  keeps the line safe for a terminal.
+  does not apply to an object is **omitted**, never `null`. A string value is the same
+  **escaped text** as the text form prints (above), so a file name that is not UTF-8 is
+  carried as its `\xNN` escapes. It is written as a JSON string that is **pure printable
+  ASCII**: `"` and `\` as `\"` and `\\`, and every character outside U+0020–U+007E as
+  `\uXXXX` (lower-case hexadecimal; a pair of surrogate escapes above U+FFFF), not left to
+  an encoder's defaults (RFC 8259 and common encoders escape only U+0000–U+001F, which
+  would pass C1 controls, U+2028, U+2029 and bidirectional controls through). So every
+  `--json` line is safe for a terminal on its own, and a consumer that decodes it gets the
+  escaped text, never a raw control character.
 
   | `type` | Command | Keys after `type` |
   |---|---|---|
@@ -1559,7 +1917,7 @@ TM X85 and X87 test this. (This closes the former OPEN O-5.)
 | Command | Slice | Synopsis |
 |---|---|---|
 | `check` | 1a | `tessera-scripttool check [--strict] [--policy default\|FILE] [--json] FOLDER...` |
-| `test` | 1a | `tessera-scripttool test [--walk FILE] [--seed N] [--latency K] [--backend offline\|other\|tessera-protocol] [--deny CAP]... [--kind installed\|developer] [--grants FILE] [--trace FILE] [--expect-trace FILE] [--worker-jitter SEED] [--keymap-ext FILE] [--root DIR] [--keep-root] [--json] FOLDER...` |
+| `test` | 1a | `tessera-scripttool test [--walk FILE] [--seed N] [--latency K] [--backend offline\|other\|tessera-protocol] [--deny CAP]... [--developer-mode] [--no-start] [--grants FILE] [--trace FILE] [--expect-trace FILE] [--worker-jitter SEED] [--keymap-ext FILE] [--root DIR] [--keep-root] [--json] (FOLDER \| --installed FOLDER \| --developer FOLDER)...`; a bare FOLDER means `--installed FOLDER` (§11.4) |
 | `escape` | 1a (cases added per slice) | **(Design addition.)** `tessera-scripttool escape [--list] [--case XN]... [--seed N] [--json]`: the runner of TM's escape tests (§11.8). D17 places the escape tests "in `scripttool test`"; this command runs them with `test`'s machinery and harness, so it adds a name, not a mechanism |
 | `modules` | 1a | **(Design addition.)** `tessera-scripttool modules [--json]`: the build's registry: modules with their majors, minors, capability, group and deprecation, and the capability catalogue of §6.1 for the slices the build serves |
 | `init` | 1b | `tessera-scripttool init ID [--dir PARENT]`: writes `PARENT/ID/script.toml` and `PARENT/ID/main.lua` (an original, CC0 skeleton) that pass `check`; refuses an existing folder |
@@ -1589,10 +1947,10 @@ Lines and columns refer to the manifest or a source file where known.
 | F06 | error | A file changed size while it was read |
 | M01 | error | `script.toml` missing, over 64 KiB, not UTF-8, has a byte-order mark, or not TOML (with the parser's line and column) |
 | M02 | error | An unknown key, or a nested table from an unquoted dotted capability name |
-| M03 | error | A required key missing, a value of the wrong type, or nesting deeper than §4.1 allows |
-| M04 | error | `manifest` newer than this build reads (§12.1), or `api` major not served |
+| M03 | error | A required key missing, a value of the wrong type, nesting deeper than §4.1 allows, or more than 1,024 keys in the document (§4.1, TM L37) |
+| M04 | error | `manifest` below 1 or newer than this build reads (§12.1); `api` below 1 or its major not served (§12.2) |
 | M05 | error | `id` grammar, reserved id, or `id` different from the folder name |
-| M06 | error | `version` not Semantic Versioning 2.0.0 within the caps |
+| M06 | error | `version` not Semantic Versioning 2.0.0 within the caps; `license` not printable ASCII (0x20–0x7E) or over 64 bytes (§4.2, TM L87) |
 | M07 | error | A display string breaks §4.4 (the message names the field, the rule and the code-point position, never the string) |
 | M08 | error | `entry` invalid, not a `.lua` file, or not in the snapshot |
 | M09 | error | An unknown capability; a capability both required and optional; more than 16 |
@@ -1600,10 +1958,10 @@ Lines and columns refer to the manifest or a source file where known.
 | M11 | error | A module unknown, its major not served, its minor too new; a module listed twice; more than 32 |
 | M12 | error | A module's capability missing from the manifest, or required module with an optional capability |
 | M13 | error | `memory_mib` out of range |
-| M14 | error | `[[contexts]]`: more than 2, name grammar, name too long for the id, duplicate |
-| M15 | error | `[[actions]]`: more than 64, name grammar or length, duplicate, `kind`, missing or unknown `context`, no context declared |
+| M14 | error | `[[contexts]]`: more than 2, name grammar, name too long for the id, duplicate; contexts declared without `input` in either capability table (§4.10) |
+| M15 | error | `[[actions]]`: more than 64, name grammar or length, duplicate, `kind`, missing or unknown `context`, no context declared; actions declared without `input` in either capability table (§4.10) |
 | M16 | error | `default` invalid: not one stroke, an axis or analog entry, `on` not allowed there, `value` out of range |
-| M17 | error | Two actions suggest the same stroke |
+| M17 | error | Two actions of one context suggest overlapping strokes: equal after KM §5.1, or one press can complete both (a shared button, a chord and one of its buttons, modifier conditions one press meets together, subset-modifier matches for axes; §4.11, TM §8.16, L61) |
 | M18 | error | `[[settings]]` invalid (any rule of §4.12) |
 | M19 | error | `[server]` invalid; `[server] entry` before slice 3 |
 | S01 | error | A source file does not compile (chunk name and line) |
@@ -1669,17 +2027,65 @@ file's expectations and the scripts' own assertions.
   the trace as a `dialog` event (§11.6). The records exist only in the tool root's grant
   store, and the tool never reads or writes the user's.
 - **Seeding the grant store.** `--grants FILE` copies FILE's bytes, unchanged, to the tool
-  root's `ext-grants.toml` before start-up's read (at most 4 MiB + 1 byte are copied, which
-  is enough for §8.6's "over 4 MiB" case). Any bytes are accepted: a hand-edited, damaged,
-  duplicated or newer-`version` document is read exactly as the client reads it (§8.4,
-  §8.6). The walk's `grants` event (§11.5) replaces the document mid-run and triggers the
-  re-read of §8.5, as the script manager's opening would. Without `--grants`, the tool
-  root starts with no grant store.
-- **Kind:** `--kind installed` (default) loads the folders as kind `scripts`;
-  `--kind developer` as `scripts-dev` with developer mode on. The folders are read where
-  they are, through §3.4's rules: the given folder's parent directory takes the place of
-  `data/scripts` in step 1, and the folder is opened relative to it in step 2. Records,
-  stores and logs go to the tool root.
+  root's `ext-grants.toml` before start-up's read (at most 4 MiB + 1 bytes are copied, the
+  bound of TM L79's read, which is enough for §8.6's "over 4 MiB" case). Any bytes are
+  accepted: a hand-edited, damaged, duplicated or newer-`version` document is read exactly
+  as the client reads it (§8.4, §8.6). The walk's `grants` event (§11.5) replaces the
+  document mid-run and triggers the re-read of §8.5, as the script manager's opening would.
+  Without `--grants`, the tool root starts with no grant store. (A grant store that is a
+  FIFO or a link to a device, TM X94, is placed by `escape`'s own hook, not by
+  `--grants`.)
+- **Input files.** The `--walk`, `--grants` and `--keymap-ext` files, and the files and
+  folders the walk names (`grants`, `reload.from`), are the user's own and may be reached
+  through links, but each is opened **non-blocking** and checked on the handle to be a
+  regular file (a directory for `reload.from`, which is then read through §3.4), and a
+  file is read at most to its cap + 1 bytes (the walk file 1 MiB, TM L86; a grant store
+  4 MiB, TM L79; an ext keymap 128 KiB, TM L47). A FIFO, a device, or a missing or
+  unreadable file is an input error (exit status 2) before the run starts, or, for a walk
+  event, a run failure in that frame; nothing waits on it. Only `--grants` and `grants`
+  accept an oversized file (the copy stops at the cap + 1 bytes, as above); an oversized
+  walk file is an input error.
+- **Folders and their kinds.** Each folder is given as `--installed FOLDER` (kind
+  `scripts`) or `--developer FOLDER` (kind `scripts-dev`); a bare FOLDER means
+  `--installed FOLDER`. The options repeat and mix; their sequence on the command line is
+  the **command-line order**. Each folder is read where it is, through §3.4's rules: its
+  parent directory takes the place of `data/scripts` or `data/scripts-dev` in step 1, and
+  the folder is opened relative to it in step 2. Two folders of **one** kind with the same
+  id are a usage error (exit status 2); one id in **both** kinds is allowed (D17 exit
+  criterion 5's second-copy case). The host's listings of §3.5 hold exactly the given
+  folders of each kind (the developer ones only while developer mode is on), so a record
+  whose (kind, id) has no given folder is an orphan by §8.7's rule. Records, stores and
+  logs go to the tool root.
+- **Developer mode** is off unless `--developer-mode` is given, whatever the folders'
+  kinds, and the walk's `developer_mode` event (§11.5) turns it on or off during the run,
+  with exactly the effects of §9.8 (turning it off unloads every loaded developer script
+  and stops listing developer folders; turning it on lists them). **No settings file** is
+  written: developer mode and every other setting of the run (the panic chord at its
+  default included) are held in memory, so the tool root never holds a settings file or
+  its lock file.
+- **Start of the run and the first loads.** In frame 0 the harness connects the session
+  (`Off` → `Starting`, §10.3), the UI is ready, and the start-up read of the grant store
+  and the store-root scan (§8.7) are submitted on the grant-store queue; they complete at
+  frame *k* (`--latency`, the worker rule above), and the gate becomes `Open` in that
+  frame (with `--backend other` or `tessera-protocol` it stays `Off`). The harness's
+  player is in the world from the connection, so **world entry** (§10.3) is the first
+  frame of each session in which its gate is `Open`. In that frame, in this order:
+  1. **autoload**, as §7.3 says: the grant table's records with `autoload = true` whose
+     folder is listed, in the script-list order;
+  2. in the run's **first** session only, and unless `--no-start` is given, a
+     **user-started load** of each folder in command-line order. A load of a (kind, id)
+     that autoload has already started is ignored, a load of an id whose other kind is
+     loading or loaded is refused (§7.4), and a load of a developer folder while developer
+     mode is off is refused with "Developer mode is off".
+
+  Every later load comes from a walk event (`manager` `load`, `reload`) or from autoload
+  at the world entry of a later session (after a `switch`). So D17 exit criterion 5's
+  cases can be written: the second copy (`--installed a/notes --developer b/notes
+  --developer-mode`: the developer load is refused while the installed one is loading or
+  loaded), a reload of an installed script with developer mode on (`--developer-mode` and
+  a `reload` event), two `autoload = true` records of one id in both kinds at world entry
+  (`--grants`, TM X90), and "turning developer mode off unloads developer scripts" (a
+  `developer_mode = false` event and an `[[expect]] loaded`).
 - **Backend:** `--backend offline` (default) admits the scripts; `other` and
   `tessera-protocol` run the session with that class (a test-only constructor in
   `tessera-net`), so the gate stays `Off` and no apartment may exist, which the walk can
@@ -1695,8 +2101,11 @@ file's expectations and the scripts' own assertions.
   by a random amount drawn from SEED; with `--expect-trace` it shows that traces do not
   depend on worker timing (M5.5 exit criterion 7). This check was EM's earlier escape case
   X-DET-1; it is an ordinary `test` check, not an escape case (TM §11.10).
-- `--keymap-ext FILE` uses a given ext keymap document for user bindings (read with KM
-  §6.3's strict reader); otherwise only suggested defaults are bound.
+- `--keymap-ext FILE` **copies** FILE's bytes (at most its cap + 1, TM L47) to
+  `keymap-ext.toml` in the tool root's config directory, which is the directory of the
+  run's configured keymap path (§3.1), before start-up; the run reads that copy with KM
+  §6.3's strict reader, and every save or binding removal of the run (§8.7) writes only
+  the copy, never FILE. Without it, only suggested defaults are bound.
 
 <a id="s11-5"></a>
 ### 11.5 The walk file
@@ -1785,9 +2194,22 @@ loaded = { script = "notes", value = true }
 | `[screen]` | `width`, `height` | The harness's virtual surface in physical pixels, the "screen" that TM §2 and §7.1 count coverage in. Default 1920 × 1080; `width` 320–7,680, `height` 200–4,320 (TM L86) |
 | `[world]` | `preset`, `size`, `start` | `flat`: terrain height 0 m everywhere; `slope`: height rises 0.1 m per metre along +x from the west edge. `size` landblocks per side (odd, 1–9, TM L86) around a fixed centre landblock that the harness prints. `start` is the player's position and heading in the region frame of ARCH §9.1 (metres, degrees) |
 | `[[entity]]` | `name` (at most 48 cp, §4.4 rules), `position` (region frame), `spawn`, `despawn` (frames; `despawn` optional) | Synthetic entities that the `Entity` module sees; at most 4,096 (TM L86) |
-| `[[input]]` | `frame` and exactly one of: `press` / `release` (one stroke, KM §5.1, resolved by the mapper exactly as in the client, so ext bindings resolve only after every built-in context, D17 §5.5); `text` (typed text, delivered to the focused text box if any, else dropped); `command` (a line as if typed in the chat input and submitted; `/ext:` lines go to the ext host, anything else is ignored); `pointer` + `click` (move the pointer to UI-space coordinates and click a mouse button there); `hold` + `until` (game-band actions held, for movement); `focus` (`"lost"` or `"gained"`: the game window loses or regains keyboard focus, TM §8.17); `switch` (`"offline"`, `"other"`, `"tessera-protocol"` or `"disconnect"`: a backend switch or session end is queued, §10.3); `reload` (`{ script = "<id>", from = "<path>" }`: from this frame the script's folder is the one at `from`, a path relative to the walk file's directory whose last segment is the id, read through §3.4's rules, and a reload is requested as `/ext:reload <id>` would, EA1b §8); `manager` (`{ script = "<id>", action = "revoke" \| "widen" \| "resume" \| "unload" \| "load", capability = "<name>" }`: the script manager's action of §9.7, `capability` only with `revoke` and `widen`; a `load` or `widen` that raises a dialog has it answered as §11.4 says); `reply` (`{ script = "<id>", kind = "first-enable" \| "first-enable-again" \| "changed" \| "update" \| "more" \| "memory", choice = "allow" \| "deny" \| "not-now" \| "escape", uncheck = ["<capability>", …], autoload = <boolean> }`: queues, from this frame, the answer to the next dialog of that script, §11.4; `uncheck` names optional capabilities left unchecked (default none), `autoload` the box (default: as §9.3 presets it); `deny` is valid for the first three kinds, `not-now` for the last three, `allow` and `escape` for all); `grants` (`"<path>"`: a file relative to the walk file's directory whose bytes (at most 4 MiB + 1, as `--grants` copies) replace the tool root's `ext-grants.toml` in this frame, after which the re-read of §8.5 is queued, as when the script manager opens) | At most 65,536 entries (TM L86) |
+| `[[input]]` | `frame` and exactly one of: `press` / `release` (one stroke, KM §5.1, resolved by the mapper exactly as in the client, so ext bindings resolve only after every built-in context, D17 §5.5); `text` (typed text, delivered to the focused text box if any, else dropped); `command` (a line as if typed in the chat input and submitted; `/ext:` lines go to the ext host, anything else is ignored); `pointer` + `click` (move the pointer to UI-space coordinates and click a mouse button there); `hold` + `until` (game-band actions held, for movement); `focus` (`"lost"` or `"gained"`: the game window loses or regains keyboard focus, TM §8.17); `switch` (`"offline"`, `"other"`, `"tessera-protocol"` or `"disconnect"`: a backend switch or session end is queued, §10.3); `reload` (`{ script = "<script>", from = "<path>" }`: from this frame the script's folder is the one at `from`, a walk path whose last segment is the id, read through §3.4's rules, and a reload is requested as `/ext:reload <id>` would, EA1b §8); `developer_mode` (`true` or `false`: the user turns developer mode on or off in Tessera's settings page, with §9.8's effects, §11.4); `manager` (`{ script = "<script>", action = "revoke" \| "widen" \| "resume" \| "unload" \| "load", capability = "<name>" }`: the script manager's action of §9.7, `capability` only with `revoke` and `widen`; a `load` or `widen` that raises a dialog has it answered as §11.4 says); `reply` (`{ script = "<script>", kind = "first-enable" \| "first-enable-again" \| "changed" \| "update" \| "more" \| "memory", choice = "allow" \| "deny" \| "not-now" \| "escape", uncheck = ["<capability>", …], autoload = <boolean> }`: queues, from this frame, the answer to the next dialog of that script, §11.4; `uncheck` names optional capabilities left unchecked (default none), `autoload` the box (default: as §9.3 presets it); `deny` is valid for the first three kinds, `not-now` for the last three, `allow` and `escape` for all); `grants` (`"<path>"`: a walk path naming a file whose bytes (at most 4 MiB + 1, as `--grants` copies) replace the tool root's `ext-grants.toml` in this frame, after which the re-read of §8.5 is queued, as when the script manager opens) | At most 65,536 entries (TM L86) |
 | `[[frame]]` | `from`, `to`, `elapsed_ms` | **Gate simulation:** in those frames, the harness reports `elapsed_ms` as the time since the frame's work started when step 7 is reached, so the heavy-frame gate (22 ms, TM L8) is evaluated on these values instead of being off, and the floor frames of TM rule 7.4.1 follow the 15-frame condition. Deterministic, because it never reads a clock. `elapsed_ms` above 22 for every frame is TM rule 7.4.6's "every frame is heavy" hook |
-| `[[expect]]` | `frame` or `at = "end"`, and exactly one of: `log` (`script`, `line`: a script-log record whose text equals `line`, logged in that frame); `log_contains` (`script`, `text`); `error` (`script`, `contains`: an aborted call whose message contains the text, in that frame); `store` (`script`, `key`, `value`; only with `at = "end"`, read after the final flush of the unload at the end of the run: the `Store` value equals the TOML value, compared as the bounded value model, a TOML array being a table with keys 1..n); `loaded` (`script`, `value` boolean); `refused` (`script`, `reason`: the load was refused with that reason text); `suspended` (`script`); `answer` (`script`, `query`, `value`: a query's answer recorded in the trace); `gate` (`state`: the gate state at the end of that frame); `dialog` (`script`, `kind`, and optionally `asked`, an array of capability names, and `choice`: a dialog of that kind was raised for that script in that frame, with exactly that asked set and answered with that choice; with `at = "end"`, at any frame of the run); `granted` (`script`, `kind` optional, default as `--kind`, `value`, an array of capability names: the grant table's `granted` list of that (kind, id) at the end of that frame, `[]` when it has no valid record); `grants_file` (`unchanged = true`, only with `at = "end"`: the tool root's `ext-grants.toml` holds exactly the bytes it was seeded with by `--grants` or the last `grants` event) | At most 4,096 entries (TM L86) |
+| `[[expect]]` | `frame` or `at = "end"`, and exactly one of: `log` (`script`, `line`: a script-log record whose text equals `line`, logged in that frame); `log_contains` (`script`, `text`); `error` (`script`, `contains`: an aborted call whose message contains the text, in that frame); `store` (`script`, `key`, `value`; only with `at = "end"`, read after the final flush of the unload at the end of the run: the `Store` value equals the TOML value, compared as the bounded value model, a TOML array being a table with keys 1..n); `loaded` (`script`, `value` boolean); `refused` (`script`, `reason`: the load was refused with that reason text); `suspended` (`script`); `answer` (`script`, `query`, `value`: a query's answer recorded in the trace); `gate` (`state`: the gate state at the end of that frame); `dialog` (`script`, `kind`, and optionally `asked`, an array of capability names, and `choice`: a dialog of that kind was raised for that script in that frame, with exactly that asked set and answered with that choice; with `at = "end"`, at any frame of the run); `granted` (`script`, `value`, an array of capability names: the grant table's `granted` list of that (kind, id) at the end of that frame, `[]` when it has no valid record); `grants_file` (`unchanged = true`, only with `at = "end"`: the tool root's `ext-grants.toml` holds exactly the bytes it was seeded with by `--grants` or the last `grants` event) | At most 4,096 entries (TM L86) |
+
+**Naming a script.** Wherever the walk names a `script` (events and expectations), the
+value is either an id, when exactly one given folder has that id, or `"<kind>/<id>"` with
+kind `scripts` or `scripts-dev` (the trace's form, §11.6). An id that folders of both
+kinds share must be written with its kind; a bare id that names two folders, or an id that
+names no given folder, is an invalid walk file (exit status 2).
+
+**Walk paths.** A path in the walk file (`reload.from`, `grants`) is relative to the walk
+file's directory: one or more segments joined by `/`, each following §3.3's segment rule
+(so no empty segment, no `.` or `..`), with no leading `/`, no `\` and no drive prefix. So
+a walk path is never absolute and never climbs out of the walk file's directory by name.
+It is opened through §11.4's input-file rule (non-blocking, its kind checked on the
+handle, bounded), relative to a handle of the walk file's directory.
 
 OPEN O-6 covers further presets (water, cells).
 
@@ -1796,8 +2218,12 @@ OPEN O-6 covers further presets (water, cells).
 
 `--trace FILE` writes the run's **trace**: one JSON object per line, in the order the
 events happened. It contains no wall-clock values, no addresses and no absolute paths, so
-two runs with the same scripts, walk file and seed produce byte-identical traces (D17 §8,
-M5.5 exit criterion 7). `--expect-trace FILE` compares the trace byte for byte with a
+two runs with the same scripts, walk file, seed and **options** produce byte-identical
+traces (D17 §8, M5.5 exit criterion 7). "Options" means every option of §11.2 that changes
+what runs: `--latency`, `--backend`, `--deny`, `--developer-mode`, `--no-start`, the
+folders with their kinds and command-line order, and the bytes of `--grants` and
+`--keymap-ext`. `--trace`, `--expect-trace`, `--worker-jitter`, `--root`, `--keep-root`
+and `--json` do not change the trace. `--expect-trace FILE` compares the trace byte for byte with a
 committed one and fails on the first difference, naming its line.
 
 **Keys**, always in this order, each present only when the event's row below lists it
@@ -1825,11 +2251,12 @@ committed one and fails on the first difference, naming its line.
 | `gc` | `f`, `ev`, `s` | — | — |
 | `notice` | `f`, `ev`, `s`, `what` | the notice's text, escaped as §11.1 says | — |
 | `intent` | `f`, `ev`, `s`, `what`, `r` | the intent's kind (for example `Input.Activate`) | `made`, `applied`, `discarded` |
-| `worker` | `f`, `ev`, `s`, `what`, `r` | the job: `snapshot`, `store-open`, `store-probe`, `store-flush`, `store-read`, `store-wipe`, `grant-write`, `grant-read`, `keymap-write`, `image-decode`; `s` omitted for `grant-read` | `submitted`, then `ok` or an error class at completion |
+| `worker` | `f`, `ev`, `s`, `what`, `r` | the job: `snapshot`, `store-open`, `store-probe`, `store-flush`, `store-read`, `store-wipe`, `grant-write`, `grant-read`, `store-scan`, `keymap-write`, `image-decode`; `s` omitted for `grant-read` and `store-scan` | `submitted`, then `ok` or an error class at completion |
 | `query` | `f`, `ev`, `s`, `what`, `u`, `a` | the query's name (for example `Entity.QueryRadius`) | — |
 | `limit` | `f`, `ev`, `s`, `what`, `r` | the TM limit reached, as its L-number (`L27`); `s` omitted for a host-wide limit | the answer given: `busy`, `limit`, `full`, `dropped`, `refused` |
 | `dialog` | `f`, `ev`, `s`, `what`, `r`, `c` | the dialog's kind: `first-enable`, `first-enable-again`, `changed`, `update`, `more`, `memory` (§9.2 step 5, §9.7) | the answer and its source: `allow:reply`, `allow:default`, `deny:reply`, `deny:default`, `not-now:reply`, `escape:reply`, `escape:unanswered`, `closed:gate` (§10.4); `c` is the asked set (§9.2 step 5) |
-| `grants` | `f`, `ev`, `s`, `what`, `c` | the grant table's change for that (kind, id): `allow` (a dialog's Allow), `update` (§9.2 step 6), `revoke`, `reread`, `remove`; one event per changed record, in byte order of `s`; `c` is the record's `granted` list after the change (`[]` when it has none) | — |
+| `devmode` | `f`, `ev`, `what` | `on` or `off`: developer mode changed (`--developer-mode` gives an `on` event in frame 0; a `developer_mode` walk event, §11.5) | — |
+| `grants` | `f`, `ev`, `s`, `what`, `c` | the grant table's change for that (kind, id): `allow` (a dialog's Allow), `update` (§9.2 step 6), `revoke`, `reread`, `remove`, `reset`; one event per changed record, in byte order of `s`; `c` is the record's `granted` list after the change (`[]` when it has none) | — |
 
 The JSON objects have no white space outside strings, and numbers are written as
 integers.
@@ -1876,11 +2303,15 @@ runner; it keeps no cases of its own.
   written for the tool, CC0, generated at run time, never stored as a binary fixture),
   runs them in a fresh tool root with the `test` machinery in deterministic mode, and uses
   the walk-file events of §11.5 (gate simulation, `switch`, `focus`, `reload`, `manager`,
-  `reply`, `grants`), `--grants` and the `dialog`, `granted` and `grants_file`
-  expectations for the situations TM's procedures name (X62's seeded documents, X90's
-  and X92's dialogs, X91's re-read). Test hooks that no walk event covers (a file that
+  `reply`, `grants`, `developer_mode`), per-folder kinds, `--developer-mode`, `--grants`
+  and the `dialog`, `granted` and `grants_file` expectations for the situations TM's
+  procedures name (X62's seeded documents; X90's dialogs, its second copy of one id in
+  both kinds and its two `autoload = true` records of one id at world entry, §11.4; X92's
+  dialogs; X91's re-read, failed-write revocation, newer document and narrowing during a
+  load). Test hooks that no walk event covers (a file that
   grows during the walk, an entry swapped for a link between a listing and its open, a
-  store flush held in flight, a kill during a flush or a grant write, the links and
+  store flush held in flight, a kill during a flush or a grant write, a grant-store write
+  made to fail, a lock held by another process, the links, FIFOs, device links and
   canaries of X94) exist only in the tool's harness, never in the client.
 - **`no_file_outside`.** After every case, the tool root holds no file outside the allowed
   set, listed with a no-follow walk of the tool root (a link is reported, never
@@ -1895,7 +2326,9 @@ runner; it keeps no cases of its own.
     `ext-grants.toml.corrupt-<unix seconds>[-n].bak` (§8.6); `keymap-ext.toml` and its lock
     file `.keymap-ext.toml.lock` (§8.7); and, only in a case whose procedure kills the
     host during a save, the temporary files `.ext-grants.toml.tmp-*` and
-    `.keymap-ext.toml.tmp-*`;
+    `.keymap-ext.toml.tmp-*`. There is no settings file and no settings lock file: the
+    harness holds developer mode and every other setting in memory (§11.4), so a
+    developer case leaves none, and one that did would fail;
   - the files a case's procedure places itself: X94's canary files and the link targets
     it creates, under the tool root's directory `canary/`, and the documents `--grants`
     and `grants` copy from.
@@ -2044,7 +2477,8 @@ invariant, it names it.
 15. Phase C never opens a store before the decision it opens it under has been durably
     written to the grant store, or, with a newer document, applied to the grant table
     (§8.5).
-16. At most one script per id is loaded across both kinds (§7.4).
+16. At most one script per id is loaded **or loading** across both kinds: a load is refused
+    while the same id of the other kind holds a reservation (§7.4; TM L26, X90).
 17. Ext apartments exist only in `Open` and `Draining` (§10.3), and only for admitted
     classes (§10.2; TM invariant 22).
 18. In `Draining` no 6b call runs and no load starts; `Connect` is submitted only after the
@@ -2055,22 +2489,45 @@ invariant, it names it.
 19. Every load in progress at a switch ends as §10.4 says; no apartment of the old session
     survives into the new one, and no store work, store probe or grant-record write is
     left half-done (TM §8.21, X87).
-20. Two `test` runs with the same scripts, walk file and seed produce byte-identical traces,
-    whatever the worker timing (§11.6).
-21. `scripttool` never writes outside its tool root, never reads `TESSERA_GAME_DIR`, and
-    never prints an unescaped control character from script-supplied text (§11.1).
-22. One press can start at most one hold from one script's suggested defaults (§4.11).
+20. Two `test` runs with the same scripts, walk file, seed and options (§11.6) produce
+    byte-identical traces, whatever the worker timing.
+21. `scripttool` never writes or removes anything outside its tool root (its removal never
+    follows a link, and a user-given `--root` is never removed), never reads
+    `TESSERA_GAME_DIR`, and never prints, in text or `--json` form, an unescaped control,
+    bidirectional or other refused character, or a raw byte of a non-UTF-8 name, from
+    script-supplied text or a path (§11.1).
+22. No two suggested defaults of one script in one context overlap: one press can never
+    complete two of them, so it starts at most one hold from one script's suggested
+    defaults (§4.11; TM §8.16, L61, X41).
 23. A capability name never allows more than it did when a record granted it (§12.7).
 24. The grant store is read and written only on the grant-store queue, never on the main
     thread (§8.5).
 25. A revocation suspends the script in the frame of the revocation (§9.7; TM invariant
     23), whether it comes from the script manager or from a re-read of the grant store
-    that removes, invalidates or narrows the script's record (§8.5; TM §8.23, X91).
-26. A re-read of the grant store never widens what a running apartment may do: a widened
-    record is used only from the script's next load (§8.5; TM §8.23).
+    that removes, invalidates or narrows the script's record (§8.5; TM §8.23, X91). A
+    revocation of this session is never undone by a re-read, even when its write failed
+    (the session overlay, §8.5).
+26. Nothing widens what a running apartment may do: natives and intent applies check the
+    apartment's effective set, never the grant table, and a widened record (by the
+    manager or by a re-read) is used only from the script's next load (§7.1, §8.5; TM
+    §8.23).
 27. No grant-store or `keymap-ext.toml` write leaves any file other than the document, its
     persistent lock file and its backups, except a temporary file after a crash (§8.5,
     §8.7, §11.8).
+28. A narrowing (a manager revocation, Reset, Remove, a local-only switch, a narrowing
+    re-read) that reaches a load past its grant decision cancels it: no load reaches its
+    top-level run without a capability revoked after its decision (§7.5; TM §8.23, X91).
+29. A read of a grant store of a newer `version` narrows, widens and suspends nothing
+    (§8.5, §8.6; TM §8.23).
+30. No open of the snapshot walk, of a store or its entries, of a log file, of the grant
+    store or `keymap-ext.toml`, and no step of the store-root scan, waits on a FIFO or
+    opens a device node; and the grant-store queue never waits on another program's lock
+    for more than 1 s (§3.4, §3.6, §8.5, §8.7; TM §8.8, X54, X94).
+31. No store is deleted under a live apartment: Remove and Reset end a loaded or loading
+    script first, and the deletion runs after its final flush (§8.7, §9.6).
+32. A written grant store never holds more than 256 `[[script]]` tables or 256 `order`
+    entries, and an invalid table of a document that is not damaged as a whole leaves it
+    only through a write of its own key, after a bounded backup (§8.5, §8.6; TM L79).
 
 ---
 
@@ -2086,8 +2543,9 @@ record). Phase A reads the four files (`script.toml`, `main.lua`, `ui/pad.lua`,
 `icon.png`), hashes them and parses the manifest. Phase B finds the registry happy (`UI`,
 `Input`, `Store`, `Commands`, `Core` 1.0 required; `World` optional, its capability
 `world.read` optional), no other `notes` loaded, the offered set `ui`, `input`,
-`world.read` (all available offline), and no record: step 1a, the first-enable dialog
-(there is no store, so no probe). It shows "Notes 1.2.0 · notes · installed", the author,
+`world.read` (all available offline), and no record: step 1a. Phase B runs the store probe on the store's I/O queue (§9.3
+"Stored values"), which finds no `s_notes` directory, so the first-enable dialog shows no
+stored-values line. It shows "Notes 1.2.0 · notes · installed", the author,
 the description, under "Observe and show" `ui` and `input` (required, no box) and
 `world.read` (a checked box) with their reasons; no warnings (no `entity.read`); "Load
 automatically" checked (the manifest's `autoload`). The pointer happens to rest where
@@ -2095,7 +2553,8 @@ automatically" checked (the manifest's `autoload`). The pointer happens to rest 
 later and clicks. The record is written (§8.2's example) on the grant-store queue; when
 the write has completed, phase C creates the store directory and writes the owner tag
 "Example Author" durably (no marker: no local-only capability), and phase D compiles
-three source files and runs `main.lua`. The suggested `Ctrl+N` collides with no built-in
+the two source files (`main.lua` and `ui/pad.lua`; the other two files are data and the
+manifest) and runs `main.lua`'s top level. The suggested `Ctrl+N` collides with no built-in
 binding, so it is applied when the host registers `ext.notes.toggle` in `ext.notes.pad`.
 
 <a id="s14-2"></a>
@@ -2258,11 +2717,25 @@ parts (b) and (c) (§4.4).
 > schema and the same strict per-record reading, and the settings file's tolerant reading
 > must never reset that table.
 
-**O-11 (closed, revision 3):** TM revision 3 registers every count of this spec: the
+**O-11 (closed, revision 4):** TM registers every **resource limit** of this spec: the
 manifest's per-field counts (TM L87), the walk file's entities, inputs, expectations,
-`frames`, `[screen]` and `size` ranges (TM L86), the folder listing (TM L88) and the owner
-tag (TM L89); TM §0.1 rule 5 keeps only character sets and formats in the defining spec.
-§3.5, §4, §8.8 and §11.5 cite them.
+`frames`, `[screen]` and `size` ranges (TM L86), the folder listing (TM L88), the owner
+tag (TM L89), the store-root scan (TM L92), and the grant store's caps with its bounded
+read, which also bounds the `--grants` and `grants` copies at 4 MiB + 1 bytes (TM L79).
+TM §0.1 rule 6 (TM revision 4) answers the rest: the settings' `min`/`max` bound of ±1e15
+and the grant record's integer bound 2^53 are argument-validity domains, and setting keys,
+capability names, module-name segments and version parts, action and context name
+lengths and the walk file's `[[entity]] name` are grammar lengths; both stay in this spec
+without an L-number. Revision 3 had claimed more than rule 5 then gave; §4's preamble now
+claims an L-number only for what rule 6 registers. §3.5, §4, §8.3, §8.7, §8.8, §11.4 and
+§11.5 cite the rows.
+
+> **OPEN O-12 (one "not loaded" notice; request to EA1b):** D17 §3 words the notice for an
+> `/ext:` line naming no loaded script as "No loaded extended script 'foo'", and EA1a §6.2
+> and §9.8 here use it. EA1b §8.2 answers `/ext:reload <id>` for an id that is not loaded
+> with "⟨id⟩ is not loaded". D17's text wins (§0 "Precedence"); EA1b §8.2 is asked to use
+> "No loaded extended script '⟨id⟩'". Until it does, an implementation shows D17's text
+> in every case. Owner: EA1b's author.
 
 ---
 
@@ -2274,3 +2747,4 @@ tag (TM L89); TM §0.1 rule 5 keeps only character sets and formats in the defin
 | 2026-10-07 | First version (Review), required by D17 "Required follow-ups" item 9 and the M5.5 "Specs needed" list. Folder layout and folder rules with the snapshot-root no-follow rule and the case rules (§3); the `script.toml` grammar with every field, display-string rules, module versions, contexts, actions with suggested defaults (one per stroke), settings and server hints (§4); the content-hash encoding with test vectors (§5); the capability catalogue with dialog texts (§6); effective rights and the four-phase load pipeline (§7); the grant store `ext-grants.toml` with its schema, validation, writing and damage rules (§8); the grant UI flow: dialog kinds, controls, outcomes, re-ask table, notice and Review, the manager's grant pages, developer mode (§9); the backend gate states `Off`, `Starting`, `Open`, `Draining` and loads at a transition (§10); `tessera-scripttool` with `check` codes, `test`, the walk file, the trace, fuzz targets and the `escape` catalogue covering D17's eight open security items (§11); versioning rules (§12); 23 invariants, 7 worked examples, 9 OPEN items. |
 | 2026-10-07 | **Revision 2** (Review), answering the independent review and aligning with TM revision 2, EA1a, EA1b and D17. Header and §0: real companion names (EA1a and EA1b are D17's `ext-api.md`), TM normative for limits, rules and escape cases, "(proposed D17 amendment)" mark; limits cited as TM L-numbers throughout. §3.1: `keymap-ext.toml` in the configured keymap path's directory (TM §8.19); the store's `owner` tag. §3.3: device-name extension = everything from the first dot; trailing dot refused; depth stated as at most 5 path segments. §3.4 and §7.3: snapshot held under the load's memory reservation and data files charged to the cap (TM §8.10; O-4 closed). §3.5, §4.2, §4.8, §4.10, §4.12, §4.13: design additions marked. §4.1: nesting counted below the root. §4.4: refusal aligned with TM §8.2 (at most 2 marks of category M, no mark without a base, Cn and noncharacters, byte caps; O-9 closed, X47 route stated). §4.6: `entry` up to 5 segments. §4.8: undeclared modules answer `"not declared"` as EA1a §3 (O-2 closed), new W09. §4.10: priorities by EA1a §8.1 (O-3 closed). §4.14: validation stages for `check` and the load; a phase-D compilation failure closes the apartment with one close item. §8: grants created only by Allow; grant table and grant-store queue on a worker with a locked, flushed read-modify-write that completes before phase C (ARCH §21); settings numbers accept TOML integers; Remove deletes the store before the record; new §8.8, the store open with the owner check (TM §8.24), wipes, durable owner tag and marker. §9.1, §9.3: pointer entry observed after the 500 ms delay, for Allow, boxes and "Load automatically" (TM §8.25). §9.2: the re-ask table replaced by an ordered six-step pipeline with each case's record write (hash updated before phase C; the notice once per change). §9.3: outcomes for manager-started dialogs; store probe for the "Stored values" line; Deny writes nothing. §9.7: every revocation suspends in that frame (TM §8.23). §9.8: full-reload declaration set adds `author`, `api`, `manifest`, `[modules]`, `[optional_modules]`, `[server]`, after full validation (TM §8.24). §10.3, §10.4: floor frames, switch timeout row and bounds (TM §7.4, L9–L11; O-5 closed), leases end when a switch is queued, store work completes (TM §8.21). §11.1: `--json` objects specified. §11.4: X-DET-1 becomes an ordinary determinism check. §11.5: 0-based frame numbers and ranges; `[screen]`, `focus`, `switch`, `reload`, `manager` events and a `gate` expectation (TM §13). §11.6: per-event trace keys and `what` values. §11.8: runner only; cases are TM's X-tests, earlier IDs retired (TM §11.10). §13: invariants 9, 12, 15, 18 restated; 24 and 25 added. §14.4: seven items, with the gated case. §15: O-2, O-3, O-4, O-5, O-9 closed; O-10 (grant store document, proposed D17 amendment) and O-11 (field caps for TM's register) added. |
 | 2026-10-07 | **Revision 3** (Review), answering the re-review of revision 2 and aligning with TM revision 3. **Store and log files** (new §3.6; §3.1, §8.8, §12.8): directory handles for `data/script-store/`, `logs/scripts/`, `<kind>` and `s_<id>` with `O_NOFOLLOW` (reparse points refused); an unusable store directory refuses the load and is never touched; every entry opened, created (exclusively), renamed or removed relative to the `s_<id>` handle with its kind and link count checked on the handle; a per-entry action table (key files kept, crash leftovers and unexpected entries removed by a no-follow removal, a non-plain `local-only` counted as present, a non-plain `owner` as missing, a subdirectory or unremovable entry fails closed); the write-behind temporary file named `t_<key>.tmp`; log files opened no-follow and otherwise left alone, with the log unavailable and reported (TM §8.8, invariant 15, X94). §8.8 restructured: handles, entry sweep, owner check, local-only check, durable tags, file index; the wipe never recurses or leaves `s_<id>`; the **store probe** defined (read-only, no creates or removals), used by §9.2 step 2 (content notice and its size) and §9.3. **Grant store** (§8.1, §8.3, §8.4, §8.5, §9.1, §9.7, §7.1): a valid hand-edited record is honoured only within §8.3 and from the next load; a re-read that removes, invalidates or narrows a loaded script's record suspends it in that frame, a widening waits for the next load (TM §8.23); the lock is `.ext-grants.toml.lock` beside the resolved document (persistent, never the settings file's lock) and the temporary file is named; the `keymap-ext.toml` bindings' removal is a locked read-modify-write (`.keymap-ext.toml.lock`, design addition). **`test`** (§11.4–§11.6): every load runs §9.2; dialogs are answered by a queued `reply`, by the default answer for a first enable, or as Escape with a run failure unless expected; `--grants FILE` seeds the tool root's grant store and the `grants` walk event replaces it mid-run with a re-read; `manager` gains `widen`; `dialog`, `granted` and `grants_file` expectations; `dialog` and `grants` trace events and the `c` key (TM X62, X90, X91, X92). **`escape`** (§11.8, §11.1): per-part results (`CLIENT` for CI parts, `ELSEWHERE` for U, FZ and RM parts), never a whole mixed test as PASS; `no_file_outside` names the lock files, backups, temporary files (only after a kill) and X94's canaries. **Smaller items:** `/ext:reload` with developer mode off, for an id not loaded and for a suspended script (§9.8); the script-list order for records outside `order` and new records appended (§7.3); §10.3 cites TM L5–L9; §10.4 rows for a load before its dialog and for one waiting on its record write or store probe (TM §8.21); §4.12 and §9.2 step 6 agree (invalid and obsolete settings values dropped by the load's own write, a reverted value never written as its default); `dump-api` accepts D17 §10's `--ext-dump-api`, and `escape`, `modules` and the subcommand are marked design additions; TM L86–L89 cited (§3.5, §4, §8.8, §11.5) and O-11 closed. Invariants 2, 9, 13, 19 and 25 restated; 26 and 27 added. |
+| 2026-10-07 | **Revision 4** (Review), answering the re-review of revision 3 and its follow-up review, aligned with TM revision 4 (TM §0.1 rule 6, §8.7 and L92, §8.8, §8.16, §8.23, L26, L79). **Non-blocking, classify-before-open** (§2, §3.4, §3.6): the snapshot walk (`check` included) classifies every entry with `fstatat(…, AT_SYMLINK_NOFOLLOW)` and opens only regular files and directories, non-blocking, re-checked on the handle; the log file is classified, then opened or created `O_NONBLOCK` (a FIFO write open fails with `ENXIO`); a rotation is not made over a non-plain `s_<id>.1.log`; TM X54 ("a worker blocks") and X94 (FIFO and device log files, a FIFO grant store) cite it. **Session overlay** (§2, §8.5): a document view, a session overlay and the grant table they make; a read narrows overlay entries by what the document removed, never undoes a session decision (a failed-write revocation stays revoked), and a newer-`version` document narrows, widens and suspends nothing; a completed write is applied as a read. **Effective set** (§2, §7.1, §8.5): natives and intent applies check the apartment's effective set, never the grant table, so a manager widening after revoke and resume does not revive kept natives (TM X91). **Grant-store writes** (§7.3, §8.4, §8.5, §9.2): a write replaces every table of its key, duplicates and invalid ones included, and keeps every other table; invalid tables leave only through a write of their key; `order` drops malformed, repeated and dangling entries; the 256-table cap is checked before a dialog and in the write; a failed load write is taken back, every other failed write stays in the overlay. **Grant store as hostile input** (§8.5, §8.6): reads non-blocking, regular file checked on the handle, at most 4 MiB + 1 bytes; an "unreadable" row (`EACCES`, `EIO`, `EISDIR`, FIFO) that is never written over; backups bounded (the bytes read, or a rename for an oversized file) in the resolved document's directory; the lock taken without blocking and retried for 1 s; the queue on a worker, never an asset-worker job. **Loads in progress** (§7.4, §7.5, §10.4): one id loaded **or loading** across both kinds; new §7.5 table for a narrowing during a load, with phase D's delivery and the top-level item re-checking the record (TM X90, X91). **Orphans and Remove** (§3.5, §8.7, §9.6, §9.7): `scripts-dev` records are never orphans while developer mode is off; Remove and Reset end a loaded or loading script before the store is deleted; the store-root scan (when, which queue, no-follow `fstatat` sizes, caps TM L92, how it stays current), and the gate waits for it in `Starting` (§10.3). **Manifest** (§4.10, §4.11, §4.12, §6.1, §11.3): declaring `[[contexts]]` or `[[actions]]` needs `input`, and they are registered only when `input` is effective; overlapping suggested defaults in one context refused (M17, invariant 22); settings values checked against the running schema at every re-read; the `ui` dialog text names the chord and the manager (EA1a §7.11); finding codes for `license`, `manifest`/`api` below 1 and the key cap. **Notices** (§9.8, §10.5, O-12): D17's "No loaded extended script '<id>'" is the one text (EA1b §8.2 asked to align); outside `Open`, `/ext:list` and `/ext:help` open the script manager and `/ext:reload` with developer mode off says "Developer mode is off". **`scripttool`** (§11.1, §11.2, §11.4–§11.8): per-folder kinds (`--installed`, `--developer`), an independent `--developer-mode` with a `developer_mode` walk event and a `devmode` trace event, `--no-start`, a stated start of the run (gate `Open` at frame `latency`, world entry, autoload then user-started loads in command-line order), scripts named by id or `"<kind>/<id>"`; no settings file written; `--keymap-ext` copied into the tool root; input files and walk paths opened non-blocking, kind-checked and bounded, walk paths relative without `..`; `--json` as pure printable ASCII with explicit `\uXXXX`, non-UTF-8 name bytes as `\xNN`; the tool root removed by a no-follow recursive removal, a user-given `--root` never removed; traces identical for the same options. **Smaller:** §8.8 step 5 keeps an existing plain marker; §9.1 hides the developer console while a dialog shows (D17 §5.3); §9.3 says where a manager-started dialog's script line comes from; §9.7's revoke moves the capability to `denied`; a hot reload writes nothing to the grant store (§9.8); §14.1's probe and two source files; O-11 closed by TM rule 6 with the right citations; invariants 16, 20, 21, 22, 25 and 26 restated, 28–32 added. |

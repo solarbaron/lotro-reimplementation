@@ -7,7 +7,7 @@
 | Status | **Review** |
 | Last updated | 2026-10-07 |
 | Author role | Design (Tessera's own design under decision 0017; clean room, no dirty-room input), AI-assisted |
-| Reviewer | Independent clean-room review, 2026-10-07: **changes requested**, status stays Review. Checked against D17 (in full, with "Open security and design items", "Other improvements", "Required follow-ups" and "Open items"), `ext-manifest.md`, `ext-threat-model.md`, KM §9.1, LEGAL §18.3, `docs/perf/reference-machine.md` and the cited code of `tessera-net`, `tessera-world` and `tessera-render`. Blocking items were: §6, §8.6 and §9.2 contradicted TM §7.1, §7.6, §8.1 and §8.2; `ext-api.md`, which §1 made the winning document, did not exist; the `dump-api` command and the walk-file owner disagreed with EM §11; leases outlived a backend switch and an optional `camera` revocation. **Revision 2** (same day) answers every issue of that review (§15) and aligns with TM revision 2, EA1a and EM; awaiting re-review. **Re-review of revision 2**, independent clean-room review, 2026-10-07: **changes requested**, status stays Review. Every first-review item is answered, and §5–§8 now agree with TM §7.1, §7.4, §7.6, §8.1, §8.2, §8.10, §8.17, §8.21, §8.23, §8.24 and L53–L56, L63, L75, L82–L85. The worked examples check out against TM rule 7.1.4. The code provenance rows were confirmed in `crates/net`, `crates/world`, `crates/render`, `apps/client` and `crates/terrain`. Two items block acceptance. (1) **The angle convention contradicts EA1a §2.10**, which wins on general rules under this document's own §1 precedence. EA1a §2.10 says arguments take `yaw` and `pitch` in radians (KM §9.1), says "No argument is ever a heading", and names EA1b's `Camera` as taking yaw. This document takes compass `heading` and `pitch` in degrees for the pose, `Follow`'s `bearing` and `pitch`, key frames and `Sandbox.Teleport`, and cites a non-existent "EA1a §9 'Heading'". Fix: align §3.1, §4.2, §4.7, §4.8, §7.2, §12 and §13 with EA1a §2.10 (yaw and pitch in radians; `tessera-net` already uses yaw's convention, so `Sandbox` only narrows to `f32`). Alternatively, amend EA1a §2.10 in the same change. (2) **`Overlay.Lines` can never succeed.** Its cost `B` + Rsv `e(60,000)` is 1,200,200 units, more than a whole call's 800,000 (TM L4) and longer than its 4 ms deadline (TM L3; about 6 ms at 5 ns per unit). By EA1a §2.5 and §10.3 step 5 a reservation over the remaining units raises before any work, so every `Lines` call raises, whatever its length. The quad-flood example and the 60,000-number functional test cannot run as written: 10,000 single adds at `B` = 200 units is 2,000,000 units, more than one call allows. Fix: give `Lines` a reservation that fits L4 (per line rather than per number, or of the actual length with a lower element cap), and restate §12's floods and §13's tests across calls and turns, or cheapen the add cost. Further items (non-blocking, to fix in the same revision): (3) stale names `Core.OnTick` and `Core.OnUnload` (§2, §5.2, §8.3, §14); EA1a revision 2 renamed them `Core.On("Tick")` and `Core.On("Unload")`. (4) A teleport already submitted when a backend switch or session end is queued may never receive its outcome. §7.4's "released when the outcome arrives" and "never held by an unloaded script" then disagree, and the slot can leak into the next `Offline` session. Release it at the session-generation change and state the correlation rule across it. (5) §13 leaves out the slice-1b parts of TM X20 (maximal hand-off), X28 ("plus a reload") and X87 ("a hot reload in progress"), which TM tags 1a although hot reload ships in 1b. List them, and ask TM §13 to retag them. (6) §6.1, §8.8 and §14 still request EM §11.5's `[screen]`, `focus` and `reload` walk-file keys, which EM revision 2 already has; mark them as done. **Revision 3** (same day) answers every item of this re-review and aligns with TM revision 3 (§15): angles in EA1a §2.10's form (yaw, pitch and field of view in radians; `heading` only as a result); `Overlay.Lines` charged by its actual length with a per-call cap that fits TM L4; floods and tests restated across calls; `Core.On("Tick")` and `Core.On("Unload")`; the teleport slot and its correlation as TM L75; the slice-1b parts of X20, X27, X28, X85 and X87 listed; the walk-file requests marked done. Awaiting re-review. **Re-review of revision 3**, independent clean-room review, 2026-10-07: **changes requested**, status stays Review. Both blocking items of the previous re-review are fixed. Angles follow EA1a §2.10 throughout. `Overlay.Lines` fits TM L3 and L4 (200 + 20 · 12,288 = 245,960 units). Items (3)–(6) are answered. Every cited L- and X-number matches TM revision 3 (L3–L12, L23–L35, L45, L53–L56, L63–L67, L75, L82–L86; X20, X27–X30, X44, X50, X64, X80, X84, X85, X87, X88, X91, X92), and every TM escape case tagged 1b is listed in §13. The worked examples check out: the quad flood (0.25 screen each, 2 drawn, 9,998 dropped), the three-script case (*c* = 6,666, *A* = 1/3), the 3,204-pixel line, `Rgba(1, 0.4, 0)`, and the starvation timeline under TM rule 7.4.1. The cited code (`Command::Teleport` answers every request exactly once, `MAX_GAME_SECONDS`, the pass primitives and `stream_focus`) was confirmed. Remaining issues: (1) **Blocking, security (§4.4, §4.7).** `lease:Follow(entity)` never checks `entity.read`. It relies on §4.7's claim that "after a resume the entity handles are gone (EA1a §2.9)", but EA1a §2.9 says the opposite: after an optional `entity.read` revocation, entity handles stay valid objects whose methods raise. So a script that keeps an entity handle, is resumed, and still holds `camera` can `Follow` it and read the entity's position every frame through `Camera.GetPose`. That bypasses the revocation (TM §8.23) and the `camera` + `entity.read` pairing (D17 §5.2), and X91 does not catch it, because `Follow` is not an `Entity` native. Fix: `Follow` with an entity handle raises `"not granted"` unless `entity.read` is in the effective rights at the call, and step 3 re-checks it. Correct the §4.7 citation, and add the case to §13 (X91's slice-1b part and a functional test). (2) **Consistency with EM §9.8 (§8.2).** EM refuses `/ext:reload` of a loaded but **suspended** script with the notice "⟨id⟩ is suspended: resume it first", and the watcher follows the same rules. §8.2 queues the reload, and §8.7 has no row for it. The not-loaded notice text also differs: "⟨id⟩ is not loaded" here, "No loaded extended script '⟨id⟩'" in EM. (3) **Register (TM §0.1 rules 1 and 5).** The 2,048-line per-call cap of `Overlay.Lines` (§5.3, §5.5) has no L-number in TM revision 3. TM §13 does not take up the X27 and X85 retags either (both are still tagged 1a only). §14 lists these only as "requested" table rows; rule 5 asks for an OPEN in this spec's own text until TM answers. Mark them `> **OPEN:**`, or have TM register the cap and retag both cases, before either spec is accepted. (4) **Lease end at unload (§4.5, invariant 2).** D17 §5.4 ends a lease at unload "in the same frame". Here the `"unload"` reason ends it only at the frame of the unload item, which for a user's unload from the script manager can run many frames after the request while the script may still be ticking and renewing. End it in the frame the unload is requested, as `"switch"` already does for a queued switch. (5) **§8.7 gaps.** Nothing says what happens to a reload in progress when, during items 1–3, the old apartment is unloaded by the user or by `Core.Unload`, developer mode is turned off (EM §9.8 then unloads every developer script), or the client exits. (6) **No placed character (§4.6, §4.7).** There is no definition of *P* (the 500 m clamp, invariant 6) or of `Follow("player")` when there is no placed character, for example before placement or in free fly without a character, which EA1a §10.2 allows. (7) **§6.4 and TM rule 7.1.4.** §6.4 counts *n* over shown lists that are "non-empty and drawn", while TM counts "non-empty". This is undefined for a list that is partly drawn after a region change (quads drawn, world primitives not). Align with TM, or state the narrower rule and why the bounds still hold. Minor: (a) §4.8 ignores only `heading` in a key frame, but §13 says `region` and `leased` are ignored "as in a key frame". (b) `Hold`'s `e(6)` does not cover the up to 9 fields of a passed `GetPose` result that the unknown-field check walks. (c) §7.4 does not say which reason, `"busy"` or `"pending"`, answers a `Teleport` while another script holds the global slot. (d) §9.4 does not state the REPL compile charge formula ("in proportion to the bytes"). (e) §8.8 does not say that the file index also counts toward the new apartment's cap during a hot reload (TM rule 7.6.1). |
+| Reviewer | Independent clean-room review, 2026-10-07: **changes requested**, status stays Review. Checked against D17 (in full, with "Open security and design items", "Other improvements", "Required follow-ups" and "Open items"), `ext-manifest.md`, `ext-threat-model.md`, KM §9.1, LEGAL §18.3, `docs/perf/reference-machine.md` and the cited code of `tessera-net`, `tessera-world` and `tessera-render`. Blocking items were: §6, §8.6 and §9.2 contradicted TM §7.1, §7.6, §8.1 and §8.2; `ext-api.md`, which §1 made the winning document, did not exist; the `dump-api` command and the walk-file owner disagreed with EM §11; leases outlived a backend switch and an optional `camera` revocation. **Revision 2** (same day) answers every issue of that review (§15) and aligns with TM revision 2, EA1a and EM; awaiting re-review. **Re-review of revision 2**, independent clean-room review, 2026-10-07: **changes requested**, status stays Review. Every first-review item is answered, and §5–§8 now agree with TM §7.1, §7.4, §7.6, §8.1, §8.2, §8.10, §8.17, §8.21, §8.23, §8.24 and L53–L56, L63, L75, L82–L85. The worked examples check out against TM rule 7.1.4. The code provenance rows were confirmed in `crates/net`, `crates/world`, `crates/render`, `apps/client` and `crates/terrain`. Two items block acceptance. (1) **The angle convention contradicts EA1a §2.10**, which wins on general rules under this document's own §1 precedence. EA1a §2.10 says arguments take `yaw` and `pitch` in radians (KM §9.1), says "No argument is ever a heading", and names EA1b's `Camera` as taking yaw. This document takes compass `heading` and `pitch` in degrees for the pose, `Follow`'s `bearing` and `pitch`, key frames and `Sandbox.Teleport`, and cites a non-existent "EA1a §9 'Heading'". Fix: align §3.1, §4.2, §4.7, §4.8, §7.2, §12 and §13 with EA1a §2.10 (yaw and pitch in radians; `tessera-net` already uses yaw's convention, so `Sandbox` only narrows to `f32`). Alternatively, amend EA1a §2.10 in the same change. (2) **`Overlay.Lines` can never succeed.** Its cost `B` + Rsv `e(60,000)` is 1,200,200 units, more than a whole call's 800,000 (TM L4) and longer than its 4 ms deadline (TM L3; about 6 ms at 5 ns per unit). By EA1a §2.5 and §10.3 step 5 a reservation over the remaining units raises before any work, so every `Lines` call raises, whatever its length. The quad-flood example and the 60,000-number functional test cannot run as written: 10,000 single adds at `B` = 200 units is 2,000,000 units, more than one call allows. Fix: give `Lines` a reservation that fits L4 (per line rather than per number, or of the actual length with a lower element cap), and restate §12's floods and §13's tests across calls and turns, or cheapen the add cost. Further items (non-blocking, to fix in the same revision): (3) stale names `Core.OnTick` and `Core.OnUnload` (§2, §5.2, §8.3, §14); EA1a revision 2 renamed them `Core.On("Tick")` and `Core.On("Unload")`. (4) A teleport already submitted when a backend switch or session end is queued may never receive its outcome. §7.4's "released when the outcome arrives" and "never held by an unloaded script" then disagree, and the slot can leak into the next `Offline` session. Release it at the session-generation change and state the correlation rule across it. (5) §13 leaves out the slice-1b parts of TM X20 (maximal hand-off), X28 ("plus a reload") and X87 ("a hot reload in progress"), which TM tags 1a although hot reload ships in 1b. List them, and ask TM §13 to retag them. (6) §6.1, §8.8 and §14 still request EM §11.5's `[screen]`, `focus` and `reload` walk-file keys, which EM revision 2 already has; mark them as done. **Revision 3** (same day) answers every item of this re-review and aligns with TM revision 3 (§15): angles in EA1a §2.10's form (yaw, pitch and field of view in radians; `heading` only as a result); `Overlay.Lines` charged by its actual length with a per-call cap that fits TM L4; floods and tests restated across calls; `Core.On("Tick")` and `Core.On("Unload")`; the teleport slot and its correlation as TM L75; the slice-1b parts of X20, X27, X28, X85 and X87 listed; the walk-file requests marked done. Awaiting re-review. **Re-review of revision 3**, independent clean-room review, 2026-10-07: **changes requested**, status stays Review. Both blocking items of the previous re-review are fixed. Angles follow EA1a §2.10 throughout. `Overlay.Lines` fits TM L3 and L4 (200 + 20 · 12,288 = 245,960 units). Items (3)–(6) are answered. Every cited L- and X-number matches TM revision 3 (L3–L12, L23–L35, L45, L53–L56, L63–L67, L75, L82–L86; X20, X27–X30, X44, X50, X64, X80, X84, X85, X87, X88, X91, X92), and every TM escape case tagged 1b is listed in §13. The worked examples check out: the quad flood (0.25 screen each, 2 drawn, 9,998 dropped), the three-script case (*c* = 6,666, *A* = 1/3), the 3,204-pixel line, `Rgba(1, 0.4, 0)`, and the starvation timeline under TM rule 7.4.1. The cited code (`Command::Teleport` answers every request exactly once, `MAX_GAME_SECONDS`, the pass primitives and `stream_focus`) was confirmed. Remaining issues: (1) **Blocking, security (§4.4, §4.7).** `lease:Follow(entity)` never checks `entity.read`. It relies on §4.7's claim that "after a resume the entity handles are gone (EA1a §2.9)", but EA1a §2.9 says the opposite: after an optional `entity.read` revocation, entity handles stay valid objects whose methods raise. So a script that keeps an entity handle, is resumed, and still holds `camera` can `Follow` it and read the entity's position every frame through `Camera.GetPose`. That bypasses the revocation (TM §8.23) and the `camera` + `entity.read` pairing (D17 §5.2), and X91 does not catch it, because `Follow` is not an `Entity` native. Fix: `Follow` with an entity handle raises `"not granted"` unless `entity.read` is in the effective rights at the call, and step 3 re-checks it. Correct the §4.7 citation, and add the case to §13 (X91's slice-1b part and a functional test). (2) **Consistency with EM §9.8 (§8.2).** EM refuses `/ext:reload` of a loaded but **suspended** script with the notice "⟨id⟩ is suspended: resume it first", and the watcher follows the same rules. §8.2 queues the reload, and §8.7 has no row for it. The not-loaded notice text also differs: "⟨id⟩ is not loaded" here, "No loaded extended script '⟨id⟩'" in EM. (3) **Register (TM §0.1 rules 1 and 5).** The 2,048-line per-call cap of `Overlay.Lines` (§5.3, §5.5) has no L-number in TM revision 3. TM §13 does not take up the X27 and X85 retags either (both are still tagged 1a only). §14 lists these only as "requested" table rows; rule 5 asks for an OPEN in this spec's own text until TM answers. Mark them `> **OPEN:**`, or have TM register the cap and retag both cases, before either spec is accepted. (4) **Lease end at unload (§4.5, invariant 2).** D17 §5.4 ends a lease at unload "in the same frame". Here the `"unload"` reason ends it only at the frame of the unload item, which for a user's unload from the script manager can run many frames after the request while the script may still be ticking and renewing. End it in the frame the unload is requested, as `"switch"` already does for a queued switch. (5) **§8.7 gaps.** Nothing says what happens to a reload in progress when, during items 1–3, the old apartment is unloaded by the user or by `Core.Unload`, developer mode is turned off (EM §9.8 then unloads every developer script), or the client exits. (6) **No placed character (§4.6, §4.7).** There is no definition of *P* (the 500 m clamp, invariant 6) or of `Follow("player")` when there is no placed character, for example before placement or in free fly without a character, which EA1a §10.2 allows. (7) **§6.4 and TM rule 7.1.4.** §6.4 counts *n* over shown lists that are "non-empty and drawn", while TM counts "non-empty". This is undefined for a list that is partly drawn after a region change (quads drawn, world primitives not). Align with TM, or state the narrower rule and why the bounds still hold. Minor: (a) §4.8 ignores only `heading` in a key frame, but §13 says `region` and `leased` are ignored "as in a key frame". (b) `Hold`'s `e(6)` does not cover the up to 9 fields of a passed `GetPose` result that the unknown-field check walks. (c) §7.4 does not say which reason, `"busy"` or `"pending"`, answers a `Teleport` while another script holds the global slot. (d) §9.4 does not state the REPL compile charge formula ("in proportion to the bytes"). (e) §8.8 does not say that the file index also counts toward the new apartment's cap during a hot reload (TM rule 7.6.1). **Revision 4** (same day) answers every item of the re-review of revision 3 and of the follow-up review of the same day, and aligns with TM revision 4 and EA1a revision 4 (§15): `Follow` checks `entity.read` at the call and at every apply, with the §4.7 citation of EA1a §2.9 corrected; leases, intents and overlay lists end in the frame an unload is requested, and an unloading apartment (its `Unload` handler included) starts no lease, overlay addition or `Sandbox` command, nothing it queues is applied; teleports numbered per `Session` connection, the slot released when the generation rises (the frame a switch is queued), at a failed submission (`"failed"`, number not consumed) and when the session has left the world; destinations validated after UTF-8 replacement and the anchor rule stated; view-dependent `GetStats` fields and every player position (`Camera` poses, `TeleportDone`, `Location`) only with `world.read`; EM §9.8's reload notices and its refusal of suspended scripts; L84 counting hot reloads only, a bounded watcher (one flag per loaded developer script) and the missing §8.7 rows; the order of checks taken from EA1a §2.4 with every walk after the reservation, the generator's vocabulary (DID, `table`, `any`, `union`, `forms`, `variadic`, the root and fields) and the registry's canonical form (RFC 8785) defined; costs counted by EA1a §2.5's element rule (`Lines` now `B` + `e(2m)`, an OPEN to TM on L90's figure); no-character *P*; TM rule 7.1.4's *n*; the file index in the new cap; the REPL compile charge; the all-scripts clock rate (TM L75); `TeleportDone` only with a handler set; the argument domains and L90, L91 cited; the quad-flood example corrected; the `Sandbox` tests moved to the client integration harness. Awaiting re-review. **Re-review of revision 4**, independent clean-room review, 2026-10-07 (D17, TM revision 4, EA1a revision 4, EM revision 4, and the cited code of `crates/net` and `crates/world`): **changes requested**, status stays Review. Every item of the re-review of revision 3 is answered. Every cited L-number matches TM revision 4 (L90 and L91 included), and every TM escape case tagged 1b (X16, X20, X27–X30, X44, X50, X64, X80, X84, X85, X87, X88, X91, X92) is in §13. The reservations check out under EA1a §2.5's rule: pose `e(20)`, `Follow` `e(12)`, key frames `e(6,144)`, `Teleport` `e(26)` + `b(256)`, and `Lines` at most 491,720 units, within TM L3 and L4. So do the worked examples (two quads drawn and 9,998 dropped; *c* = 6,666 and *A* = 1/3; the 3,204-pixel line; `#FF6600FF`; expiry at the floor frame of 380 ms). EM §9.8's notices match. The code facts hold: `Destination::is_valid`, `MAX_LOCAL_OFFSET`, the U+FFFD and `White_Space` reading of `is_valid_place_name`, the sandbox answering every teleport once with the cancel line first, and the ±10¹² clamp of `set_game_seconds`. Remaining issues: (1) **Blocking, testability of a security case (§4.4, §10.2, §10.3, §13, TM X91).** §10.2 picks a `union` alternative as "the first alternative whose check passes", and §10.3 puts the minting-capability check into the handle alternative's step-2 check. A kept entity handle after an `entity.read` revocation then matches neither `"player"` nor `handle(Entity)` and raises the generic "matches none" error. But §4.4, the §13 functional test and X91's fail condition ("a handle it minted answers anything but `"not granted"`") require `"not granted"`. The generated validation cannot do both. Fix: choose the alternative by its discriminator (Lua type or literal, which §10.2 already requires to tell the alternatives apart), then run that alternative's full step-2 checks, so a stale handle raises as stale and a revoked minting capability raises `"not granted"`. State this in §10.2's `union` row and in §10.3. (2) **Blocking, an unanswered companion request (§3.1, §4.2, §7.2; EA1a OPEN-12(a)).** EA1a refuses region 0, which means "no region" in `coordinates.md` §4. It asks EA1b to refuse 0 for a destination or to say what 0 means. Revision 4 still accepts `region` 0–255 without saying. `tessera-net`'s `RegionId(0)` is "the abstract region of a sandbox that has no world data". Either state that meaning (for destinations, poses and reports) or refuse 0, and record the answer so EA1a can close its request. Non-blocking: (3) EA1a §2.4 step 3 checks "unknown names and option fields" before the charge, while §10.3 and invariant 23 move every field check into the walk at step 6. This document's order is the safer one, but EA1a wins on general rules (§1), so mark an OPEN asking EA1a to say that field checks of table arguments run in the walk after the reservation. (4) §9.4: 2 · (200 + 4 · 8,199) is 65,992, not 66,392. (5) §7.4 does not define the one-second windows (sliding over the last accepted calls or fixed, on the lease clock), so the five-script `SetTimeOfDay` test is not fixed by the text. (6) §8.2 does not say what `/ext:reload` and the watcher do while the gate is not `Open`. EM §10.5 gives "No loaded extended script '⟨id⟩'" in `Draining`. State that nothing is queued then and that the flags are cleared. (7) §8.7: a **required** grant revoked before item 4 unloads the script (TM §8.23, EA1a §2.9). Today the row says it "stays loaded and suspended". (8) §8.1 and §8.2: state that a full reload's load (EM phase A) starts only after the old apartment's close item has run. That is why it never adds an apartment, why TM L84 can leave it uncounted and why TM L26's 17 still holds. D17 §10's "at most one reload runs at a time" is narrowed by TM L84 with no amendment note; ask TM §13 to record it. (9) TM L82 still says "≤ 500 m from the player". §4.6's *P* with no placed character needs TM to restate L82; mark it OPEN in §14 under TM §0.1 rule 5, as the L90 cost figure already is. (10) §5.3 defines `culled` as the frustum and alpha cases only, so a filled box with the eye inside (counted 0 by TM rule 7.1.2) falls in no `GetStats` field. Name its field. (11) §4.2 reports the free-fly eye under `world.read`, which settles EA1a OPEN-7 one way. Say so, or align with EA1a. (12) §4.4 cites EA1a §2.9 for the handle rule, and EA1a OPEN-12 asks for §2.7. (13) §8.5 says the old apartment's outstanding requests "count against the caps" until their results arrive, but not whose TM L27 count (old apartment, new apartment or the script) they occupy after item 4. |
 | Implements into | `crates/ext` (registry entries, validation, leases, overlay lists, hand-off serialisation), `crates/ext-host` (Camera, Overlay and Sandbox ports, the clock port, the file watcher, the reload sequence), `crates/render` (filled world boxes with back faces culled and a world style without depth test, §5.4), `apps/client` (feature `ext`: lease application in step 3, pointer picking under a lease, overlay encoding and coverage counting in step 10, the lease indicator, the developer console), `apps/scripttool` (`dump-api`, EM §11.2), `crates/net` (one additive event, §7.5), `tools/` (the reference check, §10.6) |
 | Related | Decision [0017](../decisions/0017-extended-scripting.md) (**D17**, accepted 2026-10-07); [`ext-threat-model.md`](ext-threat-model.md) (**TM**, normative for every limit, every rule of its §7–§9 and the escape catalogue); [`ext-api-1a.md`](ext-api-1a.md) (**EA1a**, the slice-1a modules and the general rules of the API); [`ext-manifest.md`](ext-manifest.md) (**EM**, manifest, grants, backend gate, the script tool and the walk file); [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [`keymap.md`](keymap.md) (**KM**), `docs/ARCHITECTURE.md` (**ARCH**), `docs/LEGAL.md` §18 |
 
@@ -66,12 +66,12 @@ source.
 | Facts | Source | Mark |
 |---|---|---|
 | Module list, capabilities, groups, backends, apply steps, the lease lifetime and end conditions, the overlay caps, the Sandbox rate limits, hot-reload rules, the console's limits, the generators' outputs | D17 (accepted 2026-10-07), sections cited per row | Decision |
-| Every limit number, the coverage rules, the frame-budget row and E9, read-your-writes, the log format, reserved-layer text, the declaration set of a hot reload, uncharged host memory, the lease end events and picking under a lease, revocation (the grant-store re-read included), split turns, the teleport slot and its correlation, the escape cases | TM (revision 3, 2026-10-07), sections and L-, X-numbers cited per use | Decision |
-| General API rules: value types (colour, position), angles (yaw and pitch in radians, `heading` only as a result), failures, costs, timing, handles, the handler pattern, the `Core` notifications `"Tick"` and `"Unload"` (`Core.On`) | EA1a §2, §2.10, §3, §4.1 | Decision |
-| Script-tool commands, the walk file, the backend gate states, manifest fields and validation | EM §4, §10, §11 | Decision |
+| Every limit number (and which numbers are limits: TM §0.1 rule 6), the coverage rules, the view-dependent overlay statistics reserved to `world.read`, the frame-budget row and E9, read-your-writes, the log format, reserved-layer text, the declaration set of a hot reload, uncharged host memory, the lease end events (the unload request included), no lease or intent from an `Unload` handler, picking under a lease, revocation (the grant-store re-read and handle checks by minting module included), split turns, the teleport slot, its per-connection correlation and the all-scripts clock-change rate, the escape cases | TM (revision 4, 2026-10-07), sections and L-, X-numbers cited per use | Decision |
+| General API rules: value types (colour, position, `DID`, `table`), angles (yaw and pitch in radians, `heading` only as a result), failures and the order of checks, costs and the element-counting rule, timing, handles, the handler pattern, the `Ext` root and `Ext.Version`, `Core.Log` and `print`, the `Core` notifications `"Tick"` and `"Unload"` (`Core.On`) | EA1a §2.3–§2.10, §3, §4.1, §4.3 | Decision |
+| Script-tool commands, the walk file, the backend gate states (the generation rising when a switch or session end is queued), manifest fields and validation, the developer-mode reload rules and notices | EM §4, §9.8, §10, §11 | Decision |
 | Every API shape, name, range, default, formula and rule not found in the sources above | This document, original design, 2026-10-07 | Decision (design) |
 | Region frame, `f64` world positions | ARCH §9.1 | Decision |
-| Teleport destination forms, the teleport answer rule (refusal and supersession answered only by a system chat line today), coordinate and place-name limits (`MAX_LOCATION_COORDINATE` = 10⁷, `MAX_PLACE_NAME_LEN` = 256 bytes); `tessera-net`'s `heading` convention (`f32` radians, 0 = +X, counter-clockwise), which is EA1a §2.10's yaw convention | `crates/net/src/model.rs`, `crates/net/src/session.rs`, read 2026-10-07 | Confirmed (code) |
+| Teleport destination forms, the teleport answer rule (refusal and supersession answered only by a system chat line today), coordinate and place-name limits (`MAX_LOCATION_COORDINATE` = 10⁷, `MAX_PLACE_NAME_LEN` = 256 bytes, a place name not only white space and with no control character), landblock indices 0–254 (`MAX_LANDBLOCK`), an anchor's ownership (same region, block-local `x` and `y` within ±1,280 m, `MAX_LOCAL_OFFSET`); `Session::send` accepts `Teleport` and `QueryLocation` only in the `InWorld` state (`NetError::InvalidState` otherwise) and passes on the backend's errors; `tessera-net`'s `heading` convention (`f32` radians, 0 = +X, counter-clockwise), which is EA1a §2.10's yaw convention | `crates/net/src/model.rs`, `crates/net/src/session.rs`, read 2026-10-07 | Confirmed (code) |
 | The clock setters and their clamps (`MAX_GAME_SECONDS` = 10¹²) | `crates/world/src/environment/clock.rs`, read 2026-10-07 | Confirmed (code) |
 | A pass offers `line`, `aabb` (outline only) and `quad` primitives with linear RGBA colours; world passes use reversed depth. There is no filled box and no world style without depth test | `crates/render/src/frame.rs`, `crates/render/src/camera.rs`, read 2026-10-07 | Confirmed (code) |
 | The client's streaming focus is computed from the player's controls (`stream_focus` over `controls.focus()`), not from the rendered camera | `apps/client/src/walker/mod.rs`, read 2026-10-07 | Confirmed (code) |
@@ -79,6 +79,7 @@ source.
 | The LuaLS annotation syntax (`---@meta`, `---@class`, `---@field`, `---@param`, `---@return`, `---@alias`, `---@overload`) | The public documentation of the lua-language-server project (MIT) | Reported (public format) |
 | The `bad argument #n to 'f' (…)` message form | The Lua 5.1 reference implementation's auxiliary library (MIT), public behaviour | Reported (public format) |
 | The sRGB transfer function (IEC 61966-2-1) | Public standard | Public mathematics |
+| The JSON Canonicalization Scheme (RFC 8785) and SHA-256 (FIPS 180-4), used for the registry's canonical form (§10.1) | Public standards | Public format |
 
 <a id="s3"></a>
 ## 3. Conventions
@@ -104,6 +105,17 @@ is in **radians**; no argument is ever a heading (EA1a §2.10).
 | Time | seconds, numbers. |
 | Direction of view | for yaw ψ and pitch θ, the unit vector d(ψ, θ) = (cos θ · cos ψ, cos θ · sin ψ, sin θ). |
 
+**Domains and limits.** The ranges of single scalar arguments and fields in this document
+(coordinate magnitudes, the pitch range of ±88° and the field-of-view range of 20°–100°
+above, `Follow`'s distance of 0.5–50 m and height of −10 to 10 m, a quad's position and
+size of at most 16,384 UI units, region, landblock and cell numbers) are argument-validity
+domains in the sense of TM §0.1 rule 6 (a): each bounds no cost by itself, stays in this
+document and has no L-number. Every count, size, rate, time and per-call cap that bounds
+work, memory or the user's control is TM's and is cited by its L-number: among them the
+`Overlay.Lines` per-call cap (TM L90), the 32 entries of a REPL result description and
+the one overlay drop record per 10 s (both TM L91). Where a domain bounds something TM
+relies on, TM registers it all the same (the 2,000 m box extent, TM L83).
+
 <a id="s3-2"></a>
 ### 3.2 Results, reasons and errors
 
@@ -116,13 +128,15 @@ aborted calls (D17 §8). Slice 1b uses EA1a's reasons and adds these:
 | Reason | Meaning | Used by |
 |---|---|---|
 | `"busy"` (EA1a) | A per-frame or per-second cap is reached | `Overlay` adds, `Sandbox` commands, camera intents past the pending-intent cap |
-| `"taken"` | Another script holds the camera lease | `Camera.Take` |
+| `"taken"` | Another script holds the camera lease, or the calling apartment is unloading (§4.5, TM §8.17: "refused as if taken") | `Camera.Take` |
+| `"unloading"` | The calling apartment's unload has been requested (§4.5); this includes every call of its `Unload` handler. Nothing is added or queued (TM §8.17) | `Overlay` adds, `Sandbox` commands |
 | `"unfocused"` | The game window does not have keyboard focus, so no lease may start (D17 §5.4) | `Camera.Take` |
 | `"ended"` | The lease has ended; `lease:EndReason()` says why | lease methods |
 | `"pending"` | A teleport is pending, of any origin (D17 §7 "Chat") | `Sandbox.Teleport` |
 | `"not in world"` | The session is not in the world | `Sandbox` commands |
 | `"too large"`, `"cyclic"`, `"invalid"` (EA1a) | The bounded value model refused a value (TM L33–L35); `"too large"` also when the hand-off would not fit the new apartment's cap (TM §8.10) | `Core.SetHandOff` |
 | `"not a hot reload"` | The hand-off table is accepted only in the `Unload` handler of a hot reload | `Core.SetHandOff` |
+| `"refused"`, `"cancelled"`, `"failed"` | Not soft failures: the values of `TeleportDone`'s `reason` field (§7.5) | `Sandbox` notifications |
 
 <a id="s3-3"></a>
 ### 3.3 Notifications and handlers
@@ -147,7 +161,9 @@ Function tables use these columns:
 - **Apply:** where the effect takes place: EA1a §2.6's *read* and *at once*, and *step 3
   next*, *step 2 next* (that step of the next frame, ARCH §20.3; D17 §4 "Intents") or
   *step 10* (this frame).
-- **Cost:** EA1a §2.5's symbols (`B`, `b(n)`, `e(n)`, `V`); "Rsv" marks a reservation of
+- **Cost:** EA1a §2.5's symbols (`B`, `b(n)`, `e(n)`, `V`), with *n* in `e(n)` counted by
+  EA1a §2.5's rule (every key and every value: a record of *k* fields is 2*k*, an array of
+  *m* entries 2*m*); "Rsv" marks a reservation of
   the cap's cost before the work, the unused part refunded (D17 §8 "Work units"). The
   figures are provisional like EA1a's (EA1a OPEN-1): E7 calibrates them and the registry
   holds them.
@@ -182,25 +198,41 @@ table with the same fields, read by raw access only (EA1a §2.3 `table`), so met
 
 | Field | Type | In a returned pose | In a pose a script passes |
 |---|---|---|---|
-| `x`, `y`, `z` | number | the eye position of the view | required, §3.1 ranges |
+| `x`, `y`, `z` | number | the eye position of the view; **only when the script holds `world.read`** (below) | required, §3.1 ranges |
 | `yaw` | number | the view's yaw, radians, in (−π, π] | required, finite (§3.1) |
 | `pitch` | number | the view's pitch, radians | required, \|pitch\| ≤ 88 · π / 180 (§3.1) |
 | `fov` | number | the vertical field of view in use, radians | optional; absent means "keep the lease's field of view" (§4.7); §3.1 range |
 | `heading` | number | the compass bearing of `yaw` in degrees, [0, 360) (EA1a §2.10; display only) | ignored (never an argument, EA1a §2.10) |
-| `region` | integer | the region of the frame the position is in | ignored (positions are always in the current region's frame) |
+| `region` | integer | the region of the frame the position is in; **only with `world.read`** | ignored (positions are always in the current region's frame) |
 | `leased` | boolean | `true` when a lease decided this view | ignored |
 
-So a pose returned by `Camera.GetPose` passes to `lease:Hold` unchanged, and the ignored
-fields are the only fields a passed pose may carry besides the required and optional ones
-(any other field name is a Lua error, §10.2).
+So a pose returned by `Camera.GetPose` to a script that holds `world.read` passes to
+`lease:Hold` unchanged, and the ignored fields are the only fields a passed pose may carry
+besides the required and optional ones (any other field name is a Lua error, §10.2). A
+passed pose is read with the bounded walk of §10.2 after the reservation (§10.3): at most
+its 9 fields plus one unknown field, 10 keys and their values, `e(20)`.
+
+**Positions need `world.read`.** The eye of the view is always near the player (the user's
+camera, or a leased eye within 500 m, §4.6), so it tells where the player is. The `camera`
+grant's dialog text (EM §6.1, "Take over the camera while it runs") does not say that, and
+`world.read`'s does ("Read where you are", EM §6.1). A returned pose therefore carries `x`,
+`y`, `z` and `region` only when `world.read` is in the apartment's effective set at the
+call (TM §8.23); otherwise those four fields are absent, and the pose cannot be passed back
+to `Hold` without the script supplying a position of its own. The same rule covers every
+position `Sandbox` reports (§7.5). Direction and field of view are not positions and are
+always reported. A pose has a **fixed shape** of 9 fields for costing (EA1a §2.5), so a
+returned pose is charged `e(18)` whether or not its position fields are present. (This is
+this document's own rule, which TM §0.1 rule 2 allows as stricter than TM; with it the
+dialog texts of `camera` and `session.sandbox` in EM §6.1 stay accurate as they stand, and
+EM §6.1 and §6.2 need no change.)
 
 <a id="s4-3"></a>
 ### 4.3 Module functions
 
 | Function | Arguments | Results | Apply | Cost | Since |
 |---|---|---|---|---|---|
-| `Camera.GetPose()` | — | pose: the view of this frame's step 3 (*V* of §4.6), the one the renderer presents | read | `B` + `e(8)` | 1.0 |
-| `Camera.GetUserPose()` | — | pose: the view the user's own camera controller produced in this frame's step 3 (*V*ᵤ), with or without a lease; `leased` is `false` | read | `B` + `e(8)` | 1.0 |
+| `Camera.GetPose()` | — | pose: the view of this frame's step 3 (*V* of §4.6), the one the renderer presents; its position fields only with `world.read` (§4.2) | read | `B` + `e(18)` | 1.0 |
+| `Camera.GetUserPose()` | — | pose: the view the user's own camera controller produced in this frame's step 3 (*V*ᵤ), with or without a lease; `leased` is `false`; its position fields only with `world.read` (§4.2) | read | `B` + `e(18)` | 1.0 |
 | `Camera.Take()` | — | lease \| `nil`, `"taken"` \| `nil`, `"unfocused"` | at once (the lease exists at once; its view applies from step 3 next) | `B` | 1.0 |
 | `Camera.On(name, fn)` | name, function or `nil` | — | at once | `B` | 1.0 |
 
@@ -213,6 +245,14 @@ fields are the only fields a passed pose may carry besides the required and opti
   **the same handle**.
 - While the game window does not have keyboard focus, `Take` answers `nil, "unfocused"`
   (D17 §5.4: no lease runs while the panic chord cannot reach the window).
+- While the calling apartment is **unloading** (from the frame its unload is requested,
+  §4.5, its `Unload` handler included), `Take` answers `nil, "taken"` and creates nothing
+  (TM §8.17: a lease request from an `Unload` handler is refused as if taken). So the old
+  apartment of a hot reload never holds the global lease slot (TM L82) against the new
+  one.
+- The order of the answers is: `"taken"` for an unloading apartment, then the renewal of
+  the caller's own active lease, then `"taken"` for another script's lease, then
+  `"unfocused"`.
 - A new lease is active, has **no mode** (so the view stays the user's until a mode intent
   applies, §4.6) and expires 350 ms after the call (TM L63, §4.5).
 
@@ -232,9 +272,9 @@ so ending under starvation never turns a script's renewal into an aborting error
 | `lease:ExpiresIn()` | — | seconds until expiry, ≥ 0; 0 when ended | read | `B` | 1.0 |
 | `lease:Exists()` | — | `true` (the uniform handle probe of D17 §3 "API rules") | read | `B` | 1.0 |
 | `lease:Kind()` | — | `"CameraLease"` (EA1a §2.7) | read | `B` | 1.0 |
-| `lease:Follow(target [, opts])` | `"player"` or an `Entity` handle; options table | `true` \| `nil`, `"ended"` | step 3 next | `B` + `e(5)` | 1.0 |
-| `lease:Hold(pose)` | pose (§4.2) | `true` \| `nil`, `"ended"` | step 3 next | `B` + `e(6)` | 1.0 |
-| `lease:Play(keyframes [, opts])` | array of keyframes (§4.8); options table | `true` \| `nil`, `"ended"` | step 3 next | `B` + Rsv `e(7 · 256)` | 1.0 |
+| `lease:Follow(target [, opts])` | `"player"` or an `Entity` handle (a union, §10.2); options table | `true` \| `nil`, `"ended"` | step 3 next | `B` + Rsv `e(12)` | 1.0 |
+| `lease:Hold(pose)` | pose (§4.2) | `true` \| `nil`, `"ended"` | step 3 next | `B` + Rsv `e(20)` | 1.0 |
+| `lease:Play(keyframes [, opts])` | array of keyframes (§4.8); options table | `true` \| `nil`, `"ended"` | step 3 next | `B` + Rsv `e(6)` + Rsv `e(24 · 256)` | 1.0 |
 | `lease:SetFov(fov)` | number, radians, in the §3.1 range, or `nil` for the user's | `true` \| `nil`, `"ended"` | step 3 next | `B` | 1.0 |
 
 - `Follow`, `Hold`, `Play` and `SetFov` are **intents**: each also renews the lease, as
@@ -243,10 +283,28 @@ so ending under starvation never turns a script's renewal into an aborting error
   mode intent (`Follow`, `Hold` or `Play`) and the last `SetFov` win. Together they count as
   **one** pending intent against TM L30's 256 per script per frame, so a script that
   re-issues `Hold` every frame never reaches `"busy"` through the camera.
-- An `Entity` handle passed to `Follow` must be a live handle of the script's own apartment
-  (EA1a §2.7, §10); a stale handle raises a Lua error, as every stale handle does.
-  Following another entity than the player therefore needs `entity.read` as well, which
-  is why the grant dialog warns about `camera` + `entity.read`.
+- **Costs.** Elements are counted by EA1a §2.5's rule (every key and every value). Each
+  table argument is walked only after its reservation (§10.3), by the bounded walk of
+  §10.2, which reads at most the declared fields plus one unknown field (whose name
+  raises): `Follow`'s options have 5 fields, so `e(2 · 6)` = `e(12)`; a pose 9 fields,
+  `e(2 · 10)` = `e(20)`; `Play`'s options 2 fields, `e(2 · 3)` = `e(6)`. For the key
+  frames `Play` reserves, per array entry, its index and its table (2) plus at most 11
+  fields of the key frame (its 10 accepted fields, §4.8, plus one unknown), 2 · 11 = 22,
+  so `e(24 · 256)` = `e(6,144)` = 122,880 units for the 256-entry cap. Every reservation
+  is refunded down to what the walk read (EA1a §2.5).
+- **`Follow` with an `Entity` handle needs `entity.read`** (TM §8.23 "Handles carry their
+  module's capability"; D17 §5.2). The handle must be a live handle of the script's own
+  apartment (EA1a §2.7, §10), and `entity.read`, the capability of the module that minted
+  it, must be in the apartment's **effective set** at the call; otherwise the call raises
+  `"not granted"` (a stale handle raises as every stale handle does). This is EA1a §2.4's
+  step 2 for a handle argument, applied to the `Entity` alternative of `Follow`'s union
+  argument even though `Follow` is a `Camera` native. The grant dialog
+  warns about `camera` + `entity.read` for this reason. A kept entity handle therefore
+  cannot start a `Follow` after an optional `entity.read` grant was revoked and the script
+  resumed (EA1a §2.9: the handle stays a valid object, but every native that takes it
+  raises). Step 3 checks the same condition again at every apply (§4.7).
+- **While unloading** (§4.5) the lease has already ended, so every intent answers
+  `nil, "ended"` and queues nothing.
 
 <a id="s4-5"></a>
 ### 4.5 Lifetime and end reasons
@@ -274,11 +332,26 @@ comes after step 3 of its frame, the view returns at step 3 of the next frame.
 | `"suspended"` | The script was suspended: watchdog, aborts, or the revocation of **any** of its grants, required or optional, by any route, a grant-store re-read that removes, invalidates or narrows its record included (TM §8.23) | at step 3 of that frame | none while suspended; readable after the user resumes it |
 | `"panic"` | The panic chord (D17 §5.5) | at step 3 of the same frame (the chord is tested in step 1) | none while suspended; readable after resume |
 | `"switch"` | A backend switch or session end is **queued** (EM §10.3 `Open` → `Draining`, TM rule 7.4.2), not the later frame of the apartment's unload item | at step 3 of that frame | none (6b does not run while `Draining`, EM §10.3, and the apartment then unloads) |
-| `"unload"` | The apartment unloads for any other cause: the user's unload, `Core.Unload`, a hot reload (at the start of item 4, §8.3), a full reload, client exit | at step 3 of the frame of that unload item | none (the apartment is gone or inert) |
+| `"unload"` | The apartment's unload is **requested** for any other cause (TM §8.17, L63), in the frame of the request, not the later frame of its unload item: the user's unload in the script manager, `Core.Unload`, developer mode turned off (EM §9.8 unloads every developer script), a full reload (§8.1), the client's exit; for the old apartment of a hot reload, the start of item 4 (§8.3), the moment the sequence commits to replacing it (until then a failed reload keeps it running, §8.7) | at step 3 of that frame (of the next frame when the request comes after step 3, for example `Core.Unload` in 6b) | none (the apartment is unloading) |
 
-After any end, the script may call `Camera.Take` again in a later call; nothing carries over
-from the ended lease. After a revoked optional `camera` grant and a resume, `Camera.Take`
-and every lease method raise `"not granted"` (EA1a §2.9, TM §8.23).
+**Unloading.** From the frame its unload is requested (the `"switch"` and `"unload"` rows)
+until its close item, an apartment is **unloading**. In that frame its lease ends, its
+pending camera, overlay and `Sandbox` intents are discarded and its overlay lists are
+cleared (§5.2). While it is unloading, whatever call runs (a turn before its unload item,
+if the cause leaves it one, and its `Unload` handler): `Camera.Take` answers
+`nil, "taken"`, every lease intent answers `nil, "ended"`, every `Overlay` add answers
+`nil, "unloading"`, and every `Sandbox` command answers `nil, "unloading"`; nothing is
+created or queued. Any intent that is queued all the same (a defect) is discarded when the
+call returns (TM §8.17, TM invariant 25), and the apply steps check it again: step 2 and
+step 3 apply no intent of an unloading apartment (§7.4), so nothing a handler queues can
+take effect after the user's unload, `Core.Unload` or a hot reload's item 4. Reads
+(`GetPose`, `IsActive`, `GetStats`) keep working, and `Core.SetHandOff` is unaffected
+(§8.4).
+
+After any end, the script may call `Camera.Take` again in a later call (while it is not
+unloading); nothing carries over from the ended lease. After a revoked optional `camera`
+grant and a resume, `Camera.Take` and every lease method raise `"not granted"` (EA1a
+§2.9, TM §8.23).
 
 <a id="s4-6"></a>
 ### 4.6 How step 3 applies a lease
@@ -295,9 +368,13 @@ Step 3 of every frame:
 3. **The leased view.** If an active lease has a mode, the view *V* is computed from the
    mode (§4.7–§4.8); otherwise *V* = *V*ᵤ.
 4. **Distance clamp.** If the eye of *V* lies more than **500 m** (TM L82; 3D distance) from
-   the player's interpolated position *P*, it is moved along the line from *P* to the eye
-   to 500 m from *P*; yaw and pitch stay. (The same 500 m as the `World` ray limit, TM
-   L69.)
+   the **reference point** *P*, it is moved along the line from *P* to the eye to 500 m
+   from *P*; yaw and pitch stay. (The same 500 m as the `World` ray limit, TM L69.) *P* is
+   the player character's interpolated position of this frame when a character is placed;
+   when none is (before placement, or in free fly without a character, which EA1a §10.2
+   allows), *P* is the eye of the user's own view *V*ᵤ of this frame. Either way *P* is
+   where the user's own controls put the view, so the clamp keeps a leased eye near what
+   the client streams (item 7).
 5. **Field of view.** *V* uses the lease's field of view when `SetFov` (or a pose's `fov`,
    or a path's `fov`) set one, otherwise the user's.
 6. **Who uses *V*.** The renderer's view and projection in step 10, the projection of ext
@@ -341,10 +418,25 @@ camera sits behind the target, looking the way the target faces, slightly down.
 
 The follow is rigid (no smoothing). If the target entity despawns or its handle becomes
 stale while the lease follows it, the lease switches to **Hold** with the last pose applied,
-and the script gets `FollowLost` (§4.10). Following `"player"` never loses its target. A
-revoked `entity.read` grant suspends the script (TM §8.23), which ends the lease; after a
-resume the entity handles are gone (EA1a §2.9), so no follow made under that grant
-survives.
+and the script gets `FollowLost` (§4.10).
+
+**`Follow("player")` without a character.** While no character is placed (before
+placement, or in free fly without a character, EA1a §10.2: `Entity.Self()` answers
+`nil`), a `"player"` follow has no target: step 3 uses *V*ᵤ as *V*, exactly as for a lease
+with no mode, and the lease stays in its `Follow` mode. From the first step 3 with a placed
+character it follows that character. Following `"player"` never ends and never produces
+`FollowLost`.
+
+**`entity.read` at every apply.** An entity follow is accepted only with `entity.read` in
+the effective set (§4.4), and step 3 checks it again every frame before it reads the
+target's transform (TM §8.23: an intent that holds a handle is re-checked when it is
+applied). A revoked `entity.read` grant suspends the script in that frame (TM §8.23), which
+ends the lease with `"suspended"`; a resume never restarts the follow (a resumed script
+has no lease, and its kept entity handles raise `"not granted"` in every native that takes
+them, EA1a §2.9, §4.4). So no `Follow` made under `entity.read` survives its revocation
+(TM §8.23). Should step 3 ever find the capability missing while an entity follow is the
+lease's mode (a defect, since the revocation suspended the script first), it applies the
+last pose as a **Hold** without reading the target, and logs the event.
 
 **Hold** — `lease:Hold(pose)`. The view is the pose as given (its `fov`, when present, acts
 as `SetFov`).
@@ -359,10 +451,13 @@ A new mode intent replaces the previous mode at the step 3 where it applies.
 
 **Keyframes.** An array (raw indices 1…*n*, 2 ≤ *n* ≤ **256**, TM L82) of tables with the
 fields `t` (seconds), `x`, `y`, `z`, `yaw`, `pitch` and optional `fov`, each angle in
-radians with the §3.1 ranges (a `heading` field is ignored, as in a pose). The first `t`
-is 0, each next `t` is strictly greater, the last is at most **300 s** (TM L82). A key frame
-with `fov` anywhere means every key frame must have it. Any violation raises a Lua error
-naming the key frame's index.
+radians with the §3.1 ranges. The fields `heading`, `region` and `leased` are ignored,
+exactly as in a passed pose (§4.2), so a pose that `GetPose` returned plus a `t` is a key
+frame; any other field name is a Lua error. The first `t` is 0, each next `t` is strictly
+greater, the last is at most **300 s** (TM L82). A key frame with `fov` anywhere means
+every key frame must have it. The array's raw length is read before any element (2 ≤ *n*
+≤ 256, else a Lua error before the reservation); the elements are walked only after `Play`'s
+reservation (§4.4, §10.3). Any violation raises a Lua error naming the key frame's index.
 
 **Options.**
 
@@ -421,7 +516,7 @@ step 3 returned the view to the user after the end:
 |---|---|---|
 | `LeaseEnded` | `reason` (`"expired"`, `"focus"` or `"region"`) | the lease ended for that reason (§4.5) |
 | `PathFinished` | — | a `Play` without `loop` reached its last key frame |
-| `FollowLost` | — | the followed entity despawned or its handle became stale (§4.7) |
+| `FollowLost` | — | the followed entity despawned or its handle became stale (§4.7); never for `"player"` |
 
 <a id="s4-11"></a>
 ### 4.11 Caps and costs
@@ -431,7 +526,7 @@ step 3 returned the view to the user after the end:
 | Camera leases | 1 for all scripts (TM L82) | `nil, "taken"` |
 | Camera intents | coalesced per lease per frame; count as 1 pending intent (TM L30) | — |
 | Path length | 256 key frames, 300 s (TM L82, L34) | Lua error |
-| Leased eye | 500 m from the player (TM L82) | eye clamped |
+| Leased eye | 500 m from *P*, the player or, with no placed character, the user's eye (TM L82, §4.6) | eye clamped |
 | Lease memory | the lease's declared size plus its current path, charged to the script's cap (TM L23) | allocation refused (EA1a §2.4) |
 
 ---
@@ -481,9 +576,11 @@ turn) stay in the draft list for the next swap.
 **Cleared.** The shown and draft lists are emptied:
 - at suspension (any cause, TM §8.23) and at the panic chord, in the same frame (D17 §5.5,
   §8 "Suspension");
-- when the apartment unloads, and when a backend switch is queued (6b does not run while
-  `Draining`, EM §10.3); for the old apartment of a hot reload at the start of item 4
-  (§8.3).
+- in the frame the apartment's unload is requested (§4.5 "Unloading": the user's unload,
+  `Core.Unload`, developer mode turned off, a full reload, the client's exit), and in the
+  frame a backend switch or session end is queued (6b does not run while `Draining`, EM
+  §10.3); for the old apartment of a hot reload at the start of item 4 (§8.3). An
+  unloading apartment adds nothing afterwards: its adds answer `nil, "unloading"`.
 
 **Not drawn.** The shown list is kept but not drawn:
 - while a consent prompt shows (D17 §4);
@@ -495,13 +592,13 @@ turn) stay in the draft list for the next swap.
 
 | Function | Arguments | Results | Apply | Cost | Since |
 |---|---|---|---|---|---|
-| `Overlay.Line(x1, y1, z1, x2, y2, z2, colour [, style])` | two world points, colour, style | `true` \| `nil`, `"busy"` | at once (draft) | `B` | 1.0 |
-| `Overlay.Lines(coords, colour [, style])` | flat array of *m* = 6·*n* numbers (1 ≤ *n* ≤ **2,048**, so *m* ≤ 12,288): x1, y1, z1, x2, y2, z2 of each line, in raw indices 1…*m*; colour; style | `true` \| `nil`, `"busy"` | at once (draft) | `B` + `e(m)`, *m* the actual length (at most 245,960 units) | 1.0 |
-| `Overlay.Box(minx, miny, minz, maxx, maxy, maxz, colour [, style [, filled]])` | an axis-aligned box in world coordinates; colour; style; `filled` boolean (default `false`) | `true` \| `nil`, `"busy"` | at once (draft) | `B` | 1.0 |
-| `Overlay.Quad(x, y, w, h, colour)` | a screen rectangle in UI units; colour | `true` \| `nil`, `"busy"` | at once (draft) | `B` | 1.0 |
+| `Overlay.Line(x1, y1, z1, x2, y2, z2, colour [, style])` | two world points, colour, style | `true` \| `nil`, `"busy"` \| `nil`, `"unloading"` | at once (draft) | `B` | 1.0 |
+| `Overlay.Lines(coords, colour [, style])` | flat array of *m* = 6·*n* numbers (1 ≤ *n* ≤ **2,048**, TM L90, so *m* ≤ 12,288): x1, y1, z1, x2, y2, z2 of each line, in raw indices 1…*m*; colour; style | `true` \| `nil`, `"busy"` \| `nil`, `"unloading"` | at once (draft) | `B` + `e(2m)`, *m* the actual length (EA1a §2.5: an array of *m* entries is 2*m* elements; at most 491,720 units) | 1.0 |
+| `Overlay.Box(minx, miny, minz, maxx, maxy, maxz, colour [, style [, filled]])` | an axis-aligned box in world coordinates; colour; style; `filled` boolean (default `false`) | `true` \| `nil`, `"busy"` \| `nil`, `"unloading"` | at once (draft) | `B` | 1.0 |
+| `Overlay.Quad(x, y, w, h, colour)` | a screen rectangle in UI units; colour | `true` \| `nil`, `"busy"` \| `nil`, `"unloading"` | at once (draft) | `B` | 1.0 |
 | `Overlay.Clear()` | — | — (empties the draft list) | at once | `B` | 1.0 |
 | `Overlay.Count()` | — | number of primitives in the draft list | read | `B` | 1.0 |
-| `Overlay.GetStats()` | — | table of the last encoded frame (below) | read | `B` + `e(7)` | 1.0 |
+| `Overlay.GetStats()` | — | table of the last encoded frame (below); its view-dependent fields only with `world.read` | read | `B` + `e(14)` (a fixed shape of 7 fields, EA1a §2.5) | 1.0 |
 | `Overlay.Rgba(r, g, b [, a])` | numbers in [0, 1]; `a` defaults to 1 | colour string `#RRGGBBAA` (§3.1): each channel is ⌊255 · *c* + 0.5⌋, in upper-case hexadecimal digits | read | `B` + `b(9)` | 1.0 |
 
 **Argument rules.**
@@ -509,23 +606,32 @@ turn) stay in the draft list for the next swap.
   `"top"` (drawn after the world with no depth test). Screen quads are always on top.
 - A box needs `min ≤ max` on every axis and an extent of at most **2,000 m** per axis (TM
   L83).
-- A quad needs `w` and `h` in [0, 16,384] and `x`, `y` in [−16,384, 16,384].
+- A quad needs `w` and `h` in [0, 16,384] and `x`, `y` in [−16,384, 16,384] (argument
+  domains, §3.1; a quad's cost is bounded by its coverage count, TM rule 7.1.2, not by
+  these ranges).
 - **`Lines` in detail.** Its length *m* is the array's raw length (Lua 5.1's `#` without
   metamethods), read **before any element**. In §10.3's order: a length that is 0, not a
-  multiple of 6 or over 12,288 (2,048 lines, a per-call cap, §5.5) raises a Lua error
-  before any element is read (step 3); a call that would take the draft past TM L53's
-  10,000 primitives answers `nil, "busy"` (step 4); then the cost `B` + `e(m)` is charged
-  (step 5). At its largest that is 200 + 20 · 12,288 = 245,960 units, under a third of one
-  call's 800,000 (TM L4) and about 1.2 ms at 5 ns per unit, inside the 4 ms deadline
-  (TM L3), so a `Lines` call of any allowed length can succeed in a call that has that
-  much left (EA1a §2.5). The elements are then read by raw access into a host buffer;
-  an element that is not a finite number with \|v\| ≤ 10⁷ raises a Lua error naming its
-  index, and nothing is added (the charge stays, as for any error after step 5). Only a
-  wholly valid array is appended. A script that wants more than 2,048 lines in one draft
-  makes several `Lines` calls, in one call while its units last or across the calls of one
-  turn (below).
+  multiple of 6 or over 12,288 (2,048 lines, TM L90) raises a Lua error before any element
+  is read (step 3); a call that would take the draft past TM L53's 10,000 primitives
+  answers `nil, "busy"` (step 4); then the cost `B` + `e(2m)` is charged (step 5). At its
+  largest that is 200 + 20 · 2 · 12,288 = 491,720 units, under two thirds of one call's
+  800,000 (TM L4) and about 2.5 ms at 5 ns per unit, inside the 4 ms deadline (TM L3), so
+  a `Lines` call of any allowed length can succeed in a call that has that much left
+  (EA1a §2.5). As §10.3 requires of every walk, the elements are read only now (step 6),
+  after the charge, by raw access into a host buffer; an element that is not a finite
+  number with \|v\| ≤ 10⁷ raises a Lua error naming its index, and nothing is added (the
+  charge stays, as for any error after step 5). Only a wholly valid array is appended. A
+  script that wants more than 2,048 lines in one draft makes several `Lines` calls, across
+  the calls of one turn (below).
 - A primitive whose colour has alpha `00` is accepted and counted toward the primitive cap,
   but it is never drawn and counts no coverage (TM rule 7.1.2).
+
+> **OPEN:** TM L90 states the cost of a maximal `Lines` call as `B` + e(*m*) = 245,960
+> units, counting one element per number. EA1a §2.5's counting rule (revision 4) counts
+> an array of *m* entries as 2*m* elements, so the cost is `B` + `e(2m)` = 491,720 units.
+> The cap of 2,048 lines still keeps the call inside L3 and L4, so the cap itself is
+> unchanged; TM is asked to restate L90's cost figure (TM §0.1 rules 1 and 5). Until it
+> does, TM L90's cap is normative and this document's cost follows EA1a.
 
 **Never a silent truncation (D17 §3 "API rules").** An add that would take the draft list
 past **10,000** primitives (TM L53) adds **nothing** and answers `nil, "busy"`; for `Lines`
@@ -533,7 +639,8 @@ that holds for the whole array, so a call either adds all its lines or none.
 
 **Building a large draft takes several calls.** Each single add costs at least `B`
 (200 units), so one call, with its 800,000 units (TM L4), makes at most 4,000 adds, fewer
-after the interpreter's own units for the loop; `Lines` adds at most 2,048 lines per call.
+after the interpreter's own units for the loop; `Lines` adds at most 2,048 lines per
+native call (TM L90), and one script call has the units for one such maximal `Lines`.
 A draft of 10,000 primitives is therefore built over several calls of one turn, before
 its swap point (§5.2): for example several timer calls that run before the turn's `Tick`,
 or, for a script without a `Tick` handler, all the calls of the turn. The 2 ms cap may
@@ -541,17 +648,23 @@ split such a turn across frames (TM L5, TM §8.13); the additions wait in the dr
 the shown list stays drawn, until the swap.
 
 **`GetStats` fields** (all of the last frame in which step 10 encoded this script's shown
-list; zeros before the first). These are TM rule 7.1.4's per-frame overlay statistics:
+list; zeros before the first). These are TM rule 7.1.4's per-frame overlay statistics.
+The fields that depend on the view (which primitives lie in the frustum and how large they
+project) are present **only when `world.read` is in the apartment's effective set** at the
+call; without it they are absent. A script with `overlay` alone could otherwise compare
+them over frames and find the camera's position and facing, and so the player's location
+(TM rule 7.1.4, TM §6.8). The other fields depend only on the script's own list and on
+*n*, the number of overlay scripts, which is a stated residual (TM §6.8 item 5).
 
-| Field | Meaning |
-|---|---|
-| `listed` | primitives in the shown list |
-| `drawn` | primitives drawn |
-| `culled` | primitives counted 0 by TM rule 7.1.2 (outside the view frustum, or alpha `00`): skipped, neither drawn nor dropped |
-| `dropped_count` | primitives dropped by the count share (TM rule 7.1.4 step 1) |
-| `dropped_coverage` | primitives dropped by the coverage share (TM rule 7.1.4 step 2) |
-| `coverage` | coverage of the drawn primitives, in screens (TM §2 "Coverage") |
-| `coverage_share` | this script's coverage share *A* in that frame, in screens |
+| Field | Meaning | Present |
+|---|---|---|
+| `listed` | primitives in the shown list | always |
+| `dropped_count` | primitives dropped by the count share (TM rule 7.1.4 step 1) | always |
+| `coverage_share` | this script's coverage share *A* in that frame, in screens | always |
+| `drawn` | primitives drawn | with `world.read` |
+| `culled` | primitives counted 0 by TM rule 7.1.2 (outside the view frustum, or alpha `00`), and world primitives not drawn after a region change (§5.2): skipped, neither drawn nor dropped | with `world.read` |
+| `dropped_coverage` | primitives dropped by the coverage share (TM rule 7.1.4 step 2) | with `world.read` |
+| `coverage` | coverage of the drawn primitives, in screens (TM §2 "Coverage") | with `world.read` |
 
 <a id="s5-4"></a>
 ### 5.4 Drawing (step 10)
@@ -588,7 +701,8 @@ write depth either, so overlays never hide each other through the depth buffer.
 | Resource | Cap | When exceeded |
 |---|---|---|
 | Draft list | 10,000 primitives per script (TM L53) | the add answers `nil, "busy"` and adds nothing |
-| One `Lines` call | 2,048 lines (12,288 numbers), so its cost fits TM L3 and L4 (this document's cap; registration in TM §10.6 requested, §14) | Lua error before any element is read |
+| One `Lines` call | 2,048 lines (12,288 numbers), so its cost fits TM L3 and L4 (TM L90) | Lua error before any element is read |
+| An unloading apartment | no add (§4.5) | `nil, "unloading"`, nothing added |
 | Encoded per frame | the count share of TM L53 | the newest of a script's list beyond its share are dropped |
 | Coverage per frame | the coverage share of TM L54 | that primitive is dropped and the visit goes on |
 | Memory | each primitive in either list is charged its declared size (E5) to the script's cap (TM L23) | allocation refused (EA1a §2.4) |
@@ -634,15 +748,25 @@ slice 1a's `UI` module (TM rule 7.1.5, EA1a §7.10); slice 1b adds nothing to th
 <a id="s6-4"></a>
 ### 6.4 Counting and dropping (step 10)
 
-Step 10 applies TM rule 7.1.4 to every script whose shown list is non-empty and drawn in
-this frame (§5.2): count share and coverage share from *n*, list order, a primitive that
-does not fit dropped alone and the visit going on, never a partial primitive.
+Step 10 applies TM rule 7.1.4 as it stands: *n* is the number of ext scripts whose shown
+list is **non-empty** in this frame, **whether or not it is drawn** (a list kept but not
+drawn under §5.2's "Not drawn", wholly while a consent prompt shows or in part after a
+region change, still counts). Then count share and coverage share from *n*, list order, a
+primitive that does not fit dropped alone and the visit going on, never a partial
+primitive. Within a list that is drawn in part, a world primitive that §5.2 keeps from
+being drawn is treated like a primitive counted 0 by TM rule 7.1.2: it keeps its place
+among the first *c* for the count share, is skipped, and adds nothing to Σ. A list that is
+not drawn at all is not visited. Counting such lists in *n* can only make *n* larger than
+the number of lists that draw, so every share, and with it every bound of TM L53 and L54,
+is the same or smaller than with *n* counted over drawn lists only; nothing is ever drawn
+past TM rule 7.1.4's bounds.
 
-**What the script observes.** `Overlay.GetStats` (§5.3) reports the frame's counts and its
-coverage against its share. The profiler line (§9.3) shows them, and the script log gets at
-most one record per 10 s with the counts ("overlay coverage: *k* primitives dropped"),
-written in TM §8.1's format. Drops are not aborts: they never throttle or suspend the
-script, because the bound already caps the cost (TM rule 7.1.4).
+**What the script observes.** `Overlay.GetStats` (§5.3) reports the frame's counts, its
+view-dependent fields only to a script with `world.read`. The profiler line (§9.3) shows
+them all to the user, and the script log gets at most one record per 10 s (TM L91) with the
+counts ("overlay coverage: *k* primitives dropped"), written in TM §8.1's format. Drops are
+not aborts: they never throttle or suspend the script, because the bound already caps the
+cost (TM rule 7.1.4).
 
 <a id="s6-5"></a>
 ### 6.5 The budget row
@@ -674,21 +798,44 @@ funded, and the interim ext ceilings until the owner decides, are TM OPEN O-2 an
 <a id="s7-2"></a>
 ### 7.2 Destinations
 
-`Sandbox.Teleport` takes one destination table. Its form is chosen by its fields; any
-other combination raises a Lua error.
+`Sandbox.Teleport` takes one destination table, a table of several forms (§10.2 `forms`).
+Its form is chosen by its fields: a table matches a form when it has every field the form
+requires and no field the form does not list; exactly one form must match, and any other
+combination raises a Lua error. The forms are disjoint by construction (`place`, `anchor`
+and `ground` each belong to one form only).
 
 | Form | Fields | `tessera-net` destination |
 |---|---|---|
 | Exact | `region`, `x`, `y`, `z`, `yaw` | `Destination::Location` |
-| On the ground | `region`, `x`, `y`, `z`, `yaw`, `ground = true` (`z` is a fallback height) | `Destination::Ground` |
-| Anchored (an interior position) | `region`, `x`, `y`, `z`, `yaw`, `anchor = { bx, by, cell }` with `bx`, `by` integers 0–255 and `cell` an integer 0–65,535 | `Destination::Anchored` |
-| Named place | `place` (a string of 1–256 bytes, not only whitespace, no control characters) | `Destination::Named` |
+| On the ground | `region`, `x`, `y`, `z`, `yaw`, `ground = true` (`z` is a fallback height; `ground` must be `true`) | `Destination::Ground` |
+| Anchored (an interior position) | `region`, `x`, `y`, `z`, `yaw`, `anchor = { bx, by, cell }` with `bx`, `by` integers 0–254 (the landblock indices) and `cell` an integer 0–65,535 | `Destination::Anchored` |
+| Named place | `place` (a string, rules below) | `Destination::Named` |
 
-Validation before anything is queued: coordinates finite with absolute value at most 10⁷;
-`region` an integer 0–255; `yaw` finite (radians, §3.1); for the anchored form, the anchor must own the
-location as `tessera-net` defines ownership. A destination that `tessera-net` would reject
-as invalid is a Lua error here, so a refusal from the sandbox (§7.5) always means the
-sandbox chose to refuse, never that the script passed garbage.
+**Validation before anything is queued**, so that every destination the script passes is
+one `tessera-net` accepts (its `Destination::is_valid`, §2):
+
+- coordinates finite with absolute value at most 10⁷; `region` an integer 0–255; `yaw`
+  finite (radians, §3.1);
+- **anchored form:** the anchor owns the location: with the landblock's origin at
+  (160 · `bx`, 160 · `by`) in the region frame, both `x` − 160 · `bx` and `y` − 160 · `by`
+  have an absolute value of at most **1,280 m** (the position lies at most 1,280 m outside
+  or inside the landblock's square, which covers every interior position); the anchor's
+  region is the destination's `region`;
+- **named form:** the host first reads `place` by EA1a §2.3's rule, replacing each invalid
+  UTF-8 sequence by U+FFFD (3 bytes each). Every check applies to that **replaced** text,
+  which is exactly the text the command carries: 1 to 256 bytes (`MAX_PLACE_NAME_LEN`), at
+  least one code point that is not white space (Unicode `White_Space`), and no control
+  character (general category Cc). A 256-byte string with invalid bytes can grow to up to
+  768 bytes when replaced; such a string raises here. When the walk meets `place`, the
+  host checks its raw length first (at most 256 bytes, else a Lua error), so the
+  replacement never reads more than 256 bytes, and `b(place)` is charged on those raw
+  bytes.
+
+A destination that `tessera-net` would reject as invalid is therefore a Lua error here, so
+a refusal from the sandbox (§7.5) always means the sandbox chose to refuse, never that the
+script passed garbage. A destination is walked after `Teleport`'s reservation and after
+its soft answers (§7.3, §10.3), so a call that answers `"unloading"`, `"not in world"`,
+`"busy"` or `"pending"` does not walk or check its destination.
 
 **Yaw.** `tessera-net`'s `heading` is in radians, 0 = `+X`, counter-clockwise (§2), which
 is EA1a §2.10's yaw convention. The port therefore passes the script's `yaw` through with
@@ -703,16 +850,32 @@ is a heading), so a stray `heading` field is a Lua error like any unknown field.
 
 | Function | Arguments | Results | Apply | Cost | Since |
 |---|---|---|---|---|---|
-| `Sandbox.Teleport(destination)` | §7.2 | `true` \| `nil`, `"busy"` \| `nil`, `"pending"` \| `nil`, `"not in world"` | step 2 next (`Command::Teleport`) | `B` + `e(8)` + `b(place)` | 1.0 |
-| `Sandbox.QueryLocation()` | — | `true` \| `nil`, `"busy"` \| `nil`, `"not in world"` | step 2 next (`Command::QueryLocation`) | `B` | 1.0 |
-| `Sandbox.SetTimeOfDay(t)` | finite number; wrapped into [0, 1) | `true` \| `nil`, `"busy"` | step 2 next (clock port, `set_time_of_day`) | `B` | 1.0 |
-| `Sandbox.SetGameSeconds(g)` | finite number with \|g\| ≤ 10¹² | `true` \| `nil`, `"busy"` | step 2 next (clock port, `set_game_seconds`) | `B` | 1.0 |
+| `Sandbox.Teleport(destination)` | §7.2 | `true` \| `nil`, `"unloading"` \| `nil`, `"not in world"` \| `nil`, `"busy"` \| `nil`, `"pending"` | step 2 next (`Command::Teleport`) | `B` + Rsv `e(26)` + Rsv `b(256)` | 1.0 |
+| `Sandbox.QueryLocation()` | — | `true` \| `nil`, `"unloading"` \| `nil`, `"not in world"` \| `nil`, `"busy"` | step 2 next (`Command::QueryLocation`) | `B` | 1.0 |
+| `Sandbox.SetTimeOfDay(t)` | finite number; wrapped into [0, 1) | `true` \| `nil`, `"unloading"` \| `nil`, `"busy"` | step 2 next (clock port, `set_time_of_day`) | `B` | 1.0 |
+| `Sandbox.SetGameSeconds(g)` | finite number with \|g\| ≤ 10¹² | `true` \| `nil`, `"unloading"` \| `nil`, `"busy"` | step 2 next (clock port, `set_game_seconds`) | `B` | 1.0 |
 | `Sandbox.On(name, fn)` | name, function or `nil` | — | at once | `B` | 1.0 |
+
+`Teleport`'s reservation covers the bounded walk of §10.2, counted by EA1a §2.5's rule:
+the destination's 8 possible fields plus one unknown, 2 · 9 = 18, and the anchor's 3 plus
+one, 2 · 4 = 8, so `e(26)`; and `b(256)` for `place`'s raw bytes. Both are refunded down
+to what the walk read (`b(place)` for a named destination, nothing for the others).
 
 `SetTimeOfDay` keeps the game day number and moves the time of day; `SetGameSeconds` sets
 the game clock's seconds. The clock is not a `Command`: the clock port of
 `tessera-ext-host` applies both over `tessera-world`'s `GameClock` (D17 §3). Neither changes
 the clock's rate.
+
+**Order of the answers** (EA1a §2.4 step 4 as §10.3 applies it: after the scalar
+arguments and the destination's Lua type are checked, before the destination is walked):
+`"unloading"`
+(§4.5), then `"not in world"` (teleport and query only: the session is not in the
+`InWorld` state), then `"busy"` (the per-script rate, and for clock changes the
+all-scripts rate, §7.4), then `"pending"` (teleport only: any teleport pending, the user's
+or another script's ext teleport holding the global slot, §7.4). So a script over its own
+rate gets `"busy"` even while a teleport is pending, and a script within its rate gets
+`"pending"` whenever the global slot is held, whoever holds it. A refused call is charged
+`B` only and consumes nothing else: no rate token, no slot.
 
 <a id="s7-4"></a>
 ### 7.4 Rate limits and the pending-teleport rule
@@ -722,28 +885,42 @@ The limits are TM L75; this is their script-visible form.
 - **One command per script per second**, counting all four commands together; a second
   command within the second answers `nil, "busy"`. The window uses the lease clock of
   §4.5 (deterministic in `scripttool test`).
+- **Clock changes for all scripts together** (TM L75): `SetTimeOfDay` and
+  `SetGameSeconds` are accepted at most **4 times per second** across every script, in a
+  one-second window on the same clock; a fifth answers `nil, "busy"`. So the sky and the
+  game time, and the plugin events they cause (§7.5), change at most 4 times per second
+  whatever the number of scripts.
 - **One outstanding ext teleport for all scripts** (TM L75). The global slot is taken when
   `Teleport` accepts a call, and it is released at the **first** of:
   1. the sandbox's **outcome arrives** in step 2 (the location report of cause
      *teleported*, or the typed outcome event of §7.5) and is matched to the ext request
      (below), whatever has become of the script meanwhile;
-  2. the intent is discarded, or not submitted, at apply time (below);
-  3. the **session generation** the request was submitted under **ends**: the queued
-     backend switch or session end is applied (EM §10.3), whether or not an outcome ever
-     arrives. A switch to a new `Offline` session therefore starts with the slot free.
+  2. the intent is **discarded** at apply time, or **not submitted** because another
+     teleport is pending or the session has left the world (below);
+  3. its **submission fails** (below);
+  4. the **session generation** the request was accepted under **rises**: in the frame a
+     backend switch or session end is **queued** (EM §10.3 `Open` → `Draining`, D17 §4),
+     not the later frame in which it is applied. No ext intent of that generation can be
+     applied after the rise (the generation check discards it, and 6b does not run while
+     `Draining`), so nothing the slot guarded can happen any more. A switch to a new
+     `Offline` session therefore starts with the slot free.
 
   So a suspended or unloaded script never holds the slot past one of these, and the slot
   is never carried into the next session.
-- **Correlation** (TM L75). The client numbers the teleports it submits to a session,
-  the user's and ext ones alike, 1, 2, 3, … within each session generation, and numbers
-  the teleport outcomes that session reports in the same way. Every teleport the sandbox
-  accepts gets exactly one outcome, in submission order (a superseded request is answered
-  "cancelled" before the request that superseded it is resolved), so outcome *k* of a
-  generation belongs to request *k* of that generation. The ext request is matched by
-  (session generation, request number) recorded at its submission; no request token in
-  `tessera-net` is needed. An outcome that arrives for an **ended** generation (a late
-  event of the old session) releases nothing, answers nothing and is dropped; it is
-  logged.
+- **Correlation** (TM L75). The client numbers the teleports it **successfully submits**
+  to a `Session`, the user's and ext ones alike, 1, 2, 3, … **per `Session` connection**:
+  the count restarts at 1 when `Command::Connect` is submitted (EM §10.3, at the end of
+  `Draining`), not when the generation rises. It numbers the teleport outcomes that
+  connection reports in the same way. Every teleport the sandbox accepts gets exactly one
+  outcome, in submission order (a superseded request is answered "cancelled" before the
+  request that superseded it is resolved), so outcome *k* of a connection belongs to
+  request *k* of that connection. The old `Session` keeps running through `Draining`
+  (up to about 6.25 s, TM L11), and a user teleport sent to it then is numbered in the old
+  connection, so the numbering never shifts. The ext request is matched by (connection,
+  request number) recorded at its submission; no request token in `tessera-net` is
+  needed. An outcome of an earlier connection, or one that arrives after its ext
+  request's slot was already released (items 2–4), releases nothing, answers nothing and
+  is dropped; it is logged.
 - **Never supersede.** `Teleport` answers `nil, "pending"` while any teleport is pending,
   the user's own included. At apply time (step 2) the client checks again: if a teleport of
   another origin became pending since the call, or is submitted in the same step 2, the ext
@@ -751,26 +928,44 @@ The limits are TM L75; this is their script-visible form.
   supersedes another request (D17 §7 "Chat"). A user teleport issued while the ext teleport
   is pending in the sandbox does supersede it, and the sandbox then answers the ext request
   with its ordinary cancellation line and the typed outcome (D17 §7).
-- **Intent checks at apply time** (D17 §4): apartment loaded and not suspended, current
-  session generation, backend class `Offline`, grant held. A discarded teleport releases
-  the slot; its outcome is not delivered (the script is suspended or gone), and the discard
-  is logged. A teleport submitted while a switch or session end is queued but not yet
-  applied belongs to the generation that is ending, so item 3 above releases its slot at
-  the latest when the switch is applied.
+- **Intent checks at apply time** (D17 §4, EA1a §2.9), for every `Sandbox` intent, in this
+  order: the apartment is loaded, **not unloading** (§4.5) and not suspended; the
+  intent's session generation is the current one; the backend class is `Offline`; the
+  grant is held. An intent that fails any of these is **discarded**: a discarded teleport
+  releases the slot; no outcome is delivered (the script is suspended, unloading or gone),
+  and the discard is logged. Then, for a teleport or query only, the session must be in
+  the `InWorld` state; if it is not (it left the world between the call and step 2), the
+  intent is not submitted: a teleport releases the slot and its outcome is
+  `"cancelled"`; a query produces no `Location`.
+- **Submission failure.** `Session::send` returns an error for a command it does not take
+  (`NetError::InvalidState` outside `InWorld`, which the check above already excludes)
+  and passes on the backend's errors (§2). A teleport whose `send` returns an error was
+  never submitted: its request number is **not consumed** (the next submitted teleport
+  gets that number), the slot is released, and its outcome is `"failed"`; the error is
+  logged. A query whose `send` fails produces no `Location`. Clock changes are not
+  `Command`s and cannot fail this way (§7.3).
 
 <a id="s7-5"></a>
 ### 7.5 Outcomes
 
 Each accepted `Teleport` gets exactly one `TeleportDone` notification, and each accepted
-`QueryLocation` at most one `Location` notification, unless the script is suspended or
-unloaded before the outcome arrives (then it is dropped and counted as EA1a §2.8 says) or
-the session generation ends first (§7.4 item 3; the script is then unloaded by the switch
+`QueryLocation` at most one `Location` notification, **when a handler for that
+notification is set** at the moment the outcome arises (§3.3, EA1a §2.8: a module
+notification is queued only then; a script that wants every outcome sets its handlers
+before it calls), and unless the script is suspended or unloading before the outcome
+arrives (then it is dropped and counted as EA1a §2.8 says) or the slot was already
+released by the generation's rise (§7.4 item 4; the script is then unloaded by the switch
 anyway):
 
 | Notification | Fields | When |
 |---|---|---|
-| `TeleportDone` | `ok` (boolean); `reason` when not ok: `"refused"` or `"cancelled"`; when ok: `region`, `x`, `y`, `z`, `yaw` and `heading` (§3.1) | the sandbox answered the request: with a location report of cause *teleported* (ok), a refusal (`"refused"`), or a cancellation by a later request (`"cancelled"`); or the client did not submit it (`"cancelled"`, §7.4) |
-| `Location` | `region`, `x`, `y`, `z`, `yaw` and `heading` (§3.1), and `anchor = { bx, by, cell }` or absent | the first location report of cause *requested* after the query was submitted |
+| `TeleportDone` | `ok` (boolean); `reason` when not ok: `"refused"`, `"cancelled"` or `"failed"`; when ok: `yaw` and `heading` (§3.1), and `region`, `x`, `y`, `z` **only with `world.read`** (§4.2) | the sandbox answered the request: with a location report of cause *teleported* (ok), a refusal (`"refused"`), or a cancellation by a later request (`"cancelled"`); or the client did not submit it because another teleport was pending or the session had left the world (`"cancelled"`, §7.4); or its submission failed (`"failed"`, §7.4) |
+| `Location` | `yaw` and `heading` (§3.1); `region`, `x`, `y`, `z` and `anchor = { bx, by, cell }` (or absent for a position outside an interior) **only with `world.read`** (§4.2) | the first location report of cause *requested* after the query was submitted |
+
+`world.read` is checked against the effective set when the notification's table is built
+(at delivery, EA1a §2.8). Without it the script learns the player's facing, not where the
+player is; a successful teleport tells it only that the player now stands at the
+destination it chose itself.
 
 **What `tessera-net` must add.** Today the sandbox answers a refused or cancelled teleport
 **only** with a system chat line (`Command::Teleport` in `crates/net/src/session.rs`), and
@@ -835,26 +1030,50 @@ stored values against the new schema (EM §4.12) and hands the new apartment the
 <a id="s8-2"></a>
 ### 8.2 Triggers and the watcher
 
-- **The command.** `/ext:reload <id>` (D17 §3 `Commands`) queues a reload request for the
-  loaded script with that id. With developer mode off it is refused with the notice of
-  §8.1's last row and queues nothing. For an id that names no loaded script it queues
-  nothing and answers with a reserved-layer notice "⟨id⟩ is not loaded", the typed id
-  drawn as plain text by TM §8.2 (rate-limited, TM L67); loading is the script manager's
-  (EM §9.7), never this command's.
+- **The command.** `/ext:reload <id>` (D17 §3 `Commands`) follows EM §9.8's rules and
+  notices exactly; each notice is drawn in the reserved layer with the typed id as plain
+  text by TM §8.2 and rate-limited (TM L67):
+  - with developer mode off it is refused with the notice "Developer mode is off" (§8.1's
+    last row) and queues nothing;
+  - for an id that names no **loaded** script (not loaded, unloaded after a suspension,
+    only listed, or unknown) it queues nothing and shows the notice "No loaded extended
+    script '⟨id⟩'"; loading is the script manager's (EM §9.7), never this command's;
+  - for a loaded script that is **suspended** it queues nothing and shows the notice
+    "⟨id⟩ is suspended: resume it first";
+  - otherwise it queues a reload request for that script.
 - **The watcher** (developer mode only) watches `data/scripts-dev/`. It is a non-main thread
-  or the platform's notification callback that sends "something under folder ⟨id⟩ changed"
-  events over a channel to the main thread; it never reads file content (D17 §10).
-- **Quiet period.** The main thread queues a reload request for a folder once **300 ms**
-  (TM L84) have passed with no further event for that folder, so an editor's save of several
-  files becomes one reload, and half-written files are not snapshotted in the common case.
-  (A file that changes during the snapshot read refuses the snapshot anyway, D17 §2, and
-  §8.7 handles that.)
-- **Only loaded scripts.** Events for a folder whose script is not loaded queue nothing.
-- **One at a time** (TM L84). At most one reload runs, from its request until the reload
-  allowance is free again (§8.3 item 6). Requests are coalesced per id: while a reload of
-  an id runs or waits, further requests for it collapse into at most one pending request,
-  which starts after the current one ends. Requests for other ids wait in the ext queue in
-  arrival order.
+  or the platform's notification callback; it never reads file content (D17 §10). It
+  sends **no** queue of events: it holds a fixed table of at most **16 slots** (TM L26),
+  one per loaded developer script, which the main thread fills at each load and empties at
+  each unload. An event under the folder of a slot sets that slot's **dirty flag** and its
+  last-event time; any other event (a folder whose script is not loaded, a path outside
+  the scripts' folders) is dropped in the watcher itself. So a directory that changes
+  without pause costs at most 16 flags, never a growing queue, whatever its event rate.
+  If the platform reports an overflow of its own event buffer, the watcher sets
+  every slot's flag.
+- **Quiet period.** Once per frame the main thread reads the slots. It queues a reload
+  request for a slot whose flag is set once **300 ms** (TM L84) have passed since its last
+  event, and clears the flag, so an editor's save of several files becomes one reload,
+  and half-written files are not snapshotted in the common case. (A file that changes
+  during the snapshot read refuses the snapshot anyway, D17 §2, and §8.7 handles that.)
+- **The watcher follows the command's rules** (EM §9.8). A slot whose script is
+  suspended when its quiet period ends queues nothing; its flag is cleared and the console
+  shows "⟨id⟩ is suspended: resume it first" (rate-limited, TM L67). The user's resume does
+  not replay it; the next change does.
+- **One hot reload at a time** (TM L84). At most one **hot** reload runs, from its item 1
+  until the reload allowance is free again (§8.3 item 6), or until it ends as a failure,
+  is cancelled (§8.7), or turns full at item 2 (which releases the allowance at once). A
+  **full** reload is an unload and a load and is not counted: it neither waits for a hot
+  reload nor makes one wait, so a full reload waiting on a grant dialog blocks no other
+  script's reload. A reload request whose kind is not yet known (a developer script's
+  request before item 2) waits for the allowance like a hot one; an installed script's
+  request is full from the start (§8.1) and never waits for it.
+- **Requests are coalesced per id.** While a reload of an id runs or waits, hot or full,
+  further requests for it collapse into at most one pending request, which starts after
+  the current one ends (a full reload ends when its load has finished, failed or been
+  refused, its grant dialog answered included). Requests of other ids that wait for the
+  allowance are served in arrival order. A waiting request is dropped when its script is
+  suspended or unloaded before it starts (§8.7).
 
 <a id="s8-3"></a>
 ### 8.3 The hot sequence
@@ -865,10 +1084,10 @@ floor (TM L8, L9) throughout, so the sequence spans frames.
 
 | # | Where | What happens | The old apartment | The new apartment |
 |---|---|---|---|---|
-| 1 | main thread, then worker | The new apartment's cap (the running manifest's `memory_mib`) is reserved from the **64 MiB reload allowance** (TM L24, §8.10). The folder is walked into a snapshot (D17 §2) under that reservation; the manifest is parsed first. No `Store` open is needed (same (kind, id) and, if the reload stays hot, same declarations, so the store stays open and unchanged) | runs | — |
-| 2 | 6a: snapshot result | The new manifest is validated (§8.1); a refused manifest ends the reload as a failure. The declarations are compared. Changed → the reservation is released, the hot sequence is abandoned and a full reload starts. Unchanged → the new apartment is created inside the reserved cap | runs | created, empty |
+| 1 | main thread, then worker | The new apartment's cap (the running manifest's `memory_mib`) is reserved from the **64 MiB reload allowance** (TM L24, §8.10). The folder is walked into a snapshot (D17 §2) under that reservation; the manifest is parsed first. No `Store` open is needed (same (kind, id) and, if the reload stays hot, same declarations, so the store stays open and its content unchanged); from item 2 its file index counts in full toward the new apartment's cap as well (TM rule 7.6.1, §8.8) | runs | — |
+| 2 | 6a: snapshot result | The new manifest is validated (§8.1); a refused manifest ends the reload as a failure. The declarations are compared. Changed → the reservation is released, the hot sequence is abandoned and a full reload starts. Unchanged → the new apartment is created inside the reserved cap, charged from now on with the store's file index (TM rule 7.6.1) | runs | created, empty |
 | 3 | 6a: one compilation item per `.lua` file | each file compiled from the snapshot; afterwards only the data files and the content hash are kept, charged to the new cap (TM §8.10) | runs, ticks as usual | compiling |
-| 4 | 6a: `Unload` handler of the old apartment | The old apartment's `"Unload"` handler (EA1a §4.1, set with `Core.On("Unload", fn)`) runs with its 4 ms deadline (TM L3) and the reason `"reload"`; `Core.SetHandOff` (§8.4) serialises the table inside this call. **From the start of this item** the old apartment gets no further turn, and its pending intents are discarded, its leases end (`"unload"`), its overlay lists are cleared, its windows and world labels are destroyed, its timers and subscriptions are dropped, its commands are unregistered and its active contexts are deactivated at the next item-7 drain (D17 §10). Its pending `Store` writes stay in the shared pending-write map, charged to the old cap (TM rule 7.6.5) | `Unload` runs, then inert | compiled |
+| 4 | 6a: `Unload` handler of the old apartment | The old apartment's `"Unload"` handler (EA1a §4.1, set with `Core.On("Unload", fn)`) runs with its 4 ms deadline (TM L3) and the reason `"reload"`; `Core.SetHandOff` (§8.4) serialises the table inside this call. **The start of this item is the old apartment's unload request** (§4.5): from then on the old apartment gets no further turn and is unloading, so inside its handler `Camera.Take` answers `nil, "taken"`, lease intents `nil, "ended"`, `Overlay` adds and `Sandbox` commands `nil, "unloading"`, and anything it queues is discarded when the handler returns; the new apartment's `Take` in item 5 therefore never meets the old lease. At that start its pending intents are discarded, its leases end (`"unload"`), its overlay lists are cleared, its windows and world labels are destroyed, its timers and subscriptions are dropped, its commands are unregistered and its active contexts are deactivated at the next item-7 drain (D17 §10). Its pending `Store` writes stay in the shared pending-write map, charged to the old cap (TM rule 7.6.5) | `Unload` runs, then inert | compiled |
 | 5 | 6a: top-level run of the new apartment | the entry file runs with its 4 ms deadline; `Core.TakeHandOff` (§8.4) returns the table, built inside this call with its cost charged first | inert | runs; from its next turn on it is the script |
 | 6 | 6a: state close of the old apartment | `lua_close` (D17 §8); the old apartment's pending entries go to its final flush. When the close item has run **and** that flush has completed, the old cap leaves the 512 MiB sum, the new cap moves from the reload allowance into it, and the allowance is free (TM rule 7.6.5, §8.10) | closed | the script |
 
@@ -962,15 +1181,25 @@ means for a hot reload:
 | The same between items 4 and 5 | the new apartment's top-level run does not start while the script is suspended (D17 §5.5); the reload is cancelled: the new apartment is closed, and the script is unloaded (the old apartment is already inert), shown as suspended-and-unloaded in the script manager |
 | A backend switch or session end queued during a reload | as EM §10.4 and TM §8.21: the gate enters `Draining`; the reload is cancelled; the new apartment's unrun items are dropped, its snapshot result (if not yet delivered) is discarded, and its state, if created, gets one close item with no `Unload` (it counts among the at most 17 apartments, TM L26, from its reservation); the old apartment unloads as a loaded script (its `Unload` handler and close item) unless item 4 has already run, in which case it gets only its close item. The switch timeout of TM rule 7.4.2 (TM L10) applies to the old apartment's `Unload` like any other; the hand-off bytes are freed |
 | A second reload request for the same id | coalesced (§8.2) |
+| A waiting reload request (§8.2) whose script is suspended or unloaded before the request starts | the request is dropped; for a suspension the console shows "⟨id⟩ is suspended: resume it first" (rate-limited, TM L67) |
+| During items 1–3: the old apartment's unload is requested by the user (script manager) or by its own `Core.Unload` | the reload is **cancelled**: the new apartment's unrun items are dropped, its snapshot result (if not yet delivered) is discarded, and its state, if created, gets one close item with no `Unload`; the reservation is released when that close item has run (or at once if no state exists). The old apartment unloads as requested: its leases, intents and overlay lists end in the frame of the request (§4.5), then its ordinary `Unload` handler (not a hot reload: `SetHandOff` answers `false, "not a hot reload"`) and close item |
+| Between items 4 and 5: the user unloads the script | the new apartment's top-level run does not start; the new apartment is closed (one close item); the script ends unloaded (the old apartment is already inert and gets its close item, item 6); the hand-off bytes are freed |
+| Developer mode is turned off during a reload (EM §9.8 then unloads every developer script) | as the two rows above, by the item the reload has reached; every waiting reload request is dropped and the watcher stops (§8.2) |
+| The client exits during a reload | as developer mode turned off: no further item of the new apartment runs code; the new apartment is closed with no `Unload`; the old apartment gets the exit's unload (its `Unload` handler only if item 4 has not run) |
+| The new top-level run calls `Core.Unload` (item 5) | the reload completes (item 6 closes the old apartment as usual), then the new apartment unloads as requested, like any loaded script |
 
 <a id="s8-8"></a>
 ### 8.8 Limits
 
-- At most one reload at a time; at most 17 apartments exist (16 loaded plus one new
-  apartment in the reload allowance, TM L26, L84).
+- At most one **hot** reload at a time (full reloads are not counted, TM L84); at most 17
+  apartments exist (16 loaded plus one new apartment in the reload allowance, TM L26).
 - The new apartment's cap is reserved from the 64 MiB reload allowance (TM L24); its
-  snapshot, retained data files and the hand-off bytes are charged **inside** that cap
-  (TM §8.10), so a reload always fits its allowance, whatever the cap (D17 §8).
+  snapshot, retained data files, the hand-off bytes and, from item 2, the store's **file
+  index** are charged **inside** that cap (TM §8.10, TM rule 7.6.1: during a hot reload
+  the file index counts in full toward both apartments' caps, conservatively twice in the
+  sum, until the old cap leaves the sum at item 6). So a reload always fits its
+  allowance, whatever the cap (D17 §8), and `SetHandOff`'s `"too large"` (§8.4) is
+  measured against what is left of the new cap after all of these.
 - Every item obeys the 6a slice, the heavy-frame gate and its floor (TM L6, L8, L9).
 - In `scripttool test`, the walk file's `reload` input (`{ script, from }`, EM §11.5)
   requests a reload of a script from a second folder version, so the hand-off path is
@@ -1044,8 +1273,13 @@ when a backend switch is queued.
 function a script can reach (D17 §10), as text only (binary chunks refused), with the chunk
 name `repl`. If the submission starts with `=`, the `=` is replaced by `return `. Otherwise
 the host first tries `return ` followed by the submission and, if that does not compile,
-the submission as written. Compilation happens inside the call below, charged before it
-starts in proportion to the submission's bytes; at 8 KiB it is far below K (TM L15).
+the submission as written. Compilation happens inside the call below, at its start, and
+each compilation attempt is charged **before** it runs `B` + 4 · *n* units, where *n* is
+the byte length of the text that attempt compiles (the submission, plus the 7 bytes of
+`return ` when added). A submission that needs both attempts is charged both. At 8 KiB
+the charge is at most 2 · (200 + 4 · 8,199) = 66,392 units, about 0.33 ms, far below K
+(TM L15) and inside one call (TM L3, L4). The coefficient is provisional like every cost
+(§3.4, EA1a OPEN-1): E7 measures the compiler and the registry holds the figure.
 
 **Running.** The compiled chunk runs as one ext call in the bound script's next turn, after
 its queued notifications and before its timers and `Tick`, in the apartment's own global
@@ -1059,8 +1293,8 @@ returns, by host code that runs no script code (D17 §1.2 "The host never runs s
 to describe a value") and charges `e(n)` + `b(bytes)` for what it reads: `nil`, booleans
 and numbers in their Lua text form, strings as plain text (§9.2's display rule), and every
 other value by its type name and `tostring` number (`table: #17`). A table result also
-shows, read by raw access (no metamethod runs), its first 32 entries in the order of a raw
-traversal, one level deep, each described the same way. If the call's units or deadline
+shows, read by raw access (no metamethod runs), its first 32 entries (TM L91) in the order
+of a raw traversal, one level deep, each described the same way. If the call's units or deadline
 run out during the description, the description ends with "…" and no abort is counted for
 that part.
 
@@ -1092,17 +1326,21 @@ validation. None can drift from the others, because none is written by hand.
 ### 10.1 The binding description
 
 One description per module major, held in `tessera-ext` as static data (no I/O, no
-generation at run time).
+generation at run time), plus one description of the **root**: the `Ext` table of
+`api` major 1 (EA1a §3) and the globals the ext environment adds or replaces (`print`,
+EA1a §2.11, §4.3).
 
 | Item | Content |
 |---|---|
 | Module | name (PascalCase), major, minor, capability (or none), group (O, A, —), backends (`Offline`, `TesseraProtocol`), slice, a one-paragraph description in Tessera's own words |
-| Function or method | name; owner (the module, or a handle type for methods); parameters; results; refusal reasons; apply step; cost (§3.4); per-frame caps it consumes, by TM L-number; the minor that added it; a deprecation note if any; a description |
-| Parameter | name; type from §10.2; constraints (range, length, enum set, element cap); optional with a default, or required |
+| Root | the `Ext` table's functions (`Use`, `Has`, `Load`) and fields (`Version`), and the global functions (`print`), each described as a function or a field below, with the owner `Ext` or `global` |
+| Function or method | name; owner (the module, a handle type for methods, `Ext` or `global`); parameters, in order; results; refusal reasons; apply step; cost (§3.4); per-frame caps it consumes, by TM L-number; the minor that added it; a deprecation note if any; a description |
+| Field | name; owner; type from §10.2; whether constant for the session; a description. A field has no cost, no validation and no apply step (`Ext.Version`, EA1a §3) |
+| Parameter | name; type from §10.2; constraints (range, length, enum set, element cap); optional with a default, or required. Only the **last** parameter may be `variadic` |
 | Result | type from §10.2; for refusals, the reason strings (each must be in the reason table) |
 | Handle type | name (`CameraLease`), its methods, sealed (always) |
-| Notification | name; fields with types; when it arises |
-| Option table | name; fields with types, ranges and defaults (for example `Follow`'s options) |
+| Notification | name; fields with types (and, per field, the capability that must be held for the field to be present, for example `world.read`, §4.2); when it arises |
+| Option table, record, forms | name; fields with types, ranges, defaults and presence conditions (for example `Follow`'s options, a pose); for `forms`, each form's name and field set (§10.2) |
 | Reason table | every reason string with its meaning (EA1a §2.4, §3.2) |
 
 All descriptions, names and reasons are Tessera's own words and carry no BIN fact (LEGAL
@@ -1111,46 +1349,63 @@ All descriptions, names and reasons are Tessera's own words and carry no BIN fac
 <a id="s10-2"></a>
 ### 10.2 The type vocabulary
 
-The runtime checks are EA1a §2.3's value types.
+The runtime checks are EA1a §2.3's value types; the vocabulary below names each of them
+and adds the composite forms the slice-1a and slice-1b entries need, so that every
+signature of EA1a and of this document can be described.
 
 | Type | Runtime validation | LuaLS annotation | Reference text |
 |---|---|---|---|
 | `number(range)` | a Lua number, finite, inside the range | `number` | "number in [a, b]" |
 | `integer(range)` | a Lua number with an integral value inside the range | `integer` | "integer a–b" |
-| `string(max)` | a Lua string of at most *max* bytes; invalid UTF-8 replaced by U+FFFD when the host reads it (EA1a §2.3) | `string` | "text, at most *max* bytes" |
-| `enum{…}` | a Lua string equal to one member, compared byte-wise | an `---@alias` of the string literals | "one of …" |
+| `DID` | EA1a §2.3 `DID`: an integer in 0 … 4,294,967,295 | `integer` (`---@alias Ext.DID integer`) | "DID" |
+| `string(max)` | a Lua string of at most *max* raw bytes; invalid UTF-8 replaced by U+FFFD when the host reads it (EA1a §2.3); a constraint that the host checks on the text (length in bytes, white space, control characters) applies to the **replaced** text, as §7.2 does for `place` | `string` | "text, at most *max* bytes" |
+| `enum{…}` | a Lua string equal to one member, compared byte-wise; a one-member enum is a **literal** (`"player"`) | an `---@alias` of the string literals (a literal is written as itself) | "one of …" |
 | `boolean` | `true` or `false` | `boolean` | "boolean" |
 | `colour` | EA1a §2.3 `colour`: `#RRGGBB` or `#RRGGBBAA` | `string` (`---@alias Ext.Colour string`) | "colour `#RRGGBB[AA]`" |
 | `position` | EA1a §2.3 `position`: three `number`s as separate arguments, each \|v\| ≤ 10⁷ | `number` ×3 | "world position" |
-| `pose`, `keyframes`, option tables | a table read by raw access only; unknown field names are a Lua error; each field validated by its type; element caps declared | a `---@class` | a field table |
-| `array(T, max)` | raw indices 1…*n*, *n* ≤ *max*, each element of type T; holes are a Lua error | `T[]` | "array of T, at most *max*" |
+| `record` (a pose, a key frame, option tables) | a table read by raw access only, walked after the reservation (§10.3); declared fields, each with its type, required or optional, and **ignored** fields (accepted and not read, such as a pose's `heading`); any other field name is a Lua error; at most the declared fields plus one are read | a `---@class` | a field table |
+| `forms{F₁, …}` | a table that is exactly one of several records (§7.2's destination): a table matches form F when it has every field F requires and no field F does not list; exactly one form must match, else a Lua error. The forms must be **disjoint**: every pair of forms differs in a required field that the other does not list (the generator checks this) | one `---@class` per form and an `---@alias` of their union | one field table per form, with the rule above |
+| `array(T, max)` | raw indices 1…*n*, *n* ≤ *max*, each element of type T; the raw length (`#` without metamethods) is read before the reservation, the elements after it (§10.3); holes are a Lua error | `T[]` | "array of T, at most *max*" |
+| `table(caps)` | EA1a §2.3 `table`: any table walked with raw access only under the declared element, depth and byte caps | `table` | "table (at most …)" |
 | `value` | the bounded value model (TM L33–L35) | `any` | "plain value (bounded)" |
-| `handle(K)` | a host userdata of kind K belonging to the calling apartment; a stale handle is a Lua error except for `Exists` and `Kind` (EA1a §2.7) | `Ext.K` | "K handle" |
+| `any` | any Lua value, never walked by the host; how the native uses it is the entry's rule (`Core.Log` converts each with `tostring`, EA1a §4.3) | `any` | "any value" |
+| `handle(K)` | a host userdata of kind K belonging to the calling apartment; a stale handle is a Lua error except for `Exists` and `Kind` (EA1a §2.7); the module that minted it must hold its capability (EA1a §2.4 step 2) | `Ext.K` | "K handle" |
+| `union(T₁ \| T₂ …)` | the first alternative whose check passes decides, the alternatives tried in their declared order; the alternatives must be told apart by the Lua type or by a literal (`Follow`'s `"player"` \| `handle(Entity)`), never by a range; a value that matches none is a Lua error naming every alternative | `T₁\|T₂` | "T₁ or T₂" |
 | `function` | a Lua function (a callable table is refused, EA1a §2.3) | `fun(...)` with the declared parameters | "function" |
+| `variadic(T)` | zero or more trailing arguments, each of type T (`any` for `Core.Log` and `print`); EA1a §2.4's "no extra argument" rule does not apply to a `variadic` parameter, and a `variadic` parameter has no element cap of its own (the entry states its cost per argument, for example `b(n)` of the text) | `---@param ... T` | "any number of T" |
 | `nil` | absent or `nil` (only for optional parameters) | `?` suffix | "optional" |
 
 <a id="s10-3"></a>
 ### 10.3 Runtime validation
 
-Generated from the description for every native, the checks run in this order, and the
-first that fails decides:
+The order of checks is EA1a §2.4's general rule (grant and backend, arity and types,
+constraints, caps, charge, operation, with steps 1–4 paid by `B`); every native of every
+slice follows it, and the runtime validation is generated from the description to
+implement it. This section adds only what the generator needs and how slice 1b's entries
+fit the order.
 
-1. **Grant and backend.** The capability is still in the effective rights and the backend
-   class admits the module (EA1a §2.9: natives check again on every call). A failure is a
-   Lua error `"not granted"` (TM §8.23) or "unavailable on this backend"; it is reached
-   only through a module table kept after a revocation and a resume, or defence in depth.
-2. **Arity and types.** No missing required argument; **no extra argument** (a script
-   written for a later minor fails loudly on an older host, never silently); every argument
-   of its type.
-3. **Constraints.** Ranges, finiteness, lengths, enum membership, unknown option fields,
-   element caps of table arguments.
-4. **Caps.** Per-frame and per-second caps: `nil, "busy"` (or the entry's reason).
-5. **Charge.** The declared cost, or the reservation (D17 §8 "Work units"); if it exceeds
-   the call's remaining units or wall time, a Lua error before any work (EA1a §2.5).
-6. The operation.
-
-Steps 1–4 are charged as `B` (the host overhead that E2 measures); step 5 charges the
-entry's own cost only when the operation proceeds.
+- **What is checked before the charge.** Steps 1–4 read only the arguments themselves:
+  scalar arguments, the Lua type of a table argument, a handle's kind, staleness and
+  minting capability, an array's **raw length**, and a string's raw byte length. They
+  never read a table's fields or elements.
+- **Every walk after the charge** (EA1a §2.5: a native that walks a Lua value reserves
+  the cost of its caps before the walk). Every read of a table's fields or elements (a
+  pose, `Follow`'s and `Play`'s options, the key frames, a `Sandbox` destination and its
+  `anchor`, the numbers of `Lines`, a `SetHandOff` value) happens in step 6, after step 5
+  has charged the entry's cost or reserved it at the cap. Every check that needs those
+  fields (unknown field names, field types and ranges, the order of key-frame times, the
+  match of a `forms` table, the `place` text after replacement) runs during that walk; a
+  failure there is a Lua error, nothing is applied or queued, and the units of the walk
+  stay charged (the unused reservation is refunded). §4.4, §4.8, §5.3 and §7.2 state the
+  reservation of each such entry.
+- **Slice-1b soft answers are step 4.** `"ended"` (lease intents), `"busy"`,
+  `"unloading"`, `"not in world"`, `"pending"` (`Sandbox`, in §7.3's order) and the draft
+  cap of `Overlay` adds are step-4 caps, so they are answered before the walk and cost
+  `B` only. `Camera.Take`'s `"taken"` and `"unfocused"` are step 4 as well.
+- **Variadic and union parameters.** A `variadic` parameter is exempt from the "no extra
+  argument" rule; every other parameter list is closed. A `union` is checked at step 2
+  by its alternatives' own step-2 checks (a handle alternative's minting capability
+  included, §4.4).
 
 **Message form.** The generated messages read `⟨chunk⟩:⟨line⟩: bad argument #⟨n⟩ to
 '⟨Module.Function⟩' (⟨expected⟩, got ⟨actual⟩)`, where ⟨chunk⟩:⟨line⟩ is the position of the
@@ -1207,6 +1462,42 @@ each call ends in a result, a refusal or a Lua error, never a panic.
   script's folder.
 - Deterministic as §10.4.
 
+**The canonical form of the registry** (used for the SHA-256 above and the fixture of
+§10.6 step 4). It is one JSON text (RFC 8259) serialised by the JSON Canonicalization
+Scheme (RFC 8785): UTF-8, no insignificant white space, object members sorted by RFC 8785's
+rule, numbers and strings in RFC 8785's forms. `tessera-ext` computes it from the static
+registry with one library function, which the generators and the check of §10.6 both call.
+Its data model:
+
+- **Top level:** an object with `canonical` (the integer 1, the version of this form),
+  `root` (the root description, §10.1), `modules` and `reasons`.
+- **Order.** Arrays whose order means something keep it: parameters in signature order,
+  a record's fields and a form's fields in declaration order, a union's alternatives and
+  a `forms` type's forms in declared order. Every other collection is an array sorted
+  byte-wise by name: modules by (name, major), and within a module its functions,
+  handle types (each with its methods), fields, notifications, option tables and records;
+  enum members; reasons.
+- **Entries.** Each function, method or field is an object with `kind` (`"function"`,
+  `"method"` or `"field"`), `name`, `owner`, `params` (each `{name, type, optional}` plus
+  `default` when it has one), `results`, `reasons` (sorted), `apply`, `cost`, `caps`
+  (TM L-numbers as integers, sorted), `since` (the minor, an integer), `deprecated` (a
+  string, only when present) and `description`. A field has only `kind`, `name`, `owner`,
+  `type`, `constant` and `description`.
+- **Types** are objects whose `t` member names the §10.2 type (`"number"`, `"integer"`,
+  `"DID"`, `"string"`, `"enum"`, `"boolean"`, `"colour"`, `"position"`, `"record"`,
+  `"forms"`, `"array"`, `"table"`, `"value"`, `"any"`, `"handle"`, `"union"`,
+  `"function"`, `"variadic"`) and whose other members are its parameters (`min`, `max`,
+  `members`, `fields`, `forms`, `of`, `alternatives`, `kind`, `caps`). An angle bound is
+  written as the number the registry holds (its `f64` value, printed by RFC 8785).
+- **Costs** are arrays of terms in the entry's order, each `{"sym": "B" | "b" | "e" | "h"
+  | "N" | "P" | "Q" | "V", "n": …, "rsv": true}`, with `n` an integer or the name of the
+  argument it is measured on (`"m"`, `"place"`) and `rsv` only on a reservation.
+- **Absent members are omitted**, never written as `null`. No member holds a path, a
+  time or anything that depends on the build.
+
+So two implementations of this section produce the same bytes from the same registry, and
+the SHA-256 (FIPS 180-4) of those bytes, written in lower-case hexadecimal, identifies it.
+
 > **OPEN:** the licence of the generated annotation file. It is derived from GPL-licensed
 > registry data, but scripts of any licence should be able to use it in their editors. The
 > owner decides whether it carries `GPL-3.0-or-later` or a permissive licence such as
@@ -1225,8 +1516,16 @@ from the generated one"):
    minor, if a refusal reason is missing from the reason table, if a module's capability
    is not in EM §6.1's catalogue, or if an entry's `since` is above its module's minor;
 4. fails if the registry removes or changes an entry of an existing major (D17 §2
-   "Versioning", EM §12.3: within a major only additions), by comparing with the previous
-   release's canonical registry form, kept as a test fixture.
+   "Versioning", EM §12.3: within a major only additions). This part is a test of
+   `tessera-ext` (run by CI's `cargo test`), which compares the current canonical form
+   (§10.5) with the previous release's, committed as a test fixture (our own registry
+   data, no game data). Both are parsed, and for each module major of the fixture every
+   entry must still exist with the same `kind`, `owner`, `params`, `results`, `reasons`,
+   `apply` and `since`, and every type it uses must be unchanged; `description`, `cost`
+   and `caps` may change (costs are calibrated by E7, EA1a OPEN-1). New entries must have
+   a `since` above the fixture's minor of their module. A change of the form's own
+   `canonical` version comes with a converter from the previous version in the same
+   test, so the comparison never lapses.
 
 ---
 
@@ -1239,15 +1538,20 @@ TM §12's invariants hold; these are the slice-1b modules' own.
 2. Every lease has ended by step 3 of the frame of each event of §4.5 that ends it (at most
    350 ms after its last `Take`, `Renew` or intent, measured on the lease clock; focus loss;
    suspension for any cause, any grant revocation included; the panic chord; a queued
-   backend switch or session end; any unload), and from that step 3 on the view is *V*ᵤ
-   (TM invariant 25).
+   backend switch or session end; an unload request, in the frame it is made), and from
+   that step 3 on the view is *V*ᵤ (TM invariant 25). An unloading apartment, its `Unload`
+   handler included, starts no lease and has no lease intent, overlay addition or
+   `Sandbox` command applied (§4.5, TM §8.17).
 3. No lease is active while the game window lacks keyboard focus.
 4. While no lease is active, the view is the user's view *V*ᵤ, exactly as with no ext script
    loaded.
 5. Character movement, the streaming focus and level-of-detail selection always use the
    user's camera *V*ᵤ and the player's controls; the user's pointer always picks from the
    presented frame (TM §8.17).
-6. A leased eye is never more than 500 m (TM L82) from the player's interpolated position.
+6. A leased eye is never more than 500 m (TM L82) from the reference point *P*: the
+   player's interpolated position, or the user's own eye when no character is placed
+   (§4.6). An entity `Follow` reads its target only while `entity.read` is in the
+   effective set (§4.7, TM §8.23).
 7. The lease indicator is drawn in every frame in which a lease is active or whose
    presented view a lease decided, names its script with id and kind, and never catches
    the pointer.
@@ -1262,18 +1566,28 @@ TM §12's invariants hold; these are the slice-1b modules' own.
     submitted to another backend or under a newer session generation.
 13. At most one ext teleport is outstanding; none is submitted while another teleport is
     pending; the slot is released at the first of its outcome's arrival, the intent's
-    discard and the end of its session generation, so it is never carried into the next
-    session; an outcome is matched by (session generation, request number), and a late
-    outcome of an ended generation releases and answers nothing (TM L75).
-14. Every accepted `Teleport` produces exactly one `TeleportDone`, unless the script is
-    suspended or unloaded, or its session generation ends, before its outcome arrives.
+    discard or non-submission, a failed submission and the rise of its session generation
+    (the frame a switch or session end is queued), so it is never carried into the next
+    session; teleports and outcomes are numbered per `Session` connection (reset when
+    `Connect` is submitted), a failed submission consumes no number, an outcome is
+    matched by (connection, request number), and an outcome of an earlier connection or
+    of an already released request releases and answers nothing (TM L75). Clock changes
+    of all scripts together stay within TM L75's 4 per second.
+14. Every accepted `Teleport` produces exactly one `TeleportDone` when a `TeleportDone`
+    handler is set as its outcome arises, unless the script is suspended or unloading, or
+    its slot was released by the generation's rise, before its outcome arrives. No
+    position field reaches a script without `world.read` (§4.2, §7.5).
 15. A hot reload happens only for a `scripts-dev` script with developer mode on, a new
     manifest that a load would accept, and unchanged declarations (TM §8.24); every other
-    reload is full and passes no hand-off table.
+    reload is full and passes no hand-off table. A reload is started only for a loaded,
+    unsuspended script (EM §9.8); at most one hot reload runs at a time, and full
+    reloads never wait for one another or for it (TM L84); the watcher holds at most one
+    flag per loaded developer script, never a queue.
 16. The hand-off table is serialised only inside the old `Unload` call, charged inside the
     new apartment's cap, and converted only inside the new top-level run.
 17. During a hot reload, a script never has two apartments that run code in the same frame:
-    the old one is inert from item 4, the new one runs from item 5.
+    the old one runs nothing but its `Unload` handler from item 4, the new one runs from
+    item 5.
 18. A failed reload (snapshot, validation or compile error) leaves the old apartment running
     exactly as before.
 19. A `Store.Get` returns the latest value written before it in program order, across a hot
@@ -1285,7 +1599,8 @@ TM §12's invariants hold; these are the slice-1b modules' own.
     marks per base, and the log file holds only TM §8.1 records (TM invariants 16, 17).
 22. `docs/specs/ext-api-reference.md` equals the registry's output byte for byte at every
     commit.
-23. Every native validates its arguments in §10.3's order, and validation never panics.
+23. Every native validates its arguments in EA1a §2.4's order as §10.3 applies it, reads
+    no table field or element before its charge or reservation, and never panics.
 
 <a id="s12"></a>
 ## 12. Worked examples
@@ -1320,19 +1635,21 @@ switch to another backend. The gate enters `Draining` in that frame; step 3 of t
 ends the lease with `"switch"` and the user's view returns, although the script's unload
 item may run many frames later (TM rule 7.4.4).
 
-**A quad flood.** A hostile script with `overlay` and no `Tick` handler has five timers
-(`Core.Every(0, …)`, EA1a §4.2) that fire in every turn; each adds 2,000 quads of
-960 × 540 at integer positions in a loop (about 400,000 units of `B` plus the loop's own,
-inside one call's 800,000, TM L4), with the UI scale at 1.0 and the screen 1920 × 1080.
-The 2 ms cap splits the turn over several frames (TM L5, TM §8.13), and the draft grows
-across them. The fifth timer's 2,001st add, the 10,001st of the draft, answers
-`nil, "busy"`, so the draft holds 10,000; at the end of the turn they become the shown
-list (§5.2). It is the
-only overlay script (*n* = 1), so *c* = 10,000 and *A* = min(0.5, 1.0) = 0.5 screen (TM rule
-7.1.4). Each quad counts 518,400 pixels, 0.25 screen. The first two are drawn (Σ = 0.5);
-every later one would pass *A* and is dropped alone. `GetStats` reports `drawn = 2`,
-`dropped_coverage = 9998`, `coverage = 0.5`. A full-screen quad (1.0 screen) never fits the
-0.5 share and is never drawn.
+**A quad flood.** A hostile script with `overlay` and `world.read` and no `Tick` handler
+has five timers (`Core.Every(0, …)`, EA1a §4.2) that fire in every turn, with the UI scale
+at 1.0 and the screen 1920 × 1080. The first four each add 2,000 quads of 960 × 540 at
+integer positions in a loop (about 400,000 units of `B` plus the loop's own, inside one
+call's 800,000, TM L4); the fifth tries 2,001. The 2 ms cap splits the turn over several
+frames (TM L5, TM §8.13), and the draft grows across them. The fifth timer's 2,001st add,
+the 10,001st of the draft, answers `nil, "busy"`, so the draft holds 10,000; at the end
+of the turn they become the shown list (§5.2). It is the only overlay script (*n* = 1),
+so *c* = 10,000 and *A* = min(0.5, 1.0) = 0.5 screen (TM rule 7.1.4). Each quad counts
+518,400 pixels, 0.25 screen. The first two are drawn (Σ = 0.5); every later one would
+pass *A* and is dropped alone. `GetStats` reports `listed = 10000`, `dropped_count = 0`,
+`coverage_share = 0.5`, and, because the script holds `world.read`, `drawn = 2`,
+`culled = 0`, `dropped_coverage = 9998`, `coverage = 0.5`. Without `world.read` it would
+get only the first three. A full-screen quad (1.0 screen) never fits the 0.5 share and is
+never drawn.
 
 **Two more scripts and the near-camera box flood.** A second hostile script adds 10,000
 filled boxes around the camera over several calls of one turn in the same way, each with a corner behind the near plane but the eye
@@ -1357,13 +1674,17 @@ the script calls `Sandbox.Teleport({ region = r, x = x, y = y, z = z, yaw = w, g
 true })`, with `w` the `yaw` that `World.Here()` returned (EA1a §2.10), which answers `true`
 and takes the global teleport slot. In the same second the user presses it again:
 `nil, "busy"` (one command per script per second). In step 2 of the next frame the client
-finds no other teleport pending and submits the command, with `w` narrowed to `f32` as the
-model's heading (§7.2), as request number *k* of the current session generation. The
-sandbox moves the player; the location report of cause *teleported* arrives in a later
-step 2 as that generation's outcome *k*, which releases the slot; the script's next turn
-gets `TeleportDone { ok = true, … }`. Had the user switched to a new `Offline` session
-before the outcome arrived, the slot would have been released when the switch was applied
-and any late outcome of the old session dropped (§7.4).
+finds no other teleport pending and the session in the world, and submits the command,
+with `w` narrowed to `f32` as the model's heading (§7.2), as request number *k* of the
+current `Session` connection. The sandbox moves the player; the location report of cause
+*teleported* arrives in a later step 2 as that connection's outcome *k*, which releases
+the slot; the script's next turn gets `TeleportDone { ok = true, yaw = …, heading = … }`
+(with `region`, `x`, `y`, `z` only if it holds `world.read`). Had the user started a
+switch to a new `Offline` session before the outcome arrived, the slot would have been
+released in the frame the switch was queued, an outcome the old session still sent during
+`Draining` dropped, and the new connection's numbering started again at 1 (§7.4). Had
+`Session::send` returned a backend error, the number *k* would not have been consumed and
+the script would have got `TeleportDone { ok = false, reason = "failed" }`.
 Had the user typed their own teleport command in the frame between the call and step 2, the
 ext intent would not have been submitted, and the script would have got
 `TeleportDone { ok = false, reason = "cancelled" }` with no chat line, since nothing reached
@@ -1430,75 +1751,118 @@ slice-1b cases and the slice-1b parts of earlier cases:
 
 | X | Slice-1b part |
 |---|---|
+| X16 | D17 E6's two backend-switch cases with a hot reload's new apartment as the 17th apartment (RM, E6) |
 | X20 | the maximal hand-off table (with hot reload) |
-| X27 | its hot-reload part (§8.10's `memory_mib = 64` reload with 8 MiB of data files and a 1 MiB hand-off); TM tags X27 1a only, retag requested (§14) |
+| X27 | its hot-reload part (the `memory_mib = 64` reload with 8 MiB of data files and a 1 MiB hand-off, the file index counted in the new cap, §8.8) |
 | X28 | each load case plus a hot reload |
 | X29, X30 | overlay coverage (CI counting; RM in E6 and E9); X29 builds its lists over several calls and frames, as §5.3 requires |
-| X44 | lease ends at every event; picking under a `Hold` |
+| X44 | its slice-1b part (TM tags it 1b, 2; its `Files.Pick` part runs in slice 2): lease ends at every event, a user unload and `Core.Unload` included, each in the frame of its request; `Camera.Take`, a lease intent, an `Overlay` add and a `Sandbox` command inside an `Unload` handler during a user unload and during a hot reload whose new apartment then calls `Take` and gets a lease; picking under a `Hold` |
 | X50 | the lease indicator over a plugin button |
 | X64 | a hot reload that changes the capability list passes no hand-off |
-| X80 | a `Sandbox` teleport before a switch to `Other`; the slot after a suspended script's outcome; a teleport outstanding when a switch to a new `Offline` session is queued, then a teleport in the new session; a late outcome of the old generation |
+| X80 | a `Sandbox` teleport before a switch to `Other`; the slot after a suspended script's outcome; a teleport outstanding when a switch to a new `Offline` session is queued (slot free in that frame), then a teleport in the new session numbered from 1; a late outcome of the old connection; a teleport whose submission fails (number not consumed) |
 | X84 | `Sandbox` on a `TesseraProtocol` stub with a permissive policy |
-| X85 | its lease part: a lease held when the switch is queued ends in that frame; TM tags X85 1a only, retag requested (§14) |
+| X85 | its slice-1b part: a switch with a hot reload in progress (17 apartments) within 392 frames, and a lease held when the switch is queued ends in that frame |
 | X87 | a hot reload in progress when a switch is queued |
 | X88 | its hot-reload part (§8.6) |
-| X91 | revocation with a lease, a path and a `Follow` active; a grant-store re-read that narrows a lease holder's record |
+| X91 | revocation with a lease, a path and a `Follow` active; a grant-store re-read that narrows a lease holder's record; a revoke-resume-widen of optional `camera`; a kept entity handle passed to `lease:Follow` after an `entity.read` revocation and resume raises `"not granted"` |
 | X92 | an `author`-only hot reload; an invalid new manifest at a hot reload; a full reload across an `author` change, its dialog answered as EM §11.4 says |
 
 X51 covers the log file (TM §8.1) and X47 part (b) the display filter (TM §8.2) that the
 console shares with the reserved layer; the console's own use of that filter is a
 functional test below.
 
-**Functional tests** (this document's own, not escape cases).
+**Functional tests** (this document's own, not escape cases). They run in `scripttool
+test` (EM §11.4) unless marked **(CI)**: a client integration test, headless, on a
+synthetic world with test hooks (TM §2 "Harness codes"). The walk file's `command` input
+passes only `/ext:` lines to the client (EM §11.5), so every test that needs a teleport,
+a location query or a clock change **of the user** is a client integration test.
 - *Leases.* A second script's `Take` answers `"taken"`; `Take` while unfocused answers
   `"unfocused"`. W moves the character relative to the user's camera during a `Hold` that
-  faces the other way. A `Hold` 2 km from the player is drawn 500 m from the player. A region
-  change ends the lease with `"region"`. A `yaw` read with `World.Here()` and passed to
-  `Hold` (with pitch 0) gives a view facing the character's facing, and a pose returned by
-  `Camera.GetPose()` passed back to `Hold` reproduces the same view (its `heading`,
-  `region` and `leased` ignored, as in a key frame); a `Sandbox` destination with a
-  `heading` field raises (§7.2). A looped path of three key frames
-  evaluates as §4.8 says at the wrap, including the cyclic neighbours. The streaming focus
-  and the level-of-detail selection are unchanged by a `Hold` far from the player.
+  faces the other way. A `Hold` 2 km from the player is drawn 500 m from the player; with
+  no placed character (free fly, EA1a §10.2) it is drawn 500 m from the user's eye, and a
+  `Follow("player")` shows the user's view until a character is placed, then follows it.
+  A region change ends the lease with `"region"`. A `yaw` read with `World.Here()` and
+  passed to `Hold` (with pitch 0) gives a view facing the character's facing, and, for a
+  script with `world.read`, a pose returned by `Camera.GetPose()` passed back to `Hold`
+  reproduces the same view (its `heading`, `region` and `leased` ignored, as in a key
+  frame); for a script without `world.read`, `GetPose` and `GetUserPose` return no `x`,
+  `y`, `z` or `region`. A `Sandbox` destination with a `heading` field raises (§7.2). A
+  looped path of three key frames evaluates as §4.8 says at the wrap, including the cyclic
+  neighbours. The streaming focus and the level-of-detail selection are unchanged by a
+  `Hold` far from the player. `lease:Follow(entity)` raises `"not granted"` for a script
+  without `entity.read`, and also with a kept entity handle after an `entity.read`
+  revocation and resume (TM X91). A user unload and `Core.Unload` (in 6b) each end the
+  lease with `"unload"` in the frame of the request (step 3 of that frame or of the next
+  one, §4.5), however late the unload item runs. Inside an `Unload` handler `Camera.Take`
+  answers `nil, "taken"` and creates nothing, a lease intent answers `nil, "ended"`, and
+  an intent queued anyway (a test hook) is discarded at the handler's return; during a hot
+  reload, the new apartment's `Take` in its top-level run gets a lease (TM X44).
 - *Overlay.* A `Lines` call of 2,048 lines succeeds in a fresh call, and its charge is
-  `B` + `e(12,288)`; one of 2,049 lines, or of a length not a multiple of 6, raises before
-  any element is read; one of 2,048 lines whose last element is a string raises naming
-  index 12,288 and adds nothing; one that would take the draft past 10,000 answers
-  `nil, "busy"` and adds nothing. A draft of 10,000 primitives built over five calls of one
-  turn (three of them `Lines`) is shown whole at the turn's swap. §12's flood examples,
-  built over several calls as they say, give exactly their `GetStats` counts in
-  `scripttool test` (virtual surface 1920 × 1080, EM §11.5 `[screen]`). A script with
-  no `Tick` handler swaps at the end of each completed turn. A filled box with the eye
-  inside draws nothing and counts 0. `Overlay.Rgba(1, 0.4, 0)` answers `"#FF6600FF"`.
-- *Sandbox.* An ext teleport is refused while a user teleport is pending, and is not
-  submitted when a user teleport becomes pending between the call and step 2. A refused and
-  a cancelled teleport each produce one `TeleportDone` with the right reason, from the typed
-  outcome event, and the plugin-visible chat lines are exactly those of the same commands
-  typed by the user. A teleport whose script is suspended before the outcome arrives
-  releases the slot at the arrival, and another script's teleport is then accepted. A
-  teleport outstanding when a switch to a new `Offline` session is applied releases the
-  slot at that moment, a teleport in the new session is accepted, and a late outcome of
-  the old session is dropped without a `TeleportDone`. A destination's `yaw` reaches the
-  model's heading unchanged except for `f32` narrowing and wrapping.
+  `B` + `e(24,576)`; one of 2,049 lines, or of a length not a multiple of 6, raises before
+  any element is read and is charged `B` only; one of 2,048 lines whose last element is a
+  string raises naming index 12,288 and adds nothing; one that would take the draft past
+  10,000 answers `nil, "busy"` and adds nothing. A draft of 10,000 primitives built over
+  five calls of one turn (three of them `Lines`) is shown whole at the turn's swap. §12's
+  flood examples, built over several calls as they say, give exactly their `GetStats`
+  counts in `scripttool test` (virtual surface 1920 × 1080, EM §11.5 `[screen]`), and a
+  script without `world.read` gets only `listed`, `dropped_count` and `coverage_share`. A
+  script with no `Tick` handler swaps at the end of each completed turn. A filled box with
+  the eye inside draws nothing and counts 0. `Overlay.Rgba(1, 0.4, 0)` answers
+  `"#FF6600FF"`. An `Overlay` add inside an `Unload` handler answers `nil, "unloading"`.
+- *Sandbox* **(CI)**. An ext teleport is refused while a user teleport is pending, and is
+  not submitted when a user teleport becomes pending between the call and step 2. A
+  refused and a cancelled teleport each produce one `TeleportDone` with the right reason,
+  from the typed outcome event, and the plugin-visible chat lines are exactly those of the
+  same commands typed by the user. A teleport whose script is suspended before the outcome
+  arrives releases the slot at the arrival, and another script's teleport is then
+  accepted. A teleport outstanding when a switch to a new `Offline` session is **queued**
+  releases the slot in that frame; a user teleport sent to the old session during
+  `Draining` is numbered in the old connection; a teleport in the new session is accepted
+  as its request 1; and a late outcome of the old connection is dropped without a
+  `TeleportDone`. A teleport whose `Session::send` fails (a test hook in the backend)
+  answers `TeleportDone { ok = false, reason = "failed" }`, releases the slot and consumes
+  no request number, so the next teleport's outcome is still matched. A teleport called in
+  the world whose session leaves the world before step 2 answers `"cancelled"`. A
+  `Sandbox` command inside an `Unload` handler answers `nil, "unloading"`, and a teleport
+  the handler's test hook queues anyway is never submitted. A destination's `yaw` reaches
+  the model's heading unchanged except for `f32` narrowing and wrapping; a `place` of 256
+  bytes with invalid UTF-8 that grows past 256 bytes when replaced raises, and one with a
+  control character raises. Five scripts that each call `SetTimeOfDay` in the same second
+  get four `true` and one `nil, "busy"` (TM L75). Without `world.read`, `TeleportDone` and
+  `Location` carry no `region`, `x`, `y`, `z` or `anchor`. A script with no `TeleportDone`
+  handler set gets no `TeleportDone`, and the slot is still released at the outcome.
 - *Hot reload.* A hot reload of a UI script keeps its window state through the hand-off
   table and keeps the frame rule (D17 slice 1b exit). A reload that changes each
   declaration of §8.1 in turn is full, with no hand-off. `/ext:reload` of an installed
   script is full and re-asks group A after a content change. A compile error and a
   snapshot refusal leave the old apartment running. The panic chord before and after
-  item 4, and a backend switch during a reload, end as §8.7 says. A maximal hand-off table,
-  a cyclic one, and one larger than what is left of the new cap (`"too large"`). A hot
-  reload of a script with `memory_mib = 64`, 8 MiB of data files and a 1 MiB hand-off stays
-  within the allowance at every item (TM X27, above). `/ext:reload` with developer mode
-  off, and of an id that is not loaded, queues nothing and shows its notice (§8.2).
+  item 4, a backend switch during a reload, a user unload and `Core.Unload` during items
+  1–3, a user unload between items 4 and 5, and developer mode turned off during a reload
+  each end as §8.7 says. A maximal hand-off table, a cyclic one, and one larger than what
+  is left of the new cap after its snapshot, data files and the store's file index
+  (`"too large"`). A hot reload of a script with `memory_mib = 64`, 8 MiB of data files
+  and a 1 MiB hand-off stays within the allowance at every item (TM X27, above).
+  `/ext:reload` with developer mode off, of an id that is not loaded, and of a loaded but
+  suspended script queues nothing and shows EM §9.8's notice ("Developer mode is off",
+  "No loaded extended script '⟨id⟩'", "⟨id⟩ is suspended: resume it first"); a watcher
+  event for a suspended script queues nothing. A full reload of one script held at its
+  grant dialog does not delay a hot reload of another (TM L84). A watcher fed 100,000
+  change events in one second under one script's folder, and as many under a folder of no
+  loaded script, holds at most 16 flags and queues exactly one reload, 300 ms after the
+  last event.
 - *Console.* The REPL cannot bind to an installed script; a submission for a suspended
   script is refused; the console is hidden while a consent prompt shows; a REPL call
-  returning a table with 10,000 entries shows 32 and stays inside its call's limits; a
+  returning a table with 10,000 entries shows 32 and stays inside its call's limits; an
+  8 KiB submission that needs both compilation attempts is charged both (§9.4); a
   `print` of X47's hostile string is drawn in the console with none of TM §8.2's removed
   characters, at most two marks per base and the log-line cap, while the log file holds
   its full escaped record (TM §8.1).
 - *Generators.* The CI check fails on a hand edit of `ext-api-reference.md` and on a
-  registry entry without a description. The validation fuzz target covers every slice-1b
-  entry.
+  registry entry without a description. The canonical form (§10.5) of a registry built in
+  two different orders is the same bytes, and the fixture test of §10.6 step 4 fails when
+  an existing entry's parameter is renamed. EA1a's `Core.Log` and `print` (variadic),
+  `Follow`'s union target and `Sandbox.Teleport`'s destination forms are described by
+  §10.2's vocabulary. The validation fuzz target covers every slice-1b entry.
 
 <a id="s14"></a>
 ## 14. Open items and changes other documents need
@@ -1508,23 +1872,32 @@ functional test below.
 
 > **OPEN:** the licence of the generated annotation file (§10.5).
 
+> **OPEN:** TM L90's cost figure for a maximal `Overlay.Lines` call (245,960 units, one
+> element per number) predates EA1a §2.5's counting rule, under which the call costs
+> `B` + `e(2m)`, at most 491,720 units (§5.3). The cap of 2,048 lines is unchanged and
+> still fits TM L3 and L4; TM is asked to restate the figure (TM §0.1 rules 1 and 5).
+
 The owner's decisions on the budget row and the interim ceilings (TM OPEN O-2) and E9's
-measurement (TM OPEN O-1) are TM's open items, not this document's. Every constant of this
-document that has a limit number is TM's (L53–L56, L63, L75, L82–L86); a change goes
-through TM §0.1 rule 1. One count of this document has no L-number yet: the per-call cap
-of `Overlay.Lines` (2,048 lines, §5.3, §5.5), requested of TM below (TM §0.1 rule 5).
+measurement (TM OPEN O-1) are TM's open items, not this document's. Every limit this
+document uses is TM's (L3–L12, L23–L35, L45, L53–L56, L63, L67, L69, L75, L82–L86, L90, L91);
+a change goes through TM §0.1 rule 1. The ranges of single arguments (§3.1 "Domains and
+limits") are argument-validity domains under TM §0.1 rule 6 and stay here.
 
 **Changes other documents need** (this document edits no other file):
 
 | Document | Change | State |
 |---|---|---|
-| TM §10.6 (L83's row or a new row) | Register the per-call cap of `Overlay.Lines`: at most 2,048 lines (12,288 numbers) per call, so its cost `B` + `e(m)` fits L3 and L4 (§5.3) | requested |
-| TM §11 slice column | X27 "1a, 1b (hot reload)" for §8.10's hot-reload part; X85 "1a, 1b (lease)" for its lease part (§13) | requested |
+| TM §10.6 | Register the per-call cap of `Overlay.Lines`: at most 2,048 lines (12,288 numbers) per call, so its cost fits L3 and L4 (§5.3) | **done** (TM L90); its cost figure is the OPEN above |
+| TM §10.6 | Register the REPL result description's 32 entries and the overlay drop record's interval of 10 s | **done** (TM L91) |
+| TM §11 slice column | X27 and X85 tagged for their slice-1b parts; X44's `Files.Pick` part in slice 2 | **done** (TM revision 4: X27, X85 and X16 "1a, 1b", X44 "1b, 2"); §13 lists the parts |
+| TM L75, X80 | Teleports numbered per `Session` connection (reset when `Connect` is submitted); the slot released in the frame a switch or session end is queued and at a failed submission (number not consumed); an all-scripts rate for clock changes | **done** (TM revision 4); §7.4 states the same moments |
+| TM §8.17, L63, L84, rule 7.1.4, rule 7.6.1 | The "unload" end at the request; no lease, intent or `Sandbox` command from an `Unload` handler; L84 counting hot reloads only; view-dependent overlay statistics only with `world.read`; the file index in the new apartment's cap | **done** (TM revision 4); §4.5, §5.3, §8.2, §8.8 follow |
+| EA1a §2.4, §2.5 | The order of checks as a general rule; the element-counting rule | **done** (EA1a revision 4); §10.3 applies the order, and every cost of this document counts elements by the rule |
 | EM §11.5 | Walk-file keys for the virtual surface size, a reload from a second folder version and a simulated loss of window keyboard focus | **done** in EM revision 2 (`[screen]`, `[[input]]` `reload` and `focus`; TM §13, ranges TM L86); cited in §6.1, §8.8 and §13 |
 | EA1a §4.1 | The `"Unload"` reason `"reload"` covers both full and hot reloads; the hand-off table is passed with `Core.SetHandOff` (§8.4), not by the handler's return value | **done** (EA1a §4.1) |
 | EA1a §0, §2.5 | The generated reference is `docs/specs/ext-api-reference.md` (§10.4); EA1a and EA1b together are D17's `ext-api.md` | **done** (EA1a §0, §2.5) |
 | EA1a §2.10 | One angle form for every API spec: yaw and pitch in radians, `heading` only as a result | **done** (EA1a §2.10); this document follows it (§3.1, §4, §7.2) |
-| `tessera-net` (`crates/net`, its model documentation and the sandbox) | The typed teleport-outcome event of §7.5: an additive variant of the non-exhaustive `Event`, emitted beside the existing system line | for the slice-1b implementation |
+| `tessera-net` (`crates/net`, its model documentation and the sandbox) | The typed teleport-outcome event of §7.5: an additive variant of the non-exhaustive `Event`, emitted beside the existing system line; a test hook that makes `Session::send` fail (§13) | for the slice-1b implementation |
 | `docs/specs/ext-api-reference.md` | New, generated (§10.4); created when the registry exists | for the slice-1b implementation |
 
 <a id="s15"></a>
@@ -1535,3 +1908,4 @@ of `Overlay.Lines` (2,048 lines, §5.3, §5.5), requested of TM below (TM §0.1 
 | 2026-10-07 | First draft (design role), from accepted decision 0017: `Camera` with leases, modes, paths and the lease indicator; `Overlay` with draft and shown lists; the GPU-area bound for ext overlays and ext UI composition with its budget row (D17 open item 1); `Sandbox` with destinations, rate limits, the pending-teleport rule and a typed teleport outcome; hot reload with the watcher, the item sequence, the hand-off table, the read-your-writes rule (D17 open item 6) and the reload cases of a backend switch; the developer console with its log filter (D17 "Other improvements", log sanitising) and REPL; the generators with the binding description, type vocabulary, validation order, reference and annotation outputs and the CI check. Status Review. |
 | 2026-10-07 | Revision 2 (Review), answering the independent review and aligning with TM revision 2, EA1a and EM. **Authority:** TM cited as normative for limits, rules and escape cases; EA1a (not the non-existent `ext-api.md`) for general rules; limits cited as TM L-numbers. **§3:** heading in compass degrees, pitch and field of view in degrees, colours as EA1a `#RRGGBB[AA]` strings, costs in EA1a's symbols, handlers as EA1a §2.8; the angle-form and handler-pattern OPENs closed. **§4:** expiry checked at the start of step 3 (D17 §5.4); new `"switch"` end reason at a queued switch; revocation of any grant ends the lease through suspension (TM §8.23); picking uses the presented view (TM §8.17); streaming focus and level of detail follow the user (both OPENs closed); the indicator's frames stated; looped paths' period, cyclic neighbours and heading unwrapping defined; `lease:Kind()`. **§5–§6:** the own a(p) table, 2·S/3·S bounds, composition rule, 1.8 ms row and E4b removed in favour of TM §7.1 (L53–L56, E9 at native 3840 × 2160); `GetStats` in screens; a swap point for scripts without `Tick`; the `crates/render` additions and the sRGB-to-linear conversion stated. **§7:** teleport slot released when the outcome arrives (L75); correlation rule; heading converted with `tessera-net`'s converter. **§8:** TM §8.24's declaration set and full validation first; cap reserved from the allowance before the snapshot, snapshot and hand-off charged inside the new cap (TM §8.10), allowance freed after the old final flush (TM rule 7.6.5); §8.6 replaced by TM §7.6; backend switch during a reload as EM §10.4 and TM §8.21 with the switch timeout; `Unload` is EA1a's `Core.OnUnload` with reason `"reload"` (OPEN closed). **§9:** log file in TM §8.1's format and console display by TM §8.2 (the own filter removed); REPL submissions for suspended scripts refused; result description inside the metered call. **§10:** `dump-api --format` subcommand of EM §11.2; the reference is the generated `ext-api-reference.md`. **§11–§13:** invariants restated (2, 5, 7, 10, 13–16, 19, 21); examples recomputed; tests split into TM escape cases by X-number and this document's functional tests; E4b replaced by E9. **§14:** closed OPENs removed; changes requested of EM §11.5, EA1a §4.1 and `tessera-net` listed. |
 | 2026-10-07 | Revision 3 (Review), answering the re-review of revision 2 and aligning with TM revision 3 and EA1a revision 3. **Angles (blocking):** EA1a §2.10's form throughout: poses, `Follow` (its `bearing` option became a `yaw` offset in radians, default pitch −0.35), key frames and `Sandbox` destinations take `yaw` and `pitch` in radians, the field of view in radians, the view direction built from yaw; `heading` appears only in results and is ignored in a passed pose or key frame and refused in a destination; yaw unwrapping in (−π, π]; the `Sandbox` port passes yaw through with `f32` narrowing (no compass converter); the non-existent "EA1a §9 'Heading'" citation removed. **`Overlay.Lines` (blocking):** cost `B` + `e(m)` on the actual length read before any element, at most 2,048 lines per call (≤ 245,960 units, inside TM L3 and L4), validated whole before anything is appended; "building a large draft takes several calls"; the quad and box floods and the functional tests restated over several calls of one turn; invariant 9 extended; the per-call cap's registration requested of TM. **Names:** `Core.On("Tick")` and `Core.On("Unload")` replace `Core.OnTick` and `Core.OnUnload` (§2, §5.2, §8.3, §14). **Teleport slot:** released at the first of the outcome's arrival, the intent's discard and the end of its session generation; outcomes matched by (session generation, request number), late outcomes of an ended generation dropped (TM L75, X80); invariants 13 and 14, the bookmark example and the Sandbox tests updated. **Tests:** the escape list is a table of X-numbers with their slice-1b parts, adding X20 (maximal hand-off), X27 and X28 (hot reload), X87 (a hot reload in progress) and X91's re-read part; retagging of X27 and X85 requested of TM; a console display test. **Walk file:** the `[screen]`, `reload` and `focus` requests marked done (EM §11.5), cited in §6.1, §8.8 and §13. **Smaller:** `/ext:reload` with developer mode off or for an id that is not loaded (§8.2); a grant-store re-read that narrows ends a lease through suspension (TM §8.23); the floor frame counted from the start of the last frame in which ext ran (§12); the `dump-api` spelling against D17 §10 noted (§10.4); §14's changes table gains a state column. |
+| 2026-10-07 | Revision 4 (Review), answering the re-review of revision 3 and the follow-up review of the same day, and aligning with TM revision 4 and EA1a revision 4. **`Follow` and `entity.read` (blocking, §4.4, §4.7):** an entity target raises `"not granted"` unless `entity.read` is in the effective set at the call (EA1a §2.4 step 2 for the handle), step 3 re-checks it at every apply; the §4.7 citation of EA1a §2.9 corrected (kept handles stay objects that raise); X91's slice-1b part and a functional test added. **Teleport correlation (blocking, §7.4):** requests and outcomes numbered per `Session` connection, reset when `Connect` is submitted; the slot released in the frame the generation rises (a switch or session end queued), as TM L75 and X80 now say; the impossible "teleport submitted while a switch is queued" sentence removed. **Submission (blocking, §7.2, §7.4, §7.5):** apply-time checks include "not unloading" and `InWorld` (a teleport that finds the session out of the world is `"cancelled"`); a failed `Session::send` releases the slot, consumes no request number and answers `TeleportDone{ok = false, reason = "failed"}`; `place` validated on the text after U+FFFD replacement, its raw length checked first. **`Unload` handlers (blocking, §3.2, §4.3, §4.5, §5.2, §8.3):** the "unload" end, the discard of intents and the clearing of overlay lists in the frame the unload is requested; while unloading (its handler included) `Camera.Take` answers `"taken"`, lease intents `"ended"`, `Overlay` adds and `Sandbox` commands the new reason `"unloading"`, intents queued anyway are discarded at return and never applied. **Capability separation (§4.2, §5.3, §7.5):** `GetStats`' view-dependent fields (`drawn`, `culled`, `dropped_coverage`, `coverage`) and every player position (`Camera` poses, `TeleportDone`, `Location`) only with `world.read`. **EM §9.8 (§8.2, §8.7):** the notices "No loaded extended script '⟨id⟩'" and "⟨id⟩ is suspended: resume it first"; a suspended script is not reloaded by the command or the watcher. **Register (§3.1, §14):** argument-validity domains named under TM §0.1 rule 6; L90 and L91 cited; TM's answers recorded as done; X16 and X44's parts in §13. **Generators (§10):** the order of checks is EA1a §2.4's, every walk of table fields or elements after the charge or reservation, slice-1b soft answers at step 4; the vocabulary gains `DID`, `table`, `any`, `record`, `forms`, `union`, `variadic`, the root and fields; the registry's canonical form defined (RFC 8785 JSON, ordering, members) and the fixture comparison stated. **Hot reload (§8.2, §8.3, §8.7, §8.8):** L84 counts hot reloads only, full reloads never wait; the watcher keeps one flag per loaded developer script instead of an event channel; rows for a user unload, `Core.Unload`, developer mode turned off and client exit during a reload, and for waiting requests; the file index counts toward the new apartment's cap (TM rule 7.6.1). **No character (§4.6, §4.7, invariant 6):** *P* is the user's eye, and `Follow("player")` shows the user's view, while no character is placed. **§6.4:** *n* counts non-empty shown lists, drawn or not, as TM rule 7.1.4. **Costs (§4.2–§4.4, §5.3, §7.3):** elements counted by EA1a §2.5's rule (poses `e(18)`, `Hold` Rsv `e(20)`, `Follow` Rsv `e(12)`, `Play` Rsv `e(6)` + `e(24 · 256)`, `Teleport` Rsv `e(26)` + `b(256)`, `GetStats` `e(14)`, `Lines` `B` + `e(2m)`), with an OPEN to TM on L90's cost figure. **Smaller:** the order of `"busy"` and `"pending"` (§7.3); the REPL compile charge `B` + 4 units per byte per attempt (§9.4); the all-scripts clock rate of 4 per second (TM L75); `TeleportDone` only when a handler is set (§7.5, invariant 14); the anchor rule stated (§7.2); the quad-flood example adds 2,001 in its fifth timer; the `Sandbox` tests run in the client integration harness (§13); invariants 2, 6, 13–15, 17 and 23 restated. |

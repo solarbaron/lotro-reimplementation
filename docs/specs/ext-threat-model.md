@@ -7,7 +7,7 @@
 | Status | **Review** |
 | Last updated | 2026-10-07 |
 | Author role | Design (original Tessera design, clean room, no dirty-room input), AI-assisted |
-| Reviewer | Independent clean-room review, 2026-10-07: changes requested (status stays Review). Revision 2 (same day) answers every issue raised and reconciles this spec with `ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. **Re-review of revision 2, 2026-10-07: changes requested, status stays Review.** The first review's issues are resolved, and the spec now agrees with D17, EM, EA1a and EA1b on every rule checked. Remaining issues: (1) **Blocking, security (§8.7, L44, X57).** The write-bucket rule charges nothing for "a call that replaces a pending value" that does not grow it. Under rule 7.6.2, a value whose flush is in flight is still a pending entry, and a newer `Set` keeps the entry alive past that flush. So a key rewritten every frame, with a `Set` landing while each flush is in flight, is never clean again: every later flush writes it unpaid. The live set can then be rewritten at up to 16 MiB/s per script after a single payment. This defeats T56 and contradicts both "pays once per flush" and X57's bound. Fix: a `Set` or `Delete` made after the flush of the key's current pending value has started counts as making the key dirty (a key token plus the full counted size), or debit per value taken by a flush. Carry the change into EA1a §5.3. (2) **Testability (§7.5 worked example, X19).** These use 16 scripts × 16 subscriptions (256), but L30 and D17 §8 allow 64 subscriptions for all scripts, so X19 cannot be set up. Restate it within the caps (for example 4 × 16 and 16 × 4). (3) **Register (§0.1, §10, EM OPEN O-11).** EM asks TM to register the manifest's per-field counts (32 settings, 32 choices, 16 capabilities, 32 modules, `max_length` 256, `version` and `license` 64 bytes) and the walk file's 65,536 inputs. TM claims to be the single home of every limit, but L37 and L86 do not list them and §13 and §14 do not answer. Give them L-numbers, or state that per-field grammar counts are outside the register. (4) Minor: §0.1 rule 3 cites "§11.9" for the mapping of EM's earlier IDs, which is §11.10. Rule 7.6.1 charges the file index "to the script" without saying which apartment's cap carries it during a hot reload (rule 7.6.5 settles this only for pending entries). The §2 "Call" definition omits the filter call (§7.5) and REPL runs (L85). Rule 7.4.1 should say that a floor frame resets the 15-frame count, which the "every 16th frame" figures and X85 assume. **Revision 3 (same day)** answers every point of this re-review (§8.7 re-dirtying rule, X19 within L30, L86–L89 registered, the minor items) and adopts the stronger rule wherever the companions' re-reviews found TM open (store and log no-follow rule, §8.8 and X94; re-read of hand-edited grants, §8.23; split-turn position, §8.13; teleport slot across a generation change, L75); change log. **Re-review of revision 3, 2026-10-07 (independent clean-room review: D17, EM, EA1a and EA1b revision 3): changes requested, status stays Review.** Every point of the revision-2 re-review is resolved: the §8.7 re-dirtying rule closes the unpaid-flush hole (invariant 28, X57 in-flight run), X19 fits L30, L86–L89 are registered and EM cites them, and the minor items are fixed. All T-, X- and L-numbers are defined and cross-referenced (T1–T93 each have a test; every X-test's threats exist; EM, EA1a and EA1b cite only existing L-numbers, X-numbers and TM sections and rules). Remaining issues: (1) **Consistency and testability: EA1b §14's requests to TM are unanswered**, against §0.1 rule 5. (a) EA1b registers `Overlay.Lines`' per-call cap of 2,048 lines (12,288 numbers), which keeps its cost within L3 and L4, as "requested of TM". It has no L-number, so §0.1 rule 5's claim that every count has an L-number is false. Add it to L83's row or a new row, and answer it in §13. (b) X85 and X27 are tagged slice 1a only, but each has a slice-1b part. X85 asks for "a lease held when the switch is queued", and the first lease, `Camera`, ships in 1b. X85 also asks for "a backend switch with 17 apartments", and a 17th apartment exists only during a hot reload (L26), which also ships in 1b. X27 asks for a `memory_mib = 64` hot reload. Under §11, slice 1a ships only when every test tagged 1a passes, so as written 1a can never ship. Retag them "1a, 1b", with 16 apartments in 1a's part of X85 and §7.4's figures restated for that count, or move those parts to 1b. Likewise, X44 (slice 1b) has a `Files.Pick` part that belongs to slice 2: tag it "1b, 2". (2) **Security gap (T56, A4: disk wear through the script log).** §8.7 lowers `Store` writes for all scripts to 128 KiB/s and says the worst sustained case for all scripts is about 10.5 GiB per day. The script log needs no grant either. It stays at 64 KiB/s per script with no rate for all scripts together (L45, D17 §8 "the only rate limit on the log"), so 16 scripts can write 1 MiB/s, about 84 GiB per day, which is eight times the bound that §8.7 sets for wear. Either add a rate for all scripts together to L45 (for example 128 KiB/s, with the counted "N records dropped" record, and a §13 row for D17 §8 under OPEN O-3), or list log wear as a stated residual with its figure, and correct §8.7's "worst sustained case" sentence. Extend X56 or X57 to cover it. (3) Minor (rule 7.1.2, composition entries): "counted outward" of a rectangle depends on its sub-pixel phase. A rectangle of width w counts ⌈w⌉ at an integer position and ⌈w⌉ + 1 at a fractional one. So an entry's count is not independent of its position as the rule says, and moving a window by a fraction of a pixel can raise its count by one row or column. That contradicts invariant 5 and X31's "a moved window raises coverage". State a count that does not depend on position, for example (⌈w⌉ + 1) × (⌈h⌉ + 1) capped at one screen, or require ext composition positions to snap to whole physical pixels. |
+| Reviewer | Independent clean-room review, 2026-10-07: changes requested (status stays Review). Revision 2 (same day) answers every issue raised and reconciles this spec with `ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. **Re-review of revision 2, 2026-10-07: changes requested, status stays Review.** The first review's issues are resolved, and the spec now agrees with D17, EM, EA1a and EA1b on every rule checked. Remaining issues: (1) **Blocking, security (§8.7, L44, X57).** The write-bucket rule charges nothing for "a call that replaces a pending value" that does not grow it. Under rule 7.6.2, a value whose flush is in flight is still a pending entry, and a newer `Set` keeps the entry alive past that flush. So a key rewritten every frame, with a `Set` landing while each flush is in flight, is never clean again: every later flush writes it unpaid. The live set can then be rewritten at up to 16 MiB/s per script after a single payment. This defeats T56 and contradicts both "pays once per flush" and X57's bound. Fix: a `Set` or `Delete` made after the flush of the key's current pending value has started counts as making the key dirty (a key token plus the full counted size), or debit per value taken by a flush. Carry the change into EA1a §5.3. (2) **Testability (§7.5 worked example, X19).** These use 16 scripts × 16 subscriptions (256), but L30 and D17 §8 allow 64 subscriptions for all scripts, so X19 cannot be set up. Restate it within the caps (for example 4 × 16 and 16 × 4). (3) **Register (§0.1, §10, EM OPEN O-11).** EM asks TM to register the manifest's per-field counts (32 settings, 32 choices, 16 capabilities, 32 modules, `max_length` 256, `version` and `license` 64 bytes) and the walk file's 65,536 inputs. TM claims to be the single home of every limit, but L37 and L86 do not list them and §13 and §14 do not answer. Give them L-numbers, or state that per-field grammar counts are outside the register. (4) Minor: §0.1 rule 3 cites "§11.9" for the mapping of EM's earlier IDs, which is §11.10. Rule 7.6.1 charges the file index "to the script" without saying which apartment's cap carries it during a hot reload (rule 7.6.5 settles this only for pending entries). The §2 "Call" definition omits the filter call (§7.5) and REPL runs (L85). Rule 7.4.1 should say that a floor frame resets the 15-frame count, which the "every 16th frame" figures and X85 assume. **Revision 3 (same day)** answers every point of this re-review (§8.7 re-dirtying rule, X19 within L30, L86–L89 registered, the minor items) and adopts the stronger rule wherever the companions' re-reviews found TM open (store and log no-follow rule, §8.8 and X94; re-read of hand-edited grants, §8.23; split-turn position, §8.13; teleport slot across a generation change, L75); change log. **Re-review of revision 3, 2026-10-07 (independent clean-room review: D17, EM, EA1a and EA1b revision 3): changes requested, status stays Review.** Every point of the revision-2 re-review is resolved: the §8.7 re-dirtying rule closes the unpaid-flush hole (invariant 28, X57 in-flight run), X19 fits L30, L86–L89 are registered and EM cites them, and the minor items are fixed. All T-, X- and L-numbers are defined and cross-referenced (T1–T93 each have a test; every X-test's threats exist; EM, EA1a and EA1b cite only existing L-numbers, X-numbers and TM sections and rules). Remaining issues: (1) **Consistency and testability: EA1b §14's requests to TM are unanswered**, against §0.1 rule 5. (a) EA1b registers `Overlay.Lines`' per-call cap of 2,048 lines (12,288 numbers), which keeps its cost within L3 and L4, as "requested of TM". It has no L-number, so §0.1 rule 5's claim that every count has an L-number is false. Add it to L83's row or a new row, and answer it in §13. (b) X85 and X27 are tagged slice 1a only, but each has a slice-1b part. X85 asks for "a lease held when the switch is queued", and the first lease, `Camera`, ships in 1b. X85 also asks for "a backend switch with 17 apartments", and a 17th apartment exists only during a hot reload (L26), which also ships in 1b. X27 asks for a `memory_mib = 64` hot reload. Under §11, slice 1a ships only when every test tagged 1a passes, so as written 1a can never ship. Retag them "1a, 1b", with 16 apartments in 1a's part of X85 and §7.4's figures restated for that count, or move those parts to 1b. Likewise, X44 (slice 1b) has a `Files.Pick` part that belongs to slice 2: tag it "1b, 2". (2) **Security gap (T56, A4: disk wear through the script log).** §8.7 lowers `Store` writes for all scripts to 128 KiB/s and says the worst sustained case for all scripts is about 10.5 GiB per day. The script log needs no grant either. It stays at 64 KiB/s per script with no rate for all scripts together (L45, D17 §8 "the only rate limit on the log"), so 16 scripts can write 1 MiB/s, about 84 GiB per day, which is eight times the bound that §8.7 sets for wear. Either add a rate for all scripts together to L45 (for example 128 KiB/s, with the counted "N records dropped" record, and a §13 row for D17 §8 under OPEN O-3), or list log wear as a stated residual with its figure, and correct §8.7's "worst sustained case" sentence. Extend X56 or X57 to cover it. (3) Minor (rule 7.1.2, composition entries): "counted outward" of a rectangle depends on its sub-pixel phase. A rectangle of width w counts ⌈w⌉ at an integer position and ⌈w⌉ + 1 at a fractional one. So an entry's count is not independent of its position as the rule says, and moving a window by a fraction of a pixel can raise its count by one row or column. That contradicts invariant 5 and X31's "a moved window raises coverage". State a count that does not depend on position, for example (⌈w⌉ + 1) × (⌈h⌉ + 1) capped at one screen, or require ext composition positions to snap to whole physical pixels. **Revision 4 (same day)** answers every point of the re-review of revision 3 and of the follow-up review of the same day (register scope and the `Overlay.Lines` cap, L90 and L91; slice tags of X16, X22, X25, X27, X31, X44, X46 and X85; an all-scripts log rate; position-independent entry counting; the K and C bounds of each interim ceiling; bounded `Store` reads; badge placement and cover; copy only of displayed text; host-change hiding of labels; the ext z-range, T94 and X95; lease ends after step 3; filter calls and the rolling time; wide lines near the viewport edge; L43's wording), and settles the points that the companions' reviews refer to TM (change log). Status stays Review. **Re-review of revision 4, 2026-10-07 (independent clean-room review: D17 in full, EM, EA1a and EA1b revision 4): changes requested, status stays Review.** Every point of the re-review of revision 3 is resolved: the register scope (§0.1 rule 6) and L86–L93 are in place, X16, X27, X44 and X85 carry their slice parts with the 16-apartment figures of slice 1a (rule 7.4.4, L11), the all-scripts log rate closes the log-wear gap (L45, §8.7, invariant 33, X56), and entries are counted by size, independent of position. All T-, X- and L-numbers are defined and cross-referenced (T1–T94 each have a test whose Threats column names them; no companion cites an L- or X-number that does not exist), every D17 open item and "other improvement" has a rule and a test, and the arithmetic of rules 7.1.2, 7.4.4, 7.5.2a, 8.3 and L12–L16 checks out against D17 §8. Remaining issues: (1) **Consistency, §0.1 rule 5: two companion requests to TM are unanswered.** (a) EA1b §5.3 and §14 ask TM to restate L90's cost: under EA1a §2.5's element rule (every key and every value counts one, as D17 §8's value model counts) a maximal `Overlay.Lines` call costs `B` + e(2*m*) = 200 + 20 × 24,576 = 491,720 units, not 245,960. The cap of 2,048 lines still fits L3 and L4, but under §0.1 rule 1 L90's wrong figure wins over the companions' correct one. Restate L90 and answer it in §13. (b) EA1a OPEN-11 asks §8.2 step 4 to name a cap category for `Commands.Register`'s `help`, drawn in the script manager by `/ext:help`. Step 4 also omits the setting `description` category that EM §4.4 and L80 cap at 160 code points and 640 bytes. Without these categories step 4 cannot be applied to those strings. Add both (or assign them to a named category) and answer OPEN-11 in §13. (2) Minor, consistency (§8.14, L28): ε is defined per value-model element "(a table, string or number)", but D17 §8 and EA1a §2.5 count every key and every value, booleans included. Define ε per element as the value model counts it, so that E5's declared worst case and the `min(n, 8,192)` term use one count. (3) Minor, citation (§8.8 "Store directories and log files"): "EM §3.1 and §8.8 name the files … and state the per-entry actions". EM revision 4 states them in its §3.6, which names the temporary files `t_<key>.tmp`, so cite EM §3.6. (4) Minor, register (§0.1 rule 6): the advisory-lock retry bound of §8.8 "Tessera's own files" (at most 1 s, then a failed write) is a deadline that bounds the grant-store queue, but it has no L-number. Add it to L79 or give it a row. |
 | Implements into | `crates/script` (the ext profile, the patched interpreter's ext modes, the hook, the sticky abort and the C-call bound), `crates/ext` (limits, value model, scheduling, gesture and focus rules, bridge resolution rules), `crates/ext-host` (ports, all ext file I/O, the `Store` file index and pending-write map, the store owner tag, the log writer, the headless harness), `crates/input` (ext holds pool, suggested-default rule, coalesced recompilation, the `Input.Drive` allow-list), `crates/net` (backend class), `crates/plugins` (registration serial numbers for the bridge, §7.3; the plugin side of X6 and X74), `crates/settings` (the install guard on `keymap-ext.toml` saves, X61), `crates/ui` (the solid-press hit test, §7.2; selection and copy rules, §8.4; composition coverage of ext entries, §7.1), `crates/render` and `apps/client` (overlay coverage, the ownership badge, the reserved layer, the heavy-frame gate and its floor, pointer picking under a lease), `apps/scripttool` (`test` and the `escape` runner), `tools/` (the build-level check), `fuzz/` (the parsers named in §11) |
 | Related records and specs | [0017](../decisions/0017-extended-scripting.md) (the accepted design; abbreviated **D17**), [0004](../decisions/0004-server-strategy.md), [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [0016](../decisions/0016-plugin-class-helper.md), [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**), [`plugin-runtime.md`](plugin-runtime.md) (**PR**), [`keymap.md`](keymap.md) (**KM**), [`chat-window.md`](chat-window.md) (**CW**), [`ui-behaviour.md`](ui-behaviour.md) (**UB**), [`ui-layout.md`](ui-layout.md), [`ui-widgets.md`](ui-widgets.md), `docs/LEGAL.md` §9.5 and §18; the M5.5 companion specs [`ext-manifest.md`](ext-manifest.md) (**EM**), [`ext-api-1a.md`](ext-api-1a.md) (**EA1a**) and [`ext-api-1b.md`](ext-api-1b.md) (**EA1b**), which cite this spec as **TM** (§0.1). "The API specs" means EA1a, EA1b and the API specs of later slices; D17's working name `ext-api.md` means these files |
 
@@ -27,7 +27,8 @@ threat model. With it an implementer and a reviewer can:
 - read the concrete rule chosen for each D17 open item (§7) and each "other improvement"
   (§8), and the restated rules for the earlier hardening items: `string.rep`, hash
   flooding, exfiltration routes, disk caps and per-apartment random numbers (§9);
-- look up every limit of extended scripting with its number in one register (§10);
+- look up every resource limit of extended scripting with its number in one register
+  (§10);
 - run the escape-test catalogue (§11) and check the invariants (§12).
 
 It is a design document. It records no fact about the original game client, and it adds
@@ -48,8 +49,9 @@ stricter of the two figures applies.
 <a id="s0-1"></a>
 ### 0.1 How other specs cite this spec
 
-This spec is the **single home** of two things: every numeric limit of extended scripting
-(the register of §10, rows **L1**…) and the escape-test catalogue (§11, tests **X1**…).
+This spec is the **single home** of two things: every resource limit of extended
+scripting (the register of §10, rows **L1**…; rule 6 says which numbers that covers) and
+the escape-test catalogue (§11, tests **X1**…).
 The companion specs follow these rules:
 
 1. **Limits.** A spec that needs a limit cites it as "TM L*n*" and may repeat its number
@@ -71,9 +73,24 @@ The companion specs follow these rules:
    be restated (with a change-log entry); its number stays.
 5. **Requests.** A companion spec that needs TM to change marks the request OPEN in its
    own text; TM answers it in §13 (the companion's change) or §10 (a new or restated
-   row), and the companion then closes its OPEN. Only the character sets and formats of
-   a grammar stay in the defining spec; every **count, size or range** of extended
-   scripting, the grammars' counts included, has an L-number here.
+   row), and the companion then closes its OPEN.
+6. **What the register holds.** Every **resource limit** of extended scripting has an
+   L-number here: a count, size, rate, time or per-call cap that bounds work, memory,
+   disk, GPU time, queue length or the user's control (objects, entries, elements,
+   records, outstanding requests, bytes held, read, written or displayed, calls or
+   commands per second, deadlines, and a per-call cap that keeps a native's cost inside
+   L3 and L4). Two kinds of number stay in the defining spec and need no L-number:
+   (a) **argument-validity domains**, the range of one scalar argument or field that
+   bounds no cost by itself (coordinate magnitudes, angles, sizes and offsets of one UI
+   node, distances of one camera or label setting, enumerated integers such as a region
+   number, numeric bounds of a setting, the integer bound of a grant record, a timer's
+   longest delay); (b) **grammar lengths**, the length of an identifier or name that
+   only fits it to its grammar (setting keys, capability names, module-name segments,
+   version parts, action and context names, a walk file's entity name). A domain or
+   grammar length on which a TM rule or bound depends is registered all the same (for
+   example L38, L68, L83). A file read bounded at "cap + 1 bytes" to detect an oversized
+   file belongs to the cap's own row. A companion spec claims an L-number only for the
+   numbers this rule registers.
 
 ---
 
@@ -87,6 +104,7 @@ The companion specs follow these rules:
 | Reference display and GPU | `docs/perf/reference-machine.md` (RTX 2070 Super Max-Q; 3840 × 2160 panel) | Recorded |
 | Revision 2: reconciliation with EM, EA1a and EA1b (§0.1, §7.1, §7.6, §8.1, §8.2, §8.10, §8.14, §8.17, §8.21, §8.23–§8.25, §10.6, §11.10, §13) | Original design by the Tessera project, 2026-10-07, from the review of the four M5.5 specs; where two specs differed, the stronger security rule was kept | **Tessera Decision** |
 | Revision 3: the re-review of the four M5.5 specs (§0.1, §2, §7.4, §7.5, §7.6, §8.7, §8.8, §8.13, §8.21, §8.23, §10, §11, §12, §13) | Original design by the Tessera project, 2026-10-07; where a companion's re-review found TM open, the stronger security rule was adopted | **Tessera Decision** |
+| Revision 4: the re-review of revision 3 and the follow-up reviews of the four M5.5 specs (§0.1, §2, §6, §7.1, §7.2, §7.4, §7.5, §7.6, §8.3, §8.4, §8.7, §8.8, §8.13, §8.14, §8.16, §8.17, §8.23, new §8.26, §10, §11, §12, §13, §14) | Original design by the Tessera project, 2026-10-07; where a companion's review found TM open, the stronger security rule was adopted | **Tessera Decision** |
 | Pixel-count bound of rule 7.1.2 (a convex region covers at most area + half perimeter + 1 lattice points) | Standard plane geometry | Public mathematics |
 
 No dirty-room material, no third-party source and no decompiler output was read. Lua
@@ -105,8 +123,8 @@ MIT-licensed library behaviour, which D17 §1.5 allows implementers to read.
 | **Apartment** | One Lua state of one ext script (D17 §1.2). |
 | **Call** | One metered entry into an apartment: a 6b turn's filter call (§7.5), a 6b delivery, a timer, `Tick`, a top-level run, an `Unload` handler or a developer REPL run (L85). Each has a 4 ms deadline and 800,000 work units (D17 §8). |
 | **Turn** | All calls one script gets in 6b for one round-robin visit: its filter pass (§7.5), its queued notifications in order, its due timers, then `Tick`. A turn may be split across frames by the 2 ms cap (§8.13). |
-| **Gesture** | A user input that D17 roots trust in: the start of one of the script's own actions, an `/ext:` line for it, or a **solid press** (§7.2) on one of its windows. |
-| **Gesture window** | The whole turn that delivers a gesture, from the call that delivers it to the end of that turn's `Tick`, across frames if the turn is split (§8.13). Every spec uses exactly this window (D17 "Other improvements"). |
+| **Gesture** | A user input that D17 roots trust in: the start of one of the script's own actions, an `/ext:` line for it, or a **solid press** (§7.2) on one of its windows. Of a solid press, only the delivery of its **press** notification is a gesture; the release and click that follow carry the press's `gesture` flag for information only and open no window (§8.13). |
+| **Gesture window** | The turn that delivers a gesture, from the call that delivers it to the end of that turn's `Tick`, across frames if the turn is split, and closed earlier by the bounds of §8.13 (the user's next input elsewhere, or 1 s, L93). Every spec uses exactly this window (D17 "Other improvements"). |
 | **Solid press** | A user press whose hit element in an ext window paints its own background colour or image at the press point with alpha × effective opacity ≥ 0.5 (§7.2). |
 | **Screen** | One full viewport of the current presentation: width × height in physical pixels. In deterministic mode and in CI the screen is the harness's virtual surface, **1920 × 1080** unless the walk file sets another (EM §11.5), so every count repeats. Coverage is measured in screens. |
 | **Coverage** | A conservative count of the physical pixels that a set of overlay primitives or composition entries can write, before depth testing, divided by one screen (§7.1). Conservative means never below the pixels actually written. |
@@ -192,7 +210,7 @@ model. Section numbers of D17 are written "D17 §n"; this spec's own are "§n".
 |---|---|---|---|---|
 | TB1 | Script ↔ host natives | Lua code and every value it passes | Calls, arguments, tables, returned values | Argument validation from the registry, charge-before-work, bounded value model, sealed metatables (D17 §1.2, §1.3, §8) |
 | TB2 | Apartment ↔ apartment | Each script | Nothing directly; shared engine state and pools only | Separate states, generators, `Store`, UI pools per script; residuals in §6.8 |
-| TB3 | Ext ↔ plugins | Both sides | Bridge actions and reads (slice 2), `/ext:` lines from `Alias` quickslots, effects on shared state | One-way bridge, direct handler call (§7.3), z-range and focus domain (D17 §4) |
+| TB3 | Ext ↔ plugins | Both sides | Bridge actions and reads (slice 2), `/ext:` lines from `Alias` quickslots, effects on shared state | One-way bridge, direct handler call (§7.3), z-range (§8.26) and focus domain (D17 §4) |
 | TB4 | Ext ↔ the user's input and the trust UI | Scripts | Key resolution, pointer routing, activation and focus, prompts | Ext passes last, gesture-rooted focus (§7.2), reserved layer, panic chord (D17 §5.3, §5.5) |
 | TB5 | Ext ↔ disk | Scripts and file content (AT5) | Snapshot reads, `Store` files, the script log, `Files.Pick` | Directory-handle opens, folder rules, per-store I/O queue, caps and rates (D17 §2, §8; §7.6, §8.5–§8.8) |
 | TB6 | Ext ↔ backend and server | Scripts; the server (AT6) | Intents, `Server` messages, policy | Backend class gate, local-only rule, session generations (D17 §5.2, §6) |
@@ -235,7 +253,7 @@ requirement; "§n" points to a rule of this spec.
 | T13 | Hash flooding of Lua tables, the interning table or the compiler | A2 | AT1 | TB1 | §9.2 | X13 |
 | T14 | Hash flooding moved into host maps (keys from scripts, files or messages) | A2, A3 | AT1, AT5, AT6 | TB1, TB5 | §9.2 (keyed hashers) | X14 |
 | T15 | Deep C recursion (callbacks, metamethods, nested coroutine resumes, deep parse nesting) overflows the native stack and crashes the process | A12 | AT1 | TB1 | §9.6 (nested C-call bound counted across resumes, stack reserve); Lua error, never a crash (D17 §8, E6) | X15 |
-| T16 | Uninterruptible spikes: collector atomic step (S), state close (C), compilation (K), worst operation (R) | A2 | AT1 | TB7 | Measured bound 7 ms + R + 2·S ≤ 13 ms, K, C ≤ 9 ms, recorded fallback (D17 §8) | X16 |
+| T16 | Uninterruptible spikes: collector atomic step (S), state close (C), compilation (K), worst operation (R) | A2 | AT1 | TB7 | Measured bounds of L12 (7 ms + R + 2·S and 2 ms + K + S, or C for K, within the ceiling in force) and of L14–L16 for the slice, recorded fallback (D17 §8) | X16 |
 | T17 | Many scripts together overrun the frame | A2 | AT1, AT3 | TB7 | 2 ms cap, 1 ms slices, rolling throttle, suspension (D17 §8) | X17 |
 | T18 | Repeated aborting calls | A2 | AT1 | TB7 | 3 aborts in 10 s suspends (D17 §8) | X18 |
 | T19 | Entity-subscription filtering outside every bound (D17 open item 5) | A2 | AT1 | TB7 | §7.5 | X19 |
@@ -280,7 +298,7 @@ requirement; "§n" points to a rule of this spec.
 | T40 | Ext holds exhaust KM §7.3's 256 holds (D17 other item) | A1 | AT1 | TB4 | §8.16 | X41 |
 | T41 | The panic chord is consumed, rebound or unreachable | A1, A13 | AT1 | TB4 | Chord tier first; leases end on focus loss (D17 §5.4, §5.5) | X42 |
 | T42 | `Input.Drive` presses actions outside movement: screenshot files, menus, chat focus, plugin handlers in step 3 (D17 open item 7) | A1, A4, A6 | AT1 | TB4 | §7.7 | X43 |
-| T43 | A lease outlives the user's ability to end it (stall, starvation, window focus loss, a queued backend switch, a revoked grant), or steers what the user's own click picks | A1 | AT1 | TB4 | 350 ms expiry, end on focus loss, watchdog, chord (D17 §5.4) and §8.17 | X44 |
+| T43 | A lease outlives the user's ability to end it (stall, starvation, window focus loss, a queued backend switch, a revoked grant, an unload, a lease taken in an `Unload` handler), or steers what the user's own click picks | A1 | AT1 | TB4 | 350 ms expiry, end on focus loss, watchdog, chord (D17 §5.4) and §8.17 | X44 |
 | T44 | World labels catch the pointer and move boxes in step 8 (D17 open item 8) | A1, A6 | AT1 | TB4 | §7.8 | X45 |
 | T45 | A script synthesises input that presses "Allow" | A8, A9 | AT1 | TB4 | No synthesised input; pointer-only Allow (D17 §5.3) | X46 |
 
@@ -291,10 +309,10 @@ requirement; "§n" points to a rule of this spec.
 |---|---|---|---|---|---|---|
 | T46 | Manifest or error strings impersonate Tessera: markup, bidi, invisible and format characters, stacked combining marks | A8 | AT1, AT4 | TB4 | Plain text rules (D17 §5.3) and §8.2 | X47 |
 | T47 | Prompt clickjacking: a resting pointer, lured rapid clicks, a key answer | A8, A9 | AT1 | TB4 | 500 ms delay, pointer entry, hidden ext output, keys only refuse (D17 §5.3) | X48 |
-| T48 | An ext window imitates a native panel or a Tessera dialog to capture typed secrets | A11, A8 | AT1 | TB4 | §8.3 (host-drawn ownership badge) | X49 |
+| T48 | An ext window imitates a native panel or a Tessera dialog to capture typed secrets, also by placing its badge under a plugin window or native panel, or off screen | A11, A8 | AT1 | TB4 | §8.3 (host-drawn ownership badge, placed wholly on screen; no focus while it is covered) | X49 |
 | T49 | Script-caused reserved-layer surfaces occlude plugin controls | A6 | AT1 | TB3 | Hit- and hover-transparent notices and indicator (D17 §5.3) | X50 |
 | T50 | Log injection: terminal escapes (OSC 52 clipboard writes), forged host lines (D17 other item) | A11, A8 | AT1, AT7 | TB8 | §8.1 | X51 |
-| T51 | Pastejacking: the script changes a box's text between the user's selection and the copy (D17 other item) | A11 | AT1 | TB4 | §8.4 | X52 |
+| T51 | Pastejacking: the script changes a box's text between the user's selection and the copy, or fills it beforehand with text the user cannot see (clipped, scrolled out, transparent, invisible characters) (D17 other item) | A11 | AT1 | TB4 | §8.4 | X52 |
 
 <a id="s6-7"></a>
 ### 6.7 Files and disks
@@ -305,7 +323,7 @@ requirement; "§n" points to a rule of this spec.
 | T53 | Links, hard links, reparse points and swaps during the walk; a symlinked script folder root (D17 other item) | A4, A9 | AT5 | TB5 | No-follow walk (D17 §2) and §8.8 | X54 |
 | T54 | Folder-walk exhaustion (millions of entries, huge directories) | A2, A3 | AT5 | TB5 | 512 entries, 64 directories, counted as read (D17 §2) | X55 |
 | T55 | Disk exhaustion through `Store`, the log or leftover temporary files | A4 | AT1 | TB5 | Key, size and log caps (D17 §8) and §8.7 | X56 |
-| T56 | Disk wear: sustained rewrites (D17 other item) | A4 | AT1 | TB5 | §8.7 | X57 |
+| T56 | Disk wear: sustained `Store` rewrites and log floods by many scripts (D17 other item) | A4 | AT1, AT3 | TB5 | §8.7; the all-scripts log rate (L45) | X57, X56 |
 | T57 | `Files.Pick` on a FIFO or device blocks a worker forever (D17 other item) | A3, A13 | AT1 | TB5 | §8.6 | X58 |
 | T58 | Hostile parsed files: `Store` values, manifest, grant store, `keymap-ext.toml`, bridge plugin data | A12, A3 | AT5, AT4 | TB5 | Bounded strict parsers with fuzz targets (D17 §2, §5.2, §8) | X59 |
 | T59 | A crash leaves half-written values or values with no local-only mark | A4, A5 | AT1 | TB5 | Temp file and rename; durable marker before the top-level run (D17 §5.2, §8) | X60 |
@@ -329,8 +347,9 @@ requirement; "§n" points to a rule of this spec.
 
 **Residuals, stated exactly (not closed by this spec).** As D17 §5.2 and LEGAL §18.4
 record: (1) cooperating scripts through shared engine state (game clock, native panel
-positions), through global pools answering "busy", and across sessions through the
-`Store` totals answering "full"; (2) a script and a plugin through bridged command
+positions), through global pools answering "busy" (the all-scripts log rate of L45
+included: a script's log records can be dropped, and counted, while other scripts fill
+it), and across sessions through the `Store` totals answering "full"; (2) a script and a plugin through bridged command
 arguments a plugin keeps, an `Alias` quickslot the user later clicks, plugin data, frame
 timing and window layout; (3) the layout residual of D17 §5.6, which also holds **between
 ext scripts** (a lower ext window learns where higher ext windows catch the pointer,
@@ -338,7 +357,10 @@ ext scripts** (a lower ext window learns where higher ext windows catch the poin
 in-flight decode, or whose entry another script already made resident, can complete
 sooner than a fresh decode would, at frame granularity (§8.9); (5) the number of ext
 scripts drawing overlays in a frame, which sets each script's fair share (§7.1.4). The
-decode-cache **content** channel of T67 is closed, not residual.
+decode-cache **content** channel of T67 is closed, not residual. Overlay coverage is
+**not** a channel to the camera: the coverage-dependent overlay statistics (culled,
+drawn, coverage, drops by coverage) reach only a script that holds `world.read`
+(rule 7.1.4).
 
 <a id="s6-9"></a>
 ### 6.9 Plugins and coexistence
@@ -352,6 +374,7 @@ decode-cache **content** channel of T67 is closed, not residual.
 | T74 | Bridge floods the plugin queue | A6, A2 | AT1 | TB3 | 1 action/s, load caps (D17 §7) | X75 |
 | T75 | A hostile plugin's data overwhelms a bridge read | A3, A12 | AT4 | TB3 | Value-model caps on the worker (D17 §7 item 4) | X76 |
 | T76 | A plugin's `Alias` `/ext:` line injects hostile arguments | A9 | AT4 | TB3 | Arguments are data; the line never reaches a backend or chat (D17 §7) | X77 |
+| T94 | An ext window, nested surface, label or badge is drawn or hit-tested above a plugin window or a native panel (through `ZOrder`, `Activate`, re-parenting, a nested surface or a show while a prompt shows), covering it, taking its clicks, or making it look like part of the ext window | A6, A1, A8 | AT1 | TB3, TB4 | §8.26 (the ext z-range is below every plugin window and native panel for drawing and hit testing) | X95 |
 
 <a id="s6-10"></a>
 ### 6.10 Backend gate and servers
@@ -415,24 +438,29 @@ can write for it.
 **Rule 7.1.2 (how each primitive and entry counts).** In physical pixels of the current
 viewport (§2 "Screen"), then divided by one screen. "Counted outward" means a real
 rectangle [x0, x1] × [y0, y1] counts (⌈x1⌉ − ⌊x0⌋) × (⌈y1⌉ − ⌊y0⌋) pixels (0 if empty),
-which covers every pixel whose centre lies in it.
+which covers every pixel whose centre lies in it. "Counted by size" means a rectangle of
+width *w* and height *h* counts (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1) pixels (0 if *w* or *h* is 0):
+an interval of length *w* contains at most ⌊*w*⌋ + 1 pixel centres wherever it lies, so
+this count is never below the pixels the rectangle covers at any position, sub-pixel
+phases included, and it does not depend on the position at all.
 
 | Primitive or entry | Counted pixels |
 |---|---|
 | Any overlay primitive whose colour alpha is 0 | 0; it is not drawn |
 | Any overlay primitive entirely outside the view frustum (every point outside one frustum plane, the near plane included) | 0; it is culled and not drawn |
 | Screen quad | Its rectangle clipped to the viewport, counted outward |
-| Line (screen or world) of width *w* pixels (*w* ≥ 1) | Clip the segment to the near plane, project both ends, clip the 2D segment to the viewport; with *L* its length in pixels plus *w* (the end caps), count ⌈*L*·*w* + *L* + *w* + 1⌉. This is area + half perimeter + 1 of the line's rectangle, an upper bound on the pixel centres any convex shape covers, so it holds at every angle |
+| Line (screen or world) of width *w* pixels (*w* ≥ 1) | Clip the segment to the near plane, project both ends, and clip the 2D segment to the viewport **expanded by *w*/2 on each side** (so a wide line whose centre line lies just outside the viewport still counts the pixels it paints inside); with *L* the clipped length in pixels plus *w* (the end caps), count ⌈*L*·*w* + *L* + *w* + 1⌉. This is area + half perimeter + 1 of the line's rectangle, an upper bound on the pixel centres any convex shape covers, so it holds at every angle. A line whose segment misses the expanded viewport counts 0 |
 | World box, drawn as edges | The sum over its twelve edges, each counted as a line (an edge entirely outside the frustum counts 0). A straddling outline box is therefore a set of clipped lines, never a full screen |
 | World box, drawn filled, eye inside the box | 0: the overlay pipeline draws filled boxes with back faces culled, so a box seen from inside writes nothing (EA1b §5.4). A renderer that does not cull back faces of filled boxes counts **one full screen** here instead |
 | World box, drawn filled, eye outside, all eight corners in front of the near plane | The axis-aligned rectangle around its eight projected corners, clipped to the viewport, counted outward. With back faces culled a convex box writes each pixel at most once |
 | World box, drawn filled, eye outside, some corner on or behind the near plane, not culled | **One full screen** |
-| Ext composition entry: a window, a nested surface, a world label, an ownership badge (§8.3) | min(one screen, its **displayed rectangle** counted outward), where the displayed rectangle is the axis-aligned rectangle around the entry after its size, scale and rotation, **not clipped to the screen and independent of its position**. Nested entries count again, because they are drawn again |
+| Ext composition entry: a window, a nested surface, a world label, an ownership badge (§8.3) | min(one screen, its **displayed rectangle counted by size**), where the displayed rectangle is the axis-aligned rectangle around the entry after its size, scale and rotation, in physical pixels, **not clipped to the screen**; the count depends only on its width and height, never on its position or sub-pixel phase. Nested entries count again, because they are drawn again. A badge counts its fixed box (§8.3) |
 
-Because an entry's count never depends on where it is, moving a window or label (by the
-script, by the user's drag, or by step 8 projecting a world label) can never raise
-coverage: a script cannot create windows that are mostly off screen and then slide them
-on screen unchecked. The count is never below the clipped area, so it stays conservative.
+Because an entry's count depends only on its size, moving a window or label (by the
+script, by the user's drag, or by step 8 projecting a world label, by whole or fractional
+pixels) can never raise coverage: a script cannot create windows that are mostly off
+screen and then slide them on screen unchecked. The count is never below the pixels the
+entry can cover at any position, so it stays conservative.
 
 **Rule 7.1.3 (bounds).**
 
@@ -461,10 +489,13 @@ ext scripts whose shown overlay list is non-empty in this frame. Each such scrip
 So no script's overlay passes 0.5 screen, all together never pass 1.0 screen and 20,000
 primitives, and one script's result depends on the others only through *n* (a residual,
 §6.8). **Reporting:** the counts dropped by the count share and by the coverage share are
-kept per frame in the script's overlay statistics (EA1b states how a script reads them),
-shown in its profiler line, and written to its script log at most once per 10 s. Drops are
-not aborts: they never throttle or suspend the script, because the bound already caps the
-cost.
+kept per frame, shown in the script's profiler line, and written to its script log at most
+once per 10 s (L91). The script's own overlay statistics (EA1b states how a script reads
+them) give it the count-share drops, which do not depend on the view; the figures that do
+(primitives culled or drawn, coverage, drops by coverage) are given only to a script that
+holds `world.read`, because a script with `overlay` alone could otherwise probe them frame
+by frame for the camera's position and facing. Drops are not aborts: they never throttle
+or suspend the script, because the bound already caps the cost.
 
 **Rule 7.1.5 (composition past the bound is refused).** The composition check runs at
 creation, at every show, at every change that makes hidden content visible (D17's entry
@@ -474,15 +505,20 @@ every screen resize or UI scale change. Position changes need no check (rule 7.1
 
 - A **script call** that would pass either bound is refused and changes nothing: a show
   leaves the window hidden and returns `false`; a size, scale, rotation or re-parenting
-  change leaves the geometry unchanged and returns `false`; the script log says why.
+  change leaves the geometry unchanged and returns `false`; a creation of a shown entry,
+  or an addition that gives a shown window its badge (its first pointer-catching element
+  or text box), answers `nil, "limit"` and creates or adds nothing; the script log says
+  why.
 - A **user resize** of an ext window stops growing the window at the largest size that
   keeps both bounds. A user drag is never limited (position does not count).
 - When a **host change** (a screen resize, a UI scale change) puts a script or the total
-  over its bound, the host hides ext windows, across all scripts, in reverse order of
-  their last show (the most recently shown first), until every script and the total fit.
-  Each hidden window gets `VisibleChanged` (marked as caused by the host) in its script's
-  next turn, and the script log records it. This order replaces EA1b §6.4's "lowest in the
-  ext z-order first" (§13).
+  over its bound, the host hides ext **windows and world labels**, across all scripts, in
+  reverse order of their last show (the most recently shown first), until every script
+  and the total fit. Hiding every entry brings any script to 0, so the rule always ends,
+  also for a script whose coverage is mostly labels. Each hidden window or label's script
+  gets `VisibilityChanged{visible = false, by = "host"}` (EA1a §7.10's name) in its next
+  turn, and the script log records it. This order replaces EA1b §6.4's "lowest in the ext
+  z-order first" (§13).
 
 **Rule 7.1.6 (budget row and E9).** D17 §8's frame-budget table gains the row **"Ext
 overlays and composition: 1.6 ms"**: **0.6 ms** of CPU encoding of up to 20,000 overlay
@@ -514,9 +550,10 @@ The profiler line shows "1 dropped (coverage)". A second script now starts drawi
 so each gets *A* = 0.5 screen and *c* = 10,000 again. With three drawing scripts *A* is 1/3
 screen each.
 
-**Tests.** X29 (full-screen quad flood), X30 (near-camera box flood), X31 (composition
-flood, off-screen windows moved on screen, user resizes at the bound), all also run inside
-E6 and E9.
+**Tests.** X29 (full-screen quad flood), X30 (near-camera box flood, wide lines just
+outside the viewport), X31 (composition flood, off-screen windows moved on screen,
+sub-pixel moves, user resizes at the bound, a labels-only script at a host change), all
+also run inside E6 and E9.
 
 <a id="s7-2"></a>
 ### 7.2 Transparent full-screen element, activation and keyboard focus (open item 2)
@@ -531,15 +568,24 @@ contradicts why `ui` is group O. This spec adopts **both** fixes D17 offers.
 counts as an **activating press** only when it is a **solid press**: the hit element at
 the press point draws there its own background colour or image, with alpha (for an
 image, the alpha of the texel under the press point) times the element's effective
-opacity (its own opacity times every ancestor's, the window's included) **at least 0.5**.
-Text, borders, the host's focus mark and the ownership badge (§8.3) do not make a press
-solid. A press that is not solid:
+opacity (its own opacity times every ancestor's, the window's included) **at least 0.5**,
+**and** no other element of any ext window (the script's own later siblings, its higher
+windows and other scripts' windows included, whether or not they catch the pointer)
+paints over the hit element at that point. The test is judged by the **topmost painted
+element** at the press point: a press that falls through a non-catching picture onto a
+catching element below it is not solid. Text, borders, the host's focus mark and the
+ownership badge (§8.3) do not make a press solid. A press on a catching element that sends
+no pointer notifications (EA1a's `enabled = false`) is solid or not by the same test and
+activates by the same rule, but it delivers no notification and so opens no gesture window.
+A press that is not solid:
 
 - is still caught by the ext element (it does not reach the world), and the script still
   receives its pointer notification, marked `gesture = false`;
 - for activation and focus is treated **exactly as a click on the world**: it activates
   nothing, deactivates whatever window was active (as a world click does), starts no
-  case 1, refreshes no case-1 timer, and is not a gesture for `Files.Pick`.
+  case 1, refreshes no case-1 timer, **raises nothing in the ext z-order** (only an
+  activating press moves a script's windows to the top of the ext range), and is not a
+  gesture for `Files.Pick`.
 
 **Rule 7.2.2 (a script focuses a text box only in a gesture turn).** A script request that
 would give keyboard focus to an ext text box (its `Focus`, an `Activate` or show of a
@@ -547,7 +593,10 @@ window whose remembered focus control is a text box) is honoured only during the
 (§8.13) that delivers a gesture for that script: a solid press on one of its windows, a
 start of one of its actions, or an `/ext:` line for it, subject to D17 §4's other
 conditions (case 2 needs no active window; the visible-and-uncovered rule always
-applies). Under case 1 outside such a turn, requests may still move **activation** among
+applies, and "covered" includes the script's own content: any element of its own tree drawn
+above the box, and any of its own higher windows, that paints inside the box's focus area,
+as well as the box's window badge being covered or off screen, §8.3). Under case 1 outside
+such a turn, requests may still move **activation** among
 the script's own windows, but a request that would focus a text box only remembers the
 focus control and returns `false`. This replaces D17 §4 case 1's sentence "inside those
 limits a timer can still focus a box before the user's next key".
@@ -669,16 +718,20 @@ suspension and the expiry of leases are native and run in every frame.
 
 **Rule 7.4.4 (bounds).** Under permanent gating at any frame rate, with *F* the length of
 one frame: a queued `/ext:` line or notification reaches its script within 250 ms + *F*
-plus that script's position in the round robin; a backend switch completes within
-**2 s + 17 × (250 ms + *F*)**, about 6.25 s when *F* is small against 250 ms (17 close
-items, at least one per floor frame). In deterministic mode the same bounds in frames are
-**16 frames** for a queued line or notification (plus the round robin) and **120 + 17 × 16
-= 392 frames** for a switch. Without gating D17's bound (34 ungated frames, about 0.6 s)
-holds.
+plus that script's position in the round robin; a backend switch with *a* apartments to
+close completes within **2 s + *a* × (250 ms + *F*)** (at least one unload or close item per
+floor frame). In slice 1a at most 16 apartments exist (L26; a 17th exists only during a hot
+reload, which ships in slice 1b), so the bound is **2 s + 16 × (250 ms + *F*)**, about 6 s
+when *F* is small against 250 ms; from slice 1b it is **2 s + 17 × (250 ms + *F*)**, about
+6.25 s. In deterministic mode the same bounds in frames are **16 frames** for a queued line
+or notification (plus the round robin) and **120 + *a* × 16** frames for a switch: **120 +
+16 × 16 = 376 frames** in slice 1a and **120 + 17 × 16 = 392 frames** from slice 1b. Without
+gating D17's bound (34 ungated frames, about 0.6 s) holds.
 
 **Rule 7.4.5 (worst-frame arithmetic).** A floor frame's ext time obeys D17 §8's ceiling
-(7 ms + R + 2·S ≤ 13 ms, or 11 ms + S after a compilation or close; the lower interim
-ceiling of OPEN O-2 while it is open), but it lands on a
+(7 ms + R + 2·S, or 2 ms + K + S after a compilation and 2 ms + C + S after a close, each
+within 13 ms; the lower interim ceilings of L12 and OPEN O-2 while it is open), but it
+lands on a
 frame that is already 22 ms old at step 7. D17 §8 "The frame budget" therefore gains the
 sentence: "Floor frames (§7.4 of the threat model) can add up to the ext ceiling to a
 heavy frame at most four times per second; they are outside the walking-run claim only if
@@ -697,17 +750,21 @@ lasts 30 ms. Ext last ran in frame 0. Frames 1–8 are gated; frame 9 starts 270
 frame 0 started, so the 250 ms condition holds before the 15-frame one and frame 9 is a
 floor frame: one 6a item runs, the 6b round robin runs up to the 2 ms cap and delivers a
 queued `/ext:notes add milk` line, and 6c steps one apartment. The user starts a backend
-switch with 17 apartments loaded at frame 10. Every ninth frame (about every 270 ms) is a
+switch with 16 apartments loaded at frame 10. Every ninth frame (about every 270 ms) is a
 floor frame and runs one unload item; 2 s after the switch was queued, the apartments
 whose `Unload` has not started are closed without it, one close per floor frame, and
-`Connect` is submitted after the last close. In deterministic mode with the "every frame
-is heavy" hook, the same run has a floor frame every 16th frame.
+`Connect` is submitted after the last close, within 2 s + 16 × 270 ms ≈ 6.3 s of the
+switch. In deterministic mode with the "every frame is heavy" hook, the same run has a
+floor frame every 16th frame and completes within 376 frames. With a hot reload in
+progress (slice 1b) the switch has 17 apartments and the bounds become 2 s + 17 × 270 ms
+≈ 6.6 s and 392 frames.
 
-**Tests.** X85: the "every frame is heavy" hook in deterministic mode with a queued
-`/ext:` line (served within 16 frames), a backend switch with 17 apartments (completes
-within 392 frames, `Connect` after the last close, no `Unload` starts after frame 120 of
-the switch, each late apartment's log has the timeout record), and a lease held when the
-switch is queued (ends in that frame, §8.17).
+**Tests.** X85, slice-1a part: the "every frame is heavy" hook in deterministic mode with
+a queued `/ext:` line (served within 16 frames) and a backend switch with 16 apartments
+(completes within 376 frames, `Connect` after the last close, no `Unload` starts after
+frame 120 of the switch, each late apartment's log has the timeout record). Slice-1b part:
+the same switch with a hot reload in progress, so 17 apartments (completes within 392
+frames), and a camera lease held when the switch is queued (ends in that frame, §8.17).
 
 <a id="s7-5"></a>
 ### 7.5 Bounded entity-subscription filtering (open item 5)
@@ -738,7 +795,22 @@ the call's remaining units or deadline, or when the script's events delivered in
 frame reach **1,024**. Matches become ordinary subscription notifications in the script's
 queue (within the 1,024-entry queue cap). The rest of the turn follows in the same frame
 if the cap allows. A record older than 60 frames when the cursor reaches it is skipped
-and counted as a drop.
+and counted as a drop. A subscription matches only records of frames **after** the frame
+in which it was created, so a subscription made while the cursor lags never matches
+records from before it existed.
+
+**Rule 7.5.2a (the filter call, the rolling time and aborts).** A filter call that ends by
+its own stopping rule (the next batch would pass its units or deadline, or the 1,024
+delivered events are reached) is **never an abort** and never counts under L18; one
+batch is at most 64 × 16 × `c_f` units (about 51 µs at `c_f` = 10), so the call stops at a
+batch boundary before its deadline. Filter-call time is **excluded** from L17's rolling
+mean, throttle and suspension: its amount is set by the world's record rate (L31) times
+the script's subscriptions (L30), which a script in a dense streaming area, or under an
+entity flood from a server (AT6, slice 3), does not control. It still counts against the
+2 ms cap (L5) and the frame's ext time (L12, E6), the profiler line shows it apart from the
+script's own time, and the rest of the turn's calls count under L17 as before. A throttled
+script's turns, its filter call included, run at half rate (L17); its cursor then lags,
+and records older than 60 frames are dropped and counted, never filtered late.
 
 **Rule 7.5.3 (enumeration).** D17 §8 "The worst ext time in one frame" now covers the
 pass: a filter call is a 6b call, so it is inside the "6b call started just under 2 ms"
@@ -759,7 +831,12 @@ frame. Every script's next delivery carries `unfiltered = 5,904`.
 
 **Tests.** X19 (E6 case: a 10,000-entity integration per frame for 10 s, run twice, with 4
 scripts × 16 subscriptions and with 16 scripts × 4, both at L30's 64 in all; frame rule and
-ceiling hold; drops counted; cursors never skip a record except past 60 frames).
+ceiling hold; drops counted; cursors never skip a record except past 60 frames; no script
+is throttled, suspended or charged an abort by its filter calls alone; a subscription made
+while its script's cursor lags matches no earlier record). Its ST part feeds the records
+through the harness's **record-flood hook** (a test hook that adds spawn and despawn
+records to steps 2–5's list in deterministic mode, as many per frame as the test asks),
+not through walk-file entities, whose count L86 caps at 4,096 per run (§13).
 
 <a id="s7-6"></a>
 ### 7.6 `Store` read-your-writes (open item 6)
@@ -772,14 +849,15 @@ values the old `Unload` saved are still pending, so the new apartment reads stal
 **Rule 7.6.1 (the file index).** When a store is opened (D17 §8, "`Store` I/O": on the
 store's I/O queue, inside the load's snapshot job, before the top-level run), the host
 first removes temporary files left by a crash (§8.7), then lists the store's key files and
-builds the **file index**: key → counted size of its file (§8.7 "Counted bytes"). It is
+builds the **file index**: key → the file's exact byte size and its counted size (§8.7
+"Counted bytes"); the exact size bounds every later read of that file (§8.14). It is
 kept in host memory and charged to the memory cap of **every apartment that has the store
 open**: in a hot reload, where both apartments share the store, it counts in full toward
 both caps (conservatively, twice in the sum) until the old apartment's cap leaves the sum
 (rule 7.6.5), and from then on toward the new apartment's cap only. It is kept current only
 by work on the store's
 I/O queue: a flush that renames a value into place sets the key's entry to the new file's
-counted size; a flushed deletion removes the entry; a wipe and an orphan removal empty
+byte size and counted size; a flushed deletion removes the entry; a wipe and an orphan removal empty
 it. The file index describes the disk; what the script has written and not yet flushed is
 in the pending-write map.
 
@@ -797,8 +875,12 @@ read this state: a call on a taken entry pays as for a clean key. Calls that ans
 the index (`Has`, `Keys`, `Usage`) see the pending map over the file index.
 
 **Rule 7.6.3 (reads see pending values).** A `Store.Get(k)` whose key has an entry in the
-pending-write map is answered from a **copy of that entry taken when the `Get` is called**
-(program order): a `Set` or `Delete` after the `Get` does not change the answer. A pending
+pending-write map is answered from **that entry's bytes as they are when the `Get` is called**
+(program order): a `Set` or `Delete` after the `Get` does not change the answer. The host
+keeps each pending value's bytes immutable and the `Get` shares them (a newer `Set` makes
+new bytes, never changes the shared ones), so the call copies nothing; an implementation
+that copies instead charges the copied bytes, b(stored size), at the call before it
+copies (D17 §8, charge before work). A pending
 deletion answers "absent", exactly as a key with no file. Such a read needs no worker job
 and no file read, but in every way the script can observe it is an ordinary read: it is
 delivered as a notification in the script's **next** turn (never in the calling turn) and
@@ -925,8 +1007,15 @@ This is the one log format; EA1a §4.3 and EA1b §9.2 cite it (§13).
 - **Cap.** A record is at most **4,096 bytes** after escaping, prefix included; longer text
   is cut at a UTF-8 boundary that does not split an escape and ends with the marker
   `…[cut]`.
-- **Rate.** The rate limit and the counted "N records dropped" record of D17 §8 are
-  unchanged (L45).
+- **Rate.** Two token buckets of escaped record bytes, each holding one second of its
+  rate and starting full: D17 §8's **64 KiB/s per script**, and a new **128 KiB/s for all
+  scripts together** (L45). A record is written only when both buckets hold its bytes,
+  which it then takes from both; otherwise it is dropped and counted in that script's
+  drop count. When both buckets next allow it, the host writes that script's counted
+  "N records dropped" record (source `host`, itself paid from both buckets) and resets the
+  count. So the bytes all script logs write in any interval of *t* seconds are at most
+  128 KiB × (*t* + 1), whatever the number of scripts. This changes D17 §8's script-log row,
+  which calls the per-script rate "the only rate limit on the log" (§13, OPEN O-3).
 - **The developer console** (EA1b §9.2) shows log records as text of the reserved layer:
   each displayed line passes §8.2's steps 1–5 with the "error or log line" cap, so the
   console and the reserved layer show script text the same way (D17 §5.3). The log
@@ -983,10 +1072,20 @@ next to the id and folder kind; the markup name of (a) is drawn as literal text.
 ### 8.3 Host-drawn ownership badge
 
 - Every shown ext window that has at least one element that catches the pointer, or any
-  text box, carries a **badge** drawn by the host: the script id and the words "ext
-  script" in Tessera's fixed badge style, attached outside the window's top edge (inside
-  the window when that edge is off screen), at full opacity whatever the window's
-  opacity.
+  text box, carries a **badge** drawn by the host: the text "⟨id⟩ · ext script" in
+  Tessera's fixed badge style, at full opacity whatever the window's opacity.
+- **Fixed box.** The badge is drawn in a box of fixed size, **20 UI units high and
+  16 + 8 × (*n* + 13) UI units wide**, where *n* is the id's length in bytes (ids are
+  ASCII, at most 32, L38), so at most 376 UI units wide; its text is clipped to that box.
+  The box, never the drawn glyphs, is what composition coverage counts (rule 7.1.2,
+  counted by size in physical pixels: UI units × the UI scale), so the count does not
+  depend on fonts and `UI.Usage().area` is deterministic.
+- **Placement: wholly on screen.** The host attaches the badge outside the window's top
+  edge, left-aligned with the window, when that position lies wholly inside the screen;
+  otherwise (a window at y = 5, a window partly off screen at the top, left or right) the
+  host places it **inside** the window along its top edge, shifted horizontally so that
+  the whole box lies on screen. Where the window itself is too small or too far off screen
+  for the box to lie wholly on screen inside it, the badge counts as **off screen**.
 - The badge is shown whenever the window is shown, not only while a text box has focus
   (this replaces EA1a §7.7's focused-only badge, §13).
 - The script cannot style, move, cover, hide or measure the badge; it is not an element
@@ -994,9 +1093,18 @@ next to the id and folder kind; the markup name of (a) is drawn as literal text.
   every ext window of every script**, as the top layer of the ext range (badges among
   themselves in the z-order of their windows), so no ext window, of the same script or of
   a cooperating one, with or without a catching element, can be placed over a badge.
-  Plugin windows, native panels and the reserved layer are above the ext range and may
-  cover a badge; none of them is controlled by an ext script. Its area counts toward the
-  window's composition coverage (§7.1).
+  Plugin windows, native panels and the reserved layer are above the ext range (§8.26) and
+  may cover a badge; none of them is controlled by an ext script. Its area counts toward
+  the window's composition coverage (§7.1).
+- **No focus behind a hidden badge.** A script can read native panel positions (§6.8
+  residual 1) and place its window so that the badge falls under an always-visible
+  toolbar or chat window while its text box stays visible. So keyboard focus enters a
+  window's text box (by the user's own solid press, or by a script request in a gesture
+  window) only while that window's badge is **wholly on screen and uncovered** by any
+  plugin window, native panel or reserved-layer surface, and the host **takes the focus
+  back** at the same re-checks as for a covered text box (D17 §4, L58) as soon as the
+  badge becomes covered or off screen. A press on the box while its badge is hidden is
+  still a press, but focus stays where it was.
 - While an ext text box has keyboard focus, its window's badge is drawn with Tessera's
   focus colour as well.
 - **Test X49:** a window styled like a native panel with a text box: the badge shows the
@@ -1004,7 +1112,13 @@ next to the id and folder kind; the markup name of (a) is drawn as literal text.
   pixels (golden image); a second, higher ext window of the same script and one of
   another script, both without catching elements or text boxes, placed over the badge:
   the badge's pixels are unchanged; a fully transparent window with a pointer-catching
-  element shows the badge too.
+  element shows the badge too; a window at y = 5 and one partly off screen at the left:
+  the badge is drawn inside the window, wholly on screen; a window placed so that its
+  badge lies under a native panel (the chat window) and, in a second run, under a plugin
+  window, while its text box is uncovered: a user's solid press on the box and a script
+  `Focus` in a gesture window both leave the focus where it was; a plugin window dragged
+  over the badge of a focused box takes the focus back before the next key; the counted
+  badge area is the same under two different fonts.
 
 <a id="s8-4"></a>
 ### 8.4 Selection and copy (pastejacking)
@@ -1015,10 +1129,27 @@ next to the id and folder kind; the markup name of (a) is drawn as literal text.
 - A copy (`Ctrl+C`, `Ctrl+X`, the platform's equivalents) copies only text the user
   selected and only if the box's text has not changed since the selection was made; if
   it changed, the copy does nothing.
+- **A copy takes only text that was on screen** (D17's wording). A script can fill a box
+  before the user selects, so a copy is made only when, from the selection to the copy,
+  the **whole selected range was displayed**: every selected character drawn inside the
+  box's visible area (none clipped by the box, its window or the screen, none scrolled
+  out), the box visible and uncovered as for focus (L58), and the text drawn with colour
+  alpha × effective opacity **≥ 0.5**. Otherwise the copy does nothing. So `Ctrl+A`,
+  `Ctrl+C` in a `Field` holding "ls" followed by 300 spaces and a command scrolled out of
+  view copies nothing.
+- **Invisible characters are stripped.** The copied text has every character of general
+  category Cc, Cf, Zl and Zp removed (bidi controls, U+200B–U+200D, U+2060, U+FEFF, tag
+  characters), except LF and tab in a box that displays them as line breaks and tabs;
+  in a single-line box LF and tab are removed too. Text whose colour merely matches the
+  background is not detected; that is a stated residual of the copy rule (the user still
+  sees the box's extent).
 - **Test X52:** the user selects "abc"; in the same frame and the next, the script
   replaces the text with a shell command; `Ctrl+C` puts nothing on the clipboard (the
   test's clipboard stub stays unchanged). A script call that tries to select text has no
-  effect.
+  effect. Then, with text set before the user selects: "ls" + 300 spaces + "; curl x|sh"
+  in a `Field` and `Ctrl+A`, `Ctrl+C` (nothing copied); text at colour alpha 0 and at
+  0.49 (nothing copied); a selection partly under a plugin window (nothing copied); text
+  with U+200B, U+202E and U+0007 inside it, fully displayed (copied without them).
 
 <a id="s8-5"></a>
 ### 8.5 Image decodes count as outstanding requests
@@ -1052,10 +1183,16 @@ busy.
 - **Sustained write rate (lowered).** Per script a token bucket of **10 MiB** capacity
   refilled at **32 KiB/s**; for all scripts **40 MiB** refilled at **128 KiB/s**. The
   capacities are D17's (10 s of its rates), so both the burst and the rate are at most
-  D17's figures. The key rate of D17 (64 key writes per second per script, 10 s bucket)
-  stays. Worst sustained case for all scripts: 128 KiB/s ≈ 10.5 GiB per day of a hostile
-  script running all day (D17's figures allowed 86–345 GB per day). This changes D17 §8's
-  `Store` writes row (§13, OPEN O-3).
+  D17's figures. These byte rates change D17 §8's `Store` writes row (§13, OPEN O-3).
+  The key rate of D17 stays, counted as **64 newly dirty keys per second per script**
+  (10 s bucket, L43): a key token is taken only when a call makes a clean key dirty
+  (below), never for a replacement of an untaken value.
+- **Worst sustained wear, all scripts, no grant needed.** `Store` writes at 128 KiB/s
+  (≈ 10.5 GiB per day) plus script logs at their all-scripts rate of 128 KiB/s (L45,
+  §8.1; ≈ 10.5 GiB per day), so about **21 GiB per day** of hostile scripts running all
+  day, plus the one-off bursts of the `Store` buckets (40 MiB) and the log buckets
+  (128 KiB). D17's figures allowed 86–345 GB per day for `Store` and, with 16 scripts at
+  64 KiB/s, about 84 GiB per day for the log.
 - **When the buckets are debited.** At the `Store.Set` or `Store.Delete` call, so that a
   refusal can be answered there. A key is **dirty** while it has an **untaken** entry in
   the pending-write map (rule 7.6.2), and **clean** otherwise: with no entry, or with an
@@ -1079,9 +1216,38 @@ busy.
 - **Temporary files count.** Temporary files of flushes in progress count toward the
   16 MiB and 256 MiB totals. When a store is opened, temporary files left by a crash are
   removed on its I/O queue before the open completes.
-- **Log.** Unchanged: 1 MiB per file, rotated once, 64 KiB/s.
+- **Log.** 1 MiB per file, rotated once (at most 2 MiB on disk per script); 64 KiB/s per
+  script and 128 KiB/s for all scripts (§8.1, L45).
+- **Totals, orphans included (L40, L41, L92).** The all-scripts totals count every store
+  of a (kind, id), loaded or not. A loaded or loading store contributes its file index and
+  pending entries (rule 7.6.1, 7.6.5). Every other store, an orphan or a script not
+  loaded, contributes the result of the **store-root scan**: the host lists
+  `data/script-store/<kind>/` through its directory handle (§8.8 item 1) and, for each
+  entry named `s_<id>` with a valid id that is a plain directory (checked with
+  `fstatat` without following, never opened if it is a link, reparse point or other
+  kind), lists that directory through a no-follow handle and adds, for each entry, its
+  counted size from `fstatat` without following (a regular file by its size, any other
+  entry as 4 KiB), and one key per regular file whose name is a key file; nothing in it
+  is opened for reading. Entries of `<kind>` that are not such directories count nothing
+  and are reported by the script manager. The scan reads at most **1,024** entries of
+  each `<kind>` listing and at most **2,064** entries of each store (1,024 key files, as
+  many temporary files left by a crash, and the host files); past either
+  cap the listing stops, the store or the remaining stores count as **full** (16 MiB and
+  1,024 keys each, or the whole all-scripts totals for a `<kind>` listing that passes
+  its cap), so the totals stay conservative, and the script manager reports it. The scan
+  runs on the grant-store queue (never an asset worker, never the main thread) once
+  while EM's gate is `Starting`, before any load, and again after every Reset, Remove and
+  orphan removal; a store leaves the scanned set when a load opens it (its file index
+  then counts) and joins it again, with its file index's last figures, when its
+  apartment's final flush completes.
 - **Test X56:** new 1-byte keys every frame stop at 1,024 keys and 16 MiB counted;
-  leftover temp files are removed at the next open. **Test X57:** a script rewriting
+  leftover temp files are removed at the next open; with 300 orphan stores of 1 MiB each
+  present at start-up, a new script's writes answer `nil, "full"` at the 256 MiB total;
+  a `<kind>` directory of 10^5 entries is listed only up to 1,024 and the totals count as
+  full. **Log flood:** one script printing a 4 KiB line every frame for 60 s keeps its
+  log files within 2 MiB on disk and its rate within 64 KiB/s; then 16 scripts doing so
+  together write at most 128 KiB × 61 bytes of log in 60 s in all, and each script's log
+  carries its counted "N records dropped" records. **Test X57:** a script rewriting
   1,024 keys every frame for 60 s writes at most 10 MiB + 60 × 32 KiB of counted bytes,
   its refused calls answer `nil, "busy"` at the call, and a reload in the middle of the
   run does not raise that bound. The same bound holds in a second run where the harness
@@ -1098,8 +1264,15 @@ handle, then the script folder `<id>` **relative to that handle** with
 `O_NOFOLLOW | O_DIRECTORY` (POSIX), or relative to the parent handle with
 `FILE_FLAG_OPEN_REPARSE_POINT`, refusing any reparse point (Windows). A symbolic link or
 junction at `<id>` refuses the script. The data directory itself may be a link (it is the
-user's configuration). **Test X54** includes a script folder that is a symlink to a
-directory outside: refused.
+user's configuration). Every entry of the walk (EM §3.4, `scripttool check` included) is
+**classified before it is opened**, with `fstatat(…, AT_SYMLINK_NOFOLLOW)` relative to its
+directory handle (Windows: the directory listing's attributes); a link, FIFO, socket or
+device node refuses the script without being opened, so no open blocks and no device is
+opened with side effects. A regular file is then opened with `O_NOFOLLOW | O_NONBLOCK`
+and checked again **on the handle** (regular, one link, the same file as classified); a
+swap between the two checks refuses the script. **Test X54** includes a script folder that
+is a symlink to a directory outside, a FIFO and a device node in the folder: each refused,
+and no asset worker blocks.
 
 **Store directories and log files (closes T93).** The same holds for every path below
 Tessera's own directories whose name a script influences: the store directory
@@ -1121,8 +1294,14 @@ can match) and state the per-entry actions; they must satisfy all of these:
    file is used only if it is a regular file with a link count of 1. New files are
    created exclusively (`O_CREAT | O_EXCL`, or `CREATE_NEW`), so a create never writes
    through an existing entry, and a rename only replaces a directory entry, never writes
-   through it. Opens that read are non-blocking, as in §8.6, so a FIFO never blocks a
-   worker.
+   through it. An existing entry is **classified before it is opened** (`fstatat` without
+   following), and only a regular file is opened; **every** open, for reading or for
+   writing (the log's append open included), is non-blocking (`O_NONBLOCK`; a write open of
+   a FIFO then fails with `ENXIO` instead of waiting for a reader), so a FIFO never blocks
+   a worker or the log writer and a device node is never opened. A rename that would
+   replace an entry that is not a plain regular file (a rotation onto a linked or special
+   `s_<id>.1.log`, a flush onto a special key file) is not made; the entry is first
+   removed as in item 4, or the operation fails closed as in item 3.
 3. **A store directory that is not a plain directory is never used.** If `s_<id>` (or its
    `<kind>` directory) is a symbolic link, a junction or other reparse point, or not a
    directory, the store open fails closed: nothing in or behind it is read, written or
@@ -1144,6 +1323,24 @@ can match) and state the per-entry actions; they must satisfy all of these:
    subdirectory, and never deletes anything outside `s_<id>`. A wipe that finds an entry
    it may not remove fails closed: the open fails, the load is refused, and nothing is
    opened that the wipe should have removed.
+
+**Tessera's own files.** The grant store `ext-grants.toml` and `keymap-ext.toml` may be
+links (they follow the configured paths, §8.19, EM §8.5), but every read of them is a
+non-blocking open whose kind is checked **on the handle** (a regular file; a FIFO,
+socket, device or directory is treated as unreadable, never waited on), and reads at most
+the file's cap + 1 bytes (L79, L47). A copy of a damaged document (EM §8.6's `.corrupt`
+backup) is made of those bytes only, or by a rename, never by an unbounded copy of the
+target. An advisory lock on such a file is taken without blocking, retried for at most
+1 s, and then treated as a failed write (the decision stays for the session, EM §8.5).
+The grant-store queue therefore never waits on another program, and EM's gate cannot stay
+in `Starting` because of it.
+
+**The harness's tool root.** `scripttool`'s tool root (EM §11.1) holds X94's links and
+junctions on purpose. Every removal EM §11.1 makes at exit (of the tool root it made,
+and of a user-given `--root` if EM decides to remove one) is a no-follow recursive
+removal by directory handles, as item 4 removes entries: a link or
+reparse point is removed as an entry, never followed, and nothing outside the root is
+removed.
 
 These rules make invariant 15 concrete for the store and the log. **Test X94.**
 
@@ -1240,9 +1437,26 @@ old and is gated. The idle 30 ms appear in neither figure.
   6b turn" as this window. EA1a's narrower "gesture call" (EA1a §2.1, §7.7) is replaced
   by it (§13), so that a gesture's effect does not depend on whether the script acts in
   the delivering handler or later in the same turn.
+- **What opens it.** Only the delivery of a gesture opens a window: an action start's
+  notification, an `/ext:` line's notification, or the **press** notification of a solid
+  press. The release and click of that press carry its `gesture` flag for information
+  only and open nothing, so a press held for 10 s does not open a second window when it
+  is released.
+- **How long it lasts (L93).** A split turn can span many frames (its rest waits for the
+  ordinary rotation, and a throttled script runs at half rate). So the window closes at
+  the **first** of: the end of the delivering turn; the first user key press, pointer
+  press or wheel step after the gesture that resolves outside that script's own windows
+  and actions (as a key elsewhere ends D17 §4 case 1); **1 s** of wall time after the
+  delivering call started (**60 frames** in deterministic mode). A request made after it
+  closed is treated as outside a gesture window (rule 7.2.2: a focus request returns
+  `false`). The 1 s covers a turn split by the 2 ms cap and resumed at the next floor
+  frame (at most 250 ms + one frame later, §7.4), so X89 still holds under gating.
 - **Test X89:** with the 2 ms cap forced by heavier scripts so that a note-taker's turn is
   split over two frames, its action start still opens its window with the text box
-  focused, every time.
+  focused, every time; also under the "every frame is heavy" hook. A split gesture turn
+  whose `Focus` call comes after the user pressed `W` (resolved to the world), or more
+  than 60 frames after the gesture, returns `false`; a solid press held for 10 s opens one
+  window, at the press.
 
 <a id="s8-14"></a>
 ### 8.14 Outstanding reservations and the memory cap
@@ -1250,20 +1464,39 @@ old and is gated. The idle 30 ms appear in neither figure.
 Every outstanding request reserves, against the script's memory cap at the call, the
 memory its result will hold until delivery, never a flat maximum:
 
-- A `Store` read reserves the stored value's size, taken from the pending-write map
-  (§7.6) when the key has an entry there and otherwise from the **file index** (§2,
-  rule 7.6.1), times the declared expansion ratio of the neutral reader's parsed form
-  over the stored bytes (E5 measures it; at least 1.0; EA1a's OPEN-2). A key with no file
-  and no pending entry reserves nothing and answers absent.
-- A bridge read reserves the plugin-data file's size, at most 1 MiB, times the same
-  ratio; a `Files.Pick` reserves 3 MiB.
+- A `Store` read of *n* stored bytes, taken from the pending-write map (§7.6) when the
+  key has an entry there and otherwise from the **file index**'s exact byte size (§2,
+  rule 7.6.1), reserves **ρ × *n* + ε × min(*n*, 8,192)**: ρ is the neutral reader's
+  declared parsed bytes per stored byte and ε its declared host memory per value-model
+  element (a table, string or number; at most 8,192 elements, L34). Both are
+  **worst-case bounds over the whole value model**, not typical figures: E5 declares them
+  as the maxima over hostile values built to maximise each (for example 8,192 empty
+  tables, or thousands of 1-byte strings, in the fewest bytes), at least 1.0 and 0
+  respectively (EA1a's OPEN-2). A key with no file and no pending entry reserves nothing
+  and answers absent.
+- **The read never passes its reservation (AT5).** Another program may replace or grow a
+  key file after the file index was built. The worker opens the key file as §8.8 says,
+  checks the size **on the handle** against the file index's exact size, and reads at
+  most that many bytes plus one; a file whose size on the handle differs from the index,
+  or that yields more bytes, answers `fn(nil, "invalid")` and is not parsed (the script
+  log names the key; the file stays for the next open's checks). The parse runs under the
+  reservation as its memory limit: a parsed result whose measured size passes its
+  reservation is discarded and answers `fn(nil, "too large")`, **never delivered**. So a
+  delivered value never holds more than the reservation charged at the call. A pending
+  entry's bytes cannot change (rule 7.6.3), and its parse is bounded the same way.
+- A bridge read reserves by the same formula over the plugin-data file's size (at most
+  1 MiB), checks that size on the handle and reads at most it plus one byte; a
+  `Files.Pick` reserves 3 MiB.
 - A reservation that would pass the script's memory cap answers `nil, "out of memory"`
   (**returned, not raised**) and queues nothing. This replaces EA1a §5.3's raised memory
   error (§13): a refused reservation is a resource answer like "busy", not a fault in the
   script's code.
 
 So 32 outstanding small reads answer `nil, "busy"` at the 33rd, as D17's exit criterion 2
-expects. **Test X25.**
+expects. **Test X25** (with the hostile-file cases: a key file replaced by a 1 MiB file, or
+grown, after the file index was built; a value of 8,192 empty tables; a value of 1-byte
+strings: no delivered value passes its reservation, no read passes the indexed size plus
+one byte, and the script's memory stays under its cap).
 
 <a id="s8-15"></a>
 ### 8.15 Compatibility functions removed from the ext profile
@@ -1288,18 +1521,28 @@ reached by any route.
 - Holds of ext actions come from their own pool of **64** for all ext scripts, on top of
   KM §7.3's 256, which stay whole for non-ext contexts. A binding whose hold would pass
   the ext pool does not start (the press resolves to nothing further).
-- A manifest may suggest **at most one** default binding per stroke per script; a second
-  suggestion of the same stroke is refused by `scripttool check` and at load.
+- A manifest may suggest **at most one** default binding per stroke per script, and no two
+  suggested defaults of one script in one context may **overlap**: one stroke's completion
+  can complete the other. That covers equal strokes after KM §5.1 normalisation, a chord
+  and a single button that is one of its buttons, or two chords of which one's buttons are
+  a subset of the other's (a simultaneous chord and a single-button binding both fire when
+  the chord completes, KM §7.2), two strokes with the same last button whose modifier
+  conditions one press can meet together (KM's modifier matching), and for axis actions
+  any two whose modifier sets can match at once (a subset-modifier match). An overlapping pair is refused by `scripttool check` and at load (EM's
+  finding code), so one press never starts two holds of one script through its defaults.
+  The user's own bindings are not limited by this rule (§4.2).
 - **Test X41:** a script binding one stroke to 64 actions by hand, held with four other
-  such keys: built-in movement still starts and stops normally.
+  such keys: built-in movement still starts and stops normally; manifests suggesting
+  `A+B` and `B`, and two axis actions on `Shift+Wheel` and `Wheel`, each pair in one
+  context: refused.
 
 <a id="s8-17"></a>
 ### 8.17 Leases end in the frame of the event; picking follows the screen
 
 D17 §5.4 ends leases "in the same frame" as the events that take control back. Every lease
-(the camera lease of EA1b §4 and any later one) therefore ends, and the user's view or
-control returns at step 3 of that frame (or of the next frame when the event comes after
-step 3), at the first of:
+(the camera lease of EA1b §4 and any later one) therefore ends at the event, and the
+user's view or control returns at step 3 of that frame (or of the next frame when the
+event comes after step 3, "Event time" below), at the first of:
 
 - the 350 ms expiry (L63);
 - the game window losing keyboard focus, including when a `Files.Pick` dialog opens;
@@ -1308,7 +1551,24 @@ step 3), at the first of:
 - the frame in which a backend switch or session end is **queued** (rule 7.4.2), not the
   later frame in which that apartment's unload item runs; this adds a "switch" end reason
   to EA1b §4.5 (§13);
-- the apartment's unload, for any other cause.
+- the frame in which the apartment's unload is **requested**, for any other cause (the
+  user's unload in the script manager, `Core.Unload`, developer mode turned off, a full
+  or hot reload, the client's exit), not the later frame in which its unload item runs
+  (D17 §5.4 "in the same frame").
+
+**No lease or intent from an `Unload` handler.** The "unload" end and the discard of
+intents happen when the unload is requested, before the handler runs, so the handler must
+not start new ones: inside an `Unload` handler, a lease request (`Camera.Take` and any
+later lease) is refused as if taken, lease and overlay intents are refused, `Sandbox`
+commands answer a refusal, and every intent the handler queues anyway is discarded when it
+returns. During a hot reload the old apartment's handler therefore never holds the global
+lease slot (L82) against the new apartment.
+
+**Event time.** Every event ends the lease at once. For an event in or before step 3 the
+user's view and control come back in step 3 of that frame. For an event after step 3
+(for example a suspension after a third abort in 6b, or a revocation applied after
+step 3) no later renewal, intent or apply of the lease takes effect, and the user's view
+and control come back at step 3 of the **next** frame, the first step 3 after the event.
 
 **Picking under a lease.** While a lease changes the rendered view, every pick that the
 user's own pointer makes (clicks, selection, hover, and IB's pointer actions) uses the
@@ -1398,6 +1658,30 @@ and no call of the script runs until the user resumes it. Then:
   `false`, and what the module made is gone (EA1a §2.9 lists it per module); an entity
   `Follow` or subscription made under `entity.read` does not survive.
 
+**What natives check: the apartment's effective set.** Every native, and every apply step
+of an intent, checks the capability against the **apartment's effective set**: the
+capabilities granted when that apartment was loaded, shrunk by every revocation since, and
+**never grown** during the apartment's life. It never reads the live grant table. So after
+the user revokes optional `camera`, resumes the script and then widens `camera` again in
+the script manager, the kept `Camera` natives still raise `"not granted"` until the
+script's next load (a widening applies only at a load, EM §9.3, §9.7).
+
+**Handles carry their module's capability.** A handle (an entity, a node, any object a
+module mints) stays a valid Lua object after its module's capability is revoked, but every
+native that takes a handle as an argument, of any module, checks the capability of the
+module that **minted** it against the effective set and raises `"not granted"` if it is
+gone; an intent that holds a handle is re-checked the same way when it is applied. So a
+kept entity handle cannot be passed to `lease:Follow` (or any later native) after
+`entity.read` is revoked, and a `Follow` already running ends at the revocation's
+suspension and is not restarted by a resume.
+
+**Suspension and input.** Suspension, for any reason, deactivates the script's ext
+contexts and releases their holds (L61) in that frame; its bindings consume no input and
+record no action edges or gestures while it is suspended (a press of one of its strokes
+resolves as if the binding did not exist; the panic chord is resolved before any of them,
+L64). On resume the contexts are **not** restored: they stay inactive, `Input.IsActive`
+answers `false`, and the script activates them again itself (within L62's rate).
+
 There is no "refuse from the next call without suspension" path (this replaces EM §9.7's
 optional-capability rule, §13).
 
@@ -1411,12 +1695,45 @@ script's grants changes nothing while it runs; the wider record is honoured only
 script's next load, which goes through EM §9.2's checks (pinned capability list and
 content hash) like any load. A record that breaks EM §8.3's rules (for example one that
 grants `session.server` with a local-only capability) is ignored and grants nothing,
-however it was written. **Test X91:** revoke an optional `camera` grant while a
+however it was written.
+
+**The session overlay.** A re-read must not undo what the user decided in this session.
+The host keeps, for the client session, an **overlay** of the user's decisions that the
+document does not hold: those whose write failed, and all of them while the document is
+not writable (a newer `version`, EM §8.6). Every re-read result is combined with it:
+narrowings of the overlay (a revocation, Reset, Remove, a local-only switch) always apply
+over the re-read result, so a revoked grant never returns without a dialog; widenings of
+the overlay (an Allow in the dialog this session) apply too, because the user made them.
+A re-read of a document that Tessera does not understand as a whole (a newer `version`,
+whose records are all ignored) changes nothing in the effective grants: it is neither a
+narrowing nor a widening, and suspends nothing. Only a re-read of a document Tessera
+reads can narrow by another route as above.
+
+**Loads in progress.** A narrowing that reaches a (kind, id) whose load is in progress
+(past its grant decision, before its top-level run: a manager revocation, Reset, Remove,
+a local-only switch or a narrowing re-read) cancels that load as §8.21 cancels one at a
+switch: store work in progress completes on its queue, the state gets one close item if it
+exists, and the top level never runs. Phase D's delivery and the top-level item each
+re-check the load's grant set against the current record before they run, so a load never
+proceeds without a capability that was revoked after its dialog (D17 §2, "never loads
+degraded").
+
+**One id, one apartment.** A load of an id is refused while the same id of the other
+folder kind is loaded **or loading**, from the moment that load took its reservation
+(EM phase A) until its close item has run (L26). So two loads of one id from both kinds
+that start together (for example two `autoload = true` records at world entry with
+developer mode on) cannot both pass: the second is refused. **Test X91:** revoke an optional `camera` grant while a
 lease and a path are active and an optional `entity.read` grant while a `Follow` runs:
 the script is suspended in that frame, the lease ends in that frame, no intent of the
 script is applied after it, and after the user resumes the script every call of either
 module raises `"not granted"`; revoke a required grant: suspended, then unloaded, with no
-`Unload` call.
+`Unload` call. Further cases: revoke optional `camera`, resume, then widen `camera` in the
+manager: the kept `Camera` natives still raise `"not granted"` until the next load; revoke
+optional `entity.read`, resume, then pass a kept entity handle to `lease:Follow` (1b):
+`"not granted"`; a manager revocation whose write fails, then a manager open that
+re-reads the document: the grant stays revoked; a newer-`version` document re-read while
+scripts run on session-only grants: nothing suspended; a suspended script's ext context
+and its holds are released in that frame, and stay inactive after resume.
 
 <a id="s8-24"></a>
 ### 8.24 No store or hand-off crosses an `author` change
@@ -1462,6 +1779,36 @@ control to inside it) **after** the 500 ms delay ended; and the pointer stayed i
 control from that entry to the press. A pointer that entered during the first 500 ms and
 rests there, or that was over the control when the dialog appeared, must leave and enter
 again. Keys only refuse. **Test X48** covers it.
+
+<a id="s8-26"></a>
+### 8.26 The ext z-range is below plugin windows and native panels
+
+D17 §4 places ext windows in their own z-range below plugin windows and native panels, and
+its M5.5 exit criterion 2 requires that "an ext window never covers a plugin window,
+whatever their `ZOrder`". The rule (closes T94):
+
+- **One range, below.** Every ext composition entry (windows, nested surfaces of any later
+  kind, world labels and badges) is drawn in the ext range, and the whole ext range is
+  drawn **below** every plugin window, every native panel and the reserved layer, and
+  above the world. Hit testing and hover use the same order, so a point covered by a
+  plugin window or native panel never reaches an ext element.
+- **Nothing a script does leaves the range.** A script's `ZOrder` (any value), `Activate`,
+  a solid press that raises the script's block (§7.2), re-parenting, a nested surface, a
+  show, and a show while a consent prompt or another reserved-layer surface shows all order
+  entries **within** the ext range only. A nested surface is drawn inside its window's
+  place in the range, never outside it. No API offers a way to place an ext entry in the
+  plugin or native range, and the host clamps every ordering value it receives into the
+  ext range.
+- **While a prompt shows** the ext range is not drawn at all (D17 §5.3), and an ext show
+  in that time changes only the ext range's order for when it is drawn again.
+
+**Test X95** (CI, golden image and hit test): a plugin window at its lowest `ZOrder` over
+part of an ext window at its highest, then after the ext window's `Activate`, a solid press
+on it, a re-parenting of its content, and (in the slice that adds one) a nested surface
+inside it; and an ext window shown while a prompt shows, then after the prompt closes. In
+every frame the plugin window's pixels are unchanged against a run without the ext script,
+and a click and a hover on the plugin window's area reach the plugin window. The same with
+a native panel (the chat window) in place of the plugin window.
 
 ---
 
@@ -1569,8 +1916,9 @@ on the client's thread and on the harness's.
 <a id="s10"></a>
 ## 10. Limits register
 
-Every limit of extended scripting, with its number. This register is the single home of
-these numbers (§0.1): other specs cite the L-number. "Source" names the defining text;
+Every resource limit of extended scripting (§0.1 rule 6), with its number. This register is
+the single home of these numbers (§0.1): other specs cite the L-number. Argument-validity
+domains and grammar lengths stay in their defining specs (§0.1 rule 6). "Source" names the defining text;
 "§" rows are new or changed here; an EM or EA row names the companion spec that states
 the limit's script-visible form. "Exceed" is what happens past the limit.
 
@@ -1589,14 +1937,14 @@ the limit's script-visible form. "Exceed" is what happens past the limit.
 | L8 | Heavy-frame gate | 22 ms from the frame's work start (§8.12) | Nothing starts | D17 §4 | T84, T85 |
 | L9 | Floor frame | after 15 gated frames or 250 ms (deterministic mode: 15 frames only); one 6a item | — | §7.4 | T84 |
 | L10 | Switch timeout | 2 s (120 frames deterministic); then close without `Unload` | — | §7.4 | T84 |
-| L11 | Switch completion under permanent gating | ≤ 2 s + 17 × (250 ms + one frame), about 6.25 s; deterministic mode ≤ 392 frames; a queued line ≤ 250 ms + one frame (16 frames) plus the round robin | — | §7.4 | T84 |
-| L12 | Worst ext time per frame | 7 ms + R + 2·S ≤ 13 ms; 11 ms + S after K or C; while OPEN O-2 is open, 12 ms in slice 1a and 11.4 ms from slice 1b | Fallback lowers caps | D17 §8, §7.1.6 | T16 |
+| L11 | Switch completion under permanent gating | with *a* apartments ≤ 2 s + *a* × (250 ms + one frame): slice 1a *a* ≤ 16, about 6 s, deterministic mode ≤ 376 frames; from slice 1b *a* ≤ 17 (a hot reload), about 6.25 s, ≤ 392 frames; a queued line ≤ 250 ms + one frame (16 frames) plus the round robin | — | §7.4 | T84 |
+| L12 | Worst ext time per frame | Both branches within the ceiling: 7 ms + R + 2·S, and 2 ms + K + S (or 2 ms + C + S) after a compilation or a close. Ceiling 13 ms (D17 §8); while OPEN O-2 is open, **12 ms** in slice 1a (so S ≤ 1 ms at R = 3 ms, and K, C ≤ 10 ms − S, so ≤ 9 ms) and **11.4 ms** from slice 1b (S ≤ 0.7 ms, and K, C ≤ 9.4 ms − S, so ≤ 8.7 ms) | Fallback lowers caps: the 4 MiB allocation (R), the 128 KiB source cap (K), the 64 MiB maximum (C) | D17 §8, §7.1.6 | T16 |
 | L13 | R (one uninterruptible operation) | ≈ 3 ms at 4 MiB (measured in slice 1a) | Fallback | D17 §8 | T11, T16 |
 | L14 | S (one collector step) | ≤ 1.5 ms required | Fallback | D17 §8 | T16 |
-| L15 | K (one compilation) | ≤ 9 ms | Lower the 128 KiB cap | D17 §8 | T16 |
-| L16 | C (one state close) | ≤ 9 ms | Lower the 64 MiB maximum | D17 §8 | T16 |
-| L17 | Rolling time per script | mean ≤ 1 ms per frame over 1 s; throttle to half rate until < 0.5 ms; over for 5 s within 10 s while throttled → suspend | Throttle, suspend | D17 §8 | T17 |
-| L18 | Aborts | 3 in 10 s | Suspend | D17 §8 | T18 |
+| L15 | K (one compilation) | ≤ 9 ms (13 ms ceiling, and slice 1a's 12 ms with S ≤ 1 ms); ≤ 8.7 ms from slice 1b while OPEN O-2 is open (11.4 ms with S ≤ 0.7 ms); in general K ≤ ceiling − 2 ms − S | Lower the 128 KiB source cap | D17 §8, L12 | T16 |
+| L16 | C (one state close) | ≤ 9 ms (13 ms ceiling, and slice 1a's 12 ms with S ≤ 1 ms); ≤ 8.7 ms from slice 1b while OPEN O-2 is open; in general C ≤ ceiling − 2 ms − S | Lower the 64 MiB maximum | D17 §8, L12 | T16 |
+| L17 | Rolling time per script | mean ≤ 1 ms per frame over 1 s; throttle to half rate until < 0.5 ms; over for 5 s within 10 s while throttled → suspend; filter-call time excluded (rule 7.5.2a), a throttled script's filter call runs at half rate with its turn | Throttle, suspend | D17 §8, §7.5 | T17, T19 |
+| L18 | Aborts | 3 in 10 s; a filter call ended by its stopping rule is never an abort | Suspend | D17 §8, §7.5 | T18 |
 | L19 | Chain bound (tables, interning) | 32 nodes, re-salt | Re-salt; steps past 32 charged | D17 §1.5 | T13 |
 | L20 | Hash secret | 128 bits per state | — | D17 §1.5 | T13 |
 | L21 | C stack | `LUAI_MAXCSTACK` 8,000 slots (argument copies, charged ≤ 8,000 units); nested C calls `LUAI_MAXCCALLS` 200 per apartment, counted across coroutine resumes; ≥ 8 MiB native stack on every thread that runs ext calls | Catchable Lua error | D17 §8, §9.6 | T15 |
@@ -1610,11 +1958,11 @@ the limit's script-visible form. "Exceed" is what happens past the limit.
 | L23 | Memory per script | 32 MiB default, manifest ≤ 64 MiB; heap + host objects (EA1a §11 lists them) + kept snapshot data files + the file index + pending `Store` entries and flush bytes it wrote + outstanding reservations | Refusal, catchable error | D17 §8, §8.10, §7.6 | T23, T24, T27 |
 | L24 | Memory sum | 512 MiB of loaded scripts' caps + 64 MiB reload allowance (the new apartment's whole cap, its snapshot and hand-off inside it); a closing apartment's cap stays until its final flush completes | Load refused | D17 §8, §8.10 | T28 |
 | L25 | Retained entity-record store | ≤ 245,760 records, ≤ 15 MiB host-wide | Overflow counted | §7.5 | T19, T27 |
-| L26 | Loaded scripts | 16; ≤ 17 apartments; one per id | Load refused | D17 §8, §2 | T28, T89 |
+| L26 | Loaded scripts | 16; ≤ 17 apartments (the 17th only during a hot reload, slice 1b); one per id: a load is refused while the same id of the other kind is loaded or loading (from its reservation to its close item, §8.23) | Load refused | D17 §8, §2 | T28, T89 |
 | L27 | Outstanding worker requests | 32 per script, 256 in all (incl. image decodes, §8.5) | `nil, "busy"` | D17 §8, §8.5 | T25, T26 |
-| L28 | Result reservation | stored size (pending entry or file index) × declared expansion ratio (`Store`); plugin-data size ≤ 1 MiB × ratio (bridge); 3 MiB (`Files.Pick`) | `nil, "out of memory"`, returned | §8.14 | T25 |
+| L28 | Result reservation | `Store`: ρ × *n* + ε × min(*n*, 8,192) for *n* stored bytes (pending entry or the file index's exact size), ρ and ε worst-case bounds over the value model; the read stops at *n* + 1 bytes and a size mismatch answers `invalid`; a parsed result over its reservation is never delivered (`too large`). Bridge: the same formula over the plugin-data size ≤ 1 MiB. `Files.Pick`: 3 MiB | `nil, "out of memory"`, returned | §8.14 | T25 |
 | L29 | Ext decode-cache partition | 16 MiB per script, 64 MiB in all; per-script visibility | LRU eviction | D17 §8, §8.9 | T67 |
-| L30 | Host object counts | elements 2,048 per script (512 per window, 256 labels), 8,192 in all (1,024 labels); timers 64; subscriptions 16 (64 in all); notification queue 1,024; pending intents 256 per frame | `nil, "limit"`, `nil, "busy"`, or dropped and counted (EA1a §11) | D17 §8 | T24 |
+| L30 | Host object counts | elements 2,048 per script (512 per window, that is per ext Frame, not per time frame; 256 labels), 8,192 in all (1,024 labels); timers 64; subscriptions 16 (64 in all); notification queue 1,024, plus room reserved for the results of outstanding requests (L27) and for due timers, which are never dropped; pending intents 256 per frame | `nil, "limit"`, `nil, "busy"`, or dropped and counted (EA1a §11) | D17 §8 | T24 |
 | L31 | Entity events | 1,024 per script per frame; records 4,096 per frame; 60 frames retained; filter batch 64 | Dropped and counted | D17 §8, §7.5 | T19 |
 | L32 | `tostring` numbers | charged to memory | — | D17 §1.2 | T3 |
 
@@ -1633,9 +1981,9 @@ the limit's script-visible form. "Exceed" is what happens past the limit.
 | L40 | `Store` keys | 1,024 per script, 16,384 in all | `nil, "full"` | D17 §8 | T55 |
 | L41 | `Store` bytes | 16 MiB per script, 256 MiB in all; key = ⌈size⌉4 KiB + 4 KiB; temp files and pending entries count | `nil, "full"` | D17 §8, §8.7, §7.6 | T55 |
 | L42 | `Store` reads | 64 reads and 4 MiB/s per script (10 s bucket); 16 MiB/s in all | `nil, "busy"` | D17 §8 | T25 |
-| L43 | `Store` writes, keys | 64 key writes/s per script (10 s bucket); one flush per script per second | `nil, "busy"` | D17 §8 | T56 |
+| L43 | `Store` writes, keys | 64 newly dirty keys/s per script (10 s bucket): a key token is taken only when a call makes a clean key dirty (§8.7); one flush per script per second | `nil, "busy"` | D17 §8, §8.7 | T56 |
 | L44 | `Store` writes, bytes | 10 MiB bucket at 32 KiB/s per script; 40 MiB at 128 KiB/s in all; debited at the call: in full when the call makes a clean key dirty (no entry, or an entry a flush has already taken, rule 7.6.2), growth only over an untaken value; buckets per (kind, id) for the session | `nil, "busy"` at the call | §8.7 (changes D17, OPEN O-3) | T56 |
-| L45 | Script log | 1 MiB per file, rotated once; 64 KiB/s; record ≤ 4,096 bytes after escaping, prefix included | Dropped, counted; cut with `…[cut]` | D17 §8, §8.1 | T50, T55 |
+| L45 | Script log | 1 MiB per file, rotated once; 64 KiB/s per script and **128 KiB/s for all scripts** (token buckets of one second, escaped record bytes); record ≤ 4,096 bytes after escaping, prefix included | Dropped, counted, "N records dropped" record; cut with `…[cut]` | D17 §8, §8.1 (all-scripts rate changes D17, OPEN O-3) | T50, T55, T56 |
 | L46 | `Files.Pick` | one dialog in all; 1 per 5 s per script; 3 MiB; regular files only; gesture only | `nil, "busy"` / refused | D17 §8, §8.6 | T57 |
 | L47 | `keymap-ext.toml` | 128 KiB, 128 contexts, 64 actions per context | Save refused | D17 §2 | T58, T60 |
 | L48 | Images | ≤ 4,096 px per axis; charged before decode | Refused | D17 §8 | T32 |
@@ -1651,15 +1999,15 @@ the limit's script-visible form. "Exceed" is what happens past the limit.
 | L52 | Ext paint and upload | 1 ms paint, 1 MiB upload per frame | Wait | D17 §4 | T31 |
 | L53 | Overlay primitives | 10,000 per script per frame, 20,000 in all; per script per frame the count share min(10,000, ⌊20,000 / *n*⌋) | Newest dropped | D17 §8, §7.1 | T29 |
 | L54 | Overlay coverage | 0.5 screen per script, 1.0 in all; per script per frame the share min(0.5, 1.0 / *n*) | That primitive dropped, the visit goes on | §7.1 | T29 |
-| L55 | Composition coverage | 1.25 screens per script, 2.0 in all; each entry min(one screen, its unclipped displayed rectangle); badges and world labels count | Script change refused; user resize stops; host change hides windows | §7.1 | T30 |
+| L55 | Composition coverage | 1.25 screens per script, 2.0 in all; each entry min(one screen, (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1) of its unclipped displayed rectangle); badges (fixed box, §8.3) and world labels count | Script change refused; user resize stops; host change hides windows and labels | §7.1 | T30 |
 | L56 | Ext overlay and composition row | 1.6 ms: 0.6 ms overlay encoding (E4, 20,000 primitives) + 1.0 ms GPU at 3840 × 2160 (E9) | Bounds shrink | §7.1 | T29, T30 |
 | L57 | Solid-press threshold | alpha × effective opacity ≥ 0.5 | Not a gesture | §7.2 | T37 |
-| L58 | Focus box | shown, on screen, ≥ full height and 16 logical px wide, opacity ≥ 0.5, uncovered | Focus refused or taken | D17 §4 | T38 |
+| L58 | Focus box | shown, on screen, ≥ full height and 16 logical px wide, opacity ≥ 0.5, uncovered (also by the script's own higher content, rule 7.2.2); its window's badge wholly on screen and uncovered (§8.3) | Focus refused or taken | D17 §4, §7.2, §8.3 | T38, T48 |
 | L59 | Activation case 1 | ends on a key elsewhere, pointer leaving, or 5 s idle; text-box focus only in a gesture turn | Request returns `false` | D17 §4, §7.2 | T36, T37 |
 | L60 | Actions, contexts | 64 actions and 2 contexts per script; 256 and 16 in all; ext priority −1,000..−1 | Load refused | D17 §8 | T33 |
-| L61 | Ext holds | 64 in all (own pool); one suggested default per stroke per script | Hold not started; manifest refused | §8.16 | T40 |
+| L61 | Ext holds | 64 in all (own pool); one suggested default per stroke per script, and no two overlapping suggested defaults of one script in one context (§8.16); released at suspension | Hold not started; manifest refused | §8.16, §8.23 | T40 |
 | L62 | Ext context changes | 4 per script per second, coalesced per frame | `nil, "busy"` | D17 §8 | T39 |
-| L63 | Lease | 350 ms; ends in the frame of focus loss, suspension (revocation included), a queued switch, unload, chord | Lease ends | D17 §5.4, §8.17 | T43 |
+| L63 | Lease | 350 ms; ends at focus loss, suspension (revocation included), a queued switch, an unload request, chord; control back by step 3 of that frame, or of the next frame after step 3; none from an `Unload` handler | Lease ends | D17 §5.4, §8.17 | T43 |
 | L64 | Panic chord | default Ctrl+Shift+F12; rebindable only in Tessera's settings | — | D17 §5.5 | T41 |
 | L65 | Prompt | 500 ms dead time; the pointer must enter the control after it and stay inside until the press (Allow, the boxes, "Load automatically"); keys only refuse; ≤ 8 reserved surfaces | Click ignored | D17 §5.3, §8.25 | T47 |
 | L66 | Reserved-layer text | code points and bytes per §8.2; ≤ 2 combining marks (category M); manifest strings that would change refused at parse time | Cut, stripped; manifest refused | D17 §5.3, §8.2 | T46 |
@@ -1677,7 +2025,7 @@ the limit's script-visible form. "Exceed" is what happens past the limit.
 | L72 | `Data` lookups | 16 per script per frame | `nil, "busy"` | D17 §8 | T25 |
 | L73 | `Audio` | 8 voices per script, 32 in all; 8 starts/s; gain ≤ bus volume (all ext ≤ 2×) | Refused | D17 §8 | — |
 | L74 | Client-local entities | 256 per script | Spawn refused | D17 §8 | — |
-| L75 | `Sandbox` | 1 command/s per script; one outstanding teleport in all. Its slot is released at the first of: the sandbox's outcome **arrives**; the intent is discarded; the session generation it was submitted under **ends** (the queued backend switch or session end is applied). The slot is matched to its outcome by (session generation, request number); an outcome of an ended generation releases nothing and is dropped. So the slot is never held by a suspended or unloaded script and never carried into the next session | `nil, "busy"` / `nil, "pending"` | D17 §8, EA1b §7.4 | T83 |
+| L75 | `Sandbox` | 1 command/s per script; clock changes (time of day, sky) at most 4 per second for all scripts together; one outstanding teleport in all. Its slot is released at the first of: the sandbox's outcome **arrives**; the intent is discarded; its submission fails (the request number is not consumed); the session generation it was submitted under **rises**, in the frame a backend switch or session end is **queued** (EM §10.3, D17 §4), since no ext intent of that generation can be applied after it. Requests and outcomes are numbered per `Session` connection (reset when `Connect` is submitted) and matched by (connection, request number); an outcome of an earlier connection, or one arriving after its slot was released, releases and answers nothing and is dropped. So the slot is never held by a suspended or unloaded script and never carried into the next session | `nil, "busy"` / `nil, "pending"` | D17 §8, EA1b §7.4 | T83 |
 | L76 | Bridge | 1 action/s per script; one load outstanding per script, two in all; name rules and 4,096-byte arguments (§7.3) | Refused | D17 §7, §7.3 | T64, T74 |
 | L77 | `Server` | 64 KiB per message; 32 messages and 256 KiB/s per script; 64 queued; 1 MiB/s in all | `nil, "busy"` | D17 §8 | T81 |
 | L78 | `Input.Drive` | the drivable actions of §7.7 only; Offline only | Lua error | §7.7, D17 §6.5 | T42, T83 |
@@ -1695,12 +2043,16 @@ are listed here so that every number has one home.
 | L81 | UI text | `Text` 16 KiB; `Field` `max_bytes` ≤ 4,096; `List` 1,024 rows × 256 bytes; labels, buttons and `placeholder` 256 bytes; `UI.MeasureText` 16 KiB | Lua error | EA1a §7.10 | T24 |
 | L82 | Camera | 1 lease for all scripts; a path ≤ 256 key frames and ≤ 300 s; the leased eye ≤ 500 m from the player | `nil, "taken"`; Lua error; eye clamped | EA1b §4 | T43 |
 | L83 | Overlay world box | extent ≤ 2,000 m per axis | Lua error | EA1b §5.3 | T29 |
-| L84 | Hot reload | one at a time; watcher quiet period 300 ms; developer scripts only | Coalesced | EA1b §8 | T28 |
+| L84 | Hot reload | one **hot** reload at a time (a full reload is an unload and a load and is not counted, so a full reload waiting on a grant dialog blocks no other reload); watcher quiet period 300 ms; developer scripts only | Coalesced | EA1b §8 | T28 |
 | L85 | Developer REPL | one submission ≤ 8 KiB; each run is a call under L3–L5 and L23 | Refused | EA1b §9.4 | T10 |
 | L86 | Walk file (`scripttool test`) | ≤ 1 MiB; ≤ 4,096 synthetic entities; ≤ 65,536 `[[input]]` entries; ≤ 4,096 `[[expect]]` entries; `frames` 1–216,000; `[screen]` `width` 320–7,680 and `height` 200–4,320 physical pixels (default 1920 × 1080); `[world]` `size` odd, 1–9 landblocks per side | Refused | EM §11.5 | T58 |
 | L87 | Manifest per-field counts | `[capabilities]` and `[optional_capabilities]` ≤ 16 entries together; `[modules]` and `[optional_modules]` ≤ 32 entries together; `[[settings]]` ≤ 32; `choices` 1–32 per setting; a `text` setting's `max_length` 1–256 bytes (default 64); `version` ≤ 64 bytes, each numeric identifier ≤ 9 digits; `license` ≤ 64 bytes | Manifest refused | EM §4.2, §4.7, §4.8, §4.12 | T58 |
 | L88 | Script-folder listing | ≤ 512 entries read per listing of `data/scripts/` or `data/scripts-dev/` (L36's entry cap applied to the listing) | Listing stops; the script manager reports it | EM §3.5 | T54 |
 | L89 | Store owner tag `owner` | ≤ 256 bytes (the `author`'s UTF-8 bytes) | Wipe before the open (§8.24) | EM §8.8 | T91 |
+| L90 | `Overlay.Lines` per call | ≤ 2,048 lines (12,288 numbers) in one call, so its cost `B` + e(*m*) is at most 245,960 units, inside L3 and L4 | Lua error before any element is read | EA1b §5.3, §5.5 | T29, T10 |
+| L91 | Per-call and per-object caps of the API specs | Command arguments ≤ 1,024 bytes (cut) and `help` ≤ 96 bytes (EA1a §6.1, §6.2); ≤ 16 action edges per action per frame (EA1a §8.2); `Entity.Read` ≤ 512 handles per call, a `near` or `around_self` radius ≤ 500 m, a `box` side ≤ 1,000 m (EA1a §10.2); a `World` ray crosses ≤ 25 landblocks (EA1a §9.1, follows from L69's 500 m); `LocText` ≤ 256 bytes (EA1a §9.1); REPL result description ≤ 32 entries (EA1b §9.4); overlay drop record in the script log ≤ 1 per 10 s (rule 7.1.4, EA1b §5) | Cut, Lua error, or dropped and counted, as the API spec states | EA1a, EA1b | T10, T17, T24 |
+| L92 | Store-root scan | ≤ 1,024 entries per `data/script-store/<kind>/` listing; ≤ 2,064 entries per store directory; sizes from no-follow `fstatat`, nothing opened; on the grant-store queue at `Starting` and after Reset, Remove and orphan removal | Listing stops; the stores not scanned count as full; the script manager reports it | §8.7 | T54, T55 |
+| L93 | Gesture window | the delivering turn, closed earlier by the user's next key, press or wheel step outside the script's windows and actions, or 1 s after the delivering call started (60 frames deterministic); only a press notification of a solid press, an action start or an `/ext:` line opens one | Requests treated as outside a gesture window | §8.13 | T36, T88 |
 
 ---
 
@@ -1711,13 +2063,15 @@ Every threat of §6 has at least one test. This catalogue is the only escape cat
 (§0.1): EM §11.8's `escape` runner runs the **ST** cases under these numbers, and the
 client's integration tests run the **CI** cases under the same numbers (EM lists them with
 its `client` runner). Tests needing a GPU or the reference machine are **RM** and are part
-of E6, E8 or E9. A slice ships only when every test of its slice
-and of earlier slices passes. "Fails if" names the observable failure.
+of E6, E8 or E9. A slice ships only when every test **part** that runs in that slice or an
+earlier one passes; a test tagged "1a, 2" blocks slice 1a only through its slice-1a part,
+and its slice-2 part blocks slice 2. "Fails if" names the observable failure.
 
 A test with parts under several harness codes (for example "ST, CI") passes only when
 every part passes. Each runner reports the parts it runs under the X-number and the part
 (for example "X62 ST: PASS") and reports the parts it does not run as left to their runner
-(EM's `escape` reports them as `CLIENT`), never as passed. Where a slice column names
+(EM §11.8's `escape` reports a CI part as `CLIENT` and a U, FZ or RM part as
+`ELSEWHERE`), never as passed. Where a slice column names
 several slices, each part runs in the slice that ships what it tests (§2 "Slice").
 
 <a id="s11-1"></a>
@@ -1741,23 +2095,23 @@ several slices, each part runs in the slice that ships what it tests (§2 "Slice
 | Test | Threats | Slice | Harness | Procedure | Fails if |
 |---|---|---|---|---|---|
 | X10 | T10 | 1a | ST, RM (E6) | Endless loop in `Tick`, top level and `Unload`; a stalled tick | Any call exceeds 4 ms + one operation; no throttle or suspension |
-| X11 | T11 | 1a | RM (E6) | 1,000 maximal concatenations and comparisons, in the main thread and in coroutines made early and late, via `resume` and `wrap`; comparison also under a UTF-8 collation locale (test build) | Ext time over 13 ms; R changes with the locale |
+| X11 | T11 | 1a | RM (E6) | 1,000 maximal concatenations and comparisons, in the main thread and in coroutines made early and late, via `resume` and `wrap`; comparison also under a UTF-8 collation locale (test build) | Ext time over L12's ceiling for the slice (12 ms in 1a, 11.4 ms from 1b while OPEN O-2 is open, 13 ms after); R changes with the locale |
 | X12 | T12 | 1a | ST, RM | §9.1's degenerate arguments | A call exceeds its units; a frame over 50 ms |
 | X13 | T13 | 1a | ST (seeded harness), RM | §9.2's flooding set | A chain walk over 32 nodes; a frame over 50 ms |
 | X14 | T14 | 1a | U (`ext-host`) | §9.2's host-map flood | Time per operation grows with the key count |
 | X15 | T15 | 1a | ST, U (`script`) | §9.6: recursion to the bound through `gsub` callbacks, `sort` comparators, metamethods, `pcall` chains, 1,000 nested `resume`/`wrap`, deep source nesting | A crash instead of a catchable Lua error; the counter restarts at a resume |
-| X16 | T16 | 1a | RM (E6) | Heaps built to maximise S, an interning rehash, worst K file, worst C; the two backend-switch cases of D17 E6 | Sum over 13 ms, K or C over 9 ms, without the fallback applied |
+| X16 | T16 | 1a, 1b (the reload apartment) | RM (E6) | Heaps built to maximise S, an interning rehash, worst K file, worst C; the two backend-switch cases of D17 E6, in 1a with 16 apartments and from 1b with a hot reload's new apartment as the 17th | Either branch of L12 over the slice's ceiling (12 ms in 1a, 11.4 ms from 1b while OPEN O-2 is open, 13 ms after); K or C over L15 or L16 for the slice (9 ms in 1a, 8.7 ms from 1b while O-2 is open); any of these without the fallback applied |
 | X17 | T17 | 1a | ST, RM | 16 scripts each using its full call every frame; one alternating heavy and light; one whose own calls fill the 2 ms cap every frame (a 1,024-entry delivery set) | Ext time over the cap plus one call; no throttle; others starved beyond round robin; a split turn resumes first in its group more than once (§8.13) |
 | X18 | T18 | 1a | ST | A script aborting 3 times in 10 s, every 10 s | Not suspended; notice not hit-transparent |
-| X19 | T19 | 1a | ST, RM | §7.5's 10,000-entity flood for 10 s, with 4 scripts × 16 subscriptions and with 16 scripts × 4 (64 in all, L30) | Filter work outside a call; frame rule broken; a record skipped by a cursor within 60 frames; drops uncounted |
+| X19 | T19 | 1a | ST (record-flood hook, §7.5), RM | §7.5's 10,000-entity flood for 10 s, with 4 scripts × 16 subscriptions and with 16 scripts × 4 (64 in all, L30); a subscription created while its cursor lags | Filter work outside a call; frame rule broken; a record skipped by a cursor within 60 frames; drops uncounted; a script throttled, suspended or charged an abort by filter calls alone (rule 7.5.2a); a new subscription matches an older record |
 | X20 | T20 | 1a, 1b (hand-off) | ST, RM | Maximal `Store` value read back; maximal hand-off (1b, with hot reload); shared-subtable graph; 10^5-deep chain; cycle; `__index`/`__len` metamethods; NaN key | Over-cap value accepted; a metamethod runs; a panic |
 | X21 | T21 | 1a | CI | Unload 16 scripts in one frame; count recompilations; E8 timing | More than one recompilation; E8 over 2 ms |
-| X22 | T22 | 1a | CI | Change the locale in a test build; run an ext load and a dialog return | Ext not suspended; `Files` still served |
+| X22 | T22 | 1a, 2 (`Files.Pick`) | CI | Change the locale in a test build; run an ext load (1a) and a `Files.Pick` dialog return (2) | Ext not suspended; `Files` still served after the dialog returns (2) |
 | X23 | T23 | 1a | ST | Heap growth to the cap; a 5 MiB string | No catchable error; host memory over the cap |
 | X24 | T24 | 1a | ST | Elements, labels, timers, subscriptions, notifications, intents and `/ext:` commands (the 33rd, L68) at and past their caps | Host memory outside the cap; a count cap passed |
-| X25 | T25 | 1a | ST | 33 small `Store` reads in one frame; reads of 1 MiB values; `Data` lookups of new DIDs at the cap for 10 s | 33rd read not `busy`; worker queue grows; `out of memory` raised instead of returned |
+| X25 | T25 | 1a, 2 (`Data`) | ST | 33 small `Store` reads in one frame; reads of 1 MiB values; the hostile-file reads of §8.14 (a key file replaced or grown after indexing, 8,192 empty tables, 1-byte strings) (1a); `Data` lookups of new DIDs at the cap for 10 s (2, the `Data` module) | 33rd read not `busy`; worker queue grows; `out of memory` raised instead of returned; a read past the indexed size; a delivered value over its reservation |
 | X26 | T26 | 1a | ST | §8.5's image create/destroy loop | Outstanding over 32; queue grows |
-| X27 | T27 | 1a | ST | §8.10's snapshot-charge check; E5 peak report | Data files not charged; retained store over 15 MiB |
+| X27 | T27 | 1a, 1b (hot reload) | ST | §8.10's snapshot-charge check and E5 peak report (1a); the hot reload of a `memory_mib = 64` script with 8 MiB of data files and a 1 MiB hand-off (1b) | Data files not charged; retained store over 15 MiB; the reload outside the allowance or the sum (1b) |
 | X28 | T28 | 1a, 1b (reload) | ST | 16 scripts at 32 MiB; 8 at 64 MiB; a 17th load (1a); each case plus a hot reload (1b) | Sum exceeded; the 17th loads |
 
 <a id="s11-3"></a>
@@ -1766,10 +2120,11 @@ several slices, each part runs in the slice that ships what it tests (§2 "Slice
 | Test | Threats | Slice | Harness | Procedure | Fails if |
 |---|---|---|---|---|---|
 | X29 | T29 | 1b | CI (counting), RM (E6, E9) | 20,000 full-screen screen quads shown in one frame by two scripts (each list built over as many calls and frames as the add costs need, then shown) | More than 1.0 screen encoded; drops not reported; E9 over 1.0 ms; a frame over 50 ms in the walking run |
-| X30 | T29 | 1b | CI, RM | 10,000 world boxes, filled and as edges, straddling the near plane, around the camera, behind it and with the eye inside; then 500 outline waypoint boxes after one straddling filled box | A filled box straddling the near plane drawn; a primitive outside the frustum counted; the waypoints dropped because of the straddling box; coverage over bound |
-| X31 | T30 | 1a | CI, RM (E9) | 16 scripts each showing full-screen windows, nested surfaces and world labels; windows created mostly off screen, then moved on screen by the script and dragged by the user; a user resize at the bound; then a screen resize and a UI scale change | A show, size, scale or rotation change past 1.25/2.0 screens succeeds; a moved window raises coverage; a user resize passes the bound; a host change leaves a script or the total over its bound; hidden windows not in reverse order of last show |
+| X30 | T29 | 1b | CI, RM | 10,000 world boxes, filled and as edges, straddling the near plane, around the camera, behind it and with the eye inside; then 500 outline waypoint boxes after one straddling filled box; screen lines of width 4 whose centre line lies 1 px outside each viewport edge | A filled box straddling the near plane drawn; a primitive outside the frustum counted; the waypoints dropped because of the straddling box; coverage over bound; a wide line near the edge counted below the pixels it paints |
+| X31 | T30 | 1a (windows, labels, badges), the slice that adds nested surfaces, scale or rotation for those parts | CI, RM (E9) | 16 scripts each showing full-screen windows and world labels; windows created mostly off screen, then moved on screen by the script and dragged by the user, also by fractional pixels at UI scale 1.25; a user resize at the bound; a script whose coverage is labels only; then a screen resize and a UI scale change. In the slice that adds them: nested surfaces, scale and rotation changes (EA1a §7.10 has none in 1a) | A show, size, scale or rotation change past 1.25/2.0 screens succeeds; a moved window or label raises coverage (whole or fractional pixels); a user resize passes the bound; a host change leaves a script or the total over its bound; labels not hidden; hidden entries not in reverse order of last show or not notified with `VisibilityChanged{by = "host"}` |
 | X32 | T31 | 1a | CI | Ext at every pool cap while a plugin creates windows, images and registrations | Any plugin call fails that succeeds with no ext script |
 | X33 | T32 | 1a | U (`ext-host`) | Images with 65,535 px axes, DDS sizes overflowing 32 bits, truncated headers | Decoded before refusal; a panic |
+| X95 | T94 | 1a (windows, labels, badges), the slice that adds nested surfaces for that part | CI (golden image, hit test) | §8.26: a plugin window at its lowest `ZOrder` against an ext window at its highest, after `Activate`, a solid press, re-parenting and (later slice) a nested surface; an ext show during a prompt; the same with a native panel | The plugin window's or panel's pixels differ from a run without ext; a click or hover on its area reaches an ext element |
 
 <a id="s11-4"></a>
 ### 11.4 Input and focus
@@ -1780,15 +2135,15 @@ several slices, each part runs in the slice that ships what it tests (§2 "Slice
 | X35 | T34 | 1a | U (`input`) | Exact ext `Shift+MouseLeft` `on = "tap"` | `tap_left` blocked |
 | X36 | T35 | 1a | CI | Ext bindings on K and F5 with chat input or a plugin `TextBox` focused | The ext action fires |
 | X37 | T36 | 1a | CI | D17 exit criterion 2's focus list; plus a solid press, then a timer `Focus` on a text box in a later turn | Any request returns `true` outside a gesture turn; `W` stops moving |
-| X38 | T37 | 1a | CI | §7.2: transparent full-screen element (also opacity 0.49, image alpha 0), world click, timer `Focus` | `Focus` returns `true`; the window becomes active; `W` is swallowed |
-| X39 | T38 | 1a | CI | Box under the chat window, under an opaque plugin window, hidden, zero-size, off screen; a plugin window moved over a focused box | Focus granted; focus kept past the next key |
+| X38 | T37 | 1a | CI | §7.2: transparent full-screen element (also opacity 0.49, image alpha 0), world click, timer `Focus`; an opaque non-catching image of the script over a catching element, pressed; repeated non-solid presses on a full-screen catching frame of one script over another script's window | `Focus` returns `true`; the window becomes active; `W` is swallowed; a press through a non-catching picture counts as solid; a non-solid press raises its script in the ext z-order |
+| X39 | T38 | 1a | CI | Box under the chat window, under an opaque plugin window, hidden, zero-size, off screen; under the script's own later sibling and its own higher window; a plugin window moved over a focused box | Focus granted; focus kept past the next key |
 | X40 | T39 | 1a | U (`input`) | Toggle an ext context every frame during `Ctrl+K Ctrl+C` | The sequence is cancelled |
-| X41 | T40 | 1a | U (`input`) | §8.16 | Built-in movement holds fail |
+| X41 | T40 | 1a | U (`input`), ST | §8.16 (also overlapping suggested defaults: `A+B` with `B`, and subset-modifier axis pairs, in one context) | Built-in movement holds fail; an overlapping pair of suggested defaults accepted |
 | X42 | T41 | 1a | U (`input`), CI | Chord with a focused text box, an imported `F12` binding, a plugin `KeyDown`, a pending sequence | Chord not consumed first; any other receiver sees it |
 | X43 | T42 | 2 | ST, CI | §7.7 | An excluded action is accepted; a file appears; a plugin handler runs outside steps 1 and 7; a UI-band entry is pushed |
-| X44 | T43 | 1b | CI | Lease held, then: script stalls; window loses focus; `Files.Pick` opens (slice 2); suspension; grant revocation; a backend switch queued; chord. Under a `Hold`, the user clicks an entity visible under the pointer | Lease survives longer than 350 ms after the last renewal, or past the event's frame; the click picks anything but what is under the pointer on the presented frame |
+| X44 | T43 | 1b, 2 (`Files.Pick`) | CI | Lease held, then: script stalls; window loses focus; `Files.Pick` opens (2); suspension by the watchdog, and by a third abort in 6b (after step 3); grant revocation; a backend switch queued; a user unload and `Core.Unload`; chord. `Camera.Take` and a `Sandbox` command inside an `Unload` handler, during a user unload and during a hot reload whose new apartment then calls `Take`. Under a `Hold`, the user clicks an entity visible under the pointer | Lease survives longer than 350 ms after the last renewal; a lease not ended at its event, or the user's view and control not back by step 3 of that frame (of the next frame for an event after step 3); a lease or intent from an `Unload` handler takes effect, or the new apartment's `Take` answers "taken"; the click picks anything but what is under the pointer on the presented frame |
 | X45 | T44 | 1a | CI | §7.8 | A label takes a click or hover, or a notification |
-| X46 | T45 | 1a | CI | Every ext call and `Input.Drive` attempted while a prompt shows | "Allow" is pressed |
+| X46 | T45 | 1a, 2 (`Input.Drive`) | CI | Every ext call attempted while a prompt shows (1a); `Input.Drive` attempted while a prompt shows (2) | "Allow" is pressed |
 
 <a id="s11-5"></a>
 ### 11.5 Spoofing and output
@@ -1797,10 +2152,10 @@ several slices, each part runs in the slice that ships what it tests (§2 "Slice
 |---|---|---|---|---|---|
 | X47 | T46 | 1a | ST, U (`ui`), CI (golden image) | §8.2 parts (a)–(c) | A hostile manifest string loads or is shown; removed characters drawn; more than 2 marks; text outside its box |
 | X48 | T47 | 1a | CI | §8.25: pointer resting on "Allow" at show; pointer entering "Allow" at 100 ms and pressing at 600 ms; clicks during 500 ms; Enter and Space; rapid clicking before the prompt; the same on a capability box and "Load automatically"; a script drawing under the dialog | Any of these allows or ticks a box; ext windows visible while the dialog shows |
-| X49 | T48 | 1a | CI (golden image) | §8.3 | Badge missing, restyled or covered |
+| X49 | T48 | 1a | CI (golden image) | §8.3 (with the badge under a native panel and under a plugin window, a window at y = 5 and one partly off screen) | Badge missing, restyled, covered by an ext window or not wholly on screen; focus enters a box, or stays in it, while its badge is covered or off screen; counted badge area depends on the font |
 | X50 | T49 | 1a (notices), 1b (lease indicator) | CI | A suspension notice over a plugin button (1a, D17 M5.5 exit criterion 2); the lease indicator over a plugin button (1b) | Click or hover on the button blocked |
 | X51 | T50 | 1a | U (`ext-host`) | §8.1 | Control bytes in the file; one `print` makes two records |
-| X52 | T51 | 1a | CI | §8.4 | Changed or script-selected text reaches the clipboard |
+| X52 | T51 | 1a | CI | §8.4 (changed text; text clipped, scrolled out, transparent, under a plugin window; Cc and Cf characters) | Changed, script-selected, undisplayed or faint text reaches the clipboard; a Cc or Cf character (other than a displayed LF or tab) is copied |
 
 <a id="s11-6"></a>
 ### 11.6 Files and disks
@@ -1808,15 +2163,15 @@ several slices, each part runs in the slice that ships what it tests (§2 "Slice
 | Test | Threats | Slice | Harness | Procedure | Fails if |
 |---|---|---|---|---|---|
 | X53 | T52 | 1a | U (`ext-host`), ST | Ids and keys `con`, `nul`, `com1`, `lpt1`; a folder segment `aux.lua`; `Ext.Load("..x")`; segments with `\` or `:` | Any accepted (keys answer `nil, "reserved key"`); a file with a bare script-chosen name created |
-| X54 | T53 | 1a | U (`ext-host`) | Symlink, hard link (link count 2), FIFO, swap of a file for a link mid-walk, a file growing mid-read, a symlinked script folder (§8.8) | Script loads |
+| X54 | T53 | 1a | U (`ext-host`) | Symlink, hard link (link count 2), FIFO, device node, swap of a file for a link mid-walk, a file growing mid-read, a symlinked script folder (§8.8) | Script loads; a worker blocks; a special file is opened |
 | X55 | T54 | 1a | U (`ext-host`) | 10^6 empty directories; one directory of 10^6 entries | More than 512 entries read |
-| X56 | T55 | 1a | ST | §8.7; plus a script printing a 4 KiB line every frame for 60 s | Caps passed; temp files left after open; the log files over 2 MiB on disk or the rate passed |
+| X56 | T55, T56 | 1a | ST | §8.7 (keys, sizes, temp files, orphan totals, the store-root scan cap); the log flood of one script and of 16 scripts | Caps passed; temp files left after open; the totals below the orphans' counted sizes; more than 1,024 entries of a `<kind>` listing read; a script's log files over 2 MiB on disk or its rate passed; all logs together over 128 KiB × (*t* + 1) in *t* s; drops not recorded |
 | X57 | T56 | 1a | ST | §8.7 | Counted bytes over the bucket bound |
 | X58 | T57 | 2 | CI | §8.6 | A worker blocks; a special file is read |
 | X59 | T58 | 1a | FZ, U | Fuzz the manifest, grant store, `Store` reader (via the neutral reader), `keymap-ext.toml` reader; slice 2 adds bridge reads | A panic, hang or over-cap allocation |
 | X60 | T59 | 1a | CI | Kill the process during flushes (test hook) at every step | A half-written value; values without the local-only mark |
 | X61 | T60 | 1a | U (`settings`) | §8.19 | A save lands in the install |
-| X94 | T93 | 1a | U (`ext-host`), ST | §8.8 store and log rules: `s_<id>` as a symlink and a junction to a directory outside holding a canary file, then a load that needs a wipe (an `author` change); inside `s_<id>`: a key file that is a symlink to a canary outside, a hard link to a canary outside (link count 2), a FIFO, a subdirectory, an unknown regular file, `owner` and `local-only` as symlinks; a log file and a log `<kind>` directory as symlinks; each entry swapped for a link between the listing and the open | A canary outside is read, written, truncated or removed; a link followed; a worker blocks on the FIFO; an unexpected entry listed into the file index or opened; a wipe enters a subdirectory or removes anything outside `s_<id>`; the load not refused when item 3 or 5 of §8.8 says so |
+| X94 | T93 | 1a | U (`ext-host`), ST | §8.8 store and log rules: `s_<id>` as a symlink and a junction to a directory outside holding a canary file, then a load that needs a wipe (an `author` change); inside `s_<id>`: a key file that is a symlink to a canary outside, a hard link to a canary outside (link count 2), a FIFO, a subdirectory, an unknown regular file, `owner` and `local-only` as symlinks; a log file and a log `<kind>` directory as symlinks; a log file and a rotated log file that are FIFOs or device nodes; the grant store as a FIFO and as a link to `/dev/zero`; each entry swapped for a link between the listing and the open | A canary outside is read, written, truncated or removed; a link followed; a worker or the log writer blocks on a FIFO; a device node opened; the grant-store queue waits; an unexpected entry listed into the file index or opened; a wipe enters a subdirectory or removes anything outside `s_<id>`; the load not refused when item 3 or 5 of §8.8 says so |
 
 <a id="s11-7"></a>
 ### 11.7 Exfiltration and isolation
@@ -1847,24 +2202,24 @@ several slices, each part runs in the slice that ships what it tests (§2 "Slice
 | X77 | T76 | 1a | CI | A plugin `Alias` with `/ext:notes` and markup, bidi and 64 KiB arguments; a user click | Anything but a command notification with the arguments as data |
 | X78 | T77 | 1a | CI | Stub backend `Other`; test-only `TesseraProtocol` session | Any ext apartment exists |
 | X79 | T78 | 1a | U (`net`) | Compile-fail test for the sealed trait; a forwarding wrapper in another crate | Class not `Other`; an apartment loads |
-| X80 | T79 | 1a, 1b | CI | Intent queued in 6b before a switch; after suspension; under a newer generation; `Sandbox` teleport before a switch to `Other`; a teleport outstanding when its script is suspended, then another script's teleport after the sandbox answers; a teleport outstanding when a switch to a new `Offline` session is queued, whose outcome never arrives, then a teleport in the new session; a late outcome of the old generation | Any intent applied; the teleport slot still held after the outcome arrived or after its generation ended; a late outcome releases or answers anything |
+| X80 | T79 | 1a, 1b | CI | Intent queued in 6b before a switch; after suspension; under a newer generation; `Sandbox` teleport before a switch to `Other`; a teleport outstanding when its script is suspended, then another script's teleport after the sandbox answers; a teleport outstanding when a switch to a new `Offline` session is queued, whose outcome never arrives, then a teleport in the new session; a late outcome of the old connection; a teleport whose submission fails | Any intent applied; the teleport slot still held after the outcome arrived, after the frame its switch was queued, or after its submission failed; a late outcome releases or answers anything; request numbers not reset at `Connect` or consumed by a failed submission |
 | X81 | T80 | 1a | U (`tools/`) | D17 §6.6's synthetic manifest sets | Check passes a bad graph |
 | X82 | T81 | 3 | ST (loopback), FZ | Messages over 64 KiB, deep, NaN keys, floods | Accepted; panic; rate passed |
 | X83 | T82 | 3 | CI | Policy without `entity.read` | `Entity` available |
 | X84 | T83 | 1b, 2 | CI | `Input.Drive`, `Sandbox`, `Data` on a `TesseraProtocol` stub with a permissive policy | Any is available |
-| X85 | T84 | 1a | ST, CI | §7.4 with the "every frame is heavy" hook (deterministic) | A line waits over 16 frames; a switch takes over 392 frames; an `Unload` starts after frame 120 of the switch; a lease survives the frame the switch was queued |
+| X85 | T84 | 1a, 1b | ST, CI | §7.4 with the "every frame is heavy" hook (deterministic): a queued line and a switch with 16 apartments (1a); a switch with a hot reload in progress (17 apartments) and a camera lease held when it is queued (1b) | A line waits over 16 frames; a switch takes over 376 frames (1a) or 392 frames (1b); an `Unload` starts after frame 120 of the switch; a lease survives the frame the switch was queued |
 | X86 | T85 | 1a | CI | §8.12 (15 ms and 18 ms after redraw start, 5 ms of callbacks, 30 ms idle) | Idle time counted; the 20 ms frame gated or the 23 ms frame not gated |
 | X87 | T86 | 1a, 1b (hot reload) | CI, ST | Switch queued with one load at a grant dialog, one waiting on its grant-record write, one at its store probe, one at its store open, one at snapshot, one mid-compile, one before top level (1a), and a hot reload in progress (1b) | A compile or top level runs; a state leaks; count over 17; a store open, probe or record write left half-done; a dialog writes a decision |
 | X88 | T87 | 1a, 1b | ST | §7.6 (hot reload part in 1b) | A stale value returned |
-| X89 | T88 | 1a | ST | §8.13 | Focus not granted in a split gesture turn |
-| X90 | T89 | 1a | CI, ST | D17 exit criterion 5's content-change and second-copy cases (the ST part answers each dialog as EM §11.4's harness policy says and expects it in the trace) | Group A kept on change outside dev mode; second copy loads |
+| X89 | T88 | 1a | ST | §8.13 (split turn, also under the "every frame is heavy" hook; a `Focus` after the user's `W`, or after 60 frames; a held solid press) | Focus not granted in a split gesture turn; granted after the window closed (L93); a release or click opens a window |
+| X90 | T89 | 1a | CI, ST | D17 exit criterion 5's content-change and second-copy cases (the ST part answers each dialog as EM §11.4's harness policy says and expects it in the trace); two loads of one id from both kinds started in the same frame (two `autoload = true` records at world entry with developer mode on) | Group A kept on change outside dev mode; second copy loads; both loads of one id pass |
 
 <a id="s11-9"></a>
 ### 11.9 Grants, authors and the keymap file
 
 | Test | Threats | Slice | Harness | Procedure | Fails if |
 |---|---|---|---|---|---|
-| X91 | T90 | 1a, 1b | ST | §8.23: revoke optional and required grants (manager test hook), with a lease, intents and a `Follow` active (1b); a re-read of a hand-edited grant store that removes, invalidates, narrows and widens loaded scripts' records | Not suspended in that frame (a narrowing re-read included); a widening applied before the next load; an intent applied after it; a lease survives the frame; a revoked module answers anything but `"not granted"` after resume; a required revocation not unloaded |
+| X91 | T90 | 1a, 1b | ST | §8.23: revoke optional and required grants (manager test hook), with a lease, intents and a `Follow` active (1b); a re-read of a hand-edited grant store that removes, invalidates, narrows and widens loaded scripts' records; a revoke-resume-widen of optional `camera` (1b); a kept entity handle passed to `lease:Follow` after an `entity.read` revocation and resume (1b); a failed-write revocation followed by a re-read; a newer-`version` document re-read; a required grant revoked while a load is past its dialog and before its top level; a suspended script's ext context | Not suspended in that frame (a narrowing re-read included); a widening applied before the next load (the live table read instead of the effective set included); an intent applied after it; a lease survives the frame; a revoked module, or a handle it minted, answers anything but `"not granted"` after resume; a required revocation not unloaded; a revoked grant back after a re-read; a newer document suspends anything; the load's top level runs; a context or hold of a suspended script still active |
 | X92 | T91 | 1a, 1b | ST | §8.24: `author`-only hot reload (1b); stores with a foreign, missing or 257-byte owner tag; an invalid new manifest at a hot reload (1b); a full reload across an `author` change, with its dialog answered per EM §11.4 (1b) | A hand-off delivered or a key readable across the `author` change; a foreign store opened without a wipe; the old apartment stopped by an invalid manifest |
 | X93 | T92 | 1a | U (`input`, `settings`) | §8.19 | The user's keymap file written because of ext; a built-in rebinding lost or read back loosely |
 
@@ -1908,17 +2263,20 @@ column of the X-tests named (EM's procedures are folded into them).
 2. No ext Lua runs outside a metered call in 6a or 6b; 6c and state closes run no Lua.
 3. Every native's cost is charged or reserved before it works; every value crossing TB1
    is bounded during its walk.
-4. Ext Lua time per frame stays within the ext ceiling (13 ms, D17 §8; while OPEN O-2 is
-   open, 12 ms in slice 1a and 11.4 ms from slice 1b) in every frame, floor frames
+4. Ext Lua time per frame stays within the ext ceiling of L12 (13 ms, D17 §8; while
+   OPEN O-2 is open, 12 ms in slice 1a and 11.4 ms from slice 1b) in every frame, on both
+   of L12's branches (7 ms + R + 2·S, and 2 ms + K + S or 2 ms + C + S), floor frames
    included; ext GPU time ≤ 1.0 ms at the coverage bounds (E9).
 5. Coverage drawn per frame never exceeds 0.5 screen per script and 1.0 screen in all
    for overlays, and 1.25 and 2.0 screens for composition, counted conservatively
-   (§7.1.2); no movement of a window or label raises composition coverage.
+   (§7.1.2); no movement of a window or label, by whole or fractional pixels, raises
+   composition coverage.
 6. No ext binding consumes a press or release that a non-ext context would consume or
    that an `opaque`/`opaque_keys` stop swallows.
 7. Keyboard focus enters an ext text box only by the user's own **solid** press on that
    box, or in a gesture window of that script, and only while the box is visible and
-   uncovered.
+   uncovered (also by the script's own content) and its window's badge is wholly on
+   screen and uncovered.
 8. A press that is not solid never activates an ext window and never opens a gesture
    window.
 9. The panic chord is resolved before anything else while ext is present, and after it no
@@ -1957,14 +2315,31 @@ column of the X-tests named (EM's procedures are folded into them).
     revocation, and every later call of the revoked module raises `"not granted"`.
 24. No `Store` value and no hand-off table reaches a script whose `author` differs from
     the one it was written under.
-25. Every lease has ended by step 3 of the frame of an event that ends it (§8.17), and the
-    user's pointer always picks from the presented frame.
+25. Every lease ends at the event that ends it, and the user's view and control are back
+    by step 3 of that frame, or of the next frame for an event after step 3 (§8.17); no
+    lease or intent comes from an `Unload` handler; the user's pointer always picks from
+    the presented frame.
 26. No ext window of any script draws over an ownership badge.
 27. No native stack overflow is reachable from ext code; deep recursion through C ends
     in a catchable Lua error.
 28. Every value a `Store` flush writes was paid in full in the write buckets at the call
     that made its key dirty or grew it (§8.7), so the counted bytes written over any
     interval never exceed the buckets' capacity plus their refill.
+29. No ext composition entry is drawn or hit-tested above a plugin window, a native panel
+    or the reserved layer, whatever its `ZOrder`, activation, parent or nesting (§8.26).
+30. A copy from an ext text box puts on the clipboard only text the user selected, that
+    did not change since, that was wholly displayed at opacity ≥ 0.5 from the selection to
+    the copy, and that holds no Cc, Cf, Zl or Zp character other than a displayed LF or
+    tab (§8.4).
+31. Every native and every intent apply checks the apartment's effective set, which only
+    shrinks during the apartment's life; a handle is usable only while the capability of
+    the module that minted it is in that set (§8.23).
+32. A `Store` or bridge read never reads past the indexed size plus one byte and never
+    delivers a value larger than the reservation charged at the call (§8.14).
+33. All script logs together write at most 128 KiB per second plus one second's burst
+    (§8.1, L45).
+34. A gesture window never outlasts the user's next input elsewhere or 1 s (60 frames in
+    deterministic mode) (§8.13, L93).
 
 ---
 
@@ -1994,7 +2369,7 @@ this spec keeps the stronger one.
 | EM §10.3, §10.4, invariant 18, OPEN O-5 **(companion)** | Cite §7.4 and L9–L11; add the switch-timeout row (close without `Unload` after 2 s or 120 frames); phase C store work completes and only its result is discarded (§8.21); the 34-frame bound holds only without gating. O-5 closed |
 | EM §11.5 **(companion)** | Walk-file keys for the virtual surface size (default 1920 × 1080, §2 "Screen"), a reload from a second folder version and a simulated loss of window focus (requested by EA1b §14). **Done** in EM revision 2 (`[screen]`, `reload`, `focus`); EA1b §6.1, §8.8 and §14 mark their requests done |
 | EM §3.1, §8.8, §12.8 **(companion)** | The no-follow and entry-kind rule of §8.8 for `s_<id>/`, its entries and the log files (items 1–5: handle-relative opens, `O_NOFOLLOW` with the kind checked on the handle, exclusive creates, a non-plain store directory fails closed, unexpected entries never opened and removed as entries, a subdirectory fails closed, the wipe never follows or recurses); a named temporary-file pattern that no key file or host file matches, so "temporary files left by a crash", the file-index listing and `no_file_outside` are exact. Escape case X94 (T93) |
-| EM §3.5, §4 preamble, §4.2, §4.7, §4.8, §4.12, §8.8, §11.5, OPEN O-11 **(companion)** | Cite the new and restated rows: L86 (walk file: inputs, expectations, frames, `[screen]` and `size` ranges), L87 (manifest per-field counts), L88 (folder listing, 512), L89 (owner tag, 256 bytes). O-11 closed: every count, size or range has an L-number (§0.1 rule 5) |
+| EM §3.5, §4 preamble, §4.2, §4.7, §4.8, §4.12, §8.8, §11.5, OPEN O-11 **(companion)** | Cite the new and restated rows: L86 (walk file: inputs, expectations, frames, `[screen]` and `size` ranges), L87 (manifest per-field counts), L88 (folder listing, 512), L89 (owner tag, 256 bytes). §0.1 rule 6 (revision 4) answers the rest of O-11: settings `min`/`max` ±1e15 and the grant-record integer bound 2^53 are argument-validity domains, and setting keys, capability names, module-name segments, version parts, action and context name lengths and the walk file's `[[entity]] name` are grammar lengths, all staying in EM; the `--grants`/`grants` copy bound of 4 MiB + 1 belongs to L79. The §4 preamble claims an L-number only for what rule 6 registers; O-11 closed |
 | EM §8.4, §8.5, invariants 9 and 13 **(companion)** | The re-read rule of §8.23: a re-read that removes, invalidates or narrows a loaded script's record suspends it in that frame; a widening is honoured only at the next load; a record that breaks §8.3 grants nothing. Invariant 9 reads "Tessera never grants a capability except by an Allow (or the `test` tool root)"; invariant 13's "hand-widened record" means a record that breaks §8.3, or the word is dropped |
 | EM §10.4 **(companion)** | A row for a load past its dialog that waits on its grant-record write or its store probe when `Draining` begins: the write or probe completes, then the load is dropped (§8.21) |
 | EM §11.4–§11.6 **(companion)** | The harness's dialog policy at every load that §9.2 would ask at (first load, `reload` with a changed hash, full reload, `manager` `load` after a required revocation, a widen): an answer per dialog from the walk file, or a stated default; a `dialog` trace event (kind, asked set, answer) and expectation; a grant-store seed option for the tool root (hand-edited, duplicate and newer-`version` documents), so the ST parts of X62, X90 and X92 can be built |
@@ -2023,10 +2398,28 @@ this spec keeps the stronger one.
 | EA1b §8.1, §8.8 **(companion)** | The full-reload declaration set and validation of §8.24; snapshot and hand-off bytes inside the new apartment's cap (§8.10) |
 | EA1b §8.6, invariant 21, its §14 OPEN **(companion)** | Replaced by §7.6: a pending read counts as outstanding and against the read rate; program order; pending deletion answers absent |
 | EA1b §9.2 **(companion)** | Log file format and escaping of §8.1 (escape, not remove); the console shows lines through §8.2 with the log-line cap |
+| D17 §8 limits table, script-log row (by status line) | The log keeps 64 KiB/s per script and gains **128 KiB/s for all scripts together**, with the counted "N records dropped" record; "the only rate limit on the log" no longer holds (§8.1, L45, OPEN O-3) |
+| D17 M5.5 exit criterion 2 (by status line) | Its `Data` item is slice 2 (`Data` ships in slice 2); in slice 1a the item covers the `Store` read flood only (X25) |
+| EM §3.4, §3.6, §12 **(companion)** | Snapshot walk (`check` included) and every store, log and grant-store open classify an entry with `fstatat` without following **before** opening it, open only regular files, and open non-blocking for reads and writes (a FIFO log write open fails with `ENXIO`); a rotation never renames over a non-plain `s_<id>.1.log` (§8.8, X54, X94) |
+| EM §8.5, §8.6, invariants 9 and 13 **(companion)** | The session overlay of §8.23 (failed-write and session-only decisions narrow, or for dialog Allows widen, every re-read result; a newer-`version` document changes nothing and suspends nothing); grant-store reads non-blocking, regular-file checked on the handle, bounded at 4 MiB + 1; `.corrupt` backups of those bytes or by rename; the advisory lock taken without blocking, retried for 1 s, then a failed write (§8.8 "Tessera's own files") |
+| EM §7.4, §9.7, §10.4 **(companion)** | A load is refused while the same id of the other kind is loaded or loading (L26, X90); a narrowing (revocation, Reset, Remove, local-only switch, narrowing re-read) during a load past its dialog cancels it, with phase D and the top-level item re-checking the record (§8.23, X91) |
+| EM §4.11, M17, invariant 22 **(companion)** | Overlapping suggested defaults of one script in one context are refused, not only equal ones (§8.16, L61, X41) |
+| EM §8.7 **(companion)** | The store-root scan of §8.7 (L92) gives the orphan totals (when, on which queue, no-follow `fstatat` sizes, caps, how it stays current) |
+| EM §11.1, §11.5, §11.8 **(companion)** | Tool-root removal is a no-follow recursive removal inside the root (§8.8); the harness offers a record-flood hook for X19's ST part (L86's 4,096 entities stay); TM §11's intro now names `ELSEWHERE` too |
+| EA1a §0, §2.3, §4.2, §6.1, §6.2, §7.4, §7.9, §8.2, §9.1, §10.2 **(companion)** | Its resource caps are L91 (command arguments, `help`, edges, `Entity.Read` handles, query radius and box side, ray landblocks, `LocText`); positions, node sizes and offsets, label width, `region`, `max_distance`, timer delay and node names are domains or grammar lengths that stay in EA1a (§0.1 rule 6); §0's sentence says "every resource limit is TM's" |
+| EA1a §2.1, §2.6, §2.8, §7.6, §7.7 **(companion)** | Only a press notification of a solid press, an action start or an `/ext:` line opens a gesture window, which closes at the user's next input elsewhere or after 1 s (§8.13, L93); a solid press is judged by the topmost painted element, a disabled node's press opens no window, and only a solid press raises a script's block (rule 7.2.1); per-request results and due timers are never dropped (L30) |
+| EA1a §2.7, §2.9, §7.11, §8.1 **(companion)** | Natives and applies check the apartment's effective set, never the live grant table; a handle is checked against the capability of the module that minted it; suspension deactivates the script's ext contexts and releases their holds, and resume does not restore them (§8.23) |
+| EA1a §5.2, §5.3 **(companion)** | A pending `Get` shares the entry's immutable bytes (or charges a copy at the call, rule 7.6.3); a read reserves ρ × *n* + ε × min(*n*, 8,192), reads at most the indexed size + 1, answers `fn(nil, "invalid")` for a size mismatch and `fn(nil, "too large")` for a result over its reservation (§8.14) |
+| EA1a §7.7, §7.10, §11, §13.1 **(companion)** | Badge text "⟨id⟩ · ext script" in a fixed box (20 × (16 + 8 × (*n* + 13)) UI units), placed wholly on screen, no focus while it is covered or off screen (§8.3); entries counted by size, (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1) (rule 7.1.2), so §13.1's coverage figure is recomputed; an addition that gives a shown frame its badge answers `nil, "limit"` past the bound (rule 7.1.5); the §11 L30 row reads "512 per Frame (window)"; the L56 row is "the 1.0 ms GPU part of the 1.6 ms row" |
+| EA1a §4.3, §10.3 **(companion)** | The all-scripts log rate (L45); a subscription matches only records of frames after its creation, a filter call ended by its stopping rule is never an abort, and filter time is outside L17 (rule 7.5.2a) |
+| EA1b §4.4, §4.5, §4.7, invariant 2 **(companion)** | `Follow` with an entity handle checks `entity.read` at the call and at every apply (§8.23 handles); the "unload" end in the frame the unload is requested; no lease, lease intent or `Sandbox` command from an `Unload` handler, its intents discarded at its return (§8.17); correct the §4.7 citation of EA1a §2.9 |
+| EA1b §5.3, §5.5, §6.4, §14 **(companion)** | The `Lines` cap is L90 (its §14 request answered); coverage-dependent `GetStats` fields only with `world.read` (rule 7.1.4); *n* counts shown lists that are non-empty, drawn or not, as rule 7.1.4 says |
+| EA1b §7.4 **(companion)** | Teleports numbered per `Session` connection, reset at `Connect`; the slot released in the frame a switch or session end is queued and at a failed submission (number not consumed); clock changes at most 4 per second for all scripts (L75, X80) |
+| EA1b §8.2, §8.3, §8.8, §13 **(companion)** | L84 counts only hot reloads; the file index counts toward the new apartment's cap during a hot reload (rule 7.6.1); X44 is tagged 1b, 2 and X85, X27 and X16 1a, 1b in TM |
 | keymap.md §7.3 | Notes the separate ext holds pool of 64 on top of the 256 (§8.16) |
 | keymap.md §6.5 | Notes that `keymap-ext.toml` follows the configured keymap path and that the install guard applies to the resolved target (§8.19) |
 | LEGAL §18.4, §18.5, §18.6 | The driven-screenshot item closed by §7.7; the decode-cache content channel closed by §8.9; residuals (3)–(5) of §6.8 (layout between ext scripts, decode timing including resident hits, the overlay share count) added to §18.4's stated limit |
-| ROADMAP M5.5 | Exit criterion 2 gains X38, X50 (notices), X65 (slice 2), X85, X88, X51, X91; deliverables name this spec |
+| ROADMAP M5.5 | Exit criterion 2 gains X38, X50 (notices), X65 (slice 2), X85, X88, X51, X91 and X95 (an ext window never covers a plugin window, §8.26); its `Data` item ("`Store` read flood and `Data` lookups of new DIDs") is tested in slice 2, where `Data` ships (X25's slice-2 part); deliverables name this spec |
 
 <a id="s14"></a>
 ## 14. Open items
@@ -2042,18 +2435,25 @@ this spec keeps the stronger one.
 > the alternative is to lower the 13 ms ext Lua ceiling by the row. Until then the
 > stricter reading applies: the row is counted **and** the 4.2 ms margin is kept, so the
 > ext Lua ceiling is 13 ms − row: **12 ms** in slice 1a (composition only, 1.0 ms) and
-> **11.4 ms** from slice 1b. With R = 3 ms that needs S ≤ 1 ms and S ≤ 0.7 ms
-> respectively; if E6 cannot show that, D17 §8's recorded fallback lowers the caps.
+> **11.4 ms** from slice 1b. Both of D17 §8's worst-frame branches must fit (L12): with
+> R = 3 ms the first, 7 ms + R + 2·S, needs S ≤ 1 ms in slice 1a and S ≤ 0.7 ms from
+> slice 1b; the second, 2 ms + K + S (or C), needs **K, C ≤ 9 ms** in slice 1a and
+> **K, C ≤ 8.7 ms** from slice 1b (L15, L16). If E6 cannot show these, D17 §8's recorded
+> fallback lowers the caps: the 4 MiB allocation for R, the 128 KiB source cap for K and
+> the 64 MiB memory maximum for C.
 
 > **OPEN O-3:** the lower `Store` byte rate of §8.7 (32 KiB/s per script, 128 KiB/s in
 > all, with D17's 10 MiB and 40 MiB bucket capacities, debited at the call) changes D17
-> §8's row; the owner confirms it at the M5.5 plan review. It is stricter than D17's
-> figure in rate and equal in burst, and applies meanwhile.
+> §8's row, and the all-scripts script-log rate of 128 KiB/s (§8.1, L45) changes D17 §8's
+> script-log row ("the only rate limit on the log"). The owner confirms both at the M5.5
+> plan review. Each is stricter than D17's figures and applies meanwhile; together they
+> bound sustained wear to about 21 GiB per day (§8.7).
 
 > **OPEN O-4:** `c_f`, the declared cost of one record-filter pair (§7.5), the declared
 > size of one retained entity record (at most 64 bytes assumed), and the neutral reader's
-> declared expansion ratio for result reservations (§8.14; EA1a OPEN-2). E7 and E5
-> measure them in slice 1a.
+> declared worst-case bounds ρ (parsed bytes per stored byte) and ε (host memory per
+> element) for result reservations (§8.14; EA1a OPEN-2), which are maxima over hostile
+> values, not typical figures. E7 and E5 measure them in slice 1a.
 
 > **OPEN O-5:** the inherited 0014 open review item 2 (§8.20). When M5 resolves it, X71's
 > exception is removed or restated to match.
@@ -2073,3 +2473,4 @@ this spec keeps the stronger one.
 | 2026-10-07 | First version (Review). Assets (13), attackers (7) and trust boundaries (9); 89 threats in 11 groups, each with a requirement and an escape test (X1–X90); concrete rules for D17's eight open items (§7: overlay and composition coverage with a GPU row and E9, solid presses and gesture-turn focus, the bridge's direct handler call, the gate's floor frame and switch timeout, metered entity filtering with a record cap, `Store` read-your-writes through a shared pending-write map, the `Input.Drive` allow-list, pointer-transparent world labels) and for its "other improvements" (§8); the earlier items restated (§9); a limits register of 78 rows (§10); 22 invariants; six OPEN items. |
 | 2026-10-07 | Revision 2 (Review), answering the independent review and reconciling with EM, EA1a and EA1b. New §0.1 (how other specs cite TM: L-, X-, T- and invariant numbers, never renumbered). §7.1 rewritten: conservative pixel-centre counting, frustum culling first, filled boxes with the eye inside, unclipped position-independent composition counting (closes the move-on-screen hole), fair shares with drop-and-go-on from EA1b, user resizes clamped, host changes hide in reverse show order across scripts, a 1.6 ms row (encoding + GPU) with E9 replacing EA1b's row and E4b. §7.3.1 serial per `AddCommand` call. §7.4: deterministic mode uses the frame condition only; switch bound 392 frames. §7.6: file index defined; pending reads counted and delivered next turn; pending deletion; charging across a hot reload. §8.1 one pinned log format (adds U+2028/U+2029). §8.2: manifest parse-time refusal kept (EM O-9), marks aligned, X47 split in three parts. §8.3 badges above all ext windows. §8.7: buckets 10/40 MiB, debited at the call, per session. §8.9 resident-hit timing residual. §8.10 hot-reload allowance contents (EM O-4 closed). §8.12 X86 figures fixed. §8.14 reservation from pending map or file index times the reader's ratio, returned. §8.17 leases end at a queued switch and at revocation; picking under a lease. §8.19 ext bindings only in `keymap-ext.toml`. §8.21 store work never cancelled half-way. New §8.23 (revocation suspends), §8.24 (no store or hand-off across an `author` change; full-reload set; store owner tag), §8.25 (consent pointer entry), §9.6 (nested C-call bound across resumes, 8 MiB stack). Threats T90–T92; limits L79–L86 and many rows restated (§10.6); tests X91–X93, X50 split by slice, EM's earlier case IDs mapped (§11.10); invariants 7, 10, 13 restated, 23–27 added; §13 lists every companion change; O-2, O-3, O-4 restated. |
 | 2026-10-07 | Revision 3 (Review), answering the re-review of revision 2 and the companions' re-reviews. §8.7 (blocking): a key is clean again once a flush has **taken** its pending value (rule 7.6.2 defines taken and untaken), so a `Set` or `Delete` landing during an in-flight flush pays a key token and the full counted size; only a replacement of an untaken value pays growth alone; X57 gains the in-flight run; L44 restated; new invariant 28. §7.5 worked example and X19 within L30 (4 × 16 and 16 × 4). §10: L86 restated (inputs, expectations, frames, `[screen]` and `size` ranges), new L87 (manifest per-field counts), L88 (folder listing), L89 (owner tag), so EM O-11 is answered; §0.1 rule 5 (every count has an L-number; requests answered in §13 or §10) and rule 3's §11.10 citation fixed. Rule 7.4.1: a floor frame resets both conditions; the "at most once per 15 gated frames" sentence corrected. Rule 7.6.1: the file index counts toward every apartment that has the store open. §2 "Call" includes the filter call and REPL runs. Adopted from the companions' re-reviews: §8.8 extended to store directories, their entries and log files (no-follow, entry kinds, fail closed, wipes never follow or recurse; new T93 and X94; invariant 15 restated); §8.13 a split turn resumes first in its group at most once (X17); §8.21 a load waiting on its record write or store probe at a switch; §8.23 a grant-store re-read that narrows suspends, a widening waits for the next load, a record breaking EM §8.3 grants nothing (X91, X62 restated); L75 teleport slot released when its session generation ends (X80); X20, X28 and X87 tagged 1a, 1b; X24 covers commands; X29 builds its lists over several calls; §11 reports multi-harness tests per part; §13 rows for EM §3.1/§8.8, O-11, §8.4/§8.5, §10.4, §11.4–§11.6, §11.8, EA1a §2.6, §2.9, §5.2/§5.3, and EA1b §7.4, §13 (EM §11.5 marked done). |
+| 2026-10-07 | Revision 4 (Review), answering the re-review of revision 3 and the follow-up review of the same day, and settling what the companions' reviews refer to TM. **Register** (§0.1, §10): new rule 6, so the register holds every resource limit, and argument-validity domains and grammar lengths stay in their defining specs (EM O-11 answered); new L90 (`Overlay.Lines` per-call cap, EA1b §14 answered), L91 (the API specs' per-call and per-object caps), L92 (store-root scan), L93 (gesture window); L11, L12, L15–L18, L26, L28, L30, L43, L45, L55, L58, L61, L63, L75 and L84 restated. **Slices** (§7.4, §11): X16, X27 and X85 tagged 1a, 1b, with X85's and L11's slice-1a figures for 16 apartments (2 s + 16 × (250 ms + *F*), 376 frames); X22, X25 and X46 tagged 1a, 2; X44 tagged 1b, 2; X31's nested, scale and rotation parts moved to the slice that adds them; a slice ships on the parts that run in it; D17 exit criterion 2's `Data` item noted as slice 2 (§13). **Wear** (§8.1, §8.7): an all-scripts log rate of 128 KiB/s (OPEN O-3), the worst sustained wear restated as about 21 GiB per day, X56 gains the 16-script log flood. **Counting** (rule 7.1.2): composition entries counted by size, (⌈*w*⌉ + 1) × (⌈*h*⌉ + 1), independent of position and sub-pixel phase; wide lines clipped against the viewport expanded by *w*/2; the badge has a fixed counted box. **Frame ceiling** (L12, L15, L16, O-2, T16, X11, X16): the K and C bounds of each interim ceiling (9 ms in 1a, 8.7 ms from 1b) and the fallbacks; X11 and X16 fail on L12's ceilings. **`Store` reads** (§8.14, rule 7.6.1, 7.6.3): reservations from worst-case ρ and ε, reads bounded by the indexed size, a size mismatch answers `invalid`, a result over its reservation is never delivered; a pending `Get` shares immutable bytes. **Badge** (§8.3): placed wholly on screen, inside the window when needed; no focus while it is covered or off screen. **Copy** (§8.4): only wholly displayed text at opacity ≥ 0.5, Cc, Cf, Zl and Zp stripped. **Host change** (rule 7.1.5): windows and labels hidden, `VisibilityChanged{visible = false, by = "host"}`. **Z-range**: new §8.26, T94, X95, invariant 29. **Leases** (§8.17, invariant 25, X44): ended at the event, control back at step 3 of that frame or the next; ended when an unload is requested; nothing from an `Unload` handler. **Filtering** (rule 7.5.2, 7.5.2a, X19): a filter call is never an abort, its time is outside L17, a subscription matches only later frames, X19's ST part uses a record-flood hook. **Settled for the companions:** solid press by the topmost painted element, only a solid press raises a block, disabled nodes (rule 7.2.1); covering by the script's own content (rule 7.2.2, L58); gesture windows opened only by a press notification and bounded (§8.13, L93); effective-set checks, handles checked against their minting module, suspension releases contexts and holds, the session overlay of grant decisions, a newer document changes nothing, loads in progress cancelled by a narrowing, one id loaded or loading (§8.23, L26, X90, X91); overlapping suggested defaults refused (§8.16, X41); classify-before-open and non-blocking opens for the walk, store, log and Tessera's own files, bounded grant-store reads, the tool root's no-follow removal (§8.8, X54, X94); the store-root scan for orphan totals (§8.7, L92); teleports numbered per connection with the slot released at the queued switch or a failed submission and a global clock-change rate (L75, X80); L84 counts hot reloads only; coverage-dependent overlay statistics only with `world.read` (rule 7.1.4, §6.8); per-request results never dropped (L30); TM §11's intro names `ELSEWHERE`. Invariants 4, 5, 7 and 25 restated; 29–34 added; §13 rows for D17's log row and exit criterion 2, EM, EA1a and EA1b. |

@@ -422,6 +422,52 @@ Exporters and viewers are for personal use, are opt-in, and are never advertised
 extraction or ripping tools. The engine must run with original placeholder content so it
 has substantial uses that do not depend on game data.
 
+### 11.1 Servers
+
+Added 2026-10-06 for ROADMAP M7 (exit criterion 4). These rules apply to `tessera-server` and
+to **any** server build that speaks Tessera's own protocol, whoever runs it. The detailed,
+checkable version is [specs/server-content.md](specs/server-content.md); the server's
+behaviour is in [specs/test-server.md](specs/test-server.md).
+
+> **Status: needs the project owner's confirmation before any public test build.** Until the
+> owner records that confirmation here (with a date), Tessera servers are built and run only
+> privately by contributors for development and LAN testing. The banner at the top of this
+> document also still applies: a lawyer's review is needed before networked features are
+> offered beyond the project.
+
+1. **No game data on a server.** A server holds, reads and sends no game data: no archives,
+   extracted assets, strings, quest or dialogue text, NPC scripts, or item, quest or map
+   databases. It does not read any game installation, the operator's own included, and it
+   never sends the static world. Each player's client draws the world from that player's own
+   install.
+2. **Opaque references are relayed, never collected.** A server may store and pass on the
+   record numbers (DIDs and enum keys) that each player's client chooses from its own install,
+   for example for a character's appearance. It never resolves them, pairs them with game
+   text, or gathers them into lists or exports. A number that only a lawful install can
+   resolve is not a copy of the content it names.
+3. **Numeric positions.** Server content may contain a few bare numeric positions (at most 16
+   per content file) as spawn points, read by the contributor from Tessera or their own
+   install, with project-made names. No place names or other game text, no maps or location
+   lists, and no positions that reproduce the game's placements.
+4. **Original default world.** The default world is project-made: neutral names and texts,
+   no game names, text or references, and usable without any game data.
+5. **No gameplay reproduction.** Combat, quests, NPC behaviour and other gameplay from the
+   game are tier T3 ([§8](#8-risk-tier-ladder)) and out of scope. A server provides accounts,
+   presence, movement, chat, appearance as opaque references, and simple project-made test
+   actors.
+6. **Operators.** Private or LAN use for testing only. No public hosting: nothing listed,
+   advertised or open to registration by strangers ([§12](#12-distribution-and-money)). No
+   money of any kind. Accounts are created by the operator. Every player brings their own
+   legally obtained installation, and nobody is given game files. Server names and messages
+   follow [§10](#10-naming-and-trademark-rules). No server connects to or imitates any
+   official service ([§9.3](#93-the-gate)).
+7. **Committed content** is original, licensed GPL-3.0-or-later or CC0-1.0, and passes the
+   review checklist of server-content.md §9.3.
+
+Questions for counsel before a public test build: whether relaying opaque references (rule 2)
+and committing numeric positions (rule 3) raise any issue under §4.1 (*Micro Star*) or the EU
+database right (§5).
+
 ---
 
 ## 12. Distribution and money
@@ -433,6 +479,7 @@ has substantial uses that do not depend on game data.
 - Free of charge. No paid tiers, perks, ads, or sales. Donations, if any, cover
   infrastructure costs only (the Project 1999 model).
 - No hosted public game servers.
+- What a Tessera server may hold and how it may be run: [§11.1](#111-servers).
 - Documentation directs users only to official download channels for the game.
 
 ---

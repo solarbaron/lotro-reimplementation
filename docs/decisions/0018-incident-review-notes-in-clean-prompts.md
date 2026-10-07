@@ -99,3 +99,19 @@ is preserved with the held material (below).
   either added to them through the spec lifecycle or removed.
 - The process rules above stay in force.
 
+
+## Correction: how the release landed in git (2026-10-07)
+Applying the held patch with a three-way merge staged most of it in the index. As a result,
+the released close-out work is split across two commits, and the first one is mislabelled:
+- **`ecc814b`:** its message describes only the owner-checklist update and carries
+  `Clean-Room-Role: spec`. It also contains 43 files of the released close-out:
+  - code in `crates/physics`, `crates/render`, `crates/world` and `apps/client`, plus fuzz
+    targets;
+  - the `walker.md` and `render.md` design sections;
+  - `ROADMAP.md`, `README.md`, `CLAUDE.md`, `ARCHITECTURE.md` and
+    `docs/perf/reference-machine.md`.
+- **`6607d43`:** contains the remaining new files and the one-line lint fix.
+
+The tree after `6607d43` is the one the full checks ran on. Published history is not
+rewritten (`docs/CLEAN_ROOM.md` §10 step 3), so this note stands as the correct description
+of `ecc814b`.

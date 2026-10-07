@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Status | **Review**. Implemented in `crates/net` (`tessera_net::transport`); waiting for a reviewer |
-| Last updated | 2026-10-04 (review fixes: PAUSED flag, retransmission budget counts only stalled retransmissions, reorder and inbox byte budgets, sequence-span window wording, invalid-ack counting) |
+| Last updated | 2026-10-04 |
 | Author role | Implementer (original design, no dirty-room input) |
 | Reviewer | none yet |
 

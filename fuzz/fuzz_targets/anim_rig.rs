@@ -54,9 +54,19 @@ fuzz_target!(|data: &[u8]| {
         }
         let mut model = vec![Mat4::IDENTITY; bones];
         let local: Vec<Transform> = (0..bones).map(|_| transform(&mut src)).collect();
-        let _ = s.compose(&local, &mut model);
+        if s.compose(&local, &mut model).is_ok() {
+            assert!(
+                model.iter().all(Mat4::is_finite),
+                "composed model matrices are finite"
+            );
+        }
         let mut skin = vec![Mat4::IDENTITY; src.below(bones + 2)];
-        let _ = skinning_matrices(s, &model, &mut skin);
+        if skinning_matrices(s, &model, &mut skin).is_ok() {
+            assert!(
+                skin.iter().all(Mat4::is_finite),
+                "skinning matrices are finite"
+            );
+        }
         let mut pal = vec![[0.0f32; 16]; src.below(300)];
         let _ = write_palette_mat4(&skin, &mut pal);
         let mut rows = vec![[0.0f32; 12]; src.below(300)];

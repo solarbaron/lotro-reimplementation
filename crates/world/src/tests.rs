@@ -236,7 +236,8 @@ fn content_layer_filter() {
     };
     let ents = vec![
         testkit::TestEntity::physics(1, obj::TREE, [1.0, 1.0, 1.0], vec![layers(&[1])]),
-        testkit::TestEntity::physics(2, obj::TREE, [2.0, 2.0, 1.0], vec![layers(&[2])]),
+        // A named layer that is not active.
+        testkit::TestEntity::physics(2, obj::TREE, [2.0, 2.0, 1.0], vec![layers(&[0x1000_02A8])]),
         testkit::TestEntity::physics(3, obj::TREE, [3.0, 3.0, 1.0], vec![layers(&[])]),
         testkit::TestEntity::physics(
             4,
@@ -248,14 +249,16 @@ fn content_layer_filter() {
             position: None,
             ..testkit::TestEntity::physics(5, obj::TREE, [0.0; 3], Vec::new())
         },
+        // `All` (2) is present in every layer and instance (`entity-descriptor.md` §4.5.1).
+        testkit::TestEntity::physics(6, obj::TREE, [6.0, 6.0, 1.0], vec![layers(&[2])]),
     ];
     s.insert(k.info_did(), testkit::landblock_info(k, &ents), Some(39));
     let ctx = context(s.clone());
     let b = bundle_of(&ctx, k).unwrap();
     let draw: Vec<bool> = b.entities.iter().map(|e| e.draw).collect();
-    assert_eq!(draw, vec![true, false, true, true]);
+    assert_eq!(draw, vec![true, false, true, true, true]);
     assert_eq!(b.unplaced_entities, 1);
-    assert_eq!(b.entities[1].content_layers.as_deref(), Some(&[2u32][..]));
+    assert_eq!(b.entities[4].content_layers.as_deref(), Some(&[2u32][..]));
 
     let opts = BundleOptions {
         active_content_layers: vec![2],
@@ -269,6 +272,13 @@ fn content_layer_filter() {
 
 #[test]
 fn walker_streams_across_a_strip() {
+    // The rings alone, and the default lookahead (velocity estimated by `update`).
+    for lookahead in [Duration::ZERO, StreamConfig::default().lookahead] {
+        walk_across_a_strip(lookahead);
+    }
+}
+
+fn walk_across_a_strip(lookahead: Duration) {
     let world = SyntheticWorld::rectangle(1, 0..=40, 0..=6);
     let ctx = context(world.build());
     let pool = pool();
@@ -283,6 +293,7 @@ fn walker_streams_across_a_strip() {
         &pool,
         StreamConfig {
             rings,
+            lookahead,
             ..StreamConfig::default()
         },
     )
@@ -290,13 +301,31 @@ fn walker_streams_across_a_strip() {
     let y = 3.0 * 160.0 + 80.0;
     let mut x = 80.0;
     let mut max_resident = 0;
+    // From cold: only the start block is waited for (so the walk has something resident
+    // even when the machine is too busy to finish a bundle during the walk itself); the
+    // rest of the rings load while walking.
+    let start = WorldPos::new(1, x, y, 0.0);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while w.bundle_at(&start).is_none() {
+        let _ = w.update(start);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "start block not loaded"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     while x < 40.0 * 160.0 {
         let p = WorldPos::new(1, x, y, 0.0);
         let r = w.update(p);
-        max_resident = max_resident.max(r.resident_blocks);
-        // Nothing resident lies beyond the far radius plus hysteresis.
+        max_resident = max_resident.max(r.resident_blocks - r.ahead_resident);
+        // Nothing resident lies beyond the far radius plus hysteresis (bundles loaded
+        // ahead of the rings are not in `resident`).
         for (k, _, _) in w.resident() {
             assert!(k.distance_to(p.xy()) <= 640.0 + 1e-9, "{k} too far");
+            assert!(!w.is_ahead(k));
+        }
+        if lookahead.is_zero() {
+            assert_eq!((r.ahead, r.corridor), (0, 0), "{r:?}");
         }
         x += 40.0;
         std::thread::sleep(Duration::from_micros(300));
@@ -643,7 +672,15 @@ fn mixed_size_world() -> MemoryWorldSource {
 
 #[test]
 fn mixed_sizes_do_not_thrash_at_a_fixed_focus() {
-    let ctx = context(mixed_size_world());
+    // Without the world systems, whose collision sets give every bundle a large common
+    // base (their charge is covered by `world_systems_are_charged_to_residency`).
+    let ctx = Arc::new(
+        WorldContext::load(
+            Arc::new(mixed_size_world()),
+            BundleOptions::default().without_world_systems(),
+        )
+        .expect("synthetic context"),
+    );
     let small = bundle_of(&ctx, key(10, 10)).unwrap().heap_bytes;
     let large = bundle_of(&ctx, key(11, 10)).unwrap().heap_bytes;
     assert!(large > 4 * small, "{small} vs {large}");
@@ -759,10 +796,11 @@ fn seam_neighbours_of_near_and_mid_blocks_stay_resident() {
                     "{what}"
                 );
             }
-            // And after moving.
+            // And after moving (the rings alone: with no velocity, nothing is loaded
+            // ahead, so the result does not depend on how fast the loop runs).
             for step in 0..40 {
                 let p = WorldPos::new(1, c.x + f64::from(step) * 40.0, c.y + 13.0, 0.0);
-                w.update(p);
+                w.update_with_velocity(p, [0.0, 0.0]);
             }
             assert!(
                 w.settle(
@@ -906,6 +944,14 @@ fn stream_config_is_validated() {
             residency_budget: 0,
             ..d.clone()
         },
+        StreamConfig {
+            frill_budget: 0,
+            ..d.clone()
+        },
+        StreamConfig {
+            max_frill_jobs_per_frame: 0,
+            ..d.clone()
+        },
     ] {
         assert!(bad.validate().is_err());
         assert!(matches!(
@@ -936,7 +982,9 @@ fn integration_progresses_when_bookkeeping_exceeds_the_frame_budget() {
     )
     .unwrap();
     let c = centre(10, 10);
-    assert!(w.settle(c, Duration::from_secs(60)));
+    // A generous deadline: 441 bundles with world systems take most of a minute in a
+    // debug build on a busy machine; the test is about progress, not speed.
+    assert!(w.settle(c, Duration::from_secs(300)));
     assert_eq!(w.resident().count(), 21 * 21);
 }
 
@@ -1097,20 +1145,23 @@ fn figures_can_be_turned_off_or_capped() {
 fn figure_content_layers_and_suppression() {
     let k = key(0, 0);
     let mut s = SyntheticWorld::rectangle(1, 0..=0, 0..=0).build();
-    let layer2 = (
-        testkit::pid::ENTITY_CONTENT_LAYERS,
-        testkit::TestValue::Array(vec![(
-            testkit::pid::ENTITY_CONTENT_LAYER,
-            testkit::TestValue::Enum(2),
-        )]),
-    );
+    let layer = |l: u32| {
+        (
+            testkit::pid::ENTITY_CONTENT_LAYERS,
+            testkit::TestValue::Array(vec![(
+                testkit::pid::ENTITY_CONTENT_LAYER,
+                testkit::TestValue::Enum(l),
+            )]),
+        )
+    };
+    let named = layer(0x1000_02A7);
     let ents = vec![
         // A hidden object with an NPC instance set: not drawable, so not a figure.
         testkit::TestEntity::physics(1, obj::HIDDEN, [1.0, 1.0, 1.0], Vec::new()),
-        // A weenie on an inactive content layer.
+        // A weenie on an inactive (named) content layer.
         testkit::TestEntity {
             kind: 6,
-            ..testkit::TestEntity::physics(2, obj::WEENIE, [2.0, 2.0, 1.0], vec![layer2])
+            ..testkit::TestEntity::physics(2, obj::WEENIE, [2.0, 2.0, 1.0], vec![named])
         },
         // A weenie without an object.
         testkit::TestEntity {
@@ -1128,9 +1179,84 @@ fn figure_content_layers_and_suppression() {
         testkit::landblock_info_with_weenies(k, &ents, &weenies),
         Some(39),
     );
-    let ctx = context(s);
+    let ctx = context(s.clone());
     let b = bundle_of(&ctx, k).unwrap();
     assert!(b.figures.is_empty(), "{:?}", b.figures);
+
+    // Weenies listing only `All` (2) or only `InstanceZero` (1) exist in the shared world
+    // (`entity-descriptor.md` §4.5.1, I = 0), whatever the active layers.
+    let ents = vec![
+        testkit::TestEntity {
+            kind: 6,
+            ..testkit::TestEntity::physics(4, obj::WEENIE, [4.0, 4.0, 1.0], vec![layer(2)])
+        },
+        testkit::TestEntity {
+            kind: 6,
+            ..testkit::TestEntity::physics(5, obj::WEENIE, [5.0, 5.0, 1.0], vec![layer(1)])
+        },
+    ];
+    s.insert(k.info_did(), testkit::landblock_info(k, &ents), Some(39));
+    for active in [vec![1], vec![0x1000_02A7], Vec::new()] {
+        let ctx = WorldContext::load(
+            Arc::new(s.clone()),
+            BundleOptions {
+                active_content_layers: active.clone(),
+                ..BundleOptions::default()
+            },
+        )
+        .unwrap();
+        let b = bundle_of(&ctx, k).unwrap();
+        assert_eq!(b.figures.len(), 2, "active {active:?}: {:?}", b.figures);
+        assert!(b.figures.iter().all(|f| f.kind == FigureKind::Weenie));
+    }
+}
+
+#[test]
+fn figures_with_one_iid_share_one_instance_set() {
+    // Hostile data: 200 weenie placements with the same IID (serial 1) and one weenie
+    // whose instance set is large. Every figure points to one shared copy, charged once.
+    let k = key(0, 0);
+    let s = SyntheticWorld::rectangle(1, 0..=0, 0..=0).build();
+    let big = (
+        testkit::pid::ENTITY_CONTENT_LAYERS,
+        testkit::TestValue::Array(
+            (0..2_000)
+                .map(|_| {
+                    (
+                        testkit::pid::ENTITY_CONTENT_LAYER,
+                        testkit::TestValue::Enum(1),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    let weenies = vec![(testkit::entity_iid(k, 1), vec![big])];
+    let make = |n: usize| {
+        let ents: Vec<testkit::TestEntity> = (0..n)
+            .map(|_| testkit::TestEntity {
+                kind: 6,
+                ..testkit::TestEntity::physics(1, obj::WEENIE, [1.0, 1.0, 1.0], Vec::new())
+            })
+            .collect();
+        testkit::landblock_info_with_weenies(k, &ents, &weenies)
+    };
+    let opts = BundleOptions::default().without_world_systems();
+    let bundle = |n: usize| {
+        let mut s = s.clone();
+        s.insert(k.info_did(), make(n), Some(39));
+        let ctx = WorldContext::load(Arc::new(s), opts.clone()).unwrap();
+        bundle_of(&ctx, k).unwrap()
+    };
+    let one = bundle(1);
+    let many = bundle(200);
+    assert_eq!(many.figures.len(), 200);
+    let first = many.figures[0].instance.as_ref().expect("instance set");
+    assert!(first.value_count() >= 1);
+    for f in &many.figures {
+        assert!(Arc::ptr_eq(first, f.instance.as_ref().unwrap()));
+    }
+    assert_eq!(one.figures.len(), 1);
+    assert_eq!(one.figures[0].instance.as_deref(), Some(&**first));
 }
 
 #[test]
@@ -1185,4 +1311,744 @@ fn rigs_of_thirty_bones_or_more_are_figures() {
     )
     .unwrap();
     assert!(bundle_of(&off, k).unwrap().figures.is_empty());
+}
+
+// ---------------------------------------------------------------------------------------
+// World systems (M4.5): scenery, water, collision and frills through bundles and streaming
+// ---------------------------------------------------------------------------------------
+
+/// Stored water level of the synthetic scenery world: h = 12 × 1000 / 255 ≈ 47.06, above
+/// every terrain height of blocks X = 10 – 13 (≈ 39 – 55 is not reached: X = 12 starts at
+/// stored 1,536 ≈ 46.9), so even-X blocks are wet.
+const LEVEL: u16 = 12;
+
+fn scenery_world() -> SyntheticWorld {
+    SyntheticWorld {
+        scenery: true,
+        water_level: Some(LEVEL),
+        ..SyntheticWorld::rectangle(1, 10..=13, 20..=21)
+    }
+}
+
+fn scenery_context(options: BundleOptions) -> Arc<WorldContext> {
+    Arc::new(
+        WorldContext::load(Arc::new(scenery_world().build()), options)
+            .expect("synthetic context")
+            .with_area_names(names()),
+    )
+}
+
+fn objects_of(b: &LandblockBundle) -> Vec<u32> {
+    b.generated
+        .iter()
+        .filter_map(|e| e.object.map(|d| d.0))
+        .collect()
+}
+
+#[test]
+fn context_loads_region_tables_and_systems() {
+    let ctx = scenery_context(BundleOptions::default());
+    let r = ctx.region(1).expect("region");
+    let t = r
+        .scenery
+        .as_ref()
+        .expect("scenery tables from slots 1, 2, 8");
+    assert_eq!(t.scene_choices.did, Did(0x1100_0000));
+    assert!(t.terrain_types.is_some());
+    let sys = ctx.systems();
+    assert!(sys.scenes.is_some());
+    let water = sys.water.as_ref().expect("water");
+    assert!(water.tables().water_table(1).is_some());
+    assert!(sys.collision.is_some());
+    // No sky description or LOD-class table in the synthetic install.
+    assert!(sys.sky.is_none() && sys.lod_classes.is_none());
+    assert_eq!(sys.pids.lod_class, Some(testkit::pid::RENDER_LOD_CLASS));
+    // Turned off: nothing loads.
+    let off = scenery_context(BundleOptions::default().without_world_systems());
+    assert!(off.region(1).unwrap().scenery.is_none());
+    assert!(off.systems().scenes.is_none() && off.systems().water.is_none());
+    assert!(off.systems().collision.is_none());
+}
+
+#[test]
+fn bundles_carry_scenery_water_and_collision() {
+    let ctx = scenery_context(BundleOptions::default());
+    let wet = bundle_of(&ctx, key(10, 20)).unwrap();
+    let dry = bundle_of(&ctx, key(11, 20)).unwrap();
+    assert!(wet.problems.is_empty(), "{:?}", wet.problems);
+
+    // Water: the even block is wet at h = 12 × 1000 / 255.
+    let h = f32::from(LEVEL) * 1000.0 / 255.0;
+    let w = wet.water.as_ref().expect("water").water().expect("wet");
+    assert!((w.height - h).abs() < 1e-4, "{}", w.height);
+    // The exact f32 height of `water.md` §6.2 from here on.
+    let h = w.height;
+    assert!(dry.water.as_ref().expect("water").water().is_none());
+
+    // Scenery: SCENERY on both, ON_WATER (height_mode 1) only where there is water, at h:
+    // the water module's plane is wired into scenery's water ranges (scenery.md §11).
+    assert_eq!(objects_of(&wet), vec![obj::SCENERY, obj::ON_WATER]);
+    assert_eq!(objects_of(&dry), vec![obj::SCENERY]);
+    let on_water = &wet.generated[1];
+    assert_eq!(on_water.placement.position[2], h);
+    let sc = wet.scenery.as_ref().expect("scenery");
+    assert!(sc.complete);
+    assert_eq!(sc.water.map(|p| p.d), Some(-h));
+    assert_eq!(sc.stats.objects, 2);
+    assert!(dry.scenery.as_ref().unwrap().water.is_none());
+
+    // Generated objects are placed like statics: resolved, drawn, LOD class from the chain.
+    for g in &wet.generated {
+        assert_eq!(g.kind, Some(StaticEntityType::Physics));
+        assert!(g.draw && g.visual.is_some() && g.iid.is_none());
+        assert!(wet.is_generated(g));
+    }
+    assert_eq!(
+        wet.drawable().count(),
+        wet.entities.iter().filter(|e| e.draw).count() + 2
+    );
+    assert_eq!(wet.lod_class_of(&wet.generated[0]), Some(5));
+    assert_eq!(wet.lod_class_of(&wet.generated[1]), None);
+    assert_eq!(wet.entity_lod_classes.len(), wet.entities.len());
+
+    // Collision: terrain, the SCENERY box as a generated body, nothing for ON_WATER.
+    let col = wet.collision.as_ref().expect("collision");
+    assert!(col.set.terrain().is_some());
+    assert!(col.generated_bodies[0].is_some());
+    assert!(col.generated_bodies[1].is_none());
+    assert_eq!(col.report().generated_blocking, 1);
+    assert_eq!(col.set.water_plane().map(|p| p.level), Some(h));
+    assert!(wet.heap_bytes > col.heap_bytes);
+
+    // The same bundle without world systems.
+    let off = scenery_context(BundleOptions::default().without_world_systems());
+    let plain = bundle_of(&off, key(10, 20)).unwrap();
+    assert!(plain.generated.is_empty() && plain.scenery.is_none());
+    assert!(plain.water.is_none() && plain.collision.is_none());
+    assert!(plain.entity_lod_classes.is_empty());
+}
+
+#[test]
+fn world_systems_are_charged_to_residency() {
+    let on = scenery_context(BundleOptions::default());
+    let off = scenery_context(BundleOptions::default().without_world_systems());
+    let a = bundle_of(&on, key(10, 20)).unwrap();
+    let b = bundle_of(&off, key(10, 20)).unwrap();
+    let col = a.collision.as_ref().unwrap().heap_bytes;
+    let gen_bytes = a.generated.capacity() * std::mem::size_of::<PlacedEntity>();
+    assert!(
+        a.heap_bytes >= b.heap_bytes + col + gen_bytes,
+        "{} vs {} + {col} + {gen_bytes}",
+        a.heap_bytes,
+        b.heap_bytes
+    );
+}
+
+/// Builds every block of `keys` through the bundle store on `workers` workers, requesting
+/// them in the given order, and returns the generated lists by key (bit patterns).
+fn generated_through_store(
+    ctx: &Arc<WorldContext>,
+    workers: usize,
+    keys: &[LandblockKey],
+) -> std::collections::BTreeMap<LandblockKey, Vec<[u32; 11]>> {
+    let pool = WorkerPool::new(PoolConfig {
+        workers,
+        ..PoolConfig::default()
+    });
+    let store = tessera_assets::AssetStore::new(
+        &pool,
+        BundleSource::new(Arc::clone(ctx.source())),
+        BundleDecoder::new(Arc::clone(ctx)),
+        tessera_assets::StoreConfig::default(),
+    );
+    let handles: Vec<_> = keys
+        .iter()
+        .map(|k| {
+            (
+                *k,
+                store.request(k.data_did().0, tessera_assets::Priority::Visible),
+            )
+        })
+        .collect();
+    handles
+        .into_iter()
+        .map(|(k, h)| {
+            let tessera_assets::AssetState::Ready(b) = h.wait(Duration::from_secs(30)) else {
+                panic!("{k} did not load");
+            };
+            let list = b
+                .generated
+                .iter()
+                .map(|e| {
+                    let p = e.placement.position;
+                    let q = e.placement.rotation.to_wxyz();
+                    [
+                        e.object.map_or(0, |d| d.0),
+                        p[0].to_bits(),
+                        p[1].to_bits(),
+                        p[2].to_bits(),
+                        q[0].to_bits(),
+                        q[1].to_bits(),
+                        q[2].to_bits(),
+                        q[3].to_bits(),
+                        e.scale[0].to_bits(),
+                        e.scale[1].to_bits(),
+                        e.scale[2].to_bits(),
+                    ]
+                })
+                .collect();
+            (k, list)
+        })
+        .collect()
+}
+
+#[test]
+fn scenery_is_identical_with_any_worker_count_and_order() {
+    let ctx = scenery_context(BundleOptions::default());
+    let mut keys: Vec<LandblockKey> = (10..=13u8)
+        .flat_map(|x| (20..=21u8).map(move |y| key(x, y)))
+        .collect();
+    let one = generated_through_store(&ctx, 1, &keys);
+    keys.reverse();
+    let many = generated_through_store(&ctx, 4, &keys);
+    assert_eq!(one, many);
+    assert!(one.values().all(|l| !l.is_empty()));
+}
+
+#[test]
+fn streamer_serves_world_system_lookups_and_frills() {
+    let ctx = scenery_context(BundleOptions::default());
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            rings: RingConfig {
+                near: 160.0,
+                mid: 320.0,
+                far: 480.0,
+                hysteresis: 80.0,
+            },
+            frills: crate::frills::FrillSettings {
+                distance_level: 1,
+                ..crate::frills::FrillSettings::default()
+            },
+            ..StreamConfig::default()
+        },
+    )
+    .unwrap();
+    let here = centre(10, 20);
+    assert!(w.settle(here, Duration::from_secs(30)));
+    let r = w.update(here);
+    assert!(r.collision_bytes > 0 && r.generated_objects > 0, "{r:?}");
+    assert_eq!(r.incomplete_scenery, 0);
+
+    // Water of the resident wet block, and the dry neighbour.
+    let h = f64::from(f32::from(LEVEL) * 1000.0 / 255.0);
+    let under = WorldPos::new(1, here.x, here.y, h - 1.0);
+    assert!(w.is_under_water(&under));
+    assert!(w.landblock_water(&under).is_some());
+    let dry = LocalPos::new(key(11, 20), [80.0, 80.0, 30.0]).to_world();
+    assert!(!w.is_under_water(&dry));
+    assert!(w.landblock_water(&dry).is_none());
+
+    // Sky and lights: no sky description; no Light entities.
+    assert!(w.sky().is_none() && w.sky_at(&here, 0, 0.0).is_none());
+    assert!(w.lights_near(&here, 500.0).is_empty());
+
+    // Draw distances: class 5 without a table keeps the component's initial values.
+    let b = Arc::clone(w.bundle(key(10, 20)).unwrap());
+    let scenery = &b.generated[0];
+    assert_eq!(w.lod_values(&b, scenery, false), LodValues::default());
+    let d = w.draw_distance(&b, scenery, 1_000.0, &DistanceSettings::default());
+    assert!(d.is_finite() && d > 0.0);
+
+    // Collision: a view over the resident sets; the generated box blocks a sweep.
+    let view = w.collision_view(&here, 1);
+    assert!(view.members().len() >= 4);
+    let col = w.collision(key(10, 20)).unwrap();
+    assert!(col.generated_bodies[0].is_some());
+    assert!(
+        w.cell_at(&here).is_none(),
+        "no cells in the synthetic world"
+    );
+
+    // Frills stream with the camera: the scenery vertex's sector holds the FRILL object.
+    let sector = crate::frills::FrillSectorKey::new(key(10, 20), 8, 8).unwrap();
+    let mut ready = None;
+    for _ in 0..2_000 {
+        let fr = w.update_frills(&here, &here);
+        if let Some(s) = w.frill_sector(sector) {
+            ready = Some((Arc::clone(s), fr));
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let (s, _) = ready.expect("frill sector generated");
+    assert!(
+        s.instances.iter().any(|i| i.object == Did(obj::FRILL)),
+        "{s:?}"
+    );
+    assert!(s.instances.iter().all(|i| i.object == Did(obj::FRILL)));
+    // Moving far away drops every sector: the first far update reports them leaving.
+    let far = centre(13, 21);
+    let mut fr = w.update_frills(&far, &far);
+    assert!(fr.left > 0, "{fr:?}");
+    for _ in 0..2_000 {
+        if fr.waiting == 0 && fr.running == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+        fr = w.update_frills(&far, &far);
+    }
+    assert!(w.frill_sector(sector).is_none());
+    // Turning frills off at run time drops every sector and keeps the landblocks.
+    let resident = w.resident().count();
+    w.set_frill_settings(crate::frills::FrillSettings {
+        draw_frills: false,
+        ..crate::frills::FrillSettings::default()
+    });
+    assert_eq!(w.frill_bytes(), 0);
+    assert!(w.frill_ring().is_empty());
+    let fr = w.update_frills(&here, &here);
+    assert_eq!((fr.ready, fr.running, fr.waiting), (0, 0, 0), "{fr:?}");
+    assert_eq!(w.resident().count(), resident);
+    // Clearing releases water and frills.
+    w.clear();
+    assert!(w.water_map().is_empty());
+    assert_eq!(w.frill_bytes(), 0);
+}
+
+#[test]
+fn frill_sector_of_a_bundle_without_scenery_is_empty() {
+    let ctx = scenery_context(BundleOptions::default().without_world_systems());
+    let b = bundle_of(&ctx, key(10, 20)).unwrap();
+    let mut thinner = crate::frills::DensityThinner::with_seed(1);
+    let s = build_frill_sector(&ctx, &b, 8, 8, 1.0, &mut thinner);
+    assert!(s.instances.is_empty());
+    assert_eq!(s.key, crate::frills::FrillSectorKey::new(key(10, 20), 8, 8));
+    // With scenery: the same call fills it, deterministically at density 1.
+    let ctx = scenery_context(BundleOptions::default());
+    let b = bundle_of(&ctx, key(10, 20)).unwrap();
+    let a = build_frill_sector(&ctx, &b, 8, 8, 1.0, &mut thinner);
+    let c = build_frill_sector(
+        &ctx,
+        &b,
+        8,
+        8,
+        1.0,
+        &mut crate::frills::DensityThinner::new(),
+    );
+    assert!(!a.instances.is_empty());
+    assert_eq!(a.instances, c.instances);
+}
+
+// ---------------------------------------------------------------------------------------
+// Review fixes of the M4.5 world systems
+// ---------------------------------------------------------------------------------------
+
+/// Small rings for streaming tests over the scenery worlds.
+fn small_rings() -> StreamConfig {
+    StreamConfig {
+        rings: RingConfig {
+            near: 160.0,
+            mid: 320.0,
+            far: 480.0,
+            hysteresis: 80.0,
+        },
+        ..StreamConfig::default()
+    }
+}
+
+#[test]
+fn block_props_read_palette_values_from_the_shared_descriptor() {
+    let k = key(127, 5);
+    let mut s = SyntheticWorld::rectangle(1, 127..=128, 5..=5).build();
+    let ctx = context(s.clone());
+    let b = bundle_of(&ctx, k).unwrap();
+    let p = &b.block_props;
+    let desc = ctx
+        .region(1)
+        .and_then(|r| r.block_map_descriptor.as_ref())
+        .expect("descriptor");
+    assert!(Arc::ptr_eq(p.descriptor.as_ref().unwrap(), desc), "shared");
+    let area = p
+        .values
+        .iter()
+        .find(|v| v.key == testkit::key::AREA)
+        .unwrap();
+    let entry = &desc.entries[area.entry.unwrap() as usize];
+    // Not a copy: the value is the descriptor's own.
+    assert!(std::ptr::eq(
+        p.value_of(area).unwrap(),
+        entry.value(area.index).unwrap()
+    ));
+    assert!(std::ptr::eq(
+        p.value(testkit::pid::AREA_DID).unwrap(),
+        entry.value(area.index).unwrap()
+    ));
+    let undescribed = p
+        .values
+        .iter()
+        .find(|v| v.key == testkit::key::UNDESCRIBED)
+        .unwrap();
+    assert_eq!((undescribed.pid, undescribed.entry), (None, None));
+    assert!(p.value_of(undescribed).is_none());
+
+    // Hostile: 20,000 pairs repeating one key. The pairs cost their own size, which is
+    // what the bundle charges; the first pair wins.
+    let pairs: Vec<(u32, u16)> = (0..20_000u32)
+        .map(|n| (testkit::key::AREA, u16::from(n % 2 == 1)))
+        .collect();
+    s.insert(k.block_map_did(), testkit::block_map(k, &pairs), None);
+    let ctx = context(s);
+    let b = bundle_of(&ctx, k).unwrap();
+    let p = &b.block_props;
+    assert_eq!(p.values.len(), 20_000);
+    assert_eq!(
+        p.heap_bytes(),
+        p.values.capacity() * std::mem::size_of::<BlockValue>()
+    );
+    assert!(p.area.is_some());
+}
+
+#[test]
+fn scenery_does_not_depend_on_build_water() {
+    let on = scenery_context(BundleOptions::default());
+    let off = scenery_context(BundleOptions {
+        build_water: false,
+        ..BundleOptions::default()
+    });
+    assert!(off.systems().water.is_some(), "the tables load for scenery");
+    for k in [key(10, 20), key(11, 20), key(12, 21)] {
+        let a = bundle_of(&on, k).unwrap();
+        let b = bundle_of(&off, k).unwrap();
+        assert_eq!(objects_of(&a), objects_of(&b), "{k}");
+        assert_eq!(
+            a.scenery.as_ref().unwrap().water.map(|p| p.d),
+            b.scenery.as_ref().unwrap().water.map(|p| p.d)
+        );
+        // Without `build_water` there is no landblock water and no water in the set.
+        assert!(b.water.is_none());
+        assert!(b.collision.as_ref().unwrap().set.water_plane().is_none());
+    }
+    let wet = bundle_of(&off, key(10, 20)).unwrap();
+    assert_eq!(objects_of(&wet), vec![obj::SCENERY, obj::ON_WATER]);
+    // Neither option: no water tables.
+    let none = scenery_context(BundleOptions {
+        build_water: false,
+        generate_scenery: false,
+        ..BundleOptions::default()
+    });
+    assert!(none.systems().water.is_none());
+}
+
+#[test]
+fn unreadable_generation_inputs_make_scenery_incomplete() {
+    let k = key(10, 20);
+    for bad in [k.info_did(), k.block_map_did()] {
+        let src = FailingSource {
+            inner: scenery_world().build(),
+            bad,
+        };
+        let ctx = WorldContext::load(Arc::new(src), BundleOptions::default()).unwrap();
+        let b = bundle_of(&ctx, k).unwrap();
+        let sc = b.scenery.as_ref().expect("scenery");
+        assert!(!sc.complete, "{bad}");
+        assert!(!b.is_complete());
+        assert!(
+            b.problems
+                .iter()
+                .any(|p| p.what == "scenery" && p.unreadable),
+            "{:?}",
+            b.problems
+        );
+    }
+    let ctx = scenery_context(BundleOptions::default());
+    assert!(bundle_of(&ctx, k).unwrap().is_complete());
+}
+
+#[test]
+fn terrain_mesh_is_charged_without_a_collision_set() {
+    let with = scenery_context(BundleOptions {
+        build_collision: false,
+        ..BundleOptions::default()
+    });
+    let without = scenery_context(BundleOptions::default().without_world_systems());
+    let a = bundle_of(&with, key(10, 20)).unwrap();
+    let b = bundle_of(&without, key(10, 20)).unwrap();
+    assert!(a.collision.is_none());
+    let sc = a.scenery.as_ref().expect("scenery");
+    let generated = a.generated.capacity() * std::mem::size_of::<PlacedEntity>();
+    assert!(
+        a.heap_bytes >= b.heap_bytes + sc.heap_bytes() + crate::bundle::GRID_MESH_BYTES + generated,
+        "{} vs {} + {} + {} + {generated}",
+        a.heap_bytes,
+        b.heap_bytes,
+        sc.heap_bytes(),
+        crate::bundle::GRID_MESH_BYTES
+    );
+}
+
+#[test]
+fn entity_refs_are_stable_across_clones() {
+    let ctx = scenery_context(BundleOptions::default());
+    let b = bundle_of(&ctx, key(10, 20)).unwrap();
+    let c = b.clone();
+    // By address a clone's element is not found; by reference it is.
+    assert_eq!(b.lod_class_of(&c.generated[0]), None);
+    assert_eq!(c.lod_class(EntityRef::Generated(0)), Some(5));
+    assert_eq!(b.lod_class(EntityRef::Generated(1)), None);
+    assert_eq!(b.entity_ref(&b.generated[1]), Some(EntityRef::Generated(1)));
+    assert_eq!(b.entity_ref(&b.entities[2]), Some(EntityRef::Entity(2)));
+    assert!(b.is_generated(&b.generated[0]) && !b.is_generated(&b.entities[0]));
+    assert!(b.lod_class(EntityRef::Entity(u32::MAX)).is_none());
+    let refs: Vec<EntityRef> = b.entity_refs().map(|(r, _)| r).collect();
+    assert_eq!(refs.len(), b.entities.len() + b.generated.len());
+    for (r, e) in b.entity_refs() {
+        assert!(std::ptr::eq(b.entity(r).unwrap(), e));
+        assert_eq!(b.lod_class(r), b.lod_class_of(e));
+    }
+    // Index 0 names an entity and a generated object; the references differ.
+    assert_eq!(b.entities[0].index, b.generated[0].index);
+    assert_ne!(EntityRef::Entity(0), EntityRef::Generated(0));
+}
+
+#[test]
+fn bundles_whose_reads_fail_transiently_are_retried() {
+    use crate::collision::tests::FlakySource;
+    use std::sync::atomic::AtomicBool;
+    let src = Arc::new(FlakySource {
+        inner: scenery_world().build(),
+        prefix: 0x47,
+        flaky: AtomicBool::new(false),
+    });
+    let ctx = Arc::new(WorldContext::load(src.clone(), BundleOptions::default()).unwrap());
+    src.flaky.store(true, Ordering::SeqCst);
+    let pool = pool();
+    let mut w = WorldStreamer::new(ctx, &pool, small_rings()).unwrap();
+    let here = centre(10, 20);
+    for _ in 0..300 {
+        w.update(here);
+        // Landblocks of the world are never failed for a full queue (those outside it
+        // are: their records do not exist).
+        for k in [key(10, 20), key(11, 20), key(10, 21), key(11, 21)] {
+            assert!(
+                !matches!(w.state_of(k), Some(BlockState::Failed(_))),
+                "{k}: a full queue is not the data's failure"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(w.stats().retried > 0);
+    assert!(w.bundle(key(10, 20)).is_none());
+    // Readable again: the landblock loads, complete.
+    src.flaky.store(false, Ordering::SeqCst);
+    assert!(w.settle(here, Duration::from_secs(30)));
+    let b = w.bundle(key(10, 20)).expect("resident after the retries");
+    assert!(b.is_complete());
+    assert_eq!(objects_of(b), vec![obj::SCENERY, obj::ON_WATER]);
+}
+
+#[test]
+fn incomplete_scenery_is_rebuilt_when_the_landblock_loads_again() {
+    use crate::collision::tests::FlakySource;
+    use std::sync::atomic::AtomicBool;
+    let world = SyntheticWorld {
+        scenery: true,
+        ..SyntheticWorld::rectangle(1, 0..=30, 20..=21)
+    };
+    let src = Arc::new(FlakySource {
+        inner: world.build(),
+        prefix: 0x02,
+        flaky: AtomicBool::new(true),
+    });
+    let ctx = Arc::new(WorldContext::load(src.clone(), BundleOptions::default()).unwrap());
+    let pool = pool();
+    let mut w = WorldStreamer::new(ctx, &pool, small_rings()).unwrap();
+    let here = centre(5, 20);
+    assert!(w.settle(here, Duration::from_secs(30)));
+    let r = w.update(here);
+    assert!(r.incomplete_scenery > 0, "{r:?}");
+    assert!(!w.bundle(key(5, 20)).unwrap().is_complete());
+    // Scene records readable again; leave (the bundles stay in the store's cache budget)
+    // and come back.
+    src.flaky.store(false, Ordering::SeqCst);
+    assert!(w.settle(centre(28, 20), Duration::from_secs(30)));
+    assert!(w.bundle(key(5, 20)).is_none());
+    assert!(w.settle(here, Duration::from_secs(30)));
+    let r = w.update(here);
+    assert_eq!(r.incomplete_scenery, 0, "{r:?}");
+    let b = w.bundle(key(5, 20)).unwrap();
+    assert!(b.is_complete());
+    assert!(!b.generated.is_empty());
+}
+
+#[test]
+fn cell_at_finds_cells_owned_by_distant_landblocks() {
+    use crate::collision::tests::{cell, info, room, system};
+    use tessera_formats::landblock::HeightGrid;
+    let ctx = context(SyntheticWorld::rectangle(1, 9..=13, 19..=21).build());
+    let pool = pool();
+    let mut w = WorldStreamer::new(ctx, &pool, StreamConfig::default()).unwrap();
+    let sys = system();
+    sys.seed_cell_geometry(room(0x0100_0001));
+    let src = MemoryWorldSource::new();
+    let schema = testkit::schema();
+    let resident = |k: LandblockKey, cells| {
+        let data = tessera_formats::LandblockData::from_heights(k.data_did(), HeightGrid::flat(0));
+        let info: Option<tessera_formats::LandblockInfo> = Some(info(cells));
+        let col = sys.build(&CollisionInput {
+            key: k,
+            data: &data,
+            terrain: None,
+            info: info.as_ref(),
+            generated: &[],
+            water: None,
+            source: &src,
+            schema: &schema,
+        });
+        let mut b = LandblockBundle::from_data(k, data);
+        b.heap_bytes += col.heap_bytes;
+        b.collision = Some(Arc::new(col));
+        b
+    };
+    // (10, 20) owns room 1 around block-local x = 92; (12, 20) owns room 3 around
+    // block-local x = -230, which lies in (10, 20), two landblocks west of its owner.
+    w.insert_resident(resident(
+        key(10, 20),
+        vec![cell(1, 0x0100_0001, Some([92.0, 80.0, 5.0]), None)],
+    ));
+    w.insert_resident(resident(key(11, 20), Vec::new()));
+    w.insert_resident(resident(
+        key(12, 20),
+        vec![cell(3, 0x0100_0001, Some([-230.0, 80.0, 5.0]), None)],
+    ));
+    let at = |x: f64, z: f64| WorldPos::new(1, x, 20.0 * 160.0 + 80.0, z);
+    let found = |p: WorldPos| w.cell_at(&p).map(|(k, c)| (k, c.index));
+    let p1 = at(1_687.0, 6.0);
+    assert_eq!(p1.landblock(), Some(key(10, 20)));
+    assert_eq!(
+        found(p1),
+        Some((key(12, 20), 3)),
+        "the distant owner's cell"
+    );
+    // In both rooms: the point's own landblock is asked first.
+    assert_eq!(found(at(1_690.0, 6.0)), Some((key(10, 20), 1)));
+    assert_eq!(found(at(1_695.0, 6.0)), Some((key(10, 20), 1)));
+    assert_eq!(found(at(1_690.0, 20.0)), None, "above both rooms");
+    assert_eq!(found(at(f64::NAN, 6.0)), None);
+    // The collision view brings the distant owner's set (radius 0: own landblock + owner;
+    // radius 1: (11, 20) too).
+    assert_eq!(w.collision_view(&p1, 0).members().len(), 2);
+    assert_eq!(w.collision_view(&p1, 1).members().len(), 3);
+    // Releasing forgets the cells.
+    w.clear();
+    assert!(w.cell_at(&p1).is_none());
+}
+
+#[test]
+fn lights_near_filters_by_radius_and_orders_across_landblocks() {
+    let mut s = SyntheticWorld::rectangle(1, 9..=12, 19..=21).build();
+    let light = |serial: u32, p: [f32; 3]| testkit::TestEntity {
+        kind: 9,
+        object: None,
+        ..testkit::TestEntity::physics(serial, 0, p, Vec::new())
+    };
+    let (a, b) = (key(10, 20), key(11, 20));
+    s.insert(
+        a.info_did(),
+        testkit::landblock_info(
+            a,
+            &[
+                light(1, [151.0, 80.0, 10.0]),
+                light(2, [158.0, 73.0, 10.0]),
+                light(3, [10.0, 80.0, 10.0]),
+            ],
+        ),
+        Some(39),
+    );
+    s.insert(
+        b.info_did(),
+        testkit::landblock_info(
+            b,
+            &[light(1, [4.0, 80.0, 10.0]), light(2, [100.0, 80.0, 10.0])],
+        ),
+        Some(39),
+    );
+    let ctx = context(s);
+    let pool = pool();
+    let mut w = WorldStreamer::new(ctx, &pool, small_rings()).unwrap();
+    let here = LocalPos::new(a, [158.0, 80.0, 10.0]).to_world();
+    assert!(w.settle(here, Duration::from_secs(20)));
+    let got = |r: f64| {
+        w.lights_near(&here, r)
+            .iter()
+            .map(|l| (l.key, l.light.index))
+            .collect::<Vec<_>>()
+    };
+    assert!(got(5.0).is_empty());
+    // Distances 6 (across the boundary), 7 and 7 (a tie: by landblock, then index).
+    assert_eq!(got(7.0), vec![(b, 0), (a, 0), (a, 1)]);
+    assert_eq!(got(110.0), vec![(b, 0), (a, 0), (a, 1), (b, 1)]);
+    assert_eq!(got(160.0), vec![(b, 0), (a, 0), (a, 1), (b, 1), (a, 2)]);
+    let nearest = w.lights_near(&here, 7.0)[0];
+    assert_eq!(
+        (nearest.position.x, nearest.position.y, nearest.position.z),
+        (11.0 * 160.0 + 4.0, 20.0 * 160.0 + 80.0, 10.0)
+    );
+    assert!(w.lights_near(&here, -1.0).is_empty());
+}
+
+#[test]
+fn evicting_or_releasing_a_wet_landblock_removes_its_water() {
+    let world = SyntheticWorld {
+        scenery: true,
+        water_level: Some(LEVEL),
+        ..SyntheticWorld::rectangle(1, 10..=22, 20..=21)
+    };
+    let ctx =
+        Arc::new(WorldContext::load(Arc::new(world.build()), BundleOptions::default()).unwrap());
+    let keys: Vec<LandblockKey> = (10..=22u8)
+        .flat_map(|x| (20..=21u8).map(move |y| key(x, y)))
+        .collect();
+    let consistent = |w: &WorldStreamer| {
+        for &k in &keys {
+            assert_eq!(
+                w.water_map().get(k).is_some(),
+                w.bundle(k).is_some(),
+                "{k}: water exactly for resident landblocks"
+            );
+        }
+    };
+    let pool = pool();
+    // Release: leave the rings.
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, small_rings()).unwrap();
+    assert!(w.settle(centre(10, 20), Duration::from_secs(30)));
+    assert!(w.water_map().get(key(10, 20)).is_some());
+    consistent(&w);
+    let before = w.water_map().len();
+    assert!(w.settle(centre(21, 20), Duration::from_secs(30)));
+    assert!(w.water_map().get(key(10, 20)).is_none());
+    assert!(w.stats().released > 0);
+    consistent(&w);
+    assert!(before > 0);
+
+    // Eviction: a budget of three bundles with an estimate that admits everything first.
+    let h = bundle_of(&ctx, key(10, 20)).unwrap().heap_bytes;
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            residency_budget: 3 * h,
+            always_admit_near: false,
+            initial_size_estimate: 1,
+            ..small_rings()
+        },
+    )
+    .unwrap();
+    assert!(w.settle(centre(10, 20), Duration::from_secs(30)));
+    assert!(w.stats().evicted > 0, "{:?}", w.stats());
+    consistent(&w);
+    assert!(w.water_map().len() <= 3);
 }

@@ -1,9 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Terrain of the resident landblocks (`docs/specs/terrain.md`): per block a
-//! [`TerrainBlock`] built on a worker, a level of detail chosen per frame by screen-space
-//! error, meshes stitched to the neighbours' levels and normals shared across seams, both
-//! built and prepared for upload on workers. The main thread only selects levels, queues
-//! jobs and uploads finished meshes within the frame's upload budget.
+//! Terrain of the resident landblocks (`docs/specs/terrain.md`, `terrain-texturing.md`):
+//! per block a [`TerrainBlock`] built on a worker, a level of detail chosen per frame by
+//! screen-space error, meshes stitched to the neighbours' levels and normals shared across
+//! seams, both built on workers. The main thread only selects levels, queues jobs and
+//! uploads finished products within the frame's upload budget.
+//!
+//! # Texture layers (M4.5)
+//!
+//! With layers on, a block's surface layers are resolved against its region's terrain type
+//! table (prefix 0x19) on the block job ([`tessera_terrain::resolve_landblock`]), which also
+//! reads and checks the block's A8 masks and decodes its light maps. A mesh job then builds
+//! the chunk's vertices (the four coordinate sets and the tangent frame, `terrain-texturing.md`
+//! §6) and, for the block's level and stitched edges, every layer's triangles
+//! ([`tessera_terrain::ChunkLayers::layer_indices_for`]); the main thread uploads it as a
+//! [`TerrainChunk`] for the layer pipeline (`docs/specs/render.md` §5.2). The layer textures
+//! (diffuse, normal, emissive, glow) are shared through the object layer's texture store;
+//! masks and light maps belong to their block. A chunk waits for its textures; a block that
+//! draws nothing yet uploads at once with what is ready and is rebuilt when the rest
+//! arrives. A cave block's ceiling chunk is drawn at level 0 (`terrain.md` §7 Decision 3).
+//! Blocks whose layers cannot be resolved, and every block with layers off, draw the M3
+//! height-and-slope mesh.
 //!
 //! # Crack-free swaps
 //!
@@ -20,28 +36,45 @@
 //! decoder panicked) leaves the block without terrain. Both count as settled, so a
 //! screenshot or flight does not wait for them, and both show in [`TerrainStats::failed`].
 //!
-//! The same block job also turns the bundle's drawable static entities into object
-//! instances ([`Instance`]) and renders a small height-shaded overview tile for the
-//! minimap fallback, so no per-entity work happens on the main thread.
+//! The same block job also turns the bundle's drawable static entities and generated
+//! scenery into objects ([`ObjectInfo`], [`Instance`]) with their LOD-class values, and
+//! renders a small height-shaded overview tile for the minimap fallback, so no per-entity
+//! work happens on the main thread.
 
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
+use tessera_formats::landblock::{
+    GRID_SIDE, GridSurface, LandblockData, LightMaps, SurfaceChunk, SurfaceLayer,
+};
+use tessera_formats::terrain_type::{TerrainTypeTable, TextureProjection};
+use tessera_formats::{Did, Record, RgbaImage, Surface};
+use tessera_material::{CurveState, FloatCurve};
 use tessera_render::glam::{Mat4, Quat, Vec3};
 use tessera_render::{
-    Indices, Material, MeshConfig, MeshData, MeshDraw, MeshId, Pass, PreparedMesh, Renderer,
-    Submesh,
+    Indices, LightSelection, LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, Pass,
+    PreparedMesh, Renderer, Submesh, TerrainChunk, TerrainChunkData, TerrainDraw, TerrainGloss,
+    TerrainLayer as GpuLayer, TerrainLayerTextures, TerrainOpacity, TerrainProjection,
+    TerrainSpecular, TerrainTransform, TerrainVertices, TextureId, TextureUpload, Wrap,
 };
 use tessera_terrain::{
-    EdgeLods, HeightSlopeShading, Lod, LodSelector, Neighbours, Side, TerrainBlock, TerrainMesh,
-    TerrainTiles, VertexNormals,
+    AlphaMask, ChunkLayers, CoordinateSet, EdgeLods, HeightSlopeShading, LayerVertices, Lod,
+    LodSelector, Neighbours, OpacityRule, ResolveOptions, Side, TerrainBlock, TerrainMesh,
+    TerrainTiles, VertexNormals, fixed_block_offset, resolve_chunk, resolve_landblock, triangulate,
 };
-use tessera_world::{LANDBLOCK_SIZE, LandblockBundle, LandblockKey};
+use tessera_world::{
+    LANDBLOCK_SIZE, LandblockBundle, LandblockKey, LodClasses, LodValues, WorldContext, WorldSource,
+};
 
 use super::UploadBudget;
+use super::env::material_curve;
+use super::farband::{BAKE_SIZE, SmallChain, bake, mip_chain, reduce_mask};
+use super::geometry::{TexRequest, VARIANT_OWN_ALPHA, image_ok};
+use super::interiors;
 use super::jobs::JobRunner;
+use super::objects::{Instance, ObjectInfo, ObjectLayer, TexLookup};
 use super::view::{Anchor, Frustum};
 use crate::smoke::linear_to_srgb8;
 
@@ -55,6 +88,8 @@ const QUEUE_CAPACITY: usize = 512;
 pub const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 /// Longest retry delay of a failed mesh.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Largest mask or light-map edge read by a block job (texels).
+pub const MAX_BLOCK_IMAGE_EDGE: u32 = 1024;
 
 /// Resident terrain heights of one region, shared between the terrain layer (the only
 /// writer) and its readers (the movement controllers, the sandbox's world source), so
@@ -154,19 +189,237 @@ impl SharedTiles {
     }
 }
 
-/// One static object part placed in its landblock's frame.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Instance {
-    /// The 0x06 part mesh.
-    pub part: u32,
-    /// Part (object) space → block-local frame: translation · rotation · scale
-    /// (`entity-descriptor.md` §5).
-    pub model: Mat4,
-    /// Largest axis scale (for bounding spheres).
-    pub scale: f32,
-    /// The bundle's figure index when the part belongs to a placed figure (`walker.md`
-    /// §10.2): drawn as a static instance unless the character layer draws that figure.
-    pub figure: Option<u32>,
+/// What the block jobs read besides the bundle: the region terrain type tables (0x19),
+/// the LOD-class table and the record source for masks and light maps.
+pub struct BlockInputs {
+    /// Record source of masks and light maps (`None`: blocks get no images).
+    pub source: Option<Arc<dyn WorldSource>>,
+    /// Terrain type table per region.
+    pub tables: HashMap<u8, Arc<TerrainTypeTable>>,
+    /// The LOD-class table (`walker.md` §11.4).
+    pub lod_classes: Option<Arc<LodClasses>>,
+}
+
+impl std::fmt::Debug for BlockInputs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockInputs")
+            .field("tables", &self.tables.keys().collect::<Vec<_>>())
+            .field("lod_classes", &self.lod_classes.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl BlockInputs {
+    /// The inputs of `ctx`: the tables its regions' scenery loaded, else read from the
+    /// region descriptors (`environment.md` §3, slot 8); the LOD-class table of its world
+    /// systems.
+    #[must_use]
+    pub fn from_context(ctx: &WorldContext) -> Self {
+        let mut tables = HashMap::new();
+        for (r, info) in ctx.regions() {
+            if let Some(t) = info.scenery.as_ref().and_then(|s| s.terrain_types.clone()) {
+                tables.insert(*r, t);
+                continue;
+            }
+            let Some(did) = info
+                .descriptor
+                .as_ref()
+                .and_then(|d| d.terrain_type_table())
+            else {
+                continue;
+            };
+            match ctx.source().read(did) {
+                Ok(Some(bytes)) => match TerrainTypeTable::parse_expecting(&bytes, did) {
+                    Ok(t) => {
+                        tables.insert(*r, Arc::new(t));
+                    }
+                    Err(e) => tracing::warn!(region = r, %did, "terrain type table: {e}"),
+                },
+                Ok(None) => tracing::warn!(region = r, %did, "terrain type table missing"),
+                Err(e) => tracing::warn!(region = r, %did, "terrain type table unreadable: {e}"),
+            }
+        }
+        let lod_classes = ctx.systems().lod_classes.clone();
+        Self {
+            source: Some(Arc::clone(ctx.source())),
+            tables,
+            lod_classes,
+        }
+    }
+}
+
+/// The shared texture store the terrain's layer textures live in (the object layer's,
+/// [`ObjectLayer`]), behind a trait so the layer can be tested without archives.
+pub trait TextureStore {
+    /// Adds a reference to each texture of `reqs` (loaded and kept until released).
+    fn acquire(&mut self, reqs: &[TexRequest]);
+    /// The small levels of `t` kept on the CPU, once on the GPU.
+    fn small(&self, t: TexRequest) -> Option<Arc<[RgbaImage]>>;
+    /// Drops the references taken with [`TextureStore::acquire`].
+    fn release(&mut self, reqs: &[TexRequest]);
+    /// Where texture `t` stands.
+    fn lookup(&self, t: TexRequest) -> TexLookup;
+    /// The mean colour of `t`'s smallest level, once on the GPU.
+    fn mean(&self, t: TexRequest) -> Option<[f32; 3]>;
+}
+
+impl TextureStore for ObjectLayer {
+    fn acquire(&mut self, reqs: &[TexRequest]) {
+        self.acquire_textures(reqs.iter().copied());
+    }
+
+    fn release(&mut self, reqs: &[TexRequest]) {
+        self.release_textures(reqs.iter().copied());
+    }
+
+    fn lookup(&self, t: TexRequest) -> TexLookup {
+        self.texture(t)
+    }
+
+    fn mean(&self, t: TexRequest) -> Option<[f32; 3]> {
+        self.texture_mean(t)
+    }
+
+    fn small(&self, t: TexRequest) -> Option<Arc<[RgbaImage]>> {
+        self.texture_small(t)
+    }
+}
+
+/// A block image waiting for its upload: a light map (RGBA8) or a layer mask, kept as its
+/// A8 texels (a quarter of the RGBA size, since a far block keeps its masks until it
+/// comes near) and expanded to (255, 255, 255, *a*) at upload, as the surface decoder
+/// expands A8.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlockImage {
+    /// RGBA8 texels.
+    Rgba(RgbaImage),
+    /// A8 texels, width × height bytes.
+    Mask {
+        /// Width.
+        width: u32,
+        /// Height.
+        height: u32,
+        /// Alpha per texel.
+        alpha: Vec<u8>,
+    },
+}
+
+impl BlockImage {
+    /// The image as RGBA8 (masks expanded to white with their alpha); `None` for a mask
+    /// whose texel count is not width × height.
+    #[must_use]
+    pub fn to_rgba(&self) -> Option<std::borrow::Cow<'_, RgbaImage>> {
+        match self {
+            Self::Rgba(img) => Some(std::borrow::Cow::Borrowed(img)),
+            Self::Mask {
+                width,
+                height,
+                alpha,
+            } => {
+                let n = (*width as usize).checked_mul(*height as usize)?;
+                (n == alpha.len() && n > 0).then(|| {
+                    std::borrow::Cow::Owned(RgbaImage {
+                        width: *width,
+                        height: *height,
+                        pixels: alpha.iter().flat_map(|&a| [255, 255, 255, a]).collect(),
+                    })
+                })
+            }
+        }
+    }
+
+    /// Bytes of the uploaded RGBA8 texture.
+    #[must_use]
+    pub fn upload_bytes(&self) -> u64 {
+        match self {
+            Self::Rgba(img) => img.pixels.len() as u64,
+            Self::Mask { width, height, .. } => u64::from(*width) * u64::from(*height) * 4,
+        }
+    }
+}
+
+/// The resolved texture layers of a block (`terrain-texturing.md` §4).
+#[derive(Debug, Clone)]
+pub struct BlockLayers {
+    /// The terrain chunk's layers.
+    pub terrain: Arc<ChunkLayers>,
+    /// The ceiling chunk's layers and surface, for a cave block.
+    pub ceiling: Option<(Arc<ChunkLayers>, Arc<TerrainBlock>)>,
+    /// The terrain chunk stores no layers and the block is not open: the original draws
+    /// nothing for it (`terrain-texturing.md` §4.9 rule 3).
+    pub terrain_hidden: bool,
+}
+
+/// Whether a block is open (`terrain-texturing.md` §4.9 rule 1): it has no ceiling, or at
+/// some grid sample (*i*, *j*) with 0 ≤ *i*, *j* ≤ 31 the stored terrain height is strictly
+/// below the stored ceiling height.
+#[must_use]
+pub fn block_open(data: &LandblockData) -> bool {
+    let Some(c) = &data.ceiling else {
+        return true;
+    };
+    (0..GRID_SIDE - 1).any(|i| {
+        (0..GRID_SIDE - 1).any(|j| match (data.heights.get(i, j), c.heights.get(i, j)) {
+            (Some(t), Some(h)) => t < h,
+            _ => false,
+        })
+    })
+}
+
+/// The terrain-type key a chunk without layers is drawn with (`terrain-texturing.md` §4.9
+/// rule 2): the table entry with the smallest `draw_order`, the one met last in stored
+/// order on a tie; `None` for an empty table.
+#[must_use]
+pub fn layerless_key(table: &TerrainTypeTable) -> Option<u32> {
+    let mut best: Option<&tessera_formats::terrain_type::TerrainType> = None;
+    for e in table.entries() {
+        if best.is_none_or(|b| e.draw_order <= b.draw_order) {
+            best = Some(e);
+        }
+    }
+    best.map(|e| e.key)
+}
+
+/// The layers of a surface chunk with §4.9 applied: a chunk that stores layers resolves
+/// them; one without layers in an open block resolves to one opaque `whole` layer of
+/// [`layerless_key`] without a mask (so it covers the full grid of its surface and takes
+/// the surface's light map); one without layers in a block that is not open resolves to no
+/// layer. Returns the layers and whether the chunk was layerless and closed.
+fn resolve_surface(
+    data: &LandblockData,
+    surface: GridSurface,
+    table: &TerrainTypeTable,
+    light_maps: &LightMaps,
+    options: &ResolveOptions,
+    open: bool,
+) -> tessera_terrain::Result<(ChunkLayers, bool)> {
+    let stored = data
+        .surface_chunk(surface)
+        .is_some_and(|c| !c.layers.is_empty());
+    if stored {
+        return resolve_landblock(data, surface, table, light_maps, options).map(|l| (l, false));
+    }
+    let key = layerless_key(table).filter(|_| open);
+    let chunk = SurfaceChunk {
+        layers: key
+            .map(|material| SurfaceLayer {
+                material,
+                whole: true,
+                ..SurfaceLayer::default()
+            })
+            .into_iter()
+            .collect(),
+        ..SurfaceChunk::default()
+    };
+    let layers = resolve_chunk(
+        &chunk,
+        &data.vertex_flags,
+        surface,
+        table,
+        light_maps.for_surface(surface),
+        options,
+    )?;
+    Ok((layers, key.is_none()))
 }
 
 /// What the block job produces.
@@ -176,17 +429,48 @@ pub struct BlockProduct {
     pub block: Arc<TerrainBlock>,
     /// Height-shaded overview tile, RGBA8 sRGB, north row first.
     pub overview: Vec<u8>,
-    /// Drawable, outdoor static-object parts.
+    /// Part instances of the drawable, outdoor objects.
     pub instances: Arc<[Instance]>,
+    /// The drawable, outdoor objects (statics and generated scenery).
+    pub objects: Arc<[ObjectInfo]>,
+    /// The texture layers, when the region's table resolves them.
+    pub layers: Option<BlockLayers>,
+    /// The block's masks (kept A8) and light maps, decoded.
+    pub images: Vec<(Did, BlockImage)>,
+    /// The terrain chunk's masks reduced for the far-band bake ([`super::farband`]).
+    pub bake_masks: HashMap<Did, AlphaMask>,
 }
 
-/// The signature of a built terrain mesh: own level, effective edge levels and which edge
-/// neighbours the normals saw.
+/// The signature of a built terrain mesh: own level, effective edge levels, which edge
+/// neighbours the normals saw, and whether it is a layered chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MeshSig {
     lod: Lod,
     edges: [Lod; 4],
     present: u8,
+    layered: bool,
+    /// The far band: one baked layer (`walker.md` §14.4).
+    far: bool,
+}
+
+/// A layered chunk built on a worker: its vertices and every drawn layer's triangles.
+#[derive(Debug)]
+pub struct ChunkPrep {
+    /// The vertex streams (`terrain-texturing.md` §6).
+    pub vertices: LayerVertices,
+    /// Triangles of each drawn layer, in the order of [`ChunkLayers::layers`].
+    pub triangles: Vec<Vec<[u16; 3]>>,
+    /// Which surface it is.
+    pub surface: GridSurface,
+    /// A far-band chunk: one layer of every covered triangle.
+    pub far: bool,
+}
+
+impl ChunkPrep {
+    fn bytes(&self) -> u64 {
+        let tris: usize = self.triangles.iter().map(Vec::len).sum();
+        (self.vertices.positions.len() * 80 + tris * 6) as u64
+    }
 }
 
 enum Job {
@@ -195,7 +479,7 @@ enum Job {
         generation: u64,
         bundle: Arc<LandblockBundle>,
         shading: Arc<HeightSlopeShading>,
-        interiors: bool,
+        inputs: Arc<BlockInputs>,
     },
     Mesh {
         key: LandblockKey,
@@ -205,14 +489,36 @@ enum Job {
         neighbours: [Option<Arc<TerrainBlock>>; 4],
         shading: Arc<HeightSlopeShading>,
         config: MeshConfig,
+        layers: Option<Arc<ChunkLayers>>,
+        far: bool,
     },
+    Ceiling {
+        key: LandblockKey,
+        generation: u64,
+        ceiling: Arc<TerrainBlock>,
+        layers: Arc<ChunkLayers>,
+    },
+    Bake {
+        key: LandblockKey,
+        generation: u64,
+        block: Arc<TerrainBlock>,
+        layers: Arc<ChunkLayers>,
+        diffuse: HashMap<Did, SmallChain>,
+        masks: Arc<HashMap<Did, AlphaMask>>,
+    },
+}
+
+/// A mesh job's product.
+enum Built {
+    Mesh(PreparedMesh),
+    Chunk(Arc<ChunkPrep>),
 }
 
 enum Output {
     Block {
         key: LandblockKey,
         generation: u64,
-        product: BlockProduct,
+        product: Box<BlockProduct>,
     },
     /// The block job failed (it panicked); the block gets no terrain.
     BlockFailed {
@@ -224,8 +530,32 @@ enum Output {
         key: LandblockKey,
         generation: u64,
         sig: MeshSig,
-        mesh: Result<(PreparedMesh, f32, f32), String>,
+        mesh: Result<(Built, f32, f32), String>,
     },
+    Ceiling {
+        key: LandblockKey,
+        generation: u64,
+        prep: Option<Arc<ChunkPrep>>,
+    },
+    Bake {
+        key: LandblockKey,
+        generation: u64,
+        chain: Result<Vec<RgbaImage>, String>,
+    },
+}
+
+/// The far-band bake of a block.
+enum Bake {
+    /// Not asked for yet.
+    None,
+    /// Baking on a worker.
+    Pending,
+    /// Baked image waiting for upload budget.
+    Waiting(Vec<RgbaImage>),
+    /// On the GPU: texture and bytes.
+    Ready(TextureId, u64),
+    /// Failed (the block stays in the near band's form).
+    Failed,
 }
 
 /// The last mesh attempt of a block failed.
@@ -234,6 +564,37 @@ struct Failure {
     sig: MeshSig,
     retry_at: Instant,
     attempts: u32,
+}
+
+/// A drawn (or staged) terrain surface.
+enum GpuKind {
+    Mesh(MeshId),
+    Chunk {
+        chunk: TerrainChunk,
+        /// Kept while some texture was missing at upload, to rebuild it.
+        prep: Option<Arc<ChunkPrep>>,
+    },
+}
+
+struct GpuTerrain {
+    kind: GpuKind,
+    sig: MeshSig,
+    min_h: f32,
+    max_h: f32,
+    bytes: u64,
+}
+
+impl GpuTerrain {
+    fn complete(&self) -> bool {
+        !matches!(self.kind, GpuKind::Chunk { prep: Some(_), .. })
+    }
+}
+
+/// A ceiling chunk (level 0 only).
+struct Ceiling {
+    prep: Option<Arc<ChunkPrep>>,
+    gpu: Option<(TerrainChunk, bool)>,
+    pending: bool,
 }
 
 struct Slot {
@@ -248,9 +609,30 @@ struct Slot {
     /// An uploaded mesh waiting for its neighbours to agree on the shared edges.
     staged: Option<GpuTerrain>,
     pending: Option<MeshSig>,
-    /// A finished mesh waiting for upload budget.
-    ready: Option<(MeshSig, PreparedMesh, f32, f32)>,
+    /// A finished mesh waiting for upload budget (or textures).
+    ready: Option<(MeshSig, Built, f32, f32)>,
     failed: Option<Failure>,
+    layers: Option<BlockLayers>,
+    /// Masks and light maps waiting for upload.
+    images: Vec<(Did, BlockImage)>,
+    /// Of `images`, how many at the end are needed only near (terrain masks, which a
+    /// baked block does not draw with).
+    near_only: usize,
+    /// Masks and light maps on the GPU (owned by the block).
+    own: HashMap<Did, (TextureId, u64)>,
+    /// Masks and light maps that could not be uploaded.
+    own_failed: HashSet<Did>,
+    /// Shared layer textures referenced in the object layer's store.
+    shared: Vec<TexRequest>,
+    ceiling: Option<Ceiling>,
+    /// Masks for the far-band bake, dropped once baked.
+    bake_masks: Option<Arc<HashMap<Did, AlphaMask>>>,
+    bake: Bake,
+    /// The block is in the far band (with hysteresis).
+    far: bool,
+    /// Layers whose `u_offset` / `v_offset` vary with time (`terrain-texturing.md` §6.3):
+    /// (layer index, the two curves with their states).
+    scrolling: Vec<(usize, [(FloatCurve, CurveState); 2])>,
 }
 
 impl Slot {
@@ -266,6 +648,17 @@ impl Slot {
             pending: None,
             ready: None,
             failed: None,
+            layers: None,
+            images: Vec::new(),
+            near_only: 0,
+            own: HashMap::new(),
+            own_failed: HashSet::new(),
+            shared: Vec::new(),
+            ceiling: None,
+            bake_masks: None,
+            bake: Bake::None,
+            far: false,
+            scrolling: Vec::new(),
         }
     }
 
@@ -293,19 +686,77 @@ impl Slot {
         attempts
     }
 
-    fn release(&mut self, renderer: &mut Renderer<'_>) {
+    fn release(&mut self, renderer: &mut Renderer<'_>, objects: Option<&mut dyn TextureStore>) {
         for m in [self.mesh.take(), self.staged.take()].into_iter().flatten() {
-            renderer.destroy_mesh(m.id);
+            if let GpuKind::Mesh(id) = m.kind {
+                renderer.destroy_mesh(id);
+            }
         }
+        self.ceiling = None;
+        for (_, (id, _)) in self.own.drain() {
+            renderer.destroy_texture(id);
+        }
+        if let Bake::Ready(id, _) = std::mem::replace(&mut self.bake, Bake::None) {
+            renderer.destroy_texture(id);
+        }
+        if let Some(objects) = objects {
+            objects.release(&self.shared);
+            self.shared.clear();
+        }
+    }
+
+    /// Whether every mask and light map of the block is uploaded or failed.
+    /// Whether every image the block draws with in `frame` is uploaded.
+    fn images_done(&self, frame: &TerrainFrame) -> bool {
+        self.images.len()
+            == if defers_masks(frame, self) {
+                self.near_only
+            } else {
+                0
+            }
+    }
+
+    /// Whether the terrain chunk resolved to at least one drawn layer (a chunk without
+    /// stored layers in an open block resolves to the one layer of
+    /// `terrain-texturing.md` §4.9). One that does not is drawn like a chunk that does not
+    /// resolve (`walker.md` §14.4: the M3 height-and-slope mesh), unless it is hidden
+    /// ([`Self::terrain_hidden`]).
+    fn has_terrain_layers(&self) -> bool {
+        self.layers.as_ref().is_some_and(|l| !l.terrain.is_empty())
+    }
+
+    /// Whether the original draws nothing for the terrain chunk: it stores no layers and
+    /// the block is not open (`terrain-texturing.md` §4.9 rule 3).
+    fn terrain_hidden(&self) -> bool {
+        self.layers.as_ref().is_some_and(|l| l.terrain_hidden)
+    }
+
+    /// Whether image `did` is needed while the block is drawn baked: its light map, and
+    /// everything of a cave ceiling (drawn with its layers at every distance).
+    fn needed_when_far(&self, did: Did) -> bool {
+        self.layers.as_ref().is_none_or(|l| {
+            l.terrain
+                .layers()
+                .iter()
+                .any(|x| x.textures().light_map == Some(did))
+                || l.ceiling.as_ref().is_some_and(|(c, _)| {
+                    c.layers().iter().any(|x| {
+                        let t = x.textures();
+                        t.light_map == Some(did) || t.mask == Some(did)
+                    })
+                })
+        })
     }
 }
 
-struct GpuTerrain {
-    id: MeshId,
-    sig: MeshSig,
-    min_h: f32,
-    max_h: f32,
-    bytes: u64,
+/// Whether a block's masks wait (`walker.md` §14.4): it is in the far band, which is on,
+/// and its bake has not failed.
+fn defers_masks(frame: &TerrainFrame, slot: &Slot) -> bool {
+    frame.layered
+        && frame.lit
+        && frame.far_band > 0.0
+        && slot.far
+        && !matches!(slot.bake, Bake::Failed)
 }
 
 /// Counters for the HUD and the frame log.
@@ -317,18 +768,142 @@ pub struct TerrainStats {
     pub built: usize,
     /// Blocks with a mesh on the GPU.
     pub meshed: usize,
+    /// Blocks drawn with texture layers.
+    pub layered: usize,
+    /// Layered chunks waiting for a texture.
+    pub incomplete: usize,
     /// Mesh jobs in flight, waiting for upload or staged for a neighbour.
     pub pending: usize,
+    /// Of `pending`: mesh jobs in flight.
+    pub in_flight: usize,
+    /// Of `pending`: meshes built and waiting for the upload budget.
+    pub awaiting_upload: usize,
+    /// Of `pending`: meshes uploaded and staged until the neighbours' seams agree.
+    pub staged: usize,
+    /// Blocks with masks or light maps waiting for the upload budget.
+    pub images_waiting: usize,
     /// Blocks whose block job or latest mesh attempt failed.
     pub failed: usize,
     /// Terrain jobs that panicked so far.
     pub panics: u64,
-    /// GPU bytes of terrain meshes (drawn and staged).
+    /// GPU bytes of terrain meshes, chunks, masks and light maps (drawn and staged).
     pub gpu_bytes: u64,
-    /// Meshes drawn last frame.
+    /// Meshes and chunks drawn last frame.
     pub drawn: usize,
-    /// Triangles drawn last frame.
+    /// Ceiling chunks drawn last frame.
+    pub ceilings: usize,
+    /// Blocks drawn in the far band (baked).
+    pub far: usize,
+    /// Far-band bakes on the GPU.
+    pub baked: usize,
+    /// Triangles drawn last frame (meshes; chunks count their layers' triangles).
     pub triangles: u64,
+}
+
+/// How the terrain of one frame is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainFrame {
+    /// Draw texture layers (needs a lit pass); off draws the M3 height-shaded meshes.
+    pub layered: bool,
+    /// Draw through the lit pipeline.
+    pub lit: bool,
+    /// Chunks within this distance (metres) cast the sun's shadow; 0 for none.
+    pub shadow_radius: f32,
+    /// Only blocks within this distance (metres, to the block square) are drawn.
+    pub extent: f32,
+    /// Blocks farther than this (metres) are drawn with their baked layer stack
+    /// (`walker.md` §14.4); 0 draws full layers at every distance.
+    pub far_band: f32,
+    /// The material clock in seconds (`material.md` §5.3.1), for scrolling layers.
+    pub time: f64,
+}
+
+impl Default for TerrainFrame {
+    fn default() -> Self {
+        Self {
+            layered: true,
+            lit: true,
+            shadow_radius: 0.0,
+            extent: f32::INFINITY,
+            far_band: 0.0,
+            time: 0.0,
+        }
+    }
+}
+
+/// Bake jobs queued per frame at most.
+const BAKES_PER_FRAME: usize = 8;
+
+/// Blocks waiting for a bake examined per frame (their layer textures looked up).
+const BAKE_CANDIDATES_PER_FRAME: usize = 48;
+/// The far band's hysteresis: a far block returns to full layers this much (metres)
+/// inside the band.
+const FAR_HYSTERESIS: f32 = 40.0;
+/// Blocks are baked once they come this much (metres) inside the band, ahead of need.
+const BAKE_AHEAD: f32 = 320.0;
+
+/// A light of the frame's light table as the terrain sees it (`lighting.md` §8.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainLight {
+    /// Position in the render frame.
+    pub position: Vec3,
+    /// Range *R*.
+    pub range: f32,
+    /// `Light_BakedLandscapeLight`: not applied to layers with a light map (`lighting.md`
+    /// §8.3 Tessera Decision).
+    pub baked: bool,
+}
+
+/// The lights of `lights` (table order) that a chunk with a light map receives: those that
+/// are not baked into the light maps and whose range sphere touches the chunk's sphere,
+/// nearest first, at most `max` (`lighting.md` §8.3, §8.5 Tessera Decisions).
+#[must_use]
+pub fn chunk_lights(
+    lights: &[TerrainLight],
+    center: Vec3,
+    radius: f32,
+    max: usize,
+) -> LightSelection {
+    let mut near: Vec<(f32, usize)> = lights
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| *i < 256 && !l.baked && l.range.is_finite())
+        .filter_map(|(i, l)| {
+            let d = (l.position - center).length();
+            (d.is_finite() && d <= l.range + radius).then_some((d, i))
+        })
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut indices = [0u8; 8];
+    let mut count = 0u8;
+    for (_, i) in near.into_iter().take(max.min(8)) {
+        indices[usize::from(count)] = u8::try_from(i).unwrap_or(u8::MAX);
+        count += 1;
+    }
+    LightSelection::List { indices, count }
+}
+
+/// Whether a layer of `layers` has a light map.
+fn has_light_map(layers: &ChunkLayers) -> bool {
+    layers.layers().iter().any(|x| x.light_map().is_some())
+}
+
+/// The lights a chunk receives: for a chunk with a light map those of [`chunk_lights`]
+/// (baked lights left out), else the renderer's automatic selection (`lighting.md` §8.3,
+/// §8.5 Tessera Decisions).
+#[must_use]
+pub fn chunk_light_selection(
+    has_light_map: bool,
+    lights: &[TerrainLight],
+    center: Vec3,
+    radius: f32,
+    max: usize,
+) -> LightSelection {
+    if has_light_map {
+        chunk_lights(lights, center, radius, max)
+    } else {
+        LightSelection::Auto
+    }
 }
 
 /// The terrain layer (module docs).
@@ -340,12 +915,13 @@ pub struct TerrainLayer {
     shading: Arc<HeightSlopeShading>,
     mesh_config: MeshConfig,
     next_gen: u64,
-    interiors: bool,
+    inputs: Arc<BlockInputs>,
     stats: TerrainStats,
     panics: u64,
     /// Finished block products not yet taken by the walker.
     finished: Vec<(LandblockKey, BlockProduct)>,
     order: Vec<(f32, LandblockKey)>,
+    frame: TerrainFrame,
 }
 
 impl std::fmt::Debug for TerrainLayer {
@@ -421,6 +997,32 @@ fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     })
 }
 
+/// The shared textures a layered block needs: every drawn layer's diffuse, normal,
+/// emissive and glow lists of its terrain and ceiling chunks (`terrain-texturing.md` §8.2).
+#[must_use]
+pub fn layer_textures(layers: &BlockLayers) -> Vec<TexRequest> {
+    let mut out: Vec<TexRequest> = Vec::new();
+    let chunks = std::iter::once(&*layers.terrain).chain(layers.ceiling.iter().map(|c| &*c.0));
+    for chunk in chunks {
+        for l in chunk.layers() {
+            let t = l.textures();
+            for did in [t.diffuse, t.normal, t.emissive, t.glow]
+                .into_iter()
+                .flatten()
+            {
+                let r = TexRequest {
+                    did: did.0,
+                    variant: VARIANT_OWN_ALPHA,
+                };
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+        }
+    }
+    out
+}
+
 impl TerrainLayer {
     /// A layer with `threads` workers.
     ///
@@ -431,7 +1033,7 @@ impl TerrainLayer {
         threads: usize,
         selector: LodSelector,
         mesh_config: MeshConfig,
-        interiors: bool,
+        inputs: Arc<BlockInputs>,
     ) -> std::io::Result<Self> {
         Ok(Self {
             runner: JobRunner::new("tessera-terrain", threads, QUEUE_CAPACITY, run_job)?,
@@ -441,11 +1043,12 @@ impl TerrainLayer {
             shading: Arc::new(HeightSlopeShading::default()),
             mesh_config,
             next_gen: 1,
-            interiors,
+            inputs,
             stats: TerrainStats::default(),
             panics: 0,
             finished: Vec::new(),
             order: Vec::new(),
+            frame: TerrainFrame::default(),
         })
     }
 
@@ -467,8 +1070,9 @@ impl TerrainLayer {
         self.stats
     }
 
-    /// Whether every tracked block is built and meshed with no job outstanding (blocks
-    /// whose block job or current mesh failed count as settled).
+    /// Whether every tracked block is built and meshed with no job outstanding, its
+    /// layered chunk complete and its ceiling drawn (blocks whose block job or current
+    /// mesh failed count as settled).
     #[must_use]
     pub fn settled(&self) -> bool {
         self.slots.iter().all(|(key, s)| {
@@ -483,11 +1087,43 @@ impl TerrainLayer {
             {
                 return true;
             }
-            s.mesh.is_some() && s.staged.is_none()
+            let ceiling_done = s.ceiling.as_ref().is_none_or(|c| {
+                !c.pending
+                    && c.gpu.as_ref().is_none_or(|g| g.1)
+                    && (c.gpu.is_some() || c.prep.is_none())
+            });
+            s.mesh.as_ref().is_some_and(GpuTerrain::complete)
+                && s.staged.is_none()
+                && s.images_done(&self.frame)
+                && ceiling_done
         })
     }
 
-    /// Block products finished since the last call (instances and overview tiles for the
+    /// Puts the queued jobs nearest first and drops those of blocks no longer tracked (or
+    /// tracked with a newer bundle): under a fast camera the queue would otherwise work
+    /// through blocks long passed while the near ones wait.
+    fn rank_jobs(&self, anchor: &Anchor, camera: Vec3) {
+        let size = LANDBLOCK_SIZE as f32;
+        let dropped = self.runner.reorder(|job| {
+            let (key, generation) = job.target();
+            let slot = self.slots.get(&key)?;
+            if slot.generation != generation {
+                return None;
+            }
+            let off = anchor.offset_of(key)?;
+            let near = Vec3::new(
+                camera.x.clamp(off.x, off.x + size),
+                camera.y.clamp(off.y, off.y + size),
+                camera.z,
+            );
+            Some((near - camera).length())
+        });
+        if dropped > 0 {
+            tracing::trace!(dropped, "stale terrain jobs dropped");
+        }
+    }
+
+    /// Block products finished since the last call (objects and overview tiles for the
     /// other layers).
     pub fn take_finished(&mut self) -> Vec<(LandblockKey, BlockProduct)> {
         std::mem::take(&mut self.finished)
@@ -501,6 +1137,7 @@ impl TerrainLayer {
         key: LandblockKey,
         bundle: &Arc<LandblockBundle>,
         renderer: &mut Renderer<'_>,
+        objects: &mut dyn TextureStore,
     ) -> bool {
         let generation = self.next_gen;
         let job = Job::Block {
@@ -508,7 +1145,7 @@ impl TerrainLayer {
             generation,
             bundle: Arc::clone(bundle),
             shading: Arc::clone(&self.shading),
-            interiors: self.interiors,
+            inputs: Arc::clone(&self.inputs),
         };
         if self.runner.submit(job).is_err() {
             return false;
@@ -519,7 +1156,7 @@ impl TerrainLayer {
             .slots
             .insert(key, Slot::new(Arc::clone(bundle), generation))
         {
-            old.release(renderer);
+            old.release(renderer, Some(objects));
             self.tiles.remove(key);
         }
         true
@@ -538,20 +1175,49 @@ impl TerrainLayer {
         self.slots.keys().copied()
     }
 
-    /// Stops tracking `key` and frees its meshes.
-    pub fn remove(&mut self, key: LandblockKey, renderer: &mut Renderer<'_>) {
+    /// Stops tracking `key` and frees its meshes and textures.
+    pub fn remove(
+        &mut self,
+        key: LandblockKey,
+        renderer: &mut Renderer<'_>,
+        objects: &mut dyn TextureStore,
+    ) {
         if let Some(mut slot) = self.slots.remove(&key) {
-            slot.release(renderer);
+            slot.release(renderer, Some(objects));
             self.tiles.remove(key);
         }
     }
 
     /// Frees everything.
-    pub fn clear(&mut self, renderer: &mut Renderer<'_>) {
+    pub fn clear(&mut self, renderer: &mut Renderer<'_>, objects: &mut dyn TextureStore) {
         for (_, mut slot) in self.slots.drain() {
-            slot.release(renderer);
+            slot.release(renderer, Some(objects));
         }
         self.tiles.clear();
+    }
+
+    /// The colour of the terrain at block-local (`x`, `y`) of `key` for frills
+    /// (`scenery.md` §8.3 rule 7, Tessera Decision): the mean colour of the top layer's
+    /// diffuse texture covering the point, times its `diffuse_scale`. `None` without
+    /// layers or before the texture is on the GPU.
+    #[must_use]
+    pub fn colour_at(
+        &self,
+        key: LandblockKey,
+        x: f32,
+        y: f32,
+        objects: &dyn TextureStore,
+    ) -> Option<[f32; 3]> {
+        let layers = &self.slots.get(&key)?.layers.as_ref()?.terrain;
+        let tri = layers.triangle_at(x, y)?;
+        let top = layers.layers_at(tri).last()?;
+        let diffuse = top.textures().diffuse?;
+        let mean = objects.mean(TexRequest {
+            did: diffuse.0,
+            variant: VARIANT_OWN_ALPHA,
+        })?;
+        let s = top.params().diffuse_colour;
+        Some([mean[0] * s[0], mean[1] * s[1], mean[2] * s[2]])
     }
 
     /// Per frame: collect finished jobs, choose levels, queue meshes, upload within
@@ -562,10 +1228,13 @@ impl TerrainLayer {
         renderer: &mut Renderer<'_>,
         anchor: &Anchor,
         camera: Vec3,
+        frame: &TerrainFrame,
+        objects: &mut dyn TextureStore,
         budget: &mut UploadBudget,
     ) {
         let now = Instant::now();
-        self.collect(now);
+        self.frame = *frame;
+        self.collect(now, objects);
 
         // Levels, nearest first.
         self.order.clear();
@@ -577,14 +1246,170 @@ impl TerrainLayer {
             let local = camera - off;
             let d = block.distance_to(local.to_array());
             slot.lod = Some(self.selector.select(block, d, slot.lod));
+            slot.far = frame.far_band > 0.0
+                && if slot.far {
+                    d > frame.far_band - FAR_HYSTERESIS
+                } else {
+                    d > frame.far_band
+                };
             self.order.push((d, *key));
         }
         self.order
             .sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        self.rank_jobs(anchor, camera);
+
+        // Block textures (masks, light maps), nearest first.
+        let order = std::mem::take(&mut self.order);
+        for &(_, key) in &order {
+            let Some(slot) = self.slots.get_mut(&key) else {
+                continue;
+            };
+            // A block drawn baked needs only its light map; its masks wait until it nears.
+            let deferring = defers_masks(frame, slot);
+            loop {
+                // The images needed far (light maps) first, then the masks (at the end)
+                // unless they wait.
+                let i = if slot.images.len() > slot.near_only {
+                    slot.images.len() - slot.near_only - 1
+                } else if !deferring && slot.near_only > 0 {
+                    slot.images.len() - 1
+                } else {
+                    break;
+                };
+                let Some((_, img)) = slot.images.get(i) else {
+                    break;
+                };
+                let bytes = img.upload_bytes();
+                if !budget.try_take(bytes) {
+                    break;
+                }
+                if i + slot.near_only >= slot.images.len() && slot.near_only > 0 {
+                    slot.near_only -= 1;
+                }
+                let (did, img) = slot.images.remove(i);
+                let uploaded = match img.to_rgba() {
+                    Some(img) => renderer
+                        .upload_texture(&TextureUpload {
+                            label: Some(&format!("terrain {did}")),
+                            wrap: Wrap::Clamp,
+                            ..TextureUpload::rgba8(img.width, img.height, &img.pixels)
+                        })
+                        .map_err(|e| e.to_string()),
+                    None => Err("malformed mask".to_owned()),
+                };
+                match uploaded {
+                    Ok(id) => {
+                        slot.own.insert(did, (id, bytes));
+                    }
+                    Err(e) => {
+                        tracing::debug!(%key, %did, "terrain image upload failed: {e}");
+                        slot.own_failed.insert(did);
+                    }
+                }
+            }
+        }
+
+        // Far-band bakes, nearest first, ahead of need.
+        let mut bakes = 0usize;
+        let mut examined = 0usize;
+        for &(d, key) in &order {
+            if bakes >= BAKES_PER_FRAME
+                || examined >= BAKE_CANDIDATES_PER_FRAME
+                || frame.far_band <= 0.0
+                || !frame.layered
+            {
+                break;
+            }
+            if d < frame.far_band - BAKE_AHEAD {
+                continue;
+            }
+            let Some(slot) = self.slots.get_mut(&key) else {
+                continue;
+            };
+            if !matches!(slot.bake, Bake::None) {
+                continue;
+            }
+            let (Some(layers), Some(block), Some(masks)) =
+                (&slot.layers, &slot.block, &slot.bake_masks)
+            else {
+                continue;
+            };
+            examined += 1;
+            // Every layer texture's small levels (a texture that failed bakes as white).
+            let mut diffuse: HashMap<Did, SmallChain> = HashMap::new();
+            let mut ready = true;
+            for l in layers.terrain.layers() {
+                let Some(did) = l.textures().diffuse else {
+                    continue;
+                };
+                let t = TexRequest {
+                    did: did.0,
+                    variant: VARIANT_OWN_ALPHA,
+                };
+                match (objects.small(t), objects.lookup(t)) {
+                    (Some(c), _) => {
+                        diffuse.insert(did, c);
+                    }
+                    (None, TexLookup::Pending) => ready = false,
+                    (None, _) => {}
+                }
+            }
+            if !ready {
+                continue;
+            }
+            let job = Job::Bake {
+                key,
+                generation: slot.generation,
+                block: Arc::clone(block),
+                layers: Arc::clone(&layers.terrain),
+                diffuse,
+                masks: Arc::clone(masks),
+            };
+            if self.runner.submit(job).is_err() {
+                break;
+            }
+            slot.bake = Bake::Pending;
+            bakes += 1;
+        }
+        // Baked images to the GPU.
+        for &(_, key) in &order {
+            let Some(slot) = self.slots.get_mut(&key) else {
+                continue;
+            };
+            let Bake::Waiting(chain) = &slot.bake else {
+                continue;
+            };
+            let bytes: u64 = chain.iter().map(|l| l.pixels.len() as u64).sum();
+            if !budget.try_take(bytes) {
+                break;
+            }
+            let levels: Vec<tessera_render::MipLevel<'_>> = chain
+                .iter()
+                .map(|l| tessera_render::MipLevel {
+                    width: l.width,
+                    height: l.height,
+                    rgba: &l.pixels,
+                })
+                .collect();
+            let label = format!("terrain bake {key}");
+            slot.bake = match renderer.upload_texture_mips(&tessera_render::MipChainUpload {
+                label: Some(&label),
+                wrap: Wrap::Clamp,
+                ..tessera_render::MipChainUpload::new(&levels)
+            }) {
+                Ok(id) => {
+                    slot.bake_masks = None;
+                    Bake::Ready(id, bytes)
+                }
+                Err(e) => {
+                    tracing::debug!(%key, "terrain bake upload failed: {e}");
+                    Bake::Failed
+                }
+            };
+        }
 
         // Mesh jobs for blocks whose signature changed.
         let mut queued = 0usize;
-        let order = std::mem::take(&mut self.order);
         for &(_, key) in &order {
             if queued >= MESH_JOBS_PER_FRAME {
                 break;
@@ -598,8 +1423,9 @@ impl TerrainLayer {
             // A staged mesh made stale by a level that flipped back is not needed.
             if slot.mesh.as_ref().is_some_and(|m| m.sig == sig)
                 && let Some(old) = slot.staged.take()
+                && let GpuKind::Mesh(id) = old.kind
             {
-                renderer.destroy_mesh(old.id);
+                renderer.destroy_mesh(id);
             }
             if !slot.wants_mesh(sig, now) {
                 continue;
@@ -608,6 +1434,12 @@ impl TerrainLayer {
                 continue;
             };
             let generation = slot.generation;
+            let layers = if sig.layered {
+                slot.layers.as_ref().map(|l| Arc::clone(&l.terrain))
+            } else {
+                None
+            };
+            let far = sig.far;
             let neighbours = Side::ALL.map(|side| self.neighbour_block(key, side));
             let job = Job::Mesh {
                 key,
@@ -617,6 +1449,8 @@ impl TerrainLayer {
                 neighbours,
                 shading: Arc::clone(&self.shading),
                 config: self.mesh_config,
+                layers,
+                far,
             };
             if self.runner.submit(job).is_err() {
                 break;
@@ -627,38 +1461,207 @@ impl TerrainLayer {
             queued += 1;
         }
 
+        // Ceiling jobs.
+        for &(_, key) in &order {
+            if queued >= MESH_JOBS_PER_FRAME || !frame.layered {
+                break;
+            }
+            let Some(slot) = self.slots.get_mut(&key) else {
+                continue;
+            };
+            let Some((layers, ceiling)) = slot.layers.as_ref().and_then(|l| l.ceiling.clone())
+            else {
+                continue;
+            };
+            if slot.ceiling.is_some() {
+                continue;
+            }
+            let job = Job::Ceiling {
+                key,
+                generation: slot.generation,
+                ceiling,
+                layers,
+            };
+            if self.runner.submit(job).is_err() {
+                break;
+            }
+            slot.ceiling = Some(Ceiling {
+                prep: None,
+                gpu: None,
+                pending: true,
+            });
+            queued += 1;
+        }
+
         // Uploads, nearest first, into the staging slot.
         for &(_, key) in &order {
             let Some(slot) = self.slots.get_mut(&key) else {
                 continue;
             };
-            let Some((sig, prepared, min_h, max_h)) = slot.ready.take() else {
-                continue;
-            };
-            let bytes = prepared.gpu_bytes();
-            if !budget.try_take(bytes) {
-                slot.ready = Some((sig, prepared, min_h, max_h));
-                break;
+            // A drawn chunk built while a texture was missing: rebuilt once they are all
+            // there.
+            if let Some(m) = &slot.mesh
+                && let GpuKind::Chunk {
+                    prep: Some(prep), ..
+                } = &m.kind
+                && let Some(layers) = &slot.layers
+            {
+                let prep = Arc::clone(prep);
+                if let Some((tex, lm, true)) =
+                    chunk_textures(&layers.terrain, slot, objects, GridSurface::Terrain)
+                    && budget.try_take(prep.bytes())
+                    && let Ok(chunk) = upload_chunk(renderer, key, &prep, &layers.terrain, &tex, lm)
+                    && let Some(m) = slot.mesh.as_mut()
+                {
+                    m.kind = GpuKind::Chunk { chunk, prep: None };
+                }
             }
-            match renderer.upload_prepared(prepared) {
-                Ok(id) => {
-                    slot.failed = None;
-                    if let Some(old) = slot.staged.replace(GpuTerrain {
-                        id,
-                        sig,
-                        min_h,
-                        max_h,
-                        bytes,
-                    }) {
-                        renderer.destroy_mesh(old.id);
+            // Ceilings.
+            if let Some(layers) = slot.layers.clone()
+                && let Some((clayers, _)) = &layers.ceiling
+                && let Some(c) = &slot.ceiling
+                && let Some(prep) = c.prep.clone()
+                && c.gpu.as_ref().is_none_or(|g| !g.1)
+                && let Some((tex, lm, complete)) =
+                    chunk_textures(clayers, slot, objects, GridSurface::Ceiling)
+                && (complete || c.gpu.is_none())
+                && budget.try_take(prep.bytes())
+            {
+                match upload_chunk(renderer, key, &prep, clayers, &tex, lm) {
+                    Ok(chunk) => {
+                        if let Some(c) = slot.ceiling.as_mut() {
+                            c.gpu = Some((chunk, complete));
+                            if complete {
+                                c.prep = None;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(%key, "ceiling chunk upload failed: {e}");
+                        if let Some(c) = slot.ceiling.as_mut() {
+                            c.prep = None;
+                        }
                     }
                 }
-                Err(e) => {
-                    let attempt = slot.fail(sig, now);
-                    if attempt == 1 {
-                        tracing::warn!(%key, "terrain upload failed (retrying later): {e}");
-                    } else {
-                        tracing::debug!(%key, attempt, "terrain upload failed again: {e}");
+            }
+            let Some((sig, built, min_h, max_h)) = slot.ready.take() else {
+                continue;
+            };
+            match built {
+                Built::Mesh(prepared) => {
+                    let bytes = prepared.gpu_bytes();
+                    if !budget.try_take(bytes) {
+                        slot.ready = Some((sig, Built::Mesh(prepared), min_h, max_h));
+                        break;
+                    }
+                    match renderer.upload_prepared(prepared) {
+                        Ok(id) => {
+                            slot.failed = None;
+                            stage(
+                                renderer,
+                                slot,
+                                GpuTerrain {
+                                    kind: GpuKind::Mesh(id),
+                                    sig,
+                                    min_h,
+                                    max_h,
+                                    bytes,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            let attempt = slot.fail(sig, now);
+                            if attempt == 1 {
+                                tracing::warn!(%key, "terrain upload failed (retrying later): {e}");
+                            } else {
+                                tracing::debug!(%key, attempt, "terrain upload failed again: {e}");
+                            }
+                        }
+                    }
+                }
+                Built::Chunk(prep) if prep.far => {
+                    let Some(layers) = slot.layers.clone() else {
+                        continue;
+                    };
+                    let Bake::Ready(baked, _) = slot.bake else {
+                        // The bake went away: build the signature again.
+                        continue;
+                    };
+                    let light_map = layers
+                        .terrain
+                        .layers()
+                        .iter()
+                        .find_map(|l| l.textures().light_map)
+                        .and_then(|d| slot.own.get(&d).map(|v| v.0));
+                    let bytes = prep.bytes();
+                    if !budget.try_take(bytes) {
+                        slot.ready = Some((sig, Built::Chunk(prep), min_h, max_h));
+                        break;
+                    }
+                    match upload_far_chunk(renderer, key, &prep, baked, light_map) {
+                        Ok(chunk) => {
+                            slot.failed = None;
+                            stage(
+                                renderer,
+                                slot,
+                                GpuTerrain {
+                                    kind: GpuKind::Chunk { chunk, prep: None },
+                                    sig,
+                                    min_h,
+                                    max_h,
+                                    bytes,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            slot.fail(sig, now);
+                            tracing::debug!(%key, "far chunk upload failed: {e}");
+                        }
+                    }
+                }
+                Built::Chunk(prep) => {
+                    let Some(layers) = slot.layers.clone() else {
+                        continue;
+                    };
+                    let textures =
+                        chunk_textures(&layers.terrain, slot, objects, GridSurface::Terrain);
+                    let first = slot.mesh.is_none() && slot.staged.is_none();
+                    let Some((tex, lm, complete)) = textures.filter(|t| t.2 || first) else {
+                        // Waiting for textures.
+                        slot.ready = Some((sig, Built::Chunk(prep), min_h, max_h));
+                        continue;
+                    };
+                    let bytes = prep.bytes();
+                    if !budget.try_take(bytes) {
+                        slot.ready = Some((sig, Built::Chunk(prep), min_h, max_h));
+                        break;
+                    }
+                    match upload_chunk(renderer, key, &prep, &layers.terrain, &tex, lm) {
+                        Ok(chunk) => {
+                            slot.failed = None;
+                            stage(
+                                renderer,
+                                slot,
+                                GpuTerrain {
+                                    kind: GpuKind::Chunk {
+                                        chunk,
+                                        prep: (!complete).then_some(prep),
+                                    },
+                                    sig,
+                                    min_h,
+                                    max_h,
+                                    bytes,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            let attempt = slot.fail(sig, now);
+                            if attempt == 1 {
+                                tracing::warn!(%key, "terrain chunk upload failed (retrying later): {e}");
+                            } else {
+                                tracing::debug!(%key, attempt, "terrain chunk upload failed again: {e}");
+                            }
+                        }
                     }
                 }
             }
@@ -691,8 +1694,9 @@ impl TerrainLayer {
             if let Some(slot) = self.slots.get_mut(&key)
                 && let Some(new) = slot.staged.take()
                 && let Some(old) = slot.mesh.replace(new)
+                && let GpuKind::Mesh(id) = old.kind
             {
-                renderer.destroy_mesh(old.id);
+                renderer.destroy_mesh(id);
             }
         }
     }
@@ -718,16 +1722,31 @@ impl TerrainLayer {
                 edges = edges.with(side, n.lod);
             }
         }
+        let layered = self.frame.layered && self.frame.lit && slot.has_terrain_layers();
+        let baked = matches!(slot.bake, Bake::Ready(..));
+        // A far block whose bake is not there yet, and that has no full-layer chunk drawn,
+        // is drawn height-shaded meanwhile (`walker.md` §14.4): a full-layer chunk would be
+        // built and uploaded only to be replaced by the baked one.
+        let placeholder = layered
+            && slot.far
+            && !baked
+            && !matches!(slot.bake, Bake::Failed)
+            && !slot
+                .mesh
+                .as_ref()
+                .is_some_and(|m| m.sig.layered && !m.sig.far);
         Some(MeshSig {
             lod,
             edges: edges.effective(lod),
             present,
+            layered: layered && !placeholder,
+            far: layered && slot.far && baked,
         })
     }
 
-    fn collect(&mut self, now: Instant) {
+    fn collect(&mut self, now: Instant, objects: &mut dyn TextureStore) {
         while let Some(out) = self.runner.try_next() {
-            self.apply(out, now);
+            self.apply(out, now, objects);
         }
         let panics = self.runner.panics();
         if panics > self.panics {
@@ -740,7 +1759,7 @@ impl TerrainLayer {
     }
 
     /// Applies one worker result.
-    fn apply(&mut self, out: Output, now: Instant) {
+    fn apply(&mut self, out: Output, now: Instant, objects: &mut dyn TextureStore) {
         match out {
             Output::Block {
                 key,
@@ -753,7 +1772,44 @@ impl TerrainLayer {
                 if slot.generation != generation {
                     return;
                 }
+                let mut product = *product;
                 slot.block = Some(Arc::clone(&product.block));
+                if let Some(layers) = product.layers.take() {
+                    slot.scrolling = layers
+                        .terrain
+                        .layers()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, l)| {
+                            let o = l.params().offsets;
+                            o.constant().is_none().then(|| {
+                                (
+                                    i,
+                                    [
+                                        (material_curve(&o.u), CurveState::new()),
+                                        (material_curve(&o.v), CurveState::new()),
+                                    ],
+                                )
+                            })
+                        })
+                        .collect();
+                    slot.shared = layer_textures(&layers);
+                    objects.acquire(&slot.shared);
+                    slot.layers = Some(layers);
+                }
+                slot.images = std::mem::take(&mut product.images);
+                // The images needed far (light maps, the ceiling's) first, masks last.
+                let far: Vec<bool> = slot
+                    .images
+                    .iter()
+                    .map(|(d, _)| slot.needed_when_far(*d))
+                    .collect();
+                let mut tagged: Vec<(bool, (Did, BlockImage))> =
+                    far.into_iter().zip(slot.images.drain(..)).collect();
+                tagged.sort_by_key(|(f, _)| !*f);
+                slot.near_only = tagged.iter().filter(|(f, _)| !*f).count();
+                slot.images = tagged.into_iter().map(|(_, i)| i).collect();
+                slot.bake_masks = Some(Arc::new(std::mem::take(&mut product.bake_masks)));
                 self.tiles.insert(key, Arc::clone(&product.block));
                 self.finished.push((key, product));
             }
@@ -799,6 +1855,42 @@ impl TerrainLayer {
                     }
                 }
             }
+            Output::Bake {
+                key,
+                generation,
+                chain,
+            } => {
+                let Some(slot) = self.slots.get_mut(&key) else {
+                    return;
+                };
+                if slot.generation != generation {
+                    return;
+                }
+                slot.bake = match chain {
+                    Ok(c) if !c.is_empty() => Bake::Waiting(c),
+                    Ok(_) => Bake::Failed,
+                    Err(e) => {
+                        tracing::warn!(%key, "terrain bake failed: {e}");
+                        Bake::Failed
+                    }
+                };
+            }
+            Output::Ceiling {
+                key,
+                generation,
+                prep,
+            } => {
+                let Some(slot) = self.slots.get_mut(&key) else {
+                    return;
+                };
+                if slot.generation != generation {
+                    return;
+                }
+                if let Some(c) = slot.ceiling.as_mut() {
+                    c.pending = false;
+                    c.prep = prep;
+                }
+            }
         }
     }
 
@@ -807,6 +1899,7 @@ impl TerrainLayer {
             blocks: self.slots.len(),
             panics: self.panics,
             drawn: self.stats.drawn,
+            ceilings: self.stats.ceilings,
             triangles: self.stats.triangles,
             ..TerrainStats::default()
         };
@@ -815,53 +1908,469 @@ impl TerrainLayer {
             if let Some(m) = &slot.mesh {
                 s.meshed += 1;
                 s.gpu_bytes += m.bytes;
+                if let GpuKind::Chunk { prep, .. } = &m.kind {
+                    s.layered += 1;
+                    s.incomplete += usize::from(prep.is_some());
+                }
             }
             if let Some(m) = &slot.staged {
                 s.gpu_bytes += m.bytes;
             }
+            s.gpu_bytes += slot.own.values().map(|v| v.1).sum::<u64>();
+            if let Bake::Ready(_, b) = slot.bake {
+                s.gpu_bytes += b;
+                s.baked += 1;
+            }
+            if slot.mesh.as_ref().is_some_and(|m| m.sig.far) {
+                s.far += 1;
+            }
             s.pending += usize::from(
                 slot.pending.is_some() || slot.ready.is_some() || slot.staged.is_some(),
             );
+            s.in_flight += usize::from(slot.pending.is_some());
+            s.awaiting_upload += usize::from(slot.ready.is_some());
+            s.staged += usize::from(slot.staged.is_some());
+            s.images_waiting += usize::from(!slot.images.is_empty());
             s.failed += usize::from(slot.block_failed || slot.failed.is_some());
         }
         self.stats = s;
     }
 
-    /// Records the visible terrain meshes into `pass`.
+    /// Records the visible terrain into `pass`: layered chunks (lit passes) or meshes.
+    /// `lights` is the pass's light table as the terrain sees it; `camera` the eye in the
+    /// render frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         renderer: &Renderer<'_>,
         pass: &mut Pass,
         anchor: &Anchor,
         frustum: &Frustum,
+        camera: Vec3,
+        lights: &[TerrainLight],
+        sun: bool,
     ) {
+        let frame = self.frame;
         let mut drawn = 0usize;
+        let mut ceilings = 0usize;
         let mut triangles = 0u64;
         let material = Material::color([1.0, 1.0, 1.0, 1.0]);
         let size = LANDBLOCK_SIZE as f32;
-        for (key, slot) in &self.slots {
-            let Some(m) = &slot.mesh else { continue };
-            let Some(off) = anchor.offset_of(*key) else {
+        let max_lights = if sun { 7 } else { 8 };
+        // Nearest first, so the depth test rejects hidden terrain before it is shaded.
+        let mut order: Vec<(f32, LandblockKey)> = Vec::with_capacity(self.slots.len());
+        for key in self.slots.keys() {
+            if let Some(off) = anchor.offset_of(*key) {
+                let near = Vec3::new(
+                    camera.x.clamp(off.x, off.x + size),
+                    camera.y.clamp(off.y, off.y + size),
+                    camera.z,
+                );
+                order.push(((near - camera).length(), *key));
+            }
+        }
+        order.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for (horizontal, key) in order {
+            let Some(slot) = self.slots.get_mut(&key) else {
                 continue;
             };
-            let min = off + Vec3::new(0.0, 0.0, m.min_h);
-            let max = off + Vec3::new(size, size, m.max_h);
-            if !frustum.aabb_visible(min, max) {
+            let Some(off) = anchor.offset_of(key) else {
+                continue;
+            };
+            // The landscape extent (`walker.md` §11.3): blocks whose square is farther.
+            if horizontal > frame.extent {
                 continue;
             }
-            pass.mesh(MeshDraw::new(m.id, Mat4::from_translation(off), material));
-            drawn += 1;
-            triangles += renderer
-                .mesh_info(m.id)
-                .map_or(0, |i| u64::from(i.index_count / 3));
+            let tf = Mat4::from_translation(off);
+            // §4.9 rule 3: a closed block's layerless terrain chunk is not in the scene.
+            let hidden = frame.layered && frame.lit && slot.terrain_hidden();
+            if let Some(m) = slot.mesh.as_ref().filter(|_| !hidden) {
+                let min = off + Vec3::new(0.0, 0.0, m.min_h);
+                let max = off + Vec3::new(size, size, m.max_h);
+                let visible = frustum.aabb_visible(min, max);
+                let mid = off + Vec3::new(size * 0.5, size * 0.5, 0.5 * (m.min_h + m.max_h));
+                let radius = 0.5 * (min - max).length();
+                let casts = frame.shadow_radius > 0.0
+                    && (mid - camera).length() - radius <= frame.shadow_radius;
+                match &m.kind {
+                    GpuKind::Chunk { chunk, .. } if frame.lit && (visible || casts) => {
+                        let has_light_map = slot
+                            .layers
+                            .as_ref()
+                            .is_some_and(|l| has_light_map(&l.terrain));
+                        let mut d = TerrainDraw::new(chunk.clone(), tf);
+                        d.cast_shadow = casts;
+                        d.lights =
+                            chunk_light_selection(has_light_map, lights, mid, radius, max_lights);
+                        // Scrolling layers (`terrain-texturing.md` §6.3) at the material clock.
+                        if !m.sig.far
+                            && !slot.scrolling.is_empty()
+                            && let Some(layers) = &slot.layers
+                        {
+                            let mut offsets: Vec<[f32; 2]> = layers
+                                .terrain
+                                .layers()
+                                .iter()
+                                .map(|l| l.params().offsets.constant().unwrap_or([0.0; 2]))
+                                .collect();
+                            for (i, curves) in &mut slot.scrolling {
+                                let [(cu, su), (cv, sv)] = curves;
+                                if let Some(o) = offsets.get_mut(*i) {
+                                    *o = [
+                                        cu.evaluate_finite(frame.time, su),
+                                        cv.evaluate_finite(frame.time, sv),
+                                    ];
+                                }
+                            }
+                            d.layer_offsets = Some(offsets.into());
+                        }
+                        pass.terrain(d);
+                        drawn += usize::from(visible);
+                        triangles += u64::from(chunk.info().triangles);
+                    }
+                    GpuKind::Mesh(id) if visible => {
+                        let lit = LitSurface {
+                            vertex_colors: true,
+                            cast_shadow: casts,
+                            ..LitSurface::default()
+                        };
+                        pass.mesh(MeshDraw::new(*id, tf, material).with_lit(lit));
+                        drawn += 1;
+                        triangles += renderer
+                            .mesh_info(*id)
+                            .map_or(0, |i| u64::from(i.index_count / 3));
+                    }
+                    _ => {}
+                }
+            }
+            if frame.lit
+                && frame.layered
+                && let Some(Ceiling {
+                    gpu: Some((chunk, _)),
+                    ..
+                }) = &slot.ceiling
+            {
+                let info = chunk.info();
+                let c = tf.transform_point3(info.sphere.center);
+                if frustum.sphere_visible(c, info.sphere.radius) {
+                    // Baked lights are left out only for a ceiling with a light map
+                    // (`lighting.md` §8.3 Decision), as for terrain chunks.
+                    let has_light_map = slot
+                        .layers
+                        .as_ref()
+                        .and_then(|l| l.ceiling.as_ref())
+                        .is_some_and(|(cl, _)| has_light_map(cl));
+                    let mut d = TerrainDraw::new(chunk.clone(), tf);
+                    d.cast_shadow = false;
+                    d.lights = chunk_light_selection(
+                        has_light_map,
+                        lights,
+                        c,
+                        info.sphere.radius,
+                        max_lights,
+                    );
+                    pass.terrain(d);
+                    ceilings += 1;
+                }
+            }
         }
         self.stats.drawn = drawn;
+        self.stats.ceilings = ceilings;
         self.stats.triangles = triangles;
     }
 
     /// Stops the workers.
     pub fn shutdown(&mut self) {
         self.runner.shutdown();
+    }
+}
+
+/// Puts `new` into `slot`'s staging place (freeing a mesh it replaces).
+fn stage(renderer: &mut Renderer<'_>, slot: &mut Slot, new: GpuTerrain) {
+    if let Some(old) = slot.staged.replace(new)
+        && let GpuKind::Mesh(id) = old.kind
+    {
+        renderer.destroy_mesh(id);
+    }
+}
+
+/// The texture ids of every drawn layer of `layers` and its light map, and whether all of
+/// them have settled (on the GPU or failed). `None` while the block's own images are still
+/// being uploaded.
+fn chunk_textures(
+    layers: &ChunkLayers,
+    slot: &Slot,
+    objects: &dyn TextureStore,
+    _surface: GridSurface,
+) -> Option<(Vec<TerrainLayerTextures>, Option<TextureId>, bool)> {
+    let mut complete = true;
+    let mut shared = |did: Option<Did>| -> Option<TextureId> {
+        let did = did?;
+        match objects.lookup(TexRequest {
+            did: did.0,
+            variant: VARIANT_OWN_ALPHA,
+        }) {
+            TexLookup::Ready(id) => Some(id),
+            TexLookup::Failed => None,
+            TexLookup::Pending => {
+                complete = false;
+                None
+            }
+        }
+    };
+    let mut out = Vec::with_capacity(layers.layers().len());
+    let mut light_map = None;
+    for l in layers.layers() {
+        let t = l.textures();
+        let tex = TerrainLayerTextures {
+            diffuse: shared(t.diffuse),
+            normal: shared(t.normal),
+            emissive: shared(t.emissive),
+            glow: shared(t.glow),
+            mask: t.mask.and_then(|d| slot.own.get(&d).map(|v| v.0)),
+        };
+        if let Some(lm) = t.light_map {
+            light_map = light_map.or_else(|| slot.own.get(&lm).map(|v| v.0));
+        }
+        out.push(tex);
+    }
+    // Incomplete while one of the chunk's own images still waits for its upload. Images
+    // of the block that this chunk does not use (a far block's deferred terrain masks,
+    // for its ceiling) do not count, or the ceiling of a far cave block never completes.
+    if own_waiting(layers, slot) {
+        complete = false;
+    }
+    Some((out, light_map, complete))
+}
+
+/// The render input of a layer (`docs/specs/render.md` §5.2, "the terrain crate's
+/// `DrawLayer` … map onto these one to one").
+fn gpu_layer<'a>(
+    l: &tessera_terrain::DrawLayer,
+    triangles: &'a [[u16; 3]],
+    textures: TerrainLayerTextures,
+) -> GpuLayer<'a> {
+    let p = l.params();
+    let f = l.features();
+    let s = l.splat();
+    let opacity = match s.opacity {
+        OpacityRule::Opaque => TerrainOpacity::Opaque,
+        OpacityRule::MaskedDiffuse { alpha_blend_max } => {
+            TerrainOpacity::MaskedDiffuse { alpha_blend_max }
+        }
+        OpacityRule::Mask => TerrainOpacity::Mask,
+        OpacityRule::Diffuse => TerrainOpacity::Diffuse,
+        OpacityRule::One => TerrainOpacity::One,
+    };
+    let projection = match l.projection() {
+        TextureProjection::Xz => TerrainProjection::Xz,
+        TextureProjection::Yz => TerrainProjection::Yz,
+        _ => TerrainProjection::Xy,
+    };
+    let _ = l.coordinate_set() == CoordinateSet::Xy;
+    GpuLayer {
+        triangles,
+        projection,
+        transform: TerrainTransform {
+            u_scale: p.transform.u_scale,
+            v_scale: p.transform.v_scale,
+            rotation_degrees: p.transform.rotation_degrees,
+            offset: p.offsets.constant().unwrap_or([0.0; 2]),
+        },
+        opacity,
+        alpha_test_ref: p.alpha_test_ref,
+        diffuse_color: [
+            p.diffuse_colour[0],
+            p.diffuse_colour[1],
+            p.diffuse_colour[2],
+        ],
+        specular: f.specular.then_some(TerrainSpecular {
+            color: [
+                p.specular_colour[0],
+                p.specular_colour[1],
+                p.specular_colour[2],
+            ],
+            power: p.specular_power,
+            gloss: if f.gloss_from_normal {
+                TerrainGloss::NormalAlpha
+            } else {
+                TerrainGloss::DiffuseAlpha
+            },
+        }),
+        glow_color: [p.glow_colour[0], p.glow_colour[1], p.glow_colour[2]],
+        textures,
+    }
+}
+
+/// Whether one of the masks or light maps `layers` draws with is still waiting in the
+/// block's image queue.
+fn own_waiting(layers: &ChunkLayers, slot: &Slot) -> bool {
+    layers.layers().iter().any(|l| {
+        let t = l.textures();
+        [t.mask, t.light_map]
+            .into_iter()
+            .flatten()
+            .any(|d| slot.images.iter().any(|(w, _)| *w == d))
+    })
+}
+
+/// Uploads a layered chunk.
+fn upload_chunk(
+    renderer: &mut Renderer<'_>,
+    key: LandblockKey,
+    prep: &ChunkPrep,
+    layers: &ChunkLayers,
+    textures: &[TerrainLayerTextures],
+    light_map: Option<TextureId>,
+) -> Result<TerrainChunk, tessera_render::RenderError> {
+    let v = &prep.vertices;
+    let gpu: Vec<GpuLayer<'_>> = layers
+        .layers()
+        .iter()
+        .zip(&prep.triangles)
+        .zip(textures)
+        .map(|((l, tris), tex)| gpu_layer(l, tris, *tex))
+        .collect();
+    let label = format!("terrain {key} {:?}", prep.surface);
+    renderer.upload_terrain_chunk(&TerrainChunkData {
+        label: Some(&label),
+        vertices: TerrainVertices {
+            positions: &v.positions,
+            normals: &v.normals,
+            tangents: &v.tangents,
+            binormals: &v.binormals,
+            sets: [&v.sets[0], &v.sets[1], &v.sets[2], &v.sets[3]],
+        },
+        layers: &gpu,
+        light_map,
+    })
+}
+
+/// Builds the layered chunk of a surface for a triangulation (`None`: every layer's own
+/// level-0 triangles, the ceiling rule).
+fn chunk_prep(
+    block: &TerrainBlock,
+    normals: &VertexNormals,
+    key: LandblockKey,
+    layers: &ChunkLayers,
+    triangulation: Option<&[u16]>,
+) -> ChunkPrep {
+    let vertices = LayerVertices::build(block, normals, fixed_block_offset(key.x(), key.y()));
+    let triangles = (0..layers.layers().len())
+        .map(|i| match triangulation {
+            Some(t) => layers.layer_indices_for(i, t).as_chunks::<3>().0.to_vec(),
+            None => layers
+                .layers()
+                .get(i)
+                .map(|l| l.triangles().to_vec())
+                .unwrap_or_default(),
+        })
+        .collect();
+    ChunkPrep {
+        vertices,
+        triangles,
+        surface: layers.surface(),
+        far: false,
+    }
+}
+
+/// The far-band chunk of a surface for a triangulation: its vertices and one triangle
+/// list, every triangle that some layer draws (holes stay open).
+fn far_prep(
+    block: &TerrainBlock,
+    normals: &VertexNormals,
+    key: LandblockKey,
+    layers: &ChunkLayers,
+    triangulation: &[u16],
+) -> ChunkPrep {
+    let vertices = LayerVertices::build(block, normals, fixed_block_offset(key.x(), key.y()));
+    let mut seen: HashSet<[u16; 3]> = HashSet::new();
+    let mut tris: Vec<[u16; 3]> = Vec::new();
+    for i in 0..layers.layers().len() {
+        for t in layers
+            .layer_indices_for(i, triangulation)
+            .as_chunks::<3>()
+            .0
+        {
+            let mut k = *t;
+            k.sort_unstable();
+            if seen.insert(k) {
+                tris.push(*t);
+            }
+        }
+    }
+    ChunkPrep {
+        vertices,
+        triangles: vec![tris],
+        surface: GridSurface::Terrain,
+        far: true,
+    }
+}
+
+/// Uploads a far-band chunk: one opaque layer sampling the baked image at
+/// (x / 160, y / 160), with the block's light map (`walker.md` §14.4).
+fn upload_far_chunk(
+    renderer: &mut Renderer<'_>,
+    key: LandblockKey,
+    prep: &ChunkPrep,
+    baked: TextureId,
+    light_map: Option<TextureId>,
+) -> Result<TerrainChunk, tessera_render::RenderError> {
+    let v = &prep.vertices;
+    let empty: Vec<[u16; 3]> = Vec::new();
+    let tris = prep.triangles.first().unwrap_or(&empty);
+    let layer = GpuLayer {
+        triangles: tris,
+        projection: TerrainProjection::Xy,
+        // Set 0 is (x + 160 X, y + 160 Y): scaled by 1 / 160 and moved back by (X, Y).
+        transform: TerrainTransform {
+            u_scale: 1.0 / 160.0,
+            v_scale: 1.0 / 160.0,
+            rotation_degrees: 0.0,
+            offset: [-f32::from(key.x()), -f32::from(key.y())],
+        },
+        opacity: TerrainOpacity::Opaque,
+        alpha_test_ref: 0.0,
+        diffuse_color: [1.0; 3],
+        specular: None,
+        glow_color: [0.0; 3],
+        textures: TerrainLayerTextures {
+            diffuse: Some(baked),
+            ..TerrainLayerTextures::default()
+        },
+    };
+    let label = format!("terrain far {key}");
+    renderer.upload_terrain_chunk(&TerrainChunkData {
+        label: Some(&label),
+        vertices: TerrainVertices {
+            positions: &v.positions,
+            normals: &v.normals,
+            tangents: &[],
+            binormals: &[],
+            sets: [&v.sets[0], &[], &[], &v.sets[3]],
+        },
+        layers: &[layer],
+        light_map,
+    })
+}
+
+impl Job {
+    /// The block and slot generation the job is for.
+    fn target(&self) -> (LandblockKey, u64) {
+        match self {
+            Job::Block {
+                key, generation, ..
+            }
+            | Job::Mesh {
+                key, generation, ..
+            }
+            | Job::Ceiling {
+                key, generation, ..
+            }
+            | Job::Bake {
+                key, generation, ..
+            } => (*key, *generation),
+        }
     }
 }
 
@@ -872,12 +2381,12 @@ fn run_job(job: Job) -> Output {
             generation,
             bundle,
             shading,
-            interiors,
-        } => match guarded(|| build_block(&bundle, &shading, interiors)) {
+            inputs,
+        } => match guarded(|| build_block(&bundle, &shading, &inputs)) {
             Ok(product) => Output::Block {
                 key,
                 generation,
-                product,
+                product: Box::new(product),
             },
             Err(reason) => Output::BlockFailed {
                 key,
@@ -893,16 +2402,30 @@ fn run_job(job: Job) -> Output {
             neighbours,
             shading,
             config,
+            layers,
+            far,
         } => {
             let mesh = guarded(|| {
                 let n = Neighbours(std::array::from_fn(|i| neighbours[i].as_deref()));
                 let normals = VertexNormals::compute(&block, &n);
                 let edges = EdgeLods(sig.edges.map(Some));
+                if let Some(layers) = layers.as_ref().filter(|_| far) {
+                    let tri = triangulate(&block, sig.lod, edges);
+                    let prep = far_prep(&block, &normals, key, layers, &tri);
+                    let (lo, hi) = height_range(&block);
+                    return Ok((Built::Chunk(Arc::new(prep)), lo, hi));
+                }
+                if let Some(layers) = layers {
+                    let tri = triangulate(&block, sig.lod, edges);
+                    let prep = chunk_prep(&block, &normals, key, &layers, Some(&tri));
+                    let (lo, hi) = height_range(&block);
+                    return Ok((Built::Chunk(Arc::new(prep)), lo, hi));
+                }
                 let mesh = TerrainMesh::build(&block, &normals, &shading, sig.lod, edges);
                 let (lo, hi) = (mesh.min_height, mesh.max_height);
                 terrain_mesh_data(mesh, key)
                     .prepare(&config)
-                    .map(|p| (p, lo, hi))
+                    .map(|p| (Built::Mesh(p), lo, hi))
                     .map_err(|e| e.to_string())
             })
             .and_then(|r| r);
@@ -913,6 +2436,69 @@ fn run_job(job: Job) -> Output {
                 mesh,
             }
         }
+        Job::Bake {
+            key,
+            generation,
+            block,
+            layers,
+            diffuse,
+            masks,
+        } => {
+            let chain = guarded(|| {
+                let img = bake(
+                    &layers,
+                    &block,
+                    fixed_block_offset(key.x(), key.y()),
+                    &diffuse,
+                    &masks,
+                    BAKE_SIZE,
+                );
+                mip_chain(img)
+            });
+            Output::Bake {
+                key,
+                generation,
+                chain,
+            }
+        }
+        Job::Ceiling {
+            key,
+            generation,
+            ceiling,
+            layers,
+        } => {
+            let prep = guarded(|| {
+                let normals = VertexNormals::ceiling(&ceiling, &Neighbours::NONE);
+                chunk_prep(&ceiling, &normals, key, &layers, None)
+            })
+            .map_err(|e| tracing::warn!(%key, "ceiling chunk failed: {e}"))
+            .ok()
+            .map(Arc::new);
+            Output::Ceiling {
+                key,
+                generation,
+                prep,
+            }
+        }
+    }
+}
+
+/// The lowest and highest height sample of a block.
+fn height_range(block: &TerrainBlock) -> (f32, f32) {
+    let mut lo = f32::INFINITY;
+    let mut hi = f32::NEG_INFINITY;
+    for j in 0..33 {
+        for i in 0..33 {
+            if let Some(h) = block.height(i, j) {
+                lo = lo.min(h);
+                hi = hi.max(h);
+            }
+        }
+    }
+    if lo.is_finite() && hi.is_finite() {
+        (lo, hi)
+    } else {
+        (0.0, 0.0)
     }
 }
 
@@ -935,19 +2521,239 @@ pub fn terrain_mesh_data(mesh: TerrainMesh, key: LandblockKey) -> MeshData {
     }
 }
 
-/// Builds the terrain block, the overview tile and the object instances of a bundle.
+/// Reads and decodes a block image (an A8 mask or a DXT1 light map); `None` (logged) when
+/// it is missing, does not decode or is too large.
+fn read_image(source: &dyn WorldSource, did: Did) -> Option<RgbaImage> {
+    let bytes = match source.read(did) {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            tracing::debug!(%did, "terrain image missing");
+            return None;
+        }
+        Err(e) => {
+            tracing::debug!(%did, "terrain image unreadable: {e}");
+            return None;
+        }
+    };
+    let s = match Surface::parse_expecting(&bytes, did) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!(%did, "terrain image does not decode: {e}");
+            return None;
+        }
+    };
+    if s.width.max(s.height) > MAX_BLOCK_IMAGE_EDGE {
+        tracing::debug!(%did, width = s.width, height = s.height, "terrain image too large");
+        return None;
+    }
+    s.to_rgba8().ok().filter(image_ok)
+}
+
+/// What [`build_layers`] gives: the layers, the decoded masks and light maps, and the
+/// masks reduced for the far-band bake.
+type LayerBuild = (
+    Option<BlockLayers>,
+    Vec<(Did, BlockImage)>,
+    HashMap<Did, AlphaMask>,
+);
+
+/// Resolves the texture layers of a bundle and reads its masks and light maps
+/// (`terrain-texturing.md` §4, §5, §10).
+fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
+    let Some(table) = inputs.tables.get(&bundle.key.region()) else {
+        return (None, Vec::new(), HashMap::new());
+    };
+    let light_maps = LightMaps {
+        terrain: bundle.light_map,
+        ceiling: bundle.ceiling_light_map,
+    };
+    let opts = ResolveOptions::default();
+    let open = block_open(&bundle.data);
+    let (mut terrain, terrain_hidden) = match resolve_surface(
+        &bundle.data,
+        GridSurface::Terrain,
+        table,
+        &light_maps,
+        &opts,
+        open,
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(key = %bundle.key, "terrain layers not resolved: {e}");
+            return (None, Vec::new(), HashMap::new());
+        }
+    };
+    let mut ceiling = TerrainBlock::from_ceiling(&bundle.data).and_then(|c| {
+        resolve_surface(
+            &bundle.data,
+            GridSurface::Ceiling,
+            table,
+            &light_maps,
+            &opts,
+            open,
+        )
+        .map_err(|e| tracing::warn!(key = %bundle.key, "ceiling layers not resolved: {e}"))
+        .ok()
+        .map(|(l, _)| (l, c))
+    });
+    let mut images: Vec<(Did, BlockImage)> = Vec::new();
+    let mut seen: HashSet<Did> = HashSet::new();
+    let Some(source) = inputs.source.as_deref() else {
+        // No record source: every layer drawn without its mask.
+        for i in 0..terrain.layers().len() {
+            if let Some(l) = terrain.layer_mut(i) {
+                l.drop_mask();
+            }
+        }
+        if let Some((c, _)) = ceiling.as_mut() {
+            for i in 0..c.layers().len() {
+                if let Some(l) = c.layer_mut(i) {
+                    l.drop_mask();
+                }
+            }
+        }
+        return (
+            Some(BlockLayers {
+                terrain: Arc::new(terrain),
+                ceiling: ceiling.map(|(l, c)| (Arc::new(l), Arc::new(c))),
+                terrain_hidden,
+            }),
+            images,
+            HashMap::new(),
+        );
+    };
+    let mut bake_masks: HashMap<Did, AlphaMask> = HashMap::new();
+    // Masks: checked (A8) before use, dropped (the layer drawn without one) otherwise.
+    let check = |chunk: &mut ChunkLayers,
+                 images: &mut Vec<(Did, BlockImage)>,
+                 seen: &mut HashSet<Did>,
+                 mut bake_masks: Option<&mut HashMap<Did, AlphaMask>>| {
+        for i in 0..chunk.layers().len() {
+            let Some(layer) = chunk.layer_mut(i) else {
+                continue;
+            };
+            let Some(did) = layer.mask() else { continue };
+            let Ok(Some(bytes)) = source.read(did) else {
+                tracing::debug!(%did, "terrain mask missing; layer drawn without one");
+                layer.drop_mask();
+                continue;
+            };
+            let Ok(surface) = Surface::parse_expecting(&bytes, did) else {
+                tracing::debug!(%did, "terrain mask does not decode; layer drawn without one");
+                layer.drop_mask();
+                continue;
+            };
+            if layer.check_mask(&surface).is_err() {
+                continue;
+            }
+            // Masks are at most 512 square in the data (`terrain-texturing.md` T14); one
+            // above the block-image cap is rejected like any unusable mask (§5.1).
+            if surface.width.max(surface.height) > MAX_BLOCK_IMAGE_EDGE {
+                tracing::debug!(%did, "terrain mask too large; layer drawn without one");
+                layer.drop_mask();
+                continue;
+            }
+            if let Some(bm) = bake_masks.as_deref_mut()
+                && !bm.contains_key(&did)
+                && let Ok(m) = AlphaMask::from_surface(&surface)
+            {
+                bm.insert(did, reduce_mask(&m));
+            }
+            if seen.insert(did) {
+                // `check_mask` accepted it: A8 with width × height texels.
+                images.push((
+                    did,
+                    BlockImage::Mask {
+                        width: surface.width,
+                        height: surface.height,
+                        alpha: surface.data.to_vec(),
+                    },
+                ));
+            }
+        }
+    };
+    check(&mut terrain, &mut images, &mut seen, Some(&mut bake_masks));
+    if let Some((c, _)) = ceiling.as_mut() {
+        check(c, &mut images, &mut seen, None);
+    }
+    for did in [bundle.light_map, bundle.ceiling_light_map]
+        .into_iter()
+        .flatten()
+    {
+        if seen.insert(did)
+            && let Some(img) = read_image(source, did)
+        {
+            images.push((did, BlockImage::Rgba(img)));
+        }
+    }
+    (
+        Some(BlockLayers {
+            terrain: Arc::new(terrain),
+            ceiling: ceiling.map(|(l, c)| (Arc::new(l), Arc::new(c))),
+            terrain_hidden,
+        }),
+        images,
+        bake_masks,
+    )
+}
+
+/// Builds the terrain block, the overview tile, the objects and the texture layers of a
+/// bundle.
 #[must_use]
 pub fn build_block(
     bundle: &LandblockBundle,
     shading: &HeightSlopeShading,
-    interiors: bool,
+    inputs: &BlockInputs,
 ) -> BlockProduct {
     let block = TerrainBlock::from_landblock(&bundle.data);
     let _ = block.lod_errors();
     let overview = overview_tile(&block, shading);
+    let (instances, objects) = block_objects(bundle, inputs.lod_classes.as_deref());
+    let (layers, images, bake_masks) = build_layers(bundle, inputs);
+    BlockProduct {
+        block: Arc::new(block),
+        overview,
+        instances: instances.into(),
+        objects: objects.into(),
+        layers,
+        images,
+        bake_masks,
+    }
+}
+
+/// The drawable objects of a bundle with their part instances (`entity-descriptor.md`
+/// §9, `scenery.md` §7.6) and LOD-class values (`walker.md` §11.4.3), then the render
+/// meshes of its interior cells (`landblock.md` §4.14). Each object names the cell it is
+/// drawn through (`walker.md` §14.11): outdoor objects cell 0; interior entities the cell
+/// of the block's collision set whose volume contains their origin, or
+/// [`interiors::UNATTACHED`]; a cell mesh its own cell. Which interior objects are loaded
+/// and drawn is the object layer's decision ([`ObjectFrame::interior`]).
+///
+/// [`ObjectFrame::interior`]: super::objects::ObjectFrame::interior
+#[must_use]
+pub fn block_objects(
+    bundle: &LandblockBundle,
+    classes: Option<&LodClasses>,
+) -> (Vec<Instance>, Vec<ObjectInfo>) {
     let mut instances = Vec::new();
-    for e in bundle.drawable() {
-        if e.interior && !interiors {
+    let mut objects = Vec::new();
+    let generated_start = bundle.entities.len();
+    let lists = bundle
+        .entities
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (i, e, false))
+        .chain(
+            bundle
+                .generated
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (generated_start + i, e, true)),
+        );
+    let default = LodClasses::default();
+    let classes = classes.unwrap_or(&default);
+    for (_, e, generated) in lists {
+        if !e.draw {
             continue;
         }
         let Some(visual) = &e.visual else { continue };
@@ -965,23 +2771,119 @@ pub fn build_block(
             Vec3::ONE
         };
         let pos = Vec3::from_array(e.placement.position);
-        if !pos.is_finite() {
+        if !pos.is_finite() || visual.parts.is_empty() {
             continue;
         }
         let model = Mat4::from_scale_rotation_translation(scale, rot, pos);
+        let Ok(object) = u32::try_from(objects.len()) else {
+            break;
+        };
+        let first = u32::try_from(instances.len()).unwrap_or(u32::MAX);
         for &part in visual.parts.iter() {
             instances.push(Instance {
                 part: part.0,
                 model,
                 scale: scale.max_element(),
                 figure: e.figure,
+                object,
             });
         }
+        let class = bundle.lod_class_of(e);
+        let cell = if e.interior {
+            entity_cell(bundle, pos)
+        } else {
+            interiors::OUTDOORS
+        };
+        objects.push(ObjectInfo {
+            position: pos,
+            lod: classes.values(class, false),
+            generated,
+            first,
+            count: u32::try_from(visual.parts.len()).unwrap_or(u32::MAX),
+            cell,
+        });
     }
-    BlockProduct {
-        block: Arc::new(block),
-        overview,
-        instances: instances.into(),
+    cell_objects(bundle, &mut instances, &mut objects);
+    (instances, objects)
+}
+
+/// The LOD values of a cell mesh (`landblock.md` §4.14 OPEN on cell detail levels and
+/// draw distances; Tessera Decision of `walker.md` §14.11): drawn out to the global limit
+/// *G* and the distance cap, always at the finest level, casting shadows within the
+/// component's default shadow distance.
+#[must_use]
+pub fn cell_lod() -> LodValues {
+    let mut v = LodValues::default();
+    v.0[0] = CELL_DRAW_DISTANCE;
+    v.0[1] = CELL_DRAW_DISTANCE;
+    v
+}
+
+/// `d0` and `d1` of a cell mesh: farther than any global limit.
+const CELL_DRAW_DISTANCE: f32 = 1.0e6;
+
+/// The cell of the block's collision set whose volume contains an interior entity's
+/// origin (`entity-descriptor.md` §4.8: containment is the fallback attachment, the
+/// stored rule is OPEN), tried at the origin and 0.05 m above and below it;
+/// [`interiors::UNATTACHED`] when none does or the block has no collision set.
+fn entity_cell(bundle: &LandblockBundle, pos: Vec3) -> u16 {
+    let Some(col) = bundle.collision.as_deref() else {
+        return interiors::UNATTACHED;
+    };
+    [0.0f32, 0.05, -0.05]
+        .into_iter()
+        .find_map(|dz| col.cell_at([pos.x, pos.y, pos.z + dz]).map(|c| c.index))
+        .filter(|&c| c != interiors::OUTDOORS && c != interiors::UNATTACHED)
+        .unwrap_or(interiors::UNATTACHED)
+}
+
+/// Appends one object per placed interior cell of the bundle's landblock info: its 0x01
+/// geometry as the part (the object layer draws its embedded render mesh,
+/// `landblock.md` §4.14), placed by the cell's position and rotation without its
+/// adjustable scale (§4.14 Tessera Decision). Cells without an x, y, z offset are left out
+/// (§4.4 OPEN), as are cells numbered 0 or 0xFFFF (LI8).
+fn cell_objects(
+    bundle: &LandblockBundle,
+    instances: &mut Vec<Instance>,
+    objects: &mut Vec<ObjectInfo>,
+) {
+    let Some(info) = bundle.info.as_ref() else {
+        return;
+    };
+    let lod = cell_lod();
+    for c in info.cells() {
+        if c.index == interiors::OUTDOORS || c.index == interiors::UNATTACHED {
+            continue;
+        }
+        let Ok(placement) = tessera_physics::geometry::CellPlacement::of_cell(c) else {
+            continue;
+        };
+        let q = placement.rotation;
+        let rot = Quat::from_xyzw(q.x, q.y, q.z, q.w);
+        let pos = Vec3::from_array(placement.position);
+        if !rot.is_finite() || !pos.is_finite() || c.geometry.is_null() {
+            continue;
+        }
+        let (Ok(object), Ok(first)) =
+            (u32::try_from(objects.len()), u32::try_from(instances.len()))
+        else {
+            break;
+        };
+        instances.push(Instance {
+            part: c.geometry.0,
+            model: Mat4::from_rotation_translation(rot, pos),
+            scale: 1.0,
+            figure: None,
+            object,
+        });
+        objects.push(ObjectInfo {
+            position: pos,
+            lod,
+            generated: false,
+            first,
+            count: 1,
+            cell: c.index,
+        });
     }
 }
 
@@ -1115,6 +3017,8 @@ mod tests {
             lod: lod(0),
             edges: [lod(0); 4],
             present: 0,
+            layered: false,
+            far: false,
         };
         let now = Instant::now();
         assert!(slot.wants_mesh(sig, now));
@@ -1129,6 +3033,11 @@ mod tests {
             slot.wants_mesh(other, now),
             "a new signature is tried at once"
         );
+        let layered = MeshSig {
+            layered: true,
+            ..sig
+        };
+        assert!(slot.wants_mesh(layered, now), "layers on: a new signature");
         let mut last = now;
         for _ in 0..40 {
             slot.fail(sig, now);
@@ -1146,29 +3055,321 @@ mod tests {
         assert!(e.contains("bad block"), "{e}");
     }
 
-    fn bundle_at(key: LandblockKey, base: u16) -> LandblockBundle {
-        LandblockBundle {
+    #[test]
+    fn lights_of_light_mapped_chunks_leave_out_baked_ones() {
+        let l = |x: f32, range: f32, baked: bool| TerrainLight {
+            position: Vec3::new(x, 0.0, 0.0),
+            range,
+            baked,
+        };
+        let lights = [
+            l(10.0, 5.0, false),  // touches (sphere radius 10 at 0)
+            l(5.0, 5.0, true),    // baked: left out
+            l(100.0, 5.0, false), // too far
+            l(2.0, 1.0, false),   // nearest
+        ];
+        match chunk_lights(&lights, Vec3::ZERO, 10.0, 7) {
+            LightSelection::List { indices, count } => {
+                assert_eq!(count, 2);
+                assert_eq!(&indices[..2], &[3, 0]);
+            }
+            other => panic!("{other:?}"),
+        }
+        match chunk_lights(&lights, Vec3::ZERO, 10.0, 1) {
+            LightSelection::List { count, .. } => assert_eq!(count, 1),
+            other => panic!("{other:?}"),
+        }
+        let hostile = [l(0.0, f32::NAN, false), l(f32::INFINITY, 1.0, false)];
+        match chunk_lights(&hostile, Vec3::ZERO, 1.0, 8) {
+            LightSelection::List { count, .. } => assert_eq!(count, 0),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn chunks_without_a_light_map_keep_the_baked_lights() {
+        // A ceiling (or terrain chunk) without a light map gets the renderer's automatic
+        // selection, baked lights included (review finding: ceilings always lost them).
+        let lights = [TerrainLight {
+            position: Vec3::ZERO,
+            range: 5.0,
+            baked: true,
+        }];
+        assert_eq!(
+            chunk_light_selection(false, &lights, Vec3::ZERO, 10.0, 8),
+            LightSelection::Auto
+        );
+        assert_eq!(
+            chunk_light_selection(true, &lights, Vec3::ZERO, 10.0, 8),
+            chunk_lights(&lights, Vec3::ZERO, 10.0, 8)
+        );
+    }
+
+    #[test]
+    fn a_chunk_without_layers_is_drawn_height_shaded() {
+        use tessera_formats::landblock::{SurfaceChunk, SurfaceLayer};
+        use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![TerrainType {
+                key: 0,
+                ..TerrainType::default()
+            }],
+        )
+        .expect("table");
+        let resolve = |chunk: &SurfaceChunk| {
+            tessera_terrain::resolve_chunk(
+                chunk,
+                &VertexFlags::default(),
+                GridSurface::Terrain,
+                &table,
+                None,
+                &ResolveOptions::default(),
+            )
+            .expect("resolves")
+        };
+        let k = key(5, 5);
+        let mut slot = Slot::new(Arc::new(bundle_at(k, 0)), 1);
+        assert!(!slot.has_terrain_layers(), "no table: not layered");
+        slot.layers = Some(BlockLayers {
+            terrain: Arc::new(resolve(&SurfaceChunk::default())),
+            ceiling: None,
+            terrain_hidden: false,
+        });
+        assert!(
+            !slot.has_terrain_layers(),
+            "an empty stack is drawn like one that does not resolve (review finding)"
+        );
+        assert!(!slot.terrain_hidden());
+        let mut chunk = SurfaceChunk::default();
+        chunk.layers.push(SurfaceLayer {
+            material: 0,
+            whole: true,
+            ..SurfaceLayer::default()
+        });
+        slot.layers = Some(BlockLayers {
+            terrain: Arc::new(resolve(&chunk)),
+            ceiling: None,
+            terrain_hidden: false,
+        });
+        assert!(slot.has_terrain_layers());
+    }
+
+    /// `terrain-texturing.md` §4.9: the open flag, the lowest-`draw_order` entry and the
+    /// one-layer draw of a chunk without layers.
+    #[test]
+    fn chunks_without_layers_follow_the_open_flag() {
+        use tessera_formats::landblock::{Ceiling, LandblockData};
+        use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+        let entry = |key, draw_order| TerrainType {
             key,
-            data: tessera_formats::landblock::LandblockData::from_heights(
+            draw_order,
+            ..TerrainType::default()
+        };
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![entry(0, 5), entry(1, 2), entry(2, 9), entry(3, 2)],
+        )
+        .expect("table");
+        assert_eq!(layerless_key(&table), Some(3), "a tie goes to the last met");
+        let empty = TerrainTypeTable::new(Did(0x1900_0000), Vec::new()).expect("table");
+        assert_eq!(layerless_key(&empty), None);
+
+        let k = key(5, 5);
+        let mut data = LandblockData::from_heights(k.data_did(), HeightGrid::flat(1_000));
+        assert!(block_open(&data), "no ceiling");
+        // A ceiling at or below the terrain everywhere it is tested: closed. The last row
+        // and column (index 32) are not tested.
+        data.ceiling = Some(Ceiling {
+            heights: HeightGrid::from_fn(|i, j| if i == 32 || j == 32 { 2_000 } else { 1_000 }),
+            ..Ceiling::default()
+        });
+        assert!(!block_open(&data));
+        if let Some(c) = data.ceiling.as_mut() {
+            c.heights = HeightGrid::from_fn(|i, j| if (i, j) == (31, 0) { 1_001 } else { 0 });
+        }
+        assert!(block_open(&data), "one sample of open cave");
+
+        let lm = LightMaps {
+            terrain: Some(Did(0x4100_0001)),
+            ceiling: None,
+        };
+        let opts = ResolveOptions::default();
+        let (open, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, true).unwrap();
+        assert!(!hidden);
+        assert_eq!(open.layers().len(), 1);
+        let l = &open.layers()[0];
+        assert_eq!(l.key(), 3);
+        assert!(l.whole() && l.first_drawn() && l.mask().is_none());
+        assert_eq!(l.light_map(), Some(Did(0x4100_0001)));
+        assert!(open.uncovered().is_empty(), "the full grid");
+        let (ceiling, _) =
+            resolve_surface(&data, GridSurface::Ceiling, &table, &lm, &opts, true).unwrap();
+        assert_eq!(
+            ceiling.layers().len(),
+            1,
+            "a layerless ceiling of an open block"
+        );
+        let (closed, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, false).unwrap();
+        assert!(hidden && closed.is_empty());
+        // A chunk that stores layers resolves them, whatever the flag.
+        data.terrain.layers.push(SurfaceLayer {
+            material: 0,
+            whole: true,
+            ..SurfaceLayer::default()
+        });
+        let (stored, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, false).unwrap();
+        assert!(!hidden);
+        assert_eq!(stored.layers()[0].key(), 0);
+
+        let mut slot = Slot::new(Arc::new(bundle_at(k, 0)), 1);
+        slot.layers = Some(BlockLayers {
+            terrain: Arc::new(closed),
+            ceiling: None,
+            terrain_hidden: true,
+        });
+        assert!(slot.terrain_hidden() && !slot.has_terrain_layers());
+    }
+
+    #[test]
+    fn a_chunk_waits_only_for_its_own_images() {
+        use tessera_formats::landblock::{SurfaceChunk, SurfaceLayer};
+        use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![TerrainType {
+                key: 0,
+                ..TerrainType::default()
+            }],
+        )
+        .expect("table");
+        let own = Did(0x4100_0002);
+        let mut chunk = SurfaceChunk::default();
+        for mask in [Did(0), own] {
+            chunk.layers.push(SurfaceLayer {
+                material: 0,
+                whole: true,
+                mask,
+                ..SurfaceLayer::default()
+            });
+        }
+        let ceiling = tessera_terrain::resolve_chunk(
+            &chunk,
+            &VertexFlags::default(),
+            GridSurface::Ceiling,
+            &table,
+            None,
+            &ResolveOptions::default(),
+        )
+        .expect("resolves");
+        assert_eq!(ceiling.layers()[1].textures().mask, Some(own));
+        let k = key(5, 5);
+        let mut slot = Slot::new(Arc::new(bundle_at(k, 0)), 1);
+        let mask = |did| {
+            (
+                did,
+                BlockImage::Mask {
+                    width: 1,
+                    height: 1,
+                    alpha: vec![0],
+                },
+            )
+        };
+        // A far block's deferred terrain mask does not hold the ceiling back (review: the
+        // ceiling of a far cave block never completed, so the walker never settled).
+        slot.images = vec![mask(Did(0x4100_0001))];
+        assert!(!own_waiting(&ceiling, &slot));
+        slot.images.push(mask(own));
+        assert!(own_waiting(&ceiling, &slot));
+    }
+
+    #[test]
+    fn masks_wait_as_a8_and_expand_like_the_surface_decoder() {
+        let m = BlockImage::Mask {
+            width: 2,
+            height: 1,
+            alpha: vec![7, 200],
+        };
+        assert_eq!(m.upload_bytes(), 8);
+        let rgba = m.to_rgba().expect("well-formed");
+        assert_eq!(rgba.pixels, vec![255, 255, 255, 7, 255, 255, 255, 200]);
+        assert_eq!((rgba.width, rgba.height), (2, 1));
+        // The expansion matches `Surface::to_rgba8` for A8.
+        let surface = tessera_formats::Surface {
+            did: Did(0x4100_0001),
+            category: 0,
+            format: tessera_formats::SurfaceFormat::A8,
+            width: 2,
+            height: 1,
+            data: &[7, 200],
+        };
+        assert_eq!(*rgba, surface.to_rgba8().unwrap());
+        let bad = BlockImage::Mask {
+            width: 3,
+            height: 3,
+            alpha: vec![0; 4],
+        };
+        assert!(bad.to_rgba().is_none());
+        let empty = BlockImage::Mask {
+            width: 0,
+            height: 0,
+            alpha: Vec::new(),
+        };
+        assert!(empty.to_rgba().is_none());
+    }
+
+    #[test]
+    fn layered_chunks_cover_the_grid_once() {
+        use tessera_formats::landblock::{SurfaceChunk, SurfaceLayer};
+        use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+        let block = TerrainBlock::flat(10_000);
+        let normals = VertexNormals::compute(&block, &Neighbours::NONE);
+        let mut chunk = SurfaceChunk::default();
+        chunk.layers.push(SurfaceLayer {
+            material: 0,
+            whole: true,
+            ..SurfaceLayer::default()
+        });
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![TerrainType {
+                key: 0,
+                ..TerrainType::default()
+            }],
+        )
+        .expect("table");
+        let layers = tessera_terrain::resolve_chunk(
+            &chunk,
+            &VertexFlags::default(),
+            GridSurface::Terrain,
+            &table,
+            None,
+            &ResolveOptions::default(),
+        )
+        .expect("one whole layer");
+        let k = key(3, 4);
+        for level in 0..=5u8 {
+            let tri = triangulate(&block, lod(level), EdgeLods::NONE);
+            let prep = chunk_prep(&block, &normals, k, &layers, Some(&tri));
+            assert_eq!(prep.triangles.len(), 1);
+            assert_eq!(prep.triangles[0].len() * 3, tri.len(), "level {level}");
+            assert_eq!(prep.vertices.positions.len(), 33 * 33);
+        }
+        let ceiling = chunk_prep(&block, &normals, k, &layers, None);
+        assert_eq!(ceiling.triangles[0].len(), 2048);
+    }
+
+    fn bundle_at(key: LandblockKey, base: u16) -> LandblockBundle {
+        LandblockBundle::from_data(
+            key,
+            tessera_formats::landblock::LandblockData::from_heights(
                 key.data_did(),
                 HeightGrid::from_fn(|i, j| base + (i * 37 + j * 11) as u16 * 20),
             ),
-            data_stamp: None,
-            info: None,
-            block_map: None,
-            block_props: tessera_world::BlockProps::default(),
-            properties: None,
-            minimap: None,
-            light_map: None,
-            ceiling_light_map: None,
-            entities: Vec::new(),
-            unplaced_entities: 0,
-            figures: Vec::new(),
-            figures_dropped: 0,
-            area: None,
-            problems: Vec::new(),
-            heap_bytes: 0,
-        }
+        )
     }
 
     fn headless() -> Option<Renderer<'static>> {
@@ -1181,12 +3382,61 @@ mod tests {
         }
     }
 
+    fn inputs() -> Arc<BlockInputs> {
+        Arc::new(BlockInputs {
+            source: None,
+            tables: HashMap::new(),
+            lod_classes: None,
+        })
+    }
+
+    /// A texture store whose textures never load.
+    #[derive(Default)]
+    struct NoTextures {
+        refs: i64,
+    }
+
+    impl TextureStore for NoTextures {
+        fn acquire(&mut self, reqs: &[TexRequest]) {
+            self.refs += reqs.len() as i64;
+        }
+        fn release(&mut self, reqs: &[TexRequest]) {
+            self.refs -= reqs.len() as i64;
+        }
+        fn lookup(&self, _t: TexRequest) -> TexLookup {
+            TexLookup::Failed
+        }
+        fn mean(&self, _t: TexRequest) -> Option<[f32; 3]> {
+            None
+        }
+        fn small(&self, _t: TexRequest) -> Option<Arc<[RgbaImage]>> {
+            None
+        }
+    }
+
+    fn objects(renderer: &Renderer<'_>) -> NoTextures {
+        let _ = renderer;
+        NoTextures::default()
+    }
+
     /// Runs `update` until settled (bounded).
-    fn settle(layer: &mut TerrainLayer, renderer: &mut Renderer<'_>, anchor: &Anchor) {
+    fn settle(
+        layer: &mut TerrainLayer,
+        renderer: &mut Renderer<'_>,
+        anchor: &Anchor,
+        objects: &mut dyn TextureStore,
+    ) {
         let t = Instant::now();
         loop {
             let mut budget = UploadBudget::new(u64::MAX, Duration::from_secs(1), Instant::now());
-            layer.update(renderer, anchor, Vec3::new(80.0, 80.0, 300.0), &mut budget);
+            layer.update(
+                renderer,
+                anchor,
+                Vec3::new(80.0, 80.0, 300.0),
+                &TerrainFrame::default(),
+                objects,
+                &mut budget,
+            );
             if layer.settled() {
                 return;
             }
@@ -1215,11 +3465,12 @@ mod tests {
         let Some(mut renderer) = headless() else {
             return;
         };
+        let mut objects = objects(&renderer);
         let mut layer = TerrainLayer::new(
             2,
             LodSelector::from_fov(720.0, 1.0, 1.5),
             MeshConfig::default(),
-            false,
+            inputs(),
         )
         .unwrap();
         let anchor = Anchor {
@@ -1231,9 +3482,14 @@ mod tests {
             .flat_map(|x| (8..13).map(move |y| key(x, y)))
             .collect();
         for k in &keys {
-            assert!(layer.insert(*k, &Arc::new(bundle_at(*k, 4_000)), &mut renderer));
+            assert!(layer.insert(
+                *k,
+                &Arc::new(bundle_at(*k, 4_000)),
+                &mut renderer,
+                &mut objects
+            ));
         }
-        settle(&mut layer, &mut renderer, &anchor);
+        settle(&mut layer, &mut renderer, &anchor, &mut objects);
         assert_eq!(layer.stats().meshed, keys.len());
         assert_eq!(layer.take_finished().len(), keys.len());
         assert_eq!(renderer.mesh_stats().meshes as usize, keys.len());
@@ -1252,19 +3508,24 @@ mod tests {
             x: 0,
             y: 0,
         };
-        settle(&mut layer, &mut renderer, &far);
+        settle(&mut layer, &mut renderer, &far, &mut objects);
         assert!(seams_agree(&layer));
         assert_eq!(renderer.mesh_stats().meshes as usize, keys.len());
 
         // Replacing a bundle frees the old mesh at once.
         let k = key(10, 10);
-        assert!(layer.insert(k, &Arc::new(bundle_at(k, 9_000)), &mut renderer));
+        assert!(layer.insert(
+            k,
+            &Arc::new(bundle_at(k, 9_000)),
+            &mut renderer,
+            &mut objects
+        ));
         assert_eq!(renderer.mesh_stats().meshes as usize, keys.len() - 1);
-        settle(&mut layer, &mut renderer, &anchor);
+        settle(&mut layer, &mut renderer, &anchor, &mut objects);
         assert_eq!(renderer.mesh_stats().meshes as usize, keys.len());
 
         // Removing frees the mesh and the heights.
-        layer.remove(k, &mut renderer);
+        layer.remove(k, &mut renderer, &mut objects);
         assert_eq!(renderer.mesh_stats().meshes as usize, keys.len() - 1);
         assert!(
             tiles
@@ -1275,10 +3536,15 @@ mod tests {
 
         // A bundle of another region switches the shared heights to it.
         let other = LandblockKey::new(2, 10, 10).unwrap();
-        assert!(layer.insert(other, &Arc::new(bundle_at(other, 4_000)), &mut renderer));
+        assert!(layer.insert(
+            other,
+            &Arc::new(bundle_at(other, 4_000)),
+            &mut renderer,
+            &mut objects
+        ));
         assert_eq!(tiles.region(), Some(2));
         assert!(tiles.is_empty());
-        layer.clear(&mut renderer);
+        layer.clear(&mut renderer, &mut objects);
         assert_eq!(renderer.mesh_stats().meshes, 0);
         layer.shutdown();
     }
@@ -1289,15 +3555,16 @@ mod tests {
         let Some(mut renderer) = headless() else {
             return;
         };
+        let mut objects = objects(&renderer);
         let mut layer = TerrainLayer::new(
             1,
             LodSelector::from_fov(720.0, 1.0, 1.5),
             MeshConfig::default(),
-            false,
+            inputs(),
         )
         .unwrap();
         let k = key(3, 3);
-        assert!(layer.insert(k, &Arc::new(bundle_at(k, 100)), &mut renderer));
+        assert!(layer.insert(k, &Arc::new(bundle_at(k, 100)), &mut renderer, &mut objects));
         let generation = layer.slots[&k].generation;
         // The worker's real result may arrive later; it is applied after this one and
         // would build the block, so stop the workers first.
@@ -1309,11 +3576,12 @@ mod tests {
                 reason: "synthetic".into(),
             },
             Instant::now(),
+            &mut objects,
         );
         assert!(layer.settled());
         layer.refresh_stats();
         assert_eq!(layer.stats().failed, 1);
         assert_eq!(layer.stats().panics, 1);
-        layer.clear(&mut renderer);
+        layer.clear(&mut renderer, &mut objects);
     }
 }

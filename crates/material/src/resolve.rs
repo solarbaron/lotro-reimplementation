@@ -14,7 +14,8 @@ use tessera_formats::Did;
 
 use crate::interface::{ShaderInterface, SlotInterface};
 use crate::records::{
-    BlendFactor, BlendOp, FloatCurve, MaterialRecord, ParamEntry, ParamValue, SamplerState,
+    BlendFactor, BlendOp, CurveStates, FloatCurve, MaterialRecord, ParamEntry, ParamValue,
+    SamplerState,
 };
 use crate::vocab::{AlphaUse, ChannelPacking, SlotKind, ids};
 
@@ -200,6 +201,13 @@ impl ParameterSet {
             ParamValue::Float(c) => Some(c),
             _ => None,
         }
+    }
+
+    /// The effective float `id` at time `t` seconds (`material.md` §5.3.1), with the
+    /// instance's curve state for `id` from `states`; always finite
+    /// ([`FloatCurve::evaluate_finite`]). `None` when `id` is not a declared float.
+    pub fn float_at(&self, id: u32, t: f64, states: &mut CurveStates) -> Option<f32> {
+        Some(states.evaluate(id, self.curve(id)?, t))
     }
 
     /// The effective colour `id`.
@@ -460,6 +468,16 @@ const ADDRESS_CLAMP: u8 = 3;
 /// Fallback alpha-test threshold when neither 1043 nor a render-state reference exists.
 pub const FALLBACK_ALPHA_THRESHOLD: f32 = 0.5;
 
+/// The alpha-test threshold used when 1043 is absent or non-finite, constant or animated
+/// (`material.md` §18 implementer notes, §19): the shader's most common render-state
+/// `alpha_ref`, then [`FALLBACK_ALPHA_THRESHOLD`].
+pub(crate) fn fallback_alpha_threshold(shader: &ShaderInterface) -> f32 {
+    shader
+        .default_alpha_ref
+        .filter(|t| t.is_finite())
+        .unwrap_or(FALLBACK_ALPHA_THRESHOLD)
+}
+
 /// `items` with each repeated DID kept at its last position only, in order.
 pub(crate) fn last_occurrences<T: Copy>(items: &[T], did: impl Fn(&T) -> Did) -> Vec<T> {
     let mut seen = HashSet::with_capacity(items.len().min(1024));
@@ -593,8 +611,7 @@ impl ResolvedMaterial {
                 let threshold = params
                     .float(ids::ALPHA_THRESHOLD)
                     .filter(|t| t.is_finite())
-                    .or(shader.default_alpha_ref.filter(|t| t.is_finite()))
-                    .unwrap_or(FALLBACK_ALPHA_THRESHOLD);
+                    .unwrap_or_else(|| fallback_alpha_threshold(shader));
                 Some(AlphaTest {
                     threshold,
                     source_slot,

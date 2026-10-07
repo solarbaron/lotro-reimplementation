@@ -1,0 +1,1272 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
+# Particle systems: particle-system descriptors (0x39) and fork-system descriptors (0x44)
+
+| | |
+|---|---|
+| **Status** | Accepted (2026-10-07) |
+| **Last updated** | 2026-10-07 |
+| **Author role** | Spec writer (dirty room) |
+| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted, not the author): first review, a re-review by a third session, and a final review by a fourth session that neither wrote the spec nor made either earlier review, all 2026-10-07 |
+| **Review record** | Final review 2026-10-07: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Implements into** | `crates/formats` (decoders for prefix 0x39, §4, and the outer layer of prefix 0x44, §6), `apps/explorer` (particle preview, §8; fork records shown as metadata, §10), `crates/render` (particle pipeline, §8.10–§8.12), `apps/client` (effects started by script-table Particle and Beam nodes, weather systems of §7.1.3), `fuzz/` (both decoders) |
+| **Companion specs** | [`records.md`](records.md) §1.2 (VLE), §1.3 (TSize), §1.4 (Pascal string), §2.1 (prefix table; rows 0x39 and 0x44), §7 (enum mappers), §8 (DID maps). [`property-system.md`](property-system.md) §2 (master property dictionary), §4.2 (waveform = float curve), §6.3 (embedded property sets), §9 (DB-object-type codes), §17.1 (VLE forms). [`material.md`](material.md) §4 (surface records 0x31), §5.3 (float curve layout and evaluation), §7 (shader records 0x2B). [`script-table.md`](script-table.md) §5.3 (Particle node, kind 59, and Beam node, kind 54). [`skeleton-anim.md`](skeleton-anim.md) (holding locations and bone types). [`environment.md`](environment.md) §9 (kinds of prefixes 0x39 and 0x44). [`coordinates.md`](coordinates.md) (axes: Z is up). |
+
+---
+
+<a id="s0"></a>
+## 0. Purpose
+
+This spec lets an implementer:
+
+- decode every particle-system descriptor (prefix 0x39, 11,155 records) to the last byte (§3, §4);
+- decode the outer layer of every fork-system descriptor (prefix 0x44, 254 records) to the last
+  byte, and locate the embedded third-party effect image and the textures it names (§6);
+- follow the DID graph into and out of both families (§7);
+- run the original's particle simulation for 0x39 records: emission timing and limits, spawn
+  shapes, spread, keyframe channels, the motion controllers, gravity and wind, the emitter fade
+  envelope, texture-atlas frames and the drawn primitive (§8);
+- know which values select or tune effects in gameplay contexts (§9).
+
+Out of scope: the node semantics of the scripts that start effects (`script-table.md`); the
+surface, material and shader programs that draw particles (`material.md`, `lighting.md`); the
+internal layout and simulation of the embedded third-party effect image of 0x44 records (§6.2,
+OPEN Q1).
+
+Field labels. Most fields of the 0x39 format have a **property label** in the master property
+dictionary 0x34000000 (`PSDesc_…` for the system, `PEDesc_…` for an emitter); the tables give
+it so that an implementation can show the dictionary's name and so that the field can be
+matched with the properties of the same name (interoperability). Fields without a label carry
+this spec's own lower-case name. Enum labels (for example `Sphere`) are data, read at run time
+from the named enum mapper. No game text appears in this spec: records are referred to by DID,
+emitter names and texture names are not reproduced.
+
+All counts are observations of one install. Numbers that define how the client computes from
+the data (gravity −9.8, the 0.0002 tolerance, the 0.95 damping, the 0.25 s catch-up limit,
+the 0.3 s wind half-life, the 32,768-vertex draw buffer, the 488-byte header size) come from
+the client executable and may be used as constants
+([decision 0012](../decisions/0012-numeric-constants.md)).
+
+---
+
+<a id="s1"></a>
+## 1. Provenance
+
+Legend:
+
+- **Confirmed**: observed in the user's install on 2026-10-07 by throwaway probes in the dirty
+  scratch area, over **all** records of the kind (every 0x39 and 0x44 record; every script
+  table and scriptlet) unless a sample is stated.
+- **Confirmed (BIN)**: read from the client executable (row BIN). **Confirmed (BIN + OBS)**:
+  read from the executable and agreeing with the data over all records.
+- **Inferred**: follows from names or from consistent data, not traced in code.
+- **Decision**: a Tessera rule (§10), not a fact about the original.
+- **Reported**: published material only (none used: no published source describes these
+  formats).
+
+| Tag | Source |
+|---|---|
+| OBS | User install (Steam), data current on 2026-10-07, read in place and read-only. Decoded in full: all 11,155 records with prefix 0x39 and all 254 with prefix 0x44 (`client_general.dat`); all 7,526 script tables (7,524 decodable) and 28,992 scriptlets of `client_gamelogic.dat` (every Particle and Beam node); the master property dictionary 0x34000000; enum mappers 0x230000AC, 0x230000AD, 0x230000AE, 0x23000068, 0x23000086; DID map 0x28000002 (UNIQUEDB); property set 0x780060C9; a DID-existence check of every referenced DID against all 29 archives of the install. |
+| BIN | **M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), analysed with Ghidra 12.1.3 in headless mode on 2026-10-06/07 in the dirty room. **Questions:** (1) the field order and encodings of the 0x39 deserialiser and of its emitter and keyframe parts (the format has no tags, no lengths and no own DID, and its curves, booleans and counts are variable or unaligned, so field boundaries cannot be found from data alone); (2) the outer deserialiser of DB type 0x56 (0x44 records) and its version-dependent parts; (3) the client's particle runtime: emission, spawn shapes, spread, keyframe channels, motion controllers, forces, fade envelope, texture frames, primitive vertex count, the end-of-effect test; (4) defaults of a new emitter and keyframe; (5) how a fork effect resolves the DIDs it names. **Why M1–M3 were not enough:** (1) and (2) need field boundaries that the data does not mark; (3)–(5) exist only as code; no published source describes them (M2); no running client and no frame capture is available to this session (M3). Only the offline client's format and rendering code was read; nothing of the network, login, launcher or anti-tamper code (decision 0004). Facts resting on BIN alone are marked so. |
+| PS | [`property-system.md`](property-system.md): dictionary layout (§2), waveform = float curve (§4.2), embedded property sets (§6.3), DB-object-type codes and ranges (§9), VLE forms (§17.1). |
+| MA | [`material.md`](material.md) §5.3: float-curve layout and evaluation (shared routine, confirmed again here by BIN). |
+| ST | [`script-table.md`](script-table.md) §5.3: Particle node (kind 59) and Beam node (kind 54) fields; node counts. |
+| REC | [`records.md`](records.md): VLE (§1.2), TSize (§1.3), Pascal string (§1.4), enum mapper (§7), DID map (§8). |
+
+| # | Fact | Sources | Mark |
+|---|---|---|---|
+| P1 | Prefix 0x39 = DB type 0x1E (PSDESC), prefix 0x44 = DB type 0x56 (FORKPSDESC); neither record starts with its own DID (§2.1) | PS §9; BIN (type registry, factories) | Confirmed (BIN + OBS) |
+| P2 | 0x39 record layout: system part, emitter list, bounds, priority, surface, trailing DID (§4.1) | BIN (field order and encodings); OBS (11,155 of 11,155 records decode with zero leftover bytes) | Confirmed (BIN + OBS) |
+| P3 | Emitter layout, 41 fields (§4.2) | BIN; OBS (32,789 emitters) | Confirmed (BIN + OBS) |
+| P4 | Keyframe layout, 10 fields (§4.3) | BIN; OBS (121,087 keyframes) | Confirmed (BIN + OBS) |
+| P5 | Fields are packed with no alignment and no padding; bool8 is one byte 0 or 1 (§3.1) | BIN; OBS | Confirmed (BIN + OBS) |
+| P6 | Every curve field is the float curve of `material.md` §5.3; a vector field is three curves X, Y, Z (§3.2, §3.3) | BIN (the same deserialiser and evaluator); MA; OBS (1,314,142 curves, modes 1–10 only) | Confirmed (BIN + OBS) |
+| P7 | Colour: u32 with A in bits 24–31, R 16–23, G 8–15, B 0–7; each channel / 255 (§3.4) | BIN | Confirmed (BIN) |
+| P8 | Property labels and enum mappers of the fields (§4.5) | OBS (dictionary 0x34000000); BIN (each registered field names its PID) | Confirmed (BIN + OBS) |
+| P9 | Enum labels: shape (0x230000AC), primitive (0x230000AD), scale mode (0x230000AE) (§4.6) | OBS | Confirmed |
+| P10 | 0x39 censuses (§5) | OBS | Confirmed |
+| P11 | 0x44 outer layout: blob, flag, name, name table, property set, transform, resource table, version-3 tail (§6.1) | BIN; OBS (254 of 254 decode with zero leftover bytes) | Confirmed (BIN + OBS) |
+| P12 | Blob framing facts: words 0 and 1, 488-byte header, string block (§6.2) | OBS (254 of 254); BIN (loader size checks) | Confirmed for the stated facts; internal layout OPEN |
+| P13 | Fork resource resolution: render surfaces, shader records, nested fork descriptors; preload dependencies (§6.4) | BIN; OBS | Confirmed (BIN + OBS) |
+| P14 | Fork effects draw with seven shader records taken from UNIQUEDB keys 0x159–0x15F (§6.4) | BIN (keys and DB type); OBS (map entries) | Confirmed (BIN + OBS) |
+| P15 | References into 0x39/0x44 from script nodes, the dynamic-particle whitelist and UNIQUEDB (§7.1) | OBS | Confirmed |
+| P16 | References out of 0x39 (surface records) and 0x44 (render surfaces, nested 0x44) (§7.2) | OBS; BIN (DB types requested) | Confirmed (BIN + OBS) |
+| P17 | Update cadence: particles are updated once at least `time_step` seconds have passed; behaviour with `time_step` ≤ 0 or not a number (§8.1) | BIN | Confirmed (BIN) |
+| P18 | Emitter activity window and end-of-effect test, including `burst_count` = 0 (§8.2) | BIN | Confirmed (BIN) |
+| P19 | Timed emission: bursts of `burst_count` every `emit_interval` seconds, caps, catch-up; no timed emission when `emit_interval` = 0; nothing emitted when `burst_count` = 0; 32-bit wrapping running total, at most cap passes per update, and the behaviour with a negative, too small or not-a-number `emit_interval` (§8.3) | BIN (the interval test, the burst test, the catch-up arithmetic, the unsigned total); OBS (615 emitters with interval 0, 507 of them with distance emission; all others finite, 0.000263 to 100,000, none negative) | Confirmed (BIN + OBS) |
+| P20 | Distance emission, including `burst_count` = 0 (§8.4) | BIN | Confirmed (BIN); details OPEN (Q9) |
+| P21 | Spawn: shapes, direction, exploding, spread, speed (§8.5) | BIN | Confirmed (BIN) |
+| P22 | Keyframe channels, flag bits 0x2/0x4/0x8/0x10/0x20/0x40/0x100/0x200, key selection by particle age, the per-key interpolation targets computed when an emitter is created and the target tests (§8.6.1) | BIN; OBS (flag census) | Confirmed (BIN + OBS) |
+| P23 | Motion controllers 2, 3, 5, 6 as used by the data; 1 (point path, speed = length of the spawn velocity) and 4 (stepped integration with force fields; a force-field lifetime below 0.0002, negative values included, never runs out) present in code and used by no controller key (§8.7) | BIN; OBS (controller census) | Confirmed (BIN + OBS); force-field source OPEN (Q14) |
+| P24 | Forces: gravity (0, 0, −9.8) and the wind vector, each scaled by the mass channel; the wind vector eases towards its target with a 0.3 s half-life, starts at zero, and takes its target from the environment update. Each emitter stores both vectors, computed at system start; the rain precipitation update recomputes them for the UNIQUEDB 0x83 system and the snow update for the 0xFE system (snow value above 1.001), once per run; no other system is recomputed; particle updates read the stored vectors, so live particles follow a recomputation (§8.8, §8.8.1) | BIN (the start routine, the recompute routine and its only two callers, the force terms of controllers 2 and 4) | Confirmed (BIN); environment wind source and the weather schedule OPEN (Q13) |
+| P25 | Emitter fade envelope from `fade_in`, `fade_out`, `time_limit`, `fast_forward` (§8.9) | BIN | Confirmed (BIN) |
+| P26 | Texture-atlas frame selection (§8.10) | BIN | Confirmed (BIN) |
+| P27 | Primitive: 3 vertices for `Triangle`, 4 for `Quad`; one shared draw buffer of 32,768 vertices per system draw, `Quad` emitters first, then `Triangle` emitters, drawing stops when the buffer is full (§8.11) | BIN (vertex counts, buffer creation size, draw order and stop rule) | Confirmed (BIN) |
+| P28 | Constructor defaults of an emitter and of a keyframe (§4.7) | BIN; OBS (most common values agree) | Confirmed (BIN) |
+| P29 | `PSDesc_FrameRate` and `PEDesc_ParticlesPerSec` are views (reciprocals) of `time_step` and `emit_interval`, not stored fields (§4.5) | BIN | Confirmed (BIN) |
+| P30 | Weather and water systems in UNIQUEDB (§7.1.3); the weather code creates one instance of each at initialisation | OBS; BIN (the weather initialisation reads all ten keys) | Confirmed (BIN + OBS) |
+| P31 | Record counts, DID ranges, payload byte totals, size ranges, and the compression flag clear in every directory entry of both prefixes (§2.1) | OBS (directory entries and payloads of all 11,155 + 254 records) | Confirmed |
+| P32 | Reachability of 0x44 records: 38 named by other 0x44 records, 35 only that way, all 254 reachable (§6.3) | OBS (all `resources` tables and all Particle nodes) | Confirmed |
+| P33 | Drawn size (scale channel × largest component of the owner's scale × `particle_scale` when that curve is not the constant 1) and drawn colour (colour channel, alpha × fade envelope, each channel clamped to [0, 1]) (§8.6.2) | BIN | Confirmed (BIN); `scale_mode` OPEN (Q4) |
+| P34 | `pivot` passed as the primitive's pivot, `origin_offset` added to every vertex after the billboard is built (§8.12) | BIN | Confirmed (BIN); axis use OPEN (Q8) |
+| P35 | No field of either family carries a gameplay value; gameplay reaches the records only by selection through script nodes, the whitelist and UNIQUEDB (§9) | OBS and BIN (the complete field lists of §4 and §6.1); ST (node fields); §7 | Inferred from the confirmed layouts and references |
+| P36 | Tessera rules: complete decoding, opaque fork images, curve and random evaluation, wrong-prefix Particle nodes, invalid `time_step`, `burst_count` = 0, controller 4 without force fields, bounded timed emission with hostile `emit_interval` (§10) | This spec | Decision |
+| P37 | `snap` values and the other emitter censuses (§4.7, §5.2), last-key time against `lifespan` (§5.3) | OBS (all 32,789 emitters and 121,087 keyframes) | Confirmed |
+
+---
+
+<a id="s2"></a>
+## 2. The families at a glance
+
+<a id="s2-1"></a>
+### 2.1 Prefixes, DB types and counts
+
+| Prefix | Archive | DB type (label) | Records | Payload bytes | Size range | Own DID at start |
+|---|---|---|---|---|---|---|
+| 0x39 | general | 0x1E (PSDESC) | 11,155 (DIDs 0x39000000–0x3900387D, with gaps) | 24,164,578 | 77–45,677 | No: the first field is a float (§4.1) |
+| 0x44 | general | 0x56 (FORKPSDESC) | 254 (DIDs 0x4400002F–0x44000229, with gaps) | 3,187,797 | 1,201–87,951 | No: the first field is a blob length (§6.1) |
+
+All records of both prefixes are stored uncompressed (the directory entry's compression flag
+is clear in all 11,409, `dat-container.md`). Both are DB objects of the client's object
+system: the 0x39 decoder is a generic field-list reader driven by a registered field list
+(BIN); the 0x44 decoder is a fixed reader (BIN). The field order of §4 is the registration
+order.
+
+<a id="s2-2"></a>
+### 2.2 DID graph (summary; details in §7)
+
+| From | Field | To | Count (OBS) |
+|---|---|---|---|
+| Script table / scriptlet, Particle node (kind 59) | `ParticleScript_ParticleID` | 0x39 | 39,830 nodes (11,041 distinct records) |
+| Particle node | `ParticleScript_ParticleID` | 0x44 | 7 nodes, all 0x44000091 (Q12) |
+| Particle node | `ParticleScript_ForkParticleID` | 0x44 | 1,517 nodes (219 distinct) |
+| Beam node (kind 54) | `BeamScript_BeamParticleSystem` | 0x39 | 571 nodes (91 distinct) |
+| Beam node | `BeamScript_HeadParticleSystem` | 0x39 | 45 nodes (9 distinct) |
+| Property set 0x780060C9 | `Render_DynamicParticleWhitelistEntry` | 0x39 | 272 (272 distinct) |
+| DID map 0x28000002 (UNIQUEDB) | 10 labelled keys | 0x39 | 10 |
+| 0x39 | `PSDesc_Material` (`surface`) | 0x31 surface record | 11,153 (2 records hold 0) |
+| 0x39 | trailing DID | (DB type 0x36, surface) | 0 in all 11,155 |
+| 0x44 | resource table | 0x41 render surface | 254 entries (all exist, in the surface archives) |
+| 0x44 | resource table | 0x44 | 74 entries (38 distinct, all exist) |
+| UNIQUEDB | keys 0x159–0x15F | 0x2B shader record | 7 (used by fork effects, §6.4) |
+
+Every Particle node names **exactly one** of the two descriptor fields: 39,837 nodes name only
+`ParticleScript_ParticleID` and 1,517 only `ParticleScript_ForkParticleID` (41,354 Particle
+nodes in all, agreeing with ST).
+
+---
+
+<a id="s3"></a>
+## 3. Shared primitives
+
+<a id="s3-1"></a>
+### 3.1 Scalars
+
+All multi-byte values are little-endian. Fields follow each other **without alignment or
+padding** (a float may start at any byte offset).
+
+| Name | Size | Meaning |
+|---|---|---|
+| f32 | 4 | IEEE-754 single |
+| f64 | 8 | IEEE-754 double (0x44 tail only) |
+| u32 / i32 | 4 | Unsigned / signed integer |
+| bool8 | 1 | 0 or 1. The client's reader fails the record when the byte is greater than 1 (BIN); no such byte occurs (OBS). |
+| VLE | 1, 2 or 4 | Count or length, `records.md` §1.2 with the forms of `property-system.md` §17.1 (the particle reader has no 0xE0 escape, BIN). Every VLE in both families uses the 1-byte form (OBS). |
+| Pascal string | VLE + bytes | `records.md` §1.4: VLE byte length, then that many Latin-1 bytes, no terminator |
+| TSize | 1 + VLE | `records.md` §1.3: hint byte (0–22), then a VLE count (0x44 tables only) |
+| DID | 4 | u32 data ID |
+
+<a id="s3-2"></a>
+### 3.2 Float curve (`curve`)
+
+Every field typed `curve` is the float curve of `material.md` §5.3 (`property-system.md` §4.2
+calls it a waveform): a u32 `mode`; mode 1 carries one f32; every other mode carries ten f32
+`w[0..9]`; mode 10 then adds f32 `period`, bool8 `loop` and a u32 count *k* of (f32 value,
+f32 position) pairs. The particle reader is the same routine (BIN) and rejects a `loop` byte
+above 1. Evaluation is `material.md` §5.3.1; the time argument used for each particle curve is
+stated in §8.
+
+Mode census over all 1,314,142 curves of all 0x39 records (OBS): 1 (1,189,510), 2 (7,247),
+3 (95,676), 4 (12,892), 5 (71), 6 (653), 7 (5,050), 8 (2,992), 10 (51). Modes 0, 9 and above 10
+do not occur. The 51 mode-10 curves have 2 (5), 3 (39) or 4 (7) pairs and `loop` 0 or 1.
+
+<a id="s3-3"></a>
+### 3.3 Curve vector (`vec`)
+
+Three `curve` values in the order X, Y, Z (24 bytes when all three are mode 1). Each component
+has its own dictionary label (`…X`, `…Y`, `…Z`).
+
+<a id="s3-4"></a>
+### 3.4 Colour (`argb`)
+
+A u32: alpha in bits 24–31, red 16–23, green 8–15, blue 0–7. The client turns each channel into
+a float by dividing by 255 (BIN). Example: 0xFFFF8000 is opaque orange (1.0, 0.502, 0.0).
+
+<a id="s3-5"></a>
+### 3.5 Plain vector (`vec3f`)
+
+Three f32 X, Y, Z (12 bytes), used for bounds.
+
+---
+
+<a id="s4"></a>
+## 4. Particle-system descriptor (prefix 0x39)
+
+<a id="s4-1"></a>
+### 4.1 Record layout
+
+The record is the system part, then the emitter list, then the tail. Offsets are fixed up to
+and including `emitter_count` (offset 38) and relative after it. The emitter list starts at
+offset 39 only while `emitter_count` uses the 1-byte VLE form (values 0–127, the form of every
+record in this install, PS8); with the 2-byte form it starts at 40 and with the 4-byte form at
+42 (§3.1, §4.4).
+
+| Offset | Size | Type | Field (own name) | Property label | Meaning, units |
+|---|---|---|---|---|---|
+| 0 | 4 | f32 | `time_step` | — (the view `PSDesc_FrameRate` = 1 / `time_step`) | Update interval of the system, seconds (§8.1) |
+| 4 | 4 | f32 | `fast_forward` | `PSDesc_FastForward` | Seconds; start of the fade envelope (§8.9); other effects OPEN (Q6) |
+| 8 | 4 | f32 | `physics_duration` | `PSDesc_PhysicsDuration` | Seconds; 0 in every record (OBS); use OPEN (Q6) |
+| 12 | 1 | bool8 | `world_space` | `PSDesc_WorldSpace` | Particles live in world space after spawn (Inferred from the label; the client branches on it in spawn and draw, Q8) |
+| 13 | 1 | bool8 | `force_draw` | `PSDesc_ForceDraw` | OPEN (Q5) |
+| 14 | 1 | bool8 | `uses_video_post` | `PSDesc_UsesVideoPost` | OPEN (Q5) |
+| 15 | 1 | bool8 | `draw_reflection` | `PSDesc_DrawReflection` | OPEN (Q5) |
+| 16 | 1 | bool8 | `use_lighting` | `PSDesc_UseLighting` | OPEN (Q5) |
+| 17 | 1 | bool8 | `inherit_opacity` | `PSDesc_InheritOpacity` | OPEN (Q5) |
+| 18 | 4 | f32 | `far_fade_start` | `PSDesc_StartFadeDist` | Metres (Inferred), Q5 |
+| 22 | 4 | f32 | `far_fade_end` | `PSDesc_StopFadeDist` | Metres (Inferred), Q5 |
+| 26 | 4 | f32 | `near_fade_start` | `PSDesc_StartNearFadeDist` | Metres (Inferred), Q5 |
+| 30 | 4 | f32 | `near_fade_end` | `PSDesc_StopNearFadeDist` | Metres (Inferred), Q5 |
+| 34 | 4 | u32 | `scale_mode` | `PSDesc_ParticleScale` (enum 0x230000AE) | How the owner's scale applies, Q4 |
+| 38 | VLE | VLE | `emitter_count` *n* | — | Number of emitters, 0–64 observed |
+| 39 (1-byte VLE) | var | emitter × *n* | `emitters` | — | §4.2 |
+| +0 | 1 | bool8 | `has_bounds` | — | 1 when `bounds_min`/`bounds_max` are valid |
+| +1 | 12 | vec3f | `bounds_min` | — | Bounding box of the effect in the system frame (Inferred), metres |
+| +13 | 12 | vec3f | `bounds_max` | — | |
+| +25 | 4 | i32 | `sorting_priority` | `PSDesc_SortingPriority` | 0–57 observed; use OPEN (Q5) |
+| +29 | 1 | bool8 | `shareable` | `PSDesc_CanBeShared` | OPEN (Q5) |
+| +30 | 4 | DID | `surface` | `PSDesc_Material` (type 20, DB type 0x36) | Surface record (prefix 0x31) the particles are drawn with (`material.md` §4), or 0 |
+| +34 | 4 | DID | `extra_surface` | — | A second DID that the client also resolves as DB type 0x36 (surface record) after loading; 0 in every record (OBS). Use OPEN (Q11). |
+| +38 | — | — | *(end)* | | Zero leftover bytes in every record |
+
+The smallest possible record (no emitters) is 77 bytes; one record has that form (0x39000E39).
+
+<a id="s4-2"></a>
+### 4.2 Emitter
+
+An emitter is 41 fields in this order, packed (§3.1). Offsets are relative to the start of the
+emitter and hold when every curve before the field is mode 1 (8 bytes); otherwise they shift.
+
+| Rel. offset (all mode 1) | Type | Field (own name) | Property label | Meaning, units |
+|---|---|---|---|---|
+| 0 | vec | `origin` | `PEDesc_OriginX/Y/Z` | Spawn offset added to the shape point, metres, emitter frame (§8.5) |
+| 24 | vec | `origin_offset` | `PEDesc_OriginOffsetX/Y/Z` | Offset added to every vertex at draw time (§8.12) |
+| 48 | vec | `pivot` | `PEDesc_PivotOriginX/Y/Z` | Pivot of the drawn primitive (§8.12) |
+| 72 | u32 | `shape` | `PEDesc_Shape` (enum 0x230000AC) | Spawn shape (§4.6, §8.5.1) |
+| 76 | u32 | `primitive` | `PEDesc_ParticleShape` (enum 0x230000AD) | Drawn primitive (§4.6, §8.11) |
+| 80 | f32 | `emit_interval` | — (the view `PEDesc_ParticlesPerSec` = 1 / `emit_interval`, 0 when the interval is 0) | Seconds between bursts (§8.3) |
+| 84 | curve | `speed` | `PEDesc_Velocity` | Initial speed along the spawn direction, metres per second (§8.5.4) |
+| 92 | vec | `direction` | `PEDesc_DirectionX/Y/Z` | Spawn direction before spread, emitter frame; normalised by the client (§8.5.2) |
+| 116 | u32 | `emission_limit` | `PEDesc_EmissionLimit` | Total particles the emitter may emit; 0 = unlimited (§8.3) |
+| 120 | curve | `lifespan` | `PEDesc_LifeSpan` | Particle lifetime, seconds (§8.6) |
+| 128 | curve | `shape_size` | `PEDesc_Scale` | Size of the spawn shape, metres (§8.5.1) |
+| 136 | curve | `min_spread` | `PEDesc_MinSpread` | Lower spread angle, degrees (§8.5.3) |
+| 144 | curve | `max_spread` | `PEDesc_MaxSpread` | Upper spread angle, degrees |
+| 152 | curve | `particle_scale` | `PEDesc_ParticleScale` | Per-particle size factor drawn at spawn (§8.12) |
+| 160 | vec | `rotation` | `PEDesc_RotationX/Y/Z` | Initial particle rotation, drawn at spawn (§8.12) |
+| 184 | u32 | `max_particles` | `PEDesc_MaxParticles` | Live-particle cap (§8.3) |
+| 188 | bool8 | `exploding` | `PEDesc_Exploding` | Direction radial from the emitter (§8.5.2) |
+| 189 | bool8 | `lock_world_rotation` | `PEDesc_LockWorldSpaceRotation` | Q8 |
+| 190 | curve | `streak` | `PEDesc_Streak` | Per-particle streak factor drawn at spawn (§8.12) |
+| 198 | vec | `world_rotation` | `PEDesc_WorldRotationX/Y/Z` | Per-particle rotation drawn at spawn (§8.12) |
+| 222 | vec | `rotation_velocity` | `PEDesc_RotationVelocityX/Y/Z` | Per-particle angular velocity drawn at spawn; rotation grows linearly with age (§8.12) |
+| 246 | u32 | `burst_count` | `PEDesc_BlastCount` | Particles per burst (§8.3) |
+| 250 | f32 | `start_time` | `PEDesc_StartTime` | Seconds after the system starts before the emitter is active (§8.2) |
+| 254 | f32 | `time_limit` | `PEDesc_TimeLimit` | Length of the active window, seconds; 0 = unlimited (§8.2) |
+| 258 | f32 | `emission_distance` | `PEDesc_EmissionDistance` | Metres of travel per extra burst; 0 = off (§8.4) |
+| 262 | curve | `snap` | `PEDesc_ParticleSnap` | Pull towards the anchor, controller 4 only (§8.7) |
+| 270 | bool8 | `inclusive` | `PEDesc_Inclusive` | Fill the shape (1) or use its outline (0) (§8.5.1) |
+| 271 | bool8 | `active` | — | The emitter takes part at all (§8.2) |
+| 272 | f32 | `fade_in` | `PEDesc_FadeIn` | Seconds (§8.9) |
+| 276 | f32 | `fade_out` | `PEDesc_FadeOut` | Seconds; start of the fade-out; negative = none (§8.9) |
+| 280 | bool8 × 3 | `constrain_x`, `constrain_y`, `constrain_z` | `PEDesc_ConstrainX/Y/Z` | Zero the force-field contribution on that axis (controller 4, §8.7) |
+| 283 | u32 | `frames_u` | `PEDesc_NumUFrames` | Atlas columns (§8.10) |
+| 287 | u32 | `frames_v` | `PEDesc_NumVFrames` | Atlas rows (§8.10) |
+| 291 | u32 | `frame_rate` | `PEDesc_FramesPerSec` | Frames per second (§8.10) |
+| 295 | bool8 | `random_start_frame` | `PEDesc_RandomizeStartFrame` | §8.10 |
+| 296 | VLE | `keyframe_count` *k* | — | 1–21 observed |
+| 297 | keyframe × *k* | `keyframes` | — | §4.3 |
+| +0 | u32 | `holding_location` | `PEDesc_EntityHoldingLocation` (enum 0x23000068) | Attachment point on the owner (§8.5.5) |
+| +4 | u32 | `bone` | `PEDesc_EntityBoneType` (enum 0x23000086) | Attachment bone on the owner (§8.5.5) |
+| +8 | bool8 | `stick_to_bones` | `PEDesc_StickToBones` | §8.5.5 |
+| +9 | bool8 | `velocity_facing` | `PEDesc_VelocityFacing` | Orient the primitive along the velocity (Inferred from the label; the client sets a draw mode from it, Q8) |
+| +10 | Pascal string | `name` | `PEDesc_Name` | Editor name; empty in 10,596 of 32,789 emitters |
+
+An emitter whose curves are all mode 1 and which has no keyframe and an empty name is 308
+bytes; each mode-1 keyframe with no points adds 60 bytes (§4.3).
+
+<a id="s4-3"></a>
+### 4.3 Keyframe
+
+| Rel. offset | Size | Type | Field (own name) | Meaning, units |
+|---|---|---|---|---|
+| 0 | 4 | f32 | `time` | Particle age at this key, seconds (§8.6) |
+| 4 | 4 | u32 | `flags` | Channel bits (§8.6.1) |
+| 8 | 4 | f32 | `scale_x` | Primitive width factor |
+| 12 | 4 | f32 | `scale_y` | Primitive height factor |
+| 16 | 4 | argb | `colour` | §3.4 |
+| 20 | 4 | f32 | `mass` | Multiplier of the forces of §8.8 (1 = full gravity, negative = rises) |
+| 24 | 4 | u32 | `controller` | Motion controller (§8.7) |
+| 28 | 4 | u32 | `physics_flags` | Force and point-selection bits (§8.8) |
+| 32 | 4 | u32 | `point_count` *p* | |
+| 36 | 12·*p* | vec3f × *p* | `points` | Point set for controllers 1 and 3 (§8.7), metres, emitter frame |
+| 36 + 12·*p* | var | vec | `position` | Path curves for controller 5 (§8.7) |
+
+The keyframe fields have no dictionary labels; the names are this spec's.
+
+<a id="s4-4"></a>
+### 4.4 Decoding procedure
+
+1. Read the fixed system part (offsets 0–37), then the emitter count (VLE).
+2. For each emitter, read its fields in the order of §4.2: curves per §3.2 (mode, then one or
+   ten floats, then for mode 10 the period, loop byte, pair count and pairs), vectors as three
+   curves, counts as VLE (keyframes) or u32 (points), the name as a Pascal string.
+3. Read the tail (§4.1, +0 to +37).
+4. The payload must now be exhausted; leftover bytes mean the record is not this format.
+
+Limits for hostile input (Tessera rule): fail on a bool8 above 1, a mode-10 `loop` above 1,
+or any count that cannot fit in the remaining bytes (a curve needs at least 8 bytes, a mode-10
+pair 8, a keyframe 60, a point 12, an emitter 308); the client fails the record on the same
+conditions (BIN). A curve mode of 0 or above 10 never occurs; the client reads ten floats for
+any mode other than 1 (`property-system.md` §4.2), and a Tessera reader may either do the same
+or reject the record. Observed maxima: 64 emitters per record, 21 keyframes per emitter, 1,203 points per
+keyframe.
+
+<a id="s4-5"></a>
+### 4.5 Labels and dictionary types
+
+The dictionary defines every label of §4.1 and §4.2 (OBS). Their types agree with the stored
+encodings: curves are type 3 (waveform), f32 fields type 9, bool8 fields type 21, enums type 8
+with the enum mapper given, counts and limits type 15 (integer), `PSDesc_Material` type 20 with
+DB-object-type 0x36, `PEDesc_Name` type 1 (string). Two labels are views computed by the client
+from stored fields rather than stored themselves (BIN): `PSDesc_FrameRate` (PID 0x2A9) is
+1 / `time_step`, and `PEDesc_ParticlesPerSec` (PID 0x2C) is 1 / `emit_interval` (0 when the
+interval is 0).
+
+<a id="s4-6"></a>
+### 4.6 Enums
+
+| Field | Mapper | Keys and labels (OBS) | Use (OBS counts) |
+|---|---|---|---|
+| `shape` | 0x230000AC | 1 `Line`, 2 `Disc`, 3 `Sphere`, 4 `Point`, 5 `Quad` | Point 14,859; Disc 9,267; Sphere 7,424; Quad 1,001; Line 238 |
+| `primitive` | 0x230000AD | 1 `Triangle`, 2 `Quad` | Quad 32,768; Triangle 21 |
+| `scale_mode` | 0x230000AE | 1 `Total`, 2 `VDescOnly`, 3 `None` | Total 10,818; None 316; VDescOnly 21 |
+| `holding_location` | 0x23000068 (123 keys) | `skeleton-anim.md` labels; 0 = `Invalid` (none) | 0 in 27,151; 99 other keys; all values are keys of the mapper |
+| `bone` | 0x23000086 (87 keys) | 0 = `Default` (none) | 0 in 26,980; 45 other keys; all values are keys of the mapper |
+
+`controller` and `physics_flags` have no mapper; their values are given in §8.7 and §8.8.
+
+<a id="s4-7"></a>
+### 4.7 Defaults of a new emitter and keyframe (BIN)
+
+A writer creating new data starts from the client's defaults: `max_particles` 500; `shape` 4
+(Point); `primitive` 2 (Quad); `emit_interval` 0.1; `burst_count` 1; `lifespan`, `speed`,
+`shape_size`, `particle_scale` constant 1.0; `direction` constant (0, 0, 1); `snap` constant
+0.1; every other curve constant 0; `inclusive` and `active` 1; `fade_in` 0; `fade_out` −1;
+`start_time`, `time_limit`, `emission_distance` 0; `frames_u` and `frames_v` 1; `frame_rate`
+30; all other bool8 fields 0; `holding_location` and `bone` 0; empty name. A new keyframe:
+`time` 0, `flags` 0x7F0, scales 1.0, colour opaque white, `mass` 1.0, `controller` 2,
+`physics_flags` 1, no points, `position` constant 0. The most common stored values agree
+(`max_particles` 500 in 7,955 emitters, `frame_rate` 30 in 25,874, `snap` 0.1 in 32,627 of
+32,789; §5.2 lists the other `snap` values).
+
+---
+
+<a id="s5"></a>
+## 5. Census of prefix 0x39 (OBS, all records)
+
+<a id="s5-1"></a>
+### 5.1 System part
+
+| Field | Observation |
+|---|---|
+| `time_step` | 18 distinct values: 1/30 (8,488), 0.1 (1,201), 1/15 (836), 1/60 (236), 0.05 (156), 1/24 (101), 1/32 (37), and 11 rarer values down to 1/120 |
+| `fast_forward` | 0 in 9,646; non-zero in 1,509, up to 90 |
+| `physics_duration` | 0 in all 11,155 |
+| bool8 fields | `world_space` 7,540; `force_draw` 220; `uses_video_post` 139; `draw_reflection` 43; `use_lighting` 1,061; `inherit_opacity` 129 (records with value 1) |
+| far fade | `far_fade_start` 1–4,000, `far_fade_end` 20–5,000; start ≤ end in all records; (40, 60) is the most common pair |
+| near fade | 0 and 0 in 11,152 records; 3 records set them (start ≤ end in 2, start > end in 1) |
+| `emitter_count` | 0 (1 record), 1 (4,379), 2 (3,058), 3 (1,342), 4 (903) … up to 64; 32,789 emitters in all |
+| `has_bounds` | 1 in 7,345 (min ≤ max on every axis in all of them); 0 in 3,810, of which 3,602 store zero bounds and 208 store non-zero bounds |
+| `sorting_priority` | 0–57; 5 (8,052), 4 (1,334), 6 (736) most common |
+| `shareable` | 1 in 9,119 |
+| `surface` | prefix 0x31 in 11,153 (all exist); 0 in 2 |
+| `extra_surface` | 0 in all |
+
+<a id="s5-2"></a>
+### 5.2 Emitters (32,789)
+
+| Field | Observation |
+|---|---|
+| `emit_interval` | 0 in 615 emitters (no timed emission, §8.3): 507 of them have a non-zero `emission_distance` (486 active, 21 inactive), 108 active ones have neither and emit nothing; otherwise finite, from 0.000263 to 100,000 (55 emitters below 0.001); none negative or not a number; 1.0 (3,351) and 0.1 (3,029) most common |
+| `emission_limit` | 0 in 18,940; 108 other values |
+| `max_particles` | 1–100,000; 500 (7,955), 100 (1,934), 1 (1,712) most common |
+| `burst_count` | 1–300; 1 (26,620), 2 (1,103), 3 (875), 5 (723), 10 (721) … (46 values); 0 never occurs |
+| `exploding` | 1 in 7,528 |
+| `lock_world_rotation` | 1 in 66 |
+| `start_time` | 0 in 22,232; −0.009 to 118 |
+| `time_limit` | 0 in 25,190; up to 500 |
+| `emission_distance` | 0 in 32,152; up to 46 |
+| `snap` | Constant (mode 1) in all 32,789: 0.1 (32,627), 0.2 (111), 0.01 (32), 0 (12), 2000 (7) |
+| `inclusive` / `active` | 1 in 23,114 / 31,158 |
+| `fade_in` | 0 (31,639), 1.0 (1,131), 0.1–0.5 (19) |
+| `fade_out` | −1 (32,393), 0 (312), −2 (71), positive (13) |
+| constrain bytes | all 0 except (0,1,0) and (0,0,1) once each |
+| `frames_u` × `frames_v` | 1 × 1 (27,088), 4 × 8 (2,217), 8 × 8 (925), 2 × 4 (707), 6 × 6 (456), 4 × 4 (410), 8 × 4 (313), 2 × 2 (263), 0 × 0 (106), others below 110 |
+| `frame_rate` | 30 (25,874), 0 (1,014), 24, 60, 15, 16, 45 … (53 values) |
+| `random_start_frame` | 1 in 6,976 |
+| `keyframe_count` | 1–21; 4 (16,287), 3 (12,415), 5 (2,572); no emitter has 0 |
+| `holding_location` / `bone` | non-zero in 5,638 / 5,809; either non-zero in 11,430 |
+| `stick_to_bones` | 1 in 3,833 |
+| `velocity_facing` | 1 in 1,091 |
+| `name` | empty in 10,596; lengths up to 38 bytes |
+
+Curve modes by field (non-constant curves): `speed` 15,788 of 32,789 (mostly mode 3, random);
+`particle_scale` 26,620 (mostly mode 3); `rotation` Z 19,249; `rotation_velocity` Z 14,078;
+`lifespan` 177; `shape_size` 2,506; `snap` none (its values are in the table above).
+
+<a id="s5-3"></a>
+### 5.3 Keyframes (121,087)
+
+| Field | Observation |
+|---|---|
+| `time` | The first key of every emitter has time 0. Times are non-decreasing in all emitters except 4 (in records 0x39001745, 0x39001746, 0x39001CA8), where one or two keys go backwards. Of the 32,612 emitters with a constant `lifespan`, the last key's time equals it exactly in 28,578, is earlier in 3,873 (54 of them by less than 0.0001) and later in 161; the other 177 emitters have a non-constant `lifespan`. |
+| `flags` | First key: 0x770 (32,776) or 0x7F0 (13). Bits over all keys: 0x4 (84,210), 0x2 (40,684), 0x200 (33,347), 0x100 (33,302), 0x400 (32,963), 0x40 (32,885), 0x20 (32,832), 0x10 (32,791), 0x8 (3,985), 0x80 (13). Keys after the first carry the set bits rarely: 0x200 (558), 0x100 (513), 0x400 (174), 0x40 (96), 0x20 (43), 0x10 (2). |
+| `scale_x`, `scale_y` | −8 to 120 and −60 to 150; equal in 98,058 keys |
+| `colour` | 18,950 distinct; 0x00FFFFFF (8,775), 0xFFFFFFFF (7,684), 0x00000000 (1,180) |
+| `mass` | 1.0 (84,524), 0 (8,298), −0.1 (2,443) …; range −6 to 15 |
+| `controller` | 1 (68,758), 2 (29,601), 6 (19,751), 5 (2,944), 3 (33). On keys with flag 0x100 (the only keys where it takes effect, §8.6.1): 2 (29,601), 5 (2,944), 6 (724), 3 (33). |
+| `physics_flags` | 0 (99,569), 0x1 (20,069), 0x5, 0x8, 0x9, 0x4, 0x7, 0x25, 0xD, 0x21, 0x20, 0x3, 0x24 |
+| `point_count` | 0 in 120,405; 144 in 649; up to 1,203; 104,784 points in all; keys with points use controller 2 (649) or 3 (33) |
+
+---
+
+<a id="s6"></a>
+## 6. Fork-system descriptor (prefix 0x44)
+
+A 0x44 record wraps the native effect image of a third-party particle library that the client
+links, plus the tables the client needs to resolve the image's textures and child effects.
+
+<a id="s6-1"></a>
+### 6.1 Record layout
+
+| Order | Type | Field (own name) | Meaning |
+|---|---|---|---|
+| 1 | u32 | `blob_length` *L* | Bytes of the effect image |
+| 2 | *L* bytes | `blob` | The effect image (§6.2) |
+| 3 | bool8 | `flag` | 1 in 92 records, 0 in 162; meaning OPEN (Q2) |
+| 4 | Pascal string | `name` | Empty in all 254 |
+| 5 | TSize + (Pascal, Pascal) × *n* | `name_table` | Short name → asset path. Hint 0; *n* = 1 (180) or 2 (74). Every key equals the last path component of its value (328 of 328). Values end in a texture extension (254) or an effect extension (74). |
+| 6 | embedded property set | `properties` | `property-system.md` §6.3 form (TSize header then entries); the hint byte and count are 0 in all 254 records (bytes `00 00`) |
+| 7 | u32 *m*, *m* bytes | `transform` | *m* = 64 in all: 16 f32, a 4 × 4 matrix stored row after row. Rows 0–2 are the identity rotation in 216 records; the last row holds a translation (each component within ±0.8) and 1.0 |
+| 8 | TSize + (DID, Pascal) × *r* | `resources` | DID → short name. Hint 0; *r* = 1 (180) or 2 (74). Prefixes: 0x41 render surface (254 entries, one per record), whose name is a key of `name_table` (254 of 254); 0x44 nested fork descriptor (74), whose name is a `name_table` key without its effect extension (74 of 74) |
+| 9 | f64 | `tail_value` | 0.2167–20.0167; meaning OPEN (Q2; plausibly a duration in seconds) |
+| 10 | vec3f | `bounds_min` | Bounding box (Inferred); min ≤ max in 242 records, not in 12 |
+| 11 | vec3f | `bounds_max` | |
+| — | — | *(end)* | Zero leftover bytes in all 254 records |
+
+Version rule (BIN): the reader works with two version numbers, one for the record and one for
+items 4–7. With an item version below 3, item 6 is a u32-counted list of property values
+instead of a property set; with an item version below 2, item 7 is absent; with a record
+version below 3, items 9–11 are absent. The client takes both versions from the read context,
+not from the record bytes (an unset item version counts as 3). Every record of
+this install decodes completely with the version-3 reading (OBS), so a reader decodes only that
+form and fails anything else. How the client chooses the version for a stored record is OPEN
+(Q2); it does not change the decoding of this install.
+
+<a id="s6-2"></a>
+### 6.2 The effect image (`blob`)
+
+Facts established over all 254 records (OBS) and from the loader's checks (BIN):
+
+- The image is 991–87,701 bytes. The client copies it, doubles the buffer (pointer widening)
+  and rejects an image shorter than 488 bytes (0x1E8) (BIN).
+- u32 at image offset 0 is 0x50 and u32 at offset 4 is 0x1E8 in every record.
+- The image starts with a 488-byte header of scalars and (count, offset) pairs; offsets are
+  byte offsets from the start of the image, which the loader turns into pointers (BIN).
+- u32 at header offset 0x120 is 488 in every record (the first byte after the header). Every
+  short name of `name_table` and of `resources` occurs inside the byte range that starts there
+  and is as long as the u32 at header offset 0x11C (254 of 254); that this u32 is the length of
+  a name block is Inferred.
+
+> **OPEN (Q1):** The internal layout of the effect image beyond these facts (the meaning of
+> the 488-byte header, its sub-structures and their relocation, which blend mode an effect uses,
+> its emitters and their parameters) and the library's simulation. The image belongs to a
+> third-party library; reconstructing it is a large separate task. Suggested method: M4 on the
+> loader that starts at the size checks above and on the library's update and draw entry points
+> that the client registers when it creates a fork effect.
+
+<a id="s6-3"></a>
+### 6.3 How 0x44 records relate to each other
+
+38 distinct 0x44 records are named by `resources` entries of other 0x44 records (74 entries);
+35 of them are reached only that way, 3 are also named by Particle nodes. Together with the 219
+records named by Particle nodes, every 0x44 record is reachable (OBS).
+
+<a id="s6-4"></a>
+### 6.4 Resource resolution (BIN)
+
+When the client prepares a fork effect it walks `resources` and, for each DID, asks the
+database for the DID's type:
+
+- DB type 5 (render surface, prefix 0x41): loads the texture and binds it to the effect under
+  the entry's short name.
+- DB type 0x51 (shader record, prefix 0x2B): accepted and kept.
+- DB type 0x56 (another fork descriptor, prefix 0x44): loaded and prepared recursively; its
+  own resources are resolved first.
+- Any other type: the entry fails and the effect is not prepared.
+
+Every DID of `resources` is also declared as a preload dependency of the record. For a 0x39
+record the only declared dependency is `surface` (BIN).
+
+The client draws fork effects with seven shader records that it fetches from UNIQUEDB (DID map
+0x28000002) by fixed keys, one per blend mode (BIN for the keys and the DB type 0x51; OBS for
+the entries): 0x159 `ForkMaterial_BlendMode_LightMap` → 0x2B0006F0; 0x15A `…_Emissive2` →
+0x2B0007DB; 0x15B `…_Emissive3` → 0x2B0006EA; 0x15C `…_Normal` → 0x2B000713; 0x15D `…_DarkMap`
+→ 0x2B0007D7; 0x15E `…_Emissive` → 0x2B0006EC; 0x15F `…_Subtractive` → 0x2B00075D. The labels
+are the DID map's own; a client resolves by key.
+
+Fork effects receive the same gravity and wind vectors as §8.8, rotated into the effect's frame
+(BIN); what the library does with them is part of Q1.
+
+---
+
+<a id="s7"></a>
+## 7. References (DID graph)
+
+<a id="s7-1"></a>
+### 7.1 Into the families
+
+<a id="s7-1-1"></a>
+#### 7.1.1 Script nodes (OBS over 7,524 tables and 28,992 scriptlets; 2 tables do not decode, ST)
+
+- **Particle node (kind 59):** 41,354 nodes. `ParticleScript_ParticleID` (PID 0x271, type 20,
+  DB type 0x1E) names a 0x39 record in 39,830 nodes and 0x44000091 in 7 nodes (Q12);
+  `ParticleScript_ForkParticleID` (PID 0x81C, DB type 0x56) names a 0x44 record in 1,517
+  nodes. Exactly one of the two is non-zero in every node (§2.2).
+- **Beam node (kind 54):** `BeamScript_BeamParticleSystem` (PID 0x481) in 571 nodes and
+  `BeamScript_HeadParticleSystem` (PID 0x38E) in 45 nodes, all 0x39.
+- The per-script DID lists of script tables name these DIDs too (ST §2.5: 26,336 0x39 entries
+  and 699 0x44 entries), as do scriptlet preload lists (ST §3).
+
+Coverage: 11,123 of the 11,155 0x39 records are named by a script node; all named DIDs exist.
+Of the other 32: 10 are UNIQUEDB entries (§7.1.3), 20 are only in the whitelist (§7.1.2), and
+2 (named nowhere that was searched) are unreferenced.
+
+<a id="s7-1-2"></a>
+#### 7.1.2 Dynamic-particle whitelist
+
+Property set 0x780060C9 (gamelogic) holds an array `Render_DynamicParticleWhitelistArray`
+(PID 0xB2C) of 272 `Render_DynamicParticleWhitelistEntry` values (PID 0xB2B, type 20, DB type
+0x1E), 272 distinct 0x39 DIDs, all present. These are the 272 values of DB type 0x1E that
+`property-system.md` §9.1 counts in 0x78 sets. The client's `[Render]` option
+`DynamicParticles` controls which particle effects are drawn on moving objects; how the list is
+used is OPEN (Q10).
+
+Other dictionary properties of type 20 with DB type 0x1E (`QuestState_True_Particle`,
+`QuestState_False_Particle`, `Filter_ParticleEntry`) have no stored value in the property sets
+(0x78–0x7F), objects (0x70), DID maps or singleton tables of the general and gamelogic archives
+(OBS).
+
+<a id="s7-1-3"></a>
+#### 7.1.3 UNIQUEDB (DID map 0x28000002)
+
+Ten labelled keys name 0x39 records: 0x2A `CameraRainImpactParticleSystem` → 0x39000001; 0x4A
+`WaterRipplesParticleSystem` → 0x39000004; 0x6C `RainVaporParticleSystem` → 0x39000002; 0x7B
+`CameraRainTorrentParticleSystem` → 0x39000000; 0x83 `RainGustParticleSystem` → 0x39000003;
+0xA1 `WaterBubblesParticleSystem` → 0x39000005; 0xFD `CameraInBlizzardParticleSystem` →
+0x390010DA; 0xFE `SnowGustParticleSystem` → 0x390010DD; 0x100 `CameraSnowImpactParticleSystem`
+→ 0x390010DB; 0x1E7 `CoinSwimRipplesParticleSystem` → 0x39002FBB (OBS). These are the
+weather and water effects the client runs itself. The weather code creates one instance of each
+when it initialises, and two of them get their forces recomputed by the precipitation updates
+(§8.8.1) (BIN). When and where each one emits is OPEN (Q13; see `environment.md` for weather).
+
+<a id="s7-2"></a>
+### 7.2 Out of the families
+
+| From | To | Rule |
+|---|---|---|
+| 0x39 `surface` | 0x31 surface record (`material.md` §4) | The client requests DB type 0x36 (surface record) (BIN). 11,153 non-zero, all exist. |
+| 0x39 `extra_surface` | DB type 0x36 | Always 0 (Q11). |
+| 0x39 `holding_location`, `bone` | enum keys, not DIDs | §4.6 |
+| 0x44 `resources` | 0x41 render surface (in `client_surface*.dat*`), 0x44 | §6.4; all 328 entries exist |
+
+No 0x39 record names a 0x44 record, and no 0x44 record names a 0x39 record (OBS).
+
+---
+
+<a id="s8"></a>
+## 8. Runtime behaviour of 0x39 systems (BIN)
+
+This section describes what the client does with a 0x39 record once a script node or the
+engine starts it. Times are seconds. "Now" is the client's global clock (`material.md` §5.3.1).
+The **system start** is the time the system was started; an emitter's **emitter time** is
+now − (system start + `start_time`).
+
+<a id="s8-1"></a>
+### 8.1 Update cadence
+
+The particles of an emitter are updated only when at least `time_step` seconds have passed
+since that emitter's previous update; otherwise the update is skipped and the particles keep
+their state (BIN). Emission (§8.3, §8.4) is a separate step whose scheduling was not traced
+(Q9).
+
+Values that do not occur in the data (OBS: every `time_step` lies between 1/120 and 0.1) but
+that hostile input can carry (BIN):
+
+- `time_step` ≤ 0: the test always passes, so the particles are updated on every call;
+  controller 4 (§8.7), which advances in steps of `time_step`, would then never finish its
+  step loop.
+- `time_step` not a number: the test never passes and the particles are never updated.
+
+Tessera applies rule §10.5 instead.
+
+<a id="s8-2"></a>
+### 8.2 Activity window and end of effect
+
+1. An emitter with `active` = 0 never emits and is ignored by the end test.
+2. An active emitter emits only while 0 ≤ emitter time and, when `time_limit` is not within
+   0.0002 of 0, emitter time ≤ `time_limit`. Before its window opens it only keeps its
+   position history up to date (so that §8.4 does not see a jump).
+3. The system has **ended** when every active emitter satisfies one of:
+   - `time_limit` is set and now ≥ system start + `start_time` + `time_limit` + *L*;
+   - `emission_limit` ≠ 0, `emit_interval` ≠ 0 and now > system start + `start_time` +
+     `emission_limit` × `emit_interval` / `burst_count` + *L*,
+   where *L* is `w[0]` of the `lifespan` curve (its constant for mode 1, its base term
+   otherwise). A system with no active emitter has ended at once. A system whose emitters have
+   neither limit runs until its owner stops it.
+4. `burst_count` = 0 (never in the data, OBS minimum 1): the client computes the second
+   condition's time as `emission_limit` divided by (`burst_count` × (1 / `emit_interval`)),
+   which is a division by zero and yields positive infinity, so the condition never holds and
+   only `time_limit` can end that emitter (BIN). Such an emitter emits nothing (§8.3, §8.4).
+   Rule §10.6 keeps this result without dividing.
+
+<a id="s8-3"></a>
+### 8.3 Timed emission
+
+Per emitter, the client keeps the time of the last burst and a running total of emitted
+particles.
+
+Timed emission runs only when `emit_interval` is not exactly 0 and the last-burst time is not
+later than now. With `emit_interval` = 0 the emitter has **no** timed emission at all (BIN);
+it emits only by distance (§8.4), if `emission_distance` ≠ 0, and otherwise never. When it
+runs:
+
+1. **Cap.** cap = `max_particles`; if `emission_limit` ≠ 0 and `emission_limit` ≤
+   `max_particles`, cap = `emission_limit`. Room = cap − live particles (0 if negative).
+2. **Catch-up.** If more than *L* (the `lifespan` value; its time argument here is Q3) has
+   passed since the last burst, the last-burst time jumps to now − *L*, and the running total
+   grows by the integer part (towards zero) of (skipped seconds / `emit_interval`), multiplied
+   by `burst_count`. Particles that would already have died are never created, but they still
+   count against `emission_limit`.
+3. If `emission_limit` ≠ 0 and the running total already exceeds it, stop.
+4. While the last-burst time is before now:
+   - if room is 0, set the last-burst time to now and stop;
+   - burst = `burst_count`, reduced to `emission_limit` − running total when that is smaller;
+     if burst < 1, set the last-burst time to now and stop;
+   - spawn min(burst, room) particles **at the last-burst time** (§8.5), add them to the total
+     and subtract them from room;
+   - advance the last-burst time by `emit_interval`.
+5. With `burst_count` = 0 the burst of step 4 is 0, below 1, so the emitter never spawns a
+   particle; the catch-up of step 2 adds 0 (BIN).
+
+The running total is a 32-bit unsigned count, and the client's additions to it wrap modulo 2³²
+(BIN). Each pass of step 4 spawns at least one particle and lowers room by as many, so one update
+makes at most cap passes, whatever the interval.
+
+Values of `emit_interval` that do not occur in the data (OBS: 0 in 615 emitters, otherwise a
+finite number from 0.000263 to 100,000) but that hostile input can carry (BIN):
+
+- **Negative.** The value is not 0, so timed emission runs. Step 4 moves the last-burst time
+  backwards, so the loop ends only when room reaches 0 or a burst is below 1. Step 2 adds a
+  negative count to the running total. Below 0 the total wraps to a large value, and when
+  `emission_limit` ≠ 0, step 3 then stops all later timed emission.
+- **Positive but too small to move the last-burst time** (adding it leaves the time unchanged at
+  the clock's precision). Here too the loop ends only when room reaches 0 or a burst is below 1.
+- **Not a number.** After the emitter's first burst the last-burst time is not a number. The test
+  "not later than now" then fails, so the emitter never emits by time again.
+
+Tessera applies rule §10.8 instead.
+
+The steady rate is therefore `burst_count` / `emit_interval` particles per second. Particles
+spawned at a time in the past are advanced to now immediately (§8.5 step 9).
+
+> **OPEN (Q9):** The initial last-burst time when a system starts (if it is 0 or far in the
+> past, step 2 pre-fills the emitter with particles of all ages on the first update).
+
+<a id="s8-4"></a>
+### 8.4 Distance emission
+
+When `emission_distance` ≠ 0, each update also emits along the path the emitter's anchor moved
+since the previous update: the number of steps is the integer part of the travelled distance /
+`emission_distance` (the larger of the two tracked anchor movements); for each step the anchor
+is moved one step along the path, a burst of up to `burst_count` particles (same caps as
+§8.3) is spawned there, and the spawn time is interpolated between the two updates. A burst
+below 1 (`burst_count` = 0, or `emission_limit` reached) ends the distance emission for that
+update. The
+emission stops early when the remaining distance to the current anchor is below
+`emission_distance` (BIN). Which two anchors the client tracks is part of Q9.
+
+<a id="s8-5"></a>
+### 8.5 Spawning one particle
+
+Every curve in this section is evaluated at the **emitter time of the spawn** (BIN), except
+where stated.
+
+1. *L* = `lifespan`. If spawn time + *L* ≤ now, the particle is not created.
+2. Shape point *s* (§8.5.1).
+3. Attachment (§8.5.5).
+4. If the emitter already holds its maximum number of live particles, stop.
+5. Direction *d* (§8.5.2), then normalise it; a zero vector (length ≤ 10⁻⁶) becomes (0, 1, 0).
+6. *s* += `origin`.
+7. Spread (§8.5.3).
+8. Position = the system's frame applied to *s*, plus the distance-emission offset of §8.4
+   (zero for timed emission). Velocity = *d* × `speed` (§8.5.4).
+9. Per-particle values drawn now: `particle_scale`, `streak`, `rotation`, `world_rotation`,
+   `rotation_velocity` (one evaluation each), and a uniform random number in [0, 1) when
+   `random_start_frame` = 1. The new particle is then updated once to now (§8.6); if that update
+   finds it dead it is removed.
+
+<a id="s8-5-1"></a>
+#### 8.5.1 Shapes
+
+Let *z* = `shape_size`. Random numbers are uniform. "Normalise" divides by the length.
+
+| `shape` | Point *s* (emitter frame, Z up) |
+|---|---|
+| 1 `Line` | The emission step passes a line vector *v* = normalise(`direction`) × *z*, with `direction` and `shape_size` evaluated at the absolute clock (BIN, a quirk of this call site). If \|*v*\|² ≥ 0.0002: *s* = normalise(*v*) × random in [0, *z*]; otherwise *s* = 0. |
+| 2 `Disc` | *u* = normalise(random in [−1, 1], random in [−1, 1], 0); if `inclusive`, *u* ×= random in [0, 1]; *s* = *u* × *z* / 2. Radius *z* / 2 in the XY plane. |
+| 3 `Sphere` | *u* = normalise of three randoms in [−1, 1]; if `inclusive`, *u* ×= random in [0, 1]; *s* = *u* × *z* / 2. |
+| 4 `Point` | *s* = 0. |
+| 5 `Quad` | *s* = (random in [−*z*/2, *z*/2], random in [−*z*/2, *z*/2], 0). If `inclusive` = 0, an integer *e* uniform in 0–3 moves the point to an edge: 0 sets x = −*z*/2, 1 sets y = −*z*/2, 2 sets x = *z*/2, 3 sets y = *z*/2. |
+
+The random directions are normalised cube samples (not uniform on the sphere) and the filled
+disc and sphere scale the radius linearly (not by area or volume). This is the original's
+distribution.
+
+<a id="s8-5-2"></a>
+#### 8.5.2 Direction
+
+- `exploding` = 0: *d* = `direction`, rotated by the system's orientation.
+- `exploding` = 1: if any component of the shape point *s* (before `origin`) exceeds 0.0002
+  in magnitude, *d* = *s* rotated by the system's orientation (radial from the emitter);
+  otherwise *d* = three randoms in [−1, 1] (not rotated).
+
+<a id="s8-5-3"></a>
+#### 8.5.3 Spread
+
+*a*₀ = `min_spread`, *a*₁ = `max_spread` (degrees). If *a*₁ − *a*₀ ≤ 0.0002, no spread. Otherwise
+pick *a* uniform in [*a*₀, *a*₁]; if *a* is 0, no spread. Otherwise tilt *d* by *a* degrees about
+the axis *d* × *u*, where *u* is the part of +Z perpendicular to *d* (normalised), or the part
+of +Y when *d* is parallel to Z; then turn the tilted direction about the original *d* by a
+uniform random angle in [0, 2π). The result is a cone between the two angles around *d*.
+
+<a id="s8-5-4"></a>
+#### 8.5.4 Speed
+
+Velocity = normalised spread direction × `speed` (metres per second). A negative speed points
+backwards.
+
+<a id="s8-5-5"></a>
+#### 8.5.5 Attachment
+
+If `stick_to_bones` = 0 and (`bone` ≠ 0 or `holding_location` ≠ 0), the client resolves that
+bone or holding location on the owning entity and moves the shape point into its frame; if it
+cannot be resolved and no earlier result is cached, the particle is not spawned. With
+`stick_to_bones` = 1 the attachment is applied when drawing instead (Q8). Both paths require
+`world_space` = 1: in a system with `world_space` = 0 an attached emitter spawns nothing
+(`stick_to_bones` = 0) or draws nothing (`stick_to_bones` = 1) (BIN). The data respects this:
+11,409 attached emitters are in world-space systems and 21 are not (OBS). Holding locations
+and bones are those of `skeleton-anim.md`.
+
+<a id="s8-6"></a>
+### 8.6 Particle life and keyframe channels
+
+A particle's **age** is now − its spawn time. It dies when age > *L*, *L* being `lifespan`
+evaluated at the emitter time of its spawn.
+
+<a id="s8-6-1"></a>
+#### 8.6.1 Flag bits and channels
+
+Keyframes are visited in stored order as the particle's age passes their `time`. A key takes
+part in a channel according to its `flags`:
+
+| Bit | Effect when the age reaches the key |
+|---|---|
+| 0x10 or 0x02 | The key becomes the particle's current **scale** key |
+| 0x20 or 0x04 | The key becomes the current **colour** key |
+| 0x40 or 0x08 | The key becomes the current **mass** key |
+| 0x100 | The key becomes the current **controller** key: its `controller`, `points` and `position` govern motion from now on (§8.7). Before switching, the client fixes the particle's position at the key time as the new base position. |
+| 0x200 | The particle's physics flags become the key's `physics_flags` |
+
+Interpolation targets: when an emitter is created, the client computes for every key *K* and
+per channel a **target key** *T* (BIN): the first key after *K* in stored order whose
+interpolate bit is set (0x02 scale, 0x04 colour, 0x08 mass); when no later key has that bit,
+*T* is *K* itself. The last key's targets are always itself. Between *K* (time *t*₀) and *T*
+(time *t*₁):
+
+- *f* = (age − *t*₀) / (*t*₁ − *t*₀), clamped to [0, 1]; when *t*₁ − *t*₀ ≤ 0.0002 (scale,
+  colour) or |*t*₁ − *t*₀| ≤ 0.0002 (mass), *f* = 1 (scale, colour) or 0 (mass);
+- value = (1 − *f*) × *K* + *f* × *T*, per component (`scale_x`, `scale_y`; the four colour
+  floats; `mass`).
+
+The test the client makes when drawing is on the **target** key: for scale and colour it
+interpolates only when *T* has the channel's interpolate bit, and otherwise uses *K*'s value;
+for mass it always interpolates. Because *T* lacks the bit only when *T* is *K* itself, and
+because *T* = *K* gives *f* = 1 with value *T* (scale, colour) or *f* = 0 with value *K*
+(mass), all three cases reduce to one rule: **when no key after the current key has the
+channel's interpolate bit, the value is the current key's.**
+
+The set bits 0x10/0x20/0x40/0x100/0x200 are what the first key uses (0x770 sets all of them);
+bits 0x80 and 0x400 (0x400 on almost every first key) have no effect in the routines read
+(Q7).
+
+Without keyframes no channel exists and mass is 1 (not observed: every emitter has a key).
+
+<a id="s8-6-2"></a>
+#### 8.6.2 Drawn size and colour
+
+Drawn width and height = `scale_x` and `scale_y` of the scale channel × the largest component
+of the owner's scale (Q4) × the particle's `particle_scale` value when that curve is not the
+constant 1. Drawn colour = the colour channel, with alpha multiplied by the emitter's fade
+envelope (§8.9); each channel is clamped to [0, 1].
+
+<a id="s8-7"></a>
+### 8.7 Motion controllers
+
+The current controller key (§8.6.1) chooses how the position changes. *p*₀ is the base
+position (spawn position, or the position fixed at the last controller key), *v* the spawn
+velocity, *τ* = age − time of the current controller key, *a* the force of §8.8.
+
+| `controller` | Motion | Used by data |
+|---|---|---|
+| 2 | Ballistic: *p* = *p*₀ + *v* *τ* + ½ *a* *τ*². At a later controller key the new base is this position; the velocity stays the spawn velocity (the accumulated *a τ* is dropped). | 29,601 controller keys |
+| 5 | Path curves: *p* = *p*₀ + (`position` X, Y, Z evaluated at *τ*). | 2,944 |
+| 3 | Point placement: *p* = *p*₀ + one point of `points` rotated by the system's orientation. The index is taken from a counter kept on the key that advances by one per particle (wrapping), or is random when physics flag 0x8 is set. With no points, *p* = *p*₀. | 33 |
+| 6 (and any value not listed) | No motion: *p* = *p*₀. | 724 |
+| 1 | Point path: the particle walks along the points of `points`, each rotated by the system's orientation and added to *p*₀. Its speed *s* is the length of its spawn velocity, that is \|`speed`\| at spawn (§8.5.4), stored per particle when any key of the emitter has controller 1. On its first update under the key it is placed on the start point: index 0, or a random index when physics flag 0x8 is set. On each later update it gets a travel budget *b* = *s* × (now − the emitter's previous update time). While *b* > 0.0002: with *q*² the **squared** distance to the current target point, if *b* ≤ *q*² the particle moves √*b* towards that point and *b* becomes 0; otherwise it lands on the point, *b* decreases by *q*², and the target becomes the next point (wrapping after the last). (The budget is compared with, and reduced by, squared distances; this is the original's arithmetic.) With no points, *p* = *p*₀. | none (value 1 occurs only on keys without bit 0x100) |
+| 4 | Stepped integration in steps of `time_step` (at most 0.25 s of catch-up per update). Each step forms a force term: *a* (mass-scaled gravity and wind, not multiplied by the step) plus, for every world force field whose radius contains the particle, a vector along (particle − field centre) of length strength × (1 − distance / radius) (zero when the distance is at most 0.0002), reversed for fields marked as attracting, with its X, Y or Z part zeroed when `constrain_x`, `constrain_y` or `constrain_z` is set. Then position += step × (velocity + force term) + (base position − position) × `snap`(age) × step, and velocity = (velocity + force term) × 0.95. Force fields: the client keeps one global list of force-field objects, each with a centre, a radius, a strength, an attracting flag and a lifetime. At each update, and only for emitters that have a key with controller 4, it gathers the entries that were refreshed in the current or previous frame, whose lifetime has not run out, and that pass one more check whose meaning was not traced (BIN). A lifetime below 0.0002 (strictly; 0 and every negative value included) never runs out; any other lifetime has run out once at least that many seconds have passed since the entry's time stamp (BIN). Which game objects add entries to that list was not found (Q14). | none (value 4 occurs on no key at all) |
+
+In all controllers, when `rotation_velocity` is not constant 0, the particle's rotation and
+world rotation (§8.5 step 9) each grow by age × its `rotation_velocity` value.
+
+> **OPEN (Q14):** Controllers 1 and 4 are never used by the data of this install (OBS: no key
+> with bit 0x100 has controller 1, and no key at all has controller 4), so these questions do
+> not affect any stored effect: the source of the world force fields of controller 4 (which
+> objects or records create them, and where their centre, radius, strength, attracting flag
+> and lifetime come from; no code adding to the list was found; the meaning of the untraced
+> gathering check), and the range of the random start index of controller 1. Tessera rule
+> §10.7 applies until then.
+
+<a id="s8-8"></a>
+### 8.8 Forces and physics flags
+
+| `physics_flags` bit | Meaning |
+|---|---|
+| 0x01 | Apply gravity: the world vector (0, 0, −9.8) m/s², rotated into the system frame |
+| 0x20 | Apply wind: the client's current wind vector, rotated into the system frame (BIN). There is one global wind vector. It starts at (0, 0, 0). Its **target** is replaced on every update of the environment (sky and weather) by the environment's current wind vector; each time, the eased value at that moment becomes the new starting value. The value eases from the starting value towards the target exponentially with a **half-life of 0.3 s** (a client constant): *t* seconds after the last target change it is start + (target − start) × (1 − 2^(−*t* / 0.3)), and once it is within 0.0002 of the target on every axis it equals the target. How the environment derives its wind vector from data is OPEN (Q13). |
+| 0x08 | Random start point for controllers 1 and 3 |
+| 0x02, 0x04 | No effect in the routines read (Q7) |
+
+*a* = mass × (gravity if 0x01) + mass × (wind if 0x20), mass from the mass channel (§8.6.1).
+
+Each emitter stores its own copy of both vectors (BIN):
+
+- **At system start** the client computes them for every emitter of the system: the gravity
+  vector, and the eased value of the global wind at that moment, each rotated into the system
+  frame. A vector whose length is 0.0002 or less is stored as it is, without rotation.
+- **Recomputation.** The client has one routine that repeats this computation for every emitter
+  of a running system, from the eased global wind at the moment of the call. Only the weather
+  code calls it, for the systems listed in §8.8.1. Every other system keeps the vectors from its
+  start for its whole life.
+- **Use.** Each particle update reads the vectors stored on the emitter at that moment
+  (controller 2 for its ½ *a* *τ*² term, controller 4 for each step). A recomputation
+  therefore also changes the motion of particles that are already alive.
+
+<a id="s8-8-1"></a>
+#### 8.8.1 Systems whose forces the weather code recomputes (BIN)
+
+When it initialises, the weather code creates one instance of each of the ten UNIQUEDB systems
+of §7.1.3 and keeps them for the life of its state. It has two precipitation updates, one for
+rain and one for snow, and each time it runs them it passes them some of those systems:
+
+| Precipitation update | System whose gravity and wind it recomputes (all emitters) | Condition |
+|---|---|---|
+| Rain | UNIQUEDB key 0x83 (`RainGustParticleSystem`, 0x39000003 in this install) | none beyond the update running |
+| Snow | UNIQUEDB key 0xFE (`SnowGustParticleSystem`, 0x390010DD in this install) | the weather's snow value exceeds 1 by more than 0.001; otherwise the snow update recomputes no system |
+
+- The DIDs are read from UNIQUEDB at run time; the ones above are observations.
+- Each precipitation update recomputes its system **once per run**, before it does anything
+  else with the system.
+- A precipitation update runs only when all of these hold:
+  - precipitation is enabled in the client (client flags whose sources were not traced);
+  - it would draw at least one rain streak or snow flake. That count grows with the weather's
+    rain or snow value, clamped to [0, 1], and is scaled by 0.3, 0.6 or 1 by a graphics quality
+    setting.
+- The rain update also spawns particles directly from the 0x6C (`RainVaporParticleSystem`) and
+  0x4A (`WaterRipplesParticleSystem`) systems and from the gust system, but it does not
+  recompute the forces of the first two.
+- No other code recomputes the forces of a running 0x39 system. That includes the other UNIQUEDB
+  systems, script-started effects and the whitelist effects.
+
+Labels are given as interoperability identifiers of the UNIQUEDB keys. The schedule of the
+weather code that runs the two updates (every frame or otherwise), the meaning of the weather's
+rain and snow values, and the flags are OPEN (Q13).
+
+<a id="s8-9"></a>
+### 8.9 Emitter fade envelope
+
+With *t* = emitter time, *F* = `fast_forward`, *i* = *F* + `fade_in`, *o* = *F* + `fade_out`:
+
+1. Opacity *α* = 1.
+2. If *i* > 0.0002 and *F* < *t* < *i*: *α* = (*t* − *F*) / (*i* − *F*).
+3. If `time_limit` > 0.0002, *o* > 0.0002, *t* > *o* and |`time_limit` − *o*| > 0.0002:
+   *α* ×= 1 − (*t* − *o*) / (`time_limit` − *o*).
+4. Clamp *α* to [0, 1]. It multiplies the alpha of every particle of the emitter when drawn.
+
+With the common `fade_out` = −1 and *F* = 0 there is no fade-out.
+
+<a id="s8-10"></a>
+### 8.10 Texture-atlas frames
+
+When `frames_u` > 1 or `frames_v` > 1, each vertex's texture coordinates (*u*_c, *v*_c) ∈ {0, 1}
+(the primitive's corner) are mapped to one cell of a `frames_u` × `frames_v` atlas. Let *U* =
+`frames_u`, *V* = `frames_v`, *R* = `frame_rate`, *x* = the particle's age, *r* = its random
+number (§8.5 step 9).
+
+1. If `random_start_frame` = 1: if *R* = 0, *k* = integer part of *U* × *r* × *V*; add
+   *k* div *V* to *u*_c and *k* mod *V* to *v*_c (a fixed random cell). If *R* ≠ 0, add *R* × *r*
+   to *x*.
+2. *u* = *u*_c / *U*; if *R* / *V* > 0.0002, add (⌊*x* × *R* / *V*⌋ mod *U*) / *U*.
+3. *v* = *v*_c / *V*; if *R* > 0, add (⌊*x* × *R*⌋ mod *V*) / *V*.
+
+So the frame counter ⌊*x* *R*⌋ runs down the rows (*v*) first and moves one column (*u*) every
+*V* frames, looping over all *U* × *V* cells. (The client computes the modulo with
+floating-point periods; the integer form above gives the same cell.)
+
+<a id="s8-11"></a>
+### 8.11 Primitive
+
+`primitive` 1 (`Triangle`) draws 3 vertices per particle and 2 (`Quad`) draws 4 (BIN). Any
+other value draws nothing.
+
+Draw buffer (BIN): the client writes the vertices of one particle system into a single shared
+dynamic vertex buffer created with room for **32,768 vertices** (8,192 quads), a client
+constant. For each system it first draws every `Quad` emitter in stored order, then every
+`Triangle` emitter in stored order. The vertices requested are capped at the buffer's size;
+once an emitter's live particles do not all fit in the room left, the particles that fit are
+drawn, and that emitter's other particles and every later emitter of the system are not drawn
+in that frame.
+
+<a id="s8-12"></a>
+### 8.12 Per-vertex extras
+
+`pivot` is passed to the billboard builder as the primitive's pivot, and `origin_offset` is
+added to every vertex after the billboard is built (BIN). Their exact axis use in billboard
+space, the orientation modes (`velocity_facing`, `world_rotation`, `lock_world_rotation`,
+`streak`) and the effect of `world_space` are OPEN (Q8).
+
+---
+
+<a id="s9"></a>
+## 9. Values that carry gameplay meaning
+
+The particle records hold only presentation data: no record of either family carries a
+gameplay value (damage, range, cost, duration of an effect on a character). Gameplay reaches
+them only by **selection**:
+
+- a skill, effect, item or creature runs a script whose Particle or Beam node names the record
+  (§7.1.1); the node's own fields (`ParticleScript_HoldingLocation`, `ParticleScript_BoneType`,
+  fade distances, `ParticleScript_DropEffect`, `ParticleScript_OnWater`,
+  `ParticleScript_ImmediateDisposal`, `ParticleScript_RedirectProperty`, base-block intensity,
+  ST §5.3) decide where and how long it plays;
+- the whitelist of §7.1.2 decides which effects survive a reduced dynamic-particle setting;
+- weather and water effects come from UNIQUEDB keys (§7.1.3).
+
+Timing values that a player can perceive (effect length) follow from `time_limit`,
+`emission_limit`, `lifespan`, `start_time` and the end test of §8.2.
+
+---
+
+<a id="s10"></a>
+## 10. Tessera rules (Decision)
+
+1. Decode 0x39 records completely (§4.4) and reject any leftover byte.
+2. Decode the outer layer of 0x44 records (§6.1) with the version-3 reading; keep the blob as
+   opaque bytes. Until Q1 is answered, an effect named by `ParticleScript_ForkParticleID` is
+   not simulated: the explorer shows the record's tables and bounds, and the client draws
+   nothing for it.
+3. Evaluate curves with `material.md` §5.3.1 at the times given in §8; mode 3 and every
+   "random" of §8 may use any uniform generator (the original's sequence is shared with
+   unrelated code and cannot be reproduced).
+4. A Particle node whose `ParticleScript_ParticleID` names a DID without prefix 0x39 starts no
+   effect (Q12).
+5. `time_step` that is not a finite number above 0 (never in the data; §8.1): use 1/120 s, the
+   smallest observed value, for the update cadence of §8.1 and the step of controller 4. The
+   client would update on every call (≤ 0) or never (not a number), and controller 4 would not
+   terminate.
+6. `burst_count` = 0 (never in the data): follow the client. The emitter spawns nothing by
+   timed or distance emission (§8.3 step 5, §8.4), and the emission-limit condition of §8.2
+   never ends it; implement that condition as "never holds" instead of dividing by zero.
+7. Controller 4 (never in the data) runs with an empty force-field list until Q14 is
+   answered: only *a* (gravity and wind), `snap` and the 0.95 damping act.
+8. Timed emission with hostile values (§8.3; never in the data):
+   - an `emit_interval` that is negative or not a finite number counts as 0, so the emitter has
+     no timed emission;
+   - for a finite positive `emit_interval`, follow §8.3, and stop step 4 when advancing the
+     last-burst time leaves it unchanged (then set it to now);
+   - before step 1, clamp cap to 100,000, the largest `max_particles` in the data (OBS);
+   - compute the step-2 increment in 64-bit arithmetic and saturate the running total at
+     2³² − 1 instead of wrapping.
+
+   One update then spawns at most 100,000 particles per emitter. The client would also run step
+   4 for the excluded values (§8.3), and its cap is limited only by the 32-bit fields.
+
+---
+
+<a id="s11"></a>
+## 11. Invariants
+
+Checkable against the install (all hold in this install, OBS) or against synthetic fixtures:
+
+- **PS1**: every 0x39 record decodes by §4.4 with zero leftover bytes (11,155 of 11,155).
+- **PS2**: every bool8 is 0 or 1; every curve mode is 1–8 or 10; every mode-10 loop byte is 0 or
+  1.
+- **PS3**: `extra_surface` = 0; `surface` is 0 or a DID with prefix 0x31 that exists.
+- **PS4**: `far_fade_start` ≤ `far_fade_end` in every record.
+- **PS5**: `has_bounds` = 1 implies `bounds_min` ≤ `bounds_max` on each axis.
+- **PS6**: `shape` ∈ 1–5, `primitive` ∈ 1–2, `scale_mode` ∈ 1–3; `holding_location` and `bone`
+  are keys of their mappers.
+- **PS7**: every emitter has at least one keyframe; the first key has time 0 and flags 0x770
+  or 0x7F0.
+- **PS8**: all VLEs of both families are in the 1-byte form.
+- **PS9**: `time_step` is a finite number above 0 (1/120 to 0.1 observed); `burst_count` ≥ 1;
+  `emit_interval` is 0 or a finite number above 0 (0.000263 to 100,000 observed);
+  `max_particles` ≤ 100,000; `snap` is a constant (mode 1) curve; no keyframe has `controller` 4,
+  and no keyframe with bit 0x100 has `controller` 1.
+- **FK1**: every 0x44 record decodes by §6.1 with zero leftover bytes (254 of 254).
+- **FK2**: blob words 0 and 1 are 0x50 and 0x1E8; the u32 at blob offset 0x120 is 488.
+- **FK3**: `transform` length is 64 and its element 15 is 1.0; `name` is empty; `properties` is
+  empty.
+- **FK4**: each `name_table` key equals the last path component of its value; each `resources`
+  DID has prefix 0x41 or 0x44 and exists; a 0x41 entry's name is a `name_table` key, and a 0x44
+  entry's name plus the effect extension is one.
+- **RF1**: every Particle node names exactly one of `ParticleScript_ParticleID` and
+  `ParticleScript_ForkParticleID`.
+- **RF2**: every DID that a Particle or Beam node, the whitelist or UNIQUEDB names exists.
+
+---
+
+<a id="s12"></a>
+## 12. Worked synthetic examples
+
+Values below are invented for testing; they are not game data.
+
+<a id="s12-1"></a>
+### 12.1 Minimal 0x39 record (77 bytes)
+
+`time_step` 0.05, `world_space` 1, far fade 30–60, `scale_mode` 1, no emitters, no bounds,
+`sorting_priority` 5, `shareable` 1, `surface` 0x31001234:
+
+```
+cd cc 4c 3d 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 f0 41 00 00 70 42 00 00 00 00 00 00
+00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+05 00 00 00 01 34 12 00 31 00 00 00 00
+```
+
+Decoding: bytes 0–3 0.05; 4–11 two zero floats; 12 `world_space` 1; 13–17 five zero bools;
+18–21 30.0 (note the odd offset); 22–25 60.0; 26–33 two zero floats; 34–37 `scale_mode` 1;
+38 emitter count 0; 39 `has_bounds` 0; 40–63 six zero floats; 64–67 `sorting_priority` 5; 68
+`shareable` 1; 69–72 `surface` 0x31001234; 73–76 `extra_surface` 0.
+
+<a id="s12-2"></a>
+### 12.2 One emitter, one keyframe (447 bytes)
+
+Same system part with emitter count 1, then one emitter whose curves are all mode 1, then the
+same tail. Field offsets from the start of the record:
+
+| Offset | Field | Value |
+|---|---|---|
+| 39 | `origin` (3 × mode 1) | (0, 0, 0) |
+| 63 | `origin_offset` | (0, 0, 0) |
+| 87 | `pivot` | (0, 0, 0) |
+| 111 | `shape` | 3 (Sphere) |
+| 115 | `primitive` | 2 (Quad) |
+| 119 | `emit_interval` | 0.1 |
+| 123 | `speed` | constant 2.0 |
+| 131 | `direction` | (0, 0, 1) |
+| 155 | `emission_limit` | 0 |
+| 159 | `lifespan` | constant 1.5 |
+| 167 | `shape_size` | constant 0.5 |
+| 175 / 183 | `min_spread` / `max_spread` | 0 / 30 |
+| 191 | `particle_scale` | constant 1.0 |
+| 199 | `rotation` | (0, 0, 0) |
+| 223 | `max_particles` | 50 |
+| 227 / 228 | `exploding` / `lock_world_rotation` | 0 / 0 |
+| 229 | `streak` | constant 0 |
+| 237 | `world_rotation` | (0, 0, 0) |
+| 261 | `rotation_velocity` | (0, 0, 0) |
+| 285 | `burst_count` | 2 |
+| 289 / 293 / 297 | `start_time` / `time_limit` / `emission_distance` | 0 / 0 / 0 |
+| 301 | `snap` | constant 0.1 |
+| 309 / 310 | `inclusive` / `active` | 1 / 1 |
+| 311 / 315 | `fade_in` / `fade_out` | 0 / −1 |
+| 319 | constrain bytes | 0, 0, 0 |
+| 322 / 326 / 330 | `frames_u` / `frames_v` / `frame_rate` | 2 / 2 / 8 |
+| 334 | `random_start_frame` | 0 |
+| 335 | keyframe count (VLE) | 1 |
+| 336 | key: `time` | 0 |
+| 340 | key: `flags` | 0x770 |
+| 344 / 348 | key: `scale_x` / `scale_y` | 0.2 / 0.2 |
+| 352 | key: `colour` | 0xFFFF8000 |
+| 356 | key: `mass` | −0.1 |
+| 360 / 364 | key: `controller` / `physics_flags` | 2 / 1 |
+| 368 | key: `point_count` | 0 |
+| 372 | key: `position` | (0, 0, 0) |
+| 396 / 400 | `holding_location` / `bone` | 0 / 0 |
+| 404 / 405 | `stick_to_bones` / `velocity_facing` | 0 / 0 |
+| 406 | `name` | length 2, then 2 bytes |
+| 409 | tail (`has_bounds` …) | as in §12.1 from offset 39 |
+
+<a id="s12-3"></a>
+### 12.3 Behaviour of example 12.2
+
+- **Emission:** 2 particles every 0.1 s = 20 per second; with lifespan 1.5 about 30 are alive,
+  below the cap of 50. No `time_limit` and no `emission_limit`: the system never ends by itself
+  (§8.2).
+- **Spawn:** sphere of radius 0.25 m, filled (`inclusive`); direction +Z tilted by 0–30°.
+- **Motion:** controller 2 with gravity: *a* = −0.1 × (0, 0, −9.8) = (0, 0, 0.98). A particle
+  launched straight up at 2 m/s is at height 2 × 1 + ½ × 0.98 × 1 = 2.49 m above its spawn point
+  after 1 s.
+- **Frames:** at age 0.3 s the frame counter is ⌊0.3 × 8⌋ = 2, so the row index is 2 mod 2 = 0
+  and the column index is ⌊0.3 × 8 / 2⌋ mod 2 = 1: the vertex at corner (0, 0) gets texture
+  coordinates (0.5, 0.0).
+- **Fade envelope** (variant with `fade_in` 0.5, `fade_out` 2.0, `time_limit` 3.0): at emitter
+  time 0.25 *α* = 0.5; at 1.0 *α* = 1; at 2.5 *α* = 1 − 0.5 / 1.0 = 0.5.
+- **Channels** (variant with a second key at time 1.0, `flags` 0x2, scale 1.0): at age 0.25 the
+  drawn scale is 0.2 + 0.25 × (1.0 − 0.2) = 0.4; the colour stays 0xFFFF8000 because the second
+  key lacks bit 0x4.
+
+<a id="s12-4"></a>
+### 12.4 Minimal 0x44 outer layer
+
+A record with a 488-byte blob (header only) and one texture:
+
+| Order | Bytes | Meaning |
+|---|---|---|
+| 1 | `e8 01 00 00` | `blob_length` 488 |
+| 2 | 488 bytes | blob (opaque here) |
+| 3 | `00` | `flag` 0 |
+| 4 | `00` | `name` empty |
+| 5 | `00 01`, then `05 "a.dds"`, then `08 "fx/a.dds"` (lengths as VLE) | `name_table`, hint 0, one pair |
+| 6 | `00 00` | `properties` empty |
+| 7 | `40 00 00 00` + 64 bytes | `transform` (identity: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1) |
+| 8 | `00 01`, then `34 12 00 41`, then `05 "a.dds"` | `resources`: 0x41001234 → "a.dds" |
+| 9 | 8 bytes | `tail_value` (f64) |
+| 10–11 | 24 bytes | bounds |
+
+---
+
+<a id="s13"></a>
+## 13. Open questions
+
+> **OPEN (Q1):** Internal layout of the 0x44 effect image (§6.2) and the third-party library's
+> simulation and drawing, including which UNIQUEDB blend-mode shader an effect uses.
+
+> **OPEN (Q2):** Meaning of the 0x44 `flag` byte and `tail_value` (f64, 0.22–20.02), the use of
+> `transform` and of the 0x44 bounds, and how the client chooses the format version (§6.1) for a
+> stored record.
+
+> **OPEN (Q3):** The time argument of the `lifespan` evaluation in the catch-up step of §8.3 and
+> of the `origin_offset` evaluation at draw time (§8.12). Only non-constant curves are affected
+> (177 `lifespan` curves, 185 `origin_offset` components).
+
+> **OPEN (Q4):** How `scale_mode` (`Total`, `VDescOnly`, `None`) applies the owner's scale; §8.6.2
+> states the `Total` behaviour that the draw routine applies by default (largest axis of the
+> owner's scale).
+
+> **OPEN (Q5):** Effect of `force_draw`, `uses_video_post`, `draw_reflection`, `use_lighting`,
+> `inherit_opacity`, `sorting_priority`, `shareable`, and the far and near fade distances (the
+> client copies them into the running system; the fade formula was not traced).
+
+> **OPEN (Q6):** What `fast_forward` does besides shifting the fade envelope (for example a
+> pre-simulation at start), and the use of `physics_duration` (0 everywhere).
+
+> **OPEN (Q7):** Keyframe flag bits 0x80 and 0x400 and physics-flag bits 0x02 and 0x04: no use
+> was found in the routines read.
+
+> **OPEN (Q8):** Coordinate frames and orientation: particles under `world_space`, attachment
+> with `stick_to_bones` = 1, billboard construction (`pivot`, `origin_offset` axes,
+> `velocity_facing`, `world_rotation`, `lock_world_rotation`, `streak`), and the system frame
+> used in §8.5.
+
+> **OPEN (Q9):** The initial last-burst time of an emitter (pre-fill on the first update or not),
+> how often the emission step runs, and the two anchors tracked by distance emission (§8.4).
+
+> **OPEN (Q10):** How the dynamic-particle whitelist (§7.1.2) and the `DynamicParticles` option
+> select effects.
+
+> **OPEN (Q11):** Purpose of the trailing `extra_surface` DID of 0x39 records (0 in all).
+
+> **OPEN (Q12):** What the client does with the 7 Particle nodes whose
+> `ParticleScript_ParticleID` names 0x44000091 (the descriptor field asks for DB type 0x1E).
+> Suggested method: M4 on the Particle node's start routine. Tessera rule §10.4 applies until
+> then.
+
+> **OPEN (Q13):** These questions remain about the UNIQUEDB weather and water systems (§7.1.3)
+> and the global wind of §8.8 (see `environment.md`):
+>
+> - when and where each system emits; the rain update's direct spawns from the 0x6C, 0x4A and
+>   0x83 systems (§8.8.1) were seen but not traced in detail;
+> - how often the weather code runs its rain and snow precipitation updates (every frame or
+>   otherwise), and so how often it recomputes the forces of the 0x83 and 0xFE systems;
+> - what the weather's rain and snow values mean and where they come from;
+> - the sources of the client flags that enable precipitation;
+> - how the environment computes the wind vector that becomes the target of the global wind.
+>
+> Already known: the easing of the global wind (0.3 s half-life, §8.8); which systems are
+> recomputed and under which condition (§8.8.1); and that no other code recomputes a running
+> system.
+
+> **OPEN (Q14):** Source of the world force fields of controller 4 and the range of the random
+> start index of controller 1 (§8.7). Neither controller is used by the data; rule §10.7
+> applies.
+
+---
+
+<a id="s14"></a>
+## 14. Notes for other specs
+
+- `records.md` §2.1: rows 0x39 and 0x44 can point here; both layouts are decoded (0x44 outer
+  layer only). Its "layouts of 0x39 … 0x44 OPEN" sentences are answered by §4 and §6.1.
+- `environment.md` §9: the 0x39/0x44 OPEN is answered here; the weather particle systems are
+  the UNIQUEDB entries of §7.1.3. The precipitation updates of §8.8.1 read the same eased global
+  wind as §8.8. The rain update's fall direction is the unit vector of (eased wind + (0, 0,
+  −9.8)), or (0, 0, −1) when that sum is 0.000001 long or shorter (BIN). This is a weather fact
+  for that spec, not a particle rule.
+- `script-table.md` §5.3: the Particle node's two DID fields are mutually exclusive (§2.2); 7
+  nodes put a 0x44 DID in the 0x39 field (Q12).
+- `property-system.md` §9.1: the 272 type-0x1E values in 0x78 sets are the whitelist of §7.1.2;
+  the 10 UNIQUEDB values are §7.1.3.
+
+These are suggestions for the owners of those specs; this spec does not edit them.
+
+---
+
+<a id="s15"></a>
+## 15. Change log
+
+| Date | Sections | Change |
+|---|---|---|
+| 2026-10-07 | all | First version, status Review. Layouts of 0x39 (complete) and 0x44 (outer layer) from M4 (row BIN) confirmed over all records (OBS); censuses; DID graph; runtime behaviour of 0x39 systems (BIN); Q1–Q13. |
+| 2026-10-07 | §0, §1, §4.1, §4.7, §5.2, §5.3, §8.1–§8.4, §8.6.1, §8.7, §8.8, §8.11, §10, §11, §13 | Review issues answered (status stays Review). (1) `snap`: 0.1 in 32,627 of 32,789 emitters, not all; other values added to §5.2 (OBS, all emitters). (2) Controller 1 speed = length of the spawn velocity, and its squared-distance walk; controller 4 force-field list and its gathering rule, source OPEN as new Q14 (both controllers unused by the data, stated); wind half-life 0.3 s, start value and target from the environment update (BIN); draw buffer 32,768 vertices, `Quad` emitters before `Triangle` emitters (BIN). (3) `time_step` ≤ 0 or not a number (§8.1, BIN) and `burst_count` = 0 (§8.2 item 4, §8.3 step 5, §8.4, BIN), Tessera rules §10.5–§10.6. (4) §8.6.1: interpolation targets as computed by the client (next later key with the bit, else the key itself), the target-bit test, and the single resulting rule. (5) Provenance rows P31–P37 added (§2.1, §6.3, §8.6.2, §8.12, §9, §10 as Decision, censuses); P17–P20, P22–P24, P27 widened. (6) §4.1: offset 39 holds only for the 1-byte VLE form. Corrections found while re-measuring: §8.3 said `emit_interval` = 0 tops the emitter up every update; the client skips timed emission entirely (BIN; 507 of the 615 such emitters emit by distance, 108 emit nothing, OBS). §8.3 catch-up rounds the quotient before multiplying by `burst_count`. §5.3 last-key-time counts were measured with a 0.0001 tolerance; now exact (28,578 / 3,873 / 161 + 177 non-constant). New invariant PS9; new rule §10.7. |
+| 2026-10-07 | §1 (P19, P23, P24, P30, P36), §5.2, §7.1.3, §8.3, §8.7, §8.8, new §8.8.1, §10.8, §11 (PS9), §13 (Q13), §14 | Re-review answered (status stays Review). **Blocking:** §8.8 said gravity and wind are computed at system start and kept for the system's life. That is not true for every system. Each emitter stores both vectors, computed at start. The weather code's rain precipitation update recomputes them for every emitter of the UNIQUEDB 0x83 system, and the snow update does the same for the 0xFE system when the snow value exceeds 1.001, once per run of each update. No other caller exists. Particle updates read the stored vectors, so live particles follow a recomputation (BIN, the start and recompute routines and both callers re-read). New §8.8.1 lists the systems and conditions. The weather code creates all ten UNIQUEDB systems at initialisation (§7.1.3, P30). P24 is widened. Q13 now asks how often the precipitation updates run, what the rain and snow values mean, and where the enabling flags come from. **Non-blocking:** (a) §8.3 now gives the 32-bit wrapping running total and the bound of at most cap passes per update. It also gives the client's behaviour with a negative, too small or not-a-number `emit_interval` (BIN). New Tessera rule §10.8 bounds the work. The `emit_interval` census was re-measured over all 32,789 emitters: 615 are 0, the rest are finite from 0.000263 to 100,000, and none is negative. `max_particles` is at most 100,000 (§5.2, PS9). (b) §8.7: a force-field lifetime below 0.0002, negative values included, never runs out (BIN). A rain fall-direction note for `environment.md` was added to §14. |

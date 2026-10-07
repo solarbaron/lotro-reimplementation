@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (2026-10-07: the OPEN-closing revision of §12 and its repair passed review; previously Accepted 2026-10-06). Implementers re-check code built on §4, §5.6 and §5.8 against the 2026-10-07 change-log rows. |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested. Spot checks against the install agree on I1, I2, IL1–IL4, the observed PIDs and types of §2.2, the top-level and non-zero counts of every `Icon_Layer_*` property, the combination table, the 218 sets with unequal sizes, the transparent placeholder (alpha 0 everywhere; 23,402 and 38,396 uses), the 23,324 equal Shadow/Underlay pairs, the quality table of §4, the 52 top-level backgrounds (34 R8G8B8, 18 A8R8G8B8, 10 soft), the skill counts, and the §3.3 worked examples and error bounds. Issues: (1) §2.3 Background row mixes scopes: the format counts 145,339 / 6,662 include the 24 nested values (top level: 145,323 / 6,654), but the distinct count (52) and sizes are top-level only (70 distinct with nested); §6.2 then says "145,339 of 151,977", a nested numerator over a top-level denominator. (2) §5.3 `Trait_Icon` "4,318 sets (70 are 0)": 4,318 is the number of values (3,950 top-level, all non-zero, plus 368 nested, of which 70 are 0) in 3,965 sets. (3) OBS row and `texture-list.md` §6.1 give 384,948 property sets with 1,616 of prefix 0x78; `client_local_English.dat` holds 2 more 0x78 sets (384,950). (4) The role of `Trait_Icon_Progression` is marked OPEN only in a table cell; give it a `> **OPEN:**` callout and a §9 entry. Writer response 2026-10-05: all four items addressed (OBS2, §12); awaiting re-review. Re-review 2026-10-05, Claude review session (spec-writer agent): **changes requested**. Items (1)–(4) are fixed and reproduce on the install: §2.3 top-level 145,323 / 6,654 and 52 / 16 distinct; nested 16 + 8 Background and 49 Overlay, all 32×32; 70 / 24 distinct with nested values; §5.3 3,950 top-level `Trait_Icon` (none 0) plus 368 nested (70 zero) in 3,965 sets; 384,950 sets, and the 2 local sets hold no icon property; the §5.8 OPEN callout and §9 item 7. The new §5.8 also reproduces: 15 progression sets with exactly the two properties, minimum 1 (14) / 0 (1), 13 × 16 entries (11 with 5 distinct surfaces repeating entry 4, one with 1, one with 15), 2 × 80 entries with 59 / 31 non-zero, 21 + 49 zero entries, 1,260 / 171 / 1,089 values, maximum ranks 16 (13), 50 (96), 60 (2), 1–7 (991). New issue: (5) §5.8 says "rank 60 of the **second** rank progression falls on a 0 entry". The traits with maximum rank 60 name the **first** progression (minimum 1, entries 0–58 non-zero), where rank 60 is entry 59, a 0. No trait names the second progression (minimum 0) with a rank above 7. Change "second" to "first" (or name it by its minimum). Writer response 2026-10-06: item (5) fixed in §5.8; both rank progressions are now named by their minimum everywhere, and the index-rule consequences were re-derived from a fresh probe (OBS2 recheck); awaiting re-review. Re-review 2026-10-06, Claude review session (spec-writer agent): **accepted**. Every §5.3 checklist item passes; item (5) is fixed. Independent read-only probe over all 383,332 0x79 sets of `client_gamelogic.dat` (fresh dump, 0 decode errors) reproduces: the §2.2 top-level and non-zero counts of all seven static `Icon_Layer_*` properties and the combination table; the §4 quality table (150,605 items, six distinct most-common backgrounds); `Trait_Icon` 3,950 top-level (none 0), `Trait_Static_Icon_Overlay` 1,258, `Trait_Rank_Overlay_Progression` 1,260 / 1,089 non-zero; the §5.8 rank progressions (exactly the two properties; minimum 1: 80 entries, 0–58 non-zero, named by 98 traits of maximum rank 50 (96) and 60 (2); minimum 0: 80 entries, 0–30 non-zero, named by 991 traits of maximum rank 1–7), so rank 60 of the minimum-1 progression is the only 0 entry the reported rule selects; and the 13 icon progressions (minimum 1, 16 entries, maximum rank 16, no top-level `Trait_Icon`; 11 with 5 distinct surfaces repeating entry 4, one with 1, one with 15). Non-blocking notes for a later revision: the property dictionary gives `Progression_MinimumIndexValue` a default of 0, while §5.8 cites LC using 1 when the property is absent (never absent in this install); the last §10 callout records a Tessera implementation decision under an "OPEN" label and could be reworded as a decision. |
+| **Review record** | Re-review 2026-10-07 (a separate dirty-room review session, not the author): **accepted**. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/material` (`icon` module: layered icon composition), explorer icon view |
 | **Companion specs** | `property-system.md` §5–§6 (property sets; the 0x70 → 0x79 rule). `records.md` §5 (render surfaces). `texture-list.md` §6.1 (icons are single surfaces, never texture lists). `material.md` MA33 (no sRGB in any back end). `ui-layout.md` (UI layout elements, which may carry the background-override property of §5.6; written in parallel). |
 
@@ -45,7 +45,9 @@ facts resting on BIN alone are marked BIN. **Reported** = from third-party mater
 |---|---|
 | OBS | Observed in user install 2026-10-04. All 384,950 property sets decoded: 383,332 with prefix 0x79 and 1,616 with prefix 0x78 in `client_gamelogic.dat`, and 2 with prefix 0x78 in `client_local_English.dat` (the first version said 384,948 and missed these 2; they hold no icon property), every one parsed to the last byte. Every image-valued property, top-level or nested, was resolved against the 0x41 headers of all 1,408,052 surfaces. The alpha channel of every distinct surface used as an icon layer was classified. About 60 item icons were composited and inspected by eye, including variants with different layer orders and size anchoring. |
 | OBS2 | Observed in user install 2026-10-05 (repair pass after review). Every icon-layer and trait-icon value counted again over all 384,950 sets, separately at the top level and nested (§2.3, §5.3). The property sets (prefix 0x79) of the 15 progression objects named by `Trait_Icon_Progression` and `Trait_Rank_Overlay_Progression` decoded in full, and every surface they name checked against the 0x41 headers (§5.8). Rechecked 2026-10-06: which traits name which rank progression, with their `Trait_Virtue_Maximum_Rank`, and the last non-zero entry of each rank progression (§5.8). |
-| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone on address ranges in the dirty room on 2026-10-05. Entry points were found by searching the code for the property IDs of §2.2 as immediate operands. **Questions:** (a) in which order the client stacks the item layers, and what it does when a layer property is missing, zero or not a DID (§3.1, §3.2); (b) the canvas, the placement and clipping of layers of unequal size (§3.4); (c) the exact blend arithmetic and its colour space (§3.3); (d) which override properties the client reads (§5.6); (e) whether item quality enters the composition (§4); (f) the layer order of the generic examination icon used for skills and traits (§5.3). **Why M1–M3 were not enough:** the data holds only the layer references; order between Underlay and Shadow, placement of unequal sizes, rounding and colour space are code; the override properties never occur in static data; no published source states any of it (M2); no running client or screenshot comparison was available to this session (M3). (g) Repair pass, 2026-10-05: how the client turns a trait's current rank into an entry of an icon progression (§5.8); M1 gave the layout and LC a rule, but not the client's own index or out-of-range handling. The virtue-panel code that reads `Trait_Icon_Progression` was located from its property ID, but the index computation was not traced to a conclusion, so **no fact in this spec rests on (g)**. Only offline UI code was read; nothing about network, login, launcher, keys or anti-tamper (decision 0004). Listings stay in the dirty scratch area. |
+| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone on address ranges in the dirty room on 2026-10-05. Entry points were found by searching the code for the property IDs of §2.2 as immediate operands. **Questions:** (a) in which order the client stacks the item layers, and what it does when a layer property is missing, zero or not a DID (§3.1, §3.2); (b) the canvas, the placement and clipping of layers of unequal size (§3.4); (c) the exact blend arithmetic and its colour space (§3.3); (d) which override properties the client reads (§5.6); (e) whether item quality enters the composition (§4); (f) the layer order of the generic examination icon used for skills and traits (§5.3). **Why M1–M3 were not enough:** the data holds only the layer references; order between Underlay and Shadow, placement of unequal sizes, rounding and colour space are code; the override properties never occur in static data; no published source states any of it (M2); no running client or screenshot comparison was available to this session (M3). (g) Repair pass, 2026-10-05: how the client turns a trait's current rank into an entry of an icon progression (§5.8); M1 gave the layout and LC a rule, but not the client's own index or out-of-range handling. The virtue-panel code that reads `Trait_Icon_Progression` was located from its property ID, but the index computation was not traced to a conclusion, so **no fact in this spec rests on (g)**. (Corrected 2026-10-07 by BIN2 (h): that code uses the number as a UI element identifier, not as a property ID.) Only offline UI code was read; nothing about network, login, launcher, keys or anti-tamper (decision 0004). Listings stay in the dirty scratch area. |
+| OBS3 | Observed in user install 2026-10-07 by a throwaway probe: the client class library (DID 0x56000000, `wlib.md`) read, its bytecode chunk (`wlib.md` §4.1) located by its length word, and the chunk searched for each icon-related property ID as a little-endian 32-bit value (§5.6, §5.8). |
+| BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), second pass.** Same client build 4906.0071.1794.4035, analysed headless in Ghidra (read-only copy of the shared project) on 2026-10-07. **Questions:** (h) does the native code read `Trait_Icon_Progression`, `Trait_Rank_Overlay_Progression`, `Progression_MinimumIndexValue` or `PropertyProgression_Array`, so that the rank-to-entry rule of §5.8 can be read there; (i) does the native UI code use `Item_Quality` for anything near the item icon (§4). **Method:** a search of all instructions and of all initialised data for those property IDs as 32-bit values, and decompilation of every function that holds a hit. **Why M1–M3 were not enough:** the data holds the progressions but not the code that indexes them; no published source describes it; no running client was available to this session. **Result:** see I13 and §4. Only offline UI code was read; nothing about network, login, launcher, keys or anti-tamper (decision 0004). Listings stay in the dirty scratch area. |
 | LC | LotroCompanion `lotro-companion` (GPL-3.0) and `lotro-tools` sources: the layer property names an item reader uses, the order in which it stacks them, and its alpha rule. Facts only. |
 | DS | `research/notes/data-semantics.md` §7.4 (list of `Icon_Layer_*` names). |
 
@@ -60,7 +62,9 @@ facts resting on BIN alone are marked BIN. **Reported** = from third-party mater
 | I7 | Skill, effect and most other icons are single surfaces (§5) | LC; OBS | Confirmed |
 | I8 | Trait icons stack a static overlay frame above the picture, and a rank overlay above both (§5.3) | LC; OBS (1,258 traits); BIN (f) (examination icon keys 4000, 5000, 6000) | Confirmed (order); rank selection OPEN |
 | I11 | `Trait_Icon_Progression` and `Trait_Rank_Overlay_Progression` name progression objects whose 0x79 property set holds `Progression_MinimumIndexValue` and an array `PropertyProgression_Array` of `Trait_Icon` surface DIDs (§5.8) | OBS2 (all 15 progression objects named; all 1,102 non-zero references) | Confirmed (layout) |
-| I12 | Array entry *i* of such a progression is the value for index (minimum + *i*) (§5.8) | LC; OBS2 (consistent: the 13 virtue icon progressions have 16 entries, minimum 1, for traits whose maximum rank is 16) | Reported |
+| I12 | Array entry *i* of such a progression is the value for index (minimum + *i*); an absent minimum counts as 0 (§5.8) | `combat-data.md` §4.3, C6, C8 (the general rule for property-array progressions); LC; OBS2 (consistent: the 13 virtue icon progressions have 16 entries, minimum 1, for traits whose maximum rank is 16) | Layout Confirmed; use as the rank index Reported |
+| I13 | The native code never reads `Trait_Icon_Progression` or `Trait_Rank_Overlay_Progression` as properties, and evaluates no progression (`combat-data.md` C25); the client library's bytecode holds the IDs of `Trait_Icon`, `Trait_Static_Icon_Overlay`, `Trait_Icon_Progression`, `Trait_Rank_Overlay_Progression` and `Trait_Virtue_Maximum_Rank` as 32-bit literals, so the trait icon and its rank selection are most likely computed in script (§5.8; each literal could also be a chance match) | BIN2 (h); OBS3 | BIN (native); literals Confirmed; script conclusion Inferred |
+| I14 | The ID of `Icon_Layer_ImageOverrideDID` occurs once as a literal in the client library's bytecode, though nowhere in the executable (§5.6) | OBS3; BIN (d) | Confirmed (occurrence); use OPEN |
 | I9 | An item shows no icon at all when it lacks the Image property (or, for an instance, the checkpointed override) or the Background property (§3.1) | BIN (a) | BIN |
 | I10 | `Icon_Layer_ImageOverrideDID_Checkpointed` replaces `Icon_Layer_ImageDID` for item instances; the UI element property `UI_ItemIconDisplay_OverrideBackground` replaces the Background; no other `…Override…` or glow property is read by the client (§5.6) | BIN (d) | BIN |
 
@@ -339,7 +343,15 @@ are shared across qualities. So:
 
 > **OPEN:** Whether a UI layout draws a separate quality frame around item slots, outside the
 > composed icon. The icon composition itself has none (BIN (e)); any such frame would come
-> from UI layout data (`ui-layout.md`).
+> from UI layout data (`ui-layout.md`). BIN2 (i): the ID of `Item_Quality` occurs in 9
+> instructions in 9 native functions. What holds for all nine: each either reads the item's
+> quality value or uses the ID (or a neighbouring number) as a key for a UI object, and none of
+> them is on the icon composition path of §3. Beyond that they differ: some only read the value
+> and return it unchanged, some map it through a fixed table to a UI resource identifier or a
+> sort rank, and two pass the ID itself, or a neighbouring number, to a UI object as a key
+> without reading a quality. What the mapped identifiers style (name colour, a slot frame or
+> something else) was not traced; a frame capture of an inventory slot (M3) or a trace of the
+> callers would settle it.
 
 ---
 
@@ -414,7 +426,7 @@ client reads it on its own (BIN (d)).
 |---|---|---|
 | `Icon_Layer_ImageOverrideDID_Checkpointed` | Yes, for item instances | When present, used **instead of** `Icon_Layer_ImageDID` (§3.1 step 1), whatever its value: an override of 0 gives an icon without a picture. Never present in static data. |
 | `UI_ItemIconDisplay_OverrideBackground` (on a UI layout element) | Yes | When the element has it, the item's Background property is not read; a non-zero value is the Background layer (§3.1 step 4). |
-| `Icon_Layer_ImageOverrideDID` | **No** | Its PID occurs nowhere in the executable. The 26 static sets that carry it have no Image or Background property, so the client shows **no icon** for them. |
+| `Icon_Layer_ImageOverrideDID` | **No** (native code) | Its PID occurs nowhere in the executable, so the native icon composition of §3 never reads it. The 26 static sets that carry it have no Image or Background property, so that composition gives **no icon** for them. Its PID does occur once as a literal in the client library's bytecode (I14); whether script code uses it (for example to fill examination data) is OPEN, see §5.8's last callout. |
 | `Icon_Layer_BackgroundOverrideDID`, `Icon_Layer_UnderlayOverrideDID`, `Icon_Layer_ShadowOverrideDID`, `Icon_Layer_LargeImageGlowDID` | **No** | Never referenced as properties by the client's code (two of these numbers occur only as unrelated UI element identifiers). |
 
 There is no Overlay override.
@@ -430,7 +442,7 @@ explicit small and large variants, each variant is its own property and surface.
 scaled from a single source.
 
 <a id="s5-8"></a>
-### 5.8 Icon progressions (layout Confirmed, OBS2; index rule Reported)
+### 5.8 Icon progressions (layout Confirmed, OBS2; index rule from `combat-data.md`; rank selection OPEN)
 
 Two trait properties name a **progression object** (prefix 0x70) instead of a surface:
 `Trait_Icon_Progression` (13 sets) and `Trait_Rank_Overlay_Progression` (1,089 non-zero
@@ -458,10 +470,15 @@ progressions (21 + 49). All 13 traits with `Trait_Icon_Progression` have
 rank progression with minimum 1 have maximum rank 50 (96 traits) or 60 (2); those that name
 the one with minimum 0 have maximum rank 1 to 7 (991 traits).
 
-**Index rule (Reported, LC).** Array entry *i* (counting from 0) is the value for index
-*m* + *i*, where *m* is `Progression_MinimumIndexValue` (LC uses 1 when the property is
-absent; it is never absent here). The data agrees for the icon progressions (16 entries from
-index 1 for maximum rank 16). For the rank progressions, under that rule:
+**Index rule (`combat-data.md` §4.3; use as the rank index Reported, LC).** These are ordinary
+property-array progressions, evaluated as `combat-data.md` §4.10 describes: array entry *i*
+(counting from 0) is the value for index *m* + *i*, where *m* is
+`Progression_MinimumIndexValue`, and **0 when the property is absent** (the dictionary default,
+`combat-data.md` C6; LC assumes 1, which the earlier version of this section repeated). It is
+never absent in these 15 objects. An index outside the covered range is clamped to the first
+or last entry by Tessera's Decision D1 (`combat-data.md` §4.8), not by a known client rule.
+The data agrees with "index = rank" for the icon progressions (16 entries from index 1 for
+maximum rank 16). For the rank progressions, under that rule:
 
 | Rank progression | `Trait_Virtue_Maximum_Rank` of the traits naming it | Entries ranks 1 to that maximum select | Non-zero entries | Ranks that fall on a 0 entry |
 |---|---|---|---|---|
@@ -477,14 +494,33 @@ viewer that shows a trait without a character uses, for `Trait_Icon_Progression`
 for the lowest index (entry 0), and shows no rank overlay; it labels both as a viewer choice.
 A 0 entry means "no layer" (§3.1).
 
-> **OPEN:** How the client turns a trait's current rank into an entry: whether the index is
-> the rank itself (so entry = rank − minimum, as LC reports), what it does when the index is
-> below the minimum or past the last entry, and whether a 0 entry leaves the trait with no
-> base picture (icon progression) or no rank overlay (rank progression; the one data case is
-> rank 60 of the minimum-1 progression) or falls back to another value. Also OPEN: whether
-> `Trait_Icon_Progression`, when present, replaces a top-level `Trait_Icon` (no set has both,
-> so the data cannot tell) and which rank value a trait that is not yet slotted uses. A BIN
-> attempt (BIN (g)) located the reading code but did not resolve these.
+**Where the client does it (I13).** The native code never reads `Trait_Icon_Progression` or
+`Trait_Rank_Overlay_Progression`: the number of the first occurs in the executable only as a
+UI element identifier (in two functions of one UI panel; UI element identifiers share the
+0x1000xxxx number space with property IDs), and the number of the second occurs nowhere in it (BIN2 (h)). The
+native code does not evaluate progressions at all (`combat-data.md` C25). The IDs of
+`Trait_Icon` (twice), `Trait_Static_Icon_Overlay`, `Trait_Icon_Progression`,
+`Trait_Rank_Overlay_Progression` and `Trait_Virtue_Maximum_Rank` (once each) do occur as
+32-bit literals in the bytecode chunk of the client class library (OBS3). From the negative
+native search and these literals it is **Inferred**, not observed, that the trait icon, its
+rank selection and the three examination-icon fields of §5.3 are computed by script code,
+whose instruction set is not specified (`wlib.md` §4.1, `combat-data.md` §13.2). The literals
+alone do not prove it: a 4-byte literal can match by chance, about once in 2,000 IDs for a
+bytecode block of this size (`combat-data.md` §13.2), and each of these IDs occurs only once
+or twice. Only reading the script functions that hold them would confirm it. (The earlier
+BIN (g) note that "the virtue-panel code that reads `Trait_Icon_Progression`" had been found is
+withdrawn: that code uses the number as a UI element identifier.)
+
+> **OPEN:** (needs a bytecode spec, `combat-data.md` §13.2) How the client turns a trait's
+> current rank into an entry: whether the index is the rank itself (so entry = rank − minimum,
+> as LC reports), what it does when the index is below the minimum or past the last entry,
+> and whether a 0 entry leaves the trait with no base picture (icon progression) or no rank
+> overlay (rank progression; the one data case is rank 60 of the minimum-1 progression) or
+> falls back to another value. Also OPEN: whether `Trait_Icon_Progression`, when present,
+> replaces a top-level `Trait_Icon` (no set has both, so the data cannot tell), which rank
+> value a trait that is not yet slotted uses, and whether the script code that fills
+> examination data reads `Icon_Layer_ImageOverrideDID` (I14). The native code cannot answer
+> any of these (I13); the script functions that hold the literals most likely can (Inferred, I13).
 
 ---
 
@@ -584,8 +620,10 @@ Generate these with our own code. No game images.
 5. ~~Override and glow properties at run time~~: answered 2026-10-05 (§5.6).
 6. ~~The relative order of Underlay and Shadow~~: answered 2026-10-05 (§6.2).
 7. Role of `Trait_Icon_Progression` and the client's rank-to-entry rule for both trait
-   progressions: index base, out-of-range indices, 0 entries, precedence over a top-level
-   `Trait_Icon`, rank of an unslotted trait (§5.8 OPEN).
+   progressions: out-of-range indices, 0 entries, precedence over a top-level `Trait_Icon`,
+   rank of an unslotted trait (§5.8 OPEN). Narrowed 2026-10-07: the index base follows
+   `combat-data.md` §4.3 (absent minimum ⇒ 0), and the selection is not native code and is
+   most likely script code (I13, Inferred), so it waits for a bytecode spec.
 
 ---
 
@@ -628,7 +666,7 @@ so none of these choices is exercised by the sampled data.
 > the client (§5.6). Showing that image alone is a Tessera choice and should be dropped, or
 > kept behind an explicit "show non-client icons" switch in tools.
 
-> **OPEN (Decision, 2026-10-06):** A caller-built stack (`IconStack::from_entries`) reads at
+> **Decision (2026-10-06; recorded as a Tessera decision 2026-10-07, no client fact needed):** A caller-built stack (`IconStack::from_entries`) reads at
 > most 64 input entries (four times the 16-layer stack limit), counting entries that are
 > dropped for a zero DID without a fallback, and fails with "too many layers" beyond that,
 > so an endless input of empty entries terminates. Stacks built from property sets use five
@@ -653,3 +691,5 @@ to 384,950 in the same repair pass, in that spec.)
 | 2026-10-05 | §1, §2.1–§2.4, §3.1–§3.4, §4, §5.3–§5.6, §6.1–§6.3, §7–§12 | M4 pass (BIN row, I9–I10; I3–I6 and I8 revised). §2.2: checkpointed override and the UI element's background override added. §3.1 rewritten: which properties the client reads, when an item has no icon, which layers are skipped. §3.2: sort keys; Underlay below Shadow now confirmed. §3.3 replaced: the client's integer source-over rule on stored values (normative), worked examples. §3.4 replaced: canvas = bottom layer, top-left placement, clipping (the provisional centring rule is withdrawn). §4: composition reads no quality. §5.3: examination icon keys 4000/5000/6000; trait order confirmed. §5.6: override table. §7: IL6–IL7. §8: fixtures for the integer rule and the missing-property cases. §9–§10: OPENs answered. §11–§12 added. |
 | 2026-10-05 | §1, §2.3, §5.3, §5.8, §6.1, §6.2, §9, §11 | Repair after review (changes requested). OBS: 384,950 property sets (2 local 0x78 sets added). New OBS2 (recount by scope; progression sets decoded) and BIN (g) (inconclusive, no fact rests on it); new facts I11–I12. §2.3: Background row now top-level only (145,323 / 6,654; 52 distinct), nested values listed separately (70 backgrounds and 24 overlays with them). §5.3: `Trait_Icon` counts split into top-level (3,950 sets) and nested (368 values, 70 zero; 4,318 values in 3,965 sets); progression rows rewritten. New §5.8: progression layout, observed contents, reported index rule, offline use, OPEN callout. §6.1: scope stated. §6.2: 145,323 of 151,977 top-level values. §9: item 4 updated, item 7 added. |
 | 2026-10-06 | header, §1, §5.8 | Repair after re-review (item 5). §5.8: the rank progressions are named by their minimum, not "first"/"second"; the wrong statement that rank 60 of the second (minimum 0) progression falls on a 0 entry is replaced by a table of the ranks each progression is reached with: rank 60 of the minimum-1 progression (entry 59) is the only 0 entry the reported rule selects; no minimum-0 trait exceeds rank 7. The §5.8 OPEN callout now also covers a 0 entry in a rank progression. OBS2 recheck dated 2026-10-06. No other fact or section number changed. |
+| 2026-10-07 | header, §1, §4, §5.6, §5.8, §9, §10, §12 | OPEN-closing revision (status Revised, waiting for review). New provenance rows OBS3 (literal search in the client library's bytecode) and BIN2 (questions (h) and (i)); I12 revised (index rule from `combat-data.md` §4.3; an absent minimum counts as 0, not 1 as LC assumes, which also settles the reviewer's 2026-10-06 note); new I13 (no native reader of the trait progressions; the trait-icon properties are bytecode literals) and I14 (`Icon_Layer_ImageOverrideDID` is a bytecode literal). §4 OPEN: what native code does with `Item_Quality` added; question kept. §5.6: the "not read" row limited to native code. §5.8: index rule, out-of-range handling (Tessera Decision D1 of `combat-data.md`), where the selection happens; the BIN (g) note corrected; the OPEN narrowed to script behaviour. §9 item 7 narrowed. §10: the 2026-10-06 implementer note recorded as a decision. No section number changed. |
+| 2026-10-07 | header, §1, §4, §5.8, §9, §12 | Repair after review (changes requested, minor). (1) I13: the conclusion that the trait icon and its rank selection are computed in script is marked Inferred; §5.8 "Where the client does it" adds the chance-match caveat of `combat-data.md` §13.2; §5.8 OPEN and §9 item 7 worded to match. (2) §4 OPEN: the description of the 9 native functions that use the `Item_Quality` ID is reduced to what holds for all of them, with the differences listed. No fact, count or section number changed. |

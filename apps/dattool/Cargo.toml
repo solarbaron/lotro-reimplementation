@@ -26,6 +26,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tessera-dat.workspace = true
 tessera-formats.workspace = true
+tessera-material.workspace = true
+# `census` decodes the embedded render meshes of 0x01 records and 0x06 meshes to walk
+# their level trees (`collision.md` §3.5, §5.7).
+tessera-mesh.workspace = true
 tessera-install.workspace = true
 serde_json = "1"
 sha2 = "0.10"

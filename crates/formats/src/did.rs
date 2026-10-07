@@ -77,26 +77,45 @@ impl fmt::UpperHex for Did {
     }
 }
 
-/// How well the meaning of a DID prefix is established (spec §2 status column).
+/// How well the meaning of a DID prefix is established (spec §2.1 status column: C, L, BIN,
+/// R), and whether this crate decodes its records.
+///
+/// When a prefix has several statuses the strongest applies, in the order of the variants:
+/// for example 0x0E (R, L, BIN) is [`Evidence::Labelled`] and 0x2B (C, L) is
+/// [`Evidence::Specified`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Evidence {
     /// Record content is decoded by this crate: by [`crate::AnyRecord`] (including the
-    /// script tables and scriptlets of [`crate::AnyRecord::decode_with_schema`]), or, for property
-    /// sets and entity descriptors (which need the dictionary as a schema), by
-    /// [`crate::PropertySetRecord`] and [`crate::EntityDescriptor`], or, for the landblock
-    /// family and its per-region tables (which need the directory stamp or the dictionary),
-    /// by the [`crate::landblock`] decoders.
+    /// script tables, scriptlets and cell geometry of
+    /// [`crate::AnyRecord::decode_with_schema`]), or, for property sets and entity
+    /// descriptors (which need the dictionary as a schema), by [`crate::PropertySetRecord`]
+    /// and [`crate::EntityDescriptor`], or, for the landblock family and its block-map
+    /// descriptors (which need the directory stamp or the dictionary), by the
+    /// [`crate::landblock`] decoders.
     Decoded,
-    /// Meaning confirmed by a DID-map label.
+    /// The layout is specified (status C) and decoded by another Tessera crate, not by this
+    /// one: animation clips (0x05), meshes (0x06), shader records, materials and surface
+    /// records (0x2B, 0x30, 0x31), the script library (0x56) and script-state objects (0x70,
+    /// 0x76).
+    Specified,
+    /// Meaning confirmed by a DID-map label; the layout is not specified (status L).
     Labelled,
-    /// Meaning reported by third parties only.
+    /// Only the DB object type the client registers for the prefix is known; the layout is
+    /// not specified (status BIN).
+    DbType,
+    /// Meaning reported by third parties only (status R).
     Reported,
     /// Meaning unknown.
     Unknown,
 }
 
 /// Sub-type of a landblock-family DID (prefix 0x80), the K nibble (spec §2.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Non-exhaustive: K nibbles that are now carried by [`LandblockKind::Other`] may get a
+/// named variant later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum LandblockKind {
     /// K = 0: landblock data (heights, terrain surface), decoded by
     /// [`crate::LandblockData`].
@@ -107,8 +126,10 @@ pub enum LandblockKind {
     Info,
     /// K = 4: landblock properties (minimap), decoded by [`crate::LandblockProperties`].
     Properties,
-    /// Any other K nibble (5 is observed, meaning unknown; its framing is decoded by
-    /// [`crate::LandblockGroupRecord`]).
+    /// Any other K nibble. K = 5 is the distant-landscape sector (spec §2.2, DB type
+    /// DISTANT_LANDSCAPE_SECTOR; framing C, most of the layout OPEN), whose framing is
+    /// decoded by [`crate::LandblockGroupRecord`]; [`DidKind::name`] names it. K = 6 is
+    /// registered (BIN) with no record in the install.
     Other(u8),
 }
 
@@ -168,24 +189,37 @@ impl LandblockId {
 
 /// Record type implied by a DID's high byte (spec §2.1).
 ///
-/// Names are descriptive. Prefixes whose meaning is unknown map to [`DidKind::Unknown`]
-/// carrying the raw prefix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Names are descriptive. Every prefix of the table that has records in the install has a
+/// named kind. Prefixes with no record in the install map to [`DidKind::Unknown`] carrying
+/// the raw prefix, even where the table lists a DB type for them: the registered-only
+/// prefixes 0x0D, 0x24, 0x46, 0x53 and 0x90–0x9F, and the unused members of the ranges
+/// 0x70–0x77 (0x71–0x75, 0x77) and 0x78–0x7F (0x7A–0x7F). [`is_catalogued_prefix`] is
+/// false for them. See [`crate::is_property_set_did`] for the property-set range.
+///
+/// The derived order follows the declaration order, which is ascending by prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum DidKind {
-    /// 0x01: stand-alone collision geometry. Earlier notes called these setups; `setup.md`
-    /// §2.2 shows they are not. Not decoded.
+    /// 0x01: cell geometry (cell volume, portals, wall polygons, hull vertices, physics mesh;
+    /// `collision.md` §5). Earlier notes called these setups; `setup.md` §2.2 shows they are
+    /// not. Decoded by [`crate::CellGeometry`] (M4.5).
     CollisionGeometry,
+    /// 0x02: scene records (DB type SCENE; `scenery.md` §5), decoded by [`crate::Scene`]
+    /// (M4.5).
+    Scene,
     /// 0x04: setups (part assemblies with a skeleton tagfile, collision volumes and the part
     /// list; `setup.md` §6), decoded by [`crate::Setup`].
     Setup,
-    /// 0x05: animation clips.
+    /// 0x05: animation clips (`havok-data.md` §2.3).
     Animation,
-    /// 0x06: meshes.
+    /// 0x06: meshes (`mesh.md`; decoded by `tessera-mesh`).
     Mesh,
     /// 0x07: script tables (script-key → node-graph maps; `script-table.md` §2), decoded by
     /// [`crate::ScriptTable`].
     ScriptTable,
+    /// 0x08: camera-state records (DB type CAMERASTATE; `walker.md` §11.5). Decoded in
+    /// [`crate::environment`] (M4.5, optional).
+    CameraState,
     /// 0x0A: audio records.
     Sound,
     /// 0x0C: scriptlets (reusable node graphs invoked by script tables; `script-table.md`
@@ -195,8 +229,32 @@ pub enum DidKind {
     SingletonTable,
     /// 0x0F: region descriptors, decoded by [`crate::RegionDescriptor`].
     RegionDescriptor,
+    /// 0x11: scene-choice tables (DB type SCENE_DESC; `scenery.md` §4.3). Decoded in
+    /// [`crate::scenery`] (M4.5).
+    SceneChoiceTable,
+    /// 0x12: terrain-scene tables (DB type TERRAIN_DESC; `scenery.md` §4.2). Decoded in
+    /// [`crate::scenery`] (M4.5).
+    TerrainSceneTable,
+    /// 0x14: encounter tables, region slot 3 (DB type ENCOUNTER_DESC; layout OPEN,
+    /// `environment.md` §4).
+    EncounterTable,
+    /// 0x15: sky descriptions (`environment.md` §5.1). Decoded in [`crate::environment`]
+    /// (M4.5).
+    SkyDescription,
+    /// 0x16: water tables (DB type WATER_DESC; `water.md` §4). Decoded in [`crate::water`]
+    /// (M4.5).
+    WaterTable,
+    /// 0x17: fog-zone tables (DB type FOG_DESC; `water.md` §5). Decoded in [`crate::water`]
+    /// (M4.5).
+    FogZoneTable,
     /// 0x18: block-map property descriptors, decoded by [`crate::BlockMapDescriptor`].
     BlockMapProperties,
+    /// 0x19: terrain type tables (DB type TERRAIN_TYPE_TABLE; `terrain-texturing.md` §3).
+    /// Decoded in [`crate::terrain_type`] (M4.5).
+    TerrainTypeTable,
+    /// 0x1A: day descriptions (DB type DAY_DESC; `environment.md` §5.2). Decoded in
+    /// [`crate::environment`] (M4.5).
+    DayDescription,
     /// 0x1D: key maps.
     KeyMap,
     /// 0x1F: visual templates (`setup.md` §5), decoded by [`crate::VisualTemplate`].
@@ -204,42 +262,70 @@ pub enum DidKind {
     /// 0x20: appearance / wardrobe records (`setup.md` §8), decoded by
     /// [`crate::AppearanceRecord`].
     Appearance,
+    /// 0x21: UI scenes (DB type UI_SCENE; layout OPEN).
+    UiScene,
     /// 0x22: UI layouts.
     UiLayout,
     /// 0x23: enum mappers.
     EnumMapper,
     /// 0x25: string tables.
     StringTable,
-    /// 0x26: reported as part of the string-table range, but no record has been observed
-    /// (spec §2.1, status R). Not accepted by the string-table decoder.
+    /// 0x26: part of the string-table range (DB type STRING_TABLE registered for
+    /// 0x25000000–0x26FFFFFF; spec §2.1, status R, BIN). Not accepted by the string-table
+    /// decoder.
     StringTableReported,
+    /// 0x27: per-region imposter tables (DB type RENDER_IMPOSTER_TABLE; layout OPEN).
+    ImposterTable,
     /// 0x28: DID maps.
     DataIdMap,
-    /// 0x2B: compiled shader programs.
+    /// 0x2A: sound-info records (DB type SOUNDINFO; layout OPEN).
+    SoundInfo,
+    /// 0x2B: compiled shader programs (shader records, `material.md` §7; decoded by
+    /// `tessera-material`).
     ShaderProgram,
-    /// 0x30: materials.
+    /// 0x2D: compute shaders (DB type COMPUTESHADER; a DXBC container).
+    ComputeShader,
+    /// 0x30: materials (`material.md` §6; decoded by `tessera-material`).
     Material,
-    /// 0x31: surface descriptors.
+    /// 0x31: surface descriptors (`material.md` §4; decoded by `tessera-material`).
     SurfaceDescriptor,
+    /// 0x32: the LOD-class table (DB type RENDER_LOD_CLASSES; `environment.md` §9.1).
+    /// Decoded in [`crate::environment`] (M4.5).
+    LodClassTable,
     /// 0x33: compositors.
     Compositor,
     /// 0x34: master property dictionary.
     PropertyDictionary,
+    /// 0x35: game time (DB type GAME_TIME; `environment.md` §6). Decoded in
+    /// [`crate::environment`] (M4.5).
+    GameTime,
+    /// 0x39: particle-system descriptors (DB type PSDESC; layout OPEN).
+    ParticleSystemDescriptor,
     /// 0x40: texture lists / mip chains.
     TextureList,
     /// 0x41: render surfaces.
     RenderSurface,
     /// 0x42: fonts.
     Font,
+    /// 0x43: script channels (DB type SCRIPTCHANNELS; layout OPEN).
+    ScriptChannels,
+    /// 0x44: particle systems: texture names, particle templates (DB type FORKPSDESC;
+    /// layout OPEN).
+    ParticleSystem,
     /// 0x47: entity descriptors (`setup.md` §4), decoded by [`crate::EntityDescriptor`].
     EntityDescriptor,
     /// 0x51: action maps.
     ActionMap,
-    /// 0x56: compiled script library.
+    /// 0x56: compiled script library (`wlib.md`).
     ScriptLibrary,
-    /// 0x70: script-state objects.
+    /// 0x58: string state (DB type STRING_STATE; layout OPEN).
+    StringState,
+    /// 0x66: stand-alone collision meshes (DB type PHYSICS_MESH; `collision.md` §4).
+    /// Decoded in [`crate::collision`] (M4.5).
+    CollisionMesh,
+    /// 0x70: script-state objects (`wstate.md`).
     ScriptStateObject,
-    /// 0x76: script-state objects (variant).
+    /// 0x76: script-state objects (variant; `wstate.md`).
     ScriptStateVariant,
     /// 0x78: stand-alone property sets.
     PropertySet,
@@ -278,34 +364,55 @@ impl DidKind {
     pub fn of(did: Did) -> Self {
         match did.prefix() {
             0x01 => Self::CollisionGeometry,
+            0x02 => Self::Scene,
             0x04 => Self::Setup,
             0x05 => Self::Animation,
             0x06 => Self::Mesh,
             0x07 => Self::ScriptTable,
+            0x08 => Self::CameraState,
             0x0A => Self::Sound,
             0x0C => Self::Scriptlet,
             0x0E => Self::SingletonTable,
             0x0F => Self::RegionDescriptor,
+            0x11 => Self::SceneChoiceTable,
+            0x12 => Self::TerrainSceneTable,
+            0x14 => Self::EncounterTable,
+            0x15 => Self::SkyDescription,
+            0x16 => Self::WaterTable,
+            0x17 => Self::FogZoneTable,
             0x18 => Self::BlockMapProperties,
+            0x19 => Self::TerrainTypeTable,
+            0x1A => Self::DayDescription,
             0x1D => Self::KeyMap,
             0x1F => Self::VisualTemplate,
             0x20 => Self::Appearance,
+            0x21 => Self::UiScene,
             0x22 => Self::UiLayout,
             0x23 => Self::EnumMapper,
             0x25 => Self::StringTable,
             0x26 => Self::StringTableReported,
+            0x27 => Self::ImposterTable,
             0x28 => Self::DataIdMap,
+            0x2A => Self::SoundInfo,
             0x2B => Self::ShaderProgram,
+            0x2D => Self::ComputeShader,
             0x30 => Self::Material,
             0x31 => Self::SurfaceDescriptor,
+            0x32 => Self::LodClassTable,
             0x33 => Self::Compositor,
             0x34 => Self::PropertyDictionary,
+            0x35 => Self::GameTime,
+            0x39 => Self::ParticleSystemDescriptor,
             0x40 => Self::TextureList,
             0x41 => Self::RenderSurface,
             0x42 => Self::Font,
+            0x43 => Self::ScriptChannels,
+            0x44 => Self::ParticleSystem,
             0x47 => Self::EntityDescriptor,
             0x51 => Self::ActionMap,
             0x56 => Self::ScriptLibrary,
+            0x58 => Self::StringState,
+            0x66 => Self::CollisionMesh,
             0x70 => Self::ScriptStateObject,
             0x76 => Self::ScriptStateVariant,
             0x78 => Self::PropertySet,
@@ -318,7 +425,7 @@ impl DidKind {
         }
     }
 
-    /// How well this classification is established.
+    /// How well this classification is established (spec §2.1 and §2.2 status columns).
     #[must_use]
     pub fn evidence(self) -> Evidence {
         match self {
@@ -339,24 +446,53 @@ impl DidKind {
             | Self::BlockMapProperties
             | Self::ScriptTable
             | Self::Scriptlet
+            | Self::CollisionGeometry
+            | Self::Scene
+            | Self::CameraState
+            | Self::SceneChoiceTable
+            | Self::TerrainSceneTable
+            | Self::SkyDescription
+            | Self::WaterTable
+            | Self::FogZoneTable
+            | Self::TerrainTypeTable
+            | Self::DayDescription
+            | Self::LodClassTable
+            | Self::GameTime
+            | Self::CollisionMesh
             | Self::Landblock(
                 LandblockKind::Heightmap
                 | LandblockKind::BlockMap
                 | LandblockKind::Info
                 | LandblockKind::Properties,
             ) => Evidence::Decoded,
+            Self::Animation
+            | Self::Mesh
+            | Self::ShaderProgram
+            | Self::Material
+            | Self::SurfaceDescriptor
+            | Self::ScriptLibrary
+            | Self::ScriptStateObject
+            | Self::ScriptStateVariant => Evidence::Specified,
             Self::SingletonTable
             | Self::KeyMap
-            | Self::ShaderProgram
             | Self::Compositor
             | Self::Font
-            | Self::ActionMap
-            | Self::ScriptLibrary
-            | Self::ScriptStateObject => Evidence::Labelled,
+            | Self::ActionMap => Evidence::Labelled,
+            Self::EncounterTable
+            | Self::UiScene
+            | Self::UiLayout
+            | Self::StringTableReported
+            | Self::ImposterTable
+            | Self::SoundInfo
+            | Self::ComputeShader
+            | Self::ParticleSystemDescriptor
+            | Self::ScriptChannels
+            | Self::ParticleSystem
+            | Self::StringState => Evidence::DbType,
+            // K = 5 (distant-landscape sector, framing C) is still reported as unknown here.
             Self::Unknown(_) | Self::Landblock(LandblockKind::Other(_)) | Self::ArchiveMetadata => {
                 Evidence::Unknown
             }
-            _ => Evidence::Reported,
         }
     }
 
@@ -365,6 +501,27 @@ impl DidKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::CollisionGeometry => "collision geometry",
+            Self::Scene => "scene",
+            Self::CameraState => "camera state",
+            Self::SceneChoiceTable => "scene-choice table",
+            Self::TerrainSceneTable => "terrain-scene table",
+            Self::EncounterTable => "encounter table",
+            Self::UiScene => "UI scene",
+            Self::ImposterTable => "imposter table",
+            Self::SoundInfo => "sound info",
+            Self::ComputeShader => "compute shader",
+            Self::ParticleSystemDescriptor => "particle-system descriptor",
+            Self::ScriptChannels => "script channels",
+            Self::ParticleSystem => "particle system",
+            Self::StringState => "string state",
+            Self::SkyDescription => "sky description",
+            Self::WaterTable => "water table",
+            Self::FogZoneTable => "fog-zone table",
+            Self::TerrainTypeTable => "terrain type table",
+            Self::DayDescription => "day description",
+            Self::LodClassTable => "LOD-class table",
+            Self::GameTime => "game time",
+            Self::CollisionMesh => "collision mesh",
             Self::Setup => "setup",
             Self::Animation => "animation",
             Self::Mesh => "mesh",
@@ -401,6 +558,7 @@ impl DidKind {
             Self::Landblock(LandblockKind::BlockMap) => "landblock block map",
             Self::Landblock(LandblockKind::Info) => "landblock info",
             Self::Landblock(LandblockKind::Properties) => "landblock properties",
+            Self::Landblock(LandblockKind::Other(5)) => "distant-landscape sector",
             Self::Landblock(LandblockKind::Other(_)) => "landblock (other)",
             Self::ArchiveMetadata => "archive metadata",
             Self::Unknown(_) => "unknown",
@@ -417,20 +575,16 @@ impl fmt::Display for DidKind {
     }
 }
 
-/// Whether a prefix appears in the spec §2.1 table: either it has a named [`DidKind`] or it
-/// is listed there with an OPEN meaning. A DID whose prefix is not catalogued has never been
-/// observed in data.
+/// Whether a prefix appears in the spec §2.1 table with records in the install, which is
+/// exactly when it has a named [`DidKind`]. A DID whose prefix is not catalogued has never
+/// been observed in data (the registered-only prefixes and range members listed at
+/// [`DidKind`] included).
 #[must_use]
 pub fn is_catalogued_prefix(prefix: u8) -> bool {
-    /// Prefixes listed in §2.1 with an unknown (OPEN) meaning.
-    const OPEN_PREFIXES: [u8; 21] = [
-        0x02, 0x08, 0x11, 0x12, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x21, 0x27, 0x2A, 0x2D, 0x32,
-        0x35, 0x39, 0x43, 0x44, 0x58, 0x66,
-    ];
     !matches!(
         DidKind::of(Did(u32::from(prefix) << 24)),
         DidKind::Unknown(_)
-    ) || OPEN_PREFIXES.contains(&prefix)
+    )
 }
 
 /// Name hash used for argument IDs and variable IDs (spec §1.5). Result is < 0x10000000.

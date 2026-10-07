@@ -111,6 +111,29 @@ impl VertexNormals {
         }
     }
 
+    /// Normals of a **ceiling** surface ([`TerrainBlock::from_ceiling`]), with ceiling
+    /// neighbours across the edges: computed from the ceiling heights as for the terrain,
+    /// then negated so that they face down. This is the Tessera Decision of
+    /// `terrain-texturing.md` §4.8; how the original computes its ceiling normal array is
+    /// OPEN there.
+    #[must_use]
+    pub fn ceiling(ceiling: &TerrainBlock, neighbours: &Neighbours<'_>) -> Self {
+        Self::compute(ceiling, neighbours).negated()
+    }
+
+    /// The same normals pointing the other way (provisional sides unchanged).
+    #[must_use]
+    pub fn negated(&self) -> Self {
+        let mut normals = self.normals.clone();
+        for n in normals.iter_mut() {
+            *n = n.map(|c| -c);
+        }
+        Self {
+            normals,
+            provisional: self.provisional,
+        }
+    }
+
     /// Normal of sample (i, j); `None` outside 0–32.
     #[must_use]
     pub fn get(&self, i: usize, j: usize) -> Option<[f32; 3]> {
@@ -227,6 +250,27 @@ mod tests {
         );
         let bn = VertexNormals::compute(&big, &Neighbours::NONE);
         assert_eq!(bn.get(16, 16), c);
+    }
+
+    /// Review finding: ceiling normals are the terrain rule's normals of the ceiling
+    /// heights, negated component by component, with the same provisional sides.
+    #[test]
+    fn ceiling_normals_are_negated() {
+        let c = block_at(0, 0);
+        let east = block_at(1, 0);
+        let nb = Neighbours::NONE.with(Side::East, Some(&east));
+        let up = VertexNormals::compute(&c, &nb);
+        let down = VertexNormals::ceiling(&c, &nb);
+        for (u, d) in up.as_slice().iter().zip(down.as_slice()) {
+            assert_eq!(*d, u.map(|x| -x));
+            assert!(d[2] < 0.0);
+        }
+        for side in Side::ALL {
+            assert_eq!(down.is_provisional(side), up.is_provisional(side));
+        }
+        assert!(!down.is_provisional(Side::East));
+        assert!(down.is_provisional(Side::West));
+        assert!(down.negated() == up);
     }
 
     #[test]

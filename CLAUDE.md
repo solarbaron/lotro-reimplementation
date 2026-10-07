@@ -80,6 +80,27 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
+- **M4.5 (world fidelity), in progress; exit verification 2026-10-06, criteria 4, 5, 6, 9
+  re-verified 2026-10-07** (`docs/ROADMAP.md` M4.5 status): every deliverable exists (new
+  decoders, `tessera-physics` with the 1/60 s controller, decision 0013; scenery, frills,
+  water, sky/clock, lighting, draw distances in `tessera-world`; lit, terrain-layer, water,
+  sky and instanced pipelines; walker `--walk-path`, switches, clock; explorer/dattool
+  views). Criteria 1, 2, 3, 7, 8 pass. Not met: 4 (25 / 32 walks; generated objects 1 of 3
+  (GN1, GN2, GN4 fail), caves 1 of 2 (CV1, CV2 fail), WL2 and FR1 near misses; soak 0
+  fall-throughs), 6 (45 / 54 rows pass on the image; L5 fails, T4, T5, T12, T15, T16, Y2,
+  L2, L7 not judgeable from their cameras), 9 (`walker.md` §13–§14 and `render.md` §4–§5
+  reviewed twice, changes requested; ten specs of the M4.5 table are Revised, not
+  Accepted). 5: one M3-b run under load passed (0 over 50 ms, 0 holes), indicative; the
+  owner re-measures on a quiet machine. `cargo clippy -D warnings` fails on one lint in
+  `crates/physics/src/controller/step.rs`; full release test run 2,613 passed, 1 failed
+  (load-sensitive `flight_across_a_region`, passes alone).
+- **Held diffs (2026-10-07):** the uncommitted `crates/render/**`, `apps/client/**`,
+  `crates/physics/**` and `crates/world/src/scenery/**`/`frills/**` diffs are held by
+  `docs/decisions/proposed-incident-2026-10-07-review-notes.md` (implementer task texts
+  carried dirty-room reviewer reports). A maintainer decides on them before any commit;
+  the M4.5 re-verification results were measured with them in the tree. Do not re-run the
+  milestone workflow for implementer tasks until its task text carries only the task, spec
+  paths and review status. M5 waits.
 - **M7 (branch `m7`, built in parallel with M4.5–M6, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
   decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
@@ -89,14 +110,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   owner's confirmation of LEGAL.md §11.1 before any public test build, re-running the soaks
   from the merge commit, and the review notes in `tessera-protocol.md` §17 and
   `test-server.md` §15. Evidence: ROADMAP M7 status and `docs/perf/m7-soak.md`.
-- **Next:** M4.5, world fidelity (owner decision 2026-10-06: it runs before M5; M5–M8 keep
-  their numbers): terrain texturing, scenery and grass, collision and the walk controller
-  (new crate `tessera-physics`), water, materials and the lit pipeline, sky, time of day
-  and fog. Plan and exit criteria: `docs/ROADMAP.md` M4.5. Run it with
-  `.claude/workflows/tessera-milestone.js` (milestone "M4.5").
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
-  M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M7 items
-  O70–O73). These do not block M5.
+  M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
+  O18–O27, M7 items O70–O73). They do not block the Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
@@ -130,6 +146,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/wstate` — WLib class library and WState object graph
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
+- `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here); depends only on `formats` and `props`, `world` may depend on it (decision 0013)
 - `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions

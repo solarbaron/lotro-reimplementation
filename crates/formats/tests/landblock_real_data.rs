@@ -27,7 +27,8 @@ use std::sync::{Mutex, OnceLock};
 
 use tessera_dat::{ArchiveKind, ArchiveSet, Entry, SetOptions};
 use tessera_formats::landblock::{
-    FailureCategory, GRID_SIDE, LandblockPids, LayoutRule, StaticEntityType, vertex_xy,
+    FailureCategory, GRID_SIDE, GRID_TRIANGLE_COUNT, GridSurface, LandblockPids, LayerKind,
+    LayoutRule, StaticEntityType, vertex_xy,
 };
 use tessera_formats::{
     BlockMap, BlockMapDescriptor, Did, LandblockData, LandblockGroupRecord, LandblockInfo,
@@ -235,11 +236,11 @@ struct DataSummary {
     /// Edges: i = 0 column, i = 32 column, j = 0 row, j = 32 row (33 samples each).
     edges: Box<[[u16; GRID_SIDE]; 4]>,
     rule: LayoutRule,
-    /// Ceiling-layer triangles: (uses the flagged diagonal, uses the other, CCW from above).
+    /// Ceiling-layer triangles: (use the bit-0 diagonal, use the other, CCW from above).
     ceiling_tris: [usize; 3],
 }
 
-/// Census of ceiling triangles against the terrain's vertex-flag diagonals (§3.5 OPEN).
+/// Census of ceiling triangles against the bit-0 (ceiling) diagonals of §3.5–§3.6.
 fn ceiling_triangle_census(d: &LandblockData) -> [usize; 3] {
     let mut out = [0usize; 3];
     let Some(c) = &d.ceiling else { return out };
@@ -249,7 +250,7 @@ fn ceiling_triangle_census(d: &LandblockData) -> [usize; 3] {
             let i = p.iter().map(|q| q.0).min().unwrap();
             let j = p.iter().map(|q| q.1).min().unwrap();
             let sw_ne = p.contains(&(i, j)) && p.contains(&(i + 1, j + 1));
-            if sw_ne == d.vertex_flags.split_sw_ne(i, j) {
+            if sw_ne == d.vertex_flags.ceiling_split_sw_ne(i, j) {
                 out[0] += 1;
             } else {
                 out[1] += 1;
@@ -338,6 +339,9 @@ fn landblock_data_decodes() {
                             s,
                         );
                     }
+                    if let Some(why) = grid_queries_unusual(&d) {
+                        return Outcome::Unusual(e.did, why, s);
+                    }
                     match d.first_unusual_field() {
                         None => Outcome::Clean(e.did, s),
                         Some(why) => Outcome::Unusual(e.did, why, s),
@@ -380,15 +384,50 @@ fn landblock_data_decodes() {
     }
     eprintln!("HM7 seams: {seam_bad} of {seam_pairs} neighbour pairs differ");
     eprintln!(
-        "ceiling triangles: {} use the flagged diagonal, {} the other; {} counter-clockwise from above",
+        "ceiling triangles: {} use the bit-0 diagonal, {} the other; {} counter-clockwise from above",
         ceiling_tris[0], ceiling_tris[1], ceiling_tris[2]
     );
+    // landblock.md §3.5 (L6a): every stored ceiling triangle uses bit 0, clockwise from above.
+    assert_eq!(
+        ceiling_tris[1], 0,
+        "ceiling triangles off the bit-0 diagonal"
+    );
+    assert_eq!(ceiling_tris[2], 0, "counter-clockwise ceiling triangles");
     check(&all, "landblock data (all regions)");
     assert_eq!(seam_bad, 0, "HM7 violated");
     assert!(
         seam_pairs > 0 || !exhaustive(),
         "no neighbour pairs checked"
     );
+}
+
+/// §3.11 at every grid sample returns the stored sample exactly (terrain and ceiling), and
+/// every `whole` layer covers all 2,048 grid triangles (§3.8.2).
+fn grid_queries_unusual(d: &LandblockData) -> Option<&'static str> {
+    for i in 0..33usize {
+        for j in 0..33usize {
+            let (x, y) = (5.0 * i as f32, 5.0 * j as f32);
+            if d.terrain_height(x, y) != d.heights.height(i, j) {
+                return Some("terrain height at a grid sample is not the sample");
+            }
+            if let Some(c) = &d.ceiling
+                && d.ceiling_height(x, y) != c.heights.height(i, j)
+            {
+                return Some("ceiling height at a grid sample is not the sample");
+            }
+        }
+    }
+    for surface in [GridSurface::Terrain, GridSurface::Ceiling] {
+        let Some(c) = d.surface_chunk(surface) else {
+            continue;
+        };
+        for l in c.layers.iter().filter(|l| l.kind() == LayerKind::Whole) {
+            if d.layer_triangles(surface, l).map(|t| t.len()) != Some(GRID_TRIANGLE_COUNT) {
+                return Some("whole layer does not cover every grid triangle");
+            }
+        }
+    }
+    None
 }
 
 /// Offset of `has_ceiling` in a landblock-data payload: header + height grid (§3.1).
@@ -823,4 +862,73 @@ fn entities_rest_on_terrain() {
     );
     assert!(n > 0);
     assert!(share > 0.3, "placements do not follow the terrain");
+}
+
+/// water.md §9 / WA5 from the landblock side: for every landblock of a kind-5 sector whose
+/// block map gives a non-zero water type (key 7) and a level (key 4) above the block's lowest
+/// sample (water.md §6.2 steps 5–7), the pair (type, level × 1000 / 255 in f32) occurs in the
+/// sector's trailing section as its 5 stored bytes. Water types the region's water table
+/// marks dry are not known here (that table is decoded elsewhere), so this is a census: a
+/// miss is reported, not fatal, unless misses are common.
+#[test]
+fn sector_water_pairs_match_block_maps() {
+    use tessera_formats::landblock::{SectorWaterPair, height_from_raw};
+    let Some(set) = open_set() else { return };
+    let entries: Vec<_> = landblock_entries(set, 5, false)
+        .into_values()
+        .flatten()
+        .collect();
+    let work = sample(&entries);
+    let results = par_each(&work, |(i, e)| {
+        let archive = &set.member(*i).archive;
+        let sector = LandblockGroupRecord::parse(&archive.read_entry(e).ok()?).ok()?;
+        let (mut predicted, mut found) = (0usize, 0usize);
+        for (x, y) in sector.sector_landblocks() {
+            let lb = sector.did.0 & 0x000F_0000;
+            let block = (u32::from(x) << 8) | u32::from(y);
+            let Ok(map) = set.read(0x8010_0000 | lb | block) else {
+                continue;
+            };
+            let Ok(map) = BlockMap::parse(&map) else {
+                continue;
+            };
+            let (Some(t), Some(level)) = (map.get(7), map.get(4)) else {
+                continue;
+            };
+            let Ok(t) = u8::try_from(t) else { continue };
+            if t == 0 {
+                continue; // always dry in this install (water.md §6.2 step 4)
+            }
+            let Ok(data) = set.read(0x8000_0000 | lb | block) else {
+                continue;
+            };
+            let Ok((_, _, heights)) = LandblockData::parse_heights(&data) else {
+                continue;
+            };
+            // water.md §6.2 step 6: f32(L) × 1000.0, then × the f32 nearest 1/255.
+            let h = (f32::from(level) * 1000.0) * (1.0f32 / 255.0);
+            if h <= height_from_raw(heights.min_max().0) {
+                continue;
+            }
+            predicted += 1;
+            found += usize::from(sector.tail_contains_water_pair(SectorWaterPair {
+                water_type: t,
+                height: h,
+            }));
+        }
+        Some((predicted, found))
+    });
+    let (predicted, found) = results
+        .into_iter()
+        .flatten()
+        .fold((0, 0), |(a, b), (c, d)| (a + c, b + d));
+    eprintln!(
+        "sector water pairs: {found} of {predicted} predicted (type ≠ 0, level above the \
+         lowest sample) occur in their sector's trailing section"
+    );
+    // Dry types other than 0 are rare (one block in region 2, water.md §6.1).
+    assert!(
+        found * 1000 >= predicted * 999,
+        "sector water pairs missing"
+    );
 }

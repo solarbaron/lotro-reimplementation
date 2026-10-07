@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Block maps, block-map descriptors and region descriptors
-//! (`docs/specs/landblock.md` §5, `docs/specs/environment.md` §3.1) on arbitrary bytes.
+//! Block maps and block-map descriptors (`docs/specs/landblock.md` §5) on arbitrary bytes.
+//! (Region descriptors, which name the block-map descriptor, have their own target,
+//! `formats_region_descriptor`.)
 //! Descriptors are decoded with a total synthetic schema; the input is also split in two
 //! and the halves resolved against each other.
 //!
@@ -44,10 +45,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = d.first_unusual_field();
     }
     if let Ok(r) = RegionDescriptor::parse(data) {
-        assert_eq!(data.len(), 114);
+        // Also reached here so that block-map inputs exercise the lookup of their descriptor.
         let _ = r.block_map_descriptor();
-        let _ = r.first_unusual_field();
-        let _ = r.map_origin_units();
     }
     // Resolve a map against a descriptor taken from the two halves of the input.
     if data.len() >= 2 {

@@ -28,13 +28,21 @@ pub enum ViewKind {
     /// Character viewer and animation browser (M4): available for every record; a 0x47,
     /// 0x04 or weenie record becomes the figure, a 0x05 clip plays, an item is previewed.
     Character,
+    /// A landblock (any landblock-family record, M4.5): terrain map, generated scenery,
+    /// statics, cells, landblock water and the collision summary.
+    Landblock,
+    /// Sky descriptions (0x15) and day descriptions (0x1A, M4.5): the day-description
+    /// choice and the blended keyframe timeline over the game day.
+    Sky,
 }
 
 impl ViewKind {
     /// Every view, in tab order.
-    pub const ALL: [ViewKind; 9] = [
+    pub const ALL: [ViewKind; 11] = [
         ViewKind::Info,
         ViewKind::Mesh,
+        ViewKind::Landblock,
+        ViewKind::Sky,
         ViewKind::Character,
         ViewKind::Texture,
         ViewKind::Strings,
@@ -57,6 +65,8 @@ impl ViewKind {
             Self::Record => "Record",
             Self::Mesh => "3D",
             Self::Character => "Character",
+            Self::Landblock => "Landblock",
+            Self::Sky => "Sky",
         }
     }
 
@@ -70,9 +80,11 @@ impl ViewKind {
             Self::Strings => prefix == 0x25,
             Self::Props => matches!(prefix, 0x70..=0x7F),
             Self::Icon => matches!(prefix, 0x41 | 0x70..=0x7F),
-            Self::Record => tessera_formats::AnyRecord::is_decodable(did),
+            Self::Record => crate::decoders::is_record_decodable(did),
             Self::Mesh => crate::scene::SceneSource::of(did).is_some(),
             Self::Character => true,
+            Self::Landblock => crate::world::landblock_of(did).is_some(),
+            Self::Sky => matches!(prefix, 0x15 | 0x1A),
         }
     }
 
@@ -85,6 +97,9 @@ impl ViewKind {
             0x70..=0x7F => Self::Props,
             0x06 | 0x04 | 0x1F | 0x47 | 0x20 | 0x31 | 0x30 => Self::Mesh,
             0x05 => Self::Character,
+            0x80 if Self::Landblock.applies_to(did) => Self::Landblock,
+            0x15 | 0x1A => Self::Sky,
+            0x66 | 0x01 => Self::Mesh,
             _ if Self::Record.applies_to(did) => Self::Record,
             _ => Self::Hex,
         }
@@ -408,7 +423,19 @@ mod tests {
         assert_eq!(ViewKind::default_for(0x2800_0000), ViewKind::Record);
         assert_eq!(ViewKind::default_for(0x0600_0001), ViewKind::Mesh);
         assert_eq!(ViewKind::default_for(0x4700_0001), ViewKind::Mesh);
-        assert_eq!(ViewKind::default_for(0x0100_0001), ViewKind::Hex);
+        // M4.5: cells and collision meshes open in the 3D view, landblocks in the
+        // landblock view, sky and day descriptions in the sky view.
+        assert_eq!(ViewKind::default_for(0x0100_0001), ViewKind::Mesh);
+        assert_eq!(ViewKind::default_for(0x6600_0001), ViewKind::Mesh);
+        assert_eq!(ViewKind::default_for(0x8001_3040), ViewKind::Landblock);
+        assert_eq!(ViewKind::default_for(0x8101_3040), ViewKind::Hex);
+        assert_eq!(ViewKind::default_for(0x1500_0007), ViewKind::Sky);
+        assert_eq!(ViewKind::default_for(0x1A00_0001), ViewKind::Sky);
+        assert_eq!(ViewKind::default_for(0x1900_0000), ViewKind::Record);
+        assert_eq!(ViewKind::default_for(0x0200_0001), ViewKind::Record);
+        assert!(ViewKind::Record.applies_to(0x0100_0001));
+        assert!(ViewKind::Mesh.applies_to(0x8001_3040));
+        assert!(!ViewKind::Sky.applies_to(0x1900_0000));
         assert!(ViewKind::Mesh.applies_to(0x7900_0001));
         assert!(ViewKind::Mesh.applies_to(0x3100_0001));
         assert!(!ViewKind::Mesh.applies_to(0x4100_0001));

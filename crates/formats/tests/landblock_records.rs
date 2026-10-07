@@ -10,12 +10,14 @@ use std::f32::consts::FRAC_1_SQRT_2;
 
 use common::B;
 use tessera_formats::landblock::{
-    BlockMapEntry, BlockMapProperty, COARSE_SAMPLES, Ceiling, Cell, CollisionTree, FailureCategory,
-    GRID_SAMPLES, GROUP_SAMPLE_COUNT, HeightGrid, InstanceId, LandblockBox, LandblockPids,
-    LayerKind, LayoutRule, MAX_PLACEMENT_COORD, MAX_STATIC_ENTITIES, PaletteValue, Placement,
-    QUAD_COUNT, StaticEntity, StaticEntityType, SurfaceChunk, SurfaceLayer, VertexFlags,
-    height_from_raw, landblock_did, quad_triangles, region_position, vertex_to_height_index,
-    vertex_xy,
+    BlockMapEntry, BlockMapProperty, COARSE_SAMPLES, Ceiling, Cell, CollisionTree,
+    DistantLandscapeSector, FailureCategory, GRID_SAMPLES, GRID_TRIANGLE_COUNT, GROUP_SAMPLE_COUNT,
+    GridSurface, HeightGrid, InstanceId, LandblockBox, LandblockPids, LayerKind, LayoutRule,
+    LightMaps, MAX_PLACEMENT_COORD, MAX_STATIC_ENTITIES, PaletteValue, Placement, QUAD_COUNT,
+    REGION_DESCRIPTOR_LEN, REGION_DID_MAP_CAPACITY, RegionDidMap, RegionDidMapEntry, RegionTable,
+    SectorWaterPair, StaticEntity, StaticEntityType, SurfaceChunk, SurfaceLayer, VertexFlags,
+    ceiling_quad_triangles, grid_triangle_key, grid_triangle_quad, height_from_raw, landblock_did,
+    light_map_uv, quad_triangles, region_position, vertex_to_height_index, vertex_xy,
 };
 use tessera_formats::setup::Quaternion;
 use tessera_formats::{
@@ -393,6 +395,371 @@ fn terrain_height_follows_the_split_diagonal() {
     assert!(d.quad_triangles(32, 0).is_none());
     let f = VertexFlags::filled(0x80);
     assert!(f.split_sw_ne(0, 0) && !f.split_sw_ne(32, 0));
+}
+
+/// landblock.md §3.11 evaluated with non-negative weights: a query at a grid sample returns
+/// that sample exactly and never leaves the range of the triangle's corners (0–2,000), so
+/// neighbouring blocks agree at shared corners.
+#[test]
+fn terrain_height_stays_within_the_corner_samples() {
+    // Corners (31,31), (32,31), (31,32), (32,32) of quad (31, 31), SW-NE split.
+    for corners in [
+        [65_534u16, 23_739, 47_077, 0],
+        [18_181, 61_649, 65_535, 65_535],
+    ] {
+        let mut g = HeightGrid::flat(0);
+        let raw = g.raw_mut();
+        raw[33 * 31 + 31] = corners[0];
+        raw[33 * 32 + 31] = corners[1];
+        raw[33 * 31 + 32] = corners[2];
+        raw[33 * 32 + 32] = corners[3];
+        let mut d = LandblockData::from_heights(Did(DATA), g);
+        d.vertex_flags.raw_mut()[33 * 31 + 31] = 0x80;
+        let h = |x: f32, y: f32| d.terrain_height(x, y).unwrap();
+        // The four corners are the stored samples, exactly.
+        assert_eq!(h(160.0, 160.0), height_from_raw(corners[3]), "{corners:?}");
+        assert_eq!(h(155.0, 155.0), height_from_raw(corners[0]));
+        assert_eq!(h(160.0, 155.0), height_from_raw(corners[1]));
+        assert_eq!(h(155.0, 160.0), height_from_raw(corners[2]));
+        let lo = corners
+            .iter()
+            .map(|&c| height_from_raw(c))
+            .fold(f32::MAX, f32::min);
+        let hi = corners
+            .iter()
+            .map(|&c| height_from_raw(c))
+            .fold(f32::MIN, f32::max);
+        for (x, y) in [
+            (160.0, 157.3),
+            (157.3, 160.0),
+            (159.999, 159.998),
+            (155.0001, 159.9999),
+            (157.5, 157.5),
+            (160.0, 155.0001),
+        ] {
+            let v = h(x, y);
+            assert!(
+                (lo..=hi).contains(&v) && (0.0..=2000.0).contains(&v),
+                "({x}, {y}): {v}"
+            );
+        }
+        // The same corners on the SE-NW split.
+        d.vertex_flags.raw_mut()[33 * 31 + 31] = 0;
+        assert_eq!(
+            d.terrain_height(160.0, 160.0),
+            Some(height_from_raw(corners[3]))
+        );
+        assert_eq!(
+            d.terrain_height(160.0, 155.0),
+            Some(height_from_raw(corners[1]))
+        );
+        assert_eq!(
+            d.terrain_height(155.0, 160.0),
+            Some(height_from_raw(corners[2]))
+        );
+    }
+    // Two neighbouring blocks agree along their shared edge (x = 160 here, x = 0 there).
+    let mut west = LandblockData::from_heights(Did(DATA), HeightGrid::from_fn(ramp));
+    let mut east = LandblockData::from_heights(
+        Did(DATA),
+        HeightGrid::from_fn(|i, j| ramp(32, j) + 7 * i as u16),
+    );
+    for split in [0x80u8, 0] {
+        for j in 0..32 {
+            west.vertex_flags.raw_mut()[33 * 31 + j] = split;
+            east.vertex_flags.raw_mut()[j] = split ^ 0x80;
+        }
+        for y in [0.0, 3.3, 77.7, 155.0, 160.0] {
+            assert_eq!(
+                west.terrain_height(160.0, y),
+                east.terrain_height(0.0, y),
+                "{y}"
+            );
+        }
+    }
+}
+
+/// Checks both seams of a global grid (`global(gi, gj)` gives the raw height sample) for
+/// every pairing of the two diagonals at the given offsets along the edge.
+fn assert_seams_agree(global: &dyn Fn(usize, usize) -> u16, samples: &[f32], label: &str) {
+    let block = |oi: usize, oj: usize| {
+        LandblockData::from_heights(
+            Did(DATA),
+            HeightGrid::from_fn(|i, j| global(i + oi, j + oj)),
+        )
+    };
+    for (near, far) in [(0x80u8, 0x80u8), (0x80, 0), (0, 0x80), (0, 0)] {
+        // West/east: x = 160 in the west block is x = 0 in the east block.
+        let (mut west, mut east) = (block(0, 0), block(32, 0));
+        // South/north: y = 160 in the south block is y = 0 in the north block.
+        let (mut south, mut north) = (block(0, 0), block(0, 32));
+        for k in 0..32 {
+            west.vertex_flags.raw_mut()[33 * 31 + k] = near;
+            east.vertex_flags.raw_mut()[k] = far;
+            south.vertex_flags.raw_mut()[33 * k + 31] = near;
+            north.vertex_flags.raw_mut()[33 * k] = far;
+        }
+        for &t in samples {
+            assert_eq!(
+                west.terrain_height(160.0, t).map(f32::to_bits),
+                east.terrain_height(0.0, t).map(f32::to_bits),
+                "{label}: x seam, splits {near:#x}/{far:#x}, y = {t:e}"
+            );
+            assert_eq!(
+                south.terrain_height(t, 160.0).map(f32::to_bits),
+                north.terrain_height(t, 0.0).map(f32::to_bits),
+                "{label}: y seam, splits {near:#x}/{far:#x}, x = {t:e}"
+            );
+        }
+    }
+}
+
+/// landblock.md §3.11 and §3.3 (HM7): neighbouring blocks share their edge samples, so the
+/// surface heights along the shared edge must agree bit for bit, for every pairing of the
+/// two diagonals, including fractions so small that `1 + f` rounds (the first row or
+/// column of quads, below 5 units).
+#[test]
+fn neighbouring_blocks_agree_bit_for_bit_along_the_shared_edge() {
+    // A steep, irregular global grid; each block is a 33 x 33 window onto it.
+    let hashed = |gi: usize, gj: usize| -> u16 {
+        let k = (gi * 7_919 + gj * 104_729) as u32;
+        (k.wrapping_mul(2_654_435_761) >> 16) as u16
+    };
+    let mut samples: Vec<f32> = (1..500).map(|k| k as f32 * 0.01).collect();
+    samples.extend((0..2_000).map(|k| k as f32 * 0.0025));
+    samples.extend([
+        0.0,
+        f32::MIN_POSITIVE,
+        1.0e-30,
+        1.0e-8,
+        2f32.powi(-24),
+        2f32.powi(-25),
+        2f32.powi(-23) * 3.0,
+        4.999_999_5,
+        5.0,
+        77.7,
+        155.0,
+        159.999_99,
+        160.0,
+    ]);
+    assert_seams_agree(&hashed, &samples, "hashed");
+}
+
+/// The same seam property where the shared edge is flat (equal adjacent edge samples, as
+/// is common in real terrain) and the interior samples on either side straddle the edge
+/// height, one block's above it and the other's below. An edge sum rounded 1 ulp past the
+/// edge height must be clamped back identically in both blocks.
+#[test]
+fn neighbouring_blocks_agree_bit_for_bit_along_a_flat_edge_between_straddling_interiors() {
+    // Global index 32 is the shared edge; 31 lies in the first block, 33 in the second.
+    let straddle = |a: u16, b: u16| {
+        move |g: usize| -> u16 {
+            match g {
+                31 => a,
+                33 => b,
+                _ if g < 32 => a / 2,
+                _ if g > 32 => b / 2,
+                _ => 30_000,
+            }
+        }
+    };
+    let samples: Vec<f32> = (1..=20_000).map(|k| k as f32 * 0.008).collect();
+    for (a, b) in [(60_000u16, 1_000u16), (1_000, 60_000)] {
+        let col = straddle(a, b);
+        // Columns vary across the x seam, constant along it.
+        let columns = |gi: usize, _gj: usize| col(gi);
+        assert_seams_agree(&columns, &samples, &format!("columns {a}/30000/{b}"));
+        // Rows vary across the y seam, constant along it.
+        let rows = |_gi: usize, gj: usize| col(gj);
+        assert_seams_agree(&rows, &samples, &format!("rows {a}/30000/{b}"));
+    }
+}
+
+/// landblock.md §3.8.2: a `whole` layer covers all 2,048 grid triangles of its surface
+/// (bit 7 and counter-clockwise in a terrain chunk, bit 0 and clockwise in a ceiling chunk).
+#[test]
+fn whole_layers_cover_every_grid_triangle() {
+    let mut d = full_data(Some(1));
+    // Make the two diagonal bits differ on quad (0, 0).
+    d.vertex_flags.raw_mut()[0] = 0x80;
+    let whole = d.terrain.layers[2];
+    assert_eq!(whole.kind(), LayerKind::Whole);
+    for surface in [GridSurface::Terrain, GridSurface::Ceiling] {
+        let tris = d.layer_triangles(surface, &whole).unwrap();
+        assert_eq!(tris.len(), GRID_TRIANGLE_COUNT);
+        for (key, t) in tris.iter().enumerate() {
+            let want = d.grid_triangle(surface, key as u16).unwrap();
+            let got = t.map(|v| vertex_xy(v).unwrap());
+            assert_eq!(got, want, "{surface:?} key {key}");
+        }
+        // Quad (0, 0): bit 7 set (SW-NE) for the terrain, bit 0 clear (SE-NW) for the
+        // ceiling.
+        let first: Vec<[u16; 3]> = tris[..2].to_vec();
+        let expect = match surface {
+            GridSurface::Terrain => quad_triangles(0, 0, true),
+            GridSurface::Ceiling => ceiling_quad_triangles(0, 0, false),
+        };
+        for t in expect {
+            assert!(
+                first.contains(&t.map(|(x, y)| v(x, y))),
+                "{surface:?} {t:?}"
+            );
+        }
+    }
+    // Stored windows come back as triangles; empty layers have none.
+    let c = &d.terrain;
+    let masked = d
+        .layer_triangles(GridSurface::Terrain, &c.layers[0])
+        .unwrap();
+    assert_eq!(masked.concat(), c.layer_indices(&c.layers[0]).unwrap());
+    assert!(
+        d.layer_triangles(GridSurface::Terrain, &c.layers[1])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(d.surface_chunk(GridSurface::Ceiling).is_some());
+    let bare = LandblockData::from_heights(Did(DATA), HeightGrid::flat(0));
+    assert_eq!(bare.layer_triangles(GridSurface::Ceiling, &whole), None);
+    assert!(bare.surface_chunk(GridSurface::Ceiling).is_none());
+}
+
+/// landblock.md §3.5–§3.6: ceiling quads split by bit 0, triangles clockwise from above.
+#[test]
+fn ceiling_quads_use_bit_0_and_face_down() {
+    for split in [false, true] {
+        let up = quad_triangles(3, 4, split);
+        let down = ceiling_quad_triangles(3, 4, split);
+        for (u, t) in up.iter().zip(&down) {
+            assert_eq!([u[2], u[1], u[0]], *t);
+            let c = |k: usize| (t[k].0 as i64, t[k].1 as i64);
+            let ((ax, ay), (bx, by), (cx, cy)) = (c(0), c(1), c(2));
+            assert!((bx - ax) * (cy - ay) - (by - ay) * (cx - ax) < 0, "{t:?}");
+        }
+    }
+    // Bit 0 and bit 7 are independent.
+    let mut f = VertexFlags::filled(0);
+    f.raw_mut()[33 * 2 + 5] = 0x01;
+    f.raw_mut()[33 * 4 + 1] = 0x80;
+    assert!(f.ceiling_split_sw_ne(2, 5) && !f.split_sw_ne(2, 5));
+    assert!(f.split_sw_ne(4, 1) && !f.ceiling_split_sw_ne(4, 1));
+    assert!(f.surface_split_sw_ne(GridSurface::Ceiling, 2, 5));
+    assert!(!f.ceiling_split_sw_ne(32, 0) && !f.ceiling_split_sw_ne(0, 32));
+    assert_eq!(GridSurface::Terrain.diagonal_bit(), 0x80);
+    assert_eq!(GridSurface::Ceiling.diagonal_bit(), 0x01);
+
+    let mut d = full_data(Some(1));
+    assert_eq!(d.first_unusual_field(), None);
+    // Byte 0 = 0x80 | 127: bit 0 set, so the ceiling quad (0, 0) is split SW-NE.
+    assert_eq!(
+        d.ceiling_quad_triangles(0, 0),
+        Some(ceiling_quad_triangles(0, 0, true))
+    );
+    // Bit 7 alone does not split the ceiling: the stored ceiling triangles now break HM6.
+    d.vertex_flags.raw_mut()[0] = 0x80;
+    assert!(
+        d.first_unusual_field()
+            .unwrap()
+            .contains("ceiling triangle does not use the bit-0 diagonal")
+    );
+    // Counter-clockwise ceiling triangles are unusual.
+    let mut d = full_data(Some(1));
+    d.ceiling.as_mut().unwrap().surface.indices.swap(1, 2);
+    assert!(d.first_unusual_field().unwrap().contains("clockwise"));
+    // No ceiling: ceiling queries answer None.
+    let d = LandblockData::from_heights(Did(DATA), HeightGrid::flat(7));
+    assert_eq!(d.ceiling_quad_triangles(0, 0), None);
+    assert_eq!(d.ceiling_height(1.0, 1.0), None);
+    assert_eq!(d.surface_tree(GridSurface::Ceiling), None);
+    assert_eq!(d.grid_triangle(GridSurface::Ceiling, 0), None);
+}
+
+#[test]
+fn ceiling_height_follows_bit_0() {
+    // Only ceiling corner (1, 1) of quad (0, 0) is raised.
+    let mut g = HeightGrid::flat(0);
+    g.raw_mut()[33 + 1] = 32_768;
+    let mut d = LandblockData::from_heights(Did(DATA), HeightGrid::flat(0));
+    d.ceiling = Some(Ceiling {
+        heights: g,
+        tree: None,
+        surface: SurfaceChunk::default(),
+    });
+    // Bit 7 set, bit 0 clear: the ceiling is split SE-NW, centre on the diagonal → 0.
+    d.vertex_flags.raw_mut()[0] = 0x80;
+    assert!(d.ceiling_height(2.5, 2.5).unwrap().abs() < 1e-3);
+    assert!((d.ceiling_height(3.75, 3.75).unwrap() - 500.0).abs() < 0.01);
+    // Bit 0 set: SW-NE, half height at the centre.
+    d.vertex_flags.raw_mut()[0] = 0x01;
+    assert!((d.ceiling_height(2.5, 2.5).unwrap() - 500.0).abs() < 0.01);
+    assert_eq!(d.ceiling_height(f32::NAN, 0.0), None);
+    let c = d.ceiling.as_ref().unwrap();
+    assert!(c.has_sample(1, 1) && !c.has_sample(0, 0) && !c.has_sample(33, 0));
+}
+
+/// collision.md §6.2: keys 2 · (32 · j + i) (+ 1), the key-base triangle west of the
+/// diagonal; every key names one of the quad's two triangles.
+#[test]
+fn grid_triangle_keys() {
+    assert_eq!(GRID_TRIANGLE_COUNT, 2048);
+    assert_eq!(grid_triangle_key(0, 0, true), Some(0));
+    assert_eq!(grid_triangle_key(0, 0, false), Some(1));
+    assert_eq!(grid_triangle_key(1, 0, true), Some(2));
+    assert_eq!(grid_triangle_key(0, 1, true), Some(64));
+    assert_eq!(grid_triangle_key(31, 31, false), Some(2047));
+    assert_eq!(grid_triangle_key(32, 0, true), None);
+    assert_eq!(grid_triangle_quad(64), Some((0, 1, true)));
+    assert_eq!(grid_triangle_quad(2047), Some((31, 31, false)));
+    assert_eq!(grid_triangle_quad(2048), None);
+    for key in 0..2048u16 {
+        let (i, j, west) = grid_triangle_quad(key).unwrap();
+        assert_eq!(grid_triangle_key(i, j, west), Some(key));
+    }
+    let mut d = LandblockData::from_heights(Did(DATA), HeightGrid::from_fn(ramp));
+    // SE-NW quad (2, 3): the west triangle is (i, j), (i + 1, j), (i, j + 1).
+    let base = grid_triangle_key(2, 3, true).unwrap();
+    assert_eq!(
+        d.grid_triangle(GridSurface::Terrain, base),
+        Some([(2, 3), (3, 3), (2, 4)])
+    );
+    // SW-NE quad: the west triangle is (i, j), (i + 1, j + 1), (i, j + 1).
+    d.vertex_flags.raw_mut()[33 * 2 + 3] = 0x80;
+    assert_eq!(
+        d.grid_triangle(GridSurface::Terrain, base),
+        Some([(2, 3), (3, 4), (2, 4)])
+    );
+    assert_eq!(
+        d.grid_triangle(GridSurface::Terrain, base + 1),
+        Some([(2, 3), (3, 3), (3, 4)])
+    );
+    let p = d
+        .grid_triangle_positions(GridSurface::Terrain, base)
+        .unwrap();
+    assert_eq!(p[0], [10.0, 15.0, height_from_raw(ramp(2, 3))]);
+    assert_eq!(p[1], [15.0, 20.0, height_from_raw(ramp(3, 4))]);
+    assert_eq!(d.grid_triangle(GridSurface::Terrain, 2048), None);
+    // The two keys of every quad cover the quad: each corner pair (diagonal) is shared.
+    for key in (0..2048u16).step_by(2) {
+        let a = d.grid_triangle(GridSurface::Terrain, key).unwrap();
+        let b = d.grid_triangle(GridSurface::Terrain, key + 1).unwrap();
+        let shared = a.iter().filter(|c| b.contains(c)).count();
+        assert_eq!(shared, 2, "{key}");
+    }
+    // Ceiling keys use bit 0 and the clockwise winding.
+    d.ceiling = Some(Ceiling {
+        heights: HeightGrid::flat(100),
+        tree: Some(tree(&[0x28], None)),
+        surface: SurfaceChunk::default(),
+    });
+    d.vertex_flags.raw_mut()[33 * 2 + 3] = 0x01;
+    assert_eq!(
+        d.grid_triangle(GridSurface::Ceiling, base),
+        Some([(2, 4), (3, 4), (2, 3)])
+    );
+    assert!(d.surface_tree(GridSurface::Ceiling).is_some());
+    assert_eq!(d.surface_tree(GridSurface::Terrain), None);
+    let t = tree(&[0x28, 1, 2], Some(1));
+    assert_eq!(t.stored_len(), 12 + 4 + 4 + 3 + 1);
+    assert_eq!(t.to_bytes().len(), t.stored_len());
 }
 
 // ---------------------------------------------------------------- landblock info
@@ -1104,16 +1471,18 @@ fn bucket_order_is_checked() {
     assert!(m.first_unusual_field().is_some());
 }
 
+/// The 114-byte layout of every observed record (`environment.md` §3.1): fixed fields, maps
+/// 1–7 with one key-0 entry each, maps 8–9 empty, then the trailing 0x19 DID.
 fn region_descriptor_bytes() -> Vec<u8> {
     let mut b = B::new()
         .u32(0x0F00_0001)
         .u32(2)
-        .f32(8.85)
+        .u32(0x410D_9AE6)
         .u32(2)
         .u32(1468)
         .u32(1244)
-        .u32(0)
-        .u32(0)
+        .f32(0.0)
+        .f32(0.0)
         .f32(0.005);
     for did in [
         0x1100_0001u32,
@@ -1124,33 +1493,205 @@ fn region_descriptor_bytes() -> Vec<u8> {
         0x1700_0001,
         0x1800_0014,
     ] {
-        b = b.u8(1).u8(1).u32(0).u32(did);
+        b = b.tsize(1, 1).u32(0).u32(did);
     }
-    b.bytes(&[1, 0, 1, 0]).u32(0x1900_0001).build()
+    b.tsize(1, 0).tsize(1, 0).u32(0x1900_0001).build()
 }
 
 #[test]
 fn region_descriptor_names_its_tables() {
     let bytes = region_descriptor_bytes();
-    assert_eq!(bytes.len(), 114);
+    assert_eq!(bytes.len(), REGION_DESCRIPTOR_LEN);
     let d = RegionDescriptor::parse(&bytes).unwrap();
     assert_eq!(d.region, 2);
+    assert_eq!(d.map_image, Did(0x410D_9AE6));
+    assert_eq!(d.value_12, 2);
+    assert_eq!(d.map_offset, [0.0, 0.0]);
+    // environment.md §3.2, row 0x0F000001.
+    assert_eq!(d.scene_choice_table(), Some(Did(0x1100_0001)));
+    assert_eq!(d.terrain_scene_table(), Some(Did(0x1200_0001)));
+    assert_eq!(d.encounter_table(), Some(Did(0x1400_0001)));
+    assert_eq!(d.sky_description(), Some(Did(0x1500_0007)));
+    assert_eq!(d.water_table(), Some(Did(0x1600_0004)));
+    assert_eq!(d.fog_zone_table(), Some(Did(0x1700_0001)));
     assert_eq!(d.block_map_descriptor(), Some(Did(0x1800_0014)));
-    assert_eq!(d.table(0x19), Some(Did(0x1900_0001)));
-    assert_eq!(d.table(0x20), None);
+    assert_eq!(d.terrain_type_table(), Some(Did(0x1900_0001)));
+    for (t, did) in d.tables() {
+        assert_eq!(did.unwrap().prefix(), t.prefix(), "{}", t.name());
+        assert_eq!(d.table_with_prefix(t.prefix()), did);
+    }
+    let slots: Vec<usize> = RegionTable::ALL.iter().map(|t| t.slot()).collect();
+    assert_eq!(slots, (1..=8).collect::<Vec<_>>());
+    assert_eq!(d.table_with_prefix(0x20), None);
+    assert!(d.maps[7].entries().is_empty() && d.maps[8].entries().is_empty());
+    // Copy, so callers can keep it by value.
+    let copy = d;
+    assert_eq!(copy, d);
     assert_eq!(d.map_origin_units(), [29_360.0, 24_880.0]);
+    // coordinates.md §8.4 D: the origin is (0, 0) exactly.
+    assert_eq!(d.map_coordinates([183, 155], [80.0, 80.0]), [0.0, 0.0]);
     assert_eq!(d.first_unusual_field(), None);
+    assert_eq!(d.to_bytes(), bytes);
     for n in 0..bytes.len() {
         assert!(RegionDescriptor::parse(&bytes[..n]).is_err());
     }
     let mut long = bytes.clone();
     long.push(0);
     assert!(RegionDescriptor::parse(&long).is_err());
+    let mut wrong = bytes.clone();
+    wrong[3] = 0x10;
+    let e = RegionDescriptor::parse(&wrong).unwrap_err();
+    assert!(matches!(e, FormatError::WrongRecordType { .. }));
+}
+
+/// The grammar, not the size, decides (`environment.md` §3.1): extra keys, empty maps and
+/// filled maps 8–9 parse and are reported as unusual; the typed accessors take key 0.
+#[test]
+fn region_descriptor_parses_the_grammar() {
+    let mut b = B::new()
+        .u32(0x0F00_0009)
+        .u32(6)
+        .u32(0x4100_000F)
+        .u32(2)
+        .u32(1)
+        .u32(2)
+        .f32(1.5)
+        .f32(-2.0)
+        .f32(0.01);
+    // Slot 1: two entries, key 0 second. Slot 2: empty. Slots 3–7: one entry each.
+    b = b
+        .tsize(1, 2)
+        .u32(5)
+        .u32(0x1100_0099)
+        .u32(0)
+        .u32(0x1100_000A);
+    b = b.tsize(1, 0);
+    for did in [
+        0x1400_000Au32,
+        0x1500_0007,
+        0x1600_000E,
+        0x1700_000A,
+        0x1900_0000,
+    ] {
+        b = b.tsize(1, 1).u32(0).u32(did);
+    }
+    // Map 8 holds an entry; map 9 is empty; null trailing DID.
+    let bytes = b
+        .tsize(3, 1)
+        .u32(0)
+        .u32(0x2000_0001)
+        .tsize(1, 0)
+        .u32(0)
+        .build();
+    let d = RegionDescriptor::parse(&bytes).unwrap();
+    assert_eq!(d.scene_choice_table(), Some(Did(0x1100_000A)));
+    assert_eq!(d.maps[0].get(5), Some(Did(0x1100_0099)));
+    assert_eq!(d.terrain_scene_table(), None);
+    // Slot 7 names a 0x19 DID: the accessor returns it, the check reports it.
+    assert_eq!(d.block_map_descriptor(), Some(Did(0x1900_0000)));
+    assert_eq!(d.terrain_type_table(), None);
+    assert!(d.first_unusual_field().is_some());
+    // §8.2 step 3 with offsets: (Δ − (f32(X0) · 20) · s) + (X · 160 + x) · s.
+    let m = d.map_coordinates([0, 0], [0.0, 0.0]);
+    assert_eq!(
+        m,
+        [
+            (1.5 - (1.0f32 * 20.0) * 0.01) + 0.0,
+            (-2.0 - (2.0f32 * 20.0) * 0.01) + 0.0
+        ]
+    );
+    assert_eq!(d.to_bytes(), bytes);
+    // A huge map count is rejected before anything is allocated.
+    let huge = B::new()
+        .u32(0x0F00_0000)
+        .bytes(&[0; 32])
+        .tsize(1, 0x3FFF_FFFF)
+        .build();
+    let e = RegionDescriptor::parse(&huge).unwrap_err();
+    assert_eq!(FailureCategory::of(&e), FailureCategory::Truncated);
+    // More entries than the decoder keeps inline: a limit, not a misframe.
+    let mut b = B::new().u32(0x0F00_0000).bytes(&[0; 32]);
+    b = b.tsize(1, REGION_DID_MAP_CAPACITY as u32 + 1);
+    for k in 0..=REGION_DID_MAP_CAPACITY as u32 {
+        b = b.u32(k).u32(0x1100_0000);
+    }
+    let e = RegionDescriptor::parse(&b.build()).unwrap_err();
+    assert_eq!(FailureCategory::of(&e), FailureCategory::Limit);
+    let entries = [RegionDidMapEntry {
+        key: 0,
+        did: Did(0x1100_0000),
+    }; REGION_DID_MAP_CAPACITY];
+    let full = RegionDidMap::new(1, &entries).unwrap();
+    assert_eq!(full.entries().len(), REGION_DID_MAP_CAPACITY);
+    assert_eq!(full.len(), REGION_DID_MAP_CAPACITY);
+    assert!(RegionDidMap::new(1, &[entries[0]; REGION_DID_MAP_CAPACITY + 1]).is_none());
+}
+
+/// coordinates.md §8.2 step 3 (every operation in f32, in the stated order) against the
+/// worked examples of §8.4, with the observed constants (origin 1,468 / 1,244, offsets 0,
+/// scale f32 0.005).
+#[test]
+fn region_map_coordinates_follow_the_f32_order() {
+    let d = RegionDescriptor::parse(&region_descriptor_bytes()).unwrap();
+    let lonlat = |lb: [u8; 2], local: [f32; 2]| d.map_coordinates(lb, local);
+    // A: landblock (100, 150), local (40, 80).
+    assert_eq!(lonlat([100, 150], [40.0, 80.0]), [-66.600_006, -4.0]);
+    // C: landblock (200, 170), local (0, 0).
+    assert_eq!(lonlat([200, 170], [0.0, 0.0]), [13.199_997, 11.600_006]);
+    // D: the origin.
+    assert_eq!(lonlat([183, 155], [80.0, 80.0]), [0.0, 0.0]);
+    // "More vectors" table.
+    let rows: [([u8; 2], [f32; 2], [f32; 2]); 7] = [
+        ([183, 155], [90.0, 80.0], [0.049_987_8, 0.0]),
+        ([183, 155], [70.0, 80.0], [-0.050_003_1, 0.0]),
+        ([183, 155], [74.0, 76.0], [-0.029_998_8, -0.019_996_6]),
+        ([183, 155], [70.03, 80.0], [-0.049_865_7, 0.0]),
+        ([183, 155], [70.06, 80.0], [-0.049_697_9, 0.0]),
+        ([254, 254], [160.0, 160.0], [57.199_997, 79.600_006]),
+        ([0, 0], [0.0, 0.0], [-146.8, -124.399_994]),
+    ];
+    for (lb, local, want) in rows {
+        let got = lonlat(lb, local);
+        // The table prints six or seven significant digits; one f32 ulp of slack at
+        // that precision covers the rounding of the printed value.
+        for k in 0..2 {
+            assert!(
+                (got[k] - want[k]).abs() <= 1e-7 + want[k].abs() * 1e-6,
+                "{lb:?} {local:?}: {got:?} vs {want:?}"
+            );
+        }
+    }
+    // Regressions from the f64 helper: these differ in the last place, and the
+    // §8.3 display rule (|v| + 0.0502, × 10, truncate) turns them into different text.
+    assert_eq!(lonlat([0, 0], [10.04, 0.0])[0], -146.749_8);
+    assert_eq!(lonlat([0, 0], [110.04, 0.0])[0], -146.249_8);
+    let shown = |v: f32| ((f64::from(v.abs()) + f64::from(0.0002f32) + 0.05) * 10.0).trunc();
+    assert_eq!(shown(lonlat([0, 0], [10.04, 0.0])[0]), 1468.0);
+    assert_eq!(shown(lonlat([0, 0], [110.04, 0.0])[0]), 1463.0);
+}
+
+/// A RegionDidMap's count cannot disagree with its entries: equality is (hint, entries).
+#[test]
+fn region_did_map_count_is_consistent() {
+    let d = RegionDescriptor::parse(&region_descriptor_bytes()).unwrap();
+    let m = d.maps[0];
+    assert_eq!(m.len(), 1);
+    assert_eq!(m.hint(), 1);
+    assert_eq!(m.size().count, 1);
+    assert!(!m.is_empty());
+    assert_eq!(m, RegionDidMap::new(1, m.entries()).unwrap());
+    assert_ne!(m, RegionDidMap::new(1, &[]).unwrap());
+    assert!(d.maps[7].is_empty());
+    assert_eq!(d.maps[7], RegionDidMap::new(1, &[]).unwrap());
 }
 
 // ---------------------------------------------------------------- properties, kind 5
 
 fn properties_bytes() -> Vec<u8> {
+    properties_bytes_with_scale(1.25)
+}
+
+fn properties_bytes_with_scale(scale: f32) -> Vec<u8> {
     B::new()
         .u32(PROPS)
         .tsize(0, 2)
@@ -1174,7 +1715,7 @@ fn properties_bytes() -> Vec<u8> {
         .u32(200)
         .u32(MSCALE)
         .u32(MSCALE)
-        .f32(1.25)
+        .f32(scale)
         .u32(IMAGE_ARRAY)
         .u32(IMAGE_ARRAY)
         .u32(1)
@@ -1211,6 +1752,11 @@ fn minimap_tile_and_georeference() {
     assert_eq!(p.light_map(&pids), Some(Did(0x4100_9999)));
     assert_eq!(p.ceiling_light_map(&pids), None);
     assert_eq!(p.minimap(&LandblockPids::default()), None);
+    // An unusable UI_Map_Scale counts as a missing field (coordinates.md §10 divides by it).
+    for bad in [0.0, -1.25, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let p = LandblockProperties::parse(&properties_bytes_with_scale(bad), &schema()).unwrap();
+        assert_eq!(p.minimap(&pids), None, "{bad}");
+    }
     let bytes = properties_bytes();
     for n in 0..bytes.len() {
         assert!(LandblockProperties::parse(&bytes[..n], &schema()).is_err());
@@ -1241,6 +1787,77 @@ fn group_record_framing() {
     let huge = B::new().u32(0x8051_0303).u32(u32::MAX).build();
     assert!(LandblockGroupRecord::parse(&huge).is_err());
     assert!(LandblockGroupRecord::parse(&B::new().u32(DATA).u32(0).build()).is_err());
+}
+
+/// landblock.md §6.4, terrain-texturing.md §10: both light maps with their surface DIDs;
+/// row 0 on the south edge.
+#[test]
+fn light_maps_and_their_orientation() {
+    let bytes = B::new()
+        .u32(PROPS)
+        .tsize(0, 2)
+        .u32(LIGHT_MAP)
+        .u32(LIGHT_MAP)
+        .u32(0x4100_9999)
+        .u32(MAP_IMAGE)
+        .u32(MAP_IMAGE)
+        .u32(0x4100_8888)
+        .build();
+    let p = LandblockProperties::parse(&bytes, &schema()).unwrap();
+    let pids = LandblockPids {
+        landblock_light_map: Some(LIGHT_MAP),
+        landblock_ceiling_light_map: Some(MAP_IMAGE),
+        ..LandblockPids::default()
+    };
+    let l = p.light_maps(&pids);
+    assert_eq!(
+        l,
+        LightMaps {
+            terrain: Some(Did(0x4100_9999)),
+            ceiling: Some(Did(0x4100_8888)),
+        }
+    );
+    assert_eq!(l.for_surface(GridSurface::Ceiling), Some(Did(0x4100_8888)));
+    assert!(!l.is_empty());
+    assert!(p.light_maps(&LandblockPids::default()).is_empty());
+    // Only the terrain map under the shared fixture's PIDs.
+    let p = LandblockProperties::parse(&properties_bytes(), &schema()).unwrap();
+    assert_eq!(p.light_maps(&self::pids()).ceiling, None);
+    assert_eq!(light_map_uv(0.0, 0.0), [0.0, 0.0]);
+    assert_eq!(light_map_uv(160.0, 40.0), [1.0, 0.25]);
+}
+
+/// water.md §9 / WA5: a (type, height) pair is found in the trailing section as its 5 bytes.
+#[test]
+fn sector_water_pairs_are_found_in_the_tail() {
+    let pair = SectorWaterPair {
+        water_type: 7,
+        height: 141.17647,
+    };
+    assert_eq!(pair.to_bytes()[0], 7);
+    assert_eq!(&pair.to_bytes()[1..], &141.17647f32.to_le_bytes());
+    let mut b = B::new().u32(0x8051_0603).u32(1).bytes(&[0; 5]);
+    // A tail: u32 0, some bytes, a one-pair list (VLE 1, type, height), more bytes.
+    b = b.u32(0).u8(9).vle(1).u8(7).f32(141.17647).u8(1).u8(0);
+    let g: DistantLandscapeSector = LandblockGroupRecord::parse(&b.build()).unwrap();
+    assert!(g.tail_contains_water_pair(pair));
+    assert!(!g.tail_contains_water_pair(SectorWaterPair {
+        water_type: 8,
+        ..pair
+    }));
+    assert!(!g.tail_contains_water_pair(SectorWaterPair {
+        height: 141.17648,
+        ..pair
+    }));
+    assert_eq!(g.sector_origin(), Some((6, 3)));
+    let blocks = g.sector_landblocks();
+    assert_eq!(blocks.len(), 9);
+    assert_eq!(blocks[0], (6, 3));
+    assert_eq!(blocks[8], (8, 5));
+    // At the grid edge the group is clipped.
+    let edge = LandblockGroupRecord::parse(&B::new().u32(0x8051_FFFE).u32(0).build()).unwrap();
+    assert_eq!(edge.sector_landblocks().len(), 2);
+    assert!(!edge.tail_contains_water_pair(pair));
 }
 
 // ---------------------------------------------------------------- review regressions

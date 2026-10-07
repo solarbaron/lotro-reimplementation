@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Free-function entry points, one per decoder: `decode_*(&[u8])`.
+//! Free-function entry points, one per decoder: `decode_*(payload[, stamp][, schema])`.
 //!
-//! Each takes a complete payload and returns the decoded record or a [`FormatError`],
-//! never panicking. They are thin wrappers over the [`Record`] implementations and the
+//! Each takes a complete payload, plus the directory-entry stamp for the records whose
+//! layout depends on it and the property schema for records with property sets, and
+//! returns the decoded record or a [`FormatError`], never panicking. They are thin wrappers over the [`Record`] implementations and the
 //! schema-driven property decoders, meant for fuzz targets, tools and quick scripts.
 //! Payloads must be consumed exactly unless the function says otherwise.
 //!
 //! [`FormatError`]: crate::FormatError
 
 use crate::appearance::AppearanceRecord;
+use crate::collision::{CellGeometry, CollisionMesh};
 use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::error::Result;
@@ -26,6 +28,14 @@ use crate::string_info::StringInfo;
 use crate::string_table::StringTable;
 use crate::surface::Surface;
 use crate::texture_list::TextureList;
+
+pub use crate::environment::{
+    decode_camera_state, decode_day_description, decode_game_time, decode_lod_class_table,
+    decode_sky_description,
+};
+pub use crate::scenery::{decode_scene, decode_scene_choice_table, decode_terrain_scene_table};
+pub use crate::terrain_type::decode_terrain_type_table;
+pub use crate::water::{decode_fog_zone_table, decode_water_table};
 
 /// Decodes a string-table record (prefix 0x25; `records.md` §3).
 pub fn decode_string_table(data: &[u8]) -> Result<StringTable> {
@@ -187,4 +197,21 @@ pub fn decode_landblock_group(data: &[u8]) -> Result<LandblockGroupRecord> {
 /// Decodes a region descriptor (prefix 0x0F; `environment.md` §3.1).
 pub fn decode_region_descriptor(data: &[u8]) -> Result<RegionDescriptor> {
     RegionDescriptor::parse(data)
+}
+
+/// Decodes a stand-alone collision mesh (prefix 0x66; `collision.md` §4). `stamp` is the
+/// record's directory stamp, which decides the tree's `build_byte` (§3.1); `None` uses the
+/// fallback described at [`CollisionMesh::parse`].
+pub fn decode_collision_mesh(data: &[u8], stamp: Option<u16>) -> Result<CollisionMesh> {
+    CollisionMesh::parse(data, stamp)
+}
+
+/// Decodes cell geometry (prefix 0x01; `collision.md` §5) with `schema` supplying the
+/// embedded property set's types. `stamp` as for [`decode_collision_mesh`].
+pub fn decode_cell_geometry<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    stamp: Option<u16>,
+    schema: &S,
+) -> Result<CellGeometry> {
+    CellGeometry::parse(data, stamp, schema)
 }

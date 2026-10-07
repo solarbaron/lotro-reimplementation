@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Landblock properties `0x804RXXYY` (minimap tile, light maps), the property IDs the
-//! landblock family uses, and the framing of kind-5 records `0x805RXXYY`.
+//! landblock family uses, and the framing of kind-5 distant-landscape sector records
+//! `0x805RXXYY`.
 //!
-//! Spec: `docs/specs/landblock.md` §6, §7; `docs/specs/coordinates.md` §10.
+//! Spec: `docs/specs/landblock.md` §6, §7; `docs/specs/coordinates.md` §10;
+//! `docs/specs/terrain-texturing.md` §10 (light maps); `docs/specs/water.md` §9 (sector
+//! water pairs).
 
 use super::{LANDBLOCK_SIZE, read_embedded_set, read_landblock_did};
 use crate::did::{Did, LandblockId, LandblockKind};
@@ -16,6 +19,49 @@ use crate::record::Record;
 pub const GROUP_SAMPLE_COUNT: u32 = 9_801;
 /// Stored size of one kind-5 sample.
 const GROUP_SAMPLE_SIZE: usize = 5;
+/// Landblocks per side of a distant-landscape sector (3 × 3 landblocks, §7).
+pub const SECTOR_SIDE: u8 = 3;
+
+/// Texture coordinates (u, v) of block-local (x, y) on a landblock light map
+/// (`landblock.md` §6.4, `terrain-texturing.md` §10): (x / 160, y / 160), where u selects
+/// the column from the west edge and v the row from **row 0 on the south edge** (the
+/// opposite row order to the minimap tiles of §6.3). The map is sampled with clamp
+/// addressing and bilinear filtering, so coordinates outside 0–1 are not wrapped here
+/// either; the caller clamps.
+#[must_use]
+pub fn light_map_uv(x: f32, y: f32) -> [f32; 2] {
+    [x / LANDBLOCK_SIZE, y / LANDBLOCK_SIZE]
+}
+
+/// A landblock's baked light maps (`landblock.md` §6.4): DXT1 render surfaces (prefix 0x41)
+/// whose texels are **added** to the lighting sum of every terrain layer
+/// (`terrain-texturing.md` §10). Orientation: [`light_map_uv`]. The client binds the map to
+/// the material parameter `BakedLightingMap` (3019, `material.md` §8), which `tessera-material`
+/// defines; this crate does not duplicate that vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct LightMaps {
+    /// `Landblock_LightMap`: applies to the terrain surface chunk.
+    pub terrain: Option<Did>,
+    /// `Landblock_CeilingLightMap`: applies to the ceiling surface chunk in the same way.
+    pub ceiling: Option<Did>,
+}
+
+impl LightMaps {
+    /// Whether neither light map is present.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.terrain.is_none() && self.ceiling.is_none()
+    }
+
+    /// The light map of `surface`.
+    #[must_use]
+    pub fn for_surface(&self, surface: super::GridSurface) -> Option<Did> {
+        match surface {
+            super::GridSurface::Terrain => self.terrain,
+            super::GridSurface::Ceiling => self.ceiling,
+        }
+    }
+}
 
 /// Property IDs used by the landblock family, looked up by internal name in the property
 /// dictionary at run time (PIDs are data, not constants). A name the dictionary lacks
@@ -161,6 +207,10 @@ impl MinimapTile {
 
     /// Pixel (px, py) of region-global position (G_x, G_y), the inverse of
     /// [`MinimapTile::pixel_to_region`].
+    ///
+    /// A tile from [`LandblockProperties::minimap`] always has a positive finite scale; for
+    /// a hand-built tile whose scale is not one, the result is not finite or collapses onto
+    /// `pixel_offset` (check [`MinimapTile::pixel_to_region`] or the scale first).
     #[must_use]
     pub fn region_to_pixel(&self, g: [f64; 2]) -> [f64; 2] {
         let s = f64::from(self.scale);
@@ -230,7 +280,9 @@ impl LandblockProperties {
     }
 
     /// The minimap tile (`UI_Map_GameMap`), or `None` when the record has none (light-map
-    /// only records) or a required field is missing.
+    /// only records) or a required field is missing. A `UI_Map_Scale` that is not a
+    /// positive finite number counts as missing, so a returned tile's
+    /// [`MinimapTile::region_to_pixel`] is always finite for finite input.
     #[must_use]
     pub fn minimap(&self, pids: &LandblockPids) -> Option<MinimapTile> {
         let map = self.properties.get(pids.ui_map_game_map?)?.as_struct()?;
@@ -238,8 +290,10 @@ impl LandblockProperties {
         let int = |pid: Option<u32>| field(pid).and_then(as_i64);
         let i32_of = |pid: Option<u32>| int(pid).and_then(|v| i32::try_from(v).ok());
         let image = field(pids.ui_map_map_image).and_then(as_did)?;
+        // A scale that is not a positive finite number makes the tile unusable
+        // (`coordinates.md` §10 divides by it), so it counts as missing.
         let scale = match field(pids.ui_map_scale)? {
-            PropertyValue::Float(f) => *f,
+            PropertyValue::Float(f) if f.is_finite() && *f > 0.0 => *f,
             _ => return None,
         };
         let fog_colour = match field(pids.ui_map_fog_of_war_color) {
@@ -275,6 +329,15 @@ impl LandblockProperties {
             fog_colour,
             variants,
         })
+    }
+
+    /// Both baked light maps (§6.4), with their surface DIDs.
+    #[must_use]
+    pub fn light_maps(&self, pids: &LandblockPids) -> LightMaps {
+        LightMaps {
+            terrain: self.light_map(pids),
+            ceiling: self.ceiling_light_map(pids),
+        }
     }
 
     /// The baked terrain light map (`Landblock_LightMap`, a 0x41 surface), if any.
@@ -332,8 +395,34 @@ pub struct GroupSample {
     pub vector: [u8; 3],
 }
 
-/// The framing of a kind-5 record `0x805RXXYY` (§7): one per 3 × 3-landblock group. Only
-/// the sample array is framed; the trailing section is kept raw (layout OPEN).
+/// One (water type, height) pair of a distant-landscape sector's water list (`landblock.md`
+/// §7, `water.md` §9): stored as a u8 water type (an entry key of the region's water table)
+/// and an f32 water height in world units, 5 bytes.
+///
+/// The pairs equal the (type, height) values `water.md` §6.2 derives from the block maps,
+/// bit for bit, so a reader can derive them from there instead (the Tessera rule of
+/// `water.md` §9).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SectorWaterPair {
+    /// Water type: an entry key of the region's water table (0x16).
+    pub water_type: u8,
+    /// Water height in world units.
+    pub height: f32,
+}
+
+impl SectorWaterPair {
+    /// The pair as stored: the type byte, then the height as a little-endian f32.
+    #[must_use]
+    pub fn to_bytes(self) -> [u8; 5] {
+        let h = self.height.to_le_bytes();
+        [self.water_type, h[0], h[1], h[2], h[3]]
+    }
+}
+
+/// The framing of a kind-5 record `0x805RXXYY` (§7): the distant-landscape sector of one
+/// 3 × 3-landblock group. Only the sample array is framed; the trailing section, which
+/// holds the sector's water list among other parts, is kept raw because its layout before
+/// the water list is OPEN ([`LandblockGroupRecord::tail_contains_water_pair`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LandblockGroupRecord {
     /// Own DID.
@@ -366,6 +455,43 @@ impl LandblockGroupRecord {
         })
     }
 
+    /// The (X, Y) of the south-west landblock of this sector (X and Y are multiples of 3 in
+    /// every observed record), or `None` for a DID outside the landblock family.
+    #[must_use]
+    pub fn sector_origin(&self) -> Option<(u8, u8)> {
+        LandblockId::from_did(self.did).map(|l| (l.x, l.y))
+    }
+
+    /// The landblocks (X, Y) the sector covers: the 3 × 3 group whose south-west block is
+    /// [`LandblockGroupRecord::sector_origin`], X outer, clipped at 255.
+    #[must_use]
+    pub fn sector_landblocks(&self) -> Vec<(u8, u8)> {
+        let Some((x0, y0)) = self.sector_origin() else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(9);
+        for dx in 0..SECTOR_SIDE {
+            for dy in 0..SECTOR_SIDE {
+                if let (Some(x), Some(y)) = (x0.checked_add(dx), y0.checked_add(dy)) {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether the trailing section contains `pair` as its stored 5 bytes
+    /// ([`SectorWaterPair::to_bytes`]). The water list's offset in the trailing section is
+    /// not known (`landblock.md` §7 OPEN), so the list cannot be read directly; this is the
+    /// check of `water.md` WA5: every (type, height) pair `water.md` §6.2 predicts for a
+    /// wet landblock of the sector occurs here, bit-identical. A match does not prove the
+    /// bytes are a list entry. Linear in the tail length.
+    #[must_use]
+    pub fn tail_contains_water_pair(&self, pair: SectorWaterPair) -> bool {
+        let needle = pair.to_bytes();
+        self.tail.windows(needle.len()).any(|w| w == needle)
+    }
+
     /// The first deviation from the observed framing (§7), or `None`.
     #[must_use]
     pub fn first_unusual_field(&self) -> Option<&'static str> {
@@ -381,6 +507,10 @@ impl LandblockGroupRecord {
         None
     }
 }
+
+/// Kind-5 records are the client's distant-landscape sectors (DB type 0x41,
+/// `landblock.md` §7); this is the same type under that name.
+pub type DistantLandscapeSector = LandblockGroupRecord;
 
 impl Record<'_> for LandblockGroupRecord {
     const NAME: &'static str = LandblockGroupRecord::NAME;

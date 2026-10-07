@@ -9,7 +9,9 @@
 //! - [`net`], [`plugins`], [`scene`], [`input`]: subsystem glue.
 //! - [`walker`]: the offline world walker (ROADMAP M3, M4 characters); [`walker_host`]
 //!   wires it into the runtime, [`headless`] runs it offscreen (`--screenshot`,
-//!   `--fly-path --headless`, `--duration --headless`); [`avatar`] parses `--avatar`.
+//!   `--fly-path --headless`, `--duration --headless`, and `--walk-path`, which needs no
+//!   GPU); [`avatar`] parses `--avatar`; [`walk_path`] parses the scripted walks of
+//!   `--walk-path` (`docs/checklists/m4-5-visual.md` §2.1).
 
 pub mod app;
 pub mod avatar;
@@ -22,6 +24,7 @@ pub mod plugins;
 pub mod runtime;
 pub mod scene;
 pub mod smoke;
+pub mod walk_path;
 pub mod walker;
 pub mod walker_host;
 

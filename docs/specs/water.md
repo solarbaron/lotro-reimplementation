@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (first round; addressed). Re-review 2026-10-05: changes requested (§8.4 step 6: the specular sentence is broken by the inserted *L* text, so "plus a sparkle term" dangles and it is not stated where the sparkle term is added; §8.2 permutation table: "position only (one vertex input)" is true of the programs' use, but the Direct3D 11 water permutations declare position, normal and UV in their input signature and read only position). Spot checks passed: W2, W3, W16 (55 users of 0x2B0000A8, 43 water; 13 permutations: 8 water, 4 Direct3D 11 with depth and 2 with ripple, ONE/ZERO without depth, SRCALPHA/INVSRCALPHA with depth, cull NONE; 5 low-detail with Color/Color2, cull CW), the 43/21/5/5/1/1 shader split. Second round addressed 2026-10-06 (change log). Third review 2026-10-06, Claude review session (spec-writer agent): **passed, Accepted.** All §5.3 items hold. §8.4 step 6 was checked against the OpenGL water pixel program and all four Direct3D 11 water pixel programs of 0x2B0000A8: the per-component clamp of the normalised tangent-space normal minus the threshold, the factor 4, the sum added after the exponent, the half vector normalize(*v* − *L*) and the toward-eye *v*. §8.2 and §8.3 were checked too: the four Direct3D 11 water vertex programs declare position, normal and UV in their signature but have only the position as a declared input register. Five Confirmed facts were spot-checked on freshly read data and all passed. W2: 5 of 5 tables, zero bytes left over, 125 entries (47/19/23/31/5), keys 4 and 7, volume entities 120/3/2, `value` 24.0, 76 surfaces. W3: 137 and 1,244 bytes, zero left over, zone key 3, `active` 0 in the defaults and 1 in all 9 zones. W15 and WA4: keys 3, 4 and 7 are in all 390,150 block maps, and key 3 is 0 in all of them. W8 and the §6.1 and §6.4 tables: 89,913 wet landblocks, with every per-region count equal. W16: 13 permutations with their render-state bytes. Advisory note for a later revision, not blocking: the Direct3D 11 depth permutations tint the refraction by a depth difference instead of the eye-distance shoreline blend of step 3, and they scale the output alpha by depth. This falls under the existing OPEN on depth permutations, and the Tessera rule avoids it. |
+| **Review record** | Second re-review of the 2026-10-06 edit to §7.4, 2026-10-06: **passed**, stays Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for the water table, prefix 0x16, and the fog-zone table, prefix 0x17; one fuzz target each), `crates/world` (per-landblock water state, water volumes, "is under water" query), `crates/terrain` or `crates/render` (water quads per landblock), `crates/render` (water pipeline), the movement controller of `collision.md` §12 (water states), `apps/explorer` (water table and per-landblock water view) |
 | **Companion specs** | [`environment.md`](environment.md) §3 (region descriptor: slots 5 and 6 name the two tables). [`landblock.md`](landblock.md) §3.4 (height conversion), §5 (block maps; keys 3, 4 and 7 are read here), §7 (distant-landscape sector records). [`material.md`](material.md) §4 (surface records 0x31), §5–§8 (shader records 0x2B, parameter entries, labels; §8.6: `c_`-labelled parameters feed the program constant of the same name). [`collision.md`](collision.md) §9–§12 (volumes, movement states, controller). [`scenery.md`](scenery.md) §7.4–§7.5 (height modes and water ranges that read the water plane). [`entity-descriptor.md`](entity-descriptor.md) (placed static entities). [`property-system.md`](property-system.md) §5 (0x78 property sets), §7 (enum mappers). [`records.md`](records.md) §1 (VLE), §2.1 (prefix → DB type table). |
 
@@ -327,6 +327,14 @@ of a landblock-frame point *p* is *p*.z − *h*.
   consumer that needs "water at this point" compares *h* with the terrain height there
   (scenery does, `scenery.md` §7.5).
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` water module):** with the Inferred
+> second step (liquid volumes), a point within 0.0002 below *h*, or exactly at *h*, is
+> "under water" after all: the volume entity's surface box (§7.1) reaches up to *h*
+> inclusive. Whether the client's physics-world query uses inclusive box bounds, and so
+> whether the 0.0002 tolerance of the plane test has any effect on the full query, is not
+> known. `tessera-world` keeps both steps as stated (plane test, then boxes with inclusive
+> bounds, the containment rule of `tessera-physics`).
+
 <a id="s6-4"></a>
 ### 6.4 Census: where this install has water (Confirmed, 2026-10-05)
 
@@ -402,6 +410,18 @@ WaterWadeVolume; labels are data).
 Relative to the water surface *h*: the surface zone is the top 0.5 units, the wading zone
 0.5–1 unit below the surface, the deep zone from 1 unit down to 1,600 units below.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` water module):** three monitor fields
+> are not covered here: (a) `Monitor_Offset` (vec3, on 382 of 464 monitors per `sound.md`
+> §10.3.4): whether and how it moves the box. Tessera (Decision): the box is
+> (min + offset, max + offset) in the entity frame, before the entity's scale, rotation and
+> position. With this rule the boxes of all three landblock volume entities of this install
+> still cover the whole 160 × 160 block from *h* down (checked by the `tessera-world` test
+> `volume_entities_cover_their_landblock`). (b) A monitor without
+> `Monitor_ScaleWithEntity`: Tessera treats it as true (scales with the entity).
+> (c) Whether `Entity_Monitors` is inherited along the 0x47 parent chain: Tessera reads it
+> from the nearest level of the chain like other object properties (`scenery.md` §9.2); in
+> this install no placed volume entity inherits its monitors.
+
 <a id="s7-2"></a>
 ### 7.2 Volume property sets (Confirmed)
 
@@ -432,6 +452,15 @@ are common), drawn with the entity (`Translucent` true and render phase 2 on the
 ones). They are placed by their static-entity frame (`entity-descriptor.md`) and scaled with
 the entity when `Monitor_ScaleWithEntity` is true.
 
+> **OPEN (implementer, 2026-10-06, `tessera-world` real-data census):** the three coin sets
+> of §7.2 also carry `Volume_IsLiquid` (their flags read as liquid without a water or lava
+> depth flag). Two placed 0x47 objects use them (19 placements). Counting every placed
+> Physics entity whose object has monitors applying a `Volume_IsLiquid` set gives 3,914
+> entities and 39 objects; without the coin sets it gives the 3,895 and 37 above. Whether a
+> coin volume counts as water for movement (§7.4) and for the "under water" query is not
+> known. Tessera (Decision): every `Volume_IsLiquid` box is liquid, as the rule of §7.4
+> states.
+
 <a id="s7-4"></a>
 ### 7.4 From volumes to movement states (partly OPEN)
 
@@ -442,6 +471,46 @@ traced (`collision.md` Q9). **Tessera rule (Decision):** a mover is in water whe
 inside any liquid box; it swims (state 2) when the water surface is more than its float height
 above its feet (`collision.md` §11.2), otherwise it wades (state 1, or 3 on steep support).
 
+> **OPEN (implementer, 2026-10-06, `tessera-physics` controller):** the rule above does not
+> say which state a mover in water **without** support takes when the surface is less than
+> its float height above its feet (jumping or stepping off a ledge into shallow water).
+> Tessera chooses state 2 (swimming) whenever there is no support. The feet are the
+> mover's position (the bottom of its capsule, `collision.md` §10.6). While swimming, the
+> controller keeps the feet from rising above the surface minus the float height and lets a
+> swimmer above that line sink to it (with gravity −20 the swimming layer would otherwise
+> lift the mover out of the water); the surface is the water plane's level where the liquid
+> boxes end there, else the top of the liquid boxes above the feet.
+
+> **OPEN (implementer, 2026-10-06, controller review):** `collision.md` §11.1 step 9 applies
+> the Swimming layer (gravity −20) in states 1, 2 and 3. How its upward gravity interacts
+> with support in states 1 and 3 is not traced (`collision.md` Q9). Tessera (Decision): in
+> state 1 the mover stands on walkable support, so its vertical speed is 0. In states 2 and 3
+> the controller uses a **float line**, the surface minus the float height. Below the line
+> or on it, the layer's gravity applies and the feet stop at the line, with the upward speed
+> zeroed. Above the line, the magnitude of the gravity (at least 1 m/s²) pulls the mover down,
+> and the feet stop at the line with the speed zeroed, so a swimmer does not overshoot it.
+> As a result, a mover dropping or stepping into deep water settles at the line without
+> sinking below it, and a mover on steep support in water shallower than its float height
+> slides down instead of being lifted. The original's buoyancy and its integration are not
+> known.
+
+
+> **OPEN (implementer, 2026-10-06, walker walk mode):** whether a mover inside an interior
+> cell (`collision.md` §5.8.1) can be in landscape water is not stated. The landblock volume
+> entity's boxes reach far below the water plane (§7.1), so a dungeon cell under a lake lies
+> inside them: walk IN1 of `m4-5-visual.md` (a cell 660 m below a lake's plane) swam up out
+> of its cell. Tessera (Decision, `walker.md` §13.5): no landscape water while the cell
+> lookup at the feet + 0.05 m finds a cell. Please state the client's rule (BIN), and
+> whether placed volumes inside cells (§7.3) still apply there.
+
+> **OPEN (M4.5 exit verification, clean room, 2026-10-06):** how the original slows a mover
+> that enters deep water at speed is not stated. Tessera (Decision, `collision.md` §12.3 OPEN
+> (p)): below the float line the downward speed is cancelled at once, so a mover sliding
+> into a lake at 15 m/s stops within one step instead of diving about 4 m before the lift
+> turns it. This applies to a mover that reaches deep water while in state 6 (sliding down a
+> steep bank into the water, `collision.md` §11.3 mechanism): once its feet pass below the
+> float line the vertical speed is zeroed and the state becomes 2 (swimming); the float line
+> is the surface minus the float height, as above.
 ---
 
 <a id="s8"></a>
@@ -528,6 +597,14 @@ Materials of individual surfaces override these as usual. Other declared water p
 (1170–1173, 1182–1190, 2004, 2005, 2007, 2008) are read by the flow, foam and depth permutations; their
 formulas were not traced (OPEN).
 
+> **OPEN:** Three of the six water shader records do not declare every parameter of the
+> table above (clean-room M4.5 real-data run, 2026-10-06): 0x2B0005EC and 0x2B000810 lack
+> 1044–1046 (waves), 1059–1062 and 1064, 1065 (normal layers 1 and 2); 0x2B0007FD lacks
+> 1044–1046. `tessera-material` (`WaterMaterial`) fills an undeclared id with the
+> 0x2B0000A8 default of this table and lists it as undeclared. Whether those records' programs
+> use a single normal layer and no vertex waves (so a renderer following §8.3–§8.4 should
+> skip layers 1 and 2 and the waves for them) is not stated.
+
 <a id="s8-3"></a>
 ### 8.3 Vertex stage (SH, shader record 0x2B0000A8)
 
@@ -602,6 +679,20 @@ alpha; all write depth; all but the low-detail ones draw both faces.
 > 0x2B0007FD and 0x2B0005EC, and the draw order of water relative to other translucent
 > objects.
 
+> **OPEN (implementer, 2026-10-06, `tessera-render` water pipeline):** step 1 rotates the
+> normal-map sum "into world space with the surface frame" without saying which way the
+> tangent-space axes point on the landscape plane, i.e. whether the world normal is
+> *n*.x · **T** + *n*.y · **B** + *n*.z · **N** or uses the −*n*.y of `lighting.md` §5.2.4
+> (**T** along +x, **B** along +y, the directions in which the layer coordinates of §8.3
+> grow). Tessera uses the `lighting.md` §5.2.4 sign (`docs/specs/render.md` §5.3). The sign
+> mirrors the ripples' shading and the refraction offset; it does not change the Fresnel or
+> sparkle magnitudes.
+
+> **OPEN (implementer, 2026-10-06):** step 6 needs the fake light's direction and specular
+> colour when the main light is not directional; `lighting.md` E18 names "a default
+> direction" and "an engine specular colour" without values. Tessera uses straight down with
+> a black specular colour (no highlight) in that case (`docs/specs/render.md` §5.3).
+
 **Tessera rule (Decision), until those are settled:** draw water after opaque geometry with a
 copy of the colour buffer as the refraction source, implement steps 1–7 with the reflection
 replaced by the refraction sample (the original's no-reflection path), and use alpha 1.
@@ -636,6 +727,11 @@ the 32-bit result of §6.2 step 6 (OBS). The rest of the record's layout is OPEN
 **Tessera rule (Decision):** derive distant water from the block maps with §6.2, which gives
 the same pairs, instead of decoding kind 5.
 
+> **OPEN (implementer, 2026-10-06):** the sector pair stores the water type as one byte,
+> while the block-map type value is a u16. How the client narrows a type value above 255 is
+> not stated (none occurs: the largest observed type is 47). `tessera-world` keeps the low
+> 8 bits.
+
 ---
 
 <a id="s10"></a>
@@ -665,6 +761,14 @@ the same pairs, instead of decoding kind 5.
 Hostile input: bound every count by the bytes left; reject flag bytes other than 0 and 1;
 treat a non-finite `value` or fog float as malformed; never index the entry list by key
 without checking it exists.
+
+> **OPEN:** Which fog-zone floats "fog float" covers, and whether the client itself rejects
+> non-finite values (no BIN statement). The `tessera-formats` decoder (M4.5) rejects a
+> non-finite value in every f32 of a fog-zone entry (`near`, `far`, `amount`, `value_60`,
+> `light_a`, `light_b`) and in the water entry's `value`; all 10 entries and 125 water
+> entries of this install are finite. It keeps `active` (§5.2 field 7, typed u8, not bool8)
+> as a raw byte and treats any non-zero value as active, and keeps the override `mode`
+> bytes raw.
 
 ---
 
@@ -733,3 +837,4 @@ whose key 3 is 0, leaves the sky's fog unchanged.
 | 2026-10-05 | First version. Settles what prefixes 0x16 and 0x17 are (BIN); full layouts with censuses; landblock water rule and census (89,913 wet landblocks); water volumes; drawing (geometry BIN, shading SH); distant water pairs; corrections to `environment.md`, `scenery.md`, `terrain-texturing.md`, `landblock.md`, `collision.md`, `terrain.md`, `walker.md`, `material.md`. |
 | 2026-10-05 | Revision after review (changes requested). Legend: **Inferred** defined. New rows W16 (0x2B0000A8 users and permutations, OBS + SH) and W17 (fake-light direction, from `lighting.md` §4.2). §8.2: 0x2B0000A8 user count (55 surface records, 43 water) and a permutation table saying which statements cover which permutation; the "other declared water parameters" list no longer includes 2006, which the table already covers. §8.4 step 6: *L* is the main light's travel direction (or an engine default), adopted from `lighting.md` §4.2. §10: scenery row updated. §13: scenery and terrain-texturing rows marked done; correction rows added for `material.md` §20.1 and `lighting.md` §4.3. |
 | 2026-10-06 | Second revision after re-review (changes requested). §8.4 step 6 restated as one formula: the sparkle term 4 · (clamp(*g*ₓ − threshold) + clamp(*g*ᵧ − threshold)) is added to the specular term after the exponent, outside the clamp (SH: the OpenGL water program and all four Direct3D 11 water pixel programs of 0x2B0000A8 agree); *L* is defined in a separate sentence. §8.4 step 1: the sparkle input is the normalised tangent-space normal (was wrongly "unnormalised sum"). §8.2 permutation table and §8.3: the water programs read only the position; the four Direct3D 11 vertex programs also declare a normal and one UV set in their input signature, unused (SH, all four checked). |
+| 2026-10-06 | Movement edit (M4.5 criterion 4). §7.4: the float-line Decision (OPEN (p)) now states the state-6 interaction — a mover that reaches deep water while sliding (state 6) has its downward speed zeroed at the float line and switches to state 2; cross-references `collision.md` §11.3 mechanism and §12.3 OPEN (p). No layout or shading change. |

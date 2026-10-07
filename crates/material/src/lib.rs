@@ -10,6 +10,9 @@
 //! | [`dye`] | Dye blend, dye colours of a dye material, dye block selection | `material.md` §12 |
 //! | [`MaterialLibrary`] | Surface → material → texture list → texture chain over a [`RecordSource`], with caches | `material.md` §9, `texture-list.md` §5.2 |
 //! | [`icon`] | Layered icon composition: layer properties, order, straight-alpha source-over, canvas and centring | `docs/specs/icon-layers.md` |
+//! | [`transform`] | Texture-coordinate transforms: matrix bindings (semantics 38–44), the seven values, composition | `material.md` §7.3, §8.4 |
+//! | [`inputs`] | Per-surface lighting inputs at a time: material and specular colour, power, glow, dye, cull, depth, alpha-test threshold, texture matrices, named constants | `lighting.md` §4.1; `material.md` §8.3, §11 |
+//! | [`water`] | The water material chain: the `c_Water…` parameters, textures and output alpha of a water surface | `water.md` §8.2 |
 //! | [`texture`] | Mip-chain helpers on top of `tessera-formats` texture lists: effective chain with a resolution cap, level selection, chain classes, GPU upload plans, level invariants | `docs/specs/texture-list.md` §4, §5 |
 //!
 //! # Resolving a submesh
@@ -38,6 +41,17 @@
 //! ));
 //! ```
 //!
+//! # Over time
+//!
+//! Float parameters are curves (`material.md` §5.3): [`FloatCurve::evaluate_at`] evaluates
+//! every mode at the clock of §5.3.1, [`CurveStates`] keeps the per-instance state of
+//! keyframed and random curves, and [`FloatCurve::evaluate_finite`] never returns a
+//! non-finite value. [`MaterialLibrary::surface_inputs`] gives a resolved material's
+//! per-surface lighting inputs ([`SurfaceInputs`], `lighting.md` §4.1) at a time,
+//! including its texture matrices ([`TextureMatrixLayout`], §8.4);
+//! [`MaterialLibrary::water_material`] gives a water surface's parameters
+//! ([`WaterMaterial`], `water.md` §8.2).
+//!
 //! Shader programs stored in shader records are never interpreted: they are skipped by
 //! their sizes (§11.1).
 //!
@@ -60,23 +74,33 @@ mod dims;
 pub mod dye;
 mod error;
 pub mod icon;
+pub mod inputs;
 pub mod interface;
 pub mod library;
 pub mod records;
 pub mod resolve;
 mod source;
 pub mod texture;
+pub mod transform;
 pub mod vocab;
+pub mod water;
 
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};
 pub use error::{MaterialError, Result, SourceFailure};
+pub use inputs::{NamedInput, NamedValue, ObjectInputs, SpecularInputs, SurfaceInputs};
 pub use interface::ShaderInterface;
 pub use library::{
     AppearanceGroup, Layering, LibraryConfig, MaterialLibrary, TextureChain, TextureImage,
 };
-pub use records::{MaterialRecord, ShaderRecord, SurfaceRecord};
+pub use records::{
+    CurveState, CurveStates, FloatCurve, MaterialRecord, ShaderRecord, SurfaceRecord, program_time,
+};
 pub use resolve::{
     AlphaTest, BlendMode, BlendState, DyeSetup, FeatureFlags, ParameterSet, ResolvedMaterial,
     TextureSlot,
 };
 pub use source::{FnSource, RecordSource};
+pub use transform::{
+    EvaluatedMatrix, TextureMatrix, TextureMatrixLayout, TextureTransform, TransformValue,
+};
+pub use water::{WaterMaterial, WaterParams};

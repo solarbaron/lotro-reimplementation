@@ -264,7 +264,13 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v5
+      # Every cargo call below says `+nightly`, which wins over the exact version pinned in
+      # rust-toolchain.toml (that pin still applies to plain `cargo`/`rustc`).
       - uses: dtolnay/rust-toolchain@nightly
+      # The prebuilt cargo-fuzz is a musl binary, and cargo-fuzz defaults `--target` to the
+      # triple it was built for. Building for musl fails (AddressSanitizer refuses a
+      # statically linked libc, and no musl standard library is installed: E0463 "can't
+      # find crate for `core`"), so every cargo-fuzz call names the host triple.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz
@@ -274,7 +280,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fuzz build
         working-directory: fuzz
-        run: cargo +nightly fuzz build
+        run: |
+          host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+          cargo +nightly fuzz build --target "$host"
       - name: Run every target
         env:
           FUZZ_SECS: ${{ github.event_name == 'schedule' && '60' || '10' }}

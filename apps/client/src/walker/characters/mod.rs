@@ -59,17 +59,15 @@ use tessera_assets::{CancelToken, Priority, WorkerPool};
 use tessera_entity::{Changes, Column, Entity, EntityStore, NetId, StoreConfig, Transform};
 use tessera_net::{Appearance, Body, EntityId, Event};
 use tessera_render::glam::{Mat4, Quat, Vec3};
-use tessera_render::{
-    AlphaMode, Dye, DyeMask, Frame, Material, MeshDraw, MeshId, Renderer, SkinPalette,
-};
+use tessera_render::{Frame, MeshDraw, MeshId, Renderer, SkinPalette};
 use tessera_world::WorldPos;
 
 use self::catalog::WeenieRole;
 use self::figure::{FigureAsset, FigureContext, FigureKey, FigureRequest, build_figure};
 use self::motion::{Locomotion, drive, make_animator};
 use super::UploadBudget;
-use super::geometry::{AlphaKind, MaterialPlan, TexRequest};
-use super::objects::{ObjectLayer, TexLookup};
+use super::geometry::{MaterialPlan, TexRequest};
+use super::objects::{ObjectLayer, surface_draw};
 use super::source::SourceShared;
 use super::view::{Anchor, Frustum};
 
@@ -88,7 +86,8 @@ pub const FIGURE_KEEP: Duration = Duration::from_secs(30);
 pub struct CharacterConfig {
     /// Draw weenie markers (housing hooks, distant-battle units) as static figures.
     pub markers: bool,
-    /// Characters further than this (m) are not drawn.
+    /// Cap on the characters' draw distance (m): below it the class distance of
+    /// [`character_draw_distance`] applies (`walker.md` §11.4.2).
     pub draw_distance: f32,
     /// Characters further than this (m) keep their last pose (no sampling job; a character
     /// gets one job for its first pose wherever it is).
@@ -106,6 +105,61 @@ impl Default for CharacterConfig {
             max_entities: 1 << 16,
         }
     }
+}
+
+/// Characters cast the sun's shadow within this distance (metres): the render
+/// component's initial `d2` (`walker.md` §11.4 step 4, `mesh.md` §8.7 shadow distance at
+/// the built-in settings). Tessera Decision: the class of each character's own entity is
+/// not resolved for this (`walker.md` §14.11 OPEN).
+pub const CHARACTER_SHADOW_DISTANCE: f32 = tessera_world::draw_distance::COMPONENT_DEFAULTS[2];
+
+/// `d0` of the character classes (`walker.md` §11.4.2: `PlayerAvatar`, `Creature` and
+/// `Creature2Deg` all have 80 m). Tessera Decision: used for every character until each
+/// entity's own class is resolved (`walker.md` §14.11 OPEN).
+pub const CHARACTER_D0: f32 = 80.0;
+
+/// What the character layer's distance rules need of a frame (`walker.md` §11.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CharacterFrame {
+    /// The global limit *G* (`walker.md` §11.3).
+    pub g: f32,
+    /// The object draw-distance multiplier *M_d* (§11.2).
+    pub multiplier: f32,
+    /// Frame time, seconds.
+    pub dt: f32,
+    /// Camera travel since the previous frame, metres (fade reset beyond 25 m).
+    pub camera_moved: f32,
+    /// Per-class distances and fades on; off draws every character to the cap.
+    pub lod: bool,
+}
+
+impl Default for CharacterFrame {
+    fn default() -> Self {
+        Self {
+            g: 2_080.0,
+            multiplier: 1.0,
+            dt: 1.0 / 60.0,
+            camera_moved: 0.0,
+            lod: true,
+        }
+    }
+}
+
+/// A character's draw distance *D* = min(*G*, `d0` × *M_d*) (`walker.md` §11.4 step 1;
+/// `d0` × 3 for the player's own character, step 3), capped at `cap`; the cap alone when
+/// per-class distances are off. Non-finite inputs fall back to the cap.
+#[must_use]
+pub fn character_draw_distance(frame: &CharacterFrame, cap: f32, player: bool) -> f32 {
+    if !frame.lod {
+        return cap;
+    }
+    let scale = if player {
+        tessera_world::draw_distance::PLAYER_SCALE
+    } else {
+        1.0
+    };
+    let d = (CHARACTER_D0 * scale * frame.multiplier).min(frame.g);
+    if d.is_finite() { d.min(cap) } else { cap }
 }
 
 /// Counters and timings for the HUD and the frame log.
@@ -171,6 +225,10 @@ struct Actor {
     heading: f32,
     speed: f32,
     seed: u32,
+    /// The 1.5 s fade across the draw distance (`mesh.md` §8.7).
+    fade: tessera_world::draw_distance::DrawFade,
+    /// In view in the previous frame (a character coming into view appears at once).
+    seen: bool,
 }
 
 struct GpuPart {
@@ -287,6 +345,14 @@ pub struct CharacterLayer {
     mesh_bytes: u64,
     /// Tags of the placed figures this layer shows (module docs, "Placed figures").
     shown: HashSet<u64>,
+    /// Draw through the lit pipeline (`walker.md` §14.5).
+    lit: bool,
+    /// Characters cast the sun's shadow.
+    shadows: bool,
+    /// Leave the player's own character out (the free-fly camera, `walker.md` §14.5).
+    hide_player: bool,
+    /// The distance rules of the frame.
+    distances: CharacterFrame,
 }
 
 impl std::fmt::Debug for CharacterLayer {
@@ -339,6 +405,10 @@ impl CharacterLayer {
             stats: CharacterStats::default(),
             mesh_bytes: 0,
             shown: HashSet::new(),
+            lit: false,
+            shadows: false,
+            hide_player: false,
+            distances: CharacterFrame::default(),
         }
     }
 
@@ -422,9 +492,14 @@ impl CharacterLayer {
         &self.shown
     }
 
-    /// Recomputes [`CharacterLayer::shown_figures`] for a viewer at `eye`.
+    /// Recomputes [`CharacterLayer::shown_figures`] for a viewer at `eye`: the placed
+    /// figures within the character draw distance (beyond it the object layer draws them).
     fn collect_shown(&mut self, eye: Option<WorldPos>) {
-        let max_d = f64::from(self.config.draw_distance);
+        let max_d = f64::from(character_draw_distance(
+            &self.distances,
+            self.config.draw_distance,
+            false,
+        ));
         let mut shown = std::mem::take(&mut self.shown);
         shown.clear();
         for (e, a) in self.actors.iter() {
@@ -655,11 +730,7 @@ impl CharacterLayer {
             }
             let mut textures: Vec<TexRequest> = parts
                 .iter()
-                .flat_map(|p| {
-                    p.plans
-                        .iter()
-                        .flat_map(|pl| pl.texture.into_iter().chain(pl.dye.map(|d| d.0)))
-                })
+                .flat_map(|p| p.plans.iter().flat_map(MaterialPlan::textures))
                 .collect();
             textures.sort_unstable();
             textures.dedup();
@@ -827,6 +898,8 @@ impl CharacterLayer {
             heading,
             speed: 0.0,
             seed: seed_of(id),
+            fade: tessera_world::draw_distance::DrawFade::new(),
+            seen: false,
         };
         if self.actors.insert(e, actor).is_err() {
             self.store.despawn(e);
@@ -1264,6 +1337,23 @@ impl CharacterLayer {
         self.stats = s;
     }
 
+    /// Sets how characters are shaded: through the lit pipeline (stored-value colours and
+    /// the lit inputs of `lighting.md` §4.1) and whether they cast the sun's shadow.
+    pub fn set_shading(&mut self, lit: bool, shadows: bool) {
+        self.lit = lit;
+        self.shadows = shadows;
+    }
+
+    /// Leaves the player's own character out of the draws (free-fly mode) or not.
+    pub fn set_hide_player(&mut self, hide: bool) {
+        self.hide_player = hide;
+    }
+
+    /// Sets the distance rules of the frame ([`character_draw_distance`], the fade).
+    pub fn set_distances(&mut self, frame: CharacterFrame) {
+        self.distances = frame;
+    }
+
     /// Uploads the palettes of the visible characters into `frame` and returns their draws
     /// (module docs, step 4). `camera` is the eye in `anchor`'s frame.
     pub fn prepare_draws(
@@ -1276,12 +1366,14 @@ impl CharacterLayer {
         out: &mut Vec<MeshDraw>,
     ) {
         let t = Instant::now();
-        let max_d = self.config.draw_distance;
+        let cap = self.config.draw_distance;
+        let df = self.distances;
         let mut drawn = 0usize;
         for (e, render, tf) in self.store.renderables() {
             let Some(a) = self.actors.get(e) else {
                 continue;
             };
+            let is_player = Some(a.net) == self.player;
             if a.hidden {
                 continue;
             }
@@ -1291,6 +1383,9 @@ impl CharacterLayer {
                 Some(tag) if !self.shown.contains(&tag) => continue,
                 None if !self.drawable(e) => continue,
                 _ => {}
+            }
+            if self.hide_player && Some(a.net) == self.player {
+                continue;
             }
             let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
             else {
@@ -1319,11 +1414,22 @@ impl CharacterLayer {
             let world = Mat4::from_scale_rotation_translation(Vec3::splat(scale), rot, pos);
             let center = world.transform_point3(g.center);
             let radius = g.radius * scale;
-            if (center - camera).length() - radius > max_d
-                || !frustum.sphere_visible(center, radius)
-            {
+            let distance = ((center - camera).length() - radius).max(0.0);
+            let max_d = character_draw_distance(&df, cap, is_player);
+            let in_view = frustum.sphere_visible(center, radius);
+            let Some(a) = self.actors.get_mut(e) else {
+                continue;
+            };
+            // `walker.md` §11.4 step 1: the 1.5 s fade across D (`mesh.md` §8.7).
+            let opacity = a
+                .fade
+                .update(distance, max_d, df.dt, df.camera_moved, !a.seen, df.lod);
+            a.seen = in_view;
+            if opacity <= 0.0 || !in_view {
                 continue;
             }
+            // A fading character casts no shadow (as fading objects, `walker.md` §14.5).
+            let casts = self.shadows && opacity >= 1.0 && distance <= CHARACTER_SHADOW_DISTANCE;
             // The sampled pose, or the reference pose of a figure without an animator.
             let pose: Option<PoseView<'_>> = match self.store.anim(e) {
                 Some(anim) => self
@@ -1352,38 +1458,14 @@ impl CharacterLayer {
                     }
                 };
                 for (i, plan) in part.plans.iter().enumerate() {
-                    let texture = match plan.texture {
-                        None => None,
-                        Some(t) => match objects.texture(t) {
-                            TexLookup::Ready(id) => Some(id),
-                            TexLookup::Failed if plan.alpha == AlphaKind::Opaque => None,
-                            _ => continue,
-                        },
-                    };
-                    let dye = plan
-                        .dye
-                        .and_then(|(mask, color)| match objects.texture(mask) {
-                            TexLookup::Ready(id) => Some(Dye {
-                                color,
-                                mask: DyeMask::Texture(id),
-                            }),
-                            _ => None,
-                        });
-                    let material = Material {
-                        base_color: plan.base_color,
-                        base_texture: texture,
-                        dye,
-                        alpha: match plan.alpha {
-                            AlphaKind::Opaque => AlphaMode::Opaque,
-                            AlphaKind::Mask(c) => AlphaMode::Mask { cutoff: c },
-                            AlphaKind::Blend => AlphaMode::Blend,
-                        },
-                        two_sided: plan.two_sided,
-                        unlit: plan.unlit,
-                        ..Material::color(plan.base_color)
+                    let Some((material, lit)) =
+                        surface_draw(plan, &|t| objects.texture(t), self.lit, opacity, casts)
+                    else {
+                        continue;
                     };
                     let mut d = MeshDraw::new(part.mesh, transform, material)
-                        .with_submesh(u32::try_from(i).unwrap_or(u32::MAX));
+                        .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
+                        .with_lit(lit);
                     if part.skinned
                         && let Some(p) = palette
                     {
@@ -1459,6 +1541,32 @@ mod tests {
             .filter(|s| !matches!(s.state, SlotState::Free))
             .map(|s| s.refs)
             .collect()
+    }
+
+    #[test]
+    fn character_distances_follow_the_class_g_and_the_multiplier() {
+        let f = CharacterFrame::default();
+        assert_eq!(character_draw_distance(&f, 400.0, false), 80.0);
+        assert_eq!(character_draw_distance(&f, 400.0, true), 240.0);
+        // `--object-draw-distance UltraHigh` (M_d 2): 160 m, not the old fixed 80 m.
+        let ultra = CharacterFrame {
+            multiplier: 2.0,
+            ..f
+        };
+        assert_eq!(character_draw_distance(&ultra, 400.0, false), 160.0);
+        // Fog pulls G in: G wins.
+        let fog = CharacterFrame { g: 60.0, ..f };
+        assert_eq!(character_draw_distance(&fog, 400.0, false), 60.0);
+        // The option is a cap.
+        assert_eq!(character_draw_distance(&ultra, 50.0, false), 50.0);
+        // Per-class distances off: the cap alone; hostile values: the cap.
+        let off = CharacterFrame { lod: false, ..f };
+        assert_eq!(character_draw_distance(&off, 400.0, false), 400.0);
+        let nan = CharacterFrame {
+            multiplier: f32::NAN,
+            ..f
+        };
+        assert_eq!(character_draw_distance(&nan, 400.0, false), 400.0);
     }
 
     #[test]

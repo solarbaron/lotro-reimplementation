@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-06, see review record) |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (2026-10-07, sixth revision, see §17) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review of the fourth revision 2026-10-06: **passed**; status moved to Accepted. Both re-review items fixed: §4.5 now limits "hidden in rock under the ceiling surface" to the 2,336,479 triangles with the ceiling at or below the terrain and carries the `collision.md` §6.5 OPEN for the 413,655 all-zero triangles (also in T11 and §16); §8 gives the full layer counts with provenance (OBS4, T39). Every §5.3 item holds. Spot checks that matched (independent probe over all 390,150 landblock-data records and all 5 tables): T39 (182 layers in 29 landblocks, all region 1; terrain 60 drawn + 36 skipped, ceiling 43 drawn + 43 skipped; 15 entries without diffuse, all in 0x19000000); T11/§4.5 (2,368 landblocks, all with a ceiling; 2,750,134 triangles = 2,336,479 ceiling at or below + 413,655 all-zero, none above); T5 (925,884 layers, none out of range; highest key 1,094 in region 1 and 1,420 in region 5); T6/§4.2 (86,726 terrain and 2,355 ceiling chunks, `draw_order` never decreasing, no repeated key; first layer key 0 in 86,681 terrain and all 2,355 ceiling chunks); §4.3 (9,170 `whole` layers without mask, 9,035 with no earlier layer with triangles); §3.4 (keys 0 … n − 1, key 0 lowest `draw_order` in all five tables). Non-blocking note for the next revision: "ascending" in T6/§4.2 means non-decreasing; 3 terrain chunks (region 2) hold both entries of the equal-`draw_order` pair of their table (§3.3), in either stored order, so a strict-order test fails there; stored order decides, as §4.2 already says. Earlier history: Claude review session (spec-writer agent), re-review 2026-10-05: **changes requested**. First-round items (2)–(5) fixed; item (1) fixed except: (1) §4.5, last paragraph, says the undrawn triangles "are terrain that is hidden inside other geometry". That is shown only for the 2,336,479 with the ceiling at or below the terrain; for the 413,655 whose three ceiling samples are 0 it is unknown (`collision.md` §6.5 keeps it OPEN: what covers them, whether a walker reaches them). Narrow the sentence and carry or cite that OPEN (also in §16). (2) Minor: §8 "used by 60 layers" counts drawn terrain-chunk layers only; the 15 entries are also named by 36 skipped terrain layers and 86 ceiling layers (43 drawn). Spot checks that matched (independent probes): OBS3/T37 (60,450 0x804 records: 4,692 + 749 light-map values, 5,422 distinct surfaces, 19 named twice, all DXT1, 5,421 of 128 × 128 and one of 64 × 64); T34/T35 and §8.2 defaults (3000 = 0x40000007 in all 192 terrain records, 3020 = 0x40000007 in all 96 overlay records, 3001 = 0x40000008, 1070/1071 = 0); T11/§4.5 census over all 390,150 records (86,726 layered terrain chunks; 2,368 landblocks, all with a ceiling; 2,750,134 triangles = 2,336,479 ceiling at or below + 413,655 all-zero, none above); 15 entries without diffuse, all in 0x19000000, 60 drawn terrain layers. First round, review 2026-10-05: changes requested. (1) §4.5 and T11 contradict `collision.md` §6.5 (C22, CO11): hole triangles are not cave mouths; the terrain there is buried under the ceiling surface or the block has no ceiling, and the client keeps them in terrain collision; adopt the correction recorded in `collision.md` §15 and the full census (2,368 landblocks, all with a ceiling) instead of the 49-block sample. (2) OBS row: "5,449 light maps" exceeds the 5,441 in the install (4,692 + 749, `landblock.md` §6.2). (3) §15 row for `scenery.md` §4.4 is stale; that section now defers to §3.3 and looks entries up by key. (4) Unknown without an OPEN callout: the client's handling of the 15 entries without a diffuse texture (§8, last paragraph; only a Tessera Decision, not in §16). (5) Minor: §5.1's BIN fact (non-A8 masks rejected with a logged error) is not among BIN questions (a)–(m) and has no provenance row. Not a defect: the §2 code fence is an ASCII diagram. Spot checks that matched (independent probes): all 5 records of 0x19 (sizes, counts, zero leftover, keys 0 … n − 1, first keys 191, 0, 192 … of 0x1900000A, key 0 lowest `draw_order`, duplicate pairs in three tables); every §3.3 and §3.6 census figure; region-descriptor slot 8 at offset 110 in all 7 descriptors; region 3 (15,897 no-ceiling chunks, 150,026 layers): keys in range, ascending `draw_order`, first layer key 0, `whole` fields 0, all 108,068 drawn masks A8 square 128/256/512, all 17,766 masks of skipped layers absent; region-3 light maps DXT1 128 × 128; terrain records' lit passes SRCALPHA / INVSRCALPHA with depth write. |
+| **Review record** | Sixth revision: Claude review session (spec-writer agent), 2026-10-07, **passed** (Accepted). Earlier rounds and detailed findings: dirty-room review log (incident 0018). |
 | **Implements into** | `crates/formats` (terrain type table decoder, prefix 0x19), `crates/terrain` (layer resolution, per-vertex texture-coordinate sets and tangent frame, splat inputs), `crates/render` (layer pipeline: feature selection, draw order, opacity rule, blend state, lighting inputs), `apps/explorer` (terrain type table view), `fuzz/` (one target for the 0x19 decoder) |
 | **Companion specs** | [`landblock.md`](landblock.md) §3.4 (height conversion), §3.5 (ceiling grid), §3.7 (per-vertex scenery word), §3.8 (surface chunks and layers), §6.4 (light maps). [`environment.md`](environment.md) §3 (region descriptor, slot 8), §5.6 (colour encoding). [`material.md`](material.md) §5.3 (float curve, reused here), §8.0 (parameter labels), §8.4 (texture transforms; same rule as §6.3 here). [`lighting.md`](lighting.md) §4 (engine inputs), §5 (lighting equation), §8 (light sources), §9 (sun shadow), §15 (colour space). [`water.md`](water.md) (everything about water). [`texture-list.md`](texture-list.md) (0x40 texture lists). [`records.md`](records.md) §1 (primitives, VLE), §5 (render surfaces, format 28 = A8), §8 (DID maps). [`property-system.md`](property-system.md) §5 (0x78 property sets), §8 (DID maps). [`scenery.md`](scenery.md) §4.4 (the same 0x19 table; its procedural flag gates scenery). [`collision.md`](collision.md) §6 (terrain collision). [`terrain.md`](terrain.md) (Tessera's meshing; §6, §7 and §9 there point here). |
 
@@ -33,7 +33,9 @@ client does:
 - how colour, normal maps, specular, the baked light map and the baked shadow enter the
   pixel (§9, §10);
 - what is known about roads and distance behaviour (§11, §12); water is in `water.md`;
-- the height conversion (§13, now adopted by `landblock.md` §3.4).
+- the height conversion (§13, now adopted by `landblock.md` §3.4);
+- what the client draws for a chunk without layers (§4.9) and how it computes the vertex
+  normals of the terrain and ceiling grids (§4.10).
 
 It settles the texture-splatting OPEN of `terrain.md` §9 and the OPENs (1)–(4) of
 `landblock.md` §3.8.2.
@@ -47,13 +49,15 @@ It settles the texture-splatting OPEN of `terrain.md` §9 and the OPENs (1)–(4
 |---|---|
 | OBS | Observed in the user's install (Steam) on 2026-10-05 by throwaway probes in the dirty-room scratchpad. All 5 records of prefix 0x19 decoded to the last byte (4,688 entries). All 390,150 landblock-data records of regions 1–5 and 14 read (86,726 terrain and 2,355 ceiling chunks with layers, 925,884 layers). The headers of all 646,073 distinct masks named by a drawn layer read. The 1,279 texture lists named by the tables decoded. A 1-in-40 sample (9,750 blocks) decoded in full (indices, vertex flags, masks); 630 minimap tiles compared with the composited layers (§4.1); light maps of adjacent blocks compared in a seam test (4,323 pairs, §10). (Corrected 2026-10-05: an earlier version of this row said "5,449 light maps"; that figure counted every 128 × 128 image in the sampled dump, not light maps. The install has 5,441 light-map properties, OBS3.) |
 | OBS3 | Observed in the same install on 2026-10-05 (third pass): all 60,450 landblock-property records (prefix 0x804, `landblock.md` §6) of regions 1–5 and 14 scanned for the two light-map properties: 4,692 `Landblock_LightMap` and 749 `Landblock_CeilingLightMap` values (5,441 in all, 5,422 distinct surfaces; 19 surfaces are named by two blocks); the header of every one of the 5,422 surfaces read. The default of parameters 3000 and 3020 in all 192 terrain shader records read. |
+| OBS5 | Observed in the same install on 2026-10-06 (M4.5 follow-up) by throwaway probes: all 390,150 landblock-data records read again; for every terrain and ceiling chunk without layers, whether the block has a ceiling and whether the stored terrain height is below the stored ceiling height at any sample (*i*, *j*) with 0 ≤ *i*, *j* ≤ 31; the smallest `draw_order` of all five tables; the diffuse-texture alpha of the 1,073 entries whose specular switches take the gloss from the diffuse alpha (227 distinct textures, one mip level of at most 32 × 32 texels each); the light maps of the `m4-5-visual.md` rows L2, L7, T15 and T16. |
+| OBS6 | Observed in the same install on 2026-10-07 by a throwaway probe (sixth revision): all 390,150 landblock-data records of regions 1–5 and 14; for every interior grid sample (1 ≤ *i*, *j* ≤ 31) the number of grid triangles that have the sample as a corner, enumerated from the quad split flags (terrain: bit 7 and the triangulation of `landblock.md` §3.6; ceiling: bit 0 with the mirrored rule of §4.10); for every pair of blocks adjacent east–west or north–south, bit 7 and bit 0 of the vertex flags at index 32 compared with the neighbour's index 0. |
 | OBS4 | Observed in the same install on 2026-10-06 by a throwaway probe: all 390,150 landblock-data records of regions 1–5 and 14 read again; every terrain-chunk and ceiling-chunk layer whose key names an entry without a diffuse texture in its region's table counted, split into drawn and skipped (§8 step 2) layers. |
 | COL | [`collision.md`](collision.md) §6.5 and rows C22 / CO11 there: census of terrain triangles covered by no layer over all 390,150 landblock-data records, compared with the ceiling grid, and the client's terrain collision mesh (BIN). |
 | OBS2 | Observed in the same install on 2026-10-05 (second pass): census of the switch combinations of all 4,688 entries (§3.6); the parameter declarations of all 192 terrain shader records of §8.1 (defaults of the transform, colour, threshold and texture parameters); the labels of DID map 0x28000002 (UDB below). |
 | UDB | The "UNIQUEDB" DID map (root key 0xF, 0x28000002 in this install, `property-system.md` §8.1), read in the install: its entries pair numeric keys with labels and 0x2B shader-record DIDs. 192 labels name the terrain layer shader records; the label grammar is in §8.1. Labels are data and are quoted for interoperability. |
 | SH | The OpenGL back end's shader text stored in the terrain shader records (prefix 0x2B) of the same install, read in the dirty room (method M1, data files) and reduced to the formulas of §7 and §9. No shader text is reproduced. The opacity formula was checked in the programs of passes 0x3E, 0x3F and 0x40 of all 192 records. |
-| BIN-S | **M4 (decision 0011).** The Direct3D 10/11 programs (kind 4, `lighting.md` §2.2) of the terrain shader records disassembled with a public shader disassembler: records 0x2B0006F4, 0x2B0009F8, 0x2B00073F and 0x2B000A5E for every pass code, and the constant and sampler names of all 192 records. **Question:** what the newer back end computes for a terrain layer (opacity, lighting, normal map, specular, baked light, baked shadow, emissive). **Why M1–M3 were not enough:** the kind-4 programs are bytecode only; the OpenGL text describes an older variant that differs (§9.6); no frame capture is available (M3). |
-| BIN | **M4 (decision 0011).** Client build: `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), disassembled with objdump in the dirty room; small routines were run in a CPU emulator with synthetic inputs. Questions asked: (a) the field list and order of a terrain type entry; (b) the per-block layer draw loop (order, which layers are skipped, how `whole` layers are drawn, which layer is drawn opaque); (c) the blend and sampler state of a layer; (d) the per-vertex texture-coordinate sets of the terrain mesh; (e) how scale, rotation and offset compose into the texture matrix; (f) the height conversion constant met in the same code; (g) how the client chooses the shader record of a layer; (h) which material parameters the client sets for a layer and from which entry fields; (i) the client's own field labels of an entry and the serialiser of each field; (j) the colour serialiser; (k) the tangent frame written by the terrain vertex builder; (l) the source of the baked-shadow texture; (m) the texture stage setup (coordinate set, address and filter modes); third pass 2026-10-05: (n) how the client loads a layer's mask and what it does with a mask that is not A8; (o) what the layer setup does when the entry's diffuse texture is 0 or does not load; (p) where the per-block texture offset of the vertex builder comes from (§6.2); (q) what the per-chunk layer routine does when a layer's key is missing from the table or its setup fails. Why M1–M3 were not enough: draw-time state (blend modes, shader choice, texture-coordinate generation, transform order, tangent frames, parameter wiring) is not stored in the data; no published source describes it; a frame capture of the running client (M3) is not available to this session. |
+| BIN-S | **M4 (decision 0011).** The Direct3D 10/11 programs (kind 4, `lighting.md` §2.2) of the terrain shader records disassembled with a public shader disassembler: records 0x2B0006F4, 0x2B0009F8, 0x2B00073F and 0x2B000A5E for every pass code, and the constant and sampler names of all 192 records. **Question:** what the newer back end computes for a terrain layer (opacity, lighting, normal map, specular, baked light, baked shadow, emissive). **Why M1–M3 were not enough:** the kind-4 programs are bytecode only; the OpenGL text describes an older variant that differs (§9.6); no frame capture is available (M3). Second pass 2026-10-07 (fifth revision, same build and method): records 0x2B0007E3 and 0x2B0007B0 (pass 0x3F, layers without a normal map) and 0x2B00076A and 0x2B00079D (pass 0x3F, permutations with feature bit 4). **Question:** how the programs use the stored vertex normal (normalised or not, per term) and how the specular term is formed (§4.10 last paragraph, §9.4). Same reasons; not re-run in the sixth revision. |
+| BIN | **M4 (decision 0011).** Client build: `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), disassembled with objdump in the dirty room; small routines were run in a CPU emulator with synthetic inputs. Questions asked: (a) the field list and order of a terrain type entry; (b) the per-block layer draw loop (order, which layers are skipped, how `whole` layers are drawn, which layer is drawn opaque); (c) the blend and sampler state of a layer; (d) the per-vertex texture-coordinate sets of the terrain mesh; (e) how scale, rotation and offset compose into the texture matrix; (f) the height conversion constant met in the same code; (g) how the client chooses the shader record of a layer; (h) which material parameters the client sets for a layer and from which entry fields; (i) the client's own field labels of an entry and the serialiser of each field; (j) the colour serialiser; (k) the tangent frame written by the terrain vertex builder; (l) the source of the baked-shadow texture; (m) the texture stage setup (coordinate set, address and filter modes); third pass 2026-10-05: (n) how the client loads a layer's mask and what it does with a mask that is not A8; (o) what the layer setup does when the entry's diffuse texture is 0 or does not load; (p) where the per-block texture offset of the vertex builder comes from (§6.2); (q) what the per-chunk layer routine does when a layer's key is missing from the table or its setup fails; fifth pass 2026-10-06 (the same build, read with the Ghidra 12.1.3 decompiler in the dirty room; no network, login, launcher or anti-tamper code examined): (r) what the per-chunk routine draws for a chunk that has no layers, and which entry it uses; (s) how the per-vertex normals of the terrain and ceiling grids are computed; (t) whether placed lights reach the terrain and ceiling chunks (`lighting.md` L30); sixth pass 2026-10-07 (same build, own copy of the Ghidra project, decompiler and listings): (u) the client's light-map bake into the chunks' baked-lighting textures and when it runs (`lighting.md` §8.6); (v) the graphics options and device conditions that gate the normal-map switch and the extra full-grid draws of the per-chunk routine; (w) what those extra draws use. Why M1–M3 were not enough: draw-time state (blend modes, shader choice, texture-coordinate generation, transform order, tangent frames, parameter wiring) is not stored in the data; no published source describes it; a frame capture of the running client (M3) is not available to this session. |
 | LC | LotroCompanion `lotro-tools` (`RegionLoader`, readable source; facts only): names the eight table slots of the region descriptor. |
 | LB | [`landblock.md`](landblock.md) §3.8 (chunk and layer layout), §6.3–§6.4 (minimap tiles, light maps). |
 | ENV | [`environment.md`](environment.md) §3–§4 (region descriptor, per-region tables), §5.6 (colour encoding). |
@@ -76,7 +80,7 @@ behaviour is unknown; tests must not treat it as the original's behaviour.
 | T3 | Meaning of the 26 entry fields; the client's labels of the fields, registered in exactly the stored order (§3.3) | BIN (a), (i); OBS (value census); SH (constants named after some fields) | BIN for names and roles; layout Confirmed |
 | T4 | Keys of a table are exactly 0 … count − 1; entries are stored in hash order, not key order (§3.4) | OBS (5 of 5) | Confirmed |
 | T5 | A layer's `material` is a key of the region's terrain type table (§4.1) | OBS (925,884 layers, none out of range; regions 1 and 5 use their table's last key); OBS (minimap test, §4.1) | Confirmed |
-| T6 | Within every chunk, layers are stored in ascending order of the entry's draw-order value (§4.2) | OBS (86,726 + 2,355 chunks, no exception) | Confirmed |
+| T6 | Within every chunk, layers are stored in non-decreasing order of the entry's draw-order value (§4.2) | OBS (86,726 + 2,355 chunks, no exception; 3 terrain chunks hold both entries of an equal-value pair) | Confirmed |
 | T7 | Stored order is the draw order, bottom to top (§4.2, §8) | BIN (b); OBS (occlusion test, minimap test) | Confirmed |
 | T8 | Layers with no triangles and `whole` = 0 are skipped; `whole` = 1 draws all 2,048 triangles of the block (§4.3) | BIN (b); OBS | Confirmed |
 | T9 | The first drawn layer of a chunk gets no opacity source, no alpha test and an opaque output; later layers are blended "over" (§7, §8) | BIN (b), (c), (g), (h); BIN-S | BIN |
@@ -110,6 +114,19 @@ behaviour is unknown; tests must not treat it as the original's behaviour.
 | T37 | Every light map is a DXT1 surface; 5,421 of the 5,422 distinct surfaces are 128 × 128 texels, one is 64 × 64 (§10) | OBS3 (5,422 of 5,422) | Confirmed |
 | T38 | When a layer's key is not in the table, or its setup fails, the per-chunk routine stops and reports failure; the remaining layers of the chunk are not drawn by it (§8) | BIN (q) | BIN; what the caller does then was not traced |
 | T39 | The 15 entries without a diffuse texture (all in table 0x19000000) are named by 182 layers in 29 landblocks of region 1: 96 in terrain chunks (60 drawn, 36 skipped) and 86 in ceiling chunks (43 drawn, 43 skipped) (§8) | OBS4 (all 390,150 landblock-data records) | Confirmed 2026-10-06 |
+| T40 | A chunk with no layers is drawn with one opaque layer over its full grid, using the table entry with the smallest `draw_order`, when the block has no ceiling or its stored terrain height is below its stored ceiling height at one of the samples 0 ≤ *i*, *j* ≤ 31; otherwise the chunk draws nothing and is not added to the scene (§4.9) | BIN (r) | BIN |
+| T41 | Chunks without layers: 303,424 terrain chunks (300,187 drawn by T40, 3,237 not) and 4,512 ceiling chunks (944 drawn, 3,568 not); the smallest `draw_order` of every table belongs to key 0 alone (§4.9) | OBS5 (all 390,150 records, all 5 tables) | Confirmed 2026-10-06 |
+| T42 | Vertex normal = the plain average of the unit normals of the grid triangles around the vertex (not renormalised); neighbouring blocks supply the triangles across an edge; ceiling normals point down and read the quad splits mirrored east–west (§4.10) | BIN (s) | BIN |
+| T43 | Lights with `Light_BakedLandscapeLight` set are never put in the light lists of terrain or ceiling chunks, whether or not the block has a light map; in normal play their light on the ground is the stored light map (§10) | BIN (t), (u); `lighting.md` L30, L36 | Light lists BIN; "normal play" Inferred |
+| T44 | In 89 % of the 1,073 entries that take the gloss from the diffuse alpha, that alpha averages below 0.25 (median 0.049; per-texture maximum median 0.133) (§9.4) | OBS5 | Confirmed 2026-10-06 (one mip level per texture) |
+| T45 | The per-chunk routine draws every layer over the full grid instead of its triangle range when a switch held by the landscape renderer is off; the renderer starts with it on (§4.3) | BIN (r) | BIN; what turns it off was not traced |
+| T46 | A grid sample has 4 to 8 triangles around it (each of its four quads gives two when its diagonal runs through the sample); census of interior samples: terrain 4: 9,201, 5: 353,168, 6: 374,206,540, 7: 358,859, 8: 6,382; ceiling (6,867 blocks) 58 / 4,260 / 6,590,660 / 4,038 / 171 (§4.10) | OBS6 | Confirmed 2026-10-07 |
+| T47 | At every shared edge of two adjacent blocks, bit 7 and bit 0 of the vertex flag at index 32 equal those of the neighbour's flag at index 0 (25,648,920 of 25,648,920 samples each) (§4.10) | OBS6 | Confirmed 2026-10-07 |
+| T48 | The normal-map switch needs the multi-pass-lighting option on, the landscape-lighting-quality option at 2 or more and a device class above 2 (§8.1) | BIN (v) | BIN |
+| T49 | The client's light-map bake draws baked-landscape lights into the chunks' baked-lighting textures with pass code 0x41 and replaces the texture's content; the per-layer pass-0x41 draw items exist only in a special client mode (§10; `lighting.md` §8.6) | BIN (u) | BIN; "not in normal play" Inferred |
+| T50 | After its layers, the per-chunk routine can draw the full grid once more with the material of a 3 × 3-block sector object of the landscape renderer, with texture scale 1/480 (u) and −1/480 (v) and a translation from the block's place in the sector, when the multi-pass-lighting option is on, the landscape-lighting quality is above 0 and the device class is above 2 (§12) | BIN (v), (w) | BIN; what the sector object is Inferred |
+| T51 | The programs' columns *c*₀, *c*₁ of §6.4 hold scale and rotation only; the translations sit in the fourth column and do not enter the normal rotation (§6.4) | `material.md` §8.4 (BIN-T); `lighting.md` §5.2.1 (BIN-S) | Inferred from those BIN facts |
+| T52 | The §4.10 last paragraph (stored normal unnormalised in the hemispheric term and the sun's *N* · *L₀*, normalised in the per-vertex point-light sum) and the §9.4 specular form (not × *N* · *L*, albedo or 2) | BIN-S (second pass, records named in the tag) | BIN |
 
 ---
 
@@ -190,7 +207,7 @@ way; the Tessera names are this spec's.
 |---|---|---|---|---|---|---|
 | 0 | 4 | u32 | `key` | (hash key) | The terrain type number that layers refer to (§4.1) | 0 … *n* − 1 |
 | 4 | *V* + *L* | Pascal string | `label` | Name | Internal identifier of the type (an editor name). VLE length (`records.md` §1.2), then *L* bytes. Not displayed text; do not depend on its content. | *L* = 6 – 48 observed |
-| 4+*V*+*L* | 4 | u32 | `draw_order` | DepthIndex | Draw-order value; layers of a chunk are stored in ascending `draw_order` (§4.2) | 2 – 3,086; unique within a table except one pair in each of three tables |
+| 4+*V*+*L* | 4 | u32 | `draw_order` | DepthIndex | Draw-order value; layers of a chunk are stored in non-decreasing `draw_order` (§4.2) | 2 – 3,086; unique within a table except one pair in each of three tables |
 | 8+*V*+*L* | 4 | DID | `diffuse` | DiffuseTexture | 0x40 texture list of the colour texture, or 0 (15 entries, all in table 0x19000000) | |
 | 12+*V*+*L* | 4 | f32 | `u_scale` | TextureUScale | Texture repeats per world unit along the first projected axis (§6.3) | −0.5 – 1.0; most often 0.1, 0.2, 0.3, 0.05 |
 | 16+*V*+*L* | 4 | f32 | `v_scale` | TextureVScale | Same for the second axis | equal to `u_scale` in 4,543 entries |
@@ -292,8 +309,11 @@ blocks, against 0.10–0.12 for the reversed order and about 0 for a wrong table
 <a id="s4-2"></a>
 ### 4.2 Order (Confirmed)
 
-- In every chunk the layers are stored in ascending `draw_order` of their entries (86,726 of
-  86,726 terrain chunks and 2,355 of 2,355 ceiling chunks). No chunk names the same key twice.
+- In every chunk the layers are stored in non-decreasing `draw_order` of their entries (86,726
+  of 86,726 terrain chunks and 2,355 of 2,355 ceiling chunks). Equal values occur (review census
+  of 2026-10-06): 3 terrain chunks (region 2) hold both entries of an equal-`draw_order` pair of their table (§3.3), in
+  either stored order, so a test for strictly increasing values fails there; the stored order
+  decides. No chunk names the same key twice.
 - The stored order is the **draw order**, bottom layer first (BIN (b); §8). A renderer uses
   the stored order and does not re-sort.
 - The first layer of every chunk with layers is key 0 (86,681 of 86,726 terrain chunks; all
@@ -312,7 +332,19 @@ blocks, against 0.10–0.12 for the reversed order and about 0 for a wrong table
 
 For `whole` = 1 the client ignores `start`, `prims`, `min_vertex` and `vertex_span` (all 0 in
 the data) and uses one shared index list covering the full grid: the level-0 triangulation of
-`landblock.md` §3.6 (each quad split by bit 7 of its vertex flag).
+`landblock.md` §3.6 (each quad split by bit 7 of its vertex flag). For a ceiling chunk the
+same full-grid list follows the ceiling triangulation instead: each quad split by bit 0 of its
+vertex flag, triangles wound to face down (BIN (r); `collision.md` §6 uses the same split).
+
+**Full-grid switch (BIN (r), T45).** The table above holds while a switch kept by the
+client's landscape renderer is on. With it off, the per-chunk routine draws **every** layer,
+including those with `prims` = 0, over the full grid, and every layer after the first gets an
+overlay record (§8.1) whether or not it names a mask. The renderer creates the switch on; two
+renderer events clear it, and which events those are was not traced.
+
+> **OPEN:** When the client's landscape renderer turns the full-grid switch off (T45). The
+> stored triangle ranges and the export-time culling of §4.4 only make sense with it on.
+> **Tessera Decision:** treat it as always on (the table above).
 
 <a id="s4-4"></a>
 ### 4.4 Why lower layers have gaps (Confirmed on sample)
@@ -362,6 +394,24 @@ Collision keeps all 2,048 triangles of every landblock (`collision.md` §6.5).
 > the OPEN of `collision.md` §6.5. Drawing does not depend on the answer (the original does not
 > draw them, BIN (b)); only what the player sees there does.
 
+> **Answered (spec writer, 2026-10-07, fifth revision):** what the original draws for a
+> terrain chunk with no layers is now §4.9 (BIN (r), T40, T41): one opaque layer of the
+> table's lowest-`draw_order` entry over the full grid, unless the block has a ceiling that is
+> nowhere above its terrain. The 13 × 13 landblocks around `m4-5-visual.md` row F1 (region 1,
+> 0x4C66) have no ceiling, so each is drawn with key 0 of 0x19000000. The height-shaded
+> fallback of `walker.md` §14.4 is no longer needed for such chunks. The original question
+> follows.
+>
+> **OPEN (clean-room implementer, 2026-10-06, walker review):** what the original draws for
+> a **terrain chunk with no layers at all**. The census above counts only the 86,726
+> landblocks whose terrain chunk has layers. A review probe found many landblock-data
+> records whose terrain chunk has none while the heights are not constant: 17,020 in
+> region 1 (703 of them with a landblock info), 11,359 in region 2 and 42,807 in region 5,
+> among them the 13 × 13 landblocks around `m4-5-visual.md` row F1 (region 1, 0x4C66). Is
+> such a chunk drawn at all, drawn by the distant-landscape path (§12), or in some other
+> way? Tessera Decision meanwhile (`walker.md` §14.4): the walker draws it like a chunk
+> that does not resolve (height-shaded), not as nothing.
+
 <a id="s4-6"></a>
 ### 4.6 Quad grid (answers `landblock.md` §3.8.4 OPEN; Probable)
 
@@ -398,12 +448,118 @@ Everything else (layers, masks, the light map named `Landblock_CeilingLightMap`,
 and blend rules) works as for the terrain chunk. Ceiling triangles face downwards
 (`landblock.md` §3.5).
 
-> **OPEN:** How the ceiling normal array is computed (from the ceiling heights like the
-> terrain normals, and whether the normals point down). The hemispheric ambient term of §9
-> depends on it: a downward normal receives *A₀* − *H₀*. **Tessera Decision:** compute ceiling
-> normals from the ceiling heights as for the terrain and negate them so that they face down.
+The ceiling normal array is computed from the ceiling heights by the rule of §4.10 (BIN (s),
+answered 2026-10-07): the normals point **down**, so a ceiling receives the downward ambient
+*A₀* − *H₀* of §9 (`lighting.md` §5.3), plus its own light map and the placed lights that
+reach it (§10). The former Tessera Decision (terrain rule, negated) gives the same direction;
+§4.10 gives the exact triangles.
 
 ---
+
+<a id="s4-9"></a>
+### 4.9 Chunks without layers (BIN (r); census Confirmed)
+
+A terrain or ceiling chunk whose layer count is 0 is not simply skipped. The client decides
+per block, with one flag that serves both chunks of the block:
+
+1. **The block's open flag.** It is set when the block has no ceiling. When the block has a
+   ceiling, it is set only if, at some grid sample (*i*, *j*) with 0 ≤ *i* ≤ 31 and
+   0 ≤ *j* ≤ 31 (the last row and column, 32, are not tested), the stored terrain height is
+   strictly lower than the stored ceiling height at the same sample (`landblock.md` §3.4,
+   §3.5; the comparison is the same on the raw u16 values or on the converted heights).
+2. **Flag set:** the chunk is drawn as if it had exactly one layer:
+   - the entry is the one with the **smallest `draw_order`** in the region's table (§3.1). The
+     client finds it by scanning the whole table; if several entries shared the smallest value
+     the one it meets last in its own storage order would win, but in every table of this
+     install the smallest value belongs to one entry only, key 0 (T41);
+   - the layer is the chunk's first drawn layer (§7, §8): no mask, no opacity input, no alpha
+     test, output alpha 1;
+   - its geometry is the chunk's full grid (§4.3: bit 7 split for the terrain chunk, bit 0 and
+     downward winding for the ceiling chunk);
+   - everything else is the normal layer setup: the shader-record switches of §8.1 (normal map,
+     specular, the chunk's light map of §10 as baked light, emissive and glow), the parameters of
+     §8.2, the texture coordinates of §6 and the lighting of §9.
+3. **Flag clear:** the chunk draws nothing. A chunk with nothing to draw is not added to the
+   client's scene at all, so it neither receives lights nor is drawn by any other path.
+
+Census (OBS5, T41; all 390,150 landblock-data records of regions 1–5 and 14):
+
+| Chunk | Without layers | Drawn by rule 2 | Not drawn (rule 3) |
+|---|---|---|---|
+| Terrain, block without a ceiling | 299,369 | 299,369 | 0 |
+| Terrain, block with a ceiling | 4,055 | 818 | 3,237 |
+| Ceiling | 4,512 (of 6,867) | 944 | 3,568 |
+
+Of the 6,867 blocks with a ceiling, 3,075 have the open flag set and 3,792 do not. Many of the
+terrain chunks drawn by rule 2 lie outside the playable areas (142,651 of them have every
+height sample 0), but not all: the 13 × 13 blocks around `m4-5-visual.md` row F1 (region 1,
+0x4C66) have varying heights, no ceiling and no layers, and are drawn with key 0 of
+0x19000000. In every table key 0 is a top-down (`projection` 3) ground type.
+
+These DIDs and counts are observations of this install; a reader takes the entry with the
+smallest `draw_order` from the table at run time.
+
+<a id="s4-10"></a>
+### 4.10 Vertex normals of the terrain and ceiling grids (BIN (s))
+
+The client computes one normal per grid sample (33 × 33 per chunk) once per block and stores
+it with the block; the vertex builder copies it unchanged into the vertex (§4.8, §6.4).
+Positions for this computation are (5 · *i*, 5 · *j*, *h*) with *i* the east index, *j* the
+north index, 5 the grid spacing (a client constant) and *h* the height of §13 (the ceiling
+height for a ceiling chunk).
+
+**Terrain chunk.** The normal at sample (*i*, *j*) is the plain average of the unit normals of
+the grid triangles that have that sample as a corner, taken from the four quads around it
+(south-west, south-east, north-west and north-east of the sample). Each quad is split by bit 7
+of its own vertex flag exactly as the terrain triangulation is (`landblock.md` §3.6): a quad
+whose split runs through the sample contributes two triangles, otherwise one. The four split
+flags are independent, so a sample has **four to eight** triangles: two each from the
+south-west and north-east quads when their flag is set, and from the south-east and north-west
+quads when their flag is clear. Census of the interior samples (1 ≤ *i*, *j* ≤ 31) of all
+390,150 landblock-data records (OBS6, T46): 4 triangles at 9,201 samples, 5 at 353,168, 6 at
+374,206,540, 7 at 358,859 and 8 at 6,382; ceiling samples of the 6,867 blocks with a ceiling
+(mirrored rule below, which gives the same count from the bit-0 flags): 58, 4,260, 6,590,660,
+4,038 and 171. Each triangle's normal is the normalised cross product of its edges
+taken counter-clockwise seen from above, so it points up. The average is the sum divided by
+the number of triangles; it is **not** normalised again, so its length is at most 1.
+
+**Ceiling chunk.** The same procedure with three differences:
+
+1. heights are the ceiling heights, and quads are split by bit 0 of the vertex flag (the
+   ceiling split, `collision.md` §6);
+2. east and west are exchanged in the triangle shapes, but not in the split flags: the quad
+   south-east of the sample is split by the flag of the quad south-west of it, the quad
+   south-west by the flag of the quad south-east, the quad north-east by the flag of the quad
+   north-west and the quad north-west by the flag of the quad north-east; and a set flag then
+   means the diagonal from the quad's south-east corner to its north-west corner (the mirror
+   image of its meaning in the triangulation);
+3. the triangle corners are taken in the mirrored order, so every triangle normal is the
+   **downward** unit normal of its triangle, and the average points down (about (0, 0, −1)
+   under a flat ceiling).
+
+So the triangles averaged for a ceiling sample are in general not the drawn ceiling triangles
+around it (§4.3); under a flat ceiling the result is the same either way.
+
+**Block edges.** A triangle that needs a sample outside the block uses the neighbouring
+block's data: index −1 is index 31 of the block to the west (or south), index 33 is index 1 of
+the block to the east (or north) (index 32 and the neighbour's 0 are the same samples). A
+**corner** sample needs the block **diagonally** adjacent as well: when both indices are out
+of range at once, both are mapped, so for example (−1, −1) is sample (31, 31) of the block to
+the south-west. The split flag of a quad outside the block is read from the neighbour (or the
+diagonal neighbour) in the same way. The client reads quads with indices −1 … 32 only; for a
+quad at index 32 it uses the block's **own** vertex flag 32, not the neighbour's flag 0 (BIN (s),
+as re-read by the fifth-revision review; not re-traced in the sixth revision). That
+gives the same result, because flag 32 equals the neighbour's flag 0 in both bit 7 and bit 0
+at every shared edge sample of this install (invariant T47: 25,648,920 of 25,648,920 for each
+bit). When the needed neighbour record does not exist, or (for a ceiling) the neighbour has no
+ceiling, the triangle is left out of the average. Normals along an edge therefore agree
+between blocks when both neighbours exist.
+
+How the programs of layers without a normal map use the stored normal (BIN-S second pass,
+T52; records 0x2B0007E3 and 0x2B0007B0, pass 0x3F): the per-vertex hemispheric term of §9.1 and the sun's
+**N** · *L₀* (interpolated, evaluated per pixel) take it as stored, without normalising; only
+the per-vertex point-light sum normalises it first. Layers with a normal map use the frame of
+§6.4.
 
 <a id="s5"></a>
 ## 5. Alpha masks
@@ -571,6 +727,22 @@ negative scale flips the matching axis. *n*′ is used in the frame (**T**, −*
 `lighting.md` §5.2.4: light, view and up vectors are taken into that frame per vertex and
 interpolated, and the lighting of §9.2 is evaluated with *n*′.
 
+> **OPEN:** (implementer, 2026-10-06) "each normalised over its four components" leaves
+> open which components the client's 4 × 4 texture matrix holds in those two columns. If
+> the matrix convention puts the translation (the `u_offset`/`v_offset` curves) into the
+> same columns, a non-zero or scrolling offset would change *n*′. Tessera follows the
+> proportionality stated above (*c*₀, *c*₁ from scale and rotation only; translation not
+> included). Please confirm, or give the four components.
+>
+> **Answered (spec writer, 2026-10-07, sixth revision; T51, Inferred from BIN facts):** the
+> programs read the matrix as u′ = m00·u + m01·v + m03 and v′ = m10·u + m11·v + m13
+> (`lighting.md` §5.2.1), so the translations (`u_offset`, `v_offset` and the early
+> translation) sit in the **fourth** column (m03, m13). The matrix is a 2-D transform appended
+> to the identity (`material.md` §8.4), so its first two columns are
+> *c*₀ = (`u_scale` cos θ, `u_scale` sin θ, 0, 0) and *c*₁ = (−`v_scale` sin θ,
+> `v_scale` cos θ, 0, 0). A constant or scrolling offset therefore does not change *n*′; the
+> proportionality stated above is exact.
+
 ---
 
 <a id="s7"></a>
@@ -610,7 +782,9 @@ pattern.
 For one chunk (terrain or ceiling) of one block:
 
 1. Resolve the region's terrain type table (§3.1) and, for every layer, its entry by key.
-2. Walk the layers in stored order. Skip a layer with `whole` = 0 and `prims` = 0.
+2. Walk the layers in stored order. Skip a layer with `whole` = 0 and `prims` = 0. A chunk
+   with no layers at all is handled by §4.9 (one full-grid layer of the lowest-`draw_order`
+   entry, or nothing).
 3. Its geometry is its triangle range (`landblock.md` §3.8.3) or, for `whole` = 1, the full
    grid triangulation (§4.3).
 4. The **first layer that is drawn** gets no opacity source and no alpha test (§7, §8.2), so it
@@ -666,7 +840,7 @@ a lookup key made of the projection and seven switches, each decided per layer a
 |---|---|
 | **overlay** | the layer is not the first drawn layer of the chunk **and** it names a mask |
 | **opacity** | the layer is not the first drawn layer **and** `use_opacity_mask` = 1 |
-| **normal map** | the entry names a normal texture, it loads, and the client's normal-map setting is on (a graphics option with a quality condition) |
+| **normal map** | the entry names a normal texture, it loads, and the graphics settings allow it: the multi-pass-lighting option is on, the landscape-lighting-quality option is 2 or more, and the device class of the graphics back end is above 2 (BIN (v), T48; the texture is not even requested otherwise) |
 | **gloss from normal** | `use_specular` = 1, `use_gloss_specular` = 1, `specular_from_normal` = 1 and the normal-map switch is on |
 | **specular** | `use_specular` = 1, `use_gloss_specular` = 1, and either the gloss-from-normal switch is on or the opacity switch is off |
 | **baked light** | the block has a light map (§10) and the client has a texture stage free for it |
@@ -689,7 +863,13 @@ that wants the original records finds them by their labels at run time (they are
 hard-code the DIDs or keys).
 
 Tessera writes its own shaders and needs the switches, not the records. **Tessera Decision:**
-treat the client's normal-map setting as on, and treat a texture stage as always free.
+treat the graphics conditions of the normal-map switch as met (the original's look at its
+higher landscape-lighting settings), and treat a texture stage as always free.
+
+**Pass-0x41 draw items (BIN (u), T49).** In the special client mode of `lighting.md` §8.6 the
+layer setup adds, for each layer, a second draw item with pass code 0x41, used by the
+light-map bake. Outside that mode no such item exists. Tessera draws none (`lighting.md` §8.6
+Tessera Decision).
 
 <a id="s8-2"></a>
 ### 8.2 Parameters the client sets for a layer (BIN (h); OBS2)
@@ -745,6 +925,15 @@ Per pixel:
 4. colour = 2 × *C* × Σ, plus the emissive term of §9.5, then distance fog (`lighting.md`
    §10).
 
+**Tessera Decisions (what `tessera-render` does; not the original's behaviour):** the ambient
+term may be evaluated per pixel with the interpolated stored normal instead of per vertex and
+then interpolated (the two differ only where the clamp acts inside a triangle); the placed
+lights of the per-vertex sum may be evaluated per pixel with the smooth fade of `lighting.md`
+§8.3 step 3, diffuse only (`lighting.md` §5.6 Decision). Without a normal map the stored
+normal is used as stored (not normalised) for the ambient and the sun's diffuse term, and the
+unit normal for the placed lights and the highlight, as above; this reproduces the original
+only when the vertex normals are those of §4.10.
+
 <a id="s9-2"></a>
 ### 9.2 Layer with a normal map
 
@@ -773,6 +962,26 @@ normalise(*V*ₜ + *L*ₜ):
   (`specular_colour`);
 - the term is added after the factor 2 of §9.1 step 4, and it is scaled by the same shadow
   factor *S* as the sun's diffuse term.
+- the specular power rule of `lighting.md` §5.8 applies: the client uploads a black specular
+  colour when the effective power is below 0.5. Terrain layers set parameter 1000 (power) and
+  2001 (specular colour) like any material (§8.2), and those bind with the same semantics as in
+  every record, so the rule reaches them too (Inferred from `lighting.md` L21 and §8.2). With
+  `use_specular` = 0 the power is 0 (§8.2), so such a layer has no highlight.
+
+The term is not multiplied by **N** · *L*, by the albedo or by the factor 2, so its strength
+is set by the gloss *g* and the light's specular colour (BIN-S second pass, T52; records
+0x2B00076A and 0x2B00079D, pass 0x3F, permutations with feature bit 4). **Data note (OBS5, T44):** where the
+gloss is the diffuse alpha, that alpha is small in most entries: over the 1,073 entries with
+both specular switches on, gloss not from the normal texture and a diffuse texture (227
+distinct textures; 1,024 entries use DXT3, 33 DXT1, 16 DXT5), the mean alpha is below 0.25 in
+89 % and below 0.5 in 95 % (median 0.049); only 3.4 % have an alpha of 1 throughout. Such
+layers show a faint sheen, not a broad highlight. Example: the diffuse texture of key 67 of
+0x19000002 (`m4-5-visual.md` rows T6 and L5) has alpha between 0 and 0.20 (mean 0.09), so with
+a white sun specular colour, white `specular_colour` and *S* = 1 the term adds at most about
+0.2 (typically 0.09) to each channel at the centre of the reflection, against a diffuse
+term 2 × *C* × Σ of about 0.3–0.4 there (texture mean albedo about (0.42, 0.37, 0.29); the
+keyframe of 0x1A000000 at *t* = 0.5 has ambient brightness 0.2, sun brightness 0.55 and sun
+specular white; sun colour per the Tessera Decision of `lighting.md` §8.1).
 
 <a id="s9-5"></a>
 ### 9.5 Emissive, glow and baked shadow
@@ -819,6 +1028,23 @@ taken per vertex. Tessera reproduces the newer back end (`lighting.md` §2.2).
   Content: baked light from placed light sources; 79 % of all texels are 0 (black), the rest
   are dim, warm colours (OBS).
 - The ceiling light map applies to the ceiling chunk in the same way.
+- **Placed lights on terrain (BIN (t), T43).** Lights whose `Light_BakedLandscapeLight` flag
+  is set are never put in the light lists of terrain or ceiling chunks (both are landscape
+  objects to the client), whether the block has a light map or not. In normal play their light
+  on the ground is the stored light map, and a block without a light map shows none of it.
+  Lights without the flag reach the chunks like any object (`lighting.md` §8.3, §8.5).
+- **The light-map bake (BIN (u), T49; `lighting.md` §8.6).** The client can also draw the
+  flagged lights that reach a chunk into the chunk's baked-lighting texture (pass code 0x41,
+  composited additively after a clear, replacing the stored content). Only a chunk that holds a
+  baked-lighting texture takes part, and in play a chunk holds one only when its block names
+  `Landblock_LightMap` (terrain chunk) or `Landblock_CeilingLightMap` (ceiling chunk) (BIN (u),
+  as traced by the fifth-revision review). The bake and its per-layer pass-0x41 draw items are
+  tied to a special client mode; **Inferred:** it is the light-map baking of the client's tools
+  and does not run in normal play, at any graphics setting. **Tessera Decision:** no bake; the
+  stored light map is used as it is. Example (OBS5): under each of the five orange lights of
+  `m4-5-visual.md` row L2 the block's light map 0x41221577 holds texels of about (0.29, 0.11,
+  0.0), so the pools are in the map; the light map of row L7, 0x4116792D, is black (largest
+  channel value 0.010 over all texels).
 
 ---
 
@@ -848,6 +1074,31 @@ blend. The layer data above describe the full-detail band. The far bands use oth
 > **OPEN:** How far layers are drawn, what replaces them beyond that distance, and how the
 > seam between near and far terrain is blended. Tessera may draw full layers at every
 > distance it meshes (`terrain.md` §3) until this is known.
+
+**Extra full-grid draws after the layers (BIN (v), (w); T50).** The per-chunk routine of §8
+can draw the chunk's full grid (§4.3) again after its layers:
+
+1. **Sector overlay.** The landscape renderer keeps objects for sectors of 3 × 3 landblocks
+   (480 units); the block build looks up the sector that holds the block and passes that
+   sector object's first material to the per-chunk routine when the renderer has one (and a
+   renderer switch is on; not traced further). When such a material is passed, the
+   multi-pass-lighting option is on, the landscape-lighting-quality option is above 0 and the
+   device class is above 2, the routine draws the full grid once more with a copy of that
+   material whose texture transform is set so that the sector image spans the sector: scale
+   1/480 on u and −1/480 on v (parameters 1001, 1002), translation from the block's place in
+   the sector (160 units per block) minus two offset values that the block build passes in
+   (Inferred: the per-block offset of §6.2), scaled by the same factors (1017, 1018; the
+   unscaled values go to 1019, 1020), and parameter 4006 (wrap V) set to 1.
+   **Inferred:** the sector objects are the distant-landscape sectors (ER; `environment.md` §2),
+   and this draw blends the near terrain toward the distant image. The material's blend state
+   and its effect on the picture were not traced.
+2. **Default layer again.** A further full-grid draw of the lowest-`draw_order` entry (§4.9)
+   runs only in the special client mode of `lighting.md` §8.6 or under a client debug switch;
+   it is not part of normal play (Inferred).
+
+> **OPEN:** What the sector overlay contributes (its shader record, blend and fade) and when
+> the renderer holds a sector material for a block. **Tessera Decision:** neither extra draw
+> is made; a chunk shows its layers only.
 
 ---
 
@@ -922,6 +1173,9 @@ At the block-local point (12.5, 3.0) inside one of key 1's triangles:
 | `terrain.md` §9 | Holes "at cave mouths"; ceiling diagonal OPEN | Revised there 2026-10-05 (§4.5 here; `collision.md` §6.4–§6.5) |
 | `property-system.md` §4.7 | Colour channel order of property values (code 16) | Not settled by this spec: the 0x19 colours use the record colour routine (§3.3), not the property-value reader. |
 | `lighting.md` §4.2 | `c_AlphaBlendMax` meaning OPEN | Adopted there: it is `alpha_blend_max` (§7) |
+| `walker.md` §14.3, §14.4 | Terrain light selection keeps baked-landscape lights on chunks without a light map; chunks without layers drawn height-shaded | Differ from §10 (T43) and §4.9 (T40). For the implementers of the walker: align with those sections; the walker's terrain normals (`terrain.md` §5, central differences) also differ from §4.10, which the renderer's stored-normal shading assumes |
+| `render.md` §4.3, §5.2 | Unattached lights with `Light_OnlyInfluenceParent`; the L30 conclusion cited in §5.2 | `lighting.md` §8.5 step 3 (BIN) withdraws the Decision for unattached lights; §5.2 stays right for the light lists, and the light-map bake is not part of normal play (§10, `lighting.md` §8.6). For the renderer's implementers |
+| `terrain.md` §5 | Central-difference vertex normals | The original's rule is §4.10 (T42); for the terrain implementers |
 
 ---
 
@@ -935,7 +1189,8 @@ At the block-local point (12.5, 3.0) inside one of key 1's triangles:
 > **OPEN:** Content and mapping of the landscape-shadow render target (§9.5). Tessera treats
 > it as white (Tessera Decision).
 
-> **OPEN:** Ceiling normals (§4.8).
+> **OPEN:** When the landscape renderer's full-grid switch turns off (§4.3, T45). Tessera
+> Decision there: always on.
 
 > **OPEN:** `slope_orientation` (147 entries): not read by the layer setup; any other use was
 > not found. Tessera ignores it.
@@ -952,6 +1207,22 @@ At the block-local point (12.5, 3.0) inside one of key 1's triangles:
 > comparison from the engine with each depth state (`lighting.md` §6); the value the engine
 > sets for terrain layers was not traced. Tessera Decision "less or equal".
 
+> **OPEN:** What sets the client mode that enables the light-map bake and its pass-0x41 draw
+> items (§10, `lighting.md` §8.6). Tessera Decision: no bake.
+
+> **OPEN:** What the sector overlay draw contributes and when a sector material is present
+> (§12, T50). Tessera Decision: not drawn.
+
+Answered in the sixth revision (2026-10-07): the client's second path for baked-landscape lights
+(§10, T43, T49: a light-map bake, Inferred not in normal play); the extra full-grid draws of the
+per-chunk routine (§12, T50); the conditions of the normal-map switch (§8.1, T48); the triangle
+count around a sample and the block-edge rule (§4.10, T46, T47); the columns of the texture
+matrix used for the normal rotation (§6.4, T51; the implementer OPEN of 2026-10-06).
+
+Answered in the fifth revision (2026-10-07): what is drawn for a chunk without layers (§4.9,
+T40, T41; the implementer's OPEN of §4.5); ceiling normals and the client's vertex-normal rule
+(§4.8, §4.10, T42); whether lights flagged as baked reach the terrain (§10, T43).
+
 Answered in the third revision (2026-10-05): the client's handling of entries without a
 diffuse texture (§8, T35; formerly unstated), the handling of a non-A8 mask (§5.1, T34), and
 the per-block offset rule (§6.2, T36).
@@ -967,3 +1238,5 @@ the per-block offset rule (§6.2, T36).
 | 2026-10-05 | Revision (spec writer, M4 under decision 0011). §1: new tags OBS2, UDB, BIN-S, LT, WAT; BIN questions (g)–(m); rows T9, T13, T16–T19, T22, T23 revised, T24–T33 added. §3.3: client labels of every field; fields renamed to the client's terms (`use_opacity_mask`, `use_specular`, `use_gloss_specular`, `alpha_test_threshold`, `alpha_blend_max`); colour byte order B, G, R, A (BIN); label length is a VLE (OPEN closed); §3.5 invariant 6; new §3.6 census. §4.7: the coarse grid is the scenery word (stale text removed). New §4.8 (ceiling chunks). §5.2, §6.1: coordinate set 4; set selection by record. §6.2: offset sources. §6.3: complete transform rule (early translation, rotation direction, curve clock, which textures it applies to); stale "mode 2 OPEN" removed. New §6.4 (tangent frame, rotation of the mapped normal). §7 rewritten: opacity per record family (T19 corrected). §8 step 4 and new §8.1 (feature switches and record choice), §8.2 (parameters). §9 rewritten with the newer back end's terrain lighting, specular, emissive, glow and baked shadow (§9.1–§9.6). §10: use BIN. §11: water replaced by a pointer to `water.md`. §13: adopted. §14: example updated. §15, §16 updated. |
 | 2026-10-05 | Third revision (spec writer, after review; M1 and M4 under decision 0011). §1: OBS row corrected (the "5,449 light maps" figure counted every 128 × 128 image of a sample dump; the install has 5,441 light-map properties); new tags OBS3 and COL; BIN questions (n)–(q); T11 rewritten from the full census of `collision.md` §6.5 (2,368 landblocks, all with a ceiling; collision keeps the triangles); new rows T34–T38. §3.3: the former-names note cites the real parameter labels (1043 `AlphaTestRef`, 1203 `c_AlphaBlendMax`). §4.5 rewritten: holes are terrain hidden under the ceiling surface or where there is no ceiling, not cave mouths; collision keeps them. §5.1: the A8 check is BIN (n) with a provenance row (T34) and a Tessera Decision. §6.2: the per-block offset rule (reference landblock, accumulated shift, reset at 2,048 units or a jump of 480 units or more); the OPEN narrowed to the choice of reference; Tessera Decision revised (camera block as reference; fixed region coordinates acceptable). §8: depth comparison labelled Tessera Decision; the client draws entries without a diffuse texture with the record default (formerly unstated, only a Decision); behaviour when a layer key is missing or a setup fails. §10: all light maps DXT1, one of 5,422 is 64 × 64. §14: offset wording follows §6.2. §15: `scenery.md` §4.4 row marked adopted; rows for `landblock.md` §6.4, `collision.md` §6.5 and `terrain.md` §9. §16 updated. |
 | 2026-10-06 | Fourth revision (spec writer, after re-review; M1). §4.5: the last paragraph no longer calls all undrawn triangles hidden terrain; only the 2,336,479 with the ceiling at or below the terrain are shown to be hidden, and what covers the 413,655 with all ceiling samples 0 is an OPEN callout carried from `collision.md` §6.5; T11 says the same. §8: the 15 entries without a diffuse texture are named by 182 layers (96 terrain-chunk layers, 60 drawn and 36 skipped; 86 ceiling-chunk layers, 43 drawn and 43 skipped), replacing "used by 60 layers"; new tag OBS4 and row T39. §16: the 413,655-triangle OPEN added. |
+| 2026-10-07 | Fifth revision (spec writer; M1 and M4 under decision 0011, Ghidra decompiler on the same build). Status Accepted → Revised. §0: new bullet. §1: tag OBS5, BIN questions (r)–(t), rows T40–T45. §4.3: full-grid list of ceiling chunks (bit 0, downward winding); the landscape renderer's full-grid switch (T45) with an OPEN and a Tessera Decision. §4.5: the implementer's OPEN on chunks without layers answered (pointer to §4.9). §4.8: ceiling-normal OPEN answered (normals point down; §4.10). New §4.9 (chunks without layers: the block's open flag, one full-grid layer of the lowest-`draw_order` entry, census). New §4.10 (vertex normals: average of unit triangle normals, ceiling rule with mirrored splits, block edges, how the programs use the stored normal). §8 step 2: pointer to §4.9. §9.4: the specular term's strength and the gloss census (T44), with the L5 example. §10: baked lights never reach terrain or ceiling chunks (T43); light maps of rows L2 and L7. §16: ceiling-normal OPEN removed; full-grid switch OPEN added; answered list. Implementers: `walker.md` §14.4's height-shaded drawing of chunks without layers and its Decision on baked lights for chunks without a light map, and `terrain.md` §5's central-difference normals, differ from the original as now specified. |
+| 2026-10-07 | Sixth revision (spec writer; M1 and M4 under decision 0011, own copy of the Ghidra project; incident 0018 follow-up). Status Revised → Review. Header: long review records moved to the dirty-room review log, short record kept. §1: tag OBS6; BIN-S tag extended with its second pass (records and question of the fifth revision's §4.10 and §9.4 statements); BIN questions (u)–(w); T6 says non-decreasing; T43 narrowed ("normal play" Inferred); T39 moved before T40; new rows T46–T52. §3.3, §4.2: "ascending" → non-decreasing, with the equal-value chunks. §4.10: four to eight triangles per sample with the census (T46); corner samples use the diagonal neighbour; quads −1 … 32 and flag 32 with the invariant T47; BIN-S references. §6.4: implementer OPEN answered (T51). §8.1: exact conditions of the normal-map switch (T48); the pass-0x41 draw items; Tessera Decision reworded. §9.1: Tessera Decisions for per-pixel ambient and placed lights (what `tessera-render` does). §9.4: the specular-power rule applies to terrain (Inferred). §10: placed lights in normal play and the light-map bake (T49) with Tessera Decision. §12: the extra full-grid draws (T50) with an OPEN and Tessera Decision. §15: rows for `walker.md`, `render.md`, `terrain.md`. §16 updated. Change-log rows put in date order. |

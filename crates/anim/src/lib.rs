@@ -73,7 +73,9 @@
 //! Nothing here panics on malformed data. Skeletons are validated once (parents precede
 //! children, at most [`MAX_BONES`] bones, finite invertible reference transforms), clips
 //! bind only when their track count equals the bone count, sampled values that are not
-//! finite or beyond [`BROKEN_TRANSLATION`] fall back to the reference transform, attach
+//! finite or beyond [`BROKEN_TRANSLATION`] / [`BROKEN_SCALE`] fall back to the reference
+//! transform, model transforms that still overflow fall back to their parent's (see
+//! [`Skeleton::compose_counted`]), non-finite skinning matrices become the identity, attach
 //! tables and bone maps are validated against the bone count, and every caller buffer is
 //! length-checked. Allocation is bounded by the bone count, the number of layers
 //! ([`Animator::MAX_LAYERS`]) and the cache budgets.
@@ -101,7 +103,8 @@ pub use attach::{
 pub use blend::{blend_poses, blend_transform, layer_over, scalar_blend_weights};
 pub use cache::{BakeCache, BakeStats, ClipDecoder, SkeletonDecoder};
 pub use clip::{
-    BROKEN_TRANSLATION, BakedClip, BoundClip, SampleReport, Wrap, clip_heap_size, clip_time,
+    BROKEN_SCALE, BROKEN_TRANSLATION, BakedClip, BoundClip, SampleReport, Wrap, clip_heap_size,
+    clip_time,
 };
 pub use deform::{BindDeformation, DeformClip};
 pub use error::{AnimError, Result};

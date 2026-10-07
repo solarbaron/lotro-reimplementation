@@ -25,7 +25,7 @@ use glam::{Vec3, Vec4};
 use tessera_havok::Transform;
 
 use crate::blend::scalar_blend_weights;
-use crate::clip::{BoundClip, SampleReport, Wrap, clip_time};
+use crate::clip::{BoundClip, SampleReport, Wrap, clip_time, scale_usable, translation_usable};
 use crate::error::{AnimError, Result};
 use crate::motion::{MotionDelta, RootMotionMode, motion_between};
 use crate::skeleton::{Skeleton, check_len};
@@ -871,7 +871,8 @@ impl Accum {
         }
     }
 
-    /// The weighted average; `fallback` where it cannot be formed.
+    /// The weighted average; `fallback` where it cannot be formed or is not finite or
+    /// beyond the broken-sample bounds ([`crate::BROKEN_TRANSLATION`], [`crate::BROKEN_SCALE`]).
     pub(crate) fn result(&self, fallback: &Transform) -> Transform {
         if !(self.w > 0.0 && self.w.is_finite()) {
             return *fallback;
@@ -885,18 +886,15 @@ impl Accum {
         } else {
             fallback.rotation
         };
+        let (t, s) = (t.to_array(), s.to_array());
         Transform {
-            translation: if t.is_finite() {
-                t.to_array()
+            translation: if translation_usable(&t) {
+                t
             } else {
                 fallback.translation
             },
             rotation,
-            scale: if s.is_finite() {
-                s.to_array()
-            } else {
-                fallback.scale
-            },
+            scale: if scale_usable(&s) { s } else { fallback.scale },
         }
     }
 }

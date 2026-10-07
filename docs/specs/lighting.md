@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-06; revised 2026-10-06, see §16) |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (2026-10-07, sixth revision, see §16) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), third review 2026-10-06: **passed** (CLEAN_ROOM §5.3, every item). Re-review items fixed: the §16 second-revision row names the time input E20 and parameter 1203 instead of a program constant name; §4.1 last row states the 2013 exception, aligned with `material.md` §7.3 and §8.6 (re-checked on all records: 7 of 11 records, one semantic-4 binding naming a permutation without programs). Spot checks that matched (independent decoder, all 510 shader records): L1 / LT1 blob magics per kind (27 / 6,918 / 7 / 7,041 / 16,985 permutations); §3.2 kind-4 permutation counts of all 14 pass codes and LT2 code set; §2.1 / LT3 depth write 1 in every block of 0x04, 0x05, 0x0A, 0x3E, 0x3F, 0x40, 0 in 0x08, 0x09, 0x41, and 8,940 SRCALPHA / ONE blocks without and 64 SRCALPHA / INVSRCALPHA blocks with depth write in 0x01–0x03; §3.2 row 0x00 over all back ends 1,764 / 220 / 97; L13 / LT5 116 colour-input records (2,624 surface records). Non-blocking note for the next revision: §3.1 says that in 6,860 permutations word-1 bit 3 is set "and the program takes bone matrices"; the 6,860 is right, but 1 of them has no bone-index vertex input and 3 declare no bone constant, so the sentence should give the share (as "98 %" tries to for word 2) rather than imply all (section is Inferred; Tessera does not select permutations). Earlier rounds: re-review 2026-10-05: **changes requested** (small). First-round items (1)–(4) fixed. Remaining: (1) the §16 change-log row of the second revision still quotes the program constant name of the time input (redacted by the spec writer 2026-10-06; not a material-parameter label, no interoperability need; CLEAN_ROOM §5.1); describe it as the time input E20. (2) §4.1 last row gives "none" as the semantic of every `c_` id, but 2013 (`c_MaterialDyeColor2`) has a semantic-4 binding in 7 records, as the row above says; align with the `material.md` fix. Spot checks that matched (independent probes, used-input masks of the Direct3D 11 vertex signatures): UV set 1 read by exactly six records used by surface records (0x2B0006F7, 0x2B000734, 0x2B0007E6, 0x2B00070E, 0x2B00078E, 0x2B0007A9; 91 surface records), set 2 only by 0x2B0007A9 (3); coordinate input 3 in 144 and input 4 in 192 records, all terrain layer records, none used by a surface record; second-colour-layer records 78 (72 / 664, 3 / 82, 3 / 1); `DirLightMaskAndAmbOcc` in 2 records (6 surface records); `BakedLight` in 96 records; 0x2B0000A8's main water permutations use only the position (normal and UV declared, unused), permutation 8 uses all three. First round, review 2026-10-05: changes requested. (1) §4.3 cites 0x2B0000A8 as a two-layer record whose colour layers both read UV set 0; it is the water shader, whose main programs take positions only (`water.md` §8.2–§8.3) and whose `Color`/`Color2` samplers occur in only 2 of its 13 permutations; say which permutations the statement covers. (2) Unknowns given only inline, without a `> **OPEN:**` callout and not in §15: the additive passes' depth comparison (§6), which UV set a baked-lighting record reads per slot and what texture-coordinate inputs 3 and 4 mean on meshes (§4.3, §5.2 item 1), and the engine values of the landscape shadow colour, range, cascade layout and fade (§9). (3) §4.2 quotes about forty engine constant labels from the programs' reflection tables while saying Tessera does not need them; CLEAN_ROOM §5.1 allows such identifiers only where interoperability needs them and says so; state the need (for example the `c_` binding names of `material.md` §8.6) or describe the inputs without the labels. (4) Status is Draft: the spec writer moves it to Review after the fixes. Spot checks that matched (independent decoder): kind-4 permutation counts of all 14 pass codes in §3.2; LT2 pass-code set over all 31,519 permutations; LT1 blob magics per kind (27/6,918/7/7,041/16,985); LT3 and §2.1 (8,940 SRCALPHA / ONE blocks of 0x01–0x03 without depth write, 64 SRCALPHA / INVSRCALPHA with); depth write 1 in every block of 0x04, 0x05, 0x0A, 0x3E, 0x3F, 0x40 and 0 in 0x08, 0x09, 0x41; L13/LT5 from the DXBC input signatures (116 records, 2,624 surface records); §4.3 UV-set census (12,904 set 0 only, 792 none). |
+| **Review record** | Sixth revision: Claude review session (spec-writer agent), 2026-10-07, **passed** (Accepted). Earlier rounds and detailed findings: dirty-room review log (incident 0018). |
 | **Implements into** | `crates/render` (lit and unlit pipelines, light uniforms, shadow pass, fog), `crates/material` (per-surface lighting inputs derived from parameters), `crates/world` (light selection per object, sun and ambient from the environment, light records from Light entities) |
 | **Companion specs** | [`material.md`](material.md) (parameters, texture roles, feature flags, permutation records, texture transforms §8.4, float curves §5.3). [`environment.md`](environment.md) (sky description, day description keyframes, game clock: the source of sun, ambient and fog values). [`entity-descriptor.md`](entity-descriptor.md) §4.5 (light properties on placed entities). [`mesh.md`](mesh.md) §5 (normals, tangent frame, vertex colours). [`terrain-texturing.md`](terrain-texturing.md) §9 (terrain layers' use of these inputs). [`water.md`](water.md) §8 (water shading; uses the fake-light inputs of §4.2). [`property-system.md`](property-system.md) §4.7 (property colour values). |
 
@@ -45,7 +45,7 @@ original's behaviour is not known; tests must not treat them as the original's b
 | OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratch area: all 510 shader records (0x2B) and their 31,519 permutations parsed with `material.md` §7; the reflection tables of every compiled program read (constant names, sizes and offsets; sampler names; vertex input semantics); all 0x30 materials and 0x31 surface records resolved with `material.md` §9. |
 | BIN-S | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`lotroclient64.exe`, `lotro_live`). The compiled programs inside the shader records of that build were disassembled with a public shader disassembler (Direct3D 9 shader model 2/3 and Direct3D 10/11 shader model 4 bytecode; the OpenGL back end stores GLSL text) and read for representative permutations of every pass code (§3.2). **Question:** what each pass computes from its inputs (the lighting equation, attenuation, shadow filtering, fog, alpha test, normal-map convention). **Why M1–M3 were not enough:** the data stores only parameter defaults and program bytecode; the equations exist only as program code; no frame capture of the original is available to this session (M3) and no published source describes them (M2). Third pass 2026-10-05: every Direct3D 10/11 permutation, following each sampler's texture coordinate back to the vertex inputs (§4.3), and the colour programs of the unlit blended records of `material.md` §20.1. **Question:** which UV set feeds which texture; what reaches the output alpha. Same reasons. |
 | BIN-C | **M4 (decision 0011).** Same client build, client executable disassembled around the day-description keyframe blending and the shader-constant registration table. **Question:** how the sun direction, ambient and fog values are produced from data, and which engine constants exist. **Why M1–M3 were not enough:** the data gives keyframe values but not how they are combined or converted into light parameters. |
-| BIN-L | **M4 (decision 0011), second pass 2026-10-05.** Same build (`x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5), plus the graphics back-end libraries shipped beside it (`x64/D3D11GraphicsCore.dll`, `x64/OpenGLGraphicsCore.dll`), disassembled with objdump; constants read from the files. **Questions:** (a) how the frame's ambient and hemispheric inputs are formed from the environment; (b) how the environment's light values are carried and cross-faded; (c) what the per-material setup uploads (material times ambient, per-object terms, specular rule); (d) which lights an object receives and in which slot; (e) how a light's record (colour, specular, range, attenuation factor, type) is built from its fields; (f) the field labels of the light class; (g) the "fake" light inputs; (h) the texture and frame-buffer formats of the back ends (sRGB); (i) the clock behind the programs' time input; third pass 2026-10-05: (j) the depth comparison of the passes (the back ends' depth-state translation, `D3D11GraphicsCore.dll` and `OpenGLGraphicsCore.dll`); (k) the engine values of the sun-shadow inputs (the client's registration of those inputs). No network, login, launcher or anti-tamper code was examined. **Why M1–M3 were not enough:** these are code paths; the data stores the inputs only; no frame capture is available (M3); nothing is published (M2). |
+| BIN-L | **M4 (decision 0011), second pass 2026-10-05.** Same build (`x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5), plus the graphics back-end libraries shipped beside it (`x64/D3D11GraphicsCore.dll`, `x64/OpenGLGraphicsCore.dll`), disassembled with objdump; constants read from the files. **Questions:** (a) how the frame's ambient and hemispheric inputs are formed from the environment; (b) how the environment's light values are carried and cross-faded; (c) what the per-material setup uploads (material times ambient, per-object terms, specular rule); (d) which lights an object receives and in which slot; (e) how a light's record (colour, specular, range, attenuation factor, type) is built from its fields; (f) the field labels of the light class; (g) the "fake" light inputs; (h) the texture and frame-buffer formats of the back ends (sRGB); (i) the clock behind the programs' time input; third pass 2026-10-05: (j) the depth comparison of the passes (the back ends' depth-state translation, `D3D11GraphicsCore.dll` and `OpenGLGraphicsCore.dll`); (k) the engine values of the sun-shadow inputs (the client's registration of those inputs); fourth pass 2026-10-06 (same build, read with the Ghidra 12.1.3 decompiler in the dirty room): (l) which objects a placed light reaches: the selection radius, the distance test, the order of an object's light list, the treatment of landscape chunks and the parent flags; (m) the light class's field registration (each field's offset, label and property id); sixth pass 2026-10-07 (same build, own copy of the Ghidra project, decompiler and listings): (n) which objects are candidates of the light-list walk and how the parent switches behave for a light without a parent; (o) the client's second path for `Light_BakedLandscapeLight` lights (drawing them into the baked-lighting texture of terrain and ceiling chunks): when it runs, its inputs, how it composites; (p) the graphics options and device conditions that gate that path. No network, login, launcher or anti-tamper code was examined. **Why M1–M3 were not enough:** these are code paths; the data stores the inputs only; no frame capture is available (M3); nothing is published (M2). |
 | ENV | [`environment.md`](environment.md) (this session): day-description layout and keyframe blending. |
 | MAT | [`material.md`](material.md): parameter ids, texture roles, permutation layout, texture transforms, float curves. |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §3.3, §9 (record colours, terrain lighting). |
@@ -76,7 +76,7 @@ Decision** = this project's rule where the original is unknown.
 | L16 | Frame ambient = ½(X + Y) and frame hemispheric = ½(X − Y), with X and Y the two ambient colours of the scene, each = ambient colour × ambient brightness (§8.1) | BIN-L (a), (b) | BIN |
 | L17 | Per-material ambient inputs: *A₀* = *M* × (frame ambient + a per-object ambient term), *H₀* = *M* × frame hemispheric (§4.2, §8.1) | BIN-L (c) | BIN |
 | L18 | Environment changes cross-fade with a sine-shaped factor, field by field (§8.1) | BIN-L (b) | BIN |
-| L19 | Light record: colour × clamp(intensity curve × scale, 0, 1); specular defaults to the diffuse colour; range *R*; *k* = 10 × falloff / *R*²; point or directional by the light's mode (§8.3) | BIN-L (e), (f) | BIN |
+| L19 | Light record: colour × clamp(intensity curve × scale, 0, 1); specular defaults to the diffuse colour; range *R*; *k* = 10 × falloff / *R*²; point or directional by the light's mode (§8.3) | BIN-L (e), (f), (m) | BIN |
 | L20 | Light selection: the main light first, then the object's lights in list order; key lights are per-pixel candidates (the first becomes light 0), others go to the per-vertex lists; at most 8 (§8.5) | BIN-L (d) | BIN |
 | L21 | Specular colour uploaded black when the specular power is below 0.5 (§5.8) | BIN-L (c) | BIN |
 | L22 | No back end uses sRGB texture or frame-buffer formats (§5.1, §15) | BIN-L (h) | BIN |
@@ -87,6 +87,14 @@ Decision** = this project's rule where the original is unknown.
 | L27 | UV set per texture role: base layers read set 0; the second colour layer reads set 0 in 72 records and set 1 in 3; the baked light mask reads set 1; coordinate inputs 3 and 4 are read only by the terrain layer records (§4.3) | OBS (input signatures of every Direct3D 11 vertex program); BIN-S (third pass, data flow per sampler) | Signatures Confirmed; per-sampler sets BIN |
 | L28 | The depth comparison is not part of the record's render state; the back ends take a Direct3D comparison code (1–8) from the engine with each depth state (§6) | BIN-L (j); OBS (`material.md` §7.6) | BIN; the engine's value per pass not traced |
 | L29 | Output alpha of unlit blended records by record family (`material.md` §20.1, MA34) | BIN-S (third pass) | BIN |
+| L30 | Lights with `Light_BakedLandscapeLight` set are never added to the light lists of terrain or ceiling chunks (§8.3). In normal play their light on the ground comes from the stored light maps only; the client's light-map bake (L35) is the one other path (§8.6) | BIN-L (l), (o) | Light-list rule BIN; "normal play" Inferred (§8.6) |
+| L31 | A light reaches an object when the squared distance from the light's position to the object's world bounding box is below ρ², with ρ = Range × (1 − 0.15 × min(Falloff, 1)), or ρ = Range for a `Light_GlobalLight` light (§8.5) | BIN-L (l) | BIN |
+| L32 | An object's light list: lights with KeyLight on are put at the front, the others appended, in the order the scene's lights are processed; `Light_OnlyInfluenceParent` and `Light_NeverInfluenceParent` restrict a light to or from the object it is attached to (§8.5) | BIN-L (l) | BIN; the scene's light order not traced |
+| L33 | Each light field is registered with the property id of a placed-entity property; table in §8.3 | BIN-L (m); OBS (the property names of those ids in the install's property registry) | BIN |
+| L34 | Candidates of the light-list walk are only objects drawn in the current frame and without any of three scene flags; a light with `Light_OnlyInfluenceParent` set and no parent reaches no object (§8.5) | BIN-L (n) | BIN |
+| L35 | The client contains a light-map bake: it draws every `Light_BakedLandscapeLight` light that reaches a terrain or ceiling chunk with pass code 0x41 into an off-screen target of at most 1,024 × 1,024 and adds the results into the chunk's baked-lighting texture, which it first clears (§8.6) | BIN-L (o), (p) | BIN |
+| L36 | The bake runs only after a landscape renderer flag requests it; that flag is raised only while a renderer switch is on, and the switch is set only in a special client mode; the per-layer pass-0x41 draw items exist only in that mode too (§8.6) | BIN-L (o) | BIN; "not in normal play" Inferred |
+| L37 | Indoors (camera inside, outdoor-visible clear) the frame's ambient, fog and main light come from the indoor record of `landblock.md` §4.13 (§8.1) | `landblock.md` §4.13 (BIN2 there) | BIN (by reference) |
 
 ---
 
@@ -151,8 +159,11 @@ The 16-byte permutation key (`material.md` §7.4) is four little-endian u32 word
 | 2 | Feature bits the permutation **excludes** |
 | 3 | Pass code (§3.2) |
 
-Words 1 and 2 use the same bit numbering: in 6,860 permutations bit 3 is set in word 1 and the
-program takes bone matrices; in 9,995 bit 3 is set in word 2 and none of them do (98 %). A
+Words 1 and 2 use the same bit numbering: bit 3 is set in word 1 in 6,860 permutations, and
+nearly all of their programs take bone matrices (the review census of 2026-10-06, an
+independent decoder, found 1 of the 6,860 without a bone-index vertex input and 3 without a
+bone constant; not re-run in this revision); bit 3 is set in word 2 in 9,995 permutations and
+none of their programs take bone matrices. A
 renderer that selects a permutation would take the one whose pass code matches, whose
 required bits are all active and whose excluded bits are all inactive. Tessera does not need
 to select permutations; it reads the render state of permutations of the right pass code
@@ -179,7 +190,7 @@ of §8.
 | 0x3E | 999 | as 0x04 | ambient, hemispheric ambient, X directional lights, X point lights, fog; **no light 0** | Base pass, all lights per vertex |
 | 0x3F | 1,905 | as 0x04 | as 0x3E plus light 0 directional with shadow map | Base pass, sun per pixel |
 | 0x40 | 3,801 | as 0x04 | as 0x3E plus light 0 point with optional cube shadow | Base pass, one point light per pixel |
-| 0x41 | 192 | no depth write | light 0 point, material colour, opacity | Lit decal or similar overlay |
+| 0x41 | 192 | no depth write | light 0 point, material colour, opacity | One point light drawn on its own. The client's light-map bake draws terrain chunks with this pass code (§8.6, BIN); other uses not traced |
 | 0x42 | 298 | ONE / ZERO | view-space transform, normal map, alpha test | Writes view-space normals (ambient-occlusion input) |
 
 Code 0x07 occurs in 38 permutations of other kinds only.
@@ -409,6 +420,11 @@ directional light when its count is 1. In the per-vertex form *N* is the vertex 
 the sum is interpolated; the per-vertex form uses a hard range cut-off (§8.3). Which lights
 fill the arrays is §8.5.
 
+**Tessera Decision:** Tessera may evaluate every listed light per pixel, with the smooth fade
+of §8.3 step 3 and the clamped specular of §5.8, instead of the per-vertex form (a quality
+choice; the original's per-vertex lists have the hard cut-off and no specular). Tests must not
+treat the per-pixel result as the original's.
+
 <a id="s5-7"></a>
 ### 5.7 Combination
 
@@ -553,8 +569,18 @@ so that an up-facing surface receives *X* and a down-facing one *Y* (§5.3). Per
 hemispheric. Two engine options can override *X* and *Y*: debug lighting modes set both to 0.5
 or to 1, and an adjustment option adds engine offsets and clamps each channel to at most 1;
 neither is active in normal play (Inferred). An override held by the environment can replace
-*X* and *Y* when the scene record is built (BIN-L (b)); that it serves indoor ambience
-(`environment.md` §7.2) is Inferred.
+*X* and *Y* when the scene record is built (BIN-L (b)).
+
+**Indoors (L37).** The client builds two environment records, outdoor and indoor, and uses
+the indoor one while the camera is inside (`landblock.md` §4.13 gives the rules and the
+property lookup). For lighting this means: in the indoor record *X* = `InteriorUpperAmbientLight`
++ `InteriorAmbientLight` and *Y* = `InteriorLowerAmbientLight` + `InteriorAmbientLight`
+(an absent colour counts as black; every channel limited to at most 1; the keyframe brightness
+*ba* is not applied) when any of the three properties is present, otherwise the keyframe
+values of the indoor sky key; the frame inputs are then formed from *X* and *Y* as above. The
+indoor record has **no main directional light** (no sun or moon, so no sun shadow either), and
+its fog follows the interior overrides and the limits of §10. The switch between the two
+records is immediate (no cross-fade); each record cross-fades on its own.
 
 **Sun.** The environment's lighting record carries *Cd*, *bd*, *Cs* and the travel direction
 separately (BIN-L (b)); the main light's colour *E₀* (before ×*M*) and specular colour are its
@@ -586,14 +612,28 @@ factor *k*, at distance *d* = |*Q* − *P*|:
    the smoothstep *s*²(3 − 2*s*) with *s* = (*R²* − *d²*) / (0.25 *R²*), so the light fades to
    zero at the range. The per-vertex lists use step 1–2 only.
 
-**Light fields (BIN-L (f)).** The client's light class names its fields; the ones the rules
-below use are Direction, Range, Diffuse, DiffuseIntensity (a float curve, `material.md` §5.3),
-Specular, Falloff and KeyLight (the others are projector, corona, shadow and influence
-settings). They are quoted because they match the property names of placed Light entities in
-the data with the prefix "Light" (`LightRange`, `LightDiffuse`, `LightDiffuseIntensity`,
-`LightSpecular`, `LightFalloff`; `KeyLight` as is), which is how a reader maps the stored
-properties onto the rules (interoperability; the mapping by name is Inferred and consistent
-with every use below). A new light starts with: point mode, Range 25, Diffuse white,
+**Light fields (BIN-L (f), (m); L33).** The client's light class registers each field with
+the id of the placed-entity property that fills it. The fields the rules of this spec use, with
+the property names those ids carry in the install's property registry (names quoted for
+interoperability: a reader finds the stored properties by these names; the ids are this
+install's and are read from the registry at run time):
+
+| Light field | Property (id in this install) | Used in |
+|---|---|---|
+| Range | `LightRange` (0x3FE) | light record, selection radius (§8.5) |
+| Diffuse | `LightDiffuse` (0x3FD) | light record |
+| DiffuseIntensity (float curve, `material.md` §5.3) | `LightDiffuseIntensity` (0x4F0) | light record |
+| Specular | `LightSpecular` (0x4EF) | light record |
+| Falloff | `LightFalloff` (0xF5) | light record, selection radius |
+| KeyLight | `KeyLight` (0x455) | §8.5 |
+| BakedLandscapeLight | `Light_BakedLandscapeLight` (0x7C9) | left out of the light lists of terrain and ceiling chunks (below); input of the light-map bake (§8.6) |
+| OnlyInfluenceParent | `Light_OnlyInfluenceParent` (0x824) | §8.5 |
+| NeverInfluenceParent | `Light_NeverInfluenceParent` (0x823) | §8.5 |
+| GlobalLight | `Light_GlobalLight` (0x84A) | selection radius (§8.5) |
+| DrivenByDayCycle | `Light_DrivenByDayCycle` (0x707) | day and night variants (below) |
+
+Direction has no property. The other fields (projector, corona, shadow-casting, baked-shadow
+and level-of-detail settings) are not used by this spec. A new light starts with: point mode, Range 25, Diffuse white,
 DiffuseIntensity a constant 0.5, Specular white, Falloff 1.0, KeyLight off, a run-time scale
 *σ* = 1 (BIN-L (e)).
 
@@ -632,9 +672,35 @@ Census of the 73,711 Light SEDs in all landblock-info records (OBS, 2026-10-05):
 | `Light_BakedLandscapeLight` | 23,765 | true 23,324 |
 | `Light_GlobalLight` | 527 | true 360 |
 
-> **OPEN:** Whether lights with `Light_BakedLandscapeLight` are excluded when lighting the
-> terrain (their light is in the landblock light maps, `terrain-texturing.md` §10).
-> **Tessera Decision:** do not apply them to terrain layers that have a light map.
+**Baked landscape lights (BIN-L (l), L30; answered 2026-10-07).** When the client builds the
+light lists (§8.5), a light whose `Light_BakedLandscapeLight` field is set is skipped for every
+terrain chunk and every ceiling chunk (`terrain-texturing.md` §4.8), whether or not the block
+has a light map; it still reaches every other object in range. In normal play its light on the
+ground comes only from the landblock light maps (`terrain-texturing.md` §10); a block without
+a light map shows no light from it on the ground. The client also contains a light-map bake
+that draws such lights into the chunks' baked-lighting textures, but it is tied to a special
+client mode and is not part of normal play (§8.6; the "normal play" part is Inferred). (The
+former Tessera Decision excluded such lights only from chunks with a light map; the client
+excludes them from all terrain and ceiling chunks.)
+
+> **OPEN (for implementers, 2026-10-07):** the walker's terrain light selection
+> (`walker.md` §14.3: baked lights left out only for chunks with a light map, range sphere
+> against bounding sphere) and the walker's frame setup (no selection radius ρ, key-light or
+> baked-landscape inputs passed to the renderer's automatic selection, `render.md` §4.3) still
+> follow the former Tessera Decisions. Under the rules of this section and §8.5, a
+> `Light_BakedLandscapeLight` light reaches no terrain or ceiling chunk, light map or not.
+> Implementers align that code with §8.3 and §8.5; until then its behaviour is a known
+> difference from the original, not a Tessera Decision.
+
+> **OPEN (implementer, 2026-10-06, `tessera-world` lighting module):** two inputs of the
+> light record are not specified. (a) The "offset" added to the entity's world position:
+> its source was not traced; `tessera-world` uses the SED's placement position (offset 0).
+> (b) The day and night variants: the names quoted in `environment.md` §7.3 are
+> `Light.Script@Entity.Night.m_fLightRange` and `…Day.m_bLightActivated` "and similar";
+> the full list of varying fields and which value applies when a variant is absent are not
+> given. `tessera-world` reads only `…Day.` / `…Night.m_fLightRange` and
+> `…m_bLightActivated` (absent: the light's own range, and on), and only for lights with
+> `Light_DrivenByDayCycle`; night is the rule of `sound.md` §10.3.5.
 
 <a id="s8-4"></a>
 ### 8.4 Projector lights
@@ -664,9 +730,113 @@ Each submitted light's colour is multiplied by a scale argument, 1 in all submis
 When there is no main light, one submission path adds a default directional light whose
 shipped colour is black (an engine value that may change at run time).
 
-> **OPEN:** How the object's light list is built (which lights are considered near an
-> object and in which order). **Tessera Decision:** the lights whose range sphere touches the
-> object's bounding sphere, nearest first.
+**Building an object's light list (BIN-L (l), (n); L31, L32, L34; answered 2026-10-07 except the
+scene order).** Once per frame the client walks the scene's placed lights and, for each light,
+the drawn objects near it:
+
+1. **Selection radius.** ρ = Range × (1 − (1 − 0.85) × min(Falloff, 1)), so a light with
+   Falloff 1 or more reaches 0.85 of its Range and one with Falloff 0 its full Range; for a light
+   with `Light_GlobalLight` set, ρ = Range. (0.85 is a client constant, decision 0012.) Note
+   that ρ ≤ *R*, the range of the light record above, so the record's fade near *R* is often
+   outside the selection radius.
+2. **Test.** The candidates are the objects near the light that were **drawn in the current
+   frame** (for the view being built) and that carry **none of three scene flags** of the
+   object (L34; what the three flags mean was not traced). A candidate is reached when the
+   squared distance from the light's world position to the object's world-space axis-aligned
+   bounding box (0 inside the box) is less than ρ².
+3. **Exclusions.** A light with `Light_BakedLandscapeLight` set skips terrain and ceiling
+   chunks (above). The parent rule (L34): for the object the light is attached to (its
+   parent), the light is added only when `Light_NeverInfluenceParent` is off; for **every
+   other object** it is added only when `Light_OnlyInfluenceParent` is off. The second test is
+   made whether or not the light has a parent, so a light with `Light_OnlyInfluenceParent` set
+   and no parent (for example a Light SED of landblock info with that property true) reaches
+   no object at all. One special light record of the client has its parent looked up through
+   another client object instead of its own parent field (not traced; it is not a placed
+   light).
+4. **Order.** A light with KeyLight on is inserted at the **front** of the object's list, any
+   other light is appended at the end. So the list holds the key lights first (the one
+   processed last at the very front), then the others in processing order. The submission of
+   this section takes lights from the list in that order, which decides which lights fill the
+   eight slots.
+
+> **OPEN:** The order in which the client walks the scene's lights (step 4), which decides
+> the order inside each group. **Tessera Decision:** order each group (key lights, then the
+> others) by distance from the object, nearest first. The choice matters only for objects
+> reached by more than eight lights.
+
+> **OPEN (implementer, 2026-10-06, `tessera-world` lighting module):** whether the default
+> directional light added when there is no main light occupies the directional light-0
+> slot, and whether it counts toward the 8 lights in all. Tessera (Decision): it stands in
+> for the main light: it holds the directional light-0 slot unless a per-pixel directional
+> light from the object's list takes that slot (then no default light is added), and it
+> counts toward the 8.
+
+> **OPEN (implementer, 2026-10-07, `tessera-render` automatic selection):** three inputs of
+> the steps above are not specified. (a) Whether the parent switches of step 3 restrict a
+> light that is attached to no object (for example a Light SED of landblock info with
+> `Light_OnlyInfluenceParent` set). (b) How the object's world-space box of step 2 is formed
+> for a rotated or scaled object (from the model-space box, from the parts, or from the
+> vertices) and which box a skinned or instanced object uses. (c) Where an extra directional
+> light (§8.2) of the light list stands relative to the point lights, since it has no
+> position for the distance test.
+>
+> **Answered (spec writer, 2026-10-07, sixth revision):** (a) by BIN-L (n), step 3 above: the
+> only-parent switch is applied to every object other than the parent, so an unattached light
+> with `Light_OnlyInfluenceParent` set reaches nothing. The former Tessera Decision (a) of
+> `render.md` §4.3 ("the switches apply only to attached lights") differs from the original
+> and is withdrawn; implementers align the renderer's automatic selection. (b) and (c) stay
+> open.
+>
+> **Tessera Decision (`render.md` §4.3), for (b) and (c):** (b) the box around the eight
+> corners of the model-space box after the object's transform (bind pose for skinned meshes;
+> an instance batch is one object enclosing its instances); (c) directional lights reach every
+> object and follow the point lights. A light for which the caller supplies no selection data
+> uses ρ = *R* and no switches (`render.md` §4.3); that default is Tessera's.
+
+<a id="s8-6"></a>
+### 8.6 The client's light-map bake (BIN-L (o), (p); L35, L36)
+
+Besides the light lists of §8.5, the client has a second path for lights with
+`Light_BakedLandscapeLight` set: it renders them into the baked-lighting texture of terrain
+and ceiling chunks (the texture bound as material parameter 3019, `terrain-texturing.md` §10).
+The steps:
+
+1. **Trigger.** The landscape renderer keeps a "re-bake" flag. In the landscape update, when
+   the multi-pass-lighting graphics option is on, the landscape-lighting-quality graphics
+   option is above its lowest value (0) and the flag is set, the client runs the bake once and
+   clears the flag.
+2. **Device condition.** The bake does nothing unless the graphics device reports a capability
+   flag and a device class above 2 (engine values of the back end).
+3. **Lights.** Every placed light of the scene with `Light_BakedLandscapeLight` set.
+4. **Chunks.** Every terrain and ceiling chunk of the scene (the landscape-chunk object kind
+   of §8.5) that holds a baked-lighting texture. A light reaches a chunk by the box test of
+   §8.5 step 2 (squared distance from the light to the chunk's world box below ρ²); the
+   drawn-this-frame, scene-flag, parent and key-light rules of §8.5 are **not** applied here.
+5. **Per chunk.** The client first resets the chunk's baked-lighting texture (cleared, or
+   reloaded from the stored light map). Then, for each light that reaches the chunk, it draws
+   the chunk lit by that light with **pass code 0x41** into an off-screen colour target of
+   min(1,024, *w*) × min(1,024, *h*) texels, with *w* and *h* two size values of the graphics device (Inferred: the back-buffer size), and composites that target
+   into the chunk's texture: the first composite clears the texture to (0, 0, 0, 1) and then
+   adds the target; every later one adds the target (source factor one, destination factor
+   one; the composite's blend codes read as the Direct3D factors of `material.md` §7.6). So after the bake the texture holds the **sum of the reaching lights' pass-0x41
+   images**, and the stored light map is replaced, not added to.
+
+**When this happens (L36).** The re-bake flag is raised after landscape changes (blocks
+loaded, a new landscape position) only while a second renderer switch is on. The only routine
+found that turns that switch on sets it from a comparison of a client-wide mode value with
+one particular constant; the only assignment of that mode value found in this build stores a
+different value, and the other routines that test it treat the matching mode as special (for
+example they keep landscape resources that normal play releases). In addition, the
+per-layer draw items with pass code 0x41 that the bake draws are created only in that same
+mode (`terrain-texturing.md` §8.1). **Inferred:** the bake belongs to a light-map baking mode
+of the client's tools (the stored light maps are its output) and does not run in normal play;
+in normal play the stored light maps are the only source of these lights on the ground.
+
+> **OPEN:** What sets the client-wide mode value to the matching constant (if anything does in
+> the shipped client), and what the pass-0x41 programs of the terrain records compute
+> (attenuation, mapping of the chunk into the light-map texture). **Tessera Decision:** no
+> bake; terrain and ceiling chunks use the stored light map as it is (`terrain-texturing.md`
+> §10).
 
 ---
 
@@ -698,7 +868,13 @@ where it fills them was not found.
 > cascade count, split distances and shadow-map size, and the fade start and scale (step 6),
 > and how a graphics setting changes them. **Tessera Decision (simple form):** a single
 > cascade, *s* from one tap, landscape shadow colour 0 and colour range 1 (so shadow colour =
-> *s*), and *φ* fading linearly to 0 at the shadow distance.
+> *s*), and *φ* fading linearly to 0 at the shadow distance. Variants that stay within this
+> Decision: the five-tap filter of step 4 instead of one tap; a fade that starts later than
+> the camera (for example over the last fifth of the shadow distance); a single map fitted
+> around a point ahead of the camera; a depth bias; points outside the map count as lit; no
+> sun shadow while the sun is low (a minimum elevation) or indoors (§8.1, no main light). The
+> radius, distance, map size, bias and elevation are Tessera's values (`render.md` §4.4,
+> `walker.md`), not the original's.
 
 > **OPEN:** Point-light cube shadows (code 0x02/0x05/0x40 with feature bit 15) and the
 > `LightShadowCubeIndex1/2` textures; the split-target output input of the shadow passes.
@@ -802,6 +978,15 @@ down-facing one (0.08, 0.08, 0.1).
 <a id="s15"></a>
 ## 15. Open questions
 
+Answered 2026-10-07 (sixth revision, BIN-L (n)–(p)): the candidates of the light-list walk
+and the parent rule for lights without a parent (§8.5, L34; the implementer OPEN part (a));
+the client's second path for baked-landscape lights, its light-map bake (§8.6, L35, L36);
+the indoor lighting record (§8.1, L37, by reference to `landblock.md` §4.13).
+
+Answered 2026-10-07 (fourth BIN-L pass): baked-landscape lights on terrain (§8.3, L30); how an
+object's light list is built apart from the scene order (§8.5, L31, L32); the mapping of light
+fields to properties (§8.3, L33).
+
 Answered 2026-10-05 (second M4 pass): sRGB (no back end uses sRGB formats, §5.1); the ambient
 and hemispheric mapping (§8.1); the light-property mapping (§8.3); the order and slots of
 lights (§8.5, except how the object's list is built); texture-matrix composition
@@ -820,10 +1005,21 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 > **OPEN:** How the sun colour and brightness combine into the main light, and its specular
 > colour (§8.1). Tessera Decision there.
 
-> **OPEN:** How an object's light list is built (§8.5); the run-time light scale *σ* (§8.3);
-> baked-landscape lights on terrain (§8.3). Tessera Decisions there.
+> **OPEN:** The order in which the scene's lights are walked when an object's light list is
+> built (§8.5); the run-time light scale *σ* (§8.3). Tessera Decisions there.
 
 > **OPEN:** Projector lights (§8.4); point-light shadows (§9).
+
+> **OPEN:** What sets the client mode that enables the light-map bake, and what the
+> terrain records' pass-0x41 programs compute (§8.6). Tessera Decision there (no bake).
+
+> **OPEN:** The meaning of the three scene flags that exclude an object from the light-list
+> walk (§8.5 step 2), the client's world box of a rotated, scaled, skinned or instanced object,
+> and where a directional light of an object's list stands (§8.5, implementer OPEN (b), (c)).
+> Tessera Decisions there.
+
+> **OPEN (for implementers):** align the walker's terrain light selection and the renderer's
+> handling of unattached lights with §8.3 and §8.5 (callouts there).
 
 > **OPEN:** How a record combines its two colour layers (multiply or add, §5.2 item 2): the
 > combine is coded per record in its programs and no data field or role name selects it;
@@ -846,3 +1042,5 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 | 2026-10-05 | Revision (spec writer, second M4 pass, BIN-L). §1: tag BIN-L, rows L16–L26; Tessera Decision mark. §2.2: back-end libraries. §4.1, §4.2: how the ambient inputs, fake lights, the terrain blend maximum (parameter 1203) and the time input (E20) are filled. New §4.4: colour encodings (single statement; record colours B, G, R, A by BIN; property colours Inferred). §5.1: no sRGB in any back end (OPEN closed). §5.2: transform composition reference; two-layer combine labelled Tessera Decision; terrain normal frame reference. §5.8: black specular below power 0.5. §8.1 rewritten: cross-fade, ambient formation (former working hypothesis now BIN), sun colour labelled Tessera Decision. §8.2: per-vertex directional slot. §8.3: light fields, defaults, record rules (colour, specular, range, *k* = 10 × falloff / *R²*), census note; former working hypothesis replaced. New §8.5: light submission order and slots. §9 step 7: terrain baked shadow. §10: fog limits. §14: light-record, ambient and cross-fade examples. §15 updated; this change log added. |
 | 2026-10-05 | Third revision after review (spec writer; M1, BIN-S third pass, BIN-L (j)–(k)). Status Draft → Review. §1: BIN-S and BIN-L log the third pass; rows L27–L29; L4 and L25 no longer quote program names. §4.2: the engine-supplied inputs are described without the programs' reflection names (no interoperability need; CLEAN_ROOM §5.1), numbered E1–E21; only material-parameter labels from the enum mapper remain. §4.3 rewritten: the claim about 0x2B0000A8 limited to its `Color`/`Color2` permutation (its main water permutations read only the position); new table of the UV set each texture role reads (second colour layer from set 1 in three records; baked light mask from set 1; inputs 3 and 4 only in terrain records, so unused on meshes); OPEN for 0x2B0007A9 and mesh sets 3 … 6. §5.2 item 1: points to §4.3. §6: depth comparison stated as BIN (not in the record; set by the engine) with an OPEN callout and a Tessera Decision. §8.4, §9: program names replaced by descriptions. §9: OPEN callout for the engine's shadow values, Tessera Decision made explicit. §15: answered and new OPEN items. |
 | 2026-10-06 | Fourth revision after the re-review of 2026-10-05 (spec writer; M1 only). §4.1, last row: 2013 is the one `c_` id with a binding (semantic 4, in 7 of its 11 records, naming a permutation without programs; aligned with `material.md` §7.3, §8.6); it still reaches the programs by name. §16: the second-revision row no longer quotes a program constant name; it names the time input E20 and the terrain blend maximum (parameter 1203) instead. |
+| 2026-10-07 | Fifth revision (spec writer; M4 under decision 0011, BIN-L fourth pass with the Ghidra decompiler). Status Accepted → Revised. §1: BIN-L questions (l), (m); rows L30–L33; L19 cites (m). §8.3: light fields mapped to properties by the ids the client registers (replaces the Inferred mapping by name); the `Light_BakedLandscapeLight` OPEN answered: such lights never reach terrain or ceiling chunks (the former Tessera Decision limited this to chunks with a light map). §8.5: the object-light-list OPEN answered (selection radius ρ with the constant 0.85, box distance test, exclusions, key lights first); a narrower OPEN on the scene's light order with a Tessera Decision. §15 updated. Implementers: `walker.md` §14.3 (terrain light table) and `render.md` §4.3 (automatic selection) differ from these rules. |
+| 2026-10-07 | Sixth revision (spec writer; M4 under decision 0011, BIN-L sixth pass in an own copy of the Ghidra project; incident 0018 follow-up). Status Revised → Review. Header: the long review records moved to the dirty-room review log; a short record remains. §1: BIN-L questions (n)–(p); row L30 narrowed (light lists BIN, "normal play" Inferred); new rows L34–L37. §3.1: the bone-matrix share stated (review census). §3.2: pass 0x41 reading names the light-map bake. §5.6: Tessera Decision for per-pixel evaluation of the listed lights (what `tessera-render` does). §8.1: the indoor record (by reference to `landblock.md` §4.13) replaces the Inferred indoor sentence. §8.3: field-table row and the baked-landscape paragraph aligned with §8.6; implementer OPEN on the walker's terrain light selection. §8.5: step 2 states the candidates (drawn this frame, no scene flags); step 3 the parent rule for lights without a parent (BIN; withdraws the render.md Decision (a)); implementer OPEN of 2026-10-07 part (a) answered, (b) and (c) kept with their Decisions. New §8.6: the client's light-map bake (trigger, inputs, composite; Inferred not in normal play; OPEN and Tessera Decision "no bake"). §9: the shadow Tessera Decision covers the variants the renderer and walker use. §15 updated. Change-log rows put in date order. Implementers: `render.md` §4.3 Decision (a) and the walker's terrain light selection differ from §8.3, §8.5. |

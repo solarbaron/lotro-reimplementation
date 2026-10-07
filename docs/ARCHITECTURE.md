@@ -119,9 +119,10 @@ constraints that show up as structure:
                          │ client app  │     │           │           │
                          └──┬───┬───┬──┘     │           │           │
  L4 presentation & host     │   │   │        │           │           │
-     render  audio*  ui*  input*  settings*  plugins*(→script)  net(backends)  entity*
+     render  audio*  ui*  input*(→settings)  settings*  plugins*(→script)  net(backends)  entity*
         │      │      │     │                   │               │
- L3 world & assets   world*  terrain*  anim*  mesh*  material*  │
+ L3 world & assets   world*(→physics)  physics*  terrain*       │
+                     anim*(→mesh)  mesh*  material*             │
         └──────┴──────┴──────┬─────────────────────────────────┘
  L2 asset system          assets*   props*/wstate*/text*
                              │
@@ -134,7 +135,21 @@ constraints that show up as structure:
 Rules:
 
 - A crate may depend only on crates in lower layers, plus siblings explicitly allowed
-  below. No cycles.
+  below. No cycles. These rules govern `[dependencies]`; test-only `[dev-dependencies]`
+  (for example `terrain`'s golden-image test through `render`, or `entity`'s tests through
+  `world` and `anim`) are exempt.
+- Explicit sibling allowances (the arrows in the diagram; no others exist, and a new one is
+  added here with its reason in the same change):
+  - `plugins` → `script` (L4);
+  - `input` → `settings` (L4, M3): saving the keymap file goes through the settings
+    crate's guard that refuses paths inside a game install (§16, §17);
+  - `anim` → `mesh` (L3, M4): the figure's shape inputs come from the setup/part assembly
+    (`tessera-mesh::assembly`, §11);
+  - `world` → `physics` (L3, from M4.5, [0013](decisions/0013-physics-crate.md)): scenery
+    generation reads the terrain collision mesh and its queries, and landblock bundles carry
+    collision sets built on the asset workers. The allowance is one-way: `physics` depends
+    only on `formats` and `props` (L1–L2) and never on `world`, `terrain`, `assets`, `render`
+    or any other L3/L4 crate, and it has no GPU, asset-server or streaming dependency.
 - L0–L2 crates have no GPU, window or audio dependencies.
 - `render`, `audio` and `ui` do not depend on each other. The client app wires them
   together.
@@ -156,8 +171,9 @@ Rules:
 | `tessera-text` (`crates/text`) | L2 | M1 | String-table lookup, StringInfo resolution, `${VAR}` substitution and grammar-tag selection. |
 | `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). |
 | `tessera-assets` (`crates/assets`) | L2 | M1 | Asset server: typed handles, decode jobs on worker threads, caches, priorities, cancellation, GPU-upload hand-off (§8). |
-| `tessera-world` (`crates/world`) | L3 | M3 | Coordinates, landblock and cell IDs, streaming rings, landblock info (cells, static entities, links), block maps (§9). |
-| `tessera-terrain` (`crates/terrain`) | L3 | M3 | Heightmap meshing, terrain LOD bands, texture splatting inputs, far-terrain imposters (§10). |
+| `tessera-world` (`crates/world`) | L3 | M3 | Coordinates, landblock and cell IDs, streaming rings, landblock info (cells, static entities, links), block maps (§9). From M4.5 also: scenery generation and the frill (grass) ring, landblock water and water volumes, the game clock and sky state (§10), light selection (`lighting.md` §8.3–§8.5), per-class draw distances (`walker.md` §11.4). Builds each landblock's collision set, water included, on the asset workers and hands it to `physics` (§10.3, §20.3). May depend on `physics` (sibling allowance, §3). |
+| `tessera-physics` (`crates/physics`) | L3 | M4.5 | Collision and movement: terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries that scenery placement uses, cell volumes and the point-in-cell lookup, per-landblock collision sets (statics, generated scenery, cells) with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller with its water states (`collision.md` §5.4, §5.8.1, §6, §9–§12; `water.md` §7.4). A collision set also carries its landblock's water plane and liquid boxes, so the controller reads water only from its own sets (§10.3). Owns the step constants (1/60 s, at most 5 per frame) and validates every input at its API boundary: non-finite or out-of-range movement parameters, bounded speeds and per-step displacement, no panicking clamps ([0013](decisions/0013-physics-crate.md)). Sets are keyed by `formats::LandblockId` in landblock frames; the mover is in the f64 region frame (§9.1). Depends only on `formats` and `props`; no GPU, asset-server or streaming dependency. Record decoders (quantised trees, 0x66, 0x01) stay in `formats`. The M7 test server reuses the controller and the collision-set types; building the sets from install data is `world`'s work (§10.3, §10.5). |
+| `tessera-terrain` (`crates/terrain`) | L3 | M3 | Heightmap meshing, terrain LOD bands, far-terrain imposters; from M4.5 the texture layers of the region's terrain type table, alpha masks, per-layer texture coordinates and tangent frames, ceiling chunks and light-map coordinates (§10). |
 | `tessera-mesh` (`crates/mesh`) | L3 | M2 | Static and skinned mesh (GfxObj) decoding into engine vertex streams; setup/part assemblies (§11). |
 | `tessera-anim` (`crates/anim`) | L3 | M4 | Skeleton hierarchy, pose sampling, blending, skinning palettes, attach points (§11). |
 | `tessera-material` (`crates/material`) | L3 | M2 | Surface → material → texture-list → texture chains, shader-feature classification, dye rules (§12). |
@@ -174,8 +190,19 @@ Rules:
 | `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). |
 | `tessera-dattool` (`apps/dattool`) | app | M0 | CLI: `detect`, `info`, `ls`, `stat`, `cat`, `extract`, `strings`, `validate`, later `diff` (§24). |
 | `tessera-explorer` (`apps/explorer`) | app | M1 | GUI asset browser: archives, strings, textures, icons, later meshes and maps (§24). |
-| `tessera-server` (`apps/server`) | app | M7 | Project-owned headless test server speaking the Tessera protocol over QUIC (decision 0030), with original test content only (`docs/specs/server-content.md`, `test-server.md`): accounts with Argon2id, characters, world instances, the 30 Hz simulation, interest management by landblock, chat relay (§19). A library plus a binary, so tests and the load tools run it in-process. |
+| `tessera-server` (`apps/server`) | app | M7 | Project-owned headless test server speaking the Tessera protocol over QUIC (decision 0030), with original test content only (`docs/specs/server-content.md`, `test-server.md`): accounts with Argon2id, characters, world instances, the 30 Hz simulation, interest management by landblock, chat relay (§19). A library plus a binary, so tests and the load tools run it in-process. Movement design (M4.5): runs server-side movement on `tessera-physics` with the same fixed step as the client (§20.3). It moves exactly like the client only over the same collision sets: on install data these include generated scenery, statics and water, which `world` builds (§10.3, §10.5). |
 | `tessera-loadtest` (`apps/loadtest`) | app | M7 | Headless bot clients built on the `tessera-net` test-server backend: connect storms, walking, chat, churn, cheating and soak scenarios against an in-process or remote `tessera-server`, with desync, leak and latency reports (`test-server.md` §13). |
+
+> **OPEN (M7, [0013](decisions/0013-physics-crate.md)):** whether `apps/server` depends on
+> `tessera-world` for collision-set building on install data, or the asset-free part of that
+> building (sets from decoded records, scenery placement, the `water.md` §6.2 rule) moves
+> into a module the server can use without `world`'s asset, animation and text
+> dependencies. Decide with `server-content.md`; until then `physics` alone does not give
+> movement identical to the client's. The M7 server as built has neither: `server-content.md`
+> §3.2 and §10 E1 keep v1 servers free of game data (no terrain heights, no collision; no
+> dependency on `tessera-dat`, `tessera-formats` or any crate that decodes game data, which
+> `tessera-physics` does today), and movement is validated by speed and extent only. The
+> owner OPEN in `server-content.md` §3.2 governs any change.
 
 > **OPEN:** whether `props`, `text` and `wstate` stay separate crates or become modules of
 > one `tessera-gamedata` crate. Decide in M1 when `props` is written; the module boundaries
@@ -369,7 +396,12 @@ nodes. A full DID → (archive, entry) index built by walking every tree is opti
 | 0x30, 0x31 | material, surface | `material` | M2 | `material.md` |
 | 0x20 | appearance (wardrobe) | `appearance` | M4 | `appearance.md` |
 | 0x04, 0x1F, 0x47 | setup (with an embedded Havok skeleton tagfile), visual template, entity descriptor | `setup` | M2/M4 | `setup.md` |
-| 0x01 | stand-alone collision geometry (not a setup; layout open) | — | M3+ | `setup.md` §2.2 |
+| 0x01, 0x66 | cell geometry, stand-alone collision mesh, and the quantised collision tree they share with meshes and landblock data | `collision` | M4.5 | `collision.md` §3–§5 |
+| 0x0F | region descriptor (names the per-region tables) | `landblock` (`region`) | M3/M4.5 | `environment.md` §3 |
+| 0x19 | terrain type table | `terrain_type` | M4.5 | `terrain-texturing.md` §3 |
+| 0x12, 0x11, 0x02 | terrain-scene table, scene-choice table, scene | `scenery` | M4.5 | `scenery.md` §4–§5 |
+| 0x16, 0x17 | water table, fog-zone table | `water` | M4.5 | `water.md` §4–§5 |
+| 0x15, 0x1A, 0x35, 0x32, 0x08 | sky description, day description, game time, LOD-class table, camera state | `environment` | M4.5 | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 | 0x800R/0x802R/0x804R, 0x801R | landblock data, info, properties; block map | `landblock` | M3 | `landblock.md` |
 | 0x18 | block-map descriptors | `block_map` | M3 | `landblock.md` |
 | — (inside 0x04), 0x05 | skeleton (the Havok tagfile slice of a 0x04 setup, handed over by `setup`), animation clip | `tessera-havok` | M4 | `havok-data.md` |
@@ -527,9 +559,9 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
 <a id="world-streaming"></a>
 ### 9.2 Landblock streaming
 
-- The streamer runs once per tick on the main thread. It is cheap: it computes the
-  **desired set** of landblocks in concentric rings around the camera and diffs it against
-  the resident set.
+- The streamer runs once per frame on the main thread (§20.3 step 4). It is cheap: it
+  computes the **desired set** of landblocks in concentric rings around the camera and
+  diffs it against the resident set.
 - Rings (Decision, defaults from Reported observations of the original's draw-distance
   behaviour): **near** ring with full terrain, static objects, grass and collision; **mid**
   ring with terrain and large objects only; **far** band with distant terrain/imposters.
@@ -540,34 +572,191 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
   tile). The bundle loader then requests the meshes and materials those reference.
 - Leaving landblocks are released with hysteresis (one ring of slack) to avoid thrash at
   boundaries.
+- **Lookahead (Decision, M4.5).** A bundle with a large collision set can take longer to
+  build than a fast camera needs to cross from the far to the near radius. The streamer
+  therefore also loads along the camera's path: from its velocity (given by the caller or
+  estimated from the last quarter second of positions) it takes the segment the camera
+  covers in the next 4 s (at most 12,800 units) and makes the landblocks within the near
+  radius of that segment desired, those beyond the far radius ahead of their ring. The
+  first 1.5 s of the segment (longer, 1.5 times the slowest recent bundle job, after slow
+  jobs) is *urgent*: its landblocks are requested with `Visible` priority; the rest with
+  their ring's priority (`Prefetch` ahead of the rings), raised when the urgent part
+  reaches them, so very slow bundles start seconds early whenever a worker is free
+  without delaying the urgent work (only a job that has started gains: a queued request
+  that is raised is ordered like a new one). Ahead landblocks are admitted and evicted by
+  distance like far-ring landblocks; they lie beyond the far radius, so the residency
+  budget cuts them before the near and mid rings and the far ring inside its radius,
+  interleaved with far-ring members in the hysteresis band. They are released when they
+  leave the path, and their bundles are not listed as resident (so nothing draws or
+  populates them) until they enter the rings. The velocity estimate restarts on a step
+  faster than 10,000 units per second (a teleport or a focus moved elsewhere), not on a
+  long frame. Lookahead changes only when bundles load, never what they hold.
 - Interior cells (dungeons, buildings) are loaded with their landblock. Visibility between
   cells (portals) is a renderer concern at M3+.
+- **World systems in the bundle (M4.5, Decision).** The bundle job builds, on the same
+  asset worker and in the order of `collision.md` §9.4: the terrain collision mesh and the
+  landblock's water decision (`water.md` §6.2); the static list with its clearance volumes
+  and the procedural scenery (`scenery.md` §7, its water ranges reading that water plane);
+  the landblock water with the liquid boxes of statics and generated objects (`water.md`
+  §7); the collision set of terrain, ceiling, blocking statics, blocking generated objects,
+  cells and water (`collision.md` §12.1), with the cells and portals of landblock info
+  (§5.8); the Light entities (`lighting.md` §8.3) and the LOD class of every placed and
+  generated entity (`walker.md` §11.4.3). Generated objects enter the bundle as placed
+  entities beside the statics and are drawn like them. The per-region tables named by the
+  region descriptor's eight slots (`environment.md` §3), the scene library, the object
+  caches, the sky library and the LOD-class table are loaded once into the world context
+  and shared by every worker.
+- **Residency (Decision).** A bundle's residency charge includes its collision set,
+  generated scenery, clearance volumes, water and lights, so the one residency budget
+  bounds them all. Collision is built for every resident landblock, not only the near ring
+  (simpler than a second residency; measured mean about 0.75 – 1.3 MiB per bundle on the
+  owner's install), and the default budget is 1 GiB.
+- **Frills (Decision).** The frill ring of `scenery.md` §8.2 is separate from the landblock
+  rings: it follows the blend of camera and player, and its 10 × 10-unit sectors are
+  generated on the asset workers from the scenery inputs a resident bundle keeps, nearest
+  first, a bounded number per frame and within their own byte budget. Frills never collide.
+- **Lookups.** Over what is resident the streamer answers area, music, ambient sound, sky
+  key and sky values, terrain height, minimap tiles, water ("under water", the water
+  surface over liquid boxes), nearby lights, LOD values and draw distances, a collision
+  view around a position (decision 0013 frames) and the interior cell containing a point
+  (`collision.md` §5.8.1).
 
 > **OPEN:** interior cell geometry, portals and the role of the original's PVS data are
 > unknown (Reported as unexplored, data-semantics.md §13). M3 exit criteria do not depend
-> on interiors.
+> on interiors. *Answered in part (M4.5):* cell geometry, cell volumes, portals and the
+> point-in-cell lookup are specified in [`collision.md`](specs/collision.md) §5; the role
+> of the PVS data is still unknown.
 
 ---
 
 <a id="terrain"></a>
-## 10. Terrain (`tessera-terrain`)
+## 10. Terrain, terrain texturing, water and sky
 
-- Input per landblock: a 33 × 33 height grid (Reported; five-unit spacing). The height
-  scale and the meaning of the bytes after the heights are **OPEN** and are the first RE
-  task of M3.
+This section says which crate does what for the ground, water and sky. The data layouts and
+algorithms are in the specs it cites; it repeats only what shapes crate boundaries and data
+flow. Grass and procedural scenery are in §10.5 because they hang off the terrain data.
+
+<a id="terrain-mesh"></a>
+### 10.1 Terrain meshing (`tessera-terrain`, M3)
+
+- Input per landblock: a 33 × 33 height grid (five-unit spacing). Heights use the client's
+  rule, stored × 2,000 / 65,535 (`landblock.md` §3.4; `terrain-texturing.md` §13); the
+  ceiling grid, vertex flags and collision tree blocks that follow the heights are in
+  `landblock.md` §3.5–§3.9.
 - Output: a CPU mesh per landblock per LOD (shared index buffers per LOD and stitch
   pattern), normals computed across landblock edges (needs neighbour heights; the bundle
-  loader requests the 8 neighbours at low priority).
-- Texturing: splat-map inputs (terrain type per vertex or per cell) once the trailing
-  bytes are decoded. Until then, terrain is shaded by height and slope with an original
-  palette.
-- Far terrain: coarser LOD meshes generated from the same heights; imposters for distant
-  objects are a later concern (M3 stretch).
-- Grass and small scenery ("frills", Reported) are a separate system with its own ring and
-  frame budget, after M3.
+  loader requests the 8 neighbours at low priority) (`terrain.md` §3–§5). Landblocks with a
+  ceiling also get a ceiling mesh (`terrain-texturing.md` §4.8).
+- Far terrain: coarser LOD meshes from the same heights. How far the original draws full
+  layers and what replaces them beyond that is OPEN (`terrain-texturing.md` §12); Tessera
+  draws full layers at every distance it meshes until it is known.
 
-> **OPEN:** terrain texture blend data, roads, water and the sky/weather/time-of-day
-> system. No public decoder exists (Reported). RE task list in `docs/ROADMAP.md` M3.
+<a id="terrain-splat"></a>
+### 10.2 Texture splatting (`terrain-texturing.md`, M4.5)
+
+Terrain is drawn as stacked texture layers, as the original draws it. The chain
+(`terrain-texturing.md` §2): each terrain or ceiling chunk of a landblock's data lists layers
+in draw order; a layer names a key of the region's **terrain type table** (0x19, found through
+slot 8 of the region descriptor 0x0F), an A8 alpha mask (0x41) and a triangle range. The
+table entry names the texture lists, the texture transform, the opacity switches and a
+physics-material property set.
+
+| Step | Crate | Spec |
+|---|---|---|
+| Decode the 0x19 table and the extended landblock data (tree blocks, ceiling diagonal, light-map properties) | `tessera-formats` | `terrain-texturing.md` §3; `landblock.md` §3, §6.4 |
+| Resolve layers against the table by key: stored order, `whole` and unmasked layers, holes, quad and coarse grids, ceiling chunks | `tessera-terrain` | `terrain-texturing.md` §4 |
+| Mask placement, per-vertex texture-coordinate sets (per-type scale, rotation and offset, per-block offset), tangent frame for normal maps, opacity inputs, light-map coordinates | `tessera-terrain` | §5, §6.1–§6.4, §7, §10 |
+| Terrain layer pipeline: the features and parameters of each layer (shader-record choice), draw the layers in stored order on the same triangles, first drawn layer opaque, later ones blended "over" after the opacity test; per-layer colour with normal maps, specular, emissive and glow; the baked light map **added** to the lighting sum. Texture lists resolve through `tessera-material` as for any surface | `tessera-render` | §7–§10; `lighting.md` |
+
+- Layer products are CPU data built on the asset workers with the landblock bundle and handed
+  to the renderer like any mesh product (§8, §20.2).
+- Whether layers are drawn one pass per layer or folded into one splatting shader per block
+  is the renderer's choice; the result is the same "over" chain (`terrain-texturing.md` §8).
+  The depth comparison for stacked layers is a Tessera Decision there ("less or equal").
+- Failure handling follows `terrain-texturing.md` §8: a layer whose setup fails is skipped
+  and logged, the rest of the chunk is drawn; an entry without a diffuse texture is drawn
+  with the shader record's default texture, never skipped.
+- Roads, paths and river beds are ordinary layers; there is no road record
+  (`terrain-texturing.md` §11).
+- The height-and-slope palette that this section planned before the layers were known
+  survives only as Tessera's fallback and debug view (`terrain.md` §6).
+
+<a id="terrain-water"></a>
+### 10.3 Water (`water.md`, M4.5)
+
+Water is not a terrain layer (`terrain-texturing.md` §11). It has three sources
+(`water.md` §2):
+
+- **Landblock water** (seas, large lakes and rivers): `tessera-world` decides each
+  landblock's water type and flat level from the block map and the region's **water table**
+  (0x16) (`water.md` §4, §6.2) and answers the "under water" query (§6.3). The renderer draws
+  one 160 × 160 quad per wet landblock at that level with the water type's surface record
+  (Tessera rule, §8.1); terrain above the plane hides it through the depth test.
+  `tessera-material` resolves the water material chain (§8.2) and `tessera-render` has a
+  water pipeline (§8.3–§8.4).
+- **Placed water** (ponds, pools, fountains, water in interiors): static entities drawn like
+  any other with the water shaders (§8.5).
+- **Distant water:** derived from the block maps with the same rule as landblock water
+  instead of decoding the distant-landscape sector records (Tessera rule, `water.md` §9).
+
+Water volumes come from the landblock volume entity and from placed volumes (`water.md`
+§7). `tessera-world` derives them, and the landblock water plane, from the data; the
+controller in `tessera-physics` uses them for its wading and swimming states (`water.md`
+§7.4; `collision.md` §12.3 step 7).
+
+**How water reaches the controller** (Decision, [0013](decisions/0013-physics-crate.md)).
+When `world` builds a landblock's collision set on the asset workers, it also stores in that
+set, as plain physics data in the landblock frame:
+
+- the landblock water plane: the level *h* and water type of `water.md` §6.2, or none for a
+  dry landblock;
+- the liquid boxes: each monitor box of the landblock volume entity (§7.1) and of every
+  placed volume entity of the landblock (§7.3), transformed by its entity's placement
+  (position, rotation, and scale when `Monitor_ScaleWithEntity` is true) into an oriented
+  box, with the flags of its property set (§7.2: liquid, lava, surface, wading, deep).
+
+The controller reads water only from the resident sets, like the triangles, so the
+determinism of §20.3 covers water too, and `physics` needs nothing from `world` at step
+time. `world`'s "under water" query (§6.3) reads the same plane and boxes.
+
+The fog-zone table (0x17) is not water; it is decoded with the other per-region tables
+(`water.md` §5).
+
+<a id="terrain-sky"></a>
+### 10.4 Sky, time of day and fog (`environment.md`, M4.5)
+
+- `tessera-formats` decodes the sky description (0x15), the day descriptions (0x1A), game
+  time (0x35) and the LOD-class table (0x32) (`environment.md` §5, §6, §9.1).
+- `tessera-world` owns the **game clock** (`environment.md` §11.1). The original's epoch is
+  OPEN, so Tessera's clock has a settable start time and rate. It chooses the day description
+  per sky key and game day (§11.2; the per-day pick is also the weather variant), blends the
+  keyframes (§11.3) and animates the sky objects (§11.4). The state is plain data handed to
+  the renderer each frame.
+- `tessera-render` draws the sky objects around the camera before the world without writing
+  depth (§12), and takes the blended sun, ambient light and fog as inputs of the lit pipeline
+  (`lighting.md` §8.1, §10). Interior cells with linear fog use their own fog values
+  (`environment.md` §7.2, §12).
+
+<a id="terrain-scenery"></a>
+### 10.5 Scenery and grass (`scenery.md`, M4.5)
+
+- Procedural scenery (trees, rocks) is generated per landblock in `tessera-world` on the
+  asset workers, deterministically, from the per-vertex scenery words, the region's scene
+  tables (0x12, 0x11) and the scene records (0x02) (`scenery.md` §6–§7). Placement needs the
+  terrain collision mesh and its radius and plane queries, which is why `world` may depend on
+  `physics` (§3). Generated objects enter the bundle like statics, with their collision
+  (`collision.md` §9.4).
+- Frills (grass and ground cover) are a separate layer of 10 × 10-unit sectors in their own
+  ring around the camera with their own frame budget (`scenery.md` §8). They never collide.
+- The renderer draws scenery and frills instanced (`scenery.md` §8.3, §9).
+
+> **Answered (M4.5):** the former OPEN of this section, "terrain texture blend data, roads,
+> water and the sky/weather/time-of-day system", is answered by
+> [`terrain-texturing.md`](specs/terrain-texturing.md) (layers, masks, blending, roads,
+> light maps), [`water.md`](specs/water.md) (water tables, landblock water, volumes, drawing)
+> and [`environment.md`](specs/environment.md) (region tables, sky, day descriptions, game
+> clock, fog). Their remaining `> **OPEN:**` items are listed in those specs; none blocks
+> M4.5, because each has a Tessera Decision (`docs/ROADMAP.md` M4.5).
 
 ---
 
@@ -585,10 +774,10 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
 - Converts Z-up source data into the engine convention at load (Decision: the engine uses
   Z-up world space too, and converts only in the camera/projection, so world data never
   needs re-axing).
-- Assemblies: setup records (0x04; 0x01 records are collision geometry, `setup.md` §2.2)
-  and appearance records (0x20) combine parts into a character or object. M4 implements
-  this as `tessera-mesh::assembly` (`appearance.md` §8): body parts by priority, worn and
-  held items, dye layers, and the inputs of the clip resolver.
+- Assemblies: setup records (0x04; 0x01 records are cell geometry, `collision.md` §5;
+  `setup.md` §2.2) and appearance records (0x20) combine parts into a character or
+  object. M4 implements this as `tessera-mesh::assembly` (`appearance.md` §8): body parts
+  by priority, worn and held items, dye layers, and the inputs of the clip resolver.
 
 <a id="anim"></a>
 ### 11.2 Skeletons and animation (`tessera-havok`, `tessera-anim`)
@@ -932,16 +1121,85 @@ frame: cull ─► build draw lists ─► encode passes ─► submit ─► pr
 1. Pump window and input events; update input state and actions.
 2. `Session::poll`: apply server events to the entity store (entity ID → transform,
    property set, render/audio components).
-3. Simulation tick at a fixed rate (Decision: 30 Hz, interpolated for rendering): local
-   movement and collision against loaded geometry (later milestones), camera.
+3. Simulation at fixed rates, interpolated for rendering (Decision, see "Simulation steps"
+   below): the character controller (`tessera-physics`) on its own 1/60 s step; the other
+   local simulation (free-fly controller, camera) on the 30 Hz tick.
 4. Streamer: update desired landblocks and priorities.
-5. Drain asset completions within the upload budget; create GPU resources.
+5. Drain asset completions within the upload budget; create GPU resources; install and
+   remove collision sets ("Collision-set residency" below).
 6. Animation: collect pose results computed on workers for the previous frame; submit new
    sampling jobs.
 7. Plugins: run Lua `Update` events and timers within their time slice.
 8. UI: process input, layout, build the 2D draw list.
 9. Audio: update listener and emitters; send commands to the audio thread.
 10. Render: cull, sort, encode, submit, present.
+
+**Simulation steps** (Decision, M4.5, [0013](decisions/0013-physics-crate.md)). There are two
+fixed-step accumulators inside the frame, both on the main thread, and neither depends on
+the frame rate:
+
+- **Character controller: 1/60 s.** Walk mode (walking, jumping, sliding, wading, swimming,
+  cells) advances `tessera-physics` in fixed steps of 1/60 s, at most 5 steps per frame
+  (`collision.md` §12.3). `tessera-physics` owns these numbers as constants
+  (`STEPS_PER_SECOND` = 60, `STEP_SECONDS` = 1/60, `MAX_STEPS_PER_FRAME` = 5) and its step
+  function takes no step length: every caller (client, tests, the M7 server) steps exactly
+  `STEP_SECONDS`. `physics` has no clock. The client owns the accumulator, a
+  `tessera-input` `FixedTimestep` built from `STEPS_PER_SECOND` and `MAX_STEPS_PER_FRAME`;
+  it only decides how many steps run. Time beyond the cap is dropped, not carried
+  (`FixedTimestep::dropped_seconds`), so a stall never causes a burst of catch-up steps.
+  Input is latched per step. The rendered avatar and the follow camera use the pose
+  interpolated between the last two controller states by the accumulator's leftover
+  fraction.
+- **Other local simulation: 30 Hz.** The free-fly controller, camera smoothing and any other
+  fixed-rate local work keep the 30 Hz tick that this section has always named (the
+  `tessera-input` default, `keymap.md` §9.1). The 30 Hz tick does not drive the controller;
+  it is not a network rate either (the network has its own message timing, §19).
+
+**Collision-set residency** (Decision, [0013](decisions/0013-physics-crate.md)):
+
+- **Installing and removing.** Sets built on the workers arrive with the asset completions
+  and are installed when completions are drained (step 5), that is after the frame's
+  controller steps (step 3) and never during a step. Sets are removed at the same point. A
+  set is not removed while the mover needs it (below); its removal waits until the mover
+  has left it.
+- **Which sets a step needs.** Every landblock that the mover's query box overlaps: the
+  capsule's bounding box grown on every side by the controller's largest per-step
+  displacement (`physics` bounds it, see "Input validation"). The bound is far below 160 m,
+  so a step needs at most 2 × 2 landblocks.
+- **Missing sets.** While any needed landblock has no installed set (not yet built, deferred
+  by the residency budget, or just teleported to), the controller does not step: the
+  frame's accumulated time is dropped, the latched input (a pending jump too) is kept, and
+  the mover's state and step count do not change. This carries over the walker's "pending
+  until the spawn block is built" (`walker.md` §5). A landblock that the streamer has
+  resolved as absent from the archives counts as installed with an empty set and is a
+  solid boundary for the mover; the walker's M4.5 section specifies that contact.
+- **Order independence.** A query over several sets visits them in ascending landblock
+  order (region, x, y). Among contacts at the same time of impact the one with the smallest
+  (landblock, primitive index) wins, so the result never depends on the order in which
+  workers finished.
+
+**Input validation** (Decision, [0013](decisions/0013-physics-crate.md)). The movement
+parameters come from property sets in the archives (`collision.md` §10.3, §11.1) and so are
+hostile input. `tessera-physics` validates everything at its API boundary and never panics
+in a step: a non-finite or out-of-range parameter is replaced by the value of the layer
+below it in the §11.1 overlay, and finally by the built-in base-layer default that
+`physics` documents; clamp bounds are ordered first and no panicking `clamp` is used; speeds
+are bounded so that the per-step displacement never exceeds the documented bound; capsule
+dimensions must be finite and positive; input axes are sanitised as in `keymap.md` §9.1
+(non-finite → 0, then −1..=1). A fuzz target drives the controller with arbitrary
+parameters, inputs and synthetic sets and checks that the state stays finite.
+
+**Determinism.** Given the same start state, the same per-step inputs and the same collision
+sets (water planes and liquid boxes included, §10.3), the controller produces the same
+positions whatever the frame rate, because it only ever sees whole `STEP_SECONDS` steps and
+waits instead of stepping without its sets. Scripted `--walk-path` runs and the soak walks
+give their inputs per step, not per wall-clock time, and start only once the sets the first
+step needs are installed; worker timing then changes when a step runs, never what it
+computes. The collision tests rely on this.
+
+The M7 test server runs the same controller with the same step. It moves exactly like the
+client only over the same collision sets; on install data they include generated scenery,
+statics and water, which `world` builds (see the OPEN under §3.1).
 
 Entity storage (Decision, [0008](decisions/0008-entity-storage.md)): the project-owned
 `tessera-entity` store (generational IDs, sparse-set components, per-frame change lists),
@@ -1072,6 +1330,8 @@ tiers:
 | `tessera-dattool extract` | Write a record (raw, as PNG for textures, or as text for string tables) to a user-chosen path outside the install, for personal study | M0 |
 | `tessera-dattool validate` | Run all structural invariants over an install | M0/M1 |
 | `tessera-dattool diff` | Compare two installs or two snapshots (DID added/removed/changed iteration) to see what a patch touched | M1 |
+| `tessera-dattool show <did>` | Decode one record and print its fields (text or JSON): world tables, scenes, collision meshes, cells, environment records, region descriptors, landblocks with their trees | M4.5 |
+| `tessera-dattool census` | Decode every record of chosen prefixes and walk their collision trees; exits 1 on any failure (`docs/TOOLING.md` §4.4) | M4.5 |
 | `tessera-explorer` | GUI browser: archives, string tables, textures, icons, then meshes, landblocks, UI layouts | M1+ |
 | `tools/imhex/`, `tools/kaitai/` | Pattern and schema files written from our specs, for interactive inspection | ongoing |
 | `fuzz/` | Fuzz targets | ongoing |
@@ -1088,7 +1348,7 @@ tiers:
 | 3 | One gamedata crate vs `props`/`text`/`wstate` | M1 | ADR |
 | 4 | Normative status of Kaitai schemas | M1 | ADR |
 | 5 | Disk cache of derived data (value and legal sign-off) | M3 | ADR + `LEGAL.md` |
-| 6 | Height scale and trailing landblock data (terrain types) | M3 | `specs/landblock.md` |
+| 6 | Height scale and trailing landblock data (terrain types): **answered** (`landblock.md` §3.4–§3.9, `terrain-texturing.md`) | M3 | `specs/landblock.md` |
 | 7 | Interiors, portals, PVS | after M3 | `specs/landblock.md` |
 | 8 | Entity storage / ECS choice: **decided**, project-owned store ([0008](decisions/0008-entity-storage.md)) | M4 | ADR 0008 |
 | 9 | Shader-record classification method | M2 | `specs/material.md` |
@@ -1096,5 +1356,5 @@ tiers:
 | 11 | Plugin namespace naming rationale | M5 | `LEGAL.md` |
 | 12 | Original keymap file syntax | M5 | `specs/keymap.md` |
 | 13 | Instrument samples and pitch mapping for player music | M6 | `specs/sound.md` |
-| 14 | Sky, weather, time of day, water | M3+ | `specs/environment.md` |
+| 14 | Sky, weather, time of day, water: **answered** (§10; remaining OPENs non-blocking, in the specs) | M4.5 | `specs/environment.md`, `specs/water.md`, `specs/terrain-texturing.md` |
 | 15 | Anything about the compatibility tier | M8 gate | `LEGAL.md` §9.3, `docs/decisions/` |

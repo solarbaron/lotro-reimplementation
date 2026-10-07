@@ -512,7 +512,7 @@ mod tests {
         let mut chat = ChatOverlay::default();
         route(&mut chat, &mut controls, &key(KeyCode::W));
         for _ in 0..10 {
-            let _ = controls.frame(1.0 / 60.0, &flat);
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
         }
         let walked = controls.focus().x;
         assert!(walked > start.x, "W walks while the chat is closed");
@@ -523,7 +523,7 @@ mod tests {
         route(&mut chat, &mut controls, &RawEvent::Text('w'));
         // The avatar slows to a stop (no key held any more), then stays.
         for _ in 0..60 {
-            let _ = controls.frame(1.0 / 60.0, &flat);
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
         }
         let stopped = controls.focus().x;
         assert!(
@@ -531,7 +531,7 @@ mod tests {
             "stopping, not walking on: {walked} -> {stopped}"
         );
         for _ in 0..60 {
-            let _ = controls.frame(1.0 / 60.0, &flat);
+            let _ = controls.frame(1.0 / 60.0, &flat, None);
         }
         let x = controls.focus().x;
         assert!(

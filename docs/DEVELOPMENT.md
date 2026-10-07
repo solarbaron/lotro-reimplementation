@@ -95,6 +95,27 @@ device on your driver, run `cargo test -p tessera-render -- --test-threads=1` an
 it. `TESSERA_REQUIRE_GPU=1` makes a missing adapter a failure (CI); a machine that has an
 adapter but cannot create a device fails the GPU tests unless `TESSERA_REQUIRE_GPU=0`.
 
+### Running the CI checks locally
+
+`tools/ci-local.sh` runs the jobs of `.github/workflows/ci.yml` on this machine and ends
+with a table of pass / fail / warn / skip per job; the exit status is non-zero if any job
+failed.
+
+```sh
+tools/ci-local.sh --quick                # fmt, clippy, unit tests: before each commit
+tools/ci-local.sh                        # everything: before pushing or leaving a machine
+tools/ci-local.sh --jobs 4 --skip fuzz   # limit compile jobs, leave out a job (see --list)
+tools/ci-local.sh --base @{push}         # DCO check against another base (default origin/main)
+```
+
+Differences from CI: tests run with `--release --no-fail-fast`, and with game data when
+`TESSERA_GAME_DIR` is exported (`--synthetic` unsets it for the run); `--require-gpu` sets
+`TESSERA_REQUIRE_GPU=1` as CI does on Linux. Jobs whose tools are missing are skipped with a
+note, never installed: the MSRV toolchains (`rustup toolchain install 1.90 1.95`),
+`cargo-deny`, `reuse`, and the DCO base. `advisories` is advisory, as in CI: a finding is a
+warning to triage, not a failure. The fuzz smoke test (`--fuzz-secs`, default 10 s per
+target) runs here although CI skips it on pull requests. `--help` lists every option.
+
 ## 2. Handing over between machines
 
 Only one machine works at a time.
@@ -198,6 +219,7 @@ commit message.
 |---|---|
 | `TESSERA_GAME_DIR` | Game install for real-data tests (the only way they find it) and the default for the apps |
 | `TESSERA_FULL=1` | Run exhaustive real-data tests (all records) instead of samples |
+| `TESSERA_PERF=1` | Also assert frame-time budgets in real-data tests (see "Performance assertions" below) |
 | `TESSERA_REQUIRE_GPU` | `1`: fail instead of skipping when no GPU adapter is available (CI). `0`: skip GPU tests even when an adapter exists but no device can be created |
 | `TESSERA_BLESS=1` | Regenerate golden images (check them on lavapipe/llvmpipe first) |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
@@ -206,3 +228,19 @@ commit message.
 | `TESSERA_RE_DIR` | Dirty-room data root for captures, snapshots, Wine prefixes, Ghidra projects (`docs/TOOLING.md` §5; default `~/.cache/tessera/re`) |
 
 Other `TESSERA_*` variables are documented next to the tests and apps that read them.
+
+### Performance assertions (`TESSERA_PERF`)
+
+Real-data tests that measure frame or main-thread update times (the 50 ms limit of ROADMAP
+M3 exit criterion 2 in `apps/client/tests/walker_real_data.rs` and
+`crates/world/tests/real_data.rs`) print their timings on every run but assert them only
+with `TESSERA_PERF=1`, because any other build or test loading the machine makes them fail.
+Their other checks (failures, near-ring holes, residency, counts) always run. To check the
+criterion, use a release build on an otherwise idle machine:
+
+```sh
+TESSERA_PERF=1 cargo test --release -p tessera-client --test walker_real_data -- --nocapture
+TESSERA_PERF=1 cargo test --release -p tessera-world --test real_data -- --nocapture
+```
+
+`tools/ci-local.sh` passes `TESSERA_PERF` through when it is set (or `--perf` sets it).

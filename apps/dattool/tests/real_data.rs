@@ -223,3 +223,150 @@ fn snapshot_of_the_install_diffs_clean_against_it() {
         serde_json::json!(["iteration", "size", "content"])
     );
 }
+
+/// M4.5 exit criterion 1 at the command line: `census` decodes every record of the world
+/// kinds to its last byte (a 0x01 record with its embedded render mesh), and every
+/// collision tree walks with valid keys (CO4): 0x66 records, cell physics meshes, the
+/// levels of the embedded render meshes, the 0x06 mesh levels and the landblock terrain and
+/// ceiling trees. Every host must be present with trees walked. Prints each count next to
+/// the one the specs recorded for the reference install; a patched install may differ in
+/// counts but not in failures.
+#[test]
+fn census_decodes_every_world_record() {
+    let Some(dir) = game_dir() else { return };
+    let dir_s = dir.to_str().expect("UTF-8 game dir");
+    // (prefix, kind, records and items in ROADMAP.md M4.5 criterion 1)
+    let expected: [(&str, u64, Option<u64>); 17] = [
+        ("0x01", 1_057, None),
+        ("0x02", 3_402, None),
+        ("0x08", 11, None),
+        ("0x0F", 7, Some(7)),
+        ("0x11", 5, None),
+        ("0x12", 5, None),
+        ("0x15", 1, None),
+        ("0x16", 5, Some(125)),
+        ("0x17", 5, None),
+        ("0x19", 5, Some(4_688)),
+        ("0x1A", 963, None),
+        ("0x2B", 510, None),
+        ("0x30", 24_094, None),
+        ("0x31", 13_781, None),
+        ("0x32", 1, Some(32)),
+        ("0x35", 1, None),
+        ("0x66", 16_819, None),
+    ];
+    let v = json_of(tool().args(["--json", "--game-dir", dir_s, "census", dir_s]));
+    assert_eq!(v["ok"], true, "census failures: {}", v["failures"]);
+    let kinds = v["kinds"].as_array().expect("kinds");
+    for (prefix, records, items) in expected {
+        let row = kinds
+            .iter()
+            .find(|k| k["prefix"] == prefix)
+            .unwrap_or_else(|| panic!("no {prefix} records"));
+        let n = row["records"].as_u64().unwrap();
+        assert_eq!(row["decoded"].as_u64(), Some(n), "{prefix}");
+        assert_eq!(row["failed"].as_u64(), Some(0), "{prefix}");
+        let got_items = row["items"].as_u64().unwrap();
+        let same = n == records && items.is_none_or(|i| i == got_items);
+        eprintln!(
+            "{prefix} {}: {n} records, {got_items} {} (roadmap: {records}{}){}",
+            row["kind"].as_str().unwrap_or(""),
+            row["item_label"].as_str().unwrap_or(""),
+            items.map_or(String::new(), |i| format!(", {i}")),
+            if same { "" } else { " DIFFERS" }
+        );
+    }
+    let records = |prefix: &str| {
+        kinds
+            .iter()
+            .find(|k| k["prefix"] == prefix)
+            .and_then(|k| k["records"].as_u64())
+            .unwrap_or(0)
+    };
+    // (host, trees in `collision.md` §3.1, must equal the records of this prefix)
+    let hosts = [
+        ("0x66 collision meshes", 16_819, Some("0x66")),
+        ("0x01 cell physics meshes", 1_010, None),
+        ("0x01 embedded mesh levels", 1_280, None),
+    ];
+    check_trees(&v, &hosts, records);
+    let embedded = tree(&v, "0x01 embedded mesh levels");
+    eprintln!(
+        "0x01 embedded mesh levels: {} renumbered (collision.md §3.5: 3), {} without code (83)",
+        embedded["renumbered"], embedded["without_code"]
+    );
+
+    // The mesh levels of the 0x06 records.
+    let v = json_of(tool().args([
+        "--json",
+        "--game-dir",
+        dir_s,
+        "census",
+        dir_s,
+        "--prefix",
+        "06",
+    ]));
+    assert_eq!(v["ok"], true, "census failures: {}", v["failures"]);
+    let row = &v["kinds"][0];
+    assert_eq!(row["decoded"], row["records"], "{row}");
+    eprintln!("0x06 mesh: {} records (mesh.md: 47,563)", row["records"]);
+    check_trees(&v, &[("0x06 mesh levels", 70_956, None)], |_| 0);
+    let levels = tree(&v, "0x06 mesh levels");
+    eprintln!(
+        "0x06 mesh levels: {} renumbered (collision.md §3.5: 12), {} without code (211)",
+        levels["renumbered"], levels["without_code"]
+    );
+
+    // The landblock family: terrain and ceiling trees, light maps.
+    let v = json_of(tool().args([
+        "--json",
+        "--game-dir",
+        dir_s,
+        "census",
+        dir_s,
+        "--prefix",
+        "80",
+    ]));
+    assert_eq!(v["ok"], true, "census failures: {}", v["failures"]);
+    let hosts = [
+        ("0x80 terrain trees", 58_546, None),
+        ("0x80 ceiling trees", 1_095, None),
+    ];
+    check_trees(&v, &hosts, |_| 0);
+}
+
+/// The `trees` row of `host` in a census report.
+fn tree(v: &serde_json::Value, host: &str) -> serde_json::Value {
+    v["trees"]
+        .as_array()
+        .expect("trees")
+        .iter()
+        .find(|t| t["host"] == host)
+        .unwrap_or_else(|| panic!("census walked no {host}: {}", v["trees"]))
+        .clone()
+}
+
+/// Every tree row has no failure; every expected host is present with trees walked, as
+/// many as its prefix has records where one is given; each count is printed next to the
+/// spec's.
+fn check_trees(
+    v: &serde_json::Value,
+    hosts: &[(&str, u64, Option<&str>)],
+    records: impl Fn(&str) -> u64,
+) {
+    for t in v["trees"].as_array().expect("trees") {
+        assert_eq!(t["failed"], 0, "{t}");
+        assert_eq!(t["keys_out_of_range"], 0, "{t}");
+    }
+    for &(host, spec, prefix) in hosts {
+        let walked = tree(v, host)["walked"].as_u64().unwrap_or(0);
+        assert!(walked > 0, "no {host} walked");
+        if let Some(p) = prefix {
+            assert_eq!(walked, records(p), "{host}: one tree per {p} record");
+        }
+        eprintln!(
+            "{host}: {walked} walked (collision.md §3.1: {spec}){}",
+            if walked == spec { "" } else { " DIFFERS" }
+        );
+    }
+}

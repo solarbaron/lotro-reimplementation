@@ -176,7 +176,25 @@ pub struct DrawRequest {
     pub explode: f32,
     /// The pose of an animated figure (character view); `None` draws the scene as stored.
     pub pose: Option<Arc<PoseDraw>>,
+    /// How the scene's collision overlays are drawn; `None` hides them.
+    pub collision: Option<CollisionDraw>,
 }
+
+/// How the collision overlays of a scene ([`SceneProduct::collision`]) are drawn: each in
+/// its own colour ([`crate::collision_overlay::OverlayKind::color`]), with its triangle
+/// edges, line lists and optionally a translucent fill.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CollisionDraw {
+    /// Hidden overlays (indices into [`SceneProduct::collision`]).
+    pub hidden: Vec<usize>,
+    /// Fill the triangles translucently besides drawing their edges.
+    pub fill: bool,
+    /// Draw over the scene (depth cleared) instead of depth-tested against it.
+    pub xray: bool,
+}
+
+/// Most overlay lines drawn per frame over all collision overlays.
+pub const MAX_COLLISION_LINES: usize = 131_072;
 
 /// Commands to the render thread.
 enum Cmd {
@@ -499,10 +517,15 @@ struct GpuScene {
     scene: Arc<SceneProduct>,
     meshes: Vec<Option<MeshId>>,
     textures: Vec<Option<TextureId>>,
+    /// The collision overlays' meshes, by overlay.
+    overlays: Vec<Option<MeshId>>,
 }
 
 impl GpuScene {
     fn release(&self, r: &mut Renderer<'static>) {
+        for m in self.overlays.iter().flatten() {
+            r.destroy_mesh(*m);
+        }
         // Parts that share a prepared mesh share its upload: destroy each once.
         let mut seen = HashSet::new();
         for m in self.meshes.iter().flatten() {
@@ -694,15 +717,85 @@ fn upload_scene(
             }
         })
         .collect();
+    let overlays = scene
+        .collision
+        .iter()
+        .map(|o| {
+            let prepared = o.prepared.as_ref()?;
+            match r.upload_prepared((**prepared).clone()) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    problems.push(format!("collision overlay {}: {e}", o.caption));
+                    None
+                }
+            }
+        })
+        .collect();
     (
         GpuScene {
             id,
             scene,
             meshes,
             textures,
+            overlays,
         },
         problems,
     )
+}
+
+/// Queues the collision overlays of `g` as one world pass per overlay (each pass has its
+/// own wireframe colour).
+fn draw_collision(
+    frame: &mut tessera_render::Frame,
+    g: &GpuScene,
+    draw: &CollisionDraw,
+    camera: &Camera,
+) {
+    let hidden: HashSet<usize> = draw.hidden.iter().copied().collect();
+    let mut first = true;
+    let mut lines = 0usize;
+    for (i, o) in g.scene.collision.iter().enumerate() {
+        if hidden.contains(&i) {
+            continue;
+        }
+        let mesh = g.overlays.get(i).copied().flatten();
+        if mesh.is_none() && o.lines.is_empty() {
+            continue;
+        }
+        let c = o.kind.color();
+        let edge = [c[0], c[1], c[2], 1.0];
+        let pass = frame.world_pass(format!("collision-{i}"), camera);
+        if first && draw.xray {
+            pass.clear_depth();
+        }
+        first = false;
+        pass.lighting(Lighting::default());
+        pass.mesh_debug(MeshDebug {
+            shading: if draw.fill {
+                MeshShading::BaseColor
+            } else {
+                MeshShading::Hidden
+            },
+            wireframe: Some(edge),
+            normals: None,
+        });
+        if let Some(m) = mesh {
+            let material = Material {
+                alpha: AlphaMode::Blend,
+                two_sided: true,
+                unlit: true,
+                ..Material::color(c)
+            };
+            pass.mesh(MeshDraw::new(m, Mat4::IDENTITY, material));
+        }
+        for &(a, b) in &o.lines {
+            if lines >= MAX_COLLISION_LINES {
+                break;
+            }
+            pass.line(vec3(a), vec3(b), edge);
+            lines += 1;
+        }
+    }
 }
 
 /// The dye channel the renderer draws for `g` (it takes one): the override's channel
@@ -922,6 +1015,9 @@ fn render(
                 }
             }
         }
+    }
+    if let (Some(g), Some(c)) = (scene, &request.collision) {
+        draw_collision(&mut frame, g, c, &request.camera);
     }
     if let Some(p) = pose
         && !p.lines.is_empty()
@@ -1176,6 +1272,7 @@ mod tests {
             diffuse_tint: false,
             explode: 0.0,
             pose: None,
+            collision: None,
         }
     }
 
@@ -1570,6 +1667,7 @@ mod tests {
             diffuse_tint: true,
             explode: 0.5,
             pose: None,
+            collision: Some(CollisionDraw::default()),
         });
         let ctx = egui::Context::default();
         let deadline = Instant::now() + std::time::Duration::from_secs(60);

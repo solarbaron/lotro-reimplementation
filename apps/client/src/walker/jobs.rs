@@ -121,6 +121,28 @@ impl<J: Send + 'static, O: Send + 'static> JobRunner<J, O> {
         Ok(())
     }
 
+    /// Reorders the queued jobs by `rank`, lowest first (ties keep their order), and drops
+    /// the jobs it ranks `None`. Returns how many were dropped.
+    pub fn reorder(&self, mut rank: impl FnMut(&J) -> Option<f32>) -> usize {
+        let mut q = self
+            .shared
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if q.jobs.is_empty() {
+            return 0;
+        }
+        let before = q.jobs.len();
+        let mut ranked: Vec<(f32, J)> = q
+            .jobs
+            .drain(..)
+            .filter_map(|j| rank(&j).map(|r| (r, j)))
+            .collect();
+        ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+        q.jobs.extend(ranked.into_iter().map(|(_, j)| j));
+        before - q.jobs.len()
+    }
+
     /// The next finished result, without blocking.
     pub fn try_next(&self) -> Option<O> {
         self.results.try_recv().ok()
@@ -207,6 +229,42 @@ fn worker<J, O>(
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn reorder_sorts_and_drops_queued_jobs() {
+        // One worker held on a gate, so the rest stay queued.
+        let gate = Arc::new(Mutex::new(()));
+        let held = gate.lock().unwrap();
+        let g = Arc::clone(&gate);
+        let mut r = JobRunner::new("test", 1, 16, move |x: u32| {
+            drop(g.lock().unwrap_or_else(PoisonError::into_inner));
+            x
+        })
+        .unwrap();
+        r.submit(0).unwrap();
+        let t = Instant::now();
+        while r.shared.queue.lock().unwrap().jobs.len() == 1
+            && t.elapsed() < Duration::from_secs(10)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for x in [5u32, 3, 9, 1, 7] {
+            r.submit(x).unwrap();
+        }
+        let dropped = r.reorder(|&x| (x != 9).then_some(x as f32));
+        assert_eq!(dropped, 1);
+        drop(held);
+        let mut got = Vec::new();
+        let t = Instant::now();
+        while got.len() < 5 && t.elapsed() < Duration::from_secs(10) {
+            match r.try_next() {
+                Some(x) => got.push(x),
+                None => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        assert_eq!(got, vec![0, 1, 3, 5, 7]);
+        r.shutdown();
+    }
 
     #[test]
     fn runs_jobs_bounds_the_queue_and_contains_panics() {

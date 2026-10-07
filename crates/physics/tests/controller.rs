@@ -1,0 +1,2228 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! The character controller (`docs/specs/collision.md` §10–§12, `water.md` §7.4) on
+//! synthetic data: the worked example §14.6 exactly, the §11.1 layering rules, float height
+//! (§11.2), contact classification (§11.3), determinism, and synthetic scenes (walls, steps,
+//! slopes, ceilings, jumps, wading and swimming) with a penetration check after every step;
+//! then hostile geometry and parameters.
+
+use std::sync::Arc;
+
+use tessera_formats::setup::{CollisionBox, Frame};
+use tessera_physics::controller::{
+    COS_PLAYER_WALKABLE, CharacterShape, ContactClass, Controller, ControllerConfig,
+    LayerConditions, LayerKind, LiquidWater, MAX_SPEED, MOVEMENT_FIELD_NAMES, MoveInput,
+    MovementLayer, MovementParams, MovementPids, MovementState, MoverState, PlayerMovementRecord,
+    STEP_SECONDS, StepEnv, StepOutcome, Support, WaterQuery, classify, float_height,
+    is_player_instance,
+};
+use tessera_physics::geometry::{
+    BodyPurpose, BodySource, CollisionFlags, CollisionLimits, CollisionSet, CollisionSetBuilder,
+    CollisionView, LiquidBox, LiquidFlags, QueryFilter, ShapeTemplate, Transform, WaterPlane,
+};
+use tessera_physics::{MAX_STEPS_PER_FRAME, PhysicsError, STEPS_PER_SECOND};
+use tessera_props::{Property, PropertySet, Value};
+
+// ---------------------------------------------------------------------------------------
+// A synthetic player movement record (§10.3) with synthetic property IDs.
+
+const FIELD_PID: u32 = 1000;
+const LAYER_PID: u32 = 2000;
+const MOVEMENT_CONFIG: u32 = 3000;
+const MOVE_TO_CONFIG: u32 = 3001;
+const DEFAULT_FLOAT: u32 = 3002;
+const MOVE_TO_FLOAT: u32 = 3003;
+const MOVE_TO_TURN: u32 = 4000;
+const MOVE_TO_GRAVITY: u32 = 4001;
+const MOVE_TO_TERMINAL: u32 = 4002;
+
+fn pids() -> MovementPids {
+    MovementPids::from_names(|n| {
+        if let Some(i) = MOVEMENT_FIELD_NAMES.iter().position(|f| *f == n) {
+            return Some(FIELD_PID + i as u32);
+        }
+        if let Some(k) = LayerKind::ALL.iter().position(|k| k.property_name() == n) {
+            return Some(LAYER_PID + k as u32);
+        }
+        match n {
+            "PlayerPhysicsControl_MovementConfiguration" => Some(MOVEMENT_CONFIG),
+            "PlayerPhysicsControl_MoveToConfiguration" => Some(MOVE_TO_CONFIG),
+            "PlayerPhysicsControl_DefaultFloatHeight" => Some(DEFAULT_FLOAT),
+            "MoveToController_FloatHeight" => Some(MOVE_TO_FLOAT),
+            _ => None,
+        }
+    })
+}
+
+/// A §10.3 row: (fwd, back, strafe L, strafe R, ctrl, damper, ramp, gravity, terminal, jump,
+/// step-up); `None` = not listed.
+#[allow(clippy::type_complexity)]
+struct Row(
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+    Option<f32>,
+);
+
+fn movement_struct(r: &Row, extra: &[(usize, Value)]) -> PropertySet {
+    let mut props = Vec::new();
+    let mut f = |i: usize, v: Option<Value>| {
+        if let Some(v) = v {
+            props.push(Property::new(FIELD_PID + i as u32, v));
+        }
+    };
+    f(0, r.0.map(Value::Float));
+    f(1, r.1.map(Value::Float));
+    f(2, r.2.map(Value::Float));
+    f(3, r.3.map(Value::Float));
+    f(6, r.4.map(Value::Vector3));
+    f(7, r.5.map(Value::Vector3));
+    f(8, r.6.map(Value::Float));
+    f(9, r.7.map(Value::Float));
+    f(10, r.8.map(Value::Float));
+    f(11, r.9.map(Value::Float));
+    f(12, r.10.map(Value::Float));
+    for (i, v) in extra {
+        f(*i, Some(v.clone()));
+    }
+    PropertySet::from_properties(props)
+}
+
+fn table() -> Vec<(LayerKind, Row)> {
+    use LayerKind::*;
+    fn s<T>(v: T) -> Option<T> {
+        Some(v)
+    }
+    vec![
+        (
+            BasePlayer,
+            Row(
+                s(6.5),
+                s(3.25),
+                s(5.0),
+                s(5.0),
+                s([65.0, 65.0, 0.0]),
+                s([0.2, 0.2, 1.0]),
+                s(0.13),
+                s(0.0),
+                s(50.0),
+                s(40.0),
+                s(0.5),
+            ),
+        ),
+        (
+            Troll,
+            Row(
+                None,
+                s(6.0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
+        (
+            Mounted,
+            Row(
+                None,
+                s(2.0),
+                None,
+                None,
+                None,
+                None,
+                s(0.25),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
+        (
+            Warsteed,
+            Row(
+                None,
+                s(2.0),
+                s(3.0),
+                s(3.0),
+                s([10.0, 10.0, 0.0]),
+                None,
+                s(0.25),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
+        (
+            Walking,
+            Row(
+                s(5.0),
+                s(4.5),
+                s(4.5),
+                s(4.5),
+                None,
+                None,
+                s(0.25),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
+        (
+            MountedWalking,
+            Row(
+                s(3.0),
+                s(3.0),
+                s(3.0),
+                s(3.0),
+                s([10.0, 10.0, 0.0]),
+                None,
+                s(0.25),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
+        (
+            Slide,
+            Row(
+                s(3.2),
+                s(2.0),
+                s(2.0),
+                s(2.0),
+                s([43.0, 25.0, 0.0]),
+                s([1.0; 3]),
+                s(0.5),
+                s(50.0),
+                s(100.0),
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            Ice,
+            Row(
+                s(3.2),
+                s(2.0),
+                s(2.0),
+                s(2.0),
+                s([43.0, 25.0, 0.0]),
+                s([1.0; 3]),
+                s(0.5),
+                s(25.0),
+                s(50.0),
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            Falling,
+            Row(
+                s(5.0),
+                s(1.0),
+                None,
+                None,
+                s([10.0, 10.0, 0.0]),
+                s([1.0; 3]),
+                s(0.01),
+                s(15.0),
+                None,
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            StealthedFalling,
+            Row(
+                s(2.42),
+                s(1.0),
+                s(2.42),
+                s(2.42),
+                s([10.0, 10.0, 0.0]),
+                s([1.0; 3]),
+                s(0.01),
+                s(15.0),
+                None,
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            Slope,
+            Row(
+                s(0.0),
+                s(0.0),
+                s(0.0),
+                s(0.0),
+                s([0.0; 3]),
+                s([1.0; 3]),
+                s(0.1),
+                s(10.0),
+                None,
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            Swimming,
+            Row(
+                s(3.2),
+                s(2.0),
+                s(2.0),
+                s(2.0),
+                None,
+                s([0.4; 3]),
+                s(0.4),
+                s(-20.0),
+                None,
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            StealthedSwimming,
+            Row(
+                s(4.15),
+                s(2.5),
+                s(2.5),
+                s(2.5),
+                s([35.0, 25.0, 0.0]),
+                s([0.4; 3]),
+                s(0.4),
+                s(-20.0),
+                None,
+                s(0.0),
+                None,
+            ),
+        ),
+        (
+            Frozen,
+            Row(
+                s(0.0),
+                s(0.0),
+                s(0.0),
+                s(0.0),
+                s([0.0; 3]),
+                None,
+                s(0.25),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ),
+    ]
+}
+
+/// MoveTo fields of a layer (a subset of §10.3's).
+fn move_to(kind: LayerKind) -> Vec<(u32, f32)> {
+    match kind {
+        LayerKind::BasePlayer => vec![
+            (MOVE_TO_TURN, 150.0),
+            (MOVE_TO_TERMINAL, 50.0),
+            (MOVE_TO_GRAVITY, 0.0),
+        ],
+        LayerKind::Falling | LayerKind::StealthedFalling => vec![(MOVE_TO_GRAVITY, 15.0)],
+        LayerKind::Swimming | LayerKind::StealthedSwimming => vec![(MOVE_TO_GRAVITY, -20.0)],
+        LayerKind::Slide => vec![
+            (MOVE_TO_GRAVITY, 50.0),
+            (MOVE_TO_TURN, 35.0),
+            (MOVE_TO_TERMINAL, 100.0),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// The record's property set, BasePlayer also carrying fly speeds and booleans.
+fn record_set() -> PropertySet {
+    let mut props = Vec::new();
+    for (kind, row) in table() {
+        let extra: Vec<(usize, Value)> = if kind == LayerKind::BasePlayer {
+            vec![
+                (4, Value::Float(0.0)),
+                (5, Value::Float(0.0)),
+                (14, Value::Bool(false)),
+                (15, Value::Bool(false)),
+            ]
+        } else {
+            Vec::new()
+        };
+        let mv = movement_struct(&row, &extra);
+        let mt = PropertySet::from_properties(
+            move_to(kind)
+                .into_iter()
+                .map(|(p, v)| Property::new(p, Value::Float(v))),
+        );
+        let layer = PropertySet::from_properties([
+            Property::new(MOVEMENT_CONFIG, Value::Struct(Box::new(mv))),
+            Property::new(MOVE_TO_CONFIG, Value::Struct(Box::new(mt))),
+        ]);
+        props.push(Property::new(
+            LAYER_PID + kind.index() as u32,
+            Value::Struct(Box::new(layer)),
+        ));
+    }
+    props.push(Property::new(DEFAULT_FLOAT, Value::Float(1.35)));
+    PropertySet::from_properties(props)
+}
+
+fn record() -> PlayerMovementRecord {
+    PlayerMovementRecord::from_set(&record_set(), &pids()).expect("record")
+}
+
+// ---------------------------------------------------------------------------------------
+// §14.6, §11.1, §11.2, §11.3.
+
+/// §14.6: BasePlayer then Falling (state 4, not stealthed).
+#[test]
+fn s14_6_parameter_layering() {
+    let r = record();
+    let layer = r.overlay(&LayerConditions::default(), MovementState::EarthNoSurface);
+    assert_eq!(layer.forward_speed, Some(5.0), "forward (Falling)");
+    assert_eq!(layer.backward_speed, Some(1.0), "backward (Falling)");
+    assert_eq!(layer.strafe_left_speed, Some(5.0), "strafe (BasePlayer)");
+    assert_eq!(layer.strafe_right_speed, Some(5.0), "strafe (BasePlayer)");
+    assert_eq!(layer.control_acceleration, Some([10.0, 10.0, 0.0]));
+    assert_eq!(layer.velocity_damper, Some([1.0, 1.0, 1.0]));
+    assert_eq!(layer.ramp_time, Some(0.01));
+    assert_eq!(layer.gravity, Some(15.0));
+    assert_eq!(layer.terminal_velocity, Some(50.0), "terminal (BasePlayer)");
+    assert_eq!(layer.jump_acceleration, Some(0.0));
+    assert_eq!(layer.step_up_height, Some(0.5), "step-up (BasePlayer)");
+    let c = r.compose(
+        &LayerConditions::default(),
+        MovementState::EarthNoSurface,
+        &pids(),
+    );
+    let order: Vec<LayerKind> = c.layers.iter().collect();
+    assert_eq!(order, [LayerKind::BasePlayer, LayerKind::Falling]);
+    let p = c.movement;
+    assert_eq!(
+        (
+            p.forward_speed,
+            p.backward_speed,
+            p.strafe_left_speed,
+            p.strafe_right_speed
+        ),
+        (5.0, 1.0, 5.0, 5.0)
+    );
+    assert_eq!(p.control_acceleration, [10.0, 10.0, 0.0]);
+    assert_eq!(p.velocity_damper, [1.0; 3]);
+    assert_eq!(
+        (
+            p.ramp_time,
+            p.gravity,
+            p.terminal_velocity,
+            p.jump_acceleration,
+            p.step_up_height
+        ),
+        (0.01, 15.0, 50.0, 0.0, 0.5)
+    );
+    // MoveTo: Falling's gravity over BasePlayer's turn rate and terminal; float set last.
+    assert_eq!(c.move_to.get(MOVE_TO_GRAVITY), Some(&Value::Float(15.0)));
+    assert_eq!(c.move_to.get(MOVE_TO_TURN), Some(&Value::Float(150.0)));
+    assert_eq!(c.move_to.get(MOVE_TO_FLOAT), Some(&Value::Float(1.35)));
+}
+
+/// §11.1's example: a player on foot in deep water.
+#[test]
+fn s11_1_swimming_example() {
+    let p = record()
+        .compose(
+            &LayerConditions::default(),
+            MovementState::WaterNoSurface,
+            &pids(),
+        )
+        .movement;
+    assert_eq!(
+        (
+            p.forward_speed,
+            p.backward_speed,
+            p.strafe_left_speed,
+            p.strafe_right_speed
+        ),
+        (3.2, 2.0, 2.0, 2.0)
+    );
+    assert_eq!(p.control_acceleration, [65.0, 65.0, 0.0]);
+    assert_eq!(p.velocity_damper, [0.4; 3]);
+    assert_eq!(
+        (
+            p.ramp_time,
+            p.gravity,
+            p.terminal_velocity,
+            p.jump_acceleration,
+            p.step_up_height
+        ),
+        (0.4, -20.0, 50.0, 0.0, 0.5)
+    );
+}
+
+#[test]
+fn s11_1_layer_order() {
+    let layers =
+        |c: LayerConditions, e: MovementState| -> Vec<LayerKind> { c.layers(e).iter().collect() };
+    use LayerKind::*;
+    let on_foot = MovementState::EarthControlledSurface;
+    assert_eq!(layers(LayerConditions::default(), on_foot), [BasePlayer]);
+    let troll_mounted_walking = LayerConditions {
+        species: Some(47),
+        mounted: true,
+        walking: true,
+        ..LayerConditions::default()
+    };
+    assert_eq!(
+        layers(troll_mounted_walking, on_foot),
+        [BasePlayer, Troll, Mounted, MountedWalking]
+    );
+    let warsteed = LayerConditions {
+        mounted: true,
+        ramp_up_controller: true,
+        ..LayerConditions::default()
+    };
+    assert_eq!(layers(warsteed, on_foot), [BasePlayer, Warsteed]);
+    assert_eq!(
+        warsteed.controller_kind().key(),
+        0x1000_0001,
+        "Mounted controller"
+    );
+    // Slide skips steps 6–9.
+    let slide = LayerConditions {
+        on_slide: true,
+        on_ice: true,
+        stealthed: true,
+        ..LayerConditions::default()
+    };
+    assert_eq!(
+        layers(slide, MovementState::WaterNoSurface),
+        [BasePlayer, Slide]
+    );
+    let ice = LayerConditions {
+        on_ice: true,
+        stealthed: true,
+        frozen: true,
+        ..LayerConditions::default()
+    };
+    assert_eq!(
+        layers(ice, MovementState::EarthNoSurface),
+        [BasePlayer, Ice, StealthedFalling, Frozen]
+    );
+    assert_eq!(
+        layers(
+            LayerConditions::default(),
+            MovementState::EarthUncontrolledSurface
+        ),
+        [BasePlayer, Slope]
+    );
+    for e in [1, 2, 3] {
+        let e = MovementState::from_key(e).unwrap();
+        assert_eq!(
+            layers(LayerConditions::default(), e),
+            [BasePlayer, Swimming]
+        );
+    }
+    assert_eq!(MovementState::from_key(7), None);
+    // Troll backward 6 over BasePlayer's 3.25.
+    let troll = LayerConditions {
+        species: Some(47),
+        ..LayerConditions::default()
+    };
+    let p = record().compose(&troll, on_foot, &pids()).movement;
+    assert_eq!((p.forward_speed, p.backward_speed), (6.5, 6.0));
+}
+
+/// §11.2 and the species values of §10.5.
+#[test]
+fn s11_2_float_height() {
+    assert_eq!(float_height(Some(0.92), Some(1.35)), 0.92, "short species");
+    assert_eq!(float_height(Some(1.42), None), 1.42, "Man");
+    assert_eq!(float_height(None, Some(1.2)), 1.2, "record default");
+    assert_eq!(float_height(None, None), 1.35, "fallback");
+    assert_eq!(float_height(Some(f32::NAN), Some(1.2)), 1.2, "hostile");
+    assert_eq!(float_height(Some(-1.0), Some(f32::INFINITY)), 1.35);
+    let short_body = LayerConditions {
+        avatar_float_height: Some(0.92),
+        ..LayerConditions::default()
+    };
+    let c = record().compose(&short_body, MovementState::EarthControlledSurface, &pids());
+    assert_eq!(c.movement.float_height, 0.92);
+    assert_eq!(c.move_to.get(MOVE_TO_FLOAT), Some(&Value::Float(0.92)));
+}
+
+#[test]
+fn s11_3_contact_classification() {
+    let cw = COS_PLAYER_WALKABLE;
+    let deg = |a: f32| {
+        let r = a.to_radians();
+        [r.sin(), 0.0, r.cos()]
+    };
+    assert_eq!(classify(deg(0.0), None, false, cw), ContactClass::Walkable);
+    assert_eq!(classify(deg(44.0), None, false, cw), ContactClass::Walkable);
+    assert_eq!(classify(deg(46.0), None, false, cw), ContactClass::Steep);
+    assert_eq!(classify(deg(84.0), None, false, cw), ContactClass::Steep);
+    assert_eq!(classify(deg(86.0), None, false, cw), ContactClass::Wall);
+    assert_eq!(
+        classify(deg(120.0), None, false, cw),
+        ContactClass::Overhang
+    );
+    assert_eq!(classify(deg(0.0), None, true, cw), ContactClass::Ignored);
+    // Other movers: 70°.
+    assert_eq!(
+        classify(
+            deg(60.0),
+            None,
+            false,
+            tessera_physics::controller::walkable_cos(false)
+        ),
+        ContactClass::Walkable
+    );
+    // An edge contact on a steep face: the face normal is steeper and less upward → used.
+    assert_eq!(
+        classify(deg(30.0), Some(deg(70.0)), false, cw),
+        ContactClass::Steep
+    );
+    // A flat face touched at its edge keeps the contact normal.
+    assert_eq!(
+        classify(deg(50.0), Some(deg(0.0)), false, cw),
+        ContactClass::Steep
+    );
+    assert!(is_player_instance(0x0200_0000_0000_1234));
+    assert!(!is_player_instance(0x0100_0000_0000_1234));
+}
+
+#[test]
+fn hostile_parameters_fall_back_layer_by_layer() {
+    let mut set = record_set();
+    // Falling's forward becomes NaN, its gravity huge, its damper > 1: BasePlayer's values
+    // show through (decision 0013).
+    let falling = LAYER_PID + LayerKind::Falling.index() as u32;
+    let bad = Row(
+        Some(f32::NAN),
+        Some(-1.0),
+        None,
+        None,
+        Some([f32::INFINITY, 1.0, 0.0]),
+        Some([1.5, 1.0, 1.0]),
+        Some(1e9),
+        Some(1e9),
+        Some(f32::NAN),
+        Some(-5.0),
+        Some(100.0),
+    );
+    let layer = PropertySet::from_properties([Property::new(
+        MOVEMENT_CONFIG,
+        Value::Struct(Box::new(movement_struct(&bad, &[(13, Value::Int(3))]))),
+    )]);
+    set.insert(falling, Value::Struct(Box::new(layer)));
+    let r = PlayerMovementRecord::from_set(&set, &pids()).unwrap();
+    let p = r
+        .compose(
+            &LayerConditions::default(),
+            MovementState::EarthNoSurface,
+            &pids(),
+        )
+        .movement;
+    let base = MovementParams::BUILTIN;
+    assert_eq!(p.forward_speed, base.forward_speed);
+    assert_eq!(p.backward_speed, base.backward_speed);
+    assert_eq!(p.control_acceleration, base.control_acceleration);
+    assert_eq!(p.velocity_damper, base.velocity_damper);
+    assert_eq!(p.ramp_time, base.ramp_time);
+    assert_eq!(p.gravity, base.gravity);
+    assert_eq!(p.jump_acceleration, base.jump_acceleration);
+    assert_eq!(p.step_up_height, base.step_up_height);
+    // Not the record.
+    assert_eq!(
+        PlayerMovementRecord::from_set(&PropertySet::new(), &pids()),
+        Err(PhysicsError::NotMovementRecord)
+    );
+    // A record without layers resolves to BUILTIN.
+    let b = PlayerMovementRecord::default().compose(
+        &LayerConditions::default(),
+        MovementState::EarthNoSurface,
+        &pids(),
+    );
+    assert_eq!(b.movement, MovementParams::BUILTIN);
+    // The built-in record is the §10.3 table (the same rows as this file's record).
+    let builtin = PlayerMovementRecord::builtin();
+    assert_eq!(builtin.layers, record().layers);
+    assert_eq!(builtin.default_float_height, Some(1.35));
+    assert!(MovementLayer::default().is_empty());
+}
+
+#[test]
+fn step_constants() {
+    assert_eq!(STEPS_PER_SECOND, 60);
+    assert_eq!(STEP_SECONDS, 1.0 / 60.0);
+    assert_eq!(MAX_STEPS_PER_FRAME, 5);
+}
+
+// ---------------------------------------------------------------------------------------
+// Scenes.
+
+struct Scene {
+    builder: CollisionSetBuilder,
+    tag: u32,
+}
+
+impl Scene {
+    fn new() -> Self {
+        Self {
+            builder: CollisionSetBuilder::new(CollisionLimits::default()),
+            tag: 0,
+        }
+    }
+
+    fn tris(&mut self, positions: &[[f32; 3]], tris: &[[u16; 3]]) -> &mut Self {
+        let t = ShapeTemplate::from_triangle_list(positions, tris).unwrap();
+        self.add(&t, CollisionFlags::default())
+    }
+
+    fn add(&mut self, t: &ShapeTemplate, flags: CollisionFlags) -> &mut Self {
+        self.tag += 1;
+        self.builder
+            .add_shape(
+                BodySource::Other { tag: self.tag },
+                flags,
+                BodyPurpose::Movement,
+                t,
+            )
+            .unwrap();
+        self
+    }
+
+    /// A horizontal square at height `z` from (x0, y0) to (x1, y1).
+    fn floor(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, z: f32) -> &mut Self {
+        self.tris(
+            &[[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]],
+            &[[0, 1, 2], [0, 2, 3]],
+        )
+    }
+
+    fn solid_box(&mut self, min: [f32; 3], max: [f32; 3]) -> &mut Self {
+        let mut t = ShapeTemplate::default();
+        t.push_box(&CollisionBox {
+            min,
+            max,
+            frame: Frame::IDENTITY,
+        })
+        .unwrap();
+        self.add(&t, CollisionFlags::default())
+    }
+
+    fn build(self) -> CollisionSet {
+        self.builder.build()
+    }
+}
+
+fn controller(start: [f64; 3], heading: f32) -> Controller {
+    Controller::new(
+        ControllerConfig::default(),
+        Arc::new(record()),
+        Arc::new(pids()),
+        LayerConditions::default(),
+        MoverState::at(start, heading),
+    )
+}
+
+fn forward() -> MoveInput {
+    MoveInput {
+        forward: 1.0,
+        ..MoveInput::default()
+    }
+}
+
+/// Deepest penetration (≤ 0) of the mover's capsule into `set`.
+fn penetration(set: &CollisionSet, c: &Controller) -> f32 {
+    let p = c.state().position;
+    let feet = [p[0] as f32, p[1] as f32, p[2] as f32];
+    let cap = c.config().shape.capsule_at(feet);
+    let mut out = Vec::new();
+    set.contacts(&cap, 0.0, &QueryFilter::player(), &mut out);
+    out.iter().map(|c| c.separation).fold(0.0, f32::min)
+}
+
+/// Runs `steps` steps of `input` and checks finiteness and penetration after each.
+fn run(set: &CollisionSet, c: &mut Controller, input: MoveInput, steps: usize) {
+    let env = StepEnv::new(set, [0.0; 3]);
+    for _ in 0..steps {
+        let r = c.step(&input, &env);
+        assert_eq!(r.outcome, StepOutcome::Stepped);
+        assert!(c.state().is_finite());
+        let d = penetration(set, c);
+        assert!(d >= -0.01, "penetration {d} at {:?}", c.state().position);
+    }
+}
+
+fn z(c: &Controller) -> f64 {
+    c.state().position[2]
+}
+
+fn x(c: &Controller) -> f64 {
+    c.state().position[0]
+}
+
+#[test]
+fn falls_lands_and_walks_on_flat_ground() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 2.0], 0.0);
+    run(&set, &mut c, MoveInput::default(), 60);
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+    assert_eq!(c.state().support, Support::Walkable);
+    assert!(
+        z(&c) >= 0.0 && z(&c) < 0.005,
+        "rests on the floor: {}",
+        z(&c)
+    );
+    run(&set, &mut c, forward(), 120);
+    let v = c.state().velocity;
+    let speed = (v[0] * v[0] + v[1] * v[1]).sqrt();
+    // Target 6.5 m/s, damped by 0.2^(1/60) after the approach (§12.3 steps 1, 3).
+    let expected = 6.5 * 0.2_f32.powf(1.0 / 60.0);
+    assert!((speed - expected).abs() < 1e-3, "speed {speed}");
+    assert!(x(&c) > 10.0, "{}", x(&c));
+    assert!(z(&c) >= 0.0 && z(&c) < 0.005);
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+}
+
+#[test]
+fn walls_block() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    s.solid_box([5.0, -10.0, 0.0], [6.0, 10.0, 3.0]);
+    // A thin two-sided wall of triangles too.
+    s.tris(
+        &[
+            [-5.0, -10.0, 0.0],
+            [-5.0, 10.0, 0.0],
+            [-5.0, 10.0, 3.0],
+            [-5.0, -10.0, 3.0],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+    );
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    run(&set, &mut c, forward(), 180);
+    assert!(x(&c) <= 5.0 - 0.35 + 1e-3, "stopped by the box: {}", x(&c));
+    assert!(x(&c) > 4.5);
+    assert!(z(&c) < 0.01, "not lifted by the wall: {}", z(&c));
+    // Turn round and walk into the thin wall.
+    let back = MoveInput {
+        heading: Some(std::f32::consts::PI),
+        ..forward()
+    };
+    run(&set, &mut c, back, 240);
+    assert!(
+        x(&c) >= -5.0 + 0.35 - 1e-3,
+        "stopped by the wall: {}",
+        x(&c)
+    );
+    // Diagonally into the box: slides along it.
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    let diag = MoveInput {
+        heading: Some(0.5),
+        ..forward()
+    };
+    run(&set, &mut c, diag, 120);
+    assert!(x(&c) <= 4.651);
+    // It reaches the box after about 0.84 s (y ≈ 2.55) and slides on. The per-axis
+    // approach of §12.3 OPEN (a) brakes the side component the wall leaves, so the slide
+    // settles near 0.5 m/s (reported as OPEN (i) in collision.md §12.3).
+    assert!(
+        c.state().position[1] > 3.0,
+        "slid along: {:?}",
+        c.state().position
+    );
+}
+
+#[test]
+fn steps_up_to_the_step_up_height_are_climbed() {
+    for (h, climbs) in [
+        (0.1, true),
+        (0.25, true),
+        (0.45, true),
+        (0.7, false),
+        (1.0, false),
+    ] {
+        let mut s = Scene::new();
+        s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+        s.solid_box([3.0, -10.0, 0.0], [20.0, 10.0, h]);
+        let set = s.build();
+        let mut c = controller([0.0, 0.0, 0.0], 0.0);
+        run(&set, &mut c, MoveInput::default(), 5);
+        run(&set, &mut c, forward(), 120);
+        let top = f64::from(h);
+        if climbs {
+            assert!(x(&c) > 6.0, "h {h}: climbed and walked on: x {}", x(&c));
+            assert!((z(&c) - top).abs() < 0.005, "h {h}: on top: z {}", z(&c));
+            assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+        } else {
+            assert!(x(&c) <= 3.0 - 0.35 + 1e-3, "h {h}: blocked: x {}", x(&c));
+            assert!(z(&c) < 0.01, "h {h}: z {}", z(&c));
+        }
+    }
+    // Slowly (walking style) up a 0.4 m step.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    s.solid_box([3.0, -10.0, 0.0], [20.0, 10.0, 0.4]);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    c.set_conditions(LayerConditions {
+        walking: true,
+        ..LayerConditions::default()
+    });
+    let slow = MoveInput {
+        forward: 0.3,
+        ..MoveInput::default()
+    };
+    run(&set, &mut c, slow, 400);
+    assert!((z(&c) - 0.4).abs() < 0.005, "z {}", z(&c));
+    // A staircase of 0.3 m steps 0.5 m deep.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    for k in 0..6 {
+        let x0 = 3.0 + 0.5 * k as f32;
+        s.solid_box([x0, -2.0, 0.0], [30.0, 2.0, 0.3 * (k + 1) as f32]);
+    }
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    run(&set, &mut c, forward(), 180);
+    assert!(
+        (z(&c) - 1.8).abs() < 0.005,
+        "top of the stairs: z {}",
+        z(&c)
+    );
+}
+
+/// A ramp rising along +x from (x0, z=0) at `deg` degrees, 10 m wide (y ±5).
+fn ramp(s: &mut Scene, x0: f32, deg: f32, run_len: f32) {
+    let h = run_len * deg.to_radians().tan();
+    let x1 = x0 + run_len;
+    s.tris(
+        &[[x0, -5.0, 0.0], [x1, -5.0, h], [x1, 5.0, h], [x0, 5.0, 0.0]],
+        &[[0, 1, 2], [0, 2, 3]],
+    );
+}
+
+#[test]
+fn walkable_slopes_are_climbed_steep_slopes_slide() {
+    // 30°: climbed.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 30.0, 10.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    run(&set, &mut c, forward(), 120);
+    assert!(z(&c) > 2.0, "walked up the 30° ramp: z {}", z(&c));
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+
+    // 60°: not climbed from flat ground.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 60.0, 4.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    run(&set, &mut c, forward(), 240);
+    assert!(z(&c) < 0.35, "did not climb the 60° ramp: z {}", z(&c));
+
+    // Standing on the 60° slope: slides down (state 6), even pushing uphill. A step that
+    // starts on the steep support never climbs (the vertical plane of §11.3); back on the
+    // floor the walker rides onto the foot of the slope again, which is not a slide step.
+    let mut c = controller([4.0, 0.0, 5.0], 0.0);
+    let mut saw_slide = false;
+    let mut last = f64::INFINITY;
+    let env = StepEnv::new(&set, [0.0; 3]);
+    for _ in 0..240 {
+        let before = c.state().element;
+        c.step(&forward(), &env);
+        assert!(penetration(&set, &c) >= -0.01);
+        if c.state().element == MovementState::EarthUncontrolledSurface {
+            saw_slide = true;
+            if before == MovementState::EarthUncontrolledSurface {
+                assert!(z(&c) <= last + 1e-4, "sliding never climbs");
+            }
+        }
+        last = z(&c);
+    }
+    assert!(saw_slide, "slid on the steep slope");
+    assert!(z(&c) < 0.35, "slid down to the floor: z {}", z(&c));
+}
+
+/// `collision.md` §11.3 (mechanism) and §12.3 step 6, OPEN (e)–(f): a walker running from
+/// walkable ground into a band steeper than walkable rides onto its foot, its support
+/// underfoot becomes the steep face (state 6), and it slides back instead of being held as
+/// against a wall; it never climbs the band. The pass condition is that of the checklist's
+/// `noclimb` walks (`m4-5-visual.md` §2.2): feet never above the foot of the band + 0.60 m,
+/// never farther than the foot + 0.60 m, state 6 at least once.
+#[test]
+fn steep_band_met_from_walkable_ground_is_slid_on_not_climbed() {
+    for deg in [46.0_f32, 50.0, 55.0, 61.0, 80.0] {
+        for (heading, input) in [
+            (0.0_f32, forward()),
+            (
+                0.0,
+                MoveInput {
+                    forward: 0.3,
+                    ..MoveInput::default()
+                },
+            ),
+        ] {
+            let mut s = Scene::new();
+            s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+            ramp(&mut s, 2.0, deg, 4.0);
+            let set = s.build();
+            let mut c = controller([0.0, 0.0, 0.0], heading);
+            run(&set, &mut c, MoveInput::default(), 5);
+            let env = StepEnv::new(&set, [0.0; 3]);
+            let (mut steep, mut zmax, mut xmax) = (0usize, f64::MIN, f64::MIN);
+            for _ in 0..240 {
+                let r = c.step(&input, &env);
+                assert_eq!(r.outcome, StepOutcome::Stepped);
+                assert!(c.state().is_finite());
+                assert!(penetration(&set, &c) >= -0.01, "{deg}°: penetration");
+                steep += usize::from(c.state().element == MovementState::EarthUncontrolledSurface);
+                zmax = zmax.max(z(&c));
+                xmax = xmax.max(x(&c));
+            }
+            assert!(
+                steep > 0,
+                "{deg}° ({}): state 6 at least once",
+                input.forward
+            );
+            assert!(zmax < 0.60, "{deg}°: never climbs: zmax {zmax}");
+            // The foot of the band is where the capsule first touches it.
+            assert!(
+                xmax < 2.0 + 0.60,
+                "{deg}°: stays near the foot: xmax {xmax}"
+            );
+        }
+    }
+    // Just walkable (44°): climbed, never state 6.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 44.0, 10.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    for _ in 0..240 {
+        c.step(&forward(), &env);
+        assert_ne!(c.state().element, MovementState::EarthUncontrolledSurface);
+    }
+    assert!(z(&c) > 3.0, "walked up the 44° ramp: z {}", z(&c));
+    // Diagonally into a 60° band: the walker keeps moving along its foot.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 60.0, 4.0);
+    let set = s.build();
+    let mut c = controller([0.0, -4.0, 0.0], 0.5);
+    run(&set, &mut c, forward(), 240);
+    assert!(z(&c) < 0.35 && x(&c) < 2.6, "{:?}", c.state().position);
+    assert!(
+        c.state().position[1] > -1.0,
+        "moved along the band: {:?}",
+        c.state().position
+    );
+}
+
+/// On steep support a steep contact adds the vertical plane of its normal's horizontal
+/// part (§11.3): a mover that lands on a steep face while moving toward the uphill side
+/// stops climbing at once and slides down.
+#[test]
+fn landing_on_a_steep_face_moving_uphill_slides_down() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 55.0, 6.0);
+    let set = s.build();
+    let mut c = controller([3.0, 0.0, 3.0], 0.0);
+    let mut state = *c.state();
+    state.velocity = [5.0, 0.0, 0.0];
+    assert!(c.set_state(state));
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut on_steep = false;
+    let mut last = z(&c);
+    for _ in 0..240 {
+        let before = c.state().element;
+        c.step(&forward(), &env);
+        assert!(penetration(&set, &c) >= -0.01);
+        if before == MovementState::EarthUncontrolledSurface {
+            on_steep = true;
+            assert!(z(&c) <= last + 1e-4, "no climbing on steep support");
+        }
+        last = z(&c);
+    }
+    assert!(on_steep);
+    assert!(z(&c) < 0.35, "slid down: {:?}", c.state().position);
+}
+
+#[test]
+fn jump_apex_airtime_and_ceilings() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    run(&set, &mut c, MoveInput::default(), 10);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let jump = MoveInput {
+        jump: true,
+        ..MoveInput::default()
+    };
+    let r = c.step(&jump, &env);
+    assert!(r.jumped);
+    let mut apex = z(&c);
+    let mut air = 1;
+    while c.state().element != MovementState::EarthControlledSurface && air < 600 {
+        c.step(&MoveInput::default(), &env);
+        apex = apex.max(z(&c));
+        air += 1;
+    }
+    let airtime = air as f32 * STEP_SECONDS;
+    // §12.3 step 2: 5.2 m/s under 15 m/s² → apex ≈ 0.9 m, ≈ 0.7 s in the air (plus the
+    // jump's own step).
+    assert!(apex > 0.85 && apex < 1.05, "apex {apex}");
+    assert!(airtime > 0.62 && airtime < 0.8, "airtime {airtime}");
+
+    // A ceiling 2.3 m above the floor stops the jump (head at 1.8 m + 0.5 m).
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    s.solid_box([-5.0, -5.0, 2.3], [5.0, 5.0, 3.0]);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    run(&set, &mut c, MoveInput::default(), 10);
+    run(&set, &mut c, jump, 1);
+    let mut top = 0.0_f64;
+    for _ in 0..90 {
+        run(&set, &mut c, MoveInput::default(), 1);
+        top = top.max(z(&c));
+    }
+    assert!(
+        top + 1.8 <= 2.3 + 1e-3,
+        "head stopped by the ceiling: {}",
+        top + 1.8
+    );
+    assert!(top > 0.4);
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+}
+
+#[test]
+fn walks_off_ledges_and_down_small_steps() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 3.0, 50.0, 2.0);
+    s.floor(3.0, -50.0, 6.0, 50.0, 1.7);
+    s.floor(6.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 2.0], 0.0);
+    run(&set, &mut c, MoveInput::default(), 3);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut states = Vec::new();
+    for _ in 0..120 {
+        c.step(&forward(), &env);
+        assert!(penetration(&set, &c) >= -0.01);
+        states.push(c.state().element);
+    }
+    // Down the 0.3 m step it stays grounded (snap), off the 1.7 m ledge it falls.
+    let at_x = x(&c);
+    assert!(at_x > 8.0);
+    assert!(z(&c) < 0.005);
+    assert!(states.contains(&MovementState::EarthNoSurface));
+}
+
+#[test]
+fn ignored_surfaces_are_not_support() {
+    let mut s = Scene::new();
+    let t = ShapeTemplate::from_triangle_list(
+        &[
+            [-50.0, -50.0, 0.0],
+            [50.0, -50.0, 0.0],
+            [50.0, 50.0, 0.0],
+            [-50.0, 50.0, 0.0],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+    )
+    .unwrap();
+    s.add(
+        &t,
+        CollisionFlags {
+            always_uncontrolled_surface: Some(true),
+            ..CollisionFlags::default()
+        },
+    );
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.5], 0.0);
+    run(&set, &mut c, MoveInput::default(), 60);
+    // It blocks (no fall-through) but never counts as support.
+    assert!(z(&c) >= 0.0 && z(&c) < 0.01);
+    assert_eq!(c.state().element, MovementState::EarthNoSurface);
+}
+
+// ---------------------------------------------------------------------------------------
+// Water.
+
+fn water_scene(level: f32) -> CollisionSet {
+    let mut s = Scene::new();
+    // Beach: flat at 0 until x = 5, then down at about 11° to −4 at x = 25, then flat.
+    s.floor(-50.0, -50.0, 5.0, 50.0, 0.0);
+    s.tris(
+        &[
+            [5.0, -50.0, 0.0],
+            [25.0, -50.0, -4.0],
+            [25.0, 50.0, -4.0],
+            [5.0, 50.0, 0.0],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+    );
+    s.floor(25.0, -50.0, 120.0, 50.0, -4.0);
+    let flags = |surface, wading, deep| LiquidFlags {
+        liquid: true,
+        surface,
+        wading,
+        deep,
+        ..LiquidFlags::default()
+    };
+    // The three bands of the landblock volume entity (water.md §7.1), placed at level h.
+    let t = Transform::new(
+        [0.0, 0.0, level],
+        tessera_formats::setup::Quaternion::IDENTITY,
+        1.0,
+    );
+    for (min_z, max_z, f) in [
+        (-0.5, 0.0, flags(true, false, false)),
+        (-1.0, -0.5, flags(false, true, false)),
+        (-1600.0, -1.0, flags(false, false, true)),
+    ] {
+        s.builder
+            .add_liquid_box(
+                LiquidBox::new([-50.0, -50.0, min_z], [160.0, 160.0, max_z], &t, f).unwrap(),
+            )
+            .unwrap();
+    }
+    s.builder
+        .set_water_plane(Some(WaterPlane::new(level, 1).unwrap()));
+    s.build()
+}
+
+#[test]
+fn water_query_finds_the_surface() {
+    let set = water_scene(-0.5);
+    let w = LiquidWater(&set);
+    assert_eq!(w.water_at([0.0, 0.0, 1.0]), None);
+    let s = w.water_at([10.0, 0.0, -2.0]).expect("in water");
+    assert_eq!(s.surface, -0.5);
+    assert!(s.flags.deep && s.flags.liquid);
+    // Without the plane the bounded search finds the box tops.
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_liquid_box(
+        LiquidBox::new(
+            [0.0, 0.0, -3.0],
+            [10.0, 10.0, 1.25],
+            &Transform::IDENTITY,
+            LiquidFlags {
+                liquid: true,
+                ..LiquidFlags::default()
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let set = b.build();
+    let s = LiquidWater(&set)
+        .water_at([5.0, 5.0, -2.0])
+        .expect("in water");
+    assert!((s.surface - 1.25).abs() < 1e-3, "{}", s.surface);
+}
+
+/// `water.md` §7.4: wading turns into swimming where the surface is more than the float
+/// height above the feet; the swimmer floats at that depth.
+#[test]
+fn wading_turns_into_swimming() {
+    let level = -0.5;
+    let set = water_scene(level);
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    c.set_conditions(LayerConditions {
+        avatar_float_height: Some(1.42),
+        ..LayerConditions::default()
+    });
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut seen = Vec::new();
+    for _ in 0..900 {
+        c.step(&forward(), &env);
+        assert!(c.state().is_finite());
+        assert!(penetration(&set, &c) >= -0.01);
+        let e = c.state().element;
+        if seen.last() != Some(&e) {
+            seen.push(e);
+        }
+        if let Some(w) = c.state().water
+            && e == MovementState::WaterControlledSurface
+        {
+            assert!(w.depth <= 1.42 + 1e-4, "wading only up to the float height");
+        }
+    }
+    let wade = seen
+        .iter()
+        .position(|e| *e == MovementState::WaterControlledSurface);
+    let swim = seen
+        .iter()
+        .position(|e| *e == MovementState::WaterNoSurface);
+    assert!(
+        matches!((wade, swim), (Some(a), Some(b)) if a < b),
+        "{seen:?}"
+    );
+    assert_eq!(c.state().element, MovementState::WaterNoSurface);
+    // Floating: the feet settle at the surface minus the float height.
+    let feet = z(&c) as f32;
+    assert!(
+        (feet - (level - 1.42)).abs() < 0.01,
+        "floats with the feet at {feet}"
+    );
+    assert!(x(&c) > 25.0, "swam on: x {}", x(&c));
+    // Swimming back to the shore: wading again, then dry.
+    let back = MoveInput {
+        heading: Some(std::f32::consts::PI),
+        ..forward()
+    };
+    for _ in 0..1200 {
+        c.step(&back, &env);
+    }
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+}
+
+// ---------------------------------------------------------------------------------------
+// Determinism.
+
+fn scripted(step: usize) -> MoveInput {
+    let k = step as u32;
+    MoveInput {
+        forward: [1.0, 0.5, 0.0, -1.0][(k / 37 % 4) as usize],
+        strafe: [0.0, 1.0, -0.5][(k / 53 % 3) as usize],
+        heading: Some((k as f32) * 0.013),
+        jump: k.is_multiple_of(97),
+    }
+}
+
+fn trajectory(set: &CollisionSet, steps: usize) -> Vec<[u64; 3]> {
+    let mut c = controller([0.0, 0.0, 1.0], 0.3);
+    let env = StepEnv::new(set, [0.0; 3]);
+    (0..steps)
+        .map(|i| {
+            c.step(&scripted(i), &env);
+            c.state().position.map(f64::to_bits)
+        })
+        .collect()
+}
+
+#[test]
+fn determinism_bit_for_bit() {
+    let mut s = Scene::new();
+    s.floor(-60.0, -60.0, 60.0, 60.0, 0.0);
+    s.solid_box([5.0, -3.0, 0.0], [7.0, 3.0, 0.4]);
+    s.solid_box([-8.0, 2.0, 0.0], [-6.0, 9.0, 3.0]);
+    ramp(&mut s, 10.0, 55.0, 3.0);
+    let set = s.build();
+    let a = trajectory(&set, 3000);
+    let b = trajectory(&set, 3000);
+    assert_eq!(a, b);
+    // The same set seen through a view (the client's multi-set query) steps identically.
+    let mut view = CollisionView::new();
+    view.push(&set, [0.0; 3]);
+    let mut c1 = controller([0.0, 0.0, 1.0], 0.3);
+    let mut c2 = c1.clone();
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let env2 = StepEnv::new(&view, [0.0; 3]);
+    for i in 0..600 {
+        c1.step(&scripted(i), &env);
+        c2.step(&scripted(i), &env2);
+        assert_eq!(c1.state(), c2.state());
+    }
+}
+
+#[test]
+fn pushed_out_of_crevices_and_overlaps() {
+    // A V-shaped crevice of two steep walls 0.6 m apart at the top, narrower below.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, -5.0);
+    s.tris(
+        &[
+            [-0.3, -10.0, 0.0],
+            [-0.3, 10.0, 0.0],
+            [-0.05, 10.0, -4.0],
+            [-0.05, -10.0, -4.0],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+    );
+    s.tris(
+        &[
+            [0.3, -10.0, 0.0],
+            [0.3, 10.0, 0.0],
+            [0.05, 10.0, -4.0],
+            [0.05, -10.0, -4.0],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+    );
+    // A box the mover starts inside of, near its face.
+    s.solid_box([4.0, -2.0, 0.0], [6.0, 2.0, 3.0]);
+    let set = s.build();
+    // Dropped into the crevice: wedges, never sinks in deeper than 0.01 m.
+    let mut c = controller([0.0, 0.0, 1.0], 0.0);
+    run(&set, &mut c, MoveInput::default(), 240);
+    run(&set, &mut c, forward(), 120);
+    // Started overlapping the box by 0.2 m: pushed out within the first steps.
+    let mut c = controller([3.85, 0.0, 0.0], 0.0);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let r = c.step(&MoveInput::default(), &env);
+    assert!(r.pushed_out > 0.19, "{r:?}");
+    assert!(penetration(&set, &c) >= -0.01);
+    run(&set, &mut c, MoveInput::default(), 30);
+}
+
+// ---------------------------------------------------------------------------------------
+// Hostile geometry and input.
+
+/// A small deterministic generator.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) as u32
+    }
+    fn unit(&mut self) -> f32 {
+        self.next() as f32 / u32::MAX as f32
+    }
+    fn f(&mut self) -> f32 {
+        match self.next() % 16 {
+            0 => f32::NAN,
+            1 => f32::INFINITY,
+            2 => -1e30,
+            3 => 9.9e5,
+            4 => f32::from_bits(self.next()),
+            _ => self.unit() * 20.0 - 10.0,
+        }
+    }
+}
+
+#[test]
+fn hostile_geometry_never_panics_or_goes_non_finite() {
+    for seed in 0..40u64 {
+        let mut g = Lcg(seed);
+        let mut s = Scene::new();
+        s.floor(-30.0, -30.0, 30.0, 30.0, -0.5);
+        // Degenerate triangles: repeated and collinear corners.
+        s.tris(
+            &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+            &[[0, 1, 2], [0, 0, 0], [1, 1, 2]],
+        );
+        // A soup with hostile coordinates (non-finite ones are dropped by the template).
+        let positions: Vec<[f32; 3]> = (0..32).map(|_| [g.f(), g.f(), g.f()]).collect();
+        let tris: Vec<[u16; 3]> = (0..48)
+            .map(|_| {
+                [
+                    (g.next() % 40) as u16,
+                    (g.next() % 40) as u16,
+                    (g.next() % 40) as u16,
+                ]
+            })
+            .collect();
+        s.tris(&positions, &tris);
+        s.solid_box([g.f(), g.f(), g.f()], [g.f(), g.f(), g.f()]);
+        let set = s.build();
+        let start = [
+            f64::from(g.unit() * 4.0 - 2.0),
+            f64::from(g.unit() * 4.0 - 2.0),
+            f64::from(g.unit() * 4.0),
+        ];
+        let mut c = controller(start, 0.0);
+        let env = StepEnv::new(&set, [0.0; 3]);
+        for _ in 0..300 {
+            let input = MoveInput {
+                forward: g.f(),
+                strafe: g.f(),
+                heading: Some(g.f()),
+                jump: g.next().is_multiple_of(5),
+            };
+            let r = c.step(&input, &env);
+            assert!(c.state().is_finite(), "seed {seed}: {:?}", c.state());
+            assert_ne!(r.outcome, StepOutcome::OutOfRange);
+        }
+    }
+}
+
+#[test]
+fn hostile_positions_and_shapes() {
+    let mut s = Scene::new();
+    s.floor(-30.0, -30.0, 30.0, 30.0, 0.0);
+    let set = s.build();
+    // Far from the query frame: refused, unchanged.
+    let mut c = controller([5e6, 0.0, 0.0], 0.0);
+    let r = c.step(&forward(), &StepEnv::new(&set, [0.0; 3]));
+    assert_eq!(r.outcome, StepOutcome::OutOfRange);
+    assert_eq!(c.state().position, [5e6, 0.0, 0.0]);
+    // The same mover with a frame near it steps.
+    let r = c.step(&forward(), &StepEnv::new(&set, [5e6, 0.0, 0.0]));
+    assert_eq!(r.outcome, StepOutcome::Stepped);
+    // Non-finite states are refused.
+    let mut bad = *c.state();
+    bad.position[0] = f64::NAN;
+    assert!(!c.set_state(bad));
+    // Shapes are validated.
+    assert!(CharacterShape::new(0.35, 1.1, 0.0).is_err());
+    assert!(CharacterShape::new(0.35, f32::NAN, 0.35).is_err());
+    assert!(CharacterShape::new(0.35, 1.1, 100.0).is_err());
+    assert!(CharacterShape::from_setup_capsule(0.5, 1.586, 0.5, 0.0).is_err());
+    let rh = CharacterShape::from_setup_capsule(0.5, 1.586, 0.5, 0.7).unwrap();
+    assert!((rh.radius() - 0.35).abs() < 1e-6 && (rh.height() - 1.8102).abs() < 1e-3);
+    // Query bounds contain the capsule and the step's reach.
+    let (lo, hi) = c.query_bounds();
+    let p = c.state().position;
+    assert!(lo[0] < p[0] - 10.0 && hi[2] > p[2] + 11.0);
+}
+
+#[test]
+fn hostile_parameter_records_stay_bounded() {
+    let mut g = Lcg(7);
+    for _ in 0..200 {
+        let mut set = PropertySet::new();
+        for kind in LayerKind::ALL {
+            let row = Row(
+                Some(g.f()),
+                Some(g.f()),
+                Some(g.f()),
+                Some(g.f()),
+                Some([g.f(), g.f(), g.f()]),
+                Some([g.f(), g.f(), g.f()]),
+                Some(g.f()),
+                Some(g.f() * 100.0),
+                Some(g.f() * 100.0),
+                Some(g.f() * 100.0),
+                Some(g.f()),
+            );
+            let layer = PropertySet::from_properties([Property::new(
+                MOVEMENT_CONFIG,
+                Value::Struct(Box::new(movement_struct(&row, &[]))),
+            )]);
+            set.insert(
+                LAYER_PID + kind.index() as u32,
+                Value::Struct(Box::new(layer)),
+            );
+        }
+        let r = PlayerMovementRecord::from_set(&set, &pids()).unwrap();
+        let mut floor = Scene::new();
+        floor.floor(-30.0, -30.0, 30.0, 30.0, 0.0);
+        let world = floor.build();
+        let mut c = Controller::new(
+            ControllerConfig::default(),
+            Arc::new(r),
+            Arc::new(pids()),
+            LayerConditions {
+                avatar_float_height: Some(g.f()),
+                ..LayerConditions::default()
+            },
+            MoverState::at([0.0, 0.0, 1.0], 0.0),
+        );
+        let env = StepEnv::new(&world, [0.0; 3]);
+        for k in 0..60 {
+            let p = c.params();
+            assert!(p.forward_speed.is_finite() && p.forward_speed <= MAX_SPEED);
+            assert!(p.velocity_damper.iter().all(|d| (0.0..=1.0).contains(d)));
+            c.step(
+                &MoveInput {
+                    forward: 1.0,
+                    jump: k % 7 == 0,
+                    ..MoveInput::default()
+                },
+                &env,
+            );
+            assert!(c.state().is_finite());
+            let v = c.state().velocity;
+            assert!((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() <= MAX_SPEED * 1.001);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Review regressions (M4.5 controller review): buoyancy, support in water, jump ramp time,
+// speed bound, step-up on level ground, built-in record, snap reach, cells, OutOfRange,
+// set_state, StepEnv::from_view, MoveTo values, column water queries.
+
+const FLOAT: f32 = 1.35;
+
+/// The three bands of the landblock volume entity (`water.md` §7.1) at `level` over
+/// x, y ∈ −50 … 160, and the water plane.
+fn add_water(s: &mut Scene, level: f32) {
+    let flags = |surface, wading, deep| LiquidFlags {
+        liquid: true,
+        surface,
+        wading,
+        deep,
+        ..LiquidFlags::default()
+    };
+    let t = Transform::new(
+        [0.0, 0.0, level],
+        tessera_formats::setup::Quaternion::IDENTITY,
+        1.0,
+    );
+    for (min_z, max_z, f) in [
+        (-0.5, 0.0, flags(true, false, false)),
+        (-1.0, -0.5, flags(false, true, false)),
+        (-1600.0, -1.0, flags(false, false, true)),
+    ] {
+        s.builder
+            .add_liquid_box(
+                LiquidBox::new([-50.0, -50.0, min_z], [160.0, 160.0, max_z], &t, f).unwrap(),
+            )
+            .unwrap();
+    }
+    s.builder
+        .set_water_plane(Some(WaterPlane::new(level, 1).unwrap()));
+}
+
+/// Runs `steps` steps and returns the lowest (feet − float line) seen while in water.
+fn lowest_below_line(
+    set: &CollisionSet,
+    c: &mut Controller,
+    input: MoveInput,
+    steps: usize,
+    line: f64,
+) -> f64 {
+    let env = StepEnv::new(set, [0.0; 3]).with_water(set);
+    let mut lowest = f64::INFINITY;
+    for _ in 0..steps {
+        let r = c.step(&input, &env);
+        assert_eq!(r.outcome, StepOutcome::Stepped);
+        assert!(c.state().is_finite());
+        assert!(penetration(set, c) >= -0.01);
+        let v = c.state().velocity;
+        assert!((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt() <= 50.0 * 1.001);
+        if c.state().water.is_some() {
+            lowest = lowest.min(z(c) - line);
+        }
+    }
+    lowest
+}
+
+/// Finding: a swimmer above the float line was pulled down at the terminal velocity and
+/// kept that speed, so it sank metres below the line (or to the bed) before floating up.
+#[test]
+fn falling_or_stepping_into_deep_water_stops_at_the_float_line() {
+    let level = 0.0_f32;
+    let line = f64::from(level - FLOAT);
+    // Dropped from 1 m above the surface into water 10 m deep.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 160.0, 160.0, -10.0);
+    add_water(&mut s, level);
+    let set = s.build();
+    let mut c = controller([10.0, 10.0, 1.0], 0.0);
+    let lowest = lowest_below_line(&set, &mut c, MoveInput::default(), 240, line);
+    assert!(lowest > -0.05, "sank {lowest} m below the float line");
+    assert_eq!(c.state().element, MovementState::WaterNoSurface);
+    assert!((z(&c) - line).abs() < 0.01, "floats at the line: {}", z(&c));
+    // Dropped from 20 m: enters at about 17 m/s, still stops at the line.
+    let mut c = controller([10.0, 10.0, 20.0], 0.0);
+    let lowest = lowest_below_line(&set, &mut c, MoveInput::default(), 300, line);
+    assert!(lowest > -0.05, "sank {lowest} m below the float line");
+    assert!((z(&c) - line).abs() < 0.01);
+
+    // Wading on a shelf 1 m deep (state 1), then off its edge over 20 m of water.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 5.0, 160.0, -1.0);
+    s.floor(5.0, -50.0, 160.0, 160.0, -20.0);
+    add_water(&mut s, level);
+    let set = s.build();
+    let mut c = controller([0.0, 10.0, -1.0], 0.0);
+    let lowest = lowest_below_line(&set, &mut c, MoveInput::default(), 30, line);
+    assert_eq!(c.state().element, MovementState::WaterControlledSurface);
+    assert!(lowest > 0.3, "wading above the line");
+    let lowest = lowest_below_line(&set, &mut c, forward(), 300, line);
+    assert!(lowest > -0.05, "sank {lowest} m below the float line");
+    assert_eq!(c.state().element, MovementState::WaterNoSurface);
+    assert!((z(&c) - line).abs() < 0.01, "floats at the line: {}", z(&c));
+    assert!(x(&c) > 10.0, "swam on: {}", x(&c));
+}
+
+/// Finding: in state 3 (steep support in water shallower than the float height) the
+/// swimming gravity lifted the mover, "rising" discarded its support, it became a swimmer
+/// above the line and the old buoyancy fired it down the slope, 16 m below the line.
+#[test]
+fn steep_support_in_shallow_water_slides_down_and_floats() {
+    let level = 6.0_f32;
+    let line = f64::from(level - FLOAT);
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 160.0, 0.0);
+    ramp(&mut s, 2.0, 60.0, 4.0);
+    add_water(&mut s, level);
+    let set = s.build();
+    let mut c = controller([5.7, 0.0, 6.3], 0.0);
+    let env = StepEnv::new(&set, [0.0; 3]).with_water(&set);
+    let mut seen = Vec::new();
+    let mut lowest = f64::INFINITY;
+    for _ in 0..240 {
+        c.step(&MoveInput::default(), &env);
+        assert!(c.state().is_finite());
+        assert!(penetration(&set, &c) >= -0.01);
+        let e = c.state().element;
+        if seen.last() != Some(&e) {
+            seen.push(e);
+        }
+        if let Some(w) = c.state().water {
+            lowest = lowest.min(z(&c) - line);
+            if e == MovementState::WaterUncontrolledSurface {
+                assert!(
+                    w.depth <= FLOAT + 1e-3,
+                    "state 3 only up to the float height"
+                );
+            }
+        }
+    }
+    assert!(
+        seen.contains(&MovementState::WaterUncontrolledSurface),
+        "slid in shallow water (state 3): {seen:?}"
+    );
+    assert!(lowest > -0.05, "sank {lowest} m below the float line");
+    assert_eq!(c.state().element, MovementState::WaterNoSurface, "{seen:?}");
+    assert!((z(&c) - line).abs() < 0.01, "floats at the line: {}", z(&c));
+}
+
+/// Finding: the jump speed used the composed layer's ramp time, so a Walking (or mounted)
+/// jump launched at 10 m/s with a 3.5 m apex. It uses BasePlayer's 0.13 s (§12.3 step 2;
+/// OPEN (c) in collision.md).
+#[test]
+fn walking_and_mounted_jumps_match_the_base_jump() {
+    for conditions in [
+        LayerConditions::default(),
+        LayerConditions {
+            walking: true,
+            ..LayerConditions::default()
+        },
+        LayerConditions {
+            mounted: true,
+            ..LayerConditions::default()
+        },
+        LayerConditions {
+            mounted: true,
+            walking: true,
+            ..LayerConditions::default()
+        },
+    ] {
+        let mut s = Scene::new();
+        s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+        let set = s.build();
+        let mut c = controller([0.0, 0.0, 0.0], 0.0);
+        c.set_conditions(conditions);
+        run(&set, &mut c, MoveInput::default(), 10);
+        let env = StepEnv::new(&set, [0.0; 3]);
+        let r = c.step(
+            &MoveInput {
+                jump: true,
+                ..MoveInput::default()
+            },
+            &env,
+        );
+        assert!(r.jumped);
+        assert!(
+            (c.state().velocity[2] - 5.2).abs() < 0.3,
+            "{conditions:?}: v0 {}",
+            c.state().velocity[2]
+        );
+        let mut apex = z(&c);
+        for _ in 0..90 {
+            c.step(&MoveInput::default(), &env);
+            apex = apex.max(z(&c));
+        }
+        assert!(apex > 0.85 && apex < 1.05, "{conditions:?}: apex {apex}");
+    }
+}
+
+/// Finding: buoyancy set the vertical speed after the speed limit, so a fast swimmer left
+/// the step at up to √2 × the limit.
+#[test]
+fn speed_stays_limited_after_buoyancy() {
+    let fast = MovementLayer {
+        terminal_velocity: Some(120.0),
+        forward_speed: Some(120.0),
+        control_acceleration: Some([1000.0, 1000.0, 1000.0]),
+        ramp_time: Some(0.0),
+        velocity_damper: Some([1.0; 3]),
+        ..MovementLayer::default()
+    };
+    let mut r = PlayerMovementRecord::default();
+    r.layers[LayerKind::BasePlayer.index()] = Some(fast);
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_liquid_box(
+        LiquidBox::new(
+            [-500.0, -500.0, -50.0],
+            [500.0, 500.0, 0.2],
+            &Transform::IDENTITY,
+            LiquidFlags {
+                liquid: true,
+                ..LiquidFlags::default()
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let set = b.build();
+    let conditions = LayerConditions {
+        avatar_float_height: Some(10.0),
+        ..LayerConditions::default()
+    };
+    let mut c = Controller::new(
+        ControllerConfig::default(),
+        Arc::new(r),
+        Arc::new(pids()),
+        conditions,
+        MoverState::at([0.0, 0.0, 0.0], 0.0),
+    );
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let speed = |c: &Controller| {
+        let v = c.state().velocity;
+        (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+    };
+    for _ in 0..30 {
+        c.step(&forward(), &env);
+        assert!(speed(&c) <= MAX_SPEED * 1.001, "speed {}", speed(&c));
+    }
+    // A swimmer above its float line moving at the limit.
+    assert!(c.set_state(MoverState {
+        element: MovementState::WaterNoSurface,
+        velocity: [120.0, 0.0, 0.0],
+        water: Some(tessera_physics::controller::WaterContact {
+            surface: 0.0,
+            depth: 0.1,
+            flags: LiquidFlags {
+                liquid: true,
+                ..LiquidFlags::default()
+            },
+        }),
+        ..MoverState::at([0.0, 0.0, -0.1], 0.0)
+    }));
+    c.step(&forward(), &env);
+    assert!(speed(&c) <= MAX_SPEED * 1.001, "speed {}", speed(&c));
+}
+
+/// Finding: on level ground the step-up's raised move (at least half a radius) always got
+/// further than a slide along a wall, so a mover pressed against a wall moved at about
+/// 10.4 m/s whatever its input.
+#[test]
+fn sliding_along_a_wall_is_never_sped_up() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    s.solid_box([-50.0, 1.0, 0.0], [50.0, 3.0, 10.0]);
+    let set = s.build();
+    let damp = 0.2_f32.powf(1.0 / 60.0);
+    for (heading, fwd, strafe, walking) in [
+        (0.1_f32, 1.0_f32, 0.0_f32, false),
+        (1.0, 1.0, 0.0, false),
+        (0.3, 0.05, 0.0, false),
+        (0.1, 0.6, 0.0, false),
+        (0.1, 1.0, 0.0, true),
+        (0.0, 1.0, -0.5, false),
+    ] {
+        let mut c = controller([-20.0, 0.64, 0.0], heading);
+        if walking {
+            c.set_conditions(LayerConditions {
+                walking: true,
+                ..LayerConditions::default()
+            });
+        }
+        let input = MoveInput {
+            forward: fwd,
+            strafe,
+            heading: Some(heading),
+            jump: false,
+        };
+        let i = input.sanitized();
+        let target = i.forward * if walking { 5.0 } else { 6.5 };
+        let open_floor = target * damp * heading.cos();
+        let env = StepEnv::new(&set, [0.0; 3]);
+        let mut x0 = 0.0;
+        for k in 0..120 {
+            let r = c.step(&input, &env);
+            assert!(!r.stepped_up, "{heading} {fwd}: stepped up at step {k}");
+            assert!(z(&c) < 0.01);
+            if k == 29 {
+                x0 = x(&c);
+            }
+        }
+        let speed = (x(&c) - x0) / 1.5;
+        assert!(
+            speed as f32 <= open_floor + 0.02,
+            "heading {heading} forward {fwd} strafe {strafe}: {speed} m/s along the wall, \
+             open floor {open_floor}"
+        );
+        assert!(c.state().position[1] <= 0.651);
+    }
+}
+
+/// Finding: `PlayerMovementRecord::builtin()` had BasePlayer only (gravity 0), so a mover
+/// that walked off a ledge floated for ever.
+#[test]
+fn builtin_record_falls_off_ledges() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    s.floor(2.0, -50.0, 50.0, 50.0, -5.0);
+    let set = s.build();
+    let mut c = Controller::new(
+        ControllerConfig::default(),
+        Arc::new(PlayerMovementRecord::builtin()),
+        Arc::new(MovementPids::default()),
+        LayerConditions::default(),
+        MoverState::at([0.0, 0.0, 0.0], 0.0),
+    );
+    run(&set, &mut c, MoveInput::default(), 5);
+    assert_eq!(c.params().gravity, 0.0, "BasePlayer on walkable ground");
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut fell = false;
+    for _ in 0..120 {
+        c.step(&forward(), &env);
+        fell |= c.state().element == MovementState::EarthNoSurface && c.params().gravity == 15.0;
+    }
+    assert!(fell, "Falling gravity 15 applies in the air");
+    assert!((z(&c) + 5.0).abs() < 0.01, "landed below: {}", z(&c));
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+}
+
+/// Finding: the snap added the step-up height whenever the mover was grounded (§12.3 step 6
+/// says: when moving down a slope), so drops up to 0.55 m were teleported down in one step.
+/// Downhill slopes are still followed.
+#[test]
+fn snap_follows_slopes_but_not_drops() {
+    // Off a 0.3 m step at run speed: a short fall.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 3.0, 50.0, 0.3);
+    s.floor(3.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.3], 0.0);
+    run(&set, &mut c, MoveInput::default(), 3);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut states = Vec::new();
+    let mut biggest_drop = 0.0_f64;
+    for _ in 0..60 {
+        let before = z(&c);
+        c.step(&forward(), &env);
+        biggest_drop = biggest_drop.max(before - z(&c));
+        states.push(c.state().element);
+    }
+    assert!(states.contains(&MovementState::EarthNoSurface), "fell");
+    assert!(biggest_drop < 0.2, "no teleport down: {biggest_drop}");
+    assert!(z(&c) < 0.005);
+    // Down a 30° slope at run speed: grounded all the way.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 30.0, 10.0);
+    let top = 10.0 * 30.0_f32.to_radians().tan();
+    s.floor(12.0, -50.0, 50.0, 50.0, top);
+    let set = s.build();
+    let mut c = controller([16.0, 0.0, f64::from(top)], std::f32::consts::PI);
+    run(&set, &mut c, MoveInput::default(), 3);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    for _ in 0..180 {
+        c.step(&forward(), &env);
+        assert_ne!(
+            c.state().element,
+            MovementState::EarthNoSurface,
+            "left the slope at {:?}",
+            c.state().position
+        );
+    }
+    assert!(x(&c) < 0.0 && z(&c) < 0.005);
+}
+
+/// Finding: no test looked at `MoverState::cell` (§12.3 step 8). The §14.5 box room placed
+/// at (10, 0, 0): walking through it switches the cell on and off.
+#[test]
+fn cell_lookup_every_step() {
+    use tessera_physics::geometry::{CellPlacement, CellVolume, PlacedCell};
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let volume = CellVolume::new([
+        ([0.0, 1.0, 0.0], 4.0),
+        ([-1.0, 0.0, 0.0], 4.0),
+        ([0.0, -1.0, 0.0], 4.0),
+        ([1.0, 0.0, 0.0], 4.0),
+        ([0.0, 0.0, -1.0], 4.0),
+        ([0.0, 0.0, 1.0], 0.0),
+    ])
+    .unwrap();
+    let mut hull = Vec::new();
+    for x in [-4.0, 4.0] {
+        for y in [-4.0, 4.0] {
+            for z in [0.0, 4.0] {
+                hull.push([x, y, z]);
+            }
+        }
+    }
+    let placement = CellPlacement::new(
+        [10.0, 0.0, 0.0],
+        tessera_formats::setup::Quaternion::IDENTITY,
+    )
+    .unwrap();
+    let cell = PlacedCell::with_volume(
+        7,
+        tessera_formats::Did(0x0100_0001),
+        Arc::new(volume),
+        &hull,
+        placement,
+    )
+    .unwrap();
+    s.builder.add_cell(cell, None).unwrap();
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut cells = Vec::new();
+    for _ in 0..240 {
+        c.step(&forward(), &env);
+        let cell = c.state().cell.map(|h| h.cell);
+        let inside = (6.0..=14.0).contains(&x(&c));
+        assert_eq!(cell.is_some(), inside, "at x {}", x(&c));
+        if cells.last() != Some(&cell) {
+            cells.push(cell);
+        }
+    }
+    assert_eq!(cells, vec![None, Some(7), None]);
+    assert_eq!(c.state().cell, None);
+}
+
+/// Finding: an OutOfRange step applied the input heading.
+#[test]
+fn out_of_range_changes_nothing_but_the_step_count() {
+    let set = Scene::new().build();
+    let mut c = controller([1e7, 0.0, 0.0], 0.0);
+    let before = *c.state();
+    let r = c.step(
+        &MoveInput {
+            heading: Some(1.0),
+            ..forward()
+        },
+        &StepEnv::new(&set, [0.0; 3]),
+    );
+    assert_eq!(r.outcome, StepOutcome::OutOfRange);
+    assert_eq!(*c.state(), MoverState { steps: 1, ..before });
+}
+
+/// Finding: `set_state` took any finite velocity; above about 1.8e19 the speed overflowed
+/// f32 and the next step zeroed the velocity instead of limiting it.
+#[test]
+fn set_state_limits_the_speed() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    assert!(c.set_state(MoverState {
+        velocity: [1e20, 0.0, 0.0],
+        ..MoverState::at([0.0, 0.0, 5.0], 0.0)
+    }));
+    let v = c.state().velocity;
+    assert!(
+        (v[0] - MAX_SPEED).abs() < 1e-3 && v[1] == 0.0 && v[2] == 0.0,
+        "{v:?}"
+    );
+    c.step(&MoveInput::default(), &StepEnv::new(&set, [0.0; 3]));
+    // In the air: limited to the terminal velocity (50), not zeroed.
+    assert!(c.state().velocity[0] > 40.0, "{:?}", c.state().velocity);
+    assert!(!c.set_state(MoverState {
+        velocity: [f32::INFINITY, 0.0, 0.0],
+        ..MoverState::at([0.0; 3], 0.0)
+    }));
+}
+
+/// Finding: `StepEnv`'s origin was separate from a view's own origin.
+#[test]
+fn step_env_from_view_takes_the_views_origin() {
+    let mut s = Scene::new();
+    s.floor(0.0, 0.0, 160.0, 160.0, 0.0);
+    s.solid_box([90.0, 50.0, 0.0], [92.0, 70.0, 3.0]);
+    add_water(&mut s, -0.5);
+    let set = s.build();
+    let origin = [3200.0, 4800.0, 10.0];
+    let mut view = CollisionView::with_origin(origin);
+    view.push(&set, [0.0; 3]);
+    let env = StepEnv::from_view(&view);
+    assert_eq!(env.origin, origin);
+    let start = [origin[0] + 80.0, origin[1] + 60.0, origin[2] + 1.0];
+    let mut a = controller(start, 0.0);
+    let mut b = controller(start, 0.0);
+    let explicit = StepEnv::new(&view, origin);
+    for i in 0..300 {
+        a.step(&scripted(i), &env);
+        b.step(&scripted(i), &explicit);
+        assert_eq!(a.state(), b.state());
+    }
+    assert!(a.state().position[0] > origin[0] + 80.5);
+}
+
+/// Finding: a hostile MoveTo field (a large array or struct) was cloned on every step.
+/// MoveTo layers keep scalars only, and the step composes movement parameters alone.
+#[test]
+fn move_to_keeps_scalars_and_steps_compose_movement_only() {
+    use tessera_physics::controller::MoveToLayer;
+    let big = Value::Array(
+        (0..1000)
+            .map(|k| Property::new(k, Value::Float(k as f32)))
+            .collect(),
+    );
+    let set = PropertySet::from_properties([
+        Property::new(MOVE_TO_TURN, Value::Float(150.0)),
+        Property::new(MOVE_TO_GRAVITY, big),
+        Property::new(MOVE_TO_TERMINAL, Value::String("x".repeat(1000))),
+        Property::new(
+            MOVE_TO_FLOAT,
+            Value::Struct(Box::new(PropertySet::from_properties([Property::new(
+                1,
+                Value::Int(1),
+            )]))),
+        ),
+        Property::new(4100, Value::Int(3)),
+    ]);
+    let l = MoveToLayer::from_set(&set);
+    assert_eq!(
+        l.fields,
+        vec![(MOVE_TO_TURN, Value::Float(150.0)), (4100, Value::Int(3))]
+    );
+    let r = record();
+    for element in [
+        MovementState::WaterControlledSurface,
+        MovementState::WaterNoSurface,
+        MovementState::EarthNoSurface,
+        MovementState::EarthControlledSurface,
+        MovementState::EarthUncontrolledSurface,
+    ] {
+        for conditions in [
+            LayerConditions::default(),
+            LayerConditions {
+                stealthed: true,
+                walking: true,
+                avatar_float_height: Some(0.92),
+                ..LayerConditions::default()
+            },
+        ] {
+            assert_eq!(
+                r.compose_movement(&conditions, element),
+                r.compose(&conditions, element, &pids()).movement
+            );
+        }
+    }
+}
+
+/// Finding: the generic water query made up to ~40 scans of every liquid box. A set and a
+/// view answer the same through their column queries.
+#[test]
+fn column_water_queries_match_the_generic_one() {
+    let level = -0.5;
+    let beach = water_scene(level);
+    let mut s = Scene::new();
+    // Boxes without a plane, one of them turned: the bounded search finds their tops.
+    for (k, yaw) in [(0, 0.0_f32), (1, 0.3), (2, 1.2)] {
+        let t = Transform::new(
+            [20.0 * k as f32, 5.0, 0.0],
+            tessera_formats::setup::Quaternion::from_yaw(yaw),
+            1.0,
+        );
+        s.builder
+            .add_liquid_box(
+                LiquidBox::new(
+                    [-8.0, -8.0, -3.0 - k as f32],
+                    [8.0, 8.0, 1.25 + k as f32],
+                    &t,
+                    LiquidFlags {
+                        liquid: true,
+                        wading: k == 1,
+                        ..LiquidFlags::default()
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let boxes = s.build();
+    let mut g = Lcg(99);
+    for set in [&beach, &boxes] {
+        let mut wet = 0;
+        for _ in 0..2000 {
+            let p = [
+                g.unit() * 60.0 - 5.0,
+                g.unit() * 16.0 - 3.0,
+                g.unit() * 8.0 - 5.0,
+            ];
+            let generic = LiquidWater(set).water_at(p);
+            assert_eq!(set.water_at(p), generic, "{p:?}");
+            wet += usize::from(generic.is_some());
+        }
+        assert!(wet > 100, "{wet}");
+    }
+    // A view of two sets side by side, shifted.
+    let mut view = CollisionView::with_origin([100.0, 0.0, 0.0]);
+    view.push(&beach, [-100.0, 0.0, 0.0]);
+    view.push(&boxes, [60.0, 0.0, 1.0]);
+    for _ in 0..2000 {
+        let p = [
+            g.unit() * 250.0 - 140.0,
+            g.unit() * 16.0 - 3.0,
+            g.unit() * 8.0 - 5.0,
+        ];
+        assert_eq!(view.water_at(p), LiquidWater(&view).water_at(p), "{p:?}");
+    }
+}
+
+/// Finding (walk GN1 of `m4-5-visual.md`, 2026-10-07): a slope falling across the path
+/// (about 33°) with a shallow concave crease across it, where the second triangle's normal
+/// differs from the first by less than §11.3's merge tolerance (0.035 per component). The
+/// motion slid along the first face still ran into the second, the merged plane list kept
+/// only the first normal, and the walker stopped dead at the crease with full forward
+/// speed. A merging normal now replaces the listed one (`collision.md` §12.3 OPEN (u)).
+#[test]
+fn shallow_concave_crease_across_a_side_slope_is_crossed() {
+    // Plane z = -sx·x + sy·y, below y = 0 with sy = 0.128, above with sy = 0.153: the
+    // unit normals differ by about 0.02 in y, so they merge.
+    let (sx, sy0, sy1) = (0.647_f32, 0.128_f32, 0.153_f32);
+    let za = |x: f32, y: f32| -sx * x + sy0 * y;
+    let zb = |x: f32, y: f32| -sx * x + sy1 * y;
+    let unit = |nx: f32, ny: f32| {
+        let l = (nx * nx + ny * ny + 1.0).sqrt();
+        [nx / l, ny / l, 1.0 / l]
+    };
+    let (na, nb) = (unit(sx, -sy0), unit(sx, -sy1));
+    assert!(tessera_physics::controller::normals_merge(na, nb));
+    let mut s = Scene::new();
+    for (x0, x1) in [(-10.0_f32, 0.0_f32), (0.0, 10.0)] {
+        s.tris(
+            &[
+                [x0, -20.0, za(x0, -20.0)],
+                [x1, -20.0, za(x1, -20.0)],
+                [x1, 0.0, za(x1, 0.0)],
+                [x0, 0.0, za(x0, 0.0)],
+                [x1, 20.0, zb(x1, 20.0)],
+                [x0, 20.0, zb(x0, 20.0)],
+            ],
+            &[[0, 1, 2], [0, 2, 3], [3, 2, 4], [3, 4, 5]],
+        );
+    }
+    let set = s.build();
+    let north = std::f32::consts::FRAC_PI_2;
+    let mut c = controller([0.0, -5.0, f64::from(za(0.0, -5.0)) + 0.5], north);
+    run(&set, &mut c, MoveInput::default(), 30);
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+    let input = MoveInput {
+        heading: Some(north),
+        ..forward()
+    };
+    run(&set, &mut c, input, 120);
+    let p = c.state().position;
+    assert!(p[1] > 5.0, "crossed the crease: {p:?}");
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+}

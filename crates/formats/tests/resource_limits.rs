@@ -961,11 +961,12 @@ fn string_entry_iterators_do_not_allocate() {
 }
 
 #[test]
-fn prefix_0x26_is_reported_only() {
+fn prefix_0x26_is_registered_only() {
     let _serial = serial();
     let kind = Did(0x2600_0001).kind();
     assert_eq!(kind, DidKind::StringTableReported);
-    assert_eq!(kind.evidence(), Evidence::Reported);
+    // Status R, BIN (`records.md` §2.1): the registered DB type is the stronger evidence.
+    assert_eq!(kind.evidence(), Evidence::DbType);
     assert_eq!(Did(0x2500_0001).kind().evidence(), Evidence::Decoded);
     let table = |did: u32| B::new().u32(did).u32(1).tsize(0, 0).build();
     assert!(StringTable::parse(&table(0x2500_0001)).is_ok());
@@ -1010,6 +1011,215 @@ fn any_record_dispatches_by_prefix() {
     assert!(!AnyRecord::is_decodable(0x0600_0001u32));
     // parse_expecting accepts a raw u32 as well as a Did.
     assert!(StringTable::parse_expecting(&table, 0x2500_0009u32).is_ok());
+}
+
+/// The world-fidelity records of M4.5 go through the dispatchers: prefix-checked records
+/// must carry the DID they were looked up by; the DID-less ones (0x08, 0x66) take it.
+#[test]
+fn any_record_dispatches_world_records() {
+    use tessera_formats::collision::{CollisionMesh, PLANE_TAG_BPFL, TreeBlock};
+    use tessera_formats::environment::{
+        CameraBody, CameraState, CinematicBody, DayDescription, GameTime, LodClass, LodClassTable,
+        SkyDescription,
+    };
+    use tessera_formats::scenery::{Scene, SceneChoiceTable, TerrainSceneTable};
+    use tessera_formats::water::{FogZoneTable, WaterTable};
+    use tessera_formats::{NoSchema, RegionDescriptor, TerrainTypeTable};
+
+    let _serial = serial();
+    let checked: Vec<(u32, Vec<u8>, &str)> = vec![
+        (
+            0x1900_0001,
+            TerrainTypeTable::new(Did(0x1900_0001), Vec::new())
+                .unwrap()
+                .to_bytes(),
+            TerrainTypeTable::NAME,
+        ),
+        (
+            0x1200_0002,
+            TerrainSceneTable::new(Did(0x1200_0002), 0, None, Vec::new())
+                .unwrap()
+                .to_bytes(),
+            TerrainSceneTable::NAME,
+        ),
+        (
+            0x1100_0003,
+            SceneChoiceTable::new(0, Did(0x1100_0003), Vec::new())
+                .unwrap()
+                .to_bytes(),
+            SceneChoiceTable::NAME,
+        ),
+        (
+            0x0200_0004,
+            Scene {
+                did: Did(0x0200_0004),
+                flag_a: true,
+                ..Scene::default()
+            }
+            .to_bytes(),
+            Scene::NAME,
+        ),
+        (
+            0x1600_0005,
+            WaterTable::new(Did(0x1600_0005), 0, 1, 2, None, Vec::new()).to_bytes(),
+            WaterTable::NAME,
+        ),
+        (
+            0x1700_0006,
+            FogZoneTable::new(Did(0x1700_0006), 0, 1, None, Vec::new()).to_bytes(),
+            FogZoneTable::NAME,
+        ),
+        (
+            0x1500_0007,
+            SkyDescription {
+                did: Did(0x1500_0007),
+                ..SkyDescription::default()
+            }
+            .to_bytes(),
+            SkyDescription::NAME,
+        ),
+        (
+            0x1A00_0008,
+            DayDescription {
+                did: Did(0x1A00_0008),
+                ..DayDescription::default()
+            }
+            .to_bytes(),
+            DayDescription::NAME,
+        ),
+        (
+            0x3500_0000,
+            GameTime {
+                did: Did(0x3500_0000),
+                ..GameTime::default()
+            }
+            .to_bytes(),
+            GameTime::NAME,
+        ),
+        (
+            0x3200_0000,
+            LodClassTable {
+                did: Did(0x3200_0000),
+                entries: vec![LodClass {
+                    class: 1,
+                    values: [10.0; 8],
+                }],
+            }
+            .to_bytes(),
+            LodClassTable::NAME,
+        ),
+        (
+            // Region descriptors need neither a stamp nor a schema (`environment.md` §3.1).
+            0x0F00_0001,
+            RegionDescriptor {
+                did: Did(0x0F00_0001),
+                region: 1,
+                map_image: Did(0x4100_000F),
+                value_12: 2,
+                map_origin: [1, 2],
+                map_offset: [0.0; 2],
+                map_scale: 0.005,
+                maps: Default::default(),
+                trailing: Did(0x1900_0001),
+            }
+            .to_bytes(),
+            RegionDescriptor::NAME,
+        ),
+    ];
+    for (did, bytes, name) in &checked {
+        assert!(AnyRecord::is_decodable(*did), "{did:#x}");
+        assert_eq!(Did(*did).kind().evidence(), Evidence::Decoded, "{did:#x}");
+        let rec = AnyRecord::decode(*did, bytes)
+            .unwrap_or_else(|e| panic!("{did:#x}: {e}"))
+            .expect("decodable");
+        assert_eq!(rec.did(), Did(*did));
+        assert_eq!(rec.type_name(), *name);
+        // The stored DID is checked.
+        assert!(matches!(
+            AnyRecord::decode(did + 1, bytes),
+            Err(FormatError::DidMismatch { .. })
+        ));
+        // The schema dispatchers agree.
+        let rec = AnyRecord::decode_with_stamp(*did, bytes, Some(40), &NoSchema)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rec.did(), Did(*did));
+    }
+
+    // DID-less records take the DID they were looked up by.
+    let camera = CameraState {
+        entity: Did(0x4700_0001),
+        collision_smoothing: 0.1,
+        near_clip: 0.1,
+        far_clip: 100.0,
+        uses_physics: true,
+        uses_water_physics: false,
+        follows_under_water: false,
+        auto_transitions_disabled: false,
+        body: CameraBody::Cinematic(CinematicBody::default()),
+    }
+    .to_bytes();
+    let rec = AnyRecord::decode(0x0800_0003u32, &camera).unwrap().unwrap();
+    assert!(
+        matches!(&rec, AnyRecord::CameraState { state, .. } if state.entity == Did(0x4700_0001))
+    );
+    assert_eq!(rec.did(), Did(0x0800_0003));
+    assert_eq!(rec.type_name(), CameraState::NAME);
+
+    let mesh = CollisionMesh {
+        vertices: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        triangles: vec![[0, 1, 2]],
+        tree: TreeBlock {
+            origin: [0.0; 3],
+            scale: 65_536.0,
+            code: vec![0x30],
+            build_byte: Some(1),
+        },
+        ..CollisionMesh::default()
+    };
+    let bytes = mesh.to_bytes();
+    for rec in [
+        AnyRecord::decode(0x6600_0009u32, &bytes).unwrap().unwrap(),
+        AnyRecord::decode_with_stamp(0x6600_0009u32, &bytes, Some(39), &NoSchema)
+            .unwrap()
+            .unwrap(),
+    ] {
+        assert_eq!(rec.did(), Did(0x6600_0009));
+        let AnyRecord::CollisionMesh { mesh: m, .. } = rec else {
+            panic!("not a collision mesh");
+        };
+        assert_eq!(m.tree.build_byte, Some(1));
+    }
+    // A stamp below 34 says there is no build byte: the trailing byte is then left over.
+    assert!(AnyRecord::decode_with_stamp(0x6600_0009u32, &bytes, Some(33), &NoSchema).is_err());
+
+    // Cell geometry needs the schema dispatchers.
+    let mut cell = Vec::new();
+    cell.extend_from_slice(&0x0100_0ABCu32.to_le_bytes());
+    cell.push(0); // no physics mesh
+    cell.extend_from_slice(&PLANE_TAG_BPFL.to_le_bytes());
+    for f in [0.0f32, 0.0, 1.0, 0.0] {
+        cell.extend_from_slice(&f.to_le_bytes());
+    }
+    cell.extend_from_slice(&0u32.to_le_bytes()); // portals
+    cell.extend_from_slice(&0u32.to_le_bytes()); // walls
+    cell.push(0); // hull
+    cell.extend_from_slice(&[0, 0]); // empty property set
+    cell.extend_from_slice(&1u32.to_le_bytes());
+    cell.push(0);
+    cell.extend_from_slice(&1u32.to_le_bytes()); // render mesh flags
+    assert!(!AnyRecord::is_decodable(0x0100_0ABCu32));
+    assert!(AnyRecord::is_decodable_with_schema(0x0100_0ABCu32));
+    assert!(AnyRecord::decode(0x0100_0ABCu32, &cell).unwrap().is_none());
+    let rec = AnyRecord::decode_with_schema(0x0100_0ABCu32, &cell, &NoSchema)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(&rec, AnyRecord::CellGeometry(c) if c.planes.len() == 1));
+    assert_eq!(rec.did(), Did(0x0100_0ABC));
+    assert!(matches!(
+        AnyRecord::decode_with_schema(0x0100_0ABDu32, &cell, &NoSchema),
+        Err(FormatError::DidMismatch { .. })
+    ));
 }
 
 /// The densest landblock records: many minimal static entities, cells, neighbours, links,

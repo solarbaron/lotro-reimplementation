@@ -6,6 +6,7 @@
 //! value between calls, and mode 3 draws a random value, so both read and update a
 //! caller-owned [`CurveState`]; the other modes are pure functions of *t*.
 
+use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -66,6 +67,94 @@ impl CurveState {
         x ^= x << 5;
         self.rng = x;
         f64::from(x) / f64::from(u32::MAX) * 2.0 - 1.0
+    }
+}
+
+/// `v` if finite; NaN gives 0 and an infinity the largest finite `f32` of its sign.
+#[must_use]
+pub(crate) fn finite(v: f32) -> f32 {
+    if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(f32::MIN, f32::MAX)
+    }
+}
+
+/// The time input of the programs (`lighting.md` §4.2 E20): the clock of
+/// `material.md` §5.3.1 in seconds as an `f32`, reduced modulo 3,600 once it exceeds
+/// 3,600. A non-finite or negative clock gives 0 (the clock starts at 0 and only grows).
+#[must_use]
+pub fn program_time(t: f64) -> f32 {
+    if !t.is_finite() || t <= 0.0 {
+        0.0
+    } else if t > TIME_WRAP {
+        (t % TIME_WRAP) as f32
+    } else {
+        t as f32
+    }
+}
+
+/// The curve states of one drawn instance, one [`CurveState`] per animated parameter id,
+/// created on first use. Keep one per surface instance whose animation should run on its
+/// own (or share one between instances that should animate together). It holds at most
+/// one state per parameter id that is evaluated with it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CurveStates {
+    states: HashMap<u32, CurveState>,
+    seed: u32,
+}
+
+impl CurveStates {
+    /// No states yet; mode-3 random sources are seeded from a fixed seed and the id.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// No states yet; mode-3 random sources are seeded from `seed` and the parameter id,
+    /// so different instances can flicker differently.
+    #[must_use]
+    pub fn with_seed(seed: u32) -> Self {
+        Self {
+            states: HashMap::new(),
+            seed,
+        }
+    }
+
+    /// The state of parameter `id`, created fresh on first use.
+    pub fn state(&mut self, id: u32) -> &mut CurveState {
+        let seed = self.seed ^ id.wrapping_mul(0x9E37_79B9);
+        self.states
+            .entry(id)
+            .or_insert_with(|| CurveState::with_seed(seed))
+    }
+
+    /// Forgets every state: mode-10 curves restart at their next evaluation.
+    pub fn reset(&mut self) {
+        self.states.clear();
+    }
+
+    /// Number of parameter states held.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.states.len()
+    }
+
+    /// Whether no state is held.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+
+    /// Evaluates `curve`, the value of parameter `id`, at `t` with this instance's state
+    /// for `id` ([`FloatCurve::evaluate_finite`]; constant curves need no state and
+    /// create none).
+    pub fn evaluate(&mut self, id: u32, curve: &FloatCurve, t: f64) -> f32 {
+        if curve.is_animated() {
+            curve.evaluate_finite(t, self.state(id))
+        } else {
+            finite(curve.params[0])
+        }
     }
 }
 
@@ -157,11 +246,27 @@ impl FloatCurve {
     /// `t` is the caller's monotonic clock: seconds since the client started (Tessera
     /// rule, §5.3 Decision revised 2026-10-05). Hostile parameters give a non-finite
     /// result rather than a panic.
+    ///
+    /// A non-finite `t` (an implementation choice; the spec's clock is always finite)
+    /// leaves the mode-10 state untouched: a running mode-10 curve returns its last value
+    /// and a fresh one the value at its start, so one bad tick neither restarts nor
+    /// freezes the curve. The other modes are evaluated at 0. For values handed to a
+    /// renderer use [`FloatCurve::evaluate_finite`].
     #[must_use]
     pub fn evaluate_at(&self, t: f64, state: &mut CurveState) -> f32 {
         let w = |i: usize| f64::from(self.params.get(i).copied().unwrap_or(0.0));
         if self.mode == 1 {
             return self.params[0];
+        }
+        if !t.is_finite() {
+            if self.mode == 10 {
+                return if state.start.is_some() {
+                    state.last
+                } else {
+                    self.keyframed(0.0, &mut state.clone())
+                };
+            }
+            return self.evaluate_at(0.0, state);
         }
         // Step 1: reduce large times (the remainder keeps the sign of t).
         let x = if t.abs() > TIME_WRAP {
@@ -200,6 +305,14 @@ impl FloatCurve {
             _ => w(0),
         };
         value as f32
+    }
+
+    /// [`FloatCurve::evaluate_at`] made safe for a renderer: the result is always finite.
+    /// A NaN result (possible only with non-finite or extreme stored parameters) gives 0,
+    /// and an infinite one the largest finite `f32` of the same sign.
+    #[must_use]
+    pub fn evaluate_finite(&self, t: f64, state: &mut CurveState) -> f32 {
+        finite(self.evaluate_at(t, state))
     }
 
     /// Mode 9: *n* = int(*A*) steps at *m* = int(*F*) steps per second (§5.3.1).
@@ -440,6 +553,45 @@ mod tests {
             let _ = c.evaluate_at(0.0, &mut st);
             let _ = c.evaluate_at(1.0, &mut st);
         }
+    }
+
+    #[test]
+    fn a_non_finite_tick_leaves_a_running_curve_alone() {
+        // Review regression: a NaN tick in the middle of a running loop-0 curve used to
+        // read as t = 0, reset the start and freeze the curve at its start value.
+        let c = keyed(10.0, 0, &[(0.0, 0.0), (100.0, 100.0)]);
+        let clean: Vec<f32> = {
+            let mut st = CurveState::new();
+            [1000.0, 1002.0, 1005.0, 1009.0, 1011.0]
+                .iter()
+                .map(|&t| c.evaluate_at(t, &mut st))
+                .collect()
+        };
+        assert!(close(clean[2], 50.0), "{clean:?}");
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut st = CurveState::new();
+            let mut got = Vec::new();
+            for (i, &t) in [1000.0, 1002.0, 1005.0, 1009.0, 1011.0].iter().enumerate() {
+                got.push(c.evaluate_at(t, &mut st));
+                if i == 1 {
+                    // The bad tick returns the last value and changes nothing.
+                    let before = st.clone();
+                    assert_eq!(c.evaluate_at(bad, &mut st), got[1]);
+                    assert_eq!(st, before);
+                }
+            }
+            assert_eq!(got, clean, "{bad}");
+        }
+        // A fresh state: the value at the start, and the state stays fresh.
+        let mut st = CurveState::new();
+        assert!(close(c.evaluate_at(f64::NAN, &mut st), 0.1));
+        assert_eq!(st, CurveState::new());
+        // Other modes are evaluated at 0.
+        let w = wave(2, [0.1, 1.0, 0., 0., 0., 0., 0., 0., 0., 0.]);
+        assert_eq!(
+            w.evaluate_at(f64::NAN, &mut CurveState::new()),
+            w.evaluate_at(0.0, &mut CurveState::new())
+        );
     }
 
     #[test]

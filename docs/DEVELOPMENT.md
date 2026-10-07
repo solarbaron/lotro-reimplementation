@@ -95,6 +95,27 @@ device on your driver, run `cargo test -p tessera-render -- --test-threads=1` an
 it. `TESSERA_REQUIRE_GPU=1` makes a missing adapter a failure (CI); a machine that has an
 adapter but cannot create a device fails the GPU tests unless `TESSERA_REQUIRE_GPU=0`.
 
+### Running the CI checks locally
+
+`tools/ci-local.sh` runs the jobs of `.github/workflows/ci.yml` on this machine and ends
+with a table of pass / fail / warn / skip per job; the exit status is non-zero if any job
+failed.
+
+```sh
+tools/ci-local.sh --quick                # fmt, clippy, unit tests: before each commit
+tools/ci-local.sh                        # everything: before pushing or leaving a machine
+tools/ci-local.sh --jobs 4 --skip fuzz   # limit compile jobs, leave out a job (see --list)
+tools/ci-local.sh --base @{push}         # DCO check against another base (default origin/main)
+```
+
+Differences from CI: tests run with `--release --no-fail-fast`, and with game data when
+`TESSERA_GAME_DIR` is exported (`--synthetic` unsets it for the run); `--require-gpu` sets
+`TESSERA_REQUIRE_GPU=1` as CI does on Linux. Jobs whose tools are missing are skipped with a
+note, never installed: the MSRV toolchains (`rustup toolchain install 1.90 1.95`),
+`cargo-deny`, `reuse`, and the DCO base. `advisories` is advisory, as in CI: a finding is a
+warning to triage, not a failure. The fuzz smoke test (`--fuzz-secs`, default 10 s per
+target) runs here although CI skips it on pull requests. `--help` lists every option.
+
 ## 2. Handing over between machines
 
 Only one machine works at a time.

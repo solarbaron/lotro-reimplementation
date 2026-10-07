@@ -244,6 +244,7 @@ plugin host on top of `crates/script`); see
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Running and testing the walker, explorer and dattool on your own install |
 | [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server gate, Bevy, multi-device workflow) |
 | [docs/checklists/](docs/checklists/) | Visual checklists and items only the owner can observe in the original client |
 | [DISCLAIMER.md](DISCLAIMER.md) | Non-affiliation statement and warranty disclaimer |

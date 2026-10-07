@@ -8,7 +8,10 @@
 //!   one block with a light map, under a sun with its shadow, ambient and fog;
 //! - pixel checks of the "over" blending, the four opacity rules, the discard threshold,
 //!   the light map, the mask orientation (row 0 south) and the normal-map rotation against
-//!   the spec's formulas, and hostile input.
+//!   the spec's formulas, and hostile input;
+//! - the stored vertex normal used as it is for the ambient and sun terms (§4.10), a
+//!   downward (ceiling) normal, the specular term of §9.4 (row L5's sheen) and the
+//!   baked-landscape lights left out of the chunks' light lists (`lighting.md` §8.3, §8.5).
 //!
 //! All data is generated here (no game data). Regenerate with
 //! `TESSERA_BLESS=1 cargo test -p tessera-render --test terrain_layers_golden`.
@@ -22,9 +25,9 @@ use std::path::Path;
 
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
-    Camera, ColorSpace, Filter, Fog, FrameLighting, MipChainUpload, MipLevel, OffscreenFormat,
-    Perspective, RenderError, Renderer, RgbaImage, SunLight, SunShadow, TerrainChunk,
-    TerrainChunkData, TerrainDraw, TerrainGloss, TerrainLayer, TerrainLayerTextures,
+    Camera, ColorSpace, Filter, Fog, FrameLighting, Light, LightReach, MipChainUpload, MipLevel,
+    OffscreenFormat, Perspective, RenderError, Renderer, RgbaImage, SunLight, SunShadow,
+    TerrainChunk, TerrainChunkData, TerrainDraw, TerrainGloss, TerrainLayer, TerrainLayerTextures,
     TerrainOpacity, TerrainProjection, TerrainSpecular, TerrainTransform, TerrainVertices,
     TextureId, TextureUpload, Wrap,
 };
@@ -560,6 +563,16 @@ fn draw_chunk(
     draw: TerrainDraw,
     lighting: FrameLighting,
 ) -> Result<RgbaImage, RenderError> {
+    draw_chunk_reach(r, draw, lighting, Vec::new())
+}
+
+/// [`draw_chunk`] with the reach of the table lights (`Pass::light_reach`).
+fn draw_chunk_reach(
+    r: &mut Renderer<'static>,
+    draw: TerrainDraw,
+    lighting: FrameLighting,
+    reach: Vec<LightReach>,
+) -> Result<RgbaImage, RenderError> {
     let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
     let mut frame = r.begin_offscreen_frame(&target)?;
     frame
@@ -572,9 +585,33 @@ fn draw_chunk(
         .eye(Vec3::new(2.0, 2.0, 10.0))
         .clear([0.0, 0.0, 0.0, 1.0])
         .frame_lighting(lighting)
+        .light_reach(reach)
         .terrain(draw);
     r.end_frame(frame)?;
     r.read_pixels(&target)
+}
+
+/// The flat square with every vertex normal set to `normal` (not normalised).
+fn flat_chunk_with_normal(
+    r: &mut Renderer<'static>,
+    layers: &[TerrainLayer<'_>],
+    normal: [f32; 3],
+) -> Result<TerrainChunk, RenderError> {
+    let f = flat();
+    let normals = vec![normal; f.positions.len()];
+    let data = TerrainChunkData {
+        label: None,
+        vertices: TerrainVertices {
+            positions: &f.positions,
+            normals: &normals,
+            tangents: &f.tangents,
+            binormals: &f.binormals,
+            sets: [&f.set0, &[], &[], &f.set3],
+        },
+        layers,
+        light_map: None,
+    };
+    r.upload_terrain_chunk(&data)
 }
 
 fn solid(r: &mut Renderer<'static>, rgba: [u8; 4]) -> Result<TextureId, RenderError> {
@@ -1281,6 +1318,236 @@ fn unresolved_masks_and_gloss_follow_the_switches() -> Result<(), RenderError> {
             img.pixel(8, 8)
         );
     }
+    Ok(())
+}
+
+/// `terrain-texturing.md` §4.10, §9.1: the ambient (hemispheric) term and the sun's
+/// N · L₀ take the stored vertex normal without normalising it; a ceiling's downward normal
+/// receives A₀ − H₀ and no sun.
+#[test]
+fn stored_normals_shade_as_they_are() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let f = flat();
+    let grey = solid(&mut r, [128, 128, 128, 255])?;
+    let layer = TerrainLayer {
+        triangles: &f.triangles,
+        diffuse_color: [1.0; 3],
+        textures: TerrainLayerTextures {
+            diffuse: Some(grey),
+            ..TerrainLayerTextures::default()
+        },
+        ..TerrainLayer::default()
+    };
+    let lighting = FrameLighting {
+        ambient: [0.25; 3],
+        hemispheric: [0.125; 3],
+        sun: Some(SunLight {
+            direction: Vec3::Z,
+            color: [0.25; 3],
+            specular: [1.0; 3],
+        }),
+        ..FrameLighting::default()
+    };
+    let c = 128.0 / 255.0;
+    // (stored normal, Σ = sat(A₀ + (N · U) H₀) + sat(N · L₀) E₀)
+    let cases: [([f32; 3], f32); 4] = [
+        ([0.0, 0.0, 1.0], 0.375 + 0.25),
+        // Length 0.5: both terms see N · U = N · L₀ = 0.5.
+        ([0.0, 0.0, 0.5], 0.3125 + 0.125),
+        // A ceiling normal (down): A₀ − H₀, the sun from above adds nothing.
+        ([0.0, 0.0, -1.0], 0.125),
+        ([0.0, 0.0, -0.8], 0.25 - 0.1),
+    ];
+    for (normal, sigma) in cases {
+        let chunk = flat_chunk_with_normal(&mut r, &[layer], normal)?;
+        let img = draw_chunk(
+            &mut r,
+            TerrainDraw::new(chunk, Mat4::IDENTITY),
+            lighting.clone(),
+        )?;
+        let want = 2.0 * c * sigma;
+        assert!(
+            near(img.pixel(8, 8), [want; 3], 2.0),
+            "normal {normal:?}: {:?} vs {want}",
+            img.pixel(8, 8)
+        );
+    }
+    // A uniform scale of the chunk keeps the stored length (the normal matrix is scaled to
+    // determinant 1).
+    let chunk = flat_chunk_with_normal(&mut r, &[layer], [0.0, 0.0, 0.5])?;
+    let scaled = Mat4::from_scale(Vec3::splat(0.5));
+    let target = r.create_offscreen_target(16, 16, OffscreenFormat::Rgba8Unorm)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    frame
+        .pass(
+            "scaled",
+            tessera_render::PassSpace::World {
+                view_proj: top_down(),
+            },
+        )
+        .eye(Vec3::new(2.0, 2.0, 10.0))
+        .clear([0.0, 0.0, 0.0, 1.0])
+        .frame_lighting(lighting)
+        .terrain(TerrainDraw::new(chunk, scaled));
+    r.end_frame(frame)?;
+    let img = r.read_pixels(&target)?;
+    let want = 2.0 * c * (0.3125 + 0.125);
+    assert!(
+        near(img.pixel(4, 12), [want; 3], 2.0),
+        "{:?}",
+        img.pixel(4, 12)
+    );
+    Ok(())
+}
+
+/// `terrain-texturing.md` §9.4 and row L5: the highlight is g · sat(n · H)^p · F₀ · S,
+/// added after the factor 2 and not multiplied by the albedo; a diffuse alpha of 0.09
+/// gives a sheen of about 0.09 at the centre of the reflection.
+#[test]
+fn specular_is_a_sheen_scaled_by_the_gloss() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let f = flat();
+    // C = 0.2, diffuse alpha (gloss) 0.09.
+    let paving = solid(&mut r, [51, 51, 51, 23])?;
+    let lighting = FrameLighting {
+        ambient: [0.1; 3],
+        hemispheric: [0.0; 3],
+        // The sun straight above and the eye above the centre: n · H = 1 there.
+        sun: Some(SunLight {
+            direction: Vec3::Z,
+            color: [0.2; 3],
+            specular: [1.0; 3],
+        }),
+        ..FrameLighting::default()
+    };
+    let layer = |specular| TerrainLayer {
+        triangles: &f.triangles,
+        diffuse_color: [1.0; 3],
+        specular,
+        textures: TerrainLayerTextures {
+            diffuse: Some(paving),
+            ..TerrainLayerTextures::default()
+        },
+        ..TerrainLayer::default()
+    };
+    let spec = TerrainSpecular {
+        color: [1.0; 3],
+        power: 8.0,
+        gloss: TerrainGloss::DiffuseAlpha,
+    };
+    let c = 51.0 / 255.0;
+    let g = 23.0 / 255.0;
+    let diffuse = 2.0 * c * (0.1 + 0.2);
+    let plain = draw_flat(&mut r, &[layer(None)], None, lighting.clone())?;
+    assert!(
+        near(plain.pixel(8, 8), [diffuse; 3], 2.0),
+        "{:?}",
+        plain.pixel(8, 8)
+    );
+    let lit = draw_flat(&mut r, &[layer(Some(spec))], None, lighting.clone())?;
+    assert!(
+        near(lit.pixel(8, 8), [diffuse + g; 3], 2.0),
+        "{:?} vs {}",
+        lit.pixel(8, 8),
+        diffuse + g
+    );
+    // The specular colour (2001) tints it; the light's specular colour scales it.
+    let tinted = TerrainSpecular {
+        color: [1.0, 0.0, 0.5],
+        ..spec
+    };
+    let img = draw_flat(&mut r, &[layer(Some(tinted))], None, lighting)?;
+    assert!(
+        near(
+            img.pixel(8, 8),
+            [diffuse + g, diffuse, diffuse + 0.5 * g],
+            2.0
+        ),
+        "{:?}",
+        img.pixel(8, 8)
+    );
+    Ok(())
+}
+
+/// `lighting.md` §8.3, §8.5 (L30, L31): lights flagged as baked into the landscape are
+/// never in a chunk's automatic light list; other lights reach a chunk when the squared
+/// distance to its box is below ρ².
+#[test]
+fn baked_lights_skip_terrain_chunks() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let f = flat();
+    let white = solid(&mut r, [255, 255, 255, 255])?;
+    let layer = TerrainLayer {
+        triangles: &f.triangles,
+        diffuse_color: [1.0; 3],
+        textures: TerrainLayerTextures {
+            diffuse: Some(white),
+            ..TerrainLayerTextures::default()
+        },
+        ..TerrainLayer::default()
+    };
+    // One point light 1 m above the centre, range 10, no attenuation, colour 0.25.
+    let lighting = FrameLighting {
+        ambient: [0.0; 3],
+        hemispheric: [0.0; 3],
+        sun: None,
+        lights: vec![Light::point(Vec3::new(2.0, 2.0, 1.0), 10.0, 0.0, [0.25; 3])],
+        ..FrameLighting::default()
+    };
+    let lit = 2.0 * 0.25;
+    let baked = LightReach {
+        baked_landscape: true,
+        ..LightReach::default()
+    };
+    let near_reach = LightReach {
+        radius: Some(1.5),
+        ..LightReach::default()
+    };
+    let far_reach = LightReach {
+        radius: Some(1.0),
+        ..LightReach::default()
+    };
+    // (reach, selection, expected at the centre)
+    let cases = [
+        (Vec::new(), TerrainDraw::new, lit),
+        (vec![baked], TerrainDraw::new, 0.0),
+        // ρ = 1.5 > 1 m above the box; ρ = 1 is not below the distance (strict test).
+        (vec![near_reach], TerrainDraw::new, lit),
+        (vec![far_reach], TerrainDraw::new, 0.0),
+    ];
+    for (reach, new, want) in cases {
+        let chunk = flat_chunk(&mut r, &[layer], None, true)?;
+        let img = draw_chunk_reach(
+            &mut r,
+            new(chunk, Mat4::IDENTITY),
+            lighting.clone(),
+            reach.clone(),
+        )?;
+        assert!(
+            near(img.pixel(8, 8), [want; 3], 2.0),
+            "{reach:?}: {:?} vs {want}",
+            img.pixel(8, 8)
+        );
+    }
+    // An explicit list is the caller's choice and is kept.
+    let chunk = flat_chunk(&mut r, &[layer], None, true)?;
+    let mut draw = TerrainDraw::new(chunk, Mat4::IDENTITY);
+    draw.lights = tessera_render::LightSelection::List {
+        indices: [0; 8],
+        count: 1,
+    };
+    let img = draw_chunk_reach(&mut r, draw, lighting, vec![baked])?;
+    assert!(
+        near(img.pixel(8, 8), [lit; 3], 2.0),
+        "{:?}",
+        img.pixel(8, 8)
+    );
     Ok(())
 }
 

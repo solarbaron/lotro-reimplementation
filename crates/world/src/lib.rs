@@ -107,8 +107,8 @@ pub use source::{
     MemoryWorldSource, StampedRecord, WorldSource,
 };
 pub use streamer::{
-    BlockState, FrameReport, FrillReport, MinimapRef, NearbyLight, StreamConfig, StreamStats,
-    WorldStreamer, build_frill_sector,
+    BlockState, FrameReport, FrillReport, MAX_LOOKAHEAD_DISTANCE, MAX_LOOKAHEAD_JOB_MARGIN,
+    MinimapRef, NearbyLight, StreamConfig, StreamStats, WorldStreamer, build_frill_sector,
 };
 pub use water::{BlockWater, LandblockWater, WaterMap, WaterSystem};
 

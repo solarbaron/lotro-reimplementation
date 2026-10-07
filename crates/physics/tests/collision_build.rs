@@ -37,6 +37,7 @@ const LEDGE: u32 = 0x1000_0005;
 const SCALE: u32 = 0x1000_0006;
 const LAYERS: u32 = 0x1000_0007;
 const LAYER: u32 = 0x1000_0008;
+const CREATION: u32 = 0x1000_0009;
 
 #[derive(Debug, Clone)]
 enum V {
@@ -57,6 +58,7 @@ fn schema() -> HashMap<u32, PropertyType> {
         (SCALE, PropertyType::Vector3),
         (LAYERS, PropertyType::Array),
         (LAYER, PropertyType::Enum),
+        (CREATION, PropertyType::Enum),
     ])
 }
 
@@ -69,6 +71,7 @@ fn pids() -> PhysicsPids {
         surface_properties_to_apply: Some(SURFACE),
         can_ledge_climb: Some(LEDGE),
         content_layers: Some(LAYERS),
+        creation_type: Some(CREATION),
         ..PhysicsPids::default()
     }
 }
@@ -434,6 +437,7 @@ fn statics_follow_the_walker_rule() {
     let r = *b.report();
     assert_eq!(r.statics_seen, 7);
     assert_eq!(r.statics_blocking, 3);
+    assert_eq!(r.statics_filtered, 1);
     assert_eq!(r.unresolved, 1);
     let set = b.build();
     let bodies: HashMap<u32, _> = set
@@ -474,8 +478,12 @@ fn statics_follow_the_walker_rule() {
             0,
         );
         let physics = e.entity_type == Some(7) && e.placement.is_some();
-        let rule =
-            static_blocks_walker(physics, layers, &own.or(resolved.flags), resolved.collision);
+        let rule = static_blocks_walker(
+            physics,
+            layers,
+            &CollisionFlags::of_static(own, resolved.flags),
+            resolved.collision,
+        );
         let blocks = bodies.get(&n).is_some_and(|b| player.accepts(b));
         assert_eq!(rule, blocks, "SED {n}");
     }
@@ -483,6 +491,95 @@ fn statics_follow_the_walker_rule() {
     let ray = |f: &QueryFilter| set.raycast([25.0, 10.0, 1.0], [10.0, 0.0, 0.0], f);
     assert!(ray(&player).is_none());
     assert!(ray(&QueryFilter::camera()).is_some());
+}
+
+/// `collision.md` §9.3 (and §9.4, C25): statics whose object's `Entity_CreationType`
+/// (resolved along its 0x47 chain) is 7 or 8 get no body; a value in the SED's own set
+/// plays no part (the reading that reproduces CO12, `collision.md` §9.3 OPEN); generated
+/// objects pass no creation-type filter.
+#[test]
+fn server_created_statics_get_no_body() {
+    const C: u32 = 0x4700_0003;
+    const D: u32 = 0x4700_0004;
+    const E: u32 = 0x4700_0005;
+    let mut records = chain();
+    records
+        .put(C, entity(C, T, &[(CREATION, V::Bits(8))], &[]))
+        .put(D, entity(D, C, &[], &[]))
+        .put(E, entity(E, T, &[(CREATION, V::Bits(3))], &[]));
+    let cache = ObjectCollisionCache::default();
+    let object = |o: Did| cache.get_or_resolve(o, |o| records.resolve(o.0));
+    let at = |x: f32| Some([x, 10.0, 0.0]);
+    let entities = vec![
+        // 0: creation type 3 on the object: blocks.
+        sed(7, E, at(10.0), &[]),
+        // 1, 2: 7 / 8 only on the SED: not the object's chain, so it blocks.
+        sed(7, E, at(20.0), &[(CREATION, V::Bits(7))]),
+        sed(7, E, at(30.0), &[(CREATION, V::Bits(8))]),
+        // 3: 8 on the object; 4: 8 on the object's parent.
+        sed(7, C, at(40.0), &[]),
+        sed(7, D, at(50.0), &[]),
+        // 5: the SED's own 3 does not hide the object's 8.
+        sed(7, C, at(60.0), &[(CREATION, V::Bits(3))]),
+    ];
+    let lb = info(entities, Vec::new());
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_statics(&lb, &pids(), &StaticOptions::default(), object);
+    let r = *b.report();
+    assert_eq!(
+        (r.statics_seen, r.statics_blocking, r.statics_filtered),
+        (6, 3, 3)
+    );
+    let set = b.build();
+    let bodies: HashMap<u32, _> = set
+        .bodies()
+        .iter()
+        .filter_map(|body| match body.source {
+            BodySource::Static { index, .. } => Some((index, body)),
+            _ => None,
+        })
+        .collect();
+    let mut indices: Vec<u32> = bodies.keys().copied().collect();
+    indices.sort_unstable();
+    assert_eq!(indices, vec![0, 1, 2]);
+    // The walker rule says the same, SED by SED.
+    let player = QueryFilter::player();
+    for (n, e) in lb.entities.iter().enumerate() {
+        let resolved = records.resolve(e.object.expect("object").0);
+        let own = e
+            .properties
+            .as_ref()
+            .map(|s| CollisionFlags::from_set(s, &pids()))
+            .unwrap_or_default();
+        let flags = CollisionFlags::of_static(own, resolved.flags);
+        let rule = static_blocks_walker(true, true, &flags, resolved.collision);
+        let index = u32::try_from(n).expect("index");
+        let blocks = bodies.get(&index).is_some_and(|b| player.accepts(b));
+        assert_eq!(rule, blocks, "SED {n}");
+        assert_eq!(rule, n <= 2, "SED {n}");
+        // The data census of §9.3 counts without the filter.
+        let census = CollisionFlags {
+            creation_type: None,
+            ..flags
+        };
+        assert!(static_blocks_walker(
+            true,
+            true,
+            &census,
+            resolved.collision
+        ));
+    }
+    // A generated object of creation type 8 still gets a body.
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    let out = b.add_generated(
+        &[GeneratedObject {
+            object: Did(C),
+            transform: Transform::new([10.0, 50.0, 0.0], Quaternion::IDENTITY, 1.0),
+        }],
+        |o: Did| Arc::new(records.resolve(o.0)),
+    );
+    assert!(out[0].is_some());
+    assert_eq!(b.report().generated_blocking, 1);
 }
 
 #[test]

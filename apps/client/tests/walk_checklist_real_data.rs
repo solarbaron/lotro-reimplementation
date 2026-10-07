@@ -29,12 +29,11 @@ use tessera_client::walker::movement::run::{
 
 /// Walks failing for the causes listed in the OPEN of `m4-5-visual.md` §2.4 (first run,
 /// 2026-10-06; `walker.md` §13.8): blocked-walk end points after sliding round obstacles
-/// (WL2, GN2–GN4), no generated body (GN1), steep starts and ends (CV1, CV2), the 0.05 m
-/// rule on a slope (FR1) and no state 6 at steep bands (SL1–SL3). ST2 and FR3 (controller
-/// faults) pass since the M4.5 verification. Shorten it as the causes are settled.
-const KNOWN_OPEN: [&str; 11] = [
-    "WL2", "GN1", "GN2", "GN3", "GN4", "CV1", "CV2", "FR1", "SL1", "SL2", "SL3",
-];
+/// (WL2, GN2–GN4), no generated body (GN1), steep starts and ends (CV1, CV2) and the
+/// 0.05 m rule on a slope (FR1). ST2 and FR3 (controller faults) pass since the M4.5
+/// verification, SL1–SL3 (state 6 at steep bands) since 2026-10-07. Shorten it as the
+/// causes are settled.
+const KNOWN_OPEN: [&str; 8] = ["WL2", "GN1", "GN2", "GN3", "GN4", "CV1", "CV2", "FR1"];
 
 fn install() -> Option<PathBuf> {
     match std::env::var_os("TESSERA_GAME_DIR") {

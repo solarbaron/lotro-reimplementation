@@ -322,6 +322,9 @@ pub struct BuildReport {
     pub statics_seen: u32,
     /// Static entities that got a body.
     pub statics_blocking: u32,
+    /// Static entities left out by the run-time filters of §9.3: the content-layer test
+    /// or an effective `Entity_CreationType` of 7 or 8.
+    pub statics_filtered: u32,
     /// Generated objects examined.
     pub generated_seen: u32,
     /// Generated objects that got a body.
@@ -594,9 +597,10 @@ impl CollisionSetBuilder {
     }
 
     /// Adds the blocking static entities of a landblock-info record (§9.3): Physics SEDs
-    /// with a position that pass the content-layer test of `options`, whose effective
+    /// with a position that pass the content-layer test of `options`, whose object's
+    /// `Entity_CreationType` (resolved along its 0x47 chain) is not 7 or 8, whose effective
     /// `Physics_NoPhysics` (the SED's own value, else the object's chain) is not true, and
-    /// whose setup has collision. Their shape is the setup's, scaled by the SED's
+    /// whose setup has collision ([`CollisionFlags::of_static`]). Their shape is the setup's, scaled by the SED's
     /// `Physics_AdjustableScale` and placed by its position and rotation. SEDs ethereal to
     /// Player get a body too (other movers may collide with them); [`QueryFilter::player`]
     /// passes through them. So a SED blocks a player walker exactly when it gets a body that
@@ -628,6 +632,7 @@ impl CollisionSetBuilder {
                 &options.active_content_layers,
                 options.instance,
             ) {
+                self.report.statics_filtered += 1;
                 continue;
             }
             let own = e
@@ -636,8 +641,14 @@ impl CollisionSetBuilder {
                 .map(|s| CollisionFlags::from_set(s, pids))
                 .unwrap_or_default();
             let resolved = object(obj);
-            let flags = own.or(resolved.flags);
+            let flags = CollisionFlags::of_static(own, resolved.flags);
             self.note_resolution(&resolved);
+            // Creation types 7 and 8 (the object's chain) are created by the server; the
+            // client drops them on the static-creation path (§9.3, §9.4 C25).
+            if flags.is_server_created() {
+                self.report.statics_filtered += 1;
+                continue;
+            }
             // The pass-through test (§9.2) is applied per query; here only "has a shape".
             let has_shape = !flags.has_no_physics() && resolved.collision.has_collision();
             let Some(template) = resolved.template.as_ref().filter(|_| has_shape) else {

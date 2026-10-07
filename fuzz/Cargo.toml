@@ -721,3 +721,10 @@ path = "fuzz_targets/client_world_fx.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "client_interiors"
+path = "fuzz_targets/client_interiors.rs"
+test = false
+doc = false
+bench = false

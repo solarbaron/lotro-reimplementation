@@ -150,6 +150,28 @@ impl Aabb {
     pub fn center(&self) -> Vec3 {
         ((self.min.as_dvec3() + self.max.as_dvec3()) * 0.5).as_vec3()
     }
+
+    /// The axis-aligned box around this box's eight corners after `transform` (the
+    /// world-space box of a placed object). `None` when a corner is not finite.
+    #[must_use]
+    pub fn transformed(&self, transform: Mat4) -> Option<Self> {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for i in 0..8u8 {
+            let corner = Vec3::new(
+                if i & 1 == 0 { self.min.x } else { self.max.x },
+                if i & 2 == 0 { self.min.y } else { self.max.y },
+                if i & 4 == 0 { self.min.z } else { self.max.z },
+            );
+            let p = transform.transform_point3(corner);
+            if !p.is_finite() {
+                return None;
+            }
+            min = min.min(p);
+            max = max.max(p);
+        }
+        Some(Self { min, max })
+    }
 }
 
 /// Bounding sphere.

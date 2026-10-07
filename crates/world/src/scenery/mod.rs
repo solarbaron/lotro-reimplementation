@@ -9,6 +9,7 @@
 //! | [`SceneSource`], [`SceneLibrary`] | Scene records (0x02), cached | §5 |
 //! | [`hash`] | The placement hashes, seeds and salts | §6 |
 //! | [`generate_landblock`], [`SceneryInput`], [`GeneratedScenery`], [`SceneryObject`] | The vertex pass: (DID, position, rotation, scale) of every generated object | §7.2–§7.6 |
+//! | [`FootprintMarker`] | The footprint markers of the generated list; the static pass's markers space the frill pass | §7.4 steps 14b–15, §8.2 item 5 |
 //! | [`frill_vertex`], [`FrillRecord`] | The frill pass of one vertex (used by [`crate::frills`]) | §8.2 |
 //! | [`SceneryWater`], [`NoWater`], [`FixedWater`], [`level_plane`] | The per-landblock water surface | §11 |
 //! | [`StaticClearance`], [`ClearancePids`], [`static_clearances`], [`property_dictionary`] | The static list and its clearance volumes | §7.4 step 14a |
@@ -54,7 +55,9 @@
 //! (static-list scans included), objects and footprint markers are budgeted per vertex
 //! and per landblock ([`SceneryLimits`]); the static list holds at most
 //! [`MAX_STATIC_VOLUMES`] volumes. Unobserved scale modes are rejected as unsupported
-//! (§5.3). A scene read that fails for a reason that is not the data's is not cached and
+//! (§5.3), except that a mode above 8 with differing scale limits is a failing child
+//! (§7.4 step 15) and abandons the rest of its vertex, as a scene reference that cannot be
+//! read does. A scene read that fails for a reason that is not the data's is not cached and
 //! marks the result incomplete ([`SceneryStats::is_complete`]), so the caller can build
 //! the landblock again.
 
@@ -73,9 +76,10 @@ pub use clearance::{
 };
 pub use error::SceneryError;
 pub use generate::{
-    DEFAULT_MAX_SCENE_DEPTH, FixedWater, FrillRecord, GeneratedScenery, MAX_RECURSION_DEPTH,
-    MAX_SCENE_DEPTH_LIMIT, NoWater, Rejection, SceneryInput, SceneryLimits, SceneryObject,
-    SceneryStats, SceneryWater, frill_vertex, generate_landblock, level_plane, sum_stats,
+    DEFAULT_MAX_SCENE_DEPTH, FixedWater, FootprintMarker, FrillRecord, GeneratedScenery,
+    MAX_RECURSION_DEPTH, MAX_SCENE_DEPTH_LIMIT, NoWater, Rejection, SceneryInput, SceneryLimits,
+    SceneryObject, SceneryStats, SceneryWater, frill_vertex, generate_landblock, level_plane,
+    sum_stats,
 };
 pub use props::{
     ChainLevel, DEFAULT_PROPERTY_CACHE_ENTRIES, MAX_CHAIN_LEVELS, MAX_EXTRA_SETS, ObjectProperties,

@@ -80,17 +80,27 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
-- **M4.5 (world fidelity), in progress; exit verification 2026-10-06** (`docs/ROADMAP.md`
-  M4.5 status): every deliverable exists (new decoders, `tessera-physics` with the 1/60 s
-  controller, decision 0013; scenery, frills, water, sky/clock, lighting, draw distances
-  in `tessera-world`; lit, terrain-layer, water, sky and instanced pipelines; walker
-  `--walk-path`, switches, clock; explorer/dattool views). Criteria 1, 2, 3, 7, 8 pass.
-  Not met: 4 (21 / 32 walks: GN1–GN4, SL1–SL3, CV1, CV2 fail, WL2 and FR1 near misses),
-  5 (flight M3-b: one near-ring landblock late, bundle latency), 6 (S1/S5/S6/S8/S10 miss
-  generated objects: `scenery.md` §7.4 step 14b OPEN, the checklist matches only without
-  footprints of depth-1 nodes; Y5 interiors not drawn; L5 highlight; dark cave ceilings),
-  9 (`walker.md` §13–§14 and `render.md` §4–§5 unreviewed). Continue M4.5 with
-  `.claude/workflows/tessera-milestone.js` (milestone "M4.5") on those items; M5 waits.
+- **M4.5 (world fidelity), in progress; exit verification 2026-10-06, criteria 4, 5, 6, 9
+  re-verified 2026-10-07** (`docs/ROADMAP.md` M4.5 status): every deliverable exists (new
+  decoders, `tessera-physics` with the 1/60 s controller, decision 0013; scenery, frills,
+  water, sky/clock, lighting, draw distances in `tessera-world`; lit, terrain-layer, water,
+  sky and instanced pipelines; walker `--walk-path`, switches, clock; explorer/dattool
+  views). Criteria 1, 2, 3, 7, 8 pass. Not met: 4 (25 / 32 walks; generated objects 1 of 3
+  (GN1, GN2, GN4 fail), caves 1 of 2 (CV1, CV2 fail), WL2 and FR1 near misses; soak 0
+  fall-throughs), 6 (45 / 54 rows pass on the image; L5 fails, T4, T5, T12, T15, T16, Y2,
+  L2, L7 not judgeable from their cameras), 9 (`walker.md` §13–§14 and `render.md` §4–§5
+  reviewed twice, changes requested; ten specs of the M4.5 table are Revised, not
+  Accepted). 5: one M3-b run under load passed (0 over 50 ms, 0 holes), indicative; the
+  owner re-measures on a quiet machine. `cargo clippy -D warnings` fails on one lint in
+  `crates/physics/src/controller/step.rs`; full release test run 2,613 passed, 1 failed
+  (load-sensitive `flight_across_a_region`, passes alone).
+- **Held diffs (2026-10-07):** the uncommitted `crates/render/**`, `apps/client/**`,
+  `crates/physics/**` and `crates/world/src/scenery/**`/`frills/**` diffs are held by
+  `docs/decisions/proposed-incident-2026-10-07-review-notes.md` (implementer task texts
+  carried dirty-room reviewer reports). A maintainer decides on them before any commit;
+  the M4.5 re-verification results were measured with them in the tree. Do not re-run the
+  milestone workflow for implementer tasks until its task text carries only the task, spec
+  paths and review status. M5 waits.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27). They do not block the Tessera-side work.

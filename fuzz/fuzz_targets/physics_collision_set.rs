@@ -365,6 +365,7 @@ const SURFACE: u32 = 0x1000_0004;
 const SCALE: u32 = 0x1000_0006;
 const LAYERS: u32 = 0x1000_0007;
 const LAYER: u32 = 0x1000_0008;
+const CREATION: u32 = 0x1000_0009;
 
 fn schema() -> &'static HashMap<u32, PropertyType> {
     static S: OnceLock<HashMap<u32, PropertyType>> = OnceLock::new();
@@ -376,6 +377,7 @@ fn schema() -> &'static HashMap<u32, PropertyType> {
             (SCALE, PropertyType::Vector3),
             (LAYERS, PropertyType::Array),
             (LAYER, PropertyType::Enum),
+            (CREATION, PropertyType::Enum),
         ])
     })
 }
@@ -387,11 +389,12 @@ fn pids() -> PhysicsPids {
         ethereal_to_type: Some(ETHEREAL_TO),
         surface_properties_to_apply: Some(SURFACE),
         content_layers: Some(LAYERS),
+        creation_type: Some(CREATION),
         ..PhysicsPids::default()
     }
 }
 
-/// An embedded property set with up to five fuzzed entries (`property-system.md` §5.1).
+/// An embedded property set with up to six fuzzed entries (`property-system.md` §5.1).
 fn set_bytes(b: &mut Bytes) -> Vec<u8> {
     let mut entries: Vec<(u32, Vec<u8>)> = Vec::new();
     let mask = b.byte();
@@ -429,6 +432,16 @@ fn set_bytes(b: &mut Bytes) -> Vec<u8> {
             v.extend_from_slice(&layer.to_le_bytes());
         }
         entries.push((LAYERS, v));
+    }
+    if mask & 32 != 0 {
+        // Entity_CreationType: mostly 7 and 8 (the §9.3 drop), sometimes anything.
+        let key = match b.byte() % 4 {
+            0 => 7,
+            1 => 8,
+            2 => 3,
+            _ => b.u32(),
+        };
+        entries.push((CREATION, key.to_le_bytes().to_vec()));
     }
     let (hint, buckets) = TSIZE_BUCKET_COUNTS
         .iter()

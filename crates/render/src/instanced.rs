@@ -30,6 +30,7 @@ use crate::arena::MeshConfig;
 use crate::error::{RenderError, Result};
 use crate::frame::{Pass, Rgba};
 use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, MAX_DRAW_LIGHTS};
+use crate::lit_pipelines::LightTarget;
 use crate::lit_pipelines::SHADOW_FORMAT;
 use crate::material::{AlphaMode, LightSelection, Specular};
 use crate::mesh::{GpuVertex, MeshData, MeshInfo};
@@ -361,8 +362,8 @@ pub struct InstanceBatch {
     pub model: WorldModel,
     /// The instances (shared, so a batch can be queued on several passes for free).
     pub instances: Arc<[Instance]>,
-    /// Lights from the pass's table (selected once for the whole batch by its bounding
-    /// sphere).
+    /// Lights from the pass's table (selected once for the whole batch by the box around
+    /// its instances, `lighting.md` §8.5).
     pub lights: LightSelection,
     /// Opaque and alpha-tested surfaces cast the sun's shadow.
     pub cast_shadow: bool,
@@ -1400,11 +1401,14 @@ pub(crate) fn build_hook(
         if gpu.len() == start {
             continue;
         }
-        // Lights for the whole batch, by the box around its instances drawn in colour.
+        // Lights for the whole batch, by the box around its instances drawn in colour
+        // (`lighting.md` §8.5 step 2 with the batch as one object).
         if mid > start {
-            let center = (lo + hi) * 0.5;
-            let radius = (hi - lo).length() * 0.5;
-            ctx.lights.select(batch.lights, center, radius, &mut chosen);
+            ctx.lights.select(
+                batch.lights,
+                &LightTarget::object(lo, hi, None),
+                &mut chosen,
+            );
         } else {
             chosen.clear();
         }

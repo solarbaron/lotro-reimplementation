@@ -38,9 +38,10 @@ pub use cell::{
     PlacedCell,
 };
 pub use flags::{
-    CollisionFlags, ETHEREAL_CAMERA, ETHEREAL_DEFAULT, ETHEREAL_PLAYER, PhysicsPids,
-    SetupCollision, content_layer_list, content_layers_pass, ethereality_bit,
-    generated_blocks_walker, static_blocks_walker,
+    CREATION_TYPE_UNIQUE_DYNAMIC_IMMOBILE, CREATION_TYPE_UNIQUE_DYNAMIC_MOBILE, CollisionFlags,
+    ETHEREAL_CAMERA, ETHEREAL_DEFAULT, ETHEREAL_PLAYER, PhysicsPids, SetupCollision,
+    content_layer_list, content_layers_pass, ethereality_bit, generated_blocks_walker,
+    static_blocks_walker,
 };
 pub use liquid::{
     LiquidBox, LiquidFlags, LiquidPids, MAX_LIQUID_BOXES, UNDER_WATER_TOLERANCE, WaterPlane,

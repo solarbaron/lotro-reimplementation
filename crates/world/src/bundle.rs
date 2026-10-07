@@ -49,6 +49,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tessera_assets::{AssetKey, Decoder, JobContext};
 use tessera_formats::landblock::{
@@ -75,8 +76,8 @@ use crate::objects::{
     value_as_u32,
 };
 use crate::scenery::{
-    FixedWater, SceneryInput, SceneryLimits, SceneryObject, SceneryStats, StaticClearance,
-    generate_landblock, level_plane, static_clearances,
+    FixedWater, FootprintMarker, SceneryInput, SceneryLimits, SceneryObject, SceneryStats,
+    StaticClearance, generate_landblock, level_plane, static_clearances,
 };
 use crate::source::BundleFrame;
 use crate::water::{BlockWater, placed_volumes};
@@ -414,6 +415,10 @@ pub struct BlockScenery {
     pub statics: Arc<[StaticClearance]>,
     /// The landblock's water plane as scenery reads it (`scenery.md` §11).
     pub water: Option<Plane>,
+    /// The footprint markers of the static pass that can reject a candidate (closed,
+    /// radius above 0): the frill pass of every sector is spaced against them
+    /// (`scenery.md` §8.2 item 5).
+    pub markers: Arc<[FootprintMarker]>,
 }
 
 /// Estimated heap bytes of a terrain [`GridMesh`] (1,089 vertices, the grid triangles).
@@ -436,6 +441,7 @@ impl BlockScenery {
                             * std::mem::size_of::<crate::scenery::ClearanceCylinder>()
                 })
                 .sum::<usize>()
+            + self.markers.len() * std::mem::size_of::<FootprintMarker>()
     }
 }
 
@@ -615,6 +621,57 @@ const DATA_FIXED_BYTES: usize = 2 * 1089 + 1089 + 4 * 289 + 512;
 /// sets (an estimate; decoded property values are larger than their stored form).
 const DECODED_PER_STORED: usize = 4;
 
+/// Bundle jobs at least this long log their stage times (debug).
+const SLOW_BUNDLE: Duration = Duration::from_millis(250);
+
+/// Wall time of the stages of one bundle job, logged at debug level when the job takes
+/// [`SLOW_BUNDLE`] or longer (diagnostics of streaming latency; no effect on the bundle).
+struct Stages {
+    start: Instant,
+    last: Instant,
+    times: Vec<(&'static str, Duration)>,
+}
+
+impl Stages {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            start: now,
+            last: now,
+            times: Vec::with_capacity(12),
+        }
+    }
+
+    /// Ends stage `name` now.
+    fn mark(&mut self, name: &'static str) {
+        let now = Instant::now();
+        self.times
+            .push((name, now.saturating_duration_since(self.last)));
+        self.last = now;
+    }
+
+    fn log(&self, key: LandblockKey, heap_bytes: usize) {
+        let total = self.start.elapsed();
+        if total < SLOW_BUNDLE {
+            return;
+        }
+        let stages = self
+            .times
+            .iter()
+            .filter(|(_, d)| *d >= Duration::from_millis(1))
+            .map(|(n, d)| format!("{n} {:.0}", d.as_secs_f64() * 1e3))
+            .collect::<Vec<_>>()
+            .join(", ");
+        tracing::debug!(
+            landblock = %key,
+            total_ms = total.as_secs_f64() * 1e3,
+            heap_mib = heap_bytes as f64 / f64::from(1u32 << 20),
+            stages = %stages,
+            "slow bundle stages (ms)"
+        );
+    }
+}
+
 /// Builds a bundle from a frame produced by [`crate::BundleSource`] for the landblock-data
 /// DID `did`. `cancelled` is polled between stages and every few hundred entities.
 ///
@@ -631,6 +688,7 @@ pub fn build_bundle(
     frame: &[u8],
     cancelled: &dyn Fn() -> bool,
 ) -> Result<LandblockBundle> {
+    let mut stages = Stages::new();
     let key = LandblockKey::from_did(did)
         .filter(|k| k.data_did() == did)
         .ok_or(WorldError::NotABundleKey { did: did.0 })?;
@@ -733,6 +791,7 @@ pub fn build_bundle(
     let minimap = properties.as_ref().and_then(|p| p.minimap(lb));
     let light_map = properties.as_ref().and_then(|p| p.light_map(lb));
     let ceiling_light_map = properties.as_ref().and_then(|p| p.ceiling_light_map(lb));
+    stages.mark("records");
 
     // Static entities.
     let mut entities = Vec::new();
@@ -790,6 +849,7 @@ pub fn build_bundle(
             });
         }
     }
+    stages.mark("entities");
     if cancelled() {
         return Err(WorldError::Cancelled);
     }
@@ -875,6 +935,7 @@ pub fn build_bundle(
     // LOD classes (walker.md §11.4.3) read the instance sets of the weenie list.
     let entity_lod_classes = entity_lod_classes(ctx, info.as_ref(), &entities, &weenie_list)?;
     drop(weenie_list);
+    stages.mark("figures and LOD classes");
 
     // Area name (reads records; we are on a worker).
     let area = match (block_props.area, ctx.area_names()) {
@@ -898,6 +959,7 @@ pub fn build_bundle(
         inputs_unreadable,
         cancelled,
         &mut problems,
+        &mut stages,
     )?;
 
     let entity_bytes = entities.capacity() * std::mem::size_of::<PlacedEntity>()
@@ -920,6 +982,7 @@ pub fn build_bundle(
         + block_props.heap_bytes()
         + world.bytes
         + entity_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
+    stages.log(key, heap_bytes);
     Ok(LandblockBundle {
         key,
         data,
@@ -1049,6 +1112,7 @@ fn build_world_parts(
     inputs_unreadable: bool,
     cancelled: &dyn Fn() -> bool,
     problems: &mut Vec<BundleProblem>,
+    stages: &mut Stages,
 ) -> Result<WorldParts> {
     let opts = ctx.options();
     let systems = ctx.systems();
@@ -1078,6 +1142,7 @@ fn build_world_parts(
                 .ok()
                 .map(|lw| level_plane(lw.height))
         });
+    stages.mark("area, terrain mesh and water plane");
 
     // (2) Static list and scenery generation (scenery.md §7.1).
     let mut objects: Vec<SceneryObject> = Vec::new();
@@ -1094,6 +1159,7 @@ fn build_world_parts(
             )?,
             None => Vec::new(),
         };
+        stages.mark("static clearances");
         let water = FixedWater(plane);
         let input = SceneryInput {
             key,
@@ -1142,6 +1208,7 @@ fn build_world_parts(
                 ),
             );
         }
+        let markers = generated.spacing_markers().into();
         objects = generated.objects;
         let scenery = BlockScenery {
             stats: generated.stats,
@@ -1149,9 +1216,11 @@ fn build_world_parts(
             terrain: Arc::clone(terrain),
             statics: statics.into(),
             water: plane,
+            markers,
         };
         out.bytes += scenery.heap_bytes();
         out.scenery = Some(Arc::new(scenery));
+        stages.mark("scenery generation");
     }
     if cancelled() {
         return Err(WorldError::Cancelled);
@@ -1171,6 +1240,7 @@ fn build_world_parts(
         }
         out.bytes += out.generated_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
     }
+    stages.mark("generated objects");
     if cancelled() {
         return Err(WorldError::Cancelled);
     }
@@ -1209,6 +1279,7 @@ fn build_world_parts(
             }
             Err(e) => return Err(e.into()),
         }
+        stages.mark("water");
     }
     if cancelled() {
         return Err(WorldError::Cancelled);
@@ -1240,6 +1311,7 @@ fn build_world_parts(
         }
         out.bytes += built.heap_bytes;
         out.collision = Some(Arc::new(built));
+        stages.mark("collision set");
     }
     // Without a collision set nothing else charges the terrain mesh scenery keeps.
     if out.collision.is_none() && out.scenery.is_some() {

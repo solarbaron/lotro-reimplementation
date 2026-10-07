@@ -164,6 +164,63 @@ earlier 2 frames were background load); M3-b longest 25.8 ms, 0 over 50 ms, but 
 frames with one near-ring landblock missing in three runs (**fails**, bundle latency as
 above).
 
+### M3-b bundle latency: streamer-only flights (2026-10-07, indicative)
+
+`cargo test --release -p tessera-world --test flight_real_data -- --ignored --nocapture`
+flies the streamer alone (no renderer) along M3-b's path, region 2 from block (0, 0) to
+(254, 254) at 3,000 m/s, paced at 60 updates per second, with the walker's default rings
+and a 4,096 MiB budget, alternating the lookahead modes so that each sees a similar load.
+The machine was **not quiet**: three other milestone builds ran beside it (load average
+16–64 on 16 hardware threads), so the numbers are indicative only. Every mode requested
+the same 9,565 bundles.
+
+| Lookahead | Runs | Frames with near-ring holes per run | Landblocks missing | Longest job | Peak bundles | Streamer update mean |
+|---|---|---|---|---|---|---|
+| off | 2 | 67, 68 | 16, 43 | 1.3–1.5 s | 749–879 MiB | 2.8–3.0 ms |
+| 1.5 s, fixed (before 2026-10-07) | 2 | 54, 51 | 4, 7 | 2.2–2.3 s | 846–872 MiB | 4.0–5.2 ms |
+| 1.5 s urgent part following slow jobs (the first lookahead) | 11 | 26, 22, 0, 23, 21, 21, 14 under load average 26–64; 0, 0, 0, 0 under 19–27 | r2 (239, 242) in every run with holes, at most 3 at once | 0.65–2.2 s | 722–1,423 MiB | 1.3–4.4 ms |
+| default: plus an early part out to 4 s at `Prefetch` priority | 11 | 0 in all 11 (load average 19–64) | none | 0.61–3.3 s | 1,162–1,425 MiB | 1.8–8.7 ms |
+
+- The late landblock is r2 (239, 242): its bundle job took 0.9–3.3 s depending on the
+  load, almost all of it the collision set (`collision.md` §12.1; about 100 MiB of
+  bundle). The slow-job time learns only from finished jobs, so the urgent part alone
+  reached it too late; the early part requests it about 4 s before it enters the near
+  ring.
+- Main-thread cost: finding the path's landblocks takes 0.26–0.29 ms per update with the
+  early part since the search keeps to the path's band (0.35–0.62 ms before), 0.14–0.17
+  ms without it. Admission was the largest share of the update; the streamer's per-landblock
+  maps now use a cheap hasher of the three key bytes and far-ring landblocks skip the
+  seam-closure walk, which halved it (indicative: about 1.75 to 0.6–0.8 ms per update).
+  The last three default runs, after these changes, averaged 1.8–1.9 ms against 1.3–1.6
+  ms for the urgent part alone.
+- Review fixes (2026-10-07): bundles loaded ahead of the rings are no longer listed as
+  resident until they enter the rings, so the walker no longer uploads terrain, objects
+  and figures up to 12.8 km beyond the view distance (the cause of the extra frames over
+  50 ms in the client with the early part); the velocity estimate restarts only on a
+  step faster than 10,000 units per second, not on a long frame; requests in flight
+  record the priority they were given. Ahead landblocks are cut by the residency budget
+  by distance like the far ring: before everything inside the far radius, interleaved
+  with far-ring members in the hysteresis band.
+- After these fixes, same tree, still **not quiet** (other milestone builds; load
+  average 13–27), indicative: streamer-only flights, 3 rounds of `off,default`: off 15,
+  17 and 12 frames with r2 (239, 242) a near-ring hole (longest job 0.75–0.85 s); default
+  0, 0 and 0 (2,672 of 9,565 requests ahead, at most 502 landblocks ahead at once,
+  update mean 1.1–1.4 ms, path search 0.22 ms mean). The client's M3-b flight
+  (`--headless --size 1280x720 --fly-path 2:0:0,2:254:254 --speed 3000`, release, 4
+  runs): **0 frames with near-ring holes in all 4**; frames over 50 ms 11, 0, 2 and 3
+  (longest 66.7, 30.2, 57.8 and 66.4 ms; streamer update at most 17.1, 5.2, 8.1 and
+  14.5 ms); peak 1,122–1,126 landblocks (ahead ones included) and 1,417–1,424 MiB of
+  bundles. Known cost: the streamer update averages about 20–40 % more with the early
+  part than with the urgent part alone (1.8–1.9 against 1.3–1.6 ms in the earlier runs),
+  to be recorded with the next quiet measurement.
+- M4.5 exit re-verification (2026-10-07), one client M3-b run, **indicative** (other
+  milestone builds running, load average 7.8–8.0): 1,140 frames, longest 37.1 ms, p50 /
+  p99 16.7 / 20.4 ms, 0 frames over 50 ms, 0 frames with near-ring holes, 9,565 bundles
+  requested and integrated, peak 1,122 landblocks / 1,424 MiB bundles, streamer update at
+  most 8.0 ms.
+- Still to do: the client's M3-b flight on the reference machine with nothing else
+  running (criterion 5 counts the client's frames).
+
 ## Log
 
 - 2026-10-04: the GTX 1070 Ti workstation proposed as the reference. M0–M3 were developed
@@ -175,3 +232,7 @@ above).
   every M4.5 system on).
 - 2026-10-06: M4.5 criterion 5 re-run in the exit verification: everything passes except
   M3-b's near-ring holes.
+- 2026-10-07: M3-b's late landblock traced to one slow bundle (its collision set); the
+  streamer's lookahead gained an early part (indicative streamer-only flights above).
+- 2026-10-07: one client M3-b run in the M4.5 exit re-verification, under load: 0 frames
+  over 50 ms, 0 near-ring holes (indicative; the quiet-machine re-measure is the owner's).

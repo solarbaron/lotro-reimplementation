@@ -41,7 +41,8 @@ use tessera_assets::{
     RecordSource, StoreConfig, WorkerPool,
 };
 use tessera_dat::ArchiveSet;
-use tessera_formats::{Did, RgbaImage};
+use tessera_formats::collision::{CELL_GEOMETRY_PREFIX, CellGeometry};
+use tessera_formats::{Did, PropertySchema, RgbaImage};
 use tessera_material::{LibraryConfig, MaterialLibrary};
 use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, StampedSource};
 use tessera_render::glam::{Mat4, Vec3};
@@ -60,6 +61,7 @@ use super::geometry::{
     VARIANT_DYE_MASK, VARIANT_OPAQUE, VARIANT_OWN_ALPHA, compose_texture, downscale_to, dye_mask,
     image_ok, level_mesh_data, plan_material,
 };
+use super::interiors::OUTDOORS;
 use super::view::{Anchor, Frustum};
 
 /// Frames an unreferenced GPU resource is kept before it may be freed even under budget.
@@ -96,6 +98,8 @@ struct ActivationKey {
     scenery: bool,
     instancing: bool,
     settings: DistanceSettings,
+    interior: Option<LandblockKey>,
+    all_interiors: bool,
 }
 
 impl ActivationKey {
@@ -107,6 +111,8 @@ impl ActivationKey {
             scenery: frame.scenery,
             instancing: frame.instancing,
             settings: frame.settings,
+            interior: frame.interior,
+            all_interiors: frame.all_interiors,
         }
     }
 }
@@ -129,6 +135,8 @@ fn activation_stale(
             || k.scenery != key.scenery
             || k.instancing != key.instancing
             || k.settings != key.settings
+            || k.interior != key.interior
+            || k.all_interiors != key.all_interiors
     })
 }
 
@@ -144,6 +152,10 @@ pub enum ObjectError {
     /// The mesh has no levels.
     #[error("mesh has no levels")]
     NoLevels,
+    /// A cell geometry record (0x01) did not decode, or no property schema was given to
+    /// decode it with.
+    #[error("cell geometry: {0}")]
+    Cell(String),
     /// The renderer refused the streams.
     #[error(transparent)]
     Render(#[from] tessera_render::RenderError),
@@ -187,11 +199,20 @@ pub fn drawn_levels(mesh: &Mesh) -> Vec<usize> {
     v
 }
 
+/// The property schema a [`PartDecoder`] decodes the embedded property set of a cell
+/// geometry record (0x01) with.
+pub type CellSchema = Arc<dyn PropertySchema + Send + Sync>;
+
 /// Decodes part meshes (module docs). Holds the material library shared with textures.
+///
+/// A part DID with prefix 0x01 is an interior cell's geometry (`collision.md` §5): the
+/// record is decoded and its embedded render mesh (§5.7, `landblock.md` §4.14) is what the
+/// part draws, decoded with the record's directory stamp.
 pub struct PartDecoder {
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     mesh_config: MeshConfig,
     limits: GeometryLimits,
+    cell_schema: Option<CellSchema>,
 }
 
 impl std::fmt::Debug for PartDecoder {
@@ -216,13 +237,23 @@ impl Decoder for PartDecoder {
         let stamp = u32::from_le_bytes([bytes[n], bytes[n + 1], bytes[n + 2], bytes[n + 3]]);
         bytes.truncate(n);
         let did = Did(key.did);
-        let mesh = Mesh::decode_expecting(
-            &bytes,
-            did,
-            u16::try_from(stamp).ok(),
-            &DecodeOptions::render_only(),
-        )?;
-        drop(bytes);
+        let stamp = u16::try_from(stamp).ok();
+        let mesh = if did.prefix() == CELL_GEOMETRY_PREFIX {
+            let schema = self
+                .cell_schema
+                .as_deref()
+                .ok_or_else(|| ObjectError::Cell("no property schema".into()))?;
+            let cell = CellGeometry::parse_expecting(&bytes, did, stamp, schema)
+                .map_err(|e| ObjectError::Cell(e.to_string()))?;
+            drop(bytes);
+            Mesh::decode(
+                &cell.render_mesh_record(),
+                stamp,
+                &DecodeOptions::render_only(),
+            )?
+        } else {
+            Mesh::decode_expecting(&bytes, did, stamp, &DecodeOptions::render_only())?
+        };
         let levels = drawn_levels(&mesh);
         if levels.is_empty() {
             return Err(ObjectError::NoLevels);
@@ -498,6 +529,20 @@ pub struct ObjectFrame {
     pub fps: f32,
     /// Camera travel since the previous frame, metres (fade reset beyond 25 m).
     pub camera_moved: f32,
+    /// The landblock owning the camera's interior cell (`landblock.md` §4.12), `None`
+    /// outdoors: only that landblock's interior objects are loaded and drawn.
+    pub interior: Option<LandblockKey>,
+    /// Load and draw every interior object whatever the camera's cell (`--interiors`,
+    /// a debugging view).
+    pub all_interiors: bool,
+}
+
+/// Whether an object attached to `cell` of block `key` may be loaded in `frame`: outdoor
+/// objects always; interior ones (cells and interior entities) only while the camera is
+/// in a cell of the same landblock, or with [`ObjectFrame::all_interiors`].
+#[must_use]
+pub fn interior_eligible(key: LandblockKey, cell: u16, frame: &ObjectFrame) -> bool {
+    cell == OUTDOORS || frame.all_interiors || frame.interior == Some(key)
 }
 
 impl Default for ObjectFrame {
@@ -513,6 +558,8 @@ impl Default for ObjectFrame {
             dt: 1.0 / 60.0,
             fps: 60.0,
             camera_moved: 0.0,
+            interior: None,
+            all_interiors: false,
         }
     }
 }
@@ -627,6 +674,11 @@ pub struct ObjectInfo {
     pub first: u32,
     /// Number of part instances.
     pub count: u32,
+    /// The interior cell it is drawn through (`landblock.md` §4.11): [`OUTDOORS`] (0) for
+    /// the outdoor visibility cell, a cell number of the block's landblock info, or
+    /// [`UNATTACHED`](super::interiors::UNATTACHED) for an interior entity no cell
+    /// contains (`walker.md` §14.11).
+    pub cell: u16,
 }
 
 /// Per-object state of the layer.
@@ -655,9 +707,9 @@ struct BlockObjects {
     active: usize,
     /// The block was drawn (its objects' fades updated) in the previous frame.
     seen: bool,
-    /// Block-local rectangle around the objects' origins (x, y).
+    /// Block-local rectangle around the outdoor objects' origins (x, y).
     rect: ([f32; 2], [f32; 2]),
-    /// The largest `d0` of the block's objects.
+    /// The largest `d0` of the block's outdoor objects.
     max_d0: f32,
     /// The distinct parts of the block's instances, sorted.
     parts: Vec<u32>,
@@ -672,7 +724,10 @@ impl BlockObjects {
         let mut lo = [f32::INFINITY; 2];
         let mut hi = [f32::NEG_INFINITY; 2];
         let mut max_d0 = 0.0f32;
-        for o in objects.iter() {
+        // Interior objects (cells may lie landblocks away from their owner, and cell
+        // meshes reach to *G*) are loaded only from inside, where the block is never
+        // skipped ([`activate_blocks`]), so they do not widen the outdoor skip test.
+        for o in objects.iter().filter(|o| o.cell == OUTDOORS) {
             if o.position.is_finite() {
                 lo = [lo[0].min(o.position.x), lo[1].min(o.position.y)];
                 hi = [hi[0].max(o.position.x), hi[1].max(o.position.y)];
@@ -1081,6 +1136,7 @@ impl ObjectLayer {
         config: ObjectConfig,
         mesh_config: MeshConfig,
         arena_limit: u64,
+        cell_schema: Option<CellSchema>,
     ) -> Self {
         let materials = Arc::new(MaterialLibrary::with_config(
             Arc::clone(&set),
@@ -1097,6 +1153,7 @@ impl ObjectLayer {
                 materials: Arc::clone(&materials),
                 mesh_config,
                 limits: GeometryLimits::default(),
+                cell_schema,
             },
             StoreConfig {
                 // The prepared streams are moved out on upload: never serve a product
@@ -2142,6 +2199,7 @@ impl ObjectLayer {
         camera: Vec3,
         frustum: &Frustum,
         characters: &HashSet<u64>,
+        drawn: &dyn Fn(LandblockKey, u16) -> bool,
     ) {
         let frame = self.frame;
         let cap = self.distance as f32;
@@ -2187,7 +2245,7 @@ impl ObjectLayer {
             let local_cam = camera - off;
             for (oi, obj) in b.objects.iter().enumerate() {
                 let Some(st) = b.state.get_mut(oi) else { break };
-                if !st.active || (obj.generated && !frame.scenery) {
+                if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
                     continue;
                 }
                 let Some((c, r)) = st.sphere else { continue };
@@ -2373,8 +2431,10 @@ fn activate_blocks(
         }
         let o = key.origin();
         // A landblock whose objects are all out of reach is skipped whole (the pass is
-        // per object otherwise, and a fast camera reruns it every frame).
-        if b.active == 0 {
+        // per object otherwise, and a fast camera reruns it every frame). The landblock
+        // whose interior the camera is in is never skipped.
+        let interiors_wanted = frame.all_interiors || frame.interior == Some(key);
+        if b.active == 0 && !interiors_wanted {
             let reach = if frame.lod {
                 (b.max_d0 * frame.settings.object_multiplier())
                     .min(frame.g)
@@ -2393,7 +2453,7 @@ fn activate_blocks(
         b.eval_at = Some((camera, akey));
         for (i, obj) in b.objects.iter().enumerate() {
             let Some(st) = b.state.get_mut(i) else { break };
-            if obj.generated && !frame.scenery {
+            if (obj.generated && !frame.scenery) || !interior_eligible(key, obj.cell, frame) {
                 if st.active {
                     st.active = false;
                     b.active -= 1;
@@ -2695,6 +2755,7 @@ mod tests {
             generated: false,
             first,
             count,
+            cell: OUTDOORS,
         };
         assert_eq!(
             object_parts(&instances, &o(0, 2)).collect::<Vec<_>>(),
@@ -2720,6 +2781,7 @@ mod tests {
             generated,
             first,
             count: 1,
+            cell: OUTDOORS,
         };
         let objects: Arc<[ObjectInfo]> = vec![o(0, false), o(1, true)].into();
         let key = LandblockKey::new(1, 10, 10).unwrap();
@@ -2799,5 +2861,65 @@ mod tests {
             &k0
         ));
         assert!(activation_stale(None, camera, &k0));
+    }
+
+    #[test]
+    fn interior_objects_load_only_from_inside_their_landblock() {
+        let instances: Arc<[Instance]> = vec![
+            inst(1, Vec3::new(100.0, 0.0, 0.0), 1.0),
+            inst(3, Vec3::new(-300.0, 0.0, -200.0), 1.0),
+        ]
+        .into();
+        let o = |first, position, cell| ObjectInfo {
+            position,
+            lod: LodValues::default(),
+            generated: false,
+            first,
+            count: 1,
+            cell,
+        };
+        // An outdoor static and a cell mesh 300 m west of the block, 200 m down.
+        let objects: Arc<[ObjectInfo]> = vec![
+            o(0, Vec3::new(100.0, 0.0, 0.0), OUTDOORS),
+            o(1, Vec3::new(-300.0, 0.0, -200.0), 9),
+        ]
+        .into();
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let mut blocks = HashMap::from([(key, BlockObjects::new(instances, objects))]);
+        let b = blocks.get(&key).unwrap();
+        assert_eq!(b.rect, ([100.0, 0.0], [100.0, 0.0]), "outdoor objects only");
+        let o = key.origin();
+        let camera = [o[0] - 300.0, o[1], -198.0];
+        let outside = ObjectFrame::default();
+        assert_eq!(
+            pass(&mut blocks, camera, &outside, 2_080.0).0,
+            Vec::<u32>::new()
+        );
+        let inside = ObjectFrame {
+            interior: Some(key),
+            ..outside
+        };
+        assert_eq!(
+            pass(&mut blocks, camera, &inside, 2_080.0),
+            (vec![3], vec![])
+        );
+        let elsewhere = ObjectFrame {
+            interior: LandblockKey::new(1, 10, 11).ok(),
+            ..outside
+        };
+        assert_eq!(
+            pass(&mut blocks, camera, &elsewhere, 2_080.0),
+            (vec![], vec![3])
+        );
+        let debug = ObjectFrame {
+            all_interiors: true,
+            ..outside
+        };
+        assert_eq!(
+            pass(&mut blocks, camera, &debug, 2_080.0),
+            (vec![3], vec![])
+        );
+        assert!(interior_eligible(key, OUTDOORS, &outside));
+        assert!(!interior_eligible(key, 9, &outside));
     }
 }

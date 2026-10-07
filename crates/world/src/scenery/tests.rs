@@ -263,6 +263,27 @@ impl Fixture {
     fn run(&self) -> GeneratedScenery {
         generate_landblock(&self.input())
     }
+
+    /// The static pass's markers, as the frill pass takes them (§8.2 item 5).
+    fn markers(&self) -> Vec<FootprintMarker> {
+        self.run().spacing_markers()
+    }
+
+    /// The frill pass of vertex (i, j) after the landblock's static pass.
+    fn frills(&self, i: usize, j: usize) -> (Vec<FrillRecord>, SceneryStats) {
+        frill_vertex(&self.input(), &self.markers(), i, j)
+    }
+
+    /// Frill sector (sx, sy) after the landblock's static pass.
+    fn sector(
+        &self,
+        sx: u8,
+        sy: u8,
+        density: f32,
+        thinner: &mut DensityThinner,
+    ) -> crate::frills::FrillSector {
+        generate_sector(&self.input(), &self.markers(), sx, sy, density, thinner)
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -742,6 +763,51 @@ fn outside_block_and_unsupported_scale_modes() {
     };
     let g = Fixture::new(data_one_vertex(), one_node(n)).run();
     assert_eq!(g.stats.rejections(Rejection::ScaleMode), 1);
+    assert_eq!(g.stats.failed_vertices, 0);
+}
+
+#[test]
+fn scale_modes_above_eight() {
+    // §7.4 steps 3 and 15: above 8 with differing limits the node fails; with equal limits
+    // it takes `scale_min` (mode 9 would then be adjusted in step 11, which is not
+    // specified, so it stays unsupported).
+    let n = |mode, max: f32| PlacementNode {
+        scale_mode: mode,
+        scale_min: [0.5; 3],
+        scale_max: [max; 3],
+        ..node(vec![SceneChild::Object(OBJ_X)])
+    };
+    let list = |mode, max| {
+        vec![scene(
+            VERTEX_SCENE,
+            vec![
+                SceneChild::Node(Box::new(n(mode, max))),
+                SceneChild::Object(OBJ_Y),
+            ],
+            None,
+        )]
+    };
+    for mode in [9u8, 12, 255] {
+        let g = Fixture::new(data_one_vertex(), list(mode, 0.8)).run();
+        assert!(g.objects.is_empty(), "mode {mode}: the vertex is abandoned");
+        assert_eq!(g.stats.failed_vertices, 1);
+        assert_eq!(g.stats.rejections(Rejection::ScaleMode), 0);
+    }
+    let g = Fixture::new(data_one_vertex(), list(12, 0.5)).run();
+    assert_eq!(g.objects.len(), 2);
+    assert!(approx(g.objects[0].scale[0], 0.5, 1e-6));
+    assert_eq!(g.stats.failed_vertices, 0);
+    let g = Fixture::new(data_one_vertex(), list(9, 0.5)).run();
+    assert_eq!(g.stats.rejections(Rejection::ScaleMode), 1);
+    assert_eq!(g.objects.len(), 1);
+    // The frequency test comes first: a skipped node does not fail.
+    let skipped = PlacementNode {
+        frequency: 0.0,
+        ..n(12, 0.8)
+    };
+    let g = Fixture::new(data_one_vertex(), one_node(skipped)).run();
+    assert_eq!(g.stats.failed_vertices, 0);
+    assert_eq!(g.stats.rejections(Rejection::Frequency), 1);
 }
 
 #[test]
@@ -836,6 +902,364 @@ fn hostile_cycles_depth_and_fanout_are_bounded() {
     assert!(start.elapsed().as_secs() < 30);
 }
 
+/// Region tables like [`tables`], with terrain id 5 slot 1 → key 10 → `a` alone and slot 2
+/// → key 11 → `b` alone, so `word(5, 1)` always picks `a` and `word(5, 2)` always `b`.
+fn two_scene_tables(a: Did, b: Did) -> SceneryTables {
+    let one = ScenePair {
+        scene_key: 1,
+        slot: 0,
+    };
+    let default = TerrainSceneEntry {
+        name: "default".into(),
+        kind: 1,
+        id: 0,
+        unknown_f: std::f32::consts::FRAC_1_SQRT_2,
+        default_pair: Some(one),
+        pairs: vec![one],
+    };
+    let listed = TerrainSceneEntry {
+        name: "zone".into(),
+        kind: 2,
+        id: 5,
+        unknown_f: std::f32::consts::FRAC_1_SQRT_2,
+        default_pair: None,
+        pairs: vec![
+            ScenePair {
+                scene_key: 2,
+                slot: 0,
+            },
+            ScenePair {
+                scene_key: 10,
+                slot: 1,
+            },
+            ScenePair {
+                scene_key: 11,
+                slot: 2,
+            },
+        ],
+    };
+    let ts = TerrainSceneTable::new(Did(0x1200_0001), 0, Some(default), vec![listed]).unwrap();
+    let only = |key, scene| SceneChoiceEntry {
+        key,
+        choices: vec![SceneChoice {
+            scene,
+            weight: 1.0,
+            flag: 1,
+        }],
+    };
+    let entries = vec![only(1, EMPTY), only(2, EMPTY), only(10, a), only(11, b)];
+    let sc = SceneChoiceTable::new(0, Did(0x1100_0001), entries).unwrap();
+    let mut t = tables();
+    t.terrain_scenes = Arc::new(ts);
+    t.scene_choices = Arc::new(sc);
+    t
+}
+
+/// Flat data with `word(5, 1)` at vertex (3, 7) and `word(5, 2)` at (4, 7).
+fn data_two_vertices() -> LandblockData {
+    let mut d = LandblockData::from_heights(key().data_did(), HeightGrid::flat(0));
+    d.coarse[17 * 3 + 7] = word(5, 1);
+    d.coarse[17 * 4 + 7] = word(5, 2);
+    d
+}
+
+/// A node at a fixed offset `(dx, dy)` from its parent with `spacing`.
+fn at(dx: f32, dy: f32, spacing: f32, children: Vec<SceneChild>) -> PlacementNode {
+    PlacementNode {
+        disp_min: [dx, dy, 0.0],
+        disp_max: [dx, dy, 0.0],
+        spacing,
+        ..node(children)
+    }
+}
+
+#[test]
+fn sc16_open_ancestors_skipped_closed_siblings_tested() {
+    let n3 = || at(0.0, 0.0, 1.0, vec![SceneChild::Object(OBJ_Y)]);
+    let n2 = |no_spacing| PlacementNode {
+        no_spacing,
+        ..at(
+            0.0,
+            0.0,
+            1.0,
+            vec![SceneChild::Object(OBJ_X), SceneChild::Node(Box::new(n3()))],
+        )
+    };
+    let n1 = || at(0.0, 0.0, 1.0, vec![SceneChild::Object(OBJ_ALIGN)]);
+    let run = |children: Vec<PlacementNode>| {
+        let list = vec![scene(
+            VERTEX_SCENE,
+            children
+                .into_iter()
+                .map(|n| SceneChild::Node(Box::new(n)))
+                .collect(),
+            None,
+        )];
+        let g = Fixture::new(data_one_vertex(), list).run();
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>()
+    };
+    // (a) N1's closed marker rejects N2, so neither N2's object nor N3 appears.
+    assert_eq!(run(vec![n1(), n2(false)]), [OBJ_ALIGN]);
+    // (b) Without N1, N3 is not spaced against its open parent N2.
+    assert_eq!(run(vec![n2(false)]), [OBJ_X, OBJ_Y]);
+    // (c) `no_spacing` on N2 skips its test, and N3 inherits it.
+    assert_eq!(run(vec![n1(), n2(true)]), [OBJ_ALIGN, OBJ_X, OBJ_Y]);
+}
+
+#[test]
+fn sc17_markers_of_earlier_vertices_take_part() {
+    // Vertex (3, 7) places A's node at its base; vertex (4, 7) places B's node 0.15 east
+    // of it (base x 29.9994 and 39.9992).
+    let (a, b) = (Did(0x0200_8000), Did(0x0200_8001));
+    let run = |spacing| {
+        let mut f = Fixture::new(
+            data_two_vertices(),
+            vec![
+                scene(
+                    a,
+                    vec![SceneChild::Node(Box::new(at(
+                        0.0,
+                        0.0,
+                        spacing,
+                        vec![SceneChild::Object(OBJ_X)],
+                    )))],
+                    None,
+                ),
+                scene(
+                    b,
+                    vec![SceneChild::Node(Box::new(at(
+                        -9.8498,
+                        0.0,
+                        spacing,
+                        vec![SceneChild::Object(OBJ_Y)],
+                    )))],
+                    None,
+                ),
+            ],
+        );
+        f.tables = two_scene_tables(a, b);
+        f.run()
+    };
+    let g = run(0.1);
+    assert_eq!(
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
+        [OBJ_X]
+    );
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+    let g = run(0.05);
+    assert_eq!(g.objects.len(), 2);
+    assert!(approx(
+        g.objects[1].position[0] - g.objects[0].position[0],
+        0.15,
+        1e-4
+    ));
+}
+
+#[test]
+fn sc18_group_nodes_meet_their_static_twin_in_the_frill_pass() {
+    let (x, y) = (Did(0x0200_8100), Did(0x0200_8101));
+    let grass = || PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Scene(y)])
+    };
+    let run = |g_no_spacing| {
+        let g = PlacementNode {
+            no_spacing: g_no_spacing,
+            ..at(0.0, 0.0, 0.1, vec![SceneChild::Scene(x)])
+        };
+        let f = Fixture::new(
+            data_one_vertex(),
+            vec![
+                scene(
+                    VERTEX_SCENE,
+                    vec![SceneChild::Node(Box::new(g))],
+                    Some(grass()),
+                ),
+                scene(x, vec![], Some(grass())),
+                scene(
+                    y,
+                    vec![SceneChild::Node(Box::new(node(vec![SceneChild::Object(
+                        OBJ_Y,
+                    )])))],
+                    None,
+                ),
+            ],
+        );
+        // The static pass places G (and nothing else).
+        let st = f.run();
+        assert_eq!(st.stats.nodes_placed, 1);
+        assert!(st.objects.is_empty());
+        let (records, _) = f.frills(3, 7);
+        assert!(records.iter().all(|r| r.object.object == OBJ_Y && !r.late));
+        records.len()
+    };
+    // G is rejected by its own static-pass marker: only V's own frill layer yields.
+    assert_eq!(run(false), 1);
+    assert_eq!(run(true), 2);
+}
+
+#[test]
+fn frill_layer_nodes_meet_markers_of_later_vertices() {
+    // Vertex (3, 7): scene A, empty group, frill layer node at the base (spacing 1).
+    // Vertex (4, 7): scene B, a group node placed on (3, 7)'s base. In the frill pass of
+    // (3, 7) the layer meets B's static-pass marker although B's vertex comes later.
+    let (a, b) = (Did(0x0200_8200), Did(0x0200_8201));
+    let run = |b_spacing| {
+        let mut f = Fixture::new(
+            data_two_vertices(),
+            vec![
+                scene(
+                    a,
+                    vec![],
+                    Some(at(0.0, 0.0, 1.0, vec![SceneChild::Object(OBJ_Y)])),
+                ),
+                scene(
+                    b,
+                    vec![SceneChild::Node(Box::new(at(
+                        -9.9998,
+                        0.0,
+                        b_spacing,
+                        vec![SceneChild::Object(OBJ_X)],
+                    )))],
+                    None,
+                ),
+            ],
+        );
+        f.tables = two_scene_tables(a, b);
+        assert_eq!(f.run().objects.len(), 1);
+        f.frills(3, 7)
+    };
+    let (records, stats) = run(1.0);
+    assert!(records.is_empty());
+    assert_eq!(stats.rejections(Rejection::Footprint), 1);
+    assert_eq!(run(0.0).0.len(), 1);
+}
+
+#[test]
+fn sc19_a_failing_child_abandons_the_vertex_and_leaves_its_marker_open() {
+    // Vertex (3, 7), scene A: N1 (3 east), N2 (at the base, child: a scene reference), N3
+    // (3 west); every node has spacing 1. Vertex (4, 7), scene B: a node on (3, 7)'s base.
+    let (a, b, empty_ok) = (Did(0x0200_8300), Did(0x0200_8301), Did(0x0200_8302));
+    let missing = Did(0x0200_DEAD);
+    let run = |reference| {
+        let mut f = Fixture::new(
+            data_two_vertices(),
+            vec![
+                scene(
+                    a,
+                    vec![
+                        SceneChild::Node(Box::new(at(
+                            3.0,
+                            0.0,
+                            1.0,
+                            vec![SceneChild::Object(OBJ_X)],
+                        ))),
+                        SceneChild::Node(Box::new(at(
+                            0.0,
+                            0.0,
+                            1.0,
+                            vec![SceneChild::Scene(reference)],
+                        ))),
+                        SceneChild::Node(Box::new(at(
+                            -3.0,
+                            0.0,
+                            1.0,
+                            vec![SceneChild::Object(OBJ_Y)],
+                        ))),
+                    ],
+                    None,
+                ),
+                scene(
+                    b,
+                    vec![SceneChild::Node(Box::new(at(
+                        -9.9998,
+                        0.0,
+                        1.0,
+                        vec![SceneChild::Object(OBJ_PLAIN)],
+                    )))],
+                    None,
+                ),
+                scene(empty_ok, vec![], None),
+            ],
+        );
+        f.tables = two_scene_tables(a, b);
+        f.run()
+    };
+    // Control: a readable reference closes N2's marker, which then rejects B's node.
+    let g = run(empty_ok);
+    assert_eq!(
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
+        [OBJ_X, OBJ_Y]
+    );
+    assert_eq!(g.stats.failed_vertices, 0);
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+    // A reference to a DID that does not exist: only N1's subtree at (3, 7); N2's marker
+    // stays open, so B's node at (4, 7) is placed.
+    let g = run(missing);
+    assert_eq!(
+        g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
+        [OBJ_X, OBJ_PLAIN]
+    );
+    assert_eq!(g.stats.failed_vertices, 1);
+    assert_eq!(g.stats.missing_scenes, 1);
+    assert_eq!(g.stats.rejections(Rejection::Footprint), 0);
+    let open: Vec<_> = g.markers.iter().filter(|m| m.open).collect();
+    assert_eq!(open.len(), 1);
+    assert!(approx(open[0].position[0], 3.0 * 9.9998, 1e-4));
+    assert!(!g.spacing_markers().iter().any(|m| m.open));
+}
+
+#[test]
+fn a_failure_inside_a_frill_layer_stays_in_the_layer() {
+    // Review record of the 2026-10-07 revision (`scenery.md` §7.4 step 15 OPEN): the scene
+    // that evaluates a frill layer ignores the layer's result. P's frill layer fails at
+    // its first reference, so its second reference yields nothing; the later sibling Q
+    // still yields its frill.
+    let (p, q, y) = (Did(0x0200_8400), Did(0x0200_8401), Did(0x0200_8402));
+    let missing = Did(0x0200_DEAD);
+    let layer = |children| PlacementNode {
+        no_spacing: true,
+        ..node(children)
+    };
+    let f = |group: Vec<SceneChild>| {
+        Fixture::new(
+            data_one_vertex(),
+            vec![
+                scene(VERTEX_SCENE, group, None),
+                scene(
+                    p,
+                    vec![],
+                    Some(layer(vec![
+                        SceneChild::Scene(missing),
+                        SceneChild::Scene(y),
+                    ])),
+                ),
+                scene(q, vec![], Some(layer(vec![SceneChild::Scene(y)]))),
+                scene(y, vec![SceneChild::Object(OBJ_Y)], None),
+            ],
+        )
+    };
+    let fx = f(vec![SceneChild::Scene(p), SceneChild::Scene(q)]);
+    assert_eq!(
+        fx.run().stats.failed_vertices,
+        0,
+        "no frill layer in the static pass"
+    );
+    let (records, stats) = fx.frills(3, 7);
+    assert_eq!(records.len(), 1);
+    assert_eq!(stats.failed_frill_layers, 1);
+    assert_eq!(stats.failed_vertices, 0);
+    // A failure in a group still ends the vertex in the frill pass: Q is never reached.
+    let fx = f(vec![
+        SceneChild::Scene(q),
+        SceneChild::Scene(missing),
+        SceneChild::Scene(q),
+    ]);
+    let (records, stats) = fx.frills(3, 7);
+    assert_eq!(records.len(), 1);
+    assert_eq!(stats.failed_vertices, 1);
+}
+
 #[test]
 fn missing_pairs_keys_and_scenes_are_counted() {
     let mut d = data_one_vertex();
@@ -880,11 +1304,11 @@ fn sc12_late_group_objects_are_not_frills() {
         [OBJ_X]
     );
     // Frill pass: Y inside the layer, X late.
-    let (records, _) = frill_vertex(&fx.input(), 3, 7);
+    let (records, _) = fx.frills(3, 7);
     assert_eq!(records.len(), 2);
     assert_eq!((records[0].object.object, records[0].late), (OBJ_Y, false));
     assert_eq!((records[1].object.object, records[1].late), (OBJ_X, true));
-    let sector = generate_sector(&fx.input(), 3, 7, 1.0, &mut DensityThinner::with_seed(1));
+    let sector = fx.sector(3, 7, 1.0, &mut DensityThinner::with_seed(1));
     assert_eq!(
         sector
             .instances
@@ -895,7 +1319,7 @@ fn sc12_late_group_objects_are_not_frills() {
     );
     assert_eq!(sector.late_discarded, 1);
     // Other sectors of the block see nothing.
-    let other = generate_sector(&fx.input(), 4, 7, 1.0, &mut DensityThinner::with_seed(1));
+    let other = fx.sector(4, 7, 1.0, &mut DensityThinner::with_seed(1));
     assert!(other.instances.is_empty());
 }
 
@@ -913,9 +1337,9 @@ fn frill_density_thins() {
             scene(g_scene, vec![SceneChild::Object(OBJ_Y)], None),
         ],
     );
-    let all = generate_sector(&fx.input(), 3, 7, 1.0, &mut DensityThinner::new());
+    let all = fx.sector(3, 7, 1.0, &mut DensityThinner::new());
     assert_eq!(all.instances.len(), 200);
-    let half = generate_sector(&fx.input(), 3, 7, 0.5, &mut DensityThinner::with_seed(9));
+    let half = fx.sector(3, 7, 0.5, &mut DensityThinner::with_seed(9));
     assert!(
         (60..140).contains(&half.instances.len()),
         "{}",
@@ -1799,12 +2223,16 @@ fn frill_pass_markers() {
             )],
         )
     };
-    let (records, stats) = frill_vertex(&fx(1.0, false).input(), 3, 7);
+    // The group node is rejected by its own static-pass twin, the layer by the same
+    // marker.
+    let (records, stats) = fx(1.0, false).frills(3, 7);
     assert!(records.is_empty());
-    assert_eq!(stats.rejections(Rejection::Footprint), 1);
+    assert_eq!(stats.rejections(Rejection::Footprint), 2);
     // A radius-0 marker never overlaps; `no_spacing` skips the marker test.
-    assert_eq!(frill_vertex(&fx(0.0, false).input(), 3, 7).0.len(), 1);
-    assert_eq!(frill_vertex(&fx(1.0, true).input(), 3, 7).0.len(), 1);
+    assert_eq!(fx(0.0, false).frills(3, 7).0.len(), 1);
+    let (records, stats) = fx(1.0, true).frills(3, 7);
+    assert_eq!(records.len(), 1);
+    assert_eq!(stats.rejections(Rejection::Footprint), 1);
 
     // Nodes placed while the state is set leave no marker: two spaced siblings under the
     // layer at the same position are both placed.
@@ -1823,13 +2251,14 @@ fn frill_pass_markers() {
         data_one_vertex(),
         vec![scene(VERTEX_SCENE, vec![], Some(layer))],
     );
-    let (records, stats) = frill_vertex(&f.input(), 3, 7);
+    let (records, stats) = f.frills(3, 7);
     assert_eq!(records.len(), 2);
     assert_eq!(stats.rejections(Rejection::Footprint), 0);
 
-    // Frill-pass markers are discarded per vertex: vertices (15, 7) and (16, 7) place
-    // group nodes 9.9998 apart with radius 5. The static pass spaces the second against
-    // the first; the frill pass of sector (15, 7) does not.
+    // The frill pass is spaced against the static pass's markers of every vertex:
+    // vertices (15, 7) and (16, 7) place group nodes 9.9998 apart with radius 5. The static
+    // pass places the first and spaces the second against it; in the frill pass of sector
+    // (15, 7) the first meets its own twin's marker and the second the first's.
     let g5 = PlacementNode {
         spacing: 5.0,
         disp_min: [-5.0, 0.0, 0.0],
@@ -1865,9 +2294,19 @@ fn frill_pass_markers() {
     let g = f.run();
     assert_eq!(g.stats.nodes_placed, 1);
     assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
-    let s = generate_sector(&f.input(), 15, 7, 1.0, &mut DensityThinner::with_seed(3));
+    let s = f.sector(15, 7, 1.0, &mut DensityThinner::with_seed(3));
+    assert_eq!(s.stats.nodes_placed, 0);
+    assert_eq!(s.stats.rejections(Rejection::Footprint), 2);
+    // Without the static pass's markers (an empty list) nothing spaces them.
+    let s = generate_sector(
+        &f.input(),
+        &[],
+        15,
+        7,
+        1.0,
+        &mut DensityThinner::with_seed(3),
+    );
     assert_eq!(s.stats.nodes_placed, 2);
-    assert_eq!(s.stats.rejections(Rejection::Footprint), 0);
 }
 
 #[test]
@@ -1893,7 +2332,7 @@ fn frill_layer_of_a_scene_reached_through_a_node() {
         ],
     );
     assert!(f.run().objects.is_empty(), "frill layers are not entities");
-    let (records, _) = frill_vertex(&f.input(), 3, 7);
+    let (records, _) = f.frills(3, 7);
     assert_eq!(records.len(), 1);
     assert_eq!((records[0].object.object, records[0].late), (OBJ_Y, false));
 }

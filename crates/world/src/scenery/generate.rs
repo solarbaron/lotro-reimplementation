@@ -4,9 +4,16 @@
 //!
 //! Generation is a pure function of the landblock's data, its region's tables, the scene
 //! records, its terrain collision mesh, its water surface and its static list: the same
-//! inputs give bit-identical output (SC8). It never fails; hostile tables are cut by the
-//! limits of [`SceneryLimits`] (scene-reference depth and cycles, work and object budgets),
-//! which the statistics report.
+//! inputs give bit-identical output (SC8). It never fails as a whole; hostile tables are
+//! cut by the limits of [`SceneryLimits`] (scene-reference depth and cycles, work and
+//! object budgets), which the statistics report. A *failing child* in the client's sense
+//! (§7.4 step 15: a scene reference that cannot be read, or a `scale_mode` above 8 with
+//! differing scale limits) abandons the rest of its vertex and is counted in
+//! [`SceneryStats::failed_vertices`].
+//!
+//! The frill pass (§8.2 item 5) tests its candidates against the footprint markers of the
+//! landblock's static pass ([`GeneratedScenery::markers`]) and appends none of its own, as
+//! the spec allows.
 
 use tessera_formats::LandblockData;
 use tessera_formats::scenery::{PlacementNode, SCALE_MODE_UNIFORM, SceneChild};
@@ -187,6 +194,51 @@ impl SceneryObject {
     }
 }
 
+/// One footprint marker of the landblock's generated list (§7.4 steps 14b and 15): the
+/// position and radius ρ_N of a placed node. A marker is *open* while its node processes
+/// its children and *closed* afterwards; a marker whose node failed (§7.4 step 15) stays
+/// open for good. Only closed markers with a radius above 0 can reject a candidate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FootprintMarker {
+    /// The node's position p (block-local x, y; absolute z).
+    pub position: [f32; 3],
+    /// The node's own footprint radius ρ_N (step 5, without the `no_spacing*` zeroing).
+    pub radius: f32,
+    /// The node's `spacing_3d`.
+    pub spacing_3d: bool,
+    /// Still open (the node has not finished its last child).
+    pub open: bool,
+}
+
+impl FootprintMarker {
+    /// Whether the marker takes part in the spacing test at all: closed, with a radius
+    /// above 0.
+    #[must_use]
+    pub fn can_overlap(&self) -> bool {
+        !self.open && self.radius > 0.0
+    }
+
+    /// Whether a candidate at `p` with radius `rho` and `spacing_3d` overlaps this marker
+    /// (§7.4 step 14b): (ρ + ρ_m)² ≥ |p − m|², horizontal unless both are 3-D. Open
+    /// markers and markers with ρ_m ≤ 0 (or NaN) never overlap.
+    #[must_use]
+    pub fn overlaps(&self, p: [f32; 3], rho: f32, spacing_3d: bool) -> bool {
+        if !self.can_overlap() {
+            return false;
+        }
+        let m = self.position;
+        let dx = p[0] - m[0];
+        let dy = p[1] - m[1];
+        let dz = if spacing_3d && self.spacing_3d {
+            p[2] - m[2]
+        } else {
+            0.0
+        };
+        let r = rho + self.radius;
+        r * r >= dx * dx + dy * dy + dz * dz
+    }
+}
+
 /// One frill record of the frill pass (§8.1–§8.2), before the landblock and density tests.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrillRecord {
@@ -266,6 +318,16 @@ pub struct SceneryStats {
     /// Rejections by reason, indexed by [`Rejection::index`] (the order of
     /// [`Rejection::ALL`]).
     pub rejected: [u32; Rejection::COUNT],
+    /// Vertices abandoned by a failing child (§7.4 step 15): a scene reference that names
+    /// no scene or one that cannot be read, or a `scale_mode` above 8 with differing scale
+    /// limits. Not a hostile-input bound: the client abandons the vertex too. In the frill
+    /// pass, a failure inside a frill layer abandons only the rest of that frill layer and
+    /// is counted in [`SceneryStats::failed_frill_layers`] instead.
+    pub failed_vertices: u32,
+    /// Frill layers whose subtree failed (frill pass only, §7.4 step 15 and the review
+    /// record of the 2026-10-07 revision): the rest of the layer is abandoned, the
+    /// enclosing scene carries on.
+    pub failed_frill_layers: u32,
     /// Objects created (static pass) or frill records made (frill pass).
     pub objects: u32,
     /// Objects skipped by the frill pass because no frill layer had been met.
@@ -316,6 +378,8 @@ impl SceneryStats {
         for (a, b) in self.rejected.iter_mut().zip(o.rejected) {
             sat(a, b);
         }
+        sat(&mut self.failed_vertices, o.failed_vertices);
+        sat(&mut self.failed_frill_layers, o.failed_frill_layers);
         sat(&mut self.objects, o.objects);
         sat(&mut self.frill_skipped, o.frill_skipped);
         sat(&mut self.cycles, o.cycles);
@@ -330,8 +394,26 @@ impl SceneryStats {
 pub struct GeneratedScenery {
     /// Objects in generation order (the order of the client's generated list).
     pub objects: Vec<SceneryObject>,
+    /// The footprint markers of the static pass in the order they were appended, in their
+    /// final state (§7.4 step 15; markers of failed nodes stay open). The frill pass tests
+    /// against these (§8.2 item 5); [`GeneratedScenery::spacing_markers`] keeps only those
+    /// that can reject.
+    pub markers: Vec<FootprintMarker>,
     /// Counters.
     pub stats: SceneryStats,
+}
+
+impl GeneratedScenery {
+    /// The markers of [`GeneratedScenery::markers`] that can reject a candidate (closed,
+    /// radius above 0), in list order: everything the frill pass of §8.2 item 5 needs.
+    #[must_use]
+    pub fn spacing_markers(&self) -> Vec<FootprintMarker> {
+        self.markers
+            .iter()
+            .copied()
+            .filter(FootprintMarker::can_overlap)
+            .collect()
+    }
 }
 
 /// Generates the scenery of one landblock: the vertex pass of §7.2–§7.6 over all 17 × 17
@@ -340,7 +422,7 @@ pub struct GeneratedScenery {
 #[must_use]
 pub fn generate_landblock(input: &SceneryInput<'_>) -> GeneratedScenery {
     let mut out = GeneratedScenery::default();
-    let mut g = Gen::new(input, Pass::Static);
+    let mut g = Gen::new(input, Pass::Static, &[]);
     let mut work_left = input.limits.max_work_per_landblock;
     for i in 0..COARSE_SIDE {
         for j in 0..COARSE_SIDE {
@@ -355,24 +437,31 @@ pub fn generate_landblock(input: &SceneryInput<'_>) -> GeneratedScenery {
     }
     out.stats = g.stats;
     out.objects = g.objects;
+    out.markers = g.markers;
     out
 }
 
 /// The frill pass of coarse vertex (i, j), 0 ≤ i, j ≤ 16 (§8.2): every object met while
-/// the vertex's *under a frill layer* state is set becomes a [`FrillRecord`]. Spacing is
-/// tested against the static list and the markers of this vertex's frill pass only, which
-/// are discarded afterwards (Tessera Decision of the §8.2 OPEN). Records are returned
-/// before the landblock and density tests, late ones (§8.6) included.
+/// the vertex's *under a frill layer* state is set becomes a [`FrillRecord`].
+///
+/// `static_markers` are the footprint markers of the landblock's static pass
+/// ([`GeneratedScenery::markers`] or [`GeneratedScenery::spacing_markers`] of
+/// [`generate_landblock`] with the same `input`). Spacing (§7.4 step 14) is tested against
+/// the static list and every closed marker among them, and the frill pass appends no
+/// markers of its own: the shortcut that §8.2 item 5 allows, which gives the client's
+/// result whatever the order and number of frill passes. Records are returned before the
+/// landblock and density tests, late ones (§8.6) included.
 #[must_use]
 pub fn frill_vertex(
     input: &SceneryInput<'_>,
+    static_markers: &[FootprintMarker],
     i: usize,
     j: usize,
 ) -> (Vec<FrillRecord>, SceneryStats) {
     if i >= COARSE_SIDE || j >= COARSE_SIDE {
         return (Vec::new(), SceneryStats::default());
     }
-    let mut g = Gen::new(input, Pass::Frill);
+    let mut g = Gen::new(input, Pass::Frill, static_markers);
     g.begin_vertex(i, j, input.limits.max_work_per_vertex);
     g.run_vertex(i, j);
     (g.frills, g.stats)
@@ -400,18 +489,18 @@ struct Frame {
     rot: Quaternion,
 }
 
+/// A failing child (§7.4 step 15): its node stops, leaves its marker open and passes the
+/// failure up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Failed;
+
+/// The outcome of processing a node or instantiating a scene.
+type Flow<T> = Result<T, Failed>;
+
 #[derive(Debug, Clone, Copy, Default)]
 struct Switches {
     no_spacing: bool,
     no_checks: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Marker {
-    pos: [f32; 3],
-    radius: f32,
-    spacing_3d: bool,
-    open: bool,
 }
 
 struct Gen<'a, 'i> {
@@ -423,7 +512,10 @@ struct Gen<'a, 'i> {
     vertex: [u8; 2],
     under_frill: bool,
     frill_depth: u32,
-    markers: Vec<Marker>,
+    /// Markers appended by this run (static pass only).
+    markers: Vec<FootprintMarker>,
+    /// The static pass's markers, which the frill pass tests against (§8.2 item 5).
+    static_markers: &'a [FootprintMarker],
     path: Vec<Did>,
     /// Nested scenes and nodes on the current path ([`MAX_RECURSION_DEPTH`]).
     depth: usize,
@@ -441,7 +533,7 @@ struct Gen<'a, 'i> {
 }
 
 impl<'a, 'i> Gen<'a, 'i> {
-    fn new(input: &'a SceneryInput<'i>, pass: Pass) -> Self {
+    fn new(input: &'a SceneryInput<'i>, pass: Pass, static_markers: &'a [FootprintMarker]) -> Self {
         let key = input.key;
         Self {
             input,
@@ -453,6 +545,7 @@ impl<'a, 'i> Gen<'a, 'i> {
             under_frill: false,
             frill_depth: 0,
             markers: Vec::new(),
+            static_markers,
             path: Vec::new(),
             depth: 0,
             max_scene_depth: input.limits.max_scene_depth.min(MAX_SCENE_DEPTH_LIMIT),
@@ -483,9 +576,6 @@ impl<'a, 'i> Gen<'a, 'i> {
         self.work_cap = self.input.limits.max_work_per_vertex.min(work_left);
         self.vertex_objects = 0;
         self.cut = false;
-        if self.pass == Pass::Frill {
-            self.markers.clear();
-        }
     }
 
     /// §7.2 and §7.3 for one vertex.
@@ -523,7 +613,13 @@ impl<'a, 'i> Gen<'a, 'i> {
             ],
             rot: Quaternion::IDENTITY,
         };
-        self.instantiate(scene, base, [1.0; 3], hash::SCENE_SEED, Switches::default());
+        if self
+            .instantiate(scene, base, [1.0; 3], hash::SCENE_SEED, Switches::default())
+            .is_err()
+        {
+            // §7.4 step 15: the rest of the vertex is abandoned; other vertices go on.
+            self.stats.failed_vertices += 1;
+        }
         if self.cut {
             self.stats.budget_cut += 1;
         }
@@ -562,7 +658,9 @@ impl<'a, 'i> Gen<'a, 'i> {
     }
 
     /// Instantiates a scene (§7.3, and §8.2 items 1–3 in the frill pass). Returns the
-    /// number of objects created directly in its group (for `max_objects`, §7.4 step 15).
+    /// number of objects created directly in its group (for `max_objects`, §7.4 step 15),
+    /// or the failure of a child (§7.4 step 15). Tessera's own bounds (cycles, depth, work
+    /// and object budgets) are not failures: they place nothing more and return normally.
     fn instantiate(
         &mut self,
         did: Did,
@@ -570,9 +668,9 @@ impl<'a, 'i> Gen<'a, 'i> {
         scale: [f32; 3],
         c: u32,
         sw: Switches,
-    ) -> u32 {
+    ) -> Flow<u32> {
         if !self.enter() {
-            return 0;
+            return Ok(0);
         }
         let created = self.instantiate_inner(did, frame, scale, c, sw);
         self.depth -= 1;
@@ -586,31 +684,46 @@ impl<'a, 'i> Gen<'a, 'i> {
         scale: [f32; 3],
         c: u32,
         sw: Switches,
-    ) -> u32 {
+    ) -> Flow<u32> {
         if !self.charge(1) {
-            return 0;
+            return Ok(0);
         }
         if self.path.contains(&did) {
             self.stats.cycles += 1;
-            return 0;
+            return Ok(0);
         }
         if self.path.len() >= self.max_scene_depth {
             self.stats.depth_capped += 1;
-            return 0;
+            return Ok(0);
         }
+        // §7.4 step 15: a scene that names no scene or cannot be read fails.
         let scene = match self.input.scenes.scene(did) {
             Ok(Some(scene)) => scene,
             Ok(None) => {
                 self.stats.missing_scenes += 1;
-                return 0;
+                return Err(Failed);
             }
             Err(e) => {
                 tracing::debug!(scene = %format_args!("{:#010x}", did.0), error = %e, "scene unavailable; result incomplete");
                 self.stats.scenes_unavailable += 1;
-                return 0;
+                return Err(Failed);
             }
         };
         self.path.push(did);
+        let result = self.scene_body(&scene, frame, scale, c, sw);
+        self.path.pop();
+        result
+    }
+
+    /// The group and, in the frill pass, the frill layer of a scene on the path.
+    fn scene_body(
+        &mut self,
+        scene: &tessera_formats::scenery::Scene,
+        frame: Frame,
+        scale: [f32; 3],
+        c: u32,
+        sw: Switches,
+    ) -> Flow<u32> {
         let s = hash::scene_seed(c);
         let mut created = 0;
         if let Some(group) = scene.placement_group() {
@@ -620,10 +733,11 @@ impl<'a, 'i> Gen<'a, 'i> {
                 }
                 #[allow(clippy::cast_possible_truncation)]
                 let ck = hash::child_seed(s, k as u32);
+                // A failing child ends the scene at once; its frill layer is skipped.
                 match child {
-                    SceneChild::Node(n) => self.node(n, frame, scale, ck, sw),
+                    SceneChild::Node(n) => self.node(n, frame, scale, ck, sw)?,
                     SceneChild::Scene(d) => {
-                        self.instantiate(*d, frame, scale, ck, sw);
+                        self.instantiate(*d, frame, scale, ck, sw)?;
                     }
                     SceneChild::Object(d) => {
                         if self.create(*d, frame, scale) {
@@ -639,11 +753,16 @@ impl<'a, 'i> Gen<'a, 'i> {
         {
             self.under_frill = true;
             self.frill_depth += 1;
-            self.node(layer, frame, scale, s.wrapping_add(FRILL_LAYER_SALT), sw);
+            let layer_result = self.node(layer, frame, scale, s.wrapping_add(FRILL_LAYER_SALT), sw);
             self.frill_depth -= 1;
+            // A failure inside the frill layer abandons only the rest of the layer: the
+            // scene ignores the layer's result and carries on (review record of the
+            // 2026-10-07 revision; `scenery.md` §7.4 step 15 OPEN).
+            if layer_result.is_err() {
+                self.stats.failed_frill_layers += 1;
+            }
         }
-        self.path.pop();
-        created
+        Ok(created)
     }
 
     /// Creates an object (§7.6), or a frill record in the frill pass (§8.2). Returns
@@ -691,13 +810,22 @@ impl<'a, 'i> Gen<'a, 'i> {
         }
     }
 
-    /// Processes a placement node (§7.4).
-    fn node(&mut self, n: &PlacementNode, parent: Frame, sigma: [f32; 3], c: u32, sw: Switches) {
+    /// Processes a placement node (§7.4). A rejection returns `Ok`; only a failing child
+    /// (step 15) returns `Err`.
+    fn node(
+        &mut self,
+        n: &PlacementNode,
+        parent: Frame,
+        sigma: [f32; 3],
+        c: u32,
+        sw: Switches,
+    ) -> Flow<()> {
         if !self.enter() {
-            return;
+            return Ok(());
         }
-        self.node_inner(n, parent, sigma, c, sw);
+        let result = self.node_inner(n, parent, sigma, c, sw);
         self.depth -= 1;
+        result
     }
 
     #[allow(clippy::too_many_lines)]
@@ -708,9 +836,9 @@ impl<'a, 'i> Gen<'a, 'i> {
         sigma: [f32; 3],
         c: u32,
         sw: Switches,
-    ) {
+    ) -> Flow<()> {
         if !self.charge(1) {
-            return;
+            return Ok(());
         }
         self.stats.nodes_tested += 1;
         let (a, b) = (self.a, self.b);
@@ -719,7 +847,7 @@ impl<'a, 'i> Gen<'a, 'i> {
         // 1. Frequency.
         if r(hash::SALT_FREQUENCY) >= n.frequency || n.frequency.is_nan() {
             self.reject(Rejection::Frequency);
-            return;
+            return Ok(());
         }
         // 2. Switches.
         let sw = Switches {
@@ -727,12 +855,21 @@ impl<'a, 'i> Gen<'a, 'i> {
             no_checks: sw.no_checks || n.no_checks,
         };
         // 3. Scale.
-        if n.scale_mode != SCALE_MODE_UNIFORM {
-            self.reject(Rejection::ScaleMode);
-            return;
-        }
         let start = if n.inherit_scale { sigma } else { [1.0; 3] };
         let varies = (0..3).any(|k| (n.scale_max[k] - n.scale_min[k]).abs() > EPS);
+        match n.scale_mode {
+            SCALE_MODE_UNIFORM => {}
+            // Above 8 with differing limits: step 3 has no rule, the node fails (step 15).
+            m if m > 8 && varies => return Err(Failed),
+            // Above 9 with equal limits: `scale_min`, and step 11 adjusts nothing.
+            m if m > 9 => {}
+            // 0–3, 5–9: per-axis salts (§6.2 OPEN) or the step-11 adjustment from water
+            // depth or slope are not specified; unobserved, rejected as unsupported.
+            _ => {
+                self.reject(Rejection::ScaleMode);
+                return Ok(());
+            }
+        }
         let t = if varies { r(hash::SALT_SCALE) } else { 0.0 };
         let scale: [f32; 3] = std::array::from_fn(|k| {
             let f = if varies {
@@ -784,12 +921,12 @@ impl<'a, 'i> Gen<'a, 'i> {
         let inside = |v: f32| rho <= v && v < BLOCK - rho && (0.0..BLOCK).contains(&v);
         if !(inside(p[0]) && inside(p[1])) {
             self.reject(Rejection::Outside);
-            return;
+            return Ok(());
         }
         // 7. Terrain type.
         if !n.no_checks && !self.terrain_type_ok(p, rho) {
             self.reject(Rejection::TerrainType);
-            return;
+            return Ok(());
         }
         // 8. Terrain plane.
         let plane = self
@@ -800,7 +937,7 @@ impl<'a, 'i> Gen<'a, 'i> {
         // 9. Slope.
         if !(n.slope_min_cos <= nrm[2] && nrm[2] <= n.slope_max_cos) {
             self.reject(Rejection::Slope);
-            return;
+            return Ok(());
         }
         // 10. Orientation.
         let mut h = n.heading.min + r(hash::SALT_HEADING) * (n.heading.max - n.heading.min);
@@ -850,7 +987,7 @@ impl<'a, 'i> Gen<'a, 'i> {
                 }
                 None => {
                     self.reject(Rejection::NoWater);
-                    return;
+                    return Ok(());
                 }
             },
             2..=8 => p[2] = 0.0,
@@ -864,7 +1001,7 @@ impl<'a, 'i> Gen<'a, 'i> {
         // 12. Height ranges.
         if !n.no_checks && !self.height_ranges_ok(n, p, &plane) {
             self.reject(Rejection::HeightRange);
-            return;
+            return Ok(());
         }
         // 13. Terrain clearance.
         if n.clearance > 0.0 {
@@ -875,18 +1012,18 @@ impl<'a, 'i> Gen<'a, 'i> {
             };
             if !self.clearance_ok(n, p, radius, rot) {
                 self.reject(Rejection::Clearance);
-                return;
+                return Ok(());
             }
         }
         // 14. Spacing.
         if !n.no_checks {
             if self.static_overlaps(p, rho, n.spacing_3d) {
                 self.reject(Rejection::StaticSpacing);
-                return;
+                return Ok(());
             }
             if !sw.no_spacing && self.footprint_overlaps(p, rho, n.spacing_3d) {
                 self.reject(Rejection::Footprint);
-                return;
+                return Ok(());
             }
         }
         // 15. Children.
@@ -894,8 +1031,8 @@ impl<'a, 'i> Gen<'a, 'i> {
         let marker = if self.pass == Pass::Frill && self.under_frill {
             None
         } else if self.markers.len() < self.input.limits.max_markers as usize {
-            self.markers.push(Marker {
-                pos: p,
+            self.markers.push(FootprintMarker {
+                position: p,
                 radius: rho_node,
                 spacing_3d: n.spacing_3d,
                 open: true,
@@ -916,10 +1053,12 @@ impl<'a, 'i> Gen<'a, 'i> {
             }
             #[allow(clippy::cast_possible_truncation)]
             let ck = hash::child_seed(c, k as u32);
+            // A failing child stops the node at once: the remaining children are not
+            // processed and the marker stays open (step 15).
             match child {
-                SceneChild::Node(m) => self.node(m, frame, scale, ck, sw),
+                SceneChild::Node(m) => self.node(m, frame, scale, ck, sw)?,
                 SceneChild::Scene(dd) => {
-                    created += self.instantiate(*dd, frame, scale, ck, sw);
+                    created += self.instantiate(*dd, frame, scale, ck, sw)?;
                 }
                 SceneChild::Object(dd) => {
                     if self.create(*dd, frame, scale) {
@@ -933,6 +1072,7 @@ impl<'a, 'i> Gen<'a, 'i> {
         {
             m.open = false;
         }
+        Ok(())
     }
 
     /// §7.4 step 7.
@@ -1135,26 +1275,26 @@ impl<'a, 'i> Gen<'a, 'i> {
             .any(|s| s.overlaps(p, rho, spacing_3d))
     }
 
-    /// §7.4 step 14b: closed markers only.
+    /// §7.4 step 14b: every closed marker of the landblock's generated list. The static
+    /// pass tests the markers it has appended so far (open ones, those of the candidate's
+    /// ancestors and of failed nodes, are skipped); the frill pass tests the static pass's
+    /// final markers (§8.2 item 5).
     fn footprint_overlaps(&mut self, p: [f32; 3], rho: f32, spacing_3d: bool) -> bool {
-        let count = u32::try_from(self.markers.len()).unwrap_or(u32::MAX);
+        let count = match self.pass {
+            Pass::Static => self.markers.len(),
+            Pass::Frill => self.static_markers.len(),
+        };
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
         if !self.charge(count / 64) {
             return true;
         }
-        self.markers.iter().any(|m| {
-            if m.open || m.radius.is_nan() || m.radius <= 0.0 {
-                return false;
-            }
-            let dx = p[0] - m.pos[0];
-            let dy = p[1] - m.pos[1];
-            let dz = if spacing_3d && m.spacing_3d {
-                p[2] - m.pos[2]
-            } else {
-                0.0
-            };
-            let r = rho + m.radius;
-            r * r >= dx * dx + dy * dy + dz * dz
-        })
+        match self.pass {
+            Pass::Static => self.markers.iter().any(|m| m.overlaps(p, rho, spacing_3d)),
+            Pass::Frill => self
+                .static_markers
+                .iter()
+                .any(|m| m.overlaps(p, rho, spacing_3d)),
+        }
     }
 }
 

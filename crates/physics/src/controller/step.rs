@@ -23,20 +23,36 @@
 //!    speeds before and after gravity, so a jump's apex is v²/2g at any step.
 //! 4. **Buoyancy** (in water without walkable support, states 2 and 3; Decision): the
 //!    float line is the water surface minus the float height. Below it (or on it) the
-//!    layer's gravity applies (−20 for swimmers lifts the mover) and the feet stop at the
-//!    line, the upward speed then zeroed. Above it the gravity's magnitude pulls the mover
-//!    down (at least [`MIN_SINK_ACCELERATION`]) and the feet stop at the line, the speed
-//!    then zeroed, so a swimmer never overshoots it. The speed is limited again afterwards.
+//!    layer's gravity applies (−20 for swimmers lifts the mover), the water takes up any
+//!    downward speed (§12.3 OPEN (p)) and the feet stop at the line, the upward speed then
+//!    zeroed. Above it the gravity's magnitude pulls the mover down (at least
+//!    [`MIN_SINK_ACCELERATION`]) and the feet stop at the line, the speed then zeroed, so a
+//!    swimmer never overshoots it. The speed is limited again afterwards.
 //! 5. **Sweep and slide** (§12.3 step 4): up to [`MAX_SLIDE_ITERATIONS`] sweeps; each hit
 //!    keeps the motion up to the contact and removes the motion and velocity into every
 //!    contact plane so far (normals merged by §11.3's 0.035 tolerance; two planes slide
-//!    along their crease, more stop). On walkable support a contact that is not walkable
-//!    counts as a vertical wall (its normal's horizontal part), so walls never lift the
-//!    mover; walkable slopes are climbed by the slide itself.
-//! 6. **Step-up** (§12.3 step 5): when a grounded horizontal move was blocked, the move is
-//!    retried from the position raised by the step-up height (less where a ceiling stops
-//!    the rise), covering at least [`STEP_OVER_FRACTION`] of the capsule radius, then swept
-//!    down by up to the rise plus [`SNAP_DISTANCE`]. It is taken when it lands on walkable
+//!    along their crease, more stop). Contacts are classified by §11.3 (the face normal
+//!    where it is steeper than walkable and less upward than the contact normal):
+//!    - on walkable support (states 1, 5), a walkable contact keeps its normal, so walkable
+//!      slopes are climbed by the slide itself; a hit whose contact normal does not oppose
+//!      the motion while its triangle's face does slides along the face (a crease, §12.3
+//!      OPEN (n)); a **steep** contact (45°–85° for players) is ridden onto: the motion
+//!      keeps its normal, so the capsule can come to rest on the steep face and step 7
+//!      classifies that face underfoot (state 6), while the velocity meets it as a vertical
+//!      wall, so riding onto it gives no upward speed (§11.3 mechanism, §12.3 step 6,
+//!      OPEN (e)–(f)); every other contact (wall, overhang, ignored surface) counts as a
+//!      vertical wall (its normal's horizontal part), so walls and risers never lift the
+//!      mover;
+//!    - on steep support (states 3, 6), contacts keep their normals and a steep contact
+//!      also adds the vertical plane of its normal's horizontal part, so the mover slides
+//!      down but never climbs the slope (§11.3 mechanism);
+//!    - in the air or swimming, contacts keep their normals.
+//! 6. **Step-up** (§12.3 step 5): when a grounded horizontal move met a contact that is not
+//!    walkable (a wall or a steep contact), the move is retried from the position raised
+//!    by the step-up height (less where a ceiling stops the rise), covering at least
+//!    [`STEP_OVER_FRACTION`] of the capsule radius (the full radius when that landing is
+//!    not walkable, §12.3 OPEN (o)), then swept down by up to the rise plus
+//!    [`SNAP_DISTANCE`]. It is taken when it lands on walkable
 //!    support (§11.3), climbs more than [`STEP_UP_MIN_RISE`] and gets further along the
 //!    move than the blocked path. When the raised move covered more than the move itself,
 //!    the same climb with only the move's length is preferred if it also lands walkable
@@ -47,7 +63,10 @@
 //!    walkable support the sweep reaches further by what a walkable slope descends over the
 //!    step's horizontal motion (at most the step-up height), so the mover follows downhill
 //!    slopes and falls off steps and ledges. The support probe of §11.3 then classifies the
-//!    contacts within [`SUPPORT_MARGIN`] (none while rising in the air out of water).
+//!    contacts of the lower cap within [`SUPPORT_MARGIN`] (none while rising in the air out
+//!    of water), walkable over steep over none: the support underfoot is steep (state 6)
+//!    once no walkable contact is left within the margin, as when the capsule has ridden
+//!    onto a steep face in step 5, whatever the state of the previous step.
 //! 8. **Water** (§12.3 step 7, `water.md` §7.4): the [`super::WaterQuery`] at the feet.
 //! 9. **Cell** (§12.3 step 8): the cell lookup of §5.8.1 at the feet, every step.
 //!
@@ -386,10 +405,15 @@ struct Slide {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// In the air, on steep support or swimming: raw contact normals.
+    /// In the air or swimming: raw contact normals.
     Free,
-    /// On walkable support: non-walkable contacts are vertical walls.
+    /// On walkable support: walkable contacts keep their normal, steep contacts are ridden
+    /// onto (the motion keeps their normal, the velocity meets them as a vertical wall),
+    /// every other contact is a vertical wall.
     Grounded,
+    /// On steep support (states 3 and 6): raw contact normals, and a steep contact adds
+    /// the vertical plane of its normal's horizontal part, which stops motion up the slope.
+    Steep,
     /// The raised move of a step-up: every contact is a vertical wall.
     Raised,
 }
@@ -650,8 +674,8 @@ impl Controller {
             } else {
                 // Below the line the water takes up any downward speed, so a mover that
                 // slides or falls in at speed stops instead of diving metres below the line
-                // before the lift turns it (Tessera Decision, M4.5 verification;
-                // `water.md` §7.4 OPEN).
+                // before the lift turns it (`collision.md` §12.3 OPEN (p), Tessera reading
+                // of `water.md` §7.4).
                 vz = vz.max(0.0);
                 dz = dz.max(0.0);
                 if feet[2] + dz > t {
@@ -671,7 +695,13 @@ impl Controller {
 
         // Sweep and slide, step-up.
         let grounded = walk_support && !report.jumped;
-        let mode = if grounded { Mode::Grounded } else { Mode::Free };
+        let mode = if grounded {
+            Mode::Grounded
+        } else if element.on_steep() {
+            Mode::Steep
+        } else {
+            Mode::Free
+        };
         let feet_before = feet;
         let plain = self.slide(q, feet, delta, vel, mode, cosw);
         let mut result = plain;
@@ -836,9 +866,15 @@ impl Controller {
         mode: Mode,
         cosw: f32,
     ) -> Slide {
+        // The planes the motion slides along and those the velocity loses its part into;
+        // they differ only for steep contacts ridden from walkable support.
         let mut planes = Planes::default();
+        let mut vel_planes = Planes::default();
         let mut remaining = delta;
         let mut blocked = false;
+        let vel_in = vel;
+        let mut walk_planes = Planes::default();
+        let mut only_walkable = true;
         for _ in 0..MAX_SLIDE_ITERATIONS {
             if len3(remaining) <= 1e-7 {
                 break;
@@ -868,9 +904,9 @@ impl Controller {
             }
             // A hit whose contact normal (an edge or corner of the triangle) does not oppose
             // the motion would leave the motion unclipped, and the next sweep would report
-            // the same hit at the same place: the walker of walk FR3 stopped dead on a slight
-            // terrain crease. On walkable support, slide along the triangle's face instead
-            // when the face opposes the motion.
+            // the same hit at the same place, stopping the mover dead on a slight terrain
+            // crease. On walkable support, slide along the triangle's face instead when the
+            // face opposes the motion (§12.3 OPEN (n)).
             if mode == Mode::Grounded
                 && dot3(remaining, n) >= 0.0
                 && let Some(face) = h.face_normal
@@ -880,20 +916,57 @@ impl Controller {
             {
                 n = face;
             }
-            let wall = match mode {
-                Mode::Free => class != ContactClass::Walkable,
-                Mode::Grounded => class != ContactClass::Walkable,
-                Mode::Raised => true,
-            };
-            if wall {
+            if class != ContactClass::Walkable {
                 blocked = true;
-                if mode != Mode::Free {
-                    n = horizontal(n);
+            }
+            match (mode, class) {
+                (Mode::Free, _)
+                | (Mode::Grounded | Mode::Steep, ContactClass::Walkable)
+                | (
+                    Mode::Steep,
+                    ContactClass::Wall | ContactClass::Overhang | ContactClass::Ignored,
+                ) => {
+                    planes.add(n);
+                    vel_planes.add(n);
+                }
+                // A steep contact met from walkable support is ridden onto: the motion
+                // slides along it, so the capsule can come to rest on the steep face and
+                // the ground snap and support probe classify that face underfoot (state 6,
+                // `collision.md` §11.3, §12.3 step 6, OPEN (e)–(f)); the velocity meets it
+                // as a vertical wall, so riding onto it gives no upward speed.
+                (Mode::Grounded, ContactClass::Steep) => {
+                    planes.add(n);
+                    vel_planes.add(horizontal(n));
+                }
+                // On steep support a steep contact also adds the vertical plane of its
+                // normal's horizontal part: the mover slides down but cannot climb (§11.3).
+                (Mode::Steep, ContactClass::Steep) => {
+                    let h = horizontal(n);
+                    planes.add(n);
+                    planes.add(h);
+                    vel_planes.add(n);
+                    vel_planes.add(h);
+                }
+                // Walls, overhangs and ignored surfaces met from walkable support, and every
+                // contact of a step-up's raised move: vertical walls, so they never lift the
+                // mover.
+                (Mode::Grounded, _) | (Mode::Raised, _) => {
+                    let h = horizontal(n);
+                    planes.add(h);
+                    vel_planes.add(h);
                 }
             }
-            planes.add(n);
             remaining = planes.clip(remaining);
-            vel = planes.clip(vel);
+            vel = vel_planes.clip(vel);
+            if mode == Mode::Grounded && class == ContactClass::Walkable {
+                walk_planes.add(n);
+            } else {
+                only_walkable = false;
+            }
+            if only_walkable {
+                remaining = keep_heading(remaining, delta, &walk_planes);
+                vel = keep_heading(vel, vel_in, &walk_planes);
+            }
         }
         Slide {
             feet,
@@ -930,8 +1003,8 @@ impl Controller {
             return None;
         }
         // The raised move first covers `reach`; when its landing is not walkable (the
-        // capsule's foot rests on a chamfered step edge, walk ST2) it is retried once with
-        // the full shape radius, so the foot clears the edge.
+        // capsule's foot rests on a chamfered step edge) it is retried once with the full
+        // shape radius, so the foot clears the edge (§12.3 OPEN (o)).
         let radius = self.config.shape.radius();
         let full = match self.raised_move(q, feet, rise, dir, reach, vel, cosw) {
             Some(s) => s,
@@ -1016,8 +1089,18 @@ struct Planes {
 }
 
 impl Planes {
+    /// Adds a contact plane. A normal that merges with a plane already listed (§11.3's
+    /// tolerance) **replaces** it: the latest contact is the one the remaining motion runs
+    /// into. Keeping the older normal instead stopped a mover dead at a shallow concave
+    /// crease between two walkable triangles whose normals merge, because the motion slid
+    /// along the first one still ran into the second (`collision.md` §12.3 OPEN (u),
+    /// Tessera reading).
     fn add(&mut self, n: [f32; 3]) {
-        if self.n[..self.len].iter().any(|m| normals_merge(*m, n)) {
+        if let Some(m) = self.n[..self.len]
+            .iter_mut()
+            .find(|m| normals_merge(**m, n))
+        {
+            *m = n;
             return;
         }
         if self.len < MAX_PLANES {
@@ -1235,6 +1318,32 @@ fn walkable_tan(cosw: f32) -> f32 {
 fn clip1(v: [f32; 3], n: [f32; 3]) -> [f32; 3] {
     let d = dot3(v, n);
     if d < 0.0 { sub3(v, scale3(n, d)) } else { v }
+}
+
+/// `c` (a motion clipped against walkable ground planes `planes`) turned back to the
+/// horizontal direction of `orig`, keeping its horizontal length, and lifted onto the
+/// highest of the planes: a walker on walkable ground keeps its heading instead of drifting
+/// downhill on a side slope (`collision.md` §12.3 OPEN (v), Tessera reading).
+fn keep_heading(c: [f32; 3], orig: [f32; 3], planes: &Planes) -> [f32; 3] {
+    let Some(dir) = normalize3([orig[0], orig[1], 0.0]) else {
+        return c;
+    };
+    let len = (c[0] * c[0] + c[1] * c[1]).sqrt();
+    if !(len > 1e-9) || c[0] * dir[0] + c[1] * dir[1] <= 0.0 {
+        return c;
+    }
+    let h = [dir[0] * len, dir[1] * len];
+    let mut z = f32::NEG_INFINITY;
+    for n in &planes.n[..planes.len] {
+        if n[2] <= 1e-3 {
+            return c;
+        }
+        z = z.max(-(n[0] * h[0] + n[1] * h[1]) / n[2]);
+    }
+    if !z.is_finite() {
+        return c;
+    }
+    [h[0], h[1], z]
 }
 
 /// The horizontal part of `n`, normalised; `n` itself when it is (nearly) vertical.

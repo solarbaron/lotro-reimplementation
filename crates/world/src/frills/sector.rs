@@ -8,7 +8,7 @@ use tessera_formats::setup::Quaternion;
 
 use super::settings::{FRILL_SECTOR_SIZE, SECTORS_PER_BLOCK};
 use crate::coords::{LANDBLOCK_SIZE, LandblockKey, WorldPos};
-use crate::scenery::{SceneryInput, SceneryStats, frill_vertex, sum_stats};
+use crate::scenery::{FootprintMarker, SceneryInput, SceneryStats, frill_vertex, sum_stats};
 
 /// Landblock edge in f32 units.
 const BLOCK_F32: f32 = 160.0;
@@ -185,9 +185,15 @@ impl DensityThinner {
 /// vertices; records created after a frill layer are discarded (§8.6); a record is kept
 /// only if it lies in the landblock (0 ≤ x, y < 160) and passes the density test. An
 /// (sx, sy) outside 0–15 gives an empty sector whose [`FrillSector::key`] is `None`.
+///
+/// `static_markers` are the footprint markers of the landblock's static pass with the same
+/// `input` ([`crate::scenery::GeneratedScenery::spacing_markers`]); the frill pass is spaced
+/// against them (§8.2 item 5), so the result does not depend on which sectors were built
+/// before.
 #[must_use]
 pub fn generate_sector(
     input: &SceneryInput<'_>,
+    static_markers: &[FootprintMarker],
     sx: u8,
     sy: u8,
     density: f32,
@@ -202,7 +208,7 @@ pub fn generate_sector(
     }
     let mut stats = Vec::new();
     for (i, j) in sector_vertices(sx, sy) {
-        let (records, s) = frill_vertex(input, i, j);
+        let (records, s) = frill_vertex(input, static_markers, i, j);
         stats.push(s);
         for r in records {
             if r.late {

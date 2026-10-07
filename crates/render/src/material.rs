@@ -305,10 +305,13 @@ pub enum Opacity {
 /// receives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LightSelection {
-    /// The renderer picks them (Tessera Decision of `lighting.md` §8.5): the lights
-    /// whose range sphere touches the draw's bounding sphere, nearest first, then the
-    /// directional ones, at most [`crate::MAX_DRAW_LIGHTS`] in all with the sun counted
-    /// (7 from the table when the pass has a sun).
+    /// The renderer picks them (`lighting.md` §8.5, `render.md` §4.3): the point lights
+    /// whose squared distance to the draw's world box is below the square of their
+    /// selection radius ρ ([`crate::LightReach`]), without lights baked into the landscape
+    /// on terrain chunks and with the parent switches applied; key lights first, each group
+    /// nearest first (Tessera Decision of §8.5); then the directional ones; at most
+    /// [`crate::MAX_DRAW_LIGHTS`] in all with the sun counted (7 from the table when the
+    /// pass has a sun).
     #[default]
     Auto,
     /// No light from the table (the sun and ambient still apply).
@@ -393,6 +396,10 @@ pub struct MeshDraw {
     /// Inputs of the lit pipeline (used in passes with
     /// [`crate::Pass::frame_lighting`]).
     pub lit: LitSurface,
+    /// The caller's handle of the object this draw belongs to, matched against
+    /// [`crate::LightReach::parent`] by the automatic light selection (`lighting.md` §8.5
+    /// step 3). `None`: the draw is no light's parent.
+    pub light_object: Option<u64>,
 }
 
 impl MeshDraw {
@@ -406,7 +413,16 @@ impl MeshDraw {
             material,
             skin: None,
             lit: LitSurface::default(),
+            light_object: None,
         }
+    }
+
+    /// Mark the draw as part of the object with handle `object` (see
+    /// [`Self::light_object`]).
+    #[must_use]
+    pub fn with_light_object(mut self, object: u64) -> Self {
+        self.light_object = Some(object);
+        self
     }
 
     /// Set the lit-pipeline inputs (see [`Self::lit`]).

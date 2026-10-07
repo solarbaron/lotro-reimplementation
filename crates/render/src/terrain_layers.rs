@@ -31,8 +31,9 @@ use crate::instanced::{
     texture_entry, uniform_entry, uniform_stride, world_depth,
 };
 use crate::lighting::MAX_DRAW_LIGHTS;
+use crate::lit_pipelines::LightTarget;
 use crate::material::LightSelection;
-use crate::mesh::BoundingSphere;
+use crate::mesh::{Aabb, BoundingSphere};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::renderer::{FrameStats, Renderer, ResolvedTexture, TextureResolver, WorldFrame};
 use crate::texture::TextureId;
@@ -311,6 +312,8 @@ pub struct TerrainChunkInfo {
     pub layers: u32,
     /// Sphere around the vertices (model space).
     pub sphere: BoundingSphere,
+    /// Box around the vertices (model space; light selection, `lighting.md` §8.5).
+    pub aabb: Aabb,
 }
 
 fn invalid(msg: impl Into<String>) -> RenderError {
@@ -413,6 +416,7 @@ impl TerrainChunkData<'_> {
             triangles: triangles as u32,
             layers: self.layers.len() as u32,
             sphere: BoundingSphere { center, radius },
+            aabb: Aabb { min: lo, max: hi },
         })
     }
 }
@@ -448,7 +452,9 @@ pub struct TerrainDraw {
     pub chunk: TerrainChunk,
     /// Model → world (normally a translation to the landblock's origin).
     pub transform: Mat4,
-    /// Lights from the pass's table (selected by the chunk's bounding sphere).
+    /// Lights from the pass's table. [`LightSelection::Auto`] selects by the chunk's world
+    /// box and leaves out lights flagged as baked into the landscape
+    /// ([`crate::LightReach::baked_landscape`], `lighting.md` §8.3, §8.5).
     pub lights: LightSelection,
     /// The chunk casts the sun's shadow.
     pub cast_shadow: bool,
@@ -1231,8 +1237,11 @@ impl fmt::Debug for TerrainHook {
 
 fn normal_matrix(m: Mat4) -> [[f32; 4]; 3] {
     let m3 = Mat3::from_mat4(m);
-    let n = if m3.determinant().abs() > 1e-20 {
-        m3.inverse().transpose()
+    let det = m3.determinant();
+    let n = if det.is_finite() && det.abs() > 1e-20 {
+        // Scaled to determinant ±1, so a uniform scale keeps the stored normal's length,
+        // which the shading uses as it is (`terrain-texturing.md` §4.10).
+        m3.inverse().transpose() * det.abs().cbrt()
     } else {
         Mat3::IDENTITY
     };
@@ -1309,8 +1318,10 @@ pub(crate) fn build_hook(
         } else {
             chunk.refresh(ctx.device, ctx.queue, &layouts, &ctx.textures);
         }
-        ctx.lights
-            .select(draw.lights, sphere.center, sphere.radius, &mut chosen);
+        // Terrain and ceiling chunks are landscape objects: baked lights skip them
+        // (`lighting.md` §8.3, §8.5 step 3, L30).
+        let target = LightTarget::placed(chunk.info.aabb, transform, None).landscape();
+        ctx.lights.select(draw.lights, &target, &mut chosen);
         let lw = light_words(&chosen);
         let u = DrawUniform {
             model: transform.to_cols_array_2d(),

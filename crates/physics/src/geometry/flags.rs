@@ -3,7 +3,9 @@
 //!
 //! The physics properties of a placed object are resolved like its draw flags
 //! (`entity-descriptor.md` §9): the static entity's own value wins, then the 0x47 chain
-//! from the named object upward (first value found). [`CollisionFlags::or`] layers them.
+//! from the named object upward (first value found). [`CollisionFlags::or`] layers them;
+//! [`CollisionFlags::of_static`] does so for a static entity, taking `Entity_CreationType`
+//! from the object's chain alone (§9.3, Tessera reading; OPEN there).
 //!
 //! Ethereality values are bitfields over the labels of enum mapper 0x230000BA: bit *k* − 1
 //! stands for key *k* (`property-system.md` §7.3). A player character belongs to **Player**
@@ -25,6 +27,11 @@ pub const ETHEREAL_DEFAULT: u64 = 1 << 0;
 pub const ETHEREAL_CAMERA: u64 = 1 << 1;
 /// `Player` (key 0x1E, bit 29): the category of a player character (§9.2).
 pub const ETHEREAL_PLAYER: u64 = 1 << 29;
+
+/// `Entity_CreationType` 7, UniqueDynamicMobile (`collision.md` §9.3).
+pub const CREATION_TYPE_UNIQUE_DYNAMIC_MOBILE: u32 = 7;
+/// `Entity_CreationType` 8, UniqueDynamicImmobile (`collision.md` §9.3).
+pub const CREATION_TYPE_UNIQUE_DYNAMIC_IMMOBILE: u32 = 8;
 
 /// The property IDs this crate reads, looked up by name in the property dictionary at run
 /// time (`collision.md` §9.1). Missing names leave fields `None`.
@@ -48,6 +55,9 @@ pub struct PhysicsPids {
     pub can_ledge_climb: Option<u32>,
     /// `Entity_ContentLayers` (`entity-descriptor.md` §4.5.1).
     pub content_layers: Option<u32>,
+    /// `Entity_CreationType` (`collision.md` §9.3: statics of creation types 7 and 8 get no
+    /// body).
+    pub creation_type: Option<u32>,
 }
 
 impl PhysicsPids {
@@ -64,6 +74,7 @@ impl PhysicsPids {
             surface_properties_to_apply: pid_of("Physics_SurfacePropertiesToApply"),
             can_ledge_climb: pid_of("Physics_CanLedgeClimb"),
             content_layers: pid_of("Entity_ContentLayers"),
+            creation_type: pid_of("Entity_CreationType"),
         }
     }
 
@@ -92,6 +103,9 @@ pub struct CollisionFlags {
     pub surface_properties: Option<Did>,
     /// `Physics_CanLedgeClimb`.
     pub can_ledge_climb: Option<bool>,
+    /// `Entity_CreationType` (an enum key; `collision.md` §9.3 resolves it along the same
+    /// chain, `scenery.md` §9.2 rule 2).
+    pub creation_type: Option<u32>,
 }
 
 impl CollisionFlags {
@@ -110,6 +124,7 @@ impl CollisionFlags {
                 _ => None,
             }),
             can_ledge_climb: get(pids.can_ledge_climb).and_then(value_bool),
+            creation_type: get(pids.creation_type).and_then(value_key),
         }
     }
 
@@ -126,7 +141,34 @@ impl CollisionFlags {
                 .or(other.always_uncontrolled_surface),
             surface_properties: self.surface_properties.or(other.surface_properties),
             can_ledge_climb: self.can_ledge_climb.or(other.can_ledge_climb),
+            creation_type: self.creation_type.or(other.creation_type),
         }
+    }
+
+    /// The flags of a static entity: its own values (`own`, from the SED's property set)
+    /// over its object's (`object`, layered along the 0x47 chain), first value found wins
+    /// (§9.1), except `Entity_CreationType`, which comes from the object's chain alone
+    /// (§9.3: "resolved along the chain as `scenery.md` §9.2 rule 2"; Tessera reading,
+    /// recorded as an OPEN in `collision.md` §9.3: it reproduces the CO12 counts, while
+    /// the SED-first precedence would drop no SED of the install).
+    #[must_use]
+    pub fn of_static(own: Self, object: Self) -> Self {
+        Self {
+            creation_type: object.creation_type,
+            ..own.or(object)
+        }
+    }
+
+    /// Whether the effective `Entity_CreationType` is 7 (UniqueDynamicMobile) or 8
+    /// (UniqueDynamicImmobile): the server creates such entities, and the client drops
+    /// landblock-info statics of these types on the static-creation path (`collision.md`
+    /// §9.3, §9.4, C25, BIN). Generated objects are not filtered by it (§9.4).
+    #[must_use]
+    pub fn is_server_created(&self) -> bool {
+        matches!(
+            self.creation_type,
+            Some(CREATION_TYPE_UNIQUE_DYNAMIC_MOBILE | CREATION_TYPE_UNIQUE_DYNAMIC_IMMOBILE)
+        )
     }
 
     /// Whether the effective `Physics_NoPhysics` is true (the instance has no shape).
@@ -160,6 +202,16 @@ fn value_bool(v: &PropertyValue) -> Option<bool> {
         PropertyValue::Bool(b) => Some(*b),
         PropertyValue::Int(i) => Some(*i != 0),
         PropertyValue::Enum(k) => Some(*k != 0),
+        _ => None,
+    }
+}
+
+/// An enum-like value as its key: an enum key, or a non-negative integer.
+fn value_key(v: &PropertyValue) -> Option<u32> {
+    match v {
+        PropertyValue::Enum(k) | PropertyValue::Bitfield32(k) => Some(*k),
+        PropertyValue::Int(i) => u32::try_from(*i).ok(),
+        PropertyValue::Int64(i) => u32::try_from(*i).ok(),
         _ => None,
     }
 }
@@ -257,11 +309,15 @@ pub fn content_layer_list(set: &PropertySet, pids: &PhysicsPids) -> Option<Vec<u
     )
 }
 
-/// The walker-blocking rule for a static entity (`collision.md` §9.3, Tessera Decision): a
-/// SED blocks a player-character walker when it is a Physics SED with a position, it passes
-/// the content-layer filter, its effective `Physics_NoPhysics` is not true, its setup has a
-/// 0x66 mesh or volumes, and its effective `Physics_EtherealToType` does not contain
-/// Player. Draw flags play no part.
+/// The walker-blocking rule for a static entity (`collision.md` §9.3, Decision from the
+/// census and BIN): a SED blocks a player-character walker when it is a Physics SED with a
+/// position, it passes the content-layer test, its effective `Physics_NoPhysics` is not
+/// true, its setup has a 0x66 mesh or volumes, its effective `Physics_EtherealToType` does
+/// not contain Player, and its effective `Entity_CreationType` is not 7 or 8
+/// ([`CollisionFlags::is_server_created`]). `flags` are the SED's, layered with
+/// [`CollisionFlags::of_static`]. Draw flags play no part. (The §9.3 data census
+/// applies neither the content-layer nor the creation-type filter: pass `true` and flags
+/// without a creation type to count it.)
 #[must_use]
 pub fn static_blocks_walker(
     is_physics_with_position: bool,
@@ -274,6 +330,7 @@ pub fn static_blocks_walker(
         && !flags.has_no_physics()
         && collision.has_collision()
         && !flags.passes(ETHEREAL_PLAYER)
+        && !flags.is_server_created()
 }
 
 /// The walker-blocking rule for a procedurally generated object (`collision.md` §9.4,

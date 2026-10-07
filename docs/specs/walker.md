@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): Accepted. §13–§14: M4.5 design (walk mode on collision; world fidelity), implemented |
-| **Last updated** | 2026-10-06 |
+| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): Accepted. §13–§14: M4.5 design (walk mode on collision; world fidelity), implemented; Review (first review 2026-10-07: **changes requested**; re-review 2026-10-07: **changes requested**, not Accepted, see review record) |
+| **Last updated** | 2026-10-07 (review records of §13–§14; the body last changed 2026-10-07 by the implementer: §14.4 pointer to `terrain-texturing.md` §4.9, §14.11 interiors note, answered and new OPENs) |
 | **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5). §15: change log |
-| **Reviewer** | §11: Claude review session (spec-writer agent) |
-| **Review record** | §11: Claude review session (spec-writer agent), 2026-10-05: changes requested (no-class LOD default contradicts `mesh.md` §8.5 without evidence; *G* step 3 condition incomplete; type 2–4 camera bodies lack offset tables; inline unknowns without OPEN callouts; provenance gaps). Re-review 2026-10-05, Claude review session (spec-writer agent): **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise, each with a Tessera Decision, non-blocking). Re-review spot checks: all 11 camera-state records re-decoded with the §11.5.3 tables (types 2, 3, 4 to the last byte; body offsets 94 and 95 zero in all four type-1 records); W21 census re-derived with an independent probe over all 2,380,699 Physics SEDs (81,425 / 333,933 / 38,849 / 1,665,106 / 12,993 / 248,393; instance and own set never disagree; 2,802 distinct objects without a class); 607 of 7,625 descriptors find a class via the parent chain; no descriptor holds `Entity_Camera_ForceUnderwater`; the §11.9 `Render_FarViewDistance` buckets (384,355 Physics SEDs); BIN (same build, d22363eb9aff0fb5): the render component's initial values 200, 60, 16, 80, 1000, 1000, 1100, −1 and `Render_LODClass` in its watch list. Non-blocking notes for a later revision: the untraced correspondence of the component's last two initial values to `d6`/`d7` (§11.4 step 4) deserves its own OPEN callout; the change log lacks a row for the repair round (W20–W26). |
+| **Reviewer** | §11: Claude review session (spec-writer agent). §13–§14: Claude review session (spec-writer agent, M4.5 criterion 9) |
+| **Review record** | §11: Claude review session (spec-writer agent), 2026-10-05: changes requested (no-class LOD default contradicts `mesh.md` §8.5 without evidence; *G* step 3 condition incomplete; type 2–4 camera bodies lack offset tables; inline unknowns without OPEN callouts; provenance gaps). Re-review 2026-10-05, Claude review session (spec-writer agent): **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise, each with a Tessera Decision, non-blocking). Re-review spot checks: all 11 camera-state records re-decoded with the §11.5.3 tables (types 2, 3, 4 to the last byte; body offsets 94 and 95 zero in all four type-1 records); W21 census re-derived with an independent probe over all 2,380,699 Physics SEDs (81,425 / 333,933 / 38,849 / 1,665,106 / 12,993 / 248,393; instance and own set never disagree; 2,802 distinct objects without a class); 607 of 7,625 descriptors find a class via the parent chain; no descriptor holds `Entity_Camera_ForceUnderwater`; the §11.9 `Render_FarViewDistance` buckets (384,355 Physics SEDs); BIN (same build, d22363eb9aff0fb5): the render component's initial values 200, 60, 16, 80, 1000, 1000, 1100, −1 and `Render_LODClass` in its watch list. Non-blocking notes for a later revision: the untraced correspondence of the component's last two initial values to `d6`/`d7` (§11.4 step 4) deserves its own OPEN callout; the change log lacks a row for the repair round (W20–W26). **§13–§14** (implementer design, M4.5): Claude review session (spec-writer agent), first review 2026-10-07 against CLEAN_ROOM.md §5.3 and the specs these sections implement: **changes requested**. Blocking: (1) Unqualified section references that resolve to the wrong part of this file: §13.2 "§10.6", "§11.1", "float height §11.2", "player character (§11.3)" and §13.7 "walkable (§11.3)" mean `collision.md` §10.6 and §11.1–§11.3 (here §10.6 is the avatar, §11.1 provenance, §11.3 the landscape extent); §13.6 "as §2.2" means `m4-5-visual.md` §2.2; §14.3 "§11.1 run backwards" and "default 2, §11.2" mean `environment.md`, "the limits of §10" and "§8.1", "§8.3" mean `lighting.md`; §14.4 "the Tessera Decision there" (`ChunkLayers::layer_indices_for`) is in `terrain.md` §5. Qualify every one. (2) §13.3 attributes "may lie up to 6 landblocks from the cell" and "3,856 of 104,269 cells … 4–6 landblocks away" to `collision.md` §5.8.1, which states neither. The figures are right (reviewer probe over all 104,271 landblock-info cells, Chebyshev distance of the landblock holding the cell origin from the owner: 0: 16,800; 1: 60,963; 2: 17,324; 3: 5,328; 4: 2,311; 5: 1,344; 6: 201; 4–6: 3,856), but they need a source: the Tessera real-data test that measured them, or a provenance row in `collision.md`/`landblock.md` §4.4. Say also that the distance is the cell origin's (a hull can reach further). (3) §13.4 departs from `collision.md` §12.3 step 8 and the §5.8.1 tie-break (lowest cell number among all containing cells): it keeps the current cell, then prefers portal neighbours. Mark it as a Tessera Decision that overrides those, and define "the lowest cell number of the first set" (which set is first; ties across landblocks). (4) Disagreements with Accepted specs: §14.3 applies a cell's or landblock info's `InteriorFog*` values without the `InteriorFogType` condition of `environment.md` §12 (stored values only for Linear); §14.3 takes the sky key "under the eye's landblock" only, without the cell and landblock-info overrides of the `environment.md` §7.1 Decision; §14.3 says water uses the renderer's automatic light selection, but the water permutations read no light slots, only the fake light (`water.md` §8.2, §8.4 step 6). (5) Revisions now in progress upstream contradict parts of §14 (those specs are Revised, not yet re-accepted): `terrain-texturing.md` §4.9 (a chunk without layers is drawn as one full-grid layer of the lowest-`draw_order` entry when the block's open flag is set, else not at all; affects §14.4 last bullet, §14.10a row F1 and the §14.11 OPEN, which is answered there), §4.10 (vertex normals; §14.4 builds them by `terrain.md` §5), §4.8 (ceilings get the downward ambient; the §14.11 cave-ceiling OPEN); `lighting.md` §8.3 row L30 (baked-landscape lights never reach terrain or ceiling chunks, light map or not; §14.3 lets them reach chunks without a light map) and §8.5 (selection radius, box test, key lights first, parent restrictions); `landblock.md` §4.12–§4.14 (indoor and outdoor environment records, `InteriorFogType` Invalid and None switch fog off, interior ambient, no sun indoors, cell render meshes; §14.3 and the §14.11 Y5 and interior-mesh OPENs). Add a pointer or OPEN for each, as the `terrain-texturing.md` review (item 6) also asks. Non-blocking: (6) §14.5 measures fade and draw distance to "a box around the sphere of its uploaded parts", not the world box of `mesh.md` §8.6 (row M23: union of the stored boxes of the level-0 vertex blocks), so objects draw slightly beyond *D*; label it a Decision or use the box. (7) §14.5 and §14.9 give characters *D* = min(*G*, 80 × *M_d*): 80 m is an observation of this install (§11.4.1: read at run time); say where the walker reads it, or that 80 is only a fallback. (8) §13–§14 have no provenance rows; data counts written into them should cite their Tessera test or the spec that now carries them (§14.11: 17,020 / 703 / 11,359 / 42,807, now in `terrain-texturing.md` §4.5 and §4.9; row F2: 74 objects, 22,945 records). §14.8 "at most 136 objects per description" follows from `environment.md` §5.4 (index 1–136, unique); cite it. (9) Tessera choices that answer OPENs are not labelled Decision: §14.4 ceilings cast no shadow; §14.6 one normal layer for records that declare none of 1059–1062, 1064, 1065 (`water.md` §8.2 OPEN); §14.7 a sector's box as its instance origins ± 4 m. (10) §13.8 and §14.10a are dated verification snapshots (the ROADMAP M4.5 status is later: 21 of 32 walks); mark them as such. CLEAN_ROOM §5.3: no code or pseudo-code (the Rust and WGSL names are Tessera's own clean-room identifiers), no copied prose, no game text, keys, hostnames or traffic; property and preference names are data labels used for interoperability as in the source specs; nothing under a closed gate. Spot checks that matched: §13.2 capsule, setup, height and float height against `collision.md` §10.5–§10.6; §13.1 step and cap against decision 0013 and `collision.md` §12.3; turn rate 2.5 rad/s against `keymap.md`; §14.3 day 12,240 at *G* = 0 (`environment.md` §14), frame ambient and hemispheric, *E₀* = *Cd* × *bd*, fog limits, time input (`lighting.md` §4.2 E20, §8.1, §10; `material.md` §5.3.1), shadow distance min(*G*, `d2` × *M_d* × *M_s*) and initial `d2` 16 (`mesh.md` §8.7); §14.5 *D*, *R_d*, smoothed distance for detail only and the 25 m reset (`mesh.md` §8.4–§8.7; reset confirmed in the clean code); §14.7 frill geometry (`scenery.md` §8.5 step 3), rules 2, 4, 5; §14.4 mask cap (twice the largest mask, 512, `terrain-texturing.md` §5.1); §14.6 water quads and *O* (`water.md` §8.1, §8.3, §9); §13.5 against the `water.md` §7.4 OPEN. **§13–§14 re-review** 2026-10-07, Claude review session (spec-writer agent, M4.5 criterion 9; an independent session, not the first reviewer), of the text after the implementer's 2026-10-07 additions (§14.4 pointer to `terrain-texturing.md` §4.9; §14.11: interior-cell OPEN answered, interiors note, F1 OPEN answered, late-landblock note): **changes requested**; §13–§14 stay Review. Items (1)–(4) and (6)–(10) of the first review are unchanged in the text and stand. Item (5) is met only for `terrain-texturing.md` §4.9 (pointer under §14.4) and for `landblock.md` §4.11–§4.14 (the §14.11 interiors note); pointers for `terrain-texturing.md` §4.8 and §4.10 and for `lighting.md` §8.3 (L30) and §8.5 are still missing. New, blocking: (11) §14.3 now contradicts `render.md` §4.3 and §5.2 as revised on 2026-10-07: under `Auto` the renderer leaves `Light_BakedLandscapeLight` lights out of every terrain and ceiling chunk (L30), so "chunks without one use the automatic selection, baked lights included" no longer describes what is drawn; and the `List` the walker builds for chunks with a light map (range sphere against the chunk's sphere, nearest first, no key-light order) is not the `lighting.md` §8.5 rule (ρ, squared distance to the world box, key lights first) that `Auto` now implements. Either hand every chunk to `Auto` or state the departure as a Decision. (12) Design choices inside an OPEN callout: the §14.11 note "interiors in the walker, the Tessera choices" is a list of Decisions (camera cell, portal walk, objects, lights, indoor record, `--interiors`), not a question. Move it into the body (a new subsection after §14.10a; existing numbers kept) with each choice labelled Decision, and revise the body text it supersedes: §14.3 "interior lights only with `--interiors`" (now interior lights from inside), the §14.3 sky-key and interior-fog bullet (now the two environment records of `landblock.md` §4.13, which also settles first-review item (4) for those two points), the last bullet of §14.4 (its pointer says it is to be revised), and §14.10a rows F1 and Y5 (both now render). (13) Departures labelled as silence: the note says its choices are Tessera's "where it is silent", but "characters are always drawn" from inside departs from `landblock.md` §4.12 (moving entities are not switched by the scene flags; the portal query culls them); and in (e) the renderer's cap of an overriding fog end at 10,000 departs from `lighting.md` §10 as much as from `landblock.md` §4.13 (both cap the keyframe's fog end before the override), so "the fog limits are those of `lighting.md` §10" is wrong. Label both as Decisions that depart. (Reviewer probe: all 775 cell and 540 landblock-info `InteriorFogFar` values are at most 10,000, so the cap changes nothing in this install; the 7 values in 0x78 sets were not checked.) (14) Answered OPENs not marked as answered: the cave-ceiling OPEN (`terrain-texturing.md` §4.8, §4.10: downward ambient *A₀* − *H₀*, the ceiling light map and the placed lights that are not baked; `render.md` §5.2 "Stored normal") and the L5 OPEN (`terrain-texturing.md` §9.4, T44: the original shows a faint sheen of about the gloss, mean 0.09 for layer 67, not a broad highlight; so the "fails" of row L5 in §14.10a is the expected look, to be re-judged). (15) Vertex normals: `render.md` §5.2 now shades layers without a normal map with the stored normal of `terrain-texturing.md` §4.10 (average of the triangle normals, not renormalised; ceiling triangles mirrored), but §14.4 builds the vertices by §6.1–§6.4 with `tessera-terrain`'s unit central-difference normals (`terrain.md` §5; ceiling: the terrain rule negated), so the length effect of §4.10 is not reached; state it as an OPEN or Decision (this is the §4.10 part of first-review item (5)). (16) The 2026-10-07 additions have no row in the §15 change log, and the header's "body unchanged since 2026-10-06" was no longer true (corrected by the reviewer in the header only). Non-blocking: (17) the M3-b late-landblock note is a performance observation for `tessera-world` and `tessera-physics`, not a question about this design; it can move to `docs/perf/reference-machine.md` with a pointer here. (18) The interiors note builds on `landblock.md` §4.11–§4.14, which is Revised with changes requested; keep the pointer until it is re-accepted. Spot checks that matched: the interiors census (49,636 landblock infos, 104,271 cells, 18,390 visibility cells, 39,692 portals) against `landblock.md` §4.11 and an independent cell dump of the install; (a) against the `landblock.md` §4.12 camera-cell Decision; (e) the §4.13 lookup order (cell, owner's landblock info, block map; the owner's landblock per the §4.13 implementer OPEN), the 2.5 s re-read and the B, G, R, A colour order; the §14.4 pointer against `terrain-texturing.md` §4.9 rules 1–3 (open flag, smallest `draw_order`, last met on a tie, no mask, the chunk's light map, closed blocks' layerless terrain chunks not drawn); `InteriorFogType` in the data (Linear in 386 cells and 499 landblock infos, None in 389 and 37, Invalid in 5 landblock infos), so the condition missing from §14.3 (first-review item (4)) concerns 431 property sets; the 104,269 placed cells of §13.3 agree with `collision.md` §5.8.1. CLEAN_ROOM §5.3 for the new text: no code or pseudo-code (file and function names are Tessera's own clean-room identifiers), no copied prose, no game text, keys, hostnames or traffic; DIDs, landblock coordinates and property names are functional identifiers or data labels used for interoperability; nothing under a closed gate. |
 | **Implements into** | `apps/client/src/walker/` (M4: `walker/characters/` — layer, `figure.rs`, `catalog.rs`, `motion.rs` — and `walker/figures.rs`), `apps/client/src/walker_host.rs`, `apps/client/src/headless.rs`, `apps/client/src/avatar.rs`, `apps/client/src/net.rs`, `crates/net` (sandbox figures, crowd, entity events), `crates/world` (bundle figures), `fuzz/fuzz_targets/client_walker_text.rs`, `client_avatar_spec.rs`, `net_npc_events.rs`, `world_bundle.rs` |
 | **Format facts from** | `coordinates.md` (§3, §8–§12), `landblock.md` (§5, §6.3, §8), `entity-descriptor.md` (§5–§9), `setup.md` (§7), `mesh.md` (§8, §11), `material.md` (§9–§12), `terrain.md`, `keymap.md`, `wstate.md` (§11); M4: `appearance.md` (§2–§7), `skeleton-anim.md` (§2, §4, §7, §8), `script-table.md` (§6, §8, §11) |
 
@@ -1487,6 +1487,17 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
   its vertex colours. What the original draws for a terrain chunk without layers is OPEN
   (`terrain-texturing.md` §4.5); a ceiling is drawn with its layers either way.
 
+> **OPEN (implementer, 2026-10-07; pointer):** the last bullet is superseded in the code
+> by `terrain-texturing.md` §4.9 (Revised, not yet re-accepted): a terrain or ceiling chunk
+> that stores no layers is resolved, when its block is open, as one opaque `whole` layer of
+> the table's lowest-`draw_order` entry (last met in stored order on a tie) without a mask,
+> with the surface's light map, and drawn through the layer pipeline like any other; when
+> the block is not open its terrain chunk is not drawn at all (no height-shaded mesh, no
+> shadow) and its ceiling chunk has no layer. The height-shaded mesh remains for layers
+> switched off, no table, and chunks whose stored layers all fail to resolve.
+> `apps/client/src/walker/terrain.rs` (`block_open`, `layerless_key`, `resolve_surface`).
+> This section's text is to be revised with the §13–§14 review.
+
 <a id="s14-5"></a>
 ### 14.5 Objects (§11.4, `mesh.md` §8.4–§8.7)
 
@@ -1646,8 +1657,43 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 > draw distance (`mesh.md` §8.7 gives the 1.5 s opacity ramp, not the blend): Tessera
 > blends by alpha with depth write and casts no shadow while fading.
 
-> **OPEN (implementer, 2026-10-06):** the render meshes of interior cells (0x01) are not
-> drawn; interiors show their interior entities (`--interiors`) only.
+> **Answered (implementer, 2026-10-07, `landblock.md` §4.11–§4.14, Revised):** interior
+> cells are drawn; Y5 renders the IN1 cave. The original note: the render meshes of
+> interior cells (0x01) are not drawn; interiors show their interior entities
+> (`--interiors`) only.
+
+> **OPEN (implementer, 2026-10-07): interiors in the walker, the Tessera choices.** Code:
+> `apps/client/src/walker/interiors.rs` (visibility cells, portals, PVS, scene flags,
+> portal walk), `objects.rs` (cell meshes as parts, `ObjectInfo::cell`), `terrain.rs`
+> (`block_objects`), `env.rs` (indoor record), `walker/mod.rs`. The spec rules followed
+> are `landblock.md` §4.11–§4.14; the choices below are Tessera's where it is silent:
+> (a) **camera cell**: the §4.12 Tessera Decision (cell lookup at the unclamped eye, else
+> the walking character's cell); inside a cell the eye is not kept above the terrain;
+> (b) **portal walk**: the §4.11 Decision with screen rectangles in normalised device
+> coordinates; a portal polygon is clipped at *w* ≥ 10⁻⁴ before its bounds are taken; an
+> eye within 0.5 m of a portal's plane and bounds passes the view on unchanged (an
+> edge-on doorway the eye stands in); a portal without a polygon passes it unchanged; at
+> most 4,096 portals per frame; (c) **objects**: a cell's render mesh is a part whose DID
+> is the cell's 0x01 geometry, placed by the cell's position and rotation (no adjustable
+> scale, §4.14 Decision), drawn out to *G* and the distance cap at its finest level (the
+> §4.14 OPEN on cell detail levels); an interior entity (`entity-descriptor.md` §4.8) is
+> attached to the cell of its landblock's collision set whose volume contains its origin
+> (tried at the origin and ±0.05 m), and one that no cell contains is drawn whenever the
+> camera is in a cell of its landblock; interior objects are loaded only while the camera
+> is in a cell of their landblock; from inside no outdoor object, terrain, ceiling,
+> landscape water or frill is drawn, the sky only when sky-visible; characters are always
+> drawn; (d) **lights**: from inside only interior Light entities enter the light table,
+> from outside only outdoor ones (interior ones too with `--interiors`); (e) **indoor
+> record**: the second environment is blended every frame from key B; the interior
+> overrides are read at the camera's cell from the cell's set, the owner landblock's info
+> set and its block map, re-read when the owner landblock changes or after 2.5 s; colours
+> by `lighting.md` §4.4's B, G, R, A rule; the fog limits are those of `lighting.md` §10
+> (the renderer's), which equal §4.13's except that §4.13 does not cap an overriding fog
+> end at 10,000; (f) `--interiors` now loads and draws every interior cell and entity
+> whatever the camera's cell (a debugging view). Checked on the install
+> (`apps/client/tests/interiors_real_data.rs`): 49,636 landblock infos, 104,271 cells,
+> 18,390 visibility cells, 39,692 portals (the §4.11 census), LI7 and LI8 on every record,
+> the IN1 example of §4.11–§4.12 (26 portals, all with polygons), and the Y5 eye in cell 9.
 
 > **OPEN (implementer, 2026-10-06):** the camera rows of §11.8 (camera-state record, login
 > placement, zoom range, look-at point, target fade) are not adopted yet.
@@ -1693,6 +1739,10 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 > shader (`tessera-render`). Cells merging sectors of different terrain-colour intensity,
 > a candidate cause, no longer happen (§14.7).
 
+> **Answered (implementer, 2026-10-07):** by `terrain-texturing.md` §4.9 (Revised); the
+> walker follows it (pointer under §14.4). Row F1 renders its 13 × 13 blocks with key 0 of
+> 0x19000000 under the frills. The original note follows.
+>
 > **OPEN (implementer, 2026-10-06, `terrain-texturing.md` §4.5):** what the original
 > draws for a terrain chunk that has no layers. In region 1 alone 17,020 landblock-data
 > records have none while their heights vary (703 of them with a landblock info), and
@@ -1711,6 +1761,27 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 > run, also with every M4.5 system off and with the M3 ring size: the bundle (with its
 > collision set, generated scenery and water) arrives late. Criterion 5's "no near-ring
 > holes" is not met there (`docs/perf/reference-machine.md`).
+
+> **OPEN (implementer, 2026-10-07, for the physics / collision implementer):** the late
+> landblock of M3-b is r2 (239, 242) (once also its neighbours under heavy machine load).
+> Its bundle job takes 0.53–0.75 s on one worker on a loaded machine and up to about 2 s
+> under a load average of 40, almost all of it the collision set: about 160 ms placing the
+> static bodies and about 570 ms building the set's hierarchy, for a bundle of about
+> 104 MiB (most bundles take under 50 ms). The streamer now loads along the focus's path
+> (`tessera-world` streamer "Lookahead", ARCHITECTURE §9.2: 1.5 s ahead by default), which
+> removed every other late landblock of the flight in the indicative runs; whether that
+> also covers r2 (239, 242) on a quiet reference machine is not yet measured. A cheaper
+> collision build for such landblocks (shared per-object hierarchies, or building the
+> hierarchy on several workers) would remove the remaining risk; the build order and the
+> set's contents stay as `collision.md` §12.1 gives them.
+
+> **OPEN (implementer, 2026-10-07, streaming):** the streamer's lookahead now has an early
+> part (`tessera-world` streamer "Lookahead", ARCHITECTURE §9.2): the path out to 4 s is
+> requested at `Prefetch` priority, the first 1.5 s (or 1.5 times the slowest recent job)
+> at `Visible`. In streamer-only M3-b flights on a loaded machine (indicative,
+> `docs/perf/reference-machine.md`) r2 (239, 242) was never missing in 11 runs, against
+> 14–26 frames in 6 of 11 runs without the early part. Still open: the walker's own M3-b
+> flight on the quiet reference machine, which criterion 5 counts.
 
 ---
 

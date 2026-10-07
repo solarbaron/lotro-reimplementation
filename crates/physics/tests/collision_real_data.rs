@@ -17,7 +17,9 @@
 //!   5.2 mm, every landblock-info cell links its portals reciprocally, and the cell lookup
 //!   finds a cell at the centre of every placed cell;
 //! - **movement record** (CO9);
-//! - **blockers** (§9.3): 82,139 undrawn mesh blockers among 97,688 undrawn blocking SEDs;
+//! - **blockers** (§9.3, CO12): 82,139 undrawn mesh blockers among 97,688 undrawn blocking
+//!   SEDs in the data census, and the run-time sets with the content-layer test and the
+//!   creation-type 7/8 drop;
 //! - **sets**: full collision sets of sampled landblocks, with sweeps.
 //!
 //! Skipped (reported as passing) unless `TESSERA_GAME_DIR` points at an install. Run with
@@ -928,7 +930,9 @@ fn s9_3_blocker_classification() {
     type Row = (&'static str, bool, bool, bool);
     let results = par_each(&entries, |(member, e)| {
         let mut rows: HashMap<Row, usize> = HashMap::new();
-        let mut blocking_undrawn = [0usize; 2]; // [ignoring layers, with layers]
+        // Per set of §9.3 / CO12 (data census; content-layer test; and creation types 7
+        // and 8 dropped): [blockers, undrawn blockers, undrawn mesh blockers].
+        let mut blocking = [[0usize; 3]; 3];
         let mut unplaced = 0usize;
         // SEDs with an effective Physics_SurfacePropertiesToApply (extra sets included,
         // scenery.md §9.2 rule 1; collision.md §9.1 OPEN).
@@ -956,7 +960,7 @@ fn s9_3_blocker_classification() {
                 .as_ref()
                 .map(|s| CollisionFlags::from_set(s, &pids))
                 .unwrap_or_default();
-            let flags = own.or(r.collision.flags);
+            let flags = CollisionFlags::of_static(own, r.collision.flags);
             surfaced += usize::from(flags.surface_properties.is_some());
             let inst = sed.iid.and_then(|i| instance.get(&i.0).copied());
             let draw = inst
@@ -988,17 +992,26 @@ fn s9_3_blocker_classification() {
                 .and_then(|s| content_layer_list(s, &pids));
             let layers = content_layers_pass(list.as_deref(), &[1], 0);
             let placed = sed.placement.is_some();
-            if !drawn && static_blocks_walker(placed, true, &flags, r.collision.collision) {
-                blocking_undrawn[0] += 1;
-            }
-            if !drawn && static_blocks_walker(placed, layers, &flags, r.collision.collision) {
-                blocking_undrawn[1] += 1;
+            let census = CollisionFlags {
+                creation_type: None,
+                ..flags
+            };
+            let mesh = r.collision.collision == SetupCollision::Mesh;
+            for (k, (layers, flags)) in [(true, &census), (layers, &census), (layers, &flags)]
+                .into_iter()
+                .enumerate()
+            {
+                if static_blocks_walker(placed, layers, flags, r.collision.collision) {
+                    blocking[k][0] += 1;
+                    blocking[k][1] += usize::from(!drawn);
+                    blocking[k][2] += usize::from(!drawn && mesh);
+                }
             }
         }
-        (rows, blocking_undrawn, unplaced, surfaced)
+        (rows, blocking, unplaced, surfaced)
     });
     let mut rows: BTreeMap<Row, usize> = BTreeMap::new();
-    let mut undrawn = [0usize; 2];
+    let mut blocking = [[0usize; 3]; 3];
     let mut unplaced = 0;
     let mut surfaced = 0;
     for (r, u, n, s) in results {
@@ -1006,8 +1019,11 @@ fn s9_3_blocker_classification() {
         for (k, v) in r {
             *rows.entry(k).or_default() += v;
         }
-        undrawn[0] += u[0];
-        undrawn[1] += u[1];
+        for (total, part) in blocking.iter_mut().zip(u) {
+            for (t, p) in total.iter_mut().zip(part) {
+                *t += p;
+            }
+        }
         unplaced += n;
     }
     let total: usize = rows.values().sum();
@@ -1022,10 +1038,12 @@ fn s9_3_blocker_classification() {
         eprintln!("  {k:?}: {v}");
     }
     eprintln!(
-        "undrawn blocking SEDs: {} ignoring content layers, {} with the shared-world layer \
-         test; {surfaced} SEDs with a surface material (0x47 extra sets included); {:.1} s",
-        undrawn[0],
-        undrawn[1],
+        "blocking SEDs [all, undrawn, undrawn mesh]: data census {:?}, content-layer test \
+         {:?}, and creation types 7/8 dropped {:?}; {surfaced} SEDs with a surface material \
+         (0x47 extra sets included); {:.1} s",
+        blocking[0],
+        blocking[1],
+        blocking[2],
         started.elapsed().as_secs_f64()
     );
     if exhaustive() {
@@ -1034,9 +1052,19 @@ fn s9_3_blocker_classification() {
             .copied()
             .unwrap_or(0);
         assert_eq!(mesh_blockers, 82_139, "§9.3 undrawn mesh blockers");
-        // The census counts without the content-layer test (with the shared-world test of
-        // `entity-descriptor.md` §4.5.1 it is 88,749; collision.md §9.3 OPEN).
-        assert_eq!(undrawn[0], 97_688, "§9.3 undrawn blocking SEDs");
+        // CO12: the data census applies neither run-time filter; the walker's world applies
+        // the content-layer test (L = 1, I = 0) and drops creation types 7 and 8.
+        assert_eq!(blocking[0], [1_651_097, 97_688, 82_139], "CO12 data census");
+        assert_eq!(
+            blocking[1],
+            [1_607_212, 88_749, 73_509],
+            "CO12 content layers"
+        );
+        assert_eq!(
+            blocking[2],
+            [1_606_311, 88_748, 73_508],
+            "CO12 creation types"
+        );
     }
 }
 

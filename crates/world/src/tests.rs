@@ -272,6 +272,13 @@ fn content_layer_filter() {
 
 #[test]
 fn walker_streams_across_a_strip() {
+    // The rings alone, and the default lookahead (velocity estimated by `update`).
+    for lookahead in [Duration::ZERO, StreamConfig::default().lookahead] {
+        walk_across_a_strip(lookahead);
+    }
+}
+
+fn walk_across_a_strip(lookahead: Duration) {
     let world = SyntheticWorld::rectangle(1, 0..=40, 0..=6);
     let ctx = context(world.build());
     let pool = pool();
@@ -286,6 +293,7 @@ fn walker_streams_across_a_strip() {
         &pool,
         StreamConfig {
             rings,
+            lookahead,
             ..StreamConfig::default()
         },
     )
@@ -293,13 +301,31 @@ fn walker_streams_across_a_strip() {
     let y = 3.0 * 160.0 + 80.0;
     let mut x = 80.0;
     let mut max_resident = 0;
+    // From cold: only the start block is waited for (so the walk has something resident
+    // even when the machine is too busy to finish a bundle during the walk itself); the
+    // rest of the rings load while walking.
+    let start = WorldPos::new(1, x, y, 0.0);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while w.bundle_at(&start).is_none() {
+        let _ = w.update(start);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "start block not loaded"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     while x < 40.0 * 160.0 {
         let p = WorldPos::new(1, x, y, 0.0);
         let r = w.update(p);
-        max_resident = max_resident.max(r.resident_blocks);
-        // Nothing resident lies beyond the far radius plus hysteresis.
+        max_resident = max_resident.max(r.resident_blocks - r.ahead_resident);
+        // Nothing resident lies beyond the far radius plus hysteresis (bundles loaded
+        // ahead of the rings are not in `resident`).
         for (k, _, _) in w.resident() {
             assert!(k.distance_to(p.xy()) <= 640.0 + 1e-9, "{k} too far");
+            assert!(!w.is_ahead(k));
+        }
+        if lookahead.is_zero() {
+            assert_eq!((r.ahead, r.corridor), (0, 0), "{r:?}");
         }
         x += 40.0;
         std::thread::sleep(Duration::from_micros(300));
@@ -770,10 +796,11 @@ fn seam_neighbours_of_near_and_mid_blocks_stay_resident() {
                     "{what}"
                 );
             }
-            // And after moving.
+            // And after moving (the rings alone: with no velocity, nothing is loaded
+            // ahead, so the result does not depend on how fast the loop runs).
             for step in 0..40 {
                 let p = WorldPos::new(1, c.x + f64::from(step) * 40.0, c.y + 13.0, 0.0);
-                w.update(p);
+                w.update_with_velocity(p, [0.0, 0.0]);
             }
             assert!(
                 w.settle(
@@ -955,7 +982,9 @@ fn integration_progresses_when_bookkeeping_exceeds_the_frame_budget() {
     )
     .unwrap();
     let c = centre(10, 10);
-    assert!(w.settle(c, Duration::from_secs(60)));
+    // A generous deadline: 441 bundles with world systems take most of a minute in a
+    // debug build on a busy machine; the test is about progress, not speed.
+    assert!(w.settle(c, Duration::from_secs(300)));
     assert_eq!(w.resident().count(), 21 * 21);
 }
 

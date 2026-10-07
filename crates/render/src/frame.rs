@@ -9,7 +9,7 @@ use glam::{Mat4, Vec3};
 
 use crate::error::Result;
 use crate::instanced::InstanceBatch;
-use crate::lighting::FrameLighting;
+use crate::lighting::{FrameLighting, LightReach};
 use crate::material::{Lighting, MeshDebug, MeshDraw};
 use crate::pass_hook::PassHook;
 use crate::pipelines::LineVertex;
@@ -119,6 +119,8 @@ pub struct Pass {
     pub(crate) eye: Option<Vec3>,
     /// Set: the pass is lit (M4.5 lit pipeline).
     pub(crate) frame_lighting: Option<Box<FrameLighting>>,
+    /// Reach of the frame lighting's table lights, by table index ([`Pass::light_reach`]).
+    pub(crate) light_reach: Vec<LightReach>,
     /// Draw recorders of the render-world modules ([`crate::pass_hook`]).
     pub(crate) hooks: Vec<Arc<dyn PassHook>>,
     /// Draws of the render-world pipelines (terrain layers, water, sky, instanced
@@ -158,6 +160,7 @@ impl Pass {
             mesh_debug: MeshDebug::default(),
             eye: None,
             frame_lighting: None,
+            light_reach: Vec::new(),
             hooks: Vec::new(),
             world: WorldDraws::default(),
         }
@@ -249,6 +252,17 @@ impl Pass {
     /// passes.
     pub fn frame_lighting(&mut self, lighting: FrameLighting) -> &mut Self {
         self.frame_lighting = Some(Box::new(lighting));
+        self
+    }
+
+    /// Which objects the table lights of [`Pass::frame_lighting`] reach under
+    /// [`crate::LightSelection::Auto`] (`lighting.md` §8.5): entry *i* describes
+    /// [`FrameLighting::lights`]`[i]` (selection radius ρ, key light, baked into the
+    /// landscape, parent switches). Lights without an entry reach as far as their range,
+    /// are not key lights, reach terrain chunks and have no parent. Replaces an earlier
+    /// list.
+    pub fn light_reach(&mut self, reach: Vec<LightReach>) -> &mut Self {
+        self.light_reach = reach;
         self
     }
 

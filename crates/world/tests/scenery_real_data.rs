@@ -17,8 +17,14 @@
 //!   lists (DID, position, rotation, scale) must be identical bit for bit. No hostile-input
 //!   bound may be hit on real data. Water comes from no landblock here (the world's water
 //!   module wires the real surface in).
-//! - `frill_sectors`: every sector of a sample of landblocks; frill instances lie in their
-//!   landblock; density 1 is deterministic.
+//! - `frill_sectors`: every sector of a sample of landblocks, spaced against the static
+//!   pass's footprint markers (`scenery.md` §8.2 item 5); frill instances lie in their
+//!   landblock; density 1 is deterministic; no child fails (§7.4 step 15).
+//! - `checklist_generated_lists`: the generated lists of the 11 landblocks of
+//!   `docs/checklists/m4-5-visual.md` §4.2 (rows S1–S11), built through the bundle path
+//!   (water and statics included), have the checklist's totals, and the objects of walks
+//!   GN1–GN4 (§2.3) sit at the listed list indices with the listed DID, position and scale
+//!   (`scenery.md` §7.4 step 14b as revised 2026-10-07); no child fails (step 15).
 //!
 //! Debug builds sample every 23rd landblock unless `TESSERA_FULL=1`; run
 //! `cargo test --release -p tessera-world --test scenery_real_data -- --nocapture` for the
@@ -44,7 +50,9 @@ use tessera_world::scenery::{
     SceneryInput, SceneryLimits, SceneryStats, SceneryTables, VertexLookup, generate_landblock,
     static_clearances, sum_stats,
 };
-use tessera_world::{BundleOptions, LandblockKey, WorldContext, WorldSource};
+use tessera_world::{
+    BundleOptions, BundleSource, LandblockKey, WorldContext, WorldSource, build_bundle,
+};
 
 fn install() -> Option<PathBuf> {
     match std::env::var_os("TESSERA_GAME_DIR") {
@@ -600,6 +608,10 @@ fn generation_is_deterministic() {
         "a hostile-input bound was hit: {stats:?}"
     );
     assert_eq!(stats.missing_scenes, 0);
+    assert_eq!(
+        stats.failed_vertices, 0,
+        "no record of the install makes a child fail (§7.4 step 15)"
+    );
     if full() {
         assert_eq!(ma.len(), 78_114);
     }
@@ -636,13 +648,20 @@ fn frill_sectors() {
             limits: SceneryLimits::default(),
         };
         blocks += 1;
+        // §8.2 item 5: the frill pass is spaced against the static pass's markers.
+        let markers = generate_landblock(&input).spacing_markers();
         let mut thinner = DensityThinner::new();
         for sx in 0..16 {
             for sy in 0..16 {
-                let s = generate_sector(&input, sx, sy, 1.0, &mut thinner);
-                let again = generate_sector(&input, sx, sy, 1.0, &mut thinner);
+                let s = generate_sector(&input, &markers, sx, sy, 1.0, &mut thinner);
+                let again = generate_sector(&input, &markers, sx, sy, 1.0, &mut thinner);
                 assert_eq!(s, again, "density 1 is deterministic");
                 assert!(!s.stats.truncated());
+                assert_eq!(
+                    (s.stats.failed_vertices, s.stats.failed_frill_layers),
+                    (0, 0),
+                    "no record of the install makes a child fail (§7.4 step 15)"
+                );
                 for i in &s.instances {
                     assert!((0.0..160.0).contains(&i.position[0]));
                     assert!((0.0..160.0).contains(&i.position[1]));
@@ -661,4 +680,132 @@ fn frill_sectors() {
         start.elapsed().as_secs_f64()
     );
     assert!(blocks > 0 && instances > 0);
+}
+
+/// Rows S1–S11 of `m4-5-visual.md` §4.2: (row, region, landblock, generated objects).
+const S_TOTALS: [(&str, u8, u16, usize); 11] = [
+    ("S1", 1, 0x669A, 25),
+    ("S2", 1, 0xA197, 315),
+    ("S3", 2, 0xAEBC, 165),
+    ("S4", 2, 0x7744, 309),
+    ("S5", 3, 0x79AD, 151),
+    ("S6", 3, 0x7A69, 111),
+    ("S7", 4, 0x1A23, 445),
+    ("S8", 4, 0x7ADD, 166),
+    ("S9", 5, 0x655A, 221),
+    ("S10", 5, 0x6FD9, 80),
+    ("S11", 14, 0x1FE2, 186),
+];
+
+/// The object of a walk of `m4-5-visual.md` §2.3.
+struct WalkObject {
+    walk: &'static str,
+    region: u8,
+    block: u16,
+    /// 0-based index in the landblock's generated list.
+    index: usize,
+    did: u32,
+    position: [f32; 3],
+    /// Uniform scale.
+    scale: f32,
+}
+
+/// Walks GN1–GN4 of `m4-5-visual.md` §2.3.
+const GN_OBJECTS: [WalkObject; 4] = [
+    WalkObject {
+        walk: "GN1",
+        region: 1,
+        block: 0x669A,
+        index: 16,
+        did: 0x4700_35F4,
+        position: [130.612, 83.519, 559.263],
+        scale: 1.1701,
+    },
+    WalkObject {
+        walk: "GN2",
+        region: 4,
+        block: 0x1A23,
+        index: 33,
+        did: 0x4700_988D,
+        position: [40.970, 46.965, 192.134],
+        scale: 1.0176,
+    },
+    WalkObject {
+        walk: "GN3",
+        region: 5,
+        block: 0x655A,
+        index: 176,
+        did: 0x4700_D780,
+        position: [123.961, 37.660, 440.486],
+        scale: 1.0304,
+    },
+    WalkObject {
+        walk: "GN4",
+        region: 14,
+        block: 0x1FE2,
+        index: 138,
+        did: 0x4700_3B84,
+        position: [117.026, 130.965, 435.875],
+        scale: 0.9556,
+    },
+];
+
+fn row_key(region: u8, block: u16) -> LandblockKey {
+    let [x, y] = block.to_be_bytes();
+    LandblockKey::new(region, x, y).expect("row landblock")
+}
+
+#[test]
+fn checklist_generated_lists() {
+    let Some((_set, ctx)) = open() else { return };
+    let src = BundleSource::new(Arc::clone(ctx.source()));
+    let bundle = |region: u8, block: u16| {
+        let key = row_key(region, block);
+        let frame = tessera_assets::RecordSource::read_record(&src, key.data_did().0)
+            .expect("bundle frame");
+        build_bundle(&ctx, key.data_did(), &frame, &|| false).expect("bundle")
+    };
+    let mut failures = Vec::new();
+    let mut bundles = HashMap::new();
+    for (row, region, block, total) in S_TOTALS {
+        let b = bundle(region, block);
+        let scenery = b.scenery.as_ref().expect("scenery generated");
+        let stats = &scenery.stats;
+        eprintln!(
+            "{row}: {} generated objects (expected {total}), {} closed markers able to reject, \
+             {} footprint rejections",
+            b.generated.len(),
+            scenery.markers.len(),
+            stats.rejected[tessera_world::scenery::Rejection::Footprint.index()]
+        );
+        if b.generated.len() != total {
+            failures.push(format!("{row}: {} objects, not {total}", b.generated.len()));
+        }
+        if stats.failed_vertices != 0 || !stats.is_complete() || stats.truncated() {
+            failures.push(format!("{row}: generation incomplete or failed: {stats:?}"));
+        }
+        if !scenery.complete {
+            failures.push(format!("{row}: the bundle's scenery is marked incomplete"));
+        }
+        bundles.insert((region, block), b);
+    }
+    for o in &GN_OBJECTS {
+        let (walk, index, did, pos, scale) = (o.walk, o.index, o.did, o.position, o.scale);
+        let b = &bundles[&(o.region, o.block)];
+        match b.generated.get(index) {
+            Some(e)
+                if e.object == Some(Did(did))
+                    && (0..3).all(|k| (e.placement.position[k] - pos[k]).abs() <= 0.01)
+                    && (e.scale[0] - scale).abs() <= 0.0001 =>
+            {
+                eprintln!("{walk}: {did:#010x} at list index {index}");
+            }
+            other => failures.push(format!(
+                "{walk}: index {index} holds {:?} at {:?}, not {did:#010x} at {pos:?}",
+                other.and_then(|e| e.object),
+                other.map(|e| e.placement.position)
+            )),
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }

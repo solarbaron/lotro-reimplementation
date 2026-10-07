@@ -8,7 +8,7 @@
 //! | Rows | Checked |
 //! |---|---|
 //! | T1–T16 | the layer stack (terrain-type keys, bottom first) over the triangle under the target, terrain or ceiling chunk, against the region's table; the diffuse texture of the top layer; the light map where the row names one |
-//! | S1–S11 | the two nearest generated objects: DID, position (0.01 m), heading (0.1°), scale (0.0001) |
+//! | S1–S11 | the landblock's total of generated objects; the two nearest: DID, position (0.01 m), heading (0.1°), scale (0.0001) |
 //! | F1–F6 | frill records of the block (all 256 sectors at density 1) |
 //! | W1–W8 | landblock water: height and surface (W8: none) |
 //! | Y1–Y4 | sky key → day description at day 12,240 and the row's time (day type 2); fog near and far, sun and ambient brightness, toward-sun vector |
@@ -170,25 +170,23 @@ struct Obj {
     scale: f32,
 }
 
+/// The scenery rows of `m4-5-visual.md` §4.2 as re-derived on 2026-10-07 (`scenery.md`
+/// §7.4 step 14b, S36): id, region, landblock, the landblock's total of generated
+/// objects, and the two nearest objects.
 #[rustfmt::skip]
-const S_ROWS: [(&str, u8, u16, [Obj; 2]); 11] = [
-    ("S1", 1, 0x669A, [Obj { did: 0x4700_35F7, pos: [127.035, 66.551, 558.282], heading: 217.16, scale: 1.2236 }, Obj { did: 0x4700_35F4, pos: [128.162, 70.238, 558.528], heading: 204.77, scale: 1.3629 }]),
-    ("S2", 1, 0xA197, [Obj { did: 0x4700_92DC, pos: [101.636, 43.146, 404.978], heading: 170.70, scale: 0.7830 }, Obj { did: 0x4700_08C5, pos: [102.067, 41.334, 405.268], heading: 200.52, scale: 1.1077 }]),
-    ("S3", 2, 0xAEBC, [Obj { did: 0x4700_6181, pos: [33.282, 36.418, 673.242], heading: 84.89, scale: 0.7148 }, Obj { did: 0x4700_6181, pos: [35.800, 43.432, 669.749], heading: 156.23, scale: 1.1352 }]),
-    ("S4", 2, 0x7744, [Obj { did: 0x4700_5A62, pos: [54.338, 122.030, 158.063], heading: 64.84, scale: 1.0634 }, Obj { did: 0x4700_5A5C, pos: [50.475, 128.619, 159.243], heading: 11.21, scale: 0.9836 }]),
-    ("S5", 3, 0x79AD, [Obj { did: 0x4700_7213, pos: [61.890, 74.593, 311.986], heading: 18.84, scale: 0.8633 }, Obj { did: 0x4700_720F, pos: [60.130, 78.403, 311.986], heading: 317.21, scale: 1.2434 }]),
-    ("S6", 3, 0x7A69, [Obj { did: 0x4700_5A5F, pos: [72.770, 21.815, 189.857], heading: 141.11, scale: 1.2845 }, Obj { did: 0x4700_6BEA, pos: [83.824, 18.210, 189.609], heading: 100.84, scale: 1.0760 }]),
-    ("S7", 4, 0x1A23, [Obj { did: 0x4700_8203, pos: [85.939, 86.901, 187.329], heading: 225.05, scale: 0.9025 }, Obj { did: 0x4700_7F5A, pos: [92.493, 91.001, 187.369], heading: 311.70, scale: 1.0031 }]),
-    ("S8", 4, 0x7ADD, [Obj { did: 0x4700_720F, pos: [120.468, 106.733, 251.971], heading: 320.10, scale: 1.0878 }, Obj { did: 0x4700_6A36, pos: [122.779, 107.565, 252.148], heading: 122.83, scale: 1.1231 }]),
-    ("S9", 5, 0x655A, [Obj { did: 0x4700_D780, pos: [123.961, 37.660, 440.486], heading: 356.54, scale: 1.0304 }, Obj { did: 0x4700_8481, pos: [130.043, 34.487, 444.051], heading: 81.28, scale: 0.4816 }]),
-    ("S10", 5, 0x6FD9, [Obj { did: 0x4700_7AA2, pos: [59.987, 43.137, 174.387], heading: 49.42, scale: 1.0798 }, Obj { did: 0x4700_7CB0, pos: [59.346, 42.853, 174.406], heading: 128.72, scale: 1.2184 }]),
-    ("S11", 14, 0x1FE2, [Obj { did: 0x4700_09A6, pos: [109.528, 66.155, 450.852], heading: 291.40, scale: 0.5993 }, Obj { did: 0x4700_5B1E, pos: [106.341, 65.737, 450.953], heading: 88.19, scale: 0.7630 }]),
+const S_ROWS: [(&str, u8, u16, usize, [Obj; 2]); 11] = [
+    ("S1", 1, 0x669A, 25, [Obj { did: 0x4700_35F6, pos: [134.757, 76.422, 555.839], heading: 222.29, scale: 1.2196 }, Obj { did: 0x4700_35F4, pos: [130.612, 83.519, 559.263], heading: 338.75, scale: 1.1701 }]),
+    ("S2", 1, 0xA197, 315, [Obj { did: 0x4700_92DC, pos: [101.636, 43.146, 404.978], heading: 170.70, scale: 0.7830 }, Obj { did: 0x4700_08C5, pos: [102.067, 41.334, 405.268], heading: 200.52, scale: 1.1077 }]),
+    ("S3", 2, 0xAEBC, 165, [Obj { did: 0x4700_6181, pos: [33.282, 36.418, 673.242], heading: 84.89, scale: 0.7148 }, Obj { did: 0x4700_6181, pos: [35.800, 43.432, 669.749], heading: 156.23, scale: 1.1352 }]),
+    ("S4", 2, 0x7744, 309, [Obj { did: 0x4700_5A62, pos: [54.338, 122.030, 158.063], heading: 64.84, scale: 1.0634 }, Obj { did: 0x4700_5A5C, pos: [50.475, 128.619, 159.243], heading: 11.21, scale: 0.9836 }]),
+    ("S5", 3, 0x79AD, 151, [Obj { did: 0x4700_7213, pos: [61.890, 74.593, 311.986], heading: 18.84, scale: 0.8633 }, Obj { did: 0x4700_5FEC, pos: [55.744, 77.442, 311.986], heading: 344.47, scale: 0.6526 }]),
+    ("S6", 3, 0x7A69, 111, [Obj { did: 0x4700_6BEA, pos: [83.824, 18.210, 189.609], heading: 100.84, scale: 1.0760 }, Obj { did: 0x4700_6BEB, pos: [68.317, 13.195, 189.385], heading: 158.61, scale: 1.2235 }]),
+    ("S7", 4, 0x1A23, 445, [Obj { did: 0x4700_8203, pos: [85.939, 86.901, 187.329], heading: 225.05, scale: 0.9025 }, Obj { did: 0x4700_7F5A, pos: [92.493, 91.001, 187.369], heading: 311.70, scale: 1.0031 }]),
+    ("S8", 4, 0x7ADD, 166, [Obj { did: 0x4700_6A36, pos: [122.779, 107.565, 252.148], heading: 122.83, scale: 1.1231 }, Obj { did: 0x4700_0620, pos: [126.422, 101.922, 254.398], heading: 163.79, scale: 1.1500 }]),
+    ("S9", 5, 0x655A, 221, [Obj { did: 0x4700_D780, pos: [123.961, 37.660, 440.486], heading: 356.54, scale: 1.0304 }, Obj { did: 0x4700_8481, pos: [130.043, 34.487, 444.051], heading: 81.28, scale: 0.4816 }]),
+    ("S10", 5, 0x6FD9, 80, [Obj { did: 0x4700_7CB0, pos: [59.346, 42.853, 174.406], heading: 128.72, scale: 1.2184 }, Obj { did: 0x4700_7AA0, pos: [58.741, 41.622, 174.458], heading: 17.71, scale: 1.0178 }]),
+    ("S11", 14, 0x1FE2, 186, [Obj { did: 0x4700_09A6, pos: [109.528, 66.155, 450.852], heading: 291.40, scale: 0.5993 }, Obj { did: 0x4700_5B1E, pos: [106.341, 65.737, 450.953], heading: 88.19, scale: 0.7630 }]),
 ];
-
-/// Scenery rows whose listed objects `tessera-world`'s generation does not reproduce on
-/// 2026-10-06 (`walker.md` §14.11 OPEN, reported for the spec writer and the scenery
-/// implementer): reported, not asserted, so the other rows keep guarding the walker.
-const KNOWN_DIVERGENT: [&str; 5] = ["S1", "S5", "S6", "S8", "S10"];
 
 /// The smallest difference of two compass headings in degrees.
 fn heading_diff(a: f64, b: f64) -> f64 {
@@ -200,10 +198,16 @@ fn heading_diff(a: f64, b: f64) -> f64 {
 fn scenery_rows_place_their_objects() {
     let Some((_ctx, mut w)) = world() else { return };
     let mut failed = Vec::new();
-    for (id, region, block, objs) in &S_ROWS {
+    for (id, region, block, total, objs) in &S_ROWS {
         settle(&mut w, *region, *block, 80.0, 80.0);
         let bundle = w.bundle(key(*region, *block)).expect("resident");
         let mut fails = Vec::new();
+        if bundle.generated.len() != *total {
+            fails.push(format!(
+                "{} generated objects ≠ {total}",
+                bundle.generated.len()
+            ));
+        }
         for o in objs {
             let found = bundle.generated.iter().find(|e| {
                 e.object == Some(Did(o.did))
@@ -246,20 +250,12 @@ fn scenery_rows_place_their_objects() {
                 }
             }
         }
-        let known = KNOWN_DIVERGENT.contains(id);
-        if known && fails.is_empty() {
-            eprintln!("{id}: passes now; remove it from KNOWN_DIVERGENT");
-        }
-        let mut sink = Vec::new();
         report(
             id,
             &fails,
-            if known { &mut sink } else { &mut failed },
+            &mut failed,
             &format!("{} generated objects", bundle.generated.len()),
         );
-        if !sink.is_empty() {
-            eprintln!("{id}: known divergence (walker.md §14.11), not asserted");
-        }
     }
     assert!(failed.is_empty(), "rows failing: {failed:?}");
 }

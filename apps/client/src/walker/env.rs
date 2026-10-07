@@ -12,12 +12,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tessera_formats::Did;
+use tessera_formats::PropertyValue;
 use tessera_formats::terrain_type::FloatCurve as StoredCurve;
 use tessera_material::{CurveState, FloatCurve};
 use tessera_render::glam::Vec3;
 use tessera_render::{Fog, FrameLighting, Light, Rgba, SkyDraw, SkyObject, SunLight, SunShadow};
 use tessera_world::draw_distance::{FogClip, global_limit};
-use tessera_world::environment::{InteriorFog, SkyValues};
+use tessera_world::environment::{SkyValues, property_colour, sky_key_of};
 use tessera_world::lighting::LightRecord;
 use tessera_world::{
     Environment, EnvironmentFrame, LandblockKey, SkyLibrary, WorldPos, WorldStreamer,
@@ -182,9 +183,136 @@ fn to_linear(c: f32) -> f32 {
     super::geometry::srgb_unit_to_linear(c)
 }
 
+/// The sky key of the indoor record when no `Environment_IndoorAmbiance` is found
+/// (`landblock.md` §4.13).
+pub const DEFAULT_INDOOR_SKY_KEY: u32 = 1;
+
+/// The property IDs the indoor record reads (`landblock.md` §4.13), looked up by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IndoorPids {
+    /// `Environment_IndoorAmbiance`.
+    pub indoor_ambiance: Option<u32>,
+    /// `InteriorUpperAmbientLight`.
+    pub upper: Option<u32>,
+    /// `InteriorLowerAmbientLight`.
+    pub lower: Option<u32>,
+    /// `InteriorAmbientLight`.
+    pub ambient: Option<u32>,
+    /// `InteriorFogType`.
+    pub fog_type: Option<u32>,
+    /// `InteriorFogColor`.
+    pub fog_colour: Option<u32>,
+    /// `InteriorFogNear`.
+    pub fog_near: Option<u32>,
+    /// `InteriorFogFar`.
+    pub fog_far: Option<u32>,
+}
+
+impl IndoorPids {
+    /// Looks every property up with `pid_of` (name → PID).
+    #[must_use]
+    pub fn from_names(pid_of: impl Fn(&str) -> Option<u32>) -> Self {
+        Self {
+            indoor_ambiance: pid_of("Environment_IndoorAmbiance"),
+            upper: pid_of("InteriorUpperAmbientLight"),
+            lower: pid_of("InteriorLowerAmbientLight"),
+            ambient: pid_of("InteriorAmbientLight"),
+            fog_type: pid_of("InteriorFogType"),
+            fog_colour: pid_of("InteriorFogColor"),
+            fog_near: pid_of("InteriorFogNear"),
+            fog_far: pid_of("InteriorFogFar"),
+        }
+    }
+}
+
+/// The inputs of the indoor environment record (`landblock.md` §4.13), read at the camera
+/// position with the lookup order cell, landblock info, block map.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct IndoorInputs {
+    /// Sky key B: `Environment_IndoorAmbiance`, else [`DEFAULT_INDOOR_SKY_KEY`].
+    pub sky_key: u32,
+    /// `InteriorUpperAmbientLight` (RGB, 0–1).
+    pub upper: Option<[f32; 3]>,
+    /// `InteriorLowerAmbientLight`.
+    pub lower: Option<[f32; 3]>,
+    /// `InteriorAmbientLight`.
+    pub ambient: Option<[f32; 3]>,
+    /// `InteriorFogType` (enum key).
+    pub fog_type: Option<u32>,
+    /// `InteriorFogColor`.
+    pub fog_colour: Option<[f32; 3]>,
+    /// `InteriorFogNear`.
+    pub fog_near: Option<f32>,
+    /// `InteriorFogFar`.
+    pub fog_far: Option<f32>,
+}
+
+impl IndoorInputs {
+    /// Reads the inputs with `lookup(pid)`, which returns the first property set of the
+    /// lookup order that has `pid` (`landblock.md` §4.13). Colours are read as B, G, R, A
+    /// (`lighting.md` §4.4 Tessera Decision); values of the wrong type or not finite count
+    /// as absent.
+    #[must_use]
+    pub fn read<'a>(pids: &IndoorPids, lookup: impl Fn(u32) -> Option<&'a PropertyValue>) -> Self {
+        let get = |pid: Option<u32>| pid.and_then(&lookup);
+        let colour = |pid| match get(pid) {
+            Some(PropertyValue::Colour(c)) => {
+                let [r, g, b, _] = property_colour(*c);
+                Some([r, g, b])
+            }
+            _ => None,
+        };
+        let float = |pid| match get(pid) {
+            Some(PropertyValue::Float(f)) if f.is_finite() => Some(*f),
+            _ => None,
+        };
+        Self {
+            sky_key: get(pids.indoor_ambiance)
+                .and_then(sky_key_of)
+                .unwrap_or(DEFAULT_INDOOR_SKY_KEY),
+            upper: colour(pids.upper),
+            lower: colour(pids.lower),
+            ambient: colour(pids.ambient),
+            fog_type: get(pids.fog_type).and_then(sky_key_of),
+            fog_colour: colour(pids.fog_colour),
+            fog_near: float(pids.fog_near),
+            fog_far: float(pids.fog_far),
+        }
+    }
+
+    /// The up- and down-facing ambient *X* and *Y* of the indoor record when any of the
+    /// three ambient properties is present: upper (lower) plus the plain ambient, black for
+    /// an absent one, every channel limited to at most 1 (`landblock.md` §4.13).
+    #[must_use]
+    pub fn ambient_xy(&self) -> Option<([f32; 3], [f32; 3])> {
+        if self.upper.is_none() && self.lower.is_none() && self.ambient.is_none() {
+            return None;
+        }
+        let a = self.ambient.unwrap_or([0.0; 3]);
+        let add = |c: Option<[f32; 3]>| {
+            let c = c.unwrap_or([0.0; 3]);
+            std::array::from_fn(|i| (c[i] + a[i]).min(1.0))
+        };
+        Some((add(self.upper), add(self.lower)))
+    }
+
+    /// Whether the indoor record has fog: with `InteriorFogType` present exactly when it
+    /// is 1 (Linear) and `switch` is on; otherwise `switch` (the keyframe's fog).
+    #[must_use]
+    pub fn fog_on(&self, switch: bool) -> bool {
+        match self.fog_type {
+            Some(t) => switch && t == 1,
+            None => switch,
+        }
+    }
+}
+
 /// The walker's environment (module docs).
 pub struct WorldEnv {
     env: Option<Environment>,
+    /// The indoor record's environment (`landblock.md` §4.13): blended on its own from sky
+    /// key B, so the change between the two records is immediate.
+    indoor: Option<Environment>,
     frame: Option<EnvironmentFrame>,
     /// The rate before a pause, while paused.
     paused: Option<f64>,
@@ -207,36 +335,13 @@ impl WorldEnv {
     /// with the clock set from `clock`.
     #[must_use]
     pub fn new(library: Option<Arc<SkyLibrary>>, clock: &ClockConfig) -> Self {
-        let env = library.map(|lib| {
-            let mut e = Environment::new(lib);
-            e.set_day_type(clock.day_type);
-            let cal = e.clock().calendar().clone();
-            let at = |day: i64| {
-                clock_seconds(
-                    cal.days_per_year,
-                    cal.day_length,
-                    cal.zero_offset,
-                    cal.zero_year,
-                    day,
-                    clock.time_of_day,
-                )
-                .filter(|g| g.abs() <= tessera_world::environment::MAX_GAME_SECONDS)
-            };
-            let g = at(clock.day).or_else(|| {
-                tracing::warn!(
-                    day = clock.day,
-                    "the clock cannot hold this day; starting on day {DEFAULT_DAY}"
-                );
-                at(DEFAULT_DAY)
-            });
-            if let Some(g) = g {
-                e.set_game_seconds(g);
-            }
-            e.set_rate(clock.rate);
-            e
-        });
+        let indoor = library
+            .clone()
+            .map(|lib| started_environment(lib, clock, false));
+        let env = library.map(|lib| started_environment(lib, clock, true));
         Self {
             env,
+            indoor,
             frame: None,
             paused: None,
             curves: HashMap::new(),
@@ -245,6 +350,46 @@ impl WorldEnv {
         }
     }
 
+    /// The two environments (outdoor and indoor record), for clock changes.
+    fn each(&mut self) -> impl Iterator<Item = &mut Environment> {
+        self.env.iter_mut().chain(self.indoor.iter_mut())
+    }
+}
+
+/// An environment of `lib` with the clock set from `clock` (`warn`: log a day the clock
+/// cannot hold).
+fn started_environment(lib: Arc<SkyLibrary>, clock: &ClockConfig, warn: bool) -> Environment {
+    let mut e = Environment::new(lib);
+    e.set_day_type(clock.day_type);
+    let cal = e.clock().calendar().clone();
+    let at = |day: i64| {
+        clock_seconds(
+            cal.days_per_year,
+            cal.day_length,
+            cal.zero_offset,
+            cal.zero_year,
+            day,
+            clock.time_of_day,
+        )
+        .filter(|g| g.abs() <= tessera_world::environment::MAX_GAME_SECONDS)
+    };
+    let g = at(clock.day).or_else(|| {
+        if warn {
+            tracing::warn!(
+                day = clock.day,
+                "the clock cannot hold this day; starting on day {DEFAULT_DAY}"
+            );
+        }
+        at(DEFAULT_DAY)
+    });
+    if let Some(g) = g {
+        e.set_game_seconds(g);
+    }
+    e.set_rate(clock.rate);
+    e
+}
+
+impl WorldEnv {
     /// Whether a sky library was loaded.
     #[must_use]
     pub fn has_sky(&self) -> bool {
@@ -253,35 +398,45 @@ impl WorldEnv {
 
     /// Moves the time of day by `steps` × [`TIME_STEP`] (keys `[` and `]`).
     pub fn step_time(&mut self, steps: f64) {
-        if let Some(e) = &mut self.env {
-            let t = e.clock().read().time_of_day;
+        let Some(t) = self.env.as_ref().map(|e| e.clock().read().time_of_day) else {
+            return;
+        };
+        for e in self.each() {
             e.set_time_of_day(t + steps * TIME_STEP);
         }
     }
 
     /// Stops or restarts the clock (key `\`).
     pub fn toggle_pause(&mut self) -> bool {
-        let Some(e) = &mut self.env else { return false };
-        match self.paused.take() {
-            Some(rate) => {
-                e.set_rate(resume_rate(rate));
-                false
-            }
+        let Some(current) = self.env.as_ref().map(|e| e.clock().rate()) else {
+            return false;
+        };
+        let (rate, paused) = match self.paused.take() {
+            Some(rate) => (resume_rate(rate), false),
             None => {
-                self.paused = Some(e.clock().rate());
-                e.set_rate(0.0);
-                true
+                self.paused = Some(current);
+                (0.0, true)
             }
+        };
+        for e in self.each() {
+            e.set_rate(rate);
         }
+        paused
     }
 
     /// Multiplies the clock rate by `factor` (keys `-` and `=`, [`scaled_rate`]). While
     /// paused, the rate the clock resumes at is scaled and the clock stays stopped.
     pub fn scale_rate(&mut self, factor: f64) {
-        if let Some(e) = &mut self.env {
-            match &mut self.paused {
-                Some(stored) => *stored = scaled_rate(resume_rate(*stored), factor),
-                None => e.set_rate(scaled_rate(e.clock().rate(), factor)),
+        let Some(current) = self.env.as_ref().map(|e| e.clock().rate()) else {
+            return;
+        };
+        match &mut self.paused {
+            Some(stored) => *stored = scaled_rate(resume_rate(*stored), factor),
+            None => {
+                let rate = scaled_rate(current, factor);
+                for e in self.each() {
+                    e.set_rate(rate);
+                }
             }
         }
     }
@@ -292,15 +447,18 @@ impl WorldEnv {
         self.env.as_ref().map_or(0.0, |e| e.clock().rate())
     }
 
-    /// Advances the clock by `dt` real seconds with `sky_key` under the camera and the
-    /// interior fog of its cell, and returns the frame's environment. `extent` is the
+    /// Advances the clock by `dt` real seconds and returns the frame's environment
+    /// (`landblock.md` §4.13): the outdoor record from `sky_key` (key A) under the camera,
+    /// or, with `indoor` (the camera inside, outdoor-visible clear), the indoor record from
+    /// its key B with the interior overrides and no sun or moon. Both records blend every
+    /// frame, each on its own, so the change between them is immediate. `extent` is the
     /// landscape extent *E*; `eye` and `forward` place the shadow map.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         dt: f64,
         sky_key: Option<u32>,
-        interior: Option<InteriorFog>,
+        indoor: Option<&IndoorInputs>,
         systems: &Systems,
         extent: f32,
         eye: Vec3,
@@ -308,11 +466,9 @@ impl WorldEnv {
         time: f32,
     ) -> FrameEnv {
         let sky_on = systems.on(System::Sky);
-        let frame = match (&mut self.env, sky_on) {
-            (Some(e), true) => {
-                e.set_interior_fog(interior);
-                Some(e.update(dt, sky_key))
-            }
+        let key_b = indoor.map_or(DEFAULT_INDOOR_SKY_KEY, |i| i.sky_key);
+        let step = |env: &mut Option<Environment>, key: Option<u32>| match (env, sky_on) {
+            (Some(e), true) => Some(e.update(dt, key)),
             (Some(e), false) => {
                 // The clock runs on; the values are the defaults.
                 e.clock_mut().advance(dt);
@@ -320,13 +476,34 @@ impl WorldEnv {
             }
             _ => None,
         };
+        let outdoor = step(&mut self.env, sky_key);
+        let inside = step(&mut self.indoor, Some(key_b));
+        let frame = if indoor.is_some() { inside } else { outdoor };
         let values = frame
             .as_ref()
             .map_or_else(SkyValues::defaults, |f| f.values.clone());
-        let li = values.lighting();
+        let mut li = values.lighting();
+        let mut fog_on = systems.on(System::Fog) && frame.is_some();
+        if let Some(ind) = indoor {
+            if let Some((x, y)) = ind.ambient_xy() {
+                li.ambient_up = x;
+                li.ambient_down = y;
+                li.frame_ambient = std::array::from_fn(|i| 0.5 * (x[i] + y[i]));
+                li.frame_hemispheric = std::array::from_fn(|i| 0.5 * (x[i] - y[i]));
+            }
+            fog_on = ind.fog_on(fog_on);
+            if let Some(c) = ind.fog_colour {
+                li.fog_colour = c;
+            }
+            if let Some(n) = ind.fog_near {
+                li.fog_near = n;
+            }
+            if let Some(f) = ind.fog_far {
+                li.fog_far = f;
+            }
+        }
         let toward = Vec3::from_array(li.sun_travel) * -1.0;
         let toward = toward.try_normalize().unwrap_or(Vec3::Z);
-        let fog_on = systems.on(System::Fog) && frame.is_some();
         let fog = fog_on.then(|| {
             Fog {
                 near: li.fog_near,
@@ -335,23 +512,26 @@ impl WorldEnv {
             }
             .limited()
         });
-        let shadow = (systems.on(System::Shadows) && toward.z > SHADOW_MIN_ELEVATION).then(|| {
-            let f = Vec3::new(forward.x, forward.y, 0.0)
-                .try_normalize()
-                .unwrap_or(Vec3::ZERO);
-            SunShadow::fit(
-                toward,
-                eye + f * (SHADOW_RADIUS * 0.6),
-                SHADOW_RADIUS,
-                SHADOW_DISTANCE,
-                SHADOW_MAP,
-            )
-        });
+        // Sun and moon give no light indoors (§4.13), so no shadow either.
+        let sun_on = indoor.is_none();
+        let shadow = (sun_on && systems.on(System::Shadows) && toward.z > SHADOW_MIN_ELEVATION)
+            .then(|| {
+                let f = Vec3::new(forward.x, forward.y, 0.0)
+                    .try_normalize()
+                    .unwrap_or(Vec3::ZERO);
+                SunShadow::fit(
+                    toward,
+                    eye + f * (SHADOW_RADIUS * 0.6),
+                    SHADOW_RADIUS,
+                    SHADOW_DISTANCE,
+                    SHADOW_MAP,
+                )
+            });
         let lighting = FrameLighting {
             up: Vec3::Z,
             ambient: li.frame_ambient,
             hemispheric: li.frame_hemispheric,
-            sun: Some(SunLight {
+            sun: sun_on.then_some(SunLight {
                 direction: toward,
                 color: li.sun_colour,
                 specular: li.sun_specular,
@@ -397,7 +577,8 @@ impl WorldEnv {
     /// [`MAX_TABLE_LIGHTS`], nearest first): the frame's light table in the render frame of
     /// `anchor` (`lighting.md` §8.3: day/night variants by the Tessera rule, intensity
     /// curves on the global clock `time`, *σ* = 1), and the same lights as the terrain sees
-    /// them. Interior lights only with `interiors`.
+    /// them. Outdoor lights only with `outdoor`, interior ones only with `interior`
+    /// (`walker.md` §14.11: the camera's side of the portal system).
     pub fn lights(
         &mut self,
         streamer: &WorldStreamer,
@@ -405,7 +586,7 @@ impl WorldEnv {
         eye: &WorldPos,
         night: bool,
         time: f64,
-        interiors: bool,
+        (outdoor, interior): (bool, bool),
     ) -> (Vec<Light>, Vec<TerrainLight>) {
         let mut lights = Vec::new();
         let mut terrain = Vec::new();
@@ -415,7 +596,7 @@ impl WorldEnv {
                 break;
             }
             let l = near.light;
-            if l.interior && !interiors {
+            if (l.interior && !interior) || (!l.interior && !outdoor) {
                 continue;
             }
             let (range, on) = l.params.at_time(night);
@@ -596,5 +777,83 @@ mod tests {
         let f = env.update(0.016, None, None, &off, 2_080.0, Vec3::ZERO, Vec3::X, 0.0);
         assert!(f.lighting.shadow.is_none());
         assert!(!env.toggle_pause(), "no clock to pause");
+    }
+
+    /// `landblock.md` §4.13: the indoor record (row Y5 worked through).
+    #[test]
+    fn the_indoor_record_takes_the_interior_overrides_and_has_no_sun() {
+        use tessera_formats::PropertyValue;
+        let pids = IndoorPids {
+            indoor_ambiance: Some(1),
+            upper: Some(2),
+            lower: Some(3),
+            ambient: Some(4),
+            fog_type: Some(5),
+            fog_colour: Some(6),
+            fog_near: Some(7),
+            fog_far: Some(8),
+        };
+        // The Y5 landblock-info set: ambient stored (8, 25, 8, 255), linear fog 0.059–90
+        // in stored (2, 14, 11, 255).
+        let set: HashMap<u32, PropertyValue> = HashMap::from([
+            (4, PropertyValue::Colour([8, 25, 8, 255])),
+            (5, PropertyValue::Enum(1)),
+            (6, PropertyValue::Colour([2, 14, 11, 255])),
+            (7, PropertyValue::Float(0.059)),
+            (8, PropertyValue::Float(90.0)),
+        ]);
+        let ind = IndoorInputs::read(&pids, |pid| set.get(&pid));
+        assert_eq!(ind.sky_key, DEFAULT_INDOOR_SKY_KEY);
+        let c = |r: u8, g: u8, b: u8| [r, g, b].map(|v| f32::from(v) / 255.0);
+        assert_eq!(ind.fog_colour, Some(c(11, 14, 2)));
+        let (x, y) = ind.ambient_xy().expect("ambient present");
+        assert_eq!((x, y), (c(8, 25, 8), c(8, 25, 8)));
+        assert!(ind.fog_on(true) && !ind.fog_on(false));
+        for (t, on) in [(0, false), (2, false), (7, false)] {
+            let other = IndoorInputs {
+                fog_type: Some(t),
+                ..ind
+            };
+            assert_eq!(other.fog_on(true), on, "type {t}");
+        }
+        let none = IndoorInputs::default();
+        assert!(none.ambient_xy().is_none());
+        assert!(none.fog_on(true), "absent: the keyframe's fog");
+        let bright = IndoorInputs {
+            upper: Some([0.95, 0.0, 0.0]),
+            ambient: Some([0.1, 0.2, 0.3]),
+            ..none
+        };
+        let (x, y) = bright.ambient_xy().unwrap();
+        assert_eq!(x[0], 1.0, "limited to 1");
+        assert_eq!(y, [0.1, 0.2, 0.3], "lower absent: black + ambient");
+
+        let mut env = WorldEnv::new(None, &ClockConfig::default());
+        let f = env.update(
+            0.016,
+            None,
+            Some(&bright),
+            &Systems::all(),
+            2_080.0,
+            Vec3::ZERO,
+            Vec3::X,
+            0.0,
+        );
+        assert!(f.lighting.sun.is_none() && f.lighting.shadow.is_none());
+        assert!((f.lighting.ambient[0] - 0.55).abs() < 1e-6);
+        assert!((f.lighting.hemispheric[0] - 0.45).abs() < 1e-6);
+        assert_eq!(f.lighting.ambient[1], 0.2);
+        // Outdoors again: the sun is back at once.
+        let f = env.update(
+            0.016,
+            None,
+            None,
+            &Systems::all(),
+            2_080.0,
+            Vec3::ZERO,
+            Vec3::X,
+            0.0,
+        );
+        assert!(f.lighting.sun.is_some());
     }
 }

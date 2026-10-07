@@ -939,22 +939,133 @@ fn walkable_slopes_are_climbed_steep_slopes_slide() {
     run(&set, &mut c, forward(), 240);
     assert!(z(&c) < 0.35, "did not climb the 60° ramp: z {}", z(&c));
 
-    // Standing on the 60° slope: slides down (state 6), even pushing uphill.
+    // Standing on the 60° slope: slides down (state 6), even pushing uphill. A step that
+    // starts on the steep support never climbs (the vertical plane of §11.3); back on the
+    // floor the walker rides onto the foot of the slope again, which is not a slide step.
     let mut c = controller([4.0, 0.0, 5.0], 0.0);
     let mut saw_slide = false;
     let mut last = f64::INFINITY;
     let env = StepEnv::new(&set, [0.0; 3]);
     for _ in 0..240 {
+        let before = c.state().element;
         c.step(&forward(), &env);
         assert!(penetration(&set, &c) >= -0.01);
         if c.state().element == MovementState::EarthUncontrolledSurface {
             saw_slide = true;
-            assert!(z(&c) <= last + 1e-4, "sliding never climbs");
+            if before == MovementState::EarthUncontrolledSurface {
+                assert!(z(&c) <= last + 1e-4, "sliding never climbs");
+            }
         }
         last = z(&c);
     }
     assert!(saw_slide, "slid on the steep slope");
     assert!(z(&c) < 0.35, "slid down to the floor: z {}", z(&c));
+}
+
+/// `collision.md` §11.3 (mechanism) and §12.3 step 6, OPEN (e)–(f): a walker running from
+/// walkable ground into a band steeper than walkable rides onto its foot, its support
+/// underfoot becomes the steep face (state 6), and it slides back instead of being held as
+/// against a wall; it never climbs the band. The pass condition is that of the checklist's
+/// `noclimb` walks (`m4-5-visual.md` §2.2): feet never above the foot of the band + 0.60 m,
+/// never farther than the foot + 0.60 m, state 6 at least once.
+#[test]
+fn steep_band_met_from_walkable_ground_is_slid_on_not_climbed() {
+    for deg in [46.0_f32, 50.0, 55.0, 61.0, 80.0] {
+        for (heading, input) in [
+            (0.0_f32, forward()),
+            (
+                0.0,
+                MoveInput {
+                    forward: 0.3,
+                    ..MoveInput::default()
+                },
+            ),
+        ] {
+            let mut s = Scene::new();
+            s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+            ramp(&mut s, 2.0, deg, 4.0);
+            let set = s.build();
+            let mut c = controller([0.0, 0.0, 0.0], heading);
+            run(&set, &mut c, MoveInput::default(), 5);
+            let env = StepEnv::new(&set, [0.0; 3]);
+            let (mut steep, mut zmax, mut xmax) = (0usize, f64::MIN, f64::MIN);
+            for _ in 0..240 {
+                let r = c.step(&input, &env);
+                assert_eq!(r.outcome, StepOutcome::Stepped);
+                assert!(c.state().is_finite());
+                assert!(penetration(&set, &c) >= -0.01, "{deg}°: penetration");
+                steep += usize::from(c.state().element == MovementState::EarthUncontrolledSurface);
+                zmax = zmax.max(z(&c));
+                xmax = xmax.max(x(&c));
+            }
+            assert!(
+                steep > 0,
+                "{deg}° ({}): state 6 at least once",
+                input.forward
+            );
+            assert!(zmax < 0.60, "{deg}°: never climbs: zmax {zmax}");
+            // The foot of the band is where the capsule first touches it.
+            assert!(
+                xmax < 2.0 + 0.60,
+                "{deg}°: stays near the foot: xmax {xmax}"
+            );
+        }
+    }
+    // Just walkable (44°): climbed, never state 6.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 44.0, 10.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    for _ in 0..240 {
+        c.step(&forward(), &env);
+        assert_ne!(c.state().element, MovementState::EarthUncontrolledSurface);
+    }
+    assert!(z(&c) > 3.0, "walked up the 44° ramp: z {}", z(&c));
+    // Diagonally into a 60° band: the walker keeps moving along its foot.
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 60.0, 4.0);
+    let set = s.build();
+    let mut c = controller([0.0, -4.0, 0.0], 0.5);
+    run(&set, &mut c, forward(), 240);
+    assert!(z(&c) < 0.35 && x(&c) < 2.6, "{:?}", c.state().position);
+    assert!(
+        c.state().position[1] > -1.0,
+        "moved along the band: {:?}",
+        c.state().position
+    );
+}
+
+/// On steep support a steep contact adds the vertical plane of its normal's horizontal
+/// part (§11.3): a mover that lands on a steep face while moving toward the uphill side
+/// stops climbing at once and slides down.
+#[test]
+fn landing_on_a_steep_face_moving_uphill_slides_down() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 2.0, 50.0, 0.0);
+    ramp(&mut s, 2.0, 55.0, 6.0);
+    let set = s.build();
+    let mut c = controller([3.0, 0.0, 3.0], 0.0);
+    let mut state = *c.state();
+    state.velocity = [5.0, 0.0, 0.0];
+    assert!(c.set_state(state));
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut on_steep = false;
+    let mut last = z(&c);
+    for _ in 0..240 {
+        let before = c.state().element;
+        c.step(&forward(), &env);
+        assert!(penetration(&set, &c) >= -0.01);
+        if before == MovementState::EarthUncontrolledSurface {
+            on_steep = true;
+            assert!(z(&c) <= last + 1e-4, "no climbing on steep support");
+        }
+        last = z(&c);
+    }
+    assert!(on_steep);
+    assert!(z(&c) < 0.35, "slid down: {:?}", c.state().position);
 }
 
 #[test]
@@ -2066,4 +2177,52 @@ fn column_water_queries_match_the_generic_one() {
         ];
         assert_eq!(view.water_at(p), LiquidWater(&view).water_at(p), "{p:?}");
     }
+}
+
+/// Finding (walk GN1 of `m4-5-visual.md`, 2026-10-07): a slope falling across the path
+/// (about 33°) with a shallow concave crease across it, where the second triangle's normal
+/// differs from the first by less than §11.3's merge tolerance (0.035 per component). The
+/// motion slid along the first face still ran into the second, the merged plane list kept
+/// only the first normal, and the walker stopped dead at the crease with full forward
+/// speed. A merging normal now replaces the listed one (`collision.md` §12.3 OPEN (u)).
+#[test]
+fn shallow_concave_crease_across_a_side_slope_is_crossed() {
+    // Plane z = -sx·x + sy·y, below y = 0 with sy = 0.128, above with sy = 0.153: the
+    // unit normals differ by about 0.02 in y, so they merge.
+    let (sx, sy0, sy1) = (0.647_f32, 0.128_f32, 0.153_f32);
+    let za = |x: f32, y: f32| -sx * x + sy0 * y;
+    let zb = |x: f32, y: f32| -sx * x + sy1 * y;
+    let unit = |nx: f32, ny: f32| {
+        let l = (nx * nx + ny * ny + 1.0).sqrt();
+        [nx / l, ny / l, 1.0 / l]
+    };
+    let (na, nb) = (unit(sx, -sy0), unit(sx, -sy1));
+    assert!(tessera_physics::controller::normals_merge(na, nb));
+    let mut s = Scene::new();
+    for (x0, x1) in [(-10.0_f32, 0.0_f32), (0.0, 10.0)] {
+        s.tris(
+            &[
+                [x0, -20.0, za(x0, -20.0)],
+                [x1, -20.0, za(x1, -20.0)],
+                [x1, 0.0, za(x1, 0.0)],
+                [x0, 0.0, za(x0, 0.0)],
+                [x1, 20.0, zb(x1, 20.0)],
+                [x0, 20.0, zb(x0, 20.0)],
+            ],
+            &[[0, 1, 2], [0, 2, 3], [3, 2, 4], [3, 4, 5]],
+        );
+    }
+    let set = s.build();
+    let north = std::f32::consts::FRAC_PI_2;
+    let mut c = controller([0.0, -5.0, f64::from(za(0.0, -5.0)) + 0.5], north);
+    run(&set, &mut c, MoveInput::default(), 30);
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
+    let input = MoveInput {
+        heading: Some(north),
+        ..forward()
+    };
+    run(&set, &mut c, input, 120);
+    let p = c.state().position;
+    assert!(p[1] > 5.0, "crossed the crease: {p:?}");
+    assert_eq!(c.state().element, MovementState::EarthControlledSurface);
 }

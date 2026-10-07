@@ -16,10 +16,10 @@ use crate::frame::{
     Frame, FrameTarget, Pass, PassSpace, Rgba, WorldDraws, screen_projection, texture_runs,
 };
 use crate::instanced::InstancedState;
-use crate::lighting::{FrameUniform, MAX_DRAW_LIGHTS};
+use crate::lighting::{FrameUniform, LightReach, MAX_DRAW_LIGHTS};
 use crate::lit_pipelines::{
-    LIT_TEXTURES, LightSelector, LitContext, LitKey, LitKind, LitLayouts, LitPipelineCache,
-    LitTextures, SHADOW_FORMAT, draw_sphere, lit_fields,
+    LIT_TEXTURES, LightSelector, LightTarget, LitContext, LitKey, LitKind, LitLayouts,
+    LitPipelineCache, LitTextures, SHADOW_FORMAT, lit_fields,
 };
 use crate::material::{AlphaMode, DyeMask, Gloss, MeshShading, Opacity};
 use crate::mesh::{MeshData, MeshInfo, PreparedMesh};
@@ -1332,6 +1332,7 @@ impl<'w> Renderer<'w> {
         &mut self,
         draws: WorldDraws,
         frame: &FrameUniform,
+        reach: &[LightReach],
         view_proj: Mat4,
         eye: Vec3,
         format: wgpu::TextureFormat,
@@ -1339,7 +1340,7 @@ impl<'w> Renderer<'w> {
         target: &wgpu::TextureView,
         scene_copy: bool,
     ) -> Result<Vec<Arc<dyn PassHook>>> {
-        let selector = LightSelector::new(frame);
+        let selector = LightSelector::new(frame, reach);
         let copy_view = if scene_copy {
             self.scene_copy.as_ref().map(|c| c.view.clone())
         } else {
@@ -1728,7 +1729,7 @@ impl<'w> Renderer<'w> {
         let lit_frame = lit.filter(|_| shading == MeshShading::Lit);
         let casts_shadows = lit_frame.is_some_and(FrameUniform::has_shadow);
         // Built once per pass; each draw reuses `chosen_lights` (no per-draw allocation).
-        let selector = lit_frame.map(LightSelector::new);
+        let selector = lit_frame.map(|f| LightSelector::new(f, &pass.light_reach));
         let mut chosen_lights: Vec<u8> = Vec::with_capacity(MAX_DRAW_LIGHTS);
         for draw in &pass.meshes {
             let Some(mesh) = self.arena.get(draw.mesh) else {
@@ -1740,7 +1741,7 @@ impl<'w> Renderer<'w> {
             };
             let page = mesh.page;
             let has_tangents = mesh.info.has_tangents;
-            let mesh_sphere = mesh.info.sphere;
+            let mesh_aabb = mesh.info.aabb;
             let vertex_range = mesh.vertex_range.clone();
             // Skinned when the mesh has influences and the draw a usable
             // palette; otherwise the bind pose (static path).
@@ -1845,8 +1846,8 @@ impl<'w> Renderer<'w> {
                         normal_length,
                     },
                 );
-                let (center, radius) = draw_sphere(mesh_sphere, draw.transform);
-                selector.select(l.lights, center, radius, &mut chosen_lights);
+                let target = LightTarget::placed(mesh_aabb, draw.transform, draw.light_object);
+                selector.select(l.lights, &target, &mut chosen_lights);
                 lit_fields(
                     &mut uniform,
                     m,
@@ -2452,6 +2453,7 @@ impl<'w> Renderer<'w> {
                             let hooks = self.world_hooks(
                                 world,
                                 fu,
+                                &pass.light_reach,
                                 view_proj,
                                 eye,
                                 format,

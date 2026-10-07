@@ -45,6 +45,7 @@ pub mod frills;
 pub mod fxparse;
 pub(crate) mod geometry;
 pub(crate) mod hud;
+pub mod interiors;
 pub(crate) mod jobs;
 pub(crate) mod minimap;
 pub mod movement;
@@ -57,13 +58,14 @@ pub(crate) mod terrain;
 pub(crate) mod view;
 pub mod water;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_dat::ArchiveSet;
+use tessera_formats::{PropertySchema, PropertyType};
 use tessera_input::RawEvent;
 use tessera_net::{EntityId, Event, LocationCause, RegionId};
 use tessera_render::glam::{Mat4, Vec3};
@@ -72,21 +74,21 @@ use tessera_render::{
     PassSpace, Perspective, Renderer, Rgba,
 };
 use tessera_terrain::LodSelector;
-use tessera_world::environment::InteriorFog;
 use tessera_world::{
-    DistanceSettings, LANDBLOCK_SIZE, LandblockKey, StreamConfig, WorldContext, WorldPos,
-    WorldStreamer,
+    DistanceSettings, LANDBLOCK_SIZE, LandblockBundle, LandblockKey, StreamConfig, WorldContext,
+    WorldPos, WorldStreamer,
 };
 
 use self::characters::catalog::CharacterCatalog;
 use self::characters::figure::{ClipStore, FigureContext};
 use self::characters::{CharacterConfig, CharacterLayer};
 use self::controls::{Controls, MoveMode};
-use self::env::{ClockConfig, FrameEnv, WorldEnv};
+use self::env::{ClockConfig, FrameEnv, IndoorInputs, IndoorPids, WorldEnv};
 use self::framelog::{FrameLog, FrameRow, Rolling, rss_bytes};
 use self::frills::FrillLayer;
 use self::fxparse::{CameraLoop, System, Systems};
 use self::hud::TextPanel;
+use self::interiors::{BlockVisibility, InteriorView, OUTDOORS, SceneFlags};
 use self::minimap::{MinimapLayer, MinimapView};
 use self::objects::{ObjectConfig, ObjectFrame, ObjectLayer};
 use self::parse::FlyPath;
@@ -324,7 +326,9 @@ pub struct WalkerConfig {
     pub pixel_tolerance: f32,
     /// Terrain worker threads.
     pub terrain_threads: usize,
-    /// Draw interior (cell) entities too.
+    /// Load and draw every interior cell and interior entity whatever the camera's cell
+    /// (a debugging view; `walker.md` §14.11). Without it interiors are drawn through the
+    /// portal system of `landblock.md` §4.11 from inside only.
     pub interiors: bool,
     /// Keymap file.
     pub keymap: Option<PathBuf>,
@@ -567,6 +571,36 @@ pub struct Walker {
     /// Main-thread phases of this frame, ms: terrain, object and minimap updates; terrain,
     /// object, water, sky and frill recording.
     phase_ms: [f64; 8],
+    /// Interior visibility per landblock (`landblock.md` §4.11), built when the camera
+    /// enters one of its cells, with the bundle it was built from.
+    visibility: HashMap<LandblockKey, (Arc<LandblockBundle>, Arc<BlockVisibility>)>,
+    /// Resident landblocks with an outdoor-walk entry cell (§4.12 step 1).
+    outdoor_entries: HashSet<LandblockKey>,
+    /// The camera's interior cell this frame (owner landblock, cell), `None` outdoors.
+    camera_cell: Option<(LandblockKey, u16)>,
+    /// The scene flags of this frame (§4.12).
+    scene: SceneFlags,
+    /// Property IDs of the indoor environment record (§4.13).
+    indoor_pids: IndoorPids,
+    /// The indoor record's inputs, the landblock they were read for and when (§4.13:
+    /// re-read on a landblock change, else at most every 2.5 s).
+    indoor: Option<(LandblockKey, Instant, IndoorInputs)>,
+    /// Visibility cells drawn in the last frame from inside (HUD).
+    interior_drawn: Option<usize>,
+}
+
+/// How often the indoor record's interior overrides are re-read while the camera stays in
+/// one landblock's cells (`landblock.md` §4.13).
+const INDOOR_REREAD: Duration = Duration::from_millis(2_500);
+
+/// The world context's property schema as an owned [`PropertySchema`] (the object layer
+/// decodes cell geometry records with it on its workers).
+struct ContextSchema(Arc<WorldContext>);
+
+impl PropertySchema for ContextSchema {
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self.0.schema().property_type(pid)
+    }
 }
 
 impl std::fmt::Debug for Walker {
@@ -628,7 +662,6 @@ impl Walker {
             config.terrain_threads.max(1),
             LodSelector::from_fov(720.0, FOV_Y, config.pixel_tolerance),
             mesh_cfg,
-            config.interiors,
             Arc::new(BlockInputs::from_context(&ctx)),
         )?;
         let objects = ObjectLayer::new(
@@ -637,7 +670,15 @@ impl Walker {
             config.objects,
             mesh_cfg,
             object_arena,
+            Some(Arc::new(ContextSchema(Arc::clone(&ctx)))),
         );
+        let indoor_pids = match catalog.data.registry() {
+            Ok(r) => IndoorPids::from_names(|n| r.dictionary().pid(n)),
+            Err(e) => {
+                tracing::warn!("property registry: {e}; interiors without their overrides");
+                IndoorPids::default()
+            }
+        };
         let minimap = MinimapLayer::new(Arc::clone(&set), &pool);
         let characters = CharacterLayer::new(
             config.characters,
@@ -777,6 +818,13 @@ impl Walker {
             render_stats: FrameStats::default(),
             camera_started: None,
             phase_ms: [0.0; 8],
+            visibility: HashMap::new(),
+            outdoor_entries: HashSet::new(),
+            camera_cell: None,
+            scene: SceneFlags::OUTDOORS,
+            indoor_pids,
+            indoor: None,
+            interior_drawn: None,
         })
     }
 
@@ -899,10 +947,25 @@ impl Walker {
             && self.terrain.settled()
             && self.objects.settled()
             && self.characters.settled()
-            && (!self.systems.on(System::Water) || self.water.settled())
-            && (!self.systems.on(System::Frills) || self.frills.settled())
-            && (!self.systems.on(System::Sky) || self.env.sky_settled(&self.objects))
+            && (!self.water_drawn() || self.water.settled())
+            && (!self.frills_drawn() || self.frills.settled())
+            && (!self.sky_drawn() || self.env.sky_settled(&self.objects))
             && self.resolver.pending() == 0
+    }
+
+    /// Whether landscape water is drawn: switched on and outdoor-visible (§4.12).
+    fn water_drawn(&self) -> bool {
+        self.systems.on(System::Water) && self.scene.outdoor_visible
+    }
+
+    /// Whether frills are drawn: switched on and outdoor-visible.
+    fn frills_drawn(&self) -> bool {
+        self.systems.on(System::Frills) && self.scene.outdoor_visible
+    }
+
+    /// Whether the sky is drawn: switched on and sky-visible (§4.12).
+    fn sky_drawn(&self) -> bool {
+        self.systems.on(System::Sky) && self.scene.sky_visible
     }
 
     /// What keeps [`Walker::settled`] false (diagnostics), empty when settled.
@@ -930,13 +993,13 @@ impl Walker {
         if !self.characters.settled() {
             out.push("characters");
         }
-        if self.systems.on(System::Water) && !self.water.settled() {
+        if self.water_drawn() && !self.water.settled() {
             out.push("water");
         }
-        if self.systems.on(System::Frills) && !self.frills.settled() {
+        if self.frills_drawn() && !self.frills.settled() {
             out.push("frills");
         }
-        if self.systems.on(System::Sky) && !self.env.sky_settled(&self.objects) {
+        if self.sky_drawn() && !self.env.sky_settled(&self.objects) {
             out.push("sky");
         }
         if self.resolver.pending() > 0 {
@@ -1060,6 +1123,7 @@ impl Walker {
             events.flight_done = done;
         }
         self.script_camera(now, dt);
+        self.update_camera_cell();
 
         // Streaming focus: the viewer, or where the sandbox needs data (module docs of
         // `source`).
@@ -1079,7 +1143,7 @@ impl Walker {
         }
         // The frill ring follows the camera and the player (`scenery.md` §8.2).
         let t_frills = Instant::now();
-        if self.systems.on(System::Frills) && self.controls.placed() {
+        if self.frills_drawn() && self.controls.placed() {
             let (eye, _) = self.view();
             let player = self.controls.focus();
             let _ = self.streamer.update_frills(&eye, &player);
@@ -1112,12 +1176,16 @@ impl Walker {
             };
             let cam = anchor.to_render(&eye_w).unwrap_or(Vec3::ZERO);
             let sky_key = self.streamer.sky_key_at(&eye_w);
-            let interior = self.interior_fog(&eye_w);
+            let indoor = if self.scene.outdoor_visible {
+                None
+            } else {
+                Some(self.indoor_inputs(now))
+            };
             let time = self.material_time();
             let fe = self.env.update(
                 f64::from(dt),
                 sky_key,
-                interior,
+                indoor.as_ref(),
                 &self.systems,
                 self.extent(),
                 cam,
@@ -1131,7 +1199,11 @@ impl Walker {
                     &eye_w,
                     fe.night,
                     time,
-                    self.config.interiors,
+                    if self.camera_cell.is_some() {
+                        (false, true)
+                    } else {
+                        (true, self.config.interiors)
+                    },
                 );
                 self.lights = lights;
                 self.terrain_lights = tl;
@@ -1363,22 +1435,94 @@ impl Walker {
             dt,
             fps: if fps > 0.0 { fps as f32 } else { 60.0 },
             camera_moved: moved,
+            interior: self.camera_cell.map(|(k, _)| k),
+            all_interiors: self.config.interiors,
         }
     }
 
-    /// The interior fog of the cell holding `eye` (`environment.md` §7.2, §12): the
-    /// cell's own properties, else its landblock info's.
-    fn interior_fog(&self, eye: &WorldPos) -> Option<InteriorFog> {
-        let (key, cell) = self.streamer.cell_at(eye)?;
-        let info = self.streamer.bundle(key)?.info.as_ref()?;
-        let pids = &self.ctx.systems().pids.environment;
-        let own = info
-            .cells
-            .as_ref()
-            .and_then(|c| c.items.iter().find(|x| x.index == cell.index))
-            .and_then(|c| c.properties.as_ref())
-            .and_then(|p| InteriorFog::from_set(p, pids));
-        own.or_else(|| InteriorFog::from_set(&info.properties, pids))
+    /// Finds the camera's interior cell (`landblock.md` §4.12 Tessera Decision): the cell
+    /// lookup at the eye; when it finds none but the walking character's feet are in a
+    /// cell, the character's cell. Then the frame's scene flags: inside, those of the
+    /// cell's PVS; outdoors, both set unless a resident landblock has an outdoor-walk entry
+    /// cell.
+    fn update_camera_cell(&mut self) {
+        let (eye, _) = self.controls.eye();
+        let mut cell = self
+            .streamer
+            .cell_at(&eye)
+            .map(|(k, c)| (k, c.index))
+            .filter(|(_, c)| *c != OUTDOORS);
+        if cell.is_none() && self.controls.mode() == MoveMode::Walk {
+            cell = self
+                .controls
+                .physics()
+                .and_then(movement::PhysicsWalker::cell);
+        }
+        self.camera_cell = cell;
+        self.scene = match cell {
+            Some((k, c)) => self
+                .visibility_of(k)
+                .map_or(SceneFlags::CLOSED, |v| v.scene_flags(c)),
+            None => interiors::outdoor_flags(!self.outdoor_entries.is_empty()),
+        };
+    }
+
+    /// The visibility of landblock `key`'s cells (`landblock.md` §4.11), built from its
+    /// resident bundle (portal polygons from its collision set) and kept while that
+    /// bundle stays resident.
+    fn visibility_of(&mut self, key: LandblockKey) -> Option<Arc<BlockVisibility>> {
+        let bundle = self.streamer.bundle(key)?;
+        if let Some((b, v)) = self.visibility.get(&key)
+            && Arc::ptr_eq(b, bundle)
+        {
+            return Some(Arc::clone(v));
+        }
+        let info = bundle.info.as_ref()?;
+        let col = bundle.collision.as_deref();
+        let vis = Arc::new(BlockVisibility::build(info, |cell, k| {
+            col.and_then(|c| c.cell(cell))
+                .and_then(|c| c.portals.get(k))
+                .map(|p| p.corners.clone())
+                .unwrap_or_default()
+        }));
+        tracing::debug!(
+            landblock = %key,
+            visibility_cells = vis.visibility_cells(),
+            portals = vis.portals().len(),
+            "interior visibility built"
+        );
+        let bundle = Arc::clone(bundle);
+        self.visibility
+            .retain(|k, _| self.streamer.bundle(*k).is_some());
+        self.visibility.insert(key, (bundle, Arc::clone(&vis)));
+        Some(vis)
+    }
+
+    /// The indoor record's inputs at the camera's cell (`landblock.md` §4.13): looked up
+    /// in the cell's property set, then its landblock info's, then its block map's; re-read
+    /// when the cell's landblock changes and otherwise at most every [`INDOOR_REREAD`].
+    fn indoor_inputs(&mut self, now: Instant) -> IndoorInputs {
+        let Some((key, index)) = self.camera_cell else {
+            return IndoorInputs::read(&self.indoor_pids, |_| None);
+        };
+        if let Some((k, at, inputs)) = &self.indoor
+            && *k == key
+            && now.saturating_duration_since(*at) < INDOOR_REREAD
+        {
+            return *inputs;
+        }
+        let bundle = self.streamer.bundle(key);
+        let info = bundle.and_then(|b| b.info.as_ref());
+        let cell = info
+            .and_then(|i| i.cell(index))
+            .and_then(|c| c.properties.as_ref());
+        let inputs = IndoorInputs::read(&self.indoor_pids, |pid| {
+            cell.and_then(|p| p.get(pid))
+                .or_else(|| info.and_then(|i| i.properties.get(pid)))
+                .or_else(|| bundle.and_then(|b| b.block_props.value(pid)))
+        });
+        self.indoor = Some((key, now, inputs));
+        inputs
     }
 
     /// The scripted camera of a timing run (`m4-5-visual.md` §3): it waits at its start
@@ -1486,6 +1630,15 @@ impl Walker {
             }
         }
         for (key, bundle) in fresh {
+            if bundle
+                .info
+                .as_ref()
+                .is_some_and(interiors::has_outdoor_entry)
+            {
+                self.outdoor_entries.insert(key);
+            } else {
+                self.outdoor_entries.remove(&key);
+            }
             if self
                 .terrain
                 .insert(key, &bundle, renderer, &mut self.objects)
@@ -1503,6 +1656,7 @@ impl Walker {
             .filter(|k| !resident.contains(k))
             .collect();
         for key in gone {
+            self.outdoor_entries.remove(&key);
             self.terrain.remove(key, renderer, &mut self.objects);
             self.objects.remove(key);
             self.minimap.remove(renderer, key);
@@ -1646,6 +1800,21 @@ impl Walker {
         out.push((format!("Map {map}"), WHITE));
         let heading = self.controls.heading();
         out.push((loc_text(&pos, heading), GREY));
+        if let Some((k, c)) = self.camera_cell {
+            out.push((
+                format!(
+                    "Inside: cell {c} of {k}, {} visibility cells drawn{}{}",
+                    self.interior_drawn.unwrap_or(0),
+                    if self.scene.sky_visible { ", sky" } else { "" },
+                    if self.scene.outdoor_visible {
+                        ", landscape"
+                    } else {
+                        ""
+                    },
+                ),
+                GREY,
+            ));
+        }
         if self.controls.mode() == MoveMode::Walk
             && let Some(w) = self.controls.physics()
         {
@@ -1866,7 +2035,19 @@ impl Walker {
                     far: self.far,
                 },
             };
-            let frustum = Frustum::from_view_proj(camera.view_proj(aspect));
+            let view_proj = camera.view_proj(aspect);
+            let frustum = Frustum::from_view_proj(view_proj);
+            // Interiors (`landblock.md` §4.11–§4.12): from inside, the portal walk from the
+            // camera's visibility cell decides which cells and interior objects are drawn,
+            // and the scene flags whether the landscape and the sky are.
+            let interior = self.camera_cell.and_then(|(k, c)| {
+                let vis = self.visibility.get(&k).map(|(_, v)| Arc::clone(v))?;
+                let off = anchor.offset_of(k)?;
+                let to_clip = view_proj * Mat4::from_translation(off);
+                Some(InteriorView::new(k, c, vis, eye - off, &to_clip))
+            });
+            self.interior_drawn = interior.as_ref().map(InteriorView::visible_count);
+            let scene = self.scene;
             let mut char_draws = std::mem::take(&mut self.char_draws);
             char_draws.clear();
             self.characters.set_shading(
@@ -1908,23 +2089,35 @@ impl Walker {
                 false
             };
             let t0 = Instant::now();
-            self.terrain.draw(
-                renderer,
-                pass,
-                &anchor,
-                &frustum,
-                eye,
-                &self.terrain_lights,
-                sun,
-            );
+            if scene.outdoor_visible {
+                self.terrain.draw(
+                    renderer,
+                    pass,
+                    &anchor,
+                    &frustum,
+                    eye,
+                    &self.terrain_lights,
+                    sun,
+                );
+            }
             let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
+            let all_interiors = self.config.interiors;
+            let inside = self.camera_cell.is_some();
+            let drawn = |key: LandblockKey, cell: u16| {
+                if cell == OUTDOORS {
+                    !inside
+                } else {
+                    all_interiors || interior.as_ref().is_some_and(|v| v.draws(key, cell))
+                }
+            };
             self.objects.draw(
                 pass,
                 &anchor,
                 eye,
                 &frustum,
                 self.characters.shown_figures(),
+                &drawn,
             );
             let t2 = Instant::now();
             for d in char_draws.drain(..) {
@@ -1947,7 +2140,7 @@ impl Walker {
                 pass.mesh(MeshDraw::new(mesh, tf, Material::color(color)));
             }
             let t3 = Instant::now();
-            if self.systems.on(System::Water) {
+            if self.water_drawn() {
                 self.water.draw(
                     pass,
                     &self.streamer,
@@ -1959,13 +2152,13 @@ impl Walker {
                 );
             }
             let t4 = Instant::now();
-            if self.systems.on(System::Sky)
+            if self.sky_drawn()
                 && let Some(sky) = self.env.sky(&mut self.resolver, &mut self.objects)
             {
                 pass.sky(sky);
             }
             let t5 = Instant::now();
-            if self.systems.on(System::Frills) {
+            if self.frills_drawn() {
                 let settings = self.streamer.config().frills;
                 self.frills.draw(
                     pass,
@@ -2086,6 +2279,10 @@ impl Walker {
     /// camera behind the avatar must not dip under a slope).
     fn view(&self) -> (WorldPos, Vec3) {
         let (mut eye, mut dir) = self.controls.eye();
+        // Inside an interior the terrain is not drawn and lies far above or below.
+        if self.camera_cell.is_some() {
+            return (eye, dir);
+        }
         if let Some(h) = self.terrain.tiles().height_at(eye.x, eye.y) {
             let min = f64::from(h) + 0.8;
             if eye.z < min {

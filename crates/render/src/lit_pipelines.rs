@@ -11,7 +11,9 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, FrameUniform, MAX_DRAW_LIGHTS};
+use crate::lighting::{
+    FRAME_SHADING_WGSL, FRAME_WGSL, FrameUniform, LightReach, MAX_DRAW_LIGHTS, reference,
+};
 use crate::material::{Gloss, LightSelection, LitSurface, Material, Opacity};
 use crate::mesh::GpuVertex;
 use crate::mesh_pipelines::{Cull, DrawUniform, MeshLayouts};
@@ -152,8 +154,58 @@ pub(crate) fn lit_fields(
 #[derive(Debug, Clone, Copy)]
 struct PointEntry {
     position: Vec3,
-    range: f32,
+    /// Selection radius ρ (`lighting.md` §8.5 step 1).
+    reach: f32,
     index: u8,
+    key: bool,
+    baked: bool,
+    parent: Option<u64>,
+    only_parent: bool,
+    never_parent: bool,
+}
+
+/// What a draw is, for light selection (`lighting.md` §8.5 steps 2–3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct LightTarget {
+    /// World-space axis-aligned bounding box; `None` when it is not finite (no point light
+    /// reaches the draw).
+    pub bounds: Option<(Vec3, Vec3)>,
+    /// A terrain or ceiling chunk: lights flagged as baked into the landscape skip it.
+    pub landscape: bool,
+    /// The caller's object handle ([`crate::MeshDraw::light_object`]), for the parent
+    /// switches.
+    pub object: Option<u64>,
+}
+
+impl LightTarget {
+    /// An object with the world box (`min`, `max`).
+    pub(crate) fn object(min: Vec3, max: Vec3, object: Option<u64>) -> Self {
+        let bounds =
+            (min.is_finite() && max.is_finite() && min.cmple(max).all()).then_some((min, max));
+        Self {
+            bounds,
+            landscape: false,
+            object,
+        }
+    }
+
+    /// The model-space box `aabb` placed with `transform`.
+    pub(crate) fn placed(aabb: crate::Aabb, transform: Mat4, object: Option<u64>) -> Self {
+        match aabb.transformed(transform) {
+            Some(b) => Self::object(b.min, b.max, object),
+            None => Self {
+                bounds: None,
+                landscape: false,
+                object,
+            },
+        }
+    }
+
+    /// The same target as a terrain or ceiling chunk.
+    pub(crate) fn landscape(mut self) -> Self {
+        self.landscape = true;
+        self
+    }
 }
 
 /// Per-pass light selection: the table's directional lights and its usable point lights
@@ -163,10 +215,10 @@ struct PointEntry {
 pub(crate) struct LightSelector {
     /// Directional table indices, in table order.
     directional: Vec<u8>,
-    /// Point lights with a positive range, sorted by `position.x`.
+    /// Point lights with a positive range and selection radius, sorted by `position.x`.
     points: Vec<PointEntry>,
-    /// Largest point-light range (for the x window).
-    max_range: f32,
+    /// Largest selection radius (for the x window).
+    max_reach: f32,
     /// Lights per draw: [`MAX_DRAW_LIGHTS`], minus one when the frame has a main light.
     limit: usize,
     /// Valid table entries.
@@ -174,12 +226,13 @@ pub(crate) struct LightSelector {
 }
 
 impl LightSelector {
-    /// The selector of a pass with frame uniform `frame`.
-    pub(crate) fn new(frame: &FrameUniform) -> Self {
+    /// The selector of a pass with frame uniform `frame`; `reach[i]` describes table entry
+    /// *i* ([`LightReach::default`] for entries past its end).
+    pub(crate) fn new(frame: &FrameUniform, reach: &[LightReach]) -> Self {
         let table_len = (frame.params[0] as usize).min(frame.lights.len());
         let mut directional = Vec::new();
         let mut points = Vec::new();
-        let mut max_range = 0.0f32;
+        let mut max_reach = 0.0f32;
         for (i, l) in frame.lights.iter().take(table_len).enumerate() {
             let Ok(index) = u8::try_from(i) else { break };
             if l.specular_kind[3] > 0.5 {
@@ -192,12 +245,26 @@ impl LightSelector {
             if r2.is_nan() || r2 <= 0.0 || !position.is_finite() {
                 continue;
             }
-            let range = r2.sqrt();
-            max_range = max_range.max(range);
+            let info = reach.get(i).copied().unwrap_or_default();
+            let reach = info
+                .radius
+                .filter(|r| r.is_finite() && *r >= 0.0)
+                .unwrap_or_else(|| r2.sqrt());
+            if reach.is_nan() || reach <= 0.0 {
+                // ρ = 0: the strict test `d² < ρ²` never passes. (An infinite range,
+                // whose square overflowed, reaches everything.)
+                continue;
+            }
+            max_reach = max_reach.max(reach);
             points.push(PointEntry {
                 position,
-                range,
+                reach,
                 index,
+                key: info.key_light,
+                baked: info.baked_landscape,
+                parent: info.parent,
+                only_parent: info.only_influence_parent,
+                never_parent: info.never_influence_parent,
             });
         }
         points.sort_by(|a, b| a.position.x.total_cmp(&b.position.x));
@@ -207,7 +274,7 @@ impl LightSelector {
         Self {
             directional,
             points,
-            max_range,
+            max_reach,
             limit,
             table_len,
         }
@@ -219,18 +286,18 @@ impl LightSelector {
         self.limit
     }
 
-    /// The light-table indices a draw with bounding sphere (`center`, `radius`) receives,
-    /// at most [`Self::limit`] of them.
+    /// The light-table indices `target` receives, at most [`Self::limit`] of them.
     ///
-    /// [`LightSelection::Auto`] (Tessera Decision of `lighting.md` §8.5): point lights whose
-    /// range sphere touches the bounding sphere, nearest centre first (ties by table
-    /// index), then directional lights in table order. Explicit lists keep their order and
-    /// drop indices past the table.
+    /// [`LightSelection::Auto`] (`lighting.md` §8.5, `render.md` §4.3): the point lights
+    /// whose squared distance to the target's box is below ρ², without the baked-landscape
+    /// lights on terrain and ceiling chunks and with the parent switches applied; key lights
+    /// first, each group nearest first (Tessera Decision of §8.5; ties by table index), then
+    /// directional lights in table order. Explicit lists keep their order and drop indices
+    /// past the table.
     pub(crate) fn select(
         &self,
         selection: LightSelection,
-        center: Vec3,
-        radius: f32,
+        target: &LightTarget,
         out: &mut Vec<u8>,
     ) {
         out.clear();
@@ -246,39 +313,51 @@ impl LightSelector {
                         .take(self.limit),
                 );
             }
-            LightSelection::Auto => self.select_auto(center, radius, out),
+            LightSelection::Auto => self.select_auto(target, out),
         }
     }
 
-    fn select_auto(&self, center: Vec3, radius: f32, out: &mut Vec<u8>) {
-        let center = if center.is_finite() {
-            center
-        } else {
-            Vec3::ZERO
+    /// Whether point light `p` may reach `target` (§8.5 step 3).
+    fn admits(p: &PointEntry, target: &LightTarget) -> bool {
+        if p.baked && target.landscape {
+            return false;
+        }
+        match p.parent {
+            None => true,
+            Some(parent) if target.object == Some(parent) => !p.never_parent,
+            Some(_) => !p.only_parent,
+        }
+    }
+
+    fn select_auto(&self, target: &LightTarget, out: &mut Vec<u8>) {
+        // The first `limit` reaching lights in (key first, distance², index) order.
+        type Rank = (bool, f32, u8);
+        let less = |a: Rank, b: Rank| {
+            b.0.cmp(&a.0)
+                .then(a.1.total_cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+                .is_lt()
         };
-        let radius = if radius.is_finite() {
-            radius.max(0.0)
-        } else {
-            0.0
-        };
-        // The nearest `limit` touching lights, kept sorted by (distance, index).
-        let mut best = [(0.0f32, 0u8); MAX_DRAW_LIGHTS];
+        let mut best: [Rank; MAX_DRAW_LIGHTS] = [(false, 0.0, 0); MAX_DRAW_LIGHTS];
         let mut len = 0usize;
-        if self.limit > 0 && !self.points.is_empty() {
-            let reach = radius + self.max_range;
-            let (lo, hi) = (center.x - reach, center.x + reach);
+        if let Some((min, max)) = target.bounds
+            && self.limit > 0
+            && !self.points.is_empty()
+        {
+            let (lo, hi) = (min.x - self.max_reach, max.x + self.max_reach);
             let start = self.points.partition_point(|p| p.position.x < lo);
             for p in self.points.get(start..).unwrap_or(&[]) {
                 if p.position.x > hi {
                     break;
                 }
-                let d = p.position.distance(center);
-                if d.is_nan() || d >= p.range + radius {
+                if !Self::admits(p, target) {
                     continue;
                 }
-                let key = (d, p.index);
-                let less =
-                    |a: (f32, u8), b: (f32, u8)| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).is_lt();
+                let d2 = reference::box_distance2(p.position, min, max);
+                if d2.is_nan() || d2 >= p.reach * p.reach {
+                    continue;
+                }
+                let key = (p.key, d2, p.index);
                 if len == self.limit && !less(key, best[len - 1]) {
                     continue;
                 }
@@ -291,7 +370,7 @@ impl LightSelector {
                 len = (len + 1).min(self.limit);
             }
         }
-        out.extend(best[..len].iter().map(|&(_, i)| i));
+        out.extend(best[..len].iter().map(|&(_, _, i)| i));
         let room = self.limit.saturating_sub(out.len());
         out.extend(self.directional.iter().copied().take(room));
     }
@@ -596,16 +675,10 @@ fn normalize(key: LitKey) -> LitKey {
     }
 }
 
-/// The world-space bounding sphere of a draw (for light selection).
-pub(crate) fn draw_sphere(sphere: crate::BoundingSphere, transform: Mat4) -> (Vec3, f32) {
-    let s = sphere.transformed(transform);
-    (s.center, s.radius)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lighting::{FrameLighting, Light, LightKind};
+    use crate::lighting::{FrameLighting, Light, LightFields, LightKind};
     use crate::material::Specular;
 
     fn validate(src: &str) {
@@ -711,6 +784,11 @@ mod tests {
         FrameUniform::new(&l, Mat4::IDENTITY, Vec3::ZERO, false)
     }
 
+    /// A unit box around `c` (or a point box with `half` 0).
+    fn boxed(c: Vec3, half: f32) -> LightTarget {
+        LightTarget::object(c - Vec3::splat(half), c + Vec3::splat(half), None)
+    }
+
     #[test]
     fn auto_selection_is_nearest_first() {
         let mut lights: Vec<Light> = (0..12)
@@ -722,35 +800,38 @@ mod tests {
             specular: [1.0; 3],
         });
         // FrameLighting::default() has a sun: 7 table lights at most (lighting.md §8.5).
-        let sel = LightSelector::new(&frame_with(lights.clone(), true));
+        let sel = LightSelector::new(&frame_with(lights.clone(), true), &[]);
         assert_eq!(sel.limit(), MAX_DRAW_LIGHTS - 1);
         let mut out = Vec::new();
-        // Sphere at x = 10 with radius 1: lights within 6 of the centre touch it.
+        // Box from x = 9 to 11: without reach entries ρ = R = 5, so lights at x in (4, 16).
         sel.select(
             LightSelection::Auto,
-            Vec3::new(10.0, 0.0, 0.0),
-            1.0,
+            &boxed(Vec3::new(10.0, 0.0, 0.0), 1.0),
             &mut out,
         );
         assert_eq!(out, vec![3, 4, 2, 5, 12]);
         // Far away: only the directional light.
-        sel.select(LightSelection::Auto, Vec3::splat(1e6), 1.0, &mut out);
+        sel.select(
+            LightSelection::Auto,
+            &boxed(Vec3::splat(1e6), 1.0),
+            &mut out,
+        );
         assert_eq!(out, vec![12]);
-        // A huge sphere touches everything: 7 at most with the sun, nearest first.
-        sel.select(LightSelection::Auto, Vec3::ZERO, 1e5, &mut out);
+        // A huge box contains everything: 7 at most with the sun, by index (all at 0).
+        sel.select(LightSelection::Auto, &boxed(Vec3::ZERO, 1e5), &mut out);
         assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6]);
         // Without a main light the draw takes 8.
-        let no_sun = LightSelector::new(&frame_with(lights.clone(), false));
-        no_sun.select(LightSelection::Auto, Vec3::ZERO, 1e5, &mut out);
+        let no_sun = LightSelector::new(&frame_with(lights.clone(), false), &[]);
+        no_sun.select(LightSelection::Auto, &boxed(Vec3::ZERO, 1e5), &mut out);
         assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6, 7]);
         // Explicit lists drop indices past the table and keep the cap.
+        let t = boxed(Vec3::ZERO, 1.0);
         sel.select(
             LightSelection::List {
                 indices: [200, 1, 0, 0, 0, 0, 0, 0],
                 count: 2,
             },
-            Vec3::ZERO,
-            1.0,
+            &t,
             &mut out,
         );
         assert_eq!(out, vec![1]);
@@ -759,8 +840,7 @@ mod tests {
                 indices: [1, 2, 3, 4, 5, 6, 7, 8],
                 count: 8,
             },
-            Vec3::ZERO,
-            1.0,
+            &t,
             &mut out,
         );
         assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7]);
@@ -769,24 +849,127 @@ mod tests {
                 indices: [1, 2, 3, 4, 5, 6, 7, 8],
                 count: u8::MAX,
             },
-            Vec3::ZERO,
-            1.0,
+            &t,
             &mut out,
         );
         assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8]);
-        sel.select(LightSelection::None, Vec3::ZERO, 1.0, &mut out);
+        sel.select(LightSelection::None, &t, &mut out);
         assert!(out.is_empty());
-        // Hostile spheres select without panicking.
-        sel.select(LightSelection::Auto, Vec3::NAN, f32::INFINITY, &mut out);
+        // Hostile boxes select without panicking; a non-finite box gets no point light.
         sel.select(
             LightSelection::Auto,
-            Vec3::splat(f32::MAX),
-            f32::MAX,
+            &LightTarget::object(Vec3::NAN, Vec3::INFINITY, None),
             &mut out,
         );
+        assert_eq!(out, vec![12]);
+        sel.select(
+            LightSelection::Auto,
+            &LightTarget::object(Vec3::splat(-f32::MAX), Vec3::splat(f32::MAX), None),
+            &mut out,
+        );
+        let placed = LightTarget::placed(
+            crate::Aabb {
+                min: Vec3::ZERO,
+                max: Vec3::splat(2.0),
+            },
+            Mat4::from_scale(Vec3::splat(f32::MAX)),
+            None,
+        );
+        assert_eq!(placed.bounds, None);
     }
 
-    /// The bounded, windowed selection equals a brute-force sort of every touching light.
+    /// lighting.md §8.5 steps 1–2: ρ from Range and Falloff, strict box test.
+    #[test]
+    fn selection_radius_and_box_test() {
+        let at = |x: f32| Light::point(Vec3::new(x, 0.0, 0.0), 10.0, 0.1, [1.0; 3]);
+        let lights = vec![at(-8.4), at(-8.6), at(18.0)];
+        let fields = |falloff: f32, global: bool| LightFields {
+            range: 10.0,
+            falloff,
+            global_light: global,
+            ..LightFields::default()
+        };
+        // Falloff 1 (and above): ρ = 8.5; Falloff 0.5: 9.25; GlobalLight: 10.
+        let reach = [
+            LightReach::from_fields(&fields(1.0, false)),
+            LightReach::from_fields(&fields(3.0, false)),
+            LightReach::from_fields(&fields(0.5, true)),
+        ];
+        let close = |r: Option<f32>, want: f32| r.is_some_and(|r| (r - want).abs() < 1e-5);
+        assert!(close(reach[0].radius, 8.5), "{:?}", reach[0].radius);
+        assert!(close(reach[1].radius, 8.5));
+        assert!(close(reach[2].radius, 10.0));
+        assert!((reference::selection_radius(10.0, 0.5, false) - 9.25).abs() < 1e-6);
+        let sel = LightSelector::new(&frame_with(lights, true), &reach);
+        let mut out = Vec::new();
+        // Box [0, 8] × [-1, 1] × [-1, 1]: light 0 at 8.4 < 8.5 reaches, light 1 at 8.6
+        // does not; light 2 at 10 from the box with ρ = 10 does not (strict).
+        let t = LightTarget::object(Vec3::new(0.0, -1.0, -1.0), Vec3::new(8.0, 1.0, 1.0), None);
+        sel.select(LightSelection::Auto, &t, &mut out);
+        assert_eq!(out, vec![0]);
+        let t = LightTarget::object(Vec3::new(0.0, -1.0, -1.0), Vec3::new(8.1, 1.0, 1.0), None);
+        sel.select(LightSelection::Auto, &t, &mut out);
+        assert_eq!(out, vec![0, 2]);
+        // The box distance, not the centre distance: a long thin box reaches far lights.
+        assert_eq!(
+            reference::box_distance2(
+                Vec3::new(5.0, 3.0, 0.0),
+                Vec3::ZERO,
+                Vec3::new(10.0, 1.0, 0.0)
+            ),
+            4.0
+        );
+        assert_eq!(
+            reference::box_distance2(Vec3::ONE, Vec3::ZERO, Vec3::splat(2.0)),
+            0.0
+        );
+        // Hostile fields fall back to the defaults of a new light.
+        assert!(close(
+            Some(reference::selection_radius(f32::NAN, f32::NAN, false)),
+            25.0 * 0.85
+        ));
+        assert_eq!(reference::selection_radius(-3.0, 0.0, false), 0.0);
+    }
+
+    /// lighting.md §8.5 steps 3–4: key lights first, baked lights skip landscape chunks,
+    /// the parent switches.
+    #[test]
+    fn key_baked_and_parent_rules() {
+        let lights: Vec<Light> = (0..10)
+            .map(|i| Light::point(Vec3::new(i as f32, 0.0, 0.0), 50.0, 0.1, [1.0; 3]))
+            .collect();
+        let mut reach = vec![LightReach::default(); 10];
+        reach[9].key_light = true;
+        reach[7].key_light = true;
+        reach[1].baked_landscape = true;
+        reach[2] = LightReach {
+            only_influence_parent: true,
+            ..LightReach::default()
+        }
+        .with_parent(42);
+        reach[3] = LightReach {
+            never_influence_parent: true,
+            ..LightReach::default()
+        }
+        .with_parent(42);
+        // Switches of an unattached light are not applied.
+        reach[4].only_influence_parent = true;
+        let sel = LightSelector::new(&frame_with(lights, true), &reach);
+        let mut out = Vec::new();
+        let at0 = |object| LightTarget::object(Vec3::ZERO, Vec3::ZERO, object);
+        // Key lights 7 and 9 first (nearest first), then 0, 1, 3, 4, 5 by distance; 2 only
+        // reaches its parent.
+        sel.select(LightSelection::Auto, &at0(None), &mut out);
+        assert_eq!(out, vec![7, 9, 0, 1, 3, 4, 5]);
+        // The parent: 2 reaches it, 3 does not.
+        sel.select(LightSelection::Auto, &at0(Some(42)), &mut out);
+        assert_eq!(out, vec![7, 9, 0, 1, 2, 4, 5]);
+        // A landscape chunk: the baked light 1 is skipped (L30).
+        sel.select(LightSelection::Auto, &at0(None).landscape(), &mut out);
+        assert_eq!(out, vec![7, 9, 0, 3, 4, 5, 6]);
+    }
+
+    /// The bounded, windowed selection equals a brute-force sort of every reaching light.
     #[test]
     fn auto_selection_matches_brute_force() {
         // Deterministic pseudo-random lights (xorshift), some with equal distances.
@@ -797,8 +980,15 @@ mod tests {
             state ^= state << 5;
             (state % 1000) as f32 / 10.0
         };
+        let mut reach = Vec::new();
         let lights: Vec<Light> = (0..200)
             .map(|i| {
+                reach.push(LightReach {
+                    radius: (i % 3 == 0).then(|| next() * 0.08),
+                    key_light: i % 11 == 0,
+                    baked_landscape: i % 4 == 0,
+                    ..LightReach::default()
+                });
                 if i % 37 == 0 {
                     Light {
                         kind: LightKind::Directional { direction: Vec3::X },
@@ -813,13 +1003,18 @@ mod tests {
             .collect();
         for sun in [true, false] {
             let frame = frame_with(lights.clone(), sun);
-            let sel = LightSelector::new(&frame);
+            let sel = LightSelector::new(&frame, &reach);
             let mut out = Vec::new();
-            for c in 0..60 {
-                let center = Vec3::new(c as f32 * 1.7, 2.0, 0.5);
-                let radius = (c % 5) as f32;
-                sel.select(LightSelection::Auto, center, radius, &mut out);
-                let mut near: Vec<(f32, u8)> = Vec::new();
+            for c in 0..120 {
+                let center = Vec3::new(c as f32 * 0.85, 2.0, 0.5);
+                let half = Vec3::new((c % 5) as f32, (c % 3) as f32 * 0.5, 0.25);
+                let landscape = c % 2 == 0;
+                let mut t = LightTarget::object(center - half, center + half, None);
+                if landscape {
+                    t = t.landscape();
+                }
+                sel.select(LightSelection::Auto, &t, &mut out);
+                let mut near: Vec<(bool, f32, u8)> = Vec::new();
                 let mut dir = Vec::new();
                 for (i, l) in frame
                     .lights
@@ -827,21 +1022,26 @@ mod tests {
                     .take(frame.params[0] as usize)
                     .enumerate()
                 {
-                    let i = i as u8;
                     if l.specular_kind[3] > 0.5 {
-                        dir.push(i);
-                    } else {
-                        let d = Vec3::from_slice(&l.position_k[..3]).distance(center);
-                        if d < l.color_r2[3].sqrt() + radius {
-                            near.push((d, i));
-                        }
+                        dir.push(i as u8);
+                        continue;
+                    }
+                    let r = reach[i];
+                    if r.baked_landscape && landscape {
+                        continue;
+                    }
+                    let rho = r.radius.unwrap_or(l.color_r2[3].sqrt());
+                    let p = Vec3::from_slice(&l.position_k[..3]);
+                    let d2 = reference::box_distance2(p, center - half, center + half);
+                    if d2 < rho * rho {
+                        near.push((r.key_light, d2, i as u8));
                     }
                 }
-                near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-                let mut expected: Vec<u8> = near.iter().map(|&(_, i)| i).collect();
+                near.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+                let mut expected: Vec<u8> = near.iter().map(|&(_, _, i)| i).collect();
                 expected.extend(dir);
                 expected.truncate(sel.limit());
-                assert_eq!(out, expected, "centre {center}, radius {radius}, sun {sun}");
+                assert_eq!(out, expected, "centre {center}, half {half}, sun {sun}");
             }
         }
     }

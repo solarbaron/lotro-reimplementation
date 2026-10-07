@@ -169,12 +169,19 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // frame (T, -B, N).
     let n0 = frame_normalize(in.normal, vec3<f32>(0.0, 0.0, 1.0));
     var n = n0;
+    // Without a normal map the ambient (hemispheric) term and the sun's N . L0 take the
+    // stored vertex normal as it is, not normalised (its length is at most 1 where the
+    // triangles around a sample differ, §4.10); the table lights and the highlight use the
+    // unit normal.
+    // (Both terms are clamped to [0, 1], so a longer normal cannot overflow them.)
+    var n_stored = in.normal;
     if (layer_flag(TL_NORMAL_MAP)) {
         let t = n_tex.xyz * 2.0 - 1.0;
         let c = layer.normal_cols;
         let r = frame_normalize(vec3<f32>(t.x * c.x + t.y * c.z, t.x * c.y + t.y * c.w, t.z),
             vec3<f32>(0.0, 0.0, 1.0));
         n = frame_normalize(r.x * in.tangent - r.y * in.binormal + r.z * n0, n0);
+        n_stored = n;
     }
 
     // Gloss (§8.1, §9.4) and specular power.
@@ -191,13 +198,16 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
     // shadow, the table lights; M pre-multiplied into every light term.
     let mc = layer.diffuse.rgb;
     let v = frame_normalize(frame.eye.xyz - in.world_pos, n);
-    var sum = frame_ambient(n, mc);
+    var sum = frame_ambient(n_stored, mc);
     if (layer_flag(TL_BAKED)) {
         sum = sum + light.rgb;
     }
     let s = frame_shadow_factor(in.shadow, in.fog_depth.y);
+    // Diffuse with the stored normal; the highlight (§9.4: g sat(n . H)^p F0 S, not
+    // multiplied by N . L, the albedo or 2) with the unit normal.
     let sun = frame_sun(n, v, gloss, power, s);
-    sum = sum + sun.diffuse * mc;
+    let sun_diffuse = frame_sun(n_stored, v, gloss, -1.0, s).diffuse;
+    sum = sum + sun_diffuse * mc;
     let count = min(draw.lights.z, 8u);
     for (var i = 0u; i < count; i = i + 1u) {
         let idx = light_index(i);

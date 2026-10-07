@@ -47,6 +47,10 @@ const FOG_NEAR_GAP: f32 = 20.0;
 /// Smallest light range (`lighting.md` §8.3, light record).
 pub const MIN_LIGHT_RANGE: f32 = 0.0002;
 
+/// Share of its Range that a light with Falloff ≥ 1 reaches when lights are selected
+/// (`lighting.md` §8.5 step 1, a client constant quoted by the spec, decision 0012).
+pub const SELECTION_FRACTION: f32 = 0.85;
+
 /// The main directional light, light 0 (`lighting.md` §5.4, §8.1).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SunLight {
@@ -174,6 +178,16 @@ pub struct LightFields {
     pub key_light: bool,
     /// The run-time scale *σ* (Tessera Decision: 1).
     pub scale: f32,
+    /// `Light_GlobalLight` (default off): the selection radius is the full Range
+    /// (`lighting.md` §8.5 step 1).
+    pub global_light: bool,
+    /// `Light_BakedLandscapeLight` (default off): the light never reaches terrain or
+    /// ceiling chunks (`lighting.md` §8.3, §8.5 step 3, L30).
+    pub baked_landscape: bool,
+    /// `Light_OnlyInfluenceParent` (default off; §8.5 step 3).
+    pub only_influence_parent: bool,
+    /// `Light_NeverInfluenceParent` (default off; §8.5 step 3).
+    pub never_influence_parent: bool,
 }
 
 impl Default for LightFields {
@@ -187,7 +201,63 @@ impl Default for LightFields {
             falloff: 1.0,
             key_light: false,
             scale: 1.0,
+            global_light: false,
+            baked_landscape: false,
+            only_influence_parent: false,
+            never_influence_parent: false,
         }
+    }
+}
+
+/// Which objects a light-table entry reaches when the renderer builds a draw's light list
+/// ([`crate::LightSelection::Auto`], `lighting.md` §8.5). Entry *i* of
+/// [`crate::Pass::light_reach`] describes entry *i* of [`FrameLighting::lights`]; a light
+/// without an entry uses [`LightReach::default`].
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LightReach {
+    /// Selection radius ρ (§8.5 step 1, [`reference::selection_radius`]). `None`, negative or
+    /// non-finite: the light's range *R*.
+    pub radius: Option<f32>,
+    /// `KeyLight`: put at the front of the list (§8.5 step 4).
+    pub key_light: bool,
+    /// `Light_BakedLandscapeLight`: skips terrain and ceiling chunks ([`crate::TerrainDraw`];
+    /// §8.3, L30).
+    pub baked_landscape: bool,
+    /// The object the light is attached to (its parent), as the caller's object handle
+    /// ([`crate::MeshDraw::light_object`]). `None`: not attached; the two parent switches
+    /// below are then not applied (Tessera Decision, `render.md` §4.3).
+    pub parent: Option<u64>,
+    /// `Light_OnlyInfluenceParent`: reaches no object other than its parent.
+    pub only_influence_parent: bool,
+    /// `Light_NeverInfluenceParent`: does not reach its parent.
+    pub never_influence_parent: bool,
+}
+
+impl LightReach {
+    /// The reach of a placed light with `fields` (`lighting.md` §8.5 steps 1–4): ρ from
+    /// Range, Falloff and `Light_GlobalLight`, and the key, baked and parent switches. Not
+    /// attached to an object ([`Self::with_parent`]).
+    #[must_use]
+    pub fn from_fields(fields: &LightFields) -> Self {
+        Self {
+            radius: Some(reference::selection_radius(
+                fields.range,
+                fields.falloff,
+                fields.global_light,
+            )),
+            key_light: fields.key_light,
+            baked_landscape: fields.baked_landscape,
+            parent: None,
+            only_influence_parent: fields.only_influence_parent,
+            never_influence_parent: fields.never_influence_parent,
+        }
+    }
+
+    /// The same reach, attached to the object with handle `parent`.
+    #[must_use]
+    pub fn with_parent(mut self, parent: u64) -> Self {
+        self.parent = Some(parent);
+        self
     }
 }
 
@@ -593,7 +663,7 @@ pub(crate) fn frame_layout_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
 pub mod reference {
     use glam::Vec3;
 
-    use super::{LightFields, LightRecord, MIN_LIGHT_RANGE};
+    use super::{LightFields, LightRecord, MIN_LIGHT_RANGE, SELECTION_FRACTION};
 
     /// Clamp to `[0, 1]` ("sat").
     #[must_use]
@@ -661,6 +731,37 @@ pub mod reference {
             range,
             attenuation: 10.0 * finite(f.falloff, 0.0) / (range * range),
         }
+    }
+
+    /// Selection radius ρ of a placed light (`lighting.md` §8.5 step 1, L31):
+    /// Range × (1 − (1 − 0.85) × min(Falloff, 1)), or Range for a `Light_GlobalLight`
+    /// light. Non-finite Range or Falloff take the defaults of a new light (25, 1.0); the
+    /// result is at least 0.
+    #[must_use]
+    pub fn selection_radius(range: f32, falloff: f32, global: bool) -> f32 {
+        let range = if range.is_finite() { range } else { 25.0 };
+        let falloff = if falloff.is_finite() { falloff } else { 1.0 };
+        let rho = if global {
+            range
+        } else {
+            range * (1.0 - (1.0 - SELECTION_FRACTION) * falloff.min(1.0))
+        };
+        if rho.is_finite() { rho.max(0.0) } else { 0.0 }
+    }
+
+    /// Squared distance from `p` to the axis-aligned box (`min`, `max`); 0 inside it
+    /// (`lighting.md` §8.5 step 2).
+    #[must_use]
+    pub fn box_distance2(p: Vec3, min: Vec3, max: Vec3) -> f32 {
+        let d = (min - p).max(p - max).max(Vec3::ZERO);
+        d.length_squared()
+    }
+
+    /// Whether a light at `p` with selection radius `rho` reaches the box (`min`, `max`):
+    /// squared box distance strictly below ρ² (`lighting.md` §8.5 step 2).
+    #[must_use]
+    pub fn reaches_box(p: Vec3, rho: f32, min: Vec3, max: Vec3) -> bool {
+        box_distance2(p, min, max) < rho * rho
     }
 
     /// Environment cross-fade factor after `t` seconds of a `duration`-second transition

@@ -9,7 +9,9 @@
 //! the same landblock twice gives bit-identical output (SC8); every static object lies in
 //! its block (0 ≤ x, y < 160, also for negative spacings); a static entry with a
 //! non-finite rotation never changes the output; long static lists are charged to the
-//! work budget (a run stays bounded however many volumes it scans).
+//! work budget (a run stays bounded however many volumes it scans); failing children
+//! (missing scene references, scale modes above 8, §7.4 step 15) end their vertex cleanly;
+//! the frill pass takes the static pass's footprint markers (§8.2 item 5).
 //!
 //! Run with e.g. `cargo fuzz run world_scenery -- -rss_limit_mb=1024`.
 
@@ -159,7 +161,7 @@ fn node(b: &mut Bytes<'_>, depth: usize) -> PlacementNode {
         unknown_174: false,
         no_spacing: bit(12),
         height_mode: b.u8() % 12,
-        scale_mode: if bit(13) { b.u8() % 9 } else { 4 },
+        scale_mode: if bit(13) { b.u8() } else { 4 },
         above_ground_mode: b.u8() % 4,
         above_water_mode: b.u8() % 4,
         below_water_mode: b.u8() % 4,
@@ -398,11 +400,15 @@ fuzz_target!(|input: &[u8]| {
         }
     }
 
+    assert!(first.markers.len() <= limits.max_markers as usize);
+    let markers = first.spacing_markers();
+    assert!(markers.iter().all(|m| !m.open && m.radius > 0.0));
+
     let density = b.f32();
     let mut thinner = DensityThinner::with_seed(u64::from(b.u32()));
     for _ in 0..2 {
         let (sx, sy) = (b.u8() % 17, b.u8() % 17);
-        let sector = generate_sector(&input, sx, sy, density, &mut thinner);
+        let sector = generate_sector(&input, &markers, sx, sy, density, &mut thinner);
         assert!(sector.instances.len() <= 4 * limits.max_objects_per_vertex as usize);
         if sx < 16 && sy < 16 {
             assert!(sector.key.is_some());

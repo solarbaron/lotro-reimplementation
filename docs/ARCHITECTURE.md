@@ -567,6 +567,25 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
   tile). The bundle loader then requests the meshes and materials those reference.
 - Leaving landblocks are released with hysteresis (one ring of slack) to avoid thrash at
   boundaries.
+- **Lookahead (Decision, M4.5).** A bundle with a large collision set can take longer to
+  build than a fast camera needs to cross from the far to the near radius. The streamer
+  therefore also loads along the camera's path: from its velocity (given by the caller or
+  estimated from the last quarter second of positions) it takes the segment the camera
+  covers in the next 4 s (at most 12,800 units) and makes the landblocks within the near
+  radius of that segment desired, those beyond the far radius ahead of their ring. The
+  first 1.5 s of the segment (longer, 1.5 times the slowest recent bundle job, after slow
+  jobs) is *urgent*: its landblocks are requested with `Visible` priority; the rest with
+  their ring's priority (`Prefetch` ahead of the rings), raised when the urgent part
+  reaches them, so very slow bundles start seconds early whenever a worker is free
+  without delaying the urgent work (only a job that has started gains: a queued request
+  that is raised is ordered like a new one). Ahead landblocks are admitted and evicted by
+  distance like far-ring landblocks; they lie beyond the far radius, so the residency
+  budget cuts them before the near and mid rings and the far ring inside its radius,
+  interleaved with far-ring members in the hysteresis band. They are released when they
+  leave the path, and their bundles are not listed as resident (so nothing draws or
+  populates them) until they enter the rings. The velocity estimate restarts on a step
+  faster than 10,000 units per second (a teleport or a focus moved elsewhere), not on a
+  long frame. Lookahead changes only when bundles load, never what they hold.
 - Interior cells (dungeons, buildings) are loaded with their landblock. Visibility between
   cells (portals) is a renderer concern at M3+.
 - **World systems in the bundle (M4.5, Decision).** The bundle job builds, on the same

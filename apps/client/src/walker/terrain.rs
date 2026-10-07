@@ -46,7 +46,9 @@ use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
-use tessera_formats::landblock::{GridSurface, LightMaps};
+use tessera_formats::landblock::{
+    GRID_SIDE, GridSurface, LandblockData, LightMaps, SurfaceChunk, SurfaceLayer,
+};
 use tessera_formats::terrain_type::{TerrainTypeTable, TextureProjection};
 use tessera_formats::{Did, Record, RgbaImage, Surface};
 use tessera_material::{CurveState, FloatCurve};
@@ -60,16 +62,17 @@ use tessera_render::{
 use tessera_terrain::{
     AlphaMask, ChunkLayers, CoordinateSet, EdgeLods, HeightSlopeShading, LayerVertices, Lod,
     LodSelector, Neighbours, OpacityRule, ResolveOptions, Side, TerrainBlock, TerrainMesh,
-    TerrainTiles, VertexNormals, fixed_block_offset, resolve_landblock, triangulate,
+    TerrainTiles, VertexNormals, fixed_block_offset, resolve_chunk, resolve_landblock, triangulate,
 };
 use tessera_world::{
-    LANDBLOCK_SIZE, LandblockBundle, LandblockKey, LodClasses, WorldContext, WorldSource,
+    LANDBLOCK_SIZE, LandblockBundle, LandblockKey, LodClasses, LodValues, WorldContext, WorldSource,
 };
 
 use super::UploadBudget;
 use super::env::material_curve;
 use super::farband::{BAKE_SIZE, SmallChain, bake, mip_chain, reduce_mask};
 use super::geometry::{TexRequest, VARIANT_OWN_ALPHA, image_ok};
+use super::interiors;
 use super::jobs::JobRunner;
 use super::objects::{Instance, ObjectInfo, ObjectLayer, TexLookup};
 use super::view::{Anchor, Frustum};
@@ -342,6 +345,81 @@ pub struct BlockLayers {
     pub terrain: Arc<ChunkLayers>,
     /// The ceiling chunk's layers and surface, for a cave block.
     pub ceiling: Option<(Arc<ChunkLayers>, Arc<TerrainBlock>)>,
+    /// The terrain chunk stores no layers and the block is not open: the original draws
+    /// nothing for it (`terrain-texturing.md` §4.9 rule 3).
+    pub terrain_hidden: bool,
+}
+
+/// Whether a block is open (`terrain-texturing.md` §4.9 rule 1): it has no ceiling, or at
+/// some grid sample (*i*, *j*) with 0 ≤ *i*, *j* ≤ 31 the stored terrain height is strictly
+/// below the stored ceiling height.
+#[must_use]
+pub fn block_open(data: &LandblockData) -> bool {
+    let Some(c) = &data.ceiling else {
+        return true;
+    };
+    (0..GRID_SIDE - 1).any(|i| {
+        (0..GRID_SIDE - 1).any(|j| match (data.heights.get(i, j), c.heights.get(i, j)) {
+            (Some(t), Some(h)) => t < h,
+            _ => false,
+        })
+    })
+}
+
+/// The terrain-type key a chunk without layers is drawn with (`terrain-texturing.md` §4.9
+/// rule 2): the table entry with the smallest `draw_order`, the one met last in stored
+/// order on a tie; `None` for an empty table.
+#[must_use]
+pub fn layerless_key(table: &TerrainTypeTable) -> Option<u32> {
+    let mut best: Option<&tessera_formats::terrain_type::TerrainType> = None;
+    for e in table.entries() {
+        if best.is_none_or(|b| e.draw_order <= b.draw_order) {
+            best = Some(e);
+        }
+    }
+    best.map(|e| e.key)
+}
+
+/// The layers of a surface chunk with §4.9 applied: a chunk that stores layers resolves
+/// them; one without layers in an open block resolves to one opaque `whole` layer of
+/// [`layerless_key`] without a mask (so it covers the full grid of its surface and takes
+/// the surface's light map); one without layers in a block that is not open resolves to no
+/// layer. Returns the layers and whether the chunk was layerless and closed.
+fn resolve_surface(
+    data: &LandblockData,
+    surface: GridSurface,
+    table: &TerrainTypeTable,
+    light_maps: &LightMaps,
+    options: &ResolveOptions,
+    open: bool,
+) -> tessera_terrain::Result<(ChunkLayers, bool)> {
+    let stored = data
+        .surface_chunk(surface)
+        .is_some_and(|c| !c.layers.is_empty());
+    if stored {
+        return resolve_landblock(data, surface, table, light_maps, options).map(|l| (l, false));
+    }
+    let key = layerless_key(table).filter(|_| open);
+    let chunk = SurfaceChunk {
+        layers: key
+            .map(|material| SurfaceLayer {
+                material,
+                whole: true,
+                ..SurfaceLayer::default()
+            })
+            .into_iter()
+            .collect(),
+        ..SurfaceChunk::default()
+    };
+    let layers = resolve_chunk(
+        &chunk,
+        &data.vertex_flags,
+        surface,
+        table,
+        light_maps.for_surface(surface),
+        options,
+    )?;
+    Ok((layers, key.is_none()))
 }
 
 /// What the block job produces.
@@ -401,7 +479,6 @@ enum Job {
         generation: u64,
         bundle: Arc<LandblockBundle>,
         shading: Arc<HeightSlopeShading>,
-        interiors: bool,
         inputs: Arc<BlockInputs>,
     },
     Mesh {
@@ -639,12 +716,19 @@ impl Slot {
             }
     }
 
-    /// Whether the terrain chunk resolved to at least one drawn layer. A chunk without
-    /// layers is drawn like one that does not resolve (`walker.md` §14.4: the M3
-    /// height-and-slope mesh): what the original draws for it is OPEN
-    /// (`terrain-texturing.md` §4.5).
+    /// Whether the terrain chunk resolved to at least one drawn layer (a chunk without
+    /// stored layers in an open block resolves to the one layer of
+    /// `terrain-texturing.md` §4.9). One that does not is drawn like a chunk that does not
+    /// resolve (`walker.md` §14.4: the M3 height-and-slope mesh), unless it is hidden
+    /// ([`Self::terrain_hidden`]).
     fn has_terrain_layers(&self) -> bool {
         self.layers.as_ref().is_some_and(|l| !l.terrain.is_empty())
+    }
+
+    /// Whether the original draws nothing for the terrain chunk: it stores no layers and
+    /// the block is not open (`terrain-texturing.md` §4.9 rule 3).
+    fn terrain_hidden(&self) -> bool {
+        self.layers.as_ref().is_some_and(|l| l.terrain_hidden)
     }
 
     /// Whether image `did` is needed while the block is drawn baked: its light map, and
@@ -831,7 +915,6 @@ pub struct TerrainLayer {
     shading: Arc<HeightSlopeShading>,
     mesh_config: MeshConfig,
     next_gen: u64,
-    interiors: bool,
     inputs: Arc<BlockInputs>,
     stats: TerrainStats,
     panics: u64,
@@ -950,7 +1033,6 @@ impl TerrainLayer {
         threads: usize,
         selector: LodSelector,
         mesh_config: MeshConfig,
-        interiors: bool,
         inputs: Arc<BlockInputs>,
     ) -> std::io::Result<Self> {
         Ok(Self {
@@ -961,7 +1043,6 @@ impl TerrainLayer {
             shading: Arc::new(HeightSlopeShading::default()),
             mesh_config,
             next_gen: 1,
-            interiors,
             inputs,
             stats: TerrainStats::default(),
             panics: 0,
@@ -1064,7 +1145,6 @@ impl TerrainLayer {
             generation,
             bundle: Arc::clone(bundle),
             shading: Arc::clone(&self.shading),
-            interiors: self.interiors,
             inputs: Arc::clone(&self.inputs),
         };
         if self.runner.submit(job).is_err() {
@@ -1902,7 +1982,9 @@ impl TerrainLayer {
                 continue;
             }
             let tf = Mat4::from_translation(off);
-            if let Some(m) = &slot.mesh {
+            // §4.9 rule 3: a closed block's layerless terrain chunk is not in the scene.
+            let hidden = frame.layered && frame.lit && slot.terrain_hidden();
+            if let Some(m) = slot.mesh.as_ref().filter(|_| !hidden) {
                 let min = off + Vec3::new(0.0, 0.0, m.min_h);
                 let max = off + Vec3::new(size, size, m.max_h);
                 let visible = frustum.aabb_visible(min, max);
@@ -2299,9 +2381,8 @@ fn run_job(job: Job) -> Output {
             generation,
             bundle,
             shading,
-            interiors,
             inputs,
-        } => match guarded(|| build_block(&bundle, &shading, interiors, &inputs)) {
+        } => match guarded(|| build_block(&bundle, &shading, &inputs)) {
             Ok(product) => Output::Block {
                 key,
                 generation,
@@ -2487,12 +2568,14 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
         ceiling: bundle.ceiling_light_map,
     };
     let opts = ResolveOptions::default();
-    let mut terrain = match resolve_landblock(
+    let open = block_open(&bundle.data);
+    let (mut terrain, terrain_hidden) = match resolve_surface(
         &bundle.data,
         GridSurface::Terrain,
         table,
         &light_maps,
         &opts,
+        open,
     ) {
         Ok(l) => l,
         Err(e) => {
@@ -2501,16 +2584,17 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
         }
     };
     let mut ceiling = TerrainBlock::from_ceiling(&bundle.data).and_then(|c| {
-        resolve_landblock(
+        resolve_surface(
             &bundle.data,
             GridSurface::Ceiling,
             table,
             &light_maps,
             &opts,
+            open,
         )
         .map_err(|e| tracing::warn!(key = %bundle.key, "ceiling layers not resolved: {e}"))
         .ok()
-        .map(|l| (l, c))
+        .map(|(l, _)| (l, c))
     });
     let mut images: Vec<(Did, BlockImage)> = Vec::new();
     let mut seen: HashSet<Did> = HashSet::new();
@@ -2532,6 +2616,7 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
             Some(BlockLayers {
                 terrain: Arc::new(terrain),
                 ceiling: ceiling.map(|(l, c)| (Arc::new(l), Arc::new(c))),
+                terrain_hidden,
             }),
             images,
             HashMap::new(),
@@ -2605,6 +2690,7 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
         Some(BlockLayers {
             terrain: Arc::new(terrain),
             ceiling: ceiling.map(|(l, c)| (Arc::new(l), Arc::new(c))),
+            terrain_hidden,
         }),
         images,
         bake_masks,
@@ -2617,13 +2703,12 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
 pub fn build_block(
     bundle: &LandblockBundle,
     shading: &HeightSlopeShading,
-    interiors: bool,
     inputs: &BlockInputs,
 ) -> BlockProduct {
     let block = TerrainBlock::from_landblock(&bundle.data);
     let _ = block.lod_errors();
     let overview = overview_tile(&block, shading);
-    let (instances, objects) = block_objects(bundle, interiors, inputs.lod_classes.as_deref());
+    let (instances, objects) = block_objects(bundle, inputs.lod_classes.as_deref());
     let (layers, images, bake_masks) = build_layers(bundle, inputs);
     BlockProduct {
         block: Arc::new(block),
@@ -2637,12 +2722,17 @@ pub fn build_block(
 }
 
 /// The drawable objects of a bundle with their part instances (`entity-descriptor.md`
-/// §9, `scenery.md` §7.6) and LOD-class values (`walker.md` §11.4.3); interior entities
-/// only with `interiors`.
+/// §9, `scenery.md` §7.6) and LOD-class values (`walker.md` §11.4.3), then the render
+/// meshes of its interior cells (`landblock.md` §4.14). Each object names the cell it is
+/// drawn through (`walker.md` §14.11): outdoor objects cell 0; interior entities the cell
+/// of the block's collision set whose volume contains their origin, or
+/// [`interiors::UNATTACHED`]; a cell mesh its own cell. Which interior objects are loaded
+/// and drawn is the object layer's decision ([`ObjectFrame::interior`]).
+///
+/// [`ObjectFrame::interior`]: super::objects::ObjectFrame::interior
 #[must_use]
 pub fn block_objects(
     bundle: &LandblockBundle,
-    interiors: bool,
     classes: Option<&LodClasses>,
 ) -> (Vec<Instance>, Vec<ObjectInfo>) {
     let mut instances = Vec::new();
@@ -2663,7 +2753,7 @@ pub fn block_objects(
     let default = LodClasses::default();
     let classes = classes.unwrap_or(&default);
     for (_, e, generated) in lists {
-        if !e.draw || (e.interior && !interiors) {
+        if !e.draw {
             continue;
         }
         let Some(visual) = &e.visual else { continue };
@@ -2699,15 +2789,102 @@ pub fn block_objects(
             });
         }
         let class = bundle.lod_class_of(e);
+        let cell = if e.interior {
+            entity_cell(bundle, pos)
+        } else {
+            interiors::OUTDOORS
+        };
         objects.push(ObjectInfo {
             position: pos,
             lod: classes.values(class, false),
             generated,
             first,
             count: u32::try_from(visual.parts.len()).unwrap_or(u32::MAX),
+            cell,
         });
     }
+    cell_objects(bundle, &mut instances, &mut objects);
     (instances, objects)
+}
+
+/// The LOD values of a cell mesh (`landblock.md` §4.14 OPEN on cell detail levels and
+/// draw distances; Tessera Decision of `walker.md` §14.11): drawn out to the global limit
+/// *G* and the distance cap, always at the finest level, casting shadows within the
+/// component's default shadow distance.
+#[must_use]
+pub fn cell_lod() -> LodValues {
+    let mut v = LodValues::default();
+    v.0[0] = CELL_DRAW_DISTANCE;
+    v.0[1] = CELL_DRAW_DISTANCE;
+    v
+}
+
+/// `d0` and `d1` of a cell mesh: farther than any global limit.
+const CELL_DRAW_DISTANCE: f32 = 1.0e6;
+
+/// The cell of the block's collision set whose volume contains an interior entity's
+/// origin (`entity-descriptor.md` §4.8: containment is the fallback attachment, the
+/// stored rule is OPEN), tried at the origin and 0.05 m above and below it;
+/// [`interiors::UNATTACHED`] when none does or the block has no collision set.
+fn entity_cell(bundle: &LandblockBundle, pos: Vec3) -> u16 {
+    let Some(col) = bundle.collision.as_deref() else {
+        return interiors::UNATTACHED;
+    };
+    [0.0f32, 0.05, -0.05]
+        .into_iter()
+        .find_map(|dz| col.cell_at([pos.x, pos.y, pos.z + dz]).map(|c| c.index))
+        .filter(|&c| c != interiors::OUTDOORS && c != interiors::UNATTACHED)
+        .unwrap_or(interiors::UNATTACHED)
+}
+
+/// Appends one object per placed interior cell of the bundle's landblock info: its 0x01
+/// geometry as the part (the object layer draws its embedded render mesh,
+/// `landblock.md` §4.14), placed by the cell's position and rotation without its
+/// adjustable scale (§4.14 Tessera Decision). Cells without an x, y, z offset are left out
+/// (§4.4 OPEN), as are cells numbered 0 or 0xFFFF (LI8).
+fn cell_objects(
+    bundle: &LandblockBundle,
+    instances: &mut Vec<Instance>,
+    objects: &mut Vec<ObjectInfo>,
+) {
+    let Some(info) = bundle.info.as_ref() else {
+        return;
+    };
+    let lod = cell_lod();
+    for c in info.cells() {
+        if c.index == interiors::OUTDOORS || c.index == interiors::UNATTACHED {
+            continue;
+        }
+        let Ok(placement) = tessera_physics::geometry::CellPlacement::of_cell(c) else {
+            continue;
+        };
+        let q = placement.rotation;
+        let rot = Quat::from_xyzw(q.x, q.y, q.z, q.w);
+        let pos = Vec3::from_array(placement.position);
+        if !rot.is_finite() || !pos.is_finite() || c.geometry.is_null() {
+            continue;
+        }
+        let (Ok(object), Ok(first)) =
+            (u32::try_from(objects.len()), u32::try_from(instances.len()))
+        else {
+            break;
+        };
+        instances.push(Instance {
+            part: c.geometry.0,
+            model: Mat4::from_rotation_translation(rot, pos),
+            scale: 1.0,
+            figure: None,
+            object,
+        });
+        objects.push(ObjectInfo {
+            position: pos,
+            lod,
+            generated: false,
+            first,
+            count: 1,
+            cell: c.index,
+        });
+    }
 }
 
 /// A 33 × 33 height/slope-shaded image of a block, north row first (the minimap
@@ -2957,11 +3134,13 @@ mod tests {
         slot.layers = Some(BlockLayers {
             terrain: Arc::new(resolve(&SurfaceChunk::default())),
             ceiling: None,
+            terrain_hidden: false,
         });
         assert!(
             !slot.has_terrain_layers(),
             "an empty stack is drawn like one that does not resolve (review finding)"
         );
+        assert!(!slot.terrain_hidden());
         let mut chunk = SurfaceChunk::default();
         chunk.layers.push(SurfaceLayer {
             material: 0,
@@ -2971,8 +3150,88 @@ mod tests {
         slot.layers = Some(BlockLayers {
             terrain: Arc::new(resolve(&chunk)),
             ceiling: None,
+            terrain_hidden: false,
         });
         assert!(slot.has_terrain_layers());
+    }
+
+    /// `terrain-texturing.md` §4.9: the open flag, the lowest-`draw_order` entry and the
+    /// one-layer draw of a chunk without layers.
+    #[test]
+    fn chunks_without_layers_follow_the_open_flag() {
+        use tessera_formats::landblock::{Ceiling, LandblockData};
+        use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+        let entry = |key, draw_order| TerrainType {
+            key,
+            draw_order,
+            ..TerrainType::default()
+        };
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![entry(0, 5), entry(1, 2), entry(2, 9), entry(3, 2)],
+        )
+        .expect("table");
+        assert_eq!(layerless_key(&table), Some(3), "a tie goes to the last met");
+        let empty = TerrainTypeTable::new(Did(0x1900_0000), Vec::new()).expect("table");
+        assert_eq!(layerless_key(&empty), None);
+
+        let k = key(5, 5);
+        let mut data = LandblockData::from_heights(k.data_did(), HeightGrid::flat(1_000));
+        assert!(block_open(&data), "no ceiling");
+        // A ceiling at or below the terrain everywhere it is tested: closed. The last row
+        // and column (index 32) are not tested.
+        data.ceiling = Some(Ceiling {
+            heights: HeightGrid::from_fn(|i, j| if i == 32 || j == 32 { 2_000 } else { 1_000 }),
+            ..Ceiling::default()
+        });
+        assert!(!block_open(&data));
+        if let Some(c) = data.ceiling.as_mut() {
+            c.heights = HeightGrid::from_fn(|i, j| if (i, j) == (31, 0) { 1_001 } else { 0 });
+        }
+        assert!(block_open(&data), "one sample of open cave");
+
+        let lm = LightMaps {
+            terrain: Some(Did(0x4100_0001)),
+            ceiling: None,
+        };
+        let opts = ResolveOptions::default();
+        let (open, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, true).unwrap();
+        assert!(!hidden);
+        assert_eq!(open.layers().len(), 1);
+        let l = &open.layers()[0];
+        assert_eq!(l.key(), 3);
+        assert!(l.whole() && l.first_drawn() && l.mask().is_none());
+        assert_eq!(l.light_map(), Some(Did(0x4100_0001)));
+        assert!(open.uncovered().is_empty(), "the full grid");
+        let (ceiling, _) =
+            resolve_surface(&data, GridSurface::Ceiling, &table, &lm, &opts, true).unwrap();
+        assert_eq!(
+            ceiling.layers().len(),
+            1,
+            "a layerless ceiling of an open block"
+        );
+        let (closed, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, false).unwrap();
+        assert!(hidden && closed.is_empty());
+        // A chunk that stores layers resolves them, whatever the flag.
+        data.terrain.layers.push(SurfaceLayer {
+            material: 0,
+            whole: true,
+            ..SurfaceLayer::default()
+        });
+        let (stored, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, false).unwrap();
+        assert!(!hidden);
+        assert_eq!(stored.layers()[0].key(), 0);
+
+        let mut slot = Slot::new(Arc::new(bundle_at(k, 0)), 1);
+        slot.layers = Some(BlockLayers {
+            terrain: Arc::new(closed),
+            ceiling: None,
+            terrain_hidden: true,
+        });
+        assert!(slot.terrain_hidden() && !slot.has_terrain_layers());
     }
 
     #[test]
@@ -3211,7 +3470,6 @@ mod tests {
             2,
             LodSelector::from_fov(720.0, 1.0, 1.5),
             MeshConfig::default(),
-            false,
             inputs(),
         )
         .unwrap();
@@ -3302,7 +3560,6 @@ mod tests {
             1,
             LodSelector::from_fov(720.0, 1.0, 1.5),
             MeshConfig::default(),
-            false,
             inputs(),
         )
         .unwrap();

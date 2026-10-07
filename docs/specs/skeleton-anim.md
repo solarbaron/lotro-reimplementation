@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (2026-10-07, re-review of the revision after review) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Spec reviewer (dirty room, a different session from the writer). Review record 2026-10-07 (re-review of the revision after review): **passed, Accepted**. All CLEAN_ROOM.md §5.3 items pass. The issue of the previous review is resolved: the player's slider time is now traced (K28), and the §15.1 O14.1 row says Answered on foot with the `Mounted` controller left OPEN. The optional §7.4 wording was added: the max is taken before \|*y*\| is doubled. BIN4 re-checked in a separate decompiler copy (build 4906.0071.1794.4035; offline movement-controller and animation code only; copy deleted). K28 agrees: the configuration comes from the `WEENIECONTENT` key of `PlayerPhysicsControl`; the base parameters are overlaid in the order troll, mounted or warsteed, walking or mounted walking, then slide (which skips ice, falling, slope and swimming), then ice, falling, slope, swimming and frozen; it is applied only when it changed; and the controller type is 3, or 0x10000001 with the ramp-up controller. The input step's *T* is the field that `GenericPhysicsController_RampTime` binds to, and the speed step reads the four speed fields from the same block (forward or backward by the sign of *y*, left when *x* > 0). The type-3 built-in defaults are 4.5 and 0.1 s. Data spot checks with a throwaway probe built on the repository decoders, all in agreement: OBS3 and KI9 (base 6.5 / 3.25 / 5.0 / 5.0, `RampTime` 0.13; walking 5.0 / 4.5 / 4.5, 0.25; the other overlays' `RampTime` 0.25, 0.5, 0.01, 0.1 and 0.4, as listed; the troll overlay sets only backward 6.0); the `WEENIECONTENT` entry is key 0x10000162 → 0x700304E2; `PHYSICSCONTROLLER` `Generic` gives 4.5 / 2.5 with `RampTime` 0.3; `Movement_SpeedMultiplier` defaults to 1.0 and `Physics_Avatar…MoveSpeed` to −1. Non-blocking, for the next revision: the BIN3 provenance row still says that ground speeds are not in the data files, which K28 now contradicts; annotate it. Owner observation O14: O14.1, O14.2, O14.3 and O14.5–O14.7 are answered from the client, and O14.4 is partly answered and still needs the owner (input vector per gait, walking speed); the statuses match what the code settles. |
 | **Implements into** | `crates/anim` (pose evaluation, track-to-bone binding, blending, root motion, attach transforms, skinning palettes), `crates/render` (skinned pipeline, palette size), `crates/formats` (setup attach tables, `setup.md` §6.2–§6.3), `apps/explorer` (character and animation viewer), `apps/client` (animated avatar) |
 | **Companion specs** | [`havok-data.md`](havok-data.md) (normative for the skeleton and clip containers, their decoding and the curve evaluation of §7 there; this spec starts from decoded skeletons and decoded clip samples). [`setup.md`](setup.md) (the 0x04 setup that carries the skeleton, its attach tables §6.2–§6.3, and part 2 §11–§14 on character setups). [`mesh.md`](mesh.md) §5.7 and §6.2 (vertex bone indices and the per-submesh influence list), §11 (axes). [`property-system.md`](property-system.md) §7–§8 (enum mappers, DID maps). `appearance.md` (M4, species and body assembly, bone sliders, worn parts). `script-table.md` (M4, which clip an entity plays when). |
 
@@ -67,6 +67,10 @@ Legend:
 | PS | `property-system.md` §7 (enum labels), §8 (DID maps), §9 (DB-object types). |
 | BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room for facts only (method M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md)), 2026-10-05. Questions: (1) how a bone's scale reaches its children and the skinned vertices (§5.4); (2) how clips playing at the same time on different layers combine per bone (§6.6). Why M1–M3 were not enough: the data hold no composition or blend rule; the §5.4 test on 86 clips could not tell the candidate rules apart; no published source states them; and observing the running client (M3) can show that River-hobbit feet do not float, but not which rule makes them so. Only offline-client code was read (pose evaluation, animation playback, mesh deformation); nothing of the network, login or anti-tamper code. |
 | RH | Dirty-room probe of 2026-10-05 that runs the BIN rules of §5.4, §6.6 and `appearance.md` §6.4 on the real setups, clips and meshes of the River-hobbit, Human, Dwarf and DwarfStoutAxe bodies (all vertices of the default parts) and compares lowest vertex, lowest bone and top vertex with the earlier matrix rule. |
+| BIN3 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-07 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), offline animation and script code only (animation component and layers, the Havok animation runtime it calls, the skinning palette, the script nodes that start clips, the movement code that sets the movement sliders). Questions, all from owner observation O14: (3) the shape and duration of clip ramps and cross-fades (§6.5); (4) the duration of a `UseBoneOpacity` change (§6.6); (5) whether and how the client applies a clip's extracted motion, and the sign of its yaw (§7.3); (6) whether the playback rate is matched to ground speed, and where the avatar's ground speed comes from (§7.4); (7) the exact skinning transform and inverse reference transform for rotated or scaled reference bones (§5.4); (8) whether capes and skirts get runtime cloth or secondary motion (§13). Why M1–M3 were not enough: the data hold no ramp curve, no blend or skinning rule and no cloth data; ground speeds are not in the data files (a full scan of all records for the move-speed properties found no stored value, OBS2); no published source covers the client's animation layer; and observing the running client (M3) can show that a blend takes "about 0.2 s" or that feet slide, but not the curve, the formula or which code path is responsible. Nothing of the network, login, launcher or anti-tamper code was read. |
+| OBS2 | Observed in the user install, 2026-10-07: a raw scan of every record of every archive for the property IDs of `Movement_RunForwardMoveSpeed`, `Movement_WalkForwardMoveSpeed`, `Movement_BackwardMoveSpeed`, `Physics_AvatarForwardMoveSpeed` and `Physics_AvatarBackwardMoveSpeed`, and a decode of all 0x47 entity sets and all 0x78–0x7F property sets for them as top-level properties (none set; the raw hits are coincidental byte patterns, enum values and script keys); the dictionary defaults of those properties; the controller property sets of all 127 PlayerPhysics script nodes (decoded with the repository's property decoder used as a tool). |
+| BIN4 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-07 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh copy of the analysis project, to answer the review of 2026-10-07: offline movement-controller code only (the player physics-control setup that builds the avatar's controller configuration, the controller's parameter block and its property bindings, the per-frame input-to-slider step, the per-direction speed step). Questions: (9) which slider time *T* the player's own input path uses and where it comes from (§7.4, §15.1 O14.1); (10) where the player's per-direction move speeds come from (§7.4, O14.4); (11) the order of the max and the doubling in the speed mix (§7.4). Why M1–M3 were not enough: the data hold the parameter structures (OBS3) but not which of them the client applies in which state, nor which field drives the slider time; no published source covers them; observing the running client (M3) gives an approximate blend time and a speed, not their source. Nothing of the network, login, launcher or anti-tamper code was read. |
+| OBS3 | Observed in the user install, 2026-10-07, with the repository's decoders used as a tool: the root DID map's `WEENIECONTENT` map entry labelled `PlayerPhysicsControl` (key 0x10000162; game object 0x700304E2 here) and the complete property set of that object (0x790304E2 here, +0x09000000 rule), decoded to the last nested field; a scan of all 0x47 entity sets and all 0x78–0x7F property sets for `PlayerPhysicsControl_BasePlayerParameters` (one hit, that set) and for `GenericPhysicsController_RampTime`, `…_ForwardMoveSpeed`, `…_BackwardMoveSpeed`, `…_StrafeLeftMoveSpeed` as top-level properties (two hits, the sets named by the root map's `PHYSICSCONTROLLER` map); the dictionary default of `Movement_SpeedMultiplier`. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -89,6 +93,15 @@ Legend:
 | K17 | Bone transforms compose as (translation, rotation, scale) triples: a parent's scale never moves a child joint, scales multiply per axis down the chain, and the skinning transform scales a vertex's offset from its own joint (§5.4) | BIN (pose composition and skinning-palette code); RH (River-hobbit feet stay within 1 cm of the ground with it, float 8.5–8.8 cm with matrix composition) | Confirmed 2026-10-05 (BIN-derived rule, checked against real data by RH). Replaces the matrix Decision of §5.4. |
 | K18 | Simultaneous clips combine per bone by layer priority with a remaining-weight budget, weights quantised to 1/255, then a normalised weighted average with a reference-pose fill below a total of 0.1 (§6.6) | BIN (animation player and pose-sampling code) | Confirmed 2026-10-05 (BIN only) |
 | K19 | Skinned parts of figures with body-shape deformers or bone sliders are drawn from vertices deformed once in bind space (`appearance.md` §6.4); the animated pose itself carries no slider | BIN; RH | Confirmed 2026-10-05 (BIN-derived, checked by RH) |
+| K20 | The client binds clip track *j* to bone *j* with an identity track-to-bone table and refuses (with an error) a clip whose track count differs from the skeleton's bone count (§3.2, §3.4) | BIN3 | Confirmed 2026-10-07 (BIN; agrees with K3) |
+| K21 | A clip's weight ramps **linearly in time**: from 0 to its target weight over `RampIn`, and from its current weight to 0 over `RampOut`; a `RampOut` below 0.0002 s removes the clip at once; a one-shot clip begins its ramp-out `RampOut` seconds before its end; clips started by an entity's start-up scripts skip their ramp-in (§6.5) | BIN3 | Confirmed 2026-10-07 (BIN only) |
+| K22 | A change of `UseBoneOpacity` on a playing clip moves the mixing factor *m* linearly over **0.2 s**, a constant of the client (§6.6) | BIN3 | Confirmed 2026-10-07 (BIN only) |
+| K23 | The reference-pose fill of §6.6 step 4 applies when the total weight is **at most** 0.1, and its rotation is sign-aligned with the weighted sum of the contributions so far (§6.6) | BIN3 | Confirmed 2026-10-07 (BIN only) |
+| K24 | The client never applies a clip's extracted-motion reference frame to the entity; the frame's w is a rotation about the frame's stored `up` vector (right-handed) (§7.3) | BIN3 | Confirmed 2026-10-07 (BIN; "never applies" = no code path in the animation component or its Havok calls reads it) |
+| K25 | Clip playback rate is the node's `Speed` × `SpeedMultiplier` (with `Speed` driven by a property); it is never rescaled to the measured ground speed. The avatar's ground speed is a per-direction move speed × `Movement_SpeedMultiplier`, mixed by the input direction (max(\|*x*\|, \|*y*\|) taken before \|*y*\| is doubled for the mix) (§7.4). The `Movement_…MoveSpeed` and `Physics_Avatar…MoveSpeed` properties are unset in the data; the speeds the player's controller uses come from the data by another path (K28) | BIN3; BIN4; OBS2 | Confirmed 2026-10-07 (rule BIN; unset properties OBS2). Revised 2026-10-07: the earlier "those move speeds are not in the data files" was wrong (K28). |
+| K26 | Skinning matrix = T·R·S of the triple (*t* + *q*·(*s* ⊙ *X*ₜ), *q*·*X*_q, *s* ⊙ *X*ₛ), with the inverse reference triple *X* = (−(*q*_r⁻¹ applied to *t*_r), *q*_r⁻¹, 1/*s*_r): the inverse translation is **not** divided by the reference scale (§5.4) | BIN3 | Confirmed 2026-10-07 (BIN only). Corrects the *X*_b translation of 2026-10-05. |
+| K27 | The executable contains no runtime cloth classes (only serialization names of Havok cloth types), never creates a ragdoll instance, and its animation component has no secondary-motion step: capes and skirts move only with their clip tracks (§13) | BIN3 | Confirmed 2026-10-07 (BIN only) |
+| K28 | The player's own movement controller is configured from the game object that the `WEENIECONTENT` DID map labels `PlayerPhysicsControl`: its `PlayerPhysicsControl_BasePlayerParameters`, overlaid in a fixed order by state-dependent parameter structures (troll, mounted, walking, slide, ice, falling, slope, swimming, frozen). The merged `GenericPhysicsController_…MoveSpeed` fields are the per-direction speeds, and the merged `GenericPhysicsController_RampTime` is the slider time *T* of the player's input path (§7.4) | BIN4; OBS3 | Confirmed 2026-10-07 (path, order and field use BIN; values OBS3, read at run time) |
 
 ---
 
@@ -272,6 +285,10 @@ Whatever table selects a clip, `tessera-anim` applies the rule of §3.2:
   "track count mismatch"). Never bind the first min(tracks, bones) tracks, and never bind by
   name. No data in this install needs another rule.
 
+The client does the same (K20, BIN3): when it plays a clip it builds a binding whose
+track-to-bone table is the identity (track *j* → bone *j*), and a clip whose track count
+differs from the bone count of the entity's setup is not played and is reported as an error.
+
 <a id="s3-5"></a>
 ### 3.5 Annotation names as a diagnostic (Confirmed patterns)
 
@@ -370,8 +387,9 @@ matrices reproduces the stored vertices of all player setups' skinned parts with
 
 The product **P_b** · **B_b**⁻¹ is exact while every scale is 1. With non-unit scales (a clip
 track, a body-shape deformer or a bone slider) the client forms the skinning transform from
-(translation, rotation, scale) triples instead, by the rule of §5.4 (K17); the two agree
-whenever all scales are 1.
+(translation, rotation, scale) triples instead, by the rule of §5.4 (K17, K26); the two
+agree whenever all scales are 1. For the few bones whose reference scale is not 1 the
+client's skinning at the reference pose is **not** the identity (§5.4, last paragraph).
 
 <a id="s4-5"></a>
 ### 4.5 The mesh bind pose is the skeleton reference pose (Confirmed)
@@ -499,21 +517,39 @@ rotation *q*, per-axis scale *s*). For a bone *b* with parent *p*:
 
 A root bone's model triple is its local triple. With all scales 1 this is exactly §5.3.
 
-**Inverse reference triple.** From the reference pose composed by the same rule, bone *b*'s
-reference model triple (*t*_r, *q*_r, *s*_r) inverts to *X*_b = (translation
-−(1/*s*_r) × (*q*_r⁻¹ applied to *t*_r), rotation *q*_r⁻¹, scale 1/*s*_r), with per-axis
-products and reciprocals.
+**Inverse reference triple** (revised 2026-10-07, K26). From the reference pose composed by
+the same rule, bone *b*'s reference model triple (*t*_r, *q*_r, *s*_r) gives the triple
+*X*_b = (translation −(*q*_r⁻¹ applied to *t*_r), rotation *q*_r⁻¹, scale 1/*s*_r, per axis).
+The client computes it exactly so: the translation is **not** divided by the reference
+scale, so *X*_b is the exact inverse only when *s*_r = (1, 1, 1). (The 2026-10-05 text
+divided the translation by *s*_r; that was wrong.)
 
-**Skinning transform.** For a pose with model triple (*t*, *q*, *s*) of bone *b*, the
-skinning triple is (translation *t* + *q* applied to (*s* × *X*_b's translation), rotation
-*q* · *X*_b's rotation, scale *s* × *X*_b's scale); the skinning matrix is T · R · S of that
-triple (§5.3 order). For a bone whose reference scale is 1 (all player-skeleton bones) a
-bind-space vertex *v* therefore lands at *t* + *q* applied to (*s* × (*q*_r⁻¹ applied to
-(*v* − *t*_r))): its offset from the bone's reference joint, taken in the bone's reference
-frame, is scaled per axis by the bone's **model** scale, then rotated and moved to the posed
-joint. So a scaled bone shrinks or grows the vertices bound to it and to its descendants
-(whose model scale inherits the factor), around each bone's own joint, while every joint
-stays where the translations and rotations put it.
+**Skinning transform** (revised 2026-10-07, K26). For a pose with model triple (*t*, *q*,
+*s*) of bone *b*, the skinning triple is (translation *t* + *q* applied to (*s* ⊙ *X*_b's
+translation), rotation *q* · *X*_b's rotation, scale *s* ⊙ *X*_b's scale), where ⊙ is the
+per-axis product; the skinning matrix is T · R · S of that triple (§5.3 order), so a
+bind-space vertex *v* lands at
+
+  *t* − *q* applied to (*s* ⊙ (*q*_r⁻¹ applied to *t*_r)) + (*q* · *q*_r⁻¹) applied to
+  ((*s* ⊙ (1/*s*_r)) ⊙ *v*).
+
+The scale acts on *v* along the **model (bind) axes**, before the rotation *q* · *q*_r⁻¹.
+For a bone whose reference rotation is the identity and whose reference scale is 1 (every
+player-skeleton bone) this reduces to *t* + *q* applied to (*s* ⊙ (*v* − *t*_r)): the
+vertex's offset from the bone's reference joint is scaled per axis by the bone's **model**
+scale, then rotated and moved to the posed joint. So a scaled bone shrinks or grows the
+vertices bound to it and to its descendants (whose model scale inherits the factor), around
+each bone's own joint, while every joint stays where the translations and rotations put it.
+The two readings that the 2026-10-05 text allowed differ only for a bone with a non-identity
+reference rotation and a non-uniform model scale; the client uses the one above.
+
+Consequence for bones whose **model reference scale is not 1** (the 224 bones in 182 setups
+with a non-unit local reference scale, first paragraph of this section, and their
+descendants): at the reference pose the skinning transform is not the identity. A vertex
+bound to such a bone lands at *t*_r − *q*_r applied to (*s*_r ⊙ (*q*_r⁻¹ applied to
+*t*_r)) + *v*; with a uniform reference scale σ that is *v* + (1 − σ) *t*_r. An
+implementation that wants the client's look reproduces this offset; KI8 (unit scales) is
+unaffected.
 
 Evidence and consequences (RH, K17): with this rule the River-hobbit bodies, whose thighs and
 knees carry fixed scales (`appearance.md` §6.3), keep their lowest vertex within 1 cm of
@@ -576,7 +612,9 @@ clip loops is decided by whoever plays it (`script-table.md`).
 ### 6.4 Playback rate
 
 Clip time advances at real time × playback rate. The data holds no per-clip rate; rates other
-than 1 come from the playing system (`script-table.md`, locomotion matching §7.4).
+than 1 come from the playing system: the node's `Speed` × `SpeedMultiplier`, with `Speed`
+often driven by a property (`script-table.md` §6.1, §8.5). The client never adapts the rate
+to the ground speed (§7.4, K25).
 
 <a id="s6-5"></a>
 ### 6.5 Normalisation and shortest path
@@ -587,12 +625,30 @@ than 1 come from the playing system (`script-table.md`, locomotion matching §7.
   is playing contributes to a per-bone weighted average (§6.6, K18). Translations and scales
   average linearly; rotations are summed as weighted quaternions and normalised (a
   normalised linear blend), each quaternion first negated when it points away from the
-  others (shortest path; the exact reference quaternion for that test is Reported, not
-  traced). Cross-fades are the same average while one clip's ramp weight falls and the
-  other's rises (ramp times: `script-table.md` §6.1).
+  others (shortest path). For the reference-pose fill of §6.6 step 4 the test is against the
+  weighted sum of the contributions accumulated so far (K23, BIN3); for the clip
+  contributions themselves the same running-sum test is Reported (inside the Havok blending
+  routine, not traced). Cross-fades are the same average while one clip's weight falls and
+  the other's rises.
 
-> **OPEN** (owner observation): whether cross-fade durations other than the nodes' `RampIn`
-> / `RampOut` and the switch-case transition times exist.
+<a id="s6-5-1"></a>
+**Ramps and cross-fades (K21, BIN3; answers the earlier OPEN on cross-fade durations).**
+Every playing clip carries one overall weight *c* (step 2 of §6.6). It changes only in these
+ways, and every change is **linear in time** (no ease curve):
+
+| Event | What *c* does |
+|---|---|
+| Clip started | Rises from 0 to the target weight (the node's intensity, normally 1) over the node's `RampIn`. A `RampIn` of 0 starts at the target. Clips started while an entity runs a **start-up** script (`script-table.md` §8.1) skip the ramp and start at the target. |
+| Clip stopped (its script branch stops, or a one-shot clip reaches its end) | Falls from its current value to 0 over the node's `RampOut`; then the clip is removed. A `RampOut` below 0.0002 s removes it at once. A one-shot clip's stop is scheduled `RampOut` seconds **before** its end, so the fade finishes exactly at the end of its played range (`script-table.md` §6.10). |
+| The node's intensity changes (driven property, ScalarBlend weight, a Switch cross-fade of its branch) | Jumps to the new value at once, and a ramp-in still in progress is abandoned. |
+
+So the cross-fade durations that exist are: a clip's own `RampIn` / `RampOut`
+(`script-table.md` §6.1), the `RampOut` of the Switch case being left, which fades the whole
+outgoing branch against the incoming one (`script-table.md` §7.1; 0.2 s for walk ↔ run in
+the locomotion templates), and the time the movement code takes to move a ScalarBlend
+slider (`script-table.md` §8.4: a constant rate of 1/*T* per second; for the player's own
+input *T* is the controller's `RampTime`, §7.4). No other blend time exists in the animation
+layer.
 
 <a id="s6-6"></a>
 ### 6.6 Partial and additive clips (Confirmed patterns)
@@ -612,8 +668,8 @@ than 1 come from the playing system (`script-table.md`, locomotion matching §7.
   Value census over all arrays: 1.0 (325,452 values), 0.01 (51,257), 0.0 (49,748), 0.5
   (12,878), then 0.05, 0.8, 0.3 and others.
 - **Combination rule (BIN, K18).** Every playing clip *i* has an overall weight *c_i*
-  (its ramp envelope: rising from 0 to the node's intensity, normally 1, over `RampIn`,
-  falling over `RampOut`; `script-table.md` §6.1) and a per-track **opacity** *o_ij*: the
+  (its linear ramp envelope of §6.5: rising from 0 to the node's intensity, normally 1,
+  over `RampIn`, falling over `RampOut`; `script-table.md` §6.1) and a per-track **opacity** *o_ij*: the
   clip's track weight *j* when its animation node has `UseBoneOpacity` = 1 and the clip has a
   weight array, otherwise 1 (`script-table.md` §6.5). For each bone *j* separately:
   1. Set the remaining weight *r* = 1.
@@ -622,9 +678,13 @@ than 1 come from the playing system (`script-table.md`, locomotion matching §7.
      layer use the same *r*. After the layer, *r* = max(0, *r* − the sum of that layer's
      *w_ij*). Lower layers therefore only get what higher layers leave.
   3. Quantise every weight: *w_ij* becomes ⌊255 × *w_ij*⌋ / 255 (truncation; the
-     unquantised values were used in step 2).
-  4. If the bone's total *W* = Σ *w_ij* is below **0.1**, add the bone's reference transform
-     with weight 0.1 − *W*.
+     unquantised values were used in step 2). The client multiplies the single-precision
+     weight by 255 and converts to an integer toward zero, with no tolerance added
+     (BIN3).
+  4. If the bone's total *W* = Σ *w_ij* is **at most 0.1**, add the bone's reference
+     transform with weight 0.1 − *W* (K23; at exactly 0.1 that weight is 0). Its rotation
+     is negated first when its dot product with the weighted quaternion sum accumulated so
+     far is negative.
   5. The bone's local transform is the weighted average of the contributions: Σ *w* ·
      translation / Σ *w*, the same for scale, and the normalised weighted quaternion sum
      (§6.5).
@@ -641,15 +701,21 @@ than 1 come from the playing system (`script-table.md`, locomotion matching §7.
   is an absolute pose clip.
 
 > **OPEN** (owner observation, confirmation only): the rule above predicts that an upper-body
-> attack played while running leaves the legs running. Visible check: attack while running.
+> attack played while running leaves the legs running, and that the same attack played while
+> standing moves the whole body (in 7,722 nodes `UseBoneOpacity` is driven by
+> `ScriptSystem_CurrentlyMoving`, so the opacity applies only while moving). Visible check:
+> attack while running, then while standing. Not needed to implement.
 
 The `UseBoneOpacity` flag can change while a clip plays (it is driven by
 `ScriptSystem_CurrentlyMoving` in 7,722 nodes): the player then moves a mixing factor *m*
 between 0 (opacity used) and 1 (opacity ignored) and uses *o_ij* + *m* × (1 − *o_ij*) as the
 track's opacity while *m* < 0.9998.
 
-> **OPEN:** the duration of that change of *m* (BIN shows a linear change between two stored
-> times; where those times come from was not traced). Until known, switch *m* immediately.
+**Duration of the change (K22, BIN3; answers the earlier OPEN).** When the flag changes,
+*m* moves **linearly from its current value to the new target** (0 when the flag becomes 1,
+1 when it becomes 0) over **0.2 s**, a constant of the client, not a data field. A clip
+without a weight array has nothing to mix and ignores the change. A clip starts with *m* = 0
+when its node has `UseBoneOpacity` = 1 and the clip has weights, otherwise with *m* = 1.
 
 ---
 
@@ -705,24 +771,41 @@ the motion removed from the bones:
   (for example 0.93 m forward over 3.3 s, 5.06 m backward over 2.5 s); speeds 0.08 – 26 m/s.
 - The `forward` member is (1, 0, 0) in 207 of 214 frames even though characters face +Y; it
   does not describe the character's facing and is not needed.
-- **Use**: at clip time *t*, the entity's placement is moved by the change of the sampled
-  reference frame since the previous update: rotate the entity about the world up axis by
-  Δw and translate it by Δ(x, y, z) expressed in the entity's frame at the clip's start.
-  Bones are sampled as usual. When the reference frame has fewer samples than the clip has
-  frames (3 cases), hold its last sample. When both a leading and an embedded copy exist
+- **Meaning of a sample** (BIN3): the client's evaluation of a reference frame at time *t*
+  interpolates (x, y, z, w) linearly between the two neighbouring samples (first sample
+  before 0, last sample at or after the frame's duration) and forms the transform
+  "translate by (x, y, z), rotate by the angle w about the frame's stored `up` vector"
+  (right-handed: a positive w turns counter-clockwise when `up` points at the viewer, so with
+  `up` = +Z a positive w is a left turn for a character facing +Y). The stored `up` is used,
+  not the world up axis (7 leading frames store (0, 1, 0), `havok-data.md` §4.5).
+- **Use by the client** (K24, BIN3): **none.** The client's animation component never reads
+  a clip's extracted motion: per playing clip it only advances the clip's time and samples
+  its bone tracks, and none of its calls into the Havok runtime queries a reference frame.
+  An entity's placement and heading come from the movement system (and, for locomotion
+  clips, `LocomotionDisplacement`, `script-table.md` §6.3), never from these frames. The
+  turn-in-place clips of the list above therefore show only their bone motion (which ends
+  where it starts) while the movement system turns the entity.
+- **Tessera rule**: the world view and the client must not move or turn entities by
+  extracted motion. A viewer may offer it as a debug overlay; when it does, it applies the
+  change of the sampled frame since the previous update (rotate about the stored `up` by Δw,
+  translate by Δ(x, y, z) in the entity's frame at the cycle's start, restart the reference
+  each loop), holds the last sample when the frame has fewer samples than the clip has
+  frames (3 cases), and scales Δ(x, y, z) by the entity's model scale. These choices are
+  Tessera's (no client behaviour to match). When both a leading and an embedded copy exist
   they are identical (`havok-data.md` §4.5); use either.
 
-> **OPEN** (owner observation): the sign of w. A positive w is a counter-clockwise turn seen
-> from above under the active-rotation convention of §5.2 (a left turn for a character
-> facing +Y). Check on a creature that turns in place (which way it ends up facing).
+> **Answered** (2026-10-07, BIN3; was: the sign of w, owner observation). A positive w is a
+> right-handed rotation about the stored `up` (counter-clockwise seen from the tip of `up`).
+> The question no longer affects rendering, because the client never applies the frame.
 
-> **OPEN** (implementation, M4 character viewer): does the extracted translation scale with
-> the entity's model scale (`appearance.md` §6.1)? The motion is removed from bones that are
-> drawn scaled, so the explorer scales Δ(x, y, z) by the model scale (otherwise the feet of
-> a River-hobbit, scale 0.7, slide by 0.3 × 3.17 m per cycle of 0x05008E8E). Please confirm.
+> **Answered** (2026-10-07, BIN3; was: implementation OPEN on scaling the extracted
+> translation by the model scale, and on loops and the `up` axis in the implementer notes of
+> §15). The client applies no extracted motion, so the M4 viewer's choices (scale by model
+> scale, restart per cycle, world up) are a debug display only; for that display use the
+> stored `up` (rule above). In the world, do not apply it.
 
 <a id="s7-4"></a>
-### 7.4 Locomotion speed of treadmill clips (Confirmed estimates, matching OPEN)
+### 7.4 Locomotion speed of treadmill clips (Confirmed estimates; rule and configured speeds BIN)
 
 A clip's natural ground speed can be measured from its planted foot: while a foot is within
 a quarter of its vertical range of its lowest point, its horizontal velocity is the
@@ -738,10 +821,99 @@ least 8 cm and stride at least 25 cm along y:
 So a typical walk cycle covers about 2 m/s and a run about 6 m/s at playback rate 1. These
 are estimates from a heuristic contact test, not stored values.
 
-> **OPEN** (owner observation): how the original matches clip rate to movement speed (scale
-> the playback rate by actual speed / clip speed, or play at rate 1 and let feet slide), and
-> the avatar's walk and run speeds. Check: time a character running a known distance between
-> two `/loc` readings, and watch whether the feet slide.
+**Rate matching (K25, BIN3; answers the first half of the earlier OPEN).** The client does
+**not** match the clip rate to the ground speed:
+
+- A clip's playback rate is its node's `Speed` × `SpeedMultiplier` (`script-table.md` §6.1),
+  where `Speed` is usually driven by `Movement_SpeedMultiplier` (`script-table.md` §8.5).
+  Nothing in the animation layer reads the entity's measured velocity.
+- The avatar's ground velocity comes from the movement code (BIN3, BIN4): for the input
+  direction (strafe *x*, propel *y*, each in [−1, 1]) it takes the forward speed when
+  *y* > 0, otherwise the backward speed, and the left strafe speed when *x* > 0, otherwise
+  the right strafe speed, each multiplied by `Movement_SpeedMultiplier` (dictionary default
+  1.0). It first takes *m* = max(\|*x*\|, \|*y*\|) from the undoubled values; then, only
+  for the mix, when both \|*x*\| and \|*y*\| are at most 0.5 it doubles \|*y*\| (call the
+  result *y*′). The speed is (\|*x*\| × strafe speed + *y*′ × forward-or-back speed) /
+  (\|*x*\| + *y*′) × *m*, along the normalised direction (*x*, *y*); with *m* at most
+  0.0002 the velocity is 0.
+- **Where the player's speeds come from (K28, BIN4, OBS3).** The `Movement_…MoveSpeed` and
+  `Physics_Avatar…MoveSpeed` properties are unset in the data (OBS2; `Physics_Avatar…` default
+  to −1) and the client does not use them for this. Instead, the client builds the
+  configuration of the player's own movement controller from the game object that the root
+  DID map's `WEENIECONTENT` map labels `PlayerPhysicsControl`, using the current values of
+  the properties named below; it repeats this as the player's state changes and applies the
+  result only when it differs from the previous one (exactly when the step runs was not
+  traced). It starts from that object's `PlayerPhysicsControl_BasePlayerParameters`
+  and lays these structures over it, in this order, each replacing only the fields it
+  contains:
+  1. `PlayerPhysicsControl_TrollParameters` when `Agent_Species` is 47 (`Troll`);
+  2. when `Mount_Is_Mounted` is true: `PlayerPhysicsControl_WarsteedParameters` if
+     `Mount_Movement_Use_RampUp_Controller` is true, else `PlayerPhysicsControl_MountedParameters`;
+  3. when `Movement_MovementStyle` is 1 (`Walking`): `PlayerPhysicsControl_MountedWalkingParameters`
+     if mounted, else `PlayerPhysicsControl_WalkingParameters`;
+  4. when `Physics_OnSlide` is true: `PlayerPhysicsControl_SlideParameters`, and steps 5 to 8
+     are skipped;
+  5. otherwise `PlayerPhysicsControl_IceParameters` when `Physics_OnIce` is true;
+  6. `PlayerPhysicsControl_FallingParameters` (`…_StealthedFallingParameters` when
+     `Stealth_IsStealthed` is true) when `Entity_Element` is 4 (no surface);
+  7. `PlayerPhysicsControl_SlopeParameters` when `Entity_Element` is 6 (uncontrolled surface);
+  8. `PlayerPhysicsControl_SwimmingParameters` (`…_StealthedSwimmingParameters` when stealthed)
+     when `Entity_Element` is 1 to 3 (water);
+  9. `PlayerPhysicsControl_FrozenParameters` when `Movement_ActiveMovementFrozen` is true.
+
+  Each structure holds a `PlayerPhysicsControl_MovementConfiguration` structure, whose
+  `GenericPhysicsController_…` fields are what the merge combines, and may hold a
+  `PlayerPhysicsControl_MoveToConfiguration` (not used by this spec). The merged
+  `GenericPhysicsController_ForwardMoveSpeed`, `…_BackwardMoveSpeed`, `…_StrafeLeftMoveSpeed`
+  and `…_StrafeRightMoveSpeed` are the speeds of the rule above (metres per second), and the
+  merged `GenericPhysicsController_RampTime` is the slider time *T* of `script-table.md` §8.4.
+  The controller is of type 3 (`Generic`), or 0x10000001 (`Mounted`) when
+  `Mount_Movement_Use_RampUp_Controller` is true; the slider and speed steps described here
+  were traced for type 3 only. Observed values (this install; read them at run time):
+
+  | Structure | Forward | Backward | Strafe left / right | `RampTime` (s) |
+  |---|---|---|---|---|
+  | Base | 6.5 | 3.25 | 5.0 / 5.0 | 0.13 |
+  | Walking overlay | 5.0 | 4.5 | 4.5 / 4.5 | 0.25 |
+
+  The other overlays set `RampTime` to 0.25 (mounted, warsteed, mounted walking, frozen),
+  0.5 (slide, ice), 0.01 (falling), 0.1 (slope) and 0.4 (swimming); the troll overlay sets
+  only the backward speed (6.0). So with a full forward input (*y* = 1, *x* = 0) and
+  `Movement_SpeedMultiplier` 1, a running avatar on the ground moves at 6.5 m/s, close to the
+  run clips' natural speed of about 6.6 m/s (89-bone male, table above), and backwards at
+  3.25 m/s (clips: about 2.7 m/s). Which input vector the keyboard produces in run and in walk
+  mode was not traced (OPEN below); a full-magnitude walk input would give 5.0 m/s, more than
+  twice the walk clips' natural speed of about 2 m/s.
+- Consequence: the feet slide whenever the ground speed differs from the clip's natural speed
+  (\|`LocomotionDisplacement`\| / duration, `script-table.md` §6.3) × rate; nothing corrects
+  it.
+- Scripts can install their own movement controller: 127 PlayerPhysics nodes (kind 47,
+  `script-table.md` §5.2, all of controller type 3) carry `GenericPhysicsController_…`
+  properties, among them `ForwardMoveSpeed` (0 in 80 nodes; otherwise 2.0, 2.42, 3.0, 3.2,
+  3.52, 5.0, 6.5 or 7.15), `BackwardMoveSpeed`, `StrafeLeftMoveSpeed`,
+  `StrafeRightMoveSpeed` and `RampTime` (0.01 – 0.4 s) (OBS2, 2026-10-07). Such a controller
+  is created fresh and takes the node's properties over the controller class's built-in
+  defaults (BIN4; for type 3: each horizontal speed 4.5, `RampTime` 0.1 s). Which situations
+  start these nodes was not traced. The root DID map also has a `PHYSICSCONTROLLER` map
+  (controller type → property set; `Generic` → a set with forward 4.5, backward 2.5,
+  `RampTime` 0.3, OBS3); neither path traced here reads it, and its use is OPEN.
+
+The animation component also offers a **locomotion velocity** computed from its own clips
+(BIN3): every layer that holds looping clips with a non-zero `LocomotionDisplacement`, a rate
+above 0.0002 and no fade-out in progress contributes the weighted mean of |displacement| ×
+rate / duration over those clips (weights = their current overall weights) along the
+normalised weighted sum of their displacement directions, times the time step; the layers'
+contributions add, and a warning is logged when more than one layer contributes. The displacement used is the node's value multiplied by the mean
+of the entity's three scale components (`script-table.md` §6.3). Which movers use this
+velocity was not traced (the avatar's controller of the list above does not).
+
+> **OPEN** (owner observation O14.4, narrowed 2026-10-07): the configured speeds and the
+> speed rule are known (above); not traced is the input vector (*x*, *y*) the keyboard gives
+> in run mode and in walk mode, so the walking ground speed is unknown and the running one
+> is predicted, not confirmed. Check: time a character moving straight for 10 s between two
+> `/loc` readings, per gait (prediction for running: 6.5 m/s forward, 3.25 m/s backward, with
+> no speed buffs), and note whether the feet slide. Tessera's walk controller follows
+> `script-table.md` §8.5 meanwhile.
 
 ---
 
@@ -954,16 +1126,18 @@ placeholders (`setup.md` §8.5).
 For one animated object per frame:
 
 1. **Skeleton**: from the object's setup (§2). Precompute the reference model transforms
-   **B**_b and their inverses (§4.4) once per distinct skeleton.
+   **B**_b and the inverse reference triples *X*_b (§5.4) once per distinct skeleton.
 2. **Clips**: for each clip layer chosen by the playing system, check compatibility (§3.4),
    compute the clip time (§6.3, §6.4; held clips take their time from a value instead,
    `script-table.md` §6.7) and sample every track (`havok-data.md` §7.7–§7.8) into local
    (translation, rotation, scale) per bone.
-3. **Blend** all playing clips per bone by the layered-weight rule (§6.6). Bones with a
-   total weight below 0.1 are pulled to (or, with no weight, keep) their reference local
-   transform. No bone slider is applied here (`appearance.md` §6.4).
-4. **Root motion**: if a clip has an extracted-motion reference frame, apply its change to the
-   object's placement (§7.3); bone tracks are used as sampled.
+3. **Blend** all playing clips per bone by the layered-weight rule (§6.6), each clip with
+   its current overall weight (linear ramps, §6.5). Bones with a total weight of at most 0.1
+   are pulled to (or, with no weight, keep) their reference local transform. No bone slider
+   is applied here (`appearance.md` §6.4).
+4. **Root motion**: none from the clips. Extracted-motion reference frames are not applied
+   (§7.3, K24); the object's placement comes from the movement system. Bone tracks are used
+   as sampled.
 5. **Model transforms**: one pass from root to leaves (§5.3, with scale by §5.4).
 6. **Palette**: for each bone, the skinning transform of §5.4 (equal to model transform times
    inverse reference transform when all scales are 1, §4.4); upload up to 256 matrices
@@ -994,9 +1168,10 @@ results are plain arrays.
 | **KI6** | Bone 0 of the player skeletons is static and equal to its reference in every compatible clip. |
 | **KI7** | Mesh `flags` ∈ `MeshTypeID` keys for every mesh record. |
 | **KI8** | With every scale equal to 1, the triple composition and skinning of §5.4 give the same model transforms and skinned positions as the matrix form of §4.4 and §5.3 (a property test on synthetic skeletons; real reference poses differ only where a reference scale is not 1). |
+| **KI9** | The root DID map's `WEENIECONTENT` map has an entry labelled `PlayerPhysicsControl` whose object's property set holds `PlayerPhysicsControl_BasePlayerParameters` with a `PlayerPhysicsControl_MovementConfiguration` that sets all four horizontal `GenericPhysicsController_…MoveSpeed` fields and `GenericPhysicsController_RampTime` (OBS3). |
 
 KI1–KI4 and KI7 are checks a decoder or loader may run and report; KI5 and KI6 are census
-facts that tests may assert on real data; KI8 is a property test.
+facts that tests may assert on real data; KI8 is a property test; KI9 is a real-data check for the speed source of §7.4.
 
 ---
 
@@ -1027,9 +1202,12 @@ facts that tests may assert on real data; KI8 is a property test.
 | Man-vs-Elf rig assignment "provisional" | MV | Confirmed from the race table (§2.2): Human 0x04000553/554, Elf 0x04000555/556; both share one skeleton per sex. |
 | `attach_map` "probably slot → bone", list A "probably attachment points", lists B and C unknown | `setup.md` §6.2–§6.3 | `BoneType` → bone; `HoldingLocation` → (bone, frame); C keyed by `UIViewport_Type`; B still open (§8). |
 | Low 16 bits of skinned mesh `flags` unexplained | `mesh.md` §3.3 | The whole `flags` word is a `MeshTypeID` slot value (§9.2). |
-| Cape and skirt bones may need runtime cloth simulation | MV | Clips animate them: cape bone rotations are animated in 90 – 96 % of compatible clips, skirt bones in 48 – 61 % (whether the original adds simulation on top stays open). |
+| Cape and skirt bones may need runtime cloth simulation | MV | Clips animate them: cape bone rotations are animated in 90 – 96 % of compatible clips, skirt bones in 48 – 61 %. The original adds nothing on top (K27, BIN3, 2026-10-07): the executable has no runtime cloth classes (only the serialization names of Havok cloth types), never creates a ragdoll instance, and its animation component goes from blended local pose to model pose to skinning palette with no secondary-motion step. |
 | Decision: full matrix composition for scale until scale inheritance is observed | this spec §5.4 (before 2026-10-05) | The client composes (translation, rotation, scale) triples: parent scale never moves child joints; skinning scales a vertex's offset from its own joint (§5.4, BIN). |
 | Recommended layering "base + w · (layer − base)"; a weighted clip alone plays its full pose | this spec §6.6 (before 2026-10-05) | Remaining-weight budget from the highest layer down, 1/255 truncation, normalised average, reference fill below 0.1 (§6.6, BIN). |
+| Inverse reference translation −(1/*s*_r) × (*q*_r⁻¹ applied to *t*_r); two readings of the skinning transform | this spec §5.4 (2026-10-05) | The translation is not divided by the reference scale; the skinning matrix is T·R·S of the skinning triple, which scales along the bind axes (§5.4, K26, BIN3). |
+| Extracted motion moves the entity (§7.3 "Use") | this spec §7.3 (2026-10-05) | The client never applies it (K24, BIN3); Tessera keeps it as a debug overlay only. |
+| Reference fill "below 0.1" | this spec §6.6 (2026-10-05) | At most 0.1 (K23, BIN3). |
 
 ---
 
@@ -1133,6 +1311,37 @@ and 252/255. Result z = (2 × −10 + 252 × 0) / 254 = −0.07874.
 
 ---
 
+<a id="s14-9"></a>
+### 14.9 Ramps and a Switch cross-fade (§6.5)
+
+A clip started at time 0 with `RampIn` 0.2 and intensity 1 has overall weight 0.25 at 0.05 s,
+0.5 at 0.1 s and 1 from 0.2 s on. Stopped at 3.0 s with `RampOut` 0.3, its weight is 0.5 at
+3.15 s and it is removed at 3.3 s. A one-shot clip of duration 2.0 s, rate 1, `LoopCount` 1,
+`RampOut` 0.25, started at 0, begins its ramp-out at 1.75 s and is gone at 2.0 s.
+
+A Switch leaves a case whose `RampOut` is 0.2 at time 10.0 for a case with `Delay` 0. From
+10.0 to 10.2 the outgoing branch's intensity is (10.2 − *t*) / 0.2 and the incoming branch's
+is 1 minus that: at 10.05 they are 0.75 and 0.25. The clips of both branches take these
+values as their weights at once (§6.5 table, third row). At 10.2 the outgoing branch is
+stopped. If the property changes back to the first case at 10.05, the branch that was
+coming in (now at 0.25) becomes the outgoing one: the new fade uses the `RampOut` of the case
+now being left and is placed in time so that this branch continues from 0.25 down to 0; the
+first case's old branch, still fading at 0.75, is stopped at once, and that case's branch is
+started again and rises as the complement (`script-table.md` §7.1).
+
+<a id="s14-10"></a>
+### 14.10 Skinning with a reference scale (§5.4, K26)
+
+One root bone with reference translation *t*_r = (0, 0, 1), identity rotation and uniform
+reference scale σ = 0.5. Inverse reference triple *X* = ((0, 0, −1), identity, (2, 2, 2)).
+At the reference pose (*t* = (0, 0, 1), *q* identity, *s* = (0.5, 0.5, 0.5)) the skinning
+triple is ((0, 0, 1) + (0.5 ⊙ (0, 0, −1)), identity, (1, 1, 1)) = ((0, 0, 0.5), identity,
+(1, 1, 1)): a vertex at (0, 0, 1) lands at (0, 0, 1.5) = *v* + (1 − σ) *t*_r. With the exact
+inverse ((0, 0, −2), identity, (2, 2, 2)) it would stay at (0, 0, 1); a test that expects
+that has the 2026-10-05 rule.
+
+---
+
 <a id="s15"></a>
 ## 15. Open questions
 
@@ -1143,14 +1352,21 @@ and 252/255. Result z = (2 × −10 + 252 × 0) / 254 = −0.07874.
 > **Resolved** (2026-10-05, BIN): scale inheritance (§5.4) and the combination of layered
 > clips (§6.6).
 
-> **OPEN** (owner observation): cross-fade durations beyond the nodes' ramp times (§6.5);
-> the duration of a `UseBoneOpacity` change (§6.6); visual confirmation that an attack while
-> running keeps the legs running.
+> **Resolved** (2026-10-07, BIN3): ramp shape and every cross-fade duration (§6.5, K21); the
+> duration of a `UseBoneOpacity` change (§6.6, K22); the sign and the use of extracted-motion
+> yaw (§7.3, K24: never applied); rate matching (§7.4, K25: none); cloth and secondary motion
+> on capes and skirts (§13, K27: none); the exact skinning transform and inverse reference
+> triple (§5.4, K26).
 
-> **OPEN** (owner observation): the sign of the extracted-motion yaw (§7.3).
+> **OPEN** (owner observation, confirmation only): an upper-body attack while running keeps
+> the legs running, the same attack while standing moves the whole body (§6.6).
 
-> **OPEN** (owner observation): playback-rate matching for locomotion and the avatar's walk
-> and run speeds (§7.4).
+> **OPEN** (owner observation O14.4, narrowed 2026-10-07): the input vector the keyboard gives
+> in run and walk mode, and so the walking ground speed; the running speed is predicted from
+> the data (6.5 m/s forward, §7.4) and needs only a confirmation.
+
+> **OPEN:** the slider and speed steps of the `Mounted` controller type (0x10000001), and the
+> use of the root DID map's `PHYSICSCONTROLLER` map (§7.4).
 
 > **OPEN** (for `script-table.md` and owner observation): in-world default holding location
 > per equipment slot, and drawn versus sheathed placement per weapon class (§8.5).
@@ -1158,8 +1374,8 @@ and 252/255. Result z = (2 × −10 + 252 × 0) / 254 = −0.07874.
 > **OPEN:** frame list B (§8.7); `Render_MeshCombiningPoseAnim` (§3.4); the 554 clips that
 > fit no skeleton of the install by pose and the 2 clips without a same-count skeleton (§3.3).
 
-> **OPEN** (owner observation): whether cape and skirt bones get runtime simulation on top
-> of their clip animation (§13).
+> **OPEN** (low priority): whether the client renormalises vertex weights before skinning
+> (not traced; Tessera does not, see the answer below).
 
 None of these blocks rendering an animated character; they affect fidelity of playback
 choices in `tessera-anim`.
@@ -1169,78 +1385,79 @@ built all 28,555 skeletons (999 distinct by bit-exact content), bound and sample
 25,395 clips (the 2 without a same-count skeleton are 0x05002255 and 0x05004AD7, as KI5
 says), reproduced the §3.3 agreement buckets within a few clips (1,222 / 18,737 / 4,883 /
 551 with skeletons grouped bit-exactly instead of to 1e-4), found KI1 and KI2 true on all
-2,625 setup submeshes, and found no non-finite posed matrix. The implementation's choices
-are stated; the spec writer should confirm or correct.
+2,625 setup submeshes, and found no non-finite posed matrix. Answers (spec writer,
+2026-10-07):
 
-> **OPEN:** Reference-pose skinning tolerance (§4.4). With the stored weights as they are,
-> skinning at the reference pose moves vertices by up to 4.4 mm (setup 0x04002BE1; about
-> 730 of 2.5 million setup-part vertices move more than 10⁻⁴ · (1 + |*v*| / 10 m) m), because a vertex's weights sum to 1
-> only within 2 × 10⁻⁴ (`mesh.md` §5.7) and the skinned position is Σ*w* · *v* = (Σ*w*) · *v*
-> at the reference pose, which is off by |1 − Σ*w*| · |*v*| on large models. With the
-> weights renormalised to sum 1 the largest error is 3.1 × 10⁻⁵ m, matching the 5.3 × 10⁻⁵ m
-> of §4.4. Should renderers renormalise weights at load (`mesh.md` §5.7 says no
-> renormalisation is needed), and does the 5.3 × 10⁻⁵ m figure assume it? The
-> implementation does not renormalise; its real-data test allows 10⁻⁴ m (scaled for large
-> models) plus |1 − Σ*w*| · |*v*|.
+> **Answered** (was: reference-pose skinning tolerance, §4.4). The 5.3 × 10⁻⁵ m of §4.4 was
+> measured on the player setups only (models about 2 m tall), where |1 − Σ*w*| · |*v*| stays
+> below it; it is not a bound for large models. **Tessera rule**: do not renormalise weights
+> at load (`mesh.md` §5.7); tests allow 10⁻⁴ · (1 + |*v*| / 10 m) m plus |1 − Σ*w*| · |*v*|,
+> as the implementation does. For bones whose reference scale is not 1, compare with the
+> client's offset of §5.4 instead of the identity. Whether the client renormalises is the
+> low-priority OPEN above.
 
-> **OPEN:** Singular reference transforms (§4.4). The spec does not say what to do when a
-> bone's model-space reference transform cannot be inverted (a zero scale); none occurs in
-> this install. The implementation rejects such a skeleton (`skeleton.singular_bind`), and
-> also rejects skeletons with more than 256 bones (§4.3), non-finite reference values or a
-> rotation that cannot be normalised (`skeleton.bad_reference`; reference rotations are
-> normalised otherwise).
+> **Answered** (was: singular reference transforms, §4.4). Accepted as **Tessera rules**:
+> reject a skeleton with a zero reference scale (`skeleton.singular_bind`), more than 256
+> bones, non-finite reference values or a rotation that cannot be normalised
+> (`skeleton.bad_reference`); normalise reference rotations otherwise. None occurs in the
+> install. (The client takes the reciprocal of the reference scale without a check, BIN3, so
+> it has no behaviour to match here.)
 
-> **OPEN:** Extracted motion over loops (§7.3). "Δ(x, y, z) expressed in the entity's frame
-> at the clip's start" leaves open what "start" is for a looping clip. The implementation
-> restarts the reference frame each cycle: within a cycle the entity relative to the
-> cycle's start is T(*p*(*t*) − *p*(0)) · R_up(*w*(*t*) − *w*(0)), each whole cycle adds the
-> full-cycle motion, and playing backwards gives the inverse motion. Following the "Use"
-> paragraph, it rotates about the world up axis (+Z) whatever the frame's stored `up`;
-> please confirm for the 7 leading frames with `up` = (0, 1, 0) (§4.5 of `havok-data.md`;
-> 0x050039F1 changes w by 0.041 rad), where "about `up`" in the first bullet would instead
-> turn about y. It uses the clip frame grid holding the last sample
-> (`ReferenceFrame::sample_on_grid`).
+> **Answered** (was: extracted motion over loops and the `up` axis, §7.3). The client applies
+> no extracted motion (K24). The implementation's per-cycle restart is fine for the debug
+> overlay; rotate about the frame's **stored** `up`, which is what a sample means (§7.3).
 
-> **OPEN:** Broken sample values (§7.7 of `havok-data.md`: "may treat them as broken").
-> The implementation replaces any sampled track that is not finite or whose translation
-> exceeds 10⁴ m in some component by the bone's reference transform; on this install that
-> affects 2 clips (0x05002819 and 0x05009355). Please confirm the threshold.
+> **Answered** (was: broken sample values, threshold 10⁴ m). Accepted as a **Tessera rule**
+> (no client behaviour was found to match): a sampled track that is not finite or has a
+> translation component beyond 10⁴ m takes the bone's reference transform (2 clips:
+> 0x05002819, 0x05009355).
 
-> **Answered** (2026-10-05, spec writer; was: track weights on the lowest layer, §6.6). The
-> sentence "a weighted clip played alone uses the full clip pose" is withdrawn. Track
-> weights (opacities) apply on every layer, the lowest included, whenever the node has
-> `UseBoneOpacity` = 1 and the clip has weights; a bone whose total weight stays below 0.1
-> is filled with the reference pose (§6.6 step 4). Two cross-fading clips of one layer each
-> get their own weight from the same remaining budget (§6.6 step 2). A partial clip whose
-> lower layers have weight 0 therefore plays over the reference pose, as the implementation
-> already does, but with the 0.1 fill and the 1/255 quantisation of §6.6.
+> **Answered** (was: bounds on scales and fallbacks). Accepted as **Tessera rules**: a
+> sampled scale component beyond 10³ in magnitude marks the track broken; the blended local
+> transform falls back per part to the reference beyond those bounds; a non-finite model
+> triple takes its parent's (a root's: its reference model triple) and is counted; a
+> non-finite skinning matrix is written as the identity.
 
-> **OPEN:** Play times outside a cycle (§6.3). Negative play times (negative playback
-> rates) wrap backwards for looping clips (*t* = τ mod `duration` with the Euclidean
-> remainder) and clamp to 0 for one-shot clips; non-finite play times sample *t* = 0. The
-> spec only states τ ≥ 0.
+> **Answered** (was: play times outside a cycle, §6.3). Accepted. This matches the client's
+> time update (BIN3): a looping clip's time that goes below 0 wraps up by whole cycles (the
+> Euclidean remainder), and a clip with a limited cycle count clamps at the start. Non-finite
+> play times sampling *t* = 0 is a **Tessera rule**.
 
-> **OPEN** (implementation, River-hobbit height fix, §5.4 skinning transform): the two
-> statements of §5.4 differ for a bone whose reference rotation is not the identity and
-> whose model scale is not uniform. "The skinning matrix is T · R · S of that triple"
-> applies the model scale along the axes of the bind (model) frame, *t'* + *q*·*q*_r⁻¹ ·
-> (*s* × *v*); the following sentence ("lands at *t* + *q* applied to (*s* × (*q*_r⁻¹
-> applied to (*v* − *t*_r)))") applies it along the bone's reference axes. Tessera Decision:
-> the second, which is the matrix product T·R·S(model triple) · (T·R·S(reference triple))⁻¹
-> = **P**_b · **B**_b⁻¹ with **P**_b composed by the triple rule; it reproduces every number of
-> `appearance.md` §6.5. The inverse reference is the exact matrix inverse (equal to *X*_b
-> whenever the reference scale is uniform or the reference rotation is the identity), so
-> skinning at the reference pose stays the identity. Which form does the client use?
+> **Answered** (was: which skinning form, §5.4; River-hobbit height fix). The client uses
+> **T·R·S of the skinning triple** (the first statement; scale along the bind axes), and its
+> inverse reference translation is −(*q*_r⁻¹ applied to *t*_r) **without** division by the
+> reference scale (K26). The Tessera Decision (**P**_b · **B**_b⁻¹ with the exact inverse) is
+> withdrawn: it differs from the client for bones with a rotated reference and a non-uniform
+> model scale, and for bones whose reference scale is not 1 (worked example §14.10). On the
+> player skeletons (identity reference rotations, unit reference scales) both give the same
+> result, so the numbers of `appearance.md` §6.5 are unchanged.
 
-> **OPEN** (implementation, §6.6): Tessera Decisions where the rule is silent: (1) the
-> truncation adds 10⁻⁴ of a step before rounding down, so that weights such as 1 − 0.5 that
-> floating point computes a hair below a whole step keep it; (2) the shortest-path test of
-> §6.5 compares each quaternion with the running weighted sum of the bone's contributions so
-> far (the first is taken as it is; the reference-pose fill is tested the same way); (3)
-> the weight of a clip inside a cross-fade chain is its fade factor times (1 − factor) of
-> every later entry of the chain, times the layer's ramp weight.
+> **Answered** (was: §6.6 Tessera Decisions). (1) The client adds no tolerance: it multiplies
+> the single-precision weight by 255 and truncates (BIN3); compute *r* and *w* in single
+> precision in the order of §6.6 step 2 and truncate the same way, with no 10⁻⁴ step. (2) The
+> running-sum test is the client's for the reference fill (K23); for clip contributions it is
+> Reported (same routine family, not traced); keep it. (3) There is no cross-fade chain in the
+> client: each playing clip has one overall weight, set by its own linear ramp or, while a
+> Switch cross-fades its branch, by the branch intensity (`script-table.md` §7.1); clips of
+> one layer simply share that layer's remaining budget (§6.6 step 2). Replace the chain
+> product by the clip's own current weight.
 
----
+<a id="s15-1"></a>
+### 15.1 Owner observation O14: status after BIN3 and BIN4 (2026-10-07)
+
+The checklist items of `docs/checklists/owner-observations.md` O14, as far as the client's
+code settles them. "Answered" means implementable without the owner; a visual check is still
+welcome where noted.
+
+| Item | Question | Status | Answer or what is still needed |
+|---|---|---|---|
+| O14.1 | Blend method and cross-fade time | **Answered** on foot (BIN, data), visual check welcome; mounted **Partly** | Weighted per-bone average with linear weight ramps (§6.5, §6.6). Walk ↔ run: 0.2 s linear cross-fade (the locomotion template's case `RampOut`, `script-table.md` §8.4). Idle ↔ walk and idle ↔ run: the locomotion clips' weights follow `Slider_Propel` / `Slider_Strafe`, which the player's own input path moves at a constant rate of 1/*T* per second, *T* being the merged `GenericPhysicsController_RampTime` of the player's controller (§7.4, K28): 0.13 s while running on the ground and 0.25 s while walking in this install (so 0 → 1 takes 0.13 s or 0.25 s, about 8 or 15 frames at 60 fps). Other entities move their sliders through the follower paths (0.2 s or 0.5 s, `script-table.md` §8.4). No pop, except for clips started by start-up scripts, which start at full weight. Still OPEN: the slider time of the `Mounted` controller type. |
+| O14.2 | Upper-body clips over locomotion | **Answered** (BIN, K18), visual check welcome | Legs keep running while moving; a standing attack moves the whole body (§6.6). |
+| O14.3 | Turn direction of turn-in-place clips | **Answered** (BIN, K24) | The client never applies the clips' extracted yaw; the heading change comes from the movement system. A positive stored w would be a left turn about +Z (§7.3). Nothing left to observe for rendering. |
+| O14.4 | Walk, run, backward speeds; foot sliding | **Partly** (BIN, data); **needs the owner** for walking and as a confirmation | Rate rule answered (K25: no rate matching, feet slide when speeds differ). Configured speeds answered (K28, §7.4): running 6.5 m/s forward, 3.25 m/s backward, 5.0 m/s strafing for a full input with `Movement_SpeedMultiplier` 1; walking configuration 5.0 / 4.5 / 4.5. Not traced: the input vector the keyboard gives per gait, so the actual walking speed needs the owner's `/loc` timing (§7.4 OPEN); the running prediction needs only a confirmation. |
+| O14.5 | Scale inheritance from parent bones | **Answered** (BIN, K17) | Children inherit the scale (their vertices grow too) but their joints do not move: a hand on an inflating arm grows around its own joint and stays where the arm's unscaled joints put it (§5.4). |
+| O14.6 | Runtime cloth on capes and skirts | **Answered** (BIN, K27) | None: capes and skirts move only with their clip tracks. |
+| O14.7 | Turning in place | **Answered** (data + BIN), visual check welcome | While standing, a turn input sets `Slider_Turn`; the template then plays the species' turn-left or turn-right clips (stepping feet) on the locomotion layer, only while propel and strafe are 0, and the movement system rotates the body (`script-table.md` §8.4). |
 
 <a id="s16"></a>
 ## 16. Change log
@@ -1248,3 +1465,5 @@ are stated; the spec writer should confirm or correct.
 | Date | Sections | Change | Role |
 |---|---|---|---|
 | 2026-10-05 | §1 (BIN, RH, K8, K17–K19), §4.4, §5.3, §5.4, §6.5, §6.6, §10, §11 (KI8), §13, §14.6–§14.8, §15, §2.2 OPEN | Scale composition and layer combination from the client (BIN, decision 0011): triple composition replaces the matrix Decision; the layered-weight rule replaces the "base + w · (layer − base)" recommendation; bind-space deformation noted in the pipeline; River-hobbit size OPEN reduced to a visual check; implementation OPEN on track weights of the lowest layer answered. | Spec writer (dirty room) |
+| 2026-10-07 | §1 (BIN3, OBS2, K20–K27), §3.4, §4.4, §5.4, §6.5 (new ramp and cross-fade paragraph), §6.6, §7.3, §7.4, §10, §13, new §14.9–§14.10, §15 (rewritten list; implementation OPENs answered), new §15.1 | Owner observation O14 settled from the client where possible (BIN3, decision 0011): linear ramps, start-up clips without ramp-in, the 0.2 s `UseBoneOpacity` change, fill at a total of at most 0.1 aligned with the running sum, no extracted motion applied in the world, no rate matching and move speeds absent from the data, no cloth; §5.4 corrected (inverse reference translation not divided by the reference scale; the skinning matrix is T·R·S of the triple); the implementation's skinning-form and cross-fade-chain Decisions withdrawn, its other Decisions accepted as Tessera rules. | Spec writer (dirty room) |
+| 2026-10-07 (revision after review) | §1 (new BIN4, OBS3, K25 revised, new K28), §6.5 (slider time), §7.4 (speed rule wording, new paragraph on the player's controller configuration, PlayerPhysics defaults, OPEN narrowed), §11 (new KI9), §15, §15.1 (O14.1, O14.4) | Review of 2026-10-07 answered. O14.1: the player's own slider time, which the review found untraced, is now traced (BIN4): it is the `RampTime` of the player's controller configuration, read from the `PlayerPhysicsControl` object of the data (0.13 s running, 0.25 s walking here); the row says Answered on foot and leaves the mounted controller OPEN. §7.4: max(\|*x*\|, \|*y*\|) is taken before \|*y*\| is doubled (optional review item); which strafe speed goes with which sign of *x*. Correction: K25's "the per-direction move speeds are not in the data files" was wrong; the player's speeds come from `PlayerPhysicsControl_…Parameters` (K28), so O14.4 is narrowed to the keyboard's input vector per gait. | Spec writer (dirty room) |

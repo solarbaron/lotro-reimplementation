@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | **Accepted** (revision of 2026-10-07 and its BIN4 repair, accepted on re-review 2026-10-07). Implementers re-check code against the sections changed on 2026-10-07: §1 (provenance legend, sources BIN3, BIN4 and OBS2, rows G33, G43–G55), §4.7, §4.8 (§4.8.1–§4.8.4), §7.6, §7.8, §7.9, §8.2 (OPEN relabelled "needs the owner"), §9.0, §9.2, §9.4 (§9.4.2, §9.4.3), §10.2, §10.3 (§10.3.1), §14, §15, §17, §18. The rest is unchanged from the earlier Accepted text. |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested. Blocking: M4 facts in §9.2 (redirect DID), §9.4 (float formatting) and §9.5 (character-name tag group, vowel set) have no provenance row; the 0x58 record-to-field mapping (§10.3, singular-flag order) is Inferred with no OPEN; wrong Confirmed counts in §4.9 (only 1 entry is exactly `[E]`, not 12,081; 147 groups have a space before `[`, not 10), §4.7 (colour openers/closers 13,951/13,942 case-insensitive, `</p>` occurs 0 times) and §4.3 (6,843 labelled selectors). Independent re-implementation of §4.10/§7.3 parses and validates all 806,052 entries; label, variable, modifier, selector, escape, whitespace, tag-letter, locale-record and DID-map spot checks all matched. Re-review 2026-10-05 (Claude review session, spec-writer agent): **accepted**. Every blocking, minor and gap item of the first review is resolved: G34–G42 added, §10.3 field order cited to BIN2, §4.9/§4.7/§4.3/§7.6 counts re-checked over all 806,052 entries and all match (202,210 groups, 12,081 exactly `[E]`, 1 entry `[E]` alone, 147 space before `[`, 21 after `]`, 4 doubled `[[`; colour 13,951/13,942 in 11,677 entries, `</p>` 0; 6,843 of 7,057 selectors labelled; options 15/4/1/2; 26 entries with an unescaped `[`, 22 losing text); locale record field values and SS1/SS2, SG14 (`token_high` 0, name byte 0 or 1 in all entries), the f32 bias value, the 26-character vowel set (one 0x41–0xFC lookup table in the executable) and all §9.4.2 float examples were reproduced independently. Non-blocking notes for a later revision: §9.4.2 "the larger of 1 and *w*" should say that a NaN *w* stays the limit (the stated NaN consequence depends on it); the client adds 0.5×*r*^−*d* and *b* before adding the absolute value of *v*; label digit strings beyond 32 bits are unspecified; §7.2 versus §4.5.2 on whether pre-decoding of prefix/suffix values needs the `item` directive. |
+| **Reviewer** | Claude review session (spec-writer agent); re-reviews of the 2026-10-07 revision and of its repair by a separate Claude review session (spec-reviewer), 2026-10-07 |
+| **Review record** | Re-review 2026-10-07 of the BIN4 repair, separate Claude review session (spec-reviewer), own fresh read-only Ghidra copy of build 4906.0071.1794.4035 plus independent data probes: **accepted**. Checklist (CLEAN_ROOM.md §5.3): every item passes; the repair adds only prose and tables, no code or pseudo-code, no client strings, log formats or build paths; the BIN4 row gives build, questions 23–25 and why M1–M3 were not enough; every new or changed fact (G33, G43, G49, G54) has a row; nothing falls under a closed gate. Previous items, all resolved and re-checked in the client: (1) §7.6/G49: the common StringInfo-to-text routine has exactly 424 call references plus one unwind-table entry; 419 zero the mode register before the call, 2 are reached only by a branch taken after it was zeroed (421 display), 2 load the constant 1 (the `PLAYERNAME` setter and a small raw helper), 1 (the template formatter) passes the first byte it has just compared with 1, so 1 on its only path; no run-time choice; the two other mode-forwarding wrappers of the inner renderer have 9 callers (all display; that wrapper returns success) and 13 callers (all raw; that wrapper adds round brackets); the remaining two direct callers of the inner renderer pass raw mode; OPEN 13 is correctly closed. (2) §4.7/§4.8/G43: in the tokenizer the `<<>` comparison, link closing and the link-registry offer come first, and property 0x1BB is read only after the registry declines; steps 3–4 both sit behind the registry's existence, as §4.8 states. (3) §10.3.1/G54: the handler is chosen by the low 10 bits of the keyboard layout; language 0x12 gets a handler that sets only the conversion mode (1 → 0x10, 2 → 0x1, other → the saved mode, saved at creation and in its counterpart, which sets 0x10); 0x11 and all other languages share the routine that sets only the open status (open unless the field is 1); nothing changes without a loaded locale record. (4) Status line now lists §1, §14, §15, §17 (and, added by the reviewer in this header, §8.2, whose OPEN was relabelled). Data spot checks (all matched): `TextTagType` 0x230000CA plus base chain = 17 keys; PIDs 0x122, 0x1BB, 0x354, 0x426, 0x75A have dictionary types int, bool, StringInfo, DID, float and fitting names; plus the property-system M10 figures. Non-blocking notes: §7.6 table, row "Raw (1), from a test": the formatter passes the tested byte itself, not a test result (the value is 1 either way); §10.3.1 first sentence ("one handler for 0x12, and handlers for 0x11 and for every other language") could say directly that 0x11 and the default share the open-status routine. Owner observations: no item of `docs/checklists/owner-observations.md` falls in this spec's scope; OPENs 9b, 9c and 11 are correctly marked as needing the owner. Earlier record: Re-review 2026-10-07 of the 2026-10-07 revision (BIN3, OBS2), separate Claude review session (spec-reviewer), own Ghidra copy of the same build 4906.0071.1794.4035 plus independent data probes: **changes requested**. Checklist: no code or pseudo-code, no copied prose or client strings, no game text beyond interoperability names, BIN3 row gives build, questions and why M1–M3 were not enough, new facts G43–G55 each have a row; passes. Re-checked in the client and matching: first byte 2 renders the second authoring string (token name, source-language text, comment order in the stored serialiser and in the text-form reader); flag byte 0/1 strict; argument kinds 1–7 with the 6-byte header, f64 + u16 *d*, i64, u8 flags + u16 radix, 6/7 built as 4/5, other kinds no value; flag bit 0 grouping, bit 1 trailing-zero drop, radix 0xFFFF = locale default, integers signed; validity test (literal valid; mode 2 needs token and table; others load the table, find the token, deep-check nested arguments) and emptiness test (invalid, or valid with empty raw render); `PLAYERNAME` from PID 0x354, type 13 only, own placeholder otherwise, rendered raw and stored without tags; 0x1BB read when a tag is met; `<p>`/`<li>` break rule; indent = bullet image width + PID 0x122; link kinds/types through EMAPPER key 0x24 and the three special (kind, type) pairs; first tag after an opener closes the link. Data spot checks (all matched): `TextTagType` 0x230000CA plus base chain = the 17 keys of §4.8.1; `Languages` 0x230000B1 plus base = 5 keys of §10.2; PIDs 0x122 (int), 0x1BB (bool), 0x354 (StringInfo), 0x426 (DID), 0x75A (float) and their dictionary names; 0x58000000 trailing fields 0x42000028 / 0 / 0, first u32 1, alphabet index 10 = `0` (so the §9.4.3 `0xEE` example holds); §17.4.1 worked-example byte counts. **Blocking:** (1) §7.6 / G49 does not reproduce: of the 424 calls of the common StringInfo-to-text routine, 421 pass a constant display mode (two of them through a branch that zeroes the mode register first), 2 pass constant raw mode, and 1 (the debugging formatter) passes a register that holds 1 on that path; no call site computes the mode at run time. Correct the counts and close or rewrite OPEN 13 of §14. (2) §4.7 first paragraph and G43: in the client tokenizer, `<<>` and link openers/closers are handled **before** property 0x1BB is read; 0x1BB gates only the §4.7 table markup. "In other elements every character is shown literally" is therefore wrong for `<<>` and for links; state which steps of the §4.8 tag order run with 0x1BB false. **Minor:** (3) §10.3.1 IME mode merges two handlers that the client picks by keyboard layout: one sets only the open status (mode 1 closed, any other open) and leaves the conversion mode alone; the other (one specific layout) sets only the conversion mode (1 → 0x10, 2 → 0x1, other → the mode saved earlier) and does not open or close the IME from this field. (4) The Status line omits sections the change log lists (§14, §15, §17, provenance legend). No item of `docs/checklists/owner-observations.md` falls in this spec's scope; the "needs the owner" OPENs (9b, 9c, 11) are correctly marked. Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. Blocking: M4 facts in §9.2 (redirect DID), §9.4 (float formatting) and §9.5 (character-name tag group, vowel set) have no provenance row; the 0x58 record-to-field mapping (§10.3, singular-flag order) is Inferred with no OPEN; wrong Confirmed counts in §4.9 (only 1 entry is exactly `[E]`, not 12,081; 147 groups have a space before `[`, not 10), §4.7 (colour openers/closers 13,951/13,942 case-insensitive, `</p>` occurs 0 times) and §4.3 (6,843 labelled selectors). Independent re-implementation of §4.10/§7.3 parses and validates all 806,052 entries; label, variable, modifier, selector, escape, whitespace, tag-letter, locale-record and DID-map spot checks all matched. Re-review 2026-10-05 (Claude review session, spec-writer agent): **accepted**. Every blocking, minor and gap item of the first review is resolved: G34–G42 added, §10.3 field order cited to BIN2, §4.9/§4.7/§4.3/§7.6 counts re-checked over all 806,052 entries and all match (202,210 groups, 12,081 exactly `[E]`, 1 entry `[E]` alone, 147 space before `[`, 21 after `]`, 4 doubled `[[`; colour 13,951/13,942 in 11,677 entries, `</p>` 0; 6,843 of 7,057 selectors labelled; options 15/4/1/2; 26 entries with an unescaped `[`, 22 losing text); locale record field values and SS1/SS2, SG14 (`token_high` 0, name byte 0 or 1 in all entries), the f32 bias value, the 26-character vowel set (one 0x41–0xFC lookup table in the executable) and all §9.4.2 float examples were reproduced independently. Non-blocking notes for a later revision: §9.4.2 "the larger of 1 and *w*" should say that a NaN *w* stays the limit (the stated NaN consequence depends on it); the client adds 0.5×*r*^−*d* and *b* before adding the absolute value of *v*; label digit strings beyond 32 bits are unspecified; §7.2 versus §4.5.2 on whether pre-decoding of prefix/suffix values needs the `item` directive. |
 | **Implements into** | `crates/text` (message model, inline grammar, tag selection, substitution, whitespace normalisation, display cut, escape decoding, StringInfo resolution, number formatting, locale selection, UI-text markup); `apps/explorer` string-table view |
 | **Companion specs** | `docs/specs/records.md` §1.4–1.5 (UTF-16 strings, name hash), [§3](records.md#s3) (string-table **byte layout**), [§4](records.md#s4) (StringInfo **byte layout**), §8 (DID maps); `docs/specs/install-layout.md` §3.5 (language archives); `docs/specs/dat-container.md` §3.4 (subset word) |
 
@@ -56,7 +56,8 @@ Marks:
   were decoded and every entry was scanned (2026-10-04, re-run 2026-10-05). Counts are
   given.
 - **Confirmed (BIN)**: read from the client executable under decision 0011 (method M4); see
-  the BIN and BIN2 rows. Where the data was also checked against the rule, the mark is
+  the BIN, BIN2, BIN3 and BIN4 rows (written "Confirmed (BIN3)" or "Confirmed (BIN4)"
+  where only that pass gives the fact). Where the data was also checked against the rule, the mark is
   "Confirmed (BIN + OBS)". These facts rest on the executable alone where no OBS is listed.
 - **Reported**: comes from published third-party material only, and neither the data nor
   the executable confirms or refutes it.
@@ -71,6 +72,9 @@ Sources:
 | OBS | Observed in the user's install 2026-10-04 and 2026-10-05 (Steam install, English client data current on those dates). Data was read in place and read-only. |
 | BIN | Client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (changelist 711794; SHA-256 prefix d22363eb9aff0fb5, the same build as `records.md` BIN), read with a disassembler (objdump) on 2026-10-05, on address ranges only. **Questions:** (1) the token and item grammar inside pieces (labels, selectors, modifiers, directives, escapes); (2) how a value's grammar tags are derived and how a selector option is chosen; (3) whitespace handling and what `{{keepspaces}}` switches off; (4) what is displayed when a lookup or a render fails; (5) how UI text interprets colour, emphasis, list and link markup; (6) how numeric arguments are formatted, and what the 0x58 record of the language archive is. **Why M1–M3 were not enough:** the data holds the templates but not the rules that interpret them; the published readers (LC, LCC) disagree with each other and with the data on the selection rule, on tag meanings and on `\q`; the original client cannot be observed running here (M3), and no published source describes failure display, whitespace or number formatting. Only the offline text-formatting code was read: the message template lexer, parser and evaluator, the string-table and StringInfo renderers, the number formatters and the UI-text markup tokenizer. Nothing about network, login, keys, launcher or anti-tamper was read. |
 | BIN2 | Second M4 pass on the same build and the same day (2026-10-05), made to answer the review of this spec. **Questions:** (7) which record field of the 0x58 record fills which field of the loaded locale object, in particular the order of the five singular flags, of the three item-composition sets and of the `M`/`F` expansions; (8) whether the `token_high` u32 of a string-table entry is the redirect DID the renderer follows; (9) the exact float-formatting arithmetic (width, rounding bias, digit extraction, limits); (10) the character-name tag group and its vowel set; (11) whether an escaped `\]` closes a selector tag list; (12) the integer type used when a value is tested for `1` and `+`; (13) how the client reads the name-group byte of an entry. **Why M1–M3 were not enough:** in English every one of these fields equals a built-in default or is never exercised (no redirect, no float argument, no character name, no escaped `]` in a tag list, no out-of-range number in the data), so observation cannot tell the orders or limits apart, and no published source describes them. Only offline code was read: the locale-record serialiser and its field getters, the string-table entry serialiser and lookup, the StringInfo renderer, the integer and float formatters, the value-tag derivation, the item-composition step, the character-name builder and the selector tag-list scanner. Nothing about network, login, keys, launcher or anti-tamper was read. |
+| BIN3 | Third M4 pass on the same build (4906.0071.1794.4035), 2026-10-07, decision 0011, with the Ghidra headless decompiler on a read-only copy of the analysis project, single functions only. **Questions:** (14) how the UI-text tokenizer treats `<p>`/`<li>` line breaks and what draws a list item's bullet and indent; (15) which link kinds and types the link registry accepts, where their names come from, what field text each accepts and how a link is closed and styled; (16) which property the client watches for `PLAYERNAME` and whether it adds a tag group; (17) the stored layout and meaning of every argument kind, including the decimal places of on-disk floats and the format options; (18) what first byte 2 and the three authoring strings do; (19) how a (0, 0) or otherwise invalid StringInfo is treated; (20) which render mode the client's callers use; (21) whether the typed record loader checks a DID against its type's range; (22) what the unknown fields of the 0x58 record are used for. **Why M1–M3 were not enough:** none of these paths is exercised by the English data (no list bullet in data, no argument, no first byte 2, no redirect, unknown locale fields equal 0 or 1), the link names are not stored as text in the executable, no published source covers them, and the client cannot be observed running here (M3). Only offline code was read: the UI-text tokenizer and line layout, the link registry and link classes, the StringInfo serialiser, renderer, validity test and argument classes, the number formatters, the locale-record serialiser and its accessors, the IME set-up routines, and the typed record-load path. Branches serving a non-stored (compact) serialised form were skipped, and nothing about network, login, keys, launcher or anti-tamper was read or is stated. |
+| BIN4 | Fourth M4 pass on the same build (4906.0071.1794.4035), 2026-10-07, decision 0011, Ghidra headless decompiler and listing on a fresh read-only copy of the analysis project, made to answer the re-review of the BIN3 revision. **Questions:** (23) which render mode each caller of the common StringInfo-to-text routine passes, counted over every reference to the routine, with the value followed back along every path to the call; (24) in which order the UI-text tokenizer tries the `<<>` literal, link closing, link opening and the §4.7 markup, and which of those steps depend on UI property 0x1BB; (25) how the IME-mode field of the locale record is applied, and whether the client has more than one IME handler. **Why M1–M3 were not enough:** these are properties of the client's code paths, not of stored bytes; the data has no element whose markup property is false next to a link, no published source covers them, the client cannot be observed running here (M3), and the BIN3 answers to (23) and (25) had been found incomplete by the reviewer. Only offline code was read: the StringInfo renderer and its callers' argument set-up, the UI-text tokenizer, and the IME handlers with the routine that picks one by keyboard layout. Nothing about network, login, keys, launcher or anti-tamper was read or is stated. |
+| OBS2 | Observed in the user's install on 2026-10-07 (data unchanged): the EMAPPER DID map entries with keys 0x24 (`TextTagType`) and 0x4A (`Languages`) and their enum mappers, decoded along their base chains; dictionary names and types of PIDs 0x122, 0x1BB, 0x354, 0x426 and 0x75A. |
 | LC | LotroCompanion `delta-lotro-dat-utils` 11.0 (Apache-2.0 distribution), studied as compiled classes for facts only: string-table loader, string renderer, tag list, locale file manager. |
 | LCC | LotroCompanion `lotro-core` (no licence file), facts only: text sanitizer and HTML conversion helpers. |
 | API | The plugin-API enumeration dump summarised in `docs/specs/lua-plugin-api.md` Appendix A (`Turbine.Language`). |
@@ -91,7 +95,7 @@ Sources:
 | G11 | Colour markup `<rgb=…>…</rgb>` with a colour stack; alpha forced to opaque | BIN (UI-text markup); OBS (13,951 opening tags, case-insensitive) | Confirmed (BIN + OBS) |
 | G12 | Eight-digit colour values: the top byte is overwritten with 0xFF, so it is never an alpha | BIN | Confirmed (BIN) |
 | G13 | `<b>` `<i>` `<u>` `<p>` `<li>` (any case) and closers; `<<>` is a literal `<` | BIN; OBS | Confirmed (BIN + OBS) |
-| G14 | Link markup `<Kind:Type:…>label<\Kind>` is recognised by a registry of link kinds; semantics per kind OPEN | BIN (tokenizer path); OBS (27 entries, 9 kinds) | Confirmed (recognition path), meaning OPEN |
+| G14 | Link markup `<Kind:Type:…>label<\Kind>` is recognised by a registry of link kinds; recognition and field formats in §4.8 (G45–G48); click actions partly OPEN | BIN (tokenizer path); BIN3; OBS (27 entries, 9 kinds) | Confirmed (recognition path and formats), actions partly OPEN |
 | G15 | `{{word}}` is a directive; it renders nothing. `keepspaces` turns off whitespace normalisation; `item` turns on item-name tag composition | BIN; OBS (37 entries use `keepspaces`, none use `item`) | Confirmed (BIN + OBS) |
 | G16 | Modifier `^` capitalises the variable's first letter; `@` lowercases it; either may follow a label or stand alone | BIN; OBS (13 `^`, 0 `@`) | Confirmed (BIN + OBS) |
 | G17 | An unlabelled selector binds to the unlabelled variable, else to the variable labelled −1 | BIN; OBS (203 + 11 selectors) | Confirmed (BIN + OBS) |
@@ -104,13 +108,13 @@ Sources:
 | G24 | Display cut: the rendered text is cut at its first unescaped `[`, then trailing whitespace is removed | BIN | Confirmed (BIN) |
 | G25 | A message with any slot whose argument has no value is not rendered (reason 6) | BIN | Confirmed (BIN) |
 | G26 | Failure reasons 1–7 and the diagnostic text the client shows (§9.3) | BIN | Confirmed (BIN) |
-| G27 | `PLAYERNAME` (hash 0x0DA47675) is supplied by the client when the caller does not supply it; the client stores it by rendering, in raw mode, a watched property of the local player's object | BIN; BIN2 (the setter) | Confirmed (BIN); which property is OPEN, its value Inferred |
+| G27 | `PLAYERNAME` (hash 0x0DA47675) is supplied by the client when the caller does not supply it; the client stores it by rendering, in raw mode, a watched property of the local player's object | BIN; BIN2 (the setter); BIN3 (the property, G52) | Confirmed (BIN); the server-supplied value's form OPEN |
 | G28 | Nested StringInfo arguments are rendered raw (tag group kept, escapes not decoded) | BIN | Confirmed (BIN) |
 | G29 | The 0x58 record (DB type STRING_STATE) holds the locale's number format, singular rule, `M`/`F` expansions and item-composition tag sets; layout §10.3 | BIN (field use); BIN2 (the record serialiser: field order, types and the object field each one fills); OBS (record parses exactly, 101 bytes); the type name is the label of DB type 0x46 in the data's DBOType enum mapper (`records.md` §2.1, provenance D2) | Confirmed (BIN + OBS) structure and record-to-field match; Confirmed (BIN) use of each field; three fields' meaning OPEN |
 | G30 | Integer arguments are printed in base 10 with the record's digit grouping and negative template | BIN; OBS (record values) | Confirmed (BIN + OBS) |
 | G31 | Literal StringInfo values are not parsed by the grammar; they get only the display cut and escape decoding | BIN | Confirmed (BIN) |
 | G32 | Entry argument names matter only for item-name composition (names `PREFIX`/`PRE`, `MID`/`NAME`/`PLURALNAME`, `SUFFIX`/`POST`) | BIN; OBS (the 7 named entries use `NAME` only) | Confirmed (BIN + OBS) |
-| G33 | Markup is interpreted only by UI text elements that enable it; unknown or malformed tags are shown literally | BIN | Confirmed (BIN) |
+| G33 | Every UI text element runs the tag steps of §4.8 (`<<>`, link closing, link opening); the §4.7 markup is interpreted only by elements that enable it (G43); unknown or malformed tags are shown literally | BIN; BIN4 (question 24) | Confirmed (BIN) |
 | G34 | An entry's second u32 (`records.md` §3.2 `token_high`) is a redirect DID: when it is not the null DID the renderer loads that record and looks the token up there; reason 5 when the record cannot be loaded, reason 4 when the token is missing from it (§9.2) | BIN2 (entry serialiser: the u32 after the token fills the field the lookup compares with the null DID; renderer: the two failure codes); OBS (the field is 0 in all 806,052 entries, so the path is never taken) | Confirmed (BIN); never exercised by the data |
 | G35 | Float arguments: double-precision arithmetic, rounding bias of half a unit of the last place plus an absolute 0.00019999999494757503, digits produced from the last place upward with the low 32 bits of each truncated product, at least one integer digit, limits on places, radix and length (§9.4) | BIN2 (float formatter and its callers) | Confirmed (BIN) |
 | G36 | Integer arguments: unsigned 64-bit digit loop over the absolute value, the record's padding, grouping and negative template; empty text without a record, for a radix ≤ 1 or for a digit alphabet shorter than the radix (§9.4) | BIN; BIN2 (integer formatter limits) | Confirmed (BIN) |
@@ -120,6 +124,19 @@ Sources:
 | G40 | The integer test of §5.3 is the C library's `wcstol` in base 10 into a signed 32-bit integer: out-of-range digit strings saturate to −2,147,483,648 or 2,147,483,647 and still count as integers | BIN2 (value-tag derivation; the import it calls) | Confirmed (BIN) |
 | G41 | The entry byte before the argument-name group is a flag: 0 = no group, 1 = one group; any other value is a stream error in the client (§17) | BIN2 (entry serialiser); OBS (every entry has 0 or 1) | Confirmed (BIN + OBS) |
 | G42 | Census corrections of 2026-10-05: exactly-`[E]` entries (1), groups with a space before `[` (147), colour tags (13,951 / 13,942 in 11,677 entries), `</p>` (0), labelled selectors (6,843 of 7,057), options with several tags (22), entries with an unescaped `[` outside the trailing group (26, of which 22 lose visible text to the display cut) | OBS (re-run over all 806,052 entries) | Confirmed |
+| G43 | The boolean UI property 0x1BB switches on only the §4.7 markup (colour, `b`, `i`, `u`, `p`, `li`). The `<<>` literal, the closing of an open link and the recognition of a link opener come before it in the tokenizer and work whatever its value; the property is read only for a tag that none of them takes (§4.7, §4.8) | BIN3 (question 14); BIN4 (question 24: tag order); OBS2 (the PID's dictionary type and name) | Confirmed (BIN) |
+| G44 | `<p>`/`<li>` line-break rule; list items draw the element's bullet image and indent by its width plus UI property 0x122 (§4.7) | BIN3 (question 14); OBS2 (PIDs 0x122, 0x426) | Confirmed (BIN); the bullet image's source property Inferred |
+| G45 | Link kinds and types are the names of the enum mapper under EMAPPER key 0x24 (`TextTagType`), matched without case (§4.8.1) | BIN3 (question 15: the registry resolves both through EMAPPER key 0x24); OBS2 (the mapper's 17 keys) | Confirmed (BIN + OBS) |
+| G46 | Opener recognition and the field text each (kind, type) accepts (§4.8.2) | BIN3 (question 15: tag parser, registry factory, link classes) | Confirmed (BIN) |
+| G47 | The first tag after an opener closes the link, whatever it says; labels use the element's link style (§4.8.3) | BIN3 (question 15: tokenizer) | Confirmed (BIN); the style's source property Inferred |
+| G48 | Panel factories are registered for five link kinds (§4.8.4) | BIN3 (question 15) | Confirmed (BIN); what activation does Inferred/OPEN |
+| G49 | The common StringInfo-to-text routine has 424 call sites, all direct calls: 421 pass display mode as a constant, 2 pass raw mode as a constant, and 1 (a formatter that shows a message as its template) passes raw mode on the only path that reaches the call. No call site chooses the mode at run time; the callers of two smaller wrappers of the renderer fix the mode too (9 display, 13 raw) (§7.6) | BIN3 (question 20); BIN4 (question 23: the census redone, every path to every call followed) | Confirmed (BIN4) |
+| G50 | First byte 2 shows the source-language authoring string; the three authoring strings; argument kinds 2/3/5/7 carry a stored decimal-place count and format options (§9.0, §9.4.2, §9.4.3; `property-system.md` §17.4) | BIN3 (questions 17, 18) | Confirmed (BIN) |
+| G51 | Validity and emptiness tests; (0, 0) and other invalid references are empty for display but fail as nested arguments (§9.0 step 2) | BIN3 (question 19) | Confirmed (BIN) |
+| G52 | `PLAYERNAME` comes from PID 0x354 (a StringInfo) of the local player's object, rendered raw and stored without adding tags; a placeholder when it is missing (§9.0) | BIN3 (question 16); OBS2 (PID 0x354 is a type-13 definition) | Confirmed (BIN + OBS) |
+| G53 | Typed record loads select the decoding class by type code; no DID range check was found; a mismatch between the requested and the stored DID fails the load (§9.2) | BIN3 (question 21) | Confirmed (BIN) as far as traced |
+| G54 | 0x58 record: the font DID is the default UI-text font; the next field is an f32 spacing added to every text element's spacing; the last is the IME mode, applied in one of two ways that the client picks by keyboard layout; no accessor reads the first u32 (§10.3.1) | BIN3 (question 22); BIN4 (question 25: the two handlers) | Confirmed (BIN); the spacing's role Inferred |
+| G55 | The data holds the language IDs and names in the enum mapper under EMAPPER key 0x4A (`Languages`) (§10.2) | OBS2 | Confirmed |
 
 ---
 
@@ -422,9 +439,24 @@ Two separate stages use escapes:
 <a id="s4-7"></a>
 ### 4.7 Colour, emphasis, paragraph and list markup (Confirmed (BIN + OBS))
 
-Markup is interpreted by UI text elements whose markup option is on (a UI property; which
-elements turn it on belongs to the UI layout spec). In other elements every character is
-shown literally.
+The markup in this section is interpreted by UI text elements whose markup option is on.
+The option is the boolean UI property with PID 0x1BB (its dictionary name says that it
+parses markup tags). Which elements set it belongs to the UI layout spec.
+
+The option does **not** switch off every tag (Confirmed (BIN4), G43). Every UI text element
+collects tags and runs the steps of the §4.8 tag order. The first three steps work whatever
+the option says:
+
+1. `<<>` is a literal `<` (the last row of the table below);
+2. while a link is open, the tag closes it (§4.8.3);
+3. a tag that the link registry accepts opens a link (§4.8.2).
+
+Only a tag that none of these takes reaches step 4. There the client reads property 0x1BB
+from the element. If it is true, the tag is tried as the markup of the table below
+(colour, `b`, `i`, `u`, `p`, `li` and their closers). If it is false, or the tag is not
+valid markup, the tag is shown literally (step 5). So in an element with the option off,
+colour, emphasis, paragraph and list tags appear as text, while `<<>` and links behave as
+in any other element.
 
 A **tag** is `<`, then everything up to the next `>`, then `>`. A `<` without a later `>`
 is literal. Tags do not nest inside each other. Tag names are matched
@@ -437,7 +469,7 @@ is literal. Tags do not nest inside each other. Tag names are matched
 | Italic | `<i>` | `</i>` | 1 / 1 | Turns italic on / off |
 | Underline | `<u>` | `</u>` | 1,120 / 1,120 | Turns underline on / off. Often used for headings. |
 | Paragraph | `<p>` | `</p>` | 1 / 0 | Opening inserts a line break (an element option drops it when the tag is at the very start of the text); closing does nothing |
-| List item | `<li>` | `</li>` | 136 / 134 | Opening inserts a line break as `<p>` does and turns list-item layout (indent) on; closing turns it off |
+| List item | `<li>` | `</li>` | 136 / 134 | Opening inserts a line break as `<p>` does, turns list-item mode on and starts an indented item with a bullet image (below); closing turns list-item mode off |
 | Literal `<` | `<<>` | — | 0 | Shows one `<` |
 
 Rules:
@@ -469,16 +501,32 @@ Rules:
   brackets as literal placeholders (`<` + a lower-case word or phrase + `>`, 38 distinct
   words); they stay literal under this rule.
 
-> **OPEN:** Whether a list item draws a bullet glyph and how deep the indent is. Both come
-> from UI properties of the element, not from the text.
+**Line breaks and list items** (Confirmed (BIN3), G44):
+
+- `<p>` and `<li>` each ask for a line break. The tokenizer inserts it (as a line-feed
+  character in the laid-out text) unless list-item mode is on after the tag and the tag
+  stands at the very start of the text or directly after a line break; then no second
+  break is added. So `<li>` at the start of the text, or right after `<p>` or another
+  break, starts the item on the current line.
+- The text never contains a bullet character. The bullet is an **image** that belongs to
+  the text element: when an element that has one lays out a line that starts a list item,
+  it draws that image at the start of the line. Inferred: the image is the one named by
+  the element's DID-valued UI property 0x426, whose dictionary name says "bullet image"
+  (the code path that loads it was not traced).
+- The item's text is indented by the width of that image (0 when the element has none)
+  plus the element's integer UI property 0x122 ("bullet spacing" in the dictionary) when
+  the element sets it, both in the element's layout units.
+
+> **OPEN:** The exact placement of the bullet image (vertical alignment with the first
+> line) and whether wrapped continuation lines of an item keep the indent. Both are
+> layout details of the text element, not of the text.
 
 <a id="s4-8"></a>
-### 4.8 Link markup (recognition Confirmed (BIN + OBS); meaning OPEN)
+### 4.8 Link markup (recognition and field formats Confirmed (BIN3); click actions partly OPEN)
 
 27 entries, mostly chat and command templates, contain **link elements**:
 
-- Opening: `<`, a Kind name, `:`, a Type name, `:`, optional further `:`-separated fields,
-  then `>`.
+- Opening: `<`, a Kind name, `:`, a Type name, `:`, the link's field text, then `>`.
 - Closing: `<`, a backslash, the same Kind name, `>`. In stored text the backslash is the
   escape `\\`, so it becomes a single backslash at display time (§7.7), before markup is
   interpreted.
@@ -494,14 +542,120 @@ the finished string (§7.8), the value simply becomes the field text of the open
 special joining is needed. A `>` inside such a value would end the opener early in the
 client; the data never puts one there.
 
-Client order for each tag (BIN): a `<<>` tag is a literal `<`; otherwise, while a link is
-open, the tag is offered to that link (this is how its closer is found); otherwise the tag
-is offered to the registry of link kinds, which may open a new link; otherwise it is tried
-as §4.7 markup; otherwise it is literal.
+Client order for each tag (BIN; Confirmed (BIN4) for the place of property 0x1BB):
 
-> **OPEN:** The semantics of each link kind (what clicking does, field formats) and the
-> complete list of kinds the registry accepts. For now Tessera renders the label text,
-> keeps the Kind, Type and fields as an inert link annotation, and never acts on it.
+1. A `<<>` tag is a literal `<`.
+2. Otherwise, while a link is open, the tag closes it (§4.8.3).
+3. Otherwise the tag is offered to the registry of link kinds, which may open a new link
+   (§4.8.2).
+4. Otherwise, and only if the element's UI property 0x1BB is true, it is tried as §4.7
+   markup.
+5. Otherwise it is shown literally.
+
+Steps 1–3 run in every UI text element, whatever 0x1BB says (§4.7). In the client, steps 3
+and 4 are both skipped when the link registry has not been created, so a tag then falls
+through to step 5; Tessera always creates its registry before laying out text, so it
+always runs both.
+
+<a id="s4-8-1"></a>
+#### 4.8.1 Kind and type names come from the data (Confirmed (BIN3 + OBS), G45)
+
+Kind and Type are both names in **one enum mapper of the data**: the one that the EMAPPER
+DID map (`property-system.md` §8.3) lists under key 0x24, label `TextTagType`
+(0x230000CA in this install). The client resolves that mapper at run time through the
+root DID map, and Tessera does the same; neither the DIDs nor the keys below may be
+hard-coded. Its keys in this install:
+
+| Key | Name | Role |
+|---|---|---|
+| 0 | `Invalid` | — |
+| 1 | `IID` | type |
+| 2 | `IIDString` | type |
+| 3 | `DID` | type |
+| 4 | `IIDDID` | type |
+| 5 | `IIDEnum` | type |
+| 6 | `String` | type |
+| 0x10000001 | `Select` | kind |
+| 0x10000002 | `QuestRef` | kind |
+| 0x10000003 | `MapNoteRef` | kind |
+| 0x10000004 | `Examine` | kind |
+| 0x10000006 | `IAInfo` | type of the `ExamineIA` kind |
+| 0x10000007 | `ExamineIA` | kind |
+| 0x10000009 | `ExamineItemInstance` | kind |
+| 0x1000000B | `ItemInfo` | type of the `ExamineItemInstance` kind |
+| 0x1000000C | `RunCmd` | kind |
+| 0x1000000D | `Append` | kind |
+
+Names are matched **without regard to case** (the client converts the tag text to 8-bit
+characters and compares case-insensitively), along the mapper's base chain as in
+`property-system.md` §7.1. `NPCQuery` is **not** in the mapper, so the one entry that uses
+it is shown literally by the client, tags included.
+
+<a id="s4-8-2"></a>
+#### 4.8.2 Recognising an opener (Confirmed (BIN3), G46)
+
+A tag opens a link when all of these hold:
+
+1. It is at least three characters long, starts with `<` and ends with `>`.
+2. The text from after `<` to the first `:` is non-empty and is a name in the mapper; its
+   key is the **kind**.
+3. The text from after that `:` to the next `:` is non-empty and is a name in the mapper;
+   its key is the **type**. A tag without that second `:` is not a link.
+4. The **field text**, from after the second `:` to just before the final `>`, is
+   non-empty.
+5. The registry creates a link object for the (kind, type) pair, and that object accepts
+   the field text:
+
+| Kind | Type | Link object | Field text accepted |
+|---|---|---|---|
+| `Examine` | `IIDDID` | special item-examination link | not traced (OPEN below) |
+| `ExamineIA` | `IAInfo` | special item-examination link | not traced (OPEN below) |
+| `ExamineItemInstance` | `ItemInfo` | special item-examination link | not traced (OPEN below) |
+| any other kind | `IID` (1) | instance-ID link | one unsigned 64-bit number |
+| any other kind | `IIDString` (2) | instance ID and text | a number, `:`, then non-empty text (the rest of the field text, `:` allowed) |
+| any other kind | `DID` (3) | DID link | one unsigned 32-bit number |
+| any other kind | `IIDDID` (4) | instance ID and DID | a 64-bit number, `:`, a 32-bit number |
+| any other kind | `IIDEnum` (5) | instance ID and a key | a 64-bit number, `:`, a name from the same mapper (its key is kept) |
+| any other kind | `String` (6) | text link | any text |
+| any kind | any other type | none | the tag is not a link |
+
+"Number" means the C library's unsigned conversion in automatic base (`0x` prefix
+hexadecimal, other leading `0` octal, otherwise decimal), which must consume the whole
+part and must not overflow its width; leading whitespace and a sign are accepted as that
+conversion accepts them. A tag that fails any step is not a link and goes on to §4.7.
+
+<a id="s4-8-3"></a>
+#### 4.8.3 Label, closing and style (Confirmed (BIN3), G47)
+
+- The text between the opener and the next tag is the link's **label**. It is shown as
+  ordinary text, in the element's link style (the style the element supplies for links,
+  in place of its normal style; Inferred from the element's UI properties whose dictionary
+  names speak of a "tag" font and "tag" font colour). The special item-examination links
+  may supply their own text colour.
+- **The first tag after an opener closes the link, whatever that tag says** (only `<<>`
+  is exempt; it stays a literal `<` inside the label). The client checks whether the tag
+  is `<\Kind>` for the link's kind but ignores the result. The closing tag is consumed and
+  not interpreted as markup. So a label cannot contain markup, and a stray tag inside a
+  label ends the link early.
+- A link that is never closed runs to the end of the text.
+- For rewriting, the client can turn a link back into `<Kind:Type:fields>` and `<\Kind>`
+  using the mapper's names for the keys.
+
+<a id="s4-8-4"></a>
+#### 4.8.4 What links do (partly Confirmed (BIN3), G48)
+
+The client keeps a table from link kind to a factory for a details panel. It registers one
+for `QuestRef`, `MapNoteRef`, `Examine`, `ExamineIA` and `ExamineItemInstance` (the first
+registration of a kind wins). Inferred: activating such a link opens the panel for the
+quest, map note or item that the fields name. `Select`, `RunCmd` and `Append` have no panel
+factory; what they do is handled elsewhere in the client and was not traced.
+
+> **OPEN:** The field-text formats of the three special item-examination links, and what
+> activating a link of each kind does (which mouse action, which panel or command). Much
+> of it depends on game objects that come from the server (instance IDs), so an offline
+> client mainly needs the label and the inert annotation. For now Tessera renders the
+> label in the link style, keeps the kind, type and fields as an inert annotation, and
+> never acts on it.
 
 <a id="s4-9"></a>
 ### 4.9 Value tag groups (Confirmed (BIN + OBS))
@@ -831,9 +985,26 @@ counted.
   inside the brackets (`[` + slot + `]`) followed by more text. The UI code that shows them
   must use raw mode, or they lose that text.
 
-> **OPEN:** Which UI elements and client features render StringInfo values in raw mode
-> rather than display mode. Known need: the 22 entries above that lose visible text. Tessera
-> uses display mode by default and raw mode for chat templates and for nested arguments.
+Which callers use which mode (Confirmed (BIN4), G49): the client's common
+StringInfo-to-text routine takes the mode from its caller. The executable calls it from
+424 places, all of them direct calls; its only other reference is its entry in the
+executable's exception-unwinding table, which is not a call. At every call site the mode is
+fixed:
+
+| Mode passed | Call sites | Notes |
+|---|---|---|
+| Display (0) | 421 | 419 set the mode to 0 just before the call; 2 are reached only by a branch taken after the mode register was set to 0 |
+| Raw (1), constant | 2 | One sets `PLAYERNAME` (§9.0); the other is a small helper that renders any StringInfo raw |
+| Raw (1), from a test | 1 | A formatter that shows a message as its template; it calls the routine only for a literal (first byte 1), and passes the result of that test, which is 1 on that path |
+
+No call site chooses the mode at run time. Two smaller wrappers of the same renderer also
+take the mode from their callers, and their callers fix it too: one that also reports
+whether the render succeeded (9 call sites, all display mode) and one that puts the raw
+rendering in round brackets (13 call sites, all raw mode; Inferred: diagnostic text). Raw
+mode is also used, without any of these wrappers, for nested arguments (§9.0 step 4) and by
+the emptiness test (`property-system.md` §17.4.2). So the client shows StringInfo values in display mode wherever it shows them as
+text, and the 22 entries above lose the same text in the client. Tessera uses display mode
+by default and raw mode for nested arguments, the emptiness test and `PLAYERNAME`.
 
 <a id="s7-7"></a>
 ### 7.7 Decode escapes (Confirmed (BIN))
@@ -845,8 +1016,9 @@ decoded; its escapes are decoded together with the outer message.
 <a id="s7-8"></a>
 ### 7.8 UI-text markup (Confirmed (BIN))
 
-The decoded string is handed to a UI text element. If that element has markup on, it
-interprets §4.7 and §4.8 on the decoded string; otherwise it shows every character.
+The decoded string is handed to a UI text element. Every element applies the `<<>` literal
+and the link steps of §4.8 to the decoded string; an element whose markup option is on
+also interprets the §4.7 markup. Any other tag is shown as text (§4.8, tag order).
 
 <a id="s7-9"></a>
 ### 7.9 Tessera output (normative for `crates/text`)
@@ -855,8 +1027,10 @@ interprets §4.7 and §4.8 on the decoded string; otherwise it shows every chara
   Rendering never panics; every malformed input yields a status, never a crash.
 - Markup interpretation (§7.8) is a separate function that turns a decoded string into
   **rich text**: runs of text with attributes (colour, bold, italic, underline, list item,
-  link annotation), plus line breaks for `<p>` and `<li>`. UI code applies it only where
-  the element has markup on.
+  link annotation), plus line breaks for `<p>` and `<li>`. It takes the element's markup
+  option (UI property 0x1BB) as an input: the `<<>` literal and the link steps of §4.8
+  always apply, and the §4.7 markup applies only when the option is true. UI code runs it
+  for every UI text element.
 - **Explorer mode** (a Tessera presentation, not client behaviour): missing values do not
   stop the render. A missing value is assembled as the empty value (tag string `+b`) and is
   shown as its `${name}` placeholder (§8.3) in a distinct style. Placeholders never change
@@ -865,7 +1039,17 @@ interprets §4.7 and §4.8 on the decoded string; otherwise it shows every chara
   levels (records.md §4.2). Past it, the nested value fails (reason 7 for the outer
   message).
 
-> **OPEN:** (implementer, 2026-10-06; engineering choice, no client fact needed unless the
+**Resource bounds (normative for `crates/text`; answers the implementer OPEN of
+2026-10-06).** These are Tessera engineering limits, not client facts; the client has no
+counterpart that a renderer must match, because no stored data comes near them. Tessera
+adopts the bounds `crates/text` already applies, quoted from the implementer's question
+below: the per-render work budget with its default and its costs, the cap on nested
+argument values per resolve call, and the cap on table bytes read per resolve call. A
+message that exceeds a bound renders as absent with a work-limit diagnostic, which is a
+Tessera status, not one of the client's reasons 1–7. Changing the numbers needs no spec
+change as long as every data entry still renders (§15).
+
+> **Answered OPEN:** (implementer, 2026-10-06; engineering choice, no client fact needed unless the
 > spec wants to fix the numbers) Resource bounds for hostile nesting, beyond depth. The
 > depth limit alone lets N nested arguments that share one wide entry (S slots) cost N×S.
 > `crates/text` adds: a per-render work budget (`RenderOptions::max_work`, default 2²²
@@ -931,7 +1115,7 @@ defines because the client defines them (interoperability identifiers):
 
 Hashing every identifier in the property dictionary matches 3 of the 804 IDs.
 
-> **OPEN:** A data source in the install that lists variable names. None was found in the
+> **OPEN (needs the owner):** A data source in the install that lists variable names. None was found in the
 > archives. The client executable contains identifier strings whose upper-case form hashes
 > to 294 of the 804 IDs (covering 47,847 of 80,821 slot uses); whether Tessera may build its
 > dictionary at run time by scanning the user's own executable is an owner decision, and
@@ -966,6 +1150,13 @@ The StringInfo byte layout is records.md §4.1.
    the grammar of §4: no selectors, no whitespace normalisation. In display mode the
    display cut (§7.6) applies; then escapes are decoded (§7.7). Only 4 of 6,348 enum display
    values are literals.
+
+   **Source-text placeholder** (first byte 2, Confirmed (BIN3), G50): the token and table
+   are not looked up. The result text is the second authoring string of the StringInfo
+   (`property-system.md` §17.4: its source-language text), or the empty text when the
+   StringInfo carries no authoring strings, and it is treated exactly like a literal
+   (no grammar, display cut in display mode, escapes decoded). No stored StringInfo has
+   first byte 2. Every other first byte (0 and 3–255) is a reference (step 2).
 2. **Reference** (`is_literal` = 0): if the token is 0, or the table DID is the null DID
    (0), stop with reason 1. Otherwise load table DID `table` from the **selected locale
    archive** (§10); if it cannot be loaded as a string table, stop with reason 3. Find
@@ -978,26 +1169,47 @@ The StringInfo byte layout is records.md §4.1.
    - 17 resolved references point at an empty single-piece entry. They render as empty
      text, which is not a miss.
 
-   > **OPEN:** (implementer, 2026-10-06) `property-system.md` §4.8 and §7.5 say a (table 0,
+   **Answer to the implementer OPEN below** (Confirmed (BIN3), G51): both specs are right
+   at different levels. The renderer reports reason 1 for token 0 or a null table, and
+   reason 2 for a missing token, as this step says. Separately, the client's emptiness
+   test (`property-system.md` §17.4.2) counts every StringInfo that fails these checks as
+   empty. Tessera therefore applies the emptiness test wherever it **shows** a StringInfo
+   (property views, UI text): an empty value shows nothing and no diagnostic. That covers
+   (0, 0), and equally token 0 with a non-null table, a non-zero token with table 0 and a
+   missing token; the current `crates/text` rule (only exactly (0, 0)) is narrower than
+   the client and should widen to the whole emptiness test. As a **nested argument**
+   (kind 1) the value is not tested for emptiness: the client renders it, gets reason 1 or
+   2 and the diagnostic text, and the outer message then fails with reason 7 (step 4). So
+   `crates/text` should not turn a nested (0, 0) into empty text.
+
+   > **Answered OPEN:** (implementer, 2026-10-06) `property-system.md` §4.8 and §7.5 say a (table 0,
    > token 0) StringInfo means "no text" (2 property values in the install), while this step
    > puts it under reason 1, which shows the diagnostic of §9.3. Which one applies to
    > Tessera's display of such values? `crates/text` currently follows property-system.md:
    > exactly (0, 0) resolves to empty text with no diagnostic, also as a nested argument;
    > token 0 in a non-null table, or a non-zero token with table 0, is still a miss.
-3. **Arguments**: build the value map from the argument block (records.md §4.2): each
-   argument value is turned into text and keyed by its `var_id`. Then, if no argument has
+3. **Arguments**: build the value map from the argument table (`property-system.md`
+   §17.4.1, which replaces records.md §4.2): each argument value is turned into text and
+   keyed by its entry key (the variable ID). Then, if no argument has
    the ID 0x0DA47675 (`PLAYERNAME`), the client adds the process-wide value it keeps for
    that ID, if it has one.
-   - No on-disk StringInfo with an argument block was found (G19). Argument blocks are
-     expected to come from the network or from client logic at run time.
-   - The three auxiliary Pascal strings remain OPEN (records.md §4).
+   - No on-disk StringInfo with an argument was found (G19). Arguments are expected to
+     come from the network or from client logic at run time.
+   - The three Pascal strings that may precede the argument table are authoring data (a
+     token name, the source-language text, a comment) and play no part here, except for
+     first byte 2 (step 1) (`property-system.md` §17.4; G50).
+   - Each argument is bound by the key of its table entry; the variable ID repeated in
+     the value's header is not used (`property-system.md` §17.4.1).
 4. Argument value to text:
    - kind 1, nested StringInfo: rendered by these same steps in **raw** mode (its tag group
      kept, escapes not decoded). If it fails, its text is the diagnostic of §9.3, which
      makes the outer message fail too (the diagnostic contains `[` … `]` followed by more
      text, §5.3 step 3);
-   - kind 4, integer: §9.4;
-   - kind 2, float: §9.4.
+   - kinds 4 and 6, integer: §9.4.1;
+   - kind 2, float: §9.4.2, with the decimal-place count *d* stored in the argument;
+   - kinds 3, 5 and 7, float and integer with format options: §9.4.3;
+   - kinds 0 and 8 and above carry no value: the variable has no value (reason 6 if a slot
+     uses it).
 5. **Render** the entry with that value map (§7.1–§7.5), then apply the display cut unless
    the caller asked for raw mode (§7.6).
 6. The caller that shows the text decodes escapes (§7.7), only if the status is success.
@@ -1005,14 +1217,25 @@ The StringInfo byte layout is records.md §4.1.
 The process-wide `PLAYERNAME` value is set by the client from a rendered string when the
 player's character is established. BIN2 shows the mechanism: when a watched property of
 the local player's object changes, the client renders that property's StringInfo in raw
-mode (§9.0, tag group kept) and stores the result as the value for 0x0DA47675. Inferred:
-the property is the character's name, whose value carries the tag group of §9.5. Until the
-property is known, Tessera sets `PLAYERNAME` to the local character's name value built by
-§9.5.
+mode (§9.0, tag group kept) and stores the result as the value for 0x0DA47675.
 
-> **OPEN:** Which property (by property ID) the client watches to set `PLAYERNAME`, and
-> whether its value is already the §9.5 form. Getting it wrong changes the gender and
-> vowel selections of every message that names the player.
+The property is **PID 0x354**, a StringInfo (type 13) whose dictionary name is the plain
+word for "name" (Confirmed (BIN3), G52). The client reads it from the local player's
+object; when the object lacks it, or it is not a StringInfo, the client substitutes a
+fixed placeholder literal of its own (Tessera uses its own placeholder text, never the
+client's). The rendered text is stored **as is**: this step adds no tag group. The client
+does have the §9.5 builder, and it applies it where it turns a plain name and a sex into a
+value (some messages pass such a value as an explicit `PLAYERNAME` argument, which then
+takes precedence, step 3), but not here. So whether `PLAYERNAME`
+carries a tag group depends only on the value of property 0x354, which the server
+supplies for player characters. Tessera's offline rule: store the local character's
+property 0x354 value if it has one and it already ends in a tag group; otherwise build
+the §9.5 form from the character's name and sex and use that.
+
+> **OPEN (needs the owner or the M8 gate):** Whether the player's property 0x354 value, as
+> the server sends it, already ends in the §9.5 tag group. This is not in the data files,
+> and observing it would mean inspecting official-server data (decision 0004). Getting it
+> wrong changes the gender and vowel selections of every message that names the player.
 
 <a id="s9-1"></a>
 ### 9.1 Named tables
@@ -1053,9 +1276,20 @@ first table. Tessera implements the same steps and treats a redirect DID outside
 0x25000000–0x26FFFFFF, or a record that does not parse as a string table, as "cannot be
 loaded" (reason 5).
 
-> **OPEN:** What the client's record loader does when a typed request names a DID outside
-> the range of that type (whether it refuses, as Tessera does, or loads whatever is there).
-> No redirect exists in this install, so this cannot be observed.
+What the loader does with the type (Confirmed (BIN3), G53, as far as traced): a typed
+request carries the DB type code next to the DID. The type code selects the object class
+that will decode the record; the DID selects the record. No comparison of the DID with the
+type's registered range was found on that path. The load fails when no record exists,
+when the record's bytes do not decode as that class (a stream error), or when the DID
+stored at the start of the decoded record differs from the requested DID (unless the
+client's DID remapping table maps one to the other). So for a redirect DID outside
+0x25000000–0x26FFFFFF the client tries to decode whatever record is there as a string
+table. Tessera refuses such a DID outright (reason 5). The two differ only for a record of
+another type that happens to decode completely as a string table and to carry its own DID
+in the right place; Tessera keeps its range check.
+
+> **OPEN (non-blocking):** The DID remapping table consulted on a DID mismatch was not
+> traced. No redirect exists in this install, so none of this is exercised.
 
 <a id="s9-3"></a>
 ### 9.3 Failure reasons and what the client shows (Confirmed (BIN))
@@ -1174,10 +1408,36 @@ Examples (English record, synthetic values): 2.5 with *d* = 1 → `2.5`; 1234.56
 0.4997 with *d* = 0 → `0`; 3 with *d* = 2 → `3.00`; −1234.5 with *d* = 1 → `-1,234.5`;
 5,000,000,000 with *d* = 0 → `4,999,999,994` (the 32-bit cut of step 3.1).
 
-> **OPEN:** How *d* is stored for an on-disk kind-2 argument (records.md §4.2 shows only a
-> marker byte and an f32, while the client's run-time float argument carries a u16 *d*
-> next to a double). No on-disk argument block exists in this install. Until it is known,
-> Tessera uses *d* = 0 for on-disk floats and the caller's choice for its own.
+**Stored floats** (Confirmed (BIN3), answers the former OPEN 6b): an on-disk kind-2
+argument stores the value as an **f64** followed by *d* as a **u16**
+(`property-system.md` §17.4.1). The "marker byte and f32" of `records.md` §4.2 is not the
+stored form. Tessera reads *d* from the argument and no longer assumes 0.
+
+<a id="s9-4-3"></a>
+#### 9.4.3 Format options (kinds 3, 5 and 7) (Confirmed (BIN3), G50)
+
+Kinds 3 (float) and 5 and 7 (integer) carry two options after the value
+(`property-system.md` §17.4.1); kinds 2, 4 and 6 behave as if the flags were 1 and the
+radix 0xFFFF:
+
+- **Radix** (u16): 0xFFFF means the record's default radix *r*; any other value replaces
+  *r* in §9.4.1–§9.4.2, with the same shared limits (a radix of 0 or 1, or one larger than
+  the alphabet, gives the empty text) and the `0x` prefix for non-negative numbers in
+  radix 16.
+- **Flags** (u8): bit 0 on = digit grouping as in §9.4.1 step 3 and §9.4.2 step 3.5; bit 0
+  off = no group separators at all. Bit 1 on = while the fraction digits are produced
+  (places below the units), a `0` digit is dropped as long as nothing has been written
+  yet; the decimal separator is written only if at least one fraction digit was kept. So
+  2.50 with *d* = 2 gives `2.5`, and 3.00 with *d* = 2 gives `3`. Bit 1 changes nothing
+  for integers, which have no fraction digits. Other bits are ignored.
+- Integers stay signed (§9.4.1), whatever the kind.
+
+Examples (English record, synthetic values): kind 5, value 1234567, flags 0, radix
+0xFFFF → `1234567`; kind 5, value −1234567, flags 1, radix 0xFFFF → `-1,234,567`; kind 3,
+value 0.5, *d* = 3, flags 3 → `0.5`; kind 3, value 2.5, *d* = 2, flags 1 → `2.50`. With
+radix 16 the digit characters come from the record's alphabet, whose index 10 is `0` in
+English (§10.3), so kind 5, value 255, flags 0, radix 16 gives `0xEE`, not `0xFF`; the client
+behaves the same way.
 
 <a id="s9-5"></a>
 ### 9.5 Character-name values built by the client (Confirmed (BIN), G37)
@@ -1257,8 +1517,16 @@ Rules for `crates/text`:
   selection rule (§6) and tag derivation (§5.3) are otherwise language-neutral and must not
   special-case letters.
 
-> **OPEN:** Confirm the subset words of the non-English archives and their locale records
-> (needs a second locale installed).
+The language IDs are also **in the data** (Confirmed (OBS2), G55): the EMAPPER DID
+map lists, under key 0x4A and the label `Languages`, an enum mapper (0x230000B1 in this
+install) with exactly the keys 0 (`Invalid`), 2 (`English`), 0x10000001 (`EN_GB`),
+0x10000003 (`FR`) and 0x10000004 (`DE`). Tessera reads that mapper at run time to name a
+language ID, instead of the table above; the Russian value of the older API listing is not
+in it.
+
+> **OPEN (needs the owner):** Confirm the subset words of the non-English archives and their
+> locale records. Only `client_local_English.dat` is installed; this needs a second
+> language installed (read-only observation, no client run needed).
 
 <a id="s10-3"></a>
 ### 10.3 The locale record (prefix 0x58, DB type STRING_STATE)
@@ -1285,7 +1553,7 @@ were missing).
 
 | Offset | Size | Type | Meaning | English value |
 |---|---|---|---|---|
-| 0 | 4 | u32 | unknown | 1 |
+| 0 | 4 | u32 | unknown; none of the client's accessors for the loaded record reads it (BIN3) | 1 |
 | 4 | 2 | u16 | default radix for numbers | 10 |
 | 6 | 2 | u16 | minimum digit count when padding | 5 |
 | 8 | 1 | u8 (bool) | pad numbers to the minimum digit count (§9.4) | 0 |
@@ -1304,9 +1572,9 @@ were missing).
 | … | var | UTF-16 string | item composition: letters taken from the **suffix** variable's tag string | `s` |
 | … | var | UTF-16 string | expansion of value tag `M` (§5.3) | `mn` |
 | … | var | UTF-16 string | expansion of value tag `F` | `fn` |
-| … | 4 | DID | a font (0x42 prefix) | 0x42000028 |
-| … | 4 | u32 | unknown (read by UI text) | 0 |
-| … | 4 | u32 | unknown (read by another UI component) | 0 |
+| … | 4 | DID | the default font of UI text elements (§10.3.1) | 0x42000028 |
+| … | 4 | f32 | extra spacing added to every UI text element's own spacing value (§10.3.1) | 0 (bit pattern 0) |
+| … | 4 | u32 | input-method (IME) mode for text entry (§10.3.1) | 0 |
 
 The record ends exactly after the last field (SS1). Besides the record bytes, the client's
 loader also stores one number taken from the reading context (not from the record); it
@@ -1318,8 +1586,41 @@ If the record is missing, the client falls back to built-in values for the gramm
 that equal the English values above (`mn`, `fn`, `v`, `mfnp`, `s`, singular only for 1),
 but prints numbers as empty text (§9.4).
 
-> **OPEN:** The meaning of the first u32 and the two trailing u32 fields, and what the font
-> DID is used for.
+<a id="s10-3-1"></a>
+#### 10.3.1 The trailing fields (Confirmed (BIN3), G54)
+
+- **Font DID.** When a UI text element is created, it requests this DID with the font DB
+  type (0x4C, `property-system.md` §9) and installs the result as the font of its first two
+  text styles (each with default style values), before any font property of the element
+  is applied. If the first request fails, the client logs an error. So it is the locale's
+  default UI font. Tessera uses it as the default font of its text elements.
+- **Spacing (f32).** Each UI text element copies these four bytes into a float field and
+  adds it to its own per-element spacing value when it lays out lines; a negative sum is
+  treated as 0. Inferred: it is extra line spacing (leading); the dictionary has a float
+  UI-text property named for extra leading (PID 0x75A), but the link between that property
+  and the element value was not traced. In English it is 0.
+- **Input-method mode (u32).** Used only when the client prepares the operating system's
+  input-method editor (IME) for text entry (Confirmed (BIN4)). The client keeps one IME
+  handler, chosen by the primary language of the current keyboard layout (the low 10 bits
+  of the Windows keyboard-layout handle): one handler for 0x12, and handlers for 0x11 and
+  for every other language that apply this field in the same way as each other. The field
+  is applied in one of two ways, never both:
+  - **Keyboard layout language 0x12:** the field sets only the IME **conversion mode**:
+    1 gives 0x10 (the Windows "roman" flag), 2 gives 0x1 (native), and any other value
+    restores the conversion mode the handler saved earlier (it records the current mode
+    when it is created and again in a counterpart routine, which then sets 0x10;
+    Inferred: that routine runs when text entry ends). The field never opens
+    or closes the IME.
+  - **Any other keyboard layout:** the field sets only whether the IME is **open**: 1 closes
+    it, any other value opens it. The conversion mode is left as it is.
+
+  When no locale record is loaded, neither handler changes anything for this field. In
+  English the field is 0, so the IME is opened on non-0x12 layouts and the saved conversion
+  mode is restored on 0x12 layouts. Tessera maps the field to its own text-input handling,
+  following the same split, and may ignore it on platforms without an IME.
+
+> **OPEN (non-blocking):** The meaning of the first u32 (English 1). No accessor of the
+> loaded record reads it; it may be a format version that only the loader checks.
 
 ---
 
@@ -1434,20 +1735,34 @@ the order of the singular flags, the item-composition sets and the `M`/`F` expan
 (§10.3); the redirect DID (§9.2); the float arithmetic (§9.4.2); the integer type of the
 tag test (§5.3); escaped `]` in tag lists (§4.3).
 
+Closed or narrowed on 2026-10-07 by BIN3 and OBS2: 5b (the full list of link kinds and
+types comes from the `TextTagType` mapper, opener rules, field formats, closing and style,
+§4.8; list-item line breaks, bullet image and indent, §4.7); 6b (on-disk floats store an f64
+and a u16 *d*, §9.4.2; format options, §9.4.3); 9c (`PLAYERNAME` comes from PID 0x354,
+stored without added tags, §9.0); 12 (font, spacing and IME fields, §10.3.1); 14 (no range
+check was found on the typed load path, §9.2); the implementer OPENs on (0, 0) StringInfos
+(§9.0 step 2) and on resource bounds (§7.9).
+
+Closed on 2026-10-07 by BIN4 (repair after the re-review): 13 (the census of render modes
+was redone: of the 424 call sites, 421 fix display mode, 2 fix raw mode and 1 passes raw
+mode on its only path; no call site chooses the mode at run time, so the former "8 call
+sites" did not exist, §7.6). Also corrected by BIN4: which tag steps depend on the markup
+option (§4.7, §4.8) and the two ways the IME field is applied (§10.3.1).
+
 Still open:
 
-5b. Link-kind semantics and the full list of link kinds (§4.8); list-item bullet and indent
-    (§4.7).
-6b. Decimal places of on-disk kind-2 float arguments (§9.4).
+5b. What activating each link kind does, and the field formats of the three special
+    item-examination links (§4.8.4); exact bullet placement and continuation-line indent
+    (§4.7). Non-blocking for an offline client.
 9b. A source of variable names; whether a run-time scan of the user's own executable is
-    allowed (§8.2).
-9c. Which property the client watches to set `PLAYERNAME` (§9.0).
-11. Subset words and locale records of the other locales (§10.2).
-12. Meaning of the unknown fields of the locale record (§10.3).
-13. Which UI elements render StringInfo values in raw rather than display mode (§7.6); the
-    22 entries that lose visible text to the display cut need raw mode.
-14. What the client's record loader does with a redirect DID outside the string-table range
-    (§9.2); Tessera refuses it with reason 5.
+    allowed (§8.2). Owner decision; the executable cannot settle it.
+9c. Whether the server-supplied player name value (PID 0x354) already carries the §9.5 tag
+    group (§9.0). Needs official-server data (decision 0004) or the owner.
+11. Subset words and locale records of the other locales (§10.2). Needs a second language
+    installed.
+12. The first u32 of the locale record (§10.3.1). Non-blocking.
+14. The DID remapping table on the typed load path (§9.2). Non-blocking; no redirect in
+    the data.
 
 ---
 
@@ -1509,7 +1824,25 @@ Synthetic fixtures (written by our own code; examples from this spec are fine):
   vowel, a final `S` (lower-cased match), a name with an existing tag group and with
   surrounding spaces, and a vowel outside the set (for example U+00FA);
 - redirects: an entry whose redirect DID names a table holding the token (renders that
-  entry), one lacking the token (reason 4), and one naming a missing record (reason 5).
+  entry), one lacking the token (reason 4), and one naming a missing record (reason 5);
+- links (with a synthetic `TextTagType`-style mapper built by the test): each type 1–6 with
+  valid and invalid field text (overflowing number, trailing letters, missing `:`, empty
+  field text), a kind or type name in another case, a kind missing from the mapper
+  (literal), a special (kind, type) pair, a `<b>` inside a label (closes the link and is
+  not applied), `<<>` inside a label (literal `<`), and an unclosed link;
+- markup option off (UI property 0x1BB false): a text with a link, `<<>`, a colour tag and
+  `<b>` gives a working link and a literal `<`, while the colour and `<b>` tags appear as
+  text (§4.7, §4.8 tag order);
+- list items: `<li>` at the start of the text and directly after `<p>` (no extra break),
+  `<p>` at the start of the text outside list mode (break), `</li>` ending list mode;
+- StringInfo modes and arguments: first byte 2 with and without authoring strings, first
+  byte 3 (reference), (0, 0) shown in a property view (empty, no diagnostic) and as a nested
+  argument (outer message fails with reason 7), one argument of each kind 2–7, the
+  §9.4.3 examples, and an argument of kind 9 bound to a slot (reason 6);
+- a locale record with an IME mode of 1 and 2 and a non-zero spacing value (parsed and
+  exposed; no rendering change). Where Tessera drives an IME, mode 1 on a keyboard layout
+  of language 0x12 changes only the conversion mode, and on any other layout only closes
+  the IME (§10.3.1).
 
 ---
 
@@ -1604,6 +1937,8 @@ the DID of A and the token *t*.
 | `records.md` | §3.2 `name_group_count` and §3.3 | The client reads this byte as a flag (0 = no group, 1 = one group); any other value is a stream error (G41). Readers should reject values above 1 rather than loop. |
 | `records.md` | §3.4 rendering model ("concatenating the pieces and replacing each slot") | Rendering is the full pipeline of §7; plain concatenation is only the template assembly step. |
 | `records.md` | §8.2 root map labels | Add `STRINGTABLE` key 0x0B `Language` → the locale record (§9.1). |
+| `records.md` | §4.1 first byte and flag byte | First byte 2 is a source-text placeholder; the byte called `has_args` announces three authoring strings (token name, source-language text, comment), and the argument table always follows (`property-system.md` §17.4, G50). |
+| `records.md` | §4.2 argument value | The stored layout is a TSize table of (u32 key, u16 kind, value) with a 6-byte value header and seven kinds; floats are f64 with a u16 decimal-place count (`property-system.md` §17.4.1; §9.4.2–§9.4.3 here). |
 
 ---
 
@@ -1615,3 +1950,5 @@ the DID of A and the token *t*.
 | 2026-10-04 | First version from OBS, LC and LCC: message model, inline grammar as observed, tag alphabet, LC selection rule, rendering steps, `${VAR}` presentation, StringInfo resolution, locale selection, statistics, invariants. |
 | 2026-10-05 | Revision from BIN (client build 4906.0071.1794.4035) and a new census. New: §4.10 token and item grammar (all 806,052 entries parse), §4.2.2 `@`, §4.5.2 item composition, §7 rewritten as the client pipeline (§7.1–§7.9), §9.0 steps with raw mode and `PLAYERNAME`, §9.3 failure reasons and display, §9.4 number formatting, §9.5 character-name values, §10.3 locale record (0x58), §16 worked examples, §17 corrections, SG11–SG13 and SS1. Changed (earlier rules were wrong): negative labels hide their variable; unlabelled selectors bind to the unlabelled variable or −1, not the nearest preceding slot, and every top-level `{` is a selector; selection scores 2 per tag and 1 for the default with ties to the later option; `E` is never derived; digits in tag lists are single-character tags; `+` is a new derived tag; escapes protect grammar characters during lexing and decode once at display time, `\q` is a double quote and `\r` exists; whitespace rule is leading trim plus run collapse with trailing whitespace kept; the message's own group goes by the display cut at the first unescaped `[`; unknown directives render nothing; duplicate labels, undefined labels and missing values fail the message instead of degrading; literals are not parsed; colour values follow the client's number parsing with forced opaque alpha and malformed tags stay literal; `<p>` and `<<>` added; link openers need no special join. Implementer OPENs of 2026-10-04 on bare `^`, escapes, link openers, selection ties, §7 details, hostile round trips and SG9 answered and folded in. |
 | 2026-10-05 | Revision for the first review (changes requested), from BIN2 (same build) and a census re-run. **Blocking items:** new provenance rows G34 (redirect DID, §9.2), G35–G36 (float and integer formatting, §9.4), G37 (character-name group and vowel set, §9.5), G38 (locale-record field order) and G39–G42; §10.3 record-to-field match is now read from the record's serialiser (Confirmed (BIN + OBS)), with one table row per singular flag, so the former "Inferred" note is gone; §4.9 corrected (12,081 groups are exactly `[E]`, only 1 entry is `[E]` alone; 147 groups have a space before `[`), §5.2 `E` row and D7 likewise; §4.7 colour counts corrected to 13,951 / 13,942 in 11,677 entries (case-insensitive), `</p>` 0. **Minor:** §4.3 and §11 labelled selectors 6,843 (7,057 in all); option tag counts restated with the counting rule; §7.6 and §11 state the counting rule for unescaped `[` (26 entries, 22 losing text). **Gaps:** §4.3 rule 2 and §4.10 token 5 say that any `]`, escaped or not, closes a tag list; §7.2 adds the Tessera rule for U+0001 in values (reason 7); §9.4 split into §9.4.1 integers and §9.4.2 floats with the absolute bias, double precision, the 32-bit digit cut and all limits; §5.3 states the saturating 32-bit integer test; §10.3 cites the source of the name STRING_STATE. Also new: §9.2 redirect steps and an OPEN on typed loads, SS2, SG14, D11, D12, §16.7–§16.8, more §15 fixtures, a records.md correction for the name-group byte. |
+| 2026-10-07 | Revision from BIN3 (same build, Ghidra headless decompiler) and OBS2, answering the remaining OPENs. **New facts:** markup option = UI property 0x1BB, `<p>`/`<li>` break rule, list bullet image and indent (§4.7); link kinds and types from the `TextTagType` mapper with case-insensitive names, opener rules, field formats per type, special (kind, type) pairs, closing by the next tag, link style, panel factories (§4.8.1–§4.8.4, new anchors `s4-8-1` to `s4-8-4`); render-mode census (§7.6); resource bounds adopted as Tessera rules (§7.9); first byte 2, authoring strings, argument binding by entry key, kinds 3/5/6/7 (§9.0); emptiness test and the answer to the (0, 0) implementer OPEN (§9.0 step 2); `PLAYERNAME` from PID 0x354 without added tags (§9.0); typed load path (§9.2); stored float layout and format options (§9.4.2, new §9.4.3, anchor `s9-4-3`); `Languages` mapper (§10.2); font, spacing and IME fields of the locale record (§10.3, new §10.3.1, anchor `s10-3-1`). **Behaviour changes for implementers:** `NPCQuery` and other unknown kinds stay literal; any tag inside a link label closes the link; on-disk floats use their stored *d*; display code applies the emptiness test, which is wider than exactly (0, 0), while nested invalid StringInfos still fail the outer message; numbers honour kinds 3/5/7 options. Provenance rows G43–G55, sources BIN3 and OBS2; §14, §15 and §17 updated. |
+| 2026-10-07 | Repair after the re-review of the BIN3 revision (changes requested), from BIN4 (same build, Ghidra headless, fresh read-only project copy). **Blocking items:** §7.6 and G49: the render-mode census was redone over every reference to the common routine, following each path to the call: 424 direct calls, 421 with display mode fixed (2 of them through a branch taken after the mode was set), 2 with raw mode fixed, 1 (the template formatter) passing raw mode on its only path; no call site chooses the mode at run time; the two smaller wrappers' callers fix the mode too; OPEN 13 of §14 closed. §4.7 first paragraph, §4.8 tag order, §7.8, G33 and G43: property 0x1BB gates only the §4.7 markup; the `<<>` literal, link closing and link opening run in every UI text element before the property is read; the tag order is now a numbered list with the place of the property and the client's dependence on its link registry. **Minor:** §10.3.1 and G54: the IME field is applied in one of two ways chosen by the keyboard layout's primary language (0x12: conversion mode only, 1 → 0x10, 2 → 0x1, other → the saved mode; any other layout: open status only, 1 closed, other open); header Status line lists every section changed on 2026-10-07, including §1, §14, §15 and §17. **Also:** §7.9 rich-text function takes the markup option as an input; §15 fixtures for markup off and the IME split; provenance legend and new source row BIN4. **Behaviour changes for implementers:** links and `<<>` work in elements whose markup option is off; the IME field never both opens the IME and sets its conversion mode. |

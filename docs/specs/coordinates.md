@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | **Accepted** (re-review of 2026-10-07 passed; covers the OPEN-closing revision of 2026-10-07 with a third BIN use and its repair revision of the same date, §16; previously Accepted 2026-10-06). Sections, anchors and numbers of the earlier Accepted text are unchanged; the rows the change log names carry the new material. |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Third re-review: Claude review session (spec-writer agent), 2026-10-06, **passed** (Accepted). Every item of §5.3 holds, and both items of the second re-review are fixed. (1) C4, §6, §9.7 and §13 now give the `landblock.md` §3.4 rule (stored × 2,000.0 × f32(1 / 65,535) in f32). Recomputed in f32: 0 → 0.0, 13,106 → 399.96948, 13,107 → 400.0, 32,768 → 1,000.01526, 65,502 → 1,998.9929, 65,535 → 2,000.0; the largest difference from stored / 32.768 is 0.0305. The implementer OPEN is answered (the `oz399.99` values are free synthetic offsets) and removed, and the formats crate uses the same rule. (2) The §11.1 tolerances are stated and reproduce. Spot checks on the install (all 3,253,835 framed SEDs, my own census, 2026-10-06), all matched: §11.1 (3,115,694 with \|x\|, \|y\| < 10⁻⁴; 3,049,348 exact zero; 2,916 with \|w\|, \|x\| ≤ 10⁻⁶ and \|y\|, \|z\| > 10⁻⁶; 9,908 with y, z non-zero); CO3 (none off unit length by more than 0.001); C20 (3,091 beyond ±1, 2,769 exactly ±1); CO2 (a)–(c) (768,911 of 1,001,648; 2,247,227 in-square and 4,960 out of 2,252,187, split 4,052 / 908); C4 scale and the §6 and §13 vectors. All seven remaining OPENs are listed in §14. The §15 rows for `entity-descriptor.md` §8 and `m3-reference-locations.md` R1 match those files, which still state stored / 32.768. Second re-review: Claude review session (spec-writer agent), 2026-10-06, **changes requested**. Both items of the previous re-review are fixed: §9.7 rows 9–11 recomputed in f32 under §11.3 and §9.4 give exactly the listed texts (row 9 bank 4.3 · 10⁻⁷°, row 10 pitch 4.5 · 10⁻⁷°, row 11 pitch −0.00043° → `p-0.0`), the eight-decimal inputs equal the exact composed rotations, and the §9.5 sign rule holds; the §7 buckets reproduce on the install (largest per-axis distance 83 / 194 / 464 / 167, Euclidean 83 / 193 / 464 / 168). New issues: (1) **Blocking.** C4, §6 (second bullet: "height = stored / 32.768 … 0 – 1,999.97") and the §13 test vector "stored height 13,107 → 399.99 units" state the superseded height rule; `landblock.md` §3.4 (row L4, revised 2026-10-05) now gives stored × 2,000.0 × f32(1 / 65,535) in f32, under which 13,107 → 400.0 and 65,535 → 2,000.0 (recomputed). C4 cites LB §3.4 as Confirmed for a rule that spec has withdrawn. The implementer's `> **OPEN:**` under §13 (formats implementation, 2026-10-06) asks exactly this and is unanswered; it is also missing from the §14 summary. Revise C4, §6 and the §13 row (say whether the `oz399.99` inputs of §9.7 and §13 are tied to a stored height or are free synthetic values), answer and remove the OPEN, add a §15 row if needed and a §16 entry. (2) Minor: §11.1's evidence omits its tolerances. "In 95.8 % the second and third components are zero" holds only with \|x\|, \|y\| < 10⁻⁴ (3,115,694 of 3,253,835); exactly zero gives 3,049,348 (93.7 %). The 2,916 scalar-last-looking rotations are those with \|w\|, \|x\| ≤ 10⁻⁶ and y and z non-zero. State both criteria. Spot checks on the install (all 3,253,835 framed SEDs, 2026-10-06) that matched: CO1 (923,545 landblock-family DIDs, none with X or Y = 255); CO2 (a)–(c) and the §7 type split (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); CO3 (no rotation off unit length by more than 0.001); C20 (3,091 arguments beyond ±1, 2,769 exactly ±1); §7 bucket counts under both metrics. Also recomputed in f32: §11.5 rows and the §11.3 arcsine vectors (1.0000001 → NaN, 0.99999994 → 89.98°). Checklist items 1–4 and 9 pass (no code or pseudo-code; the f32 evaluation-order table of §11.3 is a functional fact; labels and tokens are interoperability names; no game text, keys or hostnames; no closed gate touched). Previous re-review: Claude review session (spec-writer agent), 2026-10-05, **changes requested**; both items are addressed in the repair revision of 2026-10-06 (§16). All earlier items are fixed. New issues: (1) §9.7 row 10 is a wrong test vector as written: the listed q = (0.95125, 0.04494, −0.16773, 0.25489) gives pitch −0.00043° under §11.3 and §9.4 (above the 0.0002 threshold), so the text is `… h330.0 p-0.0 b-20.0`, not `… h330.0 b-20.0`; only the exact composed rotation gives the listed text. State that the row uses the exact rotation (or give inputs that produce the text, or correct the expected text). (2) Minor: §7 does not say which distance the 83 / 194 / 464 / 167 buckets use; they match the largest per-axis distance outside the square, while the Euclidean distance gives 83 / 193 / 464 / 168. Spot checks against the install that matched: CO2 (a)–(c) counts; §7 type split of the 4,960 (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); C20 3,091 arguments beyond ±1 and 2,769 exactly ±1; §9.4 constants and examples recomputed in f32; §11.3 test vectors (1.0000001, 0.99999994 → 89.98°); §9.7 rows 1–9 and §11.5 rows. Previous review: Claude review session (spec-writer agent), 2026-10-05, changes requested; every item is addressed in the repair revision of the same date (§16). Items: (1) Invariant CO2 (§13) is false on the install: landblocks without cells hold 2,252,187 positioned SEDs, 4,960 of them outside the 160 m square (4,052 with the interior flag, 908 without; all 908 non-interior out-of-square SEDs are in cell-less landblocks); "2,247,227 of 2,247,227" counts only the in-square ones. (2) BIN facts without a provenance row and not among the BIN questions: the Position flag-bit rules of §15 (0x01–0x80), cell values 0 and 0xFFFF (§7), block value 0xFF as invalid (§4), the inverse-parser facts of §9.8. (3) Unknowns not in `> **OPEN:**` callouts: the layout of the `Language` record that supplies the decimal separator (§8.3, §15), indoor hiding of map coordinates (§8.3, listed only in §14), out-of-domain handling of the bank asin (§11.3). (4) The "OPEN (implementation choice)" on lenient map-coordinate input is a Tessera convention, not an unknown, and sits in §11.4 instead of §8. Spot checks that matched: REGION map 0x28000008 (9 entries) and all 7 descriptors (offset 4 = key; offsets 16–32), the `Position` table (5 tokens, argument IDs) and the pair template with arguments 0x753/0x6C7, 20 of 20 reference rows recomputed in f32, all §8.4 vectors, CO1 over 923,545 landblock-family DIDs, CO3, 3,115,694 pure turns, 2,916 scalar-last-looking rotations, §7 768,911 of 1,001,648. |
+| **Review record** | **Re-review of the repair revision, 2026-10-07:** Claude review session (spec-writer agent, a separate session from the writer's), 2026-10-07, **passed** (Accepted). Every item of §5.3 holds: no code, pseudo-code, addresses or decompiler names; the BIN row names the build, questions 12–14, the repair re-read and why M1–M3 were not enough; C22–C24 have provenance rows; constants are numeric (decision 0012); no closed gate is touched. All three items of the review of the same date are fixed: (1) the §4 bullet "Containing landblock of a global point" now gives the east-or-north rule and says G = 40,800 has no valid block, matching C22; (2) §9.8 no longer calls the missing-`c` default untraced and points to C23; (3) §4 and C22 now say that *x* (offset and block) is finished before *y* is tested, so a failure on *y* leaves *x* re-homed, and a clamped *x* does not stop the treatment of *y*. Re-checked in my own Ghidra copy of the same build (deleted afterwards): the normaliser returns failure on *x* before writing anything, writes *x* and X before reading *y*, tests the block range before the 160 → 0 carry, and clamps *y* to 0 / block 0 or 159.9998 (f32 0x431FFFF3) / 0xFF; the region mask and the cell constants 0xFFFF, 0 and 1. The new CO9 vectors were recomputed by the rule and match, and the §9.5 MSDOC sentence matches that source. Note for the next revision (not blocking): an *x* just below a block edge going down (for example X = 0, *x* = −10⁻⁶) fails or clamps even though the carry would have kept it in block 0, because the range test comes before the carry; CO9 could add that vector. Earlier review — **Review of the 2026-10-07 revision:** Claude review session (spec-writer agent, a separate session from the writer's), 2026-10-07, **changes requested**. Checked against §5.3: no code, pseudo-code, addresses or decompiler names; the BIN row names the build, questions 12–14 and why M1–M3 were not enough; C22–C24 and MSDOC have provenance rows; the constants are numeric (decision 0012); no closed gate is touched. BIN re-checked in an independent Ghidra copy of the same build, all matching the spec: the normaliser (acts only on a valid position with cell 0 in a known region; f32 floor of *x* / 160; the 160 → 0 carry; failure, or with clamping 0 in block 0 or 159.9998 (f32 0x431FFFF3) with block 0xFF; cell 1 sent to the cell-lookup service; 74 call references); the inverse parser (region default 1, block index above 255 rejected, block from `lx` / 8 and `ly` / 8, the landcell south-west default offset ((`lx` mod 8) and (`ly` mod 8) times the region's landcell size, *z* 0) only when no offset is given and the cell is outdoors, the normaliser called without clamping); the Universal C runtime imports (the `printf` family and `asinf`) and the start-up OR of 0x24 into the printf options. MSDOC re-read: it matches C24 (it also says the rounding follows the `fesetround` mode, which the spec may mention). The CO9 and CO10 vectors were recomputed by the rule and match. **Items:** (1) §4, bullet "Containing landblock of a global point" still says a point on a shared edge "belongs to either block; pick the lower one unless the higher index would exceed 254". That contradicts C22 and the new paragraph below it (east or north; 40,800 has no valid block). Replace it. (2) §9.8, second paragraph, still says "the full grammar, its error handling and the default of a missing `c` were not traced". C23 now gives the `c` default, so update the paragraph. (3) §4 step 4 and C22 say the routine "stops and reports failure without changing anything". The client re-homes *x* before it tests *y*, so a failure on *y* leaves an *x* (offset and block index) that has already changed. Say so. Earlier review — Third re-review: Claude review session (spec-writer agent), 2026-10-06, **passed** (Accepted). Every item of §5.3 holds, and both items of the second re-review are fixed. (1) C4, §6, §9.7 and §13 now give the `landblock.md` §3.4 rule (stored × 2,000.0 × f32(1 / 65,535) in f32). Recomputed in f32: 0 → 0.0, 13,106 → 399.96948, 13,107 → 400.0, 32,768 → 1,000.01526, 65,502 → 1,998.9929, 65,535 → 2,000.0; the largest difference from stored / 32.768 is 0.0305. The implementer OPEN is answered (the `oz399.99` values are free synthetic offsets) and removed, and the formats crate uses the same rule. (2) The §11.1 tolerances are stated and reproduce. Spot checks on the install (all 3,253,835 framed SEDs, my own census, 2026-10-06), all matched: §11.1 (3,115,694 with \|x\|, \|y\| < 10⁻⁴; 3,049,348 exact zero; 2,916 with \|w\|, \|x\| ≤ 10⁻⁶ and \|y\|, \|z\| > 10⁻⁶; 9,908 with y, z non-zero); CO3 (none off unit length by more than 0.001); C20 (3,091 beyond ±1, 2,769 exactly ±1); CO2 (a)–(c) (768,911 of 1,001,648; 2,247,227 in-square and 4,960 out of 2,252,187, split 4,052 / 908); C4 scale and the §6 and §13 vectors. All seven remaining OPENs are listed in §14. The §15 rows for `entity-descriptor.md` §8 and `m3-reference-locations.md` R1 match those files, which still state stored / 32.768. Second re-review: Claude review session (spec-writer agent), 2026-10-06, **changes requested**. Both items of the previous re-review are fixed: §9.7 rows 9–11 recomputed in f32 under §11.3 and §9.4 give exactly the listed texts (row 9 bank 4.3 · 10⁻⁷°, row 10 pitch 4.5 · 10⁻⁷°, row 11 pitch −0.00043° → `p-0.0`), the eight-decimal inputs equal the exact composed rotations, and the §9.5 sign rule holds; the §7 buckets reproduce on the install (largest per-axis distance 83 / 194 / 464 / 167, Euclidean 83 / 193 / 464 / 168). New issues: (1) **Blocking.** C4, §6 (second bullet: "height = stored / 32.768 … 0 – 1,999.97") and the §13 test vector "stored height 13,107 → 399.99 units" state the superseded height rule; `landblock.md` §3.4 (row L4, revised 2026-10-05) now gives stored × 2,000.0 × f32(1 / 65,535) in f32, under which 13,107 → 400.0 and 65,535 → 2,000.0 (recomputed). C4 cites LB §3.4 as Confirmed for a rule that spec has withdrawn. The implementer's `> **OPEN:**` under §13 (formats implementation, 2026-10-06) asks exactly this and is unanswered; it is also missing from the §14 summary. Revise C4, §6 and the §13 row (say whether the `oz399.99` inputs of §9.7 and §13 are tied to a stored height or are free synthetic values), answer and remove the OPEN, add a §15 row if needed and a §16 entry. (2) Minor: §11.1's evidence omits its tolerances. "In 95.8 % the second and third components are zero" holds only with \|x\|, \|y\| < 10⁻⁴ (3,115,694 of 3,253,835); exactly zero gives 3,049,348 (93.7 %). The 2,916 scalar-last-looking rotations are those with \|w\|, \|x\| ≤ 10⁻⁶ and y and z non-zero. State both criteria. Spot checks on the install (all 3,253,835 framed SEDs, 2026-10-06) that matched: CO1 (923,545 landblock-family DIDs, none with X or Y = 255); CO2 (a)–(c) and the §7 type split (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); CO3 (no rotation off unit length by more than 0.001); C20 (3,091 arguments beyond ±1, 2,769 exactly ±1); §7 bucket counts under both metrics. Also recomputed in f32: §11.5 rows and the §11.3 arcsine vectors (1.0000001 → NaN, 0.99999994 → 89.98°). Checklist items 1–4 and 9 pass (no code or pseudo-code; the f32 evaluation-order table of §11.3 is a functional fact; labels and tokens are interoperability names; no game text, keys or hostnames; no closed gate touched). Previous re-review: Claude review session (spec-writer agent), 2026-10-05, **changes requested**; both items are addressed in the repair revision of 2026-10-06 (§16). All earlier items are fixed. New issues: (1) §9.7 row 10 is a wrong test vector as written: the listed q = (0.95125, 0.04494, −0.16773, 0.25489) gives pitch −0.00043° under §11.3 and §9.4 (above the 0.0002 threshold), so the text is `… h330.0 p-0.0 b-20.0`, not `… h330.0 b-20.0`; only the exact composed rotation gives the listed text. State that the row uses the exact rotation (or give inputs that produce the text, or correct the expected text). (2) Minor: §7 does not say which distance the 83 / 194 / 464 / 167 buckets use; they match the largest per-axis distance outside the square, while the Euclidean distance gives 83 / 193 / 464 / 168. Spot checks against the install that matched: CO2 (a)–(c) counts; §7 type split of the 4,960 (Physics 3,887, Weenie 144, Light 17, TeleportDestination 3, LBIOnly 1; 886 / 22 non-interior); C20 3,091 arguments beyond ±1 and 2,769 exactly ±1; §9.4 constants and examples recomputed in f32; §11.3 test vectors (1.0000001, 0.99999994 → 89.98°); §9.7 rows 1–9 and §11.5 rows. Previous review: Claude review session (spec-writer agent), 2026-10-05, changes requested; every item is addressed in the repair revision of the same date (§16). Items: (1) Invariant CO2 (§13) is false on the install: landblocks without cells hold 2,252,187 positioned SEDs, 4,960 of them outside the 160 m square (4,052 with the interior flag, 908 without; all 908 non-interior out-of-square SEDs are in cell-less landblocks); "2,247,227 of 2,247,227" counts only the in-square ones. (2) BIN facts without a provenance row and not among the BIN questions: the Position flag-bit rules of §15 (0x01–0x80), cell values 0 and 0xFFFF (§7), block value 0xFF as invalid (§4), the inverse-parser facts of §9.8. (3) Unknowns not in `> **OPEN:**` callouts: the layout of the `Language` record that supplies the decimal separator (§8.3, §15), indoor hiding of map coordinates (§8.3, listed only in §14), out-of-domain handling of the bank asin (§11.3). (4) The "OPEN (implementation choice)" on lenient map-coordinate input is a Tessera convention, not an unknown, and sits in §11.4 instead of §8. Spot checks that matched: REGION map 0x28000008 (9 entries) and all 7 descriptors (offset 4 = key; offsets 16–32), the `Position` table (5 tokens, argument IDs) and the pair template with arguments 0x753/0x6C7, 20 of 20 reference rows recomputed in f32, all §8.4 vectors, CO1 over 923,545 landblock-family DIDs, CO3, 3,115,694 pure turns, 2,916 scalar-last-looking rotations, §7 768,911 of 1,001,648. |
 | **Implements into** | `crates/world` (coordinate types, conversions, map-coordinate formatting and parsing), `crates/terrain` (height lookup), `crates/net` sandbox (`--spawn`, reported position), `apps/client` (on-screen coordinates, minimap), `apps/explorer` |
 | **Companion specs** | `landblock.md` (landblock records, height scale §3.4, triangulation §3.11, minimap tiles §6). `entity-descriptor.md` §4.4–§6 (placement frame, rotation evidence, placement transform). `environment.md` §3 (region descriptor 0x0F, which stores the map-coordinate constants). `property-system.md` §4.6 (stored Position encoding). `records.md` §2.2 (landblock DIDs), §8 (DID maps). `string-table.md` §7–§9 (StringInfo arguments, used by the map-coordinate text). `mesh.md` §11 (model axes and units). |
 
@@ -48,7 +48,7 @@ data; facts that rest on BIN alone say so; **Reported** = third-party only.
 | Tag | Source |
 |---|---|
 | OBS | Observed in user install 2026-10-04: all landblock records of regions 1–5 and 14 (`landblock.md` §1), all 7 region descriptors, all 3,253,862 placed static entities, 120 minimap tiles. Re-checked 2026-10-05: the REGION DID map 0x28000008 (all 9 entries), the region descriptors' offsets 4–35 (all 7), the STRINGTABLE DID map 0x28000004 entries used in §8.3, the string table it names under the label `Position` (all 5 entries), and the 20 reference rows of `docs/checklists/m3-reference-locations.md` recomputed with §8.2–§8.3. Repair re-check 2026-10-05: the block-local position of every one of the 3,253,835 SEDs with a frame against whether its landblock-info record has cells and whether the SED has the interior flag (CO2, §7), and the bank-arcsine argument of every stored SED rotation evaluated in the client's f32 order (§11.3). Re-check 2026-10-06: the near-zero component patterns of all 3,253,835 framed SED rotations at the tolerances stated in §11.1. |
-| BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room on 2026-10-05 for facts only. Questions: (1) how the `/loc` position text is produced: tokens, order, landcell rule, number formats, omissions (owner item O1); (2) how its heading relates to a stored rotation, and so to placed objects (O2); (3) how map coordinates are computed, rounded, lettered and composed, and where their constants come from (O1, the former §8.3 OPEN); (4) what the region number is. Why M1–M3 were not enough: the data hold the constants and the string templates but no rule; the published description (ER) gives the output only by example, and its omission rule for `h` disagrees with the code; the owner's in-game readings (M3, items O1 and O2) are pending and could sample the rounding but not establish it. Only position-formatting, map-coordinate, region-lookup, angle, number-formatting and string-argument code was read; no network, login, launcher or anti-tamper code. **Second use, 2026-10-05 (repair session, same build, same method, address ranges only):** (5) how the client computes the flag byte of a stored Position, bits 0x01–0x80 (§15); (6) which cell values mean "outdoors", "interior" and "no valid cell", and where the outdoor value comes from (§7); (7) which region and block values make a position invalid (§4, §8.2, §9.2); (8) which members, separators and defaults the client's inverse position parser accepts (§9.8); (9) whether the reduction of h, p and b and their omission tests run in single or double precision, and with which constants (§9.4); (10) what the client does when the bank arcsine argument leaves [−1, 1] (§11.3); (11) whether the callers of the map-coordinate routine test the cell (§8.3). **Why M1–M3 were not enough for (5)–(11):** the data hold only values that already satisfy the rules (no stored Position disagrees with its flags, none has region 0, block 0xFF or cell 0xFFFF), so they cannot show the rule or its edge cases; precision and out-of-domain behaviour leave no trace in data; no published source states them; the owner's readings (M3) cannot reach a parser that only developer facilities use. Only the Position flag writer, the position-text formatter, the static initialisers of the cell constants, the angle helpers, the quaternion decomposition, the inverse parser's strings and member table, and the three direct callers of the map-coordinate routine were read. |
+| BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room on 2026-10-05 for facts only. Questions: (1) how the `/loc` position text is produced: tokens, order, landcell rule, number formats, omissions (owner item O1); (2) how its heading relates to a stored rotation, and so to placed objects (O2); (3) how map coordinates are computed, rounded, lettered and composed, and where their constants come from (O1, the former §8.3 OPEN); (4) what the region number is. Why M1–M3 were not enough: the data hold the constants and the string templates but no rule; the published description (ER) gives the output only by example, and its omission rule for `h` disagrees with the code; the owner's in-game readings (M3, items O1 and O2) are pending and could sample the rounding but not establish it. Only position-formatting, map-coordinate, region-lookup, angle, number-formatting and string-argument code was read; no network, login, launcher or anti-tamper code. **Second use, 2026-10-05 (repair session, same build, same method, address ranges only):** (5) how the client computes the flag byte of a stored Position, bits 0x01–0x80 (§15); (6) which cell values mean "outdoors", "interior" and "no valid cell", and where the outdoor value comes from (§7); (7) which region and block values make a position invalid (§4, §8.2, §9.2); (8) which members, separators and defaults the client's inverse position parser accepts (§9.8); (9) whether the reduction of h, p and b and their omission tests run in single or double precision, and with which constants (§9.4); (10) what the client does when the bank arcsine argument leaves [−1, 1] (§11.3); (11) whether the callers of the map-coordinate routine test the cell (§8.3). **Why M1–M3 were not enough for (5)–(11):** the data hold only values that already satisfy the rules (no stored Position disagrees with its flags, none has region 0, block 0xFF or cell 0xFFFF), so they cannot show the rule or its edge cases; precision and out-of-domain behaviour leave no trace in data; no published source states them; the owner's readings (M3) cannot reach a parser that only developer facilities use. Only the Position flag writer, the position-text formatter, the static initialisers of the cell constants, the angle helpers, the quaternion decomposition, the inverse parser's strings and member table, and the three direct callers of the map-coordinate routine were read. **Third use, 2026-10-07 (OPEN-closing session, same build, same method, address ranges only):** (12) which block the client assigns to a point exactly on a block edge, and what it does at the far edge of the grid (§4 OPEN); (13) the defaults of the inverse position parser for members that are absent (§9.8 implementer OPEN); (14) whether the client links its C runtime statically or uses the system's, and which printf rounding option it selects (§9.5 and §11.3 OPENs). **Why M1–M3 were not enough for (12)–(14):** no stored position lies exactly on an edge or at the grid's far edge; the parser is a developer facility the owner cannot reach; tie rounding and the runtime choice leave no trace in data or in ordinary `/loc` output (ties need binary-exact values). Read: the client's general position normaliser and its constants, the inverse parser's per-member cases and its final assembly of the position, the default position constructor, the cell constants' static initialisers, the C runtime import table, the printf option accessor and the start-up routine that sets its bits. No network, login, launcher or anti-tamper code. **Repair re-read, 2026-10-07 (same build, same method, after the review of the same date):** question (12) again, for the order in which the normaliser handles *x* and *y* and what a failure leaves behind; only the normaliser was read. |
 | LC | LotroCompanion `delta-lotro-dat-utils` (Apache-2.0 distribution; decompiled `PositionDecoder`, `GeoLoader`) and `lotro-tools` `MapUtils` (readable source). Facts only. |
 | ER | `research/notes/engine-client-re.md` §3–§4: lotro-wiki "Coordinate Systems" page (landcells, `/loc` fields, map-coordinate formula), engine position struct and resource keys. |
 | DS | `research/notes/data-semantics.md` §6.1 (Position encoding, 160-unit landblocks, LC's map formula). |
@@ -57,6 +57,7 @@ data; facts that rest on BIN alone say so; **Reported** = third-party only.
 | ED | `entity-descriptor.md` (this install, same date). |
 | ENV | `environment.md` §3 (this install, same date). |
 | MESH | `mesh.md` §11.1 (characters face model +Y; origin at the foot point). |
+| MSDOC | Microsoft C runtime documentation ("`printf` family" floating-point rounding change for Windows 10 version 2004, programs built with Visual Studio 2019 16.2 or later; learn.microsoft.com), consulted 2026-10-07 for the runtime's behaviour only. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -81,6 +82,9 @@ data; facts that rest on BIN alone say so; **Reported** = third-party only.
 | C19 | h, p and b are reduced and tested in single precision: f32 product with 57.29578, the runtime's single-precision remainder by 360, f32 addition of 360, f32 comparisons with 0.0002 and 0.011459156 (§9.4) | BIN (question 9: the angle helpers and their constants) | BIN |
 | C20 | The bank arcsine is not clamped: the single-precision argument goes straight to the runtime's single-precision arcsine (§11.3) | BIN (question 10); OBS (3,091 of 3,253,835 stored SED rotations give an argument beyond ±1 in the client's f32 order, census 2026-10-05) | BIN; census Confirmed |
 | C21 | The map-coordinate routine accepts interior positions; its three direct callers do not test the cell (§8.3) | BIN (question 11) | BIN |
+| C22 | The client's general outdoor-position normaliser: a block-local *x* or *y* outside [0, 160) moves the position by ⌊value / 160⌋ blocks (f32) and keeps the remainder; a remainder of exactly 160 becomes 0 in the next block; a target block outside 0–254 fails (or, when the caller asks for clamping, gives 0 in block 0 below, 159.9998 with block 0xFF above); *x* is finished and written before *y* is examined, so a failure on *y* leaves *x* and X already re-homed; a point exactly on an edge belongs to the block east or north of it (§4) | BIN (question 12: the normaliser, called from 73 places, and its constants 160.0 and 159.9998; order of *x* and *y* re-read 2026-10-07) | BIN |
+| C23 | Defaults of the client's inverse position parser: `r` 1, `i` 0, `c` 0 (outdoors; the words `outside` → 0, `inside` and `limbo` → 1); absent offset members 0, except that with the block given by `lx` `ly`, an outdoor cell and no offset member at all, the offset is the landcell's south-west corner; absent `h`, `p`, `b` 0; the result is normalised by C22 without clamping (§9.8) | BIN (question 13) | BIN |
+| C24 | The client uses the system's Universal C runtime (printf family and `asinf` imported, not linked in) and sets the printf options "legacy wide specifiers" (0x4) and "standard rounding" (0x20) at start-up; with standard rounding, Microsoft's runtime on Windows 10 version 2004 and later rounds binary-exact ties to even (§9.5, §11.3) | BIN (question 14: import table, option accessor, start-up routine); MSDOC (Microsoft C runtime documentation, `printf` family, Windows 10 2004 change) | BIN; the runtime's tie behaviour Reported |
 
 ---
 
@@ -149,19 +153,48 @@ renderer's clip space (for example Y-up) happens only at the camera.
 - The landblock DIDs of (R, X, Y) are `0x80KRXXYY` (LB §2.1): for example the height record of
   region 1, X = 126, Y = 140 is 0x80017E8C.
 - **Containing landblock of a global point**: X = ⌊G_x / 160⌋, x = G_x − 160 · X (likewise
-  for Y). A point exactly on a shared edge belongs to either block; pick the lower one unless
-  the higher index would exceed 254.
+  for Y). A point exactly on a shared edge belongs to the block **east or north** of it
+  (*x* = 0 there), as the client's normaliser below decides (C22); the grid's far edge
+  G = 40,800 has no valid block (X would be 255).
 
 The engine's in-memory position (ER §3; BIN) is a region number, a landblock (u8 X, u8 Y),
 a cell (u16), an instance (u16), block-local f32 x, y, z and a rotation quaternion — the
 same split Tessera uses for stored positions.
 
-> **OPEN:** The edge rule above can be read two ways. `tessera-world` uses
-> X = ⌊G_x / 160⌋ everywhere (a point on a shared edge belongs to the block east or north
-> of it, with x = 0), except that G = 40,800, the far edge of the grid, stays in block 254
-> with x = 160. Which block the original's movement code assigns to a point exactly on an
-> edge was not traced (BIN only shows that `/loc` prints the block the position holds and
-> does not re-home it, §9.2). It changes only `/loc` output and area lookups at that line.
+**Re-homing a position (C22, BIN 2026-10-07; closes the former edge-rule OPEN).** The
+client has one general routine that brings an outdoor position back into its block (called
+from 73 places, among them the inverse parser of §9.8). It acts only on a valid position of a
+known region (1–15) whose cell is 0 (outdoors); *z* is never changed. For *x* (then
+independently for *y*), with the block size 160.0 as an f32:
+
+1. If 0 ≤ *x* < 160, nothing changes.
+2. Otherwise *k* = ⌊*x* / 160⌋ (single precision, rounded toward minus infinity) and the
+   new block index is X + *k*.
+3. If the new index lies in 0–254: *x* becomes *x* − *k* · 160 (single precision); if that
+   result equals 160 exactly (an f32 rounding case), it becomes 0 and the index grows by
+   one more. The position takes the new index.
+4. If the new index lies outside 0–254, the routine stops and reports failure, unless its
+   caller asked for clamping; then a negative index gives *x* = 0 in block 0, and an index
+   above 254 gives *x* = 159.9998 with block index 0xFF, which makes the position invalid
+   (C17), and the routine goes on.
+
+The routine finishes *x* (steps 1–4, including writing the new offset and block index)
+before it looks at *y*. So a failure on *x* leaves the position unchanged, but a failure on
+*y* (without clamping) leaves an *x* offset and X index that have **already been
+re-homed**, with *y* and Y as they were. A caller that needs all-or-nothing behaviour must
+keep a copy of the position. With clamping the routine always succeeds, and a clamped *x*
+(block 0 or 0xFF) does not stop it from treating *y*.
+
+For an interior position whose cell is the generic value 1 (§7) the same routine instead
+asks a cell-lookup service for the cell containing the position and stores it (not traced
+further).
+
+Consequences: a point exactly on a shared edge belongs to the block **east or north** of it
+(*x* = 0 there), which is what `tessera-world` does. The far edge of the grid, G = 40,800,
+has **no** valid block in the client: X + 1 = 255 is outside 0–254, so the routine fails (or
+invalidates the position when clamping). `tessera-world` keeps such a point in block 254 with
+*x* = 160 (a Tessera choice; the client never produces such a position, because it cannot
+re-home onto it).
 
 ---
 
@@ -554,9 +587,15 @@ value, stays 0). A negative value whose magnitude rounds to zero keeps its minus
 that runtime format does (−0.00043 prints as `-0.0`, §9.7 row 11). An exact tie arises only for binary-exact values (for example 40.125 at two
 decimals).
 
-> **OPEN (minor):** the runtime decides exact ties; the current Windows runtime rounds them
-> to even (40.125 → `40.12`), older runtimes and other implementations may round them up.
-> Tessera rounds ties to even.
+**Exact ties (C24; closes the former minor OPEN).** The client does not carry its own
+number formatter for these values: it calls the system's Universal C runtime, and at start-up
+it selects that runtime's "standard rounding" printf option. With that option Microsoft's
+runtime on Windows 10 version 2004 and later rounds a binary-exact tie to even (40.125 →
+`40.12`; Reported, MSDOC), which is what Tessera does. MSDOC adds that this rounding
+follows the current floating-point rounding mode (round to nearest, ties to even, unless a
+program changes it; no change of the mode by the client was looked for). On an older Windows runtime, or a
+different implementation of the same runtime interface (for example under a compatibility
+layer), ties may round up; that is a property of the host, not of the client.
 
 <a id="s9-6"></a>
 ### 9.6 Edge cases
@@ -619,17 +658,33 @@ outside or inside). Members may be separated by spaces, commas, semicolons or co
 four separator characters the parser splits on). `r` is optional and defaults to region 1,
 as the client's own help text for the parser states; `i`, `c`, `ox`, `oy`, `oz`, `h`, `p`
 and `b` are optional too, and the block must be given by both `bx` and `by` or both `lx`
-and `ly`. Only these facts were read (the member table, the separator set and the help
-text); the full grammar, its error handling and the default of a missing `c` were not
+and `ly`. The first BIN use read the member table, the separator set and the help text;
+the third use (2026-10-07) read the per-member cases and the final assembly, so the defaults
+of absent members, including a missing `c` (0, outdoors), are given below (C23). The rest of
+the grammar (the bracketed offset form) and the parser's error messages were not
 traced, and Tessera does not need them: Tessera's own parser (above) accepts the tokens of
 §9.1, separated by any of the same four characters.
 
-> **OPEN (implementer, 2026-10-07):** §9.1 and §9.3 say the original writes the `ox oy oz`
-> group whole or not at all, and the client's inverse parser takes each of them as
-> optional, but the default of a missing member is not traced. `tessera-world` reads a
-> missing group as (0, 0, 0) (the block corner, §9.3) and rejects text that gives only one
-> or two of the three, since the original never writes that (Tessera choice, conservative).
-> It also requires `r`, although the client's inverse parser defaults it to region 1.
+**Defaults of the client's inverse parser (C23, BIN 2026-10-07; answers the implementer
+OPEN of 2026-10-07).** The parser starts from an invalid position and fills in what the text
+gives; for what it does not give:
+
+| Member | Default when absent |
+|---|---|
+| `r` | 1. A region outside 1–15, or one the client does not know, is an error. |
+| block | none: the block must be given by both `bx` and `by` or both `lx` and `ly` (an error otherwise, also when the two schemes are mixed); with landcells, X = ⌊`lx` / 8⌋ and Y = ⌊`ly` / 8⌋; a block index above 255 is an error |
+| `i` | 0 |
+| `c` | 0 (outdoors). The word `outside` gives 0; `inside` and `limbo` give 1, the generic interior value of §7; otherwise a number |
+| `ox`, `oy`, `oz` | 0 each, individually: a text giving only some of them gets 0 for the others. When **none** of them is given, the block was given by `lx` `ly` and the cell is outdoors, the offset is the landcell's south-west corner, ((`lx` mod 8) · 20, (`ly` mod 8) · 20, 0) with the region's landcell size (§5.2); otherwise it is (0, 0, 0), the block corner |
+| `h`, `p`, `b` | 0 each; when none is given the rotation is the identity, otherwise it is built from the three angles (ψ = −*h*, §11.3) |
+
+A bracketed form `o[` … `]` that gives the three offsets together also exists; its grammar
+was not traced. After assembly the position goes through the normaliser of §4 without
+clamping, so an offset beyond the block moves the position into the neighbouring block.
+
+Tessera's parser (above) is not bound by these defaults: the original never writes a partial
+`ox oy oz` group or omits `r`, so `tessera-world`'s stricter choices (rejecting a partial
+group, requiring `r`) lose nothing when reading the original's own text (Decision, kept).
 
 ---
 
@@ -736,9 +791,11 @@ position text would contain `b` followed by the runtime's text for a NaN. The av
 always upright (θ = 0), so `/loc` for the player never meets this; it can only appear for
 frames printed for objects.
 
-> **OPEN (minor):** the exact characters the client prints for a NaN bank (the runtime's
-> NaN spelling for `%.1f`, which depends on the NaN's sign and payload) were not
-> established.
+> **OPEN (minor):** the exact characters printed for a NaN bank. Both the arcsine and the
+> number formatting come from the system's Universal C runtime, not from the client (C24),
+> so the text is the host runtime's spelling of the NaN that its single-precision arcsine
+> returns for an argument outside [−1, 1] (sign and payload included). It was not
+> established for any runtime.
 
 **Decision (Tessera):** Tessera clamps the arcsine argument to [−1, 1] before taking the
 arcsine, everywhere it decomposes a rotation (explorer read-outs, the heading of placed
@@ -838,6 +895,17 @@ Invariants of the rules (testable on synthetic input):
 - **CO7**: a printed `h` lies in 0.0 – 360.0; `p` in −180.0 – 180.0; `b` in −90.0 – 90.0.
 - **CO8**: the map-coordinate letter depends only on the sign of the unrounded f32 value;
   the number has exactly one decimal and no sign.
+- **CO9** (re-homing, §4, C22; region 1, cell 0, f32 arithmetic): X = 10, *x* = 160.0 →
+  X = 11, *x* = 0.0; X = 10, *x* = −0.5 → X = 9, *x* = 159.5; X = 10, *x* = 325.0 → X = 12,
+  *x* = 5.0; X = 254, *x* = 160.0 → failure without clamping, and with clamping
+  *x* = 159.9998, X = 0xFF (invalid); X = 0, *x* = −1.0 → failure without clamping, and with
+  clamping *x* = 0.0, X = 0. X = 10, *x* = 170.0, Y = 254, *y* = 160.0 → failure without
+  clamping, leaving X = 11, *x* = 10.0, Y = 254, *y* = 160.0 (*x* already re-homed); with
+  clamping X = 11, *x* = 10.0, Y = 0xFF, *y* = 159.9998. A position with cell ≠ 0 is never moved.
+- **CO10** (inverse parser defaults, §9.8, C23): `lx125 ly1100` alone gives region 1,
+  X = 15, Y = 137, instance 0, cell 0, offset (100.0, 80.0, 0.0) (landcell 125 mod 8 = 5 and
+  1100 mod 8 = 4 times 20), identity rotation; `r1 bx15 by137 ox3` gives offset
+  (3.0, 0.0, 0.0).
 
 Test vectors for `crates/world` (all synthetic):
 
@@ -874,29 +942,36 @@ formats implementation's question of 2026-10-06: stored 13,107 is 400.0 units, a
 <a id="s14"></a>
 ## 14. Open questions (summary)
 
-1. Which block the original's movement code assigns to a point exactly on a block edge (§4).
-2. Whether the avatar's origin rests exactly on the terrain (`oz` against terrain height,
-   §6); owner item O1.
-3. Exact-tie rounding of the two-decimal and one-decimal `/loc` numbers (§9.5, minor).
-4. Minimap pixel corners versus centres (§10).
-5. Whether some UI panels hide the player's own map coordinates indoors (§8.3; Tessera shows
+1. Whether the original's movement code keeps the avatar's origin exactly on the terrain
+   (`oz` against terrain height, §6); owner item O1.
+2. Minimap pixel corners versus centres (§10).
+3. Whether some UI panels hide the player's own map coordinates indoors (§8.3; Tessera shows
    them, Decision).
-6. Whether the record-to-field match of the locale record (`string-table.md` §10.3) is right
+4. Whether the record-to-field match of the locale record (`string-table.md` §10.3) is right
    for the digit alphabet and decimal separator used by map coordinates (§8.3).
-7. The exact text the client prints for a NaN bank (§11.3, minor; Tessera clamps,
-   Decision).
+5. The exact text printed for a NaN bank, now known to be the host runtime's (§11.3, minor;
+   Tessera clamps, Decision).
+
+Closed in the 2026-10-07 revision (BIN third use): the block of a point exactly on an edge
+and the far edge of the grid (§4, C22); exact-tie rounding of the `/loc` numbers (§9.5, C24);
+the inverse parser's defaults (§9.8, C23; the implementer OPEN of 2026-10-07).
 
 Owner items this revision answers (`docs/checklists/owner-observations.md`):
 
 - **O1** (`/loc` and map coordinates at 20 reference locations): the map formula, its
   per-region constants, the rounding (§8.3: the **first**, rounded form of every row of
   `m3-reference-locations.md` §2.2; recomputed with §8.2–§8.3, 20 of 20), the letters, the
-  `/loc` landcell and offset rules and the meaning of `r` (§4, §9) are now BIN facts. The
-  owner's readings remain useful as confirmation and for the open points 2 and 5 above and
-  the area-name column.
+  `/loc` landcell and offset rules and the meaning of `r` (§4, §9) are now BIN facts; the
+  2026-10-07 revision adds the edge rule (§4, C22) and the tie rounding (§9.5, C24). Status:
+  **partly answered**. The owner's readings remain needed for open points 1 and 3 above
+  (the `oz` offset of the avatar above the terrain, which lives in movement code not traced;
+  indoor display of map coordinates) and for the area-name column, and are useful as
+  confirmation of the rest.
 - **O2** (bearing of placed objects against the `/loc` heading): answered by §11.3–§11.4;
   the expected values in O2's table under "Expected `h` if §4.4 is right" are the client's.
   A reading is now only a confirmation (and would reveal heading quantisation, §9.4).
+  Status: **answered**. The same rule gives the facings of the static NPC figures of owner
+  item O17 (`entity-descriptor.md` §9.4).
 
 ---
 
@@ -912,6 +987,7 @@ Owner items this revision answers (`docs/checklists/owner-observations.md`):
 | `engine-client-re` notes (ER §4), as quoted in §9 before this revision | `h` omitted within about 1.3° of north | The client's rule is 0.0002 rad (§9.4). |
 | `entity-descriptor.md` §8 | Terrain height in metres is raw / 32.768 | Superseded by `landblock.md` §3.4 (row L4): stored × 2,000.0 × f32(1 / 65,535) in f32 (§6 here, C4). The §8 evidence (fitted scale 1 / 32.7665) fits both rules; only the stated formula is out of date. |
 | `docs/checklists/m3-reference-locations.md` §1 (row R1) | Terrain height in metres = raw u16 sample / 32.768 | Same correction as the previous row; recomputed `oz` expectations move by at most 0.0305 units. |
+| `tessera-world` containing-block rule (§4 here, before 2026-10-07) | G = 40,800 stays in block 254 with x = 160 | The client has no valid block for G = 40,800 (C22): re-homing onto it fails, or with clamping marks the position invalid. Tessera's choice is harmless (the client never produces such a position) and may stay; code that wants the client's behaviour treats it as outside the world. |
 | `walker.md` §5–§6 (`WorldSource` location descriptions, HUD lines) | Built on the pre-BIN rules of §8.3 (round half away from zero in f64 with an exact 0.005) and §9 | Follow §8.2–§8.3 and §9 (f32 order, 0.0502 rounding, letters by sign, `ox` group omission, `h` tolerance, `p`/`b`) for character-exact output. |
 
 ---
@@ -926,3 +1002,5 @@ Owner items this revision answers (`docs/checklists/owner-observations.md`):
 | 2026-10-05 | header, §1 (OBS re-check, BIN second use with questions 5–11, new C15–C21), §4, §7, §8.3, new §8.5, §9.4, §9.8, §11.3, §11.4, §13 (CO2 rewritten, new test vectors), §14, §15 | Repair after review. CO2 was false: it counted only in-square SEDs; it now states the full census (768,911 of 768,911 out-of-square SEDs in blocks with cells are interior; 4,960 of 2,252,187 framed SEDs in blocks without cells are out of the square, 4,052 interior and 908 not; all 908 non-interior out-of-square SEDs are in blocks without cells), and §7 describes the 4,960. BIN facts that lacked provenance now have rows and listed questions (Position flag bits C15; cell values 0, 1 and 0xFFFF and how the client derives them C16; invalid R, X, Y and cell C17; inverse-parser members, separators and the `r` default C18). New BIN facts: §9.4 reductions and omission tests run in f32 with the stated constants (C19); the bank arcsine is not clamped and 3,091 stored rotations leave its domain in f32 (C20); the map-coordinate routine's callers do not test the cell (C21). New OPEN callouts: locale-record field match (§8.3), indoor hiding of the player's map coordinates (§8.3), NaN text of `b` (§11.3); Tessera decisions recorded for each. The lenient map-coordinate input moved from an OPEN in §11.4 to a Decision in new §8.5, with test vectors. | Spec writer (dirty room) |
 | 2026-10-06 | header, §7, §9.5, §9.7 | Repair after re-review. §9.7: rows 9 and 10 now give their quaternions to eight decimals (the exact composed rotations rounded to f32), which produce the listed texts under §11.3 and §9.4 with the vanishing angle near 4 · 10⁻⁷°; the former five-decimal input of row 10 is kept as new row 11 with its correct text `… h330.0 p-0.0 b-20.0` (pitch −0.00043°, above the 0.0002 threshold), and a note explains how the inputs are evaluated and why row 9 must not be rounded to five decimals (bank 0.00019°). §9.5: a negative value that rounds to zero prints with its minus sign. §7: the distance of the 908 non-interior out-of-square SEDs is defined as the larger per-axis distance outside the square, with half-open buckets; the Euclidean counts (83 / 193 / 464 / 168) are given for comparison. | Spec writer (dirty room) |
 | 2026-10-06 | §1 (OBS, C4), §6 (title and bullets), §9.7, §11.1, §13, §15 | Repair after the second re-review. C4 and §6 now state the client's height rule of `landblock.md` §3.4 (row L4): stored × 2,000.0 × f32(1 / 65,535) in f32, 0 – 2,000.0 units; C4 is marked rule BIN (via LB), scale Confirmed, instead of citing the withdrawn stored / 32.768 as Confirmed. §13: the stored-height vector is now 13,107 → 400.0 (plus 65,535, 32,768 and 0); the implementer OPEN of 2026-10-06 is answered and removed (it is therefore not in §14): the `oz399.99` values of §9.7 and §13 are free synthetic offsets, not derived from a stored height, and §6 and §9.7 say so. §11.1: the evidence now states its tolerances (95.8 % with \|x\|, \|y\| < 10⁻⁴; 93.7 % with exact zeros; the 2,916 scalar-last-looking rotations are those with \|w\|, \|x\| ≤ 10⁻⁶ and \|y\|, \|z\| > 10⁻⁶; 9,908 with "y, z non-zero"), re-counted on the install 2026-10-06. §15: rows for `entity-descriptor.md` §8 and `m3-reference-locations.md` R1, which still state stored / 32.768. | Spec writer (dirty room) |
+| 2026-10-07 | header, §1 (BIN third use with questions 12–14, new source MSDOC, new C22–C24), §4, §9.5, §9.8, §11.3, §14, §15 | OPEN-closing revision (BIN, decision 0011). §4: the client's general outdoor-position normaliser (C22) settles the edge rule: a point on a shared edge belongs to the block east or north of it, and the grid's far edge G = 40,800 has no valid block; the former OPEN is closed and `tessera-world`'s choice at 40,800 is recorded as harmless (§15). §9.5: the client formats through the system's Universal C runtime with the "standard rounding" option, so on current Windows exact ties round to even (C24; Reported for the runtime via MSDOC); the minor OPEN is closed. §9.8: the inverse parser's defaults for absent members (C23) answer the implementer OPEN of 2026-10-07, which is replaced by the answer; Tessera's stricter parser stays a Decision. §11.3: the NaN-bank OPEN is narrowed to the host runtime. §14: summary renumbered; O1 partly answered, O2 answered. | Spec writer (dirty room) |
+| 2026-10-07 | header, §1 (BIN repair re-read of question 12; C22), §4, §9.5, §9.8, §13 (CO9) | Repair after the review of 2026-10-07 (changes requested, three items). (1) §4, bullet "Containing landblock of a global point": the stale "either block; pick the lower one" rule is replaced by the client's rule (east or north; G = 40,800 has no valid block), matching C22. (2) §9.8: the paragraph no longer says the default of a missing `c` was not traced; it points to C23 (0, outdoors) and names what remains untraced (the bracketed offset form, error messages). (3) §4 step 4 and C22: the normaliser finishes *x* before it examines *y*, so a failure on *y* leaves *x* and X already re-homed (BIN, re-read); a clamped *x* does not stop the treatment of *y*; new CO9 vector. §9.5: MSDOC's note that the rounding follows the floating-point rounding mode (reviewer's suggestion). | Spec writer (dirty room) |

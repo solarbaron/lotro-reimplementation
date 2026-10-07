@@ -4,12 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Review |
-| **Last updated** | 2026-10-05 |
+| **Status** | Review, changes requested (re-review of 2026-10-07; never Accepted, so it stays in Review). |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | none yet |
+| **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review |
+| **Review record** | **Re-review, 2026-10-07: changes requested** (one blocking item, below); the status stays Review. **First review (same day):** changes requested, three blocking and seven non-blocking items. All ten are fixed: the limit is "strictly below 0.0002" in A27, §6.1 (twice, including the Decision) and §14; §3.2.1 and AI12 split the 79 into 13 by rule 1 and 66 by rule 3; §17 has the O9 row; §7.4 states its counting rule (21,780 nodes, 830 pairs, 61 tables in key 5; 21,841 and 62 tables overall); §6.1 states the uniform holder factor, its two flag bits, `Model_ParticleScale` 0x5A0 and the holder's final scale; §3.3 names the two sources and the dictionary default false; §3.5 and A21 attribute the 297 nodes and the counts by kind; OBS2 says 632,847; item 9 became A28 and §4.7 rule 4. **`CLEAN_ROOM.md` §5.3:** every form item holds. The new text is functional fact in plain words, with no code, no listing structure, and no copied strings (no log text or build paths). Labels are interoperability labels only, there is no game text, key or hostname, the BIN3 row is complete (build, questions, why M1–M3 were not enough, what was not read), BIN-only facts are marked BIN, unknowns are OPEN, and no closed gate is touched. **BIN re-check of the new BIN3 facts** (my own read-only Ghidra copy at `/home/solarbaron/tessera-re/work/review-appearance`, same build, deleted afterwards). These match. The reset rule tests non-finite components first, then any component strictly below 0.0002. The own scale is A × s × `Model_Scale` × V, then × the holder's final scale. *s* is 1 unless the object has a holder other than itself, in which case it is the holder's reported scale; flag bit 30 forces 1, and bit 14 is checked after it, so it wins and reads the holder's `Model_ParticleScale` 0x5A0, which must be a float, else 1. In the 0x20 reader, the u32 after the DID is a count followed by that many u32 DIDs, then the `section` byte. That byte indexes a 23-element list of table sizes, and the client rejects a value above 22. The sizes run 11, 23, 47 and so on, so every family's byte matches its entry count at about two entries per bucket. The block-applying routine first applies each linked DID, in order, with the same (key, modifier) and recursively; it logs and skips a DID that does not resolve, and it has no guard against self-reference. Only then does it choose the record's own block. **Data spot checks** (owner's install, read-only, my own probe on the repository decoders, all records). These match. (1) AI13: the count is 0 in all 4,201 records, there are no negative variants, and `section` is at most 6. (2) The section by family in §4.2: Head 5, Shoulder 5, Chest 6, Back (a) 6, Back (b) 3, Gloves 5, Legs 4, Boots 5, Class 0, Weapon_Primary 1. (3) §3.2.1 and AI12: 12,199 elements, of which 11,774 are exact, 265 lower, 13 rule 1, 66 rule 3, 67 key missing and 14 null. (4) The OBS2 total is 632,847 nodes over 36,516 decodable tables and scriptlets (2 do not decode), with 218 of kind 33, 199 of kind 44 and 39 of kind 53. (5) The dictionary default of `GOP_AvatarUpdateVisible` is false. **Blocking:** (1) The §3.3 entity counts for the toggle property are wrong. Seven avatar entities name it in their lists: Hobbit M and F, Human M and F, Elf M and F, Dwarf M. Ten avatar entities carry it as true: those seven plus DwarfStoutAxe 0x4700979A and River-hobbit 0x4700CEA3 and 0x4700CEA4, which carry it without naming it. Nineteen 0x47 entities carry it in all, every one true. Four non-avatar entities (0x4700A4A4, 0x4700A4A8, 0x4700A4AA, 0x4700A4AF) name it, with toggle files, but do not carry it. Two places need fixing. The §3.3 phrase "each avatar entity naming it … (10 entities)" should say 7 name it and 10 carry it. The OPEN's "every avatar entity whose list names the toggle property holds true (10 of the 14 …)" needs the same correction, and its conclusion "the result differs only when the option is turned off" fails for those four entities: if the entity's own set answered, they would fall to the dictionary default false and show the plain files. State this. **Non-blocking:** (2) In §4.2, the client also refuses a `section` index whose table size is above 50,000 (index 13 and above) when one reader flag is set. Mention it or leave it, since no record comes near. (3) The client's "does this record have key K" test also finds a key in a linked record, and a separate routine collects block variants across linked records. Neither changes any result today, because every list is empty; they could join §4.7 rule 4 as notes. (4) `setup.md` §8.1 gives 4,111 records with section 0, but 4,113 is correct (its counts sum to 4,199). That spec's owner should fix it when revising rows 2 and 3, as §4.2 asks. **Owner items in scope:** O8 partly, O9 partly, O10 partly, O11 answered, O12 partly, O13 answered for weapons, shields and ranged items and partly overall, O15 answered for the mechanism and partly for rendering detail, O17 needs the owner. All are recorded in §17. **Taint:** this session read client disassembly for the appearance subsystem and must not implement it. Nothing was committed. |
 | **Implements into** | `crates/formats` (appearance-list structs, bone-slider definition structs; the 0x20 decoder already exists), `crates/anim` (bone-slider application, attach placement), `crates/assets` or a new assembly module (slot table, priority resolution, material and dye selection), `apps/explorer` (character viewer: species, sex, worn items, dyes, sliders), `apps/client` and the sandbox backend (animated avatar, static NPCs) |
-| **Companion specs** | [`setup.md`](setup.md) (normative for the 0x47, 0x1F, 0x04 and 0x20 layouts, the item paths §3, the slot field §8.3 and §12.2, held items §13). [`skeleton-anim.md`](skeleton-anim.md) (skeletons, the race-table walk §2.2, attach points §8, the multi-part rule §9). [`material.md`](material.md) §9.3 (material groups), §12 (dyes). [`entity-descriptor.md`](entity-descriptor.md) (SEDs, instance IDs). [`landblock.md`](landblock.md) §4.8 (the landblock weenie list). [`property-system.md`](property-system.md) §5–§8 (property sets, enum mappers, DID maps). `script-table.md` (which clip plays; idle animations of NPCs). |
+| **Companion specs** | [`setup.md`](setup.md) (normative for the 0x47, 0x1F, 0x04 and 0x20 layouts, the item paths §3, the slot field §8.3 and §12.2, held items §13). [`skeleton-anim.md`](skeleton-anim.md) (skeletons, the race-table walk §2.2, attach points §8, the multi-part rule §9). [`material.md`](material.md) §9.3 (material groups), §12 (dyes). [`entity-descriptor.md`](entity-descriptor.md) (SEDs, instance IDs). [`landblock.md`](landblock.md) §4.8 (the landblock weenie list). [`property-system.md`](property-system.md) §5–§8 (property sets, enum mappers, DID maps). `script-table.md` (which clip plays; idle animations of NPCs; §5 node layouts of the Appearance, MeshFX, EditMaterial and compositor nodes used by §3.5, §5.6 and §7.4; §8 how a figure finds its tables). [`misc-records.md`](misc-records.md) §3 (face compositors and their composition). |
 
 ---
 
@@ -21,16 +22,18 @@ meshes. This spec says how the pieces are **put together** into one dressed figu
 
 - which playable species and sexes exist, how each reaches its body, and the list that
   M4 exit criterion 2 must cover (§2);
-- the default body, the head, hair, beard and ear styles, and the character-creation
-  controls (§3);
+- the default body, the head, hair, beard and ear styles, the character-creation
+  controls, face compositing and colour tints (§3);
 - worn items: equipment slots, wardrobe records per body, the **part priority** that decides
   which item shows in each body slot, layering cases, dyes (§4);
-- held items: slot and category statistics, attach location, wielded versus stowed (§5);
+- held items: slot and category statistics, attach location, stowed and wielded
+  placements (§5);
 - whole-body scale, the height controls and the facial bone sliders (§6);
 - NPCs and creatures: what the 775 weenie objects of the landblocks really are, where
   NPC-like figures come from, and how to dress them (§7);
 - the whole algorithm in words, invariants, statistics, failure categories, corrections
-  and synthetic examples (§8–§13).
+  and synthetic examples (§8–§13), and what the client settles of the owner observations
+  (§17).
 
 All counts are observations of one install on one date. Tests assert the invariants (§9),
 not the counts. DIDs quoted are observations for tests and checklists; implementations
@@ -63,6 +66,9 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | BIN | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035, compiled 2026-09-27), disassembled in the dirty room for facts only on 2026-10-05 (method M4, standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md)). Questions: how the height controls act (§6.2); how bone sliders are parsed, combined and applied, in which frame, and how scaled bones affect children and feet (§6.3–§6.4). Why M1–M3 were not enough: the data name the properties, nodes and limits but no rule (the earlier Decisions were guesses that made River-hobbit feet float 9 cm); no published source covers them; observing the client (M3) can confirm a look but not a rule. Only offline animation and mesh-deformation code was read. |
 | ST, SA2 | `script-table.md` §6.7–§6.9 (held clips, layer 110, deformer nodes) and `skeleton-anim.md` §5.4, §6.6 (scale composition, layer combination), written from the same BIN session. |
 | RH | Dirty-room probe of 2026-10-05: the rules of §6.2–§6.4 run on the real River-hobbit, DwarfStoutAxe, Dwarf and Human setups, clips and every vertex of their default parts; lowest vertex, lowest bone and top vertex measured (§6.5). |
+| OBS2 | Observed 2026-10-07 (same Steam install, data current that day), read-only, with throwaway probes on the repository's own decoders: **all 7,524** decodable script tables (0x07; 2 of 7,526 do not decode with the current decoder and were skipped) and **all** scriptlets (0x0C), every node walked (632,847 nodes), with the enclosing Switch, When and port context of each Appearance (58), MeshFX (41), EditMaterial (60), ModifyCompositorColor (33), ModifyCompositorLayer (44), TextureCompositor (53), Run (5) and SetProperty (40) node and its driven fields; the include graph of all tables; all 27,546 property definitions; the enum mappers `Item_EquipmentCategory`, `HoldingLocation`, `Combat_SkillMode`, `TextureCompositorNames`, `ImageCompositorColorNames`, `MeshTypeID`, `MaterialTypeID`, the script-key mapper 0x23000097 and the DID map 0x28000007; the inventory-control object 0x70000230; all 0x47 property sets for scale and location properties; all 383,343 game-object property sets for location properties; all 49,636 landblock-info records for `Appearance_RandomAppearanceType`; all 12,199 appearance-list elements of the 0x47 records against all 4,201 0x20 records. |
+| BIN2 | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-07 with Ghidra (headless, read-only copy of the shared project, deleted afterwards), method M4 under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the routine that builds a figure's appearance from `Appearance_ClassList` and `Appearance_InstanceList`; the toggle-file test; the visual-template object (0x1F) merge, flag computation and parent flattening; the appearance-record (0x20) block choice; the per-record key table and the record order of a figure's appearance; the block application (material groups, parts); the Appearance script node's apply routine; the render component's scale computation and its property-change handler; the registration of the two avatar graphics options and their character-creation and options-panel bindings; the client's object property lookup. Searches by value and by name for the PIDs of the worn-item map structs, the random-appearance properties, the cosmetic-inventory properties and the held-item script properties. **Questions:** O8 (does the template scale combine with the entity scale), O10 (equal-priority ties and source order), O11 (the updated-avatar option and its default), O12 (does the client turn a random-appearance type into an outfit), O13 (does client code choose stowed and wielded locations), O15 (does client code pair colours with face layers); and the implementation OPENs of §14–§15 on block choice, dye pairing, scale type and cosmetic-inventory visibility. **Why M1–M3 were not enough:** the data names the properties, records and nodes but not the rules that combine them (tie order, block choice for a modifier that matches no block, whether a property is read by code at all); no published source covers them; an owner observation (M3) shows one outcome but cannot give a rule. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
+| BIN3 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-07 after the review, with Ghidra (headless, read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the render component's scale computation again (threshold comparison, the holder factor and its two flag bits, the holder's final scale); the property lookup call that reads `Model_ParticleScale`; the block-applying routine of a 0x20 record; the 0x20 record reader (the fields after the DID, the `section` byte and the entry table). **Questions:** review items 1, 5 and 9 (is the 0.0002 limit inclusive; which holder factors enter the render scale; what the list applied before a record's own entry is and where it is stored), and the `section` OPEN of §4.2. **Why M1–M3 were not enough:** the u32 after the DID is 0 and the `section` byte has no visible effect in every record, so the data cannot show their use; the limit and the holder factors only change the result for values no record carries (components near 0.0002, attached figures with flags whose source is not in the data); no published source covers them; observing the client (M3) cannot separate them. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -70,20 +76,30 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A2 | Worn items use one wardrobe record per (slot family, wardrobe body); seven wardrobe bodies serve the 14 combinations (§2.3, §4.2) | MV (shared wardrobe per body); OBS (634,655 map structs) | Confirmed |
 | A3 | A character setup's part list is the default body, one part per `MeshTypeID` slot, some slots holding three-vertex placeholders (§3.1) | SET §12.2; OBS (11 player setups, 4 NPC rigs) | Confirmed |
 | A4 | Head, hair, beard and ears come from appearance lists (`Appearance_ClassList`, `Appearance_InstanceList`) of the avatar entity: key + 0x20 record + modifier; the modifier selects the block (style) (§3.2–§3.3) | MV, DS (chargen chain); OBS (14 avatars) | Confirmed |
-| A5 | An appearance part's leading float is a **priority**; per body slot the part with the highest priority is shown; a three-vertex part at a higher priority hides the slot (§4.4) | MV (stub "blanking"); OBS (all worn records; mesh extents) | Confirmed by consistent census and geometry; tie rule OPEN |
+| A5 | An appearance part's leading float is a **priority**; per body slot the part with the highest priority is shown; a three-vertex part at a higher priority hides the slot (§4.4) | MV (stub "blanking"); OBS (all worn records; mesh extents) | Confirmed by consistent census and geometry; tie rule A22 |
 | A6 | The float before each material group is that group's priority; the float after the last group is 0 in every block; group field `a` is a `MeshTypeID` slot or 2 (`All`) (§4.3) | OBS (84,261 groups, 74,839 blocks) | Confirmed. Corrects the field attribution of SET §8.3 and MAT §9.3. |
 | A7 | The 0x20 key table value of an entry equals the number of its blocks whose `variant` is below 0.5 (§4.8) | OBS (49,383 of 49,383 entries) | Confirmed. Resolves SET §8.4. |
 | A8 | An item's default dye code is `Item_ClothingColor`; it selects a block of the `ClothingColor` entry of the same wardrobe record (§4.9) | MAT §12; OBS (21,843 of 21,999 items) | Confirmed. Answers MAT §12.4 OPEN. |
-| A9 | Whole-body scale of a playable body: template `vec3` and entity `Render_AdjustableScale`; River-hobbit entities carry 0.7 (§6.1) | SET §5.2; OBS (14 avatars) | Confirmed values; composition OPEN |
+| A9 | Whole-body scale of a playable body: template `vec3` and entity `Render_AdjustableScale`; River-hobbit entities carry 0.7 (§6.1) | SET §5.2; OBS (14 avatars) | Confirmed values; composition A27 (partly BIN2), OPEN for the template factor |
 | A10 | Bone sliders: definition records name bone indices, transform channels and limits; the character stores one byte per slider (§6.3) | DS (byte string, 0x80 default); OBS (4 definition records, 2 preset records) | Confirmed layout; value mapping and application: A16, A17 |
 | A11 | The 775 weenie objects placed by SEDs are housing hooks (744), distant-battle units (29), one door and one monster; none is an NPC (§7.1) | ED §4.1 ("NPC, interactive object"); OBS (775 of 775) | Confirmed. Corrects ED §4.1. |
 | A12 | The landblock weenie list holds per-instance property sets keyed by IID: one for every SED IID plus 514,987 for IIDs without a SED (§7.2) | LB §4.8 ("server-side templates"); OBS (3,768,840 entries) | Confirmed. Corrects LB §4.8. |
 | A13 | Static NPC-like figures are Physics SEDs whose object resolves to a humanoid rig and whose instance property set adds appearance lists, a random-appearance type, an idle animation and held items (§7.2–§7.4) | OBS | Confirmed |
-| A14 | No client record maps `Appearance_RandomAppearanceType` to an outfit (§7.4) | OBS (property sets of all prefixes holding property sets; raw search of the PID) | Confirmed absence in the scanned records; OPEN |
+| A14 | No **property set** maps `Appearance_RandomAppearanceType` to an outfit (§7.4) | OBS (property sets of all prefixes holding property sets; raw search of the PID) | Confirmed for property sets; superseded by A26 (the mapping is in script tables) |
 | A15 | `AC_Avatar_Height` is the held time (as a fraction) of the River-hobbit layer-110 `scale_blend` clip; `AC_BoneScale_Test` is the held fraction of every avatar's body-shape deformer clip and of the DwarfStoutAxe layer-110 clip (§6.2) | OBS (the 7 driven nodes, the 14 species tables); BIN (§6.7 of ST) | Confirmed 2026-10-05 |
 | A16 | Bone sliders: one value per slider *t* = byte / 255 in definition order, 0.5 for sliders past the end of the string; channel = min + *t* × (max − min), negated per reversed bone; later sliders overwrite earlier ones per bone and channel (§6.3) | BIN; OBS (definition records, node strings) | Confirmed 2026-10-05 (BIN only for the rule). Replaces the §6.3 value Decision. |
 | A17 | Sliders and body-shape deformers are not applied to the animated pose: they deform the skinned meshes once in bind space, using the scale composition of SA2 (§6.4) | BIN; RH (feet within 1 cm of the ground for River-hobbit M and F at every height value) | Confirmed 2026-10-05. Replaces the §6.3 application Decision. |
 | A18 | Expected standing heights with all mechanisms applied (§6.5) | RH | Confirmed 2026-10-05 as a computation on real data; not yet compared with the original client by eye |
+| A19 | Block choice: the block with the greatest `variant` not above the modifier; none if the modifier is below every variant; a modifier of −1.0 means "no block" (§3.2.1) | BIN2; OBS2 (12,199 elements: 11,774 exact, 265 a lower block, 79 none, 67 key missing, 14 null) | Confirmed (rule BIN only) |
+| A20 | Toggle files: the figure reads the toggle property through its own property lookup and uses `Appearance_AprToggleFile` when it reads true; the property is a graphics option, default on, and a change rebuilds the figure (§3.3) | BIN2 | BIN |
+| A21 | Face compositing and colour tints are driven by script nodes of each avatar's species table: compositor attach (53), layer choice (44) from `AC_Texture_*`, colour (33) from `AC_Color_*`, and dye-colour edits (60) of hair, beard and skin surfaces from `AC_Color_Hair` and `AC_Color_Skin` (§3.5) | OBS2 (all compositor nodes: 218 of kind 33, 199 of kind 44, 39 of kind 53; all 297 EditMaterial nodes driven by `AC_Color_Hair` or `AC_Color_Skin`) | Confirmed |
+| A22 | Equal part priority: the part applied later replaces the earlier one; records are applied in the order of their first appearance in the figure's appearance, keys of one record in the order of the client's key table (§4.7) | BIN2 | BIN |
+| A23 | Material groups of all applied blocks go into one figure-wide list ordered by ascending group priority; a group keeps no link to the record or block it came from (§4.10) | BIN2 | BIN |
+| A24 | Stowed and wielded placements of weapons and shields are data: MeshFX nodes of the shared avatar script table attach the equipped item's entity at a location chosen by equipment category, species and skill mode (§5.6) | OBS2 (all MeshFX nodes of the six placement scripts; all avatar closures) | Confirmed |
+| A25 | No client routine references the worn-item map structs, the random-appearance properties, the cosmetic-inventory visibility or `Script_Item_PhysObj_Primary` / `…_Secondary`; they are read by data (script nodes) or supplied with the object (§4.7, §5.5, §5.6, §7.4) | BIN2 (searches by value and by name) | BIN |
+| A26 | Random-appearance types select outfits through Appearance nodes under Switches on `Appearance_RandomAppearanceType` in figure script tables, with a random choice per piece group (§7.4) | OBS2 (21,780 nodes under explicit cases in key 5, 830 (table, case) pairs in 61 tables; 21,841 in all scripts and ports, 62 tables; 433 case values; 316 of the 318 non-zero types placed by landblocks covered; counting rule in §7.4) | Confirmed |
+| A27 | Render scale of an object, per axis: `Render_AdjustableScale_Checkpointed` or else `Render_AdjustableScale`, × one uniform holder factor, × `Model_Scale`, × a vector of a related object, × the holder's final render scale when attached; a result with a non-finite component or a component **strictly below** 0.0002 becomes (1, 1, 1). Template `vec3` values multiply along the template parent chain (§6.1) | BIN2, BIN3; OBS2 (types and census) | BIN (rule); Confirmed (types) |
+| A28 | The u32 after the DID of a 0x20 record is the count of a list of further 0x20 DIDs that follow it; the client applies those records, recursively and with the same key and modifier, before the record's own entry. The count is 0 in all 4,201 records. The `section` byte is the size class of the client's in-memory entry lookup (an index 0–22), with no appearance meaning (§4.2, §4.7) | BIN3; OBS (4,201 of 4,201 records, zero trailing bytes) | BIN (meaning); Confirmed (all counts 0) |
 
 ---
 
@@ -230,19 +246,38 @@ Two array properties use the same struct:
 | `Appearance_ToggleProperty` | property ID, optional | The property that switches to the toggle record (§3.3) |
 
 <a id="s3-2-1"></a>
-#### 3.2.1 Choosing the block (Confirmed sources, rule partly Decision)
+#### 3.2.1 Choosing the block (Confirmed rule, BIN2, A19)
 
-Within the entry whose `key` equals `Appearance_Key`:
+Within the entry whose `key` equals `Appearance_Key` (the blocks of every entry are stored in
+ascending `variant` order, `setup.md` §8.3):
 
-1. If a block's `variant` equals the modifier (within 0.0005), take it. This covers style
-   lists (modifier = style index / 100: 0.00, 0.01, …), worn pieces on NPCs (modifier 1.0 =
-   the base block) and dye tables (modifier = dye code).
-2. Otherwise, for a `ClothingColor` or `ClothingColorSecondary` entry, use the dye rule of
-   `material.md` §12.4.
-3. Otherwise (Decision): the block with `variant` 1.0 if there is one, else the first block.
+1. A modifier of exactly −1.0 selects **no block**: the element contributes nothing (the
+   client uses −1.0 as its "removed" marker).
+2. Otherwise take the block with the **greatest `variant` that is not above the modifier**
+   (compared as single-precision floats, no tolerance). Equivalently: walk the blocks in
+   stored order and stop before the first block whose `variant` is greater than the
+   modifier; the last block passed is the one.
+3. If the modifier is below the first block's `variant`, the element contributes nothing.
 
-Census over all appearance lists of all 0x47 records (12,199 elements): 11,823 find a block
-by rule 1, 295 need rule 2 or 3, 67 name a key the record lacks, 14 name the null DID.
+There is no separate dye rule and no fallback to the `variant` 1.0 block or to the first
+block: `ClothingColor` elements, style lists and worn pieces all use rules 1–3. Examples: a
+style list 0.00 … 0.37 with modifier 1.0 gives the 0.37 block; a dye table 0.00 … 0.45 with
+code 0.49 gives the 0.45 block; an entry whose only block is 1.0 with modifier 0.0 gives
+nothing; a dye element with modifier 0.0 gives the 0.00 block (it is layered like any other
+dye block).
+
+Census over all appearance lists of all 0x47 records (12,199 elements, OBS2): 11,774 match a
+block's `variant` exactly, 265 take a lower block by rule 2, 79 take nothing (13 of them
+have modifier exactly −1.0, rule 1; 66 have a modifier below the first block's `variant`,
+rule 3, for example modifier 0.0 on an entry whose only block is 1.0), 67 name a key the
+record lacks, 14 name the null DID. No block of any 0x20 record has a negative `variant`,
+so the 13 elements at −1.0 would take nothing by rule 3 as well. Compared with the rules this section stated before 2026-10-07 (match
+within 0.0005, else the 1.0 block or the first block; the old dye rule not modelled), 153
+elements get a different result.
+
+When the same record is named twice with the same key (for example by a template section and
+by a list), the later modifier replaces the earlier one; when it is named with different
+keys, each key selects its own block (§4.7 gives the order).
 
 <a id="s3-3"></a>
 ### 3.3 Head, hair, beard and ears (Confirmed)
@@ -283,26 +318,47 @@ name other files for the same keys (Beorning, HighElf, the toggle files); the en
 is the in-world default.
 
 **Toggle files.** The property named by `Appearance_ToggleProperty` is
-`GOP_AvatarUpdateVisible`, a boolean that the avatar entity itself sets to true. The toggle
+`GOP_AvatarUpdateVisible`, a boolean that each avatar entity naming it sets to true in its
+own property set (10 entities). The toggle
 file holds the same styles as the plain file plus later ones (Human M hair: 57 meshes in
 common, 4 only in the toggle file, 1 only in the plain file; heads and beards identical
 sets).
 
-> **Decision:** use `Appearance_AprToggleFile` when the toggle property is true in the
-> entity's property set (it is, for all avatars that have toggles), else `Appearance_AprFile`.
-> **OPEN** (owner observation O11): what the client's own option controls and which file it
-> uses by default.
+**Toggle rule (BIN2, A20).** A list element is ignored when its `Appearance_AprFile` is null
+or its `Appearance_Key` is 0; a missing `Appearance_Modifier` counts as 0.0. The toggle file
+replaces `Appearance_AprFile` when the element names both a toggle property and a non-null
+`Appearance_AprToggleFile` and that property, looked up **through the figure's own property
+lookup**, is a boolean true. The figure watches every toggle property its elements name and
+rebuilds its appearance when one changes.
 
-**Face compositing is out of scope for M4.** Character-creation controls of type
-`AppearanceUI_CompositorControl` name compositor records (0x33000002, 0x33000003) and layer
-labels (`Avatar_Face_Base`, `_Eyes`, `_Eyebrows`, `_Mouth`, `_Scar`, `_Scar2`, `_Wrinkles`,
-`_Stubble` …) driven by the integer properties `AC_Texture_*`. Fallback: draw the head mesh
-with its own surface (its base face texture is complete, MV). Skin, hair, eye and lip colours
-(`AC_Color_Skin`, `AC_Color_Hair`, `AC_Color_Eyes`, `AC_Color_Lips`, `AC_Color_WarPaint`,
-RGBA) are not applied by M4.
+`GOP_AvatarUpdateVisible` is a **graphics option**: the client registers it at start-up with
+the default **on**, the options panel binds a check box to it, and the character-creation
+screen shows a check box for it only while the species is Dwarf (0x49) or Hobbit (0x51)
+(BIN2). The same property also chooses the face compositor (§3.5): on, the newer one; off,
+the older one or, for some head choices, the newer one. So by default the client shows the
+toggle files, which agrees with the avatar entities' own value (true; the property's dictionary
+default is false, see the OPEN below).
 
-> **OPEN** (frame capture, owner observation O15): how the colour properties tint skin, hair
-> and eyes (MV reports a dye-like tint of grey hair textures), and the 0x33 compositor layout.
+> **Rule (replaces the 2026-10-05 Decision):** use `Appearance_AprToggleFile` when the toggle
+> property reads true for the figure, else `Appearance_AprFile`. Tessera keeps the property
+> in its own settings (default true) and lets the figure's lookup find it there before the
+> entity's value; changing it rebuilds every figure that met it.
+>
+> **OPEN (narrow):** the client's property lookup chooses where to read a property (the
+> object's own set, another component, or a client-wide store) by a per-property attribute
+> of its in-memory definition (BIN2). Which stored definition field that attribute comes from
+> was not traced; all 248 `GOP_*` properties, and 15 option-description properties, share
+> `field_a` = 0x18 (`property-system.md` §2.2; OBS2), which fits an option group. That the
+> option store, not the entity, answers for `GOP_AvatarUpdateVisible` is therefore inferred,
+> not traced. The two candidate answers agree by default: the graphics option registered at
+> start-up is on (BIN2), and the property set of every avatar entity whose list names the
+> toggle property holds true (10 of the 14; the Beorning and High-elf entities name no
+> toggle files and do not carry it; OBS). The property's dictionary default (the optional
+> default of its definition, `property-system.md` §2.2) is **false** (OBS2); it would
+> answer only if neither source held a value. So the result differs only when the option is
+> turned off.
+
+**Face compositing and colours** are in §3.5.
 
 <a id="s3-4"></a>
 ### 3.4 Character-creation controls (Confirmed layout, UI only)
@@ -324,6 +380,75 @@ one control struct:
 The controls matter to Tessera only as the catalogue of choices for the explorer's character
 viewer. A character's actual choices are character data (server side in the original, M7 in
 Tessera); the avatar entity's own values are the defaults.
+
+<a id="s3-5"></a>
+### 3.5 Face compositing and colour tints (Confirmed data, A21; answers owner item O15)
+
+None of this is client code that pairs properties with layers: the pairing is in the
+`Startup` and two named scripts of each avatar's species table (`script-table.md` §8.1 for
+how a figure finds its tables), as script nodes whose fields are **driven** by the
+character's properties (`script-table.md` §4.2). Counts are over all tables and scriptlets
+(OBS2).
+
+**Face texture (composited at run time).** The species tables attach a face compositor with
+a TextureCompositor node (53) in one of two scripts: key 0x10002ACD (`Compositor`), under the
+compositor name 0x10000001 (the newer face), and key 0x10002ACE (`Compositor_Old`), under
+0x1000000A (the older face). Each attaches one 0x33 record (21 face compositors in all) to
+mesh slot `Head` (0x10000002), material type 0x1000006C (the face-skin binding key). The
+`Startup` script runs one of them: in the tables that define both (0x07002DAD, 0x07002DB0,
+0x07002F08, 0x07002F09 directly; 0x0700041F, 0x07000425, 0x07000491, 0x07001D83 and
+0x07001D85 through scriptlet 0x0C0091D3),
+the newer one runs and the older one is stopped when `GOP_AvatarUpdateVisible` is true, and a
+test on `AC_Mesh_Head` picks one when it is false; the tables 0x0700247C, 0x07003012,
+0x07003013, 0x0700301A and 0x0700301B define only the newer one. Before either runs, a
+scriptlet (0x0C0084DA) checks `GOP_AvatarFaceCompositing`: when it is false neither
+compositor is attached and the head keeps the texture of its own surface.
+`GOP_AvatarFaceCompositing` is a second graphics option, default **on** (BIN2). The
+composition itself (layers, masks, colour multiply, placement) is `misc-records.md` §3.6.
+
+Layer choices (node 44, `ImageNumber` driven) and colours (node 33, `Color` driven), per
+compositor name; colour and layer keys are those of `misc-records.md` §3.3:
+
+| Property | Node | Feeds (colour or layer key) |
+|---|---|---|
+| `AC_Color_Skin` | 33 | face skin 0x1000000B, eye-area skin 0x1000000D, eyebrow-area skin 0x1000000E (newer face only), mouth skin 0x10000003, scar skin 0x10000005, wrinkle skin 0x10000019 |
+| `AC_Color_Eyes` | 33 | eye colour 0x1000000A |
+| `AC_Color_Hair` | 33 | eyebrow colour 0x10000007, scar hair colour 0x10000018 |
+| `AC_Color_Lips` | 33 | lip colour 0x10000017 |
+| `AC_Color_WarPaint` | 33 | war-paint colour 0x10000013 |
+| `AC_Texture_Mouth`, `_Eyebrows`, `_Eyes`, `_Scar`, `_Scar2`, `_Facepaint`, `_Wrinkles`, `_Complexion`, `_Eyeshadow`, `_Jewelry`, `_Stubble` | 44 | layers 0x10000001, 0x10000003, 0x10000004, 0x10000006, 0x1000000C, 0x10000012, 0x10000017, 0x1000000B, 0x1000001B, 0x1000001A, 0x10000018 |
+
+The Beorning bear face (compositor name 0x10000005, attached to slot `UpperBody` 0x1000000C,
+material type 0x10000062) takes colour key 0x10000014 from `AC_Color_Hair` (the fur), key
+0x10000015 from `AC_Color_WarPaint` and layer 0x10000014 from `AC_Texture_Scar`.
+
+The stored `Color` of the 33 nodes is white (war paint: one fixed colour) and is replaced by
+the driven property at run time; colours are the RGBA property bytes in `property-system.md`
+order (B, G, R, A).
+
+**Hair, beard and skin surfaces (dye-colour edits).** 297 EditMaterial nodes (60) have
+`ColorValue` driven by `AC_Color_Hair` (255) or `AC_Color_Skin` (42); all set material
+parameter 2003 (the **dye colour**, `material.md` §12) with priority 5 (a few 20). Three
+further EditMaterial nodes are driven by other properties (`AC_Color_WarPaint`,
+`Character_SkinColor` and `Appearance_RandomDyeColorValue`, one each) and are not part of
+avatar tinting:
+
+| Property | Mesh slot (`MeshType`) | Material types (binding keys) |
+|---|---|---|
+| `AC_Color_Hair` | `Crest` 0x1000000E | 0x10000024, 0x1000002F, 0x10000036, 0x10000041, 0x10000047, 0x1000004B, 0x10000051, 0x10000056 (the hair materials) |
+| `AC_Color_Hair` | `Beard` 0x10000007 | 0x1000000B, 0x10000010, 0x10000017, 0x1000001D, 0x10000023, 0x1000002E, 0x10000035, 0x10000046 (the beard materials) |
+| `AC_Color_Hair` | `All` (2) | a few tables: 0x10000024, 0x1000002F, 0x10000062, 0x10000073, 0x1000000B |
+| `AC_Color_Skin` | `All` (2) | 0x1000006C (face skin), 0x10000073 (body skin), 0x1000008F |
+
+So hair and beard are **tinted, not baked**: the chosen colour becomes the dye colour of the
+hair and beard surfaces, and the shader mixes it in through the surface's dye mask
+(`material.md` §12.3). Skin is tinted twice: in the composited face texture and as the dye
+colour of the skin surfaces.
+
+> **OPEN (narrow):** into which texture slot of the face-skin surface the composed image goes
+> (the TextureCompositor node names the mesh slot and the material type only), and how an
+> EditMaterial node's priority ranks against the surface's own material and dye blocks
+> (`material.md` §9.2). Owner frame capture O15 can settle the first.
 
 ---
 
@@ -386,7 +511,21 @@ Weapon_Primary 26.
 Back (b) 3; Weapon_Primary 1; Class and the null record 0. Mount records use 2, 3 and 4 as
 well, and style records use 0. The byte does not change decoding.
 
-> **OPEN:** meaning of `section` (a record category; nothing in assembly depends on it).
+**What the two header fields are (BIN3, A28).** The client's reader of a 0x20 record treats
+the fields of `setup.md` §8.1 as follows:
+
+- The u32 after the DID (`reserved` there) is a **count** *m*, and *m* u32 DIDs of further
+  0x20 records follow it, before the `section` byte. In this install *m* is 0 in all 4,201
+  records, so no record carries such a list and the framing of `setup.md` §8.1 is exact
+  (every record decodes with zero trailing bytes). A reader should nevertheless accept
+  *m* > 0 by reading the *m* DIDs; how they are applied is §4.7 rule 4.
+- The `section` byte is the **size class** of the client's in-memory lookup table for the
+  entries: an index from 0 to 22 into the client's list of table sizes. The client rejects
+  a record whose byte is above 22. It has no appearance meaning, and its census by family
+  above reflects the number of entries. Tessera may ignore it apart from that limit.
+
+> **Resolved** (2026-10-07, BIN3): the meaning of `section` (was OPEN). `setup.md` §8.1
+> rows 2 and 3 should be revised by that spec's owner to name the count and the size class.
 
 <a id="s4-3"></a>
 ### 4.3 Block fields, corrected attribution (Confirmed)
@@ -427,10 +566,11 @@ into it in order (§8); a part replaces the slot's current mesh when its priorit
 1. The setup's default parts enter first with the lowest possible priority.
 2. Every appearance part (style records, NPC pieces, worn items) is a candidate for its own
    `slot` field (not the mesh's `flags`; they differ for 3 parts of the worn records).
-3. Per slot the candidate with the **highest priority** wins. A winning **stub** mesh
-   (three vertices, one triangle: 258 mesh records; the smallest real part has 4 vertices)
-   leaves the slot visually empty: the slot is "hidden". Whether the original draws the
-   stub's tiny triangle is O4; it never matters for what is hidden.
+3. Per slot the candidate with the **highest priority** wins; on equal priority the one
+   applied later (§4.7). A winning **stub** mesh (three vertices, one triangle: 258 mesh
+   records; the smallest real part has 4 vertices) leaves the slot visually empty: the slot
+   is "hidden". The client never draws a stub part of a multi-part figure (`setup.md` §8.5,
+   answers O4).
 4. A slot with no candidate keeps the default part.
 
 The rule needs no flag or property anywhere: hiding is expressed only by stub parts at a
@@ -500,7 +640,7 @@ several bodies, 9 to 15 structs each). Every entry found has a `variant` 1.0 blo
 | Satchel | `Satchel` real 3 (Class slot) | Drawn in its own slot; one cloak entry also supplies a satchel at 4. |
 
 <a id="s4-7"></a>
-### 4.7 Ties (Confirmed occurrence; rule OPEN)
+### 4.7 Ties and source order (Confirmed occurrence; client rule BIN2, A22)
 
 Equal priorities with different meshes occur between families: `Hands` 5 (chest 7 entries
 per body vs battle gauntlets 147), `Hands` 1 (gloves vs 6 gauntlet entries), `Ears` 10
@@ -511,13 +651,57 @@ appearance lists (§7.4) ties at priority 1 are common: 1,176 slot conflicts in 
 NPC lists, 311 of them between a stub and a real part (the real part comes later in the
 list in 265).
 
-> **Decision:** on equal priority the later source wins, with worn items applied in
-> ascending `ContainerSlot` bit order (`Head`, `Chest`, `Legs`, `Gloves`, `Boots`,
-> `Shoulder`, `Back`, `Weapon_Primary`, `Class`) after the appearance lists, and list
-> elements in stored order. This lets battle gauntlets show over a chest's bare hands and an
-> NPC's explicitly listed hair show over a piece's stub.
+**The client's rule (BIN2).** A figure's appearance is a set of **records**, each with a set
+of (key, modifier) pairs, and blocks are applied one after another to a part table:
+
+1. When a block offers a part for a slot that already holds a part, the new part replaces
+   the old one when the old priority is **lower than or equal to** the new one. **On equal
+   priority the part applied later wins.** A block part for a slot with no part yet is
+   added.
+2. Records are applied in the order in which each record **first** entered the figure's
+   appearance. Sources enter in this order: the template chain's appearance sections (root
+   template first, `setup.md` §5.4), then the elements of `Appearance_ClassList` followed by
+   those of `Appearance_InstanceList` (one concatenated list, in stored order), then
+   Appearance script nodes as they run (§7.4). A record named again later keeps its first
+   position; the later (key, modifier) is merged into it (same key: the modifier is
+   replaced; new key: added).
+3. Within one record the keys are applied in the order of the client's key table: ascending
+   (key mod 23), and among keys with the same remainder the one added last first. (The key
+   table has 23 buckets, the value of `records.md` §1.3 *B*[1], and never grows. This order
+   matters only when two keys of one record offer equal-priority parts for one slot.)
+4. **Linked records (BIN3, A28).** When the client applies one (key, modifier) pair of a
+   record, it first applies the same key and modifier to each record of that record's list
+   of further DIDs (§4.2), in stored order, each in the same way (so their own lists first,
+   recursively), and only then chooses and applies the block of the record's own entry for
+   the key. A linked DID that does not resolve is skipped (the client logs it). A linked
+   record lacking the key contributes nothing. Every list in this install is empty, so this
+   rule changes no result today.
+
+> **OPEN** (narrow, BIN3): the block-applying routine has no guard against a record that
+> lists itself, directly or through others; what the client does with such data was not
+> traced further. Tessera stops at a record
+> already being applied on the current path and reports a data-quality issue (Decision; no
+> record in this install has a list).
+
+**Worn items.** No client routine reads the per-species worn-item map structs (no reference
+by value to `Item_WornAppearanceMapStruct`, `Item_SpeciesOfWearer` or `Item_SexOfWearer`, and
+no string naming the worn-appearance properties, BIN2, A25): in the original a character's
+worn pieces reach the client as appearance elements supplied with the character, so the
+order between worn items is the supplier's (the server's), not the client's. Tessera is its
+own supplier (M7):
+
+> **Decision (unchanged in effect, now grounded):** Tessera builds a player figure's
+> appearance as the client would apply a list: the avatar entity's lists, then the worn items
+> in ascending `ContainerSlot` bit order (`Head`, `Chest`, `Legs`, `Gloves`, `Boots`,
+> `Shoulder`, `Back`, `Weapon_Primary`, `Class`), each item contributing its wardrobe record
+> with key `Item_AppearanceKey` and modifier 1.0 and its dye element (§4.9); then rule 1
+> above. This lets battle gauntlets show over a chest's bare hands and an NPC's explicitly
+> listed hair show over a piece's stub. Note rule 2: two items sharing one wardrobe record
+> (the chest/shoulder cross-overs of §4.2) are applied at that record's first position.
 >
-> **OPEN** (owner observation O10): the original's tie rule.
+> **OPEN** (owner observation O10, still wanted): which piece the original shows in the
+> equal-priority cases between items (battle gauntlets against a chest at 5, gloves against
+> gauntlets at 1), which reflects the order in which the original's server lists the pieces.
 
 <a id="s4-8"></a>
 ### 4.8 Key table (Confirmed; resolves `setup.md` §8.4)
@@ -535,24 +719,47 @@ invariant and assembly does not need it.
 The dye code of a worn item comes from the item property `Item_ClothingColor` (float, 22,257
 items; 0.0 in 7,712) and, for the second channel, `Item_ClothingColorSecondary` (2,785
 items). The code selects a block of the `ClothingColor` (or `ClothingColorSecondary`) entry
-**of the same wardrobe record** as the item's parts, by the block rule of `material.md`
-§12.4: 21,843 of the 21,999 items with maps and a dye code find a block with exactly that
-`variant`; 156 do not (108 have code 1.0, the rest codes between 0.49 and 0.97 in records
-whose tables stop earlier). The dye block's groups layer onto the item's parts as
-`material.md` §12.3 says. A character's chosen dye replaces the item's default code.
+**of the same wardrobe record** as the item's parts: 21,843 of the 21,999 items with maps
+and a dye code find a block with exactly that `variant`; 156 do not (108 have code 1.0, the
+rest codes between 0.49 and 0.97 in records whose tables stop earlier). A character's chosen
+dye replaces the item's default code.
+
+In the original the item's dye reaches the figure as an appearance element (§4.7), so the
+client chooses the dye block by §3.2.1 (BIN2): the block with the largest `variant` not
+above the code, no tolerance, nothing below the first block. This is the client rule that
+`material.md` §12.4 asks for; for the 156 codes without an exact block it gives the last
+block at or below the code (for code 1.0, the table's last block). The dye block's groups
+join the figure-wide group list (§4.10) and reach the item's parts through their slot and
+binding key (`material.md` §12.3).
+
+> **Decision:** Tessera emits no dye element for an item code of 0.0 (`material.md` §12.4:
+> "no dye"); whether the original's server sends one is not visible in the client.
 
 <a id="s4-10"></a>
-### 4.10 Material groups (Confirmed slots; priority use Reported by analogy)
+### 4.10 Material groups (Confirmed slots; ordering BIN2, A23)
 
-The block's material groups apply to the block's own parts (`material.md` §9.3): a group
-with `slot` 2 (`All`) to every part of the block, a group with a body slot to the block's
-part in that slot, each to the submeshes whose surface binding key matches. In worn records
-groups target `All` (41,806), a slot of one of the block's own parts (5,759) or, in
-material-only dye blocks, a slot with no part (1,485); never a slot that another item fills.
+In worn records groups target `All` (41,806), a slot of one of the block's own parts (5,759)
+or, in material-only dye blocks, a slot with no part (1,485); never a slot that another item
+fills.
 
-> **OPEN:** how group priorities combine when several layers (surface materials, the item's
-> group, a dye block's group) set the same parameter; `material.md` §9.2 layers them in
-> order, which Tessera keeps. Group priority is probably the analogue of part priority.
+**The client's handling (BIN2).** When a block is applied (§4.7), each of its groups is
+inserted into **one figure-wide group list**, kept in ascending order of group priority; a
+group with the same priority as groups already in the list goes after them (application
+order). The list element keeps only (priority, shader, material, slot, binding key): it has
+no link to the record, block or parts it came from. A group therefore applies to **every
+drawn part of the figure** whose slot matches the group's `slot` (`All` matches every part)
+and whose surface binding key matches (`material.md` §9.3), whichever record supplied the
+part, including the setup's default parts. A dye element (`ClothingColor` key) and any other
+material-only element are not paired with "their" record's parts; they join this list like
+any other block.
+
+> **Rule for Tessera:** collect the groups of all applied blocks into one list ordered by
+> ascending group priority (ties: application order of §4.7) and layer them onto every
+> matching part in that order, so that a higher-priority group is applied later
+> (`material.md` §9.2 layering).
+>
+> **OPEN (narrow):** the consumer of the group list was not traced; that it layers in list
+> order (higher priority last, so it wins) is the reading that matches `material.md` §9.2.
 
 <a id="s4-11"></a>
 ### 4.11 Blocks for entries without a base block (Confirmed; answers `setup.md` §10.1 OPEN)
@@ -563,7 +770,8 @@ parts, 373 material-only), and the head, hair, beard and ear style records (65).
 always chosen by a modifier (§3.2.1) or a dye code (§4.9); a viewer without one shows the
 first block. Worn item structs never land on such entries. Material-only entries (the
 `setup.md` §10.2 OPEN) are the dye tables of the same record or selection tables of NPC
-pieces; they apply only together with the record's parts as above.
+pieces; their groups join the figure-wide group list and apply to every matching part
+(§4.10).
 
 ---
 
@@ -596,12 +804,14 @@ One-handed weapons are compatible with both weapon slots (`Inventory_CompatibleS
 only with `Weapon_Primary`. `Item_EquipmentCategory` labels come from mapper 0x2300004C.
 
 <a id="s5-3"></a>
-### 5.3 Attach location (Confirmed sources, rule partly OPEN)
+### 5.3 Attach location (Confirmed sources; in-world rule §5.6)
 
-The sources and the viewer rule are in `skeleton-anim.md` §8.5: `Weapon_Primary` →
+The paperdoll (UI viewport) rule is in `skeleton-anim.md` §8.5: `Weapon_Primary` →
 `Wpn_RHand`, `Weapon_Secondary` → `Wpn_LOffHand`, `Weapon_Ranged` → `Sheath_Back_Bow` (the
 inventory-control object's paperdoll list), replaced by the item's
-`Inventory_ParentingLocation` in the world. On the player setups these resolve to:
+`Inventory_PaperdollParentingLocation`. **In the world** the placement comes from the
+placement scripts of §5.6 (stowed or wielded), not from `Inventory_ParentingLocation`, which
+no script node reads (OBS2) and no client routine references by value (BIN2). On the player setups the locations resolve to:
 
 | Location | Human M 0x04000553 bone (`BoneType`) | Hobbit M 0x04000551 | Dwarf M 0x04000557 |
 |---|---|---|---|
@@ -616,26 +826,30 @@ inventory-control object's paperdoll list), replaced by the item's
 names only the three weapon slots). Their `PhysObj` is mostly one generic entity
 (0x470001AE) shared by 579 class items and 246 instruments.
 
-> **Decision:** do not draw `Class`-slot held items and `Weapon_Primary_FX` items in the
-> world for M4. **OPEN** (owner observation O13): where they appear.
+> **Decision (now supported by the data, §5.6):** do not draw `Class`-slot held items and
+> `Weapon_Primary_FX` items in the world. The placement scripts of §5.6 cover only the three
+> weapon slots (there is no held-item script property for the `Class` slot), and instruments
+> appear through the music and crafting scripts while they are played. **OPEN** (owner
+> observation O13, narrowed): whether class items are ever visible on the figure.
 
 <a id="s5-4"></a>
-### 5.4 Wielded versus stowed (Confirmed data, rule OPEN)
+### 5.4 Wielded versus stowed (Confirmed data, §5.6)
 
 Every player setup carries stowing locations (`Sheath_LHip`, `Sheath_RHip`,
 `Sheath_Back_2H`, `Sheath_Back_2H_Sword`, `Sheath_Back_Bow`, `Sheath_Back_Crossbow`,
-`Sheath_Back_Shield`; `skeleton-anim.md` §8.3), but no item or inventory property selects
-one; the enum `Inventory_Cosmetic_IsSheathed` (`Sheathed`, `Unsheathed`, `Combat_Defined`,
-`Sheathed_Staff`, `Combat_Defined_Staff`) shows that the state exists, and the combat-stance
-enum `Inventory_EntityMode_*` (`combat_1h`, `combat_2h`, `combat_bow`, `combat_xbow`,
-`combat_1hshield`, `combat_dualwield` …) belongs to the script tables.
+`Sheath_Back_Shield`; `skeleton-anim.md` §8.3). No item property selects one: the choice is
+made by script data, by equipment category, species and skill mode (§5.6). The
+`Inventory_ParentingLocation` and `Inventory_PaperdollParentingLocation` item properties
+take no part in it (no script node reads them, OBS2); §5.3's paperdoll rule stays for the
+paperdoll view only.
 
-> **Decision** (until `script-table.md` or owner observation settles it): out of combat,
-> stow by category: one-handed in the primary slot → `Sheath_LHip`, in the secondary slot →
-> `Sheath_RHip`; `2HSword` → `Sheath_Back_2H_Sword`; other two-handed weapons, staves,
-> spears and halberds → `Sheath_Back_2H`; `Bow` → `Sheath_Back_Bow`; `Crossbow` →
-> `Sheath_Back_Crossbow`; shields → `Sheath_Back_Shield`; orbs and javelins stay in hand.
-> In combat use §5.3. **OPEN** (owner observation O13).
+> **Rule (replaces the 2026-10-05 Decision):** out of combat, place each equipped weapon,
+> shield or ranged item at its **stowed** placement of §5.6; in combat at its **wielded**
+> placement. The walker (no combat) uses the stowed placements. Differences from the old
+> Decision: shields stay on the forearm (`Wpn_Forearm`) when stowed, except while the
+> figure's skill mode is ranged; javelins are stowed at `Sheath_Back_Bow`; staves are stowed
+> at `Sheath_Back_2H` with an offset and a half turn; an orb has no stowed placement (it is
+> not drawn while stowed).
 
 <a id="s5-5"></a>
 ### 5.5 NPC held items (Confirmed)
@@ -647,13 +861,112 @@ values) and `NPC_Cosmetic_Inventory_Visible`. In the landblock instance sets: 30
 have item 1 (28,807 non-null), 15,295 item 2, 201 item 3. The prop resolves and attaches like
 any held item (§5.1) at that location of the NPC's own setup.
 
+**Visibility (OBS2, BIN2).** No client routine reads `NPC_Cosmetic_Inventory_Visible` (A25);
+script data does. Every MeshFX node that attaches `NPC_Cosmetic_Inventory_Item1` or `…2`
+lies under a Switch case `NPC_Cosmetic_Inventory_Visible` = true (or under the sheath
+branch of §5.6 for a figure playing its starting idle), and 41 SetProperty nodes set the
+flag to false (21) or true (20) during scripted actions. The same holds for the creature
+cosmetic slots `Inventory_Cosmetic_Slot1` … `4` (`_Entity`, `_HoldingLocation`, `_Scale`,
+`_OffsetRotationYaw`, `_OffsetRotationPitch`, `_Behavior`, `_Hide`), attached by the script
+key 0x100007C3 of table 0x07000090 while the flag is true and the slot's `_Hide` is false.
+
+> **Rule:** draw a figure's cosmetic props only while `NPC_Cosmetic_Inventory_Visible` is
+> true (its dictionary default is true); skip a creature cosmetic slot whose `_Hide` is true.
+>
+> **OPEN (narrow):** the probe found the attaching MeshFX nodes for props 1 and 2 only in
+> spawn scripts (table 0x0700012C) and in the sheath script of §5.6; the node that keeps a
+> static figure's tool in its hand during its idle was not identified (it may be bound
+> through scriptlet parameters, `script-table.md` §7.8). Until it is, attach every non-null
+> prop at its holding location while the flag is true.
+
+<a id="s5-6"></a>
+### 5.6 Stowed and wielded placements (Confirmed data, A24; answers owner item O13)
+
+**Where it lives.** Table 0x07000090, which is in the include closure of every avatar class
+table (`script-table.md` §8.2), defines six scripts that attach the equipped item's entity
+with a MeshFX node (41) whose `Entity` is driven by an avatar property:
+
+| Script key (label) | Entity property | Role |
+|---|---|---|
+| 0x10000684 (`Inventory_Sheath_Primary`) | `Script_Item_PhysObj_Primary` | stowed, primary weapon slot |
+| 0x10000593 (`Inventory_Sheath_Secondary`) | `Script_Item_PhysObj_Secondary` | stowed, secondary slot |
+| 0x10000135 (`Inventory_Sheath_Bow`) | `Script_Item_PhysObj_Ranged` | stowed, ranged slot |
+| 0x10002982 (`Inventory_Equipped_Primary`) | `Script_Item_PhysObj_Primary` | wielded, primary |
+| 0x10002981 (`Inventory_Equipped_Secondary`) | `Script_Item_PhysObj_Secondary` | wielded, secondary |
+| 0x10002983 (`Inventory_Equipped_Bow`) | `Script_Item_PhysObj_Ranged` | wielded, ranged |
+
+Inputs the scripts switch on, all avatar properties: `Inventory_PrimaryEquipmentCategory`,
+`Inventory_SecondaryEquipmentCategory`, `Inventory_RangedEquipmentCategory` (64-bit
+bit fields with the `Item_EquipmentCategory` bits of the equipped item; the inventory-control
+object's `InventoryControl_EquipmentCategoryCachedSlotList` names which slot fills which of
+the three), `Agent_Species`, `Combat_SkillMode`, `Combat_Violent`, the `…_Cosmetic`
+override DIDs and the `…_Cosmetic_Hide` flags. No client routine references
+`Script_Item_PhysObj_Primary` or `…_Secondary` by value or by name (A25; four routines
+reference `…_Ranged` and were not read): the client does not compute them from the
+inventory, so in the original they arrive with the character. Tessera sets each to the 0x47
+entity of the item in that slot (its `PhysObj`, or the cosmetic override when one is set).
+
+Which of the two families runs is decided by the script `Visibility_Controller` (0x10000527)
+of the same table and by the combat scripts: out of combat (`Combat_Violent` false) the
+stowed scripts run and the wielded ones are stopped; in combat the reverse; mounts, stealth,
+a ranged skill mode and cosmetic locomotion styles add exceptions that a full script
+evaluator reproduces.
+
+**Stowed placements** (offset in metres in the location's frame, rotations in degrees as
+`OffsetRotationYaw`, `…Pitch`, `…Roll`, scale is the node's uniform `Scale`; categories are
+`Item_EquipmentCategory` labels):
+
+| Slot | Categories | Species | Location | Offset | Yaw, pitch, roll | Scale |
+|---|---|---|---|---|---|---|
+| Primary | `1HSword`, `1HAxe`, `1HMace`, `1HClub`, `1HHammer`, `Dagger`, `Implement1H`, `Cosmetic` | all | `Sheath_LHip` | 0 | 0 | 1 |
+| Primary | same, while `Script_Item_PhysObj_Primary_Cosmetic` is one of the entity DIDs listed in the script's case (cosmetic in-hand items) | all | `Wpn_RHand` | 0 | 0 | 1 |
+| Primary | `2HSword` | all | `Sheath_Back_2H_Sword` | 0 | 0 | 1 |
+| Primary | `2HMace`, `2HAxe`, `2HClub`, `2HHammer`, `Spear`, `Halberd`, `Implement2H` | all | `Sheath_Back_2H` | 0 | 0 | 1 |
+| Primary | `2HStaff` | Dwarf, DwarfStoutAxe | `Sheath_Back_2H` | (0, 0.35, 0) | (0, 180, 0) | 1 |
+| Primary | `2HStaff` | Hobbit | `Sheath_Back_2H` | (0, 0.2, 0) | (0, 180, 0) | 1 |
+| Primary | `2HStaff` | others | `Sheath_Back_2H` | (0, 0.4, 0) | (0, 180, 0) | 1 |
+| Primary | `Orb` | all | none (not drawn) | | | |
+| Secondary | one-handed list as above | all | `Sheath_RHip` | 0 | 0 | 1 |
+| Secondary | `Shield`, `HeavyShield`, `MediumShield` | all | `Wpn_Forearm` (skill mode not ranged); `Sheath_Back_Shield` (skill mode `Ranged`) | 0 | 0 | `Script_AdjustableScale_Secondary_Vector` |
+| Ranged | `Bow` | Dwarf, DwarfStoutAxe / Hobbit, RiverHobbit / others | `Sheath_Back_Bow` | 0 | 0 | 0.9 / 0.8 / 1 |
+| Ranged | `Crossbow` | all | `Sheath_Back_Crossbow` | 0 | 0 | 1 |
+| Ranged | `Javelin` | Dwarf, DwarfStoutAxe | `Sheath_Back_Bow` | 0 | (0, 0, 90) | 1 |
+| Ranged | `Javelin` | Hobbit | `Sheath_Back_Bow` | (0.03, 0, 0) | (0, 0, 90) | 1 |
+| Ranged | `Javelin` | others | `Sheath_Back_Bow` | 0 | 0 | 1 |
+
+**Wielded placements:**
+
+| Slot | Categories | Location | Notes |
+|---|---|---|---|
+| Primary | one-handed list, `2HSword`, the two-handed list, `2HStaff` | `Wpn_RHand` | |
+| Primary | `Orb` | `Wpn_RHand` and `Wpn_LHand` | two MeshFX nodes in the same branch |
+| Secondary | one-handed list | `Wpn_LOffHand` | |
+| Secondary | shields | `Wpn_Forearm` | all species |
+| Ranged | `Bow` | `Wpn_LHand` | scale 0.9 Dwarf and DwarfStoutAxe, 0.8 Hobbit and River-hobbit |
+| Ranged | `Crossbow` | `Wpn_RHand` | |
+| Ranged | `Javelin` | `Wpn_ROffhand` | |
+
+`BattleGauntlets` (primary) add a fixed effect entity at `Wpn_RHand` and `Wpn_LHand` (yaw −90
+and +90) in both families; the gauntlets themselves are worn (§5.1).
+
+Each node also names a `Behavior` (a script key run on the attached item, for example its
+draw or sheathe effect), `AttachToParent` 1, `Persistent` 1 and `UseParentScale` 1 in all
+of the placements above. How offset and rotations compose with the location frame is the
+MeshFX rule of `script-table.md` (the rotation fields are degrees by their values).
+
+> **OPEN (narrow, owner observation O13):** whether a long weapon held in the hand points
+> along the line of sight or along the forearm (`skeleton-anim.md` §8.3 note), and the order
+> in which yaw, pitch and roll compose for the staff and javelin rows; the transitions
+> between the two families (draw and sheathe animations, scripts 0x10000683 and 0x100008A5)
+> are not covered here.
+
 ---
 
 <a id="s6"></a>
 ## 6. Scale, height and bone sliders
 
 <a id="s6-1"></a>
-### 6.1 Whole-body scale (Confirmed values; composition OPEN)
+### 6.1 Whole-body scale (Confirmed values; composition partly BIN2 and BIN3, A27)
 
 Two values scale a whole body uniformly:
 
@@ -670,11 +983,56 @@ the product of both values, standing heights (bind geometry top × scale) become
 `skeleton-anim.md` §2.2 River-hobbit question as far as the data can: the setup is drawn at
 0.7.
 
-> **Decision:** model scale = template `vec3` (1 if absent) × entity `Render_AdjustableScale`
-> × instance `Render_AdjustableScale` (landblock instance set or SED, §7.2), applied
-> uniformly at the object's origin before the world placement.
-> **OPEN** (owner observation O8): whether template and entity scales multiply (HighElf F
-> would be 1.0506) or one replaces the other.
+**What the client does (BIN2).**
+
+- **Template chain.** When a visual template (0x1F) is resolved, its parent chain is
+  flattened root first, and the `vec3`, `value_a` and `value_b` of each template are
+  **multiplied**, per component, into the accumulated values (a template without the field
+  contributes 1). So a template's effective `vec3` is the product over its chain.
+- **Render scale of an object (BIN2, BIN3).** The render component computes a per-axis
+  scale in two stages.
+  1. **Own scale**, per axis, the product of:
+     - *A*: `Render_AdjustableScale_Checkpointed` if the object has it, else
+       `Render_AdjustableScale` (default (1, 1, 1));
+     - *s*: one **uniform** scalar from the holder. When the object is attached to a holder
+       (another object, for example a held item's wearer), *s* is a scale the holder reports
+       (how the holder computes it was not traced); when it is not attached, *s* = 1. For an
+       attached object two flag bits of the object's render component can override it: one
+       forces *s* = 1; the other, which wins if both are set, makes *s* the holder's
+       `Model_ParticleScale` (property 0x5A0, a float, read through the holder's property
+       lookup; 1 when absent or not a float). Where these flag bits come from was not traced;
+       for an unattached object they have no effect;
+     - *M*: `Model_Scale` (property 0x3C3, a vector, default (1, 1, 1));
+     - *V*: a vector held by a related object of the figure (default (1, 1, 1); see below).
+  2. **Final scale** = own scale × the holder's **final** render scale, per axis, when the
+     object is attached to a holder; otherwise the own scale.
+
+  The checks run on the final scale only: if any component is not finite, the final scale
+  becomes (1, 1, 1); then, if any component is **strictly below** 0.0002 (so zero and
+  negative values too, but not 0.0002 itself), the client logs it and uses (1, 1, 1).
+  `Physics_AdjustableScale` is not part of the render scale.
+- **Types (Confirmed).** `Render_AdjustableScale` is a **vector3** (registry type Vector3;
+  answers the §14 OPEN). Its components are used per axis; a non-uniform value scales the
+  axes separately. One entity in this install has one: 0x4700DAD2, (0.4, 1, 1). No 0x47 entity
+  has `Model_Scale` or `Render_AdjustableScale_Checkpointed`.
+
+What was not traced: what the holder's reported scale *s* is and where the two flag bits
+come from (the MeshFX placements of §5.6 all set `UseParentScale` 1, but no link between that
+field and either bit was seen); and whether the vector *V* "held by a related object" is the
+template chain's `vec3`. The data suggests it: High-elf templates carry larger `vec3` values than the Elf ones
+(1.05 against 1.03 for males) while the entities differ only for females, which a replace
+rule would partly cancel.
+
+> **Decision (unchanged apart from the limit):** model scale = template chain `vec3`
+> (product, 1 if absent) × entity `Render_AdjustableScale` × instance
+> `Render_AdjustableScale` (landblock instance set or SED, §7.2), per axis, applied at the
+> object's origin before the world placement; for an attached object (a held item), also
+> × the holder's final model scale, with *s* = 1 (Decision: the holder factor *s* and its
+> flag bits are not modelled until their sources are known). A result with a non-finite
+> component, or with a component strictly below 0.0002, is replaced by (1, 1, 1).
+> **OPEN** (owner observation O8, narrowed): whether the template `vec3` enters the render
+> scale. With it a High-elf female stands about 1.84 m (scale 1.0506), without it about
+> 1.82 m (1.02); a High-elf male 1.90 m against 1.81 m.
 
 The template floats `value_a` and `value_b` (`setup.md` §5.2) are not scales (the hobbit
 setups are already hobbit-sized); assembly ignores them.
@@ -782,8 +1140,9 @@ strings are 35 × `80` (*t* = 128 / 255 = 0.50196, so for example a 0.7–1.3 sc
 > **OPEN** (driven value of an absent property): the Elf and HighElf avatar entities carry no
 > `AC_BoneSlider_Value_Array`. Whether the driven field then keeps the node's stored string
 > (eye rotation at its minimum, −0.1) or receives the property's dictionary default was not
-> traced. **Decision** (until known): use 35 × `80`, the value every other slider avatar
-> carries.
+> traced. The dictionary default of `AC_BoneSlider_Value_Array` is itself 35 × `80`
+> (Confirmed, OBS2, the property definition's default value), so the Decision equals the
+> dictionary-default reading. **Decision** (until known): use 35 × `80`.
 
 **Per-bone entries (BIN).** The sliders are turned into one entry per bone, in definition
 order, starting from translation (0, 0, 0), angles (0, 0, 0), scale (1, 1, 1) and an empty
@@ -991,7 +1350,7 @@ wardrobe records** (Human M head, shoulder, chest, legs, gloves and boots record
 appearance keys and modifier 1.0: they assemble exactly like a player (§4).
 
 <a id="s7-4"></a>
-### 7.4 Dressing an NPC (Confirmed sources; random type OPEN)
+### 7.4 Dressing an NPC (Confirmed sources; random type Confirmed, A26)
 
 Sources, applied in this order (§8):
 
@@ -1017,14 +1376,48 @@ partners) with style modifiers 0.00, 0.01, …
 
 **Random appearance.** `Appearance_RandomAppearanceType` (enum 0x2300031D, 440 labels:
 regional villager, guard, brigand and creature types) is set on 36,685 server objects and on
-about 43,000 static figures. No client record maps a type to pieces: the property occurs only
-in property sets of 0x79 (36,685), 0x47 (165) and landblock instance sets, in 72 script tables
-(0x07) and 8 scriptlets (0x0C), and no array, struct or DID map is keyed by it.
+about 43,000 static figures. No client routine reads it, `Appearance_RandomAppearanceColor`,
+`Appearance_RandomDyeColorSet` or `Appearance_RandomDyeColorValue` (A25), and no record
+outside the script tables is keyed by it. The outfits are in the **script tables** (OBS2):
 
-> **Decision:** draw a random-appearance figure with its setup's default parts and its
-> instance's held props. **OPEN** (owner observation O12): what such figures look like in the
-> original (fixed or varying per visit), and whether the client builds them from a table not
-> found here.
+- Counting rule: an Appearance node (kind 58, `script-table.md` §5.1: a 0x20 record, an
+  appearance key, a modifier, `Persistent`) is counted for a case when the **nearest**
+  enclosing Switch on `Appearance_RandomAppearanceType` reaches it through an explicit case
+  port (not the default port). By that rule 21,780 Appearance nodes lie under such cases in
+  the `Startup` script (key 5) of 61 tables, in 830 (table, case) pairs, for 433 distinct
+  type values. A further 38 lie under default ports of those Switches in key 5 (21,818), and
+  23 more in two other scripts of one table (21,841 in all scripts and ports, 62 tables;
+  AI10 counts this total).
+  Those tables are reached through the include closures of the NPC rigs' class tables (for
+  example rig entity 0x4700005B → table 0x07000004 → 0x07001469, the largest, 6,088 nodes).
+- A case is typically a Collection (2) of piece groups (median 3, at most 11), and each group is a
+  Random node (17) over Appearance nodes (median 23 alternatives per case, at most 103),
+  usually with weight 1 each; so each group contributes **one** randomly chosen piece or
+  dye: for example a group of shirt colours (one record and key, modifiers 0.01 … 0.10)
+  next to a group of hair styles. 66 nodes have `Probability` 0.25 or about 0.22 (an optional
+  extra piece).
+- Coverage: of the 318 non-zero types on landblock instance sets (60,211 sets), 316 have a
+  case (60,117 sets); types 149 (88 sets) and 148 (6 sets) have none.
+
+**Applying an Appearance node (BIN2).** When the node runs, the client appends one element
+(record, key, modifier × the node's run-time intensity) to the figure's appearance, through
+the same path as a list element (§4.7, rule 2: after the lists); the block is chosen by
+§3.2.1. Every Appearance node in this install has `IntensityMultiplier` 1.0, variance 0 and
+`UseParentIntensity` 1 (`script-table.md` §4.2); Tessera uses the stored modifier (factor 1;
+the intensity of enclosing nodes was not checked). 18 nodes in other contexts
+take their record, key or modifier from driven properties (quest-state appearances).
+
+> **Rule (replaces the 2026-10-05 Decision):** dress a figure with its setup's default
+> parts, its template sections, its class and instance lists (§7.4 steps 1–4), its held
+> props, and then the Appearance nodes its `Startup` scripts run (`script-table.md` §11.3),
+> choosing at each Random node by its weights. Explicit lists and the random type both
+> apply; the script pieces come later and win equal-priority ties (§4.7). The 616 figures
+> that carry both keep both.
+>
+> **OPEN** (owner observation O12, narrowed): the data makes the pieces random each time
+> the script runs. Whether the original seeds the choice per object (same look on every
+> visit) or not (a new look per visit) was not traced; Tessera seeds the Random nodes of a
+> placed figure from its instance ID so that a figure keeps its look (Decision).
 
 ---
 
@@ -1039,36 +1432,44 @@ character's appearance values.
    (`setup.md` §3.1). Load the skeleton (`skeleton-anim.md` §2).
 2. **Slot table.** For every setup part, slot = mesh `flags` (`MeshTypeID`); enter it with
    the lowest priority.
-3. **Appearance lists**, in the order of §7.4 (template section, class list, instance list).
-   For each element: pick the record (toggle rule, §3.3), the entry (`key`), the block
-   (§3.2.1; for a player's head, hair and beard the character's chosen style value replaces
-   the modifier). Offer each part to its slot (§4.4); remember the block's material groups
-   with the parts they belong to; a dye element (`ClothingColor` keys) selects a dye block of
-   its record for the parts that record contributed.
-4. **Worn items** (players and player-bodied NPCs), in ascending `ContainerSlot` order: pick
-   the map struct for the wearer's species and sex (§2.3 Decision for gaps), the entry for
-   `Item_AppearanceKey`, its `variant` 1.0 block; offer the parts; take the dye block for the
-   item's dye code (§4.9).
-5. **Resolve** every slot: highest priority wins, later source on ties (§4.7). Record which
-   slots hold stubs.
-6. **Materials.** For each winning part: surface materials, then the groups of its own block
-   that target `All` or its slot with a matching binding key, then its dye block
-   (`material.md` §9.3, §12).
+3. **Appearance elements**, building the ordered record list of §4.7 rule 2: the template
+   chain's sections (root first), the class list then the instance list (§7.4), then for a
+   player the worn items in ascending `ContainerSlot` order (§4.7 Decision: per item its
+   wardrobe record from the map struct for the wearer's species and sex, §2.3, with key
+   `Item_AppearanceKey` and modifier 1.0, and its dye element, §4.9), then the Appearance
+   nodes the figure's `Startup` scripts run (§7.4). For each element pick the record (toggle
+   rule, §3.3); a record already in the list keeps its position and takes the new key and
+   modifier. For a player's head, hair and beard the character's chosen style value replaces
+   the modifier.
+4. **Apply** the records in list order and, within a record, its keys in key-table order
+   (§4.7 rule 3): first apply the same key and modifier to the record's linked records
+   (§4.7 rule 4; none in this install), then choose the block by §3.2.1 (none for −1.0 or a
+   modifier below every variant); offer each part to its slot, replacing the current part when its priority is
+   lower or equal (§4.7 rule 1); insert each material group into the figure-wide group list
+   by ascending group priority (§4.10).
+5. **Resolve:** the slot table now holds the winners. Record which slots hold stubs.
+6. **Materials.** For each winning part: its surface materials, then every group of the
+   figure-wide list whose slot is `All` or the part's slot and whose binding key matches, in
+   list order (`material.md` §9.3, §12); then the colour edits of §3.5 (hair, beard and skin
+   dye colours) and the composited face texture.
 7. **Scale, shape and sliders.** Model scale per §6.1. Once per change of the height
    controls or slider string (not per frame), deform the skinned parts in bind space by the
    body-shape deformer and the sliders (§6.4). The species table also starts the held
    proportion clip of River-hobbit and DwarfStoutAxe bodies (`script-table.md` §6.8), which
    the per-frame animation blends like any other layer.
 8. **Draw** every non-stub winning part with identity part transform in the setup frame,
-   skinned to the skeleton (`skeleton-anim.md` §9.1); stubs per the O4 policy (draw or skip;
-   no effect on hiding).
-9. **Held items.** For each held item or NPC prop: resolve its setup, choose the location
-   (§5.3–§5.5), look it up in the wearer's list A, place it there each frame
-   (`skeleton-anim.md` §8.4). Items whose location the wearer lacks are not drawn.
+   skinned to the skeleton (`skeleton-anim.md` §9.1); stub parts of a multi-part figure are
+   never drawn (`setup.md` §8.5).
+9. **Held items.** For each equipped weapon, shield or ranged item: its stowed placement out
+   of combat, its wielded placement in combat (§5.4, §5.6); for NPC props, their holding
+   locations while `NPC_Cosmetic_Inventory_Visible` is true (§5.5). Resolve the entity's
+   setup, look the location up in the wearer's list A, apply the placement's offset,
+   rotation and scale, and place it there each frame (`skeleton-anim.md` §8.4). Items whose
+   location the wearer lacks are not drawn.
 
-A figure is rebuilt (steps 2–6) only when its equipment, appearance values or instance set
-change; the deformation of step 7 when a height control or the slider string changes; the
-animation of the figure and steps 8–9 run per frame.
+A figure is rebuilt (steps 2–6) only when its equipment, appearance values, a watched toggle
+property (§3.3) or its instance set change; the deformation of step 7 when a height control
+or the slider string changes; the animation of the figure and steps 8–9 run per frame.
 
 ---
 
@@ -1085,6 +1486,11 @@ animation of the figure and steps 8–9 run per frame.
 | **AI6** | For a given (species, sex, item slot) all worn items name one wardrobe record, except the chest/shoulder cross-overs (2 per body) and the null record for Dwarf F. |
 | **AI7** | Bone-slider bone indices are below the bone count of every setup whose avatar names the definition record; `BoneSlider_BoneReverse` ∈ {0, 1}; each mask element has one bit set; the value string has two hex digits per visible slider. |
 | **AI8** | Every appearance-list element names an existing 0x20 record or the null DID. |
+| **AI9** | In every 0x20 entry the block `variant` values are strictly ascending in stored order (49,383 of 49,383 entries), so the block choice of §3.2.1 is well defined. |
+| **AI10** | Every Appearance script node (58) names an existing 0x20 record or the null DID (3 nodes). Of the 21,841 under Switches on the random-appearance type or colour: 21,216 match a block exactly, 292 take a lower block, 42 take none, 291 name a key the record lacks. |
+| **AI11** | Table 0x07000090 is in the include closure of the class table of all 14 player-avatar entities and defines the six placement scripts of §5.6. |
+| **AI12** | Block choice over the 12,199 appearance-list elements of the 0x47 records: 11,774 exact, 265 lower block, 79 none (13 by rule 1, 66 by rule 3), 67 key missing, 14 null DID (§3.2.1). |
+| **AI13** | In every 0x20 record the linked-record count after the DID is 0 and the `section` byte is at most 22 (4,201 of 4,201; §4.2). |
 
 A loader reports AI1, AI4, AI7 and AI8 violations as data-quality issues and continues
 (dropping the offending element); AI2 and AI3 are decoder checks.
@@ -1112,10 +1518,11 @@ Failure categories an assembler distinguishes:
 | No map struct for the wearer (after the §2.3 fallback) | Item not drawn; body part stays |
 | Key missing in the record (260 structs) | Item not drawn for that body |
 | Material-only entry where parts were expected (null record) | Nothing to draw |
-| Block for the modifier not found | §3.2.1 rule 3 |
+| No block at or below the modifier, or modifier −1.0 | The element contributes nothing (§3.2.1) |
 | Part mesh missing or undecodable | Slot keeps its previous winner; reported |
 | Holding location missing on the wearer | Held item not drawn (debug: at origin) |
-| Random-appearance type | Default parts (§7.4 Decision) |
+| Equipment category with no placement (orb stowed, class items, instruments) | Not drawn (§5.6) |
+| Random-appearance type | Pieces from the `Startup` script's Appearance nodes (§7.4); with no case for the type, the default parts |
 | Chain, record or skeleton failures | As `setup.md` §10 and `skeleton-anim.md` |
 
 ---
@@ -1138,6 +1545,13 @@ Failure categories an assembler distinguishes:
 | Height controls neutral; sliders applied per frame to the local pose after sampling, matrix composition | this spec §6.2–§6.3 (Decisions before 2026-10-05) | Height controls hold deformer and `scale_blend` clips (§6.2); sliders and body shape deform the meshes once in bind space with triple composition (§6.3–§6.4). |
 | Slider value *t* = byte / 255; "centred mapping equally plausible"; absent string means 0x80 | this spec §6.3, §14 | *t* = byte / 255 confirmed; sliders without a pair get 0.5; the absent-string case stays OPEN (§6.3). |
 | Appearance keys head 0x10000009, hair 0x10000032, beard 0x10000018 | DS §7.1 | Confirmed; their labels (`FaceTexture`, `HeadMesh`) are misleading (§3.3). |
+| Block choice: exact match within 0.0005, then a dye rule, then the 1.0 block or the first block | this spec §3.2.1 (2026-10-05) | The greatest `variant` not above the modifier; nothing below the first block or for −1.0 (§3.2.1, BIN2). |
+| Material groups apply to their own block's parts; a dye element applies to the parts its record contributed | this spec §4.10, §15 implementation; `material.md` §9.3 | Groups join one figure-wide list by group priority and apply to every matching part (§4.10, BIN2). `material.md` §9.3's "own block" restriction does not hold for figures. |
+| Equal-priority ties: later source wins, worn items after lists (Decision) | this spec §4.7 (2026-10-05) | Client rule confirmed (later applied wins), with the record order of §4.7 rule 2 (BIN2); the worn-item order is the supplier's. |
+| Shields stowed on the back; javelins and orbs stay in hand (Decision) | this spec §5.4 (2026-10-05) | Shields stay on the forearm unless the skill mode is ranged; javelins stow at `Sheath_Back_Bow`; orbs are not drawn when stowed (§5.6, data). |
+| No client record maps a random-appearance type to an outfit | this spec §7.4, A14 (2026-10-05) | The mapping is in script tables: Appearance nodes under Switches on the type (§7.4, A26). The scan of 2026-10-05 covered property sets only. |
+| 0x20 `reserved` u32 is 0; `section` byte meaning OPEN | `setup.md` §8.1 | The u32 counts a list of further 0x20 DIDs applied before the record's own entry; `section` is the size class (0–22) of the client's entry lookup table (§4.2, §4.7 rule 4, BIN3). |
+| `Inventory_ParentingLocation` gives the in-world location of a held item | `skeleton-anim.md` §8.5; this spec §5.3 | No script node reads it; in-world placement comes from the placement scripts (§5.6). It keeps no known role (OPEN for `skeleton-anim.md`). |
 
 ---
 
@@ -1171,9 +1585,16 @@ Remove the back item: `Crest` → S1 (hidden), `Helmet` → G. Remove the head i
 <a id="s12-2"></a>
 ### 12.2 Block choice
 
-An entry with blocks of `variant` 0.00, 0.01, 0.02, 0.45, 0.80: modifier 0.02 → third block;
-modifier 0.0199995 → third block (within 0.0005); modifier 1.0 → no 1.0 block, so the first
-block (Decision); its key-table value is 4.
+An entry with blocks of `variant` 0.00, 0.01, 0.02, 0.45, 0.80 (single-precision values):
+modifier 0.02 → third block; modifier 0.0199995 → **second** block (it is below the stored
+0.02, and there is no tolerance); modifier 0.30 → third block; modifier 1.0 → fifth block
+(0.80); modifier −0.5 → no block; modifier −1.0 → no block. Its key-table value is 4. An
+entry whose only block is 1.0: modifier 1.0 or 2.0 → that block; modifier 0.0 → no block.
+
+Record order (§4.7): template section {record R1, key K1}, class list {R2 K2, R1 K3}, then a
+worn item {R3 K4}. Records apply in the order R1 (keys K1 and K3, in key-table order), R2,
+R3. If R1's K3 block and R2's K2 block both offer a `Hands` part at priority 5, R2's part
+wins (applied later); if R3 also offers one at 5, R3's wins.
 
 <a id="s12-3"></a>
 ### 12.3 Bone slider
@@ -1221,34 +1642,45 @@ would put the sole at 0.134 (`skeleton-anim.md` §14.7) — the floating-feet er
 <a id="s13"></a>
 ## 13. Open questions
 
-> **OPEN** (owner observation O8): composition of template `vec3` and entity
-> `Render_AdjustableScale` (§6.1).
+> **OPEN** (owner observation O8, narrowed 2026-10-07): whether the template chain's `vec3`
+> enters the render scale; the multiplication along the template chain and the render-scale
+> product are BIN (§6.1).
 
 > **Resolved** (2026-10-05, BIN): the height controls' effect (§6.2), the bone-slider byte
 > mapping, combination, rotation axes and frame (§6.3–§6.4). **OPEN** (owner observation
 > O9, confirmation only): compare the shortest and tallest River-hobbit with §6.5; the
-> driven value of an absent slider string (§6.3).
+> driven value of an absent slider string (§6.3; the Decision equals the dictionary default).
 
-> **OPEN** (owner observation O10): equal-priority ties between worn items and in NPC lists
-> (§4.7); confirmation of the layering cases of §4.6.
+> **Resolved** (2026-10-07, BIN2): the client's tie rule and record order (§4.7). **OPEN**
+> (owner observation O10, narrowed): the original's order between worn items, which its
+> server supplies; confirmation of the layering cases of §4.6.
 
-> **OPEN** (owner observation O11): the updated-avatar toggle and which style files the
-> client uses by default (§3.3).
+> **Resolved** (2026-10-07, BIN2): the updated-avatar option (graphics option, default on)
+> and the toggle rule (§3.3). Narrow OPEN on the property lookup's source (§3.3).
 
-> **OPEN** (owner observation O12): random-appearance figures (§7.4).
+> **Resolved** (2026-10-07, OBS2): where random-appearance outfits come from (§7.4).
+> **OPEN** (owner observation O12, narrowed): same look on every visit or not.
 
-> **OPEN** (owner observation O13): stowed weapon locations by category, `Class`-slot held
-> items (§5.3, §5.4).
+> **Resolved** (2026-10-07, OBS2): stowed and wielded placements of weapons, shields and
+> ranged items (§5.6). **OPEN** (owner observation O13, narrowed): in-hand orientation of
+> long weapons, rotation order, class items (§5.3, §5.6).
 
-> **OPEN** (frame capture, O15): skin, hair and eye colour tinting; face compositing (§3.3).
+> **Resolved** (2026-10-07, OBS2): which colour and texture properties drive which face
+> layers and surfaces (§3.5). **OPEN** (frame capture O15, narrowed): the face-skin texture
+> slot that receives the composed image; the rank of colour edits against dye blocks.
 
-> **OPEN:** `section` byte of 0x20 records (§4.2); how material group priorities combine
-> (§4.10); distant-battle units (§7.1).
+> **Resolved** (2026-10-07, BIN3): the `section` byte and the u32 after the DID of 0x20
+> records (§4.2, §4.7 rule 4). **OPEN** (narrow): a self-referencing linked-record list
+> (§4.7).
 
-> **OPEN** (owner observation O4, existing): whether stub triangles are drawn (§4.4).
+> **OPEN:** the consumer of the figure-wide group
+> list (§4.10, layering direction); distant-battle units (§7.1); the node that keeps a
+> static figure's prop in hand (§5.5).
+
+> **Resolved** (`setup.md` §8.5, BIN): stub parts of multi-part figures are never drawn (O4).
 
 None of these blocks assembling and animating the 14 playable bodies with worn and held
-items; they affect fidelity of scale, sliders, ties and NPC looks.
+items; they affect fidelity of scale, ties and NPC looks.
 
 ---
 
@@ -1270,6 +1702,12 @@ entity scales (1.02, 1.03, 0.7). Points for the spec owner:
 > River-hobbit entities). The implementation accepts a float or a uniform vector and
 > ignores a non-uniform one. Please state the type, and what a non-uniform value would mean.
 
+> **Answered** (2026-10-07, spec writer, OBS2 and BIN2): the type is **Vector3** (registry
+> type 15, `property-system.md` §3). The client uses it per axis: a non-uniform value scales
+> the three axes separately, and any component that is not finite or is strictly below
+> 0.0002 makes the whole render scale (1, 1, 1); exactly 0.0002 is kept (§6.1). One entity has a non-uniform value (0x4700DAD2,
+> (0.4, 1, 1)). Accept any vector; stop ignoring non-uniform ones.
+
 > **Answered in part** (2026-10-05, spec writer; was: absent `AC_BoneSlider_Value_Array` on
 > the Elf and High-elf entities). Correct: only the Human and River-hobbit entities carry the
 > string; §6.3 now says so. The client's slider input is the SliderMeshDeformer node of the
@@ -1286,10 +1724,25 @@ entity scales (1.02, 1.03, 0.7). Points for the spec owner:
 > the caller; its test builds them from the `ContainerSlot` and `HoldingLocation` labels of
 > §5.3 (bit-to-key rule, `property-system.md` §7.3). Please name the struct's fields.
 
+> **Answered** (2026-10-07, spec writer, OBS2): both lists
+> (`InventoryControl_SlotToPaperdollLocation_MappingList` and
+> `InventoryControl_SlotToLocation_MappingList`) hold `InventoryControl_SlotToLocation_Mapping`
+> structs with two fields: `InventoryControl_SlotToLocation_InventorySlot` (bit field, a
+> `ContainerSlot` value) and `InventoryControl_SlotToLocation_HoldingLocationID` (enum, a
+> `HoldingLocation` key). The same object's `InventoryControl_EquipmentCategoryCachedSlotList`
+> holds `InventoryControl_EquipmentCategoryCachedSlotListEntry` structs
+> (`InventoryControl_EquipmentCategoryCachedSlot`, `InventoryControl_EquipmentCategoryCachedProperty`)
+> that name the avatar property caching each weapon slot's category (§5.6).
+
 > **OPEN** (§2.3, §10): an item that has wardrobe structs for other bodies but none for the
 > wearer (after the fallback) and also a `PhysObj` is treated as **not drawn**, as §10's
 > first failure category says, never as a held item. Please confirm that the `PhysObj` of
 > a worn item is never shown on a body it does not fit.
+
+> **Answered** (2026-10-07, spec writer, BIN2 and OBS2): confirmed. A worn item reaches a
+> figure only as appearance elements (§4.7); the only data path that attaches an item's
+> entity to a figure is the placement scripts of §5.6, which read the three weapon-slot
+> properties only. A worn item without a wardrobe struct for the wearer is not drawn.
 
 > **OPEN** (§5.5, review 2026-10-05): §5.5 names `NPC_Cosmetic_Inventory_Visible` without
 > giving its meaning. A review probe found that of 28,807 landblock instance sets with a non-null
@@ -1298,6 +1751,10 @@ entity scales (1.02, 1.03, 0.7). Points for the spec owner:
 > figure's props when it is false: `npc_held_items` returns them all and
 > `npc_cosmetic_inventory_visible` reports the flag for the caller to decide. Please state
 > whether false hides the props (always, out of combat, or only in some UI views).
+
+> **Answered** (2026-10-07, spec writer, OBS2 and BIN2): false hides the props, always: they
+> are attached by script nodes that run only while the flag is true, and scripts switch the
+> flag during scripted actions (§5.5 Rule).
 
 > **Correction applied** (§5.3, review): the holding rule now follows `skeleton-anim.md`
 > §8.5 exactly: in a paperdoll view the item's `Inventory_PaperdollParentingLocation`, else
@@ -1346,6 +1803,11 @@ figure, type 0xDB). Choices the spec leaves open:
 > same way, without a report. Please state how a dye element pairs with pieces of another
 > record (by position after its `Worn` element, by record, or onto the rig).
 
+> **Answered** (2026-10-07, spec writer, BIN2): none of these. A dye element's material
+> groups join the figure-wide group list and apply to every drawn part whose slot and binding
+> key match, whichever record supplied the part, default parts included (§4.10). There is no
+> pairing and so no "unpaired" case; drop the `unpaired-dye` report.
+
 > **OPEN** (§7.3, rig rule): the distant-battle marker entity 0x47006915 (29 weenie objects,
 > §7.1) resolves to setup 0x040002DE, whose single part is in slot `UpperBody`. The rule of
 > §7.3 therefore calls it a humanoid rig, while §7.1 describes it as a marker. Nothing in
@@ -1363,6 +1825,11 @@ figure, type 0xDB). Choices the spec leaves open:
 > **OPEN** (§4.4, stubs): a part is a stub when its mesh has at most three vertices in all
 > submeshes and levels together. Please confirm that no stub has more than one submesh.
 
+> **Answered** (2026-10-07, spec writer): the client flags a mesh whose detail levels hold
+> exactly **one triangle in total** (`setup.md` §8.5, `mesh.md` §8.10); that selects the same
+> 258 records as the three-vertex test. A mesh with one triangle in its first level but more
+> in others (0x0600C113) is not a stub.
+
 > **OPEN** (§3.1, §4.4, static setups): static setups list several parts with the same
 > `flags` (`Default`). The implementation keeps every default part, in order, and an offered
 > part for a slot replaces **all** default parts of that slot (drawn once, at the first one's
@@ -1372,6 +1839,12 @@ figure, type 0xDB). Choices the spec leaves open:
 > **OPEN** (§5.4 Decision, categories it does not name): `Implement1H`, `Implement2H`,
 > `Cosmetic`, `Bauble`, `Instrument`, `Class` and `Weapon_FX` items stay at their in-hand
 > (wielded) location when stowed. Please extend the Decision if they have stowing places.
+
+> **Answered** (2026-10-07, spec writer, OBS2): §5.6. `Implement1H` and `Cosmetic` stow with
+> the one-handed weapons (`Sheath_LHip`, or `Sheath_RHip` in the secondary slot);
+> `Implement2H` with the two-handed weapons (`Sheath_Back_2H`); `Orb` has no stowed placement
+> (not drawn while stowed); `Bauble`, `Instrument`, `Class` and `Weapon_FX` items have no
+> placement script and are not drawn (§5.3 Decision).
 
 Review follow-up (clean room, 2026-10-05):
 
@@ -1385,6 +1858,12 @@ Review follow-up (clean room, 2026-10-05):
 > `Sheath_Back_Shield` like the other shields). The only open point is the reading itself:
 > please confirm the bitfield reading in §5.2.
 
+> **Answered** (2026-10-07, spec writer, OBS2): confirmed. `Item_EquipmentCategory` is
+> registry type Bitfield64 with the enum mapper 0x2300004C (key *k* = bit *k* − 1), and the
+> avatar properties `Inventory_PrimaryEquipmentCategory`, `…Secondary…`, `…Ranged…` that the
+> placement scripts switch on are Bitfield64 too; the scripts' cases compare single bits
+> (for example 0x4 `2HSword`, bit 38 `Orb`).
+
 > **OPEN** (§4.11, material-only list elements under other keys): a list element whose
 > chosen block has material groups but no parts, under a key other than `ClothingColor` /
 > `ClothingColorSecondary` (NPC selection tables and the `_Dye` partners of §7.4), is now
@@ -1395,6 +1874,10 @@ Review follow-up (clean room, 2026-10-05):
 > Please confirm that unpaired material-only elements recolour the default parts, or say
 > that they are dropped ("they apply only together with the record's parts").
 
+> **Answered** (2026-10-07, spec writer, BIN2): they are not dropped and not paired: their
+> groups join the figure-wide list like every other block's groups (§4.10). "They apply only
+> together with the record's parts" in §4.11 is withdrawn.
+
 > **OPEN** (§7.4 random appearance versus explicit lists): the implementation follows the
 > Decision literally: a figure with a random-appearance type is drawn with its setup's
 > default parts and its held props, and its template sections, class list and instance
@@ -1402,11 +1885,22 @@ Review follow-up (clean room, 2026-10-05):
 > lists that would contribute parts (for example entity 0x47006369 in all 82 of its
 > placements). Please state whether explicit lists take precedence over the random type.
 
+> **Answered** (2026-10-07, spec writer, OBS2 and BIN2): both apply. The random type is not
+> a replacement for the lists: it selects Appearance nodes in the figure's `Startup` scripts,
+> which run after the lists are applied and win equal-priority ties (§7.4 Rule).
+
 > **OPEN** (§3.2.1 rule 1 versus `material.md` §12.4, dye code 0.0 in lists): a
 > `ClothingColor` list element with modifier 0.0 layers the 0.00 block (rule 1: "dye tables
 > (modifier = dye code)"), while a worn item with code 0.0 (default or chosen) layers no dye
 > (`material.md` §12.4: "Code 0.0 or 'no dye' means: do not layer a dye material"). Please
 > state which reading applies to list elements.
+
+> **Answered** (2026-10-07, spec writer, BIN2): for list elements (and Appearance nodes) the
+> client applies the block chosen by §3.2.1, so modifier 0.0 layers the 0.00 block of the
+> dye table. The "code 0.0 means no dye" rule of `material.md` §12.4 concerns an item's own
+> dye code, which in the original is turned into an element by the server; Tessera's
+> worn-item builder (§4.7 Decision) keeps that rule by not emitting a dye element for code
+> 0.0.
 
 > **Implementation note** (§4.9, §8 step 3, dye pairing): list dye and material-only
 > elements pair only with parts contributed by appearance-list elements, never with a worn
@@ -1414,6 +1908,12 @@ Review follow-up (clean room, 2026-10-05):
 > chosen dye. The holding location (§5.3), the stowing location (§5.4) and the worn-item
 > order (§4.7) use the slot an item is **equipped** in when the caller gives one (dual
 > wielding), else its `Inventory_DefaultSlot`.
+
+> **Superseded** (2026-10-07, spec writer, BIN2): there is no pairing at all (§4.10); every
+> group, from lists, worn items or script nodes, applies figure-wide by slot and binding key
+> in group-priority order. A list dye therefore can affect a worn item's parts when slot and
+> binding key match, as in the original. Using the equipped slot for placement stays right:
+> the placement scripts of §5.6 switch on the categories cached per weapon slot.
 
 > **OPEN** (implementation, River-hobbit height fix, §6.3 values): "each pair read as a
 > base-16 number, so a pair that is not hexadecimal reads 0" leaves two cases open: a pair
@@ -1442,3 +1942,25 @@ Review follow-up (clean room, 2026-10-05):
 | Date | Sections | Change | Role |
 |---|---|---|---|
 | 2026-10-05 | §1 (BIN, ST/SA2, RH, A10, A15–A18), §6.2, §6.3, new §6.4 and §6.5, §8 step 7, §11, §12.3, new §12.4–§12.5, §13, §14 | Height controls, bone-slider values and application, and bind-space deformation from the client (BIN, decision 0011), checked on real data (RH); the earlier Decisions of §6.2 and §6.3 withdrawn; expected standing heights added; implementation OPENs on absent slider strings and rotation order answered (the first in part). | Spec writer (dirty room) |
+| 2026-10-07 | header; §1 (OBS2, BIN2, A14, A19–A27); §3.2.1; §3.3; new §3.5; §4.7; §4.9; §4.10; §4.11; §5.3; §5.4; §5.5; new §5.6; §6.1; §6.3; §7.4; §8; §11; §12.2; §13; §14; §15; new §17 | Owner items O8, O10, O11, O12, O13, O15 answered from the client where the client can settle them (BIN2, decision 0011) and from script-table data (OBS2): block choice (largest variant not above the modifier) replaces the old rule and Decision; tie rule and record order; figure-wide material-group list (dye pairing withdrawn); updated-avatar and face-compositing options; face layers and colour tints from species-table script nodes; stowed and wielded weapon placements from the shared avatar table (old stowing Decision replaced); random-appearance outfits from script tables (old Decision replaced); render-scale composition and the vector3 type; eleven implementation OPENs answered. | Spec writer (dirty room) |
+| 2026-10-07 | header; §1 (OBS2, A21, A26, A27, new A28, new BIN3); §3.2.1; §3.3; §3.5; §4.2; §4.7 (new rule 4 and OPEN); §6.1; §7.4; §8 step 4; §9 (AI12, new AI13); §11; §13; §14; §17 (new O9 and O17 rows, O8 row) | Answers the review of 2026-10-07. Blocking: the render-scale limit is **strictly below** 0.0002 (A27, §6.1 twice including the Decision, §14); the §3.2.1 census splits the 79 "none" into 13 by rule 1 and 66 by rule 3; §17 gains the O9 row. Non-blocking: §7.4 states its counting rule and the corrected counts (21,780 nodes, 830 cases, 61 tables in key 5; 21,841 and 62 tables over all scripts); §6.1 states the holder factors (uniform holder scalar with its two flag bits and `Model_ParticleScale`, then the holder's final scale, BIN3); §3.3 names the two sources and the dictionary default (false); §3.5 and A21 attribute the 297 nodes and the compositor counts by kind; OBS2 node total 632,847. From BIN3: the u32 after a 0x20 record's DID counts a linked-record list applied first (§4.2, §4.7 rule 4), and the `section` byte is a lookup-table size class (its OPEN resolved). | Spec writer (dirty room) |
+
+---
+
+<a id="s17"></a>
+## 17. Owner observations: what the client settles (2026-10-07)
+
+Answers to the owner items of `docs/checklists/owner-observations.md` in this spec's scope
+(O8–O13, O15, and O17 in part), from BIN (2026-10-05), BIN2, BIN3, RH and OBS2.
+"Answered" means the item no longer needs the owner for Tessera to match the original; "partly" means a narrower question remains.
+
+| Item | Result | What the client and data settle | What still needs the owner, and why |
+|---|---|---|---|
+| O8 standing heights | **partly** | Template `vec3` values multiply along the template chain; the render scale is a per-axis product of `Render_AdjustableScale` (or its checkpointed copy), a uniform holder factor, `Model_Scale` and a vector of a related object, times the holder's final scale for an attached object, reset to (1, 1, 1) when a component is not finite or strictly below 0.0002 (§6.1). | Whether the template `vec3` is the vector of the related object was not traced. One screenshot pair settles it: a High-elf female at about 1.84 m (multiply) or 1.82 m (no template factor) beside a Human female (1.77 m). |
+| O9 height and facial sliders | **partly** (rules answered by BIN on 2026-10-05) | The height controls hold clip fractions: `AC_BoneScale_Test` the body-shape deformer (girth only, except DwarfStoutAxe and the River-hobbit look) and `AC_Avatar_Height` the River-hobbit layer-110 clip, higher values taller (§6.2). A slider byte gives *t* = byte / 255 and the channel value `BoneSlider_LimitMin` + *t* × (max − min), so byte 0 (the left end) gives the stored minimum (the smaller scale, for example 0.7 on the nose bridge) and the default 0x80 gives *t* = 0.50196, a hair off the centre value; mirrored sliders negate the value on the reversed bone, so eye separation moves both eyes symmetrically; sliders and body shape deform the meshes once in bind space, about each bone's own joint, never the animated pose (§6.3–§6.4). On real data the computation keeps River-hobbit feet within 1 cm of the ground at every height value in idle (§6.5). | Confirmation only: the standing heights of §6.5 (shortest and tallest River-hobbit, Human ends) against the original's character-creation screen, and that River-hobbit feet rest on the ground at the default height in idle, walk and run (the walking toe-dip OPEN of §6.5). The client code read cannot show the rendered result. |
+| O10 layering ties | **partly** | Equal priority: the later-applied part wins; the order of records and keys (§4.7); the layering cases of §4.6 follow from the priorities. | Worn pieces reach the original client from its server, whose order between items is not in the client; items 5 (gauntlets against a long-sleeved chest) and 1–4, 6–8 remain useful as confirmation. |
+| O11 updated-avatar option | **answered** | A graphics option, default on, bound to `GOP_AvatarUpdateVisible`; with it on, the toggle (newer) style files and the newer face compositor are used; turning it off rebuilds figures with the older files; character creation offers it for Hobbit and Dwarf only (§3.3, §3.5). | Nothing required; a look at the options screen would confirm the default. |
+| O12 random-appearance NPCs | **partly** | Outfits come from Appearance nodes under Switches on the type in the figures' `Startup` scripts, one random piece per group (§7.4); 316 of the 318 placed types have outfits. | Whether a figure keeps its look between visits (the client's random seeding was not traced). Two visits to one figure settle it. |
+| O13 held-item rest positions | **answered** for weapons, shields and ranged items; **partly** overall | Stowed and wielded locations, offsets, rotations and per-species scales by equipment category (§5.6); class items and instruments have no placement script (§5.3). | The in-hand direction of long weapons and the yaw/pitch/roll composition (one screenshot of a stowed staff and of a drawn sword from the side), and whether class items are ever visible. |
+| O15 skin, hair and eye tints, face layers | **answered** for the pairing and the mechanism; **partly** for rendering detail | The face is one texture composited at run time from the face compositor (`misc-records.md` §3.6) with layer choices from `AC_Texture_*` and colours from `AC_Color_*`; hair and beard (and skin surfaces) are tinted through the dye colour 2003 set from `AC_Color_Hair` and `AC_Color_Skin` (§3.5); a second graphics option, default on, turns face compositing off. | Which texture slot of the face-skin surface receives the composed image (one frame capture of a face, as the checklist asks). |
+| O17 static NPCs at the N spots (dress part only) | **needs the owner** | What a figure wears and holds is settled by §7.2–§7.4 and §5.5 (data and BIN2); positions and headings come from the SED data (`entity-descriptor.md`), which the client places as stored. | Presence, position and facing at each spot depend on the original's server and content layers, not on client code; only the in-game `/loc` readings and a look can settle them. |

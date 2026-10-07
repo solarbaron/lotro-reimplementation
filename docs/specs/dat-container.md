@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (re-review of 2026-10-07 passed; the second revision of 2026-10-07 is the Accepted text) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-06 of the second revision of 2026-10-06: **passed** (Accepted). The blocking issue is resolved: BIN questions Q15 and Q16 no longer carry the Q14 note, and the BIN source row, Q17, Q18, P52 and P53 record the 2026-10-06 reads. The seven §14 implementer notes are answered in §2.1, §2.3 (severity table), §4.5, §7.2 and I-21, I-22, I-24, I-25, and the answers agree with each other and with the change log. Checklist §5.3: every item true (functional facts only; no code or pseudo-code; no copied prose; no game text, keys or hostnames; provenance and marks present; byte layouts complete with units; invariants testable; unknowns marked OPEN; no closed gate). Spot checks that matched on 2026-10-06 (fresh read-only walk of all 29 archives): (1) P53/I-21/I-22: every free table has header `{0, 0}`, 16 + 8 × 0x15C < 0x1A0, no zero-size pair before index 0x15C, pair 0x15C = `{0, 0}`, pairs sorted by offset, every size ≥ 0x144, 0x19C = Σ (size − 8), and the client test Σ size = 8 × 0x15C + 0x19C holds; (2) P52: 0xFFFF0005 present in 29/29 with `stamp` 1, 24 bytes, flag bit 0 clear; (3) §3.3: 0x190/0x194/0x198 = 104/32/8, 0x148 = file length, 0x1A4 = 2460 when 0x144 < 2460 else 0x144, 0x178 = 3 for portal and language and 0 for cell and map, 0x1A8–0x3FF zero, in 29/29; (4) §5.4/P24: every node header `{0, 0}`, non-root counts 30–61, uniform leaf depth per archive, 3,838,957 entries; (5) §7.1: 0xFFFF0003 is 37 bytes with `stamp` 1 in 27 archives and absent exactly in `mesh_aux_1` and `highres_aux_3`; 0xFFFF0004 is 12 bytes with `stamp` 2 in exactly the 10 listed archives; every metadata record has `iteration` 0. Non-blocking notes for a later revision: I-24 lacks a full stop before "A record that is absent"; the §2.3 severity rule ("Warn when every file is readable") does not by itself cover the Error row "number of parts ≠ base count" when extra readable parts exist (the table is explicit, so it is implementable); the §7.2 reader rule treats a short record as wholly absent, which is simpler than the client's per-field defaults (same severity, deliberate); §2.3 orders aux parts by N but does not say where a non-canonical aux match without a number (§2.1) sorts. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-06 of the revision of 2026-10-06: changes requested. The re-review issue of 2026-10-05 is resolved: §2.3 step 3, §7.2, I-24 and P49 now agree, and the rule matches the client (re-read 2026-10-06 at the per-part membership check; the comparison constant is 16 zero bytes, an all-zero part fails unless it is the first part loaded, an all-zero set identifier adopts the part's identifier without an index check, otherwise identifier and index = position are both required). One issue, in the provenance record only: the BIN-question rows Q15 (access and sharing mode) and Q16 (file growth) now end with "identifier rules re-checked on 2026-10-06", which belongs to Q14 alone and misstates the M4 work done for Q15 and Q16; remove it from those two rows. Non-blocking: the seven implementer OPEN callouts added to §14 from the audit of 2026-10-06 still need a spec-writer answer. Checklist §5.3: every other item true. Spot checks that matched on 2026-10-06 (fresh read-only walk of all 29 archives): 0xFFFF0005 present in 29/29, 24 bytes, `stamp` 1, identifier non-zero in 29/29, 22 distinct identifiers, shared within the mesh/sound/surface/highres sets with index = N and counts 2/2/3/4, every other archive count 1; 0x158 = 0x119C in exactly `cell_5`, `cell_15`, `map_5`, `map_15`; 0x17C all zero in exactly `mesh_aux_1` and `highres_aux_3`, one shared value in the other 27; the 8 flags-0 records are 0xFFFF0003 and 0xFFFF0008 of those four archives; 0xFFFF0008 in all 22 bases and no aux part, 16 bytes, one value; root entry counts 1–58 (general 4, local 5) and 3,838,957 entries; every file length a multiple of 1 MiB except `local_English`. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-05 of the revision: changes requested. One issue: §7.2 says an all-zero set identifier is "allowed only for a one-part set", but §2.3 step 3 says the client accepts an all-zero identifier on the first part and adopts the next part's identifier, so a multi-part set with an all-zero base is accepted; make §7.2 (and the "all parts share the identifier" clause of I-24, if intended) agree with §2.3. All earlier issues (1)–(4) and the three minors are resolved. Spot checks that matched on 2026-10-05: §6.1 census with *Z* = `length` − 4 (0 failures, 17 only via the 512,000 clause, 5,758 failures if `length` were used; no *U* < stored length; no *U* ≤ 16; smallest compressed 19); 3,009,330 unused entry slots with 186,823 all zero, no entry with DID 0 or 0xFFFFFFFF; 112,267 nodes / 3,838,957 entries / 1,740,962 compressed; only `local_English` not a multiple of 1 MiB; cell/map class 0 and 1 low bytes ≤ 0xFE; the §8.1/§8.2 high-byte placement per archive (70/76 and 78/79 only, 25 only, kind-3 row = `general` contents). Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §6.1 writer policy: "10 × compressed ≤ 8 × original" does not say what "compressed" measures; read as the stored `length` (prefix included), 5,758 of the 1,740,962 compressed records break the 80 % clause without saving 512,000 bytes, so the claim "every compressed record satisfies the rule" is false as written. It holds for all of them when "compressed" is the zlib stream length (`length` − 4). State that. (2) §5.5: the "no DID" value that lookup treats as absent is not given; state it or add an OPEN. (3) §3.4 note: the older identifier encoding (0x14E and 0x14F both zero) is an unknown with neither an OPEN callout nor a reader rule. (4) BIN facts without a provenance row or BIN question: the set-opening procedure of §2.3 (part order, all-zero identifier rule, part-count failure, deletion of mismatched files), the sharing mode of §3.7 and §9, and the growth formula and 8 MiB headroom of §4.7 (P31 covers only aux-part creation). Minor: I-17 does not say whether the legal value 1 warns; the §8.2 home table says "present in the install" but lists absent high bytes (11–1D, 70–77, 7A–7F); the client-table name of kind 0x0D (§2.4, §3.4) is not needed by a reader, so describe the kind without it. Spot checks that matched: every cell of the §3.5 header table and the common fields for all 29 archives; 3,838,957 entries, 112,267 nodes, depths and 30–61 non-root counts; 1,740,962 compressed (789C 1,055,024 / 78DA 685,938); the 8 flags-0 records; 256 fragmented records with the §4.2 per-archive and local_English F distribution, all reassembled (47 inflate exactly, 209 echo their DID); sizing rule 3,780,330 / 58,371 / 0; 340 larger nodes and 25 / 4 in general / local; 2,778 nodes with stale pointers; tiling and free tables (I-20…I-22) in 29/29; stamp values; 10,677 records written 20:08:20–20:08:53 on 2026-10-04; metadata presence, lengths, stamps and iteration 0; 0xFFFF0005 part index and counts; 383,332 0x70/0x79 pairs; no cross-archive duplicates; §6.2 echo counts for general and local; RegionID keys 1–6, 14, 15; all four §3.6 checksum test vectors; full inflation of anim, mesh_aux_1 and cell_14.. **Response:** every item of the earlier review addressed in the revision of 2026-10-05; the re-review issue (§7.2 vs §2.3, I-24) addressed in the revision of 2026-10-06; the re-review of 2026-10-06 (Q15/Q16 note) and its seven non-blocking §14 notes addressed in the second revision of 2026-10-06 (change log, [§13](#s13)). |
+| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-07 of the second revision of 2026-10-07: **passed** (Accepted). The blocking issue is resolved: §3.7 "Expected datpack versions" now states the rule as steps 1–4 (either comparison alone refuses; the waiver applies when the expected container version and 0x174 are 111 and 112 in either order, also when the game-data comparison failed, and not when the two container versions are equal), and the 0x174 and 0x178 rows of the §3.7 table and P55 carry the same rule. The three worked cases agree with it. Notes a–c are resolved: "any value is accepted at open" is gone, with a new OPEN and reader rule for a 0x174 other than 111 or 112; §4.7 "Versions stamped at creation" (P58, Q23) and §2.5 "Directory" (P59, Q24) are added, each with an OPEN and a reader rule. BIN re-checks on build 4906.0071.1794.4035 in the reviewer's own copy (decision 0011, archive library only, copy deleted afterwards), all matching the spec: the comparison and waiver of §3.7 steps 1–4; creation stamps 0x174 = expected container version when ≥ 1, else 111, 0x178 = the expected game data version unchanged, and 104/32/8 (P58); when a set creates an aux part, the expected versions come from the overlay if one is in use, else from the first part (that archive's own 0x174 and 0x178), and a set with no part keeps −1/−1 (P58); the set-level open looks for the overlay in the set's directory, or `.` when that is empty, and does not take the opener's overlay-directory value (P59). Spot checks on the install, read-only, 2026-10-07: (1) 0x174 = 112 in 29 of 29 archives (§3.7 OPEN); (2) 0x178 = 3 in every portal and language archive and 0 in every cell and map archive; (3) 0x190/0x194/0x198 = 104/32/8 in 29 of 29; (4) every aux part carries the same 0x174/0x178 as its base (112/3), as P58 predicts; (5) `cell_15` and `map_15` are 1,048,576 bytes each, and no `.ovl` file exists next to the archives (§2.5). Non-blocking notes for a later revision: (a) the §2.5 OPEN says the conditions of the second lookup (bare name in the current directory) were not traced; as read, it is made whenever the overlay is not found next to the archives, unless the opener sets an open flag that disables the overlay lookup altogether, so the OPEN could be narrowed (the reader rule is unaffected); (b) §4.7 "Versions stamped at creation" could add that a container version above 0 but below 111 selects no free-space layout, so such a creation fails (not reachable from the game client, which passes −1). Checklist §5.3: every item true (functional facts only; no code or pseudo-code; no copied prose or non-interoperability identifiers; no game text, keys or hostnames; provenance rows P54–P59 and Q19–Q24 present and marked; byte layouts unchanged and complete; invariants testable; unknowns marked OPEN with reader rules; no closed gate). Earlier record: Claude review session (spec-writer agent), review 2026-10-07 of the revision of 2026-10-07 ([§13](#s13)): **changes requested**. One issue: (1) **§3.7, "Expected datpack versions":** the sentence "When both are given and differ from the file, the archive is refused, except that 111 and 112 are accepted for each other" misstates the rule. Re-read on 2026-10-07: the archive is refused when the expected container version is not negative and differs from 0x174, **or** when the expected game data version is not negative, the skip request is absent and it differs from 0x178; that refusal is then waived when the expected container version and 0x174 are 111 and 112 in either order, even if the game-data comparison failed. Either comparison alone is enough to refuse. Restate it this way, and add the same waiver to the 0x178 row of the §3.7 table. Non-blocking notes: (a) §3.7 "any value is accepted at open" claims more than was shown. The game client makes no comparison against an expected value, but whether the header reader accepts a 0x174 other than 111 or 112 is not stated. Say "neither is compared with an expected value". (b) §4.7 "New archives": the library's creation path stamps 0x174 with the expected container version, or 111 when that value is below 1. So an archive the game client creates (expected −1) would get version 111. Confirm this and state it, or add an OPEN. (c) §2.5: confirmed for the game client's archive controller, which uses the archive's own directory (or the current directory when that is empty). The library's set-level overlay path takes an opener-supplied overlay directory, and the game client leaves it empty. You may add this. BIN re-checks on build 4906.0071.1794.4035 in the reviewer's own copy (decision 0011, archive library and archive initialisation only, copy deleted afterwards). All of these match the spec: the overlay name is the full archive path plus `.ovl`, while aux names use the stem (P54); the game client's four expected-version slots are statically −1, and portal/language share the container slot and portal/region share the game-data slot (P55); the open parameters carry 0x100000 and 0xFFFFFFFF (P56); the 0xFFFF0004 slot of the reserved-DID table has no code reference, and the 0xFFFF0008 slot has two (P57); the 0xFFFF0001 trailing list is read only for stamp 2, returns early below 2 and fails at 3 or more, and each entry is a u32 plus 8 copied bytes (P57). Spot checks on the install, read-only, 2026-10-07: (1) LOG: the client log of 2026-10-04 has 29 "stamped with datpack" lines for 29 distinct archive names, all with expected −1/−1; (2) `cell_15` and `map_15` are 1,048,576 bytes each; (3) the 0x174/0x178 values in those log lines are 112/3 for portal and language and 112/0 for cell and map, as in §3.3; (4) the depot manifests confirm that `mesh_aux_1` and `highres_aux_3` are not shipped (companion P53). The "stamp 2 in every 0xFFFF0001" observation of P57 was not re-walked in this review; it rests on the census of 2026-10-05/06. Checklist §5.3: every other item true. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-06 of the second revision of 2026-10-06: **passed** (Accepted). The blocking issue is resolved: BIN questions Q15 and Q16 no longer carry the Q14 note, and the BIN source row, Q17, Q18, P52 and P53 record the 2026-10-06 reads. The seven §14 implementer notes are answered in §2.1, §2.3 (severity table), §4.5, §7.2 and I-21, I-22, I-24, I-25, and the answers agree with each other and with the change log. Checklist §5.3: every item true (functional facts only; no code or pseudo-code; no copied prose; no game text, keys or hostnames; provenance and marks present; byte layouts complete with units; invariants testable; unknowns marked OPEN; no closed gate). Spot checks that matched on 2026-10-06 (fresh read-only walk of all 29 archives): (1) P53/I-21/I-22: every free table has header `{0, 0}`, 16 + 8 × 0x15C < 0x1A0, no zero-size pair before index 0x15C, pair 0x15C = `{0, 0}`, pairs sorted by offset, every size ≥ 0x144, 0x19C = Σ (size − 8), and the client test Σ size = 8 × 0x15C + 0x19C holds; (2) P52: 0xFFFF0005 present in 29/29 with `stamp` 1, 24 bytes, flag bit 0 clear; (3) §3.3: 0x190/0x194/0x198 = 104/32/8, 0x148 = file length, 0x1A4 = 2460 when 0x144 < 2460 else 0x144, 0x178 = 3 for portal and language and 0 for cell and map, 0x1A8–0x3FF zero, in 29/29; (4) §5.4/P24: every node header `{0, 0}`, non-root counts 30–61, uniform leaf depth per archive, 3,838,957 entries; (5) §7.1: 0xFFFF0003 is 37 bytes with `stamp` 1 in 27 archives and absent exactly in `mesh_aux_1` and `highres_aux_3`; 0xFFFF0004 is 12 bytes with `stamp` 2 in exactly the 10 listed archives; every metadata record has `iteration` 0. Non-blocking notes for a later revision: I-24 lacks a full stop before "A record that is absent"; the §2.3 severity rule ("Warn when every file is readable") does not by itself cover the Error row "number of parts ≠ base count" when extra readable parts exist (the table is explicit, so it is implementable); the §7.2 reader rule treats a short record as wholly absent, which is simpler than the client's per-field defaults (same severity, deliberate); §2.3 orders aux parts by N but does not say where a non-canonical aux match without a number (§2.1) sorts. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-06 of the revision of 2026-10-06: changes requested. The re-review issue of 2026-10-05 is resolved: §2.3 step 3, §7.2, I-24 and P49 now agree, and the rule matches the client (re-read 2026-10-06 at the per-part membership check; the comparison constant is 16 zero bytes, an all-zero part fails unless it is the first part loaded, an all-zero set identifier adopts the part's identifier without an index check, otherwise identifier and index = position are both required). One issue, in the provenance record only: the BIN-question rows Q15 (access and sharing mode) and Q16 (file growth) now end with "identifier rules re-checked on 2026-10-06", which belongs to Q14 alone and misstates the M4 work done for Q15 and Q16; remove it from those two rows. Non-blocking: the seven implementer OPEN callouts added to §14 from the audit of 2026-10-06 still need a spec-writer answer. Checklist §5.3: every other item true. Spot checks that matched on 2026-10-06 (fresh read-only walk of all 29 archives): 0xFFFF0005 present in 29/29, 24 bytes, `stamp` 1, identifier non-zero in 29/29, 22 distinct identifiers, shared within the mesh/sound/surface/highres sets with index = N and counts 2/2/3/4, every other archive count 1; 0x158 = 0x119C in exactly `cell_5`, `cell_15`, `map_5`, `map_15`; 0x17C all zero in exactly `mesh_aux_1` and `highres_aux_3`, one shared value in the other 27; the 8 flags-0 records are 0xFFFF0003 and 0xFFFF0008 of those four archives; 0xFFFF0008 in all 22 bases and no aux part, 16 bytes, one value; root entry counts 1–58 (general 4, local 5) and 3,838,957 entries; every file length a multiple of 1 MiB except `local_English`. Earlier record: Claude review session (spec-writer agent), re-review 2026-10-05 of the revision: changes requested. One issue: §7.2 says an all-zero set identifier is "allowed only for a one-part set", but §2.3 step 3 says the client accepts an all-zero identifier on the first part and adopts the next part's identifier, so a multi-part set with an all-zero base is accepted; make §7.2 (and the "all parts share the identifier" clause of I-24, if intended) agree with §2.3. All earlier issues (1)–(4) and the three minors are resolved. Spot checks that matched on 2026-10-05: §6.1 census with *Z* = `length` − 4 (0 failures, 17 only via the 512,000 clause, 5,758 failures if `length` were used; no *U* < stored length; no *U* ≤ 16; smallest compressed 19); 3,009,330 unused entry slots with 186,823 all zero, no entry with DID 0 or 0xFFFFFFFF; 112,267 nodes / 3,838,957 entries / 1,740,962 compressed; only `local_English` not a multiple of 1 MiB; cell/map class 0 and 1 low bytes ≤ 0xFE; the §8.1/§8.2 high-byte placement per archive (70/76 and 78/79 only, 25 only, kind-3 row = `general` contents). Earlier record: Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §6.1 writer policy: "10 × compressed ≤ 8 × original" does not say what "compressed" measures; read as the stored `length` (prefix included), 5,758 of the 1,740,962 compressed records break the 80 % clause without saving 512,000 bytes, so the claim "every compressed record satisfies the rule" is false as written. It holds for all of them when "compressed" is the zlib stream length (`length` − 4). State that. (2) §5.5: the "no DID" value that lookup treats as absent is not given; state it or add an OPEN. (3) §3.4 note: the older identifier encoding (0x14E and 0x14F both zero) is an unknown with neither an OPEN callout nor a reader rule. (4) BIN facts without a provenance row or BIN question: the set-opening procedure of §2.3 (part order, all-zero identifier rule, part-count failure, deletion of mismatched files), the sharing mode of §3.7 and §9, and the growth formula and 8 MiB headroom of §4.7 (P31 covers only aux-part creation). Minor: I-17 does not say whether the legal value 1 warns; the §8.2 home table says "present in the install" but lists absent high bytes (11–1D, 70–77, 7A–7F); the client-table name of kind 0x0D (§2.4, §3.4) is not needed by a reader, so describe the kind without it. Spot checks that matched: every cell of the §3.5 header table and the common fields for all 29 archives; 3,838,957 entries, 112,267 nodes, depths and 30–61 non-root counts; 1,740,962 compressed (789C 1,055,024 / 78DA 685,938); the 8 flags-0 records; 256 fragmented records with the §4.2 per-archive and local_English F distribution, all reassembled (47 inflate exactly, 209 echo their DID); sizing rule 3,780,330 / 58,371 / 0; 340 larger nodes and 25 / 4 in general / local; 2,778 nodes with stale pointers; tiling and free tables (I-20…I-22) in 29/29; stamp values; 10,677 records written 20:08:20–20:08:53 on 2026-10-04; metadata presence, lengths, stamps and iteration 0; 0xFFFF0005 part index and counts; 383,332 0x70/0x79 pairs; no cross-archive duplicates; §6.2 echo counts for general and local; RegionID keys 1–6, 14, 15; all four §3.6 checksum test vectors; full inflation of anim, mesh_aux_1 and cell_14.. **Response:** every item of the earlier review addressed in the revision of 2026-10-05; the re-review issue (§7.2 vs §2.3, I-24) addressed in the revision of 2026-10-06; the re-review of 2026-10-06 (Q15/Q16 note) and its seven non-blocking §14 notes addressed in the second revision of 2026-10-06; the review of 2026-10-07 (blocking issue 1 and notes a–c) addressed in the second revision of 2026-10-07 (change log, [§13](#s13)). |
 | **Implements into** | `crates/dat` (container, extents, directory, zlib, archive set, DID routing), `apps/dattool` |
 | **Companion specs** | [`install-layout.md`](install-layout.md) (finding the install, version fingerprint, the 0xFFFF0001 run-list decoder), [`records.md`](records.md) (record prologues §1.6, DID type table §2, DID maps §8), [`property-system.md`](property-system.md) (DID maps and enum mappers) |
 
@@ -73,8 +73,9 @@ Source tags:
 | KD | koniecdev/LotroKoniecDev knowledge base (observations of `datexport` version numbers) |
 | AT1 | Adobe Type 1 Font Format specification (published), for the checksum cipher constants in [§3.6](#s3-6) |
 | OBS | Our own black-box observation of the user's install, 2026-10-03 and 2026-10-05 (probes in the spec writer's scratch area; no data committed) |
+| LOG | The official client's own log file `lotroclient64.log` (under `%LOCALAPPDATA%\The Lord of the Rings Online\` in the Steam Proton prefix), written by its run of 2026-10-04 and read read-only on 2026-10-07 (method M3). Only the lines that report each archive's datpack versions were read. |
 | EM | Game data read in the install on 2026-10-05: the "Languages" enumeration (EMAPPER DID map label, enum mapper 0x230000B1 with base 0x23000186) and the "RegionID" DID map (0x28000008), decoded with [`records.md`](records.md) §7–§8 |
-| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, **client build 4906.0071.1794.4035**, read on 2026-10-05 in a dirty-room spec-writing session (Q17, Q18 and the Q14 re-check on 2026-10-06), address ranges only. **Scope:** the client's own archive library (file open and header handling, directory B-tree, extent and chained reads, free-space handling, the journal and overlay side files, compression, archive-set handling, metadata records) and the archive-selection code that maps a DID to an archive. **Not read:** any network, login, patch-protocol, launcher, patcher (`PatchClient.dll`) or anti-tamper code. The questions and why M1–M3 could not answer them are listed in the table below. |
+| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, **client build 4906.0071.1794.4035**, read on 2026-10-05 in a dirty-room spec-writing session (Q17, Q18 and the Q14 re-check on 2026-10-06; Q19–Q22 on 2026-10-07; the Q20 re-read, Q23 and Q24 in the repair session of 2026-10-07), address ranges only. **Scope:** the client's own archive library (file open and header handling, directory B-tree, extent and chained reads, free-space handling, the journal and overlay side files, compression, archive-set handling, metadata records) and the archive-selection code that maps a DID to an archive. **Not read:** any network, login, patch-protocol, launcher, patcher (`PatchClient.dll`) or anti-tamper code. The questions and why M1–M3 could not answer them are listed in the table below. |
 
 BIN questions:
 
@@ -98,6 +99,12 @@ BIN questions:
 | Q16 | When the writer grows a file, by how much, and when an archive counts as full | These are write-side rules. The data shows only the resulting lengths (multiples of 1 MiB), from which the constants cannot be recovered. Re-read on 2026-10-05 (revision). |
 | Q17 | How the client loads a part's 0xFFFF0005 record: stamp, length, compression, and what happens when the record is absent or unusable | No archive in the install has an absent, short, compressed or wrongly stamped membership record, and producing one would mean writing to the install. Asked on 2026-10-06 (answer to the implementer notes of [§14](#s14)). |
 | Q18 | When and how the client reads the version-112 free-space table, and what it checks | Every table in the install is consistent, and the client reads it only on the write side, which cannot be run against the install. Asked on 2026-10-06 (answer to the implementer notes of [§14](#s14)). |
+| Q19 | The exact file name of an archive set's overlay | No overlay exists in the install, and making the client create one would mean letting it write next to the archives. Asked on 2026-10-07 (OPEN of [§2.5](#s2-5)). |
+| Q20 | Which datpack (container and game-data) versions the game client expects when it opens each archive family, and how the comparison with the file's values decides | The log (M3) shows the expected values of one run but not where they come from or whether another configuration changes them; the data shows only the stamped values. Asked on 2026-10-07 (OPEN of [§3.7](#s3-7)); the comparison rule re-read on 2026-10-07 after the review of that date. |
+| Q21 | The configured maximum archive length, and the length of a newly created archive | Write-side settings that leave no trace in the data except the final lengths. Asked on 2026-10-07 (OPEN of [§4.7](#s4-7)). |
+| Q22 | Whether any code of the game client reads 0xFFFF0004, the u64 values of the iteration list, or the product identifier 0xFFFF0008; how the iteration list's trailing part depends on the record's `stamp` | The records' contents are opaque numbers; the data cannot show whether or how they are used. Asked on 2026-10-07 (OPEN of [§7.5](#s7-5)). |
+| Q23 | Which 0x174 and 0x178 a newly created archive gets, and where a set takes them from when it creates an aux part | Every archive in the install was written by the patcher; making the game client create one would mean letting it write to the install. Asked on 2026-10-07 (review of 2026-10-07, note b). |
+| Q24 | In which directory the client looks for a set's overlay | No overlay exists in the install, and the lookup leaves no trace without one. Asked on 2026-10-07 (review of 2026-10-07, note c). |
 
 | # | Fact (section) | Sources | Mark |
 |---|---|---|---|
@@ -154,6 +161,12 @@ BIN questions:
 | P51 | File growth: *need* formula, growth by whole MiB, the full test with 8 MiB headroom, metadata exemption ([§4.7](#s4-7)) | BIN (Q16) | BIN only; C (file lengths are multiples of 1 MiB except `local_English`) |
 | P52 | Loading 0xFFFF0005: ordinary record read (a compressed copy is inflated), `stamp` must be 1, the first 24 bytes are used and further bytes ignored, a shorter record leaves the missing fields at their defaults; the open does not check whether the load worked; defaults are an all-zero identifier, index 0, count 1 ([§7.2](#s7-2)) | BIN (Q17) | BIN only (no such record in the install); C for "every membership record has `stamp` 1, 24 bytes and flag bit 0 clear" (29 of 29, 2026-10-06) |
 | P53 | Version-112 free table: read only when the writer first allocates or frees space; offset 0 with size 0 means an empty free list; the allocation header is skipped, pairs are read up to the first pair whose size is 0, and the one check is that 8 × pairs read + Σ (size − 8) equals 8 × 0x15C + 0x19C ([§4.5](#s4-5)) | BIN (Q18), OBS | BIN; C (29 of 29 tables: offset and size non-zero, the first pair with size 0 is the pair at index 0x15C and is `{0, 0}`, and the check holds; 2026-10-06) |
+| P54 | The overlay of a set is the base archive's full file name with `.ovl` appended, in the base's directory (for example `client_general.dat.ovl`) ([§2.5](#s2-5)) | BIN (Q19) | BIN only (no overlay in the install, 2026-10-07) |
+| P55 | The game client opens every archive with expected datpack versions −1 (container) and −1 (game data), so it compares neither 0x174 nor 0x178; a negative expected value disables each comparison; either failed comparison refuses the archive, and the refusal is waived when the expected container version and 0x174 are 111 and 112 in either order ([§3.7](#s3-7)) | BIN (Q20, rule re-read 2026-10-07), LOG | BIN; C (29 of 29 archives logged with expected values −1 and −1 in the run of 2026-10-04, read 2026-10-07) |
+| P56 | The game client opens its archives with a configured maximum length of 0xFFFFFFFF; an archive created by the archive library starts 1 MiB (0x100000) long, with the minimum allocation size of its kind ([§4.7](#s4-7)) | BIN (Q21), OBS | BIN; C (`cell_15` and `map_15` are exactly 1 MiB, 2026-10-05) |
+| P57 | 0xFFFF0001's trailing list exists only when the record's `stamp` is 2; the u64 of each entry is copied verbatim and not interpreted by any code found; no code of the game client reads 0xFFFF0004; 0xFFFF0008 is read and written only through the archive library's product-identifier accessors, and the open does not check it ([§7.3](#s7-3), [§7.5](#s7-5)) | BIN (Q22), OBS | BIN; C (every 0xFFFF0001 has `stamp` 2, 2026-10-05) |
+| P58 | Creation stamps 0x174 = expected container version if ≥ 1, else 111, and 0x178 = expected game data version unchanged; a set creating an aux part takes the expected versions from its overlay or first part (that archive's own 0x174 and 0x178) ([§4.7](#s4-7)) | BIN (Q23) | BIN only (no archive created by the game client in the install, 2026-10-07) |
+| P59 | The overlay is looked for in the directory the opener names for the set, or the current directory when none is named; the separate overlay-directory parameter is not used by the set-level open and is empty in the game client's call ([§2.5](#s2-5)) | BIN (Q24) | BIN only (no overlay in the install, 2026-10-07) |
 
 ---
 
@@ -267,6 +280,10 @@ them in this install. **BIN**, **C**
 
 A reader should discover aux parts both by pattern and by name, order them by the number `N`
 in the file name (not by byte-wise name order), and check the membership records as in step 3.
+A pattern match without a canonical number `N` ([§2.1](#s2-1), for example `_aux_01.datx` or
+`_aux_x.datx`) gets no place in that order: the reader does not open it as a part and reports it
+as a warning. Because the client counts it, the reader also reports, as the client's step 5 would
+see it, the part count that includes such files.
 It should report a missing part (index < count but no file present) or a count mismatch as an
 error for that set, not crash.
 
@@ -275,7 +292,9 @@ or unusable, is in [§7.2](#s7-2). Only the base's part count enters step 5. The
 compares the count fields of aux parts.
 
 Recommended severities for a reader. The rule is: **Error** when records of the set cannot be
-read; **Warn** when every file is readable but the membership metadata disagrees, even where the
+read, which includes a part that is missing and a number of parts that differs from the base's
+count (a part may then be absent, or a file the reader does not know may hold records); **Warn**
+when every file is readable and present but the membership metadata disagrees, even where the
 client would refuse the set. A read-only reader can still serve every record in that case.
 
 | Situation | Client ([§2.3](#s2-3), [§7.2](#s7-2)) | Reader severity |
@@ -328,9 +347,25 @@ same container format, with the extension `.ovl`. **BIN**
 A read-only reader may ignore an overlay but should report its presence, because the set's
 records may then be out of date.
 
-> **OPEN:** The exact overlay file name. The code appends `.ovl` to the archive's name as
-> passed to the set; that name appears to be the file name without `.dat` (giving, for
-> example, `client_general.ovl`), but this was not confirmed.
+**File name** (**BIN**, Q19, P54). The overlay's name is the base archive's **full** file name,
+extension included, with `.ovl` appended, in the same directory as the base. Examples:
+`client_general.dat.ovl`, `client_cell_14.dat.ovl`, `client_local_English.dat.ovl`. The name
+the client builds for a set is `client_` + the archive's name + `.dat` ([§2.1](#s2-1)); the aux
+parts take the same name without the `.dat` extension as the stem of `_aux_<N>.datx`, but the
+overlay keeps it. There is one overlay per set, never one per aux part. A reader looks for this
+exact name (letter case as in [§2.1](#s2-1)) when it reports an overlay. (This replaces the
+OPEN of the Accepted version, which guessed `client_general.ovl`.)
+
+**Directory** (**BIN**, Q24, P59). The client looks for the overlay in the directory that the
+opener names for the set, which is the directory of the archives themselves; when the opener names
+no directory, it uses the process's current directory. The archive library's open parameters also
+carry a separate overlay directory, but the set-level open does not use it, and the game client
+passes it empty. So for the game client the overlay sits next to the base archive.
+
+> **OPEN:** The set-level open also tries the overlay's bare file name relative to the current
+> directory when it is not found next to the archives; the conditions under which that second
+> location is used were not traced. **Reader rule:** look for the overlay only next to the base
+> archive; do not search the current directory.
 
 ---
 
@@ -618,8 +653,8 @@ so it does not replay; journalled opens are made by other users of the same libr
 | Check | Client behaviour | Recommended reader behaviour | Mark |
 |---|---|---|---|
 | Magic at 0x140 | refuses | Error | BIN, C |
-| 0x174 version | 111 and 112 are interchangeable: a version-111 archive is read with the chained layout everywhere ([§4.3](#s4-3)); opened for writing in a particular mode it is converted to 112 in place. Any other value that differs from what the opener expects is refused. | Accept 112; accept 111 with the chained layout; Warn and refuse other values | BIN, C (112) |
-| 0x178 game data version | compared with the value the opener expects, unless the opener disables the check; a mismatch is refused | Warn if not 3 (portal, language) or 0 (region) | BIN, C |
+| 0x174 version | 111 and 112 are interchangeable: a version-111 archive is read with the chained layout everywhere ([§4.3](#s4-3)); opened for writing in a particular mode it is converted to 112 in place. Compared with the opener's expected container version, when that is not negative: a difference refuses the archive, unless the expected value and 0x174 are 111 and 112 in either order (see "Expected datpack versions" below). Whether a value other than 111 or 112 is accepted when no comparison is made was not shown (OPEN below). | Accept 112; accept 111 with the chained layout; Warn and refuse other values | BIN, C (112) |
+| 0x178 game data version | compared with the opener's expected game data version, when that is not negative and the opener does not ask to skip it; a difference refuses the archive, unless the expected container version and 0x174 are 111 and 112 in either order, which waives the refusal even though the game data versions differ | Warn if not 3 (portal, language) or 0 (region) | BIN, C |
 | Resource identifier | the older encoding is converted first ([§3.4.1](#s3-4-1)); then type and kind must be a pair from the client's table; one variant per family; the check is skipped only on request | Convert the older encoding (Info); Warn on a mismatch with the file name | BIN, C |
 | 0x154 = 0xFFFFFFFF (version 112) | refuses (free table invalid) | Warn; read records normally; skip free-space checks | BIN |
 | 0x16C ≠ 0 | journalled writable opens replay ([§3.6](#s3-6)); other opens ignore it | Error by default ([§3.6](#s3-6)) | BIN |
@@ -638,9 +673,46 @@ The game client opens its archives in the read-write mode unless it is configure
 read-only. A reader of ours opens read-only and allows sharing. It must expect the open to fail
 while the official client runs, and report that clearly.
 
-> **OPEN:** The exact game data versions the client expects for each family when it checks
-> 0x178. The observed values (3 portal and language, 0 region) are accepted by the client, so a
-> reader that warns on other values loses nothing.
+**Expected datpack versions** (**BIN**, Q20, P55; **C** by LOG). The opener passes an expected
+container version (compared with 0x174), an expected game data version (compared with 0x178) and
+a request to skip the game-data comparison. A negative expected value disables that comparison.
+The rule, re-read on 2026-10-07:
+
+1. **Container comparison fails** when the expected container version is not negative and differs
+   from 0x174.
+2. **Game-data comparison fails** when the expected game data version is not negative, the opener
+   has not asked to skip it, and it differs from 0x178.
+3. If **either** comparison fails, the archive is refused. Either one alone is enough.
+4. **Waiver:** the refusal of step 3 does not happen when the expected container version and 0x174
+   are 111 and 112 in either order (expected 111 with 0x174 = 112, or expected 112 with
+   0x174 = 111). The waiver applies even when the game-data comparison failed. It does not apply
+   when the two container versions are equal: expected 112 with 0x174 = 112 and a different 0x178
+   is refused.
+
+Worked cases (synthetic): expected (112, 3) against a file with (112, 0) is refused; expected
+(111, 3) against (112, 0) is accepted; expected (−1, 3) against (112, 0) is refused; expected
+(−1, −1) against any pair is not compared.
+
+- The game client's archive initialisation passes −1 for both values for every archive family
+  (portal, region, language). The client's own log of its run of 2026-10-04 reports the expected
+  values −1 and −1 for each of the 29 archives it opened (read 2026-10-07). So the game client
+  compares neither 0x174 nor 0x178 with an expected value when it opens an archive.
+
+- The client keeps separate expected-value slots per family (the portal and language families
+  share one container-version slot, the region family has its own; the portal and region families
+  share one game-data slot, the language family has its own). All of them start at −1. A code path
+  that stores other values into them exists, but the game client's run does not take it (the log
+  shows −1), and it was not traced further.
+- 0x174 still selects how the free space is kept (version 111 chain, version 112 table,
+  [§4.5](#s4-5)); that is a layout decision, not a version check.
+
+> **OPEN:** Whether the client opens an archive whose 0x174 is neither 111 nor 112 when no
+> expected container version is given (the game client's case) was not shown. **Reader rule:**
+> refuse such an archive with a clear message (the 0x174 row of the table above), whatever the client does;
+> no archive in the install has such a value (29 of 29 hold 112, 2026-10-05).
+
+Reader rule (unchanged): accept 112 and 111; for 0x178, warn when the value is not 3 (portal and
+language) or 0 (region). The warning reflects what the install holds, not a client refusal.
 
 ---
 
@@ -914,10 +986,50 @@ These rules explain archive lengths and aux parts. A reader needs none of them. 
 - A set writes a record to the first part, in index order, that accepts it. If no part
   accepts it, the set creates the next aux part (`_aux_<count>.datx`) and writes there.
 
-> **OPEN:** The configured maximum length. It is held as a u32. Because the full test sums
-> modulo 2³², a configured value of 0 acts like 2³² there, and 0 also disables the check on
-> growth. The largest observed archive, 0xFF900000, fits a maximum of 0 (or 2³²) with the
-> 8 MiB headroom, but the value the game client configures was not read.
+**Configured maximum length** (**BIN**, Q21, P56). The maximum is a u32 set per archive by the
+opener. A value of 0 acts like 2³² in the full test (the sum is taken modulo 2³²) and disables the
+check on growth.
+
+- The game client's archive initialisation sets the maximum to **0xFFFFFFFF** for every archive
+  it opens.
+- Worked consequence (synthetic numbers): with the maximum 0xFFFFFFFF, an archive of length
+  0xFF800000 with 1,000,000 free bytes gives 0xFFFFFFFF − 0xFF800000 + 1,000,000 = 9,388,607;
+  minus 8 MiB (8,388,608) that leaves 999,999, so the archive is full for any *need* above
+  999,999 bytes. The same archive with no free bytes sums to 8,388,607, below 8 MiB: the
+  subtraction wraps and the test does not report it as full. An archive of length 0xFF900000
+  wraps the same way whenever its free bytes are at most 0x100000.
+- The observed archives (largest 0xFF900000) were written by the launcher's patcher, not by the
+  game client. The patcher's own maximum was not read: the patcher is excluded from M4
+  (decision 0011). So the observed lengths are not evidence for the game client's value.
+
+**New archives** (**BIN**, Q21, P56). When the archive library creates an archive, the file
+starts **1 MiB** (0x100000) long, its minimum allocation size (0x144) is the default of its kind
+([§3.4](#s3-4)), and its first free extent starts at 0x400 ([§4](#s4)). The two metadata-only
+placeholders `cell_15` and `map_15` are exactly 1 MiB long (**C**, 2026-10-05), as such a
+newly created archive would be.
+
+**Versions stamped at creation** (**BIN**, Q23, P58). The creating opener's expected datpack
+versions ([§3.7](#s3-7)) decide the new archive's versions:
+
+- 0x174 = the expected container version when it is 1 or more, otherwise 111. The new archive
+  then keeps its free space as a version-111 chain or a version-112 table to match
+  ([§4.5](#s4-5)).
+- 0x178 = the expected game data version as given, with no substitution.
+- 0x190/0x194/0x198 = 104/32/8 ([§3.3](#s3-3)).
+
+When a set creates its next aux part (the last bullet of the list at the start of this section), it does not use the
+values the set was opened with. It takes the expected versions from the set's overlay when one is
+in use, otherwise from its first part, and those are that archive's own 0x174 and 0x178. So a new
+aux part carries the same 0x174 and 0x178 as its base: 112 and 3 for the sets of the observed
+install. Only a set with no part at all would fall back to −1 and −1, and so to 0x174 = 111.
+
+A stand-alone archive created with the game client's own expected values (−1 and −1,
+[§3.7](#s3-7)) would get 0x174 = 111 and 0x178 = 0xFFFFFFFF.
+
+> **OPEN:** Whether the game client ever creates an archive other than an aux part was not
+> traced. Every archive in the install was written by the patcher, and all hold 0x174 = 112.
+> **Reader rule:** treat 0x178 = 0xFFFFFFFF like any other value outside 3 and 0 (Warn,
+> [§3.7](#s3-7)), and accept 0x174 = 111 with the chained layout.
 
 ---
 
@@ -1238,6 +1350,12 @@ archive.
 The layout and the run-list decoder are specified in [`install-layout.md`](install-layout.md)
 §9.2.1 and §9.3. Additional facts (**BIN**, **C**):
 - The trailing list holds `K` entries of a u32 iteration and a **u64** value.
+- The trailing part (`K` and its entries) is present only when the record's `stamp` is 2. With
+  `stamp` 1 the record ends after the run list. The client refuses a `stamp` of 3 or more (the
+  load fails, and the game client's open then fails, [§3.7](#s3-7)). Every 0xFFFF0001 in the
+  install has `stamp` 2. **BIN** (Q22, P57), **C**
+- The client copies each entry's u64 verbatim (8 bytes, no conversion) and no code of the game
+  client that was found interprets it. **BIN** (Q22)
 - Only the base archive's list describes the set: entry iterations in aux parts are members of
   the base's list ([§5.2](#s5-2)). Aux parts have empty lists (N = 0) or lists that do not
   cover their own entries (`highres_aux_3`, `mesh_aux_1`).
@@ -1262,8 +1380,25 @@ missing. For a set it uses the record of the first part, in index order, that ha
 A GUID in the usual little-endian GUID serialisation: u32, u16, u16, then 8 bytes. The value is
 identical in all 22 base archives. **C**, **BIN** (layout)
 
-> **OPEN:** The meaning of 0xFFFF0004 (u32 N, i32 −N, u32 1), which the client's archive
-> library never reads, and of the u64 values in the iteration list's trailing entries.
+The archive library has a "get product identifier" and a "set product identifier" operation for
+this record; the setter writes it with `stamp` 1. Opening an archive does not read or compare it,
+and no caller of the getter that compares it with anything was found. A reader treats it as an
+opaque product identifier. **BIN** (Q22, P57)
+
+**What is still unknown** (Q22, read 2026-10-07):
+
+- 0xFFFF0004: the 32-bit value 0xFFFF0004 appears only in the archive library's list of reserved
+  DIDs; no code of the game client loads or writes a record by that DID. The archives are
+  written by the launcher's patcher, which decision 0011 excludes from M4, so whatever uses the
+  record was not examined.
+- The u64 of the iteration list's trailing entries: copied verbatim by the client ([§7.3](#s7-3)).
+  Observed values look uniformly random (all 64 bits used, no shared prefix between consecutive
+  iterations; 2026-10-07, the 66 trailing entries of six archives).
+
+> **OPEN:** The meaning of 0xFFFF0004 (u32 N, i32 −N, u32 1) and of the iteration list's u64
+> values. Both are written by the patcher, so M4 on the game client cannot answer them; the
+> patcher is excluded by decision 0011. Readers must not depend on either. Needs a maintainer
+> decision to extend M4 to the patcher, or a published source.
 
 ---
 
@@ -1437,7 +1572,7 @@ request.
 | I-21 | Free table header `{0,0}`; 16 + 8·count ≤ 0x1A0; the first pair with size 0 is the pair at index count and is `{0,0}` ([§4.5](#s4-5)); pairs in bounds, sorted by offset; each size ≥ 0x144 | Warn; skipped when 0x154 = 0xFFFFFFFF; not applicable (Info) when 0x154 = 0 and 0x1A0 = 0 (no table) |
 | I-22 | 0x19C = Σ (free size − 8); with no table (0x154 = 0 and 0x1A0 = 0), 0x15C = 0 and 0x19C = 0 | Warn; skipped when 0x154 = 0xFFFFFFFF |
 | I-23 | Compressed record: length ≥ 16, inflated length = prefix, stream ends within `length` with a valid trailer, no trailing bytes | Error for that record (trailing bytes: Warn) |
-| I-24 | 0xFFFF0005 exists; its part index matches the file name (0 for `.dat`, N for `_aux_N`) and index < count; all parts share the identifier, except that the base may carry an all-zero identifier while the aux parts share one non-zero identifier ([§2.3](#s2-3) step 3; such a set is valid and gives no warning); an aux part with an all-zero identifier is a warning A record that is absent, has `stamp` ≠ 1 or is shorter than 24 bytes counts as absent; a compressed or longer record is valid ([§7.2](#s7-2)) | Warn |
+| I-24 | 0xFFFF0005 exists; its part index matches the file name (0 for `.dat`, N for `_aux_N`) and index < count; all parts share the identifier, except that the base may carry an all-zero identifier while the aux parts share one non-zero identifier ([§2.3](#s2-3) step 3; such a set is valid and gives no warning); an aux part with an all-zero identifier is a warning. A record that is absent, has `stamp` ≠ 1 or is shorter than 24 bytes counts as absent; a compressed or longer record is valid ([§7.2](#s7-2)) | Warn |
 | I-25 | Across the archives the client opens together (every portal and region set plus the **one** selected language set, [§2.4](#s2-4)), no DID (< 0xFFFF0000) appears in two archives. Archives of other languages are validated on their own and are not part of this check | Warn |
 | I-26 | 0x16C = 0 (no pending journal) | Error by default ([§3.6](#s3-6)) |
 | I-27 | 0x154 ≠ 0xFFFFFFFF (free table valid) | Warn |
@@ -1569,6 +1704,8 @@ The list exists for reviewers.
 | 2026-10-05 (revision after review) | Answers the review of 2026-10-05. §6.1: the writer's 80 % rule measures the zlib stream (*Z* = `length` − 4), not the stored length; census re-run (0 failures, 17 through the 512,000-byte clause, 5,758 failures if the prefix were counted); worked example added. §5.5: the "no DID" value is 0 (new BIN question Q12, P47); §5.1 notes that new nodes zero their slots; new invariant I-33. §3.4.1 (new): the older identifier encoding, its conversion and a reader rule (Q13, P48), replacing the former note. §2.3 rewritten after re-reading the set-opening code (Q14, P49): discovery by pattern, byte-wise name order, the exact identifier rules, the part-count test (inequality, not only "fewer"), and deletion of the set's files when an aux part fails in the normal open. §3.7 and §9: access and sharing per mode (Q15, P50). §4.7: provenance (Q16, P51), the modular arithmetic of the full test, the "no maximum" case and a worked example. I-17 now says value 1 gives no warning. §8.2: table heading and cells name only ranges that hold records, with the occurring high bytes of multi-byte ranges; 0x13, 0x1B and 0x1C (no records, and no registration was found for them) removed from the kind-3 row; absent registered ranges listed. The client-table name of kind 0x0D removed (§2.4, §3.4). Q8 extended to the writer policy. |
 | 2026-10-06 | Answers the re-review of 2026-10-05. §7.2: the set-identifier row no longer says all zero is "allowed only for a one-part set"; it now agrees with §2.3 (all zero allowed on the base of a set of any size, never on an aux part). §2.3 step 3: re-checked against the client (Q14) and the consequence stated (the base's identifier is adopted the same way; with an all-zero base the first aux part's identifier is adopted and its index is not checked); observation added that no archive has an all-zero identifier. I-24: the "all parts share the identifier" clause now exempts an all-zero base and says an all-zero aux identifier warns. P49 updated. |
 | 2026-10-06 (second revision) | Answers the re-review of 2026-10-06. Provenance: removed the note "identifier rules re-checked on 2026-10-06" from BIN questions Q15 and Q16, where it had been added by mistake (it belongs to Q14 alone). Answers the seven implementer notes of [§14](#s14) (audit of 2026-10-06) with two new BIN questions, both read on 2026-10-06 under decision 0011 (address ranges of the archive library only): Q17, how a part's 0xFFFF0005 is loaded (P52), and Q18, how the free table is loaded (P53). New text: §2.1 (names the client opens without the magic are errors; the aux pattern counts any match), §2.3 (aux counts are never compared; reader severity table), §4.5 (the client reads the table only on the write side; offset 0 with size 0 means no table; pairs read up to the first zero size; the sum test), §7.2 (load rules and defaults of 0xFFFF0005). Invariants changed: I-21 (terminator position, no-table case), I-22 (no-table case), I-24 (what counts as absent), I-25 (which archives it covers). Probe of 29 archives on 2026-10-06: every free table passes the client's test with its first zero-size pair at index 0x15C, and every 0xFFFF0005 has `stamp` 1, 24 bytes and flag bit 0 clear. |
+| 2026-10-07 | Revision (status Revised, awaits review). Closes three of the four OPEN items with method M4 (BIN questions Q19–Q22, client build 4906.0071.1794.4035, archive library and archive initialisation only) and the client's own log (new source tag LOG). **§2.5:** the overlay file name is the base's full file name plus `.ovl` (`client_general.dat.ovl`), not `client_general.ovl` (P54). **§3.7:** the game client opens every archive with expected datpack versions −1 and −1, so it compares neither 0x174 nor 0x178 (P55, confirmed by the log for all 29 archives); reader rule unchanged. **§4.7:** the game client's configured maximum length is 0xFFFFFFFF, with a worked example of the modular full test; a newly created archive starts 1 MiB long (P56). **§7.3:** the trailing list exists only for `stamp` 2, `stamp` ≥ 3 is refused, the u64 is copied verbatim (P57). **§7.5:** the product-identifier accessors and the absence of any reader of 0xFFFF0004 in the game client (P57); the OPEN now names only what the patcher holds. Non-blocking notes of the re-review of 2026-10-06 applied: I-24 punctuation; the §2.3 severity rule now covers "number of parts ≠ base count"; §2.3 says how a reader orders (does not order) a non-canonical aux match. **No implementer action** is required by the closed OPENs (reader rules unchanged); `crates/dat` may name the overlay it reports by the §2.5 rule. |
+| 2026-10-07 (second revision) | Answers the review of 2026-10-07 (status still Revised, awaits re-review). BIN reads in the repair session of 2026-10-07 (client build 4906.0071.1794.4035, archive library only): the Q20 comparison re-read, and new questions Q23 and Q24. **Blocking issue, §3.7:** "Expected datpack versions" now states the rule as numbered steps: either comparison alone refuses, and the refusal is waived when the expected container version and 0x174 are 111 and 112 in either order, even if the game-data comparison failed; worked cases added. The 0x174 and 0x178 rows of the §3.7 table carry the same rule and waiver (P55 updated). **Note a:** "any value is accepted at open" replaced by "compares neither … with an expected value"; new OPEN with a reader rule for a 0x174 other than 111 or 112. **Note b, §4.7:** new paragraph "Versions stamped at creation" (P58): 0x174 = expected container version if ≥ 1, else 111; 0x178 = expected game data version unchanged; a set creating an aux part takes the expected versions from its overlay or first part, so the new part matches its base (112/3 here); new OPEN, with a reader rule, on whether the game client ever creates a stand-alone archive. **Note c, §2.5:** new paragraph "Directory" (P59): the overlay is looked for in the set's directory, or the current directory when none is named; new OPEN, with a reader rule, on a second lookup in the current directory. **Implementer action:** check `crates/dat` against the reader rules of the new OPENs in §2.5, §3.7 and §4.7; the earlier reader rules are unchanged. |
 
 ---
 

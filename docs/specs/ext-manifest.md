@@ -4,10 +4,10 @@
 
 | Field | Value |
 |---|---|
-| Status | **Review** |
+| Status | **Accepted** (2026-10-07) |
 | Last updated | 2026-10-07 |
 | Author role | Design (clean room). Everything here is **Tessera's own design**, written from [decision 0017](../decisions/0017-extended-scripting.md) and Tessera's own specs. It describes no other program, and no dirty-room material, disassembly or third-party source was read to write it |
-| Reviewer | Independent clean-room review, 2026-10-07: **changes requested** (consistency with `ext-threat-model.md`, `ext-api-1a.md`, `ext-api-1b.md` and D17; prompt pointer-entry wording; hot-reload declaration set; re-ask table composition; grant-store I/O thread; `keymap-ext.toml` location; escape-catalogue IDs; and smaller items). **Revision 2** (the same day) answers every returned issue and aligns this spec with TM revision 2 (change log, §16). **Re-review of revision 2, 2026-10-07: changes requested**, status stays Review. Every issue of the first review is resolved and the content-hash vectors of §5.2 reproduce. Still open: (1) the store open and wipe (§8.8) and the log paths (§3.1) state no no-follow or entry-kind rule for `s_<id>/` and its entries, and do not name the temporary files, so TM invariant 15 is not concrete and a wipe through a linked store directory is not excluded; (2) `test` (§11.4) does not say how grants and dialogs behave at loads after the first (reloads, full reloads, `manager` loads), there is no trace event for a dialog, and nothing seeds a grant store, so the ST parts of TM X62, X90 and X92 cannot be built; (3) `no_file_outside` (§11.8) omits the settings crate's persistent lock file, and "the settings crate's lock file" (§8.5) is ambiguous; (4) invariants 9 and 13 contradict the re-read of valid hand-edited records (§8.5, TM §4.3 assumption 3), and a re-read that narrows or invalidates a loaded script's record is not said to suspend it (TM §8.23); plus smaller items (`/ext:reload` with developer mode off, autoload order for records outside `order`, the store size for the content notice, a phase-B load waiting on its write at a switch, `escape` results for mixed ST/CI tests, the O-11 list, the `dump-api` spelling against D17 §10, the L9 citation in §10.3). **Revision 3** (the same day) answers every point of this re-review and aligns this spec with TM revision 3: the store and log no-follow and entry-kind rules with a named temporary-file pattern (§3.6, §8.8, TM §8.8, X94); the harness's dialog policy, `reply` and `grants` walk events, `--grants`, a `dialog` trace event and expectation (§11.4–§11.6); the named lock and temporary files (§8.5, §11.8); the grant-store re-read as a revocation route and invariants 9 and 13 restated (§8.5, TM §8.23); the smaller items (change log, §16). Status stays Review. **Re-review of revision 3, 2026-10-07: changes requested**, status stays Review. Every point of the re-review of revision 2 is answered. §3.6 and §8.8 match TM §8.8 items 1–5, §8.5 and §8.4 match TM §8.23, §9.8 matches TM §8.24 and EA1b §8.1, §10.3–§10.4 match TM §7.4 and §8.21, and §11.4–§11.8 give X62, X91, X92 and X94 their ST routes. The §5.2 vectors reproduce again. Still open: (1) **security, liveness:** §3.4 step 3 (the snapshot walk, also used by `check`) checks each entry's kind only after opening it, and states no non-blocking open, so a FIFO in an unpacked folder (TM X54) blocks an asset worker on its open. The same holds for the log file's write open in §3.6 (`O_NOFOLLOW | O_APPEND`). Fix: open non-blocking, or classify first with `fstatat(…, AT_SYMLINK_NOFOLLOW)`, for both; TM X54's "Fails if" should name a blocked worker; (2) **§8.5:** a re-read replaces the grant table and re-applies only the changes submitted after the read was queued. So session-only decisions are lost. In a newer-document session (§8.6), every manager open re-reads an all-ignored document, which empties the table and, by the re-read rule, suspends every loaded script. A manager revocation whose write failed ("keeps the narrower state for the session") is undone by the next re-read, so a grant the user removed returns without a dialog. Fix: keep the session-only and failed-write changes as an overlay that every re-read result is narrowed by; (3) **testability:** `test` (§11.4) applies `--kind` to every FOLDER, ties developer mode to `--kind developer`, and does not say what starts the first load of each FOLDER (a user-started load at `Open`? in which frame? in command-line order?), nor how that load interacts with the autoload of a `--grants` record that has `autoload = true`. So D17 exit criterion 5's second-copy case (one id in both kinds) and its `/ext:reload` of an installed script with developer mode on cannot be expressed. That leaves the X90 ST part unbuildable, and "turning developer mode off unloads developer scripts" (§9.8) untestable; (4) **§8.5/§8.6 writes:** "replaces … exactly those records, keeping every other record" does not say what a write for a (kind, id) does to duplicate or invalid records of the same key, or when "the first write that would drop them" (§8.6) happens. Nor does it say what an Allow does when the document already holds 256 records or 256 `order` entries (TM L79). Writing a 257th would make the next start-up ignore records; (5) a manager revocation, Reset, Remove or local-only switch, and a narrowing re-read, during a load in progress (phases B–D, the apartment not yet loaded) are unspecified. §9.7 and §8.5 cover only loaded or suspended apartments, so a required grant revoked in phase C or D can still let the script finish loading without it, against D17 §2 "never loads degraded"; (6) **TM §0.1 rule 5 / O-11:** §4's preamble claims that every count, size and range has a TM L-number. Several do not: settings `min`/`max` ±1e15, setting key 1–32 bytes, capability names 1–32 bytes, module-name segments and version digits, the action and context name length, the walk file's `[[entity]] name` 48 cp, the grant-record integer bound 2^53, and the `--grants` copy bound. Register them in TM (or have TM exempt grammar lengths) and cite the rows; (7) **notices:** §9.8's "No loaded extended script '<id>'" differs from EA1b §8.2's "⟨id⟩ is not loaded". §10.5 maps every `/ext:` line outside `Open` to "No loaded extended script", which includes `/ext:list` and `/ext:help`. D17 §3 says those open the script manager, and §10.3 makes the manager available read-only in `Off`. It also includes `/ext:reload` with developer mode off, which §9.8 answers "Developer mode is off". Plus smaller items: §8.8 step 5's "created exclusively" marker when a plain marker is already present; §3.6 "never removes a log entry that is not a plain file" against a rotation that renames over a non-plain `s_<id>.1.log`; and TM §11's intro, which says `escape` reports unrun parts as `CLIENT`, where §11.8 also uses `ELSEWHERE` (a TM wording fix). A follow-up review of revision 3 the same day added: natives must check the apartment's effective set, not the grant table; one id loaded **or loading** across both kinds; overlapping suggested defaults (KM §7.2); Remove of a loaded orphan; developer records shown as orphans while developer mode is off; the store-root scan for orphan totals; grant-store reads, backups, lock and I/O errors as hostile input; settings values checked at a re-read; the `ui` dialog text naming the chord and the manager; `input` for `[[actions]]` and `[[contexts]]`; `--json` escaping and non-UTF-8 names; the tool root's removal; harness inputs and settings; §14.1's probe and file count; and smaller items. **Revision 4** (the same day) answers every point of the re-review of revision 3 and of that follow-up, aligned with TM revision 4 (§8.7 store-root scan and L92, §8.8 classify-before-open and Tessera's own files, §8.16 overlap rule, §8.23 effective set, session overlay, loads in progress and one id loaded or loading, §0.1 rule 6); change log, §16. Status stays Review. **Re-review of revision 4, 2026-10-07 (independent clean-room review against D17, TM revision 4, EA1a and EA1b revision 4): changes requested**, status stays Review. Every point of the re-review of revision 3 and of its follow-up is answered: classify-before-open and non-blocking opens (§3.4, §3.6) match TM §8.8; §7.4, §7.5 and §10.4 match TM §8.21, §8.23 and L26; the store-root scan (§8.7) matches TM §8.7 and L92; §4.11 and M17 match TM §8.16 and L61; every cited L-number (L5–L11, L23–L26, L36–L41, L47, L60, L61, L64, L65, L67, L79, L80, L86–L89, L92) matches TM §10 and its repeated figures; the §5.2 vectors reproduce again. Still open: (1) **§8.5, the session overlay (contradicts TM §8.23).** A completed write is applied as a read result with P the previous document view, so the write's **own** records count as "narrowings by the document" and are moved into `denied` in any **later** overlay entry of that key. A manager revocation of `b` followed by a manager widen (or a "first enable again" Allow) of `b` before the revocation's write completes loses the user's Allow: the grant table denies `b`, a load deciding on it is cancelled by §7.5, and if the second write fails the Allow is gone for the session. Reset or Remove followed by a first-enable Allow of the same key does the same to the new record (and suspends the newly loaded script, §8.5 step 4). TM §8.23 says the overlay's widenings (an Allow this session) apply over every re-read. Fix: when applying a write's completion, exclude the keys (or the records) the write carried from step 2, so only changes by another process narrow; add the case to X91's ST part (walk: `manager` `revoke` and `widen` in one frame with `--latency` 2, `[[expect]] granted`). (2) **TM §13 (EM §11.1, §11.5, §11.8 row) and EA1a OPEN-12(e): no record-flood hook.** TM §7.5 and X19's ST part feed spawn and despawn records through the harness's record-flood hook because L86 caps walk entities at 4,096; §11.8's list of harness-only hooks has none, so X19's ST part and EA1a's ST tests 36 and 37 cannot be built. Define it (a walk key or a harness option: records added to steps 2–5's list, how many per frame, which frames). (3) **EA1a OPEN-12(d), unanswered:** §11.5's `[world] start` gives `heading` in "degrees" without its convention; EA1a §2.10 is the one home of angle forms and makes no direction argument a heading. State compass bearing (0 = north, clockwise) or replace it with `yaw` in radians. (4) **§8.5 step 2 against TM §8.23's last sentences.** EM narrows every record when a re-read finds the document unreadable or damaged as a whole; TM says only a re-read of a document Tessera reads can narrow, and that one it does not understand as a whole changes nothing. Either rule is defensible (EM's is the fail-closed one), but the two must say the same; note that a transient `EACCES`/`EIO` (on Windows a sharing violation by an editor or scanner) at a script-manager open would then suspend every loaded script and turn every session decision into `denied` for the rest of the session. Settle it in TM and EM together. (5) **Reset and Remove timing.** §7.5 applies every narrowing in one frame, while §8.7 and §9.6 remove the record only after the store deletion completes; say in which frame the "no record" decision enters the overlay, that its write is submitted only after the deletion, and what a user-started load or autoload of that (kind, id) does in between (refused, or decided under the old record and then cancelled by §7.5). (6) **Stale O-12:** EA1b revision 4 §8.2 already uses "No loaded extended script '⟨id⟩'"; close O-12 and correct §9.8's sentence. Smaller: (a) `/ext:<id>` with no command word outside `Open` gets the notice in §10.5, but EA1a §6.2 says it opens the script manager as `/ext:help <id>` does, which §10.5 allows in every state; align. (b) The trace's `grants` event (§11.6) has no `what` for settings, `autoload` or `order` changes, a failed load write taken back out of the overlay, or the overlay narrowing a completed write causes, though each changes the grant table; list them or say they emit no event. (c) §4.1's datetime and non-finite-number refusals have no finding code in §11.3 (M03?). |
+| Reviewer | Independent clean-room review, 2026-10-07: **changes requested** (consistency with `ext-threat-model.md`, `ext-api-1a.md`, `ext-api-1b.md` and D17; prompt pointer-entry wording; hot-reload declaration set; re-ask table composition; grant-store I/O thread; `keymap-ext.toml` location; escape-catalogue IDs; and smaller items). **Revision 2** (the same day) answers every returned issue and aligns this spec with TM revision 2 (change log, §16). **Re-review of revision 2, 2026-10-07: changes requested**, status stays Review. Every issue of the first review is resolved and the content-hash vectors of §5.2 reproduce. Still open: (1) the store open and wipe (§8.8) and the log paths (§3.1) state no no-follow or entry-kind rule for `s_<id>/` and its entries, and do not name the temporary files, so TM invariant 15 is not concrete and a wipe through a linked store directory is not excluded; (2) `test` (§11.4) does not say how grants and dialogs behave at loads after the first (reloads, full reloads, `manager` loads), there is no trace event for a dialog, and nothing seeds a grant store, so the ST parts of TM X62, X90 and X92 cannot be built; (3) `no_file_outside` (§11.8) omits the settings crate's persistent lock file, and "the settings crate's lock file" (§8.5) is ambiguous; (4) invariants 9 and 13 contradict the re-read of valid hand-edited records (§8.5, TM §4.3 assumption 3), and a re-read that narrows or invalidates a loaded script's record is not said to suspend it (TM §8.23); plus smaller items (`/ext:reload` with developer mode off, autoload order for records outside `order`, the store size for the content notice, a phase-B load waiting on its write at a switch, `escape` results for mixed ST/CI tests, the O-11 list, the `dump-api` spelling against D17 §10, the L9 citation in §10.3). **Revision 3** (the same day) answers every point of this re-review and aligns this spec with TM revision 3: the store and log no-follow and entry-kind rules with a named temporary-file pattern (§3.6, §8.8, TM §8.8, X94); the harness's dialog policy, `reply` and `grants` walk events, `--grants`, a `dialog` trace event and expectation (§11.4–§11.6); the named lock and temporary files (§8.5, §11.8); the grant-store re-read as a revocation route and invariants 9 and 13 restated (§8.5, TM §8.23); the smaller items (change log, §16). Status stays Review. **Re-review of revision 3, 2026-10-07: changes requested**, status stays Review. Every point of the re-review of revision 2 is answered. §3.6 and §8.8 match TM §8.8 items 1–5, §8.5 and §8.4 match TM §8.23, §9.8 matches TM §8.24 and EA1b §8.1, §10.3–§10.4 match TM §7.4 and §8.21, and §11.4–§11.8 give X62, X91, X92 and X94 their ST routes. The §5.2 vectors reproduce again. Still open: (1) **security, liveness:** §3.4 step 3 (the snapshot walk, also used by `check`) checks each entry's kind only after opening it, and states no non-blocking open, so a FIFO in an unpacked folder (TM X54) blocks an asset worker on its open. The same holds for the log file's write open in §3.6 (`O_NOFOLLOW | O_APPEND`). Fix: open non-blocking, or classify first with `fstatat(…, AT_SYMLINK_NOFOLLOW)`, for both; TM X54's "Fails if" should name a blocked worker; (2) **§8.5:** a re-read replaces the grant table and re-applies only the changes submitted after the read was queued. So session-only decisions are lost. In a newer-document session (§8.6), every manager open re-reads an all-ignored document, which empties the table and, by the re-read rule, suspends every loaded script. A manager revocation whose write failed ("keeps the narrower state for the session") is undone by the next re-read, so a grant the user removed returns without a dialog. Fix: keep the session-only and failed-write changes as an overlay that every re-read result is narrowed by; (3) **testability:** `test` (§11.4) applies `--kind` to every FOLDER, ties developer mode to `--kind developer`, and does not say what starts the first load of each FOLDER (a user-started load at `Open`? in which frame? in command-line order?), nor how that load interacts with the autoload of a `--grants` record that has `autoload = true`. So D17 exit criterion 5's second-copy case (one id in both kinds) and its `/ext:reload` of an installed script with developer mode on cannot be expressed. That leaves the X90 ST part unbuildable, and "turning developer mode off unloads developer scripts" (§9.8) untestable; (4) **§8.5/§8.6 writes:** "replaces … exactly those records, keeping every other record" does not say what a write for a (kind, id) does to duplicate or invalid records of the same key, or when "the first write that would drop them" (§8.6) happens. Nor does it say what an Allow does when the document already holds 256 records or 256 `order` entries (TM L79). Writing a 257th would make the next start-up ignore records; (5) a manager revocation, Reset, Remove or local-only switch, and a narrowing re-read, during a load in progress (phases B–D, the apartment not yet loaded) are unspecified. §9.7 and §8.5 cover only loaded or suspended apartments, so a required grant revoked in phase C or D can still let the script finish loading without it, against D17 §2 "never loads degraded"; (6) **TM §0.1 rule 5 / O-11:** §4's preamble claims that every count, size and range has a TM L-number. Several do not: settings `min`/`max` ±1e15, setting key 1–32 bytes, capability names 1–32 bytes, module-name segments and version digits, the action and context name length, the walk file's `[[entity]] name` 48 cp, the grant-record integer bound 2^53, and the `--grants` copy bound. Register them in TM (or have TM exempt grammar lengths) and cite the rows; (7) **notices:** §9.8's "No loaded extended script '<id>'" differs from EA1b §8.2's "⟨id⟩ is not loaded". §10.5 maps every `/ext:` line outside `Open` to "No loaded extended script", which includes `/ext:list` and `/ext:help`. D17 §3 says those open the script manager, and §10.3 makes the manager available read-only in `Off`. It also includes `/ext:reload` with developer mode off, which §9.8 answers "Developer mode is off". Plus smaller items: §8.8 step 5's "created exclusively" marker when a plain marker is already present; §3.6 "never removes a log entry that is not a plain file" against a rotation that renames over a non-plain `s_<id>.1.log`; and TM §11's intro, which says `escape` reports unrun parts as `CLIENT`, where §11.8 also uses `ELSEWHERE` (a TM wording fix). A follow-up review of revision 3 the same day added: natives must check the apartment's effective set, not the grant table; one id loaded **or loading** across both kinds; overlapping suggested defaults (KM §7.2); Remove of a loaded orphan; developer records shown as orphans while developer mode is off; the store-root scan for orphan totals; grant-store reads, backups, lock and I/O errors as hostile input; settings values checked at a re-read; the `ui` dialog text naming the chord and the manager; `input` for `[[actions]]` and `[[contexts]]`; `--json` escaping and non-UTF-8 names; the tool root's removal; harness inputs and settings; §14.1's probe and file count; and smaller items. **Revision 4** (the same day) answers every point of the re-review of revision 3 and of that follow-up, aligned with TM revision 4 (§8.7 store-root scan and L92, §8.8 classify-before-open and Tessera's own files, §8.16 overlap rule, §8.23 effective set, session overlay, loads in progress and one id loaded or loading, §0.1 rule 6); change log, §16. Status stays Review. **Re-review of revision 4, 2026-10-07 (independent clean-room review against D17, TM revision 4, EA1a and EA1b revision 4): changes requested**, status stays Review. Every point of the re-review of revision 3 and of its follow-up is answered: classify-before-open and non-blocking opens (§3.4, §3.6) match TM §8.8; §7.4, §7.5 and §10.4 match TM §8.21, §8.23 and L26; the store-root scan (§8.7) matches TM §8.7 and L92; §4.11 and M17 match TM §8.16 and L61; every cited L-number (L5–L11, L23–L26, L36–L41, L47, L60, L61, L64, L65, L67, L79, L80, L86–L89, L92) matches TM §10 and its repeated figures; the §5.2 vectors reproduce again. Still open: (1) **§8.5, the session overlay (contradicts TM §8.23).** A completed write is applied as a read result with P the previous document view, so the write's **own** records count as "narrowings by the document" and are moved into `denied` in any **later** overlay entry of that key. A manager revocation of `b` followed by a manager widen (or a "first enable again" Allow) of `b` before the revocation's write completes loses the user's Allow: the grant table denies `b`, a load deciding on it is cancelled by §7.5, and if the second write fails the Allow is gone for the session. Reset or Remove followed by a first-enable Allow of the same key does the same to the new record (and suspends the newly loaded script, §8.5 step 4). TM §8.23 says the overlay's widenings (an Allow this session) apply over every re-read. Fix: when applying a write's completion, exclude the keys (or the records) the write carried from step 2, so only changes by another process narrow; add the case to X91's ST part (walk: `manager` `revoke` and `widen` in one frame with `--latency` 2, `[[expect]] granted`). (2) **TM §13 (EM §11.1, §11.5, §11.8 row) and EA1a OPEN-12(e): no record-flood hook.** TM §7.5 and X19's ST part feed spawn and despawn records through the harness's record-flood hook because L86 caps walk entities at 4,096; §11.8's list of harness-only hooks has none, so X19's ST part and EA1a's ST tests 36 and 37 cannot be built. Define it (a walk key or a harness option: records added to steps 2–5's list, how many per frame, which frames). (3) **EA1a OPEN-12(d), unanswered:** §11.5's `[world] start` gives `heading` in "degrees" without its convention; EA1a §2.10 is the one home of angle forms and makes no direction argument a heading. State compass bearing (0 = north, clockwise) or replace it with `yaw` in radians. (4) **§8.5 step 2 against TM §8.23's last sentences.** EM narrows every record when a re-read finds the document unreadable or damaged as a whole; TM says only a re-read of a document Tessera reads can narrow, and that one it does not understand as a whole changes nothing. Either rule is defensible (EM's is the fail-closed one), but the two must say the same; note that a transient `EACCES`/`EIO` (on Windows a sharing violation by an editor or scanner) at a script-manager open would then suspend every loaded script and turn every session decision into `denied` for the rest of the session. Settle it in TM and EM together. (5) **Reset and Remove timing.** §7.5 applies every narrowing in one frame, while §8.7 and §9.6 remove the record only after the store deletion completes; say in which frame the "no record" decision enters the overlay, that its write is submitted only after the deletion, and what a user-started load or autoload of that (kind, id) does in between (refused, or decided under the old record and then cancelled by §7.5). (6) **Stale O-12:** EA1b revision 4 §8.2 already uses "No loaded extended script '⟨id⟩'"; close O-12 and correct §9.8's sentence. Smaller: (a) `/ext:<id>` with no command word outside `Open` gets the notice in §10.5, but EA1a §6.2 says it opens the script manager as `/ext:help <id>` does, which §10.5 allows in every state; align. (b) The trace's `grants` event (§11.6) has no `what` for settings, `autoload` or `order` changes, a failed load write taken back out of the overlay, or the overlay narrowing a completed write causes, though each changes the grant table; list them or say they emit no event. (c) §4.1's datetime and non-finite-number refusals have no finding code in §11.3 (M03?). **Revision 5** (the same day) answers every point of the re-review of revision 4, aligned with TM revision 5 (TM §8.23, invariant 35, L94, X91): a write's completion is applied only for the keys it did not carry, and per key the newest decision wins (§8.5, §7.5, invariant 33); only an understood re-read narrows, and an unreadable, damaged or newer one changes nothing (§8.5, §8.6, invariant 29); the frames of Reset and Remove (§8.7, §9.6, §7.5, invariant 34); the record-flood hook `[[flood]]` (§11.5, §11.8; its bounds OPEN O-13 to TM); `[world] start` takes `yaw` in radians (§11.5); O-12 closed and §9.8 corrected; `/ext:<id>` alone opens the script manager in every gate state (§10.5); the `grants` trace event's `what` values (§11.6); M03 covers datetimes and non-finite numbers (§11.3). Status stays Review. **Re-review of revision 5, 2026-10-07 (independent clean-room review against D17, TM revision 5, EA1a and EA1b revision 5, KM §6.5 and the `crates/settings` rustdoc): changes requested**, status stays Review. Every point of the re-review of revision 4 is answered: a write's completion excludes its carried keys and the newest decision wins (§8.5, §7.5, invariant 33) as TM §8.23 says; only an understood read narrows (§8.5 step 1, §8.6, invariant 29); the frames of Reset and Remove (§8.7, invariant 34); `[[flood]]` covers X19 and EA1a invariants 36 and 37 with the stated examples; `[world] start` `yaw` matches EA1a §2.10 (EA1a OPEN-12(d) and (e) may close); O-12 closed; §10.5, §11.6 and M03 fixed. Every cited L-number matches TM §10, and the §5.2 vectors and §14.5's code-point positions reproduce. Still open: (1) **§8.5 "A failed write", rollback of a load write (security; contradicts TM §8.23 "a revoked grant never returns without a dialog").** The overlay holds one entry per key, and a failed load write is "taken back out of the overlay". If that entry superseded an earlier session decision whose write had **failed** (a manager revocation, or Reset's or Remove's "no record"), removing it drops that decision too, and the grant table falls back to the document view, which still grants what the user revoked or still holds the record the user reset. Example: the disk is full; the user revokes optional `b` (write fails, kept); a load with a changed hash writes its update (fails, taken back): `b` is granted again, and once writes succeed the next load writes it back to disk, with no dialog. The same after Reset whose write failed followed by a first-enable Allow whose write fails: the old record returns although its store was erased. Fix: a failed load write restores the overlay entry it superseded (or none if there was none), so a rollback never undoes an earlier session decision; add the case to X91's ST part (a write-failure hook exists, §11.8) and to invariant 25 or 33. (2) **Developer mode turned off during a developer load (contradicts §3.1 and D17 §2, "only with developer mode on").** §9.8 unloads only **loaded** developer scripts; a developer load in phases A–D (or a user-started one waiting in `Starting`) has no rule, so it can finish and leave a developer script loaded, with its developer-mode grant decision, while developer mode is off; the harness's `developer_mode = false` event (§11.4) therefore has no defined trace either. Fix: turning developer mode off cancels every developer load in progress by §7.5's rows (a dialog closes as "Not now", store work completes, phase D gets one close item) and refuses waiting ones with "Developer mode is off"; state the same for the user's unload of a **loading** script (the unload §7.4 offers), which §7.5 does not list. Minor follow-ups: (a) O-13: TM revision 5 does not register the `[[flood]]` bounds; TM to restate L86, then close O-13; (b) invariant 21 ("never writes … outside its tool root") contradicts `--trace FILE`, `pack -o`, `dump-api -o` and `init --dir`; except the output files the user names; (c) invariant 15 and §8.5 "Before the store is opened" do not cover a load decided under an overlay entry whose write failed earlier (§9.2 step 6 writes nothing when nothing changed, so phase C opens under a decision that is not durable; harmless because the owner tag and marker are durable, but the invariant must say so or the load must write again); (d) §8.5 write step 4 replaces a key's table whole: say that a decision's record carries the replaced valid record's unknown keys and `signing_key` (§8.3, §8.4 promise both survive); (e) §8.3: say whether `format` and `version` are required (a missing one, and an empty file, damaged or understood as empty); (f) §9.1/§9.3: D17 §5.3 says every prompt button ignores input for its first 500 ms; state it for Deny and "Not now" (no pointer-entry rule needed); (g) §10.4 and invariant 18: give L11's slice-1a figures (16 apartments, 32 ungated frames, ≤ 376 deterministic frames) beside the 1b ones; (h) §9.8: state that a full reload's load (phase A, its reservation) starts only after the old close item has run (EA1b §8, TM L84), as §7.4 would otherwise refuse it; (i) §8.6 and §11.8: give the backup name exactly as the settings crate forms it (`<unix seconds>` as 12 zero-padded digits); (j) slice 3: the harness has no `reply` key or default answer for the local-only choice (§9.4: "every other optional box checked" would check both sides) and no `manager` action for the switch (TM X62's dialog part); (k) §8.5 step 2: a narrowing by the document of an overlay entry whose write is in flight leaves that write to put the hand-removed capability back on disk; submit a write of the narrowed entry or say this is accepted; (l) §8.7 and §10.3: say whether the store-root scan runs at every `Starting` or once per client run (the trace depends on it); (m) §11.5: say whether a `manager` event implies the manager's open re-read of §8.5; (n) §4.12: say which §4.4 rows apply to `text` values (surrounding white space?); (o) §8.2's example `content_hash` is the `hello` vector's (§5.2), not the note-taker's; cosmetic. **Revision 6** (the same day) answers every point of the re-review of revision 5, aligned with TM revision 6 (TM §8.23, L65, L84, L86, L92): the overlay is a per-key chain and a failed load write taken back restores the entry it superseded (§8.5, invariant 33, X91's rollback cases in §11.8); developer mode turned off and the user's unload of a loading copy cancel loads in progress by §7.5's rows and refuse waiting developer loads (§7.5, §9.8, §11.4, invariant 35); O-13 closed (TM L86); and every minor item (a)–(o) (change log, §16). Status stays Review. **Review of revision 6, 2026-10-07** (independent clean-room review against D17 §2, §3, §5.2, §5.3, §10 and the M5.5 exit criteria; TM revision 6: §0.1, §8.8, §8.23–§8.25, §10, §11, §13; EA1a revision 6 §6.2 and OPEN-12; EA1b revision 6 §4, §8.2 and its requests; and the `crates/settings` rustdoc and code for the lock, temporary-file and backup names): **accepted**, no blocking item. Every point of the re-review of revision 5 is answered: the overlay chain restores the superseded entry on a failed load write, never reaches past a non-load decision and holds at most two entries (§8.5, invariant 33), as TM §8.23 requires; developer mode turned off and the user's unload of a loading copy cancel loads by §7.5's rows and refuse waiting developer loads (§7.5, §9.8, §11.4, invariant 35), matching TM §8.23 and X90; minor items (a)–(o) are done. Every TM request to EM in TM §13 is answered, and EA1b's request for the synthetic world's region number is answered by §11.5 `[world] region`. Every cited L-number matches TM §10 (L5–L11 with 376 and 392 frames, L23–L26, L36–L41, L47, L60, L61, L64, L65, L67, L79, L80, L84, L86–L89, L92, L94); the §5.2 vectors and §14.5's code-point positions reproduce; the backup, lock and temporary-file names match the settings crate. **Follow-ups (minor, for the next revision; none blocks):** (1) §8.5 write step 1 and §8.7's bindings' removal take the lock beside the **resolved** destination before step 2 classifies it, so with `ext-grants.toml` a link to a device (TM X94's `/dev/zero` case) a write creates `.ext-grants.toml.lock` in `/dev/` when that is writable (a harness run as root), outside the tool root, against invariant 21 and §11.8; classify the resolved destination first and fail a write whose destination exists and is not a regular file before any lock, temporary or backup file is created (the settings crate locks first too, so state it as EM's own order). (2) §11.8 `no_file_outside` does not list the case's own walk file, against whose directory `grants` and `reload.from` resolve (§11.5); say where it lives (in the tool root, allowed, or outside it). (3) §11.8's X90 recipe (and TM X90's procedure) has one developer load showing its dialog, one in phase C and one waiting in `Starting` when developer mode is turned off; no load runs while the gate is `Starting`, so these cannot coexist: state them as separate runs or sessions (TM wording too). (4) §11.8's first X91 rollback case: the revocation of optional `b` suspends the script, and §9.8 refuses `/ext:reload` of a suspended script, so the walk needs a `manager` `resume` before the `reload`, and a full reload of an installed script needs `--developer-mode`; say so, and say whether `reload.from`'s folder swap (§11.5) applies when the reload is refused. (5) §11.6: the `gate` event's `r` has no cause for `Starting` → `Open` when the grant-store read and store-root scan complete after the UI is ready (the harness's usual case, §11.4); name one (`grants-read`) or say `ui-ready` covers every entry into `Open`. The `worker` job list has no name for Remove's deletion (wipe and `s_<id>` removal); say it is `store-wipe` or add `store-remove`. (6) §9.4, §7.5: say that a local-only switch narrows only at its Allow (nothing changes while its dialog shows, or after "Not now"). (7) TM wording, for TM (it governs): TM §8.23 "The overlay holds one entry per key" reads against the per-key chain that the same paragraph's "restores the overlay entry that write superseded" needs (EM §8.5); TM L94's Exceed column says a failed write's decision stays in the overlay, but a failed load write is taken back. (8) EA1b may close its OPEN (request to EM) on the region number, and its §13 *Leases* text "its walk file has no region-change input" is stale now that §11.5 has a `region` input (the region-change lease test may move to ST). (9) OPEN O-1, O-8 and O-10 remain owner decisions (O-10 a proposed D17 amendment); each states what slice 1a builds until the owner answers. |
 | Implements into | `crates/ext` (`tessera-ext`: manifest parser and validation, folder rules applied to entries it is handed, content hash, grant-store format, the grant decision pipeline of §9.2, walk-file parser); `crates/ext-host` (`tessera-ext-host`: the folder walk, the grant-store queue and persistence, the store open with its owner tag and marker, the load pipeline, the script manager's grant pages, the headless harness); `apps/scripttool` (`tessera-scripttool`); `apps/client` (the backend gate states, consent prompts); `crates/net` (`Session::class()`, D17 §6.1); `fuzz/` (targets of §11.7) |
 | Related documents | Decision [0017](../decisions/0017-extended-scripting.md) (abbreviated **D17**; §n means its section n); [`ext-threat-model.md`](ext-threat-model.md) (**TM**: normative for every limit, cited as TM L*n*, for the rules of its §7–§9, cited as TM §*n.m*, and for the escape tests, cited as TM X*n*; TM §0.1); [`ext-api-1a.md`](ext-api-1a.md) (**EA1a**) and [`ext-api-1b.md`](ext-api-1b.md) (**EA1b**), which together are D17's `ext-api.md` for slices 1a and 1b ("the API specs"); [0004](../decisions/0004-server-strategy.md); [0014](../decisions/0014-ui-input-bridge.md) (**IB**); [0015](../decisions/0015-ui-rendering.md) (**UR**); [`keymap.md`](keymap.md) (**KM**); [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**); [`plugin-runtime.md`](plugin-runtime.md) (**PR**); [`docs/LEGAL.md`](../LEGAL.md) §9.5 and §18; `docs/ARCHITECTURE.md` (**ARCH**) §17, §18, §21 |
 
@@ -70,13 +70,14 @@ document's schema and reading rules (KM, D17 §2).
 | Backend classes, fail-closed gate, slice-1a admission, backend switch | D17 §4 "Lifecycle", §6 | Decision |
 | `check`, `test`, `init`, `pack`, deterministic mode, headless harness | D17 §8 "Deterministic mode", §10 | Decision |
 | Module majors, deprecation window, `Ext.Has`, `Ext.Version` | D17 §2 "Versioning" | Decision |
-| Snapshot-root no-follow rule (TM §8.8), one suggested default per stroke (TM §8.16), retained snapshot charged to the script (TM §8.10), display strings refused at parse time with TM's mark rule (TM §8.2), the liveness floor and switch timeout (TM §7.4), partial loads at a switch (TM §8.21), `keymap-ext.toml` location (TM §8.19), revocation suspends, a grant-store re-read included (TM §8.23), no store or hand-off across an `author` change and the store owner tag (TM §8.24), consent pointer entry (TM §8.25), the store-directory and log-file no-follow rule (TM §8.8), loads waiting on a record write or store probe at a switch (TM §8.21), classify-before-open and non-blocking opens for the walk, the store, the log and Tessera's own files, bounded grant-store reads and backups, a lock taken without blocking, the tool root's no-follow removal (TM §8.8), overlapping suggested defaults (TM §8.16), the apartment's effective set, the session overlay, narrowings during a load and one id loaded or loading (TM §8.23), the store-root scan (TM §8.7, L92), every limit, the manifest's per-field counts, the walk file, the folder listing and the owner tag included (TM §10, L86–L89, L92), what the register holds (TM §0.1 rule 6), every escape case and per-part reporting (TM §11) | TM revision 4, from D17 "Open security and design items" and "Other improvements" | Decision (TM) |
+| Snapshot-root no-follow rule (TM §8.8), one suggested default per stroke (TM §8.16), retained snapshot charged to the script (TM §8.10), display strings refused at parse time with TM's mark rule (TM §8.2), the liveness floor and switch timeout (TM §7.4), partial loads at a switch (TM §8.21), `keymap-ext.toml` location (TM §8.19), revocation suspends, a grant-store re-read included (TM §8.23), no store or hand-off across an `author` change and the store owner tag (TM §8.24), consent pointer entry (TM §8.25), the store-directory and log-file no-follow rule (TM §8.8), loads waiting on a record write or store probe at a switch (TM §8.21), classify-before-open and non-blocking opens for the walk, the store, the log and Tessera's own files, bounded grant-store reads and backups, a lock taken without blocking, the tool root's no-follow removal (TM §8.8), overlapping suggested defaults (TM §8.16), the apartment's effective set, the session overlay, narrowings during a load and one id loaded or loading (TM §8.23), the store-root scan (TM §8.7, L92), every limit, the manifest's per-field counts, the walk file, the folder listing and the owner tag included (TM §10, L86–L89, L92), what the register holds (TM §0.1 rule 6), every escape case and per-part reporting (TM §11); from TM revision 5: only a re-read of an understood document narrows, an unusable or newer one changes nothing, a write's completion never narrows the keys it carried, a write replacing a damaged document writes every grant-table record (TM §8.23, invariant 35, X91), and the 1 s advisory-lock wait (TM L94); from TM revision 6: a failed load write taken back restores the overlay entry it superseded, turning developer mode off cancels every developer load in progress and refuses waiting ones, the user's unload of a loading copy cancels its load (TM §8.23), the store-root scan at every entry into `Starting` (TM L92), a full reload's load waiting until the old cap has left the sum (TM L84), the 500 ms dead time of every prompt control (TM L65) and the `[[flood]]` bounds (TM L86) | TM revisions 4, 5 and 6, from D17 "Open security and design items" and "Other improvements" | Decision (TM) |
+| Angle form of the walk file's `[world] start` (`yaw` in radians) | EA1a §2.10 (KM §9.1) | Decision (EA1a) |
 | `Ext.Use` and the manifest's module tables, including `"not declared"` | EA1a §3 | Decision (EA1a) |
 | Name grammar, stroke syntax, keymap limits, saving rules | KM §2, §4, §5, §6 | Decision (KM) |
 | Activation filter `on` | IB D3 | Decision (IB) |
 | Settings file location, atomic save, lock file, install guard, tolerant loading with backups | `crates/settings` rustdoc (the settings file has no spec; its rustdoc is its definition) | Decision (code) |
-| Settings-crate lock and temporary-file names (`.<file name>.lock`, `.<file name>.tmp-…`) | `crates/settings` rustdoc of `SettingsStore::update` and the atomic write | Decision (code) |
-| Everything else here (TOML shapes, the grant-store schema and queue, the store's file names and per-entry actions, the decision pipeline, dialog kinds and texts, gate state names, CLI syntax, walk file, the harness's dialog policy, trace format, `escape` runner, exit codes) | This document, 2026-10-07 (revisions 2 to 4 the same day) | Design |
+| Settings-crate lock, temporary-file and backup names (`.<file name>.lock`, `.<file name>.tmp-…`, `<file name>.<reason>-<12-digit Unix seconds>[-<n>].bak`) | `crates/settings` rustdoc of `SettingsStore::update`, the atomic write and the backup constants | Decision (code) |
+| Everything else here (TOML shapes, the grant-store schema and queue, the store's file names and per-entry actions, the decision pipeline, dialog kinds and texts, gate state names, CLI syntax, walk file, the harness's dialog policy, the record-flood hook, the frames of Reset and Remove, the overlay chain, the text-value rules, the synthetic world's region and its `region` input, the harness's local-only answer and dialog `delay`, trace format, `escape` runner, exit codes) | This document, 2026-10-07 (revisions 2 to 6 the same day) | Design |
 
 No fact here comes from the original client, its data or any third-party tool.
 
@@ -97,10 +98,11 @@ No fact here comes from the original client, its data or any third-party tool.
 | **Admitted class** | A backend class on which ext apartments may exist (§10.1) |
 | **Developer mode** | Tessera's setting `[ext] developer_mode` (§9.8) |
 | **Display string** | A manifest string shown to the user (§4.4) |
-| **Grant table** | The ext host's in-memory view of the grants, kept on the main thread: the last document read or written, combined with the session overlay (§8.5). Phase B, the dialogs and the script manager read it; natives never do |
+| **Grant table** | The ext host's in-memory view of the grants, kept on the main thread: the last understood document read or written (the **document view**), combined with the session overlay (§8.5). Phase B, the dialogs and the script manager read it; natives never do |
 | **Grant-store queue** | The one serial worker queue that performs every read and write of the grant store, and the store-root scan (§8.5, §8.7) |
 | **Effective set** | The capabilities an apartment may use: decided at its load (§7.1), shrunk by every revocation during its life, never grown (TM §8.23). Natives check it, never the grant table |
-| **Session overlay** | The user's decisions of this client session that the grant store document does not hold; every re-read result is combined with it (§8.5, TM §8.23) |
+| **Session overlay** | The user's decisions of this client session that the grant store document does not hold, kept per key as a short chain whose newest entry decides; every re-read result is combined with it, per key the newest decision wins over the completion of every earlier write, and a failed load write taken back restores the entry it superseded (§8.5, TM §8.23) |
+| **Understood document** | A grant-store read that Tessera can use: read whole, of a version the build reads, not damaged as a whole; a missing file is understood as empty. Only such a read narrows or widens anything (§8.5, TM §8.23) |
 | **Classify, then open** | An existing entry is classified with `fstatat(…, AT_SYMLINK_NOFOLLOW)` relative to its directory handle (Windows: the listing's attributes and reparse tag) before it is opened; only an entry of the expected kind is opened, non-blocking, and checked again on the handle (§3.4, §3.6; TM §8.8) |
 | **Owner tag** | The host file `owner` in a store directory, naming the `author` the store belongs to (§8.8, TM §8.24) |
 | **Byte order** | Ordering by unsigned byte values, the shorter string first when one is a prefix of the other |
@@ -377,14 +379,15 @@ each field's character set. (OPEN O-11 is closed by TM rule 6, §15.)
   and a choice table level 4, which is allowed; nothing in a valid manifest is deeper.
 - **Strict.** Every error refuses the script. Unknown keys refuse it ("unknown key"), at
   every level, so a misspelt field is never silently ignored. Datetime values are refused
-  anywhere. Keys are case-sensitive.
+  anywhere (`check` code M03, §11.3). Keys are case-sensitive.
 - **Dotted capability names.** In TOML a bare key `entity.read = "…"` is a dotted key that
   makes a nested table. Inside `[capabilities]` and `[optional_capabilities]` the parser
   reports such a nested table as "capability names containing '.' must be quoted
   (`\"entity.read\" = …`)" and refuses the script.
 - **Integers and floats.** A field documented as an integer refuses a float (`memory_mib =
   48.0` is refused); a field documented as a number accepts both and stores an `f64`.
-  Non-finite numbers (`inf`, `nan`) are refused everywhere.
+  Non-finite numbers (`inf`, `nan`) are refused everywhere. Both refusals are `check` code
+  M03 (§11.3).
 
 <a id="s4-2"></a>
 ### 4.2 Top-level fields
@@ -700,16 +703,24 @@ marked **(design addition)** are this spec's.
 | `choices` | array of tables | for `choice` | 1–32 entries (TM L87) `{ value = "<key grammar>", label = "<display string, 48 cp>" }`, values unique |
 | `max_length` | integer | no (`text` only) | **(Design addition**, D17's "length cap" made a key.) 1–256 bytes, default 64 (TM L87) |
 
+- **Text-value rules.** A `text` value (its `default`, a value the user types, a stored
+  value) is checked against these rows of §4.4, and only these: **"Removed characters"**,
+  without its exception (U+000A is refused too: a text value is one line);
+  **"Variation selectors"**; and **"Combining marks"**. The other rows do not apply:
+  a text value may be empty ("Not empty" does not apply) and may start or end with white
+  space, which is kept exactly as typed ("No surrounding space" does not apply; a value of
+  spaces only is valid), and §4.4's "Length" row is replaced by `max_length`, counted in
+  UTF-8 bytes. Everywhere this spec says a text value "follows the display-string
+  character rules", it means these text-value rules.
 - `default` of a `number` lies in `min..=max`; of a `choice` is one of the values; of a
-  `text` is at most `max_length` bytes and follows the display-string character rules
-  (§4.4) except that it may be empty.
+  `text` is at most `max_length` bytes and follows the text-value rules above.
 - A key that does not belong to the setting's type (`choices` on a `bool`) refuses the
   script, as every unknown key does.
 - **Valid for the schema.** A stored value is valid for a setting when: for `bool`, a
   boolean; for `number`, a number in `min..=max`, and an integer when `integer` is true;
   for `choice`, a string equal to one of the `choices` values; for `text`, a string of at
-  most `max_length` bytes that follows the display-string character rules (§4.4, empty
-  allowed). Anything else is invalid, a value of another type included.
+  most `max_length` bytes that follows the text-value rules above. Anything else is
+  invalid, a value of another type included.
 - **Stored values** are kept in the grant record (§8.3). When a load finds a stored value
   that is no longer valid for the current schema (the type changed, the range shrank, the
   choice vanished, or a hand edit put an out-of-range number or an over-long text in the
@@ -721,8 +732,8 @@ marked **(design addition)** are this spec's.
   default: an absent key takes the manifest's default, so a later change of that default
   reaches the user. A load that writes nothing (Deny, "Not now", a refusal) leaves the
   stored values as they are; the next load drops them.
-- Text values typed by the user follow the same character rules; the settings page refuses
-  forbidden characters as they are typed.
+- Text values typed by the user follow the same text-value rules; the settings page
+  refuses forbidden characters as they are typed.
 - A change the user applies is written as §8.5 says and reaches a loaded script through
   `Core.Setting` and its settings-changed handler (EA1a §4.1, §4.4).
 - **At a re-read** of the grant store (§8.5), every changed `settings` value of a loaded
@@ -962,7 +973,9 @@ snapshot is held under that reservation. After phase A the reservation becomes t
 manifest's `memory_mib`; a growth that does not fit refuses the load the same way. The
 reservation becomes the apartment's cap in phase D, and a refused or cancelled load
 releases it. (A hot reload's new apartment reserves from the reload allowance instead:
-TM §8.10, EA1b §8.)
+TM §8.10, EA1b §8. A full reload's load starts only after the old apartment's close item
+has run and its cap has left the sum at its final flush, so it waits for that flush
+rather than being refused: §9.8, TM L84.)
 
 | Phase | Where | What |
 |---|---|---|
@@ -999,15 +1012,18 @@ is a reload (§9.8). TM X90's ST part tests both cases (§11.8).
 ### 7.5 A narrowing during a load
 
 A **narrowing** of a (kind, id) is any of: a manager revocation (§9.7), Reset (§9.6),
-Remove (§8.7), a local-only switch (§9.4), and a re-read whose combined result narrows
-the record (§8.5). Each is applied to the grant table in one frame on the main thread.
-For a load of that (kind, id) that is in progress, the rule is TM §8.23 "Loads in
+Remove (§8.7), a local-only switch (§9.4), and a re-read of an understood document whose
+result narrows the record (§8.5; TM §8.23 "What narrows by another route"). Each is
+applied to the grant table in one frame on the main thread: Reset and Remove too, whose
+"no record" enters the session overlay in the frame the user chooses them, although
+their grant-store write follows the store's deletion (§8.7 "Reset and Remove, step by
+step"). For a load of that (kind, id) that is in progress, the rule is TM §8.23 "Loads in
 progress": a load never proceeds without a capability revoked after its decision (D17 §2,
 "never loads degraded"). The load's **decided set** is the effective set phase B decided.
 
 | Where the load is when the narrowing is applied | What happens |
 |---|---|
-| Phase A running or its result not yet consumed | Nothing yet: phase B has not decided. It runs §9.2 against the narrowed grant table (after Reset or Remove: no record, a first enable) |
+| Phase A running or its result not yet consumed | After a revocation, a local-only switch or a re-read: nothing yet, because phase B has not decided; it runs §9.2 against the narrowed grant table. After **Reset or Remove**: the load is cancelled, its result discarded when it arrives and its reservation released, because the (kind, id) is then **pending deletion** (§8.7) |
 | Phase B before its dialog, or with its dialog showing or queued | The dialog closes as "Not now", or is never shown; nothing is written; the load is cancelled. A store probe already submitted completes and its result is discarded |
 | Phase B past its dialog, waiting on its record write or store probe | The write or probe completes in order on its queue (the narrowing's own write follows it on the grant-store queue, so the document ends narrowed). Then the load is cancelled with its reservation released, before phase C |
 | Phase C queued or running | It completes on the store's queue; its result is discarded and the load is cancelled. Reset's or Remove's store deletion is queued behind it on the same queue |
@@ -1019,11 +1035,39 @@ with the `granted` list of the (kind, id)'s record in the grant table (after the
 overlay, §8.5). If the record is gone, or any capability of the decided set is no longer
 granted, the load is cancelled as the table says. A widening of the record changes
 nothing for the load. A narrowing applied in the same frame before the item runs is seen
-by it; one applied after the top-level item has run meets a loaded script.
+by it; one applied after the top-level item has run meets a loaded script. The completion
+of an **earlier** grant-store write never counts as a narrowing for the keys that write
+carried (§8.5): a load that decided on a newer decision of the same key (a widen, or a
+first-enable Allow after Reset or Remove) is never cancelled by it (TM §8.23, X91).
 
 Every cancelled load is reported "Not loaded · notes · installed: its permissions changed
 while it loaded" and appears in the trace as `load` with `r` = `cancelled` (§11.6). TM X91
 tests a required grant revoked while a load is past its dialog and before its top level.
+
+**Other cancellations of a load in progress (TM §8.23).** Two events that are not
+narrowings cancel a load in progress by the same rows, with one difference in the first
+row: the load is cancelled **at once** in phase A too (its result discarded when it
+arrives, its reservation released), because nothing would decide it again.
+
+- **Developer mode turned off** (§9.8) cancels, in that frame, every load in progress of
+  kind `scripts-dev`, in the script-list order: a grant dialog showing or queued for it
+  closes as "Not now" (nothing written); a load past its dialog waits for its record write
+  or store probe to complete and is then cancelled before phase C; phase C completes on
+  the store's queue and its result is discarded; in phase D the apartment's state, if it
+  exists, gets **one close item** and the top level never runs. A hot reload in progress
+  (slice 1b) has its new apartment's load cancelled this way and its old apartment
+  unloaded as a loaded script (§9.8). Each is reported "Not loaded · hud · developer:
+  developer mode was turned off". A developer load that is still **waiting** (a
+  user-started load queued in `Starting`, §10.3, or a reload request not yet started,
+  EA1b §8) is refused with "Developer mode is off" and never starts.
+- **The user's unload of a loading copy** (the unload the script manager offers for a
+  script that is loading, §7.4, or the walk's `manager` `unload` of a loading script,
+  §11.5) cancels that load the same way, reported "Not loaded · notes · installed:
+  unloaded by you".
+
+Both appear in the trace as `load` with `r` = `cancelled` (§11.6). So no developer script
+finishes loading, under a grant decided in developer mode, while developer mode is off,
+and no load the user ended reaches its top level (TM X90).
 
 ---
 
@@ -1068,7 +1112,7 @@ optional = ["world.read"]
 granted = ["input", "ui", "world.read"]
 denied = []
 memory_mib = 32
-content_hash = "62eba7b09ef519d9c6a6fa1046fc1f340e2ff7483586b8dfad433deb362f59ab"
+content_hash = "62eba7b09ef519d9c6a6fa1046fc1f340e2ff7483586b8dfad433deb362f59ab"   # illustrative only: §5.2's `hello` vector, not the note-taker's hash
 content_hash_version = 1
 autoload = true
 
@@ -1086,10 +1130,17 @@ Root:
 
 | Key | Type | Rule |
 |---|---|---|
-| `format` | string | `"tessera-ext-grants"`; any other value: the whole document is treated as damaged (§8.6) |
-| `version` | integer | The grant-store format version, `1` (§12.5) |
-| `order` | array of strings | The user's script list order, which autoload follows: entries `"<kind>/<id>"`, unique, at most 256 |
-| `script` | array of tables | The grant records, at most 256 |
+| `format` | string | **Required.** `"tessera-ext-grants"`; a missing key, a value of another type or any other value: the whole document is damaged (§8.6) |
+| `version` | integer | **Required.** The grant-store format version, `1` (§12.5). A missing key, a value that is not a TOML integer, or an integer below 1: damaged as a whole (§8.6); an integer above the version the build reads: **newer** (§8.6) |
+| `order` | array of strings | Optional (absent: empty). The user's script list order, which autoload follows: entries `"<kind>/<id>"`, unique, at most 256 |
+| `script` | array of tables | Optional (absent: no records). The grant records, at most 256 |
+
+So an **empty file** (zero bytes), and a file of only white space and comments, are
+damaged as a whole, not an empty understood document: they lack `format`. Only a
+**missing** file reads as an understood, empty document (§8.6). (A file an editor has
+just truncated while saving therefore changes nothing at a re-read, §8.5 step 1, instead
+of narrowing every record.) Tessera never writes such a file: every document it writes
+holds `format` and `version` first.
 
 One record (`[[script]]`):
 
@@ -1104,7 +1155,7 @@ One record (`[[script]]`):
 | `content_hash` | string | 64 lowercase hexadecimal digits (§5) |
 | `content_hash_version` | integer | `1` |
 | `autoload` | boolean | The user's "Load automatically" choice |
-| `settings` | table | The `[[settings]]` values the user set: key (settings-key grammar) → boolean, number or string (at most 256 bytes, TM L79; display-string character rules, may be empty); at most 32 entries (TM L79). A number is a finite TOML float, or a TOML integer of magnitude at most 2^53 (an argument-validity domain, TM §0.1 rule 6), read as the equal float; the writer always writes numbers as floats (`200.0`). Absent keys take the manifest's default. This is the record's own validity; whether a value fits the script's current schema is checked at load and at a re-read (§4.12) |
+| `settings` | table | The `[[settings]]` values the user set: key (settings-key grammar) → boolean, number or string (at most 256 bytes, TM L79; the text-value rules of §4.12, so it may be empty); at most 32 entries (TM L79). A number is a finite TOML float, or a TOML integer of magnitude at most 2^53 (an argument-validity domain, TM §0.1 rule 6), read as the equal float; the writer always writes numbers as floats (`200.0`). Absent keys take the manifest's default. This is the record's own validity; whether a value fits the script's current schema is checked at load and at a re-read (§4.12) |
 | `signing_key` | string | Reserved for slice 4 (D17 §5.7): `"ed25519:"` and 64 lowercase hexadecimal digits. A build before slice 4 keeps it unchanged and does not use it |
 
 - **Invariant of every valid record:** `granted` never holds `session.server` together
@@ -1168,18 +1219,38 @@ program (TM §8.8 "Tessera's own files"). So:
   one job at a time, in submission order.
 - **Three views, kept on the main thread.**
   - The **document view**: the valid records, `order`, unknown keys and the number of
-    `[[script]]` tables of the last document a job read or wrote (empty before the first
-    read, and for a missing, unreadable or damaged document, §8.6), and whether the
-    document is **writable** (it is not when its `version` is newer, §8.6).
-  - The **session overlay** (§2, TM §8.23): for each (kind, id), the record the user last
-    decided in this client session, or "no record" after Reset or Remove. An entry is
-    added when a decision is applied and dropped when a write that holds it completes
-    successfully (unless a later decision of the same key was applied meanwhile). It
-    stays for the rest of the session when that write fails (below), and every decision
-    stays in it while the document is not writable.
+    `[[script]]` tables of the last **understood** document (below) that a job read or
+    wrote (empty before the first such read, and so empty for the whole session when
+    the start-up read is unreadable, damaged or newer, §8.6), and whether the document is
+    **writable** (it is not, for the rest of the session, once a read or a write has found
+    its `version` newer, §8.6). A read that is not understood never replaces it (TM §8.23).
+  - The **session overlay** (§2, TM §8.23): for each (kind, id), the decisions of this
+    client session that the document does not yet hold, as a **chain** of entries,
+    oldest first. Each entry is a whole record, or "no record" after Reset or Remove.
+    The **newest** entry of the chain is the key's **current entry**, and only it
+    decides the grant table; the older ones are kept only so that a rollback can
+    restore them (below). A decision applied to a key appends its entry to the key's
+    chain (it **supersedes** the entry before it). An entry leaves the chain only in
+    three ways: when a write that carried it completes successfully, that entry and
+    every **older** entry of the chain are dropped (the record just written was decided
+    from a grant table that already held them, so the document now holds what they
+    said; newer entries stay); when it is a failed load write taken back (§8.5 "A failed
+    write"), that entry alone is removed, wherever it is in the chain, and the entry
+    after it then supersedes the one before it; and at the end of the session. A
+    decision whose write fails otherwise stays for the rest of the session, and every
+    decision stays while the document is not writable. Only a load's own record write
+    is ever taken back, so when any **other** entry is appended (a manager action, a
+    manager-started dialog's Allow, Reset, Remove, a local-only switch, a narrowed
+    entry of step 2 below), every older entry of its chain is dropped: no rollback can
+    reach past it. While the document is not writable nothing is ever taken back, so
+    every append drops the older entries. With one load of a (kind, id) at a time
+    (§7.4), which waits for its own write before phase C, a chain therefore holds at
+    most two entries, an older decision and one load write above it, each at most one
+    record (TM L79). A failed load write whose entry an append has already dropped
+    restores nothing: the newer decision stays current.
   - The **grant table**: the document view combined with the overlay. For a (kind, id)
-    with an overlay entry it holds the overlay's record (or none); otherwise the document
-    view's valid record (or none). Phase B, the dialogs, the script manager and the
+    with an overlay chain it holds the current entry's record (or none); otherwise the
+    document view's valid record (or none). Phase B, the dialogs, the script manager and the
     re-checks of §7.5 read the grant table. **Natives never read it:** every native and
     every intent's apply step checks the apartment's **effective set** (§2, §7.1; TM
     §8.23 "What natives check"), which a revocation shrinks and nothing grows during the
@@ -1187,35 +1258,63 @@ program (TM §8.8 "Tessera's own files"). So:
     widens `camera` again in the manager, the grant table grants `camera` but the kept
     `Camera` natives still raise `"not granted"` until the next load (TM X91).
 - **A decision** (a dialog's Allow, a load's record update of §9.2 step 6, a manager
-  action of §9.7) is applied to the overlay, and so to the grant table, at once, in that
-  frame, and is submitted as a write job unless the document is not writable.
-- **Reads.** The document is read at start-up (the gate does not leave `Starting` before
-  the result is applied, §10.3) and each time the script manager opens (to pick up hand
-  edits). The configured path is first classified (`stat`, following the symbolic links
+  action of §9.7) is appended to its key's overlay chain as the current entry, and so
+  applied to the grant table, at once, in that frame, and is submitted as a write job
+  unless the document is not writable. Reset and Remove are applied the same way, but their write is submitted only when the store's
+  deletion has completed (§8.7 "Reset and Remove, step by step").
+- **Reads.** The document is read every time the gate enters `Starting` (each session
+  start; the first of them is the **start-up read**), as the first of the two jobs the
+  gate waits for there, the store-root scan of §8.7 being the second (the gate does not
+  leave `Starting` before both results are applied, §10.3; TM L92), and each time the
+  script manager opens (to pick up hand edits). A read at a later session's `Starting`
+  is applied like any re-read (steps 1–5 below); no script is loaded then (§10.3), so it
+  suspends nothing. The configured path is first classified (`stat`, following the symbolic links
   in the path, at most 40, as a write does) and opened only when it is a regular file,
   so a device is never opened on purpose; it is then opened **non-blocking** (`O_RDONLY |
   O_NONBLOCK`), the handle is checked again to be a **regular file**, the same one (`fstat`
   on the handle; a FIFO, socket, device or directory swapped in is never read and never
   waited on), and at most 4 MiB + 1 bytes are read
   (TM L79, TM §8.8 "Tessera's own files"). A missing file reads as missing; a failed open
-  or read (`EACCES`, `EIO`, `EISDIR`, a file that is not regular) reads as **unreadable**.
-  The bytes are then classified by §8.4 and §8.6.
+  or read (`EACCES`, `EIO`, `EISDIR`, a file that is not regular; on Windows also a
+  sharing violation while an editor or a virus scanner holds the file) reads as
+  **unreadable**. The bytes are then classified by §8.4 and §8.6.
+- **Three kinds of read result** (TM §8.23 "What narrows by another route"):
+  - **understood**: a document read whole, of a version the build reads, not damaged as a
+    whole (§8.6); a **missing** file is understood as an empty document;
+  - **newer**: a document whose `version` is newer than the build reads (§8.6);
+  - **unusable**: unreadable, or damaged as a whole (§8.6).
+
+  Only an understood result can replace the document view, and so only it can narrow or
+  widen anything.
 - **Applying a read result.** On the main thread, in the frame its completion is seen,
-  with P the previous document view and R the result:
-  1. **A newer document** (§8.6). The document becomes not writable for the session, and
-     every record of the current grant table enters the overlay as it is. Nothing else
-     changes: such a read narrows nothing, widens nothing and suspends nothing (TM §8.23
-     "The session overlay"), whatever records it holds.
-  2. **Narrowings by the document.** Otherwise, for each (kind, id), the capabilities that
-     P's record grants and R's record does not are **narrowed by the document**: all of
-     P's when R has no valid record of that key (removed, made invalid, a duplicate, or
-     the document missing, unreadable or damaged as a whole, §8.6). In an overlay entry of
-     that key, those capabilities are moved from `granted` to `denied`. So a hand edit that
-     narrows always narrows, and the document never undoes a decision of this session: a
-     revocation whose write failed stays revoked, whatever a later read finds.
+  with P the current document view and R the result:
+  1. **Newer or unusable** (TM §8.23 "A re-read that cannot be used changes nothing").
+     P stays the document view and the base of the next comparison; the grant table does
+     not change; nothing narrows, widens or is suspended, whatever R holds; the script
+     manager reports the case (§8.6). A newer R also makes the document not writable for
+     the rest of the session (§8.6), so every decision from then on stays in the overlay.
+     A transient failure when the script manager opens therefore never suspends a script
+     and never turns a session decision into `denied`. Steps 2–5 are skipped.
+  2. **Narrowings by the document** (R understood). For each (kind, id) that is not an
+     **excluded key** (a write's completion, below), the capabilities that P's record
+     grants and R's record does not are **narrowed by the document**: all of P's when R
+     has no valid record of that key (removed, made invalid, a duplicate, or the file
+     missing). In **every** entry of that key's overlay chain, those capabilities are
+     moved from `granted` to `denied` (so an entry that a rollback restores later is
+     narrowed too). So a hand edit that narrows always narrows, and the document never
+     undoes a decision of this session: a revocation whose write failed stays revoked,
+     whatever a later read finds. **A write in flight** **(design addition)**: if a
+     write job that carries that key is queued or running when step 2 narrows its chain,
+     that job would put the capability the user removed by hand back on disk. So, in the
+     same frame and when the document is writable, the narrowed current entry is
+     appended to the chain as a new entry (it is not a load write) and a write job
+     carrying it is submitted; it runs after the earlier job on the grant-store queue,
+     so the document ends narrowed. An entry whose write has already failed needs no
+     such write: the document R already holds the narrower record.
   3. R becomes the document view, and the grant table is recomputed.
-  4. **Loaded apartments.** For each loaded or suspended apartment, its effective set is
-     compared with the `granted` list of its (kind, id)'s record in the new grant table:
+  4. **Loaded apartments.** For each loaded or suspended apartment whose unload has not
+     been requested, its effective set is compared with the `granted` list of its (kind,
+     id)'s record in the new grant table:
      - **Narrowed** (a capability of the effective set is no longer granted): a
        revocation by another route. The script is **suspended in this frame**, exactly as
        §9.7's "Uncheck" says (a revoked required capability: unloaded with one close item
@@ -1231,20 +1330,35 @@ program (TM §8.8 "Tessera's own files"). So:
      - `autoload` and `order` take effect at their next use.
   5. **Loads in progress.** A narrowing of a (kind, id) whose load is in progress is §7.5's.
 - **A write job** carries the overlay entries it writes (whole records, or "no record" for
-  a removal) and, after "Move in the list", the new `order`. On the queue it:
+  a removal; their keys are the job's **carried keys**) and, after "Move in the list", the
+  new `order`. It also carries a copy of every record of the grant table and of the
+  document view's `order` as they stood when it was submitted, used only by step 3. On the
+  queue it:
   1. **Locks.** It takes the grant store's lock (below) without blocking: a lock that
-     another process holds is retried for at most 1 s, then the write **fails** (TM §8.8).
+     another process holds is retried for at most 1 s of wall-clock time (TM L94), then
+     the write **fails** (TM §8.8 "Tessera's own files").
   2. **Reads** the current document by the read rule above. If it is unreadable, nothing
-     is written and the write fails. If its `version` is newer, nothing is written, the
-     write fails, and its result is applied as step 1 above says.
+     is written and the write fails; its read result changes nothing (step 1 above). If
+     its `version` is newer, nothing is written, the write fails as a **newer** failure
+     (below), and its result is applied as step 1 above says.
   3. **Backs up** the document first (§8.6) when it is damaged as a whole, or when this
-     job replaces or removes an invalid table (step 4); a damaged document is then
-     replaced by an empty one.
+     job replaces or removes an invalid table (step 4). A damaged document is then
+     replaced by a document that holds **every record of the grant-table copy** the job
+     carries, in its `order`, with the job's own entries applied over them (TM §8.23
+     "Replacing a damaged document narrows nothing"); every key it writes then counts as
+     carried. So the replacement grants no less than the grant table did.
   4. **Replaces by key.** A `[[script]]` table **belongs to** a (kind, id) as §8.4 says.
      For each key the job carries, **every** table that belongs to it (its valid record,
      an invalid one, or each of two or more duplicates) is removed, and the job's record,
-     if any, is inserted once. Every other table, invalid ones and tables that belong to
-     no key included, is kept with its keys and values unchanged, and so is every unknown
+     if any, is inserted once. **What the record keeps:** when exactly one table that
+     belonged to the key was a **valid** record of the document this job read in step 2,
+     the inserted record keeps that table's unknown keys (with their values, §8.4) and
+     its `signing_key` (§8.3), so a newer Tessera's fields and a slice-4 key survive a
+     decision of this build; every key §8.3 defines otherwise comes from the job's
+     record. When the replaced tables were invalid, duplicates or absent, nothing of them
+     is kept (the backup of step 3 holds them). A "no record" removes the tables with
+     everything in them. Every other table, invalid ones and tables that belong to no key
+     included, is kept with its keys and values unchanged, and so is every unknown root
      key. This is the only way an invalid table leaves the document.
   5. **Checks the caps (TM L79).** A record whose key has no table in the document is
      inserted only if the document then holds at most 256 `[[script]]` tables; otherwise
@@ -1257,20 +1371,52 @@ program (TM §8.8 "Tessera's own files"). So:
      never breaks §8.4's caps.
   6. **Commits.** It writes a temporary file in the destination's directory, flushes it to
      disk, renames it over the document, flushes the directory entry, releases the lock,
-     and reports completion together with the document it wrote. The main thread first
-     applies that document as a read result (above; another process's changes found in
-     step 2 are honoured, and narrow, like a hand edit) and then drops the overlay
-     entries that the write held.
+     and reports completion together with the document it wrote and its carried keys.
 
   A reader never sees a half-written document, and a completed write survives a crash.
-- **A failed write.** A load's own record write (§9.2 step 6, including a dialog's Allow)
-  that fails is taken back out of the overlay, the load is cancelled, and the script
-  manager reports "Permissions could not be saved: <reason>". Every other decision whose
-  write fails (a manager action, a manager-started dialog's Allow) **stays in the
-  overlay** for the session, so a revocation keeps acting and is never undone by a later
-  read, and the manager reports the failure. While the document is not writable, no write
-  job is submitted, every decision lives in the overlay for this session only (§8.6), and
-  phase C follows the overlay.
+- **Applying a write's completion** (TM §8.23 "Tessera's own writes never narrow the
+  user's decisions"). The written document is applied as an understood read result
+  (above) whose **excluded keys** are the write's carried keys. So:
+  - for a key the write did **not** carry, the written document counts like a hand edit:
+    another process's change that step 2 of the write found is honoured and narrows as
+    step 2 above says;
+  - for a carried key, nothing narrows and the grant table does not change. The entry
+    this write carried, and every older entry of the key's chain, are dropped. If that
+    entry was the current one, the document view now holds the same record. If a
+    **newer** decision of that key was applied while the write was in flight, its entry
+    stays exactly as the user made it, and its own later write follows on the queue: per
+    key, the newest decision wins over the completion of every earlier write.
+
+  Example (TM X91): a manager revocation of optional `b` and a widen of `b` whose dialog
+  the user allows, both before the revocation's write completes. The revocation's
+  completion leaves `b` granted; no load that decided on `b` is cancelled (§7.5); when the
+  widen's write completes, the document grants `b`. Likewise, after Reset or Remove
+  (§8.7) a first-enable Allow of the same key, made before the Reset's write completes,
+  is neither undone by that completion nor suspended or cancelled by it.
+- **A failed write.** A load's own record write (§9.2 step 6, including a load dialog's
+  Allow) that fails is **taken back**: its entry is removed from the key's overlay chain
+  (§8.5 "Three views"), which **restores the entry it superseded** as the current entry,
+  or leaves the key with no overlay entry (the document view decides) when it superseded
+  none. It never simply empties the key's chain, so a rollback never undoes an earlier
+  session decision whose own write failed (TM §8.23 "A failed write never undoes an
+  earlier session decision"). If a newer decision of that key was applied meanwhile, that
+  decision stays current. The load is cancelled, and the script manager reports
+  "Permissions could not be saved: <reason>". Example (TM X91): with the disk full, the
+  user revokes optional `b` (its write fails; the revocation stays in the chain); a later
+  load of the script with a changed hash appends its update, built from the grant table
+  and so with `b` denied, and its write fails too; taking it back restores the
+  revocation, so `b` stays revoked, and the next write that succeeds writes `b` as
+  denied. Likewise a Reset whose write failed, followed by a first-enable Allow whose
+  write fails: taking the Allow back restores Reset's "no record", and the erased store's
+  old record never returns. Every other decision whose write fails (a
+  manager action, a manager-started dialog's Allow) **stays in the overlay** for the
+  session, so a revocation keeps acting and is never undone by a later read, and the
+  manager reports the failure. A **newer** failure (step 2 found a newer `version`) is
+  not a failure of the decision: the document becomes not writable, the decision stays in
+  the overlay for the session, and a load waiting on that write continues to phase C
+  under it, as if the document had been not writable when it decided. While the document
+  is not writable, no write job is submitted, every decision lives in the overlay for this
+  session only (§8.6), and phase C follows the overlay.
 - **Lock and temporary file (named).** The lock is the file `.ext-grants.toml.lock` in the
   directory of the **resolved** `ext-grants.toml` (the settings crate's lock naming,
   `.<file name>.lock`, applied to this document; never the settings file's own
@@ -1294,22 +1440,34 @@ program (TM §8.8 "Tessera's own files"). So:
   same bytes apart from unknown keys' formatting.
 - **Before the store is opened.** A load's record write (§9.2 step 6) must **complete**
   before phase C is queued, so a crash never leaves a store opened under a grant that the
-  document does not hold. With a document that is not writable, the decision applied to
-  the overlay is what phase C follows.
+  document does not hold. A load that decides under an **overlay entry** (the key's
+  record in the grant table is a current entry whose write is queued, running or has
+  failed) therefore writes its record even when §9.2 found nothing to update, while the
+  document is writable; that write is a load write like any other (taken back and the
+  load cancelled if it fails). With a document that is not writable, the decision applied
+  to the overlay is what phase C follows.
 
 <a id="s8-6"></a>
 ### 8.6 Damaged, missing and newer documents
 
 | Case | Reading | Writing |
 |---|---|---|
-| Missing | Empty: no records | Created by the first write |
-| Unreadable: the open or the read fails (`EACCES`, `EIO`, `EISDIR`, …), or the path is not a regular file (a FIFO, socket, device or directory, never waited on, §8.5) | Every record ignored (fail closed); the script manager says "Permissions could not be read: <reason>". At start-up the gate still leaves `Starting` (§10.3) | A write job reads the document first (§8.5 step 2) and fails while it is unreadable, so nothing is ever written over a document Tessera could not read; decisions stay in the session overlay (§8.5) |
-| Not UTF-8, not TOML, over 4 MiB, wrong `format`, nesting too deep, more than 256 `[[script]]` tables or `order` entries | Every record ignored (fail closed) | The first write backs the document up (below), then starts from an empty document |
-| `version` newer than the build reads | Every record ignored; the script manager says "Permissions were saved by a newer Tessera and are not used". Such a read never narrows or suspends anything (§8.5) | **Never written** by this build, so the newer build's data is kept. Dialogs still show; their decisions apply to this session only, in the session overlay (§8.5) |
+| Missing | Understood as empty: no records. At a re-read, every record of the previous document view is narrowed by the document (§8.5 step 2; TM §8.23) | Created by the first write |
+| Unreadable: the open or the read fails (`EACCES`, `EIO`, `EISDIR`, a Windows sharing violation, …), or the path is not a regular file (a FIFO, socket, device or directory, never waited on, §8.5) | Not understood. At start-up every record is ignored (fail closed: the document view stays empty). At a re-read **nothing changes**: the previous document view stays, nothing narrows, widens or is suspended (§8.5 step 1; TM §8.23). Either way the script manager says "Permissions could not be read: <reason>", and at start-up the gate still leaves `Starting` (§10.3) | A write job reads the document first (§8.5 step 2) and fails while it is unreadable, so nothing is ever written over a document Tessera could not read; decisions stay in the session overlay (§8.5) |
+| Damaged as a whole: not UTF-8, not TOML, over 4 MiB, `format` or `version` missing or wrong (§8.3; an empty file included), nesting too deep, more than 256 `[[script]]` tables or `order` entries | Not understood. At start-up every record is ignored (fail closed). At a re-read nothing changes, as for an unreadable one. The script manager says "Permissions are damaged and were not used" | The first write backs the document up (below), then writes every record of the grant table it carries with its own entries applied (§8.5 step 3), so the replacement narrows nothing (TM §8.23) |
+| `version` newer than the build reads | Not understood: every record of it ignored. At start-up the document view stays empty; at a re-read the previous document view stays. Such a read never narrows, widens or suspends anything (§8.5 step 1). The script manager says "Permissions were saved by a newer Tessera and are not used" | **Never written** by this build for the rest of the session, so the newer build's data is kept. Dialogs still show; their decisions apply to this session only, in the session overlay (§8.5) |
 | Some records invalid | Those ignored (§8.4) | Kept as they are, except by a write of their own key (§8.5 step 4), which first backs the document up |
 
-**Backups (TM L79, TM §8.8 "Tessera's own files").** A backup is named
-`ext-grants.toml.corrupt-<unix seconds>[-n].bak` and lies in the directory of the
+**Backups (TM L79, TM §8.8 "Tessera's own files").** A backup is named exactly as the
+settings crate forms its own backup names, `<file name>.<reason>-<stamp>[-<n>].bak`, with
+the file name `ext-grants.toml` and the reason `corrupt`:
+`ext-grants.toml.corrupt-<stamp>.bak`, or `ext-grants.toml.corrupt-<stamp>-<n>.bak` when
+that name exists. `<stamp>` is the backup's time in whole Unix seconds (UTC) written as
+**exactly 12 decimal digits, zero-padded** (`001791084283`); `<n>` is the first of 1, 2,
+… 99 (decimal, no leading zero) that gives a name not yet present, tried with exclusive
+creates. When all 100 names of one second exist, no backup is made and the write job
+fails before anything is replaced. Only names of exactly this form count as backups
+(for the cap of 8 below and for `no_file_outside`, §11.8). A backup lies in the directory of the
 **resolved** document, beside the lock and temporary file (§8.5), never behind the
 configured path's link. Its bytes are bounded:
 
@@ -1343,22 +1501,56 @@ the settings crate keeps its own.
   table. It is listed the same way.
 - **Remove** (TM §8.24). An orphan may still be loaded (its folder was deleted after its
   snapshot was read) or loading. So Remove first ends it: a **loading** (kind, id) is
-  handled as §7.5 says (cancelled once past its grant decision); a **loaded** one gets the ordinary unload (its `Unload` handler
-  item, then its close item with the final flush; a suspended one its close item only).
-  Then the store's deletion is queued on the store's I/O queue, behind the final flush and
-  every earlier job of that store, so no apartment's flush ever meets a removed
-  directory. When the deletion has completed, Remove removes the record (a grant-store
-  write) and the id's bindings from `keymap-ext.toml`, unless a record of the other kind
-  with the same id remains (D17 §2). A crash between the two leaves a record with no
-  store, which is harmless. The store's deletion is the wipe of §8.8 followed by a removal
-  of the then empty `s_<id>` directory relative to its `<kind>` handle; an unusable store
-  directory (§3.6) is reported and nothing is removed, and the record stays. Reset (§9.6)
-  ends a loaded or loading script the same way.
+  cancelled in any phase (§7.5); a **loaded** one gets the ordinary unload (its `Unload`
+  handler item, then its close item with the final flush; a suspended one its close item
+  only). Then the store's deletion is queued on the store's I/O queue, behind the final
+  flush and every earlier job of that store, so no apartment's flush ever meets a removed
+  directory. When the deletion has completed, Remove's grant-store write removes the
+  record, and the id's bindings are removed from `keymap-ext.toml`, unless a record of the
+  other kind with the same id remains (D17 §2). A crash between the two leaves a record
+  with no store, which is harmless. The store's deletion is the wipe of §8.8 followed by a
+  removal of the then empty `s_<id>` directory relative to its `<kind>` handle. Reset
+  (§9.6) ends a loaded or loading script the same way and deletes the store's contents
+  (the wipe; `s_<id>` itself may stay). The order of frames is below.
+- **Reset and Remove, step by step** **(design addition**, TM §8.23, §8.24). Let F be the
+  frame in which the user chooses Reset or Remove of a (kind, id):
+  1. **In frame F**, "no record" for that key enters the session overlay (§8.5), so the
+     grant table has no record from F on, and the (kind, id) becomes **pending
+     deletion**. In the same frame a load of it in progress is cancelled (§7.5, every
+     phase), and a loaded one has its ordinary unload requested. No grant-store write is
+     submitted yet.
+  2. **The deletion** is submitted on the store's I/O queue in the first frame in which
+     the (kind, id) has neither an apartment nor a load in progress (frame F itself when
+     it had none), behind every earlier job of that store (the final flush, a cancelled
+     load's phase C).
+  3. **When the deletion has completed** (frame G), the grant-store write that carries
+     "no record" for the key is submitted in G (and, for Remove, the bindings' removal
+     below), then a store-root scan (§8.7). The key stops being pending deletion in G.
+     If the document is not writable (§8.6), no write is submitted and the "no record"
+     stays in the overlay for the session.
+  4. **If the deletion fails** (an unusable store directory, a subdirectory or an entry
+     that cannot be removed, §3.6), it is reported ("The stored values of notes ·
+     installed could not be erased: <reason>"), no grant-store write is submitted, and
+     the key stops being pending deletion. The "no record" stays in the overlay for the
+     session, as every failed narrowing does (§8.5), so nothing the user removed returns
+     in this session; the document keeps the record, which keeps "the store is deleted
+     before its record" true across a restart.
+  5. **Between F and G** a load of that (kind, id) is refused, whoever starts it, with
+     "notes · installed: its stored values are being erased; try again when that has
+     finished", and nothing is decided, probed or written for it; autoload never starts
+     one, because the key has no record. The script manager shows the key as "erasing".
+     A second Reset or Remove of a key that is pending deletion is ignored.
+  6. **From G on** a load of that (kind, id) is a first enable (§9.2 step 1a). Its store
+     probe and phase C run on the store's queue after the deletion, so they find no
+     store. Its Allow is a newer decision of the same key than the Reset's or Remove's
+     "no record": its write follows on the grant-store queue, and the earlier write's
+     completion neither undoes it nor cancels or suspends the load (§8.5 "Applying a
+     write's completion"; TM X91).
 - **The bindings' removal** **(design addition)** is a read-modify-write of
   `keymap-ext.toml` on a worker, made as §8.5's write job is, with KM §6.3's strict reader
   and KM §6.5's saving rules: the lock `.keymap-ext.toml.lock` in the directory of the
   resolved document (persistent, never removed, taken without blocking and retried for at
-  most 1 s, as in §8.5), the document read with a non-blocking open checked on the handle
+  most 1 s, TM L94, as in §8.5), the document read with a non-blocking open checked on the handle
   and bounded at its cap + 1 bytes (TM L47, TM §8.8), and a temporary file
   `.keymap-ext.toml.tmp-<…>` beside it, renamed on success and removed on failure. The
   binding UI's own saves follow KM §6.5 and create the same temporary-file form.
@@ -1368,10 +1560,13 @@ totals count every store of a (kind, id), orphans and scripts not loaded include
 §5.2). A loaded or loading store contributes its file index and pending entries (TM rules
 7.6.1, 7.6.5). Every other store contributes the figures of the **store-root scan**:
 
-- **When.** On the grant-store queue (§8.5), once while the gate is `Starting`, after the
-  start-up read and before any load (the gate does not leave `Starting` before it has
-  completed, §10.3), and again after every Reset, Remove and orphan removal has
-  completed. A store leaves the scanned set when a load's phase C opens it (its file index
+- **When.** On the grant-store queue (§8.5), **every time the gate enters `Starting`**
+  (each session start, not once per client run; TM L92), right after that entry's read of
+  the grant store and before any load of the session (the gate does not leave `Starting`
+  before it has completed, §10.3), and again after the store deletion of every Reset and
+  Remove (step 3 above). So a session after a backend switch scans again, and its
+  `store-scan` worker event appears in the trace after that session's `grant-read`
+  (§11.6). A store leaves the scanned set when a load's phase C opens it (its file index
   counts from then) and joins it again, with its file index's last figures, when its
   apartment's final flush has completed. So the totals are current without rescanning
   stores that are open.
@@ -1476,6 +1671,11 @@ counted size. The open of steps 1–6 re-checks everything and is what decides.
   release follows on the button. A pointer that entered during the first 500 ms and rests
   there, or that was over the button when the dialog appeared, must leave and enter again.
   No key activates it.
+- **Every control waits 500 ms** (D17 §5.3, TM L65). "Deny" and "Not now" also ignore a
+  press during the first 500 ms after the dialog appeared; they need **no** pointer-entry
+  rule (a refusal grants nothing), so a press on them counts from 500 ms on, wherever the
+  pointer was before. The Escape key is not a control of the dialog: it refuses at any
+  time (keys only refuse, TM L65), which can never grant anything.
 - **No script can raise a dialog.** Dialogs come only from loads that the user starts, from
   autoload at world entry (§7.3), and from the user's own actions in the script manager
   (§9.7). A script's own actions never cause a load.
@@ -1557,7 +1757,9 @@ unavailable on the backend) stays undecided and is asked when a later load offer
 **Step 6: the record write and the outcome.**
 
 - **No dialog.** If step 2 or 3 left something to update, or stored settings values must
-  be dropped (§4.12), the record is written (§8.5) with the manifest's hash and
+  be dropped (§4.12), or the record the load decided under is an overlay entry of a
+  writable document (§8.5 "Before the store is opened"), the record is written (§8.5)
+  with the manifest's hash and
   `memory_mib` and the working decisions (so a group-A grant that step 2 made undecided
   leaves `granted`). The write completes before phase C. The content notice of step 2, if
   due, is shown with this write, so it appears once per content change, not at every load.
@@ -1602,6 +1804,9 @@ names differ. All texts except the script's display strings are Tessera's own.
   §8.25, TM L65): a press counts only at least 500 ms after the dialog appeared, after a
   pointer entry into **that** control observed after the delay ended, with the pointer
   inside from that entry to the press. No key changes them.
+- **Deny** and **Not now** ignore every press during the first 500 ms after the dialog
+  appeared, like every control (D17 §5.3, TM L65), and have no pointer-entry rule
+  (§9.1).
 
 **Outcomes.**
 
@@ -1623,6 +1828,15 @@ choice to the user (all of them optional), the dialog shows one choice instead o
 boxes: "Exchange messages with the server" **or** "Use local data (decoded game data,
 plugins)", plus "Neither". The text explains: "A script can either talk to the server or
 read your local data, never both, so that your local data never reaches a server."
+
+- **Preset and input.** The choice starts at the side the record grants (at "Neither"
+  when it grants neither, and always at "Neither" at a first enable or a changed script,
+  which have no earlier choices, §9.3 "Controls"); a switch started in the manager starts at the side the
+  user asked for. It follows the boxes' input rule of §9.3 (pointer only, TM §8.25).
+  "Exchange messages with the server" grants `session.server`; "Use local data" grants
+  every local-only capability of the offered set; the side not taken is **denied**, and
+  "Neither" denies both. The harness answers it only by a `reply` with `local_only`, or
+  by "Neither" as its default (§11.4).
 
 - If the record's granted set moves from a local-only capability to `session.server`, the
   dialog states "This script's stored values will be erased", and the next store open
@@ -1659,10 +1873,13 @@ list cannot be told from an update, so it keeps group-O grants and the store; th
   every notice (TM L67).
 - "Review" is not on the notice (notices take no clicks): it is the script's page in the
   script manager, which the notice names. The page lists the kept grants and the store size
-  and has **Reset**, which first ends the script if it is loaded (the ordinary unload,
-  with the final flush) or loading (as §7.5 says), then empties the store (on its I/O
-  queue, behind that flush) and, when that has completed, removes the record and queues a
-  store-root scan (§8.7). The next load is a first enable.
+  and has **Reset**. In the frame the user chooses it, the record leaves the grant table
+  (its "no record" enters the session overlay) and the script is ended if it is loaded
+  (the ordinary unload, with the final flush) or loading (cancelled, §7.5). The store is
+  then emptied on its I/O queue, behind that flush; when that has completed, the
+  grant-store write that removes the record is submitted and a store-root scan queued.
+  Until then a load of the script is refused. §8.7 "Reset and Remove, step by step" gives
+  the frames. The next load is a first enable.
 
 <a id="s9-7"></a>
 ### 9.7 The script manager's grant pages
@@ -1679,8 +1896,8 @@ and the settings page.
 | Switch between a local-only capability and `session.server` | §9.4 |
 | Change "Load automatically" | Written at once |
 | Move in the list | Writes `order` |
-| Reset | §9.6; a loaded script is unloaded first, and a load in progress is handled as §7.5 says |
-| Remove (orphans) | §8.7; a loaded orphan is unloaded first, and a load in progress is handled as §7.5 says, before its store is deleted |
+| Reset | §9.6; the record leaves the grant table in that frame, a loaded script is unloaded and a load in progress cancelled (§7.5), and the record's write follows the store's deletion (§8.7 "Reset and Remove, step by step") |
+| Remove (orphans) | §8.7; the same frames as Reset, then the store directory itself and the id's bindings are removed |
 | Change a setting value | Written at once; a loaded script sees it as §4.12 says |
 
 <a id="s9-8"></a>
@@ -1706,7 +1923,12 @@ and the settings page.
     `[modules]`, `[optional_modules]` and `[server]` table as the running one (TM §8.24,
     D17 §10). Any difference makes it **full**: an unload, the pipeline of §9.2, and a
     load without a hand-off table; an `author` difference also wipes the store before the
-    new apartment opens it (§8.8 step 3);
+    new apartment opens it (§8.8 step 3). A full reload's **load** (phase A, with its
+    memory reservation, §7.3) starts only after the old apartment's close item has run
+    **and** its cap has left the 512 MiB sum at its final flush (TM L84, L24; EA1b §8),
+    as a hot reload's new apartment waits for it. So §7.4's one-id rule (the old copy is
+    no longer loaded) and the sum (with 16 × 32 MiB loaded, the load waits for that flush
+    instead of being refused) never refuse it, and it never adds an apartment (TM L26);
   - a **hot** reload writes nothing to the grant store (EA1b §8.3 has no such write): the
     record keeps the hash of the last full load, which is harmless because a developer
     script's content change keeps every decision (§9.2 step 2); stored settings values
@@ -1715,25 +1937,38 @@ and the settings page.
     a **full** reload writes as §9.2 step 6 says;
   - the developer console's REPL binds only to developer apartments (D17 §10).
 - **`/ext:reload` of an installed script** (developer mode on) is always a full reload:
-  unload, phase A, the pipeline of §9.2 (so a changed hash re-asks group A before new code
-  runs), and a load without a hand-off table.
+  unload, phase A (started as the full reload above says), the pipeline of §9.2 (so a
+  changed hash re-asks group A before new code runs), and a load without a hand-off
+  table.
 - **`/ext:reload` is a developer-mode command** (D17 §3, EA1b §8.1). With developer mode
   off, every `/ext:reload` line, whatever its id, is refused with the reserved-layer notice
   "Developer mode is off"; nothing is unloaded, read or loaded. With developer mode on, an
   `/ext:reload <id>` whose id names no **loaded** script (not loaded, unloaded after a
   suspension, only listed, or unknown) produces the notice "No loaded extended script
   '<id>'" (D17 §3; the id shown as plain text, TM §8.2) and starts no load. This is the
-  one text for every "not loaded" case, the `/ext:` command line's (EA1a §6.2) included,
-  because D17 §3 states it; EA1b §8.2's "⟨id⟩ is not loaded" is to be aligned with it
-  (OPEN O-12). A reload never loads a script that was not running; the user loads it from
-  the script manager. A
+  one text for every "not loaded" case, because D17 §3 states it; the `/ext:` command
+  line's (EA1a §6.2) and EA1b §8.2's reload notices use it too (O-12, closed). A reload
+  never loads a script that was not running; the user loads it from the script manager. A
   loaded script that is **suspended** is not reloaded: the notice is "notes is suspended:
   resume it first" (a suspension during a reload cancels it, EA1b §8). The file watcher
   follows the same rules (EA1b §8.2: events for a script that is not loaded queue
   nothing).
-- **Turning developer mode off** unloads every loaded developer script (the ordinary unload
-  items) and stops listing `data/scripts-dev/`. Their records stay. Turning it on again
-  shows them; their next load follows §9.2 with developer mode on.
+- **Turning developer mode off** (TM §8.23 "Developer mode turned off"), in that frame:
+  unloads every loaded developer script (the ordinary unload items; a suspended one its
+  close item only); **cancels every developer load in progress** by §7.5's rows (a grant
+  dialog showing or queued for it closes as "Not now" and writes nothing; store work
+  already submitted completes on its queue and its result is discarded; in phase D the
+  apartment's state gets one close item and the top level never runs; §7.5 "Other
+  cancellations"); **refuses every waiting developer load** (a user-started load queued
+  in `Starting`, a reload request not yet started) with "Developer mode is off"; and
+  stops listing `data/scripts-dev/`. So no developer script finishes loading, and no
+  developer load's dialog makes a decision, after developer mode is off (a decision made
+  before, whose write is in flight, is written whole, as at a switch, §10.4).
+  Their records stay. Turning it on again shows them; their next load follows §9.2 with
+  developer mode on.
+- **The user's unload of a loading copy** (the unload §7.4 offers when the other kind of
+  an id is loading) cancels that load the same way (§7.5 "Other cancellations"), whatever
+  its kind and whatever developer mode is.
 - **Developer scripts still need their grants once:** Tessera never grants without a
   dialog, in any mode (the only exception is `scripttool test`'s tool root, §11.4; a
   valid record the user wrote by hand is the user's own act, §8.4).
@@ -1771,14 +2006,14 @@ The ext host is always in exactly one gate state:
 | State | Entered when | Apartments | Loads | Ext steps 6a / 6b / 6c | Dialogs | Script manager |
 |---|---|---|---|---|---|---|
 | **Off** | At start-up; when `Draining` ends; for the whole life of a session whose class is not admitted | none exist | none start; a user's Load is refused with "Extended scripts are not available with this connection" | not run | none shown; none queued | lists scripts and records read-only, shows the gate state |
-| **Starting** | An admitted session has connected (start-up step 8: its class is known), and the UI is not yet ready, or the start-up read of the grant store (§8.5) or the store-root scan (§8.7) has not yet been applied | none | user-started loads wait (queued in order) | not run | none shown | as Off, with "starting" |
-| **Open** | `Starting`, the UI is ready (start-up step 9), and the start-up read and the store-root scan have been applied (an unreadable, damaged or newer document counts as read, §8.6) | loaded and loading ones | allowed (§7.3); autoload queued at **world entry** (the session's first entry into the world after its `Connect`, once per session; if that entry came while the state was still `Starting`, at the entry into `Open`) | run, under the per-frame rules of EA1a §2.6 and TM L5–L9 (cap and slices, L5–L7; heavy-frame gate, L8; floor frames, L9 and TM rule 7.4.1) | allowed | full |
+| **Starting** | An admitted session has connected (start-up step 8: its class is known), and the UI is not yet ready, or this entry's read of the grant store (§8.5) or its store-root scan (§8.7) has not yet been applied. Both are submitted at **every** entry into `Starting`, read first (TM L92) | none | user-started loads wait (queued in order) | not run | none shown | as Off, with "starting" |
+| **Open** | `Starting`, the UI is ready (start-up step 9), and this entry's grant-store read and store-root scan have been applied (an unreadable, damaged or newer document counts as read, §8.6) | loaded and loading ones | allowed (§7.3); autoload queued at **world entry** (the session's first entry into the world after its `Connect`, once per session; if that entry came while the state was still `Starting`, at the entry into `Open`) | run, under the per-frame rules of EA1a §2.6 and TM L5–L9 (cap and slices, L5–L7; heavy-frame gate, L8; floor frames, L9 and TM rule 7.4.1) | allowed | full |
 | **Draining** | A backend switch is queued, or the session disconnects | existing ones are being unloaded | none start; loads in progress end as §10.4 says | 6a runs the unload and close items at the head of the ext queue, under the 6a slice (TM L6), the heavy-frame gate (TM L8) and its floor frames (TM rule 7.4.1, TM L9); **6b does not run**; 6c runs | the shown dialog closes as "Not now"; queued ones are dropped | read-only, "unloading" |
 
 Transitions:
 
 - `Off` → `Starting`: the new session is connected and its class is admitted.
-- `Starting` → `Open`: the UI is ready, and the start-up read and the store-root scan have
+- `Starting` → `Open`: the UI is ready, and this entry's grant-store read and store-root scan have
   been applied. Both are jobs of the grant-store queue, which never waits on another
   program (§8.5), so this transition cannot be held back by a FIFO, a device or a lock
   at the grant store's path. Waiting user-started loads start, in order.
@@ -1813,10 +2048,15 @@ spec's phases:
 | **Switch timeout** (TM rule 7.4.2, TM L10): the switch has been queued for 2 s of wall time (120 frames in deterministic mode) | Every apartment whose `Unload` handler has not started gets its close item **without** the `Unload` handler, exactly as for a suspended script (D17 §4): its `Store` writes are flushed at the close, and its script log records "unloaded without Unload: backend switch timed out". An `Unload` call already running finishes within its own deadline (TM L3) |
 
 **Bounds.** Unload and close items obey the 6a slice like every item (D17 §4). Without
-gating, at least one item runs per ungated frame (TM L6), so `Draining` lasts at most 34
-ungated frames (17 `Unload` items and 17 close items). Under permanent gating, floor frames
-run exactly one 6a item each and the timeout closes the rest, so a switch completes within
-TM L11 (2 s + 17 × (250 ms + one frame), about 6.25 s; 392 frames in deterministic mode).
+gating, at least one item runs per ungated frame (TM L6). Under permanent gating, floor
+frames run exactly one 6a item each and the timeout closes the rest, so a switch completes
+within TM L11, 2 s + *a* × (250 ms + one frame) with *a* apartments:
+
+| Slice | Apartments *a* (TM L26) | Without gating | Under permanent gating (TM L11) |
+|---|---|---|---|
+| 1a | at most 16 (no hot reload) | at most **32** ungated frames (16 `Unload` items and 16 close items) | about 6 s; at most **376** frames in deterministic mode |
+| 1b and later | at most 17 (16 plus a hot reload's new apartment) | at most **34** ungated frames (17 + 17) | about 6.25 s; at most **392** frames in deterministic mode |
+
 TM X85 and X87 test this. (This closes the former OPEN O-5.)
 
 **Narrowings during a load.** A manager revocation, Reset, Remove, a local-only switch or a
@@ -1825,7 +2065,8 @@ progress is not a gate transition. §7.5 states it with the same rows as the tab
 (phase A; phase B before, at and past its dialog; phase C; phase D before the top-level
 run; loaded), and phase D's delivery and the top-level item re-check the record, so no
 load reaches its top-level run without a capability revoked after its decision (TM §8.23
-"Loads in progress", X91).
+"Loads in progress", X91). Developer mode turned off and the user's unload of a loading
+copy cancel a load by the same rows (§7.5 "Other cancellations", TM X90).
 
 <a id="s10-5"></a>
 ### 10.5 What the gate does not change
@@ -1837,12 +2078,14 @@ load reaches its top-level run without a capability revoked after its decision (
 - An `/ext:` line in any state other than `Open` is never a chat line and is never sent to
   a backend. Outside `Open` no script takes lines (none is loaded in `Off` and `Starting`;
   in `Draining` 6b does not run). So:
-  - `/ext:list` and `/ext:help [<id>]` open the script manager at the matching page, as in
-    `Open` (D17 §3), read-only in the states where §10.3's table makes it so;
+  - `/ext:list`, `/ext:help [<id>]` and `/ext:<id>` with **no** command word open the
+    script manager at the matching page, as in `Open` (D17 §3; EA1a §6.2: `/ext:<id>`
+    alone opens the script's help page as `/ext:help <id>` does), read-only in the states
+    where §10.3's table makes it so; no script gets anything;
   - `/ext:reload <id>` with developer mode off gives "Developer mode is off" (§9.8);
-  - every other `/ext:` line (`/ext:reload <id>` with developer mode on, `/ext:<id>` with or
-    without a command word) gives the notice "No loaded extended script '<id>'" (D17 §3,
-    §9.8), the id shown as plain text (TM §8.2), rate-limited as every notice (TM L67).
+  - every other `/ext:` line (`/ext:reload <id>` with developer mode on, `/ext:<id>` **with**
+    a command word) gives the notice "No loaded extended script '<id>'" (D17 §3, §9.8),
+    the id shown as plain text (TM §8.2), rate-limited as every notice (TM L67).
 
 ---
 
@@ -1947,7 +2190,7 @@ Lines and columns refer to the manifest or a source file where known.
 | F06 | error | A file changed size while it was read |
 | M01 | error | `script.toml` missing, over 64 KiB, not UTF-8, has a byte-order mark, or not TOML (with the parser's line and column) |
 | M02 | error | An unknown key, or a nested table from an unquoted dotted capability name |
-| M03 | error | A required key missing, a value of the wrong type, nesting deeper than §4.1 allows, or more than 1,024 keys in the document (§4.1, TM L37) |
+| M03 | error | A required key missing, a value of the wrong type (a float where an integer is documented included), a datetime value anywhere, a non-finite number (`inf`, `nan`) anywhere, nesting deeper than §4.1 allows, or more than 1,024 keys in the document (§4.1, TM L37) |
 | M04 | error | `manifest` below 1 or newer than this build reads (§12.1); `api` below 1 or its major not served (§12.2) |
 | M05 | error | `id` grammar, reserved id, or `id` different from the folder name |
 | M06 | error | `version` not Semantic Versioning 2.0.0 within the caps; `license` not printable ASCII (0x20–0x7E) or over 64 bytes (§4.2, TM L87) |
@@ -2006,17 +2249,27 @@ file's expectations and the scripts' own assertions.
   of the run, the first and every later one (a `reload`, a full reload, a `manager`
   `load`, an autoload after a `switch`), runs the decision pipeline of §9.2 against the
   tool root's grant table, exactly as in the client. No dialog is drawn; each dialog that
-  §9.2 or §9.7 raises (at a load, or by a `manager` `widen` or local-only switch) is
-  **answered by the harness** in the frame it is raised, by this policy:
+  §9.2 or §9.7 raises (at a load, or by a `manager` `widen` or `local-only` switch) is
+  **answered by the harness** when it is shown: in the frame it is raised, or, while
+  another dialog shows, in the frame it reaches the front of §9.1's queue. The answer is
+  chosen in that frame by this policy, and applied in that frame unless the reply taken
+  has a `delay` (§11.5), which keeps the dialog showing for that many frames first (so a
+  narrowing, a switch or developer mode turned off can meet a dialog that shows, §7.5,
+  §10.4; TM X90, X91):
   1. If the walk has queued a `reply` for that script (§11.5) that has not been used,
-     the oldest such reply is taken. Its `kind` must equal the dialog's kind; otherwise
-     the run fails with "dialog kind <kind> raised, reply expects <kind>" and the dialog
-     is answered as Escape.
+     the oldest such reply is taken. Its `kind` must equal the dialog's kind, and its
+     `local_only` key must be present exactly when the dialog shows a local-only choice
+     (§9.4) and `uncheck` must name no capability of that choice; otherwise the run
+     fails with "dialog kind <kind> raised, reply expects <kind>" (or "reply does not fit
+     the local-only choice") and the dialog is answered as Escape.
   2. Otherwise, a **first enable** dialog gets the **default answer**: Allow, with every
      optional capability named by `--deny CAP` (repeatable) unchecked, every other
      optional box checked, and "Load automatically" as the manifest's `autoload`; if a
      required capability is named by `--deny`, the answer is Deny (the load is refused,
-     which the walk can expect).
+     which the walk can expect). A **local-only choice** (§9.4, slice 3) is not a box:
+     the default answer takes **"Neither"** for it, so it grants neither side and denies
+     every capability of the choice (the fail-closed answer; a test that wants a side
+     queues a `reply` with `local_only`).
   3. Otherwise (any other kind, with no queued reply), the dialog is answered as
      **Escape** (Deny or "Not now" by kind, §9.3), and the run **fails** unless an
      `[[expect]] dialog` (§11.5) names that dialog. So no later dialog is ever allowed
@@ -2058,16 +2311,28 @@ file's expectations and the scripts' own assertions.
   logs go to the tool root.
 - **Developer mode** is off unless `--developer-mode` is given, whatever the folders'
   kinds, and the walk's `developer_mode` event (§11.5) turns it on or off during the run,
-  with exactly the effects of §9.8 (turning it off unloads every loaded developer script
-  and stops listing developer folders; turning it on lists them). **No settings file** is
+  with exactly the effects of §9.8: turning it off unloads every loaded developer script,
+  cancels every developer load in progress and refuses every waiting one (§7.5 "Other
+  cancellations"), and stops listing developer folders; turning it on lists them. In the
+  trace, the frame of a `developer_mode = false` event shows, in this order: the
+  `devmode` `off` event; for each developer load in progress, in the script-list order,
+  its `dialog` event (closed as "Not now", `r` = `closed:devmode`) if one was showing,
+  and its `load` event with `r` = `cancelled` (or, for a load waiting on its record write
+  or store probe, or in phase C, that `load` event in the frame the job's completion is
+  seen; for a phase-D load, its `close` item when it runs); then each loaded developer
+  script's unload items as they run; and for each waiting developer load a `load` event
+  with `r` = `refused:Developer mode is off`. **No settings file** is
   written: developer mode and every other setting of the run (the panic chord at its
   default included) are held in memory, so the tool root never holds a settings file or
   its lock file.
 - **Start of the run and the first loads.** In frame 0 the harness connects the session
-  (`Off` → `Starting`, §10.3), the UI is ready, and the start-up read of the grant store
-  and the store-root scan (§8.7) are submitted on the grant-store queue; they complete at
-  frame *k* (`--latency`, the worker rule above), and the gate becomes `Open` in that
-  frame (with `--backend other` or `tessera-protocol` it stays `Off`). The harness's
+  (`Off` → `Starting`, §10.3), the UI is ready, and the session's read of the grant store
+  (the start-up read) and then the store-root scan (§8.7) are submitted on the
+  grant-store queue; they complete at frame *k* (`--latency`, the worker rule above), and
+  the gate becomes `Open` in that frame (with `--backend other` or `tessera-protocol` it
+  stays `Off`). Every later session (after a `switch` to an admitted class) submits the
+  same two jobs at its own entry into `Starting` and opens when both have completed
+  (§8.5, §8.7; TM L92). The harness's
   player is in the world from the connection, so **world entry** (§10.3) is the first
   frame of each session in which its gate is `Open`. In that frame, in this order:
   1. **autoload**, as §7.3 says: the grant table's records with `autoload = true` whose
@@ -2118,7 +2383,9 @@ and the default screen.
 0 is the first frame of the run, and a run of `frames = 900` has frames 0 to 899. Every
 frame number must be below `frames`. An event "at frame *n*" is delivered in that frame
 the way the client would deliver it (an input in step 1 of frame *n*, and so a script's
-handler in 6b of frame *n*). Ranges: `[[frame]] from` and `to` are both inclusive; a
+handler in 6b of frame *n*). Several `[[input]]` entries of one frame are applied in
+the walk file's order, so a `manager` `revoke` and a `manager` `widen` of one capability
+in one frame (TM X91) run in that order. Ranges: `[[frame]] from` and `to` are both inclusive; a
 `hold` lasts from `frame` up to but not including `until`; an entity exists from `spawn`
 up to but not including `despawn`.
 
@@ -2136,7 +2403,7 @@ height = 1080
 [world]
 preset = "flat"     # "flat" or "slope"
 size = 3            # landblocks per side, odd, 1-9
-start = { x = 96.0, y = 96.0, heading = 0.0 }
+start = { x = 96.0, y = 96.0, yaw = 1.5707963 }   # facing +Y (north)
 
 [[entity]]
 name = "Marker A"
@@ -2192,9 +2459,10 @@ loaded = { script = "notes", value = true }
 |---|---|---|
 | root | `format`, `version`, `seed`, `latency`, `frames` | `frames` 1–216,000 (one hour at 60 frames per second; TM L86) |
 | `[screen]` | `width`, `height` | The harness's virtual surface in physical pixels, the "screen" that TM §2 and §7.1 count coverage in. Default 1920 × 1080; `width` 320–7,680, `height` 200–4,320 (TM L86) |
-| `[world]` | `preset`, `size`, `start` | `flat`: terrain height 0 m everywhere; `slope`: height rises 0.1 m per metre along +x from the west edge. `size` landblocks per side (odd, 1–9, TM L86) around a fixed centre landblock that the harness prints. `start` is the player's position and heading in the region frame of ARCH §9.1 (metres, degrees) |
+| `[world]` | `preset`, `size`, `start`, `region` | **Region (design addition):** the synthetic world has world data, so its session reports a region number in 1–255, never 0 (EA1b §3.1); it is `region` (integer 1–255, default **1**, an argument-validity domain, TM §0.1 rule 6), the region of the player and of every `[[entity]]` and flood entity until a `region` input (below) changes it. `flat`: terrain height 0 m everywhere; `slope`: height rises 0.1 m per metre along +x from the west edge. `size` landblocks per side (odd, 1–9, TM L86) around a fixed centre landblock that the harness prints. `start` is the player's position `x`, `y` in the region frame of ARCH §9.1 (metres) and the direction the character faces as `yaw`: radians in EA1a §2.10's form (KM §9.1: counter-clockwise from +X seen from above, 0 facing +X, π/2 facing +Y = north; any finite value, read modulo 2π, an argument-validity domain, TM §0.1 rule 6). There is no `heading` key: as EA1a §2.10 says, no input takes a compass heading, and `World.Here().heading` is derived from this yaw (EA1a invariant 40). Default `yaw` 0 |
 | `[[entity]]` | `name` (at most 48 cp, §4.4 rules), `position` (region frame), `spawn`, `despawn` (frames; `despawn` optional) | Synthetic entities that the `Entity` module sees; at most 4,096 (TM L86) |
-| `[[input]]` | `frame` and exactly one of: `press` / `release` (one stroke, KM §5.1, resolved by the mapper exactly as in the client, so ext bindings resolve only after every built-in context, D17 §5.5); `text` (typed text, delivered to the focused text box if any, else dropped); `command` (a line as if typed in the chat input and submitted; `/ext:` lines go to the ext host, anything else is ignored); `pointer` + `click` (move the pointer to UI-space coordinates and click a mouse button there); `hold` + `until` (game-band actions held, for movement); `focus` (`"lost"` or `"gained"`: the game window loses or regains keyboard focus, TM §8.17); `switch` (`"offline"`, `"other"`, `"tessera-protocol"` or `"disconnect"`: a backend switch or session end is queued, §10.3); `reload` (`{ script = "<script>", from = "<path>" }`: from this frame the script's folder is the one at `from`, a walk path whose last segment is the id, read through §3.4's rules, and a reload is requested as `/ext:reload <id>` would, EA1b §8); `developer_mode` (`true` or `false`: the user turns developer mode on or off in Tessera's settings page, with §9.8's effects, §11.4); `manager` (`{ script = "<script>", action = "revoke" \| "widen" \| "resume" \| "unload" \| "load", capability = "<name>" }`: the script manager's action of §9.7, `capability` only with `revoke` and `widen`; a `load` or `widen` that raises a dialog has it answered as §11.4 says); `reply` (`{ script = "<script>", kind = "first-enable" \| "first-enable-again" \| "changed" \| "update" \| "more" \| "memory", choice = "allow" \| "deny" \| "not-now" \| "escape", uncheck = ["<capability>", …], autoload = <boolean> }`: queues, from this frame, the answer to the next dialog of that script, §11.4; `uncheck` names optional capabilities left unchecked (default none), `autoload` the box (default: as §9.3 presets it); `deny` is valid for the first three kinds, `not-now` for the last three, `allow` and `escape` for all); `grants` (`"<path>"`: a walk path naming a file whose bytes (at most 4 MiB + 1, as `--grants` copies) replace the tool root's `ext-grants.toml` in this frame, after which the re-read of §8.5 is queued, as when the script manager opens) | At most 65,536 entries (TM L86) |
+| `[[flood]]` | `from`, `to` (frames, inclusive), `spawn` (entities per frame), `life` (frames, default 1), `radius` (metres, default 50) | **The record-flood hook** **(design addition**, a test hook of the tool only, never in the client; TM §7.5, X19; EA1a invariants 36 and 37). In each frame from `from` to `to`, `spawn` synthetic **flood entities** are spawned, and each is despawned `life` frames after its spawn frame (also after `to`; one whose despawn frame is not below `frames` lives to the end of the run). Their spawn and despawn records enter the record list of the frame's steps 2–5 exactly as a walk entity's records would, so TM rule 7.5.1's cap of 4,096 recorded records per frame and its overflow count apply to them. Within a frame the records come in this order: the `[[entity]]` records (in file order), then flood despawns (in spawn order), then flood spawns (in serial order). Flood entity *i* (a run-wide serial from 0) has the same synthetic kind as an `[[entity]]`, the name `flood-<i>`, and a position drawn from the run's seed, uniform in the disc of `radius` around `[world] start`, at terrain height, so two runs with the same seed flood identically. Flood entities do not count toward L86's 4,096 `[[entity]]` entries. Bounds (TM L86, registered in TM revision 6; O-13 closed): at most 64 `[[flood]]` entries; `spawn` 1–16,384 flood entities per frame; `life` 1–600 frames; at most 65,536 flood entities alive in any frame, checked when the walk file is read (a walk that breaks one is invalid, exit status 2). `radius` 1–500 m is an argument-validity domain (TM §0.1 rule 6) and stays here. Examples: TM X19's 10,000-entity integration per frame for 10 s is `{ from = 60, to = 659, spawn = 10000 }` (10,000 spawns and 10,000 despawns per frame); EA1a invariant 36's single frame is `{ from = 60, to = 60, spawn = 10000, life = 600 }`; invariant 37's 1,024 events per frame are `{ from = 60, to = 659, spawn = 512 }` |
+| `[[input]]` | `frame` and exactly one of: `press` / `release` (one stroke, KM §5.1, resolved by the mapper exactly as in the client, so ext bindings resolve only after every built-in context, D17 §5.5); `text` (typed text, delivered to the focused text box if any, else dropped); `command` (a line as if typed in the chat input and submitted; `/ext:` lines go to the ext host, anything else is ignored); `pointer` + `click` (move the pointer to UI-space coordinates and click a mouse button there); `hold` + `until` (game-band actions held, for movement); `focus` (`"lost"` or `"gained"`: the game window loses or regains keyboard focus, TM §8.17); `region` (an integer 1–255 other than the current one: **(design addition)** the player changes region in this frame at the same position and yaw: the harness's sandbox applies a location report with the new region in step 2 of that frame, so a lease ends with `"region"` as EA1b §4.5 says, which lets that test run under `test` instead of only in the client; the synthetic world serves the same preset, size and entities under every region number, so only the number changes); `switch` (`"offline"`, `"other"`, `"tessera-protocol"` or `"disconnect"`: a backend switch or session end is queued, §10.3); `reload` (`{ script = "<script>", from = "<path>" }`: from this frame the script's folder is the one at `from`, a walk path whose last segment is the id, read through §3.4's rules, and a reload is requested as `/ext:reload <id>` would, EA1b §8); `developer_mode` (`true` or `false`: the user turns developer mode on or off in Tessera's settings page, with §9.8's effects, §11.4); `manager` (`{ script = "<script>", action = "revoke" \| "widen" \| "resume" \| "unload" \| "load" \| "reset" \| "remove" \| "autoload-on" \| "autoload-off" \| "local-only" \| "open", capability = "<name>", side = "server" \| "local" }`: the script manager's action of §9.7, `capability` only with `revoke` and `widen`, `side` only with `local-only`; `reset` and `remove` follow §8.7 "Reset and Remove, step by step" (`remove` only for an orphan, §8.7; otherwise the run fails in that frame); `unload` of a script whose load is in progress cancels that load (§7.5 "Other cancellations"); `local-only` (slice 3) is §9.4's switch to the named side (`server`: `session.server`; `local`: the record's local-only capabilities), started in the manager: the script is unloaded first if loaded, then the switch dialog (kind `more`, its asked set the new side's capabilities, with the erase line of §9.3 when it moves to `server`) is raised and answered as §11.4 says; a script whose record offers no such switch fails the run in that frame; `open` (no `script`) is the user opening the script manager: it queues the re-read of §8.5 without changing the file. **No other `manager` action re-reads**: the harness models the script manager as open from the run's start, so its actions apply to the grant table as it stands, and a walk that needs the re-read of an opening writes an `open` (or a `grants` event) first; a `load`, `widen` or `local-only` that raises a dialog has it answered as §11.4 says); `reply` (`{ script = "<script>", kind = "first-enable" \| "first-enable-again" \| "changed" \| "update" \| "more" \| "memory", choice = "allow" \| "deny" \| "not-now" \| "escape", uncheck = ["<capability>", …], autoload = <boolean>, local_only = "server" \| "local" \| "neither", delay = <frames> }`: queues, from this frame, the answer to the next dialog of that script, §11.4; `uncheck` names optional capabilities left unchecked (default none; never one of the local-only choice), `autoload` the box (default: as §9.3 presets it), `local_only` the side taken in a dialog that shows §9.4's choice (slice 3; required exactly for such a dialog, §11.4 rule 1), `delay` the number of frames the dialog stays showing before the answer is applied (0, the default, to 600, an argument-validity domain, TM §0.1 rule 6: it adds no work or memory; at most one dialog shows at a time, so later dialogs wait behind it, §9.1); `deny` is valid for the first three kinds, `not-now` for the last three, `allow` and `escape` for all); `grants` (`"<path>"`: a walk path naming a file whose bytes (at most 4 MiB + 1, as `--grants` copies) replace the tool root's `ext-grants.toml` in this frame, after which the re-read of §8.5 is queued, as when the script manager opens) | At most 65,536 entries (TM L86) |
 | `[[frame]]` | `from`, `to`, `elapsed_ms` | **Gate simulation:** in those frames, the harness reports `elapsed_ms` as the time since the frame's work started when step 7 is reached, so the heavy-frame gate (22 ms, TM L8) is evaluated on these values instead of being off, and the floor frames of TM rule 7.4.1 follow the 15-frame condition. Deterministic, because it never reads a clock. `elapsed_ms` above 22 for every frame is TM rule 7.4.6's "every frame is heavy" hook |
 | `[[expect]]` | `frame` or `at = "end"`, and exactly one of: `log` (`script`, `line`: a script-log record whose text equals `line`, logged in that frame); `log_contains` (`script`, `text`); `error` (`script`, `contains`: an aborted call whose message contains the text, in that frame); `store` (`script`, `key`, `value`; only with `at = "end"`, read after the final flush of the unload at the end of the run: the `Store` value equals the TOML value, compared as the bounded value model, a TOML array being a table with keys 1..n); `loaded` (`script`, `value` boolean); `refused` (`script`, `reason`: the load was refused with that reason text); `suspended` (`script`); `answer` (`script`, `query`, `value`: a query's answer recorded in the trace); `gate` (`state`: the gate state at the end of that frame); `dialog` (`script`, `kind`, and optionally `asked`, an array of capability names, and `choice`: a dialog of that kind was raised for that script in that frame, with exactly that asked set and answered with that choice; with `at = "end"`, at any frame of the run); `granted` (`script`, `value`, an array of capability names: the grant table's `granted` list of that (kind, id) at the end of that frame, `[]` when it has no valid record); `grants_file` (`unchanged = true`, only with `at = "end"`: the tool root's `ext-grants.toml` holds exactly the bytes it was seeded with by `--grants` or the last `grants` event) | At most 4,096 entries (TM L86) |
 
@@ -2254,9 +2522,9 @@ committed one and fails on the first difference, naming its line.
 | `worker` | `f`, `ev`, `s`, `what`, `r` | the job: `snapshot`, `store-open`, `store-probe`, `store-flush`, `store-read`, `store-wipe`, `grant-write`, `grant-read`, `store-scan`, `keymap-write`, `image-decode`; `s` omitted for `grant-read` and `store-scan` | `submitted`, then `ok` or an error class at completion |
 | `query` | `f`, `ev`, `s`, `what`, `u`, `a` | the query's name (for example `Entity.QueryRadius`) | — |
 | `limit` | `f`, `ev`, `s`, `what`, `r` | the TM limit reached, as its L-number (`L27`); `s` omitted for a host-wide limit | the answer given: `busy`, `limit`, `full`, `dropped`, `refused` |
-| `dialog` | `f`, `ev`, `s`, `what`, `r`, `c` | the dialog's kind: `first-enable`, `first-enable-again`, `changed`, `update`, `more`, `memory` (§9.2 step 5, §9.7) | the answer and its source: `allow:reply`, `allow:default`, `deny:reply`, `deny:default`, `not-now:reply`, `escape:reply`, `escape:unanswered`, `closed:gate` (§10.4); `c` is the asked set (§9.2 step 5) |
+| `dialog` | `f`, `ev`, `s`, `what`, `r`, `c` | the dialog's kind: `first-enable`, `first-enable-again`, `changed`, `update`, `more`, `memory` (§9.2 step 5, §9.7) | the answer and its source: `allow:reply`, `allow:default`, `deny:reply`, `deny:default`, `not-now:reply`, `escape:reply`, `escape:unanswered`, `closed:gate` (§10.4), `closed:narrowed` (a narrowing, §7.5), `closed:devmode` and `closed:unload` (§7.5 "Other cancellations"). The event is in the frame the dialog was answered or closed: the frame it was raised, unless a `reply` with `delay` kept it showing (§11.4, §11.5). With a local-only choice (§9.4) an Allow's `r` also names the side taken: `allow:reply:server`, `allow:default:neither` and so on (`server`, `local` or `neither`). `c` is the asked set (§9.2 step 5) |
 | `devmode` | `f`, `ev`, `what` | `on` or `off`: developer mode changed (`--developer-mode` gives an `on` event in frame 0; a `developer_mode` walk event, §11.5) | — |
-| `grants` | `f`, `ev`, `s`, `what`, `c` | the grant table's change for that (kind, id): `allow` (a dialog's Allow), `update` (§9.2 step 6), `revoke`, `reread`, `remove`, `reset`; one event per changed record, in byte order of `s`; `c` is the record's `granted` list after the change (`[]` when it has none) | — |
+| `grants` | `f`, `ev`, `s`, `what`, `c` | why the grant table's entry of that (kind, id) changed: `allow` (a dialog's Allow, a widen's and a local-only switch's included), `update` (§9.2 step 6's write without a dialog, dropped settings values included), `revoke` (§9.7), `autoload` (the "Load automatically" choice), `settings` (a setting value changed in the manager), `reset`, `remove` (the "no record" entering the overlay, §8.7 step 1), `rollback` (a failed load write taken back, which restores the overlay entry it superseded or leaves none, §8.5 "A failed write"; no event when a newer decision stays current), `reread` (a read result or a write's completion changed the entry: a hand edit or another process's change, a narrowing of an overlay entry by the document included, §8.5 step 2); `order` ("Move in the list"; `s` and `c` omitted, one event). One event per changed entry, in byte order of `s`, in the frame the change is applied. A change of the document view that leaves the grant table's entry as it was (an overlay entry still decides; a write's completion for its carried keys; a newer or unusable read; a failed write whose decision stays) emits **no** event; the `worker` event shows the job. `c` is the entry's `granted` list after the change (`[]` when it has no record) | — |
 
 The JSON objects have no white space outside strings, and numbers are written as
 integers.
@@ -2303,12 +2571,37 @@ runner; it keeps no cases of its own.
   written for the tool, CC0, generated at run time, never stored as a binary fixture),
   runs them in a fresh tool root with the `test` machinery in deterministic mode, and uses
   the walk-file events of §11.5 (gate simulation, `switch`, `focus`, `reload`, `manager`,
-  `reply`, `grants`, `developer_mode`), per-folder kinds, `--developer-mode`, `--grants`
-  and the `dialog`, `granted` and `grants_file` expectations for the situations TM's
-  procedures name (X62's seeded documents; X90's dialogs, its second copy of one id in
-  both kinds and its two `autoload = true` records of one id at world entry, §11.4; X92's
-  dialogs; X91's re-read, failed-write revocation, newer document and narrowing during a
-  load). Test hooks that no walk event covers (a file that
+  `reply`, `grants`, `developer_mode`), the record-flood hook `[[flood]]` (§11.5),
+  per-folder kinds, `--developer-mode`, `--grants`, `--latency` and the `dialog`,
+  `granted` and `grants_file` expectations for the situations TM's procedures name
+  (X19's flood of 10,000 entities per frame, `[[flood]]` within TM L86; X62's seeded
+  documents and, from slice 3, its local-only switch through `manager` `local-only` and a
+  `reply` with `local_only`; X90's dialogs, its second copy of one id in both kinds and
+  its two `autoload = true` records of one id at world entry, §11.4, and developer mode
+  turned off by a `developer_mode = false` event while one developer load shows its
+  dialog (a `reply` with `delay`), one is in phase C and one waits in `Starting`, plus a
+  `manager` `unload` of a loading copy, each expected `cancelled` or refused with
+  "Developer mode is off" and never `loaded`; X92's dialogs; X91's re-read (`manager`
+  `open` or `grants`), failed-write revocation, newer document, a document damaged as a
+  whole re-read and then replaced by a write, narrowing during a load, a `manager`
+  `revoke` and `widen` of one optional grant in one frame under `--latency 2` with an
+  `[[expect]] granted` that lists it after both writes, a `manager` `reset` followed,
+  once the deletion has completed, by a first-enable `load` answered Allow before the
+  Reset's write completes, expected neither cancelled nor suspended, and the **rollback
+  cases** of §8.5 "A failed write", with the hook that makes grant-store writes fail: a
+  `manager` `revoke` of optional `b` whose write fails, then a `reload` with a changed
+  hash whose update write fails, with `[[expect]] granted` not listing `b` after both,
+  and, once writes succeed again, a later write after whose completion (the overlay
+  chain then empty, so the grant table is the written document's) `[[expect]] granted`
+  still does not list `b`; and a `manager` `reset` whose write fails, then a
+  first-enable Allow whose write fails, with `[[expect]] granted` `[]` after it and the
+  next load a first enable (`[[expect]] dialog` of kind `first-enable`)). In the last two the harness also **holds the earlier
+  grant-store write in flight** (a test hook) until the later decision has been applied,
+  because under one uniform `--latency` the manager-started dialog's manifest read (§3.5)
+  or the new load's phase A and store probe would otherwise complete in the same frame as
+  that write, and the order of the two would not be the one the case needs. X91's re-read
+  whose open fails is its U part (`tessera-ext-host`), reported `ELSEWHERE`.
+  Test hooks that no walk event covers (a grant-store write held in flight, a file that
   grows during the walk, an entry swapped for a link between a listing and its open, a
   store flush held in flight, a kill during a flush or a grant write, a grant-store write
   made to fail, a lock held by another process, the links, FIFOs, device links and
@@ -2322,8 +2615,9 @@ runner; it keeps no cases of its own.
     flush, temporary files `t_<key>.tmp` (§3.1, §3.6);
   - `logs/scripts/<kind>/s_<id>.log` and `s_<id>.1.log`;
   - in the tool root's config directory: `ext-grants.toml`; its lock file
-    `.ext-grants.toml.lock` (persistent, §8.5); its backups
-    `ext-grants.toml.corrupt-<unix seconds>[-n].bak` (§8.6); `keymap-ext.toml` and its lock
+    `.ext-grants.toml.lock` (persistent, §8.5); its backups, exactly
+    `ext-grants.toml.corrupt-<12 digits>.bak` or `ext-grants.toml.corrupt-<12 digits>-<n>.bak`
+    with `<n>` 1–99 without a leading zero (§8.6); `keymap-ext.toml` and its lock
     file `.keymap-ext.toml.lock` (§8.7); and, only in a case whose procedure kills the
     host during a save, the temporary files `.ext-grants.toml.tmp-*` and
     `.keymap-ext.toml.tmp-*`. There is no settings file and no settings lock file: the
@@ -2476,23 +2770,30 @@ invariant, it names it.
 14. A grant document of a newer version is never written by an older build (§8.6).
 15. Phase C never opens a store before the decision it opens it under has been durably
     written to the grant store, or, with a newer document, applied to the grant table
-    (§8.5).
+    (§8.5). This includes a load that decides under an overlay entry whose write is in
+    flight or failed earlier: it writes its record again, even with nothing to update,
+    and is cancelled if that write fails (§8.5 "Before the store is opened", §9.2
+    step 6).
 16. At most one script per id is loaded **or loading** across both kinds: a load is refused
     while the same id of the other kind holds a reservation (§7.4; TM L26, X90).
 17. Ext apartments exist only in `Open` and `Draining` (§10.3), and only for admitted
     classes (§10.2; TM invariant 22).
 18. In `Draining` no 6b call runs and no load starts; `Connect` is submitted only after the
     last close item; an apartment whose `Unload` handler has not started when the switch
-    timeout passes (TM L10) is closed without it; `Draining` ends within 34 ungated frames
-    without gating and within TM L11 under permanent gating (§10.3, §10.4; TM invariant
-    20).
+    timeout passes (TM L10) is closed without it; `Draining` ends within 32 ungated frames
+    in slice 1a (16 apartments) and 34 from slice 1b (17) without gating, and within TM
+    L11 under permanent gating (slice 1a: at most 376 deterministic frames; from slice 1b:
+    at most 392) (§10.3, §10.4; TM invariant 20).
 19. Every load in progress at a switch ends as §10.4 says; no apartment of the old session
     survives into the new one, and no store work, store probe or grant-record write is
     left half-done (TM §8.21, X87).
 20. Two `test` runs with the same scripts, walk file, seed and options (§11.6) produce
     byte-identical traces, whatever the worker timing.
 21. `scripttool` never writes or removes anything outside its tool root (its removal never
-    follows a link, and a user-given `--root` is never removed), never reads
+    follows a link, and a user-given `--root` is never removed), except the output files
+    and folders the user names on its command line: `test --trace FILE`, `pack -o
+    FILE.zip`, `dump-api -o FILE` (and `--ext-dump-api -o FILE`), and the new folder
+    `PARENT/ID/` of `init --dir PARENT`, which it creates and never removes. It never reads
     `TESSERA_GAME_DIR`, and never prints, in text or `--json` form, an unescaped control,
     bidirectional or other refused character, or a raw byte of a non-UTF-8 name, from
     script-supplied text or a path (§11.1).
@@ -2503,10 +2804,10 @@ invariant, it names it.
 24. The grant store is read and written only on the grant-store queue, never on the main
     thread (§8.5).
 25. A revocation suspends the script in the frame of the revocation (§9.7; TM invariant
-    23), whether it comes from the script manager or from a re-read of the grant store
-    that removes, invalidates or narrows the script's record (§8.5; TM §8.23, X91). A
-    revocation of this session is never undone by a re-read, even when its write failed
-    (the session overlay, §8.5).
+    23), whether it comes from the script manager or from a re-read of an **understood**
+    grant store that removes, invalidates or narrows the script's record (§8.5; TM §8.23,
+    X91). A revocation of this session is never undone by a re-read, even when its write
+    failed (the session overlay, §8.5).
 26. Nothing widens what a running apartment may do: natives and intent applies check the
     apartment's effective set, never the grant table, and a widened record (by the
     manager or by a re-read) is used only from the script's next load (§7.1, §8.5; TM
@@ -2517,17 +2818,38 @@ invariant, it names it.
 28. A narrowing (a manager revocation, Reset, Remove, a local-only switch, a narrowing
     re-read) that reaches a load past its grant decision cancels it: no load reaches its
     top-level run without a capability revoked after its decision (§7.5; TM §8.23, X91).
-29. A read of a grant store of a newer `version` narrows, widens and suspends nothing
-    (§8.5, §8.6; TM §8.23).
+29. A read of a grant store that is not understood (a newer `version`, a document damaged
+    as a whole, a failed open, kind check or read) narrows, widens and suspends nothing,
+    and the previous document view stays the base; a write that replaces a damaged
+    document writes every record of the grant table, so it narrows nothing either (§8.5,
+    §8.6; TM §8.23, invariant 35).
 30. No open of the snapshot walk, of a store or its entries, of a log file, of the grant
     store or `keymap-ext.toml`, and no step of the store-root scan, waits on a FIFO or
     opens a device node; and the grant-store queue never waits on another program's lock
-    for more than 1 s (§3.4, §3.6, §8.5, §8.7; TM §8.8, X54, X94).
+    for more than 1 s (TM L94) (§3.4, §3.6, §8.5, §8.7; TM §8.8, X54, X94).
 31. No store is deleted under a live apartment: Remove and Reset end a loaded or loading
     script first, and the deletion runs after its final flush (§8.7, §9.6).
 32. A written grant store never holds more than 256 `[[script]]` tables or 256 `order`
     entries, and an invalid table of a document that is not damaged as a whole leaves it
     only through a write of its own key, after a bounded backup (§8.5, §8.6; TM L79).
+33. The completion of a grant-store write never narrows a key it carried: per key, the
+    newest decision of the session wins over the completion of every earlier write, so a
+    widen or a first-enable Allow made while an older revocation's, Reset's or Remove's
+    write is in flight stays granted, and no load or apartment that relies on it is
+    cancelled or suspended by that completion (§8.5, §7.5; TM §8.23, invariant 35, X91).
+    And a failed load write that is taken back restores the overlay entry it superseded
+    (or none): it never undoes an earlier session decision whose own write failed, so a
+    revocation, or Reset's or Remove's "no record", stays in force and is never written
+    back as a grant (§8.5 "A failed write"; TM §8.23, X91).
+34. Reset and Remove take the record out of the grant table in the frame the user chooses
+    them; their grant-store write is submitted only after the store's deletion has
+    completed, no load of that (kind, id) starts in between, and a failed deletion
+    removes nothing and keeps the "no record" for the session (§8.7).
+35. No developer script finishes loading while developer mode is off: turning it off
+    unloads every loaded developer script, cancels every developer load in progress
+    (its dialog closes as "Not now" and writes nothing) and refuses every waiting one;
+    and a load the user unloads while it loads never reaches its top level (§7.5, §9.8;
+    TM §8.23, X90).
 
 ---
 
@@ -2730,12 +3052,16 @@ without an L-number. Revision 3 had claimed more than rule 5 then gave; §4's pr
 claims an L-number only for what rule 6 registers. §3.5, §4, §8.3, §8.7, §8.8, §11.4 and
 §11.5 cite the rows.
 
-> **OPEN O-12 (one "not loaded" notice; request to EA1b):** D17 §3 words the notice for an
-> `/ext:` line naming no loaded script as "No loaded extended script 'foo'", and EA1a §6.2
-> and §9.8 here use it. EA1b §8.2 answers `/ext:reload <id>` for an id that is not loaded
-> with "⟨id⟩ is not loaded". D17's text wins (§0 "Precedence"); EA1b §8.2 is asked to use
-> "No loaded extended script '⟨id⟩'". Until it does, an implementation shows D17's text
-> in every case. Owner: EA1b's author.
+**O-12 (closed, revision 5):** one "not loaded" notice. EA1b revision 4 §8.2 uses D17
+§3's "No loaded extended script '⟨id⟩'" for `/ext:reload` of an id that is not loaded, as
+EA1a §6.2 and §9.8 here do; §9.8's sentence is corrected.
+
+**O-13 (closed, revision 6):** the record-flood hook's bounds. TM revision 6 registers
+them in L86 (at most 64 `[[flood]]` entries, `spawn` 1–16,384 flood entities per frame,
+`life` 1–600 frames, at most 65,536 flood entities alive in any frame, flood entities not
+counted toward the 4,096 `[[entity]]` entries), and TM §7.5's Tests and X19 cite them.
+§11.5 cites L86 and no longer calls the figures interim; `radius` (1–500 m) stays here as
+an argument-validity domain (TM §0.1 rule 6).
 
 ---
 
@@ -2748,3 +3074,5 @@ claims an L-number only for what rule 6 registers. §3.5, §4, §8.3, §8.7, §8
 | 2026-10-07 | **Revision 2** (Review), answering the independent review and aligning with TM revision 2, EA1a, EA1b and D17. Header and §0: real companion names (EA1a and EA1b are D17's `ext-api.md`), TM normative for limits, rules and escape cases, "(proposed D17 amendment)" mark; limits cited as TM L-numbers throughout. §3.1: `keymap-ext.toml` in the configured keymap path's directory (TM §8.19); the store's `owner` tag. §3.3: device-name extension = everything from the first dot; trailing dot refused; depth stated as at most 5 path segments. §3.4 and §7.3: snapshot held under the load's memory reservation and data files charged to the cap (TM §8.10; O-4 closed). §3.5, §4.2, §4.8, §4.10, §4.12, §4.13: design additions marked. §4.1: nesting counted below the root. §4.4: refusal aligned with TM §8.2 (at most 2 marks of category M, no mark without a base, Cn and noncharacters, byte caps; O-9 closed, X47 route stated). §4.6: `entry` up to 5 segments. §4.8: undeclared modules answer `"not declared"` as EA1a §3 (O-2 closed), new W09. §4.10: priorities by EA1a §8.1 (O-3 closed). §4.14: validation stages for `check` and the load; a phase-D compilation failure closes the apartment with one close item. §8: grants created only by Allow; grant table and grant-store queue on a worker with a locked, flushed read-modify-write that completes before phase C (ARCH §21); settings numbers accept TOML integers; Remove deletes the store before the record; new §8.8, the store open with the owner check (TM §8.24), wipes, durable owner tag and marker. §9.1, §9.3: pointer entry observed after the 500 ms delay, for Allow, boxes and "Load automatically" (TM §8.25). §9.2: the re-ask table replaced by an ordered six-step pipeline with each case's record write (hash updated before phase C; the notice once per change). §9.3: outcomes for manager-started dialogs; store probe for the "Stored values" line; Deny writes nothing. §9.7: every revocation suspends in that frame (TM §8.23). §9.8: full-reload declaration set adds `author`, `api`, `manifest`, `[modules]`, `[optional_modules]`, `[server]`, after full validation (TM §8.24). §10.3, §10.4: floor frames, switch timeout row and bounds (TM §7.4, L9–L11; O-5 closed), leases end when a switch is queued, store work completes (TM §8.21). §11.1: `--json` objects specified. §11.4: X-DET-1 becomes an ordinary determinism check. §11.5: 0-based frame numbers and ranges; `[screen]`, `focus`, `switch`, `reload`, `manager` events and a `gate` expectation (TM §13). §11.6: per-event trace keys and `what` values. §11.8: runner only; cases are TM's X-tests, earlier IDs retired (TM §11.10). §13: invariants 9, 12, 15, 18 restated; 24 and 25 added. §14.4: seven items, with the gated case. §15: O-2, O-3, O-4, O-5, O-9 closed; O-10 (grant store document, proposed D17 amendment) and O-11 (field caps for TM's register) added. |
 | 2026-10-07 | **Revision 3** (Review), answering the re-review of revision 2 and aligning with TM revision 3. **Store and log files** (new §3.6; §3.1, §8.8, §12.8): directory handles for `data/script-store/`, `logs/scripts/`, `<kind>` and `s_<id>` with `O_NOFOLLOW` (reparse points refused); an unusable store directory refuses the load and is never touched; every entry opened, created (exclusively), renamed or removed relative to the `s_<id>` handle with its kind and link count checked on the handle; a per-entry action table (key files kept, crash leftovers and unexpected entries removed by a no-follow removal, a non-plain `local-only` counted as present, a non-plain `owner` as missing, a subdirectory or unremovable entry fails closed); the write-behind temporary file named `t_<key>.tmp`; log files opened no-follow and otherwise left alone, with the log unavailable and reported (TM §8.8, invariant 15, X94). §8.8 restructured: handles, entry sweep, owner check, local-only check, durable tags, file index; the wipe never recurses or leaves `s_<id>`; the **store probe** defined (read-only, no creates or removals), used by §9.2 step 2 (content notice and its size) and §9.3. **Grant store** (§8.1, §8.3, §8.4, §8.5, §9.1, §9.7, §7.1): a valid hand-edited record is honoured only within §8.3 and from the next load; a re-read that removes, invalidates or narrows a loaded script's record suspends it in that frame, a widening waits for the next load (TM §8.23); the lock is `.ext-grants.toml.lock` beside the resolved document (persistent, never the settings file's lock) and the temporary file is named; the `keymap-ext.toml` bindings' removal is a locked read-modify-write (`.keymap-ext.toml.lock`, design addition). **`test`** (§11.4–§11.6): every load runs §9.2; dialogs are answered by a queued `reply`, by the default answer for a first enable, or as Escape with a run failure unless expected; `--grants FILE` seeds the tool root's grant store and the `grants` walk event replaces it mid-run with a re-read; `manager` gains `widen`; `dialog`, `granted` and `grants_file` expectations; `dialog` and `grants` trace events and the `c` key (TM X62, X90, X91, X92). **`escape`** (§11.8, §11.1): per-part results (`CLIENT` for CI parts, `ELSEWHERE` for U, FZ and RM parts), never a whole mixed test as PASS; `no_file_outside` names the lock files, backups, temporary files (only after a kill) and X94's canaries. **Smaller items:** `/ext:reload` with developer mode off, for an id not loaded and for a suspended script (§9.8); the script-list order for records outside `order` and new records appended (§7.3); §10.3 cites TM L5–L9; §10.4 rows for a load before its dialog and for one waiting on its record write or store probe (TM §8.21); §4.12 and §9.2 step 6 agree (invalid and obsolete settings values dropped by the load's own write, a reverted value never written as its default); `dump-api` accepts D17 §10's `--ext-dump-api`, and `escape`, `modules` and the subcommand are marked design additions; TM L86–L89 cited (§3.5, §4, §8.8, §11.5) and O-11 closed. Invariants 2, 9, 13, 19 and 25 restated; 26 and 27 added. |
 | 2026-10-07 | **Revision 4** (Review), answering the re-review of revision 3 and its follow-up review, aligned with TM revision 4 (TM §0.1 rule 6, §8.7 and L92, §8.8, §8.16, §8.23, L26, L79). **Non-blocking, classify-before-open** (§2, §3.4, §3.6): the snapshot walk (`check` included) classifies every entry with `fstatat(…, AT_SYMLINK_NOFOLLOW)` and opens only regular files and directories, non-blocking, re-checked on the handle; the log file is classified, then opened or created `O_NONBLOCK` (a FIFO write open fails with `ENXIO`); a rotation is not made over a non-plain `s_<id>.1.log`; TM X54 ("a worker blocks") and X94 (FIFO and device log files, a FIFO grant store) cite it. **Session overlay** (§2, §8.5): a document view, a session overlay and the grant table they make; a read narrows overlay entries by what the document removed, never undoes a session decision (a failed-write revocation stays revoked), and a newer-`version` document narrows, widens and suspends nothing; a completed write is applied as a read. **Effective set** (§2, §7.1, §8.5): natives and intent applies check the apartment's effective set, never the grant table, so a manager widening after revoke and resume does not revive kept natives (TM X91). **Grant-store writes** (§7.3, §8.4, §8.5, §9.2): a write replaces every table of its key, duplicates and invalid ones included, and keeps every other table; invalid tables leave only through a write of their key; `order` drops malformed, repeated and dangling entries; the 256-table cap is checked before a dialog and in the write; a failed load write is taken back, every other failed write stays in the overlay. **Grant store as hostile input** (§8.5, §8.6): reads non-blocking, regular file checked on the handle, at most 4 MiB + 1 bytes; an "unreadable" row (`EACCES`, `EIO`, `EISDIR`, FIFO) that is never written over; backups bounded (the bytes read, or a rename for an oversized file) in the resolved document's directory; the lock taken without blocking and retried for 1 s; the queue on a worker, never an asset-worker job. **Loads in progress** (§7.4, §7.5, §10.4): one id loaded **or loading** across both kinds; new §7.5 table for a narrowing during a load, with phase D's delivery and the top-level item re-checking the record (TM X90, X91). **Orphans and Remove** (§3.5, §8.7, §9.6, §9.7): `scripts-dev` records are never orphans while developer mode is off; Remove and Reset end a loaded or loading script before the store is deleted; the store-root scan (when, which queue, no-follow `fstatat` sizes, caps TM L92, how it stays current), and the gate waits for it in `Starting` (§10.3). **Manifest** (§4.10, §4.11, §4.12, §6.1, §11.3): declaring `[[contexts]]` or `[[actions]]` needs `input`, and they are registered only when `input` is effective; overlapping suggested defaults in one context refused (M17, invariant 22); settings values checked against the running schema at every re-read; the `ui` dialog text names the chord and the manager (EA1a §7.11); finding codes for `license`, `manifest`/`api` below 1 and the key cap. **Notices** (§9.8, §10.5, O-12): D17's "No loaded extended script '<id>'" is the one text (EA1b §8.2 asked to align); outside `Open`, `/ext:list` and `/ext:help` open the script manager and `/ext:reload` with developer mode off says "Developer mode is off". **`scripttool`** (§11.1, §11.2, §11.4–§11.8): per-folder kinds (`--installed`, `--developer`), an independent `--developer-mode` with a `developer_mode` walk event and a `devmode` trace event, `--no-start`, a stated start of the run (gate `Open` at frame `latency`, world entry, autoload then user-started loads in command-line order), scripts named by id or `"<kind>/<id>"`; no settings file written; `--keymap-ext` copied into the tool root; input files and walk paths opened non-blocking, kind-checked and bounded, walk paths relative without `..`; `--json` as pure printable ASCII with explicit `\uXXXX`, non-UTF-8 name bytes as `\xNN`; the tool root removed by a no-follow recursive removal, a user-given `--root` never removed; traces identical for the same options. **Smaller:** §8.8 step 5 keeps an existing plain marker; §9.1 hides the developer console while a dialog shows (D17 §5.3); §9.3 says where a manager-started dialog's script line comes from; §9.7's revoke moves the capability to `denied`; a hot reload writes nothing to the grant store (§9.8); §14.1's probe and two source files; O-11 closed by TM rule 6 with the right citations; invariants 16, 20, 21, 22, 25 and 26 restated, 28–32 added. |
+| 2026-10-07 | **Revision 5** (Review), answering the re-review of revision 4, aligned with TM revision 5 (TM §8.23 "What narrows by another route", invariant 35, L94, X91). **(1) A write's completion** (§8.5, §7.5, §2): a write carries its keys; its completion is applied as an understood read result with those keys **excluded** from the narrowing step, so per key the newest decision of the session wins over the completion of every earlier write (a revoke then widen, or a Reset then a first-enable Allow, before the older write completes keeps the grant; no load is cancelled and no apartment suspended by it); an overlay entry is dropped only when the completing write carried that very entry; a failed load write is taken back unless a newer decision of the key exists; a write that finds a newer `version` keeps its decision in the overlay and lets its load continue. **(2) Record-flood hook** (§11.5, §11.8): the walk table `[[flood]]` (per-frame spawns, life, radius, seeded positions, record order within a frame) feeds TM rule 7.5.1's list beyond L86's 4,096 walk entities, for X19's ST part and EA1a invariants 36 and 37 (EA1a OPEN-12(e) answered); its bounds are interim and asked of TM (new OPEN O-13). **(3) `[world] start`** takes `yaw` in radians in EA1a §2.10's form (KM §9.1), never a heading (EA1a OPEN-12(d) answered). **(4) Unusable re-reads** (§8.5, §8.6, §2): read results are understood, newer or unusable; only an understood one replaces the document view and can narrow (a missing file is understood as empty); an unreadable (`EACCES`, `EIO`, a Windows sharing violation) or damaged one changes nothing and suspends nothing; a write that replaces a damaged document writes every record of the grant table it carries, so it narrows nothing (TM §8.23). **(5) Reset and Remove** (§8.7 new "Reset and Remove, step by step", §7.5, §9.6, §9.7): "no record" enters the overlay in the frame the user chooses them; a load in progress is cancelled in every phase; the (kind, id) is pending deletion and its loads are refused until the store deletion completes; the grant-store write is submitted only then; a failed deletion removes nothing and keeps the "no record" for the session. **(6)** O-12 closed (EA1b revision 4 §8.2 uses D17's notice); §9.8's sentence corrected. **Smaller:** (a) `/ext:<id>` with no command word opens the script manager in every gate state, as EA1a §6.2 and `/ext:help <id>` (§10.5); (b) the `grants` trace event names `autoload`, `settings`, `order`, `rollback` and `reread` (a narrowing by a completed write included) and says which changes emit no event (§11.6); (c) M03 covers datetime values and non-finite numbers (§4.1, §11.3). Also: the walk's `manager` gains `reset`, `remove`, `autoload-on` and `autoload-off`, entries of one frame apply in file order, and X91's two ordering cases hold the earlier write in flight with a harness hook (§11.5, §11.8); TM L94 cited for the lock wait (§8.5, §8.7, invariant 30); §2 defines the understood document; invariants 25 and 29 restated, 33 and 34 added. |
+| 2026-10-07 | **Revision 6** (Review), answering the re-review of revision 5, aligned with TM revision 6 (TM §8.23 "A failed write never undoes an earlier session decision" and "Developer mode turned off", L65, L84, L86, L92, X90, X91). **(1) Rollback of a failed load write** (§8.5, §2): the session overlay holds, per key, a **chain** of entries whose newest decides; a decision appends; a completed write drops its entry and every older one; a failed load write is taken back by removing its entry alone, which **restores the entry it superseded** (or none), so a revocation or Reset's or Remove's "no record" whose own write failed stays in force; any entry that is not a load write drops the older ones, so a chain holds at most two entries; step 2 narrows every entry of a chain; the example of the review is worked in §8.5; X91's rollback cases (§11.8, with the write-failure hook) and invariant 33. **(2) Developer mode turned off** (§7.5 new "Other cancellations", §9.8, §10.4, §11.4): every developer load in progress is cancelled by §7.5's rows (a showing or queued dialog closes as "Not now", store work completes, phase D gets one close item, a hot reload's new apartment is cancelled), every waiting developer load is refused with "Developer mode is off", and the user's unload of a loading copy cancels it the same way; the trace of the `developer_mode = false` event is stated (§11.4), the `dialog` event gains `closed:devmode`, `closed:unload` and `closed:narrowed` (§11.6); X90's cases (§11.8); invariant 35. **Minor:** (a) O-13 closed: §11.5 cites TM L86 for the `[[flood]]` bounds; (b) invariant 21 excepts the output files the user names (`--trace`, `pack -o`, `dump-api -o`, `--ext-dump-api -o`, `init --dir`); (c) a load deciding under an overlay entry whose write is in flight or failed writes its record again before phase C (§8.5 "Before the store is opened", §9.2 step 6, invariant 15); (d) a decision's record keeps the unknown keys and `signing_key` of the valid table it replaces (§8.5 write step 4); (e) root `format` and `version` are required, and an empty file is damaged as a whole (§8.3, §8.6); (f) Deny and "Not now" ignore presses for 500 ms with no pointer-entry rule; Escape refuses at any time (§9.1, §9.3); (g) the slice-1a figures (16 apartments, 32 ungated frames, at most 376 deterministic frames) beside the 1b ones (§10.4, invariant 18); (h) a full reload's load starts after the old close item and once the old cap has left the sum (§7.3, §9.8; TM L84); (i) the backup name exactly as the settings crate forms it, `<stamp>` 12 zero-padded digits, `-<n>` 1–99 (§8.6, §11.8); (j) slice 3 in the harness: a `reply` key `local_only`, "Neither" as the default answer, a `manager` `local-only` action, and §9.4's preset (§9.4, §11.4, §11.5, §11.6); (k) a narrowing by the document of a key whose write is in flight submits a write of the narrowed entry (§8.5 step 2); (l) the grant-store read and the store-root scan run at every entry into `Starting` (§8.5, §8.7, §10.3, §11.4; TM L92); (m) no `manager` action re-reads except the new `open`, and the harness models the manager as open (§11.5); (n) the text-value rules name which rows of §4.4 apply to `text` values (§4.12, §8.3); (o) §8.2's example hash is marked as §5.2's `hello` vector. Also: a `reply` key `delay` keeps a dialog showing so narrowings, switches and developer mode can meet it (§11.4, §11.5); the synthetic world states its region (`[world] region`, default 1) and a `region` input changes it (§11.5, answering EA1b's review of its region-change lease test). |

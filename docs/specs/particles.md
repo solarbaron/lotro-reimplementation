@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
+| **Status** | Accepted (2026-10-07) |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted, not the author): first review and a re-review by a third session that neither wrote the spec nor made the first review, both 2026-10-07 |
-| **Review record** | **Re-review 2026-10-07, `CLEAN_ROOM.md` §5.3: changes requested (one blocking correction); status stays Review.** The six issues of the first review (same date) are resolved: (1) the `snap` census (§4.7, §5.2); (2) controller 1 speed and walk, the controller 4 force-field list with new Q14, the 0.3 s wind easing, the 32,768-vertex draw buffer; (3) `time_step` ≤ 0 or not a number, `burst_count` = 0, rules §10.5–§10.6; (4) the §8.6.1 interpolation targets; (5) rows P31–P37, with §10 marked Decision; (6) the §4.1 offset caveat. Clean-room items pass. There is no code or pseudo-code: §8 is plain-word steps and formulas, and §12 is synthetic. No prose is copied, labels serve as interoperability identifiers, there is no game text, key or hostname, the BIN row follows decision 0011, and nothing falls under a closed gate. **Data spot checks**, with the reviewer's own read-only probe over all records: 11,155 of 11,155 0x39 records and 254 of 254 0x44 records decode with 0 leftover bytes, and every VLE uses the 1-byte form. The disputed facts all match: `snap` is mode 1 in all 32,789 emitters, with values 0.1/0.2/0.01/0/2000 = 32,627/111/32/12/7. 615 emitters have `emit_interval` 0: 507 have a distance (486 active, 21 inactive) and 108 active ones have neither. The last key against a constant `lifespan` is 28,578 equal, 3,873 earlier (54 by less than 0.0001), 161 later, plus 177 non-constant. `controller` 4 is on no key, and no key with bit 0x100 has controller 1. `time_step` runs from 1/120 to 0.1, and `burst_count` from 1 to 300 (46 values). Five further Confirmed facts also match: (a) the §5.1 census (bool counts, `has_bounds` 7,345/3,810/3,602, far and near fades, `sorting_priority`, `shareable`, `surface`, emitter counts); (b) the §5.2 census (`emission_limit`, `max_particles`, `start_time`, `time_limit`, `emission_distance`, the constrain bytes, frames, `frame_rate`, keyframe counts, attachments 11,409/21, names); (c) the §5.3 census (flag bits, later-key bits, the 4 backward emitters in the 3 named records, scales, colours, `mass`, `physics_flags`, points 649/104,784 with controllers 2/3); (d) the §3.2 mode census of 1,314,142 curves; (e) the §6.1 0x44 census (`flag` 92/162, table sizes 180/74, empty name and properties, 216 identity rotations, element 15 = 1.0, translations within the f32 value of ±0.8, bounds 242/12, `tail_value` 0.2167–20.0167). **BIN re-checks** (M4 under decision 0011, Ghidra headless on a temporary project copy that was deleted afterwards) confirm all of these: the §8.3 interval test, so no timed emission at interval 0; the caps; the catch-up, which takes the integer part before multiplying by `burst_count`; the burst loop and its exits; the §8.2 end test and the `burst_count` = 0 result; the §8.1 cadence test; the controller 1 squared-distance walk; the controller 4 step (force-field term, attracting flag, constrain bytes, `snap` pull, 0.95, the 0.25 s catch-up) and the gathering rule; the §8.6.1 targets, each the first later key with the bit or the key itself; the wind easing (0.3 s half-life, zero start, eased value as the new start, the 0.0002 snap); the draw buffer of 32,768 vertices, filled with `Quad` emitters first and stopping when full. **Issue (blocking):** the last sentence of §8.8, "Both vectors are computed when the system starts and kept for its life", is not true for every system. The client also has a routine that recomputes the gravity and wind vectors of every emitter of a running system from the current eased global wind. The client's weather code calls it for a particle system that the weather code holds, each time that code runs; this is the code that also reads the global wind to set a precipitation direction. Fix: say the vectors are computed at system start and recomputed for the systems the weather code drives, add which systems and how often to Q13, and widen P24. **Non-blocking notes:** (a) A hostile `emit_interval` that is negative, or too small to move the last-burst time, makes the §8.3 loop end only through room or burst, and a negative interval makes the catch-up subtract from the running total. A §10 rule that bounds the work per update would help implementers. (b) In §8.7 the client treats a force-field lifetime below 0.0002, negative values included, as unlimited, not only a lifetime of 0. Once the §8.8 sentence is fixed, the spec can be accepted without a further data review. |
+| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted, not the author): first review, a re-review by a third session, and a final review by a fourth session that neither wrote the spec nor made either earlier review, all 2026-10-07 |
+| **Review record** | **Final review 2026-10-07, `CLEAN_ROOM.md` §5.3: passed; status moved to Accepted.** The re-review issues are fixed. (Blocking) §8.8 no longer says that every system keeps its start vectors for its whole life: each emitter stores gravity and wind computed at system start, the weather code recomputes them for the systems listed in the new §8.8.1 (rain: UNIQUEDB key 0x83; snow: key 0xFE when the snow value exceeds 1.001; once per run of each update), no other code recomputes them, and live particles follow a recomputation. Q13 now asks how often the precipitation updates run, what the rain and snow values mean and where the enabling flags come from, and P24 is widened to cover all of this. (Non-blocking a) §8.3 now covers a negative, too small or not-a-number `emit_interval`, the wrapping 32-bit total and the limit of cap passes per update, and the new rule §10.8 bounds the work; P19 and P36 are widened. (Non-blocking b) §8.7 and P23 say that a force-field lifetime below 0.0002, negative values included, never runs out. The clean-room items pass for the new and changed text (§8.3, §8.7, §8.8, §8.8.1, §10.8, §13 Q13, §14). It is prose and formulas, with no code or pseudo-code and no copied prose. UNIQUEDB labels appear only as interoperability identifiers of their keys, and their DIDs are marked as observations read at run time. There is no game text, key or hostname, the BIN row follows decision 0011, nothing falls under a closed gate, and every unknown is an OPEN callout. **Spot checks** (the reviewer's own read-only probe, a decoder written from §3–§4 alone, over all records; no Ghidra used): all 11,155 0x39 records decode with 0 leftover bytes, giving 32,789 emitters. (1) §5.2/P19 `emit_interval`: 0 in 615 emitters, 507 of them with a distance (486 active, 21 inactive) and 108 active with neither; the non-zero values are finite from 0.000263 to 100,000, none is negative or not a number, and 55 are below 0.001. The most common values are 1.0 (3,351) and 0.1 (3,029). (2) §5.2/PS9/§10.8 `max_particles`: 1 to 100,000; 500 (7,955), 100 (1,934) and 1 (1,712) are the most common. `burst_count` runs from 1 to 300 with 46 values. (3) §7.1.3/§8.8.1/P30: UNIQUEDB 0x28000002 has exactly ten keys whose values have prefix 0x39, and 0x83 → 0x39000003 and 0xFE → 0x390010DD as stated, as do the other eight. All match. **Non-blocking note for a later revision:** §10.8 bounds timed emission only. Distance emission (§8.4) with a hostile, very small `emission_distance` can still take many steps in one update, because the spec ends that loop on a burst below 1 but not when room reaches 0. A matching Tessera rule would close this. **Earlier record:** **Re-review 2026-10-07, `CLEAN_ROOM.md` §5.3: changes requested (one blocking correction); status stays Review.** The six issues of the first review (same date) are resolved: (1) the `snap` census (§4.7, §5.2); (2) controller 1 speed and walk, the controller 4 force-field list with new Q14, the 0.3 s wind easing, the 32,768-vertex draw buffer; (3) `time_step` ≤ 0 or not a number, `burst_count` = 0, rules §10.5–§10.6; (4) the §8.6.1 interpolation targets; (5) rows P31–P37, with §10 marked Decision; (6) the §4.1 offset caveat. Clean-room items pass. There is no code or pseudo-code: §8 is plain-word steps and formulas, and §12 is synthetic. No prose is copied, labels serve as interoperability identifiers, there is no game text, key or hostname, the BIN row follows decision 0011, and nothing falls under a closed gate. **Data spot checks**, with the reviewer's own read-only probe over all records: 11,155 of 11,155 0x39 records and 254 of 254 0x44 records decode with 0 leftover bytes, and every VLE uses the 1-byte form. The disputed facts all match: `snap` is mode 1 in all 32,789 emitters, with values 0.1/0.2/0.01/0/2000 = 32,627/111/32/12/7. 615 emitters have `emit_interval` 0: 507 have a distance (486 active, 21 inactive) and 108 active ones have neither. The last key against a constant `lifespan` is 28,578 equal, 3,873 earlier (54 by less than 0.0001), 161 later, plus 177 non-constant. `controller` 4 is on no key, and no key with bit 0x100 has controller 1. `time_step` runs from 1/120 to 0.1, and `burst_count` from 1 to 300 (46 values). Five further Confirmed facts also match: (a) the §5.1 census (bool counts, `has_bounds` 7,345/3,810/3,602, far and near fades, `sorting_priority`, `shareable`, `surface`, emitter counts); (b) the §5.2 census (`emission_limit`, `max_particles`, `start_time`, `time_limit`, `emission_distance`, the constrain bytes, frames, `frame_rate`, keyframe counts, attachments 11,409/21, names); (c) the §5.3 census (flag bits, later-key bits, the 4 backward emitters in the 3 named records, scales, colours, `mass`, `physics_flags`, points 649/104,784 with controllers 2/3); (d) the §3.2 mode census of 1,314,142 curves; (e) the §6.1 0x44 census (`flag` 92/162, table sizes 180/74, empty name and properties, 216 identity rotations, element 15 = 1.0, translations within the f32 value of ±0.8, bounds 242/12, `tail_value` 0.2167–20.0167). **BIN re-checks** (M4 under decision 0011, Ghidra headless on a temporary project copy that was deleted afterwards) confirm all of these: the §8.3 interval test, so no timed emission at interval 0; the caps; the catch-up, which takes the integer part before multiplying by `burst_count`; the burst loop and its exits; the §8.2 end test and the `burst_count` = 0 result; the §8.1 cadence test; the controller 1 squared-distance walk; the controller 4 step (force-field term, attracting flag, constrain bytes, `snap` pull, 0.95, the 0.25 s catch-up) and the gathering rule; the §8.6.1 targets, each the first later key with the bit or the key itself; the wind easing (0.3 s half-life, zero start, eased value as the new start, the 0.0002 snap); the draw buffer of 32,768 vertices, filled with `Quad` emitters first and stopping when full. **Issue (blocking):** the last sentence of §8.8, "Both vectors are computed when the system starts and kept for its life", is not true for every system. The client also has a routine that recomputes the gravity and wind vectors of every emitter of a running system from the current eased global wind. The client's weather code calls it for a particle system that the weather code holds, each time that code runs; this is the code that also reads the global wind to set a precipitation direction. Fix: say the vectors are computed at system start and recomputed for the systems the weather code drives, add which systems and how often to Q13, and widen P24. **Non-blocking notes:** (a) A hostile `emit_interval` that is negative, or too small to move the last-burst time, makes the §8.3 loop end only through room or burst, and a negative interval makes the catch-up subtract from the running total. A §10 rule that bounds the work per update would help implementers. (b) In §8.7 the client treats a force-field lifetime below 0.0002, negative values included, as unlimited, not only a lifetime of 0. Once the §8.8 sentence is fixed, the spec can be accepted without a further data review. |
 | **Implements into** | `crates/formats` (decoders for prefix 0x39, §4, and the outer layer of prefix 0x44, §6), `apps/explorer` (particle preview, §8; fork records shown as metadata, §10), `crates/render` (particle pipeline, §8.10–§8.12), `apps/client` (effects started by script-table Particle and Beam nodes, weather systems of §7.1.3), `fuzz/` (both decoders) |
 | **Companion specs** | [`records.md`](records.md) §1.2 (VLE), §1.3 (TSize), §1.4 (Pascal string), §2.1 (prefix table; rows 0x39 and 0x44), §7 (enum mappers), §8 (DID maps). [`property-system.md`](property-system.md) §2 (master property dictionary), §4.2 (waveform = float curve), §6.3 (embedded property sets), §9 (DB-object-type codes), §17.1 (VLE forms). [`material.md`](material.md) §4 (surface records 0x31), §5.3 (float curve layout and evaluation), §7 (shader records 0x2B). [`script-table.md`](script-table.md) §5.3 (Particle node, kind 59, and Beam node, kind 54). [`skeleton-anim.md`](skeleton-anim.md) (holding locations and bone types). [`environment.md`](environment.md) §9 (kinds of prefixes 0x39 and 0x44). [`coordinates.md`](coordinates.md) (axes: Z is up). |
 
@@ -93,24 +93,24 @@ Legend:
 | P16 | References out of 0x39 (surface records) and 0x44 (render surfaces, nested 0x44) (§7.2) | OBS; BIN (DB types requested) | Confirmed (BIN + OBS) |
 | P17 | Update cadence: particles are updated once at least `time_step` seconds have passed; behaviour with `time_step` ≤ 0 or not a number (§8.1) | BIN | Confirmed (BIN) |
 | P18 | Emitter activity window and end-of-effect test, including `burst_count` = 0 (§8.2) | BIN | Confirmed (BIN) |
-| P19 | Timed emission: bursts of `burst_count` every `emit_interval` seconds, caps, catch-up; no timed emission when `emit_interval` = 0; nothing emitted when `burst_count` = 0 (§8.3) | BIN (the interval test, the burst test, the catch-up arithmetic); OBS (615 emitters with interval 0, 507 of them with distance emission) | Confirmed (BIN + OBS) |
+| P19 | Timed emission: bursts of `burst_count` every `emit_interval` seconds, caps, catch-up; no timed emission when `emit_interval` = 0; nothing emitted when `burst_count` = 0; 32-bit wrapping running total, at most cap passes per update, and the behaviour with a negative, too small or not-a-number `emit_interval` (§8.3) | BIN (the interval test, the burst test, the catch-up arithmetic, the unsigned total); OBS (615 emitters with interval 0, 507 of them with distance emission; all others finite, 0.000263 to 100,000, none negative) | Confirmed (BIN + OBS) |
 | P20 | Distance emission, including `burst_count` = 0 (§8.4) | BIN | Confirmed (BIN); details OPEN (Q9) |
 | P21 | Spawn: shapes, direction, exploding, spread, speed (§8.5) | BIN | Confirmed (BIN) |
 | P22 | Keyframe channels, flag bits 0x2/0x4/0x8/0x10/0x20/0x40/0x100/0x200, key selection by particle age, the per-key interpolation targets computed when an emitter is created and the target tests (§8.6.1) | BIN; OBS (flag census) | Confirmed (BIN + OBS) |
-| P23 | Motion controllers 2, 3, 5, 6 as used by the data; 1 (point path, speed = length of the spawn velocity) and 4 (stepped integration with force fields) present in code and used by no controller key (§8.7) | BIN; OBS (controller census) | Confirmed (BIN + OBS); force-field source OPEN (Q14) |
-| P24 | Forces: gravity (0, 0, −9.8) and the wind vector, each scaled by the mass channel; the wind vector eases towards its target with a 0.3 s half-life, starts at zero, and takes its target from the environment update (§8.8) | BIN | Confirmed (BIN); environment wind source OPEN (Q13) |
+| P23 | Motion controllers 2, 3, 5, 6 as used by the data; 1 (point path, speed = length of the spawn velocity) and 4 (stepped integration with force fields; a force-field lifetime below 0.0002, negative values included, never runs out) present in code and used by no controller key (§8.7) | BIN; OBS (controller census) | Confirmed (BIN + OBS); force-field source OPEN (Q14) |
+| P24 | Forces: gravity (0, 0, −9.8) and the wind vector, each scaled by the mass channel; the wind vector eases towards its target with a 0.3 s half-life, starts at zero, and takes its target from the environment update. Each emitter stores both vectors, computed at system start; the rain precipitation update recomputes them for the UNIQUEDB 0x83 system and the snow update for the 0xFE system (snow value above 1.001), once per run; no other system is recomputed; particle updates read the stored vectors, so live particles follow a recomputation (§8.8, §8.8.1) | BIN (the start routine, the recompute routine and its only two callers, the force terms of controllers 2 and 4) | Confirmed (BIN); environment wind source and the weather schedule OPEN (Q13) |
 | P25 | Emitter fade envelope from `fade_in`, `fade_out`, `time_limit`, `fast_forward` (§8.9) | BIN | Confirmed (BIN) |
 | P26 | Texture-atlas frame selection (§8.10) | BIN | Confirmed (BIN) |
 | P27 | Primitive: 3 vertices for `Triangle`, 4 for `Quad`; one shared draw buffer of 32,768 vertices per system draw, `Quad` emitters first, then `Triangle` emitters, drawing stops when the buffer is full (§8.11) | BIN (vertex counts, buffer creation size, draw order and stop rule) | Confirmed (BIN) |
 | P28 | Constructor defaults of an emitter and of a keyframe (§4.7) | BIN; OBS (most common values agree) | Confirmed (BIN) |
 | P29 | `PSDesc_FrameRate` and `PEDesc_ParticlesPerSec` are views (reciprocals) of `time_step` and `emit_interval`, not stored fields (§4.5) | BIN | Confirmed (BIN) |
-| P30 | Weather and water systems in UNIQUEDB (§7.1.3) | OBS | Confirmed |
+| P30 | Weather and water systems in UNIQUEDB (§7.1.3); the weather code creates one instance of each at initialisation | OBS; BIN (the weather initialisation reads all ten keys) | Confirmed (BIN + OBS) |
 | P31 | Record counts, DID ranges, payload byte totals, size ranges, and the compression flag clear in every directory entry of both prefixes (§2.1) | OBS (directory entries and payloads of all 11,155 + 254 records) | Confirmed |
 | P32 | Reachability of 0x44 records: 38 named by other 0x44 records, 35 only that way, all 254 reachable (§6.3) | OBS (all `resources` tables and all Particle nodes) | Confirmed |
 | P33 | Drawn size (scale channel × largest component of the owner's scale × `particle_scale` when that curve is not the constant 1) and drawn colour (colour channel, alpha × fade envelope, each channel clamped to [0, 1]) (§8.6.2) | BIN | Confirmed (BIN); `scale_mode` OPEN (Q4) |
 | P34 | `pivot` passed as the primitive's pivot, `origin_offset` added to every vertex after the billboard is built (§8.12) | BIN | Confirmed (BIN); axis use OPEN (Q8) |
 | P35 | No field of either family carries a gameplay value; gameplay reaches the records only by selection through script nodes, the whitelist and UNIQUEDB (§9) | OBS and BIN (the complete field lists of §4 and §6.1); ST (node fields); §7 | Inferred from the confirmed layouts and references |
-| P36 | Tessera rules: complete decoding, opaque fork images, curve and random evaluation, wrong-prefix Particle nodes, invalid `time_step`, `burst_count` = 0, controller 4 without force fields (§10) | This spec | Decision |
+| P36 | Tessera rules: complete decoding, opaque fork images, curve and random evaluation, wrong-prefix Particle nodes, invalid `time_step`, `burst_count` = 0, controller 4 without force fields, bounded timed emission with hostile `emit_interval` (§10) | This spec | Decision |
 | P37 | `snap` values and the other emitter censuses (§4.7, §5.2), last-key time against `lifespan` (§5.3) | OBS (all 32,789 emitters and 121,087 keyframes) | Confirmed |
 
 ---
@@ -407,7 +407,7 @@ A writer creating new data starts from the client's defaults: `max_particles` 50
 
 | Field | Observation |
 |---|---|
-| `emit_interval` | 0 in 615 emitters (no timed emission, §8.3): 507 of them have a non-zero `emission_distance` (486 active, 21 inactive), 108 active ones have neither and emit nothing; otherwise above 0 and up to 100,000; 1.0 (3,351) and 0.1 (3,029) most common |
+| `emit_interval` | 0 in 615 emitters (no timed emission, §8.3): 507 of them have a non-zero `emission_distance` (486 active, 21 inactive), 108 active ones have neither and emit nothing; otherwise finite, from 0.000263 to 100,000 (55 emitters below 0.001); none negative or not a number; 1.0 (3,351) and 0.1 (3,029) most common |
 | `emission_limit` | 0 in 18,940; 108 other values |
 | `max_particles` | 1–100,000; 500 (7,955), 100 (1,934), 1 (1,712) most common |
 | `burst_count` | 1–300; 1 (26,620), 2 (1,103), 3 (875), 5 (723), 10 (721) … (46 values); 0 never occurs |
@@ -586,8 +586,9 @@ Ten labelled keys name 0x39 records: 0x2A `CameraRainImpactParticleSystem` → 0
 0xA1 `WaterBubblesParticleSystem` → 0x39000005; 0xFD `CameraInBlizzardParticleSystem` →
 0x390010DA; 0xFE `SnowGustParticleSystem` → 0x390010DD; 0x100 `CameraSnowImpactParticleSystem`
 → 0x390010DB; 0x1E7 `CoinSwimRipplesParticleSystem` → 0x39002FBB (OBS). These are the
-weather and water effects the client starts itself; which code starts each one and when is
-OPEN (Q13; see `environment.md` for weather).
+weather and water effects the client runs itself. The weather code creates one instance of each
+when it initialises, and two of them get their forces recomputed by the precipitation updates
+(§8.8.1) (BIN). When and where each one emits is OPEN (Q13; see `environment.md` for weather).
 
 <a id="s7-2"></a>
 ### 7.2 Out of the families
@@ -677,6 +678,24 @@ runs:
    - advance the last-burst time by `emit_interval`.
 5. With `burst_count` = 0 the burst of step 4 is 0, below 1, so the emitter never spawns a
    particle; the catch-up of step 2 adds 0 (BIN).
+
+The running total is a 32-bit unsigned count, and the client's additions to it wrap modulo 2³²
+(BIN). Each pass of step 4 spawns at least one particle and lowers room by as many, so one update
+makes at most cap passes, whatever the interval.
+
+Values of `emit_interval` that do not occur in the data (OBS: 0 in 615 emitters, otherwise a
+finite number from 0.000263 to 100,000) but that hostile input can carry (BIN):
+
+- **Negative.** The value is not 0, so timed emission runs. Step 4 moves the last-burst time
+  backwards, so the loop ends only when room reaches 0 or a burst is below 1. Step 2 adds a
+  negative count to the running total. Below 0 the total wraps to a large value, and when
+  `emission_limit` ≠ 0, step 3 then stops all later timed emission.
+- **Positive but too small to move the last-burst time** (adding it leaves the time unchanged at
+  the clock's precision). Here too the loop ends only when room reaches 0 or a burst is below 1.
+- **Not a number.** After the emitter's first burst the last-burst time is not a number. The test
+  "not later than now" then fails, so the emitter never emits by time again.
+
+Tessera applies rule §10.8 instead.
 
 The steady rate is therefore `burst_count` / `emit_interval` particles per second. Particles
 spawned at a time in the past are advanced to now immediately (§8.5 step 9).
@@ -835,7 +854,7 @@ velocity, *τ* = age − time of the current controller key, *a* the force of §
 | 3 | Point placement: *p* = *p*₀ + one point of `points` rotated by the system's orientation. The index is taken from a counter kept on the key that advances by one per particle (wrapping), or is random when physics flag 0x8 is set. With no points, *p* = *p*₀. | 33 |
 | 6 (and any value not listed) | No motion: *p* = *p*₀. | 724 |
 | 1 | Point path: the particle walks along the points of `points`, each rotated by the system's orientation and added to *p*₀. Its speed *s* is the length of its spawn velocity, that is \|`speed`\| at spawn (§8.5.4), stored per particle when any key of the emitter has controller 1. On its first update under the key it is placed on the start point: index 0, or a random index when physics flag 0x8 is set. On each later update it gets a travel budget *b* = *s* × (now − the emitter's previous update time). While *b* > 0.0002: with *q*² the **squared** distance to the current target point, if *b* ≤ *q*² the particle moves √*b* towards that point and *b* becomes 0; otherwise it lands on the point, *b* decreases by *q*², and the target becomes the next point (wrapping after the last). (The budget is compared with, and reduced by, squared distances; this is the original's arithmetic.) With no points, *p* = *p*₀. | none (value 1 occurs only on keys without bit 0x100) |
-| 4 | Stepped integration in steps of `time_step` (at most 0.25 s of catch-up per update). Each step forms a force term: *a* (mass-scaled gravity and wind, not multiplied by the step) plus, for every world force field whose radius contains the particle, a vector along (particle − field centre) of length strength × (1 − distance / radius) (zero when the distance is at most 0.0002), reversed for fields marked as attracting, with its X, Y or Z part zeroed when `constrain_x`, `constrain_y` or `constrain_z` is set. Then position += step × (velocity + force term) + (base position − position) × `snap`(age) × step, and velocity = (velocity + force term) × 0.95. Force fields: the client keeps one global list of force-field objects, each with a centre, a radius, a strength, an attracting flag and a lifetime. At each update, and only for emitters that have a key with controller 4, it gathers the entries that were refreshed in the current or previous frame and whose lifetime (when not 0) has not run out, and that pass one more check whose meaning was not traced (BIN). Which game objects add entries to that list was not found (Q14). | none (value 4 occurs on no key at all) |
+| 4 | Stepped integration in steps of `time_step` (at most 0.25 s of catch-up per update). Each step forms a force term: *a* (mass-scaled gravity and wind, not multiplied by the step) plus, for every world force field whose radius contains the particle, a vector along (particle − field centre) of length strength × (1 − distance / radius) (zero when the distance is at most 0.0002), reversed for fields marked as attracting, with its X, Y or Z part zeroed when `constrain_x`, `constrain_y` or `constrain_z` is set. Then position += step × (velocity + force term) + (base position − position) × `snap`(age) × step, and velocity = (velocity + force term) × 0.95. Force fields: the client keeps one global list of force-field objects, each with a centre, a radius, a strength, an attracting flag and a lifetime. At each update, and only for emitters that have a key with controller 4, it gathers the entries that were refreshed in the current or previous frame, whose lifetime has not run out, and that pass one more check whose meaning was not traced (BIN). A lifetime below 0.0002 (strictly; 0 and every negative value included) never runs out; any other lifetime has run out once at least that many seconds have passed since the entry's time stamp (BIN). Which game objects add entries to that list was not found (Q14). | none (value 4 occurs on no key at all) |
 
 In all controllers, when `rotation_velocity` is not constant 0, the particle's rotation and
 world rotation (§8.5 step 9) each grow by age × its `rotation_velocity` value.
@@ -859,7 +878,49 @@ world rotation (§8.5 step 9) each grow by age × its `rotation_velocity` value.
 | 0x02, 0x04 | No effect in the routines read (Q7) |
 
 *a* = mass × (gravity if 0x01) + mass × (wind if 0x20), mass from the mass channel (§8.6.1).
-Both vectors are computed when the system starts and kept for its life.
+
+Each emitter stores its own copy of both vectors (BIN):
+
+- **At system start** the client computes them for every emitter of the system: the gravity
+  vector, and the eased value of the global wind at that moment, each rotated into the system
+  frame. A vector whose length is 0.0002 or less is stored as it is, without rotation.
+- **Recomputation.** The client has one routine that repeats this computation for every emitter
+  of a running system, from the eased global wind at the moment of the call. Only the weather
+  code calls it, for the systems listed in §8.8.1. Every other system keeps the vectors from its
+  start for its whole life.
+- **Use.** Each particle update reads the vectors stored on the emitter at that moment
+  (controller 2 for its ½ *a* *τ*² term, controller 4 for each step). A recomputation
+  therefore also changes the motion of particles that are already alive.
+
+<a id="s8-8-1"></a>
+#### 8.8.1 Systems whose forces the weather code recomputes (BIN)
+
+When it initialises, the weather code creates one instance of each of the ten UNIQUEDB systems
+of §7.1.3 and keeps them for the life of its state. It has two precipitation updates, one for
+rain and one for snow, and each time it runs them it passes them some of those systems:
+
+| Precipitation update | System whose gravity and wind it recomputes (all emitters) | Condition |
+|---|---|---|
+| Rain | UNIQUEDB key 0x83 (`RainGustParticleSystem`, 0x39000003 in this install) | none beyond the update running |
+| Snow | UNIQUEDB key 0xFE (`SnowGustParticleSystem`, 0x390010DD in this install) | the weather's snow value exceeds 1 by more than 0.001; otherwise the snow update recomputes no system |
+
+- The DIDs are read from UNIQUEDB at run time; the ones above are observations.
+- Each precipitation update recomputes its system **once per run**, before it does anything
+  else with the system.
+- A precipitation update runs only when all of these hold:
+  - precipitation is enabled in the client (client flags whose sources were not traced);
+  - it would draw at least one rain streak or snow flake. That count grows with the weather's
+    rain or snow value, clamped to [0, 1], and is scaled by 0.3, 0.6 or 1 by a graphics quality
+    setting.
+- The rain update also spawns particles directly from the 0x6C (`RainVaporParticleSystem`) and
+  0x4A (`WaterRipplesParticleSystem`) systems and from the gust system, but it does not
+  recompute the forces of the first two.
+- No other code recomputes the forces of a running 0x39 system. That includes the other UNIQUEDB
+  systems, script-started effects and the whitelist effects.
+
+Labels are given as interoperability identifiers of the UNIQUEDB keys. The schedule of the
+weather code that runs the two updates (every frame or otherwise), the meaning of the weather's
+rain and snow values, and the flags are OPEN (Q13).
 
 <a id="s8-9"></a>
 ### 8.9 Emitter fade envelope
@@ -958,6 +1019,17 @@ Timing values that a player can perceive (effect length) follow from `time_limit
    never ends it; implement that condition as "never holds" instead of dividing by zero.
 7. Controller 4 (never in the data) runs with an empty force-field list until Q14 is
    answered: only *a* (gravity and wind), `snap` and the 0.95 damping act.
+8. Timed emission with hostile values (§8.3; never in the data):
+   - an `emit_interval` that is negative or not a finite number counts as 0, so the emitter has
+     no timed emission;
+   - for a finite positive `emit_interval`, follow §8.3, and stop step 4 when advancing the
+     last-burst time leaves it unchanged (then set it to now);
+   - before step 1, clamp cap to 100,000, the largest `max_particles` in the data (OBS);
+   - compute the step-2 increment in 64-bit arithmetic and saturate the running total at
+     2³² − 1 instead of wrapping.
+
+   One update then spawns at most 100,000 particles per emitter. The client would also run step
+   4 for the excluded values (§8.3), and its cap is limited only by the 32-bit fields.
 
 ---
 
@@ -978,8 +1050,9 @@ Checkable against the install (all hold in this install, OBS) or against synthet
   or 0x7F0.
 - **PS8**: all VLEs of both families are in the 1-byte form.
 - **PS9**: `time_step` is a finite number above 0 (1/120 to 0.1 observed); `burst_count` ≥ 1;
-  `snap` is a constant (mode 1) curve; no keyframe has `controller` 4, and no keyframe with
-  bit 0x100 has `controller` 1.
+  `emit_interval` is 0 or a finite number above 0 (0.000263 to 100,000 observed);
+  `max_particles` ≤ 100,000; `snap` is a constant (mode 1) curve; no keyframe has `controller` 4,
+  and no keyframe with bit 0x100 has `controller` 1.
 - **FK1**: every 0x44 record decodes by §6.1 with zero leftover bytes (254 of 254).
 - **FK2**: blob words 0 and 1 are 0x50 and 0x1E8; the u32 at blob offset 0x120 is 488.
 - **FK3**: `transform` length is 64 and its element 15 is 1.0; `name` is empty; `properties` is
@@ -1149,9 +1222,20 @@ A record with a 488-byte blob (header only) and one texture:
 > Suggested method: M4 on the Particle node's start routine. Tessera rule §10.4 applies until
 > then.
 
-> **OPEN (Q13):** Which code starts the UNIQUEDB weather and water systems (§7.1.3), and how
-> the environment computes the wind vector that becomes the target of the global wind of §8.8
-> (see `environment.md`). The easing of the global wind (0.3 s half-life) is known (§8.8).
+> **OPEN (Q13):** These questions remain about the UNIQUEDB weather and water systems (§7.1.3)
+> and the global wind of §8.8 (see `environment.md`):
+>
+> - when and where each system emits; the rain update's direct spawns from the 0x6C, 0x4A and
+>   0x83 systems (§8.8.1) were seen but not traced in detail;
+> - how often the weather code runs its rain and snow precipitation updates (every frame or
+>   otherwise), and so how often it recomputes the forces of the 0x83 and 0xFE systems;
+> - what the weather's rain and snow values mean and where they come from;
+> - the sources of the client flags that enable precipitation;
+> - how the environment computes the wind vector that becomes the target of the global wind.
+>
+> Already known: the easing of the global wind (0.3 s half-life, §8.8); which systems are
+> recomputed and under which condition (§8.8.1); and that no other code recomputes a running
+> system.
 
 > **OPEN (Q14):** Source of the world force fields of controller 4 and the range of the random
 > start index of controller 1 (§8.7). Neither controller is used by the data; rule §10.7
@@ -1165,7 +1249,10 @@ A record with a 488-byte blob (header only) and one texture:
 - `records.md` §2.1: rows 0x39 and 0x44 can point here; both layouts are decoded (0x44 outer
   layer only). Its "layouts of 0x39 … 0x44 OPEN" sentences are answered by §4 and §6.1.
 - `environment.md` §9: the 0x39/0x44 OPEN is answered here; the weather particle systems are
-  the UNIQUEDB entries of §7.1.3.
+  the UNIQUEDB entries of §7.1.3. The precipitation updates of §8.8.1 read the same eased global
+  wind as §8.8. The rain update's fall direction is the unit vector of (eased wind + (0, 0,
+  −9.8)), or (0, 0, −1) when that sum is 0.000001 long or shorter (BIN). This is a weather fact
+  for that spec, not a particle rule.
 - `script-table.md` §5.3: the Particle node's two DID fields are mutually exclusive (§2.2); 7
   nodes put a 0x44 DID in the 0x39 field (Q12).
 - `property-system.md` §9.1: the 272 type-0x1E values in 0x78 sets are the whitelist of §7.1.2;
@@ -1182,3 +1269,4 @@ These are suggestions for the owners of those specs; this spec does not edit the
 |---|---|---|
 | 2026-10-07 | all | First version, status Review. Layouts of 0x39 (complete) and 0x44 (outer layer) from M4 (row BIN) confirmed over all records (OBS); censuses; DID graph; runtime behaviour of 0x39 systems (BIN); Q1–Q13. |
 | 2026-10-07 | §0, §1, §4.1, §4.7, §5.2, §5.3, §8.1–§8.4, §8.6.1, §8.7, §8.8, §8.11, §10, §11, §13 | Review issues answered (status stays Review). (1) `snap`: 0.1 in 32,627 of 32,789 emitters, not all; other values added to §5.2 (OBS, all emitters). (2) Controller 1 speed = length of the spawn velocity, and its squared-distance walk; controller 4 force-field list and its gathering rule, source OPEN as new Q14 (both controllers unused by the data, stated); wind half-life 0.3 s, start value and target from the environment update (BIN); draw buffer 32,768 vertices, `Quad` emitters before `Triangle` emitters (BIN). (3) `time_step` ≤ 0 or not a number (§8.1, BIN) and `burst_count` = 0 (§8.2 item 4, §8.3 step 5, §8.4, BIN), Tessera rules §10.5–§10.6. (4) §8.6.1: interpolation targets as computed by the client (next later key with the bit, else the key itself), the target-bit test, and the single resulting rule. (5) Provenance rows P31–P37 added (§2.1, §6.3, §8.6.2, §8.12, §9, §10 as Decision, censuses); P17–P20, P22–P24, P27 widened. (6) §4.1: offset 39 holds only for the 1-byte VLE form. Corrections found while re-measuring: §8.3 said `emit_interval` = 0 tops the emitter up every update; the client skips timed emission entirely (BIN; 507 of the 615 such emitters emit by distance, 108 emit nothing, OBS). §8.3 catch-up rounds the quotient before multiplying by `burst_count`. §5.3 last-key-time counts were measured with a 0.0001 tolerance; now exact (28,578 / 3,873 / 161 + 177 non-constant). New invariant PS9; new rule §10.7. |
+| 2026-10-07 | §1 (P19, P23, P24, P30, P36), §5.2, §7.1.3, §8.3, §8.7, §8.8, new §8.8.1, §10.8, §11 (PS9), §13 (Q13), §14 | Re-review answered (status stays Review). **Blocking:** §8.8 said gravity and wind are computed at system start and kept for the system's life. That is not true for every system. Each emitter stores both vectors, computed at start. The weather code's rain precipitation update recomputes them for every emitter of the UNIQUEDB 0x83 system, and the snow update does the same for the 0xFE system when the snow value exceeds 1.001, once per run of each update. No other caller exists. Particle updates read the stored vectors, so live particles follow a recomputation (BIN, the start and recompute routines and both callers re-read). New §8.8.1 lists the systems and conditions. The weather code creates all ten UNIQUEDB systems at initialisation (§7.1.3, P30). P24 is widened. Q13 now asks how often the precipitation updates run, what the rain and snow values mean, and where the enabling flags come from. **Non-blocking:** (a) §8.3 now gives the 32-bit wrapping running total and the bound of at most cap passes per update. It also gives the client's behaviour with a negative, too small or not-a-number `emit_interval` (BIN). New Tessera rule §10.8 bounds the work. The `emit_interval` census was re-measured over all 32,789 emitters: 615 are 0, the rest are finite from 0.000263 to 100,000, and none is negative. `max_particles` is at most 100,000 (§5.2, PS9). (b) §8.7: a force-field lifetime below 0.0002, negative values included, never runs out (BIN). A rain fall-direction note for `environment.md` was added to §14. |

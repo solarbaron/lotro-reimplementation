@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
+| **Status** | Accepted |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Spec reviewer (separate session, not the author; second review by another separate session) |
-| **Review record** | **2026-10-07, second CLEAN_ROOM.md §5.3 review: not passed; stays Review.** Clean-room items pass again: functional facts only, no code or pseudo-code (§6.8 D3 and §6.7 are numbered prose rules, §12 uses synthetic values only), no copied prose, labels used only as interoperability identifiers, no game text, keys or hostnames, the BIN row meets decision 0011, nothing falls under a closed gate. **All seven issues of the first review are fixed**, and every disputed fact was re-measured over all records with an independent read-only probe and **reproduced**: (1) §12.3 is 16 + 4 + 5 + 4 + 21 = 50 bytes, the hex offsets agree, and a 12-byte label gives 58; the install holds 0x14000000 at 1,687 bytes (16 zones) and four 58-byte records, 70 slots, all decoding to the last byte with every slot field as in §7. (2) 383,332 records with prefix 0x70 and 11 with prefix 0x76, none of which has a set at +0x09000000. (3) 883 colour-event records, each with exactly one array event per key 1–22; 19,426 array events, 1,391 without `_SayType`, 97,130 data entries and 1,382 sounds; one record also holds a top-level event (8 entries, 8 sounds, `_Probability` 1.0, `_SoundChannel` 4) whose type is in its array and whose content differs. (4) A D1 store built as §3.2.2 states gives back 38,651 of 38,651 sets and stores 185,059 mirrors (6,323,020 equal, 185,058 base-absent, 1 different); per-class mirror counts are 175, 355 and 12 as stated, and the total is 6,508,079 of 16,193,558. (5) The §6.5 `OneOf` shapes are 2,363 / 16 / 26 / 35 entry choices and 172 / 368 / 348 single-set position-set choices (1,952, all `Weight` 1). The inner `Repeat`s are 900 / 756 / 64 / 204 / 24 / 4, and there are 1,976 repeat structs (1,968 equal) and 43 random placements. The D3 maximum per point is 81 for 2 profiles and 15 or less for all others. The §12.2 case-2 arithmetic is correct. (6) §3.3: the type-13 pair (direction 1, then 0, terminator 0) is in all 20,161 class-1723 and 16 class-4026 records, and every other template entry has terminator 3. (7) C17 is Reported (LC) and C17a is Decision, with the weight and per-mille reading kept as a hypothesis under the §6.8 OPEN. **Five further Confirmed facts reproduce exactly:** §5.1 (3,033 tables, 14,300 actions with 1–12 per table, 15,023 chain entries, all skills class 827, 13,384 cooldowns); §4.3 `AI_ActionTable_Array` (10–16 per mob, 206,050 elements, 50,890 / 155,158 / 2, min −1 197,911, max −1 205,925); §5.3 (124 records; 118 / 114 / 110 / 2 empty; 1–5 filters); §5.4 (124 records, three properties and one genus bit in all); §5.6 (212 records, 685 followers, 668 / 17, at most 10); §5.8 (82 records, 72 key 2 and 10 key 1); and §3.1 and §3.4 (link section absent in 149 records, available list in 38,488, the length histogram). **Issues to fix before acceptance:** (A) Internal contradiction (implementability). §3.2.1 says that when only the mirror is present, its value stands for the base. Under §3.2.2 D1, a lookup of that base on the same template, for example `Movement_MountSpeedMultiplier`, answers absent (dictionary default), because the base is neither stored, class-constant nor a derived mirror. An implementer gets two answers for the eight base-less names. State one rule: either add a step to the D1 lookup (base absent, so take the stored mirror whose base it is), or drop the §3.2.1 sentence. Give that Decision a number or fold it into D1 so that C21 covers it, and add the case to §12.1 (for example `Movement_SpeedMultiplier` looked up on T1). (B) Minor: §6.9 says "by its name a speed factor; not confirmed" about `PatrolLink_Speed`. This is an unknown stated inline. Move it into the §6.9 OPEN, as was done for the §6.8 hypothesis. With (A) and (B) fixed, the spec can be accepted without a further data review. First review (2026-10-07, separate session): not passed on seven issues (§12.3 size; 0x70/0x76 split; §5.5 top-level event; D1 and the differing mirror; the D3 `OneOf` rule; §3.3 type-13 entries; the C17 mark). All were fixed in the §15 change-log rows 2 and 3 and re-checked above. |
+| **Reviewer** | Spec reviewer (separate session, not the author; second and third reviews by further separate sessions, none of them the author) |
+| **Review record** | **2026-10-07, third CLEAN_ROOM.md §5.3 review (separate session, not the author): passed; Accepted.** Both issues of the second review are fixed. (A) §3.2.1 and §3.2.2 now state one rule: a mirror never stands for its base, and the D1 lookup (stored value, class-constant, derived mirror from its base, otherwise absent) answers a base the set does not hold as absent, never from a mirror; C21 covers it, CR13 tests it, and §12.1 shows it (T1 and T3 against T2), with the remaining question kept as an OPEN in §3.2.1 and §13 item 12. (B) §6.9 no longer states the `PatrolLink_Speed` reading inline; it is a hypothesis inside an OPEN, and §13 item 8 names it. The new C4 facts were re-measured with an independent read-only probe over all 38,651 template sets and all 27,546 dictionary definitions and **reproduce exactly**: 185,058 base-absent mirror occurrences; seven of the eight base-less names have a base with no dictionary definition and each holds one value in every set; the 138 hunter sets hold both base-less mirrors of one base with equal values; only `Movement_SpeedMultiplier` is defined (with a dictionary default), is held by one class-1724 template, and its base-less mirror is 1.0 in 36,925 of 36,928 sets, above 1.0 in two and below in one. **Spot checks (§5.3), all reproduced:** §2.1/C1 per-class template counts (20,161 / 16,605 / 1,722 / 69 / 69 / 16 / 6 / 1 / 1 / 1 = 38,651); §5 record counts (534: 3,033; 884: 124; 973: 124; 539: 883; 3477: 212; 1001: 237; 3761: 82; 1132: 4,168); §3.2.1 per-class mirror counts (175 in every set of 1723, 1724, 4026, 5785 and the referee classes, 355 in 1653 and 1654, 12 in 794); CR12 (no mob or NPC template holds `Advancement_Level`). Checklist: functional facts only; no code or pseudo-code (the revised D1 lookup is a prose rule); no copied prose; labels only as interoperability identifiers; no game text, keys or hostnames; every fact has a provenance row and mark; layouts complete; invariants testable; unknowns are OPEN; the BIN row meets decision 0011; nothing falls under a closed gate. No Ghidra was used in this review. **Earlier: 2026-10-07, second CLEAN_ROOM.md §5.3 review: not passed; stays Review.** Clean-room items pass again: functional facts only, no code or pseudo-code (§6.8 D3 and §6.7 are numbered prose rules, §12 uses synthetic values only), no copied prose, labels used only as interoperability identifiers, no game text, keys or hostnames, the BIN row meets decision 0011, nothing falls under a closed gate. **All seven issues of the first review are fixed**, and every disputed fact was re-measured over all records with an independent read-only probe and **reproduced**: (1) §12.3 is 16 + 4 + 5 + 4 + 21 = 50 bytes, the hex offsets agree, and a 12-byte label gives 58; the install holds 0x14000000 at 1,687 bytes (16 zones) and four 58-byte records, 70 slots, all decoding to the last byte with every slot field as in §7. (2) 383,332 records with prefix 0x70 and 11 with prefix 0x76, none of which has a set at +0x09000000. (3) 883 colour-event records, each with exactly one array event per key 1–22; 19,426 array events, 1,391 without `_SayType`, 97,130 data entries and 1,382 sounds; one record also holds a top-level event (8 entries, 8 sounds, `_Probability` 1.0, `_SoundChannel` 4) whose type is in its array and whose content differs. (4) A D1 store built as §3.2.2 states gives back 38,651 of 38,651 sets and stores 185,059 mirrors (6,323,020 equal, 185,058 base-absent, 1 different); per-class mirror counts are 175, 355 and 12 as stated, and the total is 6,508,079 of 16,193,558. (5) The §6.5 `OneOf` shapes are 2,363 / 16 / 26 / 35 entry choices and 172 / 368 / 348 single-set position-set choices (1,952, all `Weight` 1). The inner `Repeat`s are 900 / 756 / 64 / 204 / 24 / 4, and there are 1,976 repeat structs (1,968 equal) and 43 random placements. The D3 maximum per point is 81 for 2 profiles and 15 or less for all others. The §12.2 case-2 arithmetic is correct. (6) §3.3: the type-13 pair (direction 1, then 0, terminator 0) is in all 20,161 class-1723 and 16 class-4026 records, and every other template entry has terminator 3. (7) C17 is Reported (LC) and C17a is Decision, with the weight and per-mille reading kept as a hypothesis under the §6.8 OPEN. **Five further Confirmed facts reproduce exactly:** §5.1 (3,033 tables, 14,300 actions with 1–12 per table, 15,023 chain entries, all skills class 827, 13,384 cooldowns); §4.3 `AI_ActionTable_Array` (10–16 per mob, 206,050 elements, 50,890 / 155,158 / 2, min −1 197,911, max −1 205,925); §5.3 (124 records; 118 / 114 / 110 / 2 empty; 1–5 filters); §5.4 (124 records, three properties and one genus bit in all); §5.6 (212 records, 685 followers, 668 / 17, at most 10); §5.8 (82 records, 72 key 2 and 10 key 1); and §3.1 and §3.4 (link section absent in 149 records, available list in 38,488, the length histogram). **Issues to fix before acceptance:** (A) Internal contradiction (implementability). §3.2.1 says that when only the mirror is present, its value stands for the base. Under §3.2.2 D1, a lookup of that base on the same template, for example `Movement_MountSpeedMultiplier`, answers absent (dictionary default), because the base is neither stored, class-constant nor a derived mirror. An implementer gets two answers for the eight base-less names. State one rule: either add a step to the D1 lookup (base absent, so take the stored mirror whose base it is), or drop the §3.2.1 sentence. Give that Decision a number or fold it into D1 so that C21 covers it, and add the case to §12.1 (for example `Movement_SpeedMultiplier` looked up on T1). (B) Minor: §6.9 says "by its name a speed factor; not confirmed" about `PatrolLink_Speed`. This is an unknown stated inline. Move it into the §6.9 OPEN, as was done for the §6.8 hypothesis. With (A) and (B) fixed, the spec can be accepted without a further data review. First review (2026-10-07, separate session): not passed on seven issues (§12.3 size; 0x70/0x76 split; §5.5 top-level event; D1 and the differing mirror; the D3 `OneOf` rule; §3.3 type-13 entries; the C17 mark). All were fixed in the §15 change-log rows 2 and 3 and re-checked above. |
 | **Implements into** | A gameplay-data layer on `crates/props` and `crates/wstate` (template store, authored-subset extraction, AI and generator decoders; crate placement is the implementer's choice); `crates/world` (generator, spawn-point and patrol-path index per landblock); `crates/net` sandbox backend (spawning, §6.8); `apps/explorer` (creature card and spawn overlay, §10); `apps/dattool` (census commands) |
 | **Companion specs** | [`wstate.md`](wstate.md) (object records 0x70, bundles, link and available-property sections §6–§7); [`property-system.md`](property-system.md) (property sets, the +0x09000000 rule §6.2, enum and bitfield labels §7, DID maps §8); [`wlib.md`](wlib.md) (class library, ancestry); [`landblock.md`](landblock.md) §4.6 (links), §4.8 (weenie list), §5 (block maps); [`entity-descriptor.md`](entity-descriptor.md) §4 (static entities, instance property sets §4.5.2); [`setup.md`](setup.md) §4 (0x47 entity descriptors); [`appearance.md`](appearance.md) §7 (how NPC and creature figures are dressed); [`environment.md`](environment.md) §4 (region tables; the encounter table is decoded here, §7); [`coordinates.md`](coordinates.md) (map coordinates for overlays); [`string-table.md`](string-table.md) §9 (rendering `Name` and other StringInfo values) |
 
@@ -68,7 +68,7 @@ How sources are marked:
 | C1 | Creature subtree: 38,651 object records in ten root classes under one library class; per-class counts and sizes (§2.1) | OBS (all 383,332 records with prefix 0x70) | Confirmed 2026-10-06; recounted 2026-10-07 |
 | C2 | `WeenieType` labels identify mob templates (`Monster`, one class), NPC templates (`RealNPC`, `NPC`) and containers (`GameplayContainer`) (§2.2) | OBS (all 0x70 sets) | Confirmed 2026-10-07 |
 | C3 | Template object record: one root object, one DID item naming the attitude table, one import of it; link schema and instance-property list (§3.1, §3.3, §3.4) | OBS (38,651) | Confirmed 2026-10-07 |
-| C4 | Mirror properties: six name patterns whose value equals the base property in every record where the base is present (one exception) (§3.2) | OBS (38,651 sets; 6,508,079 mirror occurrences) | Confirmed 2026-10-07 |
+| C4 | Mirror properties: six name patterns whose value equals the base property in every record where the base is present (one exception); the eight base-less mirror names, seven of whose bases have no dictionary definition, and the values of the base-less mirrors (§3.2.1) | OBS (38,651 sets; 6,508,079 mirror occurrences; 185,058 base-less occurrences; all 27,546 dictionary definitions) | Confirmed 2026-10-07 |
 | C5 | Class-constant and varying properties per class; authored subset sizes (§3.2) | OBS (20,161 + 16,605 + the small classes) | Confirmed 2026-10-07 |
 | C6 | Link schema direction 0 is the link's source end (`end_id_2`), 1 its target end (`end_id_1`) (§3.3, §6.3) | OBS (schemas of the creature and generator classes against 1,324,469 landblock links); derived by this spec writer | Confirmed 2026-10-07 (consistent on every link whose ends can be typed) |
 | C7 | Template property census and DID targets (§4.1–§4.7) | OBS (all records of each class) | Confirmed 2026-10-07 |
@@ -86,7 +86,7 @@ How sources are marked:
 | C18 | Patrol links and path graph (§6.9) | OBS (all landblocks) | Confirmed 2026-10-07 |
 | C19 | Encounter table layout (§7) | OBS (5 of 5 records decoded to the last byte) | Confirmed 2026-10-07; meaning OPEN |
 | C20 | Enum mappers and their entry counts (§8) | OBS | Confirmed 2026-10-07 |
-| C21 | Tessera rules D1 (template store, §3.2.2), D2 (instance-property list, §3.4), D4 (unscoped entries, §6.7), D5 and D6 (tool views, §10), D7 (colour-event extra event, §5.5) | Tessera | Decision |
+| C21 | Tessera rules D1 (template store and its lookup, including the rule that a base is never answered from a mirror, §3.2.1, §3.2.2), D2 (instance-property list, §3.4), D4 (unscoped entries, §6.7), D5 and D6 (tool views, §10), D7 (colour-event extra event, §5.5) | Tessera | Decision |
 
 ---
 
@@ -214,14 +214,30 @@ the property named by removing the pattern's affix.
   `Movement_SpeedMultiplier` at all (an NPC template, class 1724): its
   `ForwardSource_Movement_SpeedMultiplier` is 1.0 while the base is 2.0. A store must
   therefore keep that mirror (Decision D1 below).
+- For seven of the eight base-less mirror names the base is not a property at all: its name
+  has no definition among the 27,546 in the property dictionary (`property-system.md` §2),
+  so no lookup can name it. Each of these seven mirrors holds one and the same value in every
+  set that has it. The 138 sets with the hunter names hold both base-less mirrors of one base
+  (`ForwardSource_` and `_Cached`), always with equal values.
+- Only `ForwardSource_Movement_SpeedMultiplier` has a base with a dictionary definition
+  (`Movement_SpeedMultiplier`, which has a dictionary default). In the 36,928 sets that hold
+  the mirror without the base, the mirror is 1.0 in 36,925 and another value in 3 (two sets
+  above 1.0, one below). The dictionary default, like every value here, is read from the
+  install at run time.
 - Mirrors are 40.2 % of all top-level properties of the 38,651 sets (6,508,079 of
   16,193,558). Every set of classes 1723, 1724, 4026, 5785 and the three referee classes
   carries exactly 175 mirrors (the same 175 names), every set of 1653 and 1654 carries 355, and
   every container set (794) 12.
 
 A reader treats a mirror as derived: it keeps the base and recomputes the mirror on demand.
-When only the mirror is present, the mirror's value stands for the base (Decision; the data
-cannot show how the original treats the eight base-less names).
+A mirror never stands for its base: when a set holds a mirror but not its base, a lookup of
+the base answers as if no mirror were there (Decision D1, the last step of the lookup in §3.2.2).
+Reason: the one template that holds both `Movement_SpeedMultiplier` and its `ForwardSource_`
+mirror shows that the two can differ, so the mirror is not a reliable copy of the base.
+
+> **OPEN:** Whether the original treats a base-less `ForwardSource_Movement_SpeedMultiplier`
+> (the three sets where it is not 1.0) as the creature's speed factor. The data cannot show
+> it; under D1 the base answers its dictionary default and the mirror keeps its own value.
 
 <a id="s3-2-2"></a>
 #### 3.2.2 Class-constant and varying properties (Confirmed, C5)
@@ -252,7 +268,11 @@ absent or whose value differs from the base's, is stored for *T* like a varying 
 §3.2.1). A lookup of property *P* on template *T* answers, in order: *T*'s own stored value
 (varying property or stored mirror); the class-constant value; for a mirror that *T*'s set
 holds but the store derived, the base's value by the same lookup; otherwise absent (the
-dictionary default applies as in `property-system.md` §2.2). The store records, per
+dictionary default applies as in `property-system.md` §2.2). These four steps are the whole
+lookup: in particular, a base that *T*'s set does not hold and that is not class-constant
+answers absent even when *T* stores a mirror of it; the lookup never derives a base from a
+mirror (in this install this concerns `Movement_SpeedMultiplier` in 36,928 templates, §3.2.1,
+and §12.1 shows the case). The store records, per
 template, which derived mirrors its set holds, so that a mirror the set does not hold is
 reported absent and not computed. With these rules the store gives back every template's
 set exactly (CR13). The classification is
@@ -921,10 +941,14 @@ the start, the observed chains:
 
 Chains with branching points were followed through the last-stored next link only; a
 consumer that needs branches follows all of them. `PatrolLink_Speed` on the start link takes
-values 0–50, 1 in most links (by its name a speed factor; not confirmed).
+values 0–50, 1 in most links.
 
 > **OPEN:** How a patrol chooses among several next points, and whether PatrolOnce stops at
 > the end while Patrol reverses or restarts. Not in the data.
+
+> **OPEN:** The meaning and unit of `PatrolLink_Speed`. Hypothesis of this spec writer, from
+> the label only: a speed factor for the patrolling creature, 1 meaning its normal speed. Not
+> confirmed; an implementation must not depend on it without a revision of this spec.
 
 <a id="s6-10"></a>
 ### 6.10 What the spawn data can and cannot reconstruct (Confirmed)
@@ -1134,7 +1158,9 @@ Decision D6, per visible landblock:
 - **CR12** No mob or NPC template carries `Advancement_Level`.
 - **CR13** A template store built by D1 (§3.2.2) gives back, for every template, exactly the
   properties and values of its stored set (38,651 of 38,651), including the one mirror that
-  differs from its base.
+  differs from its base. A lookup of `Movement_SpeedMultiplier` on any of the 36,928 templates
+  whose set holds only its `ForwardSource_` mirror answers absent (dictionary default), never
+  the mirror's value.
 - **CR14** Every `OneOf` directly in a profile holds either `Entry` choices only (after an
   optional modifier at element 0) or `PositionSetEntry` choices only (no modifier); in the
   second case all its `PositionSetEntry` elements name one position set, and each of their
@@ -1164,7 +1190,7 @@ Class *K* has three templates. Their sets (property: value):
 | `Combat_CanBlock_Cached` | true | true | true |
 | `Quest_RelatedQuest` | absent | 0x70001234 | absent |
 | `Movement_SpeedMultiplier` | absent | 2.0 | absent |
-| `ForwardSource_Movement_SpeedMultiplier` | 1.0 | 1.0 | 1.0 |
+| `ForwardSource_Movement_SpeedMultiplier` | 1.0 | 1.0 | 1.5 |
 
 Result: `Health_MaxLevel` and `Combat_CanBlock` are class-constant; the `_ForwardSource`,
 `_Cached` and `ForwardSource_` properties are mirrors; `AI_PerceptionRadius`,
@@ -1177,10 +1203,14 @@ is absent, in T2 because it differs from its base (1.0 against 2.0).
 The store keeps {`Health_MaxLevel` 10, `Combat_CanBlock` true} for *K*;
 {`AI_PerceptionRadius` 7, `ForwardSource_Movement_SpeedMultiplier` 1.0} for T1;
 {`AI_PerceptionRadius` 12, `Quest_RelatedQuest` 0x70001234, `Movement_SpeedMultiplier` 2.0,
-`ForwardSource_Movement_SpeedMultiplier` 1.0} for T2; and the same as T1 for T3. Lookups on
-T2: `AI_PerceptionRadius_ForwardSource` answers 12 (derived from the base);
+`ForwardSource_Movement_SpeedMultiplier` 1.0} for T2; and {`AI_PerceptionRadius` 7,
+`ForwardSource_Movement_SpeedMultiplier` 1.5} for T3. Lookups on T2:
+`AI_PerceptionRadius_ForwardSource` answers 12 (derived from the base);
 `ForwardSource_Movement_SpeedMultiplier` answers 1.0 (stored), **not** the base's 2.0;
-`Movement_SpeedMultiplier` answers 2.0. On T1, `Movement_SpeedMultiplier` is absent.
+`Movement_SpeedMultiplier` answers 2.0. On T1 and on T3, `Movement_SpeedMultiplier` answers
+absent, so the dictionary default applies: on T3 it is **not** the stored mirror's 1.5, and on
+T1 it is not the mirror's 1.0 either, even though the two values may coincide.
+`ForwardSource_Movement_SpeedMultiplier` answers 1.0 on T1 and 1.5 on T3 (stored).
 
 <a id="s12-2"></a>
 ### 12.2 Candidates at a spawn point
@@ -1263,12 +1293,14 @@ bytes, the size of each of the four one-zone, one-slot records of the install.
 6. Profile bundle classes 1130, 1140, 166, 176 (§6.6).
 7. The original server's spawn, placement, respawn and AI rules, and the frame of exact
    placements (§6.8).
-8. Patrol branching and end behaviour (§6.9).
+8. Patrol branching and end behaviour, and the meaning of `PatrolLink_Speed` (§6.9).
 9. Encounter-table slot fields (§7).
 10. Where the templates of type-8-linked spawns come from (§6.10): not in the client data; a
     server must supply them.
 11. Which colour event the original uses when a record holds a top-level event besides its
     array (§5.5).
+12. Whether a base-less `ForwardSource_Movement_SpeedMultiplier` acts as the creature's speed
+    factor in the original (§3.2.1).
 
 ---
 
@@ -1293,3 +1325,4 @@ bytes, the size of each of the four one-zone, one-slot records of the install.
 | 2026-10-07 | all | First version, status Review. Census over all 38,651 templates, all AI records, all 4,168 profiles, all 49,636 landblock-info records and the five encounter tables; one BIN use (creature information panel). | Spec writer (dirty room) |
 | 2026-10-07 | header, §1 (OBS, C1, C17, C17a, C21), §2.1, §3.1, §3.2.1, §3.2.2, §3.3, §5.5, §6.5, §6.7, §6.8, §9, §11 (CR13–CR15), §12.1–§12.3, §13 | Review fixes, every count re-measured over all records on 2026-10-07. (1) §12.3 headed 50 bytes, total explained. (2) 383,332 records with prefix 0x70, the other 11 object records are 0x76 singletons. (3) §5.5: the top-level colour event is in addition to the full array; counts are of the 19,426 array events (19,427 with it); Decision D7 and an OPEN added. (4) D1 stores every mirror whose base is absent or differs; §12.1 covers it; CR13. (5) D3 step 2 rewritten as one rule (non-matching position-set choices are removed before the draw; a leading `Repeat` repeats the whole draw; a leading placement applies to everything the `OneOf` produces; 256-object cap); §6.5 census of `OneOf` shapes; §12.2 case 2; CR14. (6) §3.3: type 13 is two entries (direction 1 then 0), terminator 0 per `wstate.md` §6. (7) C17 split into Reported (LC) and Decision (C17a); the weight and per-mille reading moved into the §6.8 OPEN as a hypothesis. Also corrected: §3.1 link section is absent in 147 + 2 records, not 163 (163 is the available-property count); §3.3 container, 4026 and 5785 schemas completed. | Spec writer (dirty room) |
 | 2026-10-07 | §3.2.1, §15 | Second pass on the review issues: every disputed count re-measured over all records with fresh probes and found as now stated (383,332 + 11 object records; 19,426 array colour events + 1 top-level, 97,130 + 8 data entries, 1,382 + 8 sounds; 1,952 `PositionSetEntry` choices in 888 `OneOf`s, all single-set; encounter records 1,687 and 4 × 58 bytes, 70 slots; D1 store rebuilds 38,651 of 38,651 sets, storing 185,059 mirrors; §3.3 schema and type-13 pair counts; all §6.5 counts, ranges and the 81-object maximum). §3.2.1: mirror totals and per-class mirror counts stated for every class. No other count in the reviewed sections changed. | Spec writer (dirty room) |
+| 2026-10-07 | §1 (C4, C21), §3.2.1, §3.2.2, §6.9, §11 (CR13), §12.1, §13 | Second-review fixes. (A) One rule for base-less mirrors: the §3.2.1 sentence letting a mirror stand for its base is replaced by the D1 lookup rule (a base the set does not hold answers absent, never from a mirror); stated in §3.2.1 and §3.2.2, covered by C21, tested by CR13 and shown in §12.1 (T3 now has a differing synthetic mirror). New facts, measured over all 185,058 base-less occurrences and all 27,546 dictionary definitions: seven of the eight base-less mirror names have no base in the dictionary, each holds a single value, the hunter base has two base-less mirrors with equal values, and only `Movement_SpeedMultiplier` has a definition (mirror 1.0 in 36,925 of 36,928 sets); new OPEN (§3.2.1, §13 item 12). (B) §6.9: the `PatrolLink_Speed` reading moved into an OPEN as a hypothesis; §13 item 8 extended. | Spec writer (dirty room) |

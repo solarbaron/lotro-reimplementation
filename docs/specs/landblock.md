@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | Revised (was Accepted 2026-10-06; 2026-10-07 revision: interiors, visibility and ceiling normals added, §3.14, §4.3, §4.4, §4.11–§4.14; re-review 2026-10-07: **changes requested**, three small corrections, see the review record; second re-review 2026-10-07 (independent session): **changes requested**, the same three corrections are still outstanding. The sections reviewed on 2026-10-06 keep their numbers and content except where the change log's 2026-10-07 row says otherwise) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review 2026-10-06 (after the second repair), Claude review session (spec-writer agent): **passed; Accepted**. Every §5.3 item holds. Item 3: the landblock-info field and part names (§4.1–§4.3, §4.6, §4.8, §9–§11) are now Tessera's own; none of the names taken from the published loader remains, and the change log does not repeat them. The remaining identifiers are generic (`did`, `flags`, `index`, `key`) or interoperability labels read from the install (property names, `EntityLinkType` labels, L24). The cross-references are fixed (L11 and §2.4 now point to §4.9, L12 to §4.4). Spot checks on 2026-10-06 matched the spec. A read-only probe read all 49,636 landblock-info records and both enum mappers directly from the install: L10/§4.1 (`flags` 1: 39,252, 3: 9,704, 5: 636, 7: 44; `aux_word` below the payload length in 49,625 records and above it in 11); L11/§2.4/§4.9 (stamp split 7,106 below 31 and 42,530 at 31 or above, and the stamp set as listed); §4.2 (block-pair part in 9,748 records, 79,147 records of 24 bytes, the same as the §4.6 `has_pair` count); §4.3 (cell groups in 680 records); L24 (0x28000001 key 0x0D names `EntityLinkType` and points to 0x230000BE, whose base is 0x230001A9 with codes 0x00–0x1B; every code and label in §4.6 matches); L12/LI3 (first cell of the 1,433 records with cells: geometry is always a 0x01 DID, and `position` names this region, landblock and `index`). Non-blocking follow-ups: (a) §4.2 says "names two landblock-info records", but one of the 158,294 block-pair DIDs, 0x8025474E, has the landblock-info shape and no record exists for it. The writer should say "DID of landblock-info shape; may not exist" in a later revision. Until then, implementers must not treat a missing record as an error. (b) The code rename noted by the writer (`crates/formats/src/landblock/info.rs`, `mod.rs`) is for an implementer, citing §4.1–§4.8. Earlier record: third review 2026-10-06, changes requested (§5.3 item 3, copied landblock-info names; wrong §4.10 references), addressed the same day (change log, third 2026-10-06 row). That round also spot-checked all 390,150 landblock-data and block-map records (L2/HM2, L5/HM1, L6c, L9, §3.8.1/HM5, §3.9, §5.3/BM1/BM2), and all matched. Review 2026-10-05 and re-review 2026-10-05: changes requested, both addressed (the §3.6 value-126 claim and the §8 step 1 vertex-flag byte). |
+| **Review record** | Second re-review 2026-10-07 of the 2026-10-07 revision, Claude review session (spec-writer agent; a different session from the writer and from the first re-review): **changes requested**. The spec text is unchanged since the first re-review, so its three required corrections are still open. This session confirmed each of them independently and found no further blocking problem. **Checklist (CLEAN_ROOM.md §5.3):** items 2 to 9 hold for the diff against HEAD. There is no code or pseudo-code. The new field names are Tessera's own and the property names are interoperability labels. The visibility library is not named. There are no client strings, source paths or bulk tables. L25 to L37 carry every new fact with BIN2, OBS2 or Inferred marks, the unknowns are OPEN with Tessera Decisions, and decision 0011 covers BIN2. Item 1 still fails on the same three statements. **Data re-check (OBS, 2026-10-07):** the read-only review probe was re-run on the install and reproduced every count of L25, L26, L28 to L31, LI5 to LI8, §4.4 and IN1. **BIN re-check** (own copy of the shared decompiler project, same build, decision 0011; copy deleted afterwards). (i) The vertex-normal routine matches §3.14: s = ±1 from the ceiling switch, the nine corner names, the four unmirrored quad tests, every corner order in the table, (B − A) × (C − A) normalised, and the sum divided by the count. Each quad gives one or two triangles, so the count is 4 to 8. The quad-bit reader uses sample 31 of the −1 neighbour, bit 0 for the ceiling and bit 7 for the terrain, and counts the bit as set when that landblock is missing. (ii) The cell reader matches §4.4 and §4.12: flag bits 0, 3, 4 and 5 kept, bit 2 = property set. Without bit 5, the PVS holds list A only, and list B becomes a group under a fresh key that is stored as the cell's group. (iii) The PVS walk matches: list A, then the members of the list-B groups, skipping `index_echo`. (iv) The portal fan is (1, k − 1, k). (v) The fog limits match §4.13. **Required corrections (unchanged from the first re-review):** (1) §3.14, the paragraph after step 7: "up to six triangles" must read "four to eight triangles" (one per quad, or two when the quad's diagonal runs through the sample). (2) §4.13, main directional light: off when the intensity is **below** 0.0002 (strict), not "at most". The colour test is inclusive, and the reference colour (0, 0, 0, 1) is correct. (3) §4.12, scene flags: the outdoor branch is taken only when region ≠ 0, landblock X ≠ 0xFF, Y ≠ 0xFF and cell = 0 (cell 0xFFFF also fails). In every other case the client looks the cell up. When no cell is found, both flags stay clear: no landscape, the indoor record and no sky. State this with BIN2 (d), and contrast it with §4.11, where cell 0xFFFF maps to the outdoor visibility cell. **Non-blocking:** (a) to (c) of the first re-review still apply. Probe and decompiler outputs: dirty scratch `m45c/dirty/review-interiors` (`probe/run2.txt`, `ghidra2/`). Earlier record: Re-review 2026-10-07 of the 2026-10-07 revision (interiors, visibility, ceiling normals), Claude review session (spec-writer agent; a different session from the writer): **changes requested**. Checklist (CLEAN_ROOM.md §5.3): items 2 to 9 hold. There is no code or pseudo-code. The §3.14 triangle table and the §4.11 steps are tables and prose of functional facts. The new field names (`portal`, `neighbour`, `back_reference`, `extra_cells`, `flag`) are Tessera's own. The property names are interoperability labels read from the install. The third-party visibility library is not named. No source paths or client strings appear. The worked examples (IN1, row Y5) quote only DIDs, cell numbers and a few property values of single records. L25 to L37 cover every new fact, and the legend adds the mark Inferred. LI5 to LI8 can be tested. The unknowns are OPEN, each with a Tessera Decision. Decision 0011 covers BIN2, and nothing outside rendering, cell loading and the environment was used. Item 1 fails on three statements, listed below. **Data re-check (OBS, 2026-10-07):** an independent read-only probe read all 49,636 landblock-info records and agreed with L25, L26, L28 to L31, LI5 to LI8 and §4.4 on every count: 104,271 cells and 1,288 groups. 78,069 `extra` values are keys whose group holds the cell, 14,064 are 0xFFFF and in no group, and 12,138 cells have no `extra`. All 129,684 bit-5 list-B values are keys, and the cell's own key is always among them. 9,288 non-bit-5 list-B lists are non-empty and contain the cell, and 2,850 are empty. There are 393,842 neighbour entries, with flag 1 in 392,318 and 0 in 1,524. The high half and the list count are 0 everywhere, and the back-reference maximum is 53. `neighbour_count` is 0 to 6, 24 (2 cells) or 54 (1 cell). Bit 4 is set in 9,493 cells and bit 0 in none, and no cell or neighbour number is 0 or 0xFFFF. Every neighbour lies in the PVS (104,271 of 104,271). Computing §4.11 from the data gives 18,390 visibility cells and 39,692 portals, with 354,150 entries inside a group. IN1 (0x802191A6) also matches: the visibility cell of cell 9 is cells 6 to 23, its only portals are 6 to 5 and 8 to 24, and the PVS of cell 9 has 25 cells, none with bit 4. The property ids the client tests resolve, in the install's registry, to the names used in §4.13: the upper, lower and plain interior ambient, the fog type, colour, near and far, and the sky-key properties in the stated order. **BIN re-check** (own copy of the shared decompiler project, same build, decision 0011; copy deleted afterwards). These agree with the client: the cell reader (flag bits 0, 3, 4 and 5 kept, bit 2 = property set; the neighbour entry u32, u16, i32, counted u16 list, u8 with values above 1 rejected; the bit-5 tail; and a non-bit-5 list B stored as a group under a fresh key). Also the group list (members of the `extra` group, otherwise empty). Also the visibility-cell rule of §4.11 steps 1 to 3 and the portal rule (skip a negative back-reference or a neighbour in the group list, fan (1, k−1, k), a per-portal geometry field passed along, which is the OPEN). Also the PVS walk (list A, then the members of the list-B groups, skipping `index_echo`) and the scene-flag pass (bit 0 clears both flags, bit 4 sets sky). Also the indoor record: the fog end is limited to 10,000, raised to at least 20 after the overrides, and the start is limited to between −10,000 and end − 20. The ambient limit is upper only and also applies to alpha. The re-read rule (2.5 s, or a change of region, landblock or instance) and the sky-key order with defaults 2 and 1 also agree. In §3.14, s = ±1, the corner naming, the four quad tests without s, every corner order in the table, the neighbour samples 31 and 1, a quad bit read as set when the neighbouring landblock is missing, skipped triangles, the (B − A) × (C − A) unit normals, and the mean without renormalising all agree. **Required corrections (small; no layout or rule changes):** (1) §3.14, the paragraph after step 7, says "the up to six triangles of the four quads". Each quad gives one triangle, or two when its diagonal runs through the sample, so the count is 4 to 8. The table is right; the sentence is not. (2) §4.13, main directional light: the client turns it off when the intensity is **below** 0.0002 (strict), not "at most 0.0002". The colour test "within 0.0002 per channel" is inclusive and correct. (3) §4.12, scene flags: the steps cover cell 0 and "an interior cell" but not a camera position that is not valid. The client takes the outdoor branch only when region ≠ 0, landblock X and Y ≠ 0xFF, and cell = 0. For any other position (for example cell 0xFFFF) it looks up a cell, finds none, and leaves **both flags clear**: no landscape, the indoor record, no sky. This differs from §4.11, where cell 0xFFFF maps to the outdoor visibility cell. Please state this, BIN2 (d), so that an implementer does not treat cell 0xFFFF as outdoors when setting the flags. **Non-blocking:** (a) The §4.11 key paragraph could add that region 0 or landblock X or Y 0xFF also gives the outdoor key. (b) The 2026-10-06 follow-up (a) on §4.2 (block-pair DID 0x8025474E without a record) is still open. (c) The cross-spec adoptions named in the change log (`terrain-texturing.md` §4.8, `environment.md` §7.1 and §12, `collision.md` §5.8) wait for those specs' own revisions. Probe and decompiler outputs: dirty scratch `m45c/dirty/review-interiors`. Earlier record: Re-review 2026-10-06 (after the second repair), Claude review session (spec-writer agent): **passed; Accepted**. Every §5.3 item holds. Item 3: the landblock-info field and part names (§4.1–§4.3, §4.6, §4.8, §9–§11) are now Tessera's own; none of the names taken from the published loader remains, and the change log does not repeat them. The remaining identifiers are generic (`did`, `flags`, `index`, `key`) or interoperability labels read from the install (property names, `EntityLinkType` labels, L24). The cross-references are fixed (L11 and §2.4 now point to §4.9, L12 to §4.4). Spot checks on 2026-10-06 matched the spec. A read-only probe read all 49,636 landblock-info records and both enum mappers directly from the install: L10/§4.1 (`flags` 1: 39,252, 3: 9,704, 5: 636, 7: 44; `aux_word` below the payload length in 49,625 records and above it in 11); L11/§2.4/§4.9 (stamp split 7,106 below 31 and 42,530 at 31 or above, and the stamp set as listed); §4.2 (block-pair part in 9,748 records, 79,147 records of 24 bytes, the same as the §4.6 `has_pair` count); §4.3 (cell groups in 680 records); L24 (0x28000001 key 0x0D names `EntityLinkType` and points to 0x230000BE, whose base is 0x230001A9 with codes 0x00–0x1B; every code and label in §4.6 matches); L12/LI3 (first cell of the 1,433 records with cells: geometry is always a 0x01 DID, and `position` names this region, landblock and `index`). Non-blocking follow-ups: (a) §4.2 says "names two landblock-info records", but one of the 158,294 block-pair DIDs, 0x8025474E, has the landblock-info shape and no record exists for it. The writer should say "DID of landblock-info shape; may not exist" in a later revision. Until then, implementers must not treat a missing record as an error. (b) The code rename noted by the writer (`crates/formats/src/landblock/info.rs`, `mod.rs`) is for an implementer, citing §4.1–§4.8. Earlier record: third review 2026-10-06, changes requested (§5.3 item 3, copied landblock-info names; wrong §4.10 references), addressed the same day (change log, third 2026-10-06 row). That round also spot-checked all 390,150 landblock-data and block-map records (L2/HM2, L5/HM1, L6c, L9, §3.8.1/HM5, §3.9, §5.3/BM1/BM2), and all matched. Review 2026-10-05 and re-review 2026-10-05: changes requested, both addressed (the §3.6 value-126 claim and the §8 step 1 vertex-flag byte). |
 | **Implements into** | `crates/formats` (landblock data, landblock info, block-map and descriptor decoders), `crates/world` (landblock IDs, bundles, block-map resolution, minimap tiles), `crates/terrain` (height grid, triangulation, surface layers), `apps/explorer` (landblock view), `fuzz/` (one target per record kind) |
-| **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor and the per-region tables). `records.md` §1 (VLE, TSize, Pascal string), §2.1–§2.2 (prefix and landblock DID shape, DB types), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). **Meaning of the parts decoded here:** [`terrain-texturing.md`](terrain-texturing.md) (surface layers, masks, quad grid, light maps), [`collision.md`](collision.md) (tree code, terrain and ceiling collision, 0x01 cell geometry, portals), [`scenery.md`](scenery.md) (coarse grid), [`water.md`](water.md) (water and fog-zone keys of the block map, water per landblock, kind 5 water). |
+| **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor and the per-region tables). `records.md` §1 (VLE, TSize, Pascal string), §2.1–§2.2 (prefix and landblock DID shape, DB types), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). [`environment.md`](environment.md) §7, §11 and [`lighting.md`](lighting.md) §8.1, §10 (the indoor environment record of §4.13 feeds them). [`appearance.md`](appearance.md) §3.2 (appearance lists, §4.14). **Meaning of the parts decoded here:** [`terrain-texturing.md`](terrain-texturing.md) (surface layers, masks, quad grid, light maps), [`collision.md`](collision.md) (tree code, terrain and ceiling collision, 0x01 cell geometry, portals), [`scenery.md`](scenery.md) (coarse grid), [`water.md`](water.md) (water and fog-zone keys of the block map, water per landblock, kind 5 water). |
 
 ---
 
@@ -28,6 +28,10 @@ for the world walker:
   triangulation, ceiling grid, surface layers, collision trees, all decoded to the last byte
   (§3);
 - the **landblock info** record `0x802RXXYY`: cells, static entities, links, weenies (§4);
+- how the client draws **interior cells**: visibility cells and portals, when cells are drawn
+  from inside and from outside, the indoor environment (ambient, fog, no sun) and what mesh a
+  cell draws (§4.11–§4.14); how terrain and **ceiling** vertex normals are computed and what
+  that means for cave-ceiling lighting (§3.14);
 - **block maps** `0x801RXXYY` and their per-region descriptors (prefix 0x18): area, music,
   ambient sound, sky and other per-landblock keys (§5);
 - **landblock properties** `0x804RXXYY`: minimap tiles and baked light maps (§6);
@@ -45,11 +49,12 @@ assert the invariants, not the counts.
 
 Legend:
 
-- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05 or 2026-10-06 where the row
-  says so) by throwaway probes in the dirty-room scratchpad, over **all** records of the kind
+- **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05, 2026-10-06 or 2026-10-07 where
+  the row says so) by throwaway probes in the dirty-room scratchpad, over **all** records of the kind
   unless a sample is stated. For a fact with a BIN source: the data agrees on every record.
-- **BIN**: rests on the disassembly of the client (tag BIN below, or the BIN tags of the
-  companion specs named in the row) and has not been checked against every record.
+- **BIN**: rests on the disassembly of the client (tags BIN and BIN2 below, or the BIN tags of
+  the companion specs named in the row) and has not been checked against every record.
+- **Inferred**: follows from BIN facts by reasoning, not traced directly.
 - **Probable**: supported by a statistical test on the data, but not by an exact rule.
 - **Reported**: comes only from third-party material and was not, or could not be, checked.
 - **Tessera Decision**: Tessera's own rule where the original's is not known; never a
@@ -66,6 +71,8 @@ Legend:
 | ED | `entity-descriptor.md` (static entity descriptors; written in parallel from the same install). |
 | TT, COL, SCN, WAT | `terrain-texturing.md`, `collision.md`, `scenery.md`, `water.md` (same install, 2026-10-05): each decodes the meaning of parts whose layout is given here; their correction tables (`terrain-texturing.md` §15, `collision.md` §15, `water.md` §13) are adopted in this revision. |
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-05 (objdump, capstone). **Questions:** (a) how the client converts a stored height sample to world units (every converter found: terrain vertex builder, height queries, physics, the landblock minimum and maximum, `terrain-texturing.md` §13 and `water.md` BIN (c)); (b) which DB object type the client registers for each landblock kind; (c) which records read block-map keys 3, 4, 6 and 7. **Why M1–M3 were not enough:** the data fits stored / 32.768 and stored × 2,000 / 65,535 equally well (they differ by at most 0.031 units); the record kinds and the keys without a 0x18 descriptor entry are named nowhere in the data or in published sources; no running client is available for M3. |
+| BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, second use. The same client build as BIN (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-07 with a headless decompiler session. Nothing outside rendering, cell loading and the environment was examined (no network, login or anti-tamper code). **Questions:** (d) which interior cells, portals and meshes the client draws, and when cells are drawn with the camera inside or outside them (row Y5 of `docs/checklists/m4-5-visual.md`: interior cell meshes not drawn); (e) how the client reads the cell flags, lists A and B, `extra`, the cell groups and the neighbour entries of §4.3–§4.4; (f) which environment values (ambient, fog, sun, sky key) apply indoors and where the client reads them; (g) how the vertex normals of terrain and ceiling chunks are computed (dark cave ceilings, rows T5, T15 and T16 of the same checklist). **Why M1–M3 were not enough:** the data stores the lists, flags and properties but not how they are used or which source wins; normals are not stored at all; no running client is available for M3 frame captures in this session. Output is prose facts only. |
+| OBS2 | Observed in user install 2026-10-07 (Steam) by a throwaway read-only probe: all 49,636 landblock-info records of regions 1–5 and 14 decoded again; all 104,271 cells, their neighbour entries, lists A and B, `extra`, flags and property sets, and all 1,288 cell groups (§4.3) dumped and cross-checked; the portal joins of the landblocks with scaled cells recomputed from the 0x01 geometry; the landblock-data and landblock-properties records of the blocks of checklist rows T5, T15 and T16 read. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -96,6 +103,19 @@ Legend:
 | L22 | Light maps: row 0 on the south edge, column 0 on the west edge; bound as material parameter 3019 and **added** to the lighting sum; content is baked light (§6.4) | TT §10, T22 (BIN there) | Confirmed (orientation); BIN (additive use); Probable (content) |
 | L23 | A point enters a cell from the outdoor world by containment in the cell's phantom and cell volume, not by crossing a portal (§4.4) | COL §5.8.1 | BIN |
 | L24 | `link_type` (§4.2, §4.6) takes codes of the install's `EntityLinkType` enumeration: the enum list 0x28000001 names it at key 0x0D and points to enum mapper 0x230000BE (codes 0x10000001 and up), whose base mapper 0x230001A9 holds codes 0x00–0x1B. Every code observed in §4.6 has a label there; the labels are quoted as interoperability names from the data | OBS (2026-10-06, both mappers read in full) | Confirmed |
+| L25 | Cell groups (§4.3) are **visibility groups**: `lead` is a group key, not a cell; a cell's `extra` names its group; in cells with `cell_flags` bit 5, list B holds group keys (its own group always among them); in cells without bit 5, list B lists the cell's own group as cell numbers (§4.3, §4.4) | BIN2 (e); OBS2: 78,069 cells have an `extra` that is a group key of their record and are members of that group, 14,064 have 0xFFFF and are in no group, 12,138 have no `extra`; 129,684 of 129,684 list-B values of bit-5 cells are group keys, the own group is among them in 78,069 of 78,069; list B of the 9,288 non-empty bit-5-clear cells always contains the cell | Confirmed (2026-10-07) |
+| L26 | Neighbour entry grammar as the client reads it: u32 portal number, u16 neighbour cell, i32 back-reference, u32-counted list of u16, u8 flag (§4.4); the former "u16 back-reference + 3 × u16 zero" reading is the same 15 bytes when the list is empty | BIN2 (e); OBS2 (list count 0 and back-reference high half 0 in all 393,842 entries) | Confirmed (2026-10-07) |
+| L27 | `cell_flags`: bit 0 makes a cell an entry of the outdoor visibility walk (never set), bit 2 = property set present, bit 4 = the sky is visible from the cell, bit 5 = the tail format with `index_echo`, group keys in list B and `extra`; bit 3 is kept by the client but its use was not traced (§4.4) | BIN2 (e) (reader and writer of the flags); OBS2 (bit 0: 0 cells; bit 4: 9,493 cells in 348 records) | BIN (meaning); counts Confirmed |
+| L28 | Visibility cells: one for the whole outdoor world, one per cell group, one per cell in no group; 104,271 cells form 18,390 visibility cells (§4.11) | BIN2 (d); OBS2 (counts) | BIN; counts Confirmed (2026-10-07) |
+| L29 | Visibility portals: one per neighbour entry whose neighbour is outside the cell's own group, built from the geometry's portal polygon; 39,692 of 393,842 neighbour entries make a portal, 354,150 lie inside a group (§4.11) | BIN2 (d); OBS2 | BIN; counts Confirmed (2026-10-07) |
+| L30 | Interior cells are never drawn while the camera is outdoors, and the landscape (terrain, ceilings, landscape water) is never drawn while the camera is in an interior cell: no portal leads between the outdoor visibility cell and a cell, and no cell has bit 0 (§4.12) | BIN2 (d); OBS2 (no neighbour entry names cell 0 or 0xFFFF; cell numbers run 2–1,569) | BIN; data Confirmed (2026-10-07) |
+| L31 | Potentially visible cells of a cell: the cell, list A, and the members of every group named in list B (bit-5 cells); every neighbour of a cell is among them (§4.12) | BIN2 (d); OBS2 (neighbours inside the set in 104,271 of 104,271 cells) | BIN; invariant Confirmed (2026-10-07) |
+| L32 | Environment values at a position are looked up in the cell's property set, then the landblock-info property set (§4.7), then the block map (§5.4); two environment records are kept, an outdoor one (sky key `Environment_LocalSky`, default 2) and an indoor one (sky key `Environment_IndoorAmbiance`, default 1), and the indoor one is used while the camera is in a cell (§4.13) | BIN2 (f) | BIN |
+| L33 | Indoor record: the main directional light (sun or moon) is off; up- and down-facing ambient come from `InteriorUpperAmbientLight` / `InteriorLowerAmbientLight` plus `InteriorAmbientLight`, each channel limited to 1; `InteriorFogType` 1 turns fog on, any other stored value turns it off; `InteriorFogColor`, `InteriorFogNear`, `InteriorFogFar` replace the keyframe values; far ≥ 20, near ≤ far − 20 (§4.13) | BIN2 (f); OBS2 (property counts) | BIN |
+| L34 | A cell draws the render mesh embedded in its 0x01 record, placed with the cell's frame; when the cell has appearance data the client draws a private copy with the appearance applied (§4.14) | BIN2 (d); COL §5.7 | BIN |
+| L35 | The cell scale properties are not part of the placement: applying `Render_AdjustableScale` / `Physics_AdjustableScale` (51 cells not 1.0) breaks all 144 portal joins of the two landblocks that have scaled cells, which match exactly without it (§4.14) | OBS2 | Confirmed (placement, 2026-10-07); render use OPEN |
+| L36 | Vertex normals of terrain and ceiling chunks: the mean of the unit normals of the grid triangles around the sample, from the neighbouring landblocks at the edges; ceiling normals face down (§3.14) | BIN2 (g) | BIN |
+| L37 | Terrain and ceiling chunks are drawn only while the outdoor scene is visible (§4.12); a ceiling with down-facing normals receives the down-facing ambient, its light map and point lights, but no sun (§3.14) | BIN2 (d), (g); `terrain-texturing.md` §9.1 | BIN (draw rule); Inferred (lighting consequence) |
 
 ---
 
@@ -616,6 +636,87 @@ a renderer meshes: two triangles per quad, diagonal per bit 7, counter-clockwise
 | Collision trees | Known: `collision.md` §3, §6 (§3.9) |
 | Box list | Layout known; meaning OPEN (§3.10) |
 | Water | Not stored here: per-landblock water comes from block-map keys 4 and 7 and the height-grid minimum (`water.md` §6) |
+| Vertex normals | Not stored; computed by the client (§3.14) |
+
+<a id="s3-14"></a>
+### 3.14 Vertex normals of terrain and ceiling chunks (BIN2 (g); L36, L37)
+
+The client computes one normal per grid sample, separately for the terrain chunk (terrain
+heights, bit-7 diagonals) and for the ceiling chunk (ceiling heights, bit-0 diagonals, only
+in landblocks with a ceiling), and writes it unchanged into the chunk's vertices: the vertex
+builder neither negates nor renormalises it. These are the "separate per-block ceiling
+normals" of `terrain-texturing.md` §4.8, whose OPEN this section answers.
+
+**Algorithm in words**, for sample (*i*, *j*), 0 ≤ *i*, *j* ≤ 32, *i* along X:
+
+1. Let *s* = +1 for the terrain chunk and *s* = −1 for the ceiling chunk.
+2. A corner (*a*, *b*) is the point (5*a*, 5*b*, *h*) in units, with *h* the stored value of
+   sample (*a*, *b*) of the chunk's grid converted with §3.4. When *a* or *b* is −1 or 33 the
+   corner comes from the neighbouring landblock in that direction (X − 1 or X + 1, Y − 1 or
+   Y + 1, both for a diagonal neighbour), at its sample 31 (for −1) or 1 (for 33). A triangle
+   with a corner that cannot be read is skipped: the neighbouring landblock's data is not
+   loaded, or, for the ceiling, that landblock has no ceiling grid.
+3. Name the corners around the sample, with the X offsets multiplied by *s*:
+   O = (*i*, *j*); S = (*i*, *j* − 1); N = (*i*, *j* + 1); W = (*i* − *s*, *j*);
+   E = (*i* + *s*, *j*); SW = (*i* − *s*, *j* − 1); SE = (*i* + *s*, *j* − 1);
+   NW = (*i* − *s*, *j* + 1); NE = (*i* + *s*, *j* + 1).
+4. Four quads are tested **without** the factor *s*: (*i* − 1, *j* − 1), (*i*, *j* − 1),
+   (*i* − 1, *j*), (*i*, *j*). A quad's bit is bit 7 (terrain) or bit 0 (ceiling) of the
+   vertex-flag byte of sample (*qi*, *qj*) of this landblock (§3.6); when *qi* or *qj* is −1,
+   of sample 31 in that axis of the neighbouring landblock; when that landblock is not
+   loaded, the bit counts as set.
+5. The triangles that contribute (corner order matters):
+
+   | Quad tested | Bit set | Bit clear |
+   |---|---|---|
+   | (*i* − 1, *j* − 1) | (O, W, SW) and (SW, S, O) | (S, O, W) |
+   | (*i*, *j* − 1) | (E, O, S) | (SE, E, O) and (O, S, SE) |
+   | (*i* − 1, *j*) | (W, O, N) | (NW, W, O) and (O, N, NW) |
+   | (*i*, *j*) | (O, E, NE) and (NE, N, O) | (N, O, E) |
+
+6. The normal of a triangle (A, B, C) is (B − A) × (C − A), normalised to length 1.
+7. The vertex normal is the sum of the normals of the triangles that were not skipped,
+   divided by their number. It is **not** normalised again, so on a crease it is shorter
+   than 1.
+
+For the terrain (*s* = +1) these are the up to six triangles of the four quads that touch the
+sample, with the quads' own diagonals, and every normal points up (counter-clockwise from
+above). For the ceiling (*s* = −1) every X offset is mirrored while the diagonal tests are
+not, and the corner order makes every normal point **down**. On a plane the ceiling result is
+exactly the negated up-normal of that plane; on a curved ceiling it can differ from "the
+terrain rule applied to the ceiling heights, negated" where the mirrored triangles use another
+diagonal. (The `terrain-texturing.md` §4.8 Tessera Decision, "negate", is therefore right on
+planes and close elsewhere; reproduce the table above for an exact match.)
+
+**What this means for cave ceilings (Inferred from L36 and `terrain-texturing.md` §9.1).**
+With a down-facing normal the per-vertex ambient clamp(*A₀* + (**N** · **U**) *H₀*) of a
+flat ceiling is *A₀* − *H₀*, the down-facing ambient colour *Y* of `lighting.md` §8.1, and the
+sun term clamp(**N** · *L₀*) is 0 whenever the sun is above the horizon. A ceiling is
+therefore lit only by *Y* of the **outdoor** environment record (a cave under a landscape
+ceiling is cell 0, outdoors, §4.12), by its `Landblock_CeilingLightMap` where the block has
+one (§6.4), and by point lights. Where *Y* is dark and the block has no ceiling light map, a
+cave ceiling is close to black in the original as well. Of the checklist rows
+(`m4-5-visual.md`), T15's block (landblock-properties record 0x8041E13A) has a ceiling light map (0x4111307C), so its
+ceiling shows those texels added to *Y*; T16's block (0x8044C9AE) has only a terrain light
+map (0x411AF104) and no ceiling light map, so its ceiling gets *Y* and point lights only.
+Row T5's block (landblock data 0x80039FE8) has no ceiling grid (`has_ceiling` 0) and only a terrain light
+map (0x4116792D); how dark it looks is not a ceiling matter (OBS2, landblock-data and
+landblock-properties records of the three blocks).
+
+**Drawing (BIN2 (d)).** The terrain chunk, the ceiling chunk and landscape water are drawn
+only while the outdoor scene is visible, that is while the camera is outdoors (§4.12). The
+ceiling chunk is drawn from the same layers as the terrain (§3.8, `terrain-texturing.md`
+§4.8) with its own index order (clockwise from above, §3.5).
+
+> **OPEN:** The client loads a chunk's light map (`Landblock_LightMap` for the terrain chunk,
+> `Landblock_CeilingLightMap` for the ceiling chunk) only when a condition on graphics
+> settings holds; two settings and a lighting-quality level take part and were not
+> identified. **Tessera Decision:** always bind the light map (the setting combination of a
+> default install is unknown).
+
+> **OPEN:** Whether the terrain shaders renormalise the interpolated normal (the vertex
+> normal of step 7 is shorter than 1 on creases). Not traced. **Tessera Decision:**
+> normalise per pixel, as `terrain-texturing.md` §6.4 does for the tangent frame.
 
 ---
 
@@ -664,11 +765,22 @@ Present in 9,748 records.
 <a id="s4-3"></a>
 ### 4.3 Cell groups
 
-"Cell group" is Tessera's name for this part; it describes the shape, not a known meaning.
+"Cell group" is Tessera's name for this part.
 Each entry: u16 `lead`, then u32 count *k*, then *k* × u16 `members`. All `members` values
-are cell indices of the same record (1,288 entries); `lead` is a cell index in 608 of
-them. Present in 680 records. Meaning OPEN (a visibility or grouping list over cells is
-likely).
+are cell indices of the same record (1,288 entries, 2 – 902 members); `lead` is a cell index
+in 608 of them. Present in 680 records.
+
+**Meaning (BIN2 (d), (e); L25, Confirmed 2026-10-07):** each entry is a **visibility group**.
+`lead` is the group's **key**, not a cell (that it equals a cell number in 608 entries is a
+coincidence of small numbers); `members` are the cells of the group. A cell names its own
+group with `extra` (§4.4 part 7d), and other cells name the group in their list B to make
+its members potentially visible (§4.4 part 7c, §4.12). All members of a group share one
+visibility cell, and no visibility portal is made between two cells of the same group
+(§4.11). A key is unique within its record.
+
+Records whose cells lack `cell_flags` bit 5 (142 records) have no groups part; there each
+cell's list B is its own group, given as cell numbers, and the client gives that list a
+fresh key of its own (§4.11).
 
 <a id="s4-4"></a>
 ### 4.4 Cells
@@ -679,14 +791,14 @@ Cells are interior spaces (rooms, caves, dungeon pieces) placed in the landblock
 |---|---|---|---|
 | 1 | `index` | u16 | Cell number. 82,996 below 0x100, 21,275 at or above. |
 | 2 | `position` | Position (`property-system.md` §4.6) | Always carries region, landblock (= this record's) and cell (= `index`). x, y, z are present in all cells **but 2** (flag byte 0x4B: region, landblock, cell and the payload-less 0x40 bit only; cell 0x2 of 0x8021FAF9 and of 0x8021FAFA). Orientation, (w, x, y, z) (`coordinates.md` §11.1), in 93,172 cells. Flag bytes seen: 0x3B (54,917), 0x7B (38,255), 0x1B (5,906), 0x5B (5,191), 0x4B (2). |
-| 3 | `cell_flags` | u32 | Bit 2 (0x04) always set; bit 5 (0x20) in 92,133; bit 3 (0x08) in 87,512; bit 4 (0x10) in 9,493. Other bits never set. |
+| 3 | `cell_flags` | u32 | Bit 2 (0x04) always set; bit 5 (0x20) in 92,133; bit 3 (0x08) in 87,512; bit 4 (0x10) in 9,493. Other bits never set. Meaning (BIN2 (e), L27): bit 0 (0x01) outdoor-walk entry (§4.12; never set); bit 2 property set present (part 8); bit 3 kept by the client, use not traced; bit 4 the sky is visible from this cell (§4.12); bit 5 the tail format of parts 7a–7d. Every record has either all cells with bit 5 (1,291 records) or none (142 records). |
 | 4 | `geometry` | DID | Always a **0x01** record in `client_general.dat` (1,033 distinct, all exist) |
-| 5 | `neighbour_count` *k* | u32 | 0 – 10 |
-| 6 | neighbours | *k* × 15 bytes | u32 ordinal (always equal to its position 0…*k*−1), u16 neighbour cell (always a cell of this record), u16 back-reference, 3 × u16 (always 0), u8 flag (1 in 392,318, 0 in 1,524) |
-| 7a | `index_echo` | u16 | If `cell_flags` bit 5: equals `index` (all) |
-| 7b | list A | u32 count, count × u16 | always; every value is a cell index of this record |
-| 7c | list B | u32 count, count × u16 | always; values are not always local cell indices (67,836 cells) |
-| 7d | `extra` | u16 | If `cell_flags` bit 5: 1 – 11 or 0xFFFF |
+| 5 | `neighbour_count` *k* | u32 | 0 – 6 in 104,268 cells, 24 in 2, 54 in 1 (corrected 2026-10-07, OBS2; the former "0 – 10" was wrong). Equals the geometry's portal count (`collision.md` §5.8). |
+| 6 | neighbours | *k* entries, each 15 bytes in this install | See the neighbour-entry table below (revised 2026-10-07, L26). The former reading "u32 ordinal, u16 neighbour cell, u16 back-reference, 3 × u16 (always 0), u8 flag" covers the same bytes while the list of field 4 is empty, which it is in every entry. |
+| 7a | `index_echo` | u16 | If `cell_flags` bit 5: equals `index` (all). The client skips this value when it walks the cell's potentially visible cells (§4.12). |
+| 7b | list A | u32 count, count × u16 | always; every value is a cell index of this record, never the cell itself. **Potentially visible cells** of this cell (BIN2 (d), L31). |
+| 7c | list B | u32 count, count × u16 | always. With bit 5: **group keys** (§4.3) whose members are also potentially visible; all 129,684 values are keys of this record's groups, and the cell's own group (`extra`) is always among them when it has one (L25). Without bit 5: the cell's **own visibility group** as cell numbers; it contains the cell itself in all 9,288 non-empty lists (2,850 are empty) (L25). |
+| 7d | `extra` | u16 | If `cell_flags` bit 5: the key of the cell's own group (§4.3), 1 – 11 in this install, or 0xFFFF = in no group. Every cell with a key is a member of that group (78,069 cells); no cell with 0xFFFF is a member of any group (14,064 cells) (L25). |
 | 8 | properties | embedded property set | If `cell_flags` bit 2 (always). Holds `Render_AdjustableScale` and `Physics_AdjustableScale` in every cell, often `Appearance_InstanceList`, `Dungeon_DID`, interior fog and light values, `Ambient_*` |
 
 Cell positions use the landblock frame but are not confined to 0–160 (`coordinates.md`
@@ -703,11 +815,24 @@ client puts a phantom shaped like each cell's hull into the landblock's physics 
 takes the first cell whose phantom overlaps a small cube around the point and whose cell
 volume contains it (`collision.md` §5.8.1, BIN; L23). No portal leads outside.
 
-> **OPEN:** Meaning of `cell_flags` bits 3, 4, 5, of the neighbour flag byte (`collision.md`
-> Q3), of lists A and B and of `extra`; how often the client re-evaluates a moving
-> character's cell (after every step, or only when its phantom starts or stops overlapping a
-> cell phantom; `collision.md` Q3, Tessera Decision there). Interiors are after M3 in the
-> roadmap.
+**Neighbour entry (BIN2 (e), L26; Confirmed 2026-10-07 on all 393,842 entries; field names are Tessera's own):**
+
+| Order | Field | Type | Meaning |
+|---|---|---|---|
+| 1 | `portal` | u32 | Number of the portal in the cell's geometry (`collision.md` §5.5); always equal to the entry's position 0 … *k* − 1 |
+| 2 | `neighbour` | u16 | Cell seen through the portal; always a cell of this record, never 0 or 0xFFFF (§4.12) |
+| 3 | `back_reference` | i32 | Number of the same opening among the neighbour's portals; 0 – 53 in this install (high half 0 in all entries). The client makes no visibility portal for a negative value (§4.11; none occurs) |
+| 4 | `extra_cells` | u32 count *c*, *c* × u16 | Tessera's name; *c* = 0 in every entry, meaning OPEN |
+| 5 | `flag` | u8 | 0 or 1 (the client rejects other values); 1 in 392,318 entries, 0 in 1,524; not used by the visibility code of §4.11 |
+
+An entry is 15 + 2*c* bytes. A decoder must read field 4 as a counted list (bounded by the
+remaining bytes, §10), not as fixed zeros.
+
+> **OPEN:** Meaning of `cell_flags` bit 3, of the neighbour `flag` and `extra_cells`
+> (`collision.md` Q3); how often the client re-evaluates a moving character's cell (after
+> every step, or only when its phantom starts or stops overlapping a cell phantom;
+> `collision.md` Q3, Tessera Decision there). *(Bits 0, 2, 4 and 5, lists A and B and `extra`
+> answered 2026-10-07, L25–L27.)*
 
 > **OPEN:** how a cell whose `position` has no x, y, z (flag 0x4B, 2 cells) is placed:
 > at the landblock origin, at the position of a neighbour or portal, or from its geometry.
@@ -792,8 +917,247 @@ weenies in most records. Meaning OPEN.
 - **LI2**: both reserved u32 are 0.
 - **LI3**: each cell's `position` names this landblock and its `index`; each neighbour's
   ordinal equals its position in the list; neighbour cells and list-A values are cells of
-  this record; the three neighbour u16 are 0; `index_echo` = `index`.
+  this record; the high half of each neighbour `back_reference` is 0 and its `extra_cells`
+  list is empty (§4.4; the former wording "the three neighbour u16 are 0" says the same for
+  this install); `index_echo` = `index`.
 - **LI4**: every cell `geometry` DID has prefix 0x01 and exists.
+- **LI5** (Confirmed 2026-10-07, OBS2): in a record either every cell has `cell_flags` bit 5
+  or none has; group keys (§4.3) are unique within a record; every cell is a member of at
+  most one group, and it is a member exactly when its `extra` is a key of the record, and
+  then of that group.
+- **LI6** (Confirmed 2026-10-07): every list-B value of a bit-5 cell is a group key of its
+  record, and the cell's own key (`extra` ≠ 0xFFFF) is among them; a non-empty list B of a
+  cell without bit 5 contains the cell.
+- **LI7** (Confirmed 2026-10-07): list A never contains the cell itself; every neighbour of a
+  cell is in the cell's potentially visible set (§4.12).
+- **LI8** (Confirmed 2026-10-07): no cell number and no neighbour cell is 0 or 0xFFFF (cell
+  numbers run 2 – 1,569); no cell has `cell_flags` bit 0.
+
+<a id="s4-11"></a>
+### 4.11 Visibility cells and portals (BIN2 (d); L28, L29)
+
+The client draws interiors through a portal visibility system (a third-party library for
+portal and occlusion culling). This section gives the partition into visibility cells and the
+portals the client builds from §4.3–§4.4 and the 0x01 geometry (`collision.md` §5); any
+portal-culling scheme can reproduce them.
+
+**Visibility-cell key.** A cell is identified by region, landblock X and Y, instance and cell
+number, the fields of its `position` (`property-system.md` §4.6; instance 0 for the stored
+landblocks). A position whose cell number is 0 (outdoors) or 0xFFFF (none) maps to the
+single **outdoor visibility cell**, which exists from start-up and holds the whole landscape:
+terrain and ceiling chunks (§3.8), landscape water and every outdoor object.
+
+**Group list of a cell.** With `cell_flags` bit 5: the members of the group whose key is the
+cell's `extra` (§4.3), or nothing when `extra` is 0xFFFF. Without bit 5: the cell's list B.
+
+**Visibility cells**, made when a landblock's cells are loaded, for each cell in turn:
+
+1. If the cell already has a visibility cell, nothing is done.
+2. Otherwise its group list is searched in order, the cell itself skipped; the first listed
+   cell that already has a visibility cell shares it with this cell.
+3. If none has one, a new visibility cell is made; its frame is this cell's placement
+   (`collision.md` §5.8).
+
+For cells with bit 5 every member of a group has the same group list, so each group becomes
+exactly one visibility cell in any order, and each cell in no group becomes a visibility cell
+of its own. For cells without bit 5 two members' lists can differ and the result depends on
+the order. **Tessera Decision:** take the cells in their stored order (§4.4). Census (OBS2):
+104,271 cells form 18,390 visibility cells besides the outdoor one.
+
+**Portals**, made after every cell of the landblock has its visibility cell, for each cell
+and each of its neighbour entries (§4.4):
+
+1. Skip the entry when its `neighbour` is in the cell's group list (both share one visibility
+   cell; the opening between them needs no portal) or when its `back_reference` is negative.
+2. Otherwise the portal's shape is portal number `portal` of the cell's 0x01 geometry
+   (`collision.md` §5.5: four corners in the cell frame), placed with the cell's frame
+   (`collision.md` §5.8). The client splits the polygon into a fan of triangles: corners
+   (1, *k* − 1, *k*) for *k* = 3 … corner count.
+3. The portal belongs to the visibility cell of the cell and leads into the visibility cell
+   of `neighbour`. A portal is one-way; the way back is the neighbour's own entry, which
+   exists for every entry (the entries are reciprocal, `collision.md` §5.8).
+
+Census (OBS2): of the 393,842 neighbour entries, 39,692 make a portal and 354,150 lie inside
+a group.
+
+**Objects.** Every drawn object is entered into the visibility cell of the cell it belongs
+to; an object that belongs to several cells is entered once per distinct visibility cell. A
+cell's own render mesh (§4.14) is in the cell's visibility cell. Which cell an interior static
+entity belongs to is OPEN (`entity-descriptor.md` §4.8).
+
+**Each frame** the cell of the camera's position (§4.12) selects the root visibility cell. The
+library returns what is visible from the root: the objects of the root and of every visibility
+cell reached through a chain of portals, each seen through the ones before it (the view
+narrowed at every portal), optionally with occlusion culling. **Tessera Decision:** a
+recursive portal traversal that clips the view frustum to each portal's screen bounds and
+recurses into the portal's target (at most 32 portals deep; a visibility cell may be entered
+again through another portal); occlusion culling optional; portals treated as two-sided until
+their facing is known.
+
+**Example (IN1 of `m4-5-visual.md`, landblock info 0x802191A6):** group 1 holds cells 6 – 23
+and is one visibility cell, whose only two portals lead from cell 6 into cell 5 and from cell
+8 into cell 24. The doorway the IN1 walk crosses (cell 9 into cell 8) lies inside the group:
+both cells are one visibility cell and no portal separates them.
+
+> **OPEN:** Together with a portal's triangles the client passes the visibility library a
+> per-portal choice derived from a field of the portal in the 0x01 geometry (possibly the
+> leading byte of `collision.md` §5.5, which is 1 for every portal); it most likely sets the
+> triangles' facing. Portal winding and facing therefore remain OPEN there and here.
+
+<a id="s4-12"></a>
+### 4.12 Inside versus outside: the camera's cell (BIN2 (d); L30, L31)
+
+**Potentially visible set (PVS) of a cell:** the cell itself, every cell of its list A, and
+for a cell with bit 5 the members of every group whose key is in its list B; the cell's own
+number (`index_echo`) is skipped when these lists are walked. For a cell without bit 5 it is
+the cell and list A (its list B is its own group, which shares its visibility cell). Every
+neighbour of a cell lies in its PVS (LI7). Example: the PVS of cell 9 of 0x802191A6 has 25
+cells (2 – 25 and 31).
+
+**Scene flags.** Whenever the camera's region, landblock, cell or instance changes, the
+client recomputes two flags, **outdoor-visible** and **sky-visible**, and a set of
+visibility-cell keys:
+
+1. Camera outdoors (cell 0): both flags are set. Then every loaded landblock's cells with
+   `cell_flags` bit 0 are visited together with their PVS, and visiting a cell with bit 0
+   clears both flags. No cell has bit 0 in this install (LI8), so outdoors both flags stay
+   set and no cell is visited.
+2. Camera in an interior cell: both flags start cleared; the camera's cell and its PVS are
+   visited; a visited cell with `cell_flags` bit 4 sets sky-visible. Outdoor-visible stays
+   clear.
+3. The keys of the visited cells' visibility cells, plus the outdoor one when outdoor-visible
+   is set, form the set handed to the scene renderer. **Tessera Decision:** its use there was
+   not traced; use it for nothing but the flags and let the portal query of §4.11 decide what
+   is drawn.
+
+**What the flags switch:**
+
+- Outdoor-visible set: the landscape is submitted (terrain chunks, ceiling chunks, landscape
+  water) and the **outdoor** environment record is used (§4.13). Clear: none of the
+  landscape is submitted and the **indoor** record is used.
+- Sky-visible set: the sky is drawn; clear: it is not. *(Inferred: indoors the sky drawn is
+  that of the indoor record's sky key; OPEN.)*
+- Static and moving entities and cell meshes are not switched by the flags; the portal query
+  culls them.
+
+**Consequences:**
+
+- **From outside**, interior cells and everything in their visibility cells are never drawn:
+  the outdoor visibility cell has no portal into any cell (no neighbour is 0 or 0xFFFF,
+  LI8) and no cell has bit 0. This includes the cells of 0x8021FAF9 and 0x8021FAFA that
+  overlap the terrain (`m4-5-visual.md` §1.1).
+- **From inside**, no terrain, ceiling chunk or landscape water is drawn, and the sky only
+  when a cell of the camera cell's PVS has bit 4 (9,493 cells in 348 records). IN1: none of
+  the 25 cells of cell 9's PVS has bit 4, so neither landscape nor sky is drawn there.
+- The change between the two is immediate when the camera's cell changes between 0 and an
+  interior cell (no blend of the environment records, §4.13).
+
+> **OPEN:** How the client gives the camera position its cell (the camera follows the
+> character and walls push it). Not traced. **Tessera Decision:** the cell lookup of
+> `collision.md` §5.8.1 at the eye; when it finds no cell but the followed character's feet
+> are in a cell, the character's cell.
+
+<a id="s4-13"></a>
+### 4.13 The indoor environment: sky key, ambient, fog, sun (BIN2 (f); L32, L33)
+
+**Property lookup at a position.** For a property the client asks, in this order, and takes
+the first source that has it:
+
+1. the property set of the cell the position is in, when it is in a cell (§4.4 part 8);
+2. the landblock-info property set of the position's landblock (§4.7);
+3. the block-map properties of that landblock (§5.4).
+
+**Two environment records.** On every environment update the client builds two records from
+sky keyframes (`environment.md` §11):
+
+- the **outdoor record** from sky key A: a value held by the client's session object (Inferred:
+  the local player's) in `Environment_LocalSky_HousingHook`, `Environment_PlayerLocalSkyOverride`
+  or `Environment_LocalSky`, the first present in that order (set by gameplay; an offline
+  walker has none); else `Environment_LocalSky` looked up at the camera position; else the
+  value 2;
+- the **indoor record** from sky key B, with the interior overrides below: the session
+  object's `Environment_PlayerIndoorAmbianceOverride` or `Environment_IndoorAmbiance`, the
+  first present; else `Environment_IndoorAmbiance` looked up at the camera position; else the
+  value 1.
+
+The indoor record is used while outdoor-visible is clear (§4.12), or when the caller forces
+it; the outdoor record otherwise. Each record blends to new keyframe values on its own
+(`environment.md` §11.2); changing from one record to the other is immediate.
+
+**Interior overrides** of the indoor record, read with the lookup above at the camera
+position; re-read when the camera's region, landblock or instance changes, when forced, and
+otherwise at most every 2.5 s:
+
+| Property (data label) | Effect on the indoor record |
+|---|---|
+| `InteriorUpperAmbientLight` (colour) | Up-facing ambient *X* (`lighting.md` §8.1) = this colour + `InteriorAmbientLight`; black (0, 0, 0, 1) when absent |
+| `InteriorLowerAmbientLight` (colour) | Down-facing ambient *Y* = this colour + `InteriorAmbientLight`; black when absent |
+| `InteriorAmbientLight` (colour) | Added to both, channel by channel; then every channel of *X* and *Y* is limited to at most 1 (no lower limit) |
+| *(none of the three present)* | *X* and *Y* stay those of key B's keyframes (*Ca1* × *ba*, *Ca2* × *ba*, `lighting.md` §8.1). When any of the three is present, *X* and *Y* are replaced as above, without the keyframe intensity *ba*. |
+| `InteriorFogType` (enum 0x2300016A) | Present: fog is on exactly when the distance-fog switch is on and the value is 1 (Linear); 0 (Invalid) and 2 (None) turn fog **off**. Absent: the keyframe's fog on or off. |
+| `InteriorFogColor` (colour) | Replaces the fog colour |
+| `InteriorFogNear` (f32, units) | Replaces the fog start |
+| `InteriorFogFar` (f32, units) | Replaces the fog end |
+
+- **Main directional light:** off in the indoor record; sun and moon give no light indoors.
+  In the outdoor record it is on unless the keyframe light's colour is (0, 0, 0, 1) within
+  0.0002 per channel or its intensity is at most 0.0002 (a further keyframe condition was not
+  traced).
+- **Fog limits (both records):** the keyframe's fog end is first limited to at most 10,000;
+  after the interior override the end is raised to at least 20; the start is limited to at
+  most end − 20 and at least −10,000.
+- Colour properties are 4 bytes in the order B, G, R, A (`property-system.md` §4.7,
+  `lighting.md` §4.4). The conversion to the record's floats was not traced here.
+
+> **OPEN (clean-room implementer, 2026-10-07):** for a camera in a cell, which landblock is
+> "the position's landblock" in steps 2 and 3 of the property lookup: the landblock whose
+> landblock info owns the cell (the landblock its `position` names, LI3), or the landblock
+> under the camera's x, y? They differ for cells placed away from their owner (the
+> implementer measured cell origins up to 6 landblocks from it, `walker.md` §13.3).
+> **Tessera Decision** (`walker.md` §14.11 interiors note): the owner's landblock info and
+> block map.
+
+These facts answer two implementer OPENs of `environment.md`: §7.1 (which sky key wins:
+the order above) and §12 (`InteriorFogType` None and Invalid switch fog off rather than
+leaving the outdoor fog in force). That spec should adopt them.
+
+**Row Y5 worked through (camera in cell 9 of 0x802191A6, IN1 start).** Cell 9 has none of
+the interior properties; the landblock-info set has `InteriorAmbientLight` stored (8, 25, 8,
+255), `InteriorFogType` 1, `InteriorFogNear` 0.059, `InteriorFogFar` 90 and
+`InteriorFogColor` stored (2, 14, 11, 255) (OBS2). Indoor record: *X* = *Y* = the ambient
+colour (R 8, G 25, B 8); fog on (with the distance-fog switch on), linear from 0.059 to 90 units (inside the
+limits) in the fog colour R 11, G 14, B 2; no sun or moon. Key B: no `Environment_IndoorAmbiance` in
+the cell or the landblock-info set, and it is no block-map key, so the value 1.
+
+<a id="s4-14"></a>
+### 4.14 What a cell draws (BIN2 (d); L34, L35)
+
+- **The mesh:** the render mesh embedded in the cell's 0x01 record (`collision.md` §5.7 part
+  11, decoded as `mesh.md` describes), placed with the cell's frame (`collision.md` §5.8) and
+  entered into the cell's visibility cell (§4.11). Nothing else of the 0x01 record is drawn:
+  the physics mesh, cell volume, portals, wall polygons and hull serve collision and
+  visibility only.
+- **Appearance:** when the cell has appearance data, the client draws a private copy of the
+  mesh with the appearance changes applied (BIN2; the rule was not traced). 80,825 cells
+  carry `Appearance_InstanceList` (OBS2). **Tessera Decision:** apply the cell's
+  `Appearance_InstanceList` to its mesh as `appearance.md` §3.2 applies an instance list to
+  an entity.
+- **Scale:** `Render_AdjustableScale` and `Physics_AdjustableScale` are equal in every cell:
+  (1, 1, 1) in 104,220 cells, 0.3 in 48, 0.384 in 2, 2.0 in 1. The placement does not use
+  them: with them, all 144 portal joins of the two landblocks with scaled cells (0x80239A60,
+  0x8024FCB6) break by up to 21 units; without them, all join exactly (L35).
+- **Lighting:** the indoor environment record (§4.13) while the camera is inside, point
+  lights of interior Light entities (`lighting.md` §8); no landblock light map applies to
+  cells.
+- **Interior entities** (`entity-descriptor.md` §4.8) are drawn through the visibility cell
+  of the cell they belong to (§4.11; attachment OPEN there).
+
+> **OPEN:** Whether the render mesh of a scaled cell is scaled (about the cell origin) when
+> drawn. **Tessera Decision:** not scaled, so the mesh stays on its portals and physics mesh.
+
+> **OPEN:** Detail level and draw distance of cell meshes (`walker.md` §11.9), and what the
+> cell properties `Render_CastDynamicShadows` (12 cells), `Render_CastLandscapeShadows` (12)
+> and `Render_CastBakedStencilShadows` (2,638) change.
 
 ---
 
@@ -1050,6 +1414,10 @@ For landblock (R, X, Y):
 6. Water: decide the landblock's water from the block map (keys 7 and 4) and the height
    grid's minimum with `water.md` §6.2; the fog-zone key 3 needs the east, north and
    north-east neighbours' block maps (`water.md` §5.3).
+7. Cells (2026-10-07): when the info record has cells, give each cell its visibility cell and
+   then make the portals (§4.11); the camera's cell decides inside or outside (§4.12), the
+   indoor environment (§4.13) and what is drawn (§4.14). Normals of the terrain and ceiling
+   chunks need the eight neighbouring landblocks' data at the edges (§3.14).
 
 <a id="s8-1"></a>
 ### 8.1 Implementation notes (`tessera-world`, 2026-10-04)
@@ -1200,7 +1568,8 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 ## 10. Hostile-input notes
 
 - Bound every count by the bytes remaining: a layer is 17 bytes, an index 2, a quad entry
-  2, a box 24, a block-pair record 24, a neighbour 15, a block-map entry 6.
+  2, a box 24, a block-pair record 24, a neighbour at least 15 (15 + 2 × its `extra_cells`
+  count, §4.4), a block-map entry 6.
 - `code_length` of a tree is bounded by the remaining bytes (`mesh.md` §10.3).
 - Validate layer windows before slicing the index list.
 - Cap the cell, entity, link and weenie counts by remaining bytes as well.
@@ -1221,10 +1590,11 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
    answered: bit 0 for every quad, `collision.md` §6.4, Q5 answered; hole triangles are kept
    in collision, `collision.md` §6.5.)*
 5. Landblock-info `aux_word`, trailer, the block-pair `number_a`, `number_b` and
-   `pair_word`, the link ids, cell groups, cell flags, the neighbour flag byte, lists A and B, `extra`, placement of the 2 cells without an offset
-   (§4). *(The 0x01 cell geometry, the neighbour meaning and entering a cell from outdoors
-   are answered by `collision.md` §5, §5.8.1; only the re-evaluation frequency stays open,
-   `collision.md` Q3.)*
+   `pair_word`, the link ids, `cell_flags` bit 3, the neighbour `flag` and `extra_cells`,
+   placement of the 2 cells without an offset (§4). *(The 0x01 cell geometry, the neighbour
+   meaning and entering a cell from outdoors are answered by `collision.md` §5, §5.8.1; only
+   the re-evaluation frequency stays open, `collision.md` Q3. Cell groups, cell flags 0, 2,
+   4 and 5, lists A and B and `extra` answered 2026-10-07, §4.3, §4.4, §4.11, §4.12.)*
 6. Block-map key 0x10000012 (§5.6; keys 3, 4, 6 and 7 answered); descriptor `flag` byte
    (§5.2).
 7. *(Answered 2026-10-05: light-map orientation and use, §6.4 and `terrain-texturing.md`
@@ -1232,6 +1602,12 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 8. Kind 5: sample meaning and the rest of the trailing section (§7; the record kind and its
    water pairs are known).
 9. In-game height test points (§3.4).
+10. Interiors (§4.11–§4.14): portal facing; how the camera position gets its cell; which sky
+    is drawn indoors when a visible cell has bit 4; the use of the visible-cell set in the
+    scene renderer; render scale, detail level, draw distance and shadow properties of cell
+    meshes.
+11. Ceilings and terrain (§3.14): the graphics-setting condition under which light maps are
+    bound; whether the shaders renormalise the vertex normal.
 
 <a id="s12"></a>
 ## 12. Change log
@@ -1243,3 +1619,4 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 | 2026-10-05 | Revision after review (changes requested): the `collision.md` §15 rows for §3.5 and §3.6, not adopted by the sweep above, are now adopted. §1: legend adds BIN and Tessera Decision and covers 2026-10-05 facts; L6 limited to terrain; new L6a (bit 0 = ceiling diagonal), L6b (holes kept in collision, not cave mouths), L23 (entering a cell by containment); L22 marks the additive use BIN. §3.5: ceiling triangulation by bit 0 for every quad (replaces "from the stored triangles" and the implementation-census OPEN); holes described per `collision.md` §6.5 (not cave mouths); only the "ceiling below floor" rendering question stays OPEN, with a Tessera Decision. §3.6: bit 0 specified; bits 1–6 always set or clear together, OPEN. §3.8.3: evidence sentence limited to terrain chunks. §3.12 HM6: ceiling triangles follow bit 0. §3.13: rows updated. §4.4: entering a cell from outdoors answered (`collision.md` §5.8.1); OPEN narrowed to the re-evaluation frequency. §6.4: additive use BIN, content Probable. §11 items 1, 4 and 5 updated. |
 | 2026-10-06 | Revision after re-review (changes requested). §1: new row L6c (vertex-flag value census, Confirmed 2026-10-06 over all 390,150 records). §3.6: the false sentence "126 occurs only together with a ceiling" replaced by the counts (365 records with low value 126, 357 with a ceiling, 8 without). §8 step 1: the loader keeps the whole vertex-flag byte (bit 7 for the terrain, bit 0 for the ceiling) instead of bit 7 only. |
 | 2026-10-06 | Revision after third review (changes requested, §5.3 item 3). Landblock-info field and part names taken from a published loader replaced by Tessera's own (old names deliberately not repeated here): §4.1 field 3 is now `aux_word`, part 4 "block-pair records" (§4.2, retitled) and part 5 "cell groups" (§4.3, retitled), also in the `flags` bit labels; §4.2 fields 1–6 are now `number_a`, `info_a`, `info_b`, `link_type`, `number_b`, `pair_word`, with an Order column and a plain Meaning column; §4.3 entry fields `lead` and `members`; §4.6 fields 2–4 are now `link_id`, `end_id_1`, `end_id_2`, field 7 `has_pair` and field 8 "block pair", with a new OPEN on the u64 ids; §4.8 entry id is now `object_id`; §9 (`BadFlag`), §10 and §11 item 5 follow. No layout, count or rule changed. New row L24: `link_type` labels now cited from the install's `EntityLinkType` enum mappers 0x230000BE and 0x230001A9 (OBS, Confirmed 2026-10-06) instead of a published loader. L10 notes that the names are Tessera's own. Wrong cross-references fixed: L11 and §2.4 (twice) now point to §4.9 for the trailer rule; L12 points to §4.4 (cells), not §4.5. |
+| 2026-10-07 | Interiors, visibility and ceiling normals (spec writer; M1 and M4 under decision 0011, tags BIN2 and OBS2; answers checklist row Y5 and the dark-ceiling rows T5, T15, T16 of `m4-5-visual.md`). §1: legend adds Inferred; new tags BIN2, OBS2; new rows L25–L37. §0: purpose lists the new sections. §3.13: normals row. New §3.14 (vertex normals of terrain and ceiling chunks; ceiling normals face down; what lights a cave ceiling; landscape drawn only outdoors; OPENs on light-map binding and renormalisation). §4.3: cell groups are visibility groups, `lead` is a key. §4.4: `cell_flags` meanings (bits 0, 2, 4, 5); **correction**: `neighbour_count` is 0 – 6, 24 or 54, not 0 – 10; neighbour entry re-read as u32, u16, i32 back-reference, u32-counted u16 list, u8 (same 15 bytes when the list is empty); lists A and B and `extra` explained; OPEN narrowed. §4.10: LI3 reworded, new LI5–LI8. New §4.11 (visibility cells and portals), §4.12 (inside versus outside; scene flags), §4.13 (indoor environment record, property lookup order, interior overrides, fog limits, no sun indoors; row Y5 worked through), §4.14 (what a cell draws; scale not used for placement). §8: step 7. §10: neighbour size. §11: items 5, 10, 11. For other specs (not edited here): `terrain-texturing.md` §4.8 OPEN (ceiling normals) is answered by §3.14; `environment.md` §7.1 and §12 implementer OPENs are answered by §4.13; `collision.md` §5.8 neighbour layout follows §4.4. |

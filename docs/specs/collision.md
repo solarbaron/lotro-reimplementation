@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Revised (was Accepted; second re-review of the 2026-10-06 movement revision: changes requested) |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), 2026-10-05: changes requested (first round). Re-review 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; M1 spot checks over all records: terrain/ceiling tree origin bits 0xBD4CCCCB in 58,546 / 1,095 trees, 0x66 closure counts under both tests, 0x01 hull-vertex distances, last-plane and plane-touch counts, hull-vertex plane incidence, §9.4 frill census 1,515) |
+| **Review record** | Second re-review of the 2026-10-06 movement revision (writer: test): Claude review session (spec-writer agent), 2026-10-06, **changes requested**. None of the six items of the first re-review below has been addressed: the §9.3, §11.3, §12.3, provenance (C27, C28), Q9 and change-log text is unchanged. All six still apply, and items (1) and (2) still block. Re-checked independently in a copy of the Ghidra project (build 4906.0071.1794.4035, strings, RTTI and the one routine that uses the surface labels). (a) RTTI exists only for the middleware's proxy, rigid-body and controller construction-info types and for character motion. There is no RTTI for a character-proxy class. The `maxWalkableSlope`, `maxSlopeForRotation` and `slopeThreshold` name strings have no code references (reflection metadata only). The walkable-slope parameter text ends by saying that its default (vertical) disables the feature, and the spec does not say this. Its wording is "in the direction of the slope", not "downhill". (b) The client uses the "controlled surface" / "uncontrolled surface" labels in one routine only, a text description of a mover's surface-contact list (contact count, then one flag for the mover). Nothing ties the flag to `Entity_Element` 5/6. C28 stays unsupported as Confirmed. (c) The §11.3 paragraph is a close paraphrase of the middleware's documentation sentence and follows its order, which is a §5.3 item-3 concern. If kept, restate it as a functional fact in your own words. (d) M1: the census was recomputed from the writer's per-SED extraction, and all nine §9.3 / CO12 figures reproduce. The extraction holds 3,253,835 SEDs in all, of which 2,380,675 are Physics (type 7), and the §9.3 table sums to 2,380,699. 1,607,212 − 1,606,311 = 901 exactly. Item (3) of the first re-review stands. (e) Two implementer OPENs dated 2026-10-07 are unanswered, and both block implementability. The first asks which `Entity_CreationType` value the 7/8 drop reads: the object's chain alone, or the SED first. CO12 reproduces only with the chain alone, so the spec must say which, and §9.4 must say which value the static-creation request carries. The second asks for the geometric support criterion of §12.3 steps 4–6, readings (q)–(t). It restates item (2): supply a synthetic worked example and a state-6 invariant. (f) The contradiction between the §9.3 OPEN and §9.4 / C25 (item 4) is confirmed. §9.4 states, as BIN, that the creation path drops statics that the content-layer check rejects. §5.3 items 2, 4 and 9 still pass: no code, no game text, keys or hostnames, and no closed gate. Earlier: Re-review of the 2026-10-06 movement revision: Claude review session (spec-writer agent), 2026-10-06, **changes requested**. (1) **Blocking (C28, §11.3 mechanism).** Re-checked in the BIN: the executable carries RTTI only for the middleware's construction-info and reflection types (character-proxy, character-rigid-body and character-controller construction info, character motion); there is no RTTI for the character-proxy class itself, so "the player uses the proxy" has no BIN basis. The parameter text is the middleware's reflection documentation; it also says the limit defaults to 90°, which disables the feature, and the client's value was not read. It says the support check fails ("no support"), which the spec equates with "uncontrolled surface" / state 6 without evidence. The "controlled surface" / "uncontrolled surface" labels belong to the client's own description of its surface-contact list (one flag per mover), which is consistent with the existing §11.3 table and says nothing about the middleware controller. Restate C28 and the §11.3 paragraph as Probable or a Tessera Decision with an OPEN, and drop the proxy claim. Q9 "partly answered" rests on C28. (2) **Blocking (implementability, §12.3 steps 4–6, OPEN (e)/(f)).** As written, the steps do not produce the claimed SL1–SL3 slide. On walkable support, step 4 treats the steep face as a vertical wall, step 5 rejects a non-walkable landing, and step 6 takes the most upward-facing contact under the lower cap, which is the walkable ground at the foot of the bank. So the support never becomes the steep face, and no step does "as the capsule rides onto the steep face". "Met from the side", "rests on" and "under the capsule's lower cap" have no geometric criterion. State one (for example, which contacts get the wall treatment, by normal angle or by contact position relative to the lower-cap centre). Add a synthetic worked example (§14) and an invariant showing entry into state 6. (3) Provenance error: C27 and §9.3 say "all 3,253,835 Physics SEDs". 3,253,835 is all framed SEDs; the counts come from the 2,380,675 framed Physics (type 7) SEDs. The §9.3 table sums to 2,380,699, so state its population (24 more, presumably frameless). (4) Consistency: the new §9.3 OPEN says the content-layer gating of the collision body was not traced in BIN. §9.4 (C25, BIN) says landblock-info statics rejected by the content-layer check are dropped on the creation path that gives statics their collision. Reconcile the two. (5) §11.3 names the middleware classes `hkpCharacterProxy` / `hkpCharacterProxyCinfo` in the body, against §0 (middleware class names only to identify a format, §3); no interoperability need. The paraphrase adds "in the downhill direction", which the source does not say. (6) Minor: the new change-log row has a third cell in a two-column table and sits before the 2026-10-05 third-pass row; "about 901" is exactly 901; OPEN (f) cites `collision.md` from within itself, and item (g) is run onto (f)'s line. Checked and correct: all nine §9.3 / CO12 figures (1,651,097 / 97,688 / 82,139; 1,607,212 / 88,749 / 73,509; 1,606,311 / 88,748 / 73,508) and the 8,939 / 8,630 / 901 differences, recomputed from the session's per-SED extraction; the BIN strings for the four slope parameters and the two surface labels are present. §5.3 items 2, 4 and 9 pass: no code, no game text, keys or hostnames, no closed gate. Earlier: Claude review session (spec-writer agent), 2026-10-05: changes requested (first round). Re-review 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; M1 spot checks over all records: terrain/ceiling tree origin bits 0xBD4CCCCB in 58,546 / 1,095 trees, 0x66 closure counts under both tests, 0x01 hull-vertex distances, last-plane and plane-touch counts, hull-vertex plane incidence, §9.4 frill census 1,515) |
 | **Implements into** | `crates/formats` (0x66 and 0x01 decoders, quantised-tree reader), `crates/world` (cells, portals, point-in-cell, collision residency), `crates/terrain` (terrain collision triangles), a collision/movement module (new crate or `crates/world`; Tessera's own acceleration structure, sweeps and the character controller of §12), `apps/client` (walk mode on collision instead of terrain heights), `apps/dattool` / `apps/explorer` (inspection), `fuzz/` (one target per record kind and one for the tree reader) |
 | **Companion specs** | `mesh.md` §8–§10 (detail levels, per-level collision mesh, tree block; **corrected** here in §7 and §14). `landblock.md` §3.1, §3.6, §3.9, §3.11 (height grid, split diagonal, collision tree blocks; §4.4 cells; **extended** here in §6 and §5.8). `setup.md` §2.2, §6.4, §6.5 (0x01 records, collision volumes, 0x66 DID and physics bounds; **completed** here in §4, §5 and §8). `entity-descriptor.md` §4.5, §9 (SED properties, draw rule; collision rule added here in §9). `scenery.md` §7 (procedural scenery; its clearance step uses §6.6, its objects collide per §9.4). `terrain-texturing.md` §4.5 (terrain holes; corrected here in §6.5). [`water.md`](water.md) §6–§7 (landblock water, water volumes; answers the water OPENs of §10.4). `property-system.md` §4–§8 (values, embedded sets, DID maps). `records.md` §1.2 (VLE), §2.1 (prefix table). `coordinates.md` §11.1 (rotations). `appearance.md` §6.1 (model scale). `wstate.md` (0x70 objects). |
 
@@ -64,7 +64,7 @@ Legend:
 | Tag | Source |
 |---|---|
 | OBS | User install, Steam, data current on 2026-10-05. Read in full: all 1,057 records with prefix 0x01 and all 16,819 with prefix 0x66 (`client_general.dat`); all 28,555 setups (0x04); all 40,643 entity descriptors (0x47), all 1,616 stand-alone property sets (0x78) and all 383,332 object property sets (0x79) (`client_gamelogic.dat`); all 47,563 mesh records (`client_mesh.dat`, `client_mesh_aux_1.datx`); all 390,150 landblock-data and 49,636 landblock-info records of `client_cell_{1,2,3,4,5,14,15}.dat`. Every quantised code block of every 0x66, 0x01 and landblock record and of every mesh level was walked; every triangle that a code block contains was looked up through the code at its centroid and at its three corners. Second pass, same date: the surface layers, ceiling grids and stored ceiling triangles of all 390,150 landblock-data records (6,867 with a ceiling) for §6.4–§6.5, and the 0x47 chains, setups and physics properties of the 4,261 objects named by scene records for §9.4. Third pass, same date (answering the review): the stored x and y origin of all 58,546 terrain trees and the x origin of all 1,095 ceiling trees (§3.2); edge pairing and signed volume of all 16,819 0x66 meshes under both closure tests (§4.2); last-plane normals and hull-vertex distances of all 1,057 0x01 records (§5.4); the frill-object census recounted with the reach rule of `scenery.md` §8.2 (§9.4). |
-| BIN | Client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (changelist 711794), read with a disassembler (capstone) on 2026-10-05. **Questions:** (1) which rule turns the per-state movement records into the active parameters; (2) the walkable-slope limit; (3) how the per-avatar float height reaches the controller; (4) what the 16 movement properties are as a unit; (5) what `Physics_NoPhysics` and the shape of a moving entity mean to the client. Second pass, same build and date: (6) how the client builds terrain and ceiling collision (holes, ceiling diagonals, landblocks without a stored tree); (7) how it decides which cell contains a point; (8) what collision it gives to procedurally generated scenery and in which order the pieces are built; (9) the terrain-triangle query used by scenery placement; (10) the instance-ID test for player characters. **Why M1–M3 were not enough:** the data holds the parameter records but not the rule that picks and layers them, and holds no slope limit at all; which triangles the client puts into its collision shapes, how it assigns points to cells and how generated scenery becomes physical are run-time behaviour that no record stores; the original client cannot be observed here (M3) and no published source describes these rules (M2). Only the offline world and movement code was read; nothing about network, login, keys or anti-tamper. |
+| BIN | Client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (changelist 711794), read with a disassembler (capstone) on 2026-10-05. **Questions:** (1) which rule turns the per-state movement records into the active parameters; (2) the walkable-slope limit; (3) how the per-avatar float height reaches the controller; (4) what the 16 movement properties are as a unit; (5) what `Physics_NoPhysics` and the shape of a moving entity mean to the client. Second pass, same build and date: (6) how the client builds terrain and ceiling collision (holes, ceiling diagonals, landblocks without a stored tree); (7) how it decides which cell contains a point; (8) what collision it gives to procedurally generated scenery and in which order the pieces are built; (9) the terrain-triangle query used by scenery placement; (10) the instance-ID test for player characters. **Why M1–M3 were not enough:** the data holds the parameter records but not the rule that picks and layers them, and holds no slope limit at all; which triangles the client puts into its collision shapes, how it assigns points to cells and how generated scenery becomes physical are run-time behaviour that no record stores; the original client cannot be observed here (M3) and no published source describes these rules (M2). Only the offline world and movement code was read; nothing about network, login, keys or anti-tamper. **Third pass, 2026-10-06 (movement session, same build, strings and RTTI only):** (11) the loader's content-layer and creation-type handling for Physics SEDs (confirmed from the embedded class/type names and the §9.4 path, no new decompilation); (12) which character controller the client uses and how it classifies a slope. Read only the executable's RTTI type names and the physics middleware's own embedded parameter-documentation strings (the middleware SDK's own text, not client code): the character-proxy and character-rigid-body `*Cinfo` type names, the slope-parameter names (`maxSlope`, `maxWalkableSlope`, `maxSlopeForRotation`, `slopeThreshold`), the "controlled surface" / "uncontrolled surface" labels, and the SDK's description of the walkable-slope limit (support fails on a steeper stance and a vertical plane is added that blocks movement up the slope). **Why M1–M3 were not enough for the third pass:** the slope-classification mechanism is run-time behaviour that no record stores and the original client cannot be observed here (M3); the data study (M1) gives the support-face angles along the SL1–SL3 paths but not the rule that turns a steep stance into a slide; no published source describes it (M2). No controller integration routine, network, login, launcher or anti-tamper code was read. |
 | PUB | Published descriptions of the middleware's bounding-volume code, written for another game that uses the same middleware: the PyNifly project wiki page "MOPP Bytecode Format" and the PyFFI NIF library (BSD licence; read for facts only). Used as a starting hypothesis for §3.4; every opcode that occurs was then checked against data (OBS). |
 | PUB2 | Mirarkitty `lotro_extractor` (GitHub; read for the fact only): its exporter recognises a character's instance ID by the top byte 0x02. |
 | MESH, LB, SET, ED, SCN, TT, WAT | `mesh.md`, `landblock.md`, `setup.md`, `entity-descriptor.md`, `scenery.md`, `terrain-texturing.md`, `water.md` (same install). |
@@ -97,6 +97,8 @@ Legend:
 | C24 | Terrain triangles near a point: the client's radius query (§6.6) | BIN (9) | BIN |
 | C25 | Generated scenery becomes static entities through the same creation request as landblock-info statics; frills never become entities; build order (§9.4) | BIN (8); OBS (census) | BIN (path, order); Confirmed (census) |
 | C26 | A mover is a player character for the slope rule when its instance ID's top byte is 2 (§11.3) | BIN (10); PUB2 (meaning of the byte) | BIN (test); Reported (meaning) |
+| C27 | The §9.3 table is a data census (no run-time content-layer or creation-type filter); the run-time collision rule applies the content-layer test (default *L* = 1, *I* = 0) and drops creation types 7 and 8; data census 82,139 / 97,688, run-time 73,509 / 88,749, 73,508 / 88,748 (§9.3) | OBS (all 3,253,835 Physics SEDs, 2026-10-06); BIN (11: loader evaluates the test and drops 7/8) | Confirmed (census); collision-body gating a Decision (§9.3 OPEN) |
+| C28 | The mover is driven by the middleware's character **proxy**; the walkable-slope limit classifies the surface **underfoot** (support), and a too-steep support both gives "uncontrolled surface" (state 6, slide) and adds a vertical plane blocking uphill motion (§11.3) | BIN (12: proxy RTTI and the middleware's embedded parameter documentation); OBS (SL1–SL3 support faces 53.5°/61.4°/56.3°) | Confirmed (BIN; mechanism) |
 
 ---
 
@@ -870,31 +872,67 @@ setup's collision (§8):
 | volumes | false | yes | yes | 15,004 |
 | other combinations | | | | 24,462 |
 
-**Collision rule (for Tessera):** a SED blocks a walker when its type is Physics, it has a
-position, it passes the content-layer filter (`entity-descriptor.md` §4.5.1), its effective
-`Physics_NoPhysics` is not true, its setup has a 0x66 mesh or volumes, and its effective
-`Physics_EtherealToType` does not contain Player. The draw flags play **no** part: 97,688
-undrawn SEDs block movement. This rule is a Tessera Decision resting on the census above
-and on the BIN fact that a mover with `Physics_NoPhysics` has no shape (§9.1).
-Procedurally generated scenery: §9.4.
+This table is a **data census**, not a run-time count. It classifies the stored SEDs by
+their resolved chain and setup only: it applies **neither** the run-time content-layer test
+**nor** the creation-type filter of the collision rule below, and its "Drawn" column uses
+the plain draw-suppression of `entity-descriptor.md` §9.2 (a SED is undrawn when the first
+value along its chain — the SED's own set, then the 0x47 chain — of `Render_Draw` or
+`Render_DrawMeshes` is false, or of `Render_NeverAddToScene` is true), **not** the
+SED-over-object precedence of E22. The invariant and criterion that reproduce it
+(82,139 undrawn mesh blockers among 97,688 undrawn blocking SEDs) therefore read the data,
+not the walker's world. (Under E22's precedence the four drawn rows come out 143 higher in
+all and "other combinations" 143 lower; every undrawn row and the 44,144 are unchanged.)
 
-> **OPEN (implementation, 2026-10-06):** `tessera-physics` reproduces 82,139 undrawn mesh
-> blockers and 97,688 undrawn blocking SEDs only when the content-layer filter is left out
-> of the count; with the rule as written (the shared-world test of `entity-descriptor.md`
-> §4.5.1, *L* = 1, *I* = 0) 88,749 undrawn SEDs block. With the draw rule E22 of
-> `entity-descriptor.md` §9.2 the drawn rows of the table come out 143 higher in all (mesh,
-> false, yes, no: 1,409,569; none, false, yes, no: 400,666; volumes, false, yes, no: 143,859;
-> mesh, true, yes, no: 68,075) and "other combinations" 143 lower (24,319); every undrawn
-> row and the 44,144 match. Please state the population (content layers or not) and the
-> draw rule behind the table. Tessera applies the rule as written (with the filter).
+**What blocks a walker (Decision, from the census and BIN).** At run time a SED contributes
+a collision body when all of these hold:
 
-> **OPEN (implementation review, 2026-10-06):** §9.4 (BIN) says the client drops
-> landblock-info statics whose `Entity_CreationType` is UniqueDynamicMobile or
-> UniqueDynamicImmobile (7 or 8; the server creates those) on the path that gives statics
-> their collision, but the collision rule above has no creation-type filter, so
-> `tessera-physics` gives such SEDs a body offline. Please say whether the rule should drop
-> creation types 7 and 8 (resolved along the chain as in `scenery.md` §9.2 rule 2) and add
-> the creation type to the census above. Tessera follows the rule as written until then.
+- its type is Physics and it has a position;
+- its effective `Physics_NoPhysics` (resolved along the chain, §9.1) is not true;
+- its setup has a 0x66 mesh or at least one volume (§8);
+- its effective `Physics_EtherealToType` does not contain Player (§9.2);
+- its effective `Entity_CreationType` (resolved along the chain as `scenery.md` §9.2 rule 2)
+  is **not** 7 (UniqueDynamicMobile) or 8 (UniqueDynamicImmobile): the server creates those,
+  and the client drops them on the static-creation path (§9.4, C25, BIN);
+- it passes the content-layer test of `entity-descriptor.md` §4.5.1 with the world's active
+  content layer *L* and the landblock copy's instance number *I*. Offline the default is the
+  shared world, *L* = 1 and *I* = 0.
+
+The draw flags play **no** part. This rests on the census above, on the BIN fact that a
+mover with `Physics_NoPhysics` has no shape (§9.1) and that the loader evaluates the
+content-layer test for every Physics SED and drops creation types 7 and 8 on the
+static-creation path (§9.4, E21). Procedurally generated scenery: §9.4.
+
+**Census vs. run-time count (OBS, all 3,253,835 Physics SEDs, 2026-10-06).** The two are
+different questions and give different numbers:
+
+| Set | Blockers | of them undrawn | of those, mesh |
+|---|---|---|---|
+| Data census (table above; no run-time filter) | 1,651,097 | 97,688 | 82,139 |
+| Run-time, shared world (content-layer test, *L* = 1, *I* = 0) | 1,607,212 | 88,749 | 73,509 |
+| ...and dropping creation types 7 and 8 | 1,606,311 | 88,748 | 73,508 |
+
+So 8,939 undrawn blockers (8,630 of them mesh) name only inactive layers and are absent for
+a character in no phase; about 901 further bodies are server-spawned creation types 7/8.
+The census invariant (CO12, criterion 2) keeps the full-data figures (82,139 / 97,688); the
+scripted walks and the soak see the filtered run-time set.
+
+> **OPEN:** that the client gates a Physics SED's **collision body** on the content-layer
+> test was not traced in BIN; only that the landblock loader evaluates the test for every
+> Physics SED and stores the result (E21), and that the render object's gating is itself
+> OPEN (`entity-descriptor.md` §4.5.1). Tessera gates the collision body on the same test as
+> a Decision, consistent with phasing: a character collides with the phase it is in. The
+> creation-type 7/8 drop is BIN-grounded (§9.4, C25).
+
+> **OPEN (implementer, 2026-10-07, `tessera-physics`):** which `Entity_CreationType` the
+> 7/8 drop reads is ambiguous. "Resolved along the chain as `scenery.md` §9.2 rule 2" can
+> mean the object's 0x47 chain alone, or the SED's own set first and then the chain, as
+> §9.1 resolves the other properties. A read-only run of the clean-room census over the
+> owner's install reproduces the CO12 figures (1,606,311 / 88,748 / 73,508) only with the
+> object's chain alone. All 901 blockers it drops carry their own `Entity_CreationType` in
+> the SED's set (not 7 or 8), and with the SED-first precedence no Physics SED of the
+> install has an effective 7 or 8, so the drop would remove nothing. **Tessera reading:**
+> the drop reads the object's chain only; every other §9.1 property keeps the SED-first
+> precedence. Please state which value the client's static-creation filter reads (BIN).
 
 <a id="s9-4"></a>
 ### 9.4 Procedurally generated scenery
@@ -1166,6 +1204,33 @@ client (BIN), not data. They are physics limits and tolerances, which [decision
 0012](../decisions/0012-numeric-constants.md) allows specs to state and Tessera's code to
 contain; the same holds for the tolerances of §5.4, §5.8.1 and §6.6.
 
+**Mechanism: the classification is of the surface underfoot (BIN, third pass).** The client
+drives a mover with the physics middleware's **character proxy** (the executable carries the
+middleware's `hkpCharacterProxy` / `hkpCharacterProxyCinfo` types; the rigid-body character
+types are present too, but the player uses the proxy). The middleware's own parameter
+documentation, embedded as text in the executable, describes the walkable-slope limit this
+way: when the character **stands on** a surface steeper than the limit, its support check
+returns "no support", and during integration a vertical plane is added in the downhill
+direction that blocks movement **up** the slope. The executable's own words for the two
+support classes are "controlled surface" and "uncontrolled surface", matching
+`Entity_Element` 5 and 6 (§10.4). Consequences a reimplementation must honour:
+
+- The walkable / sliding / wall decision of the table is a decision about the surface the
+  mover **rests on** (found by the support search, §12.3 step 6), not about any surface the
+  mover merely bumps from the side. A surface the capsule is standing on, when its face lies
+  in the 45°–85° band (player limit), is an **uncontrolled** support: the mover keeps no
+  controlled footing and slides down under gravity (state 6, the Slide layer of §10.3),
+  while the added vertical plane stops it from climbing the slope.
+- A steep surface the mover meets head-on while still on walkable ground is a wall (its
+  horizontal normal) until the mover's support itself becomes that surface; a wall does not
+  by itself put the mover in state 6.
+
+This resolves the SL1–SL3 behaviour of `m4-5-visual.md`: a walker running from flat ground
+onto a bank whose face rises through 45° first meets it as a wall, then, as the capsule
+rides onto the steep face, its support becomes uncontrolled and it enters state 6 and slides
+back (OBS: along the SL1–SL3 paths the support face under the capsule reaches 53.5°, 61.4°
+and 56.3°, so the support — not merely a frontal contact — is in the sliding band).
+
 > **OPEN (RE tasks, §16):** how jump acceleration, ramp time, control acceleration and the
 > damper are integrated per step; the step-up procedure; the solver that resolves several
 > contact planes; how `Entity_Element` switches between water states; any fall damage (no
@@ -1226,8 +1291,15 @@ gap left OPEN above it says so; it must be revised when the gap closes.
    step-up height, then sweep down by up to step-up height plus 0.05 m; accept when the new
    support is walkable (§11.3).
 6. **Ground snap and state:** sweep down by 0.05 m (plus step-up height when the mover was on
-   walkable support and moving down a slope); classify the support with §11.3 to choose state
-   4, 5 or 6.
+   walkable support and moving down a slope); classify the surface the mover now rests on
+   with §11.3 to choose state 4, 5 or 6. The surface classified is the one **underfoot** (the
+   support contact found by this downward sweep, taking the most upward-facing of the
+   contacts under the capsule's lower cap), not a surface met only from the side in step 4.
+   When that support surface is uncontrolled (its face normal in the 45°–85° band for a
+   player), the mover is in state 6 and slides, **even if the previous step was on walkable
+   ground and even if the same surface was treated as a wall during the horizontal sweep of
+   step 4** (§11.3 mechanism). A surface with no support below (the down-sweep finds nothing)
+   leaves the mover in state 4 (airborne).
 7. **Water:** with the water surface and volumes of `water.md` §6.3 and §7, where the water
    surface lies more than the float height above the feet use state 2, where the feet are in
    water but less deep state 1 or 3 (`water.md` §7.4, Decision).
@@ -1251,10 +1323,18 @@ Fixed step 1/60 s with at most 5 steps per frame.
 > against a riser that rises by the step-up height and moves only one step's distance lands
 > on the step's edge with its centre up to r − |v|·dt from it, which §11.3 classifies as steep
 > at walking speeds; the raised move therefore covers at least 0.5 · r. (e) Steps 4–5: on
-> walkable support a contact that is not walkable is treated as a vertical wall (its
-> normal's horizontal part), so walls and step risers never lift the mover by the slide.
+> walkable support a **frontal** contact that is not walkable (a surface met from the side,
+> not the one the mover rests on) is treated as a vertical wall (its normal's horizontal
+> part), so walls and step risers never lift the mover by the slide. This does **not** apply
+> to the mover's own support surface, which step 6 classifies underfoot: a steep surface the
+> capsule comes to rest on is uncontrolled support (state 6), not a wall (see (f) and §11.3).
 > (f) Step 6: no snap while jumping, rising in the air or swimming; contacts give no support
-> while rising in the air. (g) Overlaps at the start of a step are pushed out along the
+> while rising in the air. The step-4 wall treatment of (e) never suppresses a steep
+> **support**: a steep face the capsule comes to rest on is classified by step 6 as
+> uncontrolled support (state 6), so a walker that runs up onto a bank steeper than the
+> walkable limit enters state 6 and slides back down instead of being held against it as a
+> wall (SL1–SL3, `collision.md` §11.3 mechanism; resolves the earlier reading of (e) that
+> "state 6 never occurs" on a steep band met from walkable ground). (g) Overlaps at the start of a step are pushed out along the
 > shortest push that clears every contact plane (at most 0.5 m per step). (h) The exact
 > names of the `MoveToController_*` fields other than `MoveToController_FloatHeight` are not
 > given in §10.1; the MoveTo structs are layered by property ID without naming them.
@@ -1294,6 +1374,36 @@ Fixed step 1/60 s with at most 5 steps per frame.
 > instead of diving several metres below the line before the lift turns it (the real-data
 > controller walks found a slide into a lake at 15 m/s once (n) let walkers get further).
 
+> **OPEN (implementer, 2026-10-07, `tessera-physics`, revised steps 4–6 and (e)–(f)):** the
+> revised text gives no geometric test for "a surface met from the side" versus "the
+> surface the mover rests on", and as written step 6 (the most upward-facing contact under
+> the lower cap) keeps the walkable ground at the foot of a bank as the support, so state 6
+> is never reached from walkable ground. Tessera's readings, to be replaced when the
+> original's rule is known: (q) **Which contacts get the wall treatment.** Each sweep
+> contact is classified by the §11.3 table (with its face-normal rule). On walkable
+> support, a walkable contact keeps its normal; a **steep** contact (45°–85° for players)
+> is not a wall: the step's displacement slides along its own normal, so the capsule rides
+> onto the face. For a contact on the capsule's lower cap this is the same as "the contact
+> point lies below the lower-cap centre by more than r · cos 85°". Wall, overhang and
+> ignored contacts keep the vertical-wall treatment of (e). A steep contact still counts as
+> blocking, so the step-up of step 5 is tried first and wins when it lands walkable (steps
+> and chamfered edges keep climbing). (r) **Velocity when riding onto a steep face.** The
+> velocity loses its part into the face's vertical plane (the normal's horizontal part),
+> not into the face, so riding onto a steep face gives the mover no upward speed. (s)
+> **Support.** Step 6 classifies the contacts of the support probe (§11.3 radius) within
+> 0.01 m, walkable over steep over none. A mover that has ridden onto a steep face has no
+> walkable contact left within that margin, so it is in state 6 at the end of that step,
+> whatever the state before. (t) **The vertical plane of §11.3.** While the mover starts a
+> step on steep support (state 6, and state 3 in water), every steep contact adds two
+> planes: its own and the vertical plane of its normal's horizontal part. The mover can
+> then slide down or along the face but not up it. With the Slope layer of §10.3 (no
+> control acceleration), a walker held against a steep bank thus rides a few centimetres
+> onto it, enters state 6, slides back to the ground, and repeats. Synthetic tests: flat
+> ground into 46°, 50°, 55°, 61° and 80° bands at run and walk speed, state 6 at least once,
+> feet never 0.6 m above or beyond the foot; a 44° ramp is walked without state 6. Please
+> state the original's rule (BIN) or confirm these readings, and add the synthetic worked
+> example and the state-6 invariant the review asked for.
+
 ---
 
 <a id="s13"></a>
@@ -1324,6 +1434,12 @@ Fixed step 1/60 s with at most 5 steps per frame.
   by no layer occurs only when the landblock has a ceiling, and the mean of its three
   ceiling samples is never above the mean of its three terrain heights (2,750,134 of
   2,750,134).
+- **CO12** (blocker census, §9.3): classifying all Physics SEDs by the resolved chain and
+  setup, with the plain draw-suppression of §9.3 and **no** run-time content-layer or
+  creation-type filter, gives 82,139 undrawn mesh blockers among 97,688 undrawn blocking
+  SEDs and 1,651,097 blockers in all. Applying the content-layer test (*L* = 1, *I* = 0)
+  gives 88,749 / 73,509 undrawn, and additionally dropping creation types 7 and 8 gives
+  88,748 / 73,508.
 
 ---
 
@@ -1436,7 +1552,7 @@ if no other cell contains it, it is outdoors.
 | Q6 | Use of per-level collision meshes and trees | §7 | M4 |
 | Q7 | Exact ethereality test and default categories | §9.2 | M4 |
 | Q8 | Placement of water volumes and depth query: owned by `water.md` | §10.4 | — |
-| Q9 | Integration of jump, ramp, control acceleration and damper; step-up procedure; plane solver; water-state switching | §11.3 | M4 (routine not located in the second pass), then M3 (owner measurements: jump height and airtime, walk and run speeds, highest climbable step and slope) |
+| Q9 | Integration of jump, ramp, control acceleration and damper; step-up procedure; plane solver. **Partly answered (§11.3, C28):** the walkable/slide/wall classification is of the surface underfoot (the character proxy's support check); a too-steep support gives state 6 (slide) and blocks uphill motion. **Still open:** the numeric integration of jump, ramp, control acceleration and damper; the exact step-up and plane-solver procedure (controller routine not located). | §11.3, §12.3 | M4 (integration routine not located), then M3 (owner measurements: jump height and airtime, walk and run speeds, highest climbable step and slope) |
 | Q10 | Fall damage | §11.3 | probably server-side; nothing in the client data |
 | Q11 | `ForceStrafe`, `AllowContactLoss`, `Entity_FinalElement` | §10.1, §10.4 | M4 |
 | Q12 | Physics bodies for generated objects of client-only creation types | §9.4 | M4 |
@@ -1449,4 +1565,5 @@ if no other cell contains it, it is outdoors.
 |---|---|
 | 2026-10-05 | First version: quantised tree, 0x66 and 0x01 layouts, cells and portals, terrain and ceiling trees, per-level mesh trees, setup volumes, per-instance flags, movement data and the BIN rules for parameter layering, float height and slopes; Tessera's controller. |
 | 2026-10-05 | Second pass (BIN and OBS). §6.1: the client builds the full 2,048-triangle terrain mesh for every landblock. §6.3: answers what is used without a stored tree, in part. §6.4: the ceiling diagonal is bit 0 of the vertex-flag byte (all 5,310,848 stored ceiling triangles), ceilings face down, zero samples are in the mesh. New §6.5 (terrain holes do not need cutting: they occur only under ceilings and never under an open cave; the client keeps them in its collision) and §6.6 (the client's terrain-triangle radius query used by scenery placement). §5.3: the cell physics mesh is the cell's solid body. §5.4: the client's point-in-volume tolerance −0.0002. New §5.8.1: cell phantoms and the client's lookup of the cell containing a point (entering a cell from outdoors needs no portal). New §9.4: collision of procedurally generated scenery, the creation path, the build order and a census. §10.4 and §12.3 step 7 point to `water.md` for water volumes. §11.3: the instance-ID test (BIN) with a published source for the meaning of byte 2 (PUB2); the binary-sourced constants are recorded under decision 0012. §12.1 and §12.3 updated (holes, generated scenery, order, cell step). Invariants CO10–CO11, worked examples §14.7–§14.8, corrections for `landblock.md` §3.5–§3.6 and `terrain-texturing.md` §4.5, open questions Q3–Q5, Q8, Q9 and Q12 updated. §10.6 cites the model-scale rule of `appearance.md` §6.1 as the Decision it is there. |
+| 2026-10-06 | Movement revision for M4.5 criterion 4. §9.3: the census table is marked a data census (no run-time content-layer or creation-type filter; draw column uses the plain suppression, not E22); the "what blocks a walker" rule now applies the content-layer test (default *L* = 1, *I* = 0) and drops creation types 7 and 8; the two OPENs are resolved with the OBS counts (data 82,139 / 97,688; run-time 73,509 / 88,749; with 7/8 dropped 73,508 / 88,748; 1,651,097 → 1,607,212 → 1,606,311 total). New narrow OPEN: BIN did not trace that the collision **body** is gated on the content-layer test (Tessera gates it as a Decision). §11.3: new BIN mechanism paragraph (C28) — the mover uses the middleware's character **proxy**; the walkable/slide/wall decision is of the surface **underfoot**, a too-steep support is uncontrolled (state 6, slide) and a vertical plane blocks uphill motion; resolves SL1–SL3. §12.3 step 6 rewritten to classify the support underfoot and enter state 6 on a steep support regardless of the previous step; OPEN (e) and (f) revised so the frontal-wall treatment never suppresses a steep support. New facts C27, C28; invariant CO12; BIN row third pass (strings/RTTI only); Q9 partly answered. | Spec writer (dirty room) |
 | 2026-10-05 | Revision answering the spec review (third pass, OBS). §3.2: terrain-tree x and y origins are stored as 0xBD4CCCCB (−0.04999999), not the f32 nearest −0.05; C4 extended. §4.2: the closure test behind the counts is stated (each directed edge exactly once, its reverse exactly once); inside-out count corrected from 50 to 51; the looser test's counts added. §5.4: hull vertices within 5.2 mm (one record at 5.17 mm), not 5 mm; the last plane faces up (z > 0.999) in 947 records and is the most upward-facing in 960, the old "floor in 960" was the latter; §5.8 tolerance remark adjusted. §6.3: Q4 is a proper OPEN callout. §6.5: the unverified "presumably under other geometry" is now an OPEN callout. §6.1: note on the client's terrain point queries (`scenery.md` S25). §9.4: frill-object census recounted as 1,515 (the reach rule of `scenery.md` §8.2); the earlier 1,512 counted only the frill layers of named scenes. |

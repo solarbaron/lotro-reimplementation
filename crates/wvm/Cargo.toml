@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-wvm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Script machine of the class library (WLib bytecode): decoder, validator, disassembler and cross-references."
+
+[dependencies]
+tessera-formats.workspace = true
+tessera-wstate.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tessera-dat.workspace = true
+tessera-props.workspace = true
+
+[lints]
+workspace = true

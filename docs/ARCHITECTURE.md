@@ -124,7 +124,7 @@ constraints that show up as structure:
  L3 world & assets   world*(→physics)  physics*  terrain*       │
                      anim*(→mesh)  mesh*  material*             │
         └──────┴──────┴──────┬─────────────────────────────────┘
- L2 asset system          assets*   props*/wstate*/text*
+ L2 asset system          assets*   props*/wstate*/text*/wvm*
                              │
  L1 record decoders       formats  (+ havok*)
                              │
@@ -169,7 +169,8 @@ Rules:
 | `tessera-havok` (`crates/havok`) | L1 | M4 | Clean-room reader for Havok binary tagfile (version 3) data as stored in the archives: skeletons and animation clips (spline-compressed and uncompressed). |
 | `tessera-props` (`crates/props`) | L2 | M1 | Property registry, typed values, property sets, enum mappers, DID maps (§7). |
 | `tessera-text` (`crates/text`) | L2 | M1 | String-table lookup, StringInfo resolution, `${VAR}` substitution and grammar-tag selection. |
-| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). |
+| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). From census 2 also typed views of the player-character records (`player-character.md`) and of the game-control singletons (`game-controls.md`). |
+| `tessera-wvm` (`crates/wvm`) | L2 | census 2 | Script machine of the class library: decodes and validates the compiled code (chunk 1 of 0x56000000) and its message list (chunk 2), resolves function IDs and slots against the class library, disassembles, counts and cross-references function bodies (`wlib-bytecode.md`). Decoder level only; no interpreter yet. Depends on `formats` and `wstate` (the L2 scripted-object group, like `wstate` on `props` and `text`). |
 | `tessera-assets` (`crates/assets`) | L2 | M1 | Asset server: typed handles, decode jobs on worker threads, caches, priorities, cancellation, GPU-upload hand-off (§8). |
 | `tessera-world` (`crates/world`) | L3 | M3 | Coordinates, landblock and cell IDs, streaming rings, landblock info (cells, static entities, links), block maps (§9). From M4.5 also: scenery generation and the frill (grass) ring, landblock water and water volumes, the game clock and sky state (§10), light selection (`lighting.md` §8.3–§8.5), per-class draw distances (`walker.md` §11.4). Builds each landblock's collision set, water included, on the asset workers and hands it to `physics` (§10.3, §20.3). May depend on `physics` (sibling allowance, §3). |
 | `tessera-physics` (`crates/physics`) | L3 | M4.5 | Collision and movement: terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries that scenery placement uses, cell volumes and the point-in-cell lookup, per-landblock collision sets (statics, generated scenery, cells) with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller with its water states (`collision.md` §5.4, §5.8.1, §6, §9–§12; `water.md` §7.4). A collision set also carries its landblock's water plane and liquid boxes, so the controller reads water only from its own sets (§10.3). Owns the step constants (1/60 s, at most 5 per frame) and validates every input at its API boundary: non-finite or out-of-range movement parameters, bounded speeds and per-step displacement, no panicking clamps ([0013](decisions/0013-physics-crate.md)). Sets are keyed by `formats::LandblockId` in landblock frames; the mover is in the f64 region frame (§9.1). Depends only on `formats` and `props`; no GPU, asset-server or streaming dependency. Record decoders (quantised trees, 0x66, 0x01) stay in `formats`. The M7 test server reuses the controller and the collision-set types; building the sets from install data is `world`'s work (§10.3, §10.5). |
@@ -398,9 +399,11 @@ nodes. A full DID → (archive, entry) index built by walking every tree is opti
 | 0x16, 0x17 | water table, fog-zone table | `water` | M4.5 | `water.md` §4–§5 |
 | 0x15, 0x1A, 0x35, 0x32, 0x08 | sky description, day description, game time, LOD-class table, camera state | `environment` | M4.5 | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 | 0x800R/0x802R/0x804R, 0x801R | landblock data, info, properties; block map | `landblock` | M3 | `landblock.md` |
+| 0x805R | distant-landscape sector (3 × 3 landblocks: terrain and ceiling meshes, water, billboards, far-visible entities) | `landblock` (`sector`) | census 2 | `distant-landscape.md` |
+| 0x79 (property sets) | instanced and group content views: encounter templates and controls, skirmish, world join, battles, session play, fellowship maker, phasing | `instance` | census 2 | `instances.md` |
 | 0x18 | block-map descriptors | `block_map` | M3 | `landblock.md` |
 | — (inside 0x04), 0x05 | skeleton (the Havok tagfile slice of a 0x04 setup, handed over by `setup`), animation clip | `tessera-havok` | M4 | `havok-data.md` |
-| 0x56000000 | class library (WLib) | `wlib` | M3 | `wlib.md` |
+| 0x56000000 | class library (WLib); its compiled code and message chunks in `tessera-wvm` | `wlib` | M3 (code: census 2) | `wlib.md`, `wlib-bytecode.md` |
 | 0x70–0x77 | object state (WState) | `wstate` | M3 | `wstate.md` |
 | 0x22 | UI layout | `ui_layout` | M5 | `ui-layout.md` |
 | 0x0A | sound info and sound payload | `sound` | M6 | `sound.md` |
@@ -477,6 +480,11 @@ game concept.
   object it is (item, quest, skill, effect, NPC, ...).
 - Attribute names are only known as hashes. Tessera does not ship third-party name lists;
   names are recovered at run time where the data contains them, or shown as hashes.
+- Typed views on top of these (census 2): `wstate::character` for the player-character
+  records (`player-character.md`) and `wstate::game_controls` for the game-control
+  singletons (`game-controls.md`). They read decoded property sets and object states and
+  need no byte decoder of their own. The compiled code of the class library is decoded by
+  `tessera-wvm` (`wlib-bytecode.md`).
 
 The client runtime's entity model (§20) stores a `PropertySet` per live entity. Gameplay
 features (tooltips, vitals, quest log) read properties by name, so the same code works for

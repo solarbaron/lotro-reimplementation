@@ -125,7 +125,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 ## Layout
 
 - `crates/dat` — `.dat`/`.datx` container: header, extent/block layer, B-tree directory, zlib, archive set, DID routing
-- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver
+- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, distant-landscape sectors, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver, instanced-content views
 - `crates/props` — property registry, values, property sets, enum mappers, DID maps
 - `crates/text` — string tables, StringInfo resolution, substitution, markup
 - `crates/assets` — prioritised worker pool, cancellation, decoded-asset cache
@@ -134,7 +134,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/havok` — clean-room reader for the Havok tagfile subset in the archives: skeletons (in 0x04 setups) and clips (0x05: spline-compressed, interleaved, annotation tracks, reference frames)
 - `crates/anim` — skeletons, clip binding and sampling, blending, root motion, attach points, bone sliders, skinning palettes, animation scheduler on the asset workers
 - `crates/entity` — the client's entity store (decision 0008): entities, transforms, network IDs, render/animation handles, landblock membership, per-frame change lists
-- `crates/wstate` — WLib class library and WState object graph
+- `crates/wstate` — WLib class library and WState object graph; player-character and game-control views
+- `crates/wvm` — script machine of the class library (WLib bytecode): code-block decoder, load-time rules, disassembly, census and cross-references
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
 - `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here); depends only on `formats` and `props`, `world` may depend on it (decision 0013)

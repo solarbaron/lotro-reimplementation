@@ -10,8 +10,8 @@
 
 use anyhow::{Context, Result};
 use tessera_formats::landblock::{
-    BlockMap, BlockMapDescriptor, LandblockData, LandblockGroupRecord, LandblockInfo,
-    LandblockProperties, RegionDescriptor,
+    BlockMap, BlockMapDescriptor, LandblockData, LandblockInfo, LandblockProperties,
+    RegionDescriptor, SectorRecord,
 };
 use tessera_formats::{
     AnyRecord, Did, DidKind, LandblockKind, NoSchema, PropertyDictionary, PropertySchema, Record,
@@ -41,8 +41,8 @@ pub enum Decoded<'a> {
     LandblockInfo(Box<LandblockInfo>),
     /// 0x804RXXYY: landblock properties.
     LandblockProperties(LandblockProperties),
-    /// 0x805RXXYY: distant-landscape sector.
-    LandblockGroup(LandblockGroupRecord),
+    /// 0x805RXXYY: distant-landscape sector (`distant-landscape.md` §3).
+    LandblockGroup(Box<SectorRecord>),
     /// 0x31, 0x30, 0x2B: a record of the material family, decoded by `tessera-material`;
     /// only its type name is kept.
     Material {
@@ -82,7 +82,9 @@ pub fn needs_schema(did: u32) -> bool {
             | DidKind::ScriptTable
             | DidKind::Scriptlet
             | DidKind::BlockMapProperties
-            | DidKind::Landblock(LandblockKind::Info | LandblockKind::Properties)
+            | DidKind::Landblock(
+                LandblockKind::Info | LandblockKind::Properties | LandblockKind::Other(5)
+            )
     )
 }
 
@@ -114,9 +116,9 @@ pub fn decode<'a>(
         DidKind::Landblock(LandblockKind::Properties) => Decoded::LandblockProperties(
             LandblockProperties::parse_expecting(payload, did, schema)?,
         ),
-        DidKind::Landblock(LandblockKind::Other(5)) => {
-            Decoded::LandblockGroup(LandblockGroupRecord::parse_expecting(payload, did)?)
-        }
+        DidKind::Landblock(LandblockKind::Other(5)) => Decoded::LandblockGroup(Box::new(
+            SectorRecord::parse_expecting(payload, did, schema)?,
+        )),
         DidKind::SurfaceDescriptor => {
             SurfaceRecord::parse_expecting(payload, did)?;
             Decoded::Material {
@@ -256,6 +258,7 @@ mod tests {
         }
         assert!(needs_schema(0x0100_0001));
         assert!(needs_schema(0x8041_0203));
+        assert!(needs_schema(0x8051_0203));
         assert!(!needs_schema(0x6600_0001));
         assert!(!needs_schema(0x8001_0203));
     }

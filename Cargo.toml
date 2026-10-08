@@ -22,6 +22,7 @@ members = [
     "crates/anim",
     "crates/entity",
     "crates/physics",
+    "crates/wvm",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -56,6 +57,7 @@ tessera-havok = { path = "crates/havok" }
 tessera-anim = { path = "crates/anim" }
 tessera-entity = { path = "crates/entity" }
 tessera-physics = { path = "crates/physics" }
+tessera-wvm = { path = "crates/wvm" }
 
 anyhow = "1"
 bitflags = "2"

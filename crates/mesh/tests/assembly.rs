@@ -744,8 +744,9 @@ fn unresolved_links_are_diagnostics() {
         "missing mesh: default kept"
     );
     assert_eq!(c.part_in(HANDS).unwrap().mesh, Did(K));
-    // `appearance.md` §6.3 (A16): a pair that is not hexadecimal reads 0 (still noted).
-    assert_eq!(c.sliders.values, vec![0]);
+    // `appearance.md` §6.3 (A16, A29): a piece without a hexadecimal digit reads 0 (still
+    // noted), and the empty piece follows an even-length string.
+    assert_eq!(c.sliders.values, vec![0, 0]);
     assert!(c.held.is_empty());
     // A body that does not exist and one whose setup is missing are errors.
     let mut s = world();
@@ -989,12 +990,12 @@ fn sliders_and_skeleton_are_passed_through() {
     let fresh = asm.assemble_character(&human(&[])).unwrap();
     assert_eq!(&*fresh.skeleton.tagfile, &[9, 9]);
     assert_eq!(c.sliders.definitions, Some(Did(0x7800_0001)));
-    assert_eq!(c.sliders.values, vec![0x80, 0xFF, 0x00]);
+    assert_eq!(c.sliders.values, vec![0x80, 0xFF, 0x00, 0]);
     let mut spec = human(&[]);
     spec.slider_values = Some("10".into());
     spec.bone_scale = Some(0.5);
     let c = asm.assemble_character(&spec).unwrap();
-    assert_eq!(c.sliders.values, vec![0x10]);
+    assert_eq!(c.sliders.values, vec![0x10, 0]);
     assert_eq!(c.sliders.bone_scale, Some(0.5));
     assert_eq!(c.clip_inputs.start, Did(AVATAR));
     assert_eq!(c.clip_inputs.entity, Did(ENTITY));

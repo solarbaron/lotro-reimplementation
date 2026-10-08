@@ -37,6 +37,40 @@ pub const REBASE_DISTANCE: f32 = 8_000.0;
 pub const EYE_HEIGHT: f32 = 1.7;
 /// Default third-person camera distance.
 pub const DEFAULT_ZOOM: f32 = 7.0;
+/// How far the walk-mode third-person camera is kept above the terrain (`walker.md` §5).
+pub const EYE_ABOVE_TERRAIN: f64 = 0.8;
+
+/// The walk-mode third-person camera kept above the terrain (`walker.md` §5: "kept 0.8 m
+/// above the terrain and then aimed at the head"): an `eye` less than
+/// [`EYE_ABOVE_TERRAIN`] above `ground` (the terrain height under it) is raised to it and
+/// turned towards the head of the avatar standing at `feet`. Only the walk-mode camera
+/// is kept: callers pass `feet` only in walk mode with the camera outside every cell
+/// (`walker.md` §14.12 (a)); without `feet` (free-fly, scripted cameras) the eye and
+/// direction are returned unchanged.
+#[must_use]
+pub fn keep_above_terrain(
+    eye: WorldPos,
+    dir: Vec3,
+    ground: Option<f32>,
+    feet: Option<WorldPos>,
+) -> (WorldPos, Vec3) {
+    let (Some(h), Some(feet)) = (ground, feet) else {
+        return (eye, dir);
+    };
+    let min = f64::from(h) + EYE_ABOVE_TERRAIN;
+    let below = eye.z < min;
+    if !below {
+        return (eye, dir);
+    }
+    let mut eye = eye;
+    eye.z = min;
+    let head = Vec3::new(
+        (feet.x - eye.x) as f32,
+        (feet.y - eye.y) as f32,
+        (feet.z + f64::from(EYE_HEIGHT) - eye.z) as f32,
+    );
+    (eye, head.try_normalize().unwrap_or(dir))
+}
 
 /// How the viewer moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,6 +657,29 @@ impl Controls {
 mod tests {
     use super::*;
     use tessera_input::KeyCode;
+
+    /// Review finding (`walker.md` §5): only the walk-mode camera is kept 0.8 m above the
+    /// terrain; a free-fly or scripted camera (no avatar) may go below it.
+    #[test]
+    fn only_the_walk_camera_is_kept_above_the_terrain() {
+        let eye = WorldPos::new(1, 100.0, 100.0, 49.5);
+        let dir = Vec3::X;
+        assert_eq!(
+            keep_above_terrain(eye, dir, Some(50.0), None),
+            (eye, dir),
+            "free-fly"
+        );
+        assert_eq!(keep_above_terrain(eye, dir, None, Some(eye)), (eye, dir));
+        let feet = WorldPos::new(1, 107.0, 100.0, 50.0);
+        let (e, d) = keep_above_terrain(eye, dir, Some(50.0), Some(feet));
+        assert!((e.z - 50.8).abs() < 1e-9);
+        assert!(d.x > 0.0 && d.z > 0.0, "aimed up at the head: {d:?}");
+        let high = WorldPos::new(1, 100.0, 100.0, 60.0);
+        assert_eq!(
+            keep_above_terrain(high, dir, Some(50.0), Some(feet)),
+            (high, dir)
+        );
+    }
 
     fn flat(_: f64, _: f64) -> Option<f32> {
         Some(100.0)

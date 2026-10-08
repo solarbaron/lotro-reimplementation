@@ -220,6 +220,7 @@ fn sector_instances() -> Vec<Instance> {
                 ),
                 tint: [1.0; 4],
                 terrain_color: terrain_color(x, y),
+                light_object: None,
             });
         }
     }
@@ -424,19 +425,29 @@ fn frill_groups_are_culled_and_reduced_by_distance() -> Result<(), RenderError> 
         &cam,
         vec![InstanceBatch::frills(s.grass.clone(), mid.clone(), params)],
     )?;
-    let expected = tessera_render::frill_reduced_count(
-        40,
-        (d - 0.1).powi(2),
-        97.0,
-        params.reduction.unwrap_or(FrillReduction {
-            distance: 40.0,
-            granule: 4,
-        }),
+    // Rule 4 measures the squared distance from the camera to the group's bounding box (the
+    // box around the instances' spheres), not to its centre.
+    let red = params.reduction.unwrap_or(FrillReduction {
+        distance: 40.0,
+        granule: 4,
+    });
+    let sphere = s.grass.info().sphere;
+    let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+    for i in &mid {
+        let t = sphere.transformed(i.transform);
+        lo = lo.min(t.center - t.radius);
+        hi = hi.max(t.center + t.radius);
+    }
+    let box_d2 = ((lo - cam.eye).max(Vec3::ZERO).max(cam.eye - hi)).length_squared();
+    let expected = tessera_render::frill_reduced_count(40, box_d2, 97.0, red);
+    let centre = sphere.transformed(mid[0].transform).center;
+    let by_centre =
+        tessera_render::frill_reduced_count(40, centre.distance_squared(cam.eye), 97.0, red);
+    assert_ne!(
+        expected, by_centre,
+        "the check must tell the two distances apart"
     );
-    assert!(
-        stats.instances <= 24 && stats.instances >= 16,
-        "{stats:?} vs about {expected}"
-    );
+    assert_eq!(stats.instances as usize, expected, "{stats:?}");
     // Not reducible: everything.
     let stats = draw_batches(
         &mut r,
@@ -575,25 +586,33 @@ fn hostile_instances_and_limits() -> Result<(), RenderError> {
         terrain_color: [f32::INFINITY; 3],
         ..Instance::new(Mat4::from_translation(Vec3::new(0.0, 6.0, 0.0)))
     });
+    let hostile = FrillParams {
+        far_distance: 97.0,
+        fade_length: f32::INFINITY,
+        fade_in: f32::NAN,
+        animation_intensity: 9.0,
+        terrain_color_intensity: -3.0,
+        reduction: Some(FrillReduction {
+            distance: f32::NAN,
+            granule: 0,
+        }),
+        opaque: false,
+        sway_z_range: Some([f32::NAN, f32::INFINITY]),
+    };
     let stats = draw_batches(
         &mut r,
         &camera(),
         vec![
+            // A finite far distance, so the other hostile fields are read: fade length,
+            // fade-in, sway and terrain intensities, reduction, the sway range and the
+            // non-opaque (blended) override.
+            InstanceBatch::frills(s.grass.clone(), inst.clone(), hostile),
             InstanceBatch::frills(
                 s.grass.clone(),
                 inst.clone(),
                 FrillParams {
                     far_distance: f32::NAN,
-                    fade_length: f32::INFINITY,
-                    fade_in: f32::NAN,
-                    animation_intensity: 9.0,
-                    terrain_color_intensity: -3.0,
-                    reduction: Some(FrillReduction {
-                        distance: f32::NAN,
-                        granule: 0,
-                    }),
-                    opaque: false,
-                    sway_z_range: Some([f32::NAN, f32::INFINITY]),
+                    ..hostile
                 },
             ),
             InstanceBatch {
@@ -602,9 +621,44 @@ fn hostile_instances_and_limits() -> Result<(), RenderError> {
             },
         ],
     )?;
-    // The non-finite transform is dropped from the rock batch; the frill group with a NaN
-    // far distance is culled whole.
-    assert_eq!(stats.instances, 4, "{stats:?}");
+    // The non-finite transform is dropped from the frill group and the rock batch (4 drawn
+    // each); the frill group with a NaN far distance is culled whole.
+    assert_eq!(stats.instances, 8, "{stats:?}");
+    assert_eq!(stats.instances_culled, 2 + 5, "{stats:?}");
+    // A group beyond D stays culled with a non-finite instance: that instance does not
+    // stretch the group's box (its sphere falling back to the model's, at the origin, near
+    // the camera).
+    let mut far = row(3, 1.0, Vec3::new(0.0, 150.0, 0.0));
+    far.push(Instance::new(Mat4::from_cols_array(&[f32::NAN; 16])));
+    let stats = draw_batches(
+        &mut r,
+        &camera(),
+        vec![InstanceBatch::frills(
+            s.grass.clone(),
+            far,
+            FrillParams::default(),
+        )],
+    )?;
+    assert_eq!(
+        (stats.instances, stats.instances_culled),
+        (0, 4),
+        "{stats:?}"
+    );
+    // Only non-finite instances: nothing to draw, nothing fails.
+    let stats = draw_batches(
+        &mut r,
+        &camera(),
+        vec![InstanceBatch::frills(
+            s.grass.clone(),
+            vec![Instance::new(Mat4::from_cols_array(&[f32::NAN; 16])); 2],
+            hostile,
+        )],
+    )?;
+    assert_eq!(
+        (stats.instances, stats.instances_culled),
+        (0, 2),
+        "{stats:?}"
+    );
     // Surfaces past the model's list reuse the last; an empty list uses the default.
     let model = r.upload_world_model(&clump(), &[])?;
     assert_eq!(model.surface_count(), 1);
@@ -923,5 +977,539 @@ fn instance_limit_drops_instead_of_failing() -> Result<(), RenderError> {
         "{stats:?}"
     );
     assert_eq!(stats.instances_culled, 10, "{stats:?}");
+    Ok(())
+}
+
+// ---- conformance fixes (render.md §2.3, §4.3, §5.5) ------------------------------------------
+
+/// A top-down camera over the origin (x right, y up on screen) and its 32 × 32 target.
+fn overhead() -> Camera {
+    Camera {
+        eye: Vec3::new(0.0, 0.0, 10.0),
+        target: Vec3::ZERO,
+        up: Vec3::Y,
+        projection: Perspective {
+            fov_y: 60f32.to_radians(),
+            near: 0.1,
+            far: 100.0,
+        },
+    }
+}
+
+const OVERHEAD: u32 = 32;
+
+/// The pixel of [`overhead`] where world point `p` lands.
+fn overhead_pixel(p: Vec3) -> (u32, u32) {
+    let c = overhead().view_proj(1.0).project_point3(p);
+    let f = OVERHEAD as f32;
+    (
+        ((c.x * 0.5 + 0.5) * f).clamp(0.0, f - 1.0) as u32,
+        ((0.5 - c.y * 0.5) * f).clamp(0.0, f - 1.0) as u32,
+    )
+}
+
+/// Draws `batches` with [`overhead`] under `lighting` (and the table lights' `reach`).
+fn draw_overhead(
+    r: &mut Renderer<'static>,
+    batches: Vec<InstanceBatch>,
+    lighting: FrameLighting,
+    reach: Vec<tessera_render::LightReach>,
+) -> Result<(RgbaImage, tessera_render::FrameStats), RenderError> {
+    let target = r.create_offscreen_target(OVERHEAD, OVERHEAD, OffscreenFormat::Rgba8Unorm)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame
+        .world_pass("overhead", &overhead())
+        .clear([0.0, 0.0, 0.0, 1.0])
+        .frame_lighting(lighting)
+        .light_reach(reach);
+    for b in batches {
+        pass.instanced(b);
+    }
+    let stats = r.end_frame(frame)?;
+    Ok((r.read_pixels(&target)?, stats))
+}
+
+fn at(img: &RgbaImage, p: Vec3) -> [u8; 4] {
+    let (x, y) = overhead_pixel(p);
+    img.pixel(x, y).unwrap_or_default()
+}
+
+/// No light: unlit surfaces show their colour as it is.
+fn dark() -> FrameLighting {
+    FrameLighting {
+        ambient: [0.0; 3],
+        hemispheric: [0.0; 3],
+        sun: None,
+        ..FrameLighting::default()
+    }
+}
+
+/// A one-sided tile scaled to 1 × 1 at `p`, with `extra` applied first (mirrors).
+fn small_tile(p: Vec3, extra: Mat4) -> Instance {
+    Instance::new(Mat4::from_translation(p) * Mat4::from_scale(Vec3::splat(0.25)) * extra)
+}
+
+/// render.md §2.3 (Mirrored transforms), through §5.5 "as the lit mesh pipeline": an instance
+/// with a negative determinant culls the other face.
+#[test]
+fn mirrored_instances_swap_culling() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let surface = WorldSurface {
+        unlit: true,
+        base_color: [1.0, 1.0, 1.0, 1.0],
+        ..WorldSurface::default()
+    };
+    let one_sided = r.upload_world_model(&tile(), &[surface])?;
+    let two_sided = r.upload_world_model(
+        &tile(),
+        &[WorldSurface {
+            two_sided: true,
+            ..surface
+        }],
+    )?;
+    let mirror_x = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let mirror_z = Mat4::from_scale(Vec3::new(1.0, 1.0, -1.0));
+    let (a, b, c) = (
+        Vec3::new(-2.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(2.0, 0.0, 0.0),
+    );
+    // One batch: upright, mirrored in x (still facing up: drawn), mirrored in z (the same
+    // points, now facing down: its front face is away from the camera, culled).
+    let batch = |model: &WorldModel| {
+        InstanceBatch::new(
+            model.clone(),
+            vec![
+                small_tile(a, Mat4::IDENTITY),
+                small_tile(b, mirror_x),
+                small_tile(c, mirror_z),
+            ],
+        )
+    };
+    let (img, stats) = draw_overhead(&mut r, vec![batch(&one_sided)], dark(), vec![])?;
+    assert_eq!(stats.instances, 3, "{stats:?}");
+    let white = [255, 255, 255, 255];
+    let black = [0, 0, 0, 255];
+    assert_eq!(at(&img, a), white, "upright");
+    assert_eq!(at(&img, b), white, "mirrored in x, facing the camera");
+    assert_eq!(at(&img, c), black, "mirrored in z, facing away");
+    // Two-sided: no culling, all three drawn.
+    let (img, _) = draw_overhead(&mut r, vec![batch(&two_sided)], dark(), vec![])?;
+    for p in [a, b, c] {
+        assert_eq!(at(&img, p), white, "two-sided at {p}");
+    }
+    Ok(())
+}
+
+/// lighting.md §8.5 (row L32): each instance gets its own light list, against its own world
+/// box, with the parent switches by its object handle (render.md §4.3, R-D9 retired).
+#[test]
+fn instances_get_their_own_lights() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let model = r.upload_world_model(
+        &tile(),
+        &[WorldSurface {
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            ..WorldSurface::default()
+        }],
+    )?;
+    let (left, right) = (Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0));
+    // A light 1 above the right tile, with a long range (it would light the left tile too)
+    // but a selection radius of 1.5: only the right tile's box is within it.
+    let light = tessera_render::Light::point(right + Vec3::Z, 100.0, 0.0, [0.5; 3]);
+    let lighting = FrameLighting {
+        lights: vec![light],
+        ..dark()
+    };
+    let reach = tessera_render::LightReach {
+        radius: Some(1.5),
+        ..tessera_render::LightReach::default()
+    };
+    let instances = vec![
+        small_tile(left, Mat4::IDENTITY),
+        small_tile(right, Mat4::IDENTITY),
+    ];
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(model.clone(), instances.clone())],
+        lighting.clone(),
+        vec![reach],
+    )?;
+    assert!(at(&img, right)[0] > 100, "right {:?}", at(&img, right));
+    assert_eq!(at(&img, left), [0, 0, 0, 255], "left");
+    // The parent switches act per instance: a light that reaches only its parent (object
+    // 7) lights the instance carrying that handle, and no other, even within reach.
+    let only_parent = tessera_render::LightReach {
+        radius: Some(100.0),
+        only_influence_parent: true,
+        ..tessera_render::LightReach::default()
+    }
+    .with_parent(7);
+    let tagged = vec![
+        Instance {
+            light_object: Some(7),
+            ..instances[0]
+        },
+        Instance {
+            light_object: Some(8),
+            ..instances[1]
+        },
+    ];
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(model.clone(), tagged)],
+        lighting.clone(),
+        vec![only_parent],
+    )?;
+    assert!(at(&img, left)[0] > 20, "parent {:?}", at(&img, left));
+    assert_eq!(at(&img, right), [0, 0, 0, 255], "not the parent");
+    // An explicit list applies to every instance.
+    let listed = InstanceBatch {
+        lights: tessera_render::LightSelection::List {
+            indices: [0; 8],
+            count: 1,
+        },
+        ..InstanceBatch::new(model, instances)
+    };
+    let (img, _) = draw_overhead(&mut r, vec![listed], lighting, vec![reach])?;
+    assert!(at(&img, left)[0] > 20, "listed left {:?}", at(&img, left));
+    assert!(
+        at(&img, right)[0] > 100,
+        "listed right {:?}",
+        at(&img, right)
+    );
+    Ok(())
+}
+
+/// lighting.md §5.2.4: the stored tangent is used as given (normalised, not made orthogonal
+/// to the normal).
+#[test]
+fn instanced_tangents_are_used_as_given() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // Tangent-space normal tilted toward +T.
+    let texel = [204u8, 128, 230];
+    let tilt = upload(
+        &mut r,
+        1,
+        1,
+        &[texel[0], texel[1], texel[2], 255],
+        Wrap::Repeat,
+    )?;
+    let mut mesh = tile();
+    let t = Vec3::new(1.0, 0.0, 1.0).normalize();
+    mesh.tangents = Some(vec![[t.x, t.y, t.z, 1.0]; 4]);
+    let model = r.upload_world_model(
+        &mesh,
+        &[WorldSurface {
+            normal_texture: Some(tilt),
+            ..WorldSurface::default()
+        }],
+    )?;
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::X,
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..dark()
+    };
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(
+            model,
+            vec![Instance::new(Mat4::IDENTITY)],
+        )],
+        lighting,
+        vec![],
+    )?;
+    let n = Vec3::from_array(texel.map(|b| f32::from(b) / 255.0 * 2.0 - 1.0)).normalize();
+    // N = n.x T − n.y B + n.z N0 with B = cross(N0, T) normalised; colour = 2 × 0.5 × N · L.
+    let b = Vec3::Z.cross(t).normalize();
+    let shading = (n.x * t - n.y * b + n.z * Vec3::Z).normalize();
+    let want = (shading.x.max(0.0) * 255.0).round();
+    let px = at(&img, Vec3::ZERO);
+    assert!(
+        (f32::from(px[0]) - want).abs() <= 2.0,
+        "{px:?} vs {want} (made orthogonal it would be {})",
+        (n.x * 255.0).round()
+    );
+    Ok(())
+}
+
+/// material.md §11.2–§11.3: a base alpha that is the gloss is not an opacity: no alpha test,
+/// output alpha M.alpha.
+#[test]
+fn gloss_in_the_base_alpha_is_not_opacity() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // White texels with alpha 0.3.
+    let glossy = upload(&mut r, 1, 1, &[255, 255, 255, 77], Wrap::Repeat)?;
+    let draw = |r: &mut Renderer<'static>, surface: WorldSurface, frill: bool| {
+        let model = r.upload_world_model(&tile(), &[surface])?;
+        let instances = vec![Instance::new(Mat4::IDENTITY)];
+        let batch = if frill {
+            InstanceBatch::frills(
+                model,
+                instances,
+                FrillParams {
+                    opaque: false,
+                    terrain_color_intensity: 0.0,
+                    ..FrillParams::default()
+                },
+            )
+        } else {
+            InstanceBatch::new(model, instances)
+        };
+        let (img, _) = draw_overhead(r, vec![batch], dark(), vec![])?;
+        Ok::<_, RenderError>(at(&img, Vec3::ZERO))
+    };
+    let surface = |alpha, gloss| WorldSurface {
+        unlit: true,
+        alpha,
+        gloss_from_base_alpha: gloss,
+        ..WorldSurface::textured(glossy)
+    };
+    let white = [255, 255, 255, 255];
+    let black = [0, 0, 0, 255];
+    let test = AlphaMode::TestBlend { cutoff: 0.5 };
+    // Opacity from the base alpha: 0.3 ≤ 0.5 is discarded; blended by 0.3.
+    assert_eq!(draw(&mut r, surface(test, false), false)?, black);
+    let px = draw(&mut r, surface(AlphaMode::Blend, false), false)?;
+    assert!(px[0].abs_diff(77) <= 2, "{px:?}");
+    // Gloss in the base alpha: no opacity source, kept and opaque.
+    assert_eq!(draw(&mut r, surface(test, true), false)?, white);
+    assert_eq!(draw(&mut r, surface(AlphaMode::Blend, true), false)?, white);
+    assert_eq!(
+        draw(
+            &mut r,
+            surface(AlphaMode::Mask { cutoff: 0.5 }, true),
+            false
+        )?,
+        white
+    );
+    // A non-opaque frill group draws a Mask surface blended (render.md §5.5): its opacity
+    // is still the base alpha unless that alpha is the gloss.
+    let mask = AlphaMode::Mask { cutoff: 0.1 };
+    let px = draw(&mut r, surface(mask, false), true)?;
+    assert!(px[0].abs_diff(77) <= 2, "{px:?}");
+    assert_eq!(draw(&mut r, surface(mask, true), true)?, white);
+    Ok(())
+}
+
+/// render.md §5.5 (`upload_world_model`): validated as for `upload_mesh`, under the
+/// renderer's own mesh limits.
+#[test]
+fn world_models_use_the_renderers_mesh_limits() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer_with(|c| {
+        c.clear_color = CLEAR;
+        c.meshes.limits.max_vertices = 3;
+    }) else {
+        return Ok(());
+    };
+    // Four vertices: over the configured limit for both paths.
+    assert!(matches!(
+        r.upload_mesh(&tile()),
+        Err(RenderError::LimitExceeded { .. })
+    ));
+    assert!(matches!(
+        r.upload_world_model(&tile(), &[]),
+        Err(RenderError::LimitExceeded { .. })
+    ));
+    // Three vertices: accepted by both.
+    let tri = MeshData::new(
+        vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        vec![0, 1, 2],
+    );
+    assert!(r.upload_mesh(&tri).is_ok());
+    assert!(r.upload_world_model(&tri, &[]).is_ok());
+    Ok(())
+}
+
+/// render.md §5.5 Culling (implementer note): a swaying frill is culled by its sphere grown
+/// by the largest sway, so its swaying tip does not pop at the screen edge.
+#[test]
+fn swaying_frills_are_culled_with_their_sway() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // A thin vertical card 1 high (sway height h = 1).
+    let mut card = MeshData::new(
+        vec![
+            [-0.05, 0.0, 0.0],
+            [0.05, 0.0, 0.0],
+            [0.05, 0.0, 1.0],
+            [-0.05, 0.0, 1.0],
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    );
+    card.normals = Some(vec![[0.0, -1.0, 0.0]; 4]);
+    let model = r.upload_world_model(
+        &card,
+        &[WorldSurface {
+            two_sided: true,
+            ..WorldSurface::default()
+        }],
+    )?;
+    let sphere = model.info().sphere;
+    let half_fov = 30f32.to_radians();
+    let cam = Camera {
+        eye: Vec3::new(0.0, 0.0, 0.5),
+        target: Vec3::new(0.0, 10.0, 0.5),
+        up: Vec3::Z,
+        projection: Perspective {
+            fov_y: 2.0 * half_fov,
+            near: 0.1,
+            far: 100.0,
+        },
+    };
+    // The static sphere 0.3 outside the right frustum plane (aspect 1) at depth 10.
+    let depth = 10.0;
+    let x = depth * half_fov.tan() + (sphere.radius + 0.3) / half_fov.cos() - sphere.center.x;
+    let at = Instance::new(Mat4::from_translation(Vec3::new(x, depth, 0.0)));
+    let frill = |intensity: f32| {
+        InstanceBatch::frills(
+            model.clone(),
+            vec![at],
+            FrillParams {
+                animation_intensity: intensity,
+                ..FrillParams::default()
+            },
+        )
+    };
+    let count = |r: &mut Renderer<'static>, b: InstanceBatch| {
+        let target = r.create_offscreen_target(32, 32, OffscreenFormat::Rgba8Unorm)?;
+        let mut frame = r.begin_offscreen_frame(&target)?;
+        frame
+            .world_pass("sway", &cam)
+            .frame_lighting(lighting())
+            .instanced(b);
+        let s = r.end_frame(frame)?;
+        Ok::<_, RenderError>((s.instances, s.instances_culled))
+    };
+    // Still: culled. Swaying with intensity 1 (reach 1.118 × h): kept.
+    assert_eq!(count(&mut r, frill(0.0))?, (0, 1));
+    assert_eq!(count(&mut r, frill(1.0))?, (1, 0));
+    // Scenery does not sway: culled as before.
+    assert_eq!(
+        count(&mut r, InstanceBatch::new(model.clone(), vec![at]))?,
+        (0, 1)
+    );
+    Ok(())
+}
+
+/// render.md §2.3, §4.1 through §5.5 "as the lit mesh pipeline": a mirrored frill instance
+/// flips the bitangent sign as scenery does, so a normal map tilted along **B** shades the
+/// same upright and mirrored in x (the texture is mirrored with the geometry).
+#[test]
+fn mirrored_frills_flip_the_bitangent() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    // Tangent-space normal tilted along +B (green above 0.5): N = −n.y B + n.z N0 tilts
+    // toward −B = −y for the upright tile (lighting.md §5.2.4).
+    let tilt = upload(&mut r, 1, 1, &[128, 204, 230, 255], Wrap::Repeat)?;
+    let model = r.upload_world_model(
+        &tile(),
+        &[WorldSurface {
+            normal_texture: Some(tilt),
+            two_sided: true,
+            ..WorldSurface::default()
+        }],
+    )?;
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::new(0.0, -1.0, 1.0).normalize(),
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..dark()
+    };
+    let mirror_x = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let (a, b) = (Vec3::new(-1.5, 0.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
+    let instances = vec![small_tile(a, Mat4::IDENTITY), small_tile(b, mirror_x)];
+    let params = FrillParams {
+        animation_intensity: 0.0,
+        terrain_color_intensity: 0.0,
+        ..FrillParams::default()
+    };
+    let frills = InstanceBatch::frills(model.clone(), instances.clone(), params);
+    let (img, stats) = draw_overhead(&mut r, vec![frills], lighting.clone(), vec![])?;
+    assert_eq!(stats.instances, 2, "{stats:?}");
+    let (up, mirrored) = (at(&img, a), at(&img, b));
+    // Flat it would be 2 × 0.5 × cos 45° = 0.707 (180); tilted toward the light it is
+    // brighter, tilted away darker.
+    assert!(up[0] > 200, "upright {up:?}");
+    assert!(
+        up[0].abs_diff(mirrored[0]) <= 2,
+        "upright {up:?}, mirrored {mirrored:?}"
+    );
+    // Scenery shades the same.
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(model, instances)],
+        lighting,
+        vec![],
+    )?;
+    assert!(
+        at(&img, a)[0].abs_diff(up[0]) <= 2,
+        "scenery {:?}",
+        at(&img, a)
+    );
+    assert!(
+        at(&img, b)[0].abs_diff(up[0]) <= 2,
+        "scenery {:?}",
+        at(&img, b)
+    );
+    Ok(())
+}
+
+/// material.md §8.3: the specular colour is multiplied by the same per-object tint as *M*.
+#[test]
+fn instance_tint_tints_the_highlight() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let model = r.upload_world_model(
+        &tile(),
+        &[WorldSurface {
+            specular: Some(tessera_render::Specular {
+                color: [1.0; 3],
+                shininess: 1.0,
+                texture: None,
+            }),
+            ..WorldSurface::default()
+        }],
+    )?;
+    // A sun straight above with a white highlight and no diffuse colour: the overhead
+    // camera sees sat(N · H)^1 = 1 at the centre.
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::Z,
+            color: [0.0; 3],
+            specular: [1.0; 3],
+        }),
+        ..dark()
+    };
+    let tinted = Instance {
+        tint: [0.5, 0.25, 1.0, 1.0],
+        ..Instance::new(Mat4::IDENTITY)
+    };
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(model, vec![tinted])],
+        lighting,
+        vec![],
+    )?;
+    let px = at(&img, Vec3::ZERO);
+    for (c, want) in px[..3].iter().zip([128u8, 64, 255]) {
+        assert!(c.abs_diff(want) <= 3, "{px:?}");
+    }
     Ok(())
 }

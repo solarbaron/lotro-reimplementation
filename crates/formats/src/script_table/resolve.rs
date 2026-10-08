@@ -90,6 +90,30 @@ pub struct AnimationFieldPids {
     pub synchronize_timing: Option<u32>,
 }
 
+/// PIDs of the MeshDeformer (kind 18) fields that driven properties can set (§6.9 property
+/// names, OBS2). Each is `None` when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MeshDeformerFieldPids {
+    /// `MeshDeformerScriptNode_AnimationAsset`.
+    pub asset: Option<u32>,
+    /// `MeshDeformerScriptNode_AnimationTime`.
+    pub time: Option<u32>,
+    /// `MeshDeformerScriptNode_UseBoneWeights`.
+    pub use_bone_weights: Option<u32>,
+}
+
+impl MeshDeformerFieldPids {
+    /// Looks the §6.9 field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        Self {
+            asset: names.pid_of("MeshDeformerScriptNode_AnimationAsset"),
+            time: names.pid_of("MeshDeformerScriptNode_AnimationTime"),
+            use_bone_weights: names.pid_of("MeshDeformerScriptNode_UseBoneWeights"),
+        }
+    }
+}
+
 /// The property IDs and enum keys clip selection needs, looked up by name in the data
 /// (§8.1, §8.4, §11.3).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -138,6 +162,8 @@ pub struct ScriptVocabulary {
     pub slider_values: Option<u32>,
     /// `BoneSlider_SliderDefinitionsFile`: the SliderMeshDeformer's definitions field.
     pub slider_definitions: Option<u32>,
+    /// MeshDeformer field PIDs (§6.9).
+    pub mesh_deformer: MeshDeformerFieldPids,
 }
 
 /// Looks `label` up in the enum mapper that `pid`'s definition names, following base
@@ -210,6 +236,7 @@ impl ScriptVocabulary {
             animation: AnimationFieldPids::from_names(dict),
             slider_values: opt("BoneSlider_ValueArray_String"),
             slider_definitions: opt("BoneSlider_SliderDefinitionsFile"),
+            mesh_deformer: MeshDeformerFieldPids::from_names(dict),
         })
     }
 }
@@ -757,38 +784,71 @@ pub struct TableClosure {
 }
 
 /// The held fraction of a held animation node (§6.7 step 1) for the value `v` of its
-/// `ManualTime`: with *n* the integer part of *v* (toward zero) and *g* = *v* − *n*:
+/// `ManualTime`. *n* is *v* truncated toward zero and converted to a signed 32-bit integer;
+/// a value that is not finite or whose integer part does not fit converts to a negative
+/// number (§6.7 step 1, T36). *g* = *v* − trunc(*v*) has the sign of *v*.
 ///
 /// - looping (`loop_forever`): *g*, plus 1 when *g* is negative (1.0 gives 0, 1.3 gives 0.3,
-///   −0.2 gives 0.8);
-/// - otherwise: 0 when *n* < 0, *g* when 0 ≤ *n* < `loop_count`, 1 when *n* ≥ `loop_count`,
-///   then limited to [0, 1].
+///   −0.2 gives 0.8). A *g* + 1 that rounds to 1 in single precision stays 1 (−10⁻⁹ gives
+///   1). An infinite value has fractional part 0, so it gives 0; NaN gives 0 (the Tessera
+///   Decision of §6.7 step 1).
+/// - otherwise: 0 when *n* < 0 (every value that is not finite or of magnitude 2³¹ or more
+///   included), *g* when 0 ≤ *n* < `loop_count`, 1 when *n* ≥ `loop_count`; then limited to
+///   [0, 1].
 ///
-/// The clip time is the fraction × the clip's duration (§6.7 step 2; Tessera Decision for
-/// the OPEN on `StartTime`/`EndTime` other than 0 and 1, which no held node of the install
-/// uses: the range is not cropped). A non-finite value gives 0.
+/// The clip time is this fraction times the played length ([`held_clip_time`], §6.7
+/// step 2).
 #[must_use]
 pub fn held_fraction(v: f32, loop_forever: bool, loop_count: i32) -> f32 {
-    if !v.is_finite() {
+    if loop_forever {
+        if !v.is_finite() {
+            return 0.0;
+        }
+        let g = v - v.trunc();
+        return if g < 0.0 { g + 1.0 } else { g };
+    }
+    // The truncating 32-bit conversion: out of range (and NaN) gives a negative number.
+    const LIMIT: f32 = 2_147_483_648.0; // 2³¹
+    let t = v.trunc();
+    if !(t.is_finite() && t > -LIMIT && t < LIMIT) {
         return 0.0;
     }
-    let n = v.trunc();
-    let g = v - n;
-    let f = if loop_forever {
-        if g < 0.0 { g + 1.0 } else { g }
-    } else if n < 0.0 {
+    #[allow(clippy::cast_possible_truncation)]
+    let n = t as i32;
+    let f = if n < 0 {
         0.0
-    } else if n < loop_count as f32 {
-        g
+    } else if n < loop_count {
+        v - t
     } else {
         1.0
     };
-    // g + 1 can round to exactly 1 for a tiny negative g; a looping fraction stays below 1.
-    if loop_forever && f >= 1.0 {
-        0.0
+    f.clamp(0.0, 1.0)
+}
+
+/// The end crop of a held clip's played length (§6.7 step 2, `havok-data.md` §2.3): 1/30 s
+/// (the single-precision value 0.033333335) when the node has `LoopForever` 0 and `LoopCount`
+/// exactly 1, otherwise 0.
+#[must_use]
+pub fn held_end_crop(loop_forever: bool, loop_count: i32) -> f32 {
+    if !loop_forever && loop_count == 1 {
+        1.0 / 30.0
     } else {
-        f.clamp(0.0, 1.0)
+        0.0
     }
+}
+
+/// The clip time of a held clip (§6.7 step 2): `fraction` ([`held_fraction`]) × the played
+/// length, limited to [0, played length], where the played length is `duration` −
+/// `end_crop` ([`held_end_crop`]). `StartTime` and `EndTime` do not enter. Tessera guards
+/// for hostile input: a played length that is not finite or not positive (a clip shorter
+/// than the crop) gives 0, and so does a `fraction` that is NaN.
+#[must_use]
+pub fn held_clip_time(fraction: f32, duration: f32, end_crop: f32) -> f32 {
+    let length = duration - end_crop;
+    if !(length.is_finite() && length > 0.0) || fraction.is_nan() {
+        return 0.0;
+    }
+    (fraction * length).clamp(0.0, length)
 }
 
 /// A bind-space deformer an entity registers (§6.9, `appearance.md` §6.4), after the
@@ -849,9 +909,11 @@ pub struct ClipCandidate {
     pub speed_source: Option<u32>,
     /// Ground displacement over one cycle (metres; x right, y forward, z up; §6.3).
     pub displacement: [f32; 3],
-    /// Start of the played range, a fraction of the clip.
+    /// `StartTime`: the start fraction of a played clip (§6.10 step 1); a held clip does
+    /// not use it (§6.7 step 2).
     pub start_time: f32,
-    /// End of the played range, a fraction.
+    /// `EndTime`: schedules the end of a played one-shot clip (§6.10 step 4); a held clip
+    /// does not use it (§6.7 step 2).
     pub end_time: f32,
     /// Start at a random phase.
     pub randomize_start_time: bool,
@@ -916,6 +978,12 @@ impl ClipCandidate {
         held_fraction(value, self.loop_forever, self.loop_count)
     }
 
+    /// The end crop of the held clip's played length ([`held_end_crop`], §6.7 step 2).
+    #[must_use]
+    pub fn held_end_crop(&self) -> f32 {
+        held_end_crop(self.loop_forever, self.loop_count)
+    }
+
     /// Natural ground speed in m/s for a clip of `duration` seconds: |displacement| /
     /// duration (§6.3). `None` for a non-positive or non-finite duration, and for a zero or
     /// non-finite displacement: a clip without displacement has no natural speed, so the
@@ -976,19 +1044,13 @@ impl ClipResolution {
         best
     }
 
-    /// The held candidates (`ManualUpdate` = 1, §6.7): the most likely one per layer, in
-    /// layer order. These are part of the figure's look in every motion state (§6.8).
+    /// The held candidates (`ManualUpdate` = 1, §6.7), **all** of them, in layer order and
+    /// evaluation order within a layer: starting a clip never stops another clip of the
+    /// same layer, so several held clips on one layer all play and share the layer's
+    /// budget (§6.2). These are part of the figure's look in every motion state (§6.8).
     #[must_use]
     pub fn held(&self) -> Vec<&ClipCandidate> {
-        let mut out: Vec<&ClipCandidate> = Vec::new();
-        for c in self.candidates.iter().filter(|c| c.is_held()) {
-            let w = c.blend_weight * c.chance;
-            match out.iter_mut().find(|p| p.layer == c.layer) {
-                Some(p) if w > p.blend_weight * p.chance => *p = c,
-                Some(_) => {}
-                None => out.push(c),
-            }
-        }
+        let mut out: Vec<&ClipCandidate> = self.candidates.iter().filter(|c| c.is_held()).collect();
         out.sort_by_key(|c| c.layer);
         out
     }
@@ -1985,10 +2047,14 @@ where
         }
     }
 
-    /// Registers a MeshDeformer (§6.9) with its driven fields. The field names are given
-    /// in the spec only by their endings (`…_AnimationAsset`, `…_AnimationTime`,
-    /// `…_UseBoneWeights`), so a driven field is recognised by its dictionary type, which
-    /// differs for the three fields (DID, float, bool; §5.1 layout).
+    /// Registers a MeshDeformer (§6.9) with its driven fields. A driven pair is bound by its
+    /// field PID (§4.2): the PIDs of `MeshDeformerScriptNode_AnimationAsset`,
+    /// `…_AnimationTime` and `…_UseBoneWeights` ([`MeshDeformerFieldPids`]); pairs on other
+    /// fields (an `IntensityMultiplier`, say) do not touch these three.
+    ///
+    /// A node whose clip is the null DID registers nothing. The client registers it and it
+    /// then contributes nothing to the deformation pose (§6.9 edge cases, BIN5); the §6.9
+    /// answer accepts leaving it out as equivalent.
     fn mesh_deformer(&mut self, n: &Node, clip: Did, time: f32, use_bone_weights: bool) {
         if self.deformers.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -1997,29 +2063,24 @@ where
         if !self.charge(n.base.driven.len()) {
             return;
         }
-        use crate::property::PropertyType as T;
+        let pids = self.r.vocab.mesh_deformer;
         let (mut clip, mut time, mut use_bone_weights) = (clip, time, use_bone_weights);
         let mut time_source = None;
         for &(field, source) in &n.base.driven {
-            match self.r.schema.property_type(field) {
-                Some(T::Float) => {
-                    time_source = Some(source);
-                    #[allow(clippy::cast_possible_truncation)]
-                    if let Some(v) = self.state.number(source) {
-                        time = v as f32;
-                    }
+            if Some(field) == pids.time {
+                time_source = Some(source);
+                #[allow(clippy::cast_possible_truncation)]
+                if let Some(v) = self.state.number(source) {
+                    time = v as f32;
                 }
-                Some(T::DidRef) => {
-                    if let Some(d) = self.state.get(source).and_then(PropertyValue::as_did) {
-                        clip = d;
-                    }
+            } else if Some(field) == pids.asset {
+                if let Some(d) = self.state.get(source).and_then(PropertyValue::as_did) {
+                    clip = d;
                 }
-                Some(T::Bool) => {
-                    if let Some(v) = self.state.number(source) {
-                        use_bone_weights = v != 0.0;
-                    }
-                }
-                _ => {}
+            } else if Some(field) == pids.use_bone_weights
+                && let Some(v) = self.state.number(source)
+            {
+                use_bone_weights = v != 0.0;
             }
         }
         if !clip.is_null() {

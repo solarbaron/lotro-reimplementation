@@ -20,13 +20,13 @@ use std::sync::{Mutex, OnceLock};
 use tessera_dat::{ArchiveKind, ArchiveSet, Entry, SetOptions};
 use tessera_formats::avatar::{RacePids, RaceTable};
 use tessera_formats::script_table::resolve::{
-    ClipResolution, ClipResolver, MotionState, ResolveIssue, ScriptVocabulary,
+    ClipResolution, ClipResolver, DeformerCandidate, MotionState, ResolveIssue, ScriptVocabulary,
     collect_entity_scripts,
 };
 use tessera_formats::script_table::{NodeCensus, NodeKind};
 use tessera_formats::{
-    DataIdMap, Did, EnumMapper, FormatError, LandblockInfo, PropertyDictionary, Record,
-    ScriptTable, Scriptlet,
+    DataIdMap, Did, EnumMapper, FormatError, LandblockInfo, PropertyDictionary, PropertyNames,
+    Record, ScriptTable, Scriptlet,
 };
 
 const PROPERTY_DICTIONARY: u32 = 0x3400_0000;
@@ -411,6 +411,20 @@ fn avatars_resolve_idle_walk_and_run() {
                 missing.len()
             );
             if state == MotionState::Idle {
+                // §6.9: the species table's body-shape MeshDeformer has its time driven by
+                // AC_BoneScale_Test; the pair is found by the field name
+                // MeshDeformerScriptNode_AnimationTime (§4.2).
+                let bone_scale = dict.pid_of("AC_BoneScale_Test");
+                let driven = r.deformers.iter().any(|d| {
+                    matches!(d, DeformerCandidate::Mesh { time_source, .. }
+                        if time_source.is_some() && *time_source == bone_scale)
+                });
+                if !driven {
+                    failures.push(format!(
+                        "{}: no body-shape deformer driven by AC_BoneScale_Test",
+                        entry.player_avatar
+                    ));
+                }
                 // The idle emote: layer 15 on hobbits and dwarves, 18 (face emote) on the
                 // human-sized bodies.
                 let emote = r

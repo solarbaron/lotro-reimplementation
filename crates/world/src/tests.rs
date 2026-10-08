@@ -167,21 +167,29 @@ fn bundle_tolerates_missing_and_broken_records() {
     let b = bundle_of(&ctx, k).unwrap();
     assert!(b.block_map.is_none() && b.minimap.is_none() && b.area.is_none());
     assert_eq!(b.entities.len(), 5);
+    // Block maps are dense (`landblock.md` §2.3 LB-E1): an absent one is a problem (§8.1);
+    // an absent properties record is not (LB-E2).
+    assert_eq!(b.problems.len(), 1, "{:?}", b.problems);
+    let p = &b.problems[0];
+    assert_eq!((p.did, p.what), (k.block_map_did(), "block map"));
+    assert!(p.category.is_none() && !p.unreadable && !p.transient);
+    assert!(b.is_complete());
 
     // A corrupt info record is a problem, not a failure.
     s.insert(k.info_did(), vec![1, 2, 3], Some(39));
     let ctx = context(s.clone());
     let b = bundle_of(&ctx, k).unwrap();
     assert!(b.info.is_none() && b.entities.is_empty());
-    assert_eq!(b.problems.len(), 1);
-    assert_eq!(b.problems[0].category, Some(FailureCategory::Truncated));
+    assert_eq!(b.problems.len(), 2);
+    assert_eq!(b.problems[1].category, Some(FailureCategory::Truncated));
 
     // Info named but absent.
     s.remove(k.info_did());
     let ctx = context(s.clone());
     let b = bundle_of(&ctx, k).unwrap();
-    assert_eq!(b.problems.len(), 1);
-    assert!(b.problems[0].category.is_none());
+    assert_eq!(b.problems.len(), 2);
+    assert!(b.problems[1].category.is_none());
+    assert_eq!(b.problems[1].did, k.info_did());
 
     // Corrupt data fails the bundle.
     s.insert(k.data_did(), vec![0; 10], Some(39));
@@ -256,9 +264,15 @@ fn content_layer_filter() {
     let ctx = context(s.clone());
     let b = bundle_of(&ctx, k).unwrap();
     let draw: Vec<bool> = b.entities.iter().map(|e| e.draw).collect();
-    assert_eq!(draw, vec![true, false, true, true, true]);
+    assert_eq!(draw, vec![true, false, true, true, true, true]);
+    // The entity without a frame stands at the landblock origin with the identity
+    // rotation (`entity-descriptor.md` §4.4), drawn like the others; it is counted.
     assert_eq!(b.unplaced_entities, 1);
-    assert_eq!(b.entities[4].content_layers.as_deref(), Some(&[2u32][..]));
+    let origin = &b.entities[4];
+    assert_eq!(origin.index, 4);
+    assert_eq!(origin.placement.position, [0.0; 3]);
+    assert_eq!(origin.placement.rotation.to_wxyz(), [1.0, 0.0, 0.0, 0.0]);
+    assert_eq!(b.entities[5].content_layers.as_deref(), Some(&[2u32][..]));
 
     let opts = BundleOptions {
         active_content_layers: vec![2],
@@ -1728,12 +1742,41 @@ fn scenery_does_not_depend_on_build_water() {
             a.scenery.as_ref().unwrap().water.map(|p| p.d),
             b.scenery.as_ref().unwrap().water.map(|p| p.d)
         );
-        // Without `build_water` there is no landblock water and no water in the set.
-        assert!(b.water.is_none());
-        assert!(b.collision.as_ref().unwrap().set.water_plane().is_none());
+        // A collision set carries the water whenever it is built (ARCHITECTURE §10.3), so
+        // with collision the water is built without `build_water` too, the same as with it.
+        assert_eq!(
+            a.water.as_ref().map(|w| w.water().map(|l| l.height)),
+            b.water.as_ref().map(|w| w.water().map(|l| l.height)),
+            "{k}"
+        );
+        assert_eq!(
+            a.collision
+                .as_ref()
+                .unwrap()
+                .set
+                .water_plane()
+                .map(|p| p.level),
+            b.collision
+                .as_ref()
+                .unwrap()
+                .set
+                .water_plane()
+                .map(|p| p.level),
+            "{k}"
+        );
     }
     let wet = bundle_of(&off, key(10, 20)).unwrap();
     assert_eq!(objects_of(&wet), vec![obj::SCENERY, obj::ON_WATER]);
+    assert!(wet.collision.as_ref().unwrap().set.water_plane().is_some());
+    // Without `build_water` and without collision there is no landblock water.
+    let neither = scenery_context(BundleOptions {
+        build_water: false,
+        build_collision: false,
+        ..BundleOptions::default()
+    });
+    let dry = bundle_of(&neither, key(10, 20)).unwrap();
+    assert!(dry.water.is_none() && dry.collision.is_none());
+    assert_eq!(objects_of(&dry), vec![obj::SCENERY, obj::ON_WATER]);
     // Neither option: no water tables.
     let none = scenery_context(BundleOptions {
         build_water: false,
@@ -1744,7 +1787,11 @@ fn scenery_does_not_depend_on_build_water() {
 }
 
 #[test]
-fn unreadable_generation_inputs_make_scenery_incomplete() {
+fn unreadable_optional_records_are_problems_not_incomplete_parts() {
+    // An info or block-map record the frame reports as unreadable is the data's condition
+    // (`landblock.md` §8.1: reported as a problem, the bundle delivered): every part is
+    // complete, scenery and collision alike, so the streamer does not rebuild the bundle
+    // on every load.
     let k = key(10, 20);
     for bad in [k.info_did(), k.block_map_did()] {
         let src = FailingSource {
@@ -1753,15 +1800,15 @@ fn unreadable_generation_inputs_make_scenery_incomplete() {
         };
         let ctx = WorldContext::load(Arc::new(src), BundleOptions::default()).unwrap();
         let b = bundle_of(&ctx, k).unwrap();
-        let sc = b.scenery.as_ref().expect("scenery");
-        assert!(!sc.complete, "{bad}");
-        assert!(!b.is_complete());
+        assert!(b.scenery.as_ref().expect("scenery").complete, "{bad}");
+        assert!(b.collision.as_ref().expect("collision").complete, "{bad}");
+        assert!(b.is_complete(), "{bad}");
+        assert_eq!(b.problems.len(), 1, "{:?}", b.problems);
+        let p = &b.problems[0];
+        assert_eq!(p.did, bad);
         assert!(
-            b.problems
-                .iter()
-                .any(|p| p.what == "scenery" && p.unreadable),
-            "{:?}",
-            b.problems
+            p.unreadable && !p.transient && p.category.is_none(),
+            "{p:?}"
         );
     }
     let ctx = scenery_context(BundleOptions::default());
@@ -1815,7 +1862,10 @@ fn entity_refs_are_stable_across_clones() {
 }
 
 #[test]
-fn bundles_whose_reads_fail_transiently_are_retried() {
+fn world_inputs_that_fail_transiently_do_not_fail_the_job() {
+    // Object records (0x47) refused by a full queue while the world systems read them:
+    // only the landblock data fails a job (`landblock.md` §8.1), so the bundle is
+    // delivered, marked incomplete with transient problems, and rebuilt on the next load.
     use crate::collision::tests::FlakySource;
     use std::sync::atomic::AtomicBool;
     let src = Arc::new(FlakySource {
@@ -1825,29 +1875,86 @@ fn bundles_whose_reads_fail_transiently_are_retried() {
     });
     let ctx = Arc::new(WorldContext::load(src.clone(), BundleOptions::default()).unwrap());
     src.flaky.store(true, Ordering::SeqCst);
+    let b = bundle_of(&ctx, key(10, 20)).expect("delivered despite the failed reads");
+    assert!(!b.is_complete());
+    assert!(
+        b.problems.iter().any(|p| p.transient && p.unreadable),
+        "{:?}",
+        b.problems
+    );
+    assert!(
+        b.problems
+            .iter()
+            .filter(|p| p.transient)
+            .all(|p| p.category.is_none())
+    );
+    assert!(
+        b.problems
+            .iter()
+            .any(|p| p.to_string().contains("[transient]"))
+    );
+
     let pool = pool();
-    let mut w = WorldStreamer::new(ctx, &pool, small_rings()).unwrap();
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, small_rings()).unwrap();
     let here = centre(10, 20);
-    for _ in 0..300 {
-        w.update(here);
-        // Landblocks of the world are never failed for a full queue (those outside it
-        // are: their records do not exist).
-        for k in [key(10, 20), key(11, 20), key(10, 21), key(11, 21)] {
+    assert!(w.settle(here, Duration::from_secs(30)));
+    // Only the landblocks outside the synthetic world fail (no data record).
+    for x in 10..=13u8 {
+        for y in 20..=21u8 {
             assert!(
-                !matches!(w.state_of(k), Some(BlockState::Failed(_))),
-                "{k}: a full queue is not the data's failure"
+                !matches!(w.state_of(key(x, y)), Some(BlockState::Failed(_))),
+                "({x}, {y})"
             );
         }
-        std::thread::sleep(Duration::from_millis(1));
     }
-    assert!(w.stats().retried > 0);
-    assert!(w.bundle(key(10, 20)).is_none());
-    // Readable again: the landblock loads, complete.
+    let b = w.bundle(key(10, 20)).expect("resident, incomplete");
+    assert!(!b.is_complete());
+    // Readable again: leave and come back, and the landblock is built again, complete.
     src.flaky.store(false, Ordering::SeqCst);
+    assert!(w.settle(centre(10, 120), Duration::from_secs(30)));
+    assert!(w.bundle(key(10, 20)).is_none());
     assert!(w.settle(here, Duration::from_secs(30)));
-    let b = w.bundle(key(10, 20)).expect("resident after the retries");
+    let b = w.bundle(key(10, 20)).expect("resident again");
     assert!(b.is_complete());
     assert_eq!(objects_of(b), vec![obj::SCENERY, obj::ON_WATER]);
+}
+
+#[test]
+fn requests_refused_by_a_full_queue_are_retried() {
+    // A pool that queues one job: most requests are refused (a full queue is the
+    // pipeline's state, not the data's) and retried until every landblock is in.
+    let ctx = context(SyntheticWorld::rectangle(1, 0..=12, 0..=12).build());
+    let pool = WorkerPool::new(PoolConfig {
+        workers: 2,
+        max_queued: 6,
+        ..PoolConfig::default()
+    });
+    let mut w = WorldStreamer::new(ctx, &pool, small_rings()).unwrap();
+    let here = centre(6, 6);
+    // Whenever an update changes nothing and nothing waits, the near ring is complete:
+    // no admitted landblock is left without a request (`walker.md` §7).
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let r = w.update_with_velocity(here, [0.0; 2]);
+        let quiet = r.loading == 0
+            && r.pending == 0
+            && r.waiting_retry == 0
+            && r.requested == 0
+            && r.integrated == 0
+            && r.evicted == 0;
+        if quiet {
+            assert_eq!((r.near_missing, r.deferred), (0, 0), "{r:?}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "never settled: {r:?}");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(w.settle(here, Duration::from_secs(60)));
+    assert!(w.stats().retried > 0, "{:?}", w.stats());
+    assert_eq!(w.stats().failed, 0, "{:?}", w.stats());
+    let r = w.update_with_velocity(here, [0.0; 2]);
+    assert_eq!((r.pending, r.deferred, r.near_missing), (0, 0, 0), "{r:?}");
+    assert_eq!(r.resident_blocks, w.rings().members().len());
 }
 
 #[test]
@@ -2001,6 +2108,61 @@ fn lights_near_filters_by_radius_and_orders_across_landblocks() {
 }
 
 #[test]
+fn lights_near_finds_lights_placed_far_from_their_owner() {
+    // Interior lights sit in cells that may lie landblocks away from their owner
+    // (`walker.md` §13.3 row W-C1): (20, 20) places a light 900 units west of its square,
+    // in (14, 20), six landblocks away. `lights_near` finds it from there.
+    let mut s = SyntheticWorld::rectangle(1, 10..=22, 18..=22).build();
+    let owner = key(20, 20);
+    let light = testkit::TestEntity {
+        kind: 9,
+        object: None,
+        interior: true,
+        ..testkit::TestEntity::physics(1, 0, [-900.0, 80.0, 10.0], Vec::new())
+    };
+    s.insert(
+        owner.info_did(),
+        testkit::landblock_info(owner, &[light]),
+        Some(39),
+    );
+    let ctx = context(s);
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        ctx,
+        &pool,
+        StreamConfig {
+            rings: RingConfig {
+                near: 160.0,
+                mid: 960.0,
+                far: 1_120.0,
+                hysteresis: 80.0,
+            },
+            ..StreamConfig::default()
+        },
+    )
+    .unwrap();
+    let here = LocalPos::new(key(14, 20), [80.0, 80.0, 10.0]).to_world();
+    assert!(w.settle(here, Duration::from_secs(20)));
+    assert!(
+        w.bundle(owner).is_some(),
+        "the owner is resident (mid ring)"
+    );
+    let got = w.lights_near(&here, 100.0);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!((got[0].key, got[0].light.index), (owner, 0));
+    assert!((got[0].position.x - (20.0 * 160.0 - 900.0)).abs() < 1e-9);
+    // Out of reach of the radius, and in another region, nothing.
+    assert!(w.lights_near(&here, 19.0).is_empty(), "20 units away");
+    assert!(
+        w.lights_near(&WorldPos::new(2, here.x, here.y, here.z), 100.0)
+            .is_empty()
+    );
+    // Releasing the owner forgets its lights.
+    w.clear();
+    assert!(w.lights_near(&here, 100.0).is_empty());
+}
+
+#[test]
 fn evicting_or_releasing_a_wet_landblock_removes_its_water() {
     let world = SyntheticWorld {
         scenery: true,
@@ -2051,4 +2213,149 @@ fn evicting_or_releasing_a_wet_landblock_removes_its_water() {
     assert!(w.stats().evicted > 0, "{:?}", w.stats());
     consistent(&w);
     assert!(w.water_map().len() <= 3);
+}
+
+#[test]
+fn residency_charge_is_the_terms_of_the_spec() {
+    // `landblock.md` §8.1, "Residency charge": the data's grids and surface lists plus four
+    // times the stored bytes of the other records. Placed entities, figures, their instance
+    // sets and block-map pairs are decoded from those records and not charged again.
+    let k = key(3, 4);
+    let mut world = SyntheticWorld::rectangle(1, 3..=3, 4..=4);
+    world.figures = true;
+    let src = world.build();
+    let ctx = Arc::new(
+        WorldContext::load(
+            Arc::new(src.clone()),
+            BundleOptions::default().without_world_systems(),
+        )
+        .expect("synthetic context"),
+    );
+    let b = bundle_of(&ctx, k).unwrap();
+    assert!(!b.entities.is_empty() && !b.figures.is_empty());
+    assert!(b.figures.iter().any(|f| f.instance.is_some()));
+    assert!(!b.block_props.values.is_empty());
+    let stored = |d: Did| {
+        src.read_stamped(d)
+            .unwrap()
+            .map_or(0, |(bytes, _)| bytes.len())
+    };
+    let others = stored(k.info_did()) + stored(k.block_map_did()) + stored(k.properties_did());
+    assert!(others > 0);
+    let data_only = LandblockBundle::from_data(k, b.data.clone()).heap_bytes;
+    assert_eq!(b.heap_bytes, data_only + 4 * others);
+    // The world parts come on top (`world_systems_are_charged_to_residency`).
+    let on = context(src);
+    assert!(bundle_of(&on, k).unwrap().heap_bytes > b.heap_bytes);
+}
+
+/// A source whose reads of one record prefix fail as the archive's (data) errors.
+struct PrefixDataErrorSource {
+    inner: MemoryWorldSource,
+    prefix: u8,
+}
+
+impl WorldSource for PrefixDataErrorSource {
+    fn read_stamped(&self, did: Did) -> std::result::Result<Option<StampedRecord>, AssetError> {
+        if did.prefix() == self.prefix {
+            return Err(AssetError::source_error(
+                did.0,
+                std::io::Error::other("bad sector"),
+            ));
+        }
+        self.inner.read_stamped(did)
+    }
+}
+
+#[test]
+fn data_failures_of_world_inputs_leave_the_parts_complete() {
+    // Object records (0x47) the archive cannot read: a data failure, absorbed where the
+    // input is read (`landblock.md` §8.1, OPEN on data errors in world-system inputs). The
+    // parts are built without them, complete, and the bundle is cached like any other.
+    let src = PrefixDataErrorSource {
+        inner: scenery_world().build(),
+        prefix: 0x47,
+    };
+    let ctx = WorldContext::load(Arc::new(src), BundleOptions::default()).unwrap();
+    let b = bundle_of(&ctx, key(10, 20)).expect("delivered");
+    assert!(b.is_complete(), "{:?}", b.problems);
+    assert!(b.problems.iter().all(|p| !p.transient), "{:?}", b.problems);
+    assert!(b.scenery.as_ref().expect("scenery built").complete);
+    let water = b.water.as_ref().expect("water built");
+    assert!(water.water().is_some(), "the plane needs no object record");
+    let col = b.collision.as_ref().expect("collision built");
+    assert!(col.complete);
+    assert!(col.set.water_plane().is_some(), "the set is not dry");
+}
+
+#[test]
+fn water_lookups_answer_from_the_collision_water_without_build_water() {
+    // `build_water` off, scenery and collision on: the set carries the water
+    // (ARCHITECTURE §10.3), so the bundle and the streamer's lookups have it too, the same
+    // plane the controller reads (`landblock.md` §8.1, water OPENs).
+    let h = f64::from(f32::from(LEVEL) * 1000.0 / 255.0);
+    let pool = pool();
+    let here = centre(10, 20);
+    let under = WorldPos::new(1, here.x, here.y, h - 1.0);
+    let ctx = scenery_context(BundleOptions {
+        build_water: false,
+        ..BundleOptions::default()
+    });
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, small_rings()).unwrap();
+    assert!(w.settle(here, Duration::from_secs(30)));
+    assert!(w.is_under_water(&under));
+    assert!(w.landblock_water(&under).is_some());
+    let b = w.bundle(key(10, 20)).expect("resident");
+    let plane = b.collision.as_ref().unwrap().set.water_plane().unwrap();
+    assert!((f64::from(plane.level) - h).abs() < 1e-3);
+    // With scenery off as well, the tables do not load: nothing has water.
+    let ctx = scenery_context(BundleOptions {
+        build_water: false,
+        generate_scenery: false,
+        ..BundleOptions::default()
+    });
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, small_rings()).unwrap();
+    assert!(w.settle(here, Duration::from_secs(30)));
+    assert!(!w.is_under_water(&under));
+    assert!(w.landblock_water(&under).is_none());
+    let b = w.bundle(key(10, 20)).expect("resident");
+    assert!(b.water.is_none());
+    assert!(b.collision.as_ref().unwrap().set.water_plane().is_none());
+}
+
+#[test]
+fn integration_overshoots_the_budget_until_the_next_update() {
+    // Integration does not check the budget (`landblock.md` §8.1, OPEN on the transient
+    // overshoot): bundles admitted on a too-small estimate all become resident, and the
+    // next update's admission, with real sizes, evicts back within the budget.
+    let ctx = context(SyntheticWorld::rectangle(1, 0..=20, 0..=20).build());
+    let h = bundle_of(&ctx, key(10, 10)).unwrap().heap_bytes;
+    let budget = 3 * h;
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            residency_budget: budget,
+            always_admit_near: false,
+            initial_size_estimate: 1,
+            max_integrations_per_frame: 10_000,
+            frame_budget: Duration::from_secs(60),
+            lookahead: Duration::ZERO,
+            ..small_rings()
+        },
+    )
+    .unwrap();
+    let c = centre(10, 10);
+    let r = w.update_with_velocity(c, [0.0, 0.0]);
+    assert!(r.requested > 3, "{r:?}");
+    // Let the jobs finish before the next update integrates them.
+    // (Synthetic bundles build in well under a millisecond.)
+    std::thread::sleep(Duration::from_millis(500));
+    let r = w.update_with_velocity(c, [0.0, 0.0]);
+    assert!(r.integrated > 3, "{r:?}");
+    assert!(r.resident_bytes > budget, "{r:?}");
+    let r = w.update_with_velocity(c, [0.0, 0.0]);
+    assert!(r.evicted > 0, "{r:?}");
+    assert!(r.resident_bytes <= budget, "{r:?}");
 }

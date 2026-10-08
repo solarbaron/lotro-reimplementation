@@ -1944,12 +1944,13 @@ const PID_BONE_SCALE: u32 = 0x1000_0303;
 const PID_DEFORM_TIME: u32 = 0x1000_0304;
 const PID_SLIDER_VALUES: u32 = 0x1000_0305;
 const PID_SLIDER_ARRAY: u32 = 0x1000_0306;
+const PID_INTENSITY: u32 = 0x1000_0307;
+const PID_OTHER_FLOAT: u32 = 0x1000_0308;
 
 fn shape_schema(pid: u32) -> Option<PropertyType> {
     match pid {
-        PID_MANUAL_TIME | PID_HEIGHT | PID_BONE_SCALE | PID_DEFORM_TIME => {
-            Some(PropertyType::Float)
-        }
+        PID_MANUAL_TIME | PID_HEIGHT | PID_BONE_SCALE | PID_DEFORM_TIME | PID_INTENSITY
+        | PID_OTHER_FLOAT => Some(PropertyType::Float),
         PID_MANUAL_UPDATE => Some(PropertyType::Bool),
         PID_SLIDER_VALUES | PID_SLIDER_ARRAY => Some(PropertyType::String),
         p => schema(p),
@@ -2025,6 +2026,7 @@ fn shape_vocab() -> ScriptVocabulary {
     v.animation.manual_update = Some(PID_MANUAL_UPDATE);
     v.animation.manual_time = Some(PID_MANUAL_TIME);
     v.slider_values = Some(PID_SLIDER_VALUES);
+    v.mesh_deformer.time = Some(PID_DEFORM_TIME);
     v
 }
 
@@ -2099,19 +2101,130 @@ fn held_clips_and_deformers_take_driven_values() {
     ));
 }
 
-/// `script-table.md` §6.7 worked example: clip time = fraction × 2.0 s.
+/// `script-table.md` §4.2, §6.9: a MeshDeformer's driven pair is bound by its field PID
+/// (`MeshDeformerScriptNode_AnimationTime`), not by the field's type: a pair on another float
+/// field (an `IntensityMultiplier`) does not set the time.
+#[test]
+fn mesh_deformer_pairs_are_bound_by_field_pid() {
+    use tessera_formats::script_table::resolve::DeformerCandidate;
+    let deformer = |driven: &[(u32, u32)]| {
+        node(
+            18,
+            B::new().u32(0x0500_0E43).f32(0.25).u8(1),
+            base_full(20, 1.0, driven),
+            &[],
+        )
+    };
+    let world = |n: Vec<u8>| {
+        let mut m = HashMap::new();
+        m.insert(Did(CLASS), table(2, &[], &[(STARTUP, vec![n])]));
+        m
+    };
+    let mut e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    e.properties.set(PID_BONE_SCALE, PropertyValue::Float(0.85));
+    e.properties.set(PID_OTHER_FLOAT, PropertyValue::Float(0.6));
+    let time_of = |m: &HashMap<Did, Vec<u8>>| {
+        let mut r = ClipResolver::new(&shape_schema, shape_vocab(), fetch(m));
+        match r.resolve(&e, MotionState::Idle).unwrap().deformers.first() {
+            Some(DeformerCandidate::Mesh {
+                time, time_source, ..
+            }) => (*time, *time_source),
+            d => panic!("{d:?}"),
+        }
+    };
+    // A pair on the intensity field (a float) leaves the stored time.
+    let m = world(deformer(&[(PID_INTENSITY, PID_OTHER_FLOAT)]));
+    assert_eq!(time_of(&m), (0.25, None));
+    // Both pairs: only the AnimationTime pair sets it, whatever the order.
+    let m = world(deformer(&[
+        (PID_DEFORM_TIME, PID_BONE_SCALE),
+        (PID_INTENSITY, PID_OTHER_FLOAT),
+    ]));
+    assert_eq!(time_of(&m), (0.85, Some(PID_BONE_SCALE)));
+    // Without the field name in the dictionary nothing is driven.
+    let mut v = shape_vocab();
+    v.mesh_deformer.time = None;
+    let mut r = ClipResolver::new(&shape_schema, v, fetch(&m));
+    assert!(matches!(
+        r.resolve(&e, MotionState::Idle).unwrap().deformers.first(),
+        Some(DeformerCandidate::Mesh { time, time_source: None, .. }) if *time == 0.25
+    ));
+}
+
+/// `script-table.md` §6.2: starting a clip never stops another clip of the same layer, so
+/// two held nodes on one layer are both held clips of the figure, in evaluation order.
+#[test]
+fn every_held_clip_of_a_layer_is_kept() {
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![
+                    held_anim(2, 0x0500_8E76, true, 0.25),
+                    held_anim(3, 0x0500_8E75, true, 0.5),
+                ],
+            )],
+        ),
+    );
+    let mut r = ClipResolver::new(&shape_schema, shape_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    let held: Vec<(Did, u32)> = res.held().iter().map(|c| (c.clip, c.layer)).collect();
+    assert_eq!(held, vec![(Did(0x0500_8E76), 110), (Did(0x0500_8E75), 110)]);
+}
+
+/// `script-table.md` §6.7 step 2: the clip time is the fraction × the played length, which
+/// is the duration minus the 1/30 s end crop for `LoopForever` 0 with `LoopCount` 1 and
+/// the full duration otherwise; `StartTime` and `EndTime` do not enter.
+#[test]
+fn held_time_uses_the_played_length() {
+    use tessera_formats::script_table::resolve::{held_clip_time, held_end_crop};
+    assert_eq!(held_end_crop(true, 1), 0.0);
+    assert_eq!(held_end_crop(false, 2), 0.0);
+    assert_eq!(held_end_crop(false, 0), 0.0);
+    assert_eq!(held_end_crop(false, 1), 0.033_333_335);
+    assert_eq!(held_clip_time(0.25, 2.0, 0.0), 0.5);
+    // A time equal to the played length stays there.
+    assert_eq!(held_clip_time(1.0, 2.0, 1.0 / 30.0), 2.0 - 1.0 / 30.0);
+    assert_eq!(held_clip_time(7.0, 2.0, 0.0), 2.0);
+    assert_eq!(held_clip_time(-1.0, 2.0, 0.0), 0.0);
+    // Tessera guards: NaN, a clip shorter than the crop, a broken duration.
+    assert_eq!(held_clip_time(f32::NAN, 2.0, 0.0), 0.0);
+    assert_eq!(held_clip_time(0.5, 0.016, 1.0 / 30.0), 0.0);
+    assert_eq!(held_clip_time(0.5, f32::INFINITY, 0.0), 0.0);
+}
+
+/// `script-table.md` §6.7 worked example (revised 2026-10-07, BIN5): a clip with a tagfile
+/// `duration` of 2.0 s; played length 2.0 s for `LoopForever` 1 and for `LoopCount` 2,
+/// 2.0 − 1/30 s for `LoopForever` 0 with `LoopCount` 1.
 #[test]
 fn held_fraction_example_6_7() {
-    use tessera_formats::script_table::resolve::held_fraction;
-    let rows: [(f32, f32, f32, f32); 5] = [
-        (0.25, 0.5, 0.5, 0.5),
-        (0.95, 1.9, 1.9, 1.9),
-        (1.0, 0.0, 2.0, 0.0),
-        (1.3, 0.6, 2.0, 0.6),
+    use tessera_formats::script_table::resolve::{held_clip_time, held_end_crop, held_fraction};
+    let rows: [(f32, f32, f32, f32); 9] = [
+        (0.25, 0.5, 0.491_666_7, 0.5),
+        (0.95, 1.9, 1.868_333_3, 1.9),
+        (1.0, 0.0, 1.966_666_7, 0.0),
+        (1.3, 0.6, 1.966_666_7, 0.6),
         (-0.2, 1.6, 0.0, 0.0),
+        (-1e-9, 2.0, 0.0, 0.0),
+        (3e9, 0.0, 0.0, 0.0),
+        (f32::INFINITY, 0.0, 0.0, 0.0),
+        (f32::NAN, 0.0, 0.0, 0.0),
     ];
     for (v, looping, once, twice) in rows {
-        let t = |lf: bool, count: i32| held_fraction(v, lf, count) * 2.0;
+        let t = |lf: bool, count: i32| {
+            held_clip_time(held_fraction(v, lf, count), 2.0, held_end_crop(lf, count))
+        };
         assert!(
             (t(true, 1) - looping).abs() < 1e-5,
             "{v} looping: {}",
@@ -2128,9 +2241,15 @@ fn held_fraction_example_6_7() {
             t(false, 2)
         );
     }
-    assert_eq!(held_fraction(f32::NAN, true, 1), 0.0);
-    assert_eq!(held_fraction(f32::INFINITY, false, 1), 0.0);
-    assert!(held_fraction(-1e-9, true, 1) < 1.0);
+    // §6.7 step 1 (T36): a looping fraction that rounds up to 1 stays 1.
+    assert_eq!(held_fraction(-1e-9, true, 1), 1.0);
+    // Values that are not finite or of magnitude 2³¹ or more give 0, on either kind.
+    for v in [f32::NEG_INFINITY, -3e9, 2_147_483_648.0, -2_147_483_648.0] {
+        assert_eq!(held_fraction(v, false, 1), 0.0, "{v}");
+        assert_eq!(held_fraction(v, true, 1), 0.0, "{v}");
+    }
+    // The largest integer part that converts: n ≥ LoopCount, so 1.
+    assert_eq!(held_fraction(2_147_483_520.0, false, 1), 1.0);
 }
 
 /// Hostile input: many SliderMeshDeformer nodes with long value strings. Every candidate

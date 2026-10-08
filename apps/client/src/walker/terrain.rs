@@ -19,7 +19,12 @@
 //! draws nothing yet uploads at once with what is ready and is rebuilt when the rest
 //! arrives. A cave block's ceiling chunk is drawn at level 0 (`terrain.md` §7 Decision 3).
 //! Blocks whose layers cannot be resolved, and every block with layers off, draw the M3
-//! height-and-slope mesh.
+//! height-and-slope mesh; a terrain chunk that does not resolve keeps the block's ceiling
+//! (its own layers and §4.9 flag). With layers on, a chunk hidden by
+//! `terrain-texturing.md` §4.9 rule 3 is left out entirely: no mesh, no layered chunk, no
+//! draw. In the far band (`walker.md` §14.4) a block keeps only its light map on the GPU:
+//! its terrain masks wait on the CPU until it nears, and masks uploaded while it was near
+//! are released again once its baked chunk is drawn (kept as A8 for the next upload).
 //!
 //! # Crack-free swaps
 //!
@@ -348,6 +353,8 @@ pub struct BlockLayers {
     /// The terrain chunk stores no layers and the block is not open: the original draws
     /// nothing for it (`terrain-texturing.md` §4.9 rule 3).
     pub terrain_hidden: bool,
+    /// The same for the ceiling chunk.
+    pub ceiling_hidden: bool,
 }
 
 /// Whether a block is open (`terrain-texturing.md` §4.9 rule 1): it has no ceiling, or at
@@ -384,7 +391,10 @@ pub fn layerless_key(table: &TerrainTypeTable) -> Option<u32> {
 /// them; one without layers in an open block resolves to one opaque `whole` layer of
 /// [`layerless_key`] without a mask (so it covers the full grid of its surface and takes
 /// the surface's light map); one without layers in a block that is not open resolves to no
-/// layer. Returns the layers and whether the chunk was layerless and closed.
+/// layer. Returns the layers and whether the chunk is layerless in a block that is not
+/// open (§4.9 rule 3: not drawn). A layerless chunk of an open block whose table has no
+/// entry resolves to no layer but is not rule 3: it is drawn like a region without a table
+/// (`walker.md` §14.4 height-shaded fallback; Tessera Decision, OPEN there).
 fn resolve_surface(
     data: &LandblockData,
     surface: GridSurface,
@@ -419,7 +429,39 @@ fn resolve_surface(
         light_maps.for_surface(surface),
         options,
     )?;
-    Ok((layers, key.is_none()))
+    Ok((layers, !open))
+}
+
+/// The layers of a terrain chunk whose stored layers do not resolve: none, so that the
+/// chunk is drawn like one none of whose layers resolves (`walker.md` §14.4 height-shaded
+/// fallback) while the block's ceiling is still resolved on its own.
+fn unresolved_terrain(data: &LandblockData, table: &TerrainTypeTable) -> Option<ChunkLayers> {
+    resolve_chunk(
+        &SurfaceChunk::default(),
+        &data.vertex_flags,
+        GridSurface::Terrain,
+        table,
+        None,
+        &ResolveOptions::default(),
+    )
+    .ok()
+}
+
+/// The walker's §4.9 path for one surface of a block (`terrain-texturing.md` §4.9,
+/// `walker.md` §14.4): [`block_open`], then the surface resolved as [`resolve_surface`]
+/// does. Returns the layers and whether the chunk is not drawn (rule 3).
+///
+/// # Errors
+///
+/// When a stored layer does not resolve ([`tessera_terrain::resolve_landblock`]).
+pub fn resolve_block_surface(
+    data: &LandblockData,
+    surface: GridSurface,
+    table: &TerrainTypeTable,
+    light_maps: &LightMaps,
+    options: &ResolveOptions,
+) -> tessera_terrain::Result<(ChunkLayers, bool)> {
+    resolve_surface(data, surface, table, light_maps, options, block_open(data))
 }
 
 /// What the block job produces.
@@ -506,6 +548,14 @@ enum Job {
         diffuse: HashMap<Did, SmallChain>,
         masks: Arc<HashMap<Did, AlphaMask>>,
     },
+    /// The height-shaded mesh of a ceiling (`walker.md` §14.4 fallback, ceilings).
+    ShadedCeiling {
+        key: LandblockKey,
+        generation: u64,
+        bundle: Arc<LandblockBundle>,
+        shading: Arc<HeightSlopeShading>,
+        config: MeshConfig,
+    },
 }
 
 /// A mesh job's product.
@@ -542,6 +592,27 @@ enum Output {
         generation: u64,
         chain: Result<Vec<RgbaImage>, String>,
     },
+    ShadedCeiling {
+        key: LandblockKey,
+        generation: u64,
+        mesh: Result<PreparedMesh, String>,
+    },
+}
+
+/// The height-shaded mesh of a block's ceiling, drawn where its layered chunk is not
+/// (`walker.md` §14.4; Tessera Decision, OPEN there): layers or lighting switched off, no
+/// 0x19 table, or ceiling layers that do not resolve.
+enum ShadedCeiling {
+    /// Not asked for.
+    None,
+    /// Building on a worker.
+    Pending,
+    /// Built, waiting for upload budget.
+    Waiting(PreparedMesh),
+    /// On the GPU: mesh and bytes.
+    Ready(MeshId, u64),
+    /// The block has no ceiling, or the build or upload failed.
+    Failed,
 }
 
 /// The far-band bake of a block.
@@ -620,11 +691,17 @@ struct Slot {
     near_only: usize,
     /// Masks and light maps on the GPU (owned by the block).
     own: HashMap<Did, (TextureId, u64)>,
+    /// The near-only images (terrain masks) of `own`, kept on the CPU (A8) so that they
+    /// can be released when the block goes back into the far band and uploaded again when
+    /// it nears ([`Slot::park_masks`]).
+    parked: Vec<(Did, BlockImage)>,
     /// Masks and light maps that could not be uploaded.
     own_failed: HashSet<Did>,
     /// Shared layer textures referenced in the object layer's store.
     shared: Vec<TexRequest>,
     ceiling: Option<Ceiling>,
+    /// The ceiling's height-shaded fallback ([`Slot::wants_shaded_ceiling`]).
+    shaded_ceiling: ShadedCeiling,
     /// Masks for the far-band bake, dropped once baked.
     bake_masks: Option<Arc<HashMap<Did, AlphaMask>>>,
     bake: Bake,
@@ -652,9 +729,11 @@ impl Slot {
             images: Vec::new(),
             near_only: 0,
             own: HashMap::new(),
+            parked: Vec::new(),
             own_failed: HashSet::new(),
             shared: Vec::new(),
             ceiling: None,
+            shaded_ceiling: ShadedCeiling::None,
             bake_masks: None,
             bake: Bake::None,
             far: false,
@@ -693,9 +772,15 @@ impl Slot {
             }
         }
         self.ceiling = None;
+        if let ShadedCeiling::Ready(id, _) =
+            std::mem::replace(&mut self.shaded_ceiling, ShadedCeiling::None)
+        {
+            renderer.destroy_mesh(id);
+        }
         for (_, (id, _)) in self.own.drain() {
             renderer.destroy_texture(id);
         }
+        self.parked.clear();
         if let Bake::Ready(id, _) = std::mem::replace(&mut self.bake, Bake::None) {
             renderer.destroy_texture(id);
         }
@@ -705,7 +790,53 @@ impl Slot {
         }
     }
 
-    /// Whether every mask and light map of the block is uploaded or failed.
+    /// Frees the terrain chunk's mesh, staged mesh and waiting product (a chunk that
+    /// [`Self::terrain_out_of_scene`] leaves out).
+    fn drop_terrain(&mut self, renderer: &mut Renderer<'_>) {
+        for m in [self.mesh.take(), self.staged.take()].into_iter().flatten() {
+            if let GpuKind::Mesh(id) = m.kind {
+                renderer.destroy_mesh(id);
+            }
+        }
+        self.ready = None;
+        self.failed = None;
+    }
+
+    /// Whether a full-layer terrain chunk is drawn, staged or waiting for its upload (it
+    /// samples the terrain masks).
+    fn uses_masks(&self) -> bool {
+        let near = |sig: &MeshSig| sig.layered && !sig.far;
+        self.mesh.as_ref().is_some_and(|m| near(&m.sig))
+            || self.staged.as_ref().is_some_and(|m| near(&m.sig))
+            || self.ready.as_ref().is_some_and(|r| near(&r.0))
+    }
+
+    /// Releases the terrain masks of a block that went back into the far band
+    /// (`walker.md` §14.4: "a block in the band keeps only its light map on the GPU"):
+    /// once its masks wait again ([`defers_masks`]), its baked chunk is what is drawn and
+    /// no full-layer chunk is left, the uploaded masks are freed and queued again (at the
+    /// end of `images`, as near-only images) for when the block nears. Returns how many
+    /// were released.
+    fn park_masks(&mut self, frame: &TerrainFrame, renderer: &mut Renderer<'_>) -> usize {
+        if self.parked.is_empty()
+            || !defers_masks(frame, self)
+            || !matches!(self.bake, Bake::Ready(..))
+            || !self.mesh.as_ref().is_some_and(|m| m.sig.far)
+            || self.uses_masks()
+        {
+            return 0;
+        }
+        let n = self.parked.len();
+        for (did, img) in std::mem::take(&mut self.parked) {
+            if let Some((id, _)) = self.own.remove(&did) {
+                renderer.destroy_texture(id);
+            }
+            self.images.push((did, img));
+            self.near_only += 1;
+        }
+        n
+    }
+
     /// Whether every image the block draws with in `frame` is uploaded.
     fn images_done(&self, frame: &TerrainFrame) -> bool {
         self.images.len()
@@ -729,6 +860,46 @@ impl Slot {
     /// the block is not open (`terrain-texturing.md` §4.9 rule 3).
     fn terrain_hidden(&self) -> bool {
         self.layers.as_ref().is_some_and(|l| l.terrain_hidden)
+    }
+
+    /// Whether the terrain chunk is left out of the scene in `frame`: §4.9 rule 3 in the
+    /// normal (layered, lit) view. No mesh is built, uploaded or drawn for it
+    /// (`terrain-texturing.md` §4.9: "not added to the client's scene at all").
+    fn terrain_out_of_scene(&self, frame: &TerrainFrame) -> bool {
+        frame.layered && frame.lit && self.terrain_hidden()
+    }
+
+    /// The ceiling's layers when it is drawn with them: it has a layer to draw and is not
+    /// hidden by §4.9 rule 3. A ceiling without one gets no layered chunk at all (it would
+    /// be a zero-layer draw that still receives lights); it is drawn by its height-shaded
+    /// fallback or not at all ([`Self::wants_shaded_ceiling`]).
+    fn layered_ceiling(&self) -> Option<(Arc<ChunkLayers>, Arc<TerrainBlock>)> {
+        let l = self.layers.as_ref()?;
+        if l.ceiling_hidden {
+            return None;
+        }
+        l.ceiling.clone().filter(|(c, _)| !c.is_empty())
+    }
+
+    /// Whether the block's ceiling is drawn as its height-shaded mesh in `frame`
+    /// (`walker.md` §14.4 fallback, extended to ceilings; Tessera Decision): the block has
+    /// a ceiling grid and its block job is done, and the ceiling is not drawn with layers:
+    /// layers or lighting switched off (then also a ceiling that §4.9 rule 3 hides, the M3
+    /// view), no 0x19 table, or ceiling layers that do not resolve. In the normal view a
+    /// ceiling hidden by rule 3 draws nothing.
+    fn wants_shaded_ceiling(&self, frame: &TerrainFrame) -> bool {
+        if self.block.is_none() || self.bundle.data.ceiling.is_none() {
+            return false;
+        }
+        if !(frame.layered && frame.lit) {
+            return true;
+        }
+        let layers = self.layers.as_ref();
+        let hidden = layers.is_some_and(|l| l.ceiling_hidden);
+        let layered = layers
+            .and_then(|l| l.ceiling.as_ref())
+            .is_some_and(|(c, _)| !c.is_empty());
+        !(hidden || layered)
     }
 
     /// Whether image `did` is needed while the block is drawn baked: its light map, and
@@ -839,72 +1010,21 @@ const BAKE_CANDIDATES_PER_FRAME: usize = 48;
 /// The far band's hysteresis: a far block returns to full layers this much (metres)
 /// inside the band.
 const FAR_HYSTERESIS: f32 = 40.0;
+/// Whether a block at distance `d` is in the far band starting at `band` (0 = off), with
+/// hysteresis: it enters beyond `band` and leaves at `band` − [`FAR_HYSTERESIS`], the
+/// hysteresis limited to half the band so that a band of 40 m or less still has a
+/// positive exit distance (`walker.md` §14.4; Tessera Decision, OPEN there).
+#[must_use]
+pub fn in_far_band(was: bool, d: f32, band: f32) -> bool {
+    if !(band.is_finite() && band > 0.0) {
+        return false;
+    }
+    let exit = band - FAR_HYSTERESIS.min(0.5 * band);
+    if was { d > exit } else { d > band }
+}
+
 /// Blocks are baked once they come this much (metres) inside the band, ahead of need.
 const BAKE_AHEAD: f32 = 320.0;
-
-/// A light of the frame's light table as the terrain sees it (`lighting.md` §8.3).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TerrainLight {
-    /// Position in the render frame.
-    pub position: Vec3,
-    /// Range *R*.
-    pub range: f32,
-    /// `Light_BakedLandscapeLight`: not applied to layers with a light map (`lighting.md`
-    /// §8.3 Tessera Decision).
-    pub baked: bool,
-}
-
-/// The lights of `lights` (table order) that a chunk with a light map receives: those that
-/// are not baked into the light maps and whose range sphere touches the chunk's sphere,
-/// nearest first, at most `max` (`lighting.md` §8.3, §8.5 Tessera Decisions).
-#[must_use]
-pub fn chunk_lights(
-    lights: &[TerrainLight],
-    center: Vec3,
-    radius: f32,
-    max: usize,
-) -> LightSelection {
-    let mut near: Vec<(f32, usize)> = lights
-        .iter()
-        .enumerate()
-        .filter(|(i, l)| *i < 256 && !l.baked && l.range.is_finite())
-        .filter_map(|(i, l)| {
-            let d = (l.position - center).length();
-            (d.is_finite() && d <= l.range + radius).then_some((d, i))
-        })
-        .collect();
-    near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    let mut indices = [0u8; 8];
-    let mut count = 0u8;
-    for (_, i) in near.into_iter().take(max.min(8)) {
-        indices[usize::from(count)] = u8::try_from(i).unwrap_or(u8::MAX);
-        count += 1;
-    }
-    LightSelection::List { indices, count }
-}
-
-/// Whether a layer of `layers` has a light map.
-fn has_light_map(layers: &ChunkLayers) -> bool {
-    layers.layers().iter().any(|x| x.light_map().is_some())
-}
-
-/// The lights a chunk receives: for a chunk with a light map those of [`chunk_lights`]
-/// (baked lights left out), else the renderer's automatic selection (`lighting.md` §8.3,
-/// §8.5 Tessera Decisions).
-#[must_use]
-pub fn chunk_light_selection(
-    has_light_map: bool,
-    lights: &[TerrainLight],
-    center: Vec3,
-    radius: f32,
-    max: usize,
-) -> LightSelection {
-    if has_light_map {
-        chunk_lights(lights, center, radius, max)
-    } else {
-        LightSelection::Auto
-    }
-}
 
 /// The terrain layer (module docs).
 pub struct TerrainLayer {
@@ -1092,10 +1212,21 @@ impl TerrainLayer {
                     && c.gpu.as_ref().is_none_or(|g| g.1)
                     && (c.gpu.is_some() || c.prep.is_none())
             });
-            s.mesh.as_ref().is_some_and(GpuTerrain::complete)
+            let shaded_done = !s.wants_shaded_ceiling(&self.frame)
+                || matches!(
+                    s.shaded_ceiling,
+                    ShadedCeiling::Ready(..) | ShadedCeiling::Failed
+                );
+            let terrain_done = if s.terrain_out_of_scene(&self.frame) {
+                s.mesh.is_none()
+            } else {
+                s.mesh.as_ref().is_some_and(GpuTerrain::complete)
+            };
+            terrain_done
                 && s.staged.is_none()
                 && s.images_done(&self.frame)
                 && ceiling_done
+                && shaded_done
         })
     }
 
@@ -1246,12 +1377,7 @@ impl TerrainLayer {
             let local = camera - off;
             let d = block.distance_to(local.to_array());
             slot.lod = Some(self.selector.select(block, d, slot.lod));
-            slot.far = frame.far_band > 0.0
-                && if slot.far {
-                    d > frame.far_band - FAR_HYSTERESIS
-                } else {
-                    d > frame.far_band
-                };
+            slot.far = in_far_band(slot.far, d, frame.far_band);
             self.order.push((d, *key));
         }
         self.order
@@ -1283,7 +1409,8 @@ impl TerrainLayer {
                 if !budget.try_take(bytes) {
                     break;
                 }
-                if i + slot.near_only >= slot.images.len() && slot.near_only > 0 {
+                let near_only = i + slot.near_only >= slot.images.len() && slot.near_only > 0;
+                if near_only {
                     slot.near_only -= 1;
                 }
                 let (did, img) = slot.images.remove(i);
@@ -1300,6 +1427,9 @@ impl TerrainLayer {
                 match uploaded {
                     Ok(id) => {
                         slot.own.insert(did, (id, bytes));
+                        if near_only {
+                            slot.parked.push((did, img));
+                        }
                     }
                     Err(e) => {
                         tracing::debug!(%key, %did, "terrain image upload failed: {e}");
@@ -1326,7 +1456,12 @@ impl TerrainLayer {
             let Some(slot) = self.slots.get_mut(&key) else {
                 continue;
             };
-            if !matches!(slot.bake, Bake::None) {
+            // Only a terrain chunk drawn with its layers has a stack to bake: not a closed
+            // layerless chunk (§4.9 rule 3) nor one none of whose layers resolves.
+            if !matches!(slot.bake, Bake::None)
+                || !slot.has_terrain_layers()
+                || slot.terrain_hidden()
+            {
                 continue;
             }
             let (Some(layers), Some(block), Some(masks)) =
@@ -1408,6 +1543,15 @@ impl TerrainLayer {
             };
         }
 
+        // What the frame leaves out: the meshes of terrain chunks hidden by §4.9 rule 3
+        // (built in another view), and the masks of blocks back in the far band.
+        for slot in self.slots.values_mut() {
+            if slot.terrain_out_of_scene(frame) {
+                slot.drop_terrain(renderer);
+            }
+            slot.park_masks(frame, renderer);
+        }
+
         // Mesh jobs for blocks whose signature changed.
         let mut queued = 0usize;
         for &(_, key) in &order {
@@ -1469,8 +1613,7 @@ impl TerrainLayer {
             let Some(slot) = self.slots.get_mut(&key) else {
                 continue;
             };
-            let Some((layers, ceiling)) = slot.layers.as_ref().and_then(|l| l.ceiling.clone())
-            else {
+            let Some((layers, ceiling)) = slot.layered_ceiling() else {
                 continue;
             };
             if slot.ceiling.is_some() {
@@ -1490,6 +1633,33 @@ impl TerrainLayer {
                 gpu: None,
                 pending: true,
             });
+            queued += 1;
+        }
+
+        // Height-shaded ceilings where the layered ceiling is not drawn.
+        for &(_, key) in &order {
+            if queued >= MESH_JOBS_PER_FRAME {
+                break;
+            }
+            let Some(slot) = self.slots.get_mut(&key) else {
+                continue;
+            };
+            if !matches!(slot.shaded_ceiling, ShadedCeiling::None)
+                || !slot.wants_shaded_ceiling(frame)
+            {
+                continue;
+            }
+            let job = Job::ShadedCeiling {
+                key,
+                generation: slot.generation,
+                bundle: Arc::clone(&slot.bundle),
+                shading: Arc::clone(&self.shading),
+                config: self.mesh_config,
+            };
+            if self.runner.submit(job).is_err() {
+                break;
+            }
+            slot.shaded_ceiling = ShadedCeiling::Pending;
             queued += 1;
         }
 
@@ -1543,6 +1713,25 @@ impl TerrainLayer {
                         }
                     }
                 }
+            }
+            if matches!(slot.shaded_ceiling, ShadedCeiling::Waiting(_)) {
+                let ShadedCeiling::Waiting(prepared) =
+                    std::mem::replace(&mut slot.shaded_ceiling, ShadedCeiling::Pending)
+                else {
+                    continue;
+                };
+                let bytes = prepared.gpu_bytes();
+                slot.shaded_ceiling = if budget.try_take(bytes) {
+                    match renderer.upload_prepared(prepared) {
+                        Ok(id) => ShadedCeiling::Ready(id, bytes),
+                        Err(e) => {
+                            tracing::debug!(%key, "shaded ceiling upload failed: {e}");
+                            ShadedCeiling::Failed
+                        }
+                    }
+                } else {
+                    ShadedCeiling::Waiting(prepared)
+                };
             }
             let Some((sig, built, min_h, max_h)) = slot.ready.take() else {
                 continue;
@@ -1709,6 +1898,9 @@ impl TerrainLayer {
 
     fn signature(&self, key: LandblockKey) -> Option<MeshSig> {
         let slot = self.slots.get(&key)?;
+        if slot.terrain_out_of_scene(&self.frame) {
+            return None;
+        }
         let lod = slot.lod?;
         let mut edges = EdgeLods::NONE;
         let mut present = 0u8;
@@ -1809,7 +2001,8 @@ impl TerrainLayer {
                 tagged.sort_by_key(|(f, _)| !*f);
                 slot.near_only = tagged.iter().filter(|(f, _)| !*f).count();
                 slot.images = tagged.into_iter().map(|(_, i)| i).collect();
-                slot.bake_masks = Some(Arc::new(std::mem::take(&mut product.bake_masks)));
+                slot.bake_masks = (slot.has_terrain_layers() && !slot.terrain_hidden())
+                    .then(|| Arc::new(std::mem::take(&mut product.bake_masks)));
                 self.tiles.insert(key, Arc::clone(&product.block));
                 self.finished.push((key, product));
             }
@@ -1891,6 +2084,25 @@ impl TerrainLayer {
                     c.prep = prep;
                 }
             }
+            Output::ShadedCeiling {
+                key,
+                generation,
+                mesh,
+            } => {
+                let Some(slot) = self.slots.get_mut(&key) else {
+                    return;
+                };
+                if slot.generation != generation {
+                    return;
+                }
+                slot.shaded_ceiling = match mesh {
+                    Ok(m) => ShadedCeiling::Waiting(m),
+                    Err(e) => {
+                        tracing::debug!(%key, "shaded ceiling failed: {e}");
+                        ShadedCeiling::Failed
+                    }
+                };
+            }
         }
     }
 
@@ -1917,6 +2129,9 @@ impl TerrainLayer {
                 s.gpu_bytes += m.bytes;
             }
             s.gpu_bytes += slot.own.values().map(|v| v.1).sum::<u64>();
+            if let ShadedCeiling::Ready(_, b) = slot.shaded_ceiling {
+                s.gpu_bytes += b;
+            }
             if let Bake::Ready(_, b) = slot.bake {
                 s.gpu_bytes += b;
                 s.baked += 1;
@@ -1937,9 +2152,9 @@ impl TerrainLayer {
     }
 
     /// Records the visible terrain into `pass`: layered chunks (lit passes) or meshes.
-    /// `lights` is the pass's light table as the terrain sees it; `camera` the eye in the
-    /// render frame.
-    #[allow(clippy::too_many_arguments)]
+    /// `camera` is the eye in the render frame. Every chunk takes the renderer's automatic
+    /// light selection, which follows the pass's reach entries (`lighting.md` §8.5: ρ, key
+    /// lights first, baked-landscape lights never on a terrain or ceiling chunk).
     pub fn draw(
         &mut self,
         renderer: &Renderer<'_>,
@@ -1947,8 +2162,6 @@ impl TerrainLayer {
         anchor: &Anchor,
         frustum: &Frustum,
         camera: Vec3,
-        lights: &[TerrainLight],
-        sun: bool,
     ) {
         let frame = self.frame;
         let mut drawn = 0usize;
@@ -1956,7 +2169,6 @@ impl TerrainLayer {
         let mut triangles = 0u64;
         let material = Material::color([1.0, 1.0, 1.0, 1.0]);
         let size = LANDBLOCK_SIZE as f32;
-        let max_lights = if sun { 7 } else { 8 };
         // Nearest first, so the depth test rejects hidden terrain before it is shaded.
         let mut order: Vec<(f32, LandblockKey)> = Vec::with_capacity(self.slots.len());
         for key in self.slots.keys() {
@@ -1983,7 +2195,7 @@ impl TerrainLayer {
             }
             let tf = Mat4::from_translation(off);
             // §4.9 rule 3: a closed block's layerless terrain chunk is not in the scene.
-            let hidden = frame.layered && frame.lit && slot.terrain_hidden();
+            let hidden = slot.terrain_out_of_scene(&frame);
             if let Some(m) = slot.mesh.as_ref().filter(|_| !hidden) {
                 let min = off + Vec3::new(0.0, 0.0, m.min_h);
                 let max = off + Vec3::new(size, size, m.max_h);
@@ -1994,14 +2206,9 @@ impl TerrainLayer {
                     && (mid - camera).length() - radius <= frame.shadow_radius;
                 match &m.kind {
                     GpuKind::Chunk { chunk, .. } if frame.lit && (visible || casts) => {
-                        let has_light_map = slot
-                            .layers
-                            .as_ref()
-                            .is_some_and(|l| has_light_map(&l.terrain));
                         let mut d = TerrainDraw::new(chunk.clone(), tf);
                         d.cast_shadow = casts;
-                        d.lights =
-                            chunk_light_selection(has_light_map, lights, mid, radius, max_lights);
+                        d.lights = LightSelection::Auto;
                         // Scrolling layers (`terrain-texturing.md` §6.3) at the material clock.
                         if !m.sig.far
                             && !slot.scrolling.is_empty()
@@ -2043,8 +2250,25 @@ impl TerrainLayer {
                     _ => {}
                 }
             }
-            if frame.lit
+            if slot.wants_shaded_ceiling(&frame) {
+                if let ShadedCeiling::Ready(id, _) = slot.shaded_ceiling
+                    && let Some(info) = renderer.mesh_info(id)
+                {
+                    let c = tf.transform_point3(info.sphere.center);
+                    if frustum.sphere_visible(c, info.sphere.radius) {
+                        let lit = LitSurface {
+                            vertex_colors: true,
+                            cast_shadow: false,
+                            ..LitSurface::default()
+                        };
+                        pass.mesh(MeshDraw::new(id, tf, material).with_lit(lit));
+                        ceilings += 1;
+                        triangles += u64::from(info.index_count / 3);
+                    }
+                }
+            } else if frame.lit
                 && frame.layered
+                && slot.layered_ceiling().is_some()
                 && let Some(Ceiling {
                     gpu: Some((chunk, _)),
                     ..
@@ -2053,22 +2277,9 @@ impl TerrainLayer {
                 let info = chunk.info();
                 let c = tf.transform_point3(info.sphere.center);
                 if frustum.sphere_visible(c, info.sphere.radius) {
-                    // Baked lights are left out only for a ceiling with a light map
-                    // (`lighting.md` §8.3 Decision), as for terrain chunks.
-                    let has_light_map = slot
-                        .layers
-                        .as_ref()
-                        .and_then(|l| l.ceiling.as_ref())
-                        .is_some_and(|(cl, _)| has_light_map(cl));
                     let mut d = TerrainDraw::new(chunk.clone(), tf);
                     d.cast_shadow = false;
-                    d.lights = chunk_light_selection(
-                        has_light_map,
-                        lights,
-                        c,
-                        info.sphere.radius,
-                        max_lights,
-                    );
+                    d.lights = LightSelection::Auto;
                     pass.terrain(d);
                     ceilings += 1;
                 }
@@ -2369,6 +2580,9 @@ impl Job {
             }
             | Job::Bake {
                 key, generation, ..
+            }
+            | Job::ShadedCeiling {
+                key, generation, ..
             } => (*key, *generation),
         }
     }
@@ -2461,6 +2675,27 @@ fn run_job(job: Job) -> Output {
                 chain,
             }
         }
+        Job::ShadedCeiling {
+            key,
+            generation,
+            bundle,
+            shading,
+            config,
+        } => {
+            let mesh = guarded(|| {
+                let ceiling = TerrainBlock::from_ceiling(&bundle.data)
+                    .ok_or_else(|| "no ceiling".to_owned())?;
+                shaded_ceiling_mesh(&ceiling, &shading, key)
+                    .prepare(&config)
+                    .map_err(|e| e.to_string())
+            })
+            .and_then(|r| r);
+            Output::ShadedCeiling {
+                key,
+                generation,
+                mesh,
+            }
+        }
         Job::Ceiling {
             key,
             generation,
@@ -2521,6 +2756,25 @@ pub fn terrain_mesh_data(mesh: TerrainMesh, key: LandblockKey) -> MeshData {
     }
 }
 
+/// The height-shaded mesh of a ceiling grid (`walker.md` §14.4 fallback): the M3 mesh of
+/// the ceiling heights at the finest level with the downward ceiling normals
+/// (`terrain-texturing.md` §4.8), its triangles turned to face down.
+#[must_use]
+pub fn shaded_ceiling_mesh(
+    ceiling: &TerrainBlock,
+    shading: &HeightSlopeShading,
+    key: LandblockKey,
+) -> MeshData {
+    let normals = VertexNormals::ceiling(ceiling, &Neighbours::NONE);
+    let mut mesh = TerrainMesh::build(ceiling, &normals, shading, Lod::FINEST, EdgeLods::NONE);
+    for tri in mesh.indices.as_chunks_mut::<3>().0 {
+        tri.swap(1, 2);
+    }
+    let mut data = terrain_mesh_data(mesh, key);
+    data.label = Some(format!("ceiling {key}"));
+    data
+}
+
 /// Reads and decodes a block image (an A8 mask or a DXT1 light map); `None` (logged) when
 /// it is missing, does not decode or is too large.
 fn read_image(source: &dyn WorldSource, did: Did) -> Option<RgbaImage> {
@@ -2569,6 +2823,9 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
     };
     let opts = ResolveOptions::default();
     let open = block_open(&bundle.data);
+    // A terrain chunk whose stored layers do not resolve keeps the block's ceiling: it
+    // resolves to no layer (drawn height-shaded, `walker.md` §14.4) and is not §4.9
+    // rule 3, while the ceiling keeps its own layers and its rule-3 flag.
     let (mut terrain, terrain_hidden) = match resolve_surface(
         &bundle.data,
         GridSurface::Terrain,
@@ -2580,9 +2837,13 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
         Ok(l) => l,
         Err(e) => {
             tracing::warn!(key = %bundle.key, "terrain layers not resolved: {e}");
-            return (None, Vec::new(), HashMap::new());
+            match unresolved_terrain(&bundle.data, table) {
+                Some(empty) => (empty, false),
+                None => return (None, Vec::new(), HashMap::new()),
+            }
         }
     };
+    let mut ceiling_hidden = false;
     let mut ceiling = TerrainBlock::from_ceiling(&bundle.data).and_then(|c| {
         resolve_surface(
             &bundle.data,
@@ -2594,7 +2855,10 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
         )
         .map_err(|e| tracing::warn!(key = %bundle.key, "ceiling layers not resolved: {e}"))
         .ok()
-        .map(|(l, _)| (l, c))
+        .map(|(l, hidden)| {
+            ceiling_hidden = hidden;
+            (l, c)
+        })
     });
     let mut images: Vec<(Did, BlockImage)> = Vec::new();
     let mut seen: HashSet<Did> = HashSet::new();
@@ -2617,6 +2881,7 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
                 terrain: Arc::new(terrain),
                 ceiling: ceiling.map(|(l, c)| (Arc::new(l), Arc::new(c))),
                 terrain_hidden,
+                ceiling_hidden,
             }),
             images,
             HashMap::new(),
@@ -2691,6 +2956,7 @@ fn build_layers(bundle: &LandblockBundle, inputs: &BlockInputs) -> LayerBuild {
             terrain: Arc::new(terrain),
             ceiling: ceiling.map(|(l, c)| (Arc::new(l), Arc::new(c))),
             terrain_hidden,
+            ceiling_hidden,
         }),
         images,
         bake_masks,
@@ -2724,7 +2990,7 @@ pub fn build_block(
 /// The drawable objects of a bundle with their part instances (`entity-descriptor.md`
 /// §9, `scenery.md` §7.6) and LOD-class values (`walker.md` §11.4.3), then the render
 /// meshes of its interior cells (`landblock.md` §4.14). Each object names the cell it is
-/// drawn through (`walker.md` §14.11): outdoor objects cell 0; interior entities the cell
+/// drawn through (`walker.md` §14.12 (e)–(h)): outdoor objects cell 0; interior entities the cell
 /// of the block's collision set whose volume contains their origin, or
 /// [`interiors::UNATTACHED`]; a cell mesh its own cell. Which interior objects are loaded
 /// and drawn is the object layer's decision ([`ObjectFrame::interior`]).
@@ -2808,7 +3074,7 @@ pub fn block_objects(
 }
 
 /// The LOD values of a cell mesh (`landblock.md` §4.14 OPEN on cell detail levels and
-/// draw distances; Tessera Decision of `walker.md` §14.11): drawn out to the global limit
+/// draw distances; Tessera Decision of `walker.md` §14.12 (g)): drawn out to the global limit
 /// *G* and the distance cap, always at the finest level, casting shadows within the
 /// component's default shadow distance.
 #[must_use]
@@ -2840,8 +3106,9 @@ fn entity_cell(bundle: &LandblockBundle, pos: Vec3) -> u16 {
 /// Appends one object per placed interior cell of the bundle's landblock info: its 0x01
 /// geometry as the part (the object layer draws its embedded render mesh,
 /// `landblock.md` §4.14), placed by the cell's position and rotation without its
-/// adjustable scale (§4.14 Tessera Decision). Cells without an x, y, z offset are left out
-/// (§4.4 OPEN), as are cells numbered 0 or 0xFFFF (LI8).
+/// adjustable scale (§4.14 Tessera Decision). A cell whose position has no x, y, z offset
+/// (or no orientation) is placed at the landblock origin (with the identity), as §4.4 gives
+/// (L42); cells numbered 0 or 0xFFFF are left out (LI8).
 fn cell_objects(
     bundle: &LandblockBundle,
     instances: &mut Vec<Instance>,
@@ -2855,7 +3122,13 @@ fn cell_objects(
         if c.index == interiors::OUTDOORS || c.index == interiors::UNATTACHED {
             continue;
         }
-        let Ok(placement) = tessera_physics::geometry::CellPlacement::of_cell(c) else {
+        // An absent offset is (0, 0, 0) and an absent orientation the identity
+        // (`landblock.md` §4.4, L42): such a cell lies at the landblock origin.
+        let Ok(placement) = tessera_physics::geometry::CellPlacement::new(
+            c.position.offset().unwrap_or([0.0; 3]),
+            c.rotation()
+                .unwrap_or(tessera_formats::setup::Quaternion::IDENTITY),
+        ) else {
             continue;
         };
         let q = placement.rotation;
@@ -3055,54 +3328,55 @@ mod tests {
         assert!(e.contains("bad block"), "{e}");
     }
 
+    /// `walker.md` §14.4 far band: a band of 40 m or less still lets a block leave it
+    /// (review finding: the exit distance was ≤ 0).
     #[test]
-    fn lights_of_light_mapped_chunks_leave_out_baked_ones() {
-        let l = |x: f32, range: f32, baked: bool| TerrainLight {
-            position: Vec3::new(x, 0.0, 0.0),
-            range,
-            baked,
-        };
-        let lights = [
-            l(10.0, 5.0, false),  // touches (sphere radius 10 at 0)
-            l(5.0, 5.0, true),    // baked: left out
-            l(100.0, 5.0, false), // too far
-            l(2.0, 1.0, false),   // nearest
-        ];
-        match chunk_lights(&lights, Vec3::ZERO, 10.0, 7) {
-            LightSelection::List { indices, count } => {
-                assert_eq!(count, 2);
-                assert_eq!(&indices[..2], &[3, 0]);
-            }
-            other => panic!("{other:?}"),
+    fn far_band_hysteresis_keeps_a_positive_exit() {
+        assert!(!in_far_band(false, 470.0, 480.0));
+        assert!(in_far_band(false, 490.0, 480.0));
+        assert!(
+            in_far_band(true, 450.0, 480.0),
+            "inside the 40 m hysteresis"
+        );
+        assert!(!in_far_band(true, 430.0, 480.0));
+        for band in [40.0, 20.0, 1.0] {
+            assert!(in_far_band(true, 0.6 * band, band));
+            assert!(
+                !in_far_band(true, 0.0, band),
+                "the block under the camera leaves"
+            );
+            assert!(!in_far_band(true, 0.4 * band, band));
         }
-        match chunk_lights(&lights, Vec3::ZERO, 10.0, 1) {
-            LightSelection::List { count, .. } => assert_eq!(count, 1),
-            other => panic!("{other:?}"),
-        }
-        let hostile = [l(0.0, f32::NAN, false), l(f32::INFINITY, 1.0, false)];
-        match chunk_lights(&hostile, Vec3::ZERO, 1.0, 8) {
-            LightSelection::List { count, .. } => assert_eq!(count, 0),
-            other => panic!("{other:?}"),
-        }
+        assert!(!in_far_band(true, 1.0e6, 0.0), "off");
+        assert!(!in_far_band(true, 1.0e6, f32::NAN));
     }
 
+    /// The ceiling's height-shaded fallback faces down and uses the ceiling heights.
     #[test]
-    fn chunks_without_a_light_map_keep_the_baked_lights() {
-        // A ceiling (or terrain chunk) without a light map gets the renderer's automatic
-        // selection, baked lights included (review finding: ceilings always lost them).
-        let lights = [TerrainLight {
-            position: Vec3::ZERO,
-            range: 5.0,
-            baked: true,
-        }];
-        assert_eq!(
-            chunk_light_selection(false, &lights, Vec3::ZERO, 10.0, 8),
-            LightSelection::Auto
-        );
-        assert_eq!(
-            chunk_light_selection(true, &lights, Vec3::ZERO, 10.0, 8),
-            chunk_lights(&lights, Vec3::ZERO, 10.0, 8)
-        );
+    fn shaded_ceilings_face_down() {
+        use tessera_formats::landblock::{Ceiling, LandblockData};
+        let k = key(5, 5);
+        let mut data = LandblockData::from_heights(k.data_did(), HeightGrid::flat(1_000));
+        data.ceiling = Some(Ceiling {
+            heights: HeightGrid::flat(2_000),
+            ..Ceiling::default()
+        });
+        let ceiling = TerrainBlock::from_ceiling(&data).expect("ceiling");
+        let shading = HeightSlopeShading::default();
+        let mesh = shaded_ceiling_mesh(&ceiling, &shading, k);
+        let Indices::U16(idx) = &mesh.indices else {
+            panic!("u16 indices");
+        };
+        assert!(!idx.is_empty());
+        let p = |i: u16| Vec3::from_array(mesh.positions[usize::from(i)]);
+        for t in idx.as_chunks::<3>().0 {
+            let n = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0]));
+            assert!(n.z < 0.0, "counter-clockwise seen from below");
+        }
+        let z = ceiling.height(0, 0).expect("height");
+        assert!(mesh.positions.iter().all(|q| (q[2] - z).abs() < 1e-3));
+        let normals = mesh.normals.as_ref().expect("normals");
+        assert!(normals.iter().all(|n| n[2] < 0.0), "downward normals");
     }
 
     #[test]
@@ -3135,6 +3409,7 @@ mod tests {
             terrain: Arc::new(resolve(&SurfaceChunk::default())),
             ceiling: None,
             terrain_hidden: false,
+            ceiling_hidden: false,
         });
         assert!(
             !slot.has_terrain_layers(),
@@ -3151,6 +3426,7 @@ mod tests {
             terrain: Arc::new(resolve(&chunk)),
             ceiling: None,
             terrain_hidden: false,
+            ceiling_hidden: false,
         });
         assert!(slot.has_terrain_layers());
     }
@@ -3214,6 +3490,14 @@ mod tests {
         let (closed, hidden) =
             resolve_surface(&data, GridSurface::Terrain, &table, &lm, &opts, false).unwrap();
         assert!(hidden && closed.is_empty());
+        // An open block whose table has no entry: nothing to draw with, but not rule 3
+        // (drawn height-shaded like a region without a table, review finding).
+        let (none, hidden) =
+            resolve_surface(&data, GridSurface::Terrain, &empty, &lm, &opts, true).unwrap();
+        assert!(!hidden && none.is_empty());
+        let (_, hidden) =
+            resolve_block_surface(&data, GridSurface::Terrain, &empty, &lm, &opts).unwrap();
+        assert!(!hidden, "the block is open");
         // A chunk that stores layers resolves them, whatever the flag.
         data.terrain.layers.push(SurfaceLayer {
             material: 0,
@@ -3230,6 +3514,7 @@ mod tests {
             terrain: Arc::new(closed),
             ceiling: None,
             terrain_hidden: true,
+            ceiling_hidden: false,
         });
         assert!(slot.terrain_hidden() && !slot.has_terrain_layers());
     }
@@ -3419,12 +3704,281 @@ mod tests {
         NoTextures::default()
     }
 
+    /// The surface chunks and table of the §4.9 and unresolved-layer tests: a table with
+    /// key 0, a chunk with one whole layer of it, and a hostile chunk whose index window
+    /// lies outside its index list (it does not resolve).
+    fn layer_fixture() -> (
+        Arc<TerrainTypeTable>,
+        tessera_formats::landblock::SurfaceChunk,
+        tessera_formats::landblock::SurfaceChunk,
+    ) {
+        use tessera_formats::landblock::{SurfaceChunk, SurfaceLayer};
+        use tessera_formats::terrain_type::TerrainType;
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![TerrainType {
+                key: 0,
+                ..TerrainType::default()
+            }],
+        )
+        .expect("table");
+        let whole = SurfaceChunk {
+            layers: vec![SurfaceLayer {
+                material: 0,
+                whole: true,
+                ..SurfaceLayer::default()
+            }],
+            ..SurfaceChunk::default()
+        };
+        let hostile = SurfaceChunk {
+            layers: vec![SurfaceLayer {
+                material: 0,
+                prims: 1,
+                vertex_span: 3,
+                ..SurfaceLayer::default()
+            }],
+            ..SurfaceChunk::default()
+        };
+        (Arc::new(table), whole, hostile)
+    }
+
+    /// A bundle at `k` with terrain heights 1,000, terrain chunk `terrain` and a ceiling at
+    /// `ceiling_raw` with chunk `ceiling` (above the terrain: open; below: closed).
+    fn cave_bundle(
+        k: LandblockKey,
+        terrain: tessera_formats::landblock::SurfaceChunk,
+        ceiling: tessera_formats::landblock::SurfaceChunk,
+        ceiling_raw: u16,
+    ) -> LandblockBundle {
+        use tessera_formats::landblock::{Ceiling, LandblockData};
+        let mut data = LandblockData::from_heights(k.data_did(), HeightGrid::flat(1_000));
+        data.terrain = terrain;
+        data.ceiling = Some(Ceiling {
+            heights: HeightGrid::flat(ceiling_raw),
+            surface: ceiling,
+            ..Ceiling::default()
+        });
+        LandblockBundle::from_data(k, data)
+    }
+
+    fn table_inputs(region: u8, table: &Arc<TerrainTypeTable>) -> BlockInputs {
+        BlockInputs {
+            source: None,
+            tables: HashMap::from([(region, Arc::clone(table))]),
+            lod_classes: None,
+        }
+    }
+
+    /// Review finding (terrain.rs `build_layers`): a terrain chunk whose stored layers do
+    /// not resolve no longer takes the ceiling's layers and rule-3 flag with it. The
+    /// ceiling's height-shaded fallback is drawn only where `walker.md` §14.4 OPEN (b)
+    /// allows it, and a rule-3 ceiling draws nothing in the normal view.
+    #[test]
+    fn an_unresolved_terrain_chunk_keeps_the_ceiling() {
+        use tessera_formats::landblock::SurfaceChunk;
+        let (table, whole, hostile) = layer_fixture();
+        let k = key(5, 5);
+        let inputs = table_inputs(k.region(), &table);
+        let frame = TerrainFrame::default();
+        let slot_of = |bundle: LandblockBundle| {
+            let (layers, _, _) = build_layers(&bundle, &inputs);
+            let block = Arc::new(TerrainBlock::from_landblock(&bundle.data));
+            let mut slot = Slot::new(Arc::new(bundle), 1);
+            slot.block = Some(block);
+            slot.layers = layers;
+            slot
+        };
+
+        // Open block, the ceiling's own layer resolves: drawn with it, not height-shaded.
+        let slot = slot_of(cave_bundle(k, hostile.clone(), whole.clone(), 2_000));
+        let l = slot.layers.as_ref().expect("layers kept");
+        assert!(l.terrain.is_empty() && !l.terrain_hidden);
+        assert!(!l.ceiling_hidden);
+        assert_eq!(l.ceiling.as_ref().map(|(c, _)| c.layers().len()), Some(1));
+        assert!(!slot.has_terrain_layers() && !slot.terrain_out_of_scene(&frame));
+        assert!(!slot.wants_shaded_ceiling(&frame));
+        assert!(slot.layered_ceiling().is_some());
+
+        // Closed block, layerless ceiling: §4.9 rule 3 hides it in the normal view.
+        let slot = slot_of(cave_bundle(
+            k,
+            hostile.clone(),
+            SurfaceChunk::default(),
+            500,
+        ));
+        let l = slot.layers.as_ref().expect("layers kept");
+        assert!(l.ceiling_hidden && !l.terrain_hidden);
+        assert!(!slot.wants_shaded_ceiling(&frame), "draws nothing");
+        assert!(slot.layered_ceiling().is_none(), "no zero-layer chunk");
+        let off = TerrainFrame {
+            layered: false,
+            ..frame
+        };
+        assert!(slot.wants_shaded_ceiling(&off), "the M3 view draws it");
+
+        // Ceiling layers that do not resolve: the fallback.
+        let slot = slot_of(cave_bundle(k, whole, hostile, 2_000));
+        assert!(slot.has_terrain_layers());
+        assert!(slot.layered_ceiling().is_none());
+        assert!(slot.wants_shaded_ceiling(&frame));
+    }
+
+    /// Review finding (terrain.rs ceiling jobs, `signature`): a ceiling and a terrain
+    /// chunk hidden by §4.9 rule 3 get no chunk, no mesh and no draw in the normal view
+    /// (`terrain-texturing.md` §4.9 rule 3); with layers off both are drawn height-shaded,
+    /// and switching layers on again frees the terrain mesh.
+    #[test]
+    fn rule_three_chunks_are_left_out_of_the_scene() {
+        use tessera_formats::landblock::SurfaceChunk;
+        let Some(mut renderer) = headless() else {
+            return;
+        };
+        let (table, _, _) = layer_fixture();
+        let k = key(10, 10);
+        let mut objects = objects(&renderer);
+        let mut layer = TerrainLayer::new(
+            1,
+            LodSelector::from_fov(720.0, 1.0, 1.5),
+            MeshConfig::default(),
+            Arc::new(table_inputs(k.region(), &table)),
+        )
+        .unwrap();
+        let anchor = Anchor {
+            region: 1,
+            x: 10,
+            y: 10,
+        };
+        let bundle = cave_bundle(k, SurfaceChunk::default(), SurfaceChunk::default(), 500);
+        assert!(!block_open(&bundle.data));
+        assert!(layer.insert(k, &Arc::new(bundle), &mut renderer, &mut objects));
+        settle(&mut layer, &mut renderer, &anchor, &mut objects);
+        let slot = &layer.slots[&k];
+        assert!(slot.terrain_hidden());
+        assert!(
+            slot.mesh.is_none() && slot.staged.is_none(),
+            "no terrain mesh"
+        );
+        assert!(slot.ceiling.is_none(), "no ceiling chunk");
+        assert!(matches!(slot.shaded_ceiling, ShadedCeiling::None));
+        assert_eq!(renderer.mesh_stats().meshes, 0);
+
+        let off = TerrainFrame {
+            layered: false,
+            ..TerrainFrame::default()
+        };
+        settle_in(&mut layer, &mut renderer, &anchor, &mut objects, &off);
+        let slot = &layer.slots[&k];
+        assert!(slot.mesh.is_some(), "the M3 view draws the terrain");
+        assert!(matches!(slot.shaded_ceiling, ShadedCeiling::Ready(..)));
+
+        settle(&mut layer, &mut renderer, &anchor, &mut objects);
+        let slot = &layer.slots[&k];
+        assert!(slot.mesh.is_none(), "freed again in the normal view");
+        assert!(slot.ceiling.is_none());
+        assert_eq!(
+            renderer.mesh_stats().meshes,
+            1,
+            "only the shaded ceiling stays"
+        );
+        layer.clear(&mut renderer, &mut objects);
+        layer.shutdown();
+    }
+
+    /// Review finding (terrain.rs far band): a block back in the far band releases the
+    /// masks uploaded while it was near and queues them again (`walker.md` §14.4: a block
+    /// in the band keeps only its light map on the GPU).
+    #[test]
+    fn far_blocks_release_their_masks() {
+        let Some(mut renderer) = headless() else {
+            return;
+        };
+        let k = key(5, 5);
+        let mut slot = Slot::new(Arc::new(bundle_at(k, 0)), 1);
+        let mask = Did(0x4100_0001);
+        let img = BlockImage::Mask {
+            width: 1,
+            height: 1,
+            alpha: vec![7],
+        };
+        let texel = TextureUpload::rgba8(1, 1, &[255, 255, 255, 7]);
+        let mask_id = renderer.upload_texture(&texel).expect("mask");
+        let bake_id = renderer.upload_texture(&texel).expect("bake");
+        slot.own.insert(mask, (mask_id, 4));
+        slot.parked.push((mask, img.clone()));
+        slot.bake = Bake::Ready(bake_id, 4);
+        let mesh = renderer
+            .upload_mesh(&shaded_ceiling_mesh(
+                &TerrainBlock::flat(1_000),
+                &HeightSlopeShading::default(),
+                k,
+            ))
+            .expect("mesh");
+        let sig = |far: bool| MeshSig {
+            lod: Lod::FINEST,
+            edges: [Lod::FINEST; 4],
+            present: 0,
+            layered: true,
+            far,
+        };
+        slot.mesh = Some(GpuTerrain {
+            kind: GpuKind::Mesh(mesh),
+            sig: sig(true),
+            min_h: 0.0,
+            max_h: 0.0,
+            bytes: 0,
+        });
+        let band = TerrainFrame {
+            far_band: 480.0,
+            ..TerrainFrame::default()
+        };
+        let textures = renderer.texture_count();
+        // Near, or the band off: kept.
+        assert_eq!(slot.park_masks(&band, &mut renderer), 0);
+        slot.far = true;
+        assert_eq!(slot.park_masks(&TerrainFrame::default(), &mut renderer), 0);
+        // A full-layer chunk still waits for its upload: kept.
+        slot.ready = Some((sig(false), Built::Mesh(prepared(k)), 0.0, 0.0));
+        assert_eq!(slot.park_masks(&band, &mut renderer), 0);
+        slot.ready = None;
+        // Far, baked, drawn baked: released and queued again as near-only.
+        assert_eq!(slot.park_masks(&band, &mut renderer), 1);
+        assert!(slot.own.is_empty() && slot.parked.is_empty());
+        assert_eq!(slot.images, vec![(mask, img)]);
+        assert_eq!(slot.near_only, 1);
+        assert_eq!(renderer.texture_count(), textures - 1);
+        assert!(slot.images_done(&band), "masks wait while far");
+        slot.far = false;
+        assert!(!slot.images_done(&band), "and are uploaded when it nears");
+        slot.release(&mut renderer, None);
+    }
+
+    fn prepared(k: LandblockKey) -> PreparedMesh {
+        shaded_ceiling_mesh(
+            &TerrainBlock::flat(1_000),
+            &HeightSlopeShading::default(),
+            k,
+        )
+        .prepare(&MeshConfig::default())
+        .expect("prepared")
+    }
+
     /// Runs `update` until settled (bounded).
     fn settle(
         layer: &mut TerrainLayer,
         renderer: &mut Renderer<'_>,
         anchor: &Anchor,
         objects: &mut dyn TextureStore,
+    ) {
+        settle_in(layer, renderer, anchor, objects, &TerrainFrame::default());
+    }
+
+    /// Runs `update` with `frame` until settled (bounded).
+    fn settle_in(
+        layer: &mut TerrainLayer,
+        renderer: &mut Renderer<'_>,
+        anchor: &Anchor,
+        objects: &mut dyn TextureStore,
+        frame: &TerrainFrame,
     ) {
         let t = Instant::now();
         loop {
@@ -3433,7 +3987,7 @@ mod tests {
                 renderer,
                 anchor,
                 Vec3::new(80.0, 80.0, 300.0),
-                &TerrainFrame::default(),
+                frame,
                 objects,
                 &mut budget,
             );

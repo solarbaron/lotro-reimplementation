@@ -17,9 +17,10 @@
 //!   5.2 mm, every landblock-info cell links its portals reciprocally, and the cell lookup
 //!   finds a cell at the centre of every placed cell;
 //! - **movement record** (CO9);
-//! - **blockers** (§9.3, CO12): 82,139 undrawn mesh blockers among 97,688 undrawn blocking
-//!   SEDs in the data census, and the run-time sets with the content-layer test and the
-//!   creation-type 7/8 drop;
+//! - **blockers** (§9.3, CO12, CO14): over the Physics SEDs with a position, 82,139 undrawn
+//!   mesh blockers among 97,688 undrawn blocking SEDs in the data census, and the run-time
+//!   sets with the content-layer test and then the creation-type filter (the SED's own
+//!   value first, else the 0x47 chain; 0, 7 and 8 refused); the creation-type census;
 //! - **sets**: full collision sets of sampled landblocks, with sweeps.
 //!
 //! Skipped (reported as passing) unless `TESSERA_GAME_DIR` points at an install. Run with
@@ -45,10 +46,11 @@ use tessera_formats::{
     PropertySetRecord, PropertyValue, Record, Setup,
 };
 use tessera_physics::geometry::{
-    Capsule, CollisionFlags, CollisionLimits, CollisionSetBuilder, ETHEREAL_PLAYER, FetchedRecord,
-    GRID_TRIANGLES, GeneratedObject, GridMesh, ObjectCollision, ObjectCollisionCache, PhysicsPids,
-    QueryFilter, SetupCollision, ShapeTemplate, StaticOptions, Transform, content_layer_list,
-    content_layers_pass, resolve_object_collision, static_blocks_walker,
+    Capsule, CollisionFlags, CollisionLimits, CollisionSetBuilder, ETHEREAL_PLAYER, EntityLookups,
+    FetchedRecord, GRID_TRIANGLES, GeneratedObject, GridMesh, ObjectCollision,
+    ObjectCollisionCache, PhysicsPids, QueryFilter, SetupCollision, ShapeTemplate, StaticOptions,
+    Transform, content_layers_pass, resolve_object_collision, static_blocks_walker,
+    static_has_walker_collision,
 };
 
 const PROPERTY_DICTIONARY: u32 = 0x3400_0000;
@@ -828,20 +830,19 @@ fn co9_movement_record() {
 // ---------------------------------------------------------------------------------------
 // §9.3: which placed objects block a walker.
 
-/// Draw-suppression values (`entity-descriptor.md` §9.2 E22).
+/// The values of the plain draw suppression of `collision.md` §9.3 (`entity-descriptor.md`
+/// §9.2, not the precedence of E22).
 #[derive(Debug, Clone, Copy, Default)]
 struct Draw {
     draw: Option<bool>,
     meshes: Option<bool>,
     never: Option<bool>,
-    server: Option<bool>,
 }
 
 struct DrawPids {
     draw: Option<u32>,
     meshes: Option<u32>,
     never: Option<u32>,
-    server: Option<u32>,
 }
 
 impl Draw {
@@ -855,7 +856,6 @@ impl Draw {
             draw: get(p.draw),
             meshes: get(p.meshes),
             never: get(p.never),
-            server: get(p.server),
         }
     }
     fn or(self, o: Self) -> Self {
@@ -863,12 +863,12 @@ impl Draw {
             draw: self.draw.or(o.draw),
             meshes: self.meshes.or(o.meshes),
             never: self.never.or(o.never),
-            server: self.server.or(o.server),
         }
     }
+    /// Undrawn when the first `Render_Draw` or `Render_DrawMeshes` found is false, or the
+    /// first `Render_NeverAddToScene` found is true (§9.3).
     fn suppressed(self) -> bool {
-        let draw = self.server.or(self.draw).unwrap_or(true);
-        !draw || self.meshes == Some(false) || self.never == Some(true)
+        self.draw == Some(false) || self.meshes == Some(false) || self.never == Some(true)
     }
 }
 
@@ -919,7 +919,6 @@ fn s9_3_blocker_classification() {
         draw: dict.pid("Render_Draw"),
         meshes: dict.pid("Render_DrawMeshes"),
         never: dict.pid("Render_NeverAddToScene"),
-        server: dict.pid("Render_ServerDraw"),
     };
     let cache = ObjectCollisionCache::default();
     let draws = Mutex::new(HashMap::new());
@@ -930,9 +929,12 @@ fn s9_3_blocker_classification() {
     type Row = (&'static str, bool, bool, bool);
     let results = par_each(&entries, |(member, e)| {
         let mut rows: HashMap<Row, usize> = HashMap::new();
-        // Per set of §9.3 / CO12 (data census; content-layer test; and creation types 7
-        // and 8 dropped): [blockers, undrawn blockers, undrawn mesh blockers].
+        // Per set of §9.3 / CO12 (data census; content-layer test; and the creation-type
+        // filter, 0, 7 and 8 refused): [blockers, undrawn blockers, undrawn mesh blockers].
         let mut blocking = [[0usize; 3]; 3];
+        // CO14 over placed Physics SEDs: [effective 0, effective 7 or 8, 7 or 8 on the
+        // chain, of those without their own value].
+        let mut creation = [0usize; 4];
         let mut unplaced = 0usize;
         // SEDs with an effective Physics_SurfacePropertiesToApply (extra sets included,
         // scenery.md §9.2 rule 1; collision.md §9.1 OPEN).
@@ -940,18 +942,14 @@ fn s9_3_blocker_classification() {
         let bytes = read(set, *member, e);
         let info = LandblockInfo::parse_expecting(&bytes, e.did, Some(e.stamp), dict)
             .unwrap_or_else(|err| panic!("{:#010x}: landblock info: {err}", e.did));
-        let instance: HashMap<u64, &PropertySet> = info
-            .weenies
-            .items
-            .iter()
-            .map(|w| (w.iid.0, &w.properties))
-            .collect();
         for sed in &info.entities {
             if sed.kind() != Some(StaticEntityType::Physics) {
                 continue;
             }
+            // The §9.3 table and CO12 are over the SEDs that have a position.
             if sed.placement.is_none() {
                 unplaced += 1;
+                continue;
             }
             let Some(object) = sed.object else { continue };
             let r = resolve(set, &cache, &draws, &pids, &dpids, object);
@@ -962,15 +960,19 @@ fn s9_3_blocker_classification() {
                 .unwrap_or_default();
             let flags = CollisionFlags::of_static(own, r.collision.flags);
             surfaced += usize::from(flags.surface_properties.is_some());
-            let inst = sed.iid.and_then(|i| instance.get(&i.0).copied());
-            let draw = inst
+            // CO14.
+            creation[0] += usize::from(flags.creation_type_value() == 0);
+            creation[1] += usize::from(flags.is_server_created());
+            if matches!(r.collision.flags.creation_type, Some(7 | 8)) {
+                creation[2] += 1;
+                creation[3] += usize::from(own.creation_type.is_none());
+            }
+            // The plain draw suppression of §9.3: the SED's own set, then the 0x47 chain.
+            let draw = sed
+                .properties
+                .as_ref()
                 .map(|s| Draw::from_set(s, &dpids))
                 .unwrap_or_default()
-                .or(sed
-                    .properties
-                    .as_ref()
-                    .map(|s| Draw::from_set(s, &dpids))
-                    .unwrap_or_default())
                 .or(r.draw);
             let drawn = !draw.suppressed();
             let kind = match (
@@ -986,36 +988,43 @@ fn s9_3_blocker_classification() {
             *rows
                 .entry((kind, flags.has_no_physics(), drawn, ethereal))
                 .or_default() += 1;
-            let list = sed
+            // The layer list by the same lookup (§9.3, the paragraph after item 3).
+            let lookups = sed
                 .properties
                 .as_ref()
-                .and_then(|s| content_layer_list(s, &pids));
-            let layers = content_layers_pass(list.as_deref(), &[1], 0);
-            let placed = sed.placement.is_some();
-            let census = CollisionFlags {
-                creation_type: None,
-                ..flags
-            };
+                .map(|s| EntityLookups::from_set(s, &pids))
+                .unwrap_or_default()
+                .or(r.collision.lookups.clone());
+            let layers = content_layers_pass(lookups.layer_list(), &[1], 0);
+            let collides = static_has_walker_collision(&flags, r.collision.collision);
             let mesh = r.collision.collision == SetupCollision::Mesh;
-            for (k, (layers, flags)) in [(true, &census), (layers, &census), (layers, &flags)]
-                .into_iter()
-                .enumerate()
+            for (k, blocks) in [
+                collides,
+                layers && collides,
+                static_blocks_walker(true, layers, &flags, r.collision.collision),
+            ]
+            .into_iter()
+            .enumerate()
             {
-                if static_blocks_walker(placed, layers, flags, r.collision.collision) {
+                if blocks {
                     blocking[k][0] += 1;
                     blocking[k][1] += usize::from(!drawn);
                     blocking[k][2] += usize::from(!drawn && mesh);
                 }
             }
         }
-        (rows, blocking, unplaced, surfaced)
+        (rows, blocking, unplaced, surfaced, creation)
     });
     let mut rows: BTreeMap<Row, usize> = BTreeMap::new();
     let mut blocking = [[0usize; 3]; 3];
     let mut unplaced = 0;
     let mut surfaced = 0;
-    for (r, u, n, s) in results {
+    let mut creation = [0usize; 4];
+    for (r, u, n, s, c) in results {
         surfaced += s;
+        for (t, p) in creation.iter_mut().zip(c) {
+            *t += p;
+        }
         for (k, v) in r {
             *rows.entry(k).or_default() += v;
         }
@@ -1028,7 +1037,8 @@ fn s9_3_blocker_classification() {
     }
     let total: usize = rows.values().sum();
     eprintln!(
-        "§9.3: {total} Physics SEDs ({unplaced} without a position), {} objects resolved; \
+        "§9.3: {total} Physics SEDs with a position ({unplaced} without one left out), {} \
+         objects resolved; \
          rows (collision, NoPhysics, drawn, ethereal to Player):",
         cache.len()
     );
@@ -1039,8 +1049,9 @@ fn s9_3_blocker_classification() {
     }
     eprintln!(
         "blocking SEDs [all, undrawn, undrawn mesh]: data census {:?}, content-layer test \
-         {:?}, and creation types 7/8 dropped {:?}; {surfaced} SEDs with a surface material \
-         (0x47 extra sets included); {:.1} s",
+         {:?}, and the creation-type filter {:?}; creation types [effective 0, effective 7/8, \
+         7/8 on the chain, of those without their own value] {creation:?}; {surfaced} SEDs \
+         with a surface material (0x47 extra sets included); {:.1} s",
         blocking[0],
         blocking[1],
         blocking[2],
@@ -1052,8 +1063,10 @@ fn s9_3_blocker_classification() {
             .copied()
             .unwrap_or(0);
         assert_eq!(mesh_blockers, 82_139, "§9.3 undrawn mesh blockers");
+        assert_eq!(total, 2_380_675, "§9.3: Physics SEDs with a position");
         // CO12: the data census applies neither run-time filter; the walker's world applies
-        // the content-layer test (L = 1, I = 0) and drops creation types 7 and 8.
+        // the content-layer test (L = 1, I = 0) and the creation-type filter (the SED's own
+        // value first; 0, 7 and 8 refused).
         assert_eq!(blocking[0], [1_651_097, 97_688, 82_139], "CO12 data census");
         assert_eq!(
             blocking[1],
@@ -1062,9 +1075,12 @@ fn s9_3_blocker_classification() {
         );
         assert_eq!(
             blocking[2],
-            [1_606_311, 88_748, 73_508],
+            [1_607_211, 88_749, 73_509],
             "CO12 creation types"
         );
+        // CO14: no effective 7 or 8, exactly one 0; 1,602 placed SEDs have 7 or 8 on their
+        // chain, each with its own value.
+        assert_eq!(creation, [1, 0, 1_602, 0], "CO14");
     }
 }
 

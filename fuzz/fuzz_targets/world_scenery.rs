@@ -13,6 +13,13 @@
 //! (missing scene references, scale modes above 8, §7.4 step 15) end their vertex cleanly;
 //! the frill pass takes the static pass's footprint markers (§8.2 item 5).
 //!
+//! The hostile-input readers of the static list (§7.4 step 14a) are fuzzed too: clearance
+//! lists built from arbitrary property values ([`volumes_from_values`]) and static lists
+//! read from a landblock-info record of arbitrary entities with their own sets, 0x47 chains
+//! (loops included) and game objects with `PhysObj` ([`static_clearances`]). Every list
+//! ends at its first element that breaks the rule, skips non-finite elements, stores boxes
+//! sorted, keeps every value finite and respects the per-entity and per-landblock caps.
+//!
 //! Run with e.g. `cargo fuzz run world_scenery -- -rss_limit_mb=1024`.
 
 #![no_main]
@@ -28,14 +35,20 @@ use tessera_formats::scenery::{
 };
 use tessera_formats::setup::Quaternion;
 use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
-use tessera_formats::{Did, LandblockData};
+use tessera_formats::{
+    Did, LandblockData, LandblockInfo, PropertyArray, PropertyEntry, PropertyStruct, PropertyType,
+    PropertyValue, TSize,
+};
 use tessera_physics::geometry::{GridMesh, Plane};
 use tessera_world::LandblockKey;
 use tessera_world::frills::{DensityThinner, generate_sector};
 use tessera_world::scenery::{
-    ClearanceBox, ClearanceCylinder, FixedWater, GeneratedScenery, SceneryInput, SceneryLimits,
-    SceneryTables, StaticClearance, generate_landblock,
+    ClearanceBox, ClearanceCylinder, ClearancePids, FixedWater, GeneratedScenery,
+    MAX_STATIC_VOLUMES, MAX_VOLUMES_PER_ENTITY, ObjectPropertyCache, SceneryInput, SceneryLimits,
+    SceneryTables, StaticClearance, generate_landblock, static_clearances, volumes_from_values,
 };
+use tessera_world::source::MemoryWorldSource;
+use tessera_world::testkit::{self, TestEntity, TestValue};
 
 /// Most scenes per input.
 const SCENES: u32 = 8;
@@ -253,6 +266,300 @@ fn data(b: &mut Bytes<'_>, key: LandblockKey) -> LandblockData {
     d
 }
 
+// Clearance PIDs of the synthetic schema (`testkit::schema` plus these).
+const PID_BOXES: u32 = 0x1000_7002;
+const PID_BOX: u32 = 0x1000_7003;
+const PID_MIN: u32 = 0x1000_7004;
+const PID_MAX: u32 = 0x1000_7005;
+const PID_CYLS: u32 = 0x1000_7006;
+const PID_CYL: u32 = 0x1000_7007;
+const PID_LOW: u32 = 0x1000_7008;
+const PID_RADIUS: u32 = 0x1000_7009;
+const PID_HEIGHT: u32 = 0x1000_700A;
+const PID_CTYPE: u32 = 0x1000_700B;
+
+fn clearance_schema() -> HashMap<u32, PropertyType> {
+    let mut s = testkit::schema();
+    for (pid, code) in [
+        (PID_BOXES, 12),
+        (PID_BOX, 11),
+        (PID_MIN, 6),
+        (PID_MAX, 6),
+        (PID_CYLS, 12),
+        (PID_CYL, 11),
+        (PID_LOW, 6),
+        (PID_RADIUS, 9),
+        (PID_HEIGHT, 9),
+        (PID_CTYPE, 8),
+    ] {
+        s.insert(pid, PropertyType::from_code(code));
+    }
+    s
+}
+
+fn clearance_pids(b: &mut Bytes<'_>) -> ClearancePids {
+    ClearancePids {
+        box_list: Some(PID_BOXES),
+        cylinder_list: Some(PID_CYLS),
+        box_min: Some(PID_MIN),
+        box_max: Some(PID_MAX),
+        low_point: Some(PID_LOW),
+        radius: Some(PID_RADIUS),
+        height: b.bool().then_some(PID_HEIGHT),
+        phys_obj: Some(testkit::pid::PHYS_OBJ),
+        creation_type: b.bool().then_some(PID_CTYPE),
+    }
+}
+
+/// A raw float for a clearance value: often small, sometimes NaN or ±∞.
+fn hostile(b: &mut Bytes<'_>) -> f32 {
+    match b.u8() % 8 {
+        0 => f32::NAN,
+        1 => f32::INFINITY,
+        2 => f32::NEG_INFINITY,
+        _ => b.f32(),
+    }
+}
+
+fn hostile_v3(b: &mut Bytes<'_>) -> [f32; 3] {
+    [hostile(b), hostile(b), hostile(b)]
+}
+
+/// One list element as a property value: usually a well-formed struct, sometimes a field
+/// missing, of the wrong type, or not a struct at all.
+fn element_value(b: &mut Bytes<'_>, cylinder: bool) -> PropertyValue {
+    let field = |pid, value| PropertyEntry { pid, value };
+    let mut fields = if cylinder {
+        vec![
+            field(PID_LOW, PropertyValue::Vector3(hostile_v3(b))),
+            field(PID_RADIUS, PropertyValue::Float(hostile(b))),
+            field(PID_HEIGHT, PropertyValue::Float(hostile(b))),
+        ]
+    } else {
+        vec![
+            field(PID_MIN, PropertyValue::Vector3(hostile_v3(b))),
+            field(PID_MAX, PropertyValue::Vector3(hostile_v3(b))),
+        ]
+    };
+    match b.u8() % 10 {
+        0 => return PropertyValue::Float(hostile(b)),
+        1 => {
+            let k = usize::from(b.u8()) % fields.len();
+            fields.remove(k);
+        }
+        2 => {
+            let k = usize::from(b.u8()) % fields.len();
+            if let Some(f) = fields.get_mut(k) {
+                f.value = PropertyValue::Int(i32::from(b.u8()));
+            }
+        }
+        _ => {}
+    }
+    PropertyValue::Struct(PropertyStruct {
+        size: TSize::default(),
+        fields,
+    })
+}
+
+fn list_value(b: &mut Bytes<'_>, cylinder: bool) -> PropertyValue {
+    if b.u8().is_multiple_of(8) {
+        return PropertyValue::Float(1.0);
+    }
+    // Sometimes longer than the per-entity cap.
+    let n = if b.u8().is_multiple_of(16) {
+        MAX_VOLUMES_PER_ENTITY + usize::from(b.u8())
+    } else {
+        usize::from(b.u8() % 8)
+    };
+    let pid = if cylinder { PID_CYL } else { PID_BOX };
+    let elements = (0..n)
+        .map(|_| PropertyEntry {
+            pid,
+            value: element_value(b, cylinder),
+        })
+        .collect::<Vec<_>>();
+    PropertyValue::Array(PropertyArray {
+        count: u32::try_from(elements.len()).unwrap_or(u32::MAX),
+        elements,
+    })
+}
+
+/// How many leading elements of a list meet the rule of §7.4 step 14a (an upper bound of
+/// the volumes read from it).
+fn leading_valid(v: &PropertyValue, pids: &ClearancePids, cylinder: bool) -> usize {
+    let Some(a) = v.as_array() else { return 0 };
+    let has = |s: &PropertyStruct, pid: Option<u32>, vector: bool| {
+        pid.and_then(|p| s.get(p)).is_some_and(|x| {
+            if vector {
+                matches!(x, PropertyValue::Vector3(_))
+            } else {
+                matches!(x, PropertyValue::Float(_))
+            }
+        })
+    };
+    a.elements
+        .iter()
+        .take_while(|e| {
+            e.value.as_struct().is_some_and(|s| {
+                if cylinder {
+                    has(s, pids.low_point, true)
+                        && has(s, pids.radius, false)
+                        && has(s, pids.height, false)
+                } else {
+                    has(s, pids.box_min, true) && has(s, pids.box_max, true)
+                }
+            })
+        })
+        .count()
+}
+
+fn check_volumes(boxes: &[ClearanceBox], cylinders: &[ClearanceCylinder]) {
+    assert!(boxes.len() <= MAX_VOLUMES_PER_ENTITY && cylinders.len() <= MAX_VOLUMES_PER_ENTITY);
+    for bx in boxes {
+        assert!(bx.min.iter().chain(&bx.max).all(|c| c.is_finite()));
+        assert!(
+            (0..3).all(|k| bx.min[k] <= bx.max[k]),
+            "box stored unsorted"
+        );
+    }
+    for c in cylinders {
+        assert!(c.low_point.iter().all(|v| v.is_finite()));
+        assert!(c.radius.is_finite() && c.height.is_finite());
+    }
+}
+
+/// The readers of §7.4 step 14a on hostile values and records.
+fn fuzz_static_list(b: &mut Bytes<'_>, key: LandblockKey) {
+    let pids = clearance_pids(b);
+    // Lists as property values.
+    let boxes = list_value(b, false);
+    let cylinders = list_value(b, true);
+    let (vb, vc) = volumes_from_values(Some(&boxes), Some(&cylinders), &pids);
+    check_volumes(&vb, &vc);
+    assert!(vb.len() <= leading_valid(&boxes, &pids, false));
+    assert!(vc.len() <= leading_valid(&cylinders, &pids, true));
+
+    // Lists read from a landblock-info record through the lookup of
+    // `entity-descriptor.md` §4.9.
+    let schema = clearance_schema();
+    let tv_list = |b: &mut Bytes<'_>, cylinder: bool| -> TestValue {
+        let n = usize::from(b.u8() % 6);
+        let elements = (0..n)
+            .map(|_| {
+                if cylinder {
+                    let mut f = vec![
+                        (PID_LOW, TestValue::Vec3(hostile_v3(b))),
+                        (PID_RADIUS, TestValue::Float(hostile(b))),
+                    ];
+                    if !b.u8().is_multiple_of(4) {
+                        f.push((PID_HEIGHT, TestValue::Float(hostile(b))));
+                    }
+                    (PID_CYL, TestValue::Struct(f))
+                } else if b.u8().is_multiple_of(5) {
+                    (PID_BOX, TestValue::Float(1.0))
+                } else {
+                    (
+                        PID_BOX,
+                        TestValue::Struct(vec![
+                            (PID_MIN, TestValue::Vec3(hostile_v3(b))),
+                            (PID_MAX, TestValue::Vec3(hostile_v3(b))),
+                        ]),
+                    )
+                }
+            })
+            .collect();
+        TestValue::Array(elements)
+    };
+    let own = |b: &mut Bytes<'_>| -> Vec<(u32, TestValue)> {
+        let mut e = Vec::new();
+        if b.bool() {
+            e.push((PID_BOXES, tv_list(b, false)));
+        }
+        if b.bool() {
+            e.push((PID_CYLS, tv_list(b, true)));
+        }
+        if b.bool() {
+            e.push((PID_CTYPE, TestValue::Enum(u32::from(b.u8() % 12))));
+        }
+        e
+    };
+    let mut src = MemoryWorldSource::new();
+    // Two 0x47 objects whose templates may loop, and a game object naming one by `PhysObj`.
+    let (o1, o2) = (0x4700_0001u32, 0x4700_0002u32);
+    let t1 = if b.bool() { o2 } else { 0x1F00_0001 };
+    let e1 = own(b);
+    src.insert(o1, testkit::entity_descriptor(o1, t1, &e1, &schema), None);
+    let e2 = own(b);
+    src.insert(o2, testkit::entity_descriptor(o2, o1, &e2, &schema), None);
+    let mut g = own(b);
+    if b.bool() {
+        g.push((
+            testkit::pid::PHYS_OBJ,
+            TestValue::Did(if b.bool() { o1 } else { 0x7000_0001 }),
+        ));
+    }
+    src.insert(
+        0x7900_0001u32,
+        testkit::property_set_record(0x7900_0001, &g),
+        None,
+    );
+    let n = usize::from(b.u8() % 6);
+    let mut entities: Vec<TestEntity> = (0..n)
+        .map(|k| {
+            let kind = [6, 7, 23, 9, 0][usize::from(b.u8() % 5)];
+            let object = match b.u8() % 5 {
+                0 => None,
+                1 => Some(0),
+                2 => Some(0x7000_0001),
+                3 => Some(o2),
+                _ => Some(o1),
+            };
+            let position = b.bool().then(|| hostile_v3(b));
+            let rotation = [hostile(b), hostile(b), hostile(b), hostile(b)];
+            TestEntity {
+                kind,
+                serial: u32::try_from(k).unwrap_or(0),
+                object,
+                position,
+                rotation,
+                properties: own(b),
+                interior: false,
+            }
+        })
+        .collect();
+    // Sometimes many entities with long lists: the landblock cap must hold.
+    if b.u8().is_multiple_of(16) {
+        let one = (
+            PID_BOX,
+            TestValue::Struct(vec![
+                (PID_MIN, TestValue::Vec3([-1.0; 3])),
+                (PID_MAX, TestValue::Vec3([1.0; 3])),
+            ]),
+        );
+        let list = vec![(PID_BOXES, TestValue::Array(vec![one; 300]))];
+        for k in 0..70 {
+            entities.push(TestEntity::physics(100 + k, o1, [10.0; 3], list.clone()));
+        }
+    }
+    let bytes = testkit::landblock_info(key, &entities);
+    let Ok(info) = LandblockInfo::parse(&bytes, Some(31), &schema) else {
+        return;
+    };
+    let cache = ObjectPropertyCache::default();
+    let list = static_clearances(&info, &src, &schema, &pids, &cache)
+        .expect("a memory source has no failures outside the data");
+    let total: usize = list.iter().map(StaticClearance::volume_count).sum();
+    assert!(total <= MAX_STATIC_VOLUMES);
+    for s in &list {
+        assert!(!s.is_empty());
+        assert!(s.position.iter().all(|c| c.is_finite()));
+        assert!(s.rotation.to_wxyz().iter().all(|c| c.is_finite()));
+        check_volumes(&s.boxes, &s.cylinders);
+    }
+    let again = static_clearances(&info, &src, &schema, &pids, &cache).expect("cached");
+    assert_eq!(list, again);
+}
+
 fn bits(g: &GeneratedScenery) -> Vec<u32> {
     g.objects
         .iter()
@@ -270,6 +577,10 @@ fn bits(g: &GeneratedScenery) -> Vec<u32> {
 fuzz_target!(|input: &[u8]| {
     let mut b = Bytes(input);
     let key = LandblockKey::new(1 + b.u8() % 6, b.u8() % 255, b.u8() % 255).expect("key");
+    if b.u8() % 4 == 0 {
+        fuzz_static_list(&mut b, key);
+        return;
+    }
     let tables = tables(&mut b);
     let mut scenes: HashMap<Did, Arc<Scene>> = HashMap::new();
     for k in 0..=SCENES {

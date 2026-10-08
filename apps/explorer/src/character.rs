@@ -644,8 +644,9 @@ pub struct SliderSet {
     pub record: Option<Did>,
     /// Sliders in definition order.
     pub defs: Vec<SliderDef>,
-    /// The value bytes in use: the *k*-th byte belongs to the *k*-th definition, hidden
-    /// ones included (A16).
+    /// The value pieces in use as bytes for the editor: the *k*-th byte belongs to the
+    /// *k*-th definition, hidden ones included (A16); one byte per definition at most, a
+    /// piece above 255 (a minus sign, `appearance.md` §6.3) shown as 255.
     pub values: Vec<u8>,
     /// Problems (missing labels, unreadable record).
     pub notes: Vec<String>,
@@ -731,18 +732,28 @@ impl ClipSelection {
     }
 }
 
-/// Plays the figure's held clips on animator layers `first ..`, in data-layer order, held
-/// at their fractions with their track opacities (`script-table.md` §6.7, §6.8;
-/// `skeleton-anim.md` §6.6). Layers past them are cleared up to `first + 4`.
+/// Plays the figure's held clips on animator layers `first ..`, one animator layer per data
+/// layer in data-layer order, held at their fractions with their own track opacities
+/// (`script-table.md` §6.7, §6.8; `skeleton-anim.md` §6.6). Held clips of one data layer
+/// play together and share its budget (`script-table.md` §6.2). Layers past them are
+/// cleared up to `first + 4`.
 pub fn add_held_layers(animator: &mut Animator, product: &CharacterProduct, first: usize) {
     let mut n = 0;
+    let mut last_layer = None;
     for h in &product.held_clips {
-        let p = Playback::held(Arc::clone(&h.clip), h.held.fraction);
+        let mut p = Playback::held(Arc::clone(&h.clip), h.clip_fraction);
+        p.use_track_weights = h.held.use_bone_opacity;
+        if n > 0 && last_layer == Some(h.held.layer) {
+            // Starting a clip never stops another clip of the same layer.
+            let _ = animator.add(first + n - 1, p);
+            continue;
+        }
         if animator.play(first + n, p, 0.0, false).is_ok() {
             if let Some(l) = animator.layer_mut(first + n) {
-                l.use_track_weights = h.held.use_bone_opacity;
+                l.use_track_weights = false;
                 l.fade_to(1.0, 0.0);
             }
+            last_layer = Some(h.held.layer);
             n += 1;
         }
     }
@@ -769,6 +780,26 @@ pub fn avatar_height_range(
             Figure::Playable { sex, .. } if *sex == crate::charspec::SEX_MALE => 0.0..=0.95,
             _ => 0.0..=0.6,
         })
+}
+
+/// The range of the figure's `AC_BoneScale_Test` (body-shape) control (`appearance.md`
+/// §6.2 table): 0 to 0.6 for the River-hobbit male body, 0 to 1 for every other body. The
+/// River-hobbit bodies are the ones whose held clip is driven by `AC_Avatar_Height`
+/// (`drivers`, as for [`avatar_height_range`]).
+#[must_use]
+pub fn bone_scale_range(
+    figure: &Figure,
+    drivers: impl IntoIterator<Item = Option<ShapeDriver>>,
+) -> std::ops::RangeInclusive<f32> {
+    let height_driven = drivers
+        .into_iter()
+        .any(|d| d == Some(ShapeDriver::AvatarHeight));
+    match figure {
+        Figure::Playable { sex, .. } if height_driven && *sex == crate::charspec::SEX_MALE => {
+            0.0..=0.6
+        }
+        _ => 0.0..=1.0,
+    }
 }
 
 /// An assembled figure ready to draw and animate.
@@ -1263,7 +1294,12 @@ fn slider_set<S: tessera_props::RecordSource>(
     let mut groups = Labels::of_property(data, "BoneSlider_SliderGroup");
     let mut out = SliderSet {
         record: Some(f.table.record),
-        values: f.bytes.clone(),
+        values: f
+            .values
+            .iter()
+            .take(f.table.sliders.len())
+            .map(|&v| u8::try_from(v).unwrap_or(u8::MAX))
+            .collect(),
         ..SliderSet::default()
     };
     if f.table.unknown_channel_bits > 0 {
@@ -1892,6 +1928,32 @@ mod tests {
             None
         );
         assert_eq!(avatar_height_range(&m, []), None);
+    }
+
+    /// `appearance.md` §6.2 table: the body-shape control runs 0 to 0.6 on the River-hobbit
+    /// male body and 0 to 1 on every other body (River-hobbit female included).
+    #[test]
+    fn body_shape_range_follows_the_table() {
+        let m = Figure::Playable {
+            species: 1,
+            sex: crate::charspec::SEX_MALE,
+        };
+        let f = Figure::Playable {
+            species: 1,
+            sex: crate::charspec::SEX_FEMALE,
+        };
+        let h = Some(ShapeDriver::AvatarHeight);
+        assert_eq!(bone_scale_range(&m, [h]), 0.0..=0.6);
+        assert_eq!(bone_scale_range(&f, [h]), 0.0..=1.0);
+        assert_eq!(
+            bone_scale_range(&m, [Some(ShapeDriver::BoneScale)]),
+            0.0..=1.0
+        );
+        assert_eq!(bone_scale_range(&m, []), 0.0..=1.0);
+        assert_eq!(
+            bone_scale_range(&Figure::Setup(tessera_formats::Did(0x0400_0001)), [h]),
+            0.0..=1.0
+        );
     }
 
     #[test]

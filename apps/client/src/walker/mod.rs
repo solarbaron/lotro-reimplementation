@@ -58,6 +58,9 @@ pub(crate) mod terrain;
 pub(crate) mod view;
 pub mod water;
 
+/// The walker's `terrain-texturing.md` §4.9 path, for the real-data row checks.
+pub use self::terrain::{block_open, layerless_key, resolve_block_surface};
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -95,7 +98,7 @@ use self::parse::FlyPath;
 use self::places::PlaceBuild;
 use self::resolver::Resolver;
 use self::source::{FigureBlock, Places, SourceShared, describe, loc_text, lock};
-use self::terrain::{BlockInputs, TerrainFrame, TerrainLayer, TerrainLight};
+use self::terrain::{BlockInputs, TerrainFrame, TerrainLayer};
 use self::view::{Anchor, Frustum};
 use self::water::WaterLayer;
 use crate::net::PlayerLocation;
@@ -327,7 +330,7 @@ pub struct WalkerConfig {
     /// Terrain worker threads.
     pub terrain_threads: usize,
     /// Load and draw every interior cell and interior entity whatever the camera's cell
-    /// (a debugging view; `walker.md` §14.11). Without it interiors are drawn through the
+    /// (a debugging view; `walker.md` §14.12 (k)). Without it interiors are drawn through the
     /// portal system of `landblock.md` §4.11 from inside only.
     pub interiors: bool,
     /// Keymap file.
@@ -498,6 +501,23 @@ pub fn keys_taken_by(keymap: &tessera_input::Keymap) -> HashSet<tessera_input::K
     taken
 }
 
+/// The camera's interior cell (`walker.md` §14.12 (a), `landblock.md` §4.12 Tessera
+/// Decision): the cell lookup of the resident landblocks at `eye` (the eye as the camera
+/// controller placed it, before any terrain clamp), else `mover` (the walking character's
+/// cell, in walk mode on collision); `None` outdoors. Owner landblock and cell number.
+#[must_use]
+pub fn camera_cell_at(
+    streamer: &WorldStreamer,
+    eye: &WorldPos,
+    mover: Option<(LandblockKey, u16)>,
+) -> Option<(LandblockKey, u16)> {
+    streamer
+        .cell_at(eye)
+        .map(|(k, c)| (k, c.index))
+        .filter(|(_, c)| *c != OUTDOORS)
+        .or(mover)
+}
+
 /// The walker (module docs).
 pub struct Walker {
     config: WalkerConfig,
@@ -505,6 +525,9 @@ pub struct Walker {
     set: Arc<ArchiveSet>,
     pool: WorkerPool,
     streamer: WorldStreamer,
+    /// The landblocks the collision walk pins (`walker.md` §13.3: the owner of the
+    /// mover's cell), streamed wherever they lie.
+    pins: movement::PinStreamers,
     terrain: TerrainLayer,
     objects: ObjectLayer,
     minimap: MinimapLayer,
@@ -553,9 +576,11 @@ pub struct Walker {
     frills: FrillLayer,
     /// The environment of this frame.
     frame_env: Option<FrameEnv>,
-    /// The frame's light table (render frame) and the same lights as the terrain sees them.
+    /// The frame's light table (render frame).
     lights: Vec<Light>,
-    terrain_lights: Vec<TerrainLight>,
+    /// The reach of each light of [`Self::lights`] for the renderer's selection
+    /// (`lighting.md` §8.5).
+    light_reach: Vec<tessera_render::LightReach>,
     /// Start of the material and light clock (`material.md` §5.3.1).
     clock_start: Instant,
     /// The eye of the previous frame (camera travel for fades).
@@ -765,6 +790,7 @@ impl Walker {
             config,
             ctx,
             set,
+            pins: movement::PinStreamers::new(Some(pool.clone())),
             pool,
             streamer,
             terrain,
@@ -810,7 +836,7 @@ impl Walker {
             frills: FrillLayer::default(),
             frame_env: None,
             lights: Vec::new(),
-            terrain_lights: Vec::new(),
+            light_reach: Vec::new(),
             clock_start: now,
             last_eye: None,
             env_ms: 0.0,
@@ -963,9 +989,12 @@ impl Walker {
         self.systems.on(System::Frills) && self.scene.outdoor_visible
     }
 
-    /// Whether the sky is drawn: switched on and sky-visible (§4.12).
+    /// Whether the sky is drawn: switched on, sky-visible (§4.12) and not hidden by fog
+    /// (`environment.md` §11.7 step 10).
     fn sky_drawn(&self) -> bool {
-        self.systems.on(System::Sky) && self.scene.sky_visible
+        self.systems.on(System::Sky)
+            && self.scene.sky_visible
+            && !self.frame_env.as_ref().is_some_and(|f| f.sky_fogged)
     }
 
     /// What keeps [`Walker::settled`] false (diagnostics), empty when settled.
@@ -1109,7 +1138,10 @@ impl Walker {
         }
         let tiles = self.terrain.tiles().clone();
         let ground = |gx: f64, gy: f64| tiles.height_at(gx, gy);
-        let collision = movement::StreamedCollision(&self.streamer);
+        let collision = movement::PinnedCollision {
+            main: &self.streamer,
+            pins: &self.pins,
+        };
         let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
         events.screenshot = ce.screenshot;
@@ -1139,6 +1171,14 @@ impl Walker {
         if let Some(focus) = focus {
             let t = Instant::now();
             self.last_report = self.streamer.update(focus);
+            // The pinned landblocks a step needs wherever they lie (`walker.md` §13.3).
+            let pins = self
+                .controls
+                .physics()
+                .filter(|_| self.controls.mode() == MoveMode::Walk)
+                .map(movement::PhysicsWalker::pins)
+                .unwrap_or_default();
+            self.pins.update(self.streamer.context(), &pins);
             self.stream_ms = t.elapsed().as_secs_f64() * 1e3;
         }
         // The frill ring follows the camera and the player (`scenery.md` §8.2).
@@ -1175,11 +1215,17 @@ impl Walker {
                 (eye_w, Vec3::X)
             };
             let cam = anchor.to_render(&eye_w).unwrap_or(Vec3::ZERO);
-            let sky_key = self.streamer.sky_key_at(&eye_w);
+            // Key A at the viewer's position (`environment.md` §7.1.1): the camera's cell
+            // with its owner landblock, else the eye's landblock.
+            let sky_key = Some(env::camera_sky_key(
+                &self.streamer,
+                self.camera_cell,
+                &eye_w,
+            ));
             let indoor = if self.scene.outdoor_visible {
                 None
             } else {
-                Some(self.indoor_inputs(now))
+                Some(self.indoor_inputs(now, &eye_w))
             };
             let time = self.material_time();
             let fe = self.env.update(
@@ -1193,7 +1239,7 @@ impl Walker {
                 time as f32,
             );
             if self.systems.on(System::Lights) {
-                let (lights, tl) = self.env.lights(
+                let (lights, reach) = self.env.lights(
                     &self.streamer,
                     &anchor,
                     &eye_w,
@@ -1206,10 +1252,10 @@ impl Walker {
                     },
                 );
                 self.lights = lights;
-                self.terrain_lights = tl;
+                self.light_reach = reach;
             } else {
                 self.lights.clear();
-                self.terrain_lights.clear();
+                self.light_reach.clear();
             }
             self.frame_env = Some(fe);
         }
@@ -1442,28 +1488,35 @@ impl Walker {
 
     /// Finds the camera's interior cell (`landblock.md` §4.12 Tessera Decision): the cell
     /// lookup at the eye; when it finds none but the walking character's feet are in a
-    /// cell, the character's cell. Then the frame's scene flags: inside, those of the
-    /// cell's PVS; outdoors, both set unless a resident landblock has an outdoor-walk entry
-    /// cell.
+    /// cell, the character's cell. Then the frame's scene flags by the pass of
+    /// `landblock.md` §4.12: inside, the cell visited with its PVS; outdoors, both set and
+    /// the outdoor-walk entry cells of the resident landblocks visited with theirs.
     fn update_camera_cell(&mut self) {
         let (eye, _) = self.controls.eye();
-        let mut cell = self
-            .streamer
-            .cell_at(&eye)
-            .map(|(k, c)| (k, c.index))
-            .filter(|(_, c)| *c != OUTDOORS);
-        if cell.is_none() && self.controls.mode() == MoveMode::Walk {
-            cell = self
-                .controls
+        let mover = if self.controls.mode() == MoveMode::Walk {
+            self.controls
                 .physics()
-                .and_then(movement::PhysicsWalker::cell);
-        }
+                .and_then(movement::PhysicsWalker::cell)
+        } else {
+            None
+        };
+        let cell = camera_cell_at(&self.streamer, &eye, mover);
         self.camera_cell = cell;
         self.scene = match cell {
             Some((k, c)) => self
                 .visibility_of(k)
                 .map_or(SceneFlags::CLOSED, |v| v.scene_flags(c)),
-            None => interiors::outdoor_flags(!self.outdoor_entries.is_empty()),
+            None => {
+                // The outdoor branch visits the outdoor-walk entry cells of every loaded
+                // landblock (none in this install, LI8), in landblock order.
+                let mut keys: Vec<LandblockKey> = self.outdoor_entries.iter().copied().collect();
+                keys.sort_unstable();
+                let blocks: Vec<Arc<BlockVisibility>> = keys
+                    .into_iter()
+                    .filter_map(|k| self.visibility_of(k))
+                    .collect();
+                interiors::outdoor_flags(blocks.iter().map(|b| &**b))
+            }
         };
     }
 
@@ -1498,11 +1551,14 @@ impl Walker {
         Some(vis)
     }
 
-    /// The indoor record's inputs at the camera's cell (`landblock.md` §4.13): looked up
-    /// in the cell's property set, then its landblock info's, then its block map's; re-read
-    /// when the cell's landblock changes and otherwise at most every [`INDOOR_REREAD`].
-    fn indoor_inputs(&mut self, now: Instant) -> IndoorInputs {
-        let Some((key, index)) = self.camera_cell else {
+    /// The indoor record's inputs at the camera position (`landblock.md` §4.13): looked up
+    /// at [`env::lookup_target`] (in a cell: the cell's property set, then its owner's
+    /// landblock info and block map; otherwise the landblock info and block map under the
+    /// eye); re-read when that landblock changes and otherwise at most every
+    /// [`INDOOR_REREAD`].
+    fn indoor_inputs(&mut self, now: Instant, eye: &WorldPos) -> IndoorInputs {
+        let (key, cell) = env::lookup_target(self.camera_cell, eye);
+        let Some(key) = key else {
             return IndoorInputs::read(&self.indoor_pids, |_| None);
         };
         if let Some((k, at, inputs)) = &self.indoor
@@ -1511,16 +1567,11 @@ impl Walker {
         {
             return *inputs;
         }
-        let bundle = self.streamer.bundle(key);
-        let info = bundle.and_then(|b| b.info.as_ref());
-        let cell = info
-            .and_then(|i| i.cell(index))
-            .and_then(|c| c.properties.as_ref());
-        let inputs = IndoorInputs::read(&self.indoor_pids, |pid| {
-            cell.and_then(|p| p.get(pid))
-                .or_else(|| info.and_then(|i| i.properties.get(pid)))
-                .or_else(|| bundle.and_then(|b| b.block_props.value(pid)))
-        });
+        let inputs = env::indoor_inputs_at(
+            self.streamer.bundle(key).map(|b| &**b),
+            cell,
+            &self.indoor_pids,
+        );
         self.indoor = Some((key, now, inputs));
         inputs
     }
@@ -1668,6 +1719,7 @@ impl Walker {
     /// releases its references first, so it acquires them again on the next frame (the
     /// water surfaces and sky parts would otherwise stay pending for ever).
     fn clear_all(&mut self, renderer: &mut Renderer<'_>) {
+        self.pins.clear();
         self.terrain.clear(renderer, &mut self.objects);
         self.frills.clear(&mut self.objects);
         self.water.release(&mut self.objects);
@@ -2070,35 +2122,25 @@ impl Walker {
             let clear = fe.as_ref().map_or(SKY, |f| f.clear);
             let pass = frame.world_pass("walker-world", &camera);
             pass.clear(clear);
-            let sun = if lit {
+            if lit {
                 let mut fl = fe
                     .as_ref()
                     .map_or_else(tessera_render::FrameLighting::default, |f| {
                         f.lighting.clone()
                     });
                 fl.lights.clone_from(&self.lights);
-                let sun = fl.sun.is_some();
                 pass.frame_lighting(fl);
-                sun
+                pass.light_reach(self.light_reach.clone());
             } else {
                 pass.lighting(Lighting {
                     direction: Vec3::new(0.35, -0.45, 0.82),
                     color: [1.0, 0.97, 0.9],
                     ambient: [0.36, 0.38, 0.42],
                 });
-                false
-            };
+            }
             let t0 = Instant::now();
             if scene.outdoor_visible {
-                self.terrain.draw(
-                    renderer,
-                    pass,
-                    &anchor,
-                    &frustum,
-                    eye,
-                    &self.terrain_lights,
-                    sun,
-                );
+                self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
             let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
@@ -2124,9 +2166,20 @@ impl Walker {
                 pass.mesh(d);
             }
             self.char_draws = char_draws;
+            // The avatar placeholder is a moving entity in the visibility cell of the cell
+            // it stands in (`landblock.md` §4.11): the mover's cell, else outdoors.
+            let placeholder_cell = self
+                .controls
+                .physics()
+                .and_then(movement::PhysicsWalker::cell);
+            let placeholder_drawn = match placeholder_cell {
+                Some((k, c)) => drawn(k, c),
+                None => !inside,
+            };
             if let (Some(mesh), Some((feet, yaw))) = (self.avatar, self.controls.avatar())
                 && !self.characters.player_ready()
                 && self.controls.mode() == MoveMode::Walk
+                && placeholder_drawn
                 && let Some(p) = anchor.to_render(&feet)
             {
                 let tf = Mat4::from_translation(p + Vec3::Z * 0.9)
@@ -2275,32 +2328,17 @@ impl Walker {
         });
     }
 
-    /// The eye and view direction, with the eye kept above the terrain (a third-person
-    /// camera behind the avatar must not dip under a slope).
+    /// The eye and view direction. The walk-mode third-person camera is kept above the
+    /// terrain (`walker.md` §5; it must not dip under a slope), except inside a cell
+    /// (§14.12 (a): the terrain is not drawn there); free-fly and scripted cameras are not.
     fn view(&self) -> (WorldPos, Vec3) {
-        let (mut eye, mut dir) = self.controls.eye();
-        // Inside an interior the terrain is not drawn and lies far above or below.
-        if self.camera_cell.is_some() {
+        let (eye, dir) = self.controls.eye();
+        if self.camera_cell.is_some() || self.controls.mode() != MoveMode::Walk {
             return (eye, dir);
         }
-        if let Some(h) = self.terrain.tiles().height_at(eye.x, eye.y) {
-            let min = f64::from(h) + 0.8;
-            if eye.z < min {
-                eye.z = min;
-                // Keep looking at the avatar's head.
-                if let Some((feet, _)) = self.controls.avatar() {
-                    let head = Vec3::new(
-                        (feet.x - eye.x) as f32,
-                        (feet.y - eye.y) as f32,
-                        (feet.z + f64::from(controls::EYE_HEIGHT) - eye.z) as f32,
-                    );
-                    if let Some(d) = head.try_normalize() {
-                        dir = d;
-                    }
-                }
-            }
-        }
-        (eye, dir)
+        let ground = self.terrain.tiles().height_at(eye.x, eye.y);
+        let feet = self.controls.avatar().map(|(feet, _)| feet);
+        controls::keep_above_terrain(eye, dir, ground, feet)
     }
 
     /// Whether the scripted flight has finished (always false without one).

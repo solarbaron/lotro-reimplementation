@@ -21,7 +21,7 @@ use crate::lit_pipelines::{
     LIT_TEXTURES, LightSelector, LightTarget, LitContext, LitKey, LitKind, LitLayouts,
     LitPipelineCache, LitTextures, SHADOW_FORMAT, lit_fields,
 };
-use crate::material::{AlphaMode, DyeMask, Gloss, MeshShading, Opacity};
+use crate::material::{AlphaMode, DyeMask, FixedBlend, Gloss, MeshShading, Opacity};
 use crate::mesh::{MeshData, MeshInfo, PreparedMesh};
 use crate::mesh_pipelines::{
     Cull, DrawContext, DrawUniform, Kind, MeshKey, MeshLayouts, MeshPipelineCache, is_mirrored,
@@ -638,6 +638,9 @@ pub(crate) struct WorldFrame<'a> {
 #[derive(Debug)]
 pub(crate) struct WorldUpload<'a> {
     pub device: &'a wgpu::Device,
+    /// The renderer's mesh configuration (its [`crate::MeshLimits`] bound model uploads
+    /// as they bound [`Renderer::upload_mesh`]).
+    pub mesh_config: crate::arena::MeshConfig,
     pub textures: TextureResolver<'a>,
     pub owner: u64,
     pub terrain: &'a mut TerrainState,
@@ -1314,6 +1317,7 @@ impl<'w> Renderer<'w> {
     pub(crate) fn world_upload(&mut self) -> WorldUpload<'_> {
         WorldUpload {
             device: &self.ctx.device,
+            mesh_config: *self.arena.config(),
             textures: TextureResolver {
                 store: &self.textures,
                 white: (&self.white_view.0, &self.white_view.1),
@@ -1924,11 +1928,12 @@ impl<'w> Renderer<'w> {
                         AlphaMode::Mask { .. } => LitKind::Mask,
                         AlphaMode::TestBlend { .. } => LitKind::TestBlend,
                         AlphaMode::Blend => LitKind::Blend,
-                        AlphaMode::Additive => LitKind::Additive,
+                        AlphaMode::Additive => LitKind::Fixed(FixedBlend::ADDITIVE),
+                        AlphaMode::Fixed(b) => LitKind::Fixed(b),
                     };
                     let blended = matches!(
                         kind,
-                        LitKind::TestBlend | LitKind::Blend | LitKind::Additive
+                        LitKind::TestBlend | LitKind::Blend | LitKind::Fixed(_)
                     );
                     let key = LitKey {
                         format,
@@ -1942,8 +1947,14 @@ impl<'w> Renderer<'w> {
                     let kind = match m.alpha {
                         AlphaMode::Opaque => Kind::Opaque,
                         AlphaMode::Mask { .. } | AlphaMode::TestBlend { .. } => Kind::Mask,
-                        AlphaMode::Blend | AlphaMode::Additive if lit_shading => Kind::Blend,
-                        AlphaMode::Blend | AlphaMode::Additive => Kind::Opaque,
+                        AlphaMode::Blend | AlphaMode::Additive | AlphaMode::Fixed(_)
+                            if lit_shading =>
+                        {
+                            Kind::Blend
+                        }
+                        AlphaMode::Blend | AlphaMode::Additive | AlphaMode::Fixed(_) => {
+                            Kind::Opaque
+                        }
                     };
                     let key = MeshKey {
                         format,
@@ -1966,7 +1977,7 @@ impl<'w> Renderer<'w> {
                         AlphaMode::Mask { .. } | AlphaMode::TestBlend { .. } => {
                             Some(LitKind::ShadowMask)
                         }
-                        AlphaMode::Blend | AlphaMode::Additive => None,
+                        AlphaMode::Blend | AlphaMode::Additive | AlphaMode::Fixed(_) => None,
                     });
                 for s in submeshes {
                     let tris = mesh.triangles(s);

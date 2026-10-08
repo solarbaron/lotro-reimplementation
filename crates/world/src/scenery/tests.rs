@@ -12,7 +12,7 @@ use tessera_formats::scenery::{
 };
 use tessera_formats::setup::Quaternion;
 use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
-use tessera_formats::{Did, LandblockData, PropertyEntry, PropertySet, PropertyValue};
+use tessera_formats::{Did, LandblockData, PropertyEntry, PropertyValue};
 use tessera_physics::geometry::{GridMesh, Plane};
 
 use super::hash::{self, SALT_HEADING};
@@ -768,9 +768,10 @@ fn outside_block_and_unsupported_scale_modes() {
 
 #[test]
 fn scale_modes_above_eight() {
-    // §7.4 steps 3 and 15: above 8 with differing limits the node fails; with equal limits
-    // it takes `scale_min` (mode 9 would then be adjusted in step 11, which is not
-    // specified, so it stays unsupported).
+    // §7.4 steps 3 and 15 (SC21): 9 or higher with differing limits the node fails; 10 or
+    // higher with equal limits takes `scale_min`. Mode 9 with equal limits is adjusted by
+    // step 11 in the client; Tessera does not implement that adjustment and rejects the
+    // node (Tessera Decision of step 3).
     let n = |mode, max: f32| PlacementNode {
         scale_mode: mode,
         scale_min: [0.5; 3],
@@ -1357,6 +1358,12 @@ const PID_BOXES: u32 = 0x1000_7002;
 const PID_BOX: u32 = 0x1000_7003;
 const PID_MIN: u32 = 0x1000_7004;
 const PID_MAX: u32 = 0x1000_7005;
+const PID_CYLS: u32 = 0x1000_7006;
+const PID_CYL: u32 = 0x1000_7007;
+const PID_LOW: u32 = 0x1000_7008;
+const PID_RADIUS: u32 = 0x1000_7009;
+const PID_HEIGHT: u32 = 0x1000_700A;
+const PID_CTYPE: u32 = 0x1000_700B;
 
 fn schema() -> HashMap<u32, tessera_formats::PropertyType> {
     let mut s = testkit::schema();
@@ -1366,6 +1373,12 @@ fn schema() -> HashMap<u32, tessera_formats::PropertyType> {
         (PID_BOX, 11),
         (PID_MIN, 6),
         (PID_MAX, 6),
+        (PID_CYLS, 12),
+        (PID_CYL, 11),
+        (PID_LOW, 6),
+        (PID_RADIUS, 9),
+        (PID_HEIGHT, 9),
+        (PID_CTYPE, 8),
     ] {
         s.insert(pid, tessera_formats::PropertyType::from_code(code));
     }
@@ -1455,52 +1468,483 @@ fn sc14_chain_lookup() {
     assert_eq!(p.levels.len(), 2);
 }
 
-#[test]
-fn clearance_volumes_from_property_values() {
-    let pids = ClearancePids {
+/// Every clearance PID of the synthetic schema.
+fn all_clearance_pids() -> ClearancePids {
+    ClearancePids {
         box_list: Some(PID_BOXES),
+        cylinder_list: Some(PID_CYLS),
         box_min: Some(PID_MIN),
         box_max: Some(PID_MAX),
-        ..ClearancePids::default()
-    };
-    let element = |min, max| PropertyEntry {
-        pid: PID_BOX,
-        value: PropertyValue::Struct(tessera_formats::PropertyStruct {
-            size: tessera_formats::TSize::default(),
-            fields: vec![
-                PropertyEntry {
-                    pid: PID_MIN,
-                    value: PropertyValue::Vector3(min),
-                },
-                PropertyEntry {
-                    pid: PID_MAX,
-                    value: PropertyValue::Vector3(max),
-                },
-            ],
-        }),
-    };
-    let list = PropertyValue::Array(tessera_formats::PropertyArray {
-        count: 3,
-        elements: vec![
-            element([0.0; 3], [1.0; 3]),
-            element([f32::NAN; 3], [1.0; 3]),
-            PropertyEntry {
-                pid: PID_BOX,
-                value: PropertyValue::Float(1.0),
-            },
+        low_point: Some(PID_LOW),
+        radius: Some(PID_RADIUS),
+        height: Some(PID_HEIGHT),
+        phys_obj: Some(testkit::pid::PHYS_OBJ),
+        creation_type: None,
+    }
+}
+
+fn entry(pid: u32, value: PropertyValue) -> PropertyEntry {
+    PropertyEntry { pid, value }
+}
+
+fn strukt(fields: Vec<PropertyEntry>) -> PropertyValue {
+    PropertyValue::Struct(tessera_formats::PropertyStruct {
+        size: tessera_formats::TSize::default(),
+        fields,
+    })
+}
+
+fn array(pid: u32, elements: Vec<PropertyValue>) -> PropertyValue {
+    PropertyValue::Array(tessera_formats::PropertyArray {
+        count: u32::try_from(elements.len()).unwrap(),
+        elements: elements.into_iter().map(|v| entry(pid, v)).collect(),
+    })
+}
+
+fn box_value(min: [f32; 3], max: [f32; 3]) -> PropertyValue {
+    strukt(vec![
+        entry(PID_MIN, PropertyValue::Vector3(min)),
+        entry(PID_MAX, PropertyValue::Vector3(max)),
+    ])
+}
+
+fn cyl_value(low: [f32; 3], radius: f32, height: Option<f32>) -> PropertyValue {
+    let mut fields = vec![
+        entry(PID_LOW, PropertyValue::Vector3(low)),
+        entry(PID_RADIUS, PropertyValue::Float(radius)),
+    ];
+    if let Some(h) = height {
+        fields.push(entry(PID_HEIGHT, PropertyValue::Float(h)));
+    }
+    strukt(fields)
+}
+
+#[test]
+fn clearance_volumes_from_property_values() {
+    // §7.4 step 14a: the first element that does not meet the rule ends the list; an
+    // element holding a non-finite value is skipped and the list goes on (Tessera Decision
+    // of §13.1); corners are sorted per axis.
+    let pids = all_clearance_pids();
+    let boxes = array(
+        PID_BOX,
+        vec![
+            box_value([0.0; 3], [1.0; 3]),
+            box_value([f32::NAN; 3], [1.0; 3]),
+            box_value([1.0, -1.0, 0.0], [-1.0, 1.0, 2.0]),
+            PropertyValue::Float(1.0),
+            box_value([5.0; 3], [6.0; 3]),
         ],
-    });
-    let (boxes, cylinders) = volumes_from_values(Some(&list), None, &pids);
-    assert_eq!(boxes.len(), 1);
-    assert!(cylinders.is_empty());
-    let set = PropertySet {
-        entries: vec![PropertyEntry {
-            pid: PID_BOXES,
-            value: list,
-        }],
-        ..PropertySet::default()
+    );
+    let (b, c) = volumes_from_values(Some(&boxes), None, &pids);
+    assert!(c.is_empty());
+    assert_eq!(
+        b,
+        [
+            ClearanceBox {
+                min: [0.0; 3],
+                max: [1.0; 3],
+            },
+            ClearanceBox {
+                min: [-1.0, -1.0, 0.0],
+                max: [1.0, 1.0, 2.0],
+            },
+        ]
+    );
+    // A field of the wrong type ends the list too.
+    let wrong = array(
+        PID_BOX,
+        vec![
+            box_value([0.0; 3], [1.0; 3]),
+            strukt(vec![
+                entry(PID_MIN, PropertyValue::Float(0.0)),
+                entry(PID_MAX, PropertyValue::Vector3([1.0; 3])),
+            ]),
+            box_value([0.0; 3], [2.0; 3]),
+        ],
+    );
+    assert_eq!(volumes_from_values(Some(&wrong), None, &pids).0.len(), 1);
+    // Not an array: no volumes.
+    let scalar = PropertyValue::Float(1.0);
+    assert!(volumes_from_values(Some(&scalar), Some(&scalar), &pids) == (vec![], vec![]));
+
+    // Cylinders: a missing height ends the list; a non-finite height or radius skips the
+    // element.
+    let cyls = array(
+        PID_CYL,
+        vec![
+            cyl_value([0.0; 3], 1.0, Some(2.0)),
+            cyl_value([0.0; 3], 1.0, Some(f32::INFINITY)),
+            cyl_value([0.0; 3], f32::NAN, Some(1.0)),
+            cyl_value([1.0; 3], 0.5, Some(3.0)),
+            cyl_value([0.0; 3], 1.0, None),
+            cyl_value([9.0; 3], 1.0, Some(2.0)),
+        ],
+    );
+    let (_, c) = volumes_from_values(None, Some(&cyls), &pids);
+    assert_eq!(
+        c,
+        [
+            ClearanceCylinder {
+                low_point: [0.0; 3],
+                radius: 1.0,
+                height: 2.0,
+            },
+            ClearanceCylinder {
+                low_point: [1.0; 3],
+                radius: 0.5,
+                height: 3.0,
+            },
+        ]
+    );
+    // A dictionary without `Entity_Clearance_Height`: no cylinder element can meet the rule.
+    let no_height = ClearancePids {
+        height: None,
+        ..pids
     };
-    assert!(set.get(PID_BOXES).is_some());
+    assert!(
+        volumes_from_values(None, Some(&cyls), &no_height)
+            .1
+            .is_empty()
+    );
+    // The per-entity cap stops reading.
+    let many = array(
+        PID_BOX,
+        vec![box_value([0.0; 3], [1.0; 3]); MAX_VOLUMES_PER_ENTITY + 10],
+    );
+    assert_eq!(
+        volumes_from_values(Some(&many), None, &pids).0.len(),
+        MAX_VOLUMES_PER_ENTITY
+    );
+}
+
+#[test]
+fn sc22a_crossed_box_corners_are_sorted() {
+    // SC22 (a): Box_Min (1, −1, 0), Box_Max (−1, 1, 2) at (40, 40, 0), identity rotation:
+    // a candidate at (40.5, 40, z) with ρ = 0.1 is rejected, as for (−1, −1, 0) … (1, 1, 2).
+    let crossed = ClearanceBox {
+        min: [1.0, -1.0, 0.0],
+        max: [-1.0, 1.0, 2.0],
+    };
+    let sorted = ClearanceBox::from_corners(crossed.min, crossed.max);
+    assert_eq!(
+        sorted,
+        ClearanceBox {
+            min: [-1.0, -1.0, 0.0],
+            max: [1.0, 1.0, 2.0],
+        }
+    );
+    for b in [crossed, sorted] {
+        let s = StaticClearance {
+            position: [40.0, 40.0, 0.0],
+            rotation: Quaternion::IDENTITY,
+            boxes: vec![b],
+            cylinders: Vec::new(),
+        };
+        for z in [0.0, 1.0, 50.0] {
+            assert!(s.overlaps([40.5, 40.0, z], 0.1, false), "{b:?} z {z}");
+        }
+        assert!(s.overlaps([40.5, 40.0, 1.0], 0.1, true));
+        assert!(!s.overlaps([41.2, 40.0, 1.0], 0.1, false));
+    }
+    // A box flat on every axis once sorted is skipped.
+    let flat = StaticClearance {
+        position: [0.0; 3],
+        rotation: Quaternion::IDENTITY,
+        boxes: vec![ClearanceBox {
+            min: [0.0001; 3],
+            max: [0.0; 3],
+        }],
+        cylinders: Vec::new(),
+    };
+    assert!(!flat.overlaps([0.0; 3], 1.0, false));
+}
+
+#[test]
+fn sc23_cylinder_with_spacing_3d() {
+    // SC23: low point (0, 0, 0), radius 1, height 2, identity frame at the origin, ρ = 0.5.
+    let s = StaticClearance {
+        position: [0.0; 3],
+        rotation: Quaternion::IDENTITY,
+        boxes: Vec::new(),
+        cylinders: vec![ClearanceCylinder {
+            low_point: [0.0; 3],
+            radius: 1.0,
+            height: 2.0,
+        }],
+    };
+    assert!(s.overlaps([1.4, 0.0, 1.0], 0.5, true));
+    assert!(s.overlaps([0.0, 0.0, 3.4], 0.5, true));
+    assert!(
+        !s.overlaps([1.5, 0.0, 1.0], 0.5, true),
+        "2.25 is not < 2.25"
+    );
+    assert!(!s.overlaps([0.0, 0.0, -1.6], 0.5, true));
+    assert!(s.overlaps([0.0, 0.0, -1.4], 0.5, true));
+    // Without `spacing_3d` the test is horizontal and inclusive.
+    assert!(s.overlaps([1.5, 0.0, 9.0], 0.5, false), "2.25 <= 2.25");
+    assert!(!s.overlaps([1.6, 0.0, 1.0], 0.5, false));
+    // Through generation: a node at the vertex (z = 0) with ρ = 0.5 and the cylinder's
+    // low point straight above it (mapped z = −1.6 or −1.4). The 2D form overlaps in both
+    // cases; with `spacing_3d` only the nearer one does.
+    let [x, y] = base_xy();
+    for (three_d, low, placed) in [
+        (true, 1.6f32, 1usize),
+        (true, 1.4, 0),
+        (false, 1.6, 0),
+        (false, 1.4, 0),
+    ] {
+        let n = PlacementNode {
+            spacing: 0.5,
+            spacing_3d: three_d,
+            ..node(vec![SceneChild::Object(OBJ_X)])
+        };
+        let mut f = Fixture::new(data_one_vertex(), one_node(n));
+        f.statics = vec![StaticClearance {
+            position: [x, y, low],
+            ..s.clone()
+        }];
+        let g = f.run();
+        assert_eq!(g.objects.len(), placed, "3d {three_d} low {low}");
+        assert_eq!(
+            g.stats.rejections(Rejection::StaticSpacing),
+            u32::from(placed == 0)
+        );
+    }
+}
+
+/// A landblock-info record of `entities` decoded with the synthetic schema.
+fn info_of(entities: &[testkit::TestEntity]) -> tessera_formats::LandblockInfo {
+    let bytes = testkit::landblock_info(key(), entities);
+    tessera_formats::LandblockInfo::parse(&bytes, Some(31), &schema()).unwrap()
+}
+
+#[test]
+fn sc22_static_list_lookup_frames_and_list_ends() {
+    use testkit::{TestEntity, TestValue as V};
+    let sch = schema();
+    let pids = all_clearance_pids();
+    let tv_box = |min: [f32; 3], max: [f32; 3]| {
+        (
+            PID_BOX,
+            V::Struct(vec![(PID_MIN, V::Vec3(min)), (PID_MAX, V::Vec3(max))]),
+        )
+    };
+    let crossed = tv_box([1.0, -1.0, 0.0], [-1.0, 1.0, 2.0]);
+    let obj = 0x4700_0400u32;
+    let game = 0x7000_0401u32;
+    let game_set = 0x7900_0401u32;
+    let mut src = MemoryWorldSource::new();
+    // The 0x47 object holds the crossed box.
+    src.insert(
+        obj,
+        testkit::entity_descriptor(
+            obj,
+            0x1F00_0001,
+            &[(PID_BOXES, V::Array(vec![crossed.clone()]))],
+            &sch,
+        ),
+        None,
+    );
+    // The game object's set has no clearance list, only `PhysObj`.
+    src.insert(
+        game_set,
+        testkit::property_set_record(game_set, &[(testkit::pid::PHYS_OBJ, V::Did(obj))]),
+        None,
+    );
+    let cache = ObjectPropertyCache::default();
+    let build = |entities: &[TestEntity]| {
+        static_clearances(&info_of(entities), &src, &sch, &pids, &cache).unwrap()
+    };
+
+    // (a) Physics at (40, 40, 0) with the crossed box in its own set.
+    let a = build(&[TestEntity::physics(
+        1,
+        0x4700_0999,
+        [40.0, 40.0, 0.0],
+        vec![(PID_BOXES, V::Array(vec![crossed.clone()]))],
+    )]);
+    assert_eq!(a.len(), 1);
+    assert_eq!(
+        a[0].boxes,
+        [ClearanceBox {
+            min: [-1.0, -1.0, 0.0],
+            max: [1.0, 1.0, 2.0],
+        }]
+    );
+    assert!(a[0].overlaps([40.5, 40.0, 0.0], 0.1, false));
+
+    // (b) A Weenie whose game object's set has no list and whose `PhysObj` holds the box.
+    let b = build(&[TestEntity {
+        kind: 6,
+        ..TestEntity::physics(2, game, [40.0, 40.0, 0.0], vec![])
+    }]);
+    assert_eq!(b.len(), 1, "the PhysObj chain supplies the box");
+    assert!(b[0].overlaps([40.5, 40.0, 0.0], 0.1, false));
+
+    // (c) A Physics entity without a frame: at the origin with the identity rotation.
+    let c = build(&[TestEntity {
+        position: None,
+        ..TestEntity::physics(3, obj, [0.0; 3], vec![])
+    }]);
+    assert_eq!(c.len(), 1, "a frameless entity is kept");
+    assert_eq!(c[0].position, [0.0; 3]);
+    assert_eq!(c[0].rotation, Quaternion::IDENTITY);
+    assert!(c[0].overlaps([0.5, 0.5, 0.0], 0.1, false));
+
+    // (d) A list whose second element lacks Box_Max: only the first box exists.
+    let second = (PID_BOX, V::Struct(vec![(PID_MIN, V::Vec3([10.0; 3]))]));
+    let d = build(&[TestEntity::physics(
+        4,
+        obj,
+        [40.0, 40.0, 0.0],
+        vec![(
+            PID_BOXES,
+            V::Array(vec![
+                tv_box([-1.0; 3], [1.0; 3]),
+                second,
+                tv_box([20.0, 0.0, 0.0], [22.0, 1.0, 1.0]),
+            ]),
+        )],
+    )]);
+    assert_eq!(d.len(), 1);
+    assert_eq!(d[0].boxes.len(), 1);
+    assert!(
+        !d[0].overlaps([61.0, 40.5, 0.5], 0.1, false),
+        "third box ignored"
+    );
+    assert!(d[0].overlaps([40.5, 40.0, 0.0], 0.1, false));
+
+    // The nearest level supplies the whole list: an own empty list hides the object's.
+    let own_empty = build(&[TestEntity::physics(
+        5,
+        obj,
+        [40.0, 40.0, 0.0],
+        vec![(PID_BOXES, V::Array(vec![]))],
+    )]);
+    assert!(own_empty.is_empty());
+
+    // Through generation (SC22 (a) and (b)): a node with ρ = 0.1 at the vertex is rejected
+    // by an entity 0.5 units west of it.
+    let [x, y] = base_xy();
+    for list in [&a, &b] {
+        let mut f = Fixture::new(
+            data_one_vertex(),
+            one_node(node(vec![SceneChild::Object(OBJ_X)])),
+        );
+        f.statics = vec![StaticClearance {
+            position: [x - 0.5, y, 0.0],
+            ..list[0].clone()
+        }];
+        let g = f.run();
+        assert!(g.objects.is_empty());
+        assert_eq!(g.stats.rejections(Rejection::StaticSpacing), 1);
+    }
+}
+
+#[test]
+fn static_list_validity_check() {
+    // `entity-descriptor.md` §4.9 validity: no object, creation type 0 (or none on the
+    // chain) and a Weenie whose final class is Static are left out; a game object's
+    // non-unique value is raised to a unique class.
+    use testkit::{TestEntity, TestValue as V};
+    let sch = schema();
+    let pids = ClearancePids {
+        creation_type: Some(PID_CTYPE),
+        ..all_clearance_pids()
+    };
+    let one_box = (
+        PID_BOXES,
+        V::Array(vec![(
+            PID_BOX,
+            V::Struct(vec![
+                (PID_MIN, V::Vec3([-1.0; 3])),
+                (PID_MAX, V::Vec3([1.0; 3])),
+            ]),
+        )]),
+    );
+    let typed = 0x4700_0500u32;
+    let untyped = 0x4700_0501u32;
+    let game_set = 0x7900_0502u32;
+    let mut src = MemoryWorldSource::new();
+    src.insert(
+        typed,
+        testkit::entity_descriptor(typed, 0x1F00_0001, &[(PID_CTYPE, V::Enum(3))], &sch),
+        None,
+    );
+    src.insert(
+        untyped,
+        testkit::entity_descriptor(untyped, 0x1F00_0001, &[], &sch),
+        None,
+    );
+    src.insert(
+        game_set,
+        testkit::property_set_record(game_set, &[(PID_CTYPE, V::Enum(3))]),
+        None,
+    );
+    let cache = ObjectPropertyCache::default();
+    let kept = |e: TestEntity| {
+        !static_clearances(&info_of(&[e]), &src, &sch, &pids, &cache)
+            .unwrap()
+            .is_empty()
+    };
+    let at = [40.0, 40.0, 0.0];
+    assert!(kept(TestEntity::physics(
+        1,
+        typed,
+        at,
+        vec![one_box.clone()]
+    )));
+    assert!(!kept(TestEntity::physics(
+        2,
+        untyped,
+        at,
+        vec![one_box.clone()]
+    )));
+    assert!(kept(TestEntity::physics(
+        3,
+        untyped,
+        at,
+        vec![one_box.clone(), (PID_CTYPE, V::Enum(5))]
+    )));
+    // The entity's own 0 hides the object's 3.
+    assert!(!kept(TestEntity::physics(
+        4,
+        typed,
+        at,
+        vec![one_box.clone(), (PID_CTYPE, V::Enum(0))]
+    )));
+    // No object (an absent field) or the null DID.
+    assert!(!kept(TestEntity {
+        object: None,
+        ..TestEntity::physics(5, 0, at, vec![one_box.clone(), (PID_CTYPE, V::Enum(3))])
+    }));
+    assert!(!kept(TestEntity::physics(
+        6,
+        0,
+        at,
+        vec![one_box.clone(), (PID_CTYPE, V::Enum(3))]
+    )));
+    // A Weenie: SharedStaticImmobile (3) becomes UniqueDynamicImmobile (8), valid; so does a
+    // game object with no value at all.
+    for (serial, game) in [(7u32, 0x7000_0502u32), (8, 0x7000_0503)] {
+        assert!(kept(TestEntity {
+            kind: 6,
+            ..TestEntity::physics(serial, game, at, vec![one_box.clone()])
+        }));
+    }
+    // Without the PID in the dictionary the creation-type part is not applied.
+    let lenient = all_clearance_pids();
+    assert!(
+        !static_clearances(
+            &info_of(&[TestEntity::physics(9, untyped, at, vec![one_box.clone()])]),
+            &src,
+            &sch,
+            &lenient,
+            &cache,
+        )
+        .unwrap()
+        .is_empty()
+    );
 }
 
 #[test]
@@ -1569,6 +2013,15 @@ fn static_scan_is_charged_to_the_work_budget() {
     assert!(g.stats.truncated());
     assert!(g.objects.len() < free.objects.len());
     assert!(start.elapsed().as_secs() < 30);
+    // The statics are far away: a scan the budget could not pay for is not booked as a
+    // static-spacing (or any other) rejection.
+    assert_eq!(
+        g.stats.rejections(Rejection::StaticSpacing),
+        0,
+        "{:?}",
+        g.stats
+    );
+    assert_eq!(g.stats.rejected.iter().sum::<u32>(), 0, "{:?}", g.stats);
     // A small static list costs one unit per scan and changes nothing here.
     f.statics = far_statics(3, 2);
     f.limits = SceneryLimits::default();
@@ -2339,8 +2792,11 @@ fn frill_layer_of_a_scene_reached_through_a_node() {
 
 #[test]
 fn no_spacing_passes_through_scene_references() {
-    // Tessera Decision of §7.4 step 2: the referenced scene's node inherits `no_spacing*`
-    // and so is not spaced against the earlier sibling at the same position.
+    // §7.4 step 2 (the client's rule, BIN (o), S37): a scene reference that is a child of
+    // node N is instantiated with N's combined switches, so the referenced scene's node
+    // inherits `no_spacing*`. The wrapper node has `no_checks`, so it is never tested
+    // itself; only the inner node meets the first node's closed marker (radius 1.0, same
+    // position).
     let r = Did(0x0200_6000);
     let spaced = |obj| PlacementNode {
         spacing: 1.0,
@@ -2354,6 +2810,7 @@ fn no_spacing_passes_through_scene_references() {
                     SceneChild::Node(Box::new(spaced(OBJ_X))),
                     SceneChild::Node(Box::new(PlacementNode {
                         no_spacing: pass,
+                        no_checks: true,
                         ..node(vec![SceneChild::Scene(r)])
                     })),
                 ],
@@ -2367,14 +2824,58 @@ fn no_spacing_passes_through_scene_references() {
         g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
         [OBJ_X, OBJ_Y]
     );
+    assert_eq!(g.stats.nodes_placed, 3);
     assert_eq!(g.stats.rejections(Rejection::Footprint), 0);
-    // Without the switch the inner node overlaps the first one's marker.
+    // Without the switch the wrapper is still placed (it skips its own tests) and its
+    // scene reference runs, but the inner node overlaps the first node's marker.
     let g = Fixture::new(data_one_vertex(), list(false)).run();
     assert_eq!(
         g.objects.iter().map(|o| o.object).collect::<Vec<_>>(),
         [OBJ_X]
     );
+    assert_eq!(
+        g.stats.nodes_tested, 3,
+        "the inner node was reached and tested"
+    );
+    assert_eq!(g.stats.nodes_placed, 2, "first node and wrapper");
     assert_eq!(g.stats.rejections(Rejection::Footprint), 1);
+}
+
+#[test]
+fn frill_pass_appends_no_markers() {
+    // §8.2 item 5 shortcut: the frill pass appends no markers of its own, so they never
+    // count against `max_markers`. With a cap of one marker the static pass is cut at the
+    // second group node; the frill pass (no markers) still reaches the frill layer.
+    let g = |obj| PlacementNode {
+        no_spacing: true,
+        spacing: 0.0,
+        ..node(vec![SceneChild::Object(obj)])
+    };
+    let layer = PlacementNode {
+        no_spacing: true,
+        ..node(vec![SceneChild::Object(OBJ_Y)])
+    };
+    let mut f = Fixture::new(
+        data_one_vertex(),
+        vec![scene(
+            VERTEX_SCENE,
+            vec![
+                SceneChild::Node(Box::new(g(OBJ_X))),
+                SceneChild::Node(Box::new(g(OBJ_ALIGN))),
+            ],
+            Some(layer),
+        )],
+    );
+    f.limits.max_markers = 1;
+    let st = f.run();
+    assert_eq!(st.markers.len(), 1);
+    assert!(st.stats.budget_cut > 0);
+    let (records, stats) = f.frills(3, 7);
+    assert_eq!(stats.budget_cut, 0, "{stats:?}");
+    assert_eq!(
+        records.iter().map(|r| r.object.object).collect::<Vec<_>>(),
+        [OBJ_Y]
+    );
 }
 
 #[test]
@@ -2398,4 +2899,84 @@ fn pids_from_a_context_dictionary() {
     );
     let f = crate::frills::FrillPids::from_context(&ctx).unwrap();
     assert_eq!((f.opaque, f.allow_reduction), (Some(0x300), None));
+}
+
+/// A record source that, while `fail` names a DID, reads it as missing (`Ok(None)`, a data
+/// fault) or fails it with a pipeline error (not the data's).
+struct FailOne {
+    inner: MemoryWorldSource,
+    fail: std::sync::Mutex<Option<(u32, bool)>>,
+}
+
+impl crate::source::WorldSource for FailOne {
+    fn read_stamped(
+        &self,
+        did: Did,
+    ) -> Result<Option<crate::source::StampedRecord>, tessera_assets::AssetError> {
+        if let Some((d, pipeline)) = *self.fail.lock().unwrap()
+            && d == did.0
+        {
+            return if pipeline {
+                Err(tessera_assets::AssetError::Shutdown)
+            } else {
+                Ok(None)
+            };
+        }
+        self.inner.read_stamped(did)
+    }
+}
+
+#[test]
+fn region_table_pipeline_failures_are_reported_for_a_retry() {
+    // A pipeline failure (full queue, shutdown, panic) while reading slot 1, 2 or 8 leaves
+    // the region out for this load and lists it for a retry; a data fault (missing table)
+    // leaves it out for good (§4.1 Tessera Decision); a missing slot-8 table only drops
+    // the terrain-type test (§4.1, §7.4 step 7).
+    let mut world = testkit::SyntheticWorld::rectangle(1, 10..=10, 20..=20);
+    world.scenery = true;
+    let src = Arc::new(FailOne {
+        inner: world.build(),
+        fail: std::sync::Mutex::new(None),
+    });
+    let ctx =
+        crate::WorldContext::load(src.clone(), crate::BundleOptions::default()).expect("context");
+    let set = |f: Option<(u32, bool)>| *src.fail.lock().unwrap() = f;
+
+    let all = SceneryTables::load_all_regions(&ctx);
+    assert!(all.retry.is_empty());
+    assert!(
+        all.tables
+            .get(&1)
+            .is_some_and(|t| t.terrain_types.is_some())
+    );
+
+    for did in [0x1100_0000, 0x1200_0000, 0x1900_0000] {
+        set(Some((did, true)));
+        let all = SceneryTables::load_all_regions(&ctx);
+        assert!(!all.tables.contains_key(&1), "{did:#010x}");
+        assert_eq!(
+            all.retry.iter().copied().collect::<Vec<_>>(),
+            [1],
+            "{did:#010x}"
+        );
+        assert!(SceneryTables::for_all_regions(&ctx).is_empty());
+        // The retry succeeds once the pipeline is back.
+        set(None);
+        assert!(SceneryTables::for_region(&ctx, 1).is_ok());
+    }
+
+    // Data faults are not retried.
+    for did in [0x1100_0000, 0x1200_0000] {
+        set(Some((did, false)));
+        let all = SceneryTables::load_all_regions(&ctx);
+        assert!(all.tables.is_empty() && all.retry.is_empty(), "{did:#010x}");
+    }
+    set(Some((0x1900_0000, false)));
+    let all = SceneryTables::load_all_regions(&ctx);
+    assert!(all.retry.is_empty());
+    assert!(
+        all.tables
+            .get(&1)
+            .is_some_and(|t| t.terrain_types.is_none())
+    );
 }

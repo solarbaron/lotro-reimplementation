@@ -249,7 +249,7 @@ impl RestPose {
         let skel = asset.skeleton.as_ref()?;
         let model = skel.reference_model();
         let mut skin = vec![Mat4::IDENTITY; skel.bone_count()];
-        if skinning_matrices(skel, model, &mut skin).is_err() {
+        if skinning_matrices(skel, skel.reference_triples(), &mut skin).is_err() {
             skin.clear();
         }
         let mut attach = Vec::new();

@@ -112,6 +112,18 @@ fn scene_stored(c: vec4<f32>) -> vec3<f32> {
     return c.rgb;
 }
 
+// x^e for x clamped to [0, 1] and e >= 0, with 0^0 = 1 and 0^e = 0 otherwise.
+fn water_pow(x: f32, e: f32) -> f32 {
+    let s = clamp(x, 0.0, 1.0);
+    if (e <= 0.0) {
+        return 1.0;
+    }
+    if (s <= 0.0) {
+        return 0.0;
+    }
+    return exp2(e * log2(s));
+}
+
 @fragment
 fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     // 1. Normal: the three layers mapped to 2 (rgb - 0.5), summed, normalised.
@@ -164,8 +176,10 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let reflection = f;
     // 5. Fresnel.
     let v = frame_normalize(to_eye, vec3<f32>(0.0, 0.0, 1.0));
+    // x^e with x in [0, 1] and e >= 0 (the uniform clamps e), 0^0 = 1 (WGSL's pow leaves
+    // a zero base undefined).
     let fr = water.misc0.w + (1.0 - water.misc0.w)
-        * pow(clamp(1.0 - abs(dot(v, n)), 0.0, 1.0), water.misc1.x);
+        * water_pow(1.0 - abs(dot(v, n)), water.misc1.x);
     var color = refraction + fr * (reflection - refraction);
     // 6. Specular: the fake light's travel direction L (the main light's, else straight
     // down), plus the sparkle of the tangent-space normal.
@@ -175,9 +189,16 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
         travel = -frame.sun_dir.xyz;
         fake_specular = frame.sun_specular.rgb;
     }
+    // clamp(n . h, 0, 1)^SpecularPower with 0^0 = 1, like the Fresnel power (a power of 0
+    // gives 1 everywhere).
     let h = frame_normalize(v - travel, n);
-    let spec = frame_spec_power(dot(n, h), water.misc1.y)
-        + 4.0 * (clamp(nt.x - water.misc1.w, 0.0, 1.0) + clamp(nt.y - water.misc1.w, 0.0, 1.0));
+    var spec = water_pow(dot(n, h), water.misc1.y);
+    // The sparkle term needs a normal map (render.md §5.3: a missing map gives no
+    // sparkle, whatever the threshold).
+    if (water.misc2.z > 0.5) {
+        spec = spec + 4.0
+            * (clamp(nt.x - water.misc1.w, 0.0, 1.0) + clamp(nt.y - water.misc1.w, 0.0, 1.0));
+    }
     // 7. Output: water colour and overbright, specular, then distance fog.
     color = color * water.water_color.rgb * water.misc1.z
         + spec * fake_specular * water.specular_color.rgb;

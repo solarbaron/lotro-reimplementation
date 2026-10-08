@@ -42,8 +42,8 @@ use std::convert::Infallible;
 use libfuzzer_sys::fuzz_target;
 use tessera_formats::reader::write_vle;
 use tessera_formats::script_table::resolve::{
-    AnimationFieldPids, ClipResolution, ClipResolver, EntityScripts, MotionState, ResolveLimits,
-    ScriptVocabulary, collect_entity_scripts,
+    AnimationFieldPids, ClipResolution, ClipResolver, EntityScripts, MeshDeformerFieldPids,
+    MotionState, ResolveLimits, ScriptVocabulary, collect_entity_scripts,
 };
 use tessera_formats::setup::ENTITY_FLAGS_REQUIRED;
 use tessera_formats::{
@@ -753,7 +753,13 @@ fn put_node(out: &mut Vec<u8>, src: &mut Src<'_>, depth: u8) {
             put_base(
                 out,
                 src,
-                &[ANIM_MANUAL_TIME, ANIM_ASSET, ANIM_LOOP_FOREVER, STATE_INT],
+                &[
+                    ANIM_MANUAL_TIME,
+                    ANIM_ASSET,
+                    ANIM_LOOP_FOREVER,
+                    ANIM_SPEED,
+                    STATE_INT,
+                ],
             );
             put_u32(out, 0);
         }
@@ -1007,6 +1013,13 @@ fuzz_target!(|data: &[u8]| {
         startup_script_names: Some(STARTUP_SCRIPT_NAMES),
         slider_values: Some(SLIDER_VALUES),
         slider_definitions: Some(SLIDER_DEFINITIONS),
+        // The MeshDeformer's fields reuse three animation PIDs (§6.9); ANIM_SPEED pairs on a
+        // deformer name another float field and must leave its time alone.
+        mesh_deformer: MeshDeformerFieldPids {
+            asset: Some(ANIM_ASSET),
+            time: Some(ANIM_MANUAL_TIME),
+            use_bone_weights: Some(ANIM_LOOP_FOREVER),
+        },
         animation: AnimationFieldPids {
             asset: Some(ANIM_ASSET),
             loop_forever: Some(ANIM_LOOP_FOREVER),
@@ -1060,6 +1073,12 @@ fuzz_target!(|data: &[u8]| {
             let _ = c.playback_rate();
             let f = c.held_fraction();
             assert!((0.0..=1.0).contains(&f), "held fractions stay in range");
+            let t =
+                tessera_formats::script_table::resolve::held_clip_time(f, 2.0, c.held_end_crop());
+            assert!(
+                (0.0..=2.0).contains(&t),
+                "held times stay in the played length"
+            );
         }
         assert!(res.deformers.len() <= limits.max_candidates);
         assert!(res.held().len() <= res.candidates.len());

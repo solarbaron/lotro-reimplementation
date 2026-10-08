@@ -49,7 +49,8 @@ const BOX_TRIANGLES: [[usize; 3]; 12] = [
 
 /// A box volume of a template: its 8 corners (corner *k*: bit 0 x max, bit 1 y max, bit 2
 /// z max) and where its 12 triangles start in [`ShapeTemplate::triangles`]. Boxes are
-/// solid (Tessera Decision, `collision.md` §8 OPEN): a capsule whose core is inside one is
+/// solid (`collision.md` §8.2, BIN; Tessera's representation, §8.3 Decision): a capsule
+/// whose core is inside one is
 /// reported as penetrating it and pushed out through its nearest face, like a sphere or
 /// capsule volume, instead of being held by the inner faces of its triangles.
 #[derive(Debug, Clone, Copy, PartialEq)]

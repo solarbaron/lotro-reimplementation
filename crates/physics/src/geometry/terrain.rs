@@ -16,7 +16,7 @@
 use tessera_formats::LandblockData;
 use tessera_formats::landblock::{
     GRID_SIDE, GRID_SPACING, GRID_TRIANGLE_COUNT, GridSurface, HeightGrid, LANDBLOCK_SIZE,
-    QUAD_SIDE, VertexFlags, grid_triangle_quad, surface_quad_triangles,
+    QUAD_SIDE, VertexFlags, grid_triangle_quad, quad_triangles,
 };
 
 use super::primitives::{Aabb, Plane};
@@ -83,9 +83,20 @@ impl GridMesh {
                 continue;
             };
             let split = flags.surface_split_sw_ne(surface, i, j);
-            // `surface_quad_triangles` lists the west triangle second for the SW-NE
-            // diagonal and first for the SE-NW one (`collision.md` §6.2, §14.4).
-            let tri = surface_quad_triangles(surface, i, j, split)[usize::from(split == west)];
+            // `quad_triangles` lists the west triangle second for the SW-NE diagonal and
+            // first for the SE-NW one (`collision.md` §6.2, §14.4).
+            let mut tri = quad_triangles(i, j, split)[usize::from(split == west)];
+            // §6.1: the key-base triangle of a SW-NE quad has its corners in the order
+            // (i, j + 1), (i, j), (i + 1, j + 1) (the same winding as `quad_triangles`'
+            // (i, j), (i + 1, j + 1), (i, j + 1), from another first corner).
+            if split && west {
+                let [a, b, c] = tri;
+                tri = [c, a, b];
+            }
+            // §6.4: the ceiling has the same split with each triangle's corners reversed.
+            if surface == GridSurface::Ceiling {
+                tri.reverse();
+            }
             #[allow(clippy::cast_possible_truncation)]
             {
                 *slot = tri.map(|(a, b)| (SIDE * b + a) as u16);

@@ -214,11 +214,13 @@ impl Convex {
 
 /// Below this gap (metres) a capsule counts as touching an item: a sweep is then blocked at
 /// once when it moves into the item and free otherwise (the f64 distance routines are not
-/// meaningful much below it).
+/// meaningful much below it). Not stated by `collision.md` §12.4 (w), which speaks of
+/// overlaps only: implementer OPEN there.
 pub(crate) const TOUCH_GAP: f64 = 1e-6;
 
-/// A sweep reports an item only when the gap to it would fall to this many skins (or to
-/// half the starting gap, when that is smaller).
+/// A sweep reports an item only when the gap to it would fall to this many skins
+/// (`collision.md` §12.4 (w)), or to half the capsule's clearance when that is smaller (not
+/// in (w): implementer OPEN in §12.4).
 pub(crate) const HIT_SKINS: f64 = 1.0;
 
 /// A sweep that reports an item leaves the capsule this many skins from it ...

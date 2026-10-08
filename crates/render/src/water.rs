@@ -221,6 +221,10 @@ struct WaterUniform {
     screen: [f32; 4],
 }
 
+/// Largest Fresnel exponent and specular power uploaded (the lit pipelines' cap); values
+/// below 0 become 0 (`docs/specs/render.md` §5.3, implementer note).
+const MAX_WATER_POWER: f32 = 4096.0;
+
 /// Per-quad instance data (must match `QuadIn` in `water.wgsl`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -263,9 +267,11 @@ impl WaterUniform {
                 f(p.refraction_distortion, d.refraction_distortion),
                 f(p.fresnel_bias, d.fresnel_bias),
             ],
+            // Exponents in 0..=4096 (as the lit and terrain powers): a negative one would
+            // raise 0 to a negative power on the GPU (inf, then NaN).
             misc1: [
-                f(p.fresnel_exponent, d.fresnel_exponent),
-                f(p.specular_power, d.specular_power),
+                f(p.fresnel_exponent, d.fresnel_exponent).clamp(0.0, MAX_WATER_POWER),
+                f(p.specular_power, d.specular_power).clamp(0.0, MAX_WATER_POWER),
                 f(p.overbright, d.overbright),
                 f(p.fake_specular_threshold, d.fake_specular_threshold),
             ],
@@ -663,16 +669,46 @@ fn wrap_pi(s: f32) -> f32 {
     s - tau * ((s + std::f32::consts::PI) / tau).floor()
 }
 
-/// CPU twin of the Fresnel factor of `water.md` §8.4 step 5 for |*v* · *n*| = `v_dot_n`.
+/// CPU twin of the Fresnel factor of `water.md` §8.4 step 5 for |*v* · *n*| = `v_dot_n`,
+/// with the parameters as the pipeline uploads them (non-finite values replaced by the
+/// defaults, the exponent clamped to 0–4096) and 0⁰ = 1.
 #[must_use]
 pub fn fresnel(params: &WaterParams, v_dot_n: f32) -> f32 {
-    let x = (1.0 - v_dot_n.abs()).clamp(0.0, 1.0);
-    params.fresnel_bias + (1.0 - params.fresnel_bias) * x.powf(params.fresnel_exponent)
+    let d = WaterParams::default();
+    let f = |v: f32, d: f32| if v.is_finite() { v } else { d };
+    let bias = f(params.fresnel_bias, d.fresnel_bias);
+    let e = f(params.fresnel_exponent, d.fresnel_exponent).clamp(0.0, MAX_WATER_POWER);
+    let x = f(1.0 - v_dot_n.abs(), 0.0).clamp(0.0, 1.0);
+    let p = if e <= 0.0 {
+        1.0
+    } else if x <= 0.0 {
+        0.0
+    } else {
+        x.powf(e)
+    };
+    bias + (1.0 - bias) * p
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Negative exponents are clamped to 0 (x⁰ = 1, also for x = 0), never inf or NaN.
+    #[test]
+    fn fresnel_with_hostile_exponents() {
+        let p = |e: f32| WaterParams {
+            fresnel_bias: 0.1,
+            fresnel_exponent: e,
+            ..WaterParams::default()
+        };
+        assert!((fresnel(&p(2.0), 0.5) - (0.1 + 0.9 * 0.25)).abs() < 1e-6);
+        for v in [0.0, 0.5, 1.0] {
+            assert_eq!(fresnel(&p(-3.0), v), 1.0, "v . n = {v}");
+            assert_eq!(fresnel(&p(0.0), v), 1.0, "v . n = {v}");
+        }
+        assert_eq!(fresnel(&p(2.0), 1.0), 0.1);
+        assert!(fresnel(&p(f32::NAN), f32::NAN).is_finite());
+    }
 
     #[test]
     fn water_shader_validates() {

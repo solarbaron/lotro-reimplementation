@@ -3,8 +3,8 @@
 //!
 //! - `sky_morning.png` and `sky_evening.png`: the same synthetic sky objects at two times
 //!   of day: a vertex-coloured dome, a sun disc and a drifting cloud layer, each placed by
-//!   its angles (*A* along the arc, *B* its azimuth) and tinted by its keyframe tint, over
-//!   lit ground under the matching sun;
+//!   its angles (§11.4 step 5: about +Z by −*B*, then about +Y by −*A*) and tinted by its
+//!   keyframe tint, over lit ground under the matching sun;
 //! - pixel checks of the placement rule, that the sky never covers geometry (queued before
 //!   or after it, or in an earlier pass), opacity 0 hiding an object, and hostile input.
 //!
@@ -111,6 +111,33 @@ fn card(d: f32, size: f32) -> MeshData {
     m
 }
 
+/// A square card at distance `d` along +X (east) facing the origin, `size` across: the
+/// model point (d, 0, 0) of `environment.md` §14's orientation example.
+fn card_east(d: f32, size: f32) -> MeshData {
+    let h = size * 0.5;
+    let mut m = MeshData::new(
+        vec![[d, h, -h], [d, -h, -h], [d, -h, h], [d, h, h]],
+        vec![0, 1, 2, 0, 2, 3],
+    );
+    m.uvs = Some(vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+    m
+}
+
+/// The angles (*A*, *B*) in degrees that turn the model point (1, 0, 0) toward the unit
+/// vector `dir` under `environment.md` §11.4 step 5: R_Z(−*B*) gives (cos *B*, −sin *B*, 0)
+/// and R_Y(−*A*) then (cos *A* cos *B*, −sin *B*, sin *A* cos *B*).
+fn angles_toward(dir: Vec3) -> (f32, f32) {
+    let b = (-dir.y).clamp(-1.0, 1.0).asin();
+    let a = dir.z.atan2(dir.x);
+    (a.to_degrees(), b.to_degrees())
+}
+
+/// The unit vector at `heading` degrees clockwise from north and `elevation` degrees.
+fn heading_elevation(heading: f32, elevation: f32) -> Vec3 {
+    let (h, e) = (heading.to_radians(), elevation.to_radians());
+    Vec3::new(h.sin() * e.cos(), h.cos() * e.cos(), e.sin())
+}
+
 /// A large horizontal cloud plane at height `z`.
 fn cloud_plane(z: f32, half: f32) -> MeshData {
     let mut m = MeshData::new(
@@ -165,7 +192,7 @@ fn sky_models(r: &mut Renderer<'static>) -> Result<Sky, RenderError> {
         }],
     )?;
     let sun = r.upload_world_model(
-        &card(800.0, 110.0),
+        &card_east(800.0, 110.0),
         &[WorldSurface {
             unlit: true,
             alpha: AlphaMode::Additive,
@@ -210,7 +237,7 @@ fn sky_models(r: &mut Renderer<'static>) -> Result<Sky, RenderError> {
 }
 
 struct TimeOfDay {
-    /// Sun (A, B) in degrees, its tint.
+    /// Sun elevation and heading in degrees, its tint.
     sun: (f32, f32, [f32; 4]),
     dome_tint: [f32; 4],
     clouds: (f32, [f32; 4]),
@@ -253,9 +280,15 @@ fn camera() -> Camera {
 
 fn sky_scene(r: &mut Renderer<'static>, t: &TimeOfDay) -> Result<RgbaImage, RenderError> {
     let sky = sky_models(r)?;
-    let (a, b, tint) = t.sun;
-    // The sun's direction: the card's +Y axis turned by A then B (render.md §5.4).
-    let toward = SkyObject::new(sky.sun.clone(), a, b).rotation() * Vec3::Y;
+    let (elevation, heading, tint) = t.sun;
+    // The sun card lies on +X; its angles turn +X toward the sun (environment.md §11.4
+    // step 5), which is also the light's direction.
+    let (a, b) = angles_toward(heading_elevation(heading, elevation));
+    let toward = SkyObject::new(sky.sun.clone(), a, b).rotation() * Vec3::X;
+    assert!(
+        toward.abs_diff_eq(heading_elevation(heading, elevation), 1e-4),
+        "{toward}"
+    );
     let lighting = FrameLighting {
         ambient: [0.3, 0.3, 0.32],
         hemispheric: [0.05, 0.05, 0.05],
@@ -341,8 +374,12 @@ fn sky_evening_golden() -> Result<(), RenderError> {
 // ---- pixel checks -------------------------------------------------------------------------
 
 fn red_card(r: &mut Renderer<'static>) -> Result<WorldModel, RenderError> {
+    red_model(r, &card(100.0, 40.0))
+}
+
+fn red_model(r: &mut Renderer<'static>, mesh: &MeshData) -> Result<WorldModel, RenderError> {
     r.upload_world_model(
-        &card(100.0, 40.0),
+        mesh,
         &[WorldSurface {
             unlit: true,
             two_sided: true,
@@ -405,39 +442,37 @@ fn placement_follows_the_angles() -> Result<(), RenderError> {
         )?,
         red
     );
-    // A = 90: at the zenith.
+    // environment.md §11.4 step 5 (EV9, §14): with B = 0 the model point (1, 0, 0) goes to
+    // (cos A, 0, sin A): east at A = 0, the zenith at 90, west at 180.
+    let east = red_model(&mut r, &card_east(100.0, 40.0))?;
+    for (a, toward, away) in [
+        (0.0, Vec3::X, Vec3::Z),
+        (90.0, Vec3::Z, Vec3::X),
+        (180.0, -Vec3::X, Vec3::X),
+    ] {
+        let obj = || vec![SkyObject::new(east.clone(), a, 0.0)];
+        assert_eq!(centre(&mut r, &look(toward), obj())?, red, "A = {a}");
+        assert_eq!(centre(&mut r, &look(away), obj())?, black, "A = {a}");
+    }
+    // B turns about the vertical axis by −B: B = 90 takes east to south.
+    let obj = || vec![SkyObject::new(east.clone(), 0.0, 90.0)];
+    assert_eq!(centre(&mut r, &look(-Vec3::Y), obj())?, red);
+    assert_eq!(centre(&mut r, &look(Vec3::X), obj())?, black);
+    // B = 75, A = 90: (0, −0.9659, 0.2588), 15° above the southern horizon; B first.
+    let obj = || vec![SkyObject::new(east.clone(), 90.0, 75.0)];
     assert_eq!(
-        centre(
-            &mut r,
-            &look(Vec3::Z),
-            vec![SkyObject::new(card.clone(), 90.0, 0.0)]
-        )?,
+        centre(&mut r, &look(Vec3::new(0.0, -0.9659, 0.2588)), obj())?,
         red
     );
+    assert_eq!(centre(&mut r, &look(Vec3::Z), obj())?, black);
+    // A turns about +Y, so it leaves a model point on +Y (north) where it is.
     assert_eq!(
         centre(
             &mut r,
             &look(Vec3::Y),
             vec![SkyObject::new(card.clone(), 90.0, 0.0)]
         )?,
-        black
-    );
-    // B = 90: east, like a heading.
-    assert_eq!(
-        centre(
-            &mut r,
-            &look(Vec3::X),
-            vec![SkyObject::new(card.clone(), 0.0, 90.0)]
-        )?,
         red
-    );
-    assert_eq!(
-        centre(
-            &mut r,
-            &look(-Vec3::X),
-            vec![SkyObject::new(card.clone(), 0.0, 90.0)]
-        )?,
-        black
     );
     // Opacity 0 hides the object; half opacity blends.
     let hidden = SkyObject {

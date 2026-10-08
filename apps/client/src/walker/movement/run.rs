@@ -27,8 +27,8 @@ use tessera_world::{LandblockKey, WorldPos, WorldStreamer};
 
 use super::setup::MoverSetup;
 use super::{
-    BlockReadiness, CollisionWorld, MoveInput, MovementState, PhysicsWalker, STEP_SECONDS,
-    StepRecord, StreamedCollision, VIEW_RADIUS,
+    BlockReadiness, CollisionWorld, MoveInput, MovementState, PhysicsWalker, PinStreamers,
+    PinnedCollision, STEP_SECONDS, StepRecord, VIEW_RADIUS,
 };
 use crate::walk_path::{Expect, SETTLE_SECONDS, Walk, WalkScript, steps_for};
 
@@ -64,39 +64,24 @@ pub trait WalkWorld: CollisionWorld {
     fn update(&mut self, focus: &WorldPos, pins: &[LandblockKey]);
 }
 
-/// Most landblocks a [`StreamingWorld`] pins at once.
-pub const MAX_PINS: usize = super::MAX_REQUIRED + 1;
+pub use super::MAX_PINS;
 
 /// A [`WorldStreamer`] as a walk world, with one small streamer per pinned landblock
-/// ([`WalkWorld::update`]) so that a cell owner several landblocks from the feet, beyond
-/// the rings, is installed too. Every view holds the pinned sets, whether or not their
-/// cells reach the feet, so what a step sees does not depend on the rings.
+/// ([`WalkWorld::update`], [`PinStreamers`]) so that a cell owner several landblocks from
+/// the feet, beyond the rings, is installed too. Every view holds the pinned sets, whether
+/// or not their cells reach the feet, so what a step sees does not depend on the rings
+/// ([`PinnedCollision`]).
 pub struct StreamingWorld {
     /// The streamer around the feet.
     pub streamer: WorldStreamer,
-    pins: Vec<(LandblockKey, WorldStreamer)>,
-    pool: Option<tessera_assets::WorkerPool>,
+    pins: PinStreamers,
 }
 
 impl std::fmt::Debug for StreamingWorld {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamingWorld")
-            .field(
-                "pins",
-                &self.pins.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
-            )
+            .field("pins", &self.pins.pinned())
             .finish_non_exhaustive()
-    }
-}
-
-/// The rings of a pin streamer: the pinned landblock alone (its focus is the landblock's
-/// centre, 80 m from every neighbour).
-fn pin_rings() -> tessera_world::RingConfig {
-    tessera_world::RingConfig {
-        near: 1.0,
-        mid: 1.0,
-        far: 1.0,
-        hysteresis: 0.0,
     }
 }
 
@@ -107,101 +92,51 @@ impl StreamingWorld {
     pub fn new(streamer: WorldStreamer, pool: Option<tessera_assets::WorkerPool>) -> Self {
         Self {
             streamer,
-            pins: Vec::new(),
-            pool,
+            pins: PinStreamers::new(pool),
         }
     }
 
     /// The landblocks pinned now.
     #[must_use]
     pub fn pinned(&self) -> Vec<LandblockKey> {
-        self.pins.iter().map(|(k, _)| *k).collect()
+        self.pins.pinned()
     }
 
-    /// The streamer holding `key`'s collision: the one around the feet, else its pin.
-    fn collision_of(&self, key: LandblockKey) -> Option<&Arc<tessera_world::BlockCollision>> {
-        self.streamer.collision(key).or_else(|| {
-            self.pins
-                .iter()
-                .find(|(k, _)| *k == key)
-                .and_then(|(_, s)| s.collision(key))
-        })
+    fn world(&self) -> PinnedCollision<'_> {
+        PinnedCollision {
+            main: &self.streamer,
+            pins: &self.pins,
+        }
     }
 }
 
 impl CollisionWorld for StreamingWorld {
     fn readiness(&self, key: LandblockKey) -> BlockReadiness {
-        let main = StreamedCollision(&self.streamer).readiness(key);
-        if main != BlockReadiness::Pending {
-            return main;
-        }
-        self.pins
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map_or(BlockReadiness::Pending, |(_, s)| {
-                StreamedCollision(s).readiness(key)
-            })
+        self.world().readiness_of(key)
     }
 
     fn view(&self, centre: &WorldPos) -> CollisionView<'_> {
-        let mut view = self.streamer.collision_view(centre, VIEW_RADIUS);
-        for (key, _) in &self.pins {
-            if key.region() != centre.region {
-                continue;
-            }
-            let present = view.members().iter().any(|(set, _)| {
-                set.landblock()
-                    .is_some_and(|id| (id.region, id.x, id.y) == (key.region(), key.x(), key.y()))
-            });
-            if !present && let Some(col) = self.collision_of(*key) {
-                let _ = view.push_landblock(&col.set);
-            }
-        }
-        view
+        self.world().view_at(centre)
     }
 
     fn terrain_height(&self, pos: &WorldPos) -> Option<f32> {
-        self.streamer.terrain_height_at(pos).or_else(|| {
-            let k = pos.landblock()?;
-            self.pins
-                .iter()
-                .find(|(p, _)| *p == k)
-                .and_then(|(_, s)| s.terrain_height_at(pos))
-        })
+        self.world().terrain_height_at(pos)
     }
 
     fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
-        self.collision_of(owner)
-            .and_then(|c| c.cell(cell))
-            .map(|c| c.portals.iter().map(|p| p.neighbour).collect())
-            .unwrap_or_default()
+        self.world().portal_neighbours_of(owner, cell)
+    }
+
+    fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
+        self.world().collision_of(key).map(|c| &*c.set)
     }
 }
 
 impl WalkWorld for StreamingWorld {
     fn update(&mut self, focus: &WorldPos, pins: &[LandblockKey]) {
         let _ = self.streamer.update(*focus);
-        let wanted: Vec<LandblockKey> = pins.iter().copied().take(MAX_PINS).collect();
-        self.pins.retain(|(k, _)| wanted.contains(k));
-        if let Some(pool) = &self.pool {
-            for k in wanted {
-                if self.pins.iter().any(|(p, _)| *p == k) {
-                    continue;
-                }
-                let config = tessera_world::StreamConfig {
-                    rings: pin_rings(),
-                    ..tessera_world::StreamConfig::default()
-                };
-                match WorldStreamer::new(Arc::clone(self.streamer.context()), pool, config) {
-                    Ok(s) => self.pins.push((k, s)),
-                    Err(e) => tracing::warn!(landblock = %k, "pin streamer: {e}"),
-                }
-            }
-        }
-        for (k, s) in &mut self.pins {
-            let c = k.center();
-            let _ = s.update(WorldPos::new(k.region(), c[0], c[1], 0.0));
-        }
+        let context = Arc::clone(self.streamer.context());
+        self.pins.update(&context, pins);
     }
 }
 
@@ -253,6 +188,10 @@ impl CollisionWorld for StaticWorld {
             .get(&(owner, cell))
             .cloned()
             .unwrap_or_default()
+    }
+
+    fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
+        self.sets.get(&key).map(|s| &**s)
     }
 }
 

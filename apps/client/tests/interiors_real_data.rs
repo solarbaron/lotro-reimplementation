@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The walker's interior visibility (`landblock.md` §4.11–§4.12, `walker.md` §14.11) against
+//! The walker's interior visibility (`landblock.md` §4.11–§4.12, `walker.md` §14.12) against
 //! a user's own install (read-only; skipped unless `TESSERA_GAME_DIR` is set).
 //!
 //! - `visibility_census`: every landblock-info record's cells partitioned into visibility
 //!   cells and portals by [`BlockVisibility`]; the totals of §4.11 (OBS2: 104,271 cells,
-//!   18,390 visibility cells, 39,692 portals) are asserted in release builds (or with
-//!   `TESSERA_FULL=1`), LI7 (every neighbour in the PVS) and LI8 (no outdoor-walk entry) on
-//!   every record read.
+//!   18,390 visibility cells, 39,692 portals), and on every record LI7 (every neighbour in
+//!   the PVS) and LI8 (no outdoor-walk entry, so the outdoor scene flags stay set).
 //! - `in1_example`: the worked example of §4.11–§4.12 (landblock info 0x802191A6): group 1
 //!   is one visibility cell whose only portals lead from cell 6 into cell 5 and from cell 8
 //!   into cell 24; the PVS of cell 9 has 25 cells, none with the sky bit; neither the
-//!   landscape nor the sky is drawn from cell 9. With the world's collision set the portal
-//!   polygons are known, and looking east from the IN1 start the walk stays inside.
+//!   landscape nor the sky is drawn from cell 9. With the world's collision set the
+//!   landblock's 26 portals all have their polygons (`walker.md` §14.12). The Y5 eye (the
+//!   IN1 start + 1.8 m) lies in cell 9 by the walker's camera-cell lookup
+//!   ([`camera_cell_at`], `walker.md` §14.12 (a)), so from it neither landscape nor sky is
+//!   drawn; looking east, the portal walk draws the camera's own visibility cell.
 //!
 //! Run with `cargo test --release -p tessera-client --test interiors_real_data --
 //! --nocapture`. Only counts and cell numbers are printed.
@@ -23,7 +25,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tessera_assets::{PoolConfig, WorkerPool};
-use tessera_client::walker::interiors::{BlockVisibility, SceneFlags, has_outdoor_entry};
+use tessera_client::walker::camera_cell_at;
+use tessera_client::walker::interiors::{
+    BlockVisibility, SceneFlags, has_outdoor_entry, outdoor_flags,
+};
 use tessera_dat::{ArchiveKind, ArchiveSet, SetOptions};
 use tessera_formats::{Did, LandblockInfo};
 use tessera_render::glam::Vec3;
@@ -40,10 +45,6 @@ fn install() -> Option<PathBuf> {
             None
         }
     }
-}
-
-fn full() -> bool {
-    !cfg!(debug_assertions) || std::env::var_os("TESSERA_FULL").is_some_and(|v| v == "1")
 }
 
 fn open() -> Option<(Arc<ArchiveSet>, Arc<WorldContext>)> {
@@ -69,6 +70,7 @@ struct Tally {
     portals: usize,
     li7: usize,
     entries: usize,
+    flags: usize,
 }
 
 #[test]
@@ -84,11 +86,8 @@ fn visibility_census() {
             infos.insert(e.expect("directory walk").did);
         }
     }
-    let infos: Vec<u32> = if full() {
-        infos.into_iter().collect()
-    } else {
-        infos.into_iter().step_by(23).collect()
-    };
+    // Every record, also in debug builds (`walker.md` §14.12: LI7 and LI8 on every record).
+    let infos: Vec<u32> = infos.into_iter().collect();
     let next = AtomicUsize::new(0);
     let tallies = std::sync::Mutex::new(Vec::new());
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -111,6 +110,9 @@ fn visibility_census() {
                     t.vcells += v.visibility_cells() as usize;
                     t.portals += v.portals().len();
                     t.entries += usize::from(has_outdoor_entry(&info));
+                    if outdoor_flags([&v]) != SceneFlags::OUTDOORS {
+                        t.flags += 1;
+                    }
                     for c in info.cells() {
                         let pvs = v.pvs(c.index);
                         if c.neighbours.iter().any(|n| !pvs.contains(&n.cell)) {
@@ -130,6 +132,7 @@ fn visibility_census() {
         t.portals += x.portals;
         t.li7 += x.li7;
         t.entries += x.entries;
+        t.flags += x.flags;
     }
     eprintln!(
         "{} of {} landblock infos: {} cells, {} visibility cells, {} portals; LI7 failures {}, \
@@ -145,11 +148,13 @@ fn visibility_census() {
     assert_eq!(t.records, infos.len(), "every record decodes");
     assert_eq!(t.li7, 0, "LI7: every neighbour lies in the PVS");
     assert_eq!(t.entries, 0, "LI8: no cell has the outdoor-walk bit");
-    if full() {
-        assert_eq!(t.cells, 104_271, "cells (OBS2)");
-        assert_eq!(t.vcells, 18_390, "visibility cells (§4.11)");
-        assert_eq!(t.portals, 39_692, "portals (§4.11)");
-    }
+    assert_eq!(
+        t.flags, 0,
+        "outdoors both scene flags stay set (§4.12 step 1)"
+    );
+    assert_eq!(t.cells, 104_271, "cells (OBS2)");
+    assert_eq!(t.vcells, 18_390, "visibility cells (§4.11)");
+    assert_eq!(t.portals, 39_692, "portals (§4.11)");
 }
 
 #[test]
@@ -230,11 +235,30 @@ fn in1_example() {
         with_corners
     );
     assert_eq!(
+        v.portals().len(),
+        26,
+        "the IN1 landblock's portals (§14.12)"
+    );
+    assert_eq!(
         with_corners,
         v.portals().len(),
         "every portal has its polygon"
     );
-    // The Y5 eye: the IN1 start + 1.8 m, heading 90 (east, the IN1 walk's way), pitch 0.
+    // The Y5 eye: the IN1 start + 1.8 m, heading 90 (east, the IN1 walk's way), pitch 0,
+    // given its cell by the walker's camera-cell lookup (no mover: the eye alone).
+    let eye_w = WorldPos::new(1, start.x, start.y, start.z + 1.8);
+    let camera_cell = camera_cell_at(&streamer, &eye_w, None);
+    eprintln!("Y5 eye: camera cell {camera_cell:?}");
+    assert_eq!(
+        camera_cell,
+        Some((key, 9)),
+        "the Y5 eye is in cell 9 (`walker.md` §14.12)"
+    );
+    assert_eq!(
+        v.scene_flags(9),
+        SceneFlags::CLOSED,
+        "no landscape, no sky from the Y5 eye"
+    );
     let eye = Vec3::new(40.86, -108.12, -212.90 + 1.8);
     let camera = tessera_render::Camera {
         eye,

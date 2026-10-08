@@ -22,6 +22,9 @@ const SF_GLOSS_BASE_ALPHA: u32 = 8u;
 const SF_OPAQUE: u32 = 16u;
 // Gloss from the normal texture's alpha (a normal-and-gloss texture).
 const SF_GLOSS_NORMAL_ALPHA: u32 = 32u;
+// The base texture's alpha is not an opacity (it is the gloss): the opacity is 1 for the
+// alpha test and the output alpha (material.md §11.2, §11.3).
+const SF_OPACITY_ONE: u32 = 64u;
 const SF_SRGB_BASE: u32 = 1u;
 const SF_SRGB_NORMAL: u32 = 2u;
 
@@ -60,9 +63,15 @@ fn surface_normal_texel(uv: vec2<f32>) -> vec4<f32> {
     return surface_to_stored(textureSample(t_normal, s_normal, uv), SF_SRGB_NORMAL);
 }
 
+// The opacity texel of a surface: the base texture's alpha, or 1 when that alpha is not an
+// opacity (SF_OPACITY_ONE). Drives the alpha test (also in the shadow pass).
+fn surface_opacity_texel(base: vec4<f32>) -> f32 {
+    return select(base.a, 1.0, surface_flag(SF_OPACITY_ONE));
+}
+
 // The opacity a surface's base texel contributes to the output alpha.
 fn surface_opacity(base: vec4<f32>) -> f32 {
-    return select(base.a, 1.0, surface_flag(SF_OPAQUE));
+    return select(surface_opacity_texel(base), 1.0, surface_flag(SF_OPAQUE));
 }
 
 // The alpha test of lit surfaces (lighting.md §5.12): discarded when opacity <= threshold.

@@ -62,6 +62,18 @@ impl WaterPlane {
     }
 }
 
+/// The part of a vertical line inside one liquid box ([`LiquidBox::column_span`]), in the
+/// frame of the query that reports it, with the box's flags.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiquidSpan {
+    /// Lowest height inside the box.
+    pub bottom: f64,
+    /// Highest height inside the box.
+    pub top: f64,
+    /// The box's flags.
+    pub flags: LiquidFlags,
+}
+
 /// The flags of a liquid box's property set (`water.md` §7.2). Water and lava share the
 /// depth flags: `surface` is `Volume_WaterSurface` or `Volume_LavaSurface`, and so on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -80,15 +92,13 @@ pub struct LiquidFlags {
 
 impl LiquidFlags {
     /// Reads the flags from a monitor's property set (`Monitor_VolumePropertiesToApply`).
+    /// The flags are boolean properties (`water.md` §7.2); a value of another type counts
+    /// as not set (Tessera Decision, implementer OPEN in `water.md` §7.2).
     #[must_use]
     pub fn from_set(set: &PropertySet, pids: &LiquidPids) -> Self {
         let get = |pid: Option<u32>| {
-            pid.and_then(|p| set.get(p)).is_some_and(|v| match v {
-                PropertyValue::Bool(b) => *b,
-                PropertyValue::Int(i) => *i != 0,
-                PropertyValue::Enum(k) => *k != 0,
-                _ => false,
-            })
+            pid.and_then(|p| set.get(p))
+                .is_some_and(|v| matches!(v, PropertyValue::Bool(true)))
         };
         Self {
             liquid: get(pids.is_liquid),
@@ -220,6 +230,42 @@ impl LiquidBox {
             let v = local[a];
             v >= f64::from(self.min[a]) * s && v <= f64::from(self.max[a]) * s
         })
+    }
+
+    /// The heights z, in the landblock frame, at which (x, y, z) is inside the box
+    /// (boundary included, as [`LiquidBox::contains`]): the box's span over the vertical
+    /// line through (x, y), lowest first, in f64. `None` when the line misses the box.
+    #[must_use]
+    pub fn column_span(&self, x: f32, y: f32) -> Option<(f64, f64)> {
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        let t = &self.transform;
+        // In the box frame the line is a + z · d.
+        let a = rotate_d(
+            t.rotation,
+            math::sub([f64::from(x), f64::from(y), 0.0], d3(t.position)),
+            true,
+        );
+        let d = rotate_d(t.rotation, [0.0, 0.0, 1.0], true);
+        let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+        for k in 0..3 {
+            let s = f64::from(t.scale[k]);
+            let (min, max) = (f64::from(self.min[k]) * s, f64::from(self.max[k]) * s);
+            if min > max {
+                return None;
+            }
+            if d[k].abs() < 1e-12 {
+                if a[k] < min || a[k] > max {
+                    return None;
+                }
+            } else {
+                let (t1, t2) = ((min - a[k]) / d[k], (max - a[k]) / d[k]);
+                lo = lo.max(t1.min(t2));
+                hi = hi.min(t1.max(t2));
+            }
+        }
+        (lo.is_finite() && hi.is_finite() && lo <= hi).then_some((lo, hi))
     }
 
     /// Bounds in the landblock frame, or `None` when a placed corner is out of range.

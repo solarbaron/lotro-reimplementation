@@ -5,7 +5,7 @@
 // by their keyframe tint, at the far plane.
 
 struct SkyObject {
-    // Columns of R_z(-B) R_x(A) times the object's scale.
+    // Columns of R_Y(-A) R_Z(-B) (environment.md §11.4 step 5) times the object's scale.
     c0: vec4<f32>,
     c1: vec4<f32>,
     c2: vec4<f32>,
@@ -49,7 +49,7 @@ fn sky_shade(in: SkyOut) -> SkyShaded {
     var out: SkyShaded;
     out.color = base.rgb * m.rgb;
     out.alpha = clamp(surface_opacity(base) * m.a, 0.0, 1.0);
-    out.opacity = base.a;
+    out.opacity = surface_opacity_texel(base);
     return out;
 }
 

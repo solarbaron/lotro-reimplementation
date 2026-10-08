@@ -47,14 +47,16 @@ fn verts(c: [(u16, u16); 3]) -> [u16; 3] {
     c.map(|(i, j)| 33 * j + i)
 }
 
-/// §14.4: quad i = 3, j = 7, base = 454, both diagonals.
+/// §14.4: quad i = 3, j = 7, base = 454, both diagonals. The key-base triangle of a SW-NE
+/// quad starts at (i, j + 1) (§6.1, the client's corner order; §14.4 lists the same
+/// corners in the same winding from (i, j)).
 #[test]
 fn s14_4_terrain_keys() {
     let heights = HeightGrid::flat(0);
     let set = GridMesh::from_grid(GridSurface::Terrain, &heights, &flags_with(3, 7, 0x80));
     assert_eq!(
         set.triangle_vertices(454),
-        Some(verts([(3, 7), (4, 8), (3, 8)]))
+        Some(verts([(3, 8), (3, 7), (4, 8)]))
     );
     assert_eq!(
         set.triangle_vertices(455),
@@ -72,13 +74,13 @@ fn s14_4_terrain_keys() {
     // Positions follow (5i, 5j, height).
     assert_eq!(
         set.triangle(454),
-        Some([[15.0, 35.0, 0.0], [20.0, 40.0, 0.0], [15.0, 40.0, 0.0]])
+        Some([[15.0, 40.0, 0.0], [15.0, 35.0, 0.0], [20.0, 40.0, 0.0]])
     );
     // The ceiling uses bit 0, not bit 7, and reverses the corners (§6.4).
     let ceiling = GridMesh::from_grid(GridSurface::Ceiling, &heights, &flags_with(3, 7, 0x01));
     assert_eq!(
         ceiling.triangle_vertices(454),
-        Some(verts([(3, 8), (4, 8), (3, 7)]))
+        Some(verts([(4, 8), (3, 7), (3, 8)]))
     );
     assert_eq!(
         ceiling.triangle_vertices(455),

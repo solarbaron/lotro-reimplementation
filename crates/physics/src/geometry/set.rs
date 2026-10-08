@@ -7,8 +7,9 @@
 //! - one **body** per blocking static entity (§9.3) and per blocking generated object
 //!   (§9.4): the triangles of its 0x66 mesh and boxes and its spheres and capsules, placed
 //!   with its transform and scale;
-//! - one body per cell physics mesh (§5.3), placed with the cell's frame (§5.8), with the
-//!   flags of the cell geometry's property set;
+//! - one body per cell physics mesh (§5.3), placed with the cell's frame (§5.8), carrying
+//!   only `Physics_SurfacePropertiesToApply` and `Physics_CanLedgeClimb` of the cell
+//!   geometry's property set ([`CollisionFlags::cell_body`]);
 //! - optional **detail** bodies (render-mesh level collision, §7) that movement queries
 //!   skip;
 //! - the cells and their lookup (§5.8.1);
@@ -31,8 +32,11 @@
 //! around a mover with that rule, in an f32 frame centred near the mover.
 //!
 //! **Bounded work.** Every limit of [`CollisionLimits`] is checked before anything is
-//! placed or allocated, and one query visits at most [`MAX_QUERY_ITEMS`] items per set:
-//! hostile data that stacks geometry at one spot cannot stall the controller's step.
+//! placed or allocated, and one query visits at most [`MAX_QUERY_ITEMS`] items per set
+//! (§12.1). A controller step makes at most 21 capsule sweeps and 8 contact queries
+//! (`crate::controller` step docs), so hostile data that stacks geometry at one spot costs
+//! a step at most (2 · 21 + 8) · [`MAX_QUERY_ITEMS`] = 1,638,400 narrow-phase tests per
+//! set it queries: bounded, though far slower than a real step.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,10 +50,10 @@ use super::cell::{
     CellPlacement, CellSet, CellVolume, MAX_SET_CELL_HULL, MAX_SET_CELL_PLANES, PlacedCell,
 };
 use super::flags::{
-    CollisionFlags, ETHEREAL_CAMERA, ETHEREAL_PLAYER, PhysicsPids, content_layer_list,
+    CollisionFlags, ETHEREAL_CAMERA, ETHEREAL_PLAYER, EntityLookups, PhysicsPids,
     content_layers_pass,
 };
-use super::liquid::{LiquidBox, LiquidFlags, MAX_LIQUID_BOXES, WaterPlane};
+use super::liquid::{LiquidBox, LiquidFlags, LiquidSpan, MAX_LIQUID_BOXES, WaterPlane};
 use super::math::{self, D3, d3, f3};
 use super::narrow::{self, Convex, SolidBox};
 use super::primitives::{Aabb, Capsule, Transform};
@@ -60,16 +64,19 @@ use crate::error::{PhysicsError, Result};
 
 /// Contact offset (metres). A sweep reports an obstacle only when the gap to it would fall
 /// to one skin, and then stops the capsule where the gap is still two skins (up to two and a
-/// half; less only when it started closer). Tessera Decision (§12.3 leaves the solver to
-/// Tessera); see the narrow phase's time of impact.
+/// half; less only when it started closer). Tessera Decision (`collision.md` §12.4 (w));
+/// the narrow phase's time of impact also lowers the hit threshold to half the capsule's
+/// clearance and counts a starting gap below 10⁻⁶ m as touching (not yet in the spec:
+/// implementer OPEN in §12.4).
 pub const SKIN: f32 = 0.001;
 
 /// Most items (triangles, round primitives, solid boxes) one sweep, ray or contact query
 /// visits in one set. Real sets hold at most a few hundred items in a query's box (539 for
 /// an 80 m drop, the real-data test's sampled landblocks); beyond this (hostile data
 /// stacking geometry at one spot) the remaining items are skipped and the query logs it at
-/// `debug` level. A sweep makes two passes, so its worst case is twice this many
-/// narrow-phase tests.
+/// `debug` level (`collision.md` §12.1: 2¹⁵). A sweep makes two passes, so its worst case
+/// is twice this many narrow-phase tests; with a step's 21 sweeps and 8 contact queries
+/// that is 50 times this many per set (module docs, "Bounded work").
 pub const MAX_QUERY_ITEMS: usize = 1 << 15;
 
 /// Side of a landblock in metres: the region frame puts landblock (x, y) at
@@ -323,7 +330,8 @@ pub struct BuildReport {
     /// Static entities that got a body.
     pub statics_blocking: u32,
     /// Static entities left out by the run-time filters of §9.3: the content-layer test
-    /// or an effective `Entity_CreationType` of 7 or 8.
+    /// (item 2) or an effective `Entity_CreationType` of 0, 7 or 8 (item 3; 0 also when
+    /// none is found or the value found is not an integer or enum).
     pub statics_filtered: u32,
     /// Generated objects examined.
     pub generated_seen: u32,
@@ -597,14 +605,17 @@ impl CollisionSetBuilder {
     }
 
     /// Adds the blocking static entities of a landblock-info record (§9.3): Physics SEDs
-    /// with a position that pass the content-layer test of `options`, whose object's
-    /// `Entity_CreationType` (resolved along its 0x47 chain) is not 7 or 8, whose effective
-    /// `Physics_NoPhysics` (the SED's own value, else the object's chain) is not true, and
-    /// whose setup has collision ([`CollisionFlags::of_static`]). Their shape is the setup's, scaled by the SED's
-    /// `Physics_AdjustableScale` and placed by its position and rotation. SEDs ethereal to
-    /// Player get a body too (other movers may collide with them); [`QueryFilter::player`]
-    /// passes through them. So a SED blocks a player walker exactly when it gets a body that
-    /// [`QueryFilter::player`] accepts, which is [`super::static_blocks_walker`]'s rule.
+    /// with a position (item 1) that pass the content-layer test of `options` (item 2) and
+    /// that the client creates (item 3: effective `Entity_CreationType` not 0, 7 or 8,
+    /// [`CollisionFlags::refuses_static_creation`]), whose effective `Physics_NoPhysics` is
+    /// not true and whose setup has collision. Every property is looked up the same way:
+    /// the SED's own set, then its object's 0x47 chain ([`CollisionFlags::of_static`],
+    /// [`EntityLookups`]; `entity-descriptor.md` §4.9). Their shape is the setup's, scaled
+    /// by the effective `Physics_AdjustableScale` (default (1, 1, 1)) and placed by the
+    /// SED's position and rotation. SEDs ethereal to Player get a body too (other movers
+    /// may collide with them); [`QueryFilter::player`] passes through them. So a SED blocks
+    /// a player walker exactly when it gets a body that [`QueryFilter::player`] accepts,
+    /// which is [`super::static_blocks_walker`]'s rule.
     ///
     /// `object` returns the resolved collision of an object DID (normally through an
     /// [`super::ObjectCollisionCache`] around [`super::resolve_object_collision`]).
@@ -615,6 +626,12 @@ impl CollisionSetBuilder {
         options: &StaticOptions,
         mut object: impl FnMut(Did) -> Arc<ObjectCollision>,
     ) {
+        if pids.creation_type.is_none() && !info.entities.is_empty() {
+            tracing::debug!(
+                "the property dictionary has no Entity_CreationType: every static counts as \
+                 creation type 0 and is refused (collision.md §9.3 item 3)"
+            );
+        }
         for (n, e) in info.entities.iter().enumerate() {
             if e.kind() != Some(StaticEntityType::Physics) {
                 continue;
@@ -623,29 +640,35 @@ impl CollisionSetBuilder {
             let (Some(placement), Some(obj)) = (e.placement, e.object) else {
                 continue;
             };
-            let list = e
-                .properties
+            let (own, own_lookups) = e.properties.as_ref().map_or_else(Default::default, |s| {
+                (
+                    CollisionFlags::from_set(s, pids),
+                    EntityLookups::from_set(s, pids),
+                )
+            });
+            let layers_pass = |list: Option<&[u32]>| {
+                content_layers_pass(list, &options.active_content_layers, options.instance)
+            };
+            // The SED's own list decides without resolving the object (§4.9 lookup order).
+            let own_test = own_lookups
+                .content_layers
                 .as_ref()
-                .and_then(|s| content_layer_list(s, pids));
-            if !content_layers_pass(
-                list.as_deref(),
-                &options.active_content_layers,
-                options.instance,
-            ) {
+                .map(|l| layers_pass(l.as_deref()));
+            if own_test == Some(false) {
                 self.report.statics_filtered += 1;
                 continue;
             }
-            let own = e
-                .properties
-                .as_ref()
-                .map(|s| CollisionFlags::from_set(s, pids))
-                .unwrap_or_default();
             let resolved = object(obj);
+            let lookups = own_lookups.or(resolved.lookups.clone());
+            if own_test.is_none() && !layers_pass(lookups.layer_list()) {
+                self.report.statics_filtered += 1;
+                continue;
+            }
             let flags = CollisionFlags::of_static(own, resolved.flags);
             self.note_resolution(&resolved);
-            // Creation types 7 and 8 (the object's chain) are created by the server; the
-            // client drops them on the static-creation path (§9.3, §9.4 C25).
-            if flags.is_server_created() {
+            // Creation type 0 (also: none found, or not an integer or enum) is rejected by
+            // the loader, 7 and 8 are not created by the client (§9.3 item 3, C29).
+            if flags.refuses_static_creation() {
                 self.report.statics_filtered += 1;
                 continue;
             }
@@ -654,11 +677,10 @@ impl CollisionSetBuilder {
             let Some(template) = resolved.template.as_ref().filter(|_| has_shape) else {
                 continue;
             };
-            let scale = pids.adjustable_scale.map_or([1.0; 3], |p| e.scale(p));
             let transform = Transform {
                 position: placement.position,
                 rotation: placement.rotation,
-                scale,
+                scale: lookups.scale(),
             };
             let source = BodySource::Static {
                 index: u32::try_from(n).unwrap_or(u32::MAX),
@@ -740,6 +762,7 @@ impl CollisionSetBuilder {
 
     /// Adds one placed cell: its volume to the cell lookup and, when given, its physics
     /// mesh (cell frame, §5.3) as a body placed with the cell's frame and default flags.
+    /// Returns the body, if one was added.
     ///
     /// # Errors
     ///
@@ -748,24 +771,32 @@ impl CollisionSetBuilder {
         &mut self,
         cell: PlacedCell,
         physics_mesh: Option<&ShapeTemplate>,
-    ) -> Result<()> {
+    ) -> Result<Option<BodyId>> {
         self.add_cell_with_flags(cell, physics_mesh, CollisionFlags::default())
     }
 
-    /// [`CollisionSetBuilder::add_cell`] with the §9.1 flags of the cell geometry's own
-    /// property set (`Physics_SurfacePropertiesToApply`, `Physics_CanLedgeClimb`, §5.7) on
-    /// the physics-mesh body.
+    /// [`CollisionSetBuilder::add_cell`] with the flags of the cell geometry's own property
+    /// set (§5.7). The body keeps only `Physics_SurfacePropertiesToApply` and
+    /// `Physics_CanLedgeClimb` ([`CollisionFlags::cell_body`], §5.3): every other §9.1
+    /// field is ignored, so a cell body blocks every mover and counts as support.
+    ///
+    /// The cell itself is refused when it does not fit the set's cell budgets. A physics
+    /// mesh that cannot become a body (a set-level limit of [`CollisionLimits`] reached,
+    /// or an invalid placement) is refused and counted ([`BuildReport::over_limit`] or
+    /// [`BuildReport::dropped_elements`]), and the cell is still placed in the lookup
+    /// without a body, as for a mesh beyond the template bound (implementer OPEN in
+    /// `collision.md` §5.3). Returns the body, if one was added.
     ///
     /// # Errors
     ///
-    /// [`PhysicsError::TooLarge`] at the cell limit, beyond [`MAX_SET_CELL_PLANES`] planes in
-    /// all, or at the body limits (nothing is added then).
+    /// [`PhysicsError::TooLarge`] at the cell limit, beyond [`MAX_SET_CELL_PLANES`] planes or
+    /// [`MAX_SET_CELL_HULL`] hull vertices in all (§12.1); nothing is added then.
     pub fn add_cell_with_flags(
         &mut self,
         cell: PlacedCell,
         physics_mesh: Option<&ShapeTemplate>,
         flags: CollisionFlags,
-    ) -> Result<()> {
+    ) -> Result<Option<BodyId>> {
         if self.cells.len() >= self.limits.max_cells {
             return Err(too_large(
                 "cells",
@@ -777,6 +808,11 @@ impl CollisionSetBuilder {
         if planes > MAX_SET_CELL_PLANES {
             return Err(too_large("cell planes", planes, MAX_SET_CELL_PLANES));
         }
+        let hull = self.cell_hull.saturating_add(cell.hull_count());
+        if hull > MAX_SET_CELL_HULL {
+            return Err(too_large("cell hull vertices", hull, MAX_SET_CELL_HULL));
+        }
+        let mut body = None;
         if let Some(mesh) = physics_mesh {
             let transform = Transform {
                 position: cell.placement.position,
@@ -787,19 +823,45 @@ impl CollisionSetBuilder {
                 cell: cell.index,
                 geometry: cell.geometry,
             };
-            self.add_object(source, flags, BodyPurpose::Movement, mesh, &transform)?;
+            match self.add_object(
+                source,
+                flags.cell_body(),
+                BodyPurpose::Movement,
+                mesh,
+                &transform,
+            ) {
+                Ok(id) => body = Some(id),
+                Err(e) => {
+                    if matches!(e, PhysicsError::TooLarge { .. }) {
+                        self.report.over_limit += 1;
+                    } else {
+                        self.report.dropped_elements += 1;
+                    }
+                    tracing::debug!(
+                        cell = cell.index,
+                        geometry = %format_args!("{:#010x}", cell.geometry.0),
+                        error = %e,
+                        "cell physics mesh refused; the cell is placed without a body"
+                    );
+                }
+            }
         }
         self.cells.push(cell);
+        self.cell_hull = hull;
         self.report.cells += 1;
-        Ok(())
+        Ok(body)
     }
 
     /// Adds every cell of a landblock-info record (§5.8, §5.8.1): `geometry` returns the
     /// decoded 0x01 record of a DID (`None` when missing). The physics-mesh bodies carry the
-    /// §9.1 flags of the geometry's property set (read with `pids`). Cells without a
-    /// position offset, with hostile planes, beyond the limits or beyond the per-set hull
-    /// and plane budgets ([`MAX_SET_CELL_HULL`], [`MAX_SET_CELL_PLANES`]) are refused and
-    /// counted.
+    /// two §5.3 flags of the geometry's property set (read with `pids`,
+    /// [`CollisionFlags::cell_body`]). Cells without a position offset, with hostile planes,
+    /// beyond the cell limit or beyond the per-set hull and plane budgets
+    /// ([`MAX_SET_CELL_HULL`], [`MAX_SET_CELL_PLANES`]) are refused and counted; only a
+    /// placed cell uses up the hull budget. A physics mesh beyond the template limits
+    /// ([`super::MAX_TEMPLATE_TRIANGLES`]) or the set's body limits is refused and counted
+    /// as a body over a limit (§12.1, [`BuildReport::over_limit`]), and its cell is placed
+    /// without a body (implementer OPEN in `collision.md` §5.3).
     pub fn add_cells(
         &mut self,
         info: &LandblockInfo,
@@ -813,11 +875,20 @@ impl CollisionSetBuilder {
                 .or_insert_with(|| {
                     let g = geometry(c.geometry)?;
                     let volume = Arc::new(CellVolume::from_planes(&g.planes).ok()?);
-                    let mesh = g
-                        .physics_mesh
-                        .as_ref()
-                        .and_then(|m| ShapeTemplate::from_collision_mesh(m).ok())
-                        .map(Arc::new);
+                    let mesh = match g.physics_mesh.as_ref() {
+                        None => CellMesh::None,
+                        Some(m) => match ShapeTemplate::from_collision_mesh(m) {
+                            Ok(t) => CellMesh::Body(Arc::new(t)),
+                            Err(e) => {
+                                tracing::debug!(
+                                    geometry = %format_args!("{:#010x}", c.geometry.0),
+                                    error = %e,
+                                    "cell physics mesh refused"
+                                );
+                                CellMesh::Refused
+                            }
+                        },
+                    };
                     let flags = CollisionFlags::from_set(&g.properties, pids);
                     Some((volume, mesh, g, flags))
                 })
@@ -834,10 +905,18 @@ impl CollisionSetBuilder {
             let placed = CellPlacement::of_cell(c).and_then(|placement| {
                 PlacedCell::with_volume(c.index, c.geometry, volume, &g.hull, placement)
             });
-            self.cell_hull = hull;
-            let ok = placed.and_then(|cell| self.add_cell_with_flags(cell, mesh.as_deref(), flags));
-            if ok.is_err() {
-                self.report.cells_refused += 1;
+            let body = match &mesh {
+                CellMesh::Body(t) => Some(t.as_ref()),
+                CellMesh::None | CellMesh::Refused => None,
+            };
+            // Only a placed cell uses up the hull budget (`add_cell_with_flags` charges it).
+            match placed.and_then(|cell| self.add_cell_with_flags(cell, body, flags)) {
+                Ok(_) => {
+                    if matches!(mesh, CellMesh::Refused) {
+                        self.report.over_limit += 1;
+                    }
+                }
+                Err(_) => self.report.cells_refused += 1,
             }
         }
     }
@@ -937,12 +1016,18 @@ impl CollisionSetBuilder {
 
 /// A cell geometry's volume, physics mesh, record and flags, shared by the cells placing
 /// it.
-type SharedCell = (
-    Arc<CellVolume>,
-    Option<Arc<ShapeTemplate>>,
-    Arc<CellGeometry>,
-    CollisionFlags,
-);
+type SharedCell = (Arc<CellVolume>, CellMesh, Arc<CellGeometry>, CollisionFlags);
+
+/// A cell geometry's physics mesh as a body template.
+#[derive(Debug, Clone)]
+enum CellMesh {
+    /// The record has no physics mesh: no body (§5.3).
+    None,
+    /// The template of its physics mesh.
+    Body(Arc<ShapeTemplate>),
+    /// The mesh is beyond the template limits: refused and counted (§12.1).
+    Refused,
+}
 
 fn too_large(what: &'static str, count: usize, limit: usize) -> PhysicsError {
     PhysicsError::TooLarge { what, count, limit }
@@ -1074,6 +1159,19 @@ impl CollisionSet {
             .iter()
             .filter(|b| b.contains(p))
             .fold(LiquidFlags::default(), |acc, b| acc.union(b.flags))
+    }
+
+    /// Appends to `out` the span of every liquid box over the vertical line through
+    /// landblock-frame (x, y) ([`LiquidBox::column_span`]), in the set's order.
+    pub fn liquid_spans(&self, x: f32, y: f32, out: &mut Vec<LiquidSpan>) {
+        out.extend(self.liquids.iter().filter_map(|b| {
+            let (bottom, top) = b.column_span(x, y)?;
+            Some(LiquidSpan {
+                bottom,
+                top,
+                flags: b.flags,
+            })
+        }));
     }
 
     /// The water plane over landblock-frame (x, y), when the set has one and the point lies
@@ -1515,6 +1613,13 @@ pub trait CollisionQuery {
         let _ = (x, y);
         None
     }
+    /// Appends the liquid-box spans over the vertical line through (x, y), heights in the
+    /// implementor's frame; see [`CollisionSet::liquid_spans`] (the default has no water).
+    /// An implementor with liquid boxes provides this and [`CollisionQuery::liquid_at`]
+    /// together: the controller's water ([`crate::LiquidWater`]) reads only this one.
+    fn liquid_spans(&self, x: f32, y: f32, out: &mut Vec<LiquidSpan>) {
+        let _ = (x, y, out);
+    }
 }
 
 impl CollisionQuery for CollisionSet {
@@ -1551,6 +1656,10 @@ impl CollisionQuery for CollisionSet {
 
     fn water_plane_at(&self, x: f32, y: f32) -> Option<WaterPlane> {
         Self::water_plane_at(self, x, y)
+    }
+
+    fn liquid_spans(&self, x: f32, y: f32, out: &mut Vec<LiquidSpan>) {
+        Self::liquid_spans(self, x, y, out);
     }
 }
 
@@ -1737,6 +1846,19 @@ impl CollisionQuery for CollisionView<'_> {
             .fold(LiquidFlags::default(), |acc, (set, offset)| {
                 acc.union(set.liquid_at(sub3(p, *offset)))
             })
+    }
+
+    /// The spans of every set, moved into the view's frame.
+    fn liquid_spans(&self, x: f32, y: f32, out: &mut Vec<LiquidSpan>) {
+        for (set, offset) in &self.members {
+            let from = out.len();
+            set.liquid_spans(x - offset[0], y - offset[1], out);
+            let dz = f64::from(offset[2]);
+            for s in &mut out[from..] {
+                s.bottom += dz;
+                s.top += dz;
+            }
+        }
     }
 
     /// The water plane of the first set (in order) whose block contains (x, y), with its

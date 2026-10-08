@@ -47,17 +47,22 @@
 //!      also adds the vertical plane of its normal's horizontal part, so the mover slides
 //!      down but never climbs the slope (§11.3 mechanism);
 //!    - in the air or swimming, contacts keep their normals.
+//!
+//!    Keeping the heading (§12.4 (v)) can lengthen the velocity; after the slide and the
+//!    step-up it is limited again to the terminal velocity and [`MAX_SPEED`].
 //! 6. **Step-up** (§12.3 step 5): when a grounded horizontal move met a contact that is not
 //!    walkable (a wall or a steep contact), the move is retried from the position raised
 //!    by the step-up height (less where a ceiling stops the rise), covering at least
-//!    [`STEP_OVER_FRACTION`] of the capsule radius (the full radius when that landing is
-//!    not walkable, §12.3 OPEN (o)), then swept down by up to the rise plus
-//!    [`SNAP_DISTANCE`]. It is taken when it lands on walkable
-//!    support (§11.3), climbs more than [`STEP_UP_MIN_RISE`] and gets further along the
-//!    move than the blocked path. When the raised move covered more than the move itself,
-//!    the same climb with only the move's length is preferred if it also lands walkable
-//!    (and climbs in proportion), so a step-up never moves the mover faster than its input
-//!    except to get a capsule resting against a riser onto the step.
+//!    [`STEP_OVER_FRACTION`] of the capsule radius, then swept down by up to the rise plus
+//!    [`SNAP_DISTANCE`]; when that sweep lands on something that is not walkable it is
+//!    retried once with the full radius (§12.4 (o); a sweep that finds nothing is not
+//!    retried). It is taken when it lands on walkable support (§11.3), climbs more than
+//!    [`STEP_UP_MIN_RISE`] and gets further along the move than the blocked path. When the
+//!    raised move covered more than the move itself, the same climb with only the move's
+//!    length is preferred if it also lands walkable, passes the same test and climbs in
+//!    proportion to the raised move taken (over the length that one covered), so a
+//!    step-up never moves the mover faster than its input except to get a capsule resting
+//!    against a riser onto the step.
 //! 7. **Ground snap and state** (§12.3 step 6): unless jumping, rising in the air or
 //!    swimming, a sweep down by [`SNAP_DISTANCE`] moves the mover onto support it finds; on
 //!    walkable support the sweep reaches further by what a walkable slope descends over the
@@ -72,9 +77,13 @@
 //!
 //! Every value is checked: a step whose result is not finite or moves the mover more than
 //! [`MAX_STEP_DISPLACEMENT`] is undone and the velocity zeroed ([`StepOutcome::Reverted`]).
-//! A step's work is bounded by its query count (at most 11 capsule sweeps and 7 contact
-//! queries, each visiting at most [`crate::geometry::MAX_QUERY_ITEMS`] items per set) and
-//! the water query; the step keeps no buffer larger than [`SCRATCH_KEEP`] entries.
+//! A step's work is bounded by its query count and the water query. Capsule sweeps: at
+//! most 4 in the slide, 1 for the step-up's rise, 15 for up to three raised moves (the
+//! first reach, the full-radius retry and the move's own length, each up to 4 slide sweeps
+//! and 1 down sweep) and 1 for the ground snap, 21 in all. Contact queries: at most 4
+//! push-out rounds, 1 support probe per raised move (3) and the support probe, 8 in all.
+//! Each query visits at most [`crate::geometry::MAX_QUERY_ITEMS`] items per set (a sweep
+//! in two passes). The step keeps no buffer larger than [`SCRATCH_KEEP`] entries.
 //! The arithmetic is plain IEEE without fused operations; the damper power is found by
 //! bisection, so only the heading's sine and cosine come from the platform's library.
 
@@ -121,6 +130,10 @@ pub const MAX_STEP_DISPLACEMENT: f32 = 10.0;
 /// A step-up must lift the mover by more than this, m (Tessera Decision): on level ground
 /// the raised move is never taken, so sliding along a wall is never sped up.
 pub const STEP_UP_MIN_RISE: f32 = 0.01;
+/// Slack of the step-up's "climbs in proportion" test, m (§12.4 (k) names no tolerance;
+/// Tessera Decision, implementer OPEN there): the short raised move counts as climbing in
+/// proportion when it climbs at least the full move's climb × (move / reach) less this.
+pub const PROPORTION_SLACK: f32 = 1e-3;
 /// Least downward acceleration of a mover above its float line in water, m/s² (Tessera
 /// Decision; used when the layer's gravity is smaller in magnitude, e.g. 0).
 pub const MIN_SINK_ACCELERATION: f32 = 1.0;
@@ -714,7 +727,11 @@ impl Controller {
             report.stepped_up = true;
         }
         feet = result.feet;
-        let vel = result.vel;
+        // Keeping the heading (§12.4 (v)) lifts the clipped velocity onto a walkable plane
+        // with its horizontal length kept, which can make it longer than the limit of
+        // §12.3 step 3: limit it again (Tessera Decision, implementer OPEN in §12.4).
+        let mut vel = result.vel;
+        limit_speed(&mut vel, speed_limit);
         report.planes = result.planes;
 
         // Ground snap.
@@ -958,7 +975,10 @@ impl Controller {
             }
             remaining = planes.clip(remaining);
             vel = vel_planes.clip(vel);
-            if mode == Mode::Grounded && class == ContactClass::Walkable {
+            // Keeping the heading (§12.4 (v)) applies while every plane of the slide is a
+            // walkable contact kept as its own plane, whatever the mover's support. The
+            // raised move's planes are vertical walls (§12.4 (k)), never walkable planes.
+            if mode != Mode::Raised && class == ContactClass::Walkable {
                 walk_planes.add(n);
             } else {
                 only_walkable = false;
@@ -1002,30 +1022,41 @@ impl Controller {
         if rise.is_nan() || rise <= 1e-3 {
             return None;
         }
-        // The raised move first covers `reach`; when its landing is not walkable (the
-        // capsule's foot rests on a chamfered step edge) it is retried once with the full
-        // shape radius, so the foot clears the edge (§12.3 OPEN (o)).
+        // The raised move first covers `reach`; when it lands but the landing is not
+        // walkable (the capsule's foot rests on a chamfered step edge) it is retried once
+        // with the full shape radius, so the foot clears the edge (§12.4 (o)). A raised move
+        // whose down sweep finds nothing has no landing and is not retried.
         let radius = self.config.shape.radius();
-        let full = match self.raised_move(q, feet, rise, dir, reach, vel, cosw) {
-            Some(s) => s,
-            None if reach < radius => self.raised_move(q, feet, rise, dir, radius, vel, cosw)?,
-            None => return None,
+        let (full, covered) = match self.raised_move(q, feet, rise, dir, reach, vel, cosw) {
+            Raised::Landed(s) => (s, reach),
+            Raised::NotWalkable if reach < radius => {
+                match self.raised_move(q, feet, rise, dir, radius, vel, cosw) {
+                    Raised::Landed(s) => (s, radius),
+                    Raised::NotWalkable | Raised::NoLanding => return None,
+                }
+            }
+            Raised::NotWalkable | Raised::NoLanding => return None,
         };
         let climb = full.feet[2] - feet[2];
-        if climb.is_nan() || climb <= STEP_UP_MIN_RISE {
-            return None;
-        }
         let progress = dot3(sub3(full.feet, feet), dir);
         let plain_progress = dot3(sub3(plain.feet, feet), dir);
-        if progress.is_nan() || progress <= plain_progress + 1e-3 {
+        if !step_up_accepted(climb, progress, plain_progress) {
             return None;
         }
         // A raised move longer than the move itself is only needed to get a capsule resting
-        // against a riser onto the step: when the move's own length also lands walkable and
-        // climbs in proportion (a slope beside a wall), take that instead.
-        if reach > hl * (1.0 + 1e-4)
-            && let Some(short) = self.raised_move(q, feet, rise, dir, hl, vel, cosw)
-            && short.feet[2] - feet[2] >= climb * (hl / reach) - 1e-3
+        // against a riser onto the step: when the move's own length also lands walkable,
+        // climbs in proportion to the raised move taken (over the length it covered) and
+        // passes the same acceptance test (§12.4 (k)), take that instead.
+        if covered > hl * (1.0 + 1e-4)
+            && let Raised::Landed(short) = self.raised_move(q, feet, rise, dir, hl, vel, cosw)
+            && short_preferred(
+                short.feet[2] - feet[2],
+                dot3(sub3(short.feet, feet), dir),
+                plain_progress,
+                climb,
+                hl,
+                covered,
+            )
         {
             return Some(short);
         }
@@ -1033,8 +1064,10 @@ impl Controller {
     }
 
     /// The raised move of a step-up: from `feet` raised by `rise`, `reach` along `dir`
-    /// (every contact a vertical wall), then down by up to `rise` + [`SNAP_DISTANCE`]; the
-    /// landing when it is on walkable support (§11.3).
+    /// (every contact a vertical wall), then down by up to `rise` + [`SNAP_DISTANCE`]: the
+    /// landing when it is walkable by the contact it lands on and by the support probe
+    /// (§12.4 (k), (s)), [`Raised::NotWalkable`] when it lands otherwise, and
+    /// [`Raised::NoLanding`] when the down sweep finds nothing.
     #[allow(clippy::too_many_arguments)]
     fn raised_move<Q: CollisionQuery + ?Sized>(
         &mut self,
@@ -1045,13 +1078,15 @@ impl Controller {
         reach: f32,
         vel: [f32; 3],
         cosw: f32,
-    ) -> Option<Slide> {
+    ) -> Raised {
         let filter = self.config.filter;
         let raised = [feet[0], feet[1], feet[2] + rise];
         let moved = self.slide(q, raised, scale3(dir, reach), vel, Mode::Raised, cosw);
         let down = rise + SNAP_DISTANCE;
         let cap = self.config.shape.capsule_at(moved.feet);
-        let hit = q.sweep_capsule(&cap, [0.0, 0.0, -down], &filter)?;
+        let Some(hit) = q.sweep_capsule(&cap, [0.0, 0.0, -down], &filter) else {
+            return Raised::NoLanding;
+        };
         let class = classify(
             hit.normal,
             hit.face_normal,
@@ -1059,7 +1094,7 @@ impl Controller {
             cosw,
         );
         if class != ContactClass::Walkable {
-            return None;
+            return Raised::NotWalkable;
         }
         let landed = [
             moved.feet[0],
@@ -1070,15 +1105,58 @@ impl Controller {
         let probe = self.config.shape.support_probe(landed);
         q.contacts(&probe, SUPPORT_MARGIN, &filter, &mut self.scratch);
         if best_support(q, &self.scratch, cosw) != Support::Walkable {
-            return None;
+            return Raised::NotWalkable;
         }
-        Some(Slide {
+        Raised::Landed(Slide {
             feet: landed,
             vel: [moved.vel[0], moved.vel[1], 0.0],
             blocked: false,
             planes: moved.planes,
         })
     }
+}
+
+/// How a step-up's raised move ended ([`Controller::raised_move`]).
+#[derive(Debug, Clone, Copy)]
+enum Raised {
+    /// It landed on walkable support.
+    Landed(Slide),
+    /// It landed, but the contact or the support probe is not walkable (§12.4 (o)).
+    NotWalkable,
+    /// The down sweep found nothing to land on.
+    NoLanding,
+}
+
+/// Whether a step-up that climbs `climb` and gets `progress` along the move is taken over
+/// the plain slide's `plain_progress` (`collision.md` §12.4 (k)): it climbs more than
+/// [`STEP_UP_MIN_RISE`] and gets further along the move (strictly; no slack).
+fn step_up_accepted(climb: f32, progress: f32, plain_progress: f32) -> bool {
+    climb > STEP_UP_MIN_RISE && progress > plain_progress
+}
+
+/// Whether the short raised move (the move's own length `hl`), which climbs `short_climb`
+/// and gets `short_progress` along the move, is taken instead of the raised move taken
+/// (`climb` over `covered`): it must pass the same acceptance test as any step-up
+/// ([`step_up_accepted`]: more than [`STEP_UP_MIN_RISE`] climbed, further than the plain
+/// slide) and climb in proportion ([`climbs_in_proportion`]) (§12.4 (k)).
+fn short_preferred(
+    short_climb: f32,
+    short_progress: f32,
+    plain_progress: f32,
+    climb: f32,
+    hl: f32,
+    covered: f32,
+) -> bool {
+    step_up_accepted(short_climb, short_progress, plain_progress)
+        && climbs_in_proportion(short_climb, climb, hl, covered)
+}
+
+/// Whether the short raised move (the move's own length `hl`) climbs `short_climb` in
+/// proportion to the raised move taken, which climbed `climb` over `covered` (the first
+/// reach, or the full radius after the retry of §12.4 (o)), less [`PROPORTION_SLACK`]
+/// (§12.4 (k)).
+fn climbs_in_proportion(short_climb: f32, climb: f32, hl: f32, covered: f32) -> bool {
+    short_climb >= climb * (hl / covered) - PROPORTION_SLACK
 }
 
 /// Contact planes of one slide (normals merged by §11.3's tolerance).
@@ -1320,10 +1398,11 @@ fn clip1(v: [f32; 3], n: [f32; 3]) -> [f32; 3] {
     if d < 0.0 { sub3(v, scale3(n, d)) } else { v }
 }
 
-/// `c` (a motion clipped against walkable ground planes `planes`) turned back to the
+/// `c` (a motion clipped against walkable planes `planes` only) turned back to the
 /// horizontal direction of `orig`, keeping its horizontal length, and lifted onto the
-/// highest of the planes: a walker on walkable ground keeps its heading instead of drifting
-/// downhill on a side slope (`collision.md` §12.3 OPEN (v), Tessera reading).
+/// highest of the planes: a walker on a side slope keeps its heading instead of drifting
+/// downhill (`collision.md` §12.4 (v), Tessera Decision; it names no mover state, so it
+/// applies in every mode but the raised move).
 fn keep_heading(c: [f32; 3], orig: [f32; 3], planes: &Planes) -> [f32; 3] {
     let Some(dir) = normalize3([orig[0], orig[1], 0.0]) else {
         return c;
@@ -1430,7 +1509,9 @@ fn normalize3(a: [f32; 3]) -> Option<[f32; 3]> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::params::{LayerKind, MovementLayer};
     use super::*;
+    use crate::geometry::SweepHit;
 
     #[test]
     fn step_factor_is_the_sixtieth_root() {
@@ -1479,6 +1560,22 @@ mod tests {
         assert_eq!(wrap_heading(f32::NAN), 0.0);
     }
 
+    /// Finding: a step-up was refused unless it got more than 1 mm further than the plain
+    /// slide; §12.4 (k) says only "further".
+    #[test]
+    fn step_up_acceptance_is_strict_without_slack() {
+        assert!(step_up_accepted(0.3, 0.1005, 0.1));
+        assert!(!step_up_accepted(0.3, 0.1, 0.1));
+        assert!(!step_up_accepted(0.3, 0.099, 0.1));
+        assert!(!step_up_accepted(STEP_UP_MIN_RISE, 0.5, 0.1));
+        assert!(!step_up_accepted(f32::NAN, 0.5, 0.1));
+        assert!(!step_up_accepted(0.3, f32::NAN, 0.1));
+        // Climbs in proportion: half the reach, half the climb, less the slack.
+        assert!(climbs_in_proportion(0.15, 0.3, 0.1, 0.2));
+        assert!(climbs_in_proportion(0.15 - PROPORTION_SLACK, 0.3, 0.1, 0.2));
+        assert!(!climbs_in_proportion(0.148, 0.3, 0.1, 0.2));
+    }
+
     #[test]
     fn planes_slide_and_stop() {
         let mut p = Planes::default();
@@ -1492,5 +1589,184 @@ mod tests {
         assert!(len3(c) < 1e-6, "{c:?}");
         let up = p.clip([-1.0, 1.0, 1.0]);
         assert!((up[2] - 1.0).abs() < 1e-6 && up[0].abs() < 1e-6 && up[1].abs() < 1e-6);
+    }
+
+    /// Finding (§12.4 (k)): the short raised move was taken after only the proportion
+    /// test, so a full climb of 0.012 m over a reach of 0.175 m let a short move climbing
+    /// 0.006 m (less than [`STEP_UP_MIN_RISE`]) through.
+    #[test]
+    fn short_raised_move_passes_the_acceptance_test_too() {
+        let (hl, reach) = (0.0875, 0.175);
+        // In proportion (0.006 ≥ 0.012 × 0.5 − slack), but it climbs less than 0.01 m.
+        assert!(climbs_in_proportion(0.006, 0.012, hl, reach));
+        assert!(!short_preferred(0.006, 0.2, 0.0, 0.012, hl, reach));
+        // A short move that gets no further than the plain slide is not taken either.
+        assert!(!short_preferred(0.2, 0.05, 0.05, 0.3, hl, reach));
+        assert!(short_preferred(0.2, 0.0875, 0.0, 0.3, hl, reach));
+    }
+
+    /// Finding (§12.4 (k), (o)): after the full-radius retry, "in proportion" divided by
+    /// the first reach instead of the radius the raised move taken covered.
+    #[test]
+    fn proportion_uses_the_length_the_raised_move_covered() {
+        let (hl, reach, radius) = (0.0875_f32, 0.175_f32, 0.35_f32);
+        // Retry taken: 0.3 m over 0.35 m; the move's own length climbing 0.1 m is in
+        // proportion (0.1 ≥ 0.3 × 0.25 − slack), which the first reach would refuse.
+        assert!(short_preferred(0.1, 0.0875, 0.0, 0.3, hl, radius));
+        assert!(!climbs_in_proportion(0.1, 0.3, hl, reach));
+    }
+
+    /// A query with a wall in front of a grounded mover below 0.3 m, free space above it
+    /// and, under every downward sweep, either nothing or one steep face. Counts the
+    /// downward sweeps.
+    struct WallMock {
+        steep_floor: bool,
+        down_sweeps: std::cell::Cell<u32>,
+        first_hit: Option<[f32; 3]>,
+        horizontal_sweeps: std::cell::Cell<u32>,
+    }
+
+    impl WallMock {
+        fn hit(normal: [f32; 3], fraction: f32) -> SweepHit {
+            SweepHit {
+                fraction,
+                gap: 2.0 * crate::geometry::SKIN,
+                normal,
+                point: [0.0; 3],
+                face_normal: None,
+                set: 0,
+                body: crate::geometry::BodyId(0),
+                kind: crate::geometry::FeatureKind::Round,
+                feature: 0,
+            }
+        }
+    }
+
+    impl CollisionQuery for WallMock {
+        fn sweep_capsule(
+            &self,
+            capsule: &crate::geometry::Capsule,
+            delta: [f32; 3],
+            _filter: &QueryFilter,
+        ) -> Option<SweepHit> {
+            let bottom = capsule.a[2].min(capsule.b[2]) - capsule.radius;
+            let horizontal = delta[0] != 0.0 || delta[1] != 0.0;
+            if horizontal {
+                let n = self.horizontal_sweeps.get();
+                self.horizontal_sweeps.set(n + 1);
+                if let Some(normal) = self.first_hit {
+                    return (n == 0).then(|| Self::hit(normal, 0.0));
+                }
+                return (bottom < 0.3).then(|| Self::hit([-1.0, 0.0, 0.0], 0.0));
+            }
+            if delta[2] < 0.0 {
+                self.down_sweeps.set(self.down_sweeps.get() + 1);
+                return self.steep_floor.then(|| Self::hit([0.8, 0.0, 0.6], 0.5));
+            }
+            None
+        }
+
+        fn contacts(
+            &self,
+            _capsule: &crate::geometry::Capsule,
+            _margin: f32,
+            _filter: &QueryFilter,
+            _out: &mut Vec<Contact>,
+        ) {
+        }
+
+        fn cell_at(&self, _p: [f32; 3]) -> Option<CellHit> {
+            None
+        }
+
+        fn body(&self, _set: u32, _id: crate::geometry::BodyId) -> Option<&crate::geometry::Body> {
+            None
+        }
+    }
+
+    fn grounded(record: PlayerMovementRecord, velocity: [f32; 3]) -> Controller {
+        Controller::new(
+            ControllerConfig::default(),
+            Arc::new(record),
+            Arc::new(MovementPids::default()),
+            LayerConditions::default(),
+            MoverState {
+                velocity,
+                element: MovementState::EarthControlledSurface,
+                support: Support::Walkable,
+                ..MoverState::at([0.0; 3], 0.0)
+            },
+        )
+    }
+
+    /// Finding (§12.4 (o)): the full-radius retry ran when the first raised move's down
+    /// sweep found nothing at all; it is stated only for a landing that is not walkable.
+    #[test]
+    fn full_radius_retry_only_after_a_landing_that_is_not_walkable() {
+        let input = MoveInput {
+            forward: 1.0,
+            ..MoveInput::default()
+        };
+        for (steep_floor, expected) in [(false, 2), (true, 3)] {
+            let q = WallMock {
+                steep_floor,
+                down_sweeps: std::cell::Cell::new(0),
+                first_hit: None,
+                horizontal_sweeps: std::cell::Cell::new(0),
+            };
+            let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+            let r = c.step(&input, &StepEnv::dry(&q, [0.0; 3]));
+            assert_eq!(r.outcome, StepOutcome::Stepped);
+            assert!(!r.stepped_up);
+            // Nothing below: one raised move and the ground snap. A steep landing: the
+            // raised move, its full-radius retry and the ground snap.
+            assert_eq!(q.down_sweeps.get(), expected, "steep floor {steep_floor}");
+        }
+    }
+
+    /// Finding (§12.3 step 3, §12.4 (v)): keeping the heading lifted the clipped velocity
+    /// onto a walkable plane with its horizontal length kept, and the result was never
+    /// limited again: forward and terminal speed 120, damper 1, into a 44° plane at 67°
+    /// off its fall line gave about 120.9 m/s.
+    #[test]
+    fn keeping_the_heading_never_exceeds_the_speed_limit() {
+        let base = MovementLayer {
+            forward_speed: Some(120.0),
+            backward_speed: Some(120.0),
+            strafe_left_speed: Some(120.0),
+            strafe_right_speed: Some(120.0),
+            control_acceleration: Some([1000.0; 3]),
+            velocity_damper: Some([1.0; 3]),
+            ramp_time: Some(0.0),
+            gravity: Some(0.0),
+            terminal_velocity: Some(120.0),
+            step_up_height: Some(0.5),
+            ..MovementLayer::default()
+        };
+        let mut record = PlayerMovementRecord::default();
+        record.layers[LayerKind::BasePlayer.index()] = Some(base);
+        let (s, c) = 44.0_f32.to_radians().sin_cos();
+        let heading = 67.0_f32.to_radians();
+        let q = WallMock {
+            steep_floor: false,
+            down_sweeps: std::cell::Cell::new(0),
+            first_hit: Some([-s, 0.0, c]),
+            horizontal_sweeps: std::cell::Cell::new(0),
+        };
+        let v = [120.0 * heading.cos(), 120.0 * heading.sin(), 0.0];
+        let mut ctl = grounded(record, v);
+        ctl.state.heading = heading;
+        let r = ctl.step(
+            &MoveInput {
+                forward: 1.0,
+                ..MoveInput::default()
+            },
+            &StepEnv::dry(&q, [0.0; 3]),
+        );
+        assert_eq!(r.outcome, StepOutcome::Stepped);
+        let w = ctl.state().velocity;
+        let speed = len3(w);
+        assert!(w[2] > 1.0, "lifted onto the plane: {w:?}");
+        assert!(speed <= 120.0 * (1.0 + 1e-6), "{speed}");
     }
 }

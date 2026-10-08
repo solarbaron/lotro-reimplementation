@@ -6,8 +6,7 @@
 // Decisions (the original's shader formulas are OPEN, scenery.md §8.3).
 
 struct Batch {
-    // x, y = light-table indices (four u8 each, low byte first), z = count,
-    // w = flags (BF_*).
+    // x, y, z unused (the light lists are per instance), w = flags (BF_*).
     lights: vec4<u32>,
     // x = far distance D, y = fade length F, z = animation intensity,
     // w = terrain-colour intensity.
@@ -30,6 +29,9 @@ struct InstIn {
     @location(10) tint: vec4<f32>,
     // rgb = terrain colour beneath the instance, w = sway phase.
     @location(11) terrain: vec4<f32>,
+    // The instance's light list: x, y = light-table indices (four u8 each, low byte
+    // first), z = count (lighting.md §8.5: one list per object).
+    @location(12) lights: vec4<u32>,
 };
 
 struct InstOut {
@@ -44,6 +46,7 @@ struct InstOut {
     @location(6) fog_depth: vec3<f32>,
     @location(7) tint: vec4<f32>,
     @location(8) terrain: vec3<f32>,
+    @location(9) @interpolate(flat) lights: vec4<u32>,
 };
 
 fn batch_flag(bit: u32) -> bool {
@@ -89,10 +92,12 @@ fn place(v: ModelIn, inst: InstIn) -> Placed {
         // D - F, scaled to nothing at D; times the group's fade-in (rule 5).
         let d = distance(frame.eye.xyz, origin);
         scale = clamp((batch.frill.x - d) / max(batch.frill.y, 1e-3), 0.0, 1.0) * batch.sway.z;
-        // Normals are rotated, not scaled (§8.5 step 5).
+        // Normals are rotated, not scaled (§8.5 step 5). A mirrored instance (negative
+        // determinant) flips the bitangent sign, as for scenery (render.md §2.3, §4.1).
         let r = mat3x3<f32>(safe_unit(c0), safe_unit(c1), safe_unit(c2));
+        let s = select(1.0, -1.0, dot(c0, cross(c1, c2)) < 0.0);
         out.normal = r * v.normal.xyz;
-        out.tangent = vec4<f32>(r * v.tangent.xyz, v.tangent.w);
+        out.tangent = vec4<f32>(r * v.tangent.xyz, v.tangent.w * s);
     } else {
         // Inverse transpose (times the determinant) for non-uniform scales.
         let cof = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1));
@@ -119,11 +124,12 @@ fn vs_main(v: ModelIn, inst: InstIn) -> InstOut {
     out.fog_depth = vec3<f32>(frame_fog_factor(pl.world), out.clip.w, pl.weight);
     out.tint = inst.tint;
     out.terrain = inst.terrain.rgb;
+    out.lights = inst.lights;
     return out;
 }
 
-fn light_index(i: u32) -> u32 {
-    let word = select(batch.lights.x, batch.lights.y, i >= 4u);
+fn light_index(lights: vec4<u32>, i: u32) -> u32 {
+    let word = select(lights.x, lights.y, i >= 4u);
     return (word >> ((i & 3u) * 8u)) & 255u;
 }
 
@@ -139,7 +145,7 @@ fn shade(in: InstOut) -> Shaded {
     let base = surface_base(in.uv);
     let ntex = surface_normal_texel(in.uv);
     var out: Shaded;
-    out.opacity = base.a;
+    out.opacity = surface_opacity_texel(base);
     var m = surface.color * in.tint;
     if (surface_flag(SF_VERTEX_COLORS)) {
         m = m * in.color;
@@ -159,10 +165,13 @@ fn shade(in: InstOut) -> Shaded {
     }
     var n = frame_normalize(in.normal, vec3<f32>(0.0, 0.0, 1.0));
     if (surface_flag(SF_NORMAL_MAP)) {
-        let t_raw = in.tangent.xyz - n * dot(n, in.tangent.xyz);
-        if (dot(t_raw, t_raw) > 1e-12) {
-            let t = normalize(t_raw);
-            let b = cross(n, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
+        // The tangent as given (normalised, not made orthogonal to N0) and the binormal
+        // w x cross(N0, T) of the mesh convention (docs/specs/render.md §2.1).
+        let t_len2 = dot(in.tangent.xyz, in.tangent.xyz);
+        let b_raw = cross(n, in.tangent.xyz);
+        if (t_len2 > 1e-12 && dot(b_raw, b_raw) > 1e-12 * t_len2) {
+            let t = in.tangent.xyz * inverseSqrt(t_len2);
+            let b = normalize(b_raw) * select(-1.0, 1.0, in.tangent.w >= 0.0);
             let tn = ntex.xyz * 2.0 - 1.0;
             // lighting.md §5.2.4: N = n.x T - n.y B + n.z N0.
             n = frame_normalize(t * tn.x - b * tn.y + n * tn.z, n);
@@ -180,15 +189,17 @@ fn shade(in: InstOut) -> Shaded {
     var spec = vec3<f32>(0.0);
     let s = frame_shadow_factor(in.shadow, in.fog_depth.y);
     let sun = frame_sun(n, v, gloss, power, s);
+    // Ms is the specular colour times the same per-object tint as M (material.md §8.3).
+    let ms = surface.specular.rgb * in.tint.rgb;
     sum = sum + sun.diffuse * m.rgb;
-    spec = spec + sun.specular * surface.specular.rgb;
-    let count = min(batch.lights.z, 8u);
+    spec = spec + sun.specular * ms;
+    let count = min(in.lights.z, 8u);
     for (var i = 0u; i < count; i = i + 1u) {
-        let idx = light_index(i);
+        let idx = light_index(in.lights, i);
         if (idx < frame.params.x) {
             let t = frame_light(idx, in.world_pos, n, v, gloss, power);
             sum = sum + t.diffuse * m.rgb;
-            spec = spec + t.specular * surface.specular.rgb;
+            spec = spec + t.specular * ms;
         }
     }
     out.unfogged = 2.0 * c * sum + spec;
@@ -232,6 +243,13 @@ fn fs_additive(in: InstOut) -> @location(0) vec4<f32> {
     return vec4<f32>(frame_output(s.unfogged * (1.0 - s.fog)), clamp(s.alpha, 0.0, 1.0));
 }
 
+// Modulating fixed blends: fog fades the colour toward white (render.md §4.3).
+@fragment
+fn fs_modulate(in: InstOut) -> @location(0) vec4<f32> {
+    let s = shade(in);
+    return vec4<f32>(frame_output(mix(s.unfogged, vec3<f32>(1.0), s.fog)), clamp(s.alpha, 0.0, 1.0));
+}
+
 struct ShadowOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -249,7 +267,7 @@ fn vs_shadow(v: ModelIn, inst: InstIn) -> ShadowOut {
 // Cut-outs cast cut-out shadows (lighting.md §7, code 0x0A).
 @fragment
 fn fs_shadow_mask(in: ShadowOut) {
-    let a = textureSample(t_base, s_base, in.uv).a;
+    let a = surface_opacity_texel(surface_base(in.uv));
     if (surface_alpha_test(a)) {
         discard;
     }

@@ -5,8 +5,17 @@
 //! top-down image of the block ([`bake`]). The composite is the CPU reference of the layer
 //! pipeline's colour without its light terms (`terrain-texturing.md` §7–§9: every layer's
 //! albedo *C* × `diffuse_scale` *M*, blended "over" by its opacity rule after the discard
-//! test), so lighting the baked layer with *M* = 1 gives 2 × *C′* × Σ as the full stack does
-//! (per-layer normal maps and specular highlights are not kept; the light map still applies).
+//! test), and the baked layer is lit with *M* = 1. This matches the full stack only for the
+//! ambient, sun and placed-light terms, which carry *M* there (§9: *M* is pre-multiplied
+//! into every light and ambient term). The light-map term *B*ₗ does not carry *M* in the
+//! full stack (2 × *C* × *B*ₗ) but does in the bake (2 × *C* × *M* × *B*ₗ), so wherever a
+//! layer's *M* ≠ 1 and the block has a light map the far band's baked light differs by the
+//! factor *M* (`walker.md` §14.4 OPEN (d); removing it needs a second baked image or an
+//! unscaled-albedo input on the renderer's far layer). Per-layer normal maps and specular
+//! highlights are not kept. The composite is stored in 8 bits, limited to 0–1; that limit
+//! never acts on valid data, because *C* ≤ 1 and *M* ≤ 1 per channel (`diffuse_scale` is
+//! stored as colour bytes, `terrain-texturing.md` §3.3) and "over" blending keeps the
+//! result between its inputs.
 //!
 //! Layer textures are sampled from their small CPU levels (at most
 //! `objects::SMALL_LEVEL` (64) texels) at the level whose texel best matches the bake's
@@ -315,6 +324,49 @@ mod tests {
         assert!(r.texels().iter().all(|&b| b == 127));
         let small = AlphaMask::from_texels(Did(0x4100_0002), 64, 64, vec![9; 64 * 64]).unwrap();
         assert_eq!(reduce_mask(&small), small);
+    }
+
+    /// The composite carries `diffuse_scale` *M* (`terrain-texturing.md` §14 bytes 0x20,
+    /// 0x40, 0x80: R 0.502, G 0.251, B 0.125) unclamped: a white texture bakes to
+    /// round(255 × *M*).
+    #[test]
+    fn bake_folds_in_the_diffuse_scale() {
+        let block = TerrainBlock::flat(10_000);
+        let mut chunk = SurfaceChunk::default();
+        chunk.layers.push(SurfaceLayer {
+            material: 0,
+            whole: true,
+            ..SurfaceLayer::default()
+        });
+        let table = TerrainTypeTable::new(
+            Did(0x1900_0000),
+            vec![TerrainType {
+                key: 0,
+                diffuse: Did(0x4000_0001),
+                diffuse_scale: Argb(0xFF80_4020),
+                u_scale: 0.1,
+                v_scale: 0.1,
+                ..TerrainType::default()
+            }],
+        )
+        .unwrap();
+        let layers = resolve_chunk(
+            &chunk,
+            &VertexFlags::default(),
+            GridSurface::Terrain,
+            &table,
+            None,
+            &ResolveOptions::default(),
+        )
+        .unwrap();
+        let mut diffuse: HashMap<Did, SmallChain> = HashMap::new();
+        diffuse.insert(Did(0x4000_0001), vec![solid(4, 4, [255; 4])].into());
+        let img = bake(&layers, &block, [0.0; 2], &diffuse, &HashMap::new(), 4);
+        assert!(
+            img.pixels.chunks(4).all(|p| p == [128, 64, 32, 255]),
+            "{:?}",
+            &img.pixels[..4]
+        );
     }
 
     /// A base layer of one colour and a masked second layer of another over the north half:

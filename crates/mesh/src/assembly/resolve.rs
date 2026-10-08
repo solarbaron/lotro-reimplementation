@@ -8,7 +8,9 @@ use tessera_formats::appearance::{
     AppearanceBlock, AppearanceKeyInfo, DYE_TOLERANCE, MODIFIER_TOLERANCE, PartSource, SLOT_ALL,
     SlotTable,
 };
-use tessera_formats::avatar::{AvatarBody, parse_slider_values, slider_value_pairs, uniform_scale};
+use tessera_formats::avatar::{
+    AvatarBody, parse_slider_values, slider_value_pieces, uniform_scale,
+};
 use tessera_formats::item::{ItemLook, ItemVisual, WornAppearanceRef, worn_block};
 use tessera_formats::{Did, PropertySet, PropertyValue, Setup};
 
@@ -931,8 +933,9 @@ impl<S: AssemblySource> CharacterAssembler<S> {
         let slider_string = spec
             .and_then(|s| s.slider_values.clone())
             .or_else(|| body.slider_values.clone());
-        // The client's reading (`appearance.md` §6.3, A16): pairs from the start, a pair
-        // that is not hexadecimal reads 0. A string that is not clean hex is still noted.
+        // The client's reading (`appearance.md` §6.3, A16, A29): pieces of two characters
+        // from the start, each read like `strtol` in base 16, an empty piece after an
+        // even-length string. A string that is not clean hex pairs is still noted.
         let values = match slider_string.as_deref() {
             Some(text) => {
                 if parse_slider_values(text).is_none() {
@@ -943,7 +946,7 @@ impl<S: AssemblySource> CharacterAssembler<S> {
                         None,
                     );
                 }
-                slider_value_pairs(text)
+                slider_value_pieces(text)
             }
             None => Vec::new(),
         };

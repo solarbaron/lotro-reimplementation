@@ -705,6 +705,64 @@ impl LayerGpu {
     }
 }
 
+/// The distinct triangles of a chunk's layer index list (`indices`: whole triangles, every
+/// layer's back to back), each once in first-seen order, or `None` when no triangle repeats.
+/// Two triangles are the same when they use the same three vertices in any order (the
+/// shadow pass culls no faces).
+fn shadow_triangles(indices: &[u16]) -> Option<Vec<u16>> {
+    let triangles = indices.len() / 3;
+    let mut seen = std::collections::HashSet::with_capacity(triangles);
+    let mut unique = Vec::with_capacity(indices.len());
+    let mut repeats = false;
+    for t in indices.as_chunks::<3>().0 {
+        let mut key = [t[0], t[1], t[2]];
+        key.sort_unstable();
+        if seen.insert(key) {
+            unique.extend_from_slice(t);
+        } else {
+            repeats = true;
+        }
+    }
+    repeats.then_some(unique)
+}
+
+/// What a terrain sampler samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SamplerUse {
+    /// The layer textures (diffuse, normal, emissive, glow): wrap addressing, filtered
+    /// between mip levels (`terrain-texturing.md` §6.3).
+    Layer,
+    /// Masks and the light map: clamp-to-edge addressing and bilinear filtering
+    /// (`terrain-texturing.md` §5.2, §10): linear within a level, the nearest mip level
+    /// (no blend between levels).
+    BlockMap,
+}
+
+fn sampler_descriptor(kind: SamplerUse) -> wgpu::SamplerDescriptor<'static> {
+    let (label, address, mipmap_filter) = match kind {
+        SamplerUse::Layer => (
+            "tessera-terrain-layer-sampler",
+            wgpu::AddressMode::Repeat,
+            wgpu::MipmapFilterMode::Linear,
+        ),
+        SamplerUse::BlockMap => (
+            "tessera-terrain-block-sampler",
+            wgpu::AddressMode::ClampToEdge,
+            wgpu::MipmapFilterMode::Nearest,
+        ),
+    };
+    wgpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: address,
+        address_mode_v: address,
+        address_mode_w: address,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter,
+        ..Default::default()
+    }
+}
+
 struct ChunkGpu {
     owner: u64,
     label: Option<String>,
@@ -713,7 +771,9 @@ struct ChunkGpu {
     has_frame: bool,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    index_count: u32,
+    /// The index range the shadow pass draws: every covered triangle once (render.md §5.2
+    /// Shadows; see [`shadow_triangles`]).
+    shadow_indices: Range<u32>,
     layer_buffer: wgpu::Buffer,
     layer_stride: u64,
     layers: Vec<LayerGpu>,
@@ -767,6 +827,18 @@ fn build_chunk(
         ranges.push(start..indices.len() as u32);
     }
     let index_count = indices.len() as u32;
+    // The shadow pass draws each covered triangle once: the layers' triangles overlap
+    // (every layer that covers a triangle lists it), so their whole list would rasterise a
+    // triangle once per layer. The distinct triangles follow the layers' lists when there
+    // are repeats; otherwise the shadow pass draws the layers' list itself.
+    let shadow_indices = match shadow_triangles(&indices) {
+        Some(unique) => {
+            let start = indices.len() as u32;
+            indices.extend(unique);
+            start..indices.len() as u32
+        }
+        None => 0..index_count,
+    };
     // A 4-byte multiple for the copy.
     if indices.len() % 2 == 1 {
         indices.push(0);
@@ -874,7 +946,7 @@ fn build_chunk(
         has_frame,
         vertices: vbuf,
         indices: ibuf,
-        index_count,
+        shadow_indices,
         layer_buffer,
         layer_stride: stride,
         layers,
@@ -1078,20 +1150,8 @@ impl TerrainState {
             label: Some("tessera-terrain-layer-bgl"),
             entries: &entries,
         });
-        let sampler = |address: wgpu::AddressMode| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("tessera-terrain-sampler"),
-                address_mode_u: address,
-                address_mode_v: address,
-                address_mode_w: address,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            })
-        };
-        let repeat = sampler(wgpu::AddressMode::Repeat);
-        let clamp = sampler(wgpu::AddressMode::ClampToEdge);
+        let repeat = device.create_sampler(&sampler_descriptor(SamplerUse::Layer));
+        let clamp = device.create_sampler(&sampler_descriptor(SamplerUse::BlockMap));
         let l = Arc::new(TerrainLayouts {
             draw,
             layer,
@@ -1384,7 +1444,7 @@ impl PassHook for TerrainHook {
                 let mut bound = false;
                 for item in self.items.iter().filter(|i| i.cast) {
                     let chunk = &item.chunk.0;
-                    if chunk.index_count == 0 {
+                    if chunk.shadow_indices.is_empty() {
                         continue;
                     }
                     if !bound {
@@ -1395,7 +1455,7 @@ impl PassHook for TerrainHook {
                     rp.set_bind_group(1, &self.draw_bg, &[item.offset]);
                     rp.set_vertex_buffer(0, chunk.vertices.slice(..));
                     rp.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint16);
-                    rp.draw_indexed(0..chunk.index_count, 0, 0..1);
+                    rp.draw_indexed(chunk.shadow_indices.clone(), 0, 0..1);
                     stats.draw_calls = stats.draw_calls.saturating_add(1);
                     stats.shadow_draws = stats.shadow_draws.saturating_add(1);
                 }
@@ -1443,6 +1503,38 @@ mod tests {
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+    }
+
+    /// The shadow pass draws each covered triangle once, not once per layer covering it.
+    #[test]
+    fn shadow_draws_each_triangle_once() {
+        // Three layers: the first covers both triangles, the second one of them (in another
+        // vertex order), the third the other one.
+        let layers: [&[u16]; 3] = [&[0, 1, 2, 2, 1, 3], &[1, 2, 0], &[2, 1, 3]];
+        let all: Vec<u16> = layers.concat();
+        assert_eq!(shadow_triangles(&all), Some(vec![0, 1, 2, 2, 1, 3]));
+        // No repeat: the layers' own list serves.
+        assert_eq!(shadow_triangles(&[0, 1, 2, 2, 1, 3]), None);
+        assert_eq!(shadow_triangles(&[]), None);
+        // A large chunk where 256 layers each list every triangle: 1 copy, not 256.
+        let one: Vec<u16> = (0..1000u16).flat_map(|i| [i, i + 1, i + 2]).collect();
+        let many: Vec<u16> = (0..256).flat_map(|_| one.iter().copied()).collect();
+        assert_eq!(shadow_triangles(&many), Some(one));
+    }
+
+    /// Masks and light maps: clamp-to-edge and bilinear, no blend between mip levels
+    /// (`terrain-texturing.md` §5.2, §10); layer textures: wrap, between mip levels (§6.3).
+    #[test]
+    fn samplers_follow_the_spec() {
+        let b = sampler_descriptor(SamplerUse::BlockMap);
+        assert_eq!(b.address_mode_u, wgpu::AddressMode::ClampToEdge);
+        assert_eq!(b.address_mode_v, wgpu::AddressMode::ClampToEdge);
+        assert_eq!(b.mag_filter, wgpu::FilterMode::Linear);
+        assert_eq!(b.min_filter, wgpu::FilterMode::Linear);
+        assert_eq!(b.mipmap_filter, wgpu::MipmapFilterMode::Nearest);
+        let l = sampler_descriptor(SamplerUse::Layer);
+        assert_eq!(l.address_mode_u, wgpu::AddressMode::Repeat);
+        assert_eq!(l.mipmap_filter, wgpu::MipmapFilterMode::Linear);
     }
 
     #[test]

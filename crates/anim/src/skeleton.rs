@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The skeleton hierarchy: validated parents, reference pose, model-space reference
-//! transforms and inverse-bind matrices (`skeleton-anim.md` §2, §4.4, §5).
+//! transforms and inverse reference triples (`skeleton-anim.md` §2, §4.4, §5).
 
 use std::sync::Arc;
 
@@ -67,6 +67,30 @@ impl Qs {
         Mat4::from_scale_rotation_translation(self.s, self.q, self.t)
     }
 
+    /// The inverse reference triple *X* of this reference model triple (§5.4, K26):
+    /// translation −(*q*⁻¹ applied to *t*), rotation *q*⁻¹, scale 1/*s* per axis. The
+    /// translation is **not** divided by the scale, so *X* is the exact inverse only when
+    /// the scale is (1, 1, 1).
+    pub(crate) fn inverse_reference(self) -> Self {
+        let q = self.q.inverse();
+        Self {
+            t: -(q * self.t),
+            q,
+            s: self.s.recip(),
+        }
+    }
+
+    /// The skinning triple of a posed model triple `self` against the inverse reference
+    /// triple `x` (§5.4, K26): translation *t* + *q* applied to (*s* ⊙ *x*.t), rotation
+    /// *q* · *x*.q, scale *s* ⊙ *x*.s.
+    pub(crate) fn skinning(self, x: Self) -> Self {
+        Self {
+            t: self.t + self.q * (self.s * x.t),
+            q: self.q * x.q,
+            s: self.s * x.s,
+        }
+    }
+
     /// Whether every component is finite.
     pub(crate) fn is_finite(self) -> bool {
         self.t.is_finite() && self.q.is_finite() && self.s.is_finite()
@@ -95,8 +119,8 @@ pub fn quat_of(q: [f32; 4]) -> Quat {
 
 /// A skeleton ready for posing: parents validated so that every parent precedes its child
 /// (one forward pass composes model transforms, and no cycle can exist), reference
-/// rotations normalised, and the model-space reference transforms **B**_b and their
-/// inverses (the inverse-bind matrices, §4.4) precomputed.
+/// rotations normalised, and the model-space reference transforms **B**_b and the inverse
+/// reference triples *X*_b (§5.4, K26) precomputed.
 ///
 /// Bones are in stored order: the order clip tracks (§3.2) and mesh bone indices (§4.1)
 /// address. Build one per distinct skeleton and share it (`Arc`); identical skeletons can
@@ -107,6 +131,7 @@ pub struct Skeleton {
     reference: Vec<Transform>,
     reference_triples: Vec<Transform>,
     reference_model: Vec<Mat4>,
+    inverse_reference: Vec<Transform>,
     inverse_bind: Vec<Mat4>,
     names: Vec<Option<Arc<[u8]>>>,
     key: u64,
@@ -231,17 +256,22 @@ impl Skeleton {
             triples.push(m);
             model.push(mat);
         }
+        // Tessera rule (`skeleton-anim.md` §15): a reference that cannot be inverted (a zero
+        // or vanishing model scale) is rejected.
         let mut inverse = Vec::with_capacity(n);
-        for (i, m) in model.iter().enumerate() {
+        let mut inverse_matrices = Vec::with_capacity(n);
+        for (i, (m, r)) in model.iter().zip(&triples).enumerate() {
             let det = m.determinant();
             if !det.is_finite() || det.abs() < 1e-12 {
                 return Err(AnimError::SingularBind { bone: i });
             }
-            let inv = m.inverse();
-            if !inv.is_finite() {
+            let x = r.inverse_reference();
+            let xm = x.matrix();
+            if !x.is_finite() || !xm.is_finite() {
                 return Err(AnimError::SingularBind { bone: i });
             }
-            inverse.push(inv);
+            inverse.push(x.transform());
+            inverse_matrices.push(xm);
         }
         let key = content_key(&ps, &refs);
         Ok(Skeleton {
@@ -249,7 +279,8 @@ impl Skeleton {
             reference: refs,
             reference_triples: triples.iter().map(|q| q.transform()).collect(),
             reference_model: model,
-            inverse_bind: inverse,
+            inverse_reference: inverse,
+            inverse_bind: inverse_matrices,
             names,
             key,
         })
@@ -272,6 +303,7 @@ impl Skeleton {
             + self.reference.capacity() * size_of::<Transform>()
             + self.reference_triples.capacity() * size_of::<Transform>()
             + self.reference_model.capacity() * size_of::<Mat4>()
+            + self.inverse_reference.capacity() * size_of::<Transform>()
             + self.inverse_bind.capacity() * size_of::<Mat4>()
             + self.names.capacity() * size_of::<Option<Arc<[u8]>>>()
             + names
@@ -333,14 +365,21 @@ impl Skeleton {
         &self.reference_triples
     }
 
-    /// Inverse-bind matrices **B**_b⁻¹ (§4.4): the exact inverses of
-    /// [`Skeleton::reference_model`].
-    ///
-    /// Tessera Decision (`skeleton-anim.md` §5.4 OPEN filed by the implementation): the
-    /// spec's inverse reference triple *X*_b, taken as the matrix T · R · S, equals this
-    /// inverse whenever the reference scale is uniform or the reference rotation is the
-    /// identity (every player-skeleton bone has scale 1); for the rare other bones the exact
-    /// inverse keeps skinning at the reference pose the identity (§4.4, KI8).
+    /// Inverse reference triples *X*_b (§5.4, K26): translation −(*q*_r⁻¹ applied to
+    /// *t*_r), rotation *q*_r⁻¹, scale 1/*s*_r per axis, from each bone's reference model
+    /// triple (*t*_r, *q*_r, *s*_r). The client does not divide the translation by the
+    /// reference scale, so *X*_b is the exact inverse of **B**_b only when *s*_r = (1, 1, 1);
+    /// [`crate::skinning_matrices`] uses these triples.
+    #[must_use]
+    pub fn inverse_reference(&self) -> &[Transform] {
+        &self.inverse_reference
+    }
+
+    /// The matrices T · R · S of [`Skeleton::inverse_reference`]: the inverse-bind matrices
+    /// **B**_b⁻¹ of §4.4 for every bone whose reference model scale is 1 (every
+    /// player-skeleton bone), and **not** the inverse of **B**_b for the other bones (§5.4).
+    /// Skinning goes through the triples ([`crate::skinning_matrices`]); these matrices are
+    /// for inspection and tests.
     #[must_use]
     pub fn inverse_bind(&self) -> &[Mat4] {
         &self.inverse_bind
@@ -407,6 +446,33 @@ impl Skeleton {
     /// [`AnimError::BufferTooSmall`] if either slice is too short.
     pub fn compose(&self, local: &[Transform], model: &mut [Mat4]) -> Result<()> {
         self.compose_counted(local, model).map(|_| ())
+    }
+
+    /// [`Skeleton::compose`] that also writes the model **triples** (the input of
+    /// [`crate::skinning_matrices`]) in the same pass, returning the fallback count of
+    /// [`Skeleton::compose_counted`].
+    ///
+    /// # Errors
+    ///
+    /// [`AnimError::BufferTooSmall`] if a slice is too short.
+    pub fn compose_with_triples(
+        &self,
+        local: &[Transform],
+        model: &mut [Mat4],
+        triples: &mut [Transform],
+    ) -> Result<u32> {
+        let n = self.bone_count();
+        check_len("local pose", n, local.len())?;
+        check_len("model pose", n, model.len())?;
+        check_len("model triples", n, triples.len())?;
+        let mut fallbacks = 0;
+        for i in 0..n {
+            let parent = self.parents[i].map(|p| Qs::of(&triples[usize::from(p)]));
+            let (m, mat) = self.model_triple(i, parent, Qs::of(&local[i]), &mut fallbacks);
+            triples[i] = m.transform();
+            model[i] = mat;
+        }
+        Ok(fallbacks)
     }
 
     /// [`Skeleton::compose`], returning how many bones fell back because their model
@@ -622,7 +688,7 @@ mod tests {
             assert!((triples[b].scale[2] - sz).abs() < 1e-6, "scale {b}");
         }
         let mut skin = vec![Mat4::IDENTITY; 3];
-        crate::skin::skinning_matrices(&s, &model, &mut skin).unwrap();
+        crate::skin::skinning_matrices(&s, &triples, &mut skin).unwrap();
         let z = |b: u8, v: f32| {
             crate::skin::skin_position(&skin, &[b], &[1.0], Vec3::new(0.0, 0.0, v)).z
         };

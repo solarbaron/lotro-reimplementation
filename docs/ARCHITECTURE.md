@@ -616,6 +616,31 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
   view around a position (decision 0013 frames) and the interior cell containing a point
   (`collision.md` §5.8.1).
 
+> **OPEN (implementer, 2026-10-07):** `tessera-world` makes engineering choices that this
+> section does not state: the retry and failure rules, the velocity-estimate details, the
+> decay of "the slowest recent bundle job", corridor hysteresis, and the frill budget
+> projection. The default residency budget is also out of date in `landblock.md` §8.1. These
+> are listed for confirmation in the implementer OPENs of
+> [`landblock.md` §8.1](specs/landblock.md#s8-1) (2026-10-07).
+
+> **OPEN (implementer, 2026-10-07, meshes and materials):** the third bullet of this
+> section says "the bundle loader then requests the meshes and materials those
+> reference". `tessera-world`'s bundle job requests none: it resolves each object chain to
+> its setup and part DIDs and stops there. The walker requests parts and textures itself,
+> by draw distance and within its GPU budget (`walker.md` §4, §14.5), which a request at
+> bundle time would bypass (every resident landblock's parts would load, whatever their
+> distance). The two specs disagree; which one holds? If `walker.md` does, the bullet
+> should say that the bundle resolves objects to setups and parts and the consumer loads
+> them.
+
+> **OPEN (implementer, 2026-10-07, streamer details):** further `tessera-world` choices
+> that this section does not state (default byte budgets and per-frame limits, the
+> one-update overshoot of the residency budget at integration, the re-admission margin
+> of a seam closure, the velocity estimate's sample rules, what a data error in a
+> world-system input does, and the water lookups with `build_water` off) are listed for
+> confirmation in the implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1)
+> (2026-10-07, second set).
+
 > **OPEN:** interior cell geometry, portals and the role of the original's PVS data are
 > unknown (Reported as unexplored, data-semantics.md §13). M3 exit criteria do not depend
 > on interiors. *Answered in part (M4.5):* cell geometry, cell volumes, portals and the
@@ -642,6 +667,12 @@ flow. Grass and procedural scenery are in §10.5 because they hang off the terra
   pattern), normals computed across landblock edges (needs neighbour heights; the bundle
   loader requests the 8 neighbours at low priority) (`terrain.md` §3–§5). Landblocks with a
   ceiling also get a ceiling mesh (`terrain-texturing.md` §4.8).
+
+> **OPEN (implementer, 2026-10-07):** the bundle loader requests no neighbours.
+> `tessera-world`'s residency admission guarantees the east, north and north-east
+> neighbours of near- and mid-ring landblocks (`landblock.md` §8.1). The normals of
+> `landblock.md` §3.14 read all eight. See the neighbours OPEN in `landblock.md` §8.1.
+
 - Far terrain: coarser LOD meshes from the same heights. How far the original draws full
   layers and what replaces them beyond that is OPEN (`terrain-texturing.md` §12); Tessera
   draws full layers at every distance it meshes until it is known.
@@ -665,6 +696,12 @@ physics-material property set.
 
 - Layer products are CPU data built on the asset workers with the landblock bundle and handed
   to the renderer like any mesh product (§8, §20.2).
+
+> **OPEN (implementer, 2026-10-07):** the bullet above does not match the code. The landblock
+> bundle (`tessera-world`) does not build layer products. The walker builds layer
+> resolution, masks, light maps and far-band bakes from the bundle's landblock data on its
+> own terrain workers (`walker.md` §14.1). Should this bullet describe that split?
+
 - Whether layers are drawn one pass per layer or folded into one splatting shader per block
   is the renderer's choice; the result is the same "over" chain (`terrain-texturing.md` §8).
   The depth comparison for stacked layers is a Tessera Decision there ("less or equal").
@@ -709,6 +746,11 @@ set, as plain physics data in the landblock frame:
   placed volume entity of the landblock (§7.3), transformed by its entity's placement
   (position, rotation, and scale when `Monitor_ScaleWithEntity` is true) into an oriented
   box, with the flags of its property set (§7.2: liquid, lava, surface, wading, deep).
+
+> **OPEN (implementer, 2026-10-07):** `tessera-world` builds the landblock water with every
+> collision set, whatever its `build_water` option says. It loads the water tables only
+> when water or scenery is on, so with both off the set is dry (`landblock.md` §8.1, water
+> OPEN).
 
 The controller reads water only from the resident sets, like the triangles, so the
 determinism of §20.3 covers water too, and `physics` needs nothing from `world` at step

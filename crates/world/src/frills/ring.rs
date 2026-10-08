@@ -2,27 +2,59 @@
 //! The frill ring: the set of frill sectors kept around the ring centre, separate from the
 //! landblock ring (`scenery.md` §8.2–§8.3).
 //!
-//! The ring centre lies between the camera and the player by `PlayerPositionBlend`
-//! (Probable, §8.2). Its shape is Tessera's (the spec gives the radius, not the shape):
-//! every sector whose centre is within `radius + extra` sectors of the centre sector's
-//! centre is wanted; a held sector is dropped once it is more than one further sector
-//! away (hysteresis). New sectors are handed out nearest first, ring by ring around the
-//! centre sector (the client's spiral order).
+//! - **Ring centre** ([`ring_centre`], [`ring_centre_of`]; §8.2, S47, and its Tessera
+//!   Decision): the camera position C when there is no player or the blend
+//!   `FrillEngine.PlayerPositionBlend` is 0 or less (−∞ included); otherwise
+//!   C + t · (P − C), not clamped (a NaN or +∞ blend counts as 1); with the blend above 0
+//!   and camera and player in different regions, the player's position.
+//! - **Sector set** (§8.2, S47): the client's square, every sector whose column and row each
+//!   differ from the centre sector's by at most `radius + extra` (Chebyshev distance),
+//!   inside the region grid. Above [`MAX_RING_RADIUS`] the square is capped, never below
+//!   [`far_reach_sectors`] of the far distance D (only non-default settings get there).
+//! - **Order**: new sectors are handed out in the client's order, ring by ring outward
+//!   (ring r = the sectors at Chebyshev distance r); each ring starts at its south-west
+//!   corner and runs north along its west column, east along its north row, south along
+//!   its east column and west along its south row. (The Tessera Decision of §8.2 leaves the
+//!   order free; it changes only when a sector appears.)
+//! - **Drop policy** (Tessera's, allowed by that Decision): a held sector is dropped once it
+//!   is more than one sector outside the square (hysteresis), or when the centre moves to
+//!   another region or off the grid. Every sector of the square is held while the centre
+//!   is still.
 
 use std::collections::BTreeSet;
 
 use super::sector::FrillSectorKey;
-use super::settings::FrillSettings;
+use super::settings::{FRILL_SECTOR_SIZE, FrillSettings};
 use crate::coords::WorldPos;
 
-/// Largest radius in sectors the ring accepts (the client's largest level is 16, plus the
-/// pre-cache rings).
+/// Radius cap in sectors for the client's square of `radius + extra` sectors (the client's
+/// largest level is 16, plus the pre-cache rings). The cap never cuts below
+/// [`far_reach_sectors`] of the far distance D, so a capped ring still holds every sector
+/// within D of the centre sector, which the Tessera Decision of `scenery.md` §8.2 accepts
+/// in place of the square (implementer note in `scenery.md` §13.2).
 pub const MAX_RING_RADIUS: u32 = 64;
+
+/// The Chebyshev radius in sectors of the smallest square that holds every sector with some
+/// point within `far` units of some point of the centre sector (`scenery.md` §8.2 Tessera
+/// Decision, the distance between the two squares, boundary included): a sector at
+/// Chebyshev offset k lies at least (k − 1) · S away, so k ≤ ⌊D / S⌋ + 1. A distance that
+/// is not finite or not above 0 gives 0.
+#[must_use]
+pub fn far_reach_sectors(far: f32) -> u32 {
+    if !far.is_finite() || far <= 0.0 {
+        return 0;
+    }
+    let k = (f64::from(far) / f64::from(FRILL_SECTOR_SIZE)).floor() + 1.0;
+    // Bounded above, so the conversion cannot overflow; D is at most 1,000 units (§8.3).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let k = k.min(f64::from(u16::MAX)) as u32;
+    k
+}
 
 /// What changed in one ring update.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FrillRingDiff {
-    /// Sectors to generate, nearest first.
+    /// Sectors to generate, in the client's ring order (module docs).
     pub entered: Vec<FrillSectorKey>,
     /// Sectors to drop.
     pub left: Vec<FrillSectorKey>,
@@ -36,15 +68,33 @@ pub struct FrillRing {
     centre: Option<FrillSectorKey>,
 }
 
-/// The ring centre: camera + blend · (player − camera) (§8.2, Probable), in the camera's
-/// region. A non-finite blend counts as 1.
+/// The ring centre with a player (§8.2): [`ring_centre_of`] with `Some(player)`.
 #[must_use]
 pub fn ring_centre(camera: &WorldPos, player: &WorldPos, blend: f32) -> WorldPos {
-    let t = if blend.is_finite() {
-        f64::from(blend)
-    } else {
-        1.0
+    ring_centre_of(camera, Some(player), blend)
+}
+
+/// The ring centre of `scenery.md` §8.2 (BIN, S47) and its Tessera Decision:
+/// - no player (`None`, for example the free-fly camera): the camera position;
+/// - a blend that is NaN or +∞ counts as 1; a blend of 0 or less (−∞ included): the camera
+///   position;
+/// - otherwise, with camera and player in different regions: the player's position;
+/// - otherwise camera + blend · (player − camera) on each axis, in the camera's region; the
+///   blend is not clamped (2 puts the centre as far beyond the player as the camera is
+///   behind it).
+#[must_use]
+pub fn ring_centre_of(camera: &WorldPos, player: Option<&WorldPos>, blend: f32) -> WorldPos {
+    let Some(player) = player else {
+        return *camera;
     };
+    let t = if blend.is_nan() || blend == f32::INFINITY {
+        1.0
+    } else {
+        f64::from(blend)
+    };
+    if t <= 0.0 {
+        return *camera;
+    }
     if camera.region != player.region {
         return *player;
     }
@@ -58,15 +108,18 @@ pub fn ring_centre(camera: &WorldPos, player: &WorldPos, blend: f32) -> WorldPos
 
 impl FrillRing {
     /// A ring of `radius + extra_precache_levels` sectors for `settings` (§8.3 rule 1,
-    /// §8.4), capped at [`MAX_RING_RADIUS`]. A radius of 0 holds nothing.
+    /// §8.4): the client's square. When that exceeds [`MAX_RING_RADIUS`] the radius is
+    /// capped there, but never below [`far_reach_sectors`] of the far distance D (§8.3
+    /// rule 2), so the ring always holds either the client's square or every sector within
+    /// D of the centre sector (§8.2 Tessera Decision). A radius of 0 holds nothing.
     #[must_use]
     pub fn new(settings: &FrillSettings) -> Self {
         let r = settings.radius_sectors();
         let radius = if r == 0 {
             0
         } else {
-            r.saturating_add(settings.extra_precache_levels)
-                .min(MAX_RING_RADIUS)
+            let cap = MAX_RING_RADIUS.max(far_reach_sectors(settings.distances().far));
+            r.saturating_add(settings.extra_precache_levels).min(cap)
         };
         Self {
             radius,
@@ -114,62 +167,76 @@ impl FrillRing {
         };
         self.centre = Some(c);
         let keep = i64::from(self.radius) + 1;
-        let dist2 = |k: &FrillSectorKey| {
-            let dx = i64::from(k.gx) - i64::from(c.gx);
-            let dy = i64::from(k.gy) - i64::from(c.gy);
-            dx * dx + dy * dy
-        };
         let left: Vec<FrillSectorKey> = self
             .held
             .iter()
-            .filter(|k| k.region != c.region || dist2(k) > keep * keep)
+            .filter(|k| k.region != c.region || chebyshev(k, c) > keep)
             .copied()
             .collect();
         for k in &left {
             self.held.remove(k);
         }
         diff.left = left;
-        let mut entered: Vec<FrillSectorKey> = wanted(c, self.radius)
+        let entered: Vec<FrillSectorKey> = wanted(c, self.radius)
             .into_iter()
             .filter(|k| !self.held.contains(k))
             .collect();
-        entered.sort_by_key(|k| {
-            let dx = i64::from(k.gx) - i64::from(c.gx);
-            let dy = i64::from(k.gy) - i64::from(c.gy);
-            (dx.abs().max(dy.abs()), dist2(k), k.gy, k.gx)
-        });
         self.held.extend(entered.iter().copied());
         diff.entered = entered;
         diff
     }
 }
 
-/// The sectors within `radius` sectors (centre to centre) of `c`, inside the region grid.
+/// Chebyshev distance in sectors between `k` and `c` (same region assumed).
+fn chebyshev(k: &FrillSectorKey, c: FrillSectorKey) -> i64 {
+    let dx = i64::from(k.gx) - i64::from(c.gx);
+    let dy = i64::from(k.gy) - i64::from(c.gy);
+    dx.abs().max(dy.abs())
+}
+
+/// The client's square of `radius` sectors around `c` (§8.2), inside the region grid, in
+/// the client's order: ring 0, then each ring r from its south-west corner north along the
+/// west column, east along the north row, south along the east column and west along the
+/// south row.
 fn wanted(c: FrillSectorKey, radius: u32) -> Vec<FrillSectorKey> {
     if radius == 0 {
         return Vec::new();
     }
     let r = i64::from(radius);
     let mut out = Vec::new();
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if dx * dx + dy * dy > r * r {
-                continue;
-            }
-            let (Ok(gx), Ok(gy)) = (
-                u16::try_from(i64::from(c.gx) + dx),
-                u16::try_from(i64::from(c.gy) + dy),
-            ) else {
-                continue;
-            };
-            let k = FrillSectorKey {
-                region: c.region,
-                gx,
-                gy,
-            };
-            if k.landblock().is_some() {
-                out.push(k);
-            }
+    let mut push = |dx: i64, dy: i64| {
+        let (Ok(gx), Ok(gy)) = (
+            u16::try_from(i64::from(c.gx) + dx),
+            u16::try_from(i64::from(c.gy) + dy),
+        ) else {
+            return;
+        };
+        let k = FrillSectorKey {
+            region: c.region,
+            gx,
+            gy,
+        };
+        if k.landblock().is_some() {
+            out.push(k);
+        }
+    };
+    push(0, 0);
+    for ring in 1..=r {
+        // West column, south to north (from the south-west corner).
+        for dy in -ring..=ring {
+            push(-ring, dy);
+        }
+        // North row, west to east (after the north-west corner).
+        for dx in (-ring + 1)..=ring {
+            push(dx, ring);
+        }
+        // East column, north to south (after the north-east corner).
+        for dy in (-ring..ring).rev() {
+            push(ring, dy);
+        }
+        // South row, east to west (after the south-east corner, up to the south-west one).
+        for dx in ((-ring + 1)..ring).rev() {
+            push(dx, -ring);
         }
     }
     out

@@ -14,7 +14,7 @@ use glam::{Mat4, Vec3};
 use crate::lighting::{
     FRAME_SHADING_WGSL, FRAME_WGSL, FrameUniform, LightReach, MAX_DRAW_LIGHTS, reference,
 };
-use crate::material::{Gloss, LightSelection, LitSurface, Material, Opacity};
+use crate::material::{FixedBlend, FogRule, Gloss, LightSelection, LitSurface, Material, Opacity};
 use crate::mesh::GpuVertex;
 use crate::mesh_pipelines::{Cull, DrawUniform, MeshLayouts};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
@@ -92,7 +92,9 @@ pub(crate) fn lit_fields(
     if lit.vertex_colors {
         flags |= lit_flag::VERTEX_COLORS;
     }
-    if lit.fog {
+    // The lit base pass always contains distance fog (lighting.md §2.1, §5.11); the switch
+    // serves unlit surfaces only (§7 code 0x00).
+    if lit.fog || !material.unlit {
         flags |= lit_flag::FOG;
     }
     if lit.emissive.is_some() && ctx.present[4] {
@@ -149,6 +151,10 @@ pub(crate) fn lit_fields(
     u.lit = [glow[0], glow[1], glow[2], power];
     u.lit_lights = [packed[0], packed[1], count as u32, flags];
 }
+
+/// Directional table lights one draw receives with [`LightSelection::Auto`]: the single
+/// extra directional slot of `lighting.md` §5.6 and §8.2 (count 0 or 1).
+pub(crate) const MAX_EXTRA_DIRECTIONAL: usize = 1;
 
 /// A point light of the table, for [`LightSelector`].
 #[derive(Debug, Clone, Copy)]
@@ -215,12 +221,20 @@ impl LightTarget {
 pub(crate) struct LightSelector {
     /// Directional table indices, in table order.
     directional: Vec<u8>,
+    /// The first directional table light with `KeyLight` (a per-pixel candidate,
+    /// `lighting.md` §8.5 step 2).
+    key_directional: Option<u8>,
+    /// Key flags of the table entries (for explicit lists).
+    key: Vec<bool>,
     /// Point lights with a positive range and selection radius, sorted by `position.x`.
     points: Vec<PointEntry>,
     /// Largest selection radius (for the x window).
     max_reach: f32,
-    /// Lights per draw: [`MAX_DRAW_LIGHTS`], minus one when the frame has a main light.
+    /// Point lights per draw: [`MAX_DRAW_LIGHTS`] minus the light-0 slot of the main light
+    /// or, without one, of the default directional light (`lighting.md` §8.5 Decision).
     limit: usize,
+    /// The frame has a main light.
+    has_sun: bool,
     /// Valid table entries.
     table_len: usize,
 }
@@ -231,12 +245,19 @@ impl LightSelector {
     pub(crate) fn new(frame: &FrameUniform, reach: &[LightReach]) -> Self {
         let table_len = (frame.params[0] as usize).min(frame.lights.len());
         let mut directional = Vec::new();
+        let mut key_directional = None;
+        let mut key = Vec::with_capacity(table_len);
         let mut points = Vec::new();
         let mut max_reach = 0.0f32;
         for (i, l) in frame.lights.iter().take(table_len).enumerate() {
             let Ok(index) = u8::try_from(i) else { break };
+            let is_key = reach.get(i).is_some_and(|r| r.key_light);
+            key.push(is_key);
             if l.specular_kind[3] > 0.5 {
                 directional.push(index);
+                if is_key && key_directional.is_none() {
+                    key_directional = Some(index);
+                }
                 continue;
             }
             let r2 = l.color_r2[3];
@@ -268,32 +289,60 @@ impl LightSelector {
             });
         }
         points.sort_by(|a, b| a.position.x.total_cmp(&b.position.x));
-        // lighting.md §8.5: at most 8 lights in all, the main light included.
+        // lighting.md §8.5: at most 8 lights in all, the main light included. Without a
+        // main light the default directional light stands in for it (Tessera Decision of
+        // §8.5): it holds the light-0 slot and counts toward the 8, unless a key
+        // directional light of the list takes that slot.
         let has_sun = frame.sun_dir[3] > 0.5;
-        let limit = MAX_DRAW_LIGHTS - usize::from(has_sun);
         Self {
             directional,
+            key_directional,
+            key,
             points,
             max_reach,
-            limit,
+            limit: MAX_DRAW_LIGHTS - 1,
+            has_sun,
             table_len,
         }
     }
 
-    /// Lights a draw receives from the table (`MAX_DRAW_LIGHTS` minus the main light).
+    /// Point lights a draw receives from the table at most (`MAX_DRAW_LIGHTS` minus the
+    /// light-0 slot).
     #[cfg(test)]
     pub(crate) fn limit(&self) -> usize {
         self.limit
     }
 
-    /// The light-table indices `target` receives, at most [`Self::limit`] of them.
+    /// Whether table entry `i` is a key directional light, which takes the light-0 slot in
+    /// a frame without a main light.
+    fn takes_light0(&self, i: u8) -> bool {
+        !self.has_sun
+            && self.directional.contains(&i)
+            && self.key.get(usize::from(i)) == Some(&true)
+    }
+
+    /// Whether [`Self::select`] gives every target the same lights for `selection`: an
+    /// explicit list, none, or automatic selection in a pass without usable point lights
+    /// (only the directional lights, which reach every draw).
+    pub(crate) fn is_uniform(&self, selection: LightSelection) -> bool {
+        match selection {
+            LightSelection::None | LightSelection::List { .. } => true,
+            LightSelection::Auto => self.points.is_empty(),
+        }
+    }
+
+    /// The light-table indices `target` receives: 7, the eighth slot being light 0 of the
+    /// main light or, without one, of the default directional light (`lighting.md` §8.5
+    /// Decision), or 8 when a key directional table light takes that slot (no main light).
     ///
     /// [`LightSelection::Auto`] (`lighting.md` §8.5, `render.md` §4.3): the point lights
     /// whose squared distance to the target's box is below ρ², without the baked-landscape
     /// lights on terrain and ceiling chunks and with the parent switches applied; key lights
-    /// first, each group nearest first (Tessera Decision of §8.5; ties by table index), then
-    /// directional lights in table order. Explicit lists keep their order and drop indices
-    /// past the table.
+    /// first, each group nearest first (Tessera Decision of §8.5; ties by table index), at
+    /// most 7; then one directional table light: without a main light the first key
+    /// directional light (light 0), otherwise the first in table order (the extra
+    /// directional slot, §5.6, §8.2) if fewer than 7 point lights were selected.
+    /// Explicit lists keep their order and drop indices past the table.
     pub(crate) fn select(
         &self,
         selection: LightSelection,
@@ -304,28 +353,35 @@ impl LightSelector {
         match selection {
             LightSelection::None => {}
             LightSelection::List { indices, count: n } => {
-                out.extend(
-                    indices
-                        .iter()
-                        .take(usize::from(n).min(MAX_DRAW_LIGHTS))
+                let list = indices
+                    .get(..usize::from(n).min(MAX_DRAW_LIGHTS))
+                    .unwrap_or(&[]);
+                let valid = || {
+                    list.iter()
                         .copied()
                         .filter(|&i| usize::from(i) < self.table_len)
-                        .take(self.limit),
-                );
+                };
+                // 8 in all with the light-0 slot: 7, or 8 when a key directional light of
+                // the list holds that slot (no main light, §8.5 Decision).
+                let cap = self.limit + usize::from(valid().any(|i| self.takes_light0(i)));
+                out.extend(valid().take(cap));
             }
             LightSelection::Auto => self.select_auto(target, out),
         }
     }
 
-    /// Whether point light `p` may reach `target` (§8.5 step 3).
+    /// Whether point light `p` may reach `target` (§8.5 step 3, row L34): the never-parent
+    /// switch for the light's parent, the only-parent switch for **every** other object,
+    /// whether or not the light has a parent (so an unattached light with
+    /// `Light_OnlyInfluenceParent` reaches nothing). A target without an object handle is
+    /// never the parent.
     fn admits(p: &PointEntry, target: &LightTarget) -> bool {
         if p.baked && target.landscape {
             return false;
         }
         match p.parent {
-            None => true,
             Some(parent) if target.object == Some(parent) => !p.never_parent,
-            Some(_) => !p.only_parent,
+            _ => !p.only_parent,
         }
     }
 
@@ -371,7 +427,19 @@ impl LightSelector {
             }
         }
         out.extend(best[..len].iter().map(|&(_, _, i)| i));
-        let room = self.limit.saturating_sub(out.len());
+        // Without a main light, a key directional light takes the light-0 slot in place of
+        // the default directional light (§8.5 step 2 and Decision): 8 in all.
+        if let Some(i) = self.key_directional.filter(|_| !self.has_sun) {
+            out.push(i);
+            return;
+        }
+        // Otherwise the light-0 slot is the main or the default light, and the extra
+        // directional slot holds one light (lighting.md §5.6, §8.2: count 0 or 1): the
+        // first directional table light, after the point lights, within the 7.
+        let room = self
+            .limit
+            .saturating_sub(out.len())
+            .min(MAX_EXTRA_DIRECTIONAL);
         out.extend(self.directional.iter().copied().take(room));
     }
 }
@@ -383,7 +451,8 @@ pub(crate) enum LitKind {
     Mask,
     TestBlend,
     Blend,
-    Additive,
+    /// Additive and the other fixed blends ([`crate::AlphaMode::Fixed`]).
+    Fixed(FixedBlend),
     /// Shadow-map depth of an opaque caster.
     Shadow,
     /// Shadow-map depth of an alpha-tested caster.
@@ -582,22 +651,17 @@ impl LitLayouts {
                 Some(wgpu::BlendState::ALPHA_BLENDING),
                 false,
             ),
-            _ => (
-                "fs_lit_additive",
-                Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::SrcAlpha,
-                        dst_factor: wgpu::BlendFactor::One,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::Zero,
-                        dst_factor: wgpu::BlendFactor::One,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                }),
-                false,
+            LitKind::Fixed(b) => (
+                match b.fog_rule() {
+                    FogRule::Lerp => "fs_lit_blend",
+                    FogRule::FadeOut => "fs_lit_additive",
+                    FogRule::TowardWhite => "fs_lit_modulate",
+                },
+                Some(b.blend_state()),
+                b.depth_write,
             ),
+            // Shadow kinds returned above.
+            LitKind::Shadow | LitKind::ShadowMask => ("fs_lit_opaque", None, true),
         };
         let targets = [Some(wgpu::ColorTargetState {
             format: key.format,
@@ -713,6 +777,29 @@ mod tests {
         }
     }
 
+    /// lighting.md §2.1: the lit base pass always contains fog; the switch serves unlit
+    /// surfaces (§7 code 0x00).
+    #[test]
+    fn fog_switch_acts_on_unlit_surfaces_only() {
+        let fog = |unlit: bool, switch: bool| {
+            let mut u: DrawUniform = bytemuck::Zeroable::zeroed();
+            let m = Material {
+                unlit,
+                ..Material::default()
+            };
+            let lit = LitSurface {
+                fog: switch,
+                ..LitSurface::default()
+            };
+            lit_fields(&mut u, &m, &lit, &ctx(), &[]);
+            u.lit_lights[3] & lit_flag::FOG != 0
+        };
+        assert!(fog(false, true));
+        assert!(fog(false, false));
+        assert!(fog(true, true));
+        assert!(!fog(true, false));
+    }
+
     #[test]
     fn lit_fields_pack_flags_and_lights() {
         let mut u = bytemuck::Zeroable::zeroed();
@@ -820,10 +907,36 @@ mod tests {
         // A huge box contains everything: 7 at most with the sun, by index (all at 0).
         sel.select(LightSelection::Auto, &boxed(Vec3::ZERO, 1e5), &mut out);
         assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6]);
-        // Without a main light the draw takes 8.
+        // Without a main light the default directional light holds the light-0 slot and
+        // counts toward the 8 (lighting.md §8.5 Decision): still 7 table lights.
         let no_sun = LightSelector::new(&frame_with(lights.clone(), false), &[]);
         no_sun.select(LightSelection::Auto, &boxed(Vec3::ZERO, 1e5), &mut out);
-        assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6]);
+        // A key directional light takes that slot instead: 7 point lights and it.
+        let mut key_dir = vec![LightReach::default(); 13];
+        key_dir[12].key_light = true;
+        let keyed = LightSelector::new(&frame_with(lights.clone(), false), &key_dir);
+        keyed.select(LightSelection::Auto, &boxed(Vec3::ZERO, 1e5), &mut out);
+        assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6, 12]);
+        // With a main light the key directional light goes to the extra slot, within 7.
+        let keyed_sun = LightSelector::new(&frame_with(lights.clone(), true), &key_dir);
+        keyed_sun.select(LightSelection::Auto, &boxed(Vec3::ZERO, 1e5), &mut out);
+        assert_eq!(out, vec![0, 1, 2, 3, 4, 5, 6]);
+        keyed_sun.select(
+            LightSelection::Auto,
+            &boxed(Vec3::new(10.0, 0.0, 0.0), 1.0),
+            &mut out,
+        );
+        assert_eq!(out, vec![3, 4, 2, 5, 12]);
+        keyed.select(
+            LightSelection::List {
+                indices: [1, 2, 3, 4, 5, 6, 7, 12],
+                count: 8,
+            },
+            &boxed(Vec3::ZERO, 1.0),
+            &mut out,
+        );
+        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 12]);
         // Explicit lists drop indices past the table and keep the cap.
         let t = boxed(Vec3::ZERO, 1.0);
         sel.select(
@@ -852,7 +965,7 @@ mod tests {
             &t,
             &mut out,
         );
-        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7]);
         sel.select(LightSelection::None, &t, &mut out);
         assert!(out.is_empty());
         // Hostile boxes select without panicking; a non-finite box gets no point light.
@@ -952,21 +1065,62 @@ mod tests {
             ..LightReach::default()
         }
         .with_parent(42);
-        // Switches of an unattached light are not applied.
+        // An unattached light with the only-parent switch reaches no object (row L34).
         reach[4].only_influence_parent = true;
+        // An unattached light with the never-parent switch reaches every object.
+        reach[5].never_influence_parent = true;
         let sel = LightSelector::new(&frame_with(lights, true), &reach);
         let mut out = Vec::new();
         let at0 = |object| LightTarget::object(Vec3::ZERO, Vec3::ZERO, object);
-        // Key lights 7 and 9 first (nearest first), then 0, 1, 3, 4, 5 by distance; 2 only
-        // reaches its parent.
+        // Key lights 7 and 9 first (nearest first), then 0, 1, 3, 5, 6 by distance; 2 only
+        // reaches its parent, 4 nothing.
         sel.select(LightSelection::Auto, &at0(None), &mut out);
-        assert_eq!(out, vec![7, 9, 0, 1, 3, 4, 5]);
-        // The parent: 2 reaches it, 3 does not.
+        assert_eq!(out, vec![7, 9, 0, 1, 3, 5, 6]);
+        // Another object with a handle: the same.
+        sel.select(LightSelection::Auto, &at0(Some(7)), &mut out);
+        assert_eq!(out, vec![7, 9, 0, 1, 3, 5, 6]);
+        // The parent: 2 reaches it, 3 does not; 4 still reaches nothing.
         sel.select(LightSelection::Auto, &at0(Some(42)), &mut out);
-        assert_eq!(out, vec![7, 9, 0, 1, 2, 4, 5]);
+        assert_eq!(out, vec![7, 9, 0, 1, 2, 5, 6]);
         // A landscape chunk: the baked light 1 is skipped (L30).
         sel.select(LightSelection::Auto, &at0(None).landscape(), &mut out);
-        assert_eq!(out, vec![7, 9, 0, 3, 4, 5, 6]);
+        assert_eq!(out, vec![7, 9, 0, 3, 5, 6, 8]);
+    }
+
+    /// lighting.md §5.6, §8.2: one extra directional slot per draw (count 0 or 1), filled
+    /// with the first directional table light after the point lights.
+    #[test]
+    fn one_directional_table_light_per_draw() {
+        let mut lights = vec![Light::point(Vec3::ZERO, 50.0, 0.1, [1.0; 3])];
+        for _ in 0..3 {
+            lights.push(Light {
+                kind: LightKind::Directional { direction: Vec3::Z },
+                color: [1.0; 3],
+                specular: [1.0; 3],
+            });
+        }
+        lights.push(Light::point(Vec3::X, 50.0, 0.1, [1.0; 3]));
+        let mut out = Vec::new();
+        for sun in [true, false] {
+            let sel = LightSelector::new(&frame_with(lights.clone(), sun), &[]);
+            let t = LightTarget::object(Vec3::ZERO, Vec3::ZERO, None);
+            sel.select(LightSelection::Auto, &t, &mut out);
+            assert_eq!(out, vec![0, 4, 1], "sun {sun}");
+            // No point light reaches a non-finite box; the directional light still does.
+            let t = LightTarget::object(Vec3::NAN, Vec3::NAN, None);
+            sel.select(LightSelection::Auto, &t, &mut out);
+            assert_eq!(out, vec![1], "sun {sun}");
+            // An explicit list is the caller's: kept as given.
+            sel.select(
+                LightSelection::List {
+                    indices: [1, 2, 3, 0, 0, 0, 0, 0],
+                    count: 3,
+                },
+                &t,
+                &mut out,
+            );
+            assert_eq!(out, vec![1, 2, 3]);
+        }
     }
 
     /// The bounded, windowed selection equals a brute-force sort of every reaching light.
@@ -1039,8 +1193,19 @@ mod tests {
                 }
                 near.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
                 let mut expected: Vec<u8> = near.iter().map(|&(_, _, i)| i).collect();
-                expected.extend(dir);
                 expected.truncate(sel.limit());
+                let key_dir = dir
+                    .iter()
+                    .copied()
+                    .find(|&i| reach[usize::from(i)].key_light);
+                if let (false, Some(k)) = (sun, key_dir) {
+                    // No main light: the key directional light holds light 0 (§8.5).
+                    expected.push(k);
+                } else {
+                    // One extra directional slot (§5.6, §8.2), after the point lights.
+                    let room = sel.limit() - expected.len();
+                    expected.extend(dir.into_iter().take(room.min(1)));
+                }
                 assert_eq!(out, expected, "centre {center}, half {half}, sun {sun}");
             }
         }

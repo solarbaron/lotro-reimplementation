@@ -37,7 +37,7 @@ use tessera_formats::appearance::{
 };
 use tessera_formats::avatar::{
     AvatarPids, BoneSliderDefinition, BoneSliderPids, MAX_RACE_ENTRIES, RacePids, RaceTable,
-    parse_slider_values, resolve_avatar_body, slider_positions, slider_value_pairs,
+    parse_slider_values, resolve_avatar_body, slider_positions, slider_value_pieces,
 };
 use tessera_formats::item::{
     HoldingRule, ItemLook, ItemPids, ItemVisual, WardrobeFallbacks, npc_cosmetic_inventory_visible,
@@ -727,7 +727,14 @@ fuzz_target!(|data: &[u8]| {
         if let Some(b) = parse_slider_values(s) {
             assert_eq!(b.len() * 2, s.len());
         }
-        assert!(slider_value_pairs(s).len() <= s.len() / 2);
+        // Pieces of two characters, the last one odd or the empty piece (§6.3, A29).
+        let pieces = slider_value_pieces(s);
+        assert!(!pieces.is_empty() && pieces.len() <= s.len() / 2 + 1);
+        assert!(
+            slider_positions(pieces.len(), &pieces)
+                .iter()
+                .all(|t| t.is_finite())
+        );
     }
     // Every DID serves the input.
     check_world(|_: Did| Ok::<_, Infallible>(Some(data)));

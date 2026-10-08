@@ -15,12 +15,13 @@
 //!   entities whose instance property set (the landblock weenie list, `appearance.md`
 //!   §7.2) makes them NPC-like figures, and Physics entities on an animated rig of
 //!   [`BundleOptions::min_rig_bones`] bones or more, each with its instance set. Only the figures'
-//!   instance sets are kept (charged to [`LandblockBundle::heap_bytes`]); the rest of the
-//!   weenie list is dropped unless [`BundleOptions::keep_weenies`] (`walker.md` §10);
+//!   instance sets are kept (covered by the info record's share of
+//!   [`LandblockBundle::heap_bytes`]); the rest of the weenie list is dropped unless
+//!   [`BundleOptions::keep_weenies`] (`walker.md` §10);
 //! - the area name, when an [`AreaNameSource`](crate::AreaNameSource) is attached;
 //! - the M4.5 world systems, built on the same worker in the order of `collision.md` §9.4
-//!   (each when its option is set and the context has its [`WorldSystems`](crate::WorldSystems)
-//!   part):
+//!   and ARCHITECTURE §9.2 (each when its option is set and the context has its
+//!   [`WorldSystems`](crate::WorldSystems) part):
 //!   1. the terrain collision mesh (`collision.md` §6.1) and the landblock's water decision
 //!      (`water.md` §6.2), whose plane feeds scenery's height and water ranges
 //!      (`scenery.md` §11);
@@ -32,20 +33,40 @@
 //!      and the generated objects;
 //!   4. the collision set ([`BlockCollision`]): terrain and ceiling, blocking statics
 //!      (`collision.md` §9.3), blocking generated objects (§9.4), cells and their portals
-//!      (§5.8), water; the Light entities (`lighting.md` §8.3) and the LOD class of every
-//!      placed and generated entity (`walker.md` §11.4.3).
+//!      (§5.8), water (ARCHITECTURE §10.3: the set carries the water whenever it is built,
+//!      so with a collision set the water of step 3 is built even without
+//!      [`BundleOptions::build_water`]);
+//!   5. the Light entities (`lighting.md` §8.3);
+//!   6. the LOD class of every placed and generated entity (`walker.md` §11.4.3).
 //!
-//! Only the landblock data is required: a failure in any other record is recorded in
-//! [`LandblockBundle::problems`] and the bundle is still delivered, so terrain shows even
-//! when, say, an info record does not decode. A read that fails for a reason that is not
-//! the data's (a full queue, a shut-down pipeline) while a world system reads its inputs
-//! fails the job instead, with a [`WorldError`] whose [`WorldError::is_data_error`] is
-//! false; the streamer retries such a job with backoff, so the bundle that becomes resident
-//! is the data's deterministic one. Where generation or collision building absorbs such a
-//! failure, the part is marked incomplete ([`BlockScenery::complete`],
-//! [`BlockCollision::complete`], [`LandblockBundle::is_complete`]) and the streamer drops
-//! the bundle from the asset store's cache so the next load rebuilds it. Every part above
-//! is charged to [`LandblockBundle::heap_bytes`], the residency charge of the streamer.
+//! The terrain's texture-layer products (`terrain-texturing.md`) are **not** part of the
+//! bundle: the walker builds them on its own terrain workers from the bundle's landblock
+//! data (`walker.md` §14.1; ARCHITECTURE §10.2 says otherwise, see the OPEN there).
+//! Neither are meshes or materials: the bundle resolves each object chain to its setup and
+//! part DIDs ([`PlacedEntity::visual`]) and requests nothing further; the walker loads the
+//! parts by draw distance (`walker.md` §4, §14.5). ARCHITECTURE §9.2 says "the bundle
+//! loader then requests the meshes and materials those reference"; see the OPEN there.
+//!
+//! Only the landblock data is required (`landblock.md` §8.1): a missing data record, or one
+//! that cannot be read or decoded, fails the job; a failure in any other record is recorded
+//! in [`LandblockBundle::problems`] and the bundle is still delivered, so terrain shows even
+//! when, say, an info record does not decode. A record the bundle frame reports as
+//! unreadable is the data's condition (the archive's read errors are data errors,
+//! [`tessera_assets::AssetError::is_data_error`]): it is a problem and leaves the parts
+//! complete. A world-system input that cannot be read for a reason that is not the data's
+//! ([`WorldError::is_data_error`] false) does not fail the job either (`landblock.md` §8.1
+//! OPEN of 2026-10-07): the part is built without it, or left out, the problem is marked
+//! [`BundleProblem::transient`], and the bundle is not complete
+//! ([`LandblockBundle::is_complete`]); the streamer keeps it resident and drops it from the
+//! asset store's cache, so the next load of the landblock builds it again. Data failures of
+//! world-system inputs are absorbed where the input is read (the record supplies nothing
+//! and the part is built without it, complete); a data error that reaches the bundle
+//! anyway leaves that part out, is a problem that is not transient, and the bundle stays
+//! complete (`landblock.md` §8.1, OPEN on data errors in world-system inputs).
+//!
+//! [`LandblockBundle::heap_bytes`], the residency charge of the streamer, follows
+//! `landblock.md` §8.1: the landblock data's grids and surface lists, four times the stored
+//! bytes of the other records, and the world parts.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -55,6 +76,7 @@ use tessera_assets::{AssetKey, Decoder, JobContext};
 use tessera_formats::landblock::{
     FailureCategory, InstanceId, MinimapTile, Placement, StaticEntityType,
 };
+use tessera_formats::setup::Quaternion;
 use tessera_formats::{
     BlockMap, BlockMapDescriptor, Did, FormatError, LandblockData, LandblockInfo,
     LandblockProperties, PropertySet, PropertyValue, Record,
@@ -126,6 +148,17 @@ pub struct BundleOptions {
     /// liquid boxes, and the water of the collision set) and load the water tables.
     /// Default true. Scenery generation reads the water plane either way
     /// ([`BundleOptions::generate_scenery`]).
+    ///
+    /// Turning it off does not by itself take water out of the bundles. The water tables
+    /// still load while [`BundleOptions::generate_scenery`] is on, and then, with
+    /// [`BundleOptions::build_collision`] on, the landblock water is built anyway because
+    /// the collision set carries it whenever it is built (ARCHITECTURE §10.3):
+    /// [`LandblockBundle::water`] holds it and the streamer's water lookups
+    /// ([`crate::WorldStreamer::water_at`], [`crate::WorldStreamer::is_under_water`],
+    /// [`crate::WorldStreamer::landblock_water`]) answer from it, the same plane and boxes
+    /// the controller reads from the set. With this option and scenery both off the tables
+    /// do not load and nothing has water, collision sets included (`landblock.md` §8.1,
+    /// water OPEN).
     pub build_water: bool,
     /// Build each landblock's collision set (`collision.md` §12.1) on the workers. Default
     /// true.
@@ -175,8 +208,8 @@ impl BundleOptions {
 }
 
 /// One non-fatal problem met while building a bundle. Classify it by [`Self::category`]
-/// (decoder failures) and [`Self::unreadable`] (read failures); the message is for
-/// people.
+/// (decoder failures), [`Self::unreadable`] (read failures) and [`Self::transient`]
+/// (failures that are not the data's); the message is for people.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BundleProblem {
     /// The record concerned.
@@ -187,6 +220,11 @@ pub struct BundleProblem {
     pub category: Option<FailureCategory>,
     /// The record exists but could not be read (I/O or archive error).
     pub unreadable: bool,
+    /// The failure is not the data's (a read refused by the pipeline's state rather than
+    /// the archive, [`WorldError::is_data_error`] false): the bundle is not the data's
+    /// deterministic one, [`LandblockBundle::is_complete`] is false, and the streamer
+    /// builds it again when the landblock loads again (module docs).
+    pub transient: bool,
     /// The error text.
     pub message: String,
 }
@@ -196,6 +234,8 @@ impl std::fmt::Display for BundleProblem {
         write!(f, "{} {:#010x}: ", self.what, self.did.0)?;
         if let Some(c) = self.category {
             write!(f, "[{c:?}] ")?;
+        } else if self.transient {
+            f.write_str("[transient] ")?;
         } else if self.unreadable {
             f.write_str("[unreadable] ")?;
         }
@@ -363,9 +403,11 @@ pub struct LandblockBundle {
     pub light_map: Option<Did>,
     /// Baked ceiling light map (0x41).
     pub ceiling_light_map: Option<Did>,
-    /// Static entities that have a placement, in stored order.
+    /// Static entities in stored order, each with its placement.
     pub entities: Vec<PlacedEntity>,
-    /// Static entities without a placement (skipped; §4.4).
+    /// Static entities stored without a frame (`entity-descriptor.md` §4.4, "No frame"):
+    /// placed at the landblock origin with the identity rotation, as that section says,
+    /// not skipped. They are in [`LandblockBundle::entities`] too; this counts them.
     pub unplaced_entities: u32,
     /// Figures among the entities, in entity order.
     pub figures: Vec<PlacedFigure>,
@@ -393,8 +435,13 @@ pub struct LandblockBundle {
     pub generated_lod_classes: Vec<Option<u32>>,
     /// Non-fatal problems.
     pub problems: Vec<BundleProblem>,
-    /// Estimated heap bytes held by the bundle (the residency charge), world systems
-    /// included.
+    /// The residency charge (`landblock.md` §8.1, "Residency charge" and "World parts"):
+    /// the decoded grids and surface lists of the landblock data, four times the stored
+    /// bytes of the info, block-map and properties records (an estimate that covers the
+    /// placed entities, figures, instance sets and block-map pairs decoded from them), and
+    /// the heap bytes of the world parts (scenery with its clearance volumes, markers and
+    /// generated objects, water, collision set, lights, LOD classes). Nothing else is
+    /// added.
     pub heap_bytes: usize,
 }
 
@@ -404,10 +451,12 @@ pub struct LandblockBundle {
 pub struct BlockScenery {
     /// Generation counters.
     pub stats: SceneryStats,
-    /// Whether every input could be read (the landblock-info and block-map records of the
-    /// frame, and every scene record): the result is then the deterministic one (SC8). An
-    /// incomplete result stays while the landblock is resident; the streamer drops it from
-    /// the asset store's cache, so it is rebuilt when the landblock loads again.
+    /// Whether every scene record could be read (a failure that is not the data's makes
+    /// it false): the result is then the deterministic one (SC8). A landblock-info or
+    /// block-map record the frame reports as unreadable is the data's condition and does
+    /// not make it false (module docs). An incomplete result stays while the landblock is
+    /// resident; the streamer drops it from the asset store's cache, so it is rebuilt when
+    /// the landblock loads again.
     pub complete: bool,
     /// The terrain collision mesh generation read (shared with the collision set).
     pub terrain: Arc<GridMesh>,
@@ -459,13 +508,14 @@ pub enum EntityRef {
 
 impl LandblockBundle {
     /// Whether every part was built from every input: [`BlockScenery::complete`] and
-    /// [`BlockCollision::complete`] of the parts present, and no resolved object marked
-    /// [`ResolvedObject::transient`]. An incomplete bundle is rebuilt when its landblock
-    /// loads again (module docs).
+    /// [`BlockCollision::complete`] of the parts present, no [`BundleProblem::transient`]
+    /// problem, and no resolved object marked [`ResolvedObject::transient`]. An incomplete
+    /// bundle is rebuilt when its landblock loads again (module docs).
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.scenery.as_ref().is_none_or(|s| s.complete)
             && self.collision.as_ref().is_none_or(|c| c.complete)
+            && !self.problems.iter().any(|p| p.transient)
             && !self
                 .entities
                 .iter()
@@ -573,6 +623,7 @@ impl LandblockBundle {
     /// tools that build bundles by hand.
     #[must_use]
     pub fn from_data(key: LandblockKey, data: LandblockData) -> Self {
+        let heap_bytes = data_charge(&data);
         Self {
             key,
             data,
@@ -597,7 +648,7 @@ impl LandblockBundle {
             entity_lod_classes: Vec::new(),
             generated_lod_classes: Vec::new(),
             problems: Vec::new(),
-            heap_bytes: std::mem::size_of::<Self>() + DATA_FIXED_BYTES,
+            heap_bytes,
         }
     }
 
@@ -617,6 +668,18 @@ impl LandblockBundle {
 /// Bytes charged per decoded landblock-data record beyond its surface lists (two
 /// 1,089-sample grids, the coarse grid and fixed parts).
 const DATA_FIXED_BYTES: usize = 2 * 1089 + 1089 + 4 * 289 + 512;
+
+/// The charge of a decoded landblock-data record (`landblock.md` §8.1, "Residency
+/// charge"): its grids ([`DATA_FIXED_BYTES`]) and its surface lists (17 bytes per layer, 2
+/// per index; a ceiling adds its grid and its own lists).
+fn data_charge(data: &LandblockData) -> usize {
+    DATA_FIXED_BYTES
+        + 17 * data.terrain.layers.len()
+        + 2 * data.terrain.indices.len()
+        + data.ceiling.as_ref().map_or(0, |c| {
+            2 * 1089 + 17 * c.surface.layers.len() + 2 * c.surface.indices.len()
+        })
+}
 /// Multiplier from stored payload bytes to decoded heap bytes for records with property
 /// sets (an estimate; decoded property values are larger than their stored form).
 const DECODED_PER_STORED: usize = 4;
@@ -650,18 +713,22 @@ impl Stages {
         self.last = now;
     }
 
+    /// Every stage with its wall time in milliseconds, in stage order (`landblock.md`
+    /// §8.1, "Stage times": each stage, however short).
+    fn line(&self) -> String {
+        self.times
+            .iter()
+            .map(|(n, d)| format!("{n} {:.1}", d.as_secs_f64() * 1e3))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     fn log(&self, key: LandblockKey, heap_bytes: usize) {
         let total = self.start.elapsed();
         if total < SLOW_BUNDLE {
             return;
         }
-        let stages = self
-            .times
-            .iter()
-            .filter(|(_, d)| *d >= Duration::from_millis(1))
-            .map(|(n, d)| format!("{n} {:.0}", d.as_secs_f64() * 1e3))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let stages = self.line();
         tracing::debug!(
             landblock = %key,
             total_ms = total.as_secs_f64() * 1e3,
@@ -718,6 +785,7 @@ pub fn build_bundle(
             what: what_of(f.did),
             category: None,
             unreadable: true,
+            transient: false,
             message: f.error.to_owned(),
         });
     }
@@ -730,12 +798,29 @@ pub fn build_bundle(
 
     // Block map → properties.
     let bm_did = key.block_map_did();
-    let block_map = frame.get(bm_did).and_then(|r| {
-        stored += r.bytes.len();
-        BlockMap::parse_expecting(r.bytes, bm_did)
-            .map_err(|e| problem(&mut problems, bm_did, "block map", &e))
-            .ok()
-    });
+    let block_map = match frame.get(bm_did) {
+        Some(r) => {
+            stored += r.bytes.len();
+            BlockMap::parse_expecting(r.bytes, bm_did)
+                .map_err(|e| problem(&mut problems, bm_did, "block map", &e))
+                .ok()
+        }
+        None => {
+            // Block maps are dense (`landblock.md` §2.3 LB-E1), so an absent one is a
+            // problem (§8.1); an unreadable one was reported with the frame's failures.
+            if frame.failure(bm_did).is_none() {
+                problems.push(BundleProblem {
+                    did: bm_did,
+                    what: "block map",
+                    category: None,
+                    unreadable: false,
+                    transient: false,
+                    message: "absent (block maps exist for every landblock)".into(),
+                });
+            }
+            None
+        }
+    };
     let block_props = block_map
         .as_ref()
         .map(|m| resolve_block_props(ctx, key, m))
@@ -757,6 +842,7 @@ pub fn build_bundle(
                     what: "landblock info",
                     category: None,
                     unreadable: false,
+                    transient: false,
                     message: "named by the data header but absent".into(),
                 });
             }
@@ -802,10 +888,18 @@ pub fn build_bundle(
             if n % 256 == 255 && cancelled() {
                 return Err(WorldError::Cancelled);
             }
-            let Some(placement) = e.placement else {
+            // A SED stored without a frame stands at the landblock origin with the
+            // identity rotation (`entity-descriptor.md` §4.4, "No frame"); it is not
+            // skipped.
+            let placement = e.placement.unwrap_or_else(|| {
                 unplaced_entities += 1;
-                continue;
-            };
+                Placement {
+                    position: [0.0; 3],
+                    rotation: Quaternion::IDENTITY,
+                    stored_rotation: Quaternion::IDENTITY,
+                    renormalised: false,
+                }
+            });
             let content_layers = lb
                 .entity_content_layers
                 .and_then(|p| e.property(p))
@@ -857,7 +951,6 @@ pub fn build_bundle(
     // Figures (walker.md §10).
     let mut figures = Vec::new();
     let mut figures_dropped = 0u32;
-    let mut instance_bytes = 0usize;
     if ctx.options().keep_figures {
         let wp = ctx.pids();
         let by_iid: HashMap<u64, usize> = weenie_list
@@ -867,7 +960,8 @@ pub fn build_bundle(
             .collect();
         let active = &ctx.options().active_content_layers;
         // One shared copy per weenie: entities with the same IID (hostile data) point to
-        // the same allocation, which is charged once.
+        // the same allocation. Its bytes are covered by four times the info record's
+        // stored bytes (the residency charge, `landblock.md` §8.1).
         let mut shared: HashMap<usize, Arc<PropertySet>> = HashMap::new();
         for (n, e) in entities.iter_mut().enumerate() {
             let weenie = e
@@ -915,10 +1009,9 @@ pub fn build_bundle(
                 continue;
             }
             let instance = match (weenie, instance) {
-                (Some(i), Some(set)) => Some(Arc::clone(shared.entry(i).or_insert_with(|| {
-                    instance_bytes += 64 + 48 * set.value_count();
-                    Arc::new(set.clone())
-                }))),
+                (Some(i), Some(set)) => Some(Arc::clone(
+                    shared.entry(i).or_insert_with(|| Arc::new(set.clone())),
+                )),
                 _ => None,
             };
             e.figure = u32::try_from(figures.len()).ok();
@@ -932,10 +1025,7 @@ pub fn build_bundle(
             });
         }
     }
-    // LOD classes (walker.md §11.4.3) read the instance sets of the weenie list.
-    let entity_lod_classes = entity_lod_classes(ctx, info.as_ref(), &entities, &weenie_list)?;
-    drop(weenie_list);
-    stages.mark("figures and LOD classes");
+    stages.mark("figures");
 
     // Area name (reads records; we are on a worker).
     let area = match (block_props.area, ctx.area_names()) {
@@ -946,40 +1036,60 @@ pub fn build_bundle(
         return Err(WorldError::Cancelled);
     }
 
-    // World systems (collision.md §9.4 order). Generation reads the info record (statics)
-    // and the block map (water plane); a read failure of either makes it incomplete.
-    let inputs_unreadable = frame.failure(info_did).is_some() || frame.failure(bm_did).is_some();
-    let world = build_world_parts(
+    // World systems (collision.md §9.4 order), then the LOD classes, which read the
+    // instance sets of the weenie list (walker.md §11.4.3; last in ARCHITECTURE §9.2).
+    let mut world = build_world_parts(
         ctx,
         key,
         &data,
         info.as_ref(),
         block_map.as_ref(),
         &entities,
-        inputs_unreadable,
         cancelled,
         &mut problems,
         &mut stages,
     )?;
-
-    let entity_bytes = entities.capacity() * std::mem::size_of::<PlacedEntity>()
-        + entities
+    let mut chains = ChainReads::default();
+    let entity_lod_classes =
+        entity_lod_classes(ctx, info.as_ref(), &entities, &weenie_list, &mut chains);
+    drop(weenie_list);
+    if let Some(pid) = ctx
+        .systems()
+        .pids
+        .lod_class
+        .filter(|_| ctx.options().load_environment)
+    {
+        world.generated_lod_classes = world
+            .generated
             .iter()
-            .map(|e| e.content_layers.as_ref().map_or(0, |l| 4 * l.capacity()))
-            .sum::<usize>();
-    let surface_bytes = 17 * data.terrain.layers.len()
-        + 2 * data.terrain.indices.len()
-        + data.ceiling.as_ref().map_or(0, |c| {
-            2 * 1089 + 17 * c.surface.layers.len() + 2 * c.surface.indices.len()
-        });
-    let heap_bytes = std::mem::size_of::<LandblockBundle>()
-        + DATA_FIXED_BYTES
-        + surface_bytes
+            .map(|g| {
+                let chain = chain_properties(ctx, g.object, &mut chains);
+                placement_lod_class(pid, None, None, chain.as_deref())
+            })
+            .collect();
+        world.bytes += world.generated_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
+    }
+    if chains.transient > 0 {
+        system_problem(
+            &mut problems,
+            key.data_did(),
+            "LOD classes",
+            true,
+            true,
+            format!(
+                "{} object chains could not be read for a reason that is not the data's; their classes are left out",
+                chains.transient
+            ),
+        );
+    }
+    stages.mark("LOD classes");
+
+    // The residency charge of `landblock.md` §8.1: the decoded grids and surface lists,
+    // four times the stored bytes of the other records (an estimate that covers what is
+    // decoded from them: placed entities, figures and their instance sets, block-map
+    // pairs), and the world parts. Nothing decoded from the records is charged again.
+    let heap_bytes = data_charge(&data)
         + DECODED_PER_STORED * stored.saturating_sub(data_rec.bytes.len())
-        + entity_bytes
-        + figures.capacity() * std::mem::size_of::<PlacedFigure>()
-        + instance_bytes
-        + block_props.heap_bytes()
         + world.bytes
         + entity_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
     stages.log(key, heap_bytes);
@@ -1011,6 +1121,13 @@ pub fn build_bundle(
     })
 }
 
+/// Object-chain reads of the LOD-class pass that failed for a reason that is not the
+/// data's.
+#[derive(Debug, Default)]
+struct ChainReads {
+    transient: u32,
+}
+
 /// The `Render_LODClass` of every placed entity (`walker.md` §11.4.3, W22): its instance
 /// set in the weenie list, its own set, then its 0x47 chain. Empty without the property
 /// or the environment.
@@ -1019,13 +1136,14 @@ fn entity_lod_classes(
     info: Option<&LandblockInfo>,
     entities: &[PlacedEntity],
     weenies: &[tessera_formats::landblock::Weenie],
-) -> Result<Vec<Option<u32>>> {
+    chains: &mut ChainReads,
+) -> Vec<Option<u32>> {
     let systems = ctx.systems();
     let (Some(pid), Some(info)) = (systems.pids.lod_class, info) else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
     if !ctx.options().load_environment {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let by_iid: HashMap<u64, &PropertySet> =
         weenies.iter().map(|w| (w.iid.0, &w.properties)).collect();
@@ -1036,35 +1154,38 @@ fn entity_lod_classes(
             .entities
             .get(e.index as usize)
             .and_then(|s| s.properties.as_ref());
-        let chain = chain_properties(ctx, e.object)?;
+        let chain = chain_properties(ctx, e.object, chains);
         out.push(placement_lod_class(pid, instance, own, chain.as_deref()));
     }
-    Ok(out)
+    out
 }
 
 /// The properties of `object` along its 0x47 chain, when it is a 0x47 record that can be
-/// used; data failures give `None`. A read that fails for a reason that is not the data's
-/// is an error that fails the job ([`WorldError::is_data_error`] false); the streamer then
-/// retries the landblock with backoff.
+/// used; failures give `None`. A read that fails for a reason that is not the data's is
+/// counted in `chains` (the bundle is then not complete, module docs), not an error: only
+/// the landblock data record fails a job (`landblock.md` §8.1).
 fn chain_properties(
     ctx: &WorldContext,
     object: Option<Did>,
-) -> Result<Option<Arc<crate::scenery::ObjectProperties>>> {
-    let Some(object) = object else {
-        return Ok(None);
-    };
+    chains: &mut ChainReads,
+) -> Option<Arc<crate::scenery::ObjectProperties>> {
     match ctx
         .systems()
         .object_properties
-        .get(&**ctx.source(), ctx.schema(), object)
+        .get(&**ctx.source(), ctx.schema(), object?)
     {
-        Ok(p) => Ok(p),
-        Err(e) if e.is_data_error() => Ok(None),
-        Err(e) => Err(e.into()),
+        Ok(p) => p,
+        Err(e) => {
+            if !e.is_data_error() {
+                chains.transient = chains.transient.saturating_add(1);
+            }
+            None
+        }
     }
 }
 
-/// What the world systems add to a bundle (module docs, items 1–4).
+/// What the world systems add to a bundle (module docs, items 1–5; the LOD classes of
+/// item 6 are added by [`build_bundle`]).
 #[derive(Default)]
 struct WorldParts {
     generated: Vec<PlacedEntity>,
@@ -1083,24 +1204,25 @@ fn system_problem(
     did: Did,
     what: &'static str,
     unreadable: bool,
+    transient: bool,
     message: String,
 ) {
-    tracing::debug!(did = %format_args!("{:#010x}", did.0), what, message, "world system problem");
+    tracing::debug!(did = %format_args!("{:#010x}", did.0), what, transient, message, "world system problem");
     problems.push(BundleProblem {
         did,
         what,
         category: None,
         unreadable,
+        transient,
         message,
     });
 }
 
 /// Builds the world-system parts of a bundle in the order of `collision.md` §9.4 (module
-/// docs). Pipeline failures that would make the result differ from the data's (a record
-/// that cannot be read now) fail the job with an error that is not a data error, which the
-/// streamer retries; data failures leave the part out and become problems.
-/// `inputs_unreadable`: the frame could not read the info record or the block map, which
-/// generation reads (the scenery is then incomplete).
+/// docs, items 1–5). No failure here fails the job (`landblock.md` §8.1): a failure that is
+/// not the data's leaves the part out or builds it without that input and records a
+/// [`BundleProblem::transient`] problem (or marks the part incomplete), a data failure
+/// leaves the part out and records a problem. Only cancellation returns an error.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_world_parts(
     ctx: &WorldContext,
@@ -1109,7 +1231,6 @@ fn build_world_parts(
     info: Option<&LandblockInfo>,
     block_map: Option<&BlockMap>,
     entities: &[PlacedEntity],
-    inputs_unreadable: bool,
     cancelled: &dyn Fn() -> bool,
     problems: &mut Vec<BundleProblem>,
     stages: &mut Stages,
@@ -1125,9 +1246,13 @@ fn build_world_parts(
         .flatten();
     let scenes = systems.scenes.as_ref().filter(|_| tables.is_some());
     let collision = systems.collision.as_ref().filter(|_| opts.build_collision);
-    // The water tables serve scenery's water plane whatever `build_water` says; the
-    // landblock's water and liquid boxes are built only with it.
-    let water_system = systems.water.as_ref().filter(|_| opts.build_water);
+    // The water tables serve scenery's water plane whatever `build_water` says. The
+    // landblock's water and liquid boxes are built with `build_water`, and also whenever
+    // a collision set is built, which carries them (ARCHITECTURE §10.3).
+    let water_system = systems
+        .water
+        .as_ref()
+        .filter(|_| opts.build_water || collision.is_some());
 
     // (1) The terrain collision mesh and the landblock's water decision.
     let terrain =
@@ -1135,7 +1260,7 @@ fn build_world_parts(
     let plane = systems
         .water
         .as_ref()
-        .filter(|_| opts.build_water || scenes.is_some())
+        .filter(|_| water_system.is_some() || scenes.is_some())
         .and_then(|w| {
             w.tables()
                 .decide(key, block_map, &data.heights)
@@ -1147,8 +1272,11 @@ fn build_world_parts(
     // (2) Static list and scenery generation (scenery.md §7.1).
     let mut objects: Vec<SceneryObject> = Vec::new();
     if let (Some(tables), Some(scenes), Some(terrain)) = (&tables, scenes, &terrain) {
-        // A read that fails for a reason that is not the data's fails the job rather than
-        // delivering a static list that silently misses volumes.
+        // A static list that silently misses volumes would place objects inside
+        // buildings, so when it cannot be built generation is left out for this load.
+        // `static_clearances` absorbs data failures (a broken record supplies no volumes),
+        // so its error is normally not the data's; one that is leaves scenery out and the
+        // bundle complete (`landblock.md` §8.1, OPEN on data errors in world-system inputs).
         let statics = match info {
             Some(info) => static_clearances(
                 info,
@@ -1156,71 +1284,77 @@ fn build_world_parts(
                 schema,
                 &systems.pids.clearance,
                 &systems.object_properties,
-            )?,
-            None => Vec::new(),
+            )
+            .map_err(|e| {
+                system_problem(
+                    problems,
+                    key.data_did(),
+                    "scenery",
+                    true,
+                    !e.is_data_error(),
+                    format!("static list not built, scenery left out: {e}"),
+                );
+            })
+            .ok(),
+            None => Some(Vec::new()),
         };
         stages.mark("static clearances");
-        let water = FixedWater(plane);
-        let input = SceneryInput {
-            key,
-            data,
-            terrain,
-            tables,
-            scenes: &**scenes,
-            water: &water,
-            statics: &statics,
-            limits: opts.scenery_limits,
-        };
-        let generated = generate_landblock(&input);
-        let complete = generated.stats.is_complete() && !inputs_unreadable;
-        if !generated.stats.is_complete() {
-            system_problem(
-                problems,
-                key.data_did(),
-                "scenery",
-                true,
-                format!(
-                    "{} scene reads failed for a reason that is not the data's",
-                    generated.stats.scenes_unavailable
-                ),
-            );
+        if let Some(statics) = statics {
+            let water = FixedWater(plane);
+            let input = SceneryInput {
+                key,
+                data,
+                terrain,
+                tables,
+                scenes: &**scenes,
+                water: &water,
+                statics: &statics,
+                limits: opts.scenery_limits,
+            };
+            let generated = generate_landblock(&input);
+            let complete = generated.stats.is_complete();
+            if !complete {
+                system_problem(
+                    problems,
+                    key.data_did(),
+                    "scenery",
+                    true,
+                    true,
+                    format!(
+                        "{} scene reads failed for a reason that is not the data's",
+                        generated.stats.scenes_unavailable
+                    ),
+                );
+            }
+            if generated.stats.truncated() {
+                system_problem(
+                    problems,
+                    key.data_did(),
+                    "scenery",
+                    false,
+                    false,
+                    format!(
+                        "generation bounds hit: {} cycles, {} depth caps, {} budget cuts",
+                        generated.stats.cycles,
+                        generated.stats.depth_capped,
+                        generated.stats.budget_cut
+                    ),
+                );
+            }
+            let markers = generated.spacing_markers().into();
+            objects = generated.objects;
+            let scenery = BlockScenery {
+                stats: generated.stats,
+                complete,
+                terrain: Arc::clone(terrain),
+                statics: statics.into(),
+                water: plane,
+                markers,
+            };
+            out.bytes += scenery.heap_bytes();
+            out.scenery = Some(Arc::new(scenery));
+            stages.mark("scenery generation");
         }
-        if inputs_unreadable {
-            system_problem(
-                problems,
-                key.data_did(),
-                "scenery",
-                true,
-                "generated without an unreadable landblock-info or block-map record".into(),
-            );
-        }
-        if generated.stats.truncated() {
-            system_problem(
-                problems,
-                key.data_did(),
-                "scenery",
-                false,
-                format!(
-                    "generation bounds hit: {} cycles, {} depth caps, {} budget cuts",
-                    generated.stats.cycles,
-                    generated.stats.depth_capped,
-                    generated.stats.budget_cut
-                ),
-            );
-        }
-        let markers = generated.spacing_markers().into();
-        objects = generated.objects;
-        let scenery = BlockScenery {
-            stats: generated.stats,
-            complete,
-            terrain: Arc::clone(terrain),
-            statics: statics.into(),
-            water: plane,
-            markers,
-        };
-        out.bytes += scenery.heap_bytes();
-        out.scenery = Some(Arc::new(scenery));
-        stages.mark("scenery generation");
     }
     if cancelled() {
         return Err(WorldError::Cancelled);
@@ -1231,15 +1365,6 @@ fn build_world_parts(
         .map(|(n, o)| generated_entity(ctx, n, o))
         .collect();
     out.bytes += out.generated.capacity() * std::mem::size_of::<PlacedEntity>();
-    if let Some(pid) = systems.pids.lod_class.filter(|_| opts.load_environment) {
-        out.generated_lod_classes = Vec::with_capacity(objects.len());
-        for o in &objects {
-            let chain = chain_properties(ctx, Some(o.object))?;
-            out.generated_lod_classes
-                .push(placement_lod_class(pid, None, None, chain.as_deref()));
-        }
-        out.bytes += out.generated_lod_classes.capacity() * std::mem::size_of::<Option<u32>>();
-    }
     stages.mark("generated objects");
     if cancelled() {
         return Err(WorldError::Cancelled);
@@ -1274,10 +1399,22 @@ fn build_world_parts(
                     + bw.boxes.capacity() * std::mem::size_of::<LiquidBox>();
                 out.water = Some(Arc::new(bw));
             }
-            Err(e) if e.is_data_error() => {
-                system_problem(problems, key.data_did(), "water", false, e.to_string());
+            Err(e) => {
+                // The water module absorbs data failures (the volume is left out), so the
+                // error is normally not the data's. One that is leaves the water and its
+                // liquid boxes out, the collision set below is then dry, and the bundle
+                // stays complete (`landblock.md` §8.1, OPEN on data errors in world-system
+                // inputs).
+                let transient = !e.is_data_error();
+                system_problem(
+                    problems,
+                    key.data_did(),
+                    "water",
+                    transient,
+                    transient,
+                    e.to_string(),
+                );
             }
-            Err(e) => return Err(e.into()),
         }
         stages.mark("water");
     }
@@ -1318,11 +1455,12 @@ fn build_world_parts(
         out.bytes += GRID_MESH_BYTES;
     }
 
-    // Light entities (lighting.md §8.3).
+    // (5) Light entities (lighting.md §8.3).
     if let Some(info) = info {
         out.lights = light_entities(info, &systems.pids.lights, &opts.active_content_layers);
         out.bytes += out.lights.capacity() * std::mem::size_of::<LightEntity>();
     }
+    stages.mark("lights");
     Ok(out)
 }
 
@@ -1371,6 +1509,7 @@ fn problem(problems: &mut Vec<BundleProblem>, did: Did, what: &'static str, e: &
         what,
         category: Some(FailureCategory::of(e)),
         unreadable: false,
+        transient: false,
         message: e.to_string(),
     });
 }
@@ -1575,5 +1714,28 @@ mod tests {
             ..none
         };
         assert!(!draw_rule(p, None, shown, Some(&visual(1, never)), &active));
+    }
+}
+
+#[cfg(test)]
+mod stage_tests {
+    use super::{Duration, Stages};
+
+    #[test]
+    fn slow_job_log_lists_every_stage_however_short() {
+        // `landblock.md` §8.1, "Stage times": the wall time of each stage.
+        let mut s = Stages::new();
+        s.times = vec![
+            ("records", Duration::from_micros(40)),
+            ("entities", Duration::ZERO),
+            ("collision set", Duration::from_millis(300)),
+        ];
+        assert_eq!(s.line(), "records 0.0, entities 0.0, collision set 300.0");
+        s.mark("lights");
+        assert_eq!(s.times.len(), 4);
+        assert!(
+            s.line()
+                .ends_with(&format!("lights {:.1}", s.times[3].1.as_secs_f64() * 1e3))
+        );
     }
 }

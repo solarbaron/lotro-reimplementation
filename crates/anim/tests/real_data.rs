@@ -265,6 +265,7 @@ fn every_clip_binds_and_samples() {
         let d = bound.duration();
         let mut local = vec![Transform::IDENTITY; n];
         let mut model = vec![Mat4::IDENTITY; n];
+        let mut triples = vec![Transform::IDENTITY; n];
         let mut skin = vec![Mat4::IDENTITY; n];
         for (tau, wrap) in [
             (0.0, Wrap::Once),
@@ -278,8 +279,9 @@ fn every_clip_binds_and_samples() {
                 .sample_at(tau, wrap, &mut local)
                 .expect("buffer sized");
             o.replaced += u64::from(r.replaced);
-            best.compose(&local, &mut model).unwrap();
-            skinning_matrices(best, &model, &mut skin).unwrap();
+            best.compose_with_triples(&local, &mut model, &mut triples)
+                .unwrap();
+            skinning_matrices(best, &triples, &mut skin).unwrap();
             if !model.iter().chain(&skin).all(|m| m.is_finite()) {
                 o.non_finite = true;
             }
@@ -425,7 +427,22 @@ fn reference_pose_skinning_reproduces_stored_vertices() {
         };
         let n = skel.bone_count();
         let mut skin = vec![Mat4::IDENTITY; n];
-        skinning_matrices(skel, skel.reference_model(), &mut skin).unwrap();
+        skinning_matrices(skel, skel.reference_triples(), &mut skin).unwrap();
+        // At the reference pose a vertex bound to bone b moves by the client's offset
+        // t_r − q_r (s_r ⊙ (q_r⁻¹ t_r)), zero when the reference model scale is 1
+        // (`skeleton-anim.md` §5.4, K26; §15 answer on the tolerance).
+        let offsets: Vec<Vec3> = skel
+            .reference_triples()
+            .iter()
+            .map(|r| {
+                let (t, q, sc) = (
+                    Vec3::from_array(r.translation),
+                    glam::Quat::from_array(r.rotation),
+                    Vec3::from_array(r.scale),
+                );
+                t - q * (sc * (q.inverse() * t))
+            })
+            .collect();
         for part in &setup.parts {
             let Ok((located, bytes)) = set.read_with_entry(part.0) else {
                 o.mesh_fail += 1;
@@ -458,7 +475,13 @@ fn reference_pose_skinning_reproduces_stored_vertices() {
                     }
                     let p = Vec3::from_array(*p);
                     let q = skin_position(&skin, j, w, p);
-                    let err = (q - p).length();
+                    let expect = p + j
+                        .iter()
+                        .zip(w)
+                        .filter(|(_, wt)| **wt != 0.0)
+                        .map(|(&b, &wt)| offsets[usize::from(b)] * wt)
+                        .sum::<Vec3>();
+                    let err = (q - expect).length();
                     o.vertices += 1;
                     // Floating-point error only (§4.4): 1e-4 m, scaled for large models,
                     // plus what the stored weights' sum deviates from 1 (mesh.md §5.7:
@@ -471,7 +494,7 @@ fn reference_pose_skinning_reproduces_stored_vertices() {
                     o.max_weight_dev = o.max_weight_dev.max((1.0 - wsum).abs());
                     let normalised: Vec<f32> = w.iter().map(|x| x / wsum).collect();
                     let qn = skin_position(&skin, j, &normalised, p);
-                    o.max_err_normalised = o.max_err_normalised.max((qn - p).length());
+                    o.max_err_normalised = o.max_err_normalised.max((qn - expect).length());
                     if err > o.max_err || err.is_nan() {
                         o.max_err = if err.is_nan() { f32::INFINITY } else { err };
                         o.worst = Some((*did, err));

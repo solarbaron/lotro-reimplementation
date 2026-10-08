@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Interior cells in the walker (`landblock.md` §4.11–§4.14, `walker.md` §14.11).
+//! Interior cells in the walker (`landblock.md` §4.11–§4.14, `walker.md` §14.12).
 //!
 //! | Item | Rule | Spec |
 //! |---|---|---|
 //! | [`BlockVisibility::build`] | A landblock's cells partitioned into visibility cells (groups share one; cells in no group get their own), and one-way portals between visibility cells for neighbours outside the cell's group list | §4.3, §4.11 |
-//! | [`BlockVisibility::pvs`] | A cell's potentially visible set: itself, list A, and (tail format) the members of the groups list B names | §4.12 |
-//! | [`BlockVisibility::scene_flags`], [`outdoor_flags`], [`has_outdoor_entry`] | Outdoor-visible and sky-visible: outdoors both set (unless a loaded cell is an outdoor-walk entry); inside both clear, sky set by a cell of the PVS with the sky bit | §4.12 |
+//! | [`BlockVisibility::pvs`] | A cell's potentially visible set: itself, list A, and (tail format) the members of the groups list B names; its own number and 0xFFFF skipped | §4.12 |
+//! | [`BlockVisibility::scene_flags`], [`outdoor_flags`], [`has_outdoor_entry`] | Outdoor-visible and sky-visible by the scene-flag pass: outdoors both set, then every outdoor-walk entry cell of the loaded landblocks visited with its PVS; inside both clear, then the camera's cell visited with its PVS (bit 0 clears both, bit 4 then sets sky-visible) | §4.12 |
 //! | [`BlockVisibility::visible_cells`] | The visibility cells seen from the camera's: a recursive portal walk narrowing a screen rectangle at every portal (Tessera Decision of §4.11) | §4.11 |
 //! | [`InteriorView`] | One frame's answer: the camera's cell, its flags and the visibility cells drawn | §4.11, §4.12 |
 //!
@@ -14,7 +14,7 @@
 //! [`MAX_PORTAL_VISITS`] portals in all, and malformed lists (unknown cells, unknown group
 //! keys) are skipped.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tessera_formats::LandblockInfo;
 use tessera_formats::landblock::Cell;
@@ -33,12 +33,13 @@ pub const NO_GROUP: u16 = 0xFFFF;
 /// The cell number of an outdoor object (`landblock.md` §4.11: cell 0 is outdoors).
 pub const OUTDOORS: u16 = 0;
 /// The cell number the walker gives an interior entity that no cell volume contains
-/// (`entity-descriptor.md` §4.8 OPEN; Tessera Decision of `walker.md` §14.11).
+/// (`entity-descriptor.md` §4.8 OPEN; Tessera Decision of `walker.md` §14.12 (h)).
 pub const UNATTACHED: u16 = 0xFFFF;
 /// Deepest chain of portals the walk follows (Tessera Decision of §4.11).
 pub const MAX_PORTAL_DEPTH: usize = 32;
 /// Most portals the walk crosses in one frame (a bound on cyclic portal graphs; Tessera's
-/// own).
+/// own, `landblock.md` §4.11). Portals tested and not crossed (behind the eye, or with no
+/// overlap) do not count.
 pub const MAX_PORTAL_VISITS: usize = 4096;
 /// Smallest clip-space *w* of a portal corner: the part of a portal nearer to the eye's
 /// plane is clipped away before its screen bounds are taken.
@@ -67,16 +68,32 @@ impl SceneFlags {
     };
 }
 
-/// The flags with the camera outdoors (§4.12 step 1): both set, unless a loaded landblock
-/// has a cell with the outdoor-walk bit (`entry_loaded`), which clears both (no cell has
-/// it in this install, LI8).
-#[must_use]
-pub fn outdoor_flags(entry_loaded: bool) -> SceneFlags {
-    if entry_loaded {
-        SceneFlags::CLOSED
-    } else {
-        SceneFlags::OUTDOORS
+/// Visits a cell in the scene-flag pass (§4.12 rule 3): `cell_flags` bit 0 clears both
+/// flags; then bit 4 sets sky-visible.
+fn visit(flags: &mut SceneFlags, cell_flags: u32) {
+    if cell_flags & CELL_OUTDOOR_ENTRY != 0 {
+        *flags = SceneFlags::CLOSED;
     }
+    if cell_flags & CELL_SKY_VISIBLE != 0 {
+        flags.sky_visible = true;
+    }
+}
+
+/// The flags with the camera outdoors (§4.12 step 1): both set, then, for every loaded
+/// landblock in `blocks` (in the order given; Tessera Decision, the client's order was not
+/// traced), each cell with the outdoor-walk bit, in stored order, visited with its PVS
+/// (rule 3: the cell, then its PVS cells one level deep; every cell at most once). No cell
+/// has the bit in this install (LI8), so outdoors both flags stay set.
+#[must_use]
+pub fn outdoor_flags<'a>(blocks: impl IntoIterator<Item = &'a BlockVisibility>) -> SceneFlags {
+    let mut flags = SceneFlags::OUTDOORS;
+    for b in blocks {
+        let mut seen: Vec<bool> = vec![false; b.cells.len()];
+        for c in b.cells.iter().filter(|c| c.flags & CELL_OUTDOOR_ENTRY != 0) {
+            b.visit_with_pvs(c, &mut flags, &mut seen);
+        }
+    }
+    flags
 }
 
 /// Whether a landblock info has a cell with the outdoor-walk bit (§4.12 step 1).
@@ -100,6 +117,16 @@ fn group_list<'a>(c: &'a Cell, groups: &HashMap<u16, &'a [u16]>) -> &'a [u16] {
     }
 }
 
+/// A neighbour entry's back-reference as the i32 of `landblock.md` §4.4. The decoder
+/// reads it as two u16 halves (`back_reference` low, `reserved[0]` high), which is the
+/// same bytes while the entry's `extra_cells` list is empty (every entry of this install,
+/// LI3; `landblock.md` §4.15 OPEN for the decoder).
+#[must_use]
+pub fn back_reference(nb: &tessera_formats::landblock::CellNeighbour) -> i32 {
+    let bits = u32::from(nb.back_reference) | (u32::from(nb.reserved[0]) << 16);
+    i32::from_ne_bytes(bits.to_ne_bytes())
+}
+
 /// A one-way portal between two visibility cells (§4.11).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VisPortal {
@@ -118,6 +145,9 @@ struct CellVis {
     vcell: u32,
     /// The potentially visible set, sorted, the cell included.
     pvs: Vec<u16>,
+    /// The PVS in the order the scene-flag pass visits it (§4.12 rule 3): the cell itself,
+    /// list A, then the members of the list-B groups in list order; each cell once.
+    visit: Vec<u16>,
 }
 
 /// One landblock's visibility cells and portals (module docs).
@@ -180,18 +210,20 @@ impl BlockVisibility {
         let mut portals = Vec::new();
         for (i, c) in cells.iter().enumerate() {
             let list = group_list(c);
-            for (k, nb) in c.neighbours.iter().enumerate() {
-                let negative = nb.reserved[0] & 0x8000 != 0;
-                if negative || list.contains(&nb.cell) {
+            for nb in &c.neighbours {
+                if back_reference(nb) < 0 || list.contains(&nb.cell) {
                     continue;
                 }
                 let Some(&j) = by_index.get(&nb.cell) else {
                     continue;
                 };
+                // The polygon is the geometry's portal named by the entry's `portal` field
+                // (L39), not the entry's position in the list.
+                let portal = usize::try_from(nb.ordinal).unwrap_or(usize::MAX);
                 portals.push(VisPortal {
                     from: vcell_of(i),
                     to: vcell_of(j),
-                    corners: corners(c.index, k),
+                    corners: corners(c.index, portal),
                 });
             }
         }
@@ -204,26 +236,46 @@ impl BlockVisibility {
             }
             first.push(at);
         }
-        // Potentially visible sets (§4.12).
+        // Potentially visible sets (§4.12): the cell, list A, and with bit 5 the members of
+        // the groups list B names; the cell's own number (`index_echo`) and 0xFFFF are
+        // skipped, and so is a number that is no cell of the record (it adds nothing).
         let out: Vec<CellVis> = cells
             .iter()
             .enumerate()
             .map(|(i, c)| {
-                let mut pvs: Vec<u16> = vec![c.index];
-                pvs.extend(c.list_a.iter().copied().filter(|&x| x != c.index));
+                let skip = |x: u16| {
+                    x == c.index
+                        || Some(x) == c.index_echo
+                        || x == NO_GROUP
+                        || !by_index.contains_key(&x)
+                };
+                let mut visit: Vec<u16> = vec![c.index];
+                let mut known: HashSet<u16> = HashSet::from([c.index]);
+                let mut push = |x: u16| {
+                    if !skip(x) && known.insert(x) {
+                        visit.push(x);
+                    }
+                };
+                c.list_a.iter().copied().for_each(&mut push);
                 if c.flags & CELL_GROUP_KEYS != 0 {
-                    for key in &c.list_b {
-                        if let Some(members) = groups.get(key) {
-                            pvs.extend(members.iter().copied().filter(|&x| x != c.index));
+                    // Each group once, however often list B names it (hostile lists).
+                    let mut keys: HashSet<u16> = HashSet::new();
+                    for key in c.list_b.iter().filter(|&&k| k != NO_GROUP) {
+                        if keys.insert(*key)
+                            && let Some(members) = groups.get(key)
+                        {
+                            members.iter().copied().for_each(&mut push);
                         }
                     }
                 }
+                let mut pvs = visit.clone();
                 pvs.sort_unstable();
                 pvs.dedup();
                 CellVis {
                     flags: c.flags,
                     vcell: vcell_of(i),
                     pvs,
+                    visit,
                 }
             })
             .collect();
@@ -271,18 +323,34 @@ impl BlockVisibility {
         self.cells.iter().any(|c| c.flags & CELL_OUTDOOR_ENTRY != 0)
     }
 
-    /// The flags with the camera in cell `index` (§4.12 step 2): both clear, sky-visible
-    /// set when a cell of the PVS has the sky bit. A cell the block does not have leaves
+    /// The flags with the camera in cell `index` (§4.12 step 2): both clear, then the cell
+    /// visited with its PVS (rule 3: bit 0 clears both, then bit 4 sets sky-visible, in the
+    /// order cell, list A, list-B group members). A cell the block does not have leaves
     /// both clear.
     #[must_use]
     pub fn scene_flags(&self, index: u16) -> SceneFlags {
-        let sky = self.pvs(index).iter().any(|&i| {
-            self.cell(i)
-                .is_some_and(|c| c.flags & CELL_SKY_VISIBLE != 0)
-        });
-        SceneFlags {
-            outdoor_visible: false,
-            sky_visible: sky,
+        let mut flags = SceneFlags::CLOSED;
+        if let Some(c) = self.cell(index) {
+            let mut seen = vec![false; self.cells.len()];
+            self.visit_with_pvs(c, &mut flags, &mut seen);
+        }
+        flags
+    }
+
+    /// Visits `c` with its PVS (§4.12 rule 3), each cell at most once (`seen`, by stored
+    /// position); the PVS cells are visited without their own PVS.
+    fn visit_with_pvs(&self, c: &CellVis, flags: &mut SceneFlags, seen: &mut [bool]) {
+        for &i in &c.visit {
+            let Some(&at) = self.by_index.get(&i) else {
+                continue;
+            };
+            let (Some(cell), Some(done)) = (self.cells.get(at), seen.get_mut(at)) else {
+                continue;
+            };
+            if !*done {
+                *done = true;
+                visit(flags, cell.flags);
+            }
         }
     }
 
@@ -328,7 +396,6 @@ impl BlockVisibility {
             if *budget == 0 {
                 return;
             }
-            *budget -= 1;
             let shape = if eye_in_portal(&p.corners, w.eye) {
                 PortalRect::Unknown
             } else {
@@ -340,6 +407,8 @@ impl BlockVisibility {
                 PortalRect::Bounds(r) => r.intersect(&rect),
             };
             if let Some(r) = narrowed {
+                // Only a crossing counts toward the bound (`landblock.md` §4.11).
+                *budget -= 1;
                 self.walk(w, p.to, r, depth + 1, out, budget);
             }
         }
@@ -652,14 +721,137 @@ mod tests {
         );
         assert_eq!(v.scene_flags(99), SceneFlags::CLOSED, "unknown cell");
         assert!(!v.has_outdoor_entry() && !has_outdoor_entry(&dungeon()));
-        assert_eq!(outdoor_flags(false), SceneFlags::OUTDOORS);
+        assert_eq!(outdoor_flags([]), SceneFlags::OUTDOORS);
+        assert_eq!(outdoor_flags([&v]), SceneFlags::OUTDOORS, "no entry cell");
+        // Cell 5 an outdoor-walk entry: visited with its PVS (5, 6), neither with the sky
+        // bit, so both flags clear.
         let mut i = dungeon();
         if let Some(c) = i.cells.as_mut().and_then(|c| c.items.get_mut(0)) {
             c.flags |= CELL_OUTDOOR_ENTRY;
         }
         let w = BlockVisibility::build(&i, |_, _| Vec::new());
         assert!(w.has_outdoor_entry() && has_outdoor_entry(&i));
-        assert_eq!(outdoor_flags(true), SceneFlags::CLOSED);
+        assert_eq!(outdoor_flags([&w]), SceneFlags::CLOSED);
+    }
+
+    /// `landblock.md` §4.12 rule 3: visiting order decides between bit 0 and bit 4.
+    #[test]
+    fn the_scene_flag_pass_visits_in_order() {
+        // Inside cell 8: PVS order 8, 9 (list A), then group 1 (6, 7). Cell 9 has the sky
+        // bit, cell 7 bit 0: the later bit-0 cell clears sky-visible again.
+        let mut i = dungeon();
+        let set = |i: &mut LandblockInfo, index: u16, bits: u32| {
+            if let Some(c) = i
+                .cells
+                .as_mut()
+                .and_then(|c| c.items.iter_mut().find(|c| c.index == index))
+            {
+                c.flags |= bits;
+            }
+        };
+        set(&mut i, 7, CELL_OUTDOOR_ENTRY);
+        let v = BlockVisibility::build(&i, |_, _| Vec::new());
+        assert_eq!(v.scene_flags(8), SceneFlags::CLOSED, "7 after 9");
+        // Cell 9: itself (sky), then list A = 8 (no bits): sky stays set.
+        assert!(v.scene_flags(9).sky_visible);
+        // A cell with both bits leaves sky-visible set.
+        let mut j = dungeon();
+        set(&mut j, 7, CELL_OUTDOOR_ENTRY | CELL_SKY_VISIBLE);
+        let v = BlockVisibility::build(&j, |_, _| Vec::new());
+        assert!(v.scene_flags(7).sky_visible && !v.scene_flags(7).outdoor_visible);
+        // Outdoors: entry cell 7 (both bits) is visited, then its PVS (6, 8 of its group):
+        // both cleared, then sky set by 7 itself; neither 6 nor 8 has a bit.
+        assert_eq!(
+            outdoor_flags([&v]),
+            SceneFlags {
+                outdoor_visible: false,
+                sky_visible: true
+            }
+        );
+    }
+
+    #[test]
+    fn the_pvs_skips_its_own_number_0xffff_and_unknown_cells() {
+        let mut i = dungeon();
+        if let Some(c) = i
+            .cells
+            .as_mut()
+            .and_then(|c| c.items.iter_mut().find(|c| c.index == 5))
+        {
+            c.list_a = vec![5, 0xFFFF, 6, 77, 6];
+            c.list_b = vec![0xFFFF, 1];
+        }
+        // A group keyed 0xFFFF (hostile) adds nothing through list B.
+        if let Some(h) = i.header_indices.as_mut() {
+            h.items.push(HeaderIndex {
+                index: 0xFFFF,
+                values: vec![9],
+            });
+        }
+        let v = BlockVisibility::build(&i, |_, _| Vec::new());
+        assert_eq!(v.pvs(5), &[5, 6, 7, 8], "list A 6, then group 1 (6, 7, 8)");
+    }
+
+    #[test]
+    fn portals_take_the_polygon_their_portal_field_names() {
+        let mut a = cell(2, CELL_GROUP_KEYS, Some(NO_GROUP));
+        let b = cell(3, CELL_GROUP_KEYS, Some(NO_GROUP));
+        link(&mut a, 3);
+        if let Some(n) = a.neighbours.get_mut(0) {
+            n.ordinal = 4;
+        }
+        let v = BlockVisibility::build(&info(vec![a, b], vec![]), |c, k| {
+            vec![[f32::from(c), k as f32, 0.0]]
+        });
+        assert_eq!(v.portals().len(), 1);
+        assert_eq!(v.portals()[0].corners, vec![[2.0, 4.0, 0.0]]);
+    }
+
+    #[test]
+    fn back_references_are_the_i32_of_the_two_halves() {
+        let mut n = CellNeighbour {
+            ordinal: 0,
+            cell: 3,
+            back_reference: 7,
+            reserved: [0; 3],
+            flag: 1,
+        };
+        assert_eq!(back_reference(&n), 7);
+        n.reserved[0] = 0x8000;
+        assert!(back_reference(&n) < 0);
+        n.reserved[0] = 0x0001;
+        assert_eq!(back_reference(&n), 0x1_0007);
+    }
+
+    /// Rejected portal tests do not use up the crossing bound (`landblock.md` §4.11).
+    #[test]
+    fn only_crossings_count_toward_the_portal_bound() {
+        // Cell 2 has MAX_PORTAL_VISITS + 10 portals behind the eye into cell 3, then one
+        // ahead into cell 4.
+        let mut a = cell(2, CELL_GROUP_KEYS, Some(NO_GROUP));
+        let b = cell(3, CELL_GROUP_KEYS, Some(NO_GROUP));
+        let c = cell(4, CELL_GROUP_KEYS, Some(NO_GROUP));
+        for _ in 0..MAX_PORTAL_VISITS + 10 {
+            link(&mut a, 3);
+        }
+        link(&mut a, 4);
+        let ahead = a.neighbours.len() - 1;
+        let v = BlockVisibility::build(&info(vec![a, b, c], vec![]), |_, k| {
+            let x = if k == ahead { 5.0 } else { -5.0 };
+            vec![
+                [x, -1.0, -1.0],
+                [x, 1.0, -1.0],
+                [x, 1.0, 1.0],
+                [x, -1.0, 1.0],
+            ]
+        });
+        let m = camera(Vec3::ZERO, Vec3::X);
+        let seen = v.visible_cells(2, Vec3::ZERO, &m);
+        assert!(!seen[v.vcell_of(3).unwrap() as usize], "behind the eye");
+        assert!(
+            seen[v.vcell_of(4).unwrap() as usize],
+            "reached after the rejected ones"
+        );
     }
 
     #[test]

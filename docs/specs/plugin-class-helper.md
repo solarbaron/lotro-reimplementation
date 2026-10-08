@@ -4,10 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | **Review** |
-| Last updated | 2026-10-06 |
+| Status | **Accepted** (2026-10-08) |
+| Last updated | 2026-10-08 |
 | Author role | Spec writer (dirty room), AI-assisted |
-| Reviewer | Claude review session (spec-writer agent), 2026-10-06: **changes requested**, stays Review. Clean: no code or pseudo-code, no copied comments, prose or message texts, layout not modelled on the sample package; behaviour of §6, §7 and invariants 8, 9, 11, 13, 15, 16 checked against the sample, H1 re-checked read-only, census spot-checked. Open: (R1) type-object method names, type-information field names, the log name and the default `ToString` text are copied identifiers with no stated interop path (census: 0 uses), so justify each in the naming note or drop it; (R2) full names of the built-in classes, and whether built-in installs apply the LPA §7.2 disk-chunk environment and metatable steps; (R3) the nature of `Turbine.Type` (helper class? final? callable? `tostring` of a type object); (R4) unlisted differences: the `IsVisible` query in the quickslot replacement, the shape of `Turbine.Debug.Table` and `Turbine.Log`, `IsA` with a mixin target, `Dump` indent `false`; (R5) K6 and §6.7 misstate the original for bases from other helpers; reconcile with the §3.1 "helper class" term. **Revised 2026-10-06 by the spec writer for R1–R5 (change log).** Second review, Claude review session (spec-writer agent, not the author), 2026-10-06: **changes requested**, stays Review. R1–R5 are resolved (naming-note rows checked against the sample's own query calls; §5.3 namespace steps match LPA §7.2; §5.5 names, §6.7 walk, §6.8 `Turbine.Type`, §7.2, §7.3, K15 re-checked with a dirty-room run of the sample); §4.7 counts recounted (53 / 3 / 50); no code, pseudo-code or copied wording (word n-gram check against all 37 sample files: only interop names and stock phrases), and the layout does not follow the sample's files. Open: (S1) the naming-note row for the members of `Turbine.Log` justifies them by "keeps its whole method set", but §7.7 and K15 drop most of the log's members and the census uses only `Debug` (§4.5, K15), so `Information`, `Warning`, `Error`, `GetLevel`, `SetLevel` have no consistent interop path: give them one or drop them (§7.7, K1, invariant 20); (S2) the original's global and package names in §4.5, §5.6 and K1 (for example `static_class`, `opairs`, `Turbine.Event`, `Turbine.LogManager`) are not covered by the naming note, which claims to list each reproduced name: add a row saying they are named only to state what Tessera does not provide and the census counts; (S3) unlisted differences: `Turbine.Table.AreEqual` and `IsA` raise in the original when an argument or target is a table with a `Constructor` function and no metatable (the original builds its type through the metatable chain before any comparison or walk), where §7.6 and §6.7 step 2 answer false; K6 describes only the walk-end case; (S4) §7.1 step 3 does not fix the order of the writes: in the original `targetOpacity` is written last, after the game time and B's `GetOpacity` are read, so it keeps its old value when either raises (for example on an unbound instance). |
+| Reviewer | Claude review session (spec-writer agent, not the author) |
+| Review record | Fourth review (re-review of the T1–T2 revision), Claude review session (spec-writer agent, not the author), 2026-10-08: **passed**, status moved to Accepted. T1 (§6.13.1) and T2 (§6.10, §5.3, H15) resolved; O1–O4 and the implementer note O6 stay open, non-blocking. Earlier records in the review log (decision 0018). |
 | Implements into | `crates/plugins` (the built-in package, the user-copy test, import resolution of the built-in names), `crates/script` (nothing new beyond `plugin-runtime.md`) |
 | Related specs | [`lua-plugin-api.md`](lua-plugin-api.md) (abbreviated **LPA**: §7 `import`, §8 object model, §8.3 subclassing from Lua, §9 events, §13 controls), [`plugin-runtime.md`](plugin-runtime.md) (abbreviated **PRT**: §5.1 apartment creation, §6 environments, §7 packages, §4.4 text forms), [`plugin-descriptor.md`](plugin-descriptor.md) (§7.2 disk resolution and precedence), [`plugin-api-usage.md`](plugin-api-usage.md) (abbreviated **PAU**: the census, §6.5); decision record [`0016-plugin-class-helper.md`](../decisions/0016-plugin-class-helper.md) |
 
@@ -15,10 +16,11 @@
 > (`Turbine.Class`, `Turbine.Type`, `Turbine.Table`, `Turbine.MathUtils`, `Turbine.Log`,
 > `Turbine.Debug`, `Turbine.Debug.Table`, `Turbine.Debug.Stack`, `Turbine.Animation`,
 > `Turbine.Animation.LerpValue`, `Turbine.UI.Extensions`, `Turbine.UI.Extensions.SimpleWindow`,
-> `Turbine.UI.Extensions.Window`, `Turbine.UI.Lotro.Quickslot`, `Turbine.Utils`), field and
-> method names and the folder name `Plugins/Turbine/` are reproduced only because existing
-> third-party plugins, or copies of the original helper that plugins carry, cannot work with
-> Tessera without them. Each one and its interop path:
+> `Turbine.UI.Extensions.Window`, `Turbine.UI.Lotro.Quickslot`), field and method names and the
+> folder name `Plugins/Turbine/` are reproduced only because existing third-party plugins, or
+> copies of the original helper that plugins carry, cannot work with Tessera without them. Each
+> one and its interop path (the last row lists the names this spec mentions but Tessera does not
+> reproduce):
 >
 > | Names | Interop path |
 > |---|---|
@@ -29,7 +31,9 @@
 > | type-object method `IsMixin` | a copy's `mixin` function asks it of every argument, and a copy's `IsA` asks it of a target that is not a class; Tessera's `IsA` asks it of other helpers' targets (§6.7) |
 > | type-object methods `GetBaseClass`, `GetMixins` | a copy's `IsA` walk asks them of the start type and of each base's type, which are Tessera's type objects when a Tessera class sits below a copy-made root class; Tessera's walk asks them of other helpers' type objects (§6.7) |
 > | type-object methods `GetClass`, `GetName` | a copy's default `ToString`, inherited by a Tessera class whose base the copy made, asks the Tessera type object for both (§6.3, §6.8) |
-> | `Dump`, `AreEqual`, `round`, the members of `LerpValue`, `SimpleWindow`, `Window` and `Turbine.Log`, the instance fields of §7.1 and §7.4 | members of objects that a dependent distribution reaches (§4.4, §4.5); an object a dependent uses keeps its whole method set, and the instance fields are names a plugin subclass can read or collide with |
+> | `Dump`, `AreEqual`, `round`, the members of `LerpValue`, `SimpleWindow` and `Window`, the instance fields of §7.1 and §7.4 | members of objects that a dependent distribution reaches (§4.4, §4.5); a class a dependent creates or subclasses keeps its whole method set, and the instance fields are names a plugin subclass can read or collide with |
+> | `Debug`, `Information` (of `Turbine.Log`) | plugins call them on `Turbine.Log` in colon form without defining the log: `Information` in 3 distributions, `Debug` in 1 (§4.5). The log's other members have no interop path and are not reproduced (§7.7) |
+> | **Not provided, named only for that:** the globals `static_class`, `abstract_class`, `final_class`, `mixin`, `enum`, `opairs`, `quicksort`, `string.trim`, `string.startsWith`, `string.endsWith`; the package and import names `Turbine.Compare`, `Turbine.Enum`, `Turbine.Event`, `Turbine.Logger`, `Turbine.LogLevel`, `Turbine.LogManager`, `Turbine.Mixin`, `Turbine.Quicksort`, `Turbine.Service`, `Turbine.ServiceContainer`, `Turbine.String`, `Turbine.Timer`, `Turbine.TimerManager`, `Turbine.Testing`, `Turbine.Testing.Assert`, `Turbine.Utils`; the sample's file names `Debug.lua`, `Debug/` and `UI/Lotro/__init__.lua` | **none, and Tessera never defines them** in any mode (in user-copy mode only the user's own files can). They appear only in §4.2, §4.5, §5.3, §5.6, §8 and the invariants, to give the census counts and to state that Tessera does not provide them; their absence is observable (a read gives nil, an import fails), so the spec must say so. `Turbine.Utils` stays here unless the owner decides O3 otherwise |
 >
 > The other type-object methods, the type-information table and its field names, the original
 > log's name and members other than those of §7.7, and the original's default `ToString` text
@@ -78,7 +82,7 @@ Source keys:
 | **SMP** | The publisher's 2010 sample package: folder `Turbine/` (37 Lua files) of `dist/Beta_LuaPlugins.zip` in the research clone `Goldbishop_Lotro_LUA` (LPA source S4). Read in the dirty room on 2026-10-06 for behaviour only (method M2). |
 | **TU** | The package as users install it today: lotrointerface.com file 1064, version 1.1.1 (published 2026-02-14), downloaded on 2026-10-06 into the dirty scratch area. Its 37 Lua files are byte-identical to SMP except one corrected line in the logger (the information level, §7.7); it adds a dummy descriptor whose root element is not `Plugin`, and has no `Utils.lua` (method M2). |
 | **CEN** | The census corpus of PAU (143 distributions: LIA and GH of PAU §2, Appendix A). Headline counts are PAU §6.5 (its row U5). Detailed counts are a recount in this session, 2026-10-06: whole distribution, comments removed, files that are copies of SMP files excluded (method M2). |
-| **RUN** | SMP executed with stock Lua 5.1.5 in the dirty scratch area, 2026-10-06, under a stub host that implements the `import` rules of LPA §7.2 and a few stub native classes. Used to confirm the behaviour read from SMP (method M2; no client code was run or read). A second run the same day, for the revision, checked the class names of the sample's classes, the nature of its type class, the shapes of its debug table and log, the quickslot call order, `Dump` with indent `false`, `IsA` with a mixin target and `IsA` through a base with a foreign type object. |
+| **RUN** | SMP executed with stock Lua 5.1.5 in the dirty scratch area, 2026-10-06, under a stub host that implements the `import` rules of LPA §7.2 and a few stub native classes. Used to confirm the behaviour read from SMP (method M2; no client code was run or read). A second run the same day, for the revision, checked the class names of the sample's classes, the nature of its type class, the shapes of its debug table and log, the quickslot call order, `Dump` with indent `false`, `IsA` with a mixin target and `IsA` through a base with a foreign type object. A third run the same day, for the second revision, checked `Turbine.Table.AreEqual`, `IsA` and `class` with tables that have a `Constructor` function and no metatable (alone, behind an `__index` link, with a metatable that has no `__index`, and a native class chain whose root has a `Constructor` function), the write order of the fading windows' `SetOpacity` when the game-time read or the base's `GetOpacity` raises, and the log's `Debug` and `Information`. The stub of these three runs restored the **previous** thread global table after a nested import, not the real one that LPA §7.2 step 4 states. A fourth run, 2026-10-08, for the third revision, used a stub that restores the real global table as LPA states, and checked the class names of §6.10 and of the sample's own window classes under that rule (H15). |
 | **OWN** | The owner's install and settings folder, read-only, 2026-10-06 (method M1). |
 | **LPA**, **PRT**, **PAU** | The Accepted specs named in the header. |
 | **DEC** | Decision 0016 (Accepted 2026-10-06). |
@@ -93,17 +97,19 @@ published third-party material (SMP, TU, CEN, RUN). **Tessera rule** = a choice 
 | H1 | The client install ships no `.lua` file and no `Turbine` folder; the owner's settings folder has no `Plugins/` folder. The sample package is user content, so on the owner's machine Tessera's built-in package is the one that applies (§5) | OWN | **Confirmed** 2026-10-06 |
 | H2 | TU equals SMP except the logger line and the dummy descriptor | SMP, TU | Reported 2026-10-06 |
 | H3 | Census headline: 121 distributions call `class`, 90 define one, 11 bundle a copy of the sample folder, 37 depend on the user's copy; import counts per sub-package (§4.1) | PAU §6.5 (U5) | Reported 2026-10-06 |
-| H4 | Detailed usage among the 37 dependent distributions and across the corpus (§4.2–§4.6) | CEN | Reported 2026-10-06 |
+| H4 | Detailed usage among the 37 dependent distributions and across the corpus (§4.2–§4.6). The `Turbine.Log` row of §4.5 was recounted for the second revision: 3 distributions, not 1 | CEN | Reported 2026-10-06 |
 | H5 | Behaviour of `class`, the class and instance metatables, constructors, `IsA` (including the walk through other helpers' type objects and the mixin-target case), type objects, `ToString`, `GetUniqueID`, class names (§6) | SMP, RUN, LPA §7.2, §8 | Reported 2026-10-06 |
 | H6 | What the original runs at apartment creation when the user copy exists, and that the folder `Debug/` shadows the file `Debug.lua` (§5.6) | SMP, RUN, LPA §7.2, §7.4, PRT §5.1 | Reported 2026-10-06 |
-| H7 | Behaviour of the fading windows and of the quickslot replacement (§7.1, §7.2) | SMP, RUN | Reported 2026-10-06 |
-| H8 | Behaviour of the table dump, the interpolator, `math.round`, `Turbine.Table.AreEqual` and the default log (§7.3–§7.7) | SMP, TU, RUN | Reported 2026-10-06 |
+| H7 | Behaviour of the fading windows (including the write order of `SetOpacity`) and of the quickslot replacement (§7.1, §7.2) | SMP, RUN | Reported 2026-10-06 |
+| H8 | Behaviour of the table dump, the interpolator, `math.round`, `Turbine.Table.AreEqual` and the default log (§7.3–§7.7); the original's type building that makes `AreEqual`, `IsA` and `class` raise on a table with a `Constructor` function and no metatable (K5, K17, K18) | SMP, TU, RUN | Reported 2026-10-06 |
 | H9 | `Turbine.Utils` is in neither SMP nor TU; 2 distributions import it without protection; one distribution ships an empty file under that name inside its own copy of the sample folder (§4.5) | SMP, TU, CEN | Reported 2026-10-06 |
 | H10 | Plugins rely on instances of one class sharing one metatable, and on reading and reusing it (§6.4) | CEN | Reported 2026-10-06 |
 | H11 | The built-in package, its contents, the user-copy test, installation at apartment creation, known differences (§5, §7 "Tessera" items, §8) | DEC, LPA §7, PRT §5, this spec | **Tessera rule** |
 | H12 | Copies of the original helper's class file carried by plugins: 53 distributions, 3 in a top-level `Turbine/` folder, 50 in a namespace of their own; one dependent carries a copy it never imports and subclasses `SimpleWindow` with the global `class` (§4.7) | CEN (recount 2026-10-06) | Reported 2026-10-06 |
 | H13 | In the original: the sample's class names follow the `_` rule (`Turbine.UI.Extensions.SimpleWindow`, `Turbine.UI.Extensions.Window`, `Turbine.Animation.LerpValue`, `Turbine.Type` in the usual import order); its type class is a final helper class whose instances are the type objects; its debug table is a non-callable helper class; its log is an instance of a helper class (§5.5, §6.8, §7.3, §7.7, §8) | SMP, RUN | Reported 2026-10-06 |
 | H14 | Tessera's class registry, type objects, `ToString` text, built-in class names and namespace steps (§5.3, §5.5, §6.2, §6.8, §6.9, §6.13) | this spec | **Tessera rule** |
+| H15 | After an import that runs a disk chunk, the importing file's top-level run has the real global table as `getfenv(0)` (LPA §7.2 step 4), so a class it declares afterwards reads `_` of the real global table (§6.10). The original's class function reads `_` of `getfenv(0)`. With the user copy installed and `Turbine.UI.Lotro` not imported before, the sample's `SimpleWindow` (and `Window` when imported alone) is unnamed (§5.5, K14) | LPA §7.2 (its row P8, BIN), SMP, RUN (fourth run) | Reported 2026-10-08 |
+| H16 | Lifetime of classes, type objects and registry entries in a runtime without ephemeron tables (§6.8, §6.13) | this spec; LUA (stock Lua 5.1 weak tables mark the values of a weak-keyed table strongly) | **Tessera rule** |
 
 ---
 
@@ -222,7 +228,7 @@ read by code that neither defines nor bundles them:
 | `class` | 31 (PAU §6.5) | declaring classes |
 | `math.round` | 1 | colour conversion |
 | `Turbine.Table.AreEqual` | 1 | comparing two data tables in an editor window |
-| `Turbine.Log` (`Debug`) | 1 | on an error path |
+| `Turbine.Log` | 3 | `Information` in all 3, in the warning routine of a decompressor each carries (reached on malformed input); `Debug` in 1 of them, on an error path. Both in colon form. No other member is read. One of the 3 carries a copy of the sample folder in a namespace of its own that it never imports, and which could not set `Turbine.Log` anyway |
 | `static_class`, `abstract_class`, `final_class`, `mixin`, `enum`, `opairs`, `quicksort`, `string.trim`, `string.startsWith`, `string.endsWith`, the other `Turbine.*` names of SMP | 0 | only in distributions that bundle their own copies or define them |
 
 `Turbine.Utils`: neither SMP nor TU contains it, so in the original `import "Turbine.Utils"`
@@ -241,7 +247,7 @@ From §4.2–§4.5, the built-in package provides (Tessera rule, DEC, LEGAL §17
 | `Turbine.UI.Extensions` with `SimpleWindow`, `Window` and the quickslot replacement | 26 dependents import the package, 1 more imports its two window files | §7.1, §7.2 |
 | `Turbine.Debug` with `Table.Dump` and `Stack` | 3 | §7.3 |
 | `Turbine.Animation` with `LerpValue` | 2 | §7.4 |
-| `math.round`, `Turbine.Table.AreEqual`, `Turbine.Log` | 1 each, read without import | §7.5–§7.7 |
+| `math.round`, `Turbine.Table.AreEqual`, `Turbine.Log` with `Debug` and `Information` | read without import by 1, 1 and 3 distributions | §7.5–§7.7 |
 | Import names `Turbine.Class`, `Turbine.Type`, `Turbine.MathUtils`, `Turbine.Table`, `Turbine.Log`, `Turbine.Debug.Table`, `Turbine.Debug.Stack`, `Turbine.Animation.LerpValue`, `Turbine.UI.Extensions.SimpleWindow`, `Turbine.UI.Extensions.Window`, `Turbine.UI.Lotro.Quickslot` succeed | consistency with the names above; a plugin may import a member file directly | §5.3 |
 
 Everything else of the sample package is left out (§8, K1).
@@ -336,10 +342,18 @@ place of loading and calling the file (step 3):
 
 - before the install, if `T` is not the real global table, `T`'s metatable is remembered and
   replaced by a new table whose `__index` is the real global table;
-- during the install, `T` is the thread's global table, so `getfenv(0)` in any plugin code that
-  the install reaches (for example a metamethod a plugin put on a native class table that the
-  install reads) is `T`; the built-in package itself never reads it (built-in class names are
-  fixed, §5.5);
+- when the install starts, `T` becomes the thread's global table. It stays so until the install
+  performs an import (in its "imports first" step, or in plugin code it reaches) that runs a
+  disk chunk or another built-in install; that import ends by restoring the **real** global
+  table (LPA §7.2 step 4, whether the chunk succeeded or raised), and from then until this
+  install ends the thread's global table is the real one, not `T`. An import that runs neither
+  (a name already recorded as run, or a name with only a native part, such as `Turbine.UI` in
+  built-in mode) leaves the thread's global table unchanged. Example: the install of
+  `Turbine.Class` installs `class` with `T` = `Turbine` as the thread's global table; its import
+  of `Turbine.Type`, if not yet run, then leaves the real global table in place for the rest of
+  it. `getfenv(0)` in plugin code that the install reaches (for example a metamethod a plugin
+  put on a native class table that the install reads) follows this rule; the built-in package
+  itself never reads it (built-in class names are fixed, §5.5);
 - afterwards the real global table is restored, and the new metatable is kept unless `T` had a
   table metatable before, which is put back.
 
@@ -381,7 +395,12 @@ not classes at all (§6.8).
 
 Their full names are fixed (Tessera rule); they do not depend on the `_` field or on
 `getfenv(0)` at the time of the import (§6.10 applies only to classes that plugin code declares).
-They equal the names the original gives these classes in the usual import order (H13):
+They equal the names the original gives these classes in the usual import order (H13), in
+which the plugin has imported `Turbine.UI.Lotro` before `Turbine.UI.Extensions`. (With the user
+copy installed and that name not imported before, the sample's `SimpleWindow` file runs the
+copy's `UI/Lotro/__init__.lua` through its own import, so it declares its class with the real
+global table as `getfenv(0)` and the class is unnamed, §6.10, H15; Tessera keeps the fixed
+name, K14.)
 
 | Class | Full name | Base (`GetBaseClass()`) | `GetName()` | `tostring` of the class / of an instance (§6.9) |
 |---|---|---|---|---|
@@ -554,9 +573,11 @@ so it treats Tessera's and other helpers' classes alike, as the original does:
    - If `target` is a table on which lookup finds a `GetType` function, call it with no
      arguments; the result is the target type `T`. Go to step 3.
    - Otherwise, if `target` is a table on which lookup finds a `Constructor` function (a native
-     class, or a class of a helper without type objects): answer **false**. (The original
-     builds a type object of its own for such a target, which its walk can never meet; it then
-     answers false, or raises if the walk reaches a base without a `GetType` function, K6.)
+     class, or a class of a helper without type objects): answer **false**, without reading
+     any metatable. (The original first builds a type object of its own for such a target by
+     following metatable `__index` links, and raises when a table on that path has no
+     metatable, K17. Otherwise its walk can never meet that type; it then answers false, or
+     raises if the walk reaches a base without a `GetType` function, K6.)
    - Anything else (nil, number, string, boolean, function, a table with neither) raises an
      error.
 3. **Class target.** Query `T` with `IsClass`. If the answer is true, walk, starting with the
@@ -578,7 +599,8 @@ so it treats Tessera's and other helpers' classes alike, as the original does:
    original.
 5. Otherwise (`T` reports neither a class nor a mixin) raise an error.
 
-Because `GetType` returns the same type object for every call on the same class (§6.8), the
+Because `GetType` returns a class's existing type object while anything outside the registry
+reaches it (§6.8, §6.13), and the walk itself holds `T` and every type it has met, the
 comparison in step 3.1 is by identity, and an instance target resolves to its class. A walk
 that passes through another helper's class continues as long as that helper's type objects
 answer `GetBaseClass` and the bases provide `GetType`, so it can answer true for a target made
@@ -587,10 +609,13 @@ by that helper. Native-derived classes use the native `IsA` instead (§6.3, LPA 
 <a id="6-8"></a>
 ### 6.8 Type objects and `Turbine.Type`
 
-`C.GetType()` (dot or colon form; arguments are ignored) on a Tessera class returns the
-**same** type object for every call on the same class (created at the first call and kept in
-the registry, §6.13), and lookup makes `i.GetType()` on an instance return its class's type
-object.
+`C.GetType()` (dot or colon form; arguments are ignored) on a Tessera class returns `C`'s
+**current** type object: the one an earlier call made, as long as it has not been collected;
+otherwise a new one, which becomes the current one. A type object is collected only when
+nothing outside the registry reaches it (§6.13), so every type object a plugin holds for `C`
+is the same value as the result of any later call, and a held type object answers every method
+below for as long as it is held, even when nothing else refers to `C` any more. Lookup makes
+`i.GetType()` on an instance return its class's current type object.
 
 **A query** of a type object `t` with a method name means: look up that name on `t` and call the
 result with `t` as its only argument (a method call). If `t` is not a table, or lookup does not
@@ -664,16 +689,34 @@ Other helpers' type objects are whatever their helper makes; Tessera only querie
 
 When `class` runs, it reads the field `_` of the thread's current global table (`getfenv(0)`,
 PRT §6.2). If that field is a table whose `Name` field is a string, that string is the class's
-full name; otherwise the full name is empty. Consequences of the `import` rules (LPA §7.2):
+full name; otherwise the full name is empty. Consequences of the `import` rules (LPA §7.2,
+"Run once" step 2 and "Running a disk chunk" steps 2 and 4; H15):
 
-- A class declared by the top-level code of a file imported as `A.B.File` is named `A.B.File`,
-  so `GetName()` gives `File`. **Every** class declared in that file's top-level run gets the
-  file's package name, whatever variable it is assigned to.
-- If the file imports another package of the **same namespace** before declaring the class, the
-  namespace's `_` now holds the other package's name, and the class takes that name.
-- A class declared later, in an event handler or any other call, reads `_` of the real global
-  table, which normally has none: the full name is empty, `GetName()` is nil and `ToString`
-  omits the name.
+- A class declared by the top-level code of a file imported as `A.B.File`, **before** that code
+  performs any import that runs a disk chunk, is named `A.B.File`, so `GetName()` gives `File`.
+  **Every** class declared in that part of the file's top-level run gets the file's package
+  name, whatever variable it is assigned to.
+- An import that runs a disk chunk (in built-in mode also a built-in install, §5.3) ends by
+  restoring the **real** global table as the thread's global table, whether its chunk succeeded
+  or raised, and whatever its namespace. For the rest of the importing file's top-level run,
+  `getfenv(0)` is the real global table, so a class declared there reads `_` of the real global
+  table (below). This holds also when the imported package is in the same namespace as the
+  file: the class does **not** take the other package's name. (The file's own functions keep
+  the namespace table as their environment, LPA §7.2; only the thread's global table changes.)
+- An import that runs no disk chunk (a name already recorded as run, a name with only a native
+  part, or an import that fails before any chunk runs) leaves `getfenv(0)` unchanged. A class
+  declared after it still reads `_` of the file's namespace table, which holds the file's own
+  name unless that import set it (LPA §7.2 "Run once" step 2 sets `_` of the imported package's
+  namespace, which can be the file's namespace).
+- A class declared outside every file's top-level run (in an event handler, a command, or any
+  function called after loading has ended) reads `_` of the real global table. A class declared
+  by a function of one file that runs during another file's top-level run reads `_` of whatever
+  the thread's global table is at that moment, which the rules above give for that other file.
+- The real global table normally has no `_` field: the full name is then empty, `GetName()` is
+  nil and `ToString` omits the name. It has one after an import of a package whose namespace is
+  the top-level namespace (a one-component file package, LPA §7.2 "Namespace"), or after plugin
+  code assigned it; a class declared with the real global table as `getfenv(0)` then takes that
+  name.
 
 The classes of the built-in package do not follow this rule; their names are fixed (§5.5).
 
@@ -714,15 +757,55 @@ reach it: it is not a field of any table, a metatable or an upvalue a plugin can
 
 - Every class table that Tessera's `class` creates (§6.3), and every built-in class (§5.5), is
   entered with: its full name (§6.10 or §5.5), its base (the value given to `class`, or none),
-  its `GetType` function and, once created, its type object.
-- Every Tessera type object (§6.8) is entered with the class it belongs to.
-- Entries are weak: the registry keeps no class, function or type object alive.
+  its `GetType` function and its current type object, if it has one (§6.8).
+- Every Tessera type object (§6.8) is entered with the class it belongs to and its mixin list
+  (the table its `GetMixins` returns).
 
 Tessera uses the registry only to: answer the methods of §6.8 on its own type objects; choose the
-form of its default `ToString` text (§6.9); and return the same type object from each `GetType`
-call. Everything else (base classification in §6.1, the `IsA` walk in §6.7) works through
-lookup and type-object queries, the same way for Tessera's classes and other helpers' classes.
-A table that only looks like a Tessera class (same fields, same metatable shape) is not one.
+form of its default `ToString` text (§6.9); and return a class's current type object from its
+`GetType` calls. Everything else (base classification in §6.1, the `IsA` walk in §6.7) works
+through lookup and type-object queries, the same way for Tessera's classes and other helpers'
+classes. A table that only looks like a Tessera class (same fields, same metatable shape) is not
+one.
+
+<a id="6-13-1"></a>
+#### 6.13.1 Lifetime (Tessera rule, H16)
+
+Tessera runs stock Lua 5.1, whose weak tables have no ephemeron behaviour: an entry of a
+weak-keyed table keeps its value alive, and so keeps its key alive whenever the value reaches
+the key. The registry therefore cannot both keep nothing alive and let a type object answer for
+a class nothing else holds. The rules are:
+
+1. **A type object keeps its class alive.** While a Tessera type object is reachable from
+   outside the registry, its class, that class's base (the value given to `class`, even after a
+   plugin changed or removed the class's metatable) and its mixin list stay alive, and every
+   method of §6.8 keeps answering on it as for a live class.
+2. **A class keeps its base alive, not its type object.** A class that is reachable keeps its
+   base and its `GetType` function alive, so a type object made later can still answer
+   `GetBaseClass`. It does not keep its type object alive: a type object that nothing outside
+   the registry reaches is collected like any other table, and the next `GetType` call on the
+   class makes a new one (a new table with a new, empty mixin list). The registry keeps its
+   entries for the class itself while the class is reachable.
+3. **Otherwise the registry keeps nothing alive.** A class, its `GetType` function and its
+   type object are collected, with their registry entries, once nothing outside the registry
+   reaches any of them, whatever the class's fields, its base, its instances, its type object's
+   fields or its mixin list refer to, with the one exception of rule 4. For example a base that
+   holds its subclass (`D.child = C`), a type object field that holds its class
+   (`C.GetType().owner = C`) or a mixin list that holds its class do not keep a class alive.
+4. **Exception: a type object reachable from its own class.** When the type object is
+   reachable from its class, from that class's base or from its mixin list (for example
+   `C.T = C.GetType()`, a base field or an instance stored on the class that holds the type
+   object, or the type object placed in its own mixin list), rules 1 and 2 together hold the
+   class, its type object and everything they reach. Tessera does **not** guarantee that such a
+   class is collected before its apartment closes; at apartment close everything of the
+   apartment is released. Tests must not depend on whether it is collected earlier. No plugin of
+   the census reads a type object at all (§4.4).
+
+Observable consequences: two type objects a plugin holds at the same time for the same class are
+always the same value (rules 1 and 2), and `IsA` walks compare by identity (§6.7). A type object
+that was collected while nothing held it cannot be compared with its successor; only the text
+`tostring` gives for the type object or its mixin list, and the contents of a weak table that
+had it as a key, can show that a new one was made.
 
 ---
 
@@ -736,7 +819,9 @@ Two Tessera classes (§6; names and text forms in §5.5). `SimpleWindow` has bas
 `Turbine.UI.Window`; `Window` has base `Turbine.UI.Lotro.GoldWindow`. They behave identically except for the base. Below, **B** is the
 base class, and "B's method" means the function found by lookup on the base class table **at the
 time of the call** (so a plugin's replacement on that native table, LPA §8.6, is the one called).
-"The instance's method" means lookup on the instance (so subclass overrides are called).
+"The instance's method" means lookup on the instance (so subclass overrides are called). "The
+game time" means the result of calling, with no arguments, the function found by lookup of
+`Turbine.Engine.GetGameTime` in the apartment's global table at the time of the call.
 
 Instance fields (interop: plugins can read them and can collide with them):
 
@@ -755,10 +840,19 @@ Behaviour:
    the instance's `SetFadeSpeed(0.2)`, then the instance's `SetOpacity(1)`.
 2. **`SetFadeSpeed(s)`**: set `fadeSpeed` to 1 divided by `s`, so a full fade from 0 to 1 takes `s`
    seconds. No check: `s` = 0 gives an infinite speed (stock division).
-3. **`SetOpacity(v)`**: set `realOpacity` and `targetOpacity` to `v`, `currentTime` to the
-   current game time, and `currentOpacity` to B's `GetOpacity`. If `targetOpacity` differs from
-   `currentOpacity`, call the instance's `SetWantsUpdates(true)`. The native opacity is **not**
-   changed now; the fade does it (step 5).
+3. **`SetOpacity(v)`**, in this order:
+   1. set `realOpacity` to `v`;
+   2. set `currentTime` to the game time;
+   3. set `currentOpacity` to the result of B's `GetOpacity` called with the instance;
+   4. set `targetOpacity` to `v`;
+   5. if `targetOpacity` differs from `currentOpacity`, call the instance's
+      `SetWantsUpdates(true)`.
+
+   An error in step 2 or 3 propagates and ends the call there, so the later fields keep their
+   old values. For example, on an instance with no native object bound (LPA §8.2) B's
+   `GetOpacity` raises: `realOpacity` and `currentTime` already hold the new values, while
+   `currentOpacity` and `targetOpacity` keep the old ones. This reproduces the original (H7).
+   The native opacity is **not** changed now; the fade does it (step 5).
 4. **`SetVisible(v)`**:
    - If `v` is exactly `true`: call B's `SetOpacity(0)`, then B's `SetVisible(true)`, then the
      instance's `SetOpacity(realOpacity)`. The window appears at opacity 0 and fades in to the
@@ -767,8 +861,8 @@ Behaviour:
      `realOpacity`, call the instance's `SetOpacity(0)`, then put the remembered value back into
      `realOpacity`. The window stays shown and fades out; it is hidden at the end of the fade.
 5. **`Update`** (a method of the class, so it is the instance's `Update` event handler, LPA §9.1,
-   §9.4, called while wants-updates is on): let the step be (now − `currentTime`) × `fadeSpeed`,
-   and set `currentTime` to now.
+   §9.4, called while wants-updates is on): let now be the game time, let the step be
+   (now − `currentTime`) × `fadeSpeed`, and set `currentTime` to now.
    - If `currentOpacity` < `targetOpacity`: the new opacity is `currentOpacity` + step; if it
      exceeds the target, call the instance's `SetWantsUpdates(false)` and use the target.
    - Otherwise (`currentOpacity` ≥ `targetOpacity`): the new opacity is `currentOpacity` − step;
@@ -875,30 +969,38 @@ converted and other values raise). Halves round up: 2.5 gives 3, −2.5 gives �
 - for a table whose lookup finds a native `GetType` method (a shortcut object), the call of
   that method without an object raises (LPA §8.2), as in the original.
 
+Tessera reads no metatable here and raises in no other case. The original raises in more cases,
+before it compares anything: when either argument is a table with a `Constructor` function, no
+`GetType` function and no metatable, and in the other cases of K17 and K18.
+
 No other member of the original's `Turbine.Table` is provided (K1).
 
 <a id="7-7"></a>
 ### 7.7 `Turbine.Log`
 
-`Turbine.Log` is a **plain table** (Tessera rule) with no metatable, holding one level number
-and these six functions (called in colon form, so the table itself is the first argument):
+`Turbine.Log` is a **plain table** (Tessera rule) with no metatable and exactly two fields,
+both functions, called in colon form (so the table itself is the first argument):
 
 | Method | Behaviour |
 |---|---|
-| `Debug(m)`, `Information(m)`, `Warning(m)`, `Error(m)` | message levels 0, 1, 2, 3. If the log's level is ≤ the message level, write one chat line with `Turbine.Shell.WriteLine`. Otherwise do nothing. |
-| `GetLevel()`, `SetLevel(n)` | read or set the log's level; initially 0, so every message is written |
+| `Debug(m)` | write one chat line with `Turbine.Shell.WriteLine`, level label `debug` |
+| `Information(m)` | write one chat line with `Turbine.Shell.WriteLine`, level label `info` |
+
+Both always write. The original's log starts at its lowest level, at which every message is
+written, and only a plugin call of its level setter changes that; no plugin in the census makes
+that call, and Tessera's log has no level and no level setter. Arguments after `m` are ignored.
 
 It is not a class instance: no `GetType`, `IsA`, `ToString` or `GetUniqueID`, and `tostring`
-gives the stock table text. It has no name and no other members. (In the original it is an
-instance of a helper class, with a name, a format string and further members; K15. One
-distribution calls its `Debug` on an error path, §4.5.)
+gives the stock table text. It has no name, no level and no other members. (In the original it
+is an instance of a helper class, with a name, a format string, a level with methods to read and
+set it, a method for each of two further message levels, and further members; K1, K15. Of all
+these, the census reads only `Information`, in 3 distributions, and `Debug`, in 1, §4.5.)
 
 The line text is Tessera's own (Tessera rule, K7): the local time of day as `hh:mm:ss` on a
-24-hour clock (the computer's local clock), a space, the level label `debug`, `info`, `warning` or
-`error`, a colon and a space, and `tostring(m)`.
-Tessera may colour it with the markup of LPA §13.4. No plugin parses these lines (§4.5).
-`Information` writes its line as the other levels do. This matches TU; the 2010 archive raised
-an error there (H2).
+24-hour clock (the computer's local clock), a space, the level label, a colon and a space, and
+`tostring(m)`. Tessera may colour it with the markup of LPA §13.4. No plugin parses these lines
+(§4.5). `Information` writes its line as `Debug` does. This matches TU; the 2010 archive raised
+an error there (H2), so with SMP installed the 3 distributions' warning routine raises instead.
 
 ---
 
@@ -910,12 +1012,12 @@ itself.
 
 | # | Difference | Census basis |
 |---|---|---|
-| K1 | Not provided: `static_class`, `abstract_class`, `final_class`, `mixin`, `enum`, `quicksort`, `opairs`, `string.startsWith`, `string.endsWith`, `string.trim`; `Turbine.Compare`, `Event`, `Logger`, `LogLevel`, `LogManager`, `Service`, `ServiceContainer`, `Timer`, `TimerManager`, `Testing` and their import names; members of `Turbine.Table` other than `AreEqual`; members of `Turbine.Type` other than the seven of §6.8; members of `Turbine.Log` other than the six of §7.7 | §4.5: 0 distributions read them without bundling or defining them |
+| K1 | Not provided: `static_class`, `abstract_class`, `final_class`, `mixin`, `enum`, `quicksort`, `opairs`, `string.startsWith`, `string.endsWith`, `string.trim`; `Turbine.Compare`, `Event`, `Logger`, `LogLevel`, `LogManager`, `Service`, `ServiceContainer`, `Timer`, `TimerManager`, `Testing` and their import names; the import names `Turbine.Enum`, `Turbine.Mixin`, `Turbine.Quicksort`, `Turbine.String`; members of `Turbine.Table` other than `AreEqual`; members of `Turbine.Type` other than the seven of §6.8; members of `Turbine.Log` other than `Debug` and `Information` (§7.7: its level, the level getter and setter, the two further message levels and the rest) | §4.5: 0 distributions read them without bundling or defining them |
 | K2 | A plain `import "Turbine.UI.Lotro"` does not install the quickslot replacement; only `Turbine.UI.Extensions` and `Turbine.UI.Lotro.Quickslot` do | O4 |
 | K3 | No hidden timer control is created at apartment creation; no test command is registered | follows from K1 |
 | K4 | Built-in classes are built by Tessera's mechanism even after a plugin replaced `class` (§5.5) | none observed |
-| K5 | `class` rejects mixin arguments; it accepts a table with a `Constructor` function and no metatable (the original raises for the latter) | §4.3: no dependent passes either |
-| K6 | Tessera's `IsA` answers false where the original raises: when its walk reaches a base on which lookup finds no `GetType` function (a native class, a class of a helper without type objects, or a value that is not a table), and when the target is a class without a type object, whose walk in the original can end the same way (§6.7 steps 2 and 3.4). Where the base's `GetType` gives a type object that answers `GetBaseClass`, both keep walking and give the same answer | none observed (§4.7) |
+| K5 | `class` rejects mixin arguments; it accepts a table with a `Constructor` function and no metatable (the original raises for the latter, while building its type, as in K17) | §4.3: no dependent passes either |
+| K6 | Tessera's `IsA` answers false where the original raises: when its walk reaches a base on which lookup finds no `GetType` function (a native class, a class of a helper without type objects, or a value that is not a table), and when the target is a class without a type object whose type the original can build (K17), since its walk can then end the same way (§6.7 steps 2 and 3.4). Where the base's `GetType` gives a type object that answers `GetBaseClass`, both keep walking and give the same answer | none observed (§4.7) |
 | K7 | Error messages, the `Turbine.Log` line text and the default `ToString` text (§6.9) are Tessera's own; a `%` in a log message is written as is (the original's substitution can raise) | §4.4: 0 uses of `ToString`; no plugin parses either text |
 | K8 | `Turbine.UI.Lotro.Quickslot` imports the native `Turbine.UI.Lotro` itself; the original raises if that package was not imported before | — |
 | K9 | `GetUniqueID` does not touch the metatable, so it also works on a table whose metatable is protected | — |
@@ -923,9 +1025,11 @@ itself.
 | K11 | `class` returns only the class table. The original also returns the class metatable, a type-information table and the instance metatable | §4.3: every call assigns one result |
 | K12 | `Turbine.Type` is a plain table of seven functions, not a class (§6.8): it is not callable, and type objects have only those seven methods, no `GetType`, `IsA`, `ToString` or `GetUniqueID`, and the stock `tostring` text. `x:IsA(Turbine.Type)` and `x:IsA(typeObject)` raise. In the original `Turbine.Type` is a final helper class whose instances are the type objects, with further query methods and statics | §4.4: 0 uses of type objects; §4.7 |
 | K13 | A Tessera class never reports final or mixin, and there is no way to declare one final (the original's type-information table can be changed, and it has `final_class`) | §4.3, §4.5 |
-| K14 | Built-in class names are fixed (§5.5); in the original they follow the `_` rule and so can change with import order | none observed |
-| K15 | `Turbine.Debug.Table` and `Turbine.Log` are plain tables (§7.3, §7.7). In the original the first is a non-callable helper class and the second an instance of a helper class; both have `GetType`, `IsA`, `ToString`, `GetUniqueID` and a `__tostring`, and the log has a name, a format and further members | §4.4, §4.5: `Dump` used by 2, `Debug` by 1, nothing else |
+| K14 | Built-in class names are fixed (§5.5); in the original they follow the `_` rule and so can change with import order: with the user copy installed, `SimpleWindow` is unnamed when `Turbine.UI.Lotro` was not imported in that apartment before (and `Window` too when its file is imported alone), because the file's own import of that name runs the copy's `UI/Lotro/__init__.lua` first (§6.10, H15) | none observed |
+| K15 | `Turbine.Debug.Table` and `Turbine.Log` are plain tables (§7.3, §7.7). In the original the first is a non-callable helper class and the second an instance of a helper class; both have `GetType`, `IsA`, `ToString`, `GetUniqueID` and a `__tostring`, and the log has a name, a format and further members | §4.4, §4.5: `Dump` used by 2, the log's `Information` by 3 and `Debug` by 1, nothing else |
 | K16 | Tessera's `IsA` walk ends with false when a type comes round a second time; the original walks until the plugin's time limit (LPA §3.3) | none observed |
+| K17 | `IsA` with a target that is a table on which lookup finds a `Constructor` function and no `GetType` function answers false (§6.7 step 2). The original first builds a type for such a target by following `__index` links: it reads the metatable's `__index` of the target and of each next table on which lookup finds a `Constructor` function and no `GetType` function, and it **raises** when one of these tables has no metatable. Examples: a table holding only a `Constructor` function; a table whose metatable's `__index` is such a table. It does the same, and raises, for a target table without a metatable on which lookup finds a field under a name the original reserves for native objects (not reproduced, naming note). The build stops without an error of its own at a link that is not a table, at a table without a `Constructor` function, or at a metatable without `__index`; at a table on which lookup finds a `GetType` function it calls that function instead (whose own errors propagate, as in Tessera). For a native class target the result depends on the root native class: the original raises when that class has a `Constructor` function and no metatable (O2) | §4.4: plugin code calls `IsA` only on native objects or inside the never-imported copy; none observed |
+| K18 | `Turbine.Table.AreEqual` answers by the rules of §7.6 where the original raises: the original builds a type for **both** arguments, the first and then the second, before it compares anything, in the way K17 describes, so it raises when either argument is such a table, whatever the other argument is (also when the other is not a table). Examples: `AreEqual(G, {})`, `AreEqual({}, G)` and `AreEqual(1, G)` for a table `G` holding only a `Constructor` function | §4.5: the one caller compares two data tables of its own, which hold no `Constructor` function |
 
 ---
 
@@ -970,12 +1074,17 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
    false and `GetBaseClass` answers nil; let `K = class(F)`. Then `rawget(K, "IsA")` is a
    function (F has none), `K():IsA(F)` is true (the walk meets `tf` through the base), and
    `K():IsA(A)` is false. For `G` a table with only a `Constructor` function and `L = class(G)`,
-   `L():IsA(A)` and `L():IsA(G)` are false and do not raise. For a target `X` whose `GetType`
+   `L():IsA(A)`, `L():IsA(G)` and `B():IsA(G)` are false and do not raise (K17). For a target `X` whose `GetType`
    returns a table whose `IsClass` answers false and `IsMixin` true, `B():IsA(X)` is false; if
    `IsMixin` also answers false, it raises.
 10. **Names.** A file `P/Q/R.lua` that declares two classes at top level, imported as `P.Q.R`:
     both have `GetType():GetName() == "R"`. A class declared later inside a function has
-    `GetName() == nil`.
+    `GetName() == nil`. **After a nested import.** In built-in mode, with `P/Q/S.lua` (any
+    content) next to it and `P/Q/R.lua` declaring `A1 = class()`, then `import "Turbine.UI"`,
+    then `A2 = class()`, then `import "P.Q.S"`, then `A3 = class()`, imported as `P.Q.R` with no
+    one-component package imported before: `A1` and `A2` have `GetName() == "R"` (the import of
+    `Turbine.UI` runs no chunk), `A3` has `GetName() == nil`, and `getfenv(0) == _G` holds in
+    `P/Q/R.lua` after the import of `P.Q.S`.
 11. **Text.** For an instance `r` of that class, `tostring(r)` equals `instance of P.Q.R (` +
     `r:GetUniqueID()` + `)`, and `tostring(R)` equals `class P.Q.R (` + `R:GetUniqueID()` + `)`.
     For an instance `u` of an unnamed class, `tostring(u)` equals `instance (` +
@@ -987,6 +1096,11 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
     is visible and wants updates. With fade speed 5 per second, `Update` at t + 0.05 sets native
     opacity 0.25. After `SetVisible(false)` and enough updates, native visibility becomes false
     at the first tick whose step would pass below 0, and `realOpacity` keeps its earlier value.
+    **Write order.** For a `SimpleWindow` `w` with B's `GetOpacity` replaced by a function that
+    raises, and the four fields set to known values, `w:SetOpacity(0.3)` raises; afterwards `realOpacity` is 0.3,
+    `currentTime` is the game time, and `currentOpacity` and `targetOpacity` are unchanged. With
+    `Turbine.Engine.GetGameTime` replaced by a function that raises instead, `realOpacity` is the
+    new value and the other three fields are unchanged.
 14. **Quickslot.** After `import "Turbine.UI.Extensions"`, `q:SetShortcut(s)` calls
     `q:IsVisible()`, then the earlier `SetShortcut` with `s`, then `q:SetVisible(s)`, in that
     order; when `q.IsVisible` is set to a function that raises, the earlier `SetShortcut` is not
@@ -997,6 +1111,8 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
     `Dump({z = 1}, false)` writes indent 2 spaces + `1: z`.
 16. **Utilities.** `math.round(2.5) == 3`, `math.round(-2.5) == -2`;
     `Turbine.Table.AreEqual({1}, {2})` is true, `AreEqual({}, 1)` and `AreEqual(1, 1)` are false;
+    for `G` a table holding only a `Constructor` function, `AreEqual(G, {})`, `AreEqual({}, G)`
+    and `AreEqual(1, G)` are false and do not raise (K18);
     a `LerpValue` after `SetValue(10)`, `SetRate(4)`, `Update(1)` has value 4 and needs an
     update; after another `Update(2)` it has value 10 and needs none; `GetRate()` is nil, and
     after `Turbine.Animation.rate = 7` it is 7.
@@ -1022,7 +1138,27 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
     nil in both cases.
 20. **Plain tables.** `getmetatable(Turbine.Debug.Table)` and `getmetatable(Turbine.Log)` are nil;
     `tostring` of each starts with `table: `; `Turbine.Debug.Table.GetType` and
-    `Turbine.Log.GetType` are nil; `Turbine.Log:Debug("m")` writes one line ending in `debug: m`.
+    `Turbine.Log.GetType` are nil. `Turbine.Log` has exactly the two keys `Debug` and
+    `Information`; `Turbine.Log:Debug("m")` writes one line ending in `debug: m`, and
+    `Turbine.Log:Information("m")` one line ending in `info: m`.
+
+21. **Collection** (§6.13.1). Each check runs the named steps inside a function, returns, and
+    then calls `collectgarbage("collect")` several times; "gone" means a weak-keyed probe table
+    (`__mode = "k"`) that held the table as a key no longer has it.
+    1. For `D = class()`, `C = class(D)` and an instance of each, with no further link, and
+       separately with each of the links `D.child = C`, `C.GetType().owner = C`,
+       `C.GetType():GetMixins()[1] = C`, and `x = D()`, `E = class(x)`, `x.sub = E`: `D`, `C`
+       (and `x`, `E`) are gone once nothing outside the function holds them.
+    2. For `t` the type object of `C = class(B)` with `B = class()`, returned from the function
+       while `B` and `C` are not: `t:IsClass() == true`, `rawequal(t:GetClass().GetType(), t)`,
+       `t:GetBaseClass().GetType():IsClass() == true`, `t:GetMixins() == t:GetMixins()`, and
+       `t:GetClass()():IsA(t:GetBaseClass())` is true. When the function also ran
+       `setmetatable(C, nil)` before returning, the same answers hold except the last (`C` is
+       then not callable); `GetBaseClass` still gives the base class. After
+       `t = nil` and the collections, `C` and `B` are gone.
+    3. With `C` held and a weak-keyed probe holding `C.GetType()` only as a key: after the
+       collections the probe is empty, and `C.GetType():GetClass() == C` still holds. With
+       `t = C.GetType()` held instead: after the collections `rawequal(C.GetType(), t)`.
 
 ---
 
@@ -1034,7 +1170,10 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
    → The apartment is in built-in mode. `class` exists from creation. The subclass's
    metatable `__index` is the native class, the instance is bound by the native constructor its
    own constructor calls, and `tostring(window)` gives `instance of Author.Plugin.Main (…)` when
-   the file was imported as `Author.Plugin.Main`.
+   the file was imported as `Author.Plugin.Main` and declares the subclass before any of its
+   imports runs a disk chunk (imports of native-only names such as `Turbine.UI.Lotro` do not
+   count in built-in mode). If the file first imports a file of its own plugin, the subclass is
+   unnamed and the text is `instance (…)` (§6.10).
 2. **A plugin using the fading window.** It imports `Turbine.UI.Extensions`, creates
    `Turbine.UI.Extensions.SimpleWindow()`, sets size and position, and calls `SetVisible(true)`.
    → `Turbine.UI` and `Turbine.UI.Lotro` are present after the import. The window appears at
@@ -1096,6 +1235,14 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
 > That would change quickslot behaviour for plugins that never asked for the package. Until
 > decided: only on the imports of §7.2 (K2).
 
+> **OPEN (O6, implementation M5, clean-room implementer 2026-10-08):** the spec does not say
+> what happens when a native class the built-in package builds on is missing when its name is
+> installed (`Turbine.UI.Window` for `SimpleWindow`, `Turbine.UI.Lotro.GoldWindow` for
+> `Window`, `Turbine.UI.Lotro.Quickslot` for §7.2), for example while the UI layer is
+> incomplete. The implementation raises a catchable error from that install, so the import
+> fails (for `Turbine.UI.Extensions`, the whole folder import) and the run-once record is
+> undone, as for a disk file that indexes a missing table.
+
 ---
 
 <a id="12"></a>
@@ -1119,3 +1266,5 @@ Each can be checked with a synthetic plugin tree and Tessera's stub or real nati
 |---|---|
 | 2026-10-06 | First version (Review), for decision 0016. Census of the sample-package names and import paths used by the 143 distributions (§4), the user-copy test and built-in installation (§5), the behaviour of `class` (§6) and of the fading windows, quickslot replacement, table dump, interpolator, `math.round`, `Turbine.Table.AreEqual` and `Turbine.Log` (§7), known differences (§8), 16 invariants, 7 worked examples, 4 OPEN items. |
 | 2026-10-06 | Revision for review items R1–R5 (status stays Review). **R1:** naming note now lists each kept identifier with its interop path; the type-information table and its field names, the type-object methods without a path, the original log name and the original `ToString` wording are dropped: `class` returns one value (§6.2, K11), type objects answer seven methods (§6.8), Tessera's own `ToString` text (§6.9, K7) and log line (§7.7). New §4.7 counts the copies of the original helper that plugins carry (H12). **R2:** fixed full names, base, `GetName` and text of the built-in classes (§5.5, K14, H13); built-in installs run the namespace steps of LPA §7.2, so `Turbine`, `Turbine.Debug`, `Turbine.Animation`, `Turbine.UI.Extensions` and (after the quickslot import) `Turbine.UI.Lotro` fall back to the globals (§5.3). **R3:** `Turbine.Type` is a plain, non-callable table of the seven methods; type objects have stock `tostring`; consequences for `class` and `IsA` (§6.8, K12). **R4:** the quickslot replacement queries `IsVisible` first (§7.2); `Turbine.Debug.Table` and `Turbine.Log` are plain tables (§7.3, §7.7, K15); `IsA` with a mixin target reproduces the original (§6.7 step 4); `Dump` treats indent `false` as absent (§7.3). **R5:** §6.7 rewritten as a walk over type-object queries that continues through other helpers' classes, K6 reworded, cycle guard K16; §3.1 terms split into helper class, Tessera class, other helper's class and type object; new §6.13 class registry (H14). Invariants 4, 8–11, 14–16 revised, 17–20 added; worked examples 1 and 5 revised; H5 and the RUN source widened. |
+| 2026-10-06 | Second revision, for review items S1–S4 (status stays Review). **S1:** a recount found `Turbine.Log` read by 3 distributions, not 1: `Information` in all 3 (a decompressor's warning routine) and `Debug` in 1 (§4.5, §4.6, H4). `Turbine.Log` now has exactly `Debug` and `Information`, which always write; its level, level getter and setter and the two other message levels are dropped (§7.7, K1, K15, invariant 20, naming note). **S2:** new naming-note row for the original's names that Tessera does not provide, which the spec names only to give census counts and to state their absence; `Turbine.Utils` moved there from the list of reproduced names. **S3:** new K17 (`IsA`) and K18 (`AreEqual`) describe where the original raises while building a type for a table with a `Constructor` function and no metatable; Tessera keeps answering false, without reading metatables (§6.7 step 2, §7.6, K5, K6, invariants 9 and 16). **S4:** §7.1 step 3 fixes the order of the writes of `SetOpacity` and the state left when the game-time read or B's `GetOpacity` raises; "the game time" defined; invariant 13 extended. H7, H8 and the RUN source widened. |
+| 2026-10-08 | Third revision, for review items T1–T2 (status stays Review). **T1** (implementer OPEN of §6.13): ruling for Tessera's Lua 5.1 runtime, which has no ephemeron tables. New §6.13.1: a type object keeps its class, the class's base and its mixin list alive; a class keeps its base but not its type object, so an unheld type object is collected and the next `GetType` makes a new one; otherwise the registry keeps nothing alive; a class whose type object is reachable from the class, its base or its mixin list may stay until the apartment closes. §6.8 now says "current type object" instead of "the same type object on every call", §6.7 states why identity still holds, §6.13 entries restated and its OPEN removed. New invariant 21 (collection); provenance H16. **T2** (O5): LPA §7.2 step 4 (BIN, its row P8) restores the real global table after every import that runs a disk chunk. §6.10 rewritten: a class declared after such an import in a file's top-level run reads `_` of the real global table and is normally unnamed (it does not take the other package's name); imports that run no chunk leave `getfenv(0)` alone; the real global table has `_` only after a one-component file package or a plugin assignment. §5.3 says when the thread's global table is `T` during a built-in install. §5.5 and K14 add the consequence for the original's `SimpleWindow` and `Window` names; invariant 10 and worked example 1 extended; O5 removed; RUN source extended by a fourth run whose stub follows LPA §7.2 step 4, provenance H15. O6 unchanged. |

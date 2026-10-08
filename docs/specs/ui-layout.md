@@ -690,6 +690,8 @@ Then each draws a uniform random number *r* in [0, 1] and acts only if *r* ≤ *
 
 > **OPEN:** the exact index arithmetic of Jump (the client stores *target* − 1 as the current
 > position before resuming). No item uses it.
+> Implementer note (2026-10-07): until answered, `tessera-ui` continues the list at index
+> *target* (clamped to the list's end) and returns busy.
 
 <a id="s6-9"></a>
 ### 6.9 Sound, Movie, Hit mask (kinds 11, 1, 7)
@@ -701,6 +703,10 @@ Then each draws a uniform random number *r* in [0, 1] and acts only if *r* ≤ *
   DID (0 in both items) or by the file path (relative to the install directory; Bink video files
   in this install). With `fit_to_screen` = 1 the video is scaled to the screen with its aspect
   ratio kept and centred. Result: busy until the video ends, then done.
+  > **OPEN:** (clean-room implementer, 2026-10-07) Tessera M5 plays no video (decision 0015
+  > §1.7: Movie items stay empty in M5). `tessera-ui` reports the movie to the client after
+  > creation has finished and treats the item as done at once, so the rest of the list does
+  > not wait for a video that is never played. Revisit when video playback exists.
 - **Hit mask** (unused in data): set an image whose pixels decide where the element can be hit
   by the pointer (§9.3); DID 0 removes the mask. Result: done.
 
@@ -1628,6 +1634,15 @@ Confirmed on every record unless marked.
 - Reject a record whose payload does not end exactly after the last element, any bool8 above 1,
   any unknown media kind, and any count that the remaining bytes cannot hold (§4.7).
 - A key/ID mismatch (UL2, UL3, UL4) never occurs; report it as malformed.
+
+> **OPEN:** (clean-room implementation, 2026-10-07) UL8 and §4.2 require unique keys within a
+> keyed table, but this section does not say what a reader does when a table repeats a key
+> (two top-level elements, two siblings or two states with the same key): reject the record,
+> or keep it, and if kept, which entry the client's lookups find (the first stored, the last
+> stored, or one that replaced the other while the table was read). Base references (§5.6,
+> §7.1) look up top-level elements by key, so the answer decides which element a based
+> element inherits from. `tessera-formats` decodes such a record, reports the repetition as a
+> UL8 issue, and its lookups return the first stored entry until this is answered.
 - Resolution (§7) must detect cycles and missing bases without recursion limits being reached
   by hostile chains; a depth limit of 32 is ample (observed 3).
 - Layout arithmetic (§8) must not overflow: use 64-bit intermediates or saturating 32-bit
@@ -1651,6 +1666,11 @@ Confirmed on every record unless marked.
 
 So every layout record decodes, and the only resolution failures are the 3 dangling base
 references.
+
+> **OPEN:** (implementer, 2026-10-07) the table has no row for a base chain that exceeds the
+> §12.1 depth limit (32) without repeating a pair. `tessera-formats` (`ui_layout::base_chain`)
+> counts such a chain under "Base chain cycle", since §12.1 groups both as hostile chains; no
+> chain in this install comes close (depth ≤ 3). Confirm or give it its own row.
 
 ---
 
@@ -1874,6 +1894,11 @@ Every item has an in-section `> **OPEN:**` callout; this list only collects them
     overlay rule (§9.6.3; Tessera rule from decision 0015).
 21. The canvas size of a native Tile surface: the layout box (decision 0015 §2.1) against the
     base image or a code-set size (`lua-plugin-api.md` §20, BIN) (§8.4; not relevant to M5).
+22. What the client does with a keyed table that repeats a key: reject, or keep and find the
+    first, the last or a replaced entry (§12.1; added by the clean-room implementation,
+    2026-10-07; never occurs in the install).
+23. Movie items while Tessera plays no video (§6.9; added by the clean-room implementation,
+    2026-10-07; Tessera: done at once).
 
 None of the owner-observation items O1–O17 concerns UI layouts.
 
@@ -2062,6 +2087,32 @@ their sizes always and their positions only when the original has no saved locat
 > buttons that the layout hides (P6, §17.4), hides any of the six others, or moves the visible
 > buttons to close the gap; not traced. None of these blocks drawing the panels' art, geometry
 > and text.
+
+> **OPEN (implementation, M5 clean room, 2026-10-08):** §17.4 names sandbox data that this spec
+> does not tie to elements, so `apps/client` (`panels`) cannot place it: (a) which elements of
+> P4, P5 and P13 show the name and the level (and which property each `PropertyDisplay`
+> shows); (b) which P3 menu button opens which panel; (c) which P12 elements are the load,
+> unload and refresh buttons and the plugin list. Tessera's rules until the facts are added:
+> (a) no name or level is filled (the layout's own text and art only); (b) the client can bind
+> a button by element ID to a panel (`NativePanels::bind_button`), none is bound by default;
+> (c) the plugin rows go into the first Tree below the P12 root, a click selects a row and a
+> double-click loads or unloads it.
+
+> **OPEN (implementation, M5 clean room, 2026-10-08, continued):** (d) §17.4 P7 says Tessera
+> fills the option pages with its own settings "using those templates", and `ui-widgets.md` §13
+> P7-A describes a slider template and a check-box template of the `options` layout, but no
+> spec names the templates, the pages or the pages' Trees by element-ID label, nor which Tessera
+> settings go on which page. Tessera's rule until the facts are added: P7 opens with the
+> layout's own content (the Graphics tab highlighted, every page's Tree empty), so checklist
+> rows P7-A and P7-T that expect filled pages wait for this item and are not judged as failing.
+> (e) `ui-widgets.md` §13 OPEN (P12) asks for the about tab highlighted and the options pane
+> hidden, but the two info-tab Buttons and the two panes have no element-ID labels in the
+> specs, so they cannot be found; P12 keeps the layout's states until they are named. (f) The
+> second table of §17.2 does not define its "Text elements" and "States" columns. Tessera's
+> census (`apps/client` `panels::census`) counts resolved elements whose element type is the
+> engine type `Text`, and the state blocks of the resolved elements summed; both reproduce
+> every value of the table on the owner's install (2026-10-08). Confirm or correct the
+> definitions.
 
 ---
 

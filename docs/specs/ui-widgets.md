@@ -650,6 +650,13 @@ With *V* the view size on the axis and *n* the number of columns (horizontal) or
 > above (UB §5.2 handles duplicates). The net effect, wheel commands only while the pointer is
 > over the scrollable's subtree or a scroll bar (§6.9), is the same under either reading.
 
+> **OPEN:** (clean-room implementer, 2026-10-07) whether the push of this section and of §6.9
+> runs the ancestor walk of UB §5.2 step 2 (the hovered element's ancestors pushing their own
+> maps one priority lower each) or adds the single entry. No layout element sets
+> `UICore_Element_InputMapID`, so the two differ only for maps given by code. `tessera-ui`
+> adds the single entry (map, hovered element, 0) and pops only that pair, so a hover never
+> leaves or removes entries of its ancestors.
+
 **Tessera input mapping** (DEC: IB D5, D7). The pushes of this section and of §6.9 reach
 Tessera's input mapper as entries of the Tessera context `ui.scroll_mouse` (owner = the
 element the map was pushed for, priority 0), which binds `WheelUp`/`WheelDown` to the actions
@@ -1179,6 +1186,13 @@ down the child's subtree (a filtered-out node stays hidden; filtering is OPEN, �
 can expand or collapse every node at once (the same steps from the root, applied to every
 level).
 
+> **OPEN:** what happens to a node's icon part and child nodes when its entry is removed from
+> the tree, destroyed or moved to another parent (not traced). Tessera rule (implementation,
+> M5): the removed node's icon part is destroyed with it; its child nodes move up to the
+> nearest ancestor node that remains (top-level when none does) and are shown exactly when
+> that new parent is expanded and visible (a top-level node is shown); adding an entry that
+> already has a node adds no second node or icon.
+
 <a id="s9-3"></a>
 ### 9.3 Indentation and placement
 
@@ -1664,6 +1678,8 @@ numbering).
 16. How a viewport that owns a surface of its own orders its 3D scene against its own media
     and its children (§12; Tessera choice: the scene is a nested entry of the element's own
     surface between its own content and its children).
+17. Whether the hover push of `ScrollableControls_Mouse` runs the ancestor walk of UB §5.2
+    (§5.7; added by the clean-room implementation, 2026-10-07; Tessera: the single entry).
 
 Outside this spec: the Text class's own scrolling (Text is a Scrollable, §3.2, but its line
 layout belongs to FO). Unused in data and so not pursued: any reader of

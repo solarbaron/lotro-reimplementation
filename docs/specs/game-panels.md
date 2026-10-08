@@ -302,6 +302,9 @@ true.
 | 13 | `UI_HideWhenField_PropertyCompare_Value` and `…_Operator` | the comparison below is true |
 | 14 | `UI_HideWhenField_HideWhenNotOnWarsteed` (only tested when 13 is absent) | true and the player is not on a war-steed |
 
+> **OPEN (implementation, M5 clean room):** row 12's "invalid DID" value is not stated.
+> `tessera-ui` (`game::hidewhen`) treats DID 0 as invalid.
+
 **Comparison (row 13).** The value property is an array whose **first element** is a property
 *P* with a value *A* (the data value). The operator (enum, default 0) selects a test of *A*
 against *B*, the player's value of *P*. If the player lacks *P*, *B* is *P*'s default from the
@@ -372,6 +375,10 @@ a fallback Field that draws both would overlay two level numbers.
 **Tessera rules:** pip displays stay hidden (UL §17.4 P3 agrees). The page changer is shown, with
 the page indicator showing Tessera's current page number (1), because the original's main toolbar
 shows page arrows in normal play (to be confirmed by the owner's screenshot, checklist P3-A).
+
+> **OPEN (implementation, M5 clean room):** which element below `ToolbarQuickslotPageChanger` is
+> the page indicator; no label is given. `tessera-ui` (`game::simple`) sets the page number on
+> the first Text element below the changer in depth-first order.
 
 ---
 
@@ -478,6 +485,11 @@ Let *L* = the player's `Volume_ContentLayer` (enum; 0 when absent). For each blo
 2. Each item gets its block's image with **draw mode 5** (UL §9.6.1, Mix colour: keeps the
    destination alpha), replacing the item's media; a block with no image clears the item's image.
    The block's `UI_Map_GameMap` struct is also applied to the item as properties.
+
+> **OPEN (implementation, M5 clean room):** what "applied to the item as properties" means
+> (the struct set as one property `UI_Map_GameMap` on the item, or each of its fields set as a
+> property of the item), and whether anything reads them. `tessera-ui` (`game::radar`) keeps
+> the decoded struct in the radar and sets no item property; nothing it draws depends on it.
 3. In the list box, item *i* sits at column *i* mod 3 and row *i* div 3, each 200 × 200 pixels:
    item (*col*, *row*) covers list pixels [200·*col*, 200·*col* + 200) × [200·*row*, 200·*row* + 200).
 
@@ -502,6 +514,12 @@ whose set holds `UI_Map_GameMap`; the landblock-info cells name their dungeon by
 
 **Tessera rule (Probable original rule):** indoors, take the cell's `Dungeon_DID`, read the
 dungeon's `Dungeon_MapData` and use its `UI_Map_GameMap`. If the dungeon has none, show no map.
+
+> **OPEN (implementation, M5 clean room):** reading the records may take frames. While the
+> lookup for an interior position is pending, `tessera-ui` (`game::radar`) keeps the indoor
+> map shown only when the last answered lookup was for the same landblock; otherwise it
+> clears `MinimapMapImage`'s image (and leaves the map where it is) until the lookup answers.
+> Leaving an interior clears the image as well.
 
 > **OPEN:** the game-script function's rule (for example whether it walks
 > `Dungeon_ParentDungeon` or checks quest state) is not traced (script code).
@@ -819,6 +837,10 @@ Shape: 227 nodes, depth 0–5 (1, 6, 72, 108, 35, 5 nodes per depth); the root's
 **Tessera rule:** to show node *N*, draw *N*'s `UI_Map_MapImage` as the image of *N*'s active
 element (this also covers the one element without an Image item).
 
+> **OPEN (implementation, M5 clean room):** the draw mode for that image is not stated.
+> `tessera-ui` (`game::worldmap`) uses the draw mode of the element's own Image item, or draw
+> mode 2 (Normal) when it has none.
+
 > **OPEN:** what a click on a `UI_Map_Child_Map` button does (G36, Probable: show the node whose
 > active element the button names; the world-map window's message handler was not read for this),
 > and what the other 3 of the 773 buttons do: each names a top-level element of the `map` layout
@@ -850,6 +872,13 @@ dungeon map of §8.5.1 in the same window (image and georeference from its `UI_M
 > that contains the position by its pixel bounds, and how it draws a dungeon map in the
 > 1024 × 768 window (dungeon images are larger, §8.5.2; scrolling or scaling not traced).
 
+> **OPEN (implementation, M5 clean room):** until the item above is settled, `tessera-ui`
+> (`game::worldmap`) draws the dungeon map on an element of its own (no layout entry), placed
+> like a node's active element (the first child of `MapBackground`), at (0, 0), unscaled,
+> resized to the image's pixel size, with draw mode 2 (Normal); there is no scrolling. When
+> the dungeon has no map, or while its lookup is pending, it shows the outdoor choice above;
+> a pending lookup is retried on each position update and replaces the node when it answers.
+
 <a id="s9-5"></a>
 ### 9.5 Composing the panel (Tessera rule)
 
@@ -864,6 +893,13 @@ the player marker with `MinimapPlayerMarker`'s image (§8.6.3) at the player's p
 
 > **OPEN:** the original's attachment points, marker art and z-order on the world map; settle with
 > owner screenshots (checklist P10-A).
+
+> **OPEN (implementation, M5 clean room):** `tessera-ui` (`game::worldmap`) draws the marker
+> on an element of its own (no layout entry) with the image, draw mode and size of the first
+> attached minimap's `MinimapPlayerMarker` (no marker without one). It is the **last** child
+> of `MapBackground` (over the map and its overlays), centred on the player's pixel of the
+> shown map (offset by that map element's position), turned by the heading as in §8.6.3
+> (object mode 1), and hidden while the shown map has no georeference.
 
 ---
 

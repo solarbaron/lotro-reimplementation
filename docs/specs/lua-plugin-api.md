@@ -784,6 +784,14 @@ Effects implementers must reproduce:
 - Assigning a bare name always writes into `T`, never into the real globals; code reaches the
   real globals through `_G`.
 
+> **OPEN (implementation, M5, `crates/plugins`):** two details of the resolution are not
+> stated here and the M5 host chose: (1) the native registry is matched by the exact name
+> (`import "turbine.ui"` has no native part); (2) the namespace path is walked with raw
+> table access, so a namespace whose metatable falls back to the globals (after an import,
+> step 5) does not lend a global table of the same name as a namespace. Also, when the disk
+> part of `import "Turbine"` fails at apartment creation (`plugin-runtime.md` §5.1 step 5),
+> the M5 host reports the error and keeps the apartment with the native part.
+
 <a id="7-3"></a>
 ### 7.3 Re-import
 
@@ -849,6 +857,20 @@ file again. Tessera: key the record by the name as passed.
   table while plugin code holds a reference (BIN, structure observed; the cache key was not
   traced). Tessera: weak-valued map from native identity to table.
 - `obj:IsA(C)` is true when `C` is the object's class or one of its bases, native or Lua.
+
+> **OPEN:** (clean-room implementer, 2026-10-08) when the original destroys a control that
+> plugin code no longer references (§8.2 keeps identity, not lifetime). Tessera rule
+> (`tessera-plugins` UI layer): a control stays alive while plugin code references it,
+> while it is a child, list item or tree node of a live control, while it is a shown
+> top-level window, or while it is subscribed to `Update` or the key broadcast; an open
+> context menu stays alive with its items. Otherwise it is destroyed after its table is
+> collected, together with the descendants collected with it; a descendant whose table is
+> still alive (referenced, or a broadcast subscriber) is detached and lives on without a
+> parent. Limitation (revised 2026-10-08 after review): a parent keeps its children's
+> tables through a weak-keyed table, and Lua 5.1 has no ephemeron tables, so a hidden
+> window that plugin code dropped is kept until unload when a descendant's table refers back
+> to it (for example a handler closure that captures the window). Tessera bounds: at most
+> 65,536 UI objects and 64 MiB of control text per apartment.
 
 <a id="8-3"></a>
 ### 8.3 Subclassing from Lua
@@ -1203,6 +1225,16 @@ validation errors below are raised as Lua errors in the caller.
 So the common pattern `local v = Turbine.PluginData.Load(scope, key)` works only during
 loading; at any other time it raises an error.
 
+> **OPEN (implementation, M5, `crates/plugins`, 2026-10-08):** steps 1 and 2 read the file
+> at call time, on the thread that runs plugin code (the main thread), up to the 16 MiB data
+> cap; `docs/ARCHITECTURE.md` §21 lists no exception for this read (its exceptions (a)–(c)
+> are the image header probe, the writes and flush of a closing state, and `import` source
+> reads). Spec owner to decide: add a §21 exception (d) for `PluginData.Load` reads, or allow
+> the asynchronous form (step 2) to read on a worker, since its handler runs later anyway.
+> Tessera until then: reads at call time as stated here (the latest queued `Save` of the
+> file, when one is not yet on disk, is returned without a read), charging the bytes read and
+> parsed to the caller's instruction budget (§3.3).
+
 **`PluginData.Save(scope, key, data [, onDone])`**
 
 1. Validate the key and scope; build the path (this fails, with an error, when the account,
@@ -1313,6 +1345,12 @@ integers, other numbers with 17 significant digits, always `.` as decimal separa
 sorted (numbers ascending first, then strings bytewise) for stable diffs. Files Tessera
 writes are therefore readable by the original.
 
+> **OPEN (implementation, M5):** the comma separator "after `=`" is ambiguous with the
+> entry separator (`["a"] = 1,5` could be a keyed field and a positional item). The M5
+> reader takes it as a decimal only when the numeral is all digits, a `,` and digits
+> follow, and the next token ends the field (`,`, `;`, `}` or `]`), which is how a
+> comma-locale writer's output always looks (six decimals, never positional items).
+
 <a id="10-5"></a>
 ### 10.5 What can be saved
 
@@ -1326,6 +1364,16 @@ Booleans, numbers, strings, nil and tables of those (BIN):
   simply shared by two entries — is written as `nil` the second time (the entry stays, with
   value nil, and disappears on reload).
 - Metatables are not saved.
+
+> **OPEN (implementation, M5):** two cases are not stated above. A boolean table key
+> (written `[true] = …` by the original, which reads back) is skipped by the M5 host,
+> whose value model keeps number and string keys only. A NaN or infinite value is written
+> as `nil` (the original writes the runtime's text, which reads back as nil or not at all),
+> and an entry with an infinite number key is skipped, so the file stays readable.
+> Tessera bounds of the M5 host: at most 1,024 queued plugin-data items per apartment and
+> 256 MiB of serialized data waiting to be written; beyond them `Save` and `Load` raise an
+> error. A later `Save` of a file that is still queued replaces the queued bytes and adds
+> its `onDone` to the queued write (per-key order and call order of the callbacks kept).
 
 <a id="10-6"></a>
 ### 10.6 Timing
@@ -1399,6 +1447,11 @@ Registrations of an apartment are removed when it unloads (§6.3).
 > `WriteLine` and never re-entrantly: not to an apartment in the line's skip set (§9.6;
 > the interim Tessera rule of the §11.3 OPEN on re-entrancy, pending a revision of decision
 > 0014).
+
+> **Note (implementation, M5):** the M5 host cuts a `WriteLine` text longer than 4,096
+> bytes at a character boundary (a Tessera bound on chat lines), and keeps at most 256
+> chat lines waiting for `Received` delivery; further lines are shown but not delivered to
+> plugins (logged).
 
 <a id="11-2"></a>
 ### 11.2 `Turbine.ShellCommand`
@@ -1691,6 +1744,18 @@ and check box (§14.2.2).
     covers `n` units.
   > **OPEN:** whether the end of a selection that runs past the text is clamped by the text
   > element. Tessera: clamp the end to the text length.
+  > **OPEN:** (clean-room implementer, 2026-10-08) `tessera-ui` exposes no caret or
+  > selection of a text element, so the plugin layer cannot read "the text element's start"
+  > nor show a selection set by `SetSelection*`. Tessera, until the UI offers a selection
+  > API: the layer keeps its own selection; after each user edit of a text box it puts the
+  > caret (start, length 0) at the end of the edited span, so `GetSelectionStart` and
+  > `InsertText` follow typing, but not caret moves made without an edit; `SetSelection*`
+  > changes only the layer's selection (no visible caret or highlight).
+
+> **OPEN:** (clean-room implementer, 2026-10-08) the value `IsMultiline()` reports for a
+> new label, and whether the label's text element wraps before `SetMultiline` is called.
+> Tessera: reports true and writes `UICore_Text_one_line` only when `SetMultiline` is
+> called.
 
 <a id="13-5"></a>
 ### 13.5 `TextBox` (extends `Label`)
@@ -1708,6 +1773,14 @@ notification, and fires `MouseDown`/`MouseUp`/`MouseClick` independently by the 
 §13.12 (BIN). > **OPEN:** which mouse buttons (and keys) make the native button report
 "activated", and whether a disabled plugin button still does. Tessera: the left button, on
 release over the button, only when enabled.
+> **OPEN:** (clean-room implementer, 2026-10-07) the order of `Click` and `MouseClick` for one
+> left click on a plugin button. With the delivery of §9.7 and `ui-behaviour.md` §4.6, the
+> button reacts to its own `Element_mouse_release` notification, so its activation is queued
+> while the release is delivered and runs before the click notification that the release
+> step posts afterwards: `tessera-ui` gives `MouseDown`, `MouseUp`, `Click`, `MouseClick`.
+> Whether the native button reacts to the release notification or to the input before it was
+> not traced.
+
 `CheckBox`: `IsChecked/SetChecked(b)`, `GetCheckAlignment/SetCheckAlignment(ContentAlignment)`;
 events `CheckedChanged`, `EnabledChanged`.
 
@@ -1744,6 +1817,28 @@ events `CheckedChanged`, `EnabledChanged`.
   `ExpandAll`, `CollapseAll`, `IsExpanded/SetExpanded`, `IsSelected`; events
   `SelectedNodeChanged` (view), `SelectedChanged` (node). (`TreeNode` has no
   `EnsureVisible` in this build.)
+
+> **OPEN:** (clean-room implementer, 2026-10-08) what `ControlList:Insert(i, c)` and
+> `Set(i, c)` do to the child order of the control (where `c` goes among the siblings, and
+> how that interacts with `ZOrder`). Tessera: both re-parent `c` as the last child (Set
+> first detaches the child at `i`), so `Get(i)` is generally not `c` afterwards;
+> `tessera-ui` has no call that inserts a child at a sibling position.
+
+> **OPEN:** (clean-room implementer, 2026-10-08) how the plugin `ListBox` maps its members
+> onto the list layout, and its defaults. Tessera rule: the layout of `ui-widgets.md`
+> §8.3; `Orientation.Horizontal` is the row-first fill; `SetMaxItemsPerLine(n)` (n > 0) is
+> the items per row (horizontal) or per column (vertical), otherwise `SetMaxColumns` /
+> `SetMaxRows` give them; `GetOrientation()` of a new list box is `Vertical`; a left press
+> on an item (or a control inside it) selects it with `SelectedIndexChanged`; the wheel
+> scrolls by 20 pixels, or by the bound scroll bar's small change; `ItemAdded`,
+> `ItemRemoved`, `SelectedIndexChanged` and `SelectedNodeChanged` go through the queue of
+> §9.7. Trees: one column, nodes indented by `GetIndentationWidth()` (20 for a new tree)
+> per level, a press selects and toggles a node (`ui-widgets.md` §9.4), filter and sort
+> functions run on `Refresh`, `SetFilter` and `SetSortMethod`. Scroll bars: a new bar's
+> `GetOrientation()` is `Horizontal` (0); the layer places the decrement button at the
+> start, the increment button at the end and sizes the thumb along the track by large
+> change ÷ (maximum − minimum), at least 8 pixels; a press on the track pages by the large
+> change, the arrow buttons and the wheel step by the small change.
 
 <a id="13-8"></a>
 ### 13.8 Images (P42)
@@ -1827,6 +1922,12 @@ byte/255 fails equality tests that plugins may make against `Color` fields.
   shows at a time; any user input outside the open menu closes it.
   `MenuItem(text [, enabled [, checked]])`: `Get/SetText`, `IsEnabled/SetEnabled`,
   `IsChecked/SetChecked`, `GetItems()` (sub-menu), event `Click`.
+  > **OPEN:** (clean-room implementer, 2026-10-08) the look and metrics of an open plugin
+  > context menu, how a sub-menu opens (hover or click), and whether a disabled item's
+  > `Click` can fire. Tessera rule: a popup window of rows 20 pixels high in neutral art,
+  > the width estimated from the text, check marks drawn as a prefix; a click opens a
+  > sub-menu beside its row; a disabled item does nothing; the popup is activated, so a
+  > press anywhere outside the open popups closes them.
 - Enums `BlendMode`, `ContentAlignment`, `EdgeAttachmentType`, `FontStyle`, `MouseButton`,
   `Orientation`, `HorizontalLayout`, `VerticalLayout`: Appendix A.
 
@@ -2484,6 +2585,13 @@ the value from the element's layout (game-styled scaled windows, §14.2.1), othe
 | 2 Tile | yes | the size of the control's base image (or a size set by client code) when the surface is created | If either side of that size is not a power of two, the client writes a diagnostic and uses mode 3 instead. How the canvas is repeated over the rectangle: `ui-layout.md` §8.4 OPEN. |
 | 3 CanvasResize | yes | follows the control's size | Drawn 1:1 as its own layer (Probable). |
 | 4 and other values | yes (any non-zero value) | the control's size; the surface is created with the value as given (the creation step special-cases only 2) | Stored and returned; no label in the data enum; any other effect not traced. |
+
+> **OPEN:** (clean-room implementer, 2026-10-07) what `GetSize()` returns after `SetSize` on a
+> control in mode 1. By `ui-behaviour.md` §9.2.1 a Stretch element resize keeps the layout
+> box and changes the scale, so `tessera-ui` keeps reporting the layout-box size (the size at
+> the surface's creation) while the control is drawn and hit-tested on the scaled displayed
+> box, trunc((size + 1) × scale − 1) per axis (for example 101 for a 50-pixel control resized
+> to 100). Whether the plugin layer reports the requested size instead was not traced.
 
 Community descriptions (S3 stubs; Reported, kept for comparison): 0 = no scaling, cropped or
 tiled and clipped by the parent; 1 = scaled by the ratio of the size when the mode was set
@@ -3144,6 +3252,14 @@ P46) unless marked.
   shortcut; this is the only way a plugin control causes a game action (§3.5).
 - `Turbine.UI.Lotro.DragDropInfo` (extends `Turbine.UI.DragDropInfo`): `GetShortcut()`.
 
+> **OPEN:** (clean-room implementer, 2026-10-08) which shortcuts `SetShortcut` calls invalid
+> (BIN says only that an invalid one raises), what `Shortcut(item)` stores, the default of
+> `IsUseOnRightClick()`, and which mouse buttons activate a quickslot. Tessera: only a value
+> that is not a `Shortcut` object raises; `Shortcut(item)` stores type `Item` with empty
+> data; `IsUseOnRightClick()` is false for a new quickslot; a left click activates, a right
+> click only with `SetUseOnRightClick(true)`; `Lotro.DragDropInfo:GetShortcut()` returns
+> the drag source's shortcut when the source is a plugin quickslot, otherwise nil.
+
 ---
 
 ## 15. Gameplay views (`Turbine.Gameplay`)
@@ -3782,6 +3898,10 @@ review added four more, each recording an interim Tessera rule where a decision 
 silent or not yet revised: when the frame clock steps (§3.3), blocking writes at unload
 (§6.3), the `Received` skip set (§11.3, moved out of the body text) and the clip chain of
 mode-0 child windows (§13.18, likewise).
+
+The clean-room implementation of `tessera-ui` (2026-10-07) added two callouts: the order of
+`Click` and `MouseClick` on a plugin button (§13.6) and what `GetSize()` reports for a
+control in stretch mode 1 after `SetSize` (§13.18).
 
 ---
 

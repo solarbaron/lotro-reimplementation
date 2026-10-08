@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): Accepted |
+| **Last updated** | 2026-10-06 |
 | **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11–§12: Spec writer (dirty room) |
 | **Reviewer** | §11: Claude review session (spec-writer agent) |
 | **Review record** | §11: Claude review session (spec-writer agent), 2026-10-05: changes requested (no-class LOD default contradicts `mesh.md` §8.5 without evidence; *G* step 3 condition incomplete; type 2–4 camera bodies lack offset tables; inline unknowns without OPEN callouts; provenance gaps). Re-review 2026-10-05, Claude review session (spec-writer agent): **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise, each with a Tessera Decision, non-blocking). Re-review spot checks: all 11 camera-state records re-decoded with the §11.5.3 tables (types 2, 3, 4 to the last byte; body offsets 94 and 95 zero in all four type-1 records); W21 census re-derived with an independent probe over all 2,380,699 Physics SEDs (81,425 / 333,933 / 38,849 / 1,665,106 / 12,993 / 248,393; instance and own set never disagree; 2,802 distinct objects without a class); 607 of 7,625 descriptors find a class via the parent chain; no descriptor holds `Entity_Camera_ForceUnderwater`; the §11.9 `Render_FarViewDistance` buckets (384,355 Physics SEDs); BIN (same build, d22363eb9aff0fb5): the render component's initial values 200, 60, 16, 80, 1000, 1000, 1100, −1 and `Render_LODClass` in its watch list. Non-blocking notes for a later revision: the untraced correspondence of the component's last two initial values to `d6`/`d7` (§11.4 step 4) deserves its own OPEN callout; the change log lacks a row for the repair round (W20–W26). |
@@ -109,8 +109,18 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 - Walk mode: the `tessera-input` walk controller on terrain heights, a third-person camera
   7 m behind the head (wheel zooms 1.5–60 m), kept 0.8 m above the terrain and then aimed at
   the head. Fly mode: the free-fly controller (wheel scales its speed). `Ctrl+F` toggles,
-  F3 toggles HUD details, F12 saves a screenshot to `<data dir>/screenshots/`, Escape quits.
+  F3 toggles HUD details, F12 saves a screenshot to `<data dir>/screenshots/`, Escape quits
+  (without a game UI attached; see the next item).
   Bindings come from Tessera's keymap file over the built-in defaults (`keymap.md` §6).
+- **Escape with a game UI attached** (M5; decision 0014, Consequences "Escape with a UI
+  attached", and its owners list). "Escape quits" holds only while no game UI is attached
+  (the walker of M3 and M4). With a UI attached, Escape gives `menu` (command `EscapeKey`),
+  which is offered to the UI first; when the UI does not consume it, the client's reaction
+  to its press is game code's handling of `EscapeKey` (`game-panels.md` §16: hide the active
+  on-demand panel, otherwise show or hide the main menu), never a quit. How the client is
+  quit while a UI is attached is outside this rule. The HUD help line (`help_text` in
+  `apps/client/src/walker/controls.rs`) labels `menu` "menu" instead of "quit" while a UI is
+  attached, and keeps "quit" without one (0014, Cost).
 
 <a id="s6"></a>
 ## 6. HUD, minimap and places
@@ -125,6 +135,21 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 - Minimap: north-up, ±320 m around the viewer, from the landblock minimap tiles of resident
   blocks (`landblock.md` §6.3, pixel frame `coordinates.md` §10, active content layer 1)
   drawn as clipped quads; blocks without a tile, or until it loads, show the overview tile.
+- **The walker's overlays with a game UI attached** (M5; decision 0015 Decision 1.6, "Walker
+  overlays with the game UI attached", and its owner question 6, answered "yes"). The HUD text
+  and the walker minimap draw **under** the game UI: after the world passes and before the UI
+  pass (`render.md` §6.9), so they never cover a native panel or a plugin window.
+  - The walker minimap is **off** by default while a game UI is attached, because the game's
+    own minimap (P1 of `ui-layout.md` §17.2) takes its place. The Tessera setting
+    `walker_minimap = auto | on | off` controls it; `auto` (the default) means off with a game
+    UI and on without one. When it is on, it still draws under the UI.
+  - The HUD is switchable with the Tessera setting `walker_hud = on | off` (default `on`, for
+    development). HUD text under semi-transparent panel art would show through it, so the M5
+    visual checklist run (`docs/checklists/m5-visual.md`) and the owner's comparison
+    screenshots use `walker_hud = off`; the scripted performance run of decision 0015 §6 reads
+    `FrameStats` instead of the HUD.
+  - Without a game UI attached nothing changes: there is no UI pass, and both overlays draw on
+    top of the world as described above.
 - Place index (`--place`): every block map of every region with a block-map descriptor is
   read for `Area_DID`; each area, territory and region name maps to the landblocks it covers;
   the target is the centre of the covered landblock nearest to their centroid. Matching is on
@@ -1165,3 +1190,4 @@ added, yaw = 0. *X* set: heading always added; with *P* clear the yaw is 0 + 90 
 | 2026-10-05 | §8.1, §10: M4 characters (clean-room implementer). |
 | 2026-10-05 | Spec writer (dirty room): new §11 (the original's preference levels and built-in defaults, quality presets, landscape extent and the global distance limit, per-class object and character draw distances with fade and detail ranges, camera-state record layout and census, camera-state selection, third-person login placement and behaviour, default-settings profile for the walker, OPENs, corrections to other specs, invariants, worked examples); §9 draw-distance OPEN marked answered; header gains the §11 status and reviewer rows. §11 status: Review. |
 | 2026-10-05 | Spec writer (dirty room), answering the review of §11 (changes requested): §11.1 BIN-W gains a second M4 session with questions (g)–(i) and OBS-W the placement-level census; W1 extended (FrillDensity, PlayerCrowdQuality, DialBackGraphics), W5 cites (h), new rows W20–W26. §11.2: case-insensitive reading marked Tessera Decision. §11.3 step 3: the missing flag condition (*S* off, or *F* set and *V* > 0.99), where *F* and *V* come from, OPEN extended. §11.4 step 4 and §11.4.1: the no-class values now rest on BIN (render-component initial values, not the dictionary default); new §11.4.3 (how the class reaches the render component; census over all Physics SEDs; OPEN on SED versus 0x47 precedence with a Tessera Decision). §11.4.2: NPC class statement reworded with the census. §11.5.3: byte-layout tables for the type-2, type-3 and type-4 bodies. §11.7 steps 1–2: look-at height fallback, under-water switch *U* and the yaw rule with flags *R*, *X*, *P*, *Q* (BIN), three new OPEN callouts. §11.8 rows updated. §11.9: OPEN list extended; `Render_FarViewDistance` census corrected (384,845 SEDs, not 8). §11.10: corrections to `mesh.md` §8.5/§8.8 and `scenery.md` §9. §11.11: W-I7–W-I9. §11.12: fog-clip, class-resolution and yaw examples. §11 status stays Review. |
+| 2026-10-06 | Spec writer, applying the accepted decisions 0014 (owners list, "`walker.md` §5"; Consequences "Escape with a UI attached"; Cost) and 0015 (Decision 1.6; owner question 6): §5 gains the Escape rule with a game UI attached (`menu` becomes game code's `EscapeKey` handling, `game-panels.md` §16; the help label reads "menu"); §6 gains the overlay rule with a game UI attached (under the UI; `walker_minimap` off by default; `walker_hud` switchable and off in checklist runs). Tessera rules only; no format fact changed. |

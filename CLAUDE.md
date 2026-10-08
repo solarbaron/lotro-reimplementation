@@ -111,9 +111,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
   decision 0010). Owner items: `docs/checklists/owner-observations.md` O28. Player music
   (`/play`, `/playstart`, `/playlist`, `/playstop`, `/instrument`) is in
-  `apps/client/src/audio/player_music.rs`, reached through `tessera-client --music-command
-  "<line>"` (the M7 chat line does not route these commands yet). Merged with M4.5 and M7
-  on main (2026-10-08). M5 (UI and plugins) runs in the worktree branch `m5`; M5.5
+  `apps/client/src/audio/player_music.rs`. The commands are client built-ins of the one
+  command dispatcher (`apps/client/src/commands/`, decision 0020): typed in the walker's chat
+  line (offline and with `--server`) or given as `tessera-client --command "<line>"` (old
+  name `--music-command`); unknown commands post an error line and are never sent. Merged
+  with M4.5 and M7 on main (2026-10-08). M5 (UI and plugins) runs in the worktree branch `m5`; M5.5
   (extended scripting) specs are Accepted (decision 0017) and wait for M5; M8 is gated.
 - **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,

@@ -43,7 +43,8 @@ Legend as in `tessera-protocol.md` §1: **Design** (decided here), **Standard**,
 | Everything not listed below: commands, files, formats, defaults, limits, policies, the desync and leak definitions | Original design, 2026-10-06 (spec writer, design role). No other server's behaviour was consulted | Design |
 | Wire behaviour referred to (states, codes, budgets, validation, interest, chat, time) | `tessera-protocol.md` v1.0 draft of 2026-10-06 | Project |
 | `WALK_SPEED` 2 m/s and `RUN_SPEED` 6 m/s (animation and gait only) | `walker.md` §10.5, §10.7; `tessera-protocol.md` §1 | Project |
-| Movement limits of §4.5: fastest target speed 6.5 m/s, walkable limit 45°, steep faces 45°–85°, jump push 5.2 m/s, ground braking ≥ 38.5 m/s², terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s, step-up 0.5 m | `collision.md` §10.3, §11.3, §12.3, §12.4 (a)–(c), (i), (p) (Accepted 2026-10-07); `tessera_physics::controller::params` (`MovementParams::BUILTIN`, `MAX_SPEED`), read 2026-10-08 | Project |
+| Movement limits of §4.5 and §8.3: fastest target speed 6.5 m/s, walkable limit 45°, steep faces 45°–85°, jump push 5.2 m/s, ground braking ≥ 38.5 m/s² and damper 0.2, Slope gravity 10 m/s², Falling gravity 15 m/s² and control acceleration 10 m/s² toward at most 5 m/s with damper 1, Slide and Ice braking ≤ 6.4 m/s², terminal velocity 50 m/s (default) and 100 m/s (Slide layer), speed cap 120 m/s, step-up 0.5 m, landings keep the horizontal length of the clipped velocity | `collision.md` §10.3, §11.1, §11.3, §12.3, §12.4 (a)–(c), (i), (p), (v) (Accepted 2026-10-07); `tessera_physics::controller::params` (`MovementParams::BUILTIN`, `MAX_SPEED`), read 2026-10-08 | Project |
+| Run-out lengths behind *S* = 56 m (§8.3) | Tessera's own stepping of the `collision.md` §12.3 controller with the default records at 1/60 s, 2026-10-08 (spec writer, design) | Design |
 | 30 Hz tick; network thread with a single-threaded async runtime; bounded channels | ARCH §19.4, §20.3; decision 0030 item 4 | Project |
 | Landblock 160 m, indices 0–254, ±1,280 m anchor ownership, region 0 = no data | `coordinates.md` §4, §7; `tessera_net::model` | Project |
 | Terrain heights lie in 0–2,000 m (stored u16 × 2,000 / 65,535) | `landblock.md` §3.4 | Project |
@@ -412,7 +413,7 @@ configurable.
 | `max_horizontal_speed` | float | 8.5 | 6.5–120 | *V*ₕ |
 | `max_up_speed` | float | 10.0 | 6.5–120 | *V*ᵤ |
 | `max_down_speed` | float | 120.0 | 50–200 | *V*_d |
-| `slide_reserve` | float | 16.0 | 0–100 | *S*, metres of descent credit kept for a slide's run-out (§8.3) |
+| `slide_reserve` | float | 56.0 | 0–100 | *S*, the most descent credit kept for a slide's run-out, in metres (§8.3); 0 turns the credit off |
 | `window_s` | float | 1.0 | 0.25–5.0 | *W*, the allowance window |
 | `settle_grace_s` | float | 3.0 | 0–10 | §8.3 settling grace |
 
@@ -437,9 +438,16 @@ speeds stay those of `walker.md` §10.5 and no longer set a limit. Reasoning:
   velocity of 50 m/s (BasePlayer; Falling lists none, `collision.md` §10.3), slides at 100
   m/s (Slide layer), and every speed is capped at 120 m/s (`collision.md` §12.3 step 3), so
   no legitimate descent exceeds it.
-- **Cheats still rejected.** A teleport or sustained speed beyond these is corrected. The
-  descent credit lets a client that alternates rising and falling reach at most *V*ₕ + *V*ᵤ
-  = 18.5 m/s horizontally, and only in bursts of *V*ₕ · *W* + *S* = 24.5 m.
+- **Cheats still rejected.** On level ground a speed or teleport hack gains at most
+  *V*ₕ · *W* + *S* = 64.5 m beyond *V*ₕ · *t* and is then corrected; the credit grows only by
+  descending and is cleared by every correction (§8.3). Over any stretch of one epoch the
+  accepted horizontal distance is at most *V*ₕ · (*t* + *W*) + *S* + the descent counted in it
+  (§14 invariant 8), so a client whose height comes back to where it was averages at most
+  *V*ₕ + *V*ᵤ = 18.5 m/s. A rise beyond *V*ᵤ or a descent beyond *V*_d is corrected outside the
+  settling grace. What a server without terrain cannot reject: horizontal motion paid metre
+  for metre by descent, the signature of a slide, looks the same as a speed hack down a slope
+  or a client sinking through the ground, and is accepted at up to *V*ₕ + *V*_d horizontally
+  while it lasts. Terrain checks (not in v1, §8.3) would close that.
 
 <a id="s4-6"></a>
 ### 4.6 `[chat]`
@@ -766,34 +774,87 @@ instance and region.
 ### 8.3 Movement validation
 
 The protocol's procedure (`tessera-protocol.md` §8.3) with the `[movement]` parameters, plus
-two server rules:
+two server rules: a settling grace and a descent credit. Besides the protocol's state the
+server keeps, per player, the **descent credit** *C* in metres, 0 ≤ *C* ≤ *S*. *C* is 0 at
+world entry and at the start of every epoch (the client sets its velocity to 0 on every
+teleport and correction, `tessera-protocol.md` §8.4) and never grows with time. *A*ₕ, *A*ᵤ
+and *A*_d refill and are capped exactly as there (at *V* · *W*; *A*ₕ never holds more).
+
+Steps 5 and 6 there become, with *d*ₕ, *d*ᵤ and *d*_d as defined there:
+
+5. The **counted descent** is *d*_c = min(*d*_d, *A*_d), the part of the descent that the down
+   allowance covers (outside the settling grace that is all of *d*_d, since a larger descent is
+   rejected). Reject (step 7) when *d*ₕ > *A*ₕ + *d*_c + *C*; outside the settling grace, also
+   when *d*ᵤ > *A*ᵤ or *d*_d > *A*_d.
+6. On acceptance, with *x* = max(0, *d*ₕ − *A*ₕ), the horizontal distance that *A*ₕ does not
+   cover: *A*ₕ ← max(0, *A*ₕ − *d*ₕ), *A*ᵤ ← max(0, *A*ᵤ − *d*ᵤ), *A*_d ← *A*_d − *d*_c and
+   *C* ← min(*S*, *C* + *d*_c − *x*). The rest of step 6 there is unchanged.
+
+So the horizontal allowance pays first, the move's counted descent next and the credit last,
+and descent the move does not need is kept in *C*. With *S* = 0 the credit is off: *d*_c and
+*C* drop out of the horizontal test, which is the protocol's again.
 
 - **Settling grace.** The server has no terrain (`server-content.md` §3.2), so a spawn or
   teleport height may differ from the ground a client sees. For `settle_grace_s` of server
   time after an epoch starts at a `ground` spawn (world entry or a `Named` teleport to one)
-  or at a `Ground` destination, the up and down allowances are not applied: only the
-  horizontal allowance and the extent check are. The vertical velocity clamp still applies
-  to what is relayed.
+  or at a `Ground` destination, the up and down tests of step 5 are skipped: only the
+  horizontal test (with its counted descent and credit) and the extent check apply. Step 6
+  still lowers *A*ᵤ and *A*_d, so a move counts at most *A*_d ≤ *V*_d · *W* = 120 m of descent
+  toward the credit however far it claims to drop, and *C* stays capped at *S*. A slide that
+  starts right after a ground spawn or a `Ground` teleport therefore gets its credit as it
+  would anywhere else, and the grace adds nothing to what a cheat can bank. The vertical
+  velocity clamp still applies to what is relayed.
 - **Descent credit (slides).** Horizontal speed above *V*ₕ arises only from gravity on
-  steep faces (normals 45°–85° from up, `collision.md` §11.3, §12.4 (q), (t)) and in the air after
-  leaving one, so it comes with at least as much descent (horizontal ≤ vertical on a face
-  of 45° or steeper). Step 5's horizontal test is therefore *d*ₕ > *A*ₕ + *d*_d, and on
-  acceptance *A*ₕ becomes min(*A*ₕ + *d*_d − *d*ₕ, *V*ₕ · *W* + *S*); *A*ₕ refills at *V*ₕ
-  only while below *V*ₕ · *W*. *S* = 16 m covers the run-out on walkable ground: a slide
-  under the default terminal velocity reaches at most 50 × cos 45° ≈ 35.4 m/s horizontally
-  and the ground brakes it toward 6.5 m/s at 38.5 m/s² or more (`collision.md` §12.4 (a)),
-  over about 15.7 m. The Slide layer's run-out (up to about 70.7 m/s, braking at 6.4 m/s²
-  or less) is not covered; it applies only while `Physics_OnSlide` is set (`collision.md`
-  §11.1 step 5), a property that no Tessera server sends.
+  steep faces (normals 45°–85° from up, `collision.md` §11.3, §12.4 (q), (t); there the Slope
+  layer applies, gravity 10 m/s², no control acceleration) and is then carried into the air
+  and onto walkable ground. Along a face of 45° or steeper the horizontal speed is at most
+  the vertical one, so every move of a slide counts at least as much descent as it covers
+  horizontally, and in the air after leaving a face gravity only adds descent. What follows
+  the descent, the **run-out**, is paid from *C*. *S* = 56 m covers the longest run-out that
+  the default records allow (`collision.md` §10.3), found by stepping the controller of
+  `collision.md` §12.3 at 1/60 s (Tessera's own calculation, 2026-10-08):
+  - **Fastest horizontal speed.** Every speed is limited to the terminal velocity, 50 m/s
+    (Slope and Falling list none, so BasePlayer's applies). On a face the horizontal part is at
+    most 50 × cos 45° ≈ 35.4 m/s. Landing from a face or a fall on a walkable plane keeps the
+    horizontal length of the clipped velocity (`collision.md` §12.4 (v)), at most
+    50 × (1 + cos 45°) / 2 ≈ 42.7 m/s (a 45° face onto a 22.5° plane).
+  - **Run-out from 42.7 m/s**, horizontal distance beyond *V*ₕ · *t* less the descent it
+    counts: about 7 m when it brakes on walkable ground (at least 38.5 m/s² plus the damper of
+    0.2 per second, `collision.md` §12.4 (a), (b)); about 26 m when it first runs off a ledge
+    (the Falling layer brakes at only 10 m/s² per axis, toward at most 5 m/s, with no damper);
+    about 18 m into water; about 45.5 m when the walker jumps at every landing (5.2 m/s,
+    `collision.md` §12.4 (c); each hop is about 0.7 s in the air and one step on the ground,
+    and the air brakes only at 10 m/s²). From 35.4 m/s: about 4, 16 and 28 m.
+  - **Late moves.** During a run-out *A*ₕ is near 0, so a move that arrives late pays from *C*
+    what *A*ₕ would have refilled meanwhile; *S* adds one window, *V*ₕ · *W* = 8.5 m, for that:
+    45.5 + 8.5, rounded up to 56 m.
+  - **The credit fills in time.** On a face *d*_c ≥ *d*ₕ, so *A*ₕ + *C* grows by at least *V*ₕ
+    per second of sliding (the allowance pays first, so none of its refill is lost), and by
+    all the descent while the mover is slower than *V*ₕ. Reaching a horizontal speed *v* on a
+    45° face takes at least *v* / 5 s (10 × sin 45° m/s² along the face), which leaves
+    *A*ₕ + *C* ≥ min(8.5 + 1.7 *v*, 64.5) m at its foot, more than the run-out from *v* needs at
+    every speed: 42.7 m/s needs 50 m/s along the face, at least 7 s of sliding. Steeper faces
+    fill it faster. No face just steeper than 45° leaves too little credit.
+  - **Not covered.** The Slide and Ice layers (terminal velocity up to 100 m/s, braking at
+    6.4 m/s² or less) apply only while `Physics_OnSlide` or `Physics_OnIce` is set
+    (`collision.md` §11.1 steps 5–6), properties that no Tessera server sends; and movement
+    records other than the observed ones of `collision.md` §10.3 (it accepts speeds up to
+    120 m/s), which a client reads from its own install.
 
 > **OPEN (tessera-protocol.md):** §8.3 there describes the checks without such a grace or
 > credit, and lets a server add checks but not relax them. Either that spec allows a
 > server-defined settling grace after `Ground`-type epochs (preferred: it changes no bytes),
 > or the protocol needs a "settle" hint so clients snap to their terrain before the first
-> `MoveInput`. Until it is settled, servers with `settle_grace_s` = 0 follow §8.3 there
-> exactly, and content spawns should give heights close to the terrain (as §5.7 does). The
-> descent credit needs the same allowance there (or a place in that procedure); without it,
-> long slides down steep faces are corrected.
+> `MoveInput`. Until it is settled, servers with `settle_grace_s` = 0 and `slide_reserve` = 0
+> follow §8.3 there exactly, and content spawns should give heights close to the terrain (as
+> §5.7 does). The descent credit needs the same allowance there (or a place in that
+> procedure); without it, long slides down steep faces are corrected.
+
+> **OPEN:** (spec writer, 2026-10-08) a run-out onto a rising walkable slope is lifted onto it
+> (`collision.md` §12.4 (v)) and climbs at up to its horizontal speed (45°). Braking on the
+> ground, it stays within *V*ᵤ: about 8 m of rise from 35.4 m/s against *V*ᵤ · *W* + *V*ᵤ · *t*
+> ≈ 13.8 m. Jumps up a slope during a run-out were not stepped; check them with a stepped
+> calculation or the M7 soak runs before relying on *V*ᵤ = 10 m/s there.
 
 The server adds no terrain or collision checks of its own in v1.
 
@@ -1070,6 +1131,9 @@ memory), which is why criterion 2 uses counts and criterion 3 uses the trend.
 5. `run` never starts with content that `check-content` (minus `SPDX`) would reject.
 6. Every count of §13.3 returns to its baseline after all clients leave.
 7. The server never opens a file inside a game installation (§3.1).
+8. Within one epoch, over any stretch of *t* seconds of server time, the horizontal distance a
+   player's accepted `MoveInput`s cover is at most *V*ₕ · (*t* + *W*) + *S* + the descent they
+   count (§8.3 *d*_c); with *S* = 0, at most *V*ₕ · (*t* + *W*).
 
 ---
 
@@ -1189,30 +1253,54 @@ reviewer should confirm or correct it.
 > 10 µs a second from the schedule and could repeat tick numbers. The finding's wording
 > question (what `server_time` a tick reports) is still open there.
 
-> **OPEN:** (implementer note, 2026-10-08) §8.3 settling grace and descent credit: during
-> the grace the down allowance is not applied, so a claimed descent of any size would lift
-> the horizontal test *d*ₕ > *A*ₕ + *d*_d without bound. The server therefore applies no
-> descent credit while the grace runs (step 5's horizontal test is *d*ₕ > *A*ₕ, as in
-> `tessera-protocol.md` §8.3); a slide that starts within `settle_grace_s` of a ground spawn
-> or a `Ground` teleport is corrected. Spec writer: confirm, or say how the credit is
-> bounded during the grace.
+> **Resolved** (2026-10-08, spec writer, design): §8.3 settling grace and descent credit
+> (implementer note: no credit during the grace, so a slide right after a ground spawn or a
+> `Ground` teleport was corrected). §8.3 now skips only the up and down *tests* during the
+> grace; step 6 keeps lowering *A*ᵤ and *A*_d, and a move counts only *d*_c = min(*d*_d, *A*_d)
+> of its descent toward the credit. A claimed drop of any size thus earns at most
+> *V*_d · *W* = 120 m, capped at *S*, and the credit applies during the grace as everywhere
+> else. The code's "no credit while the grace runs" is replaced.
 
-> **OPEN:** (implementer note, 2026-10-08) §8.3 "*S* = 16 m covers the run-out" holds only
-> once the credit has filled. *A*ₕ grows by *d*_d − *d*ₕ per move, which is close to 0 on a
-> face just steeper than 45°, so after such a slide at 50 m/s *A*ₕ is still about
-> *V*ₕ · *W* = 8.5 m; the run-out of about 15.7 m in about 0.75 s then has about
-> 8.5 + 8.5 × 0.75 ≈ 14.9 m and is corrected near its end. The tests use a 47° face, where
-> the run-out fits. Spec writer: is that edge accepted, or should the credit rule change?
+> **Resolved** (2026-10-08, spec writer, design): §8.3 credit after faces just steeper than
+> 45° (implementer note: *A*ₕ grew only by *d*_d − *d*ₕ ≈ 0, so a run-out after a 45°+ slide
+> at 50 m/s was corrected near its end). The credit rule changes: *C* is a pool of its own,
+> *A*ₕ pays first, then the move's counted descent, then *C*, and unused descent is kept in
+> *C*. *A*ₕ's refill is then never lost while sliding, and *A*ₕ + *C* grows by at least *V*ₕ
+> per second on any face. *S* rises from 16 to 56 m because a run-out with a jump at every
+> landing needs about 45.5 m (§8.3 reasoning), and *C* is cleared at every new epoch. The edge
+> no longer exists; the tests may use 45°+ faces.
 
-> **OPEN:** (implementer note, 2026-10-08) API shape for the §4.5 defaults:
-> `tessera_protocol::movement::MovementLimits` carries *V*ₕ directly (`horizontal_speed`,
-> default `limits::MAX_HORIZONTAL_SPEED` = 8.5; the old `run_speed` field and
-> `HORIZONTAL_TOLERANCE_FACTOR` are gone) and an opt-in `descent_credit: Option<f64>`
-> holding *S*. `None` (the default) is `tessera-protocol.md` §8.3 exactly; `tessera-server`
-> sets `Some(slide_reserve)`. *A*ₕ is additionally capped at *V*ₕ · *W* + *S* whenever the
-> limits change. A negative or NaN *S* counts as 0. `tessera-net`'s §8.6 snap speed default
-> is the same 8.5 m/s, and its `InterpConfig::with_run_speed` was removed (§7.3: run speed no
-> longer sets *V*ₕ).
+> **Resolved** (2026-10-08, spec writer, design): API shape for the §4.5 defaults: done and
+> accepted as the implementer note recorded it: `tessera_protocol::movement::MovementLimits`
+> carries *V*ₕ as `horizontal_speed` (default `limits::MAX_HORIZONTAL_SPEED` = 8.5; the
+> `run_speed` field and `HORIZONTAL_TOLERANCE_FACTOR` are gone), `descent_credit:
+> Option<f64>` holds *S* (`None` = `tessera-protocol.md` §8.3 exactly; `tessera-server` sets
+> `Some(slide_reserve)`; a negative or NaN *S* counts as 0), `tessera-net`'s §8.6 snap speed
+> default is 8.5 m/s and `InterpConfig::with_run_speed` is removed. Under the revised §8.3
+> the validator keeps *C* apart from *A*ₕ (so the old cap of *A*ₕ at *V*ₕ · *W* + *S* becomes
+> *A*ₕ ≤ *V*ₕ · *W* and *C* ≤ *S*), treats *S* = 0 like `None` in the horizontal test, clears
+> *C* at every new epoch, and runs the grace by skipping the up and down tests instead of
+> using very large vertical limits.
+
+> **OPEN:** (implementer note, 2026-10-08) §8.3 settling grace across a correction. A
+> correction inside the grace (horizontal or extent) starts a new epoch at the last accepted
+> *P*, not at a `ground` spawn. `tessera-server` keeps the grace running until
+> `settle_grace_s` after the ground epoch started (the up and down tests stay skipped after
+> such a correction); the credit is cleared by the correction as §8.3 requires. Spec writer:
+> confirm, or say that a correction ends the grace.
+
+> **OPEN:** (implementer note, 2026-10-08) API shape for the revised §8.3:
+> `MovementValidator::set_settling(bool)` turns the grace on and off (the server sets it
+> before each check from its grace deadline; `start_epoch` leaves it as it is), and
+> `MovementValidator::descent_credit()` returns *C*. A change of limits caps *A*ₕ at
+> *V*ₕ · *W* and *C* at the new *S* at the next check. The tests step their own model of the
+> controller at 1/60 s (ground braking 38.5 m/s² without the damper, air 10 m/s² toward
+> 5 m/s, jump 5.2 m/s, Falling gravity 15 m/s²): the run-out from 42.7 m/s with a jump at
+> every landing comes to about 49 m beyond *V*ₕ · *t* less its counted descent (§8.3 says
+> about 45.5 m), and on level ground braking about 15 m (§8.3: about 7 m). Both still fit
+> *A*ₕ + *C* at the foot of a 46° face, also with the first second of the run-out arriving
+> at once; a reserve of 44 m does not. Spec writer: the difference may come from the damper
+> or from how the run-out is counted; worth a second look at the 56 m margin.
 
 ### 15.2 Implementer notes (`tessera-loadtest`, 2026-10-07)
 
@@ -1385,3 +1473,4 @@ should confirm or correct it.
 |---|---|
 | 2026-10-06 | First draft (M7, spec writer, design). Companion to `tessera-protocol.md` v1.0 and `server-content.md` |
 | 2026-10-08 | §1, §4.5, §8.3: movement limits follow the `collision.md` §12 controller instead of the walk 2 / run 6 m/s controller: *V*ₕ 8.5 m/s (`max_horizontal_speed` replaces `tolerance`; no longer derived from `run_speed`), *V*ᵤ 10 m/s (reasoned anew), *V*_d 120 m/s (was 60); new descent credit with `slide_reserve` *S* = 16 m. Spec writer (design) |
+| 2026-10-08 | §1, §4.5, §8.3, §14, §15.1: answers the three implementer notes of 2026-10-08. Descent credit is a pool *C* of its own (0 to *S*, cleared at every epoch); *A*ₕ pays first, then the move's counted descent *d*_c, then *C*; unused descent is kept in *C*. *S* (`slide_reserve`) 16 → 56 m, derived from stepped run-outs with a jump at every landing; *S* = 0 turns the credit off. Settling grace skips only the up and down tests; *A*ᵤ and *A*_d stay tracked and bound the counted descent. Cheat bounds restated (§4.5), new invariant 8, new OPEN on run-outs up slopes. Spec writer (design) |

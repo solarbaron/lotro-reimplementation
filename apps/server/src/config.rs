@@ -151,7 +151,8 @@ pub struct MovementSection {
     pub max_up_speed: f64,
     /// *V*_d, m/s (50–200, default 120).
     pub max_down_speed: f64,
-    /// *S*, metres of descent credit kept for a slide's run-out (0–100, default 16, §8.3).
+    /// *S*, the most descent credit kept for a slide's run-out, metres (0–100, default 56,
+    /// §8.3); 0 turns the credit off.
     pub slide_reserve: f64,
     /// *W*, seconds.
     pub window_s: f64,
@@ -274,7 +275,7 @@ impl Default for Config {
                 max_horizontal_speed: 8.5,
                 max_up_speed: 10.0,
                 max_down_speed: 120.0,
-                slide_reserve: 16.0,
+                slide_reserve: 56.0,
                 window_s: 1.0,
                 settle_grace_s: 3.0,
             },
@@ -1048,7 +1049,7 @@ mod tests {
         assert_eq!(m.max_horizontal_speed, 8.5);
         assert_eq!(m.max_up_speed, 10.0);
         assert_eq!(m.max_down_speed, 120.0);
-        assert_eq!(m.slide_reserve, 16.0);
+        assert_eq!(m.slide_reserve, 56.0);
         assert_eq!((m.window_s, m.settle_grace_s), (1.0, 3.0));
 
         let (c, f) = Config::parse(

@@ -143,10 +143,11 @@ pub trait WalkerSession {
     fn drain_chat(&mut self, out: &mut Vec<crate::net::ChatLine>) {
         let _ = out;
     }
-    /// Says `text` on the local channel; `false` when it was not sent (not in the world).
-    /// The default sends nothing.
-    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
-        let _ = (now, text);
+    /// Sends `text` on `channel` (a `Tell` carries its peer); `false` when it was not sent
+    /// (not in the world). Only the dispatcher's channel commands call it (decision 0020
+    /// item 2). The default sends nothing.
+    fn send_chat(&mut self, now: Instant, channel: &tessera_net::ChatChannel, text: &str) -> bool {
+        let _ = (now, channel, text);
         false
     }
 }
@@ -1095,11 +1096,14 @@ impl Walker {
         self.controls.placed().then(|| self.controls.focus())
     }
 
-    /// Per frame (module docs, steps 1–4). `dt` is the frame time in seconds.
+    /// Per frame (module docs, steps 1–4). `dt` is the frame time in seconds. Lines typed
+    /// in the chat overlay go to `commands`, the client's command dispatcher (decision
+    /// 0020), which also gives the lines the client posts.
     pub fn update(
         &mut self,
         renderer: &mut Renderer<'_>,
         world: Option<&mut dyn WalkerSession>,
+        commands: &mut dyn crate::plugins::CommandSink,
         now: Instant,
         dt: f32,
     ) -> WalkerEvents {
@@ -1394,27 +1398,29 @@ impl Walker {
                 .controls
                 .avatar()
                 .or_else(|| placed.then(|| (self.controls.focus(), self.controls.heading())));
+            // `sound.md` §10.8.6 step 1: the walking character's own cell (physics), never
+            // the camera's; in free flight the camera eye's cell lookup.
+            let player_cell = if self.controls.mode() == MoveMode::Walk {
+                self.controls
+                    .physics()
+                    .and_then(movement::PhysicsWalker::cell)
+            } else {
+                camera_cell_at(&self.streamer, &self.controls.eye().0, None)
+            };
             if let Some(audio) = self.audio.as_mut() {
                 audio.update(crate::audio::AudioInput {
                     dt: f64::from(dt),
                     streamer: &self.streamer,
                     eye,
                     player,
+                    player_cell,
                 });
             }
         }
 
         let mut chat_in = Vec::new();
-        let mut unsent = None;
         if let Some(w) = world.as_deref_mut() {
             w.drain_chat(&mut chat_in);
-            while let Some(text) = self.chat.take_outgoing() {
-                if !w.send_chat(now, &text) {
-                    unsent = Some("Not in the world: chat not sent");
-                }
-            }
-        } else if self.chat.take_outgoing().is_some() {
-            unsent = Some("Not connected: chat not sent");
         }
         let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
         if self
@@ -1423,9 +1429,7 @@ impl Walker {
         {
             self.notice = None;
         }
-        if let Some(text) = unsent {
-            self.chat.push_local(text, now);
-        }
+        chat::dispatch(&mut self.chat, commands, &mut world, now);
         let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
         self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {

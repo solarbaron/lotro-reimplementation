@@ -393,12 +393,15 @@ pub struct Args {
     #[arg(long)]
     pub no_emitters: bool,
 
-    /// A player-music chat command (`/play <name> [<part>] [sync]`, `/playstart`,
-    /// `/playlist`, `/playstop`, `/instrument`), run in order once the archives are open;
-    /// its replies go to the chat log. Repeatable. (The M7 chat line does not route these
-    /// commands yet.)
-    #[arg(long = "music-command", value_name = "LINE")]
-    pub music_commands: Vec<String>,
+    /// A command line for the client's command dispatcher (decision 0020 item 7), for
+    /// example a player-music command (`/play <name> [<part>] [sync]`, `/playstart`,
+    /// `/playlist`, `/playstop`, `/instrument`) or `/help`. Repeatable; the lines run in
+    /// order in the first frame after the archives are open (and the install's command
+    /// words are read); replies go to the chat overlay and the log. A line that would chat
+    /// (plain text, `/say`, ...) is logged and dropped, never sent. The same commands work
+    /// typed in the walker's chat line. `--music-command` is the old name.
+    #[arg(long = "command", visible_alias = "music-command", value_name = "LINE")]
+    pub commands: Vec<String>,
 }
 
 /// Environment variable the test-server password is read from (else a prompt).
@@ -949,11 +952,13 @@ mod tests {
             "t",
             "--music-command",
             "/play tune",
-            "--music-command",
+            "--command",
             "/playstop",
+            "--music-command",
+            "/help",
         ])
         .unwrap();
-        assert_eq!(m.music_commands, vec!["/play tune", "/playstop"]);
+        assert_eq!(m.commands, vec!["/play tune", "/playstop", "/help"]);
     }
 
     #[test]

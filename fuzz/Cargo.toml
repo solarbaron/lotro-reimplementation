@@ -960,3 +960,10 @@ path = "fuzz_targets/explorer_query_hex.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "client_command_line"
+path = "fuzz_targets/client_command_line.rs"
+test = false
+doc = false
+bench = false

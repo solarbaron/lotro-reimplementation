@@ -124,6 +124,7 @@ stable without libFuzzer.
 | `wstate_store_geo` | `ObjectStore` and `Geo` over a damaged synthetic install (library through the WLIB map, headers, imports, states with tiny caches, objects, weenies, singletons; area, territory, region and dungeon look-ups with a dungeon parent cycle, area chains, region tables, `GeoIndex` built at once and in chunks): no panic, build reports that add up | `wstate.md` §2, §11, `wlib.md` §2 |
 | `world_context` | `WorldContext::load` over a damaged `SyntheticWorld` (dictionary, DID maps, region and block-map descriptors, scenery, water, collision, sky and LOD systems, systems switched by the input), then one input-chosen landblock read through `BundleSource` and built with `build_bundle` against that context; scenery-table, LOD, sky and environment queries | `landblock.md` §8, `environment.md` §3, §5–§6, §11, `scenery.md` §4, `water.md` §4–§5 |
 | `explorer_query_hex` | the explorer's DID search box and hex view (`apps/explorer/src/query.rs`, `hex.rs`, included by path): ordered, aligned hex ranges with canonical round trips; fixed hex-line layout, empty lines past the end | `apps/explorer` |
+| `client_command_line` | the client command-line pipeline (`apps/client/src/commands/line.rs`, included by path) on arbitrary text: tokens never empty, arguments trimmed, history bounded and free of duplicates | `chat-window.md` §6.3, §7.2–§7.4, decision 0020 |
 
 ## Running
 

@@ -492,6 +492,12 @@ describe the implementation and list what it leaves open.
   time, clock offset and the interpolation delay. M5 replaces this with the real chat
   window.
 
+> **OPEN (implementation, 2026-10-08):** the overlay now feeds the client's command
+> dispatcher (decision 0020) in every session, with or without `--server`: plain text is said
+> on Say, `/play` and the other client commands run locally, and an unknown command posts a
+> local error line and sends nothing. The bullet above still says "Enter sends on Say";
+> spec writer: update it as decision 0020 Consequences asks.
+
 > **OPEN:** the motion byte's Backward flag and the Airborne gait, and the `STANCE` and
 > `EMOTE` properties (`tessera-protocol.md` §7.5), do not change a networked character's
 > animation yet: §10.5 has no backward playback, airborne clips, stance idle families or

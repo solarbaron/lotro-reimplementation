@@ -1088,6 +1088,37 @@ These are Tessera's rules, not facts about the original.
    bindings of the same keys (without the push, Page Up and Page Down would reach the camera
    zoom). The default keys are those of `keymap.md` §8 as revised for decision 0014.
 
+> **OPEN (implementation, client command dispatcher, 2026-10-08):** decision 0020 is
+> implemented in `apps/client/src/commands/` before the M5 chat window exists. These choices
+> were made where this spec and the decision are silent; please confirm or correct:
+> (a) **Mode-table variants.** Only the 26 fixed rows of §6.5 are registered; neither
+> variant group is, because the game-state test that picks one is OPEN (Q12). `IsCommand`
+> therefore answers false for the variant words.
+> (b) **When the install's names arrive.** The client built-ins are registered under their
+> Tessera names at start-up; the install's names (help, plugin manager, channel words, and
+> the `CommandSetup` default channel word, which is registered as a `Say` word so that plain
+> text always finds it) are registered when the background read of the two tables finishes,
+> after the archives open. A plugin that registered one of those names earlier keeps it
+> (first registration wins). `--command` lines wait for that read.
+> (c) **Case folding** is Rust's Unicode lower-casing, not a locale's (§8.2).
+> (d) **Positions.** The tokenizer counts UTF-16 code units as §7.3 states (so a character
+> outside the BMP right after a closing quote is two units and is kept); the leading-character
+> removal of §7.2 step 4 and §7.4 step 5 compares whole characters.
+> (e) **Bounds and wording.** Lines over 4096 bytes are refused with a type 1 line; channel
+> text over the protocol's chat length is refused locally. `tell` takes the first token of
+> the arguments as the name (in double quotes when it has spaces) and the trimmed rest as the
+> text. Tessera's own lines: "This channel is not available here.", "There is no one to reply
+> to." (reply and tell-again words), "There is no one to tell in the sandbox.", "Not
+> connected: chat not sent", "Not in the world: chat not sent". A `--command` line that
+> resolves to a channel command is logged, shown as a type 8 line and dropped.
+> (f) **History.** Lines typed in the walker overlay are added to the §6.3 history; the
+> overlay has no line up or down yet. Start-up lines are not added.
+> (g) **Plugins before M5.** `tessera-script` still keeps its own command table: a word the
+> client registry does not hold is offered to the plugin manager's line entry point before
+> the unknown-command line is posted, and `/plugins` calls that entry point with
+> `/plugins <arguments>`. The client answers `HostApi::is_builtin_command` and
+> `builtin_commands` from the registry, so plugins cannot take client names.
+
 ---
 
 <a id="s11"></a>

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
+| **Status** | **Accepted** (third review of 2026-10-07 passed) |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author) |
-| **Review record** | 2026-10-07, first review: **changes requested**. §5.3 checklist passes; spot checks over all records reproduced B1–B4, B8, B10–B13 and V1–V14 exactly. To fix: §12 zero-fill allowance (one body reads a local before any store on some path), §2 shared-body count, BIN-row call-site count, a provenance row for §11.2. Details in the review log (decision 0018). Revised the same day by the spec writer in a separate session (F1–F5, §17). 2026-10-07, second review (separate session): **changes requested**. F1–F5 fixed and reproduced over every record and in the executable. To fix: §10 and its OPEN treat 32 game-callback classes as outside class 91, but their parents 916 and 946 are children of class 91 that override slot 85, so all 110 descend from class 91; "derive from" in §10 means "has as parent". Details in the review log (decision 0018). |
+| **Review record** | 2026-10-07: first and second reviews **changes requested** (fixed by F1–F5 and R1–R3, §17). Third review, 2026-10-07 (separate session, not the author): **passed**, Accepted; R1–R3 reproduced over all records. Details in the review log (decision 0018). |
 | **Implements into** | A script-machine crate on top of `crates/wstate` (decoder, validator, interpreter core; crate placement is the implementer's choice); `apps/explorer` (disassembly and cross-reference view, §11); `apps/dattool` (listing and statistics) |
 | **Companion specs** | [`wlib.md`](wlib.md) (container §3, bytecode chunk §4.1, messages §4.2, value type codes §5, class table and method tables §6, singleton list §7, attribute lists §8, parent map §9); [`wstate.md`](wstate.md) (object records, native classes §5.3); [`records.md`](records.md) §1.4 (UTF-16 strings); [`property-system.md`](property-system.md) §9 (DB-object types); [`combat-data.md`](combat-data.md) §13.2; [`misc-records.md`](misc-records.md) §13.5, §13.6; [`plugin-runtime.md`](plugin-runtime.md) §4.6 (floating-point environment) |
 
@@ -80,6 +80,7 @@ How sources are marked:
 | B17 | The 0xCD fill of locals is observable in the shipped code: a definite-assignment pass over all 18,323 bodies finds exactly one body (offset 0x125B8) that can read a local before any store to it, at two sites (§4.3, §12, §13 V16) | OBS (every body); BIN (the fill, B5) | Confirmed (BIN + OBS) |
 | B18 | Body sharing comes only from inheritance: each of the 4,218 shared bodies has an owner that is an ancestor of all its other owners, and every other owner holds it at the same slot indices; 1,428 of them have two owners that are not ancestor and descendant (§2) | OBS (all method tables, parent map of `wlib.md` §9) | Confirmed |
 | B19 | Property-ID immediates: 8,712 integer immediates of 0x01 equal a defined property ID (3,524 distinct IDs), no float immediate does; a byte search of the whole block finds 5,993 distinct IDs (§11.2, §16) | OBS (every 0x01 instruction, every byte offset; the 27,546 defined property IDs of the install's property registry, `property-system.md`); CD (§13.2, same byte-search count) | Confirmed |
+| B20 | Class ancestry of the families of §10: all 110 game-callback classes descend from class 91 (78 as children, 27 through class 916, 5 through class 946; 916 and 946 are children of 91 and override slot 85); none of the 136 descendants of class 91 overrides slot 84; usage plugins: 24 children of class 3227, 6 grandchildren (through 3603 and 3694), and class 3227 itself | OBS (parent map of `wlib.md` §9 and method tables of all classes; family membership as in B15) | Confirmed |
 
 ---
 
@@ -642,8 +643,8 @@ ID 0x005B0001 is class 91, function 1: `method_indices[1]` of class 91 is slot 8
 of the 136 descendants of class 91 overrides, so a receiver of class 91 or any descendant runs
 class 91's slot-84 body.
 That body takes three arguments and the receiver and passes them on unchanged to virtual
-slot 85 of the receiver, returning its one-cell result (OBS; see §10 for the classes that
-override slot 85).
+slot 85 of the receiver, returning its one-cell result (OBS; see §10 for which slot-85
+body each game-callback class runs).
 
 Inside the bytecode, function IDs do not occur: script-to-script calls use offsets (0x16) or
 slots (0x14).
@@ -855,14 +856,22 @@ Further observations:
 - Every class of every family has own bodies, and every class outside the modifiers
   overrides slot 0 (the initializer). Usage plugins, property responses, response callbacks,
   progressions, skills and traits also override slot 50 in every class; effects in 86 of 87.
-- Game callbacks: 78 of the 110 classes derive from class 91 and all of them override slot 85
-  (a few also slots 86–88); the other 32 derive from class 916 (27) or 946 (5) and override
-  only slot 0. Usage plugins: 24 of 31 derive from class 3227; 30 override slot 88. Which slot the client invokes for a callback or a usage plugin is not
+- Game callbacks: all 110 classes descend from class 91 (parent map, `wlib.md` §9). 78 have
+  class 91 as parent and override slot 85 themselves (5 of them also slots 86–88, or 86–87);
+  27 have class 916 as parent and 5 have class 946, and these 32 override only slot 0.
+  Classes 916 and 946 are themselves children of class 91 and each overrides slot 85 (and
+  adds slot 86), so the 32 inherit their parent's slot-85 body. Class 91 has a slot-85 body of
+  its own; none of the 110 runs it, every one runs a slot-85 body of its own class or of 916
+  or 946. Usage plugins: 24 of the 31 classes have class 3227 as parent, 6 more have it as
+  grandparent (4 through class 3603, 2 through class 3694), and the 31st is class 3227 itself; 30
+  override slot 88. Which slot the client invokes for a callback or a usage plugin is not
   established (the script node of `script-table.md` that names game callbacks was not read).
 - None of the 1,367 constant static function IDs of §6.4 names a class of these families or
-  one of their ancestors. The one constant virtual ID, 0x005B0001, names class 91, the
-  ancestor of the 78 game-callback classes above: on such a receiver it runs class 91's
-  slot-84 body, which forwards to slot 85, the slot those 78 classes override (§6.4). The
+  one of their ancestors. The one constant virtual ID, 0x005B0001, names class 91, an
+  ancestor of all 110 game-callback classes: on a receiver of any of them it runs class 91's
+  slot-84 body (no descendant overrides slot 84), which forwards to slot 85 of the receiver,
+  that is, the class's own slot-85 body for the 78 children of class 91 and the inherited one
+  of class 916 or 946 for the other 32 (§6.4). The
   other families' functions are not called by a fixed ID; they run from other script code
   (virtual slots) or through computed IDs.
 - Property responses and response callbacks have almost no code of their own; their
@@ -870,11 +879,11 @@ Further observations:
 
 > **OPEN:** the entry points (slot or function ID) through which the client starts a game
 > callback, a usage plugin, a property response and an effect, skill or trait function. They
-> are in native code outside the interpreter and were not part of this pass. For the 78
-> game callbacks under class 91 the virtual call of function ID 0x005B0001 (§6.4) reaches
-> their slot-85 override, but the native code around that call site was not read, so it is
-> not established that the client starts game callbacks there, nor how the 32 under classes
-> 916 and 946 are started.
+> are in native code outside the interpreter and were not part of this pass. For all 110
+> game-callback classes (all descend from class 91) the virtual call of function ID
+> 0x005B0001 (§6.4) reaches the slot-85 body each of them runs, but the native code around
+> that call site was not read, so it is not established that the client starts game
+> callbacks there, or only there.
 
 ---
 
@@ -974,7 +983,7 @@ B17, §13 V16).
 | V13 | Slot-0 bodies declare *A* = 8. |
 | V14 | *L* ≤ 416 and *A* ≤ 144, multiples of 8. |
 | V15 | Stack depth: in 18,314 of the 18,323 bodies each instruction can be given one operand-stack depth (cells above FP + *L*/8) such that every instruction finds at least as many cells as it pops (an empty-area return of §4.3 excepted), and every branch target and fall-through agrees, except at a 0x13, where depths may differ (§4.3). The stack effects are those of §5 and §7.2; for 0x14 and 0x15, whose effect depends on the callee, some consistent choice exists. For the other 9 bodies the search was stopped by its time limit, not refuted. |
-| V16 | Definite assignment of locals: follow every path from the start of each body (fall-through, branch targets of §3.4, every switch target; no edge out of a return) and treat a local cell (index 0 … *L*/8 − 1) as assigned once a store to it has run on **every** path to the current instruction. Stores are 0x48, 0x49, 0xA8–0xB5 and, conservatively, 0x52 (taking the cell's address, since a callee may write through it); for the two-cell forms both cells count. (0x46 and 0x47, the stores with a computed index, do not occur.) Reads are 0x43, 0x44, 0x9D–0xA0, the short forms 0xA1–0xA7 with a non-negative index, and 0x95–0x98. Exactly one body has a read of a local that is not assigned on every path: offset 0x125B8, local 0, at 0x127D4 and 0x127E0 (§4.3). |
+| V16 | Definite assignment of locals: follow every path from the start of each body (fall-through, branch targets of §3.4, every switch target; no edge out of a return) and treat a local cell (index 0 … *L*/8 − 1) as assigned once a store to it has run on **every** path to the current instruction. Stores are 0x48, 0x49, 0xA8–0xB5 and, conservatively, 0x52 (taking the cell's address, since a callee may write through it); for the two-cell forms both cells count. (0x46 and 0x47, the stores with a computed index, do not occur.) Reads are all frame-cell reads (0x43, 0x44, 0x9B–0xA7, 0x95–0x98) whose cells include a local; a two-cell read starting at FP − 1 (0xA3, or 0x44 with *k* = −1) reads local 0 as its second cell. (0xA3 and 0x44 with *k* = −1 do not occur, so they do not change the result.) Exactly one body has a read of a local that is not assigned on every path: offset 0x125B8, local 0, at 0x127D4 and 0x127E0 (§4.3). |
 
 V1–V14 are load-time checks (§12). V15 and V16 are cross-checks; a Tessera tool may report bodies that
 fail it but must not reject the library for it.
@@ -1062,8 +1071,9 @@ fewer than 6 entries, the result is the missing-function error (status 3).
 > **OPEN:** statuses other than 0, 1 and 3, and the resume path (§6.5).
 
 > **OPEN:** entry points through which the client starts game callbacks, usage plugins,
-> property responses and family functions (§10; narrowed for the game callbacks under class
-> 91 by the constant virtual ID of §6.4).
+> property responses and family functions (§10; for the game callbacks, all 110 of which
+> descend from class 91, narrowed to the constant virtual ID of §6.4, whose call site's
+> purpose is not established).
 
 > **OPEN:** whether 0x0D returns one shared object per prototype or a fresh one (§9.3).
 
@@ -1103,3 +1113,5 @@ fewer than 6 entries, the result is the missing-function error (status 3).
 |---|---|
 | 2026-10-07 | First version (status Review). M1 census of the whole code block and M4 reading (BIN row) of the interpreter, the native-to-script entry routines, the link step and the native calling convention. Facts B1–B16. 15 invariants, 5 worked examples, 7 OPEN items. |
 | 2026-10-07 | Revision after the first review (changes requested), status stays Review; spec writer in a separate session, with new probes over every record and a short second BIN reading (BIN row). F1: §12 no longer allows zero-filled locals; §4.3 names the one body that reads a local before any store (offset 0x125B8) and what changes with zero; new B17 and invariant V16 (definite-assignment rule). F2: §2 shared-body statement corrected (sharing comes only from inheritance; 1,428 bodies have sibling owners; the "2,140 unrelated, identical bodies" claim withdrawn); new B18. F3: call sites re-counted: 1,376 sites of the three entry routines (1,372 static, 3 virtual by ID, 1 by slot); 2 static sites the first pattern missed carry constant IDs, so 1,367 constant static IDs (1,362 resolve), 5 computed; one virtual site carries the constant ID 0x005B0001 (class 91, slot 84, forwarding to slot 85) and the by-slot site uses slot 0. BIN row, B14, §6.4 (new table), §10 bullet and OPEN, §15 updated. F4: new B19 for the property-ID counts of §11.2 and §16, plus the 0x03 observation in §11.2. F5: §5.9 states the IEEE zero test of 0x73–0x78 (−0.0 is zero, NaN is true). |
+| 2026-10-07 | Revision after the second review (changes requested), status stays Review; spec writer in a separate session, own probe over the parent map and all method tables (no BIN reading). R1: §10 now says all 110 game-callback classes descend from class 91 (78 children, 27 through class 916, 5 through class 946, which are children of 91 and override slot 85), so the 0x005B0001 virtual call reaches a slot-85 body for all 110; the §10 OPEN and the third §15 OPEN narrowed to "not established that the client starts callbacks there". R2: usage plugins: 24 have class 3227 as parent, 6 as grandparent, the 31st is class 3227. R3: V16 counts every frame-cell read whose cells include a local (0xA3 and 0x44 with *k* = −1 read local 0 as their second cell; neither occurs). New B20. |
+| 2026-10-07 | Third review (separate session, not the author): passed; status Accepted. No content change. |

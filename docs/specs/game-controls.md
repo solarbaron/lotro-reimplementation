@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
+| **Status** | **Accepted** (third review of 2026-10-07 passed) |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | First review 2026-10-07: **changes requested** (§2.1 base-class rule, §3.4 manager template and RepositoryManager extras, property-set count, provenance rows). Revised by the author 2026-10-07 for all six issues (change log §14). Second review 2026-10-07 (separate session): **changes requested**; the six repairs verified, one regression (§5.2, GC13, Q23: the class-3509 traits do carry `Trait_Group`, nested) and two minor items. Details in the review log (decision 0018). |
+| **Review record** | First and second reviews 2026-10-07: changes requested, repaired (§14). Third review 2026-10-07 (a session separate from the writer and the earlier reviewers): **passed**, Accepted. Details in the review log (decision 0018). |
 | **Implements into** | `crates/props` (typed views of the singletons of §3–§8, the WEENIECONTENT label index of §2); `apps/explorer` (generic typed singleton views, the label index, the reference graph of §9); `apps/client` (the mounted gait multipliers of §5.3.2, duel timings of §5.7, the player-note limit of §8.1, consideration and vital-display lookups once their OPENs close); Tessera's own server (M7: PvP, monster-play, perk, collection, reset and social rules); `apps/dattool` (`info` for the generic forms of §3) |
 | **Companion specs** | [`property-system.md`](property-system.md) §5 (property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels, the bit-to-key rule §7.3), §8 (DID maps, the root key 0x0A WEENIECONTENT); [`wstate.md`](wstate.md) §3–§5 (object records, items, native classes; the small set of class 18 and the counted lists of classes 104 and 11, §5.3); [`wlib.md`](wlib.md) (class library, parent map); [`misc-records.md`](misc-records.md) §14 (the WEENIECONTENT map; this spec resolves the labels it hands on); [`combat-data.md`](combat-data.md) §4 (progressions, class 1385), §7 (skills, class 827), §8 (traits), §10.1 (the combat control); [`economy.md`](economy.md) §4.12 (loot singletons), §6.4 (perk vendors); [`items.md`](items.md) §6.4 (paper-item lists); [`map-data.md`](map-data.md) §9.7 (the housing control); [`quests.md`](quests.md) (reputation, reward-track experience); [`creatures.md`](creatures.md) §2.1 (classes 1653 and 1654); [`sound.md`](sound.md) §10.6 (combat music script); [`walker.md`](walker.md) (movement controller, for §5.3.2) |
 
@@ -69,7 +69,7 @@ How sources are marked:
 | Key | Source |
 |---|---|
 | OBS | Observed in the user's install on 2026-10-07 (Steam install, client data current on that date). Read: the WEENIECONTENT map (all 316 entries) and the root DID map; **all 383,343 object records** (383,332 of prefix 0x70 and 11 of prefix 0x76, all in `client_gamelogic.dat`: root class, size); the **383,332 object property sets** (0x79; one per 0x70 object; the 0x76 objects have none, because DID + 0x09000000 would be a 0x7F record and none exists), none failed; all **1,618 bare property sets** (0x78: 1,616 in `client_gamelogic.dat`, 2 in `client_local_English.dat`; no other archive holds records of prefixes 0x70–0x7F); and all 24 DID maps (all in `client_general.dat`), for the typed-reference census of §9 (5,915,209 non-null DID values in the 383,332 object sets and the 1,616 bare sets of `client_gamelogic.dat`, plus 3,666 non-null DID-map values; the two `client_local_English.dat` sets, one chat-font array with 6 non-null DIDs and one empty set, were checked separately in the revision and name none of the 119 labels); a byte scan for the raw 4-byte DIDs of the 119 labels of §2.2 over every record of prefixes 0x07, 0x0C, 0x22, 0x28, 0x47, 0x56, 0x70, 0x76, 0x78 and 0x79 in `client_gamelogic.dat` and `client_general.dat`, and over the two bare sets of `client_local_English.dat` (added in the revision of 2026-10-07); the full property trees of the 119 labelled objects and per-class censuses (every property path: presence, occurrences, type, range, distinct values, referenced classes) of 97 + 18 root classes; the object states of the class-3399, 849, 852 and 1490 records (§3.3, §4.2, §4.10); the enum mappers named by the properties of this spec (labels and key sets); the property dictionary (27,546 definitions) for the family counts of §4.9, §5.10 and §8.5. The probes used the project's own decoders (`tessera-dat`, `tessera-formats`, `tessera-props`, `tessera-wstate`) read-only plus small independent scripts. |
-| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-07), read on 2026-10-07 with Ghidra (headless, on a private copy of the shared analysed project, deleted after use). **Questions:** (q1) which WEENIECONTENT singletons the client's native code resolves, and how; (q2) whether native code reads any property of this spec's singletons by a constant property ID; (q3) for each native reader found, what it reads, which defaults apply when a value is absent, and how the values are combined. **Method:** an instruction scan for call sites that pass the WEENIECONTENT root key together with a constant key of that map; an instruction scan for immediates equal to the 296 property IDs of this spec's controls; decompilation of the resolver's callers for this spec's labels and of the functions found by the property scan. **Why M1–M3 were not enough:** the data does not say which side (client or server) consumes a control, nor which value applies when a property is absent; a frame or log capture (M3) cannot separate the mounted gait multipliers from server-driven movement, and no capture of the running client is available to this session. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. No symbol names, listings or addresses are carried into this spec; they stay in the dirty notes. |
+| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-07), read on 2026-10-07 with Ghidra (headless, on a private copy of the shared analysed project, deleted after use). **Questions:** (q1) which WEENIECONTENT singletons the client's native code resolves, and how; (q2) whether native code reads any property of this spec's singletons by a constant property ID; (q3) for each native reader found, what it reads, which defaults apply when a value is absent, and how the values are combined. **Method:** an instruction scan for call sites that pass the WEENIECONTENT root key together with a constant key of that map; an instruction scan for immediates equal to the 296 property IDs of this spec's controls; decompilation of the resolver's callers for this spec's labels and of the functions found by the property scan. **Why M1–M3 were not enough:** the data does not say which side (client or server) consumes a control, nor which value applies when a property is absent; a frame or log capture (M3) cannot separate the mounted gait multipliers from server-driven movement, and no capture of the running client is available to this session. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. No symbol names, listings or addresses are carried into this spec; they stay in the dirty notes. **Second revision (2026-10-07):** (q4) whether native code could read GRSControl by a constant property ID (§7.16); method: a byte scan (no disassembly) of the same executable (SHA-256 prefix re-verified) for the 4-byte little-endian values of the 28 property IDs of GRSControl's property tree, sorted by PE section. |
 | SPEC | Facts stated, with their own provenance, in the companion specs named in the header; used here as cross-references only. |
 
 | # | Fact | Source(s) | Mark |
@@ -86,7 +86,7 @@ How sources are marked:
 | GC10 | Monster-play controls and tables: MonsterPlayControl, MPAdvancementControl, MPLevelTableDirectory, the two empty level directories (§4.6–§4.8) | OBS | Confirmed |
 | GC11 | Compiled-only tables referenced by these controls: class 849 (29 cumulative-value arrays of u64), class 852 (3 maps of u32 to float bits) (§4.10) | OBS (29 + 3 object states) | Confirmed (layout); meaning of the index OPEN |
 | GC12 | Mount directory: 676 skill DIDs (347 tall, 329 short; disjoint) (§5.1) | OBS | Confirmed |
-| GC13 | MountAppearanceTraits is the set of all 767 trait objects of class 3509; none of the 767 carries `Trait_Group` (§5.2) | OBS (767 of 767) | Confirmed |
+| GC13 | MountAppearanceTraits is the set of all 767 trait objects of class 3509. Each carries exactly one `Trait_Group`, nested as the single element of the top-level array `Trait_Groups` (none at top level); keys 8–14 of mapper 0x230002EE with the per-slot counts of §5.2; the seven keys are exactly the keys of `Mount_Control_Appearance_Group_To_Property_Hash`; the appearance fields and dye flags of §5.2; the seven slot-material properties named by the hash share the mapper of `Trait_Appearance_Material` and occur in no object property set and no bare set (§5.2) | OBS (767 of 767, full recursive walk of each property set; all 383,332 object sets and the 1,616 `client_gamelogic.dat` bare sets for the slot-material properties; second revision of 2026-10-07) | Confirmed |
 | GC14 | MountedCombatControl layout (§5.3.1) | OBS | Confirmed |
 | GC15 | Mounted gait multipliers: speed by gait (Walk/Trot/Canter/Gallop, else 1.0), turn rate by gait plus the actor's add-mod property, the locked-gear speed limit (§5.3.2) | BIN (q3) | BIN |
 | GC16 | The 17 weapon-style default-attack skills: shared shape, distinguishing fields, mounted additions (§5.5) | OBS (17 of 17) | Confirmed (data); selection rule OPEN |
@@ -101,7 +101,7 @@ How sources are marked:
 | GC25 | ResetScheduleControl (§7.4) | OBS | Confirmed |
 | GC26 | Consideration control and its 8 tables: 31 ranks per table, non-decreasing, index 15 = Even in all 8 (§7.5) | OBS (8 of 8) | Confirmed (data); index rule OPEN |
 | GC27 | Formation control and the 30 formation-layout objects (§7.6) | OBS (30 of 30) | Confirmed |
-| GC28 | Small UI and system controls: AggroPing, CombatMusic, DiscoveryDistance, TrackingState, Shapeshift, PetControl (2), PetChannel, PruneInfo_Skill, WhiteList (4), OpenTapping, GRS (§7.7–§7.16) | OBS | Confirmed |
+| GC28 | Small UI and system controls: AggroPing, CombatMusic, DiscoveryDistance, TrackingState, Shapeshift, PetControl (2), PetChannel, PruneInfo_Skill, WhiteList (4), OpenTapping, GRS (§7.7–§7.16) | OBS; BIN (q4, GRSControl byte scan) | Confirmed; GRS scan BIN |
 | GC29 | Social controls: GuildControl, MailControl, AuctionControl; player-note default 48 (§8) | OBS; BIN (q3, the guild reader) | Confirmed; default BIN |
 | GC30 | Dictionary-only families: LFG (17 definitions) and Antispam (65) hold no value anywhere; used versus defined counts of the other families (§4.9, §5.10, §8.5) | OBS (all 383,332 object sets and all 1,618 bare sets; the two `client_local_English.dat` sets hold no property of these families) | Confirmed |
 | GC31 | Reference graph of the singletons and their families (§9) | OBS (the typed-reference census of the OBS row) | Confirmed |
@@ -242,9 +242,12 @@ effects as such (`combat-data.md` §6–§8).
 - **No raw occurrence.** A byte scan of every record of prefixes 0x07, 0x0C, 0x22, 0x28,
   0x47, 0x56, 0x70, 0x76, 0x78 and 0x79 in `client_gamelogic.dat` and `client_general.dat`,
   and of the two bare sets in `client_local_English.dat`, found each of the 119 DIDs once in
-  WEENIECONTENT and otherwise only: the two typed references above, two 4-byte matches
-  inside the 29.9 MB object state of QuestEventTargetLocationControl (not DID items of its
-  decoded state) and one match inside the class library (0x56000000). None is a reference.
+  WEENIECONTENT, once at payload offset 0 of its own object record (the header's first
+  field, the record's own DID, `wstate.md` §3.1; 119 of 119, and no labelled record holds
+  its own DID at any other offset), and otherwise only: the two typed references above,
+  two 4-byte matches inside the 29.9 MB object state of QuestEventTargetLocationControl
+  (not DID items of its decoded state) and one match inside the class library
+  (0x56000000). None is a reference.
 - Members of the families are reached from their controls (§9), and some also from other
   records (perks from perk vendors, VDO unlocks from items, formation layouts from
   distant-battle units, whitelists from encounter templates).
@@ -570,13 +573,63 @@ body size). 102 of the 131 collection pieces (§6.2) are skills of this director
 <a id="s5-2"></a>
 ### 5.2 MountAppearanceTraits (Confirmed, GC13)
 
-A DID set (§3.3) of all 767 trait objects of class 3509 here (`combat-data.md` §8). None
-of the 767 carries `Trait_Group`, so the trait records themselves do not name the mount
-slot that a trait fills.
+A DID set (§3.3) of all 767 trait objects of class 3509 here (`combat-data.md` §8). All
+767 have `Trait_Nature` MountedAppearances (key 16 of mapper 0x23000057),
+`Trait_Category` Appearance (key 54 of mapper 0x2300001A), `Trait_Tier` 1 and
+`Trait_Cost_To_Slot` 0.
 
-> **OPEN:** (Q23) How a mount appearance trait is tied to a mount slot (the `Trait_Group`
-> keys of `Mount_Control_Appearance_Group_To_Property_Hash`, §5.3.1). The trait records do
-> not carry the slot; the rule is in the trait or appearance code (`appearance.md`).
+**The slot of a trait.** Each trait names the mount slot it fills, **one level down**: its
+property set has the top-level array `Trait_Groups` with exactly one element, and that
+element is a `Trait_Group` (enum, mapper 0x230002EE, the TraitGroup mapper). No trait
+carries `Trait_Group` at the top level, so a reader that looks only at top-level properties
+finds no slot; it must take the element of `Trait_Groups`. (The same holds for every other
+object that carries `Trait_Group`: 509 objects of five other root classes, none at the top
+level.) The keys used are 8 to 14, the mount-slot keys of the mapper:
+
+| `Trait_Group` key (label) | Traits | `Trait_Appearance_IsDyable` true | `Trait_Appearance_Material` non-zero | Slot-material property named by the hash (§5.3.1) |
+|---|---|---|---|---|
+| 8 (`Mount_Slot_Head`) | 152 | 129 | 30 | `Mount_Appearance_Material_Slot_Head` |
+| 9 (`Mount_Slot_Body`) | 175 | 166 | 70 | `Mount_Appearance_Material_Slot_Body` |
+| 10 (`Mount_Slot_Legs`) | 105 | 82 | 0 | `Mount_Appearance_Material_Slot_Legs` |
+| 11 (`Mount_Slot_Tail`) | 54 | 54 | 0 | `Mount_Appearance_Material_Slot_Tail` |
+| 12 (`Mount_Slot_Saddle`) | 153 | 10 | 0 | `Mount_Appearance_Material_Slot_Saddle` |
+| 13 (`Mount_Slot_Gear`) | 118 | 5 | 0 | `Mount_Appearance_Material_Slot_Gear` |
+| 14 (`Mount_Slot_Hide`) | 10 | 10 | 0 | `Mount_Appearance_Material_Slot_Hide` |
+| total | 767 | 456 | 100 | |
+
+The seven keys used by the traits are exactly the seven keys of MountedCombatControl's
+`Mount_Control_Appearance_Group_To_Property_Hash` (§5.3.1), each once. So the data links a
+trait to its slot (through the nested `Trait_Group`) and the slot to an actor property
+(through the hash).
+
+**Appearance fields of a trait** (top level, all 767 unless stated):
+
+| Property | Type | Observed |
+|---|---|---|
+| `Trait_Appearance_Material` | enum, mapper 0x230000F3 | 0 in 667; non-zero only in head and body traits (table above), 8 distinct keys |
+| `Trait_Appearance_IsDyable` | bool | table above |
+| `Trait_Appearance_DefaultColour` | enum, mapper 0x23000398 (AppearanceColor) | 0 in 761; non-zero in 6 body traits (2 distinct keys) |
+| `Trait_Appearance_ScriptID` | enum, mapper 0x23000097 | 0 in 734; non-zero in 33 |
+| `Trait_Appearance_List` | array | exactly 2 elements in all 767, each a `Trait_Appearance_Set` (array) holding exactly one `Trait_Appearance_Struct`; the struct's fields are `Trait_Appearance_APR_Key` and `Trait_Appearance_ColorAPR_Key` (enum, mapper 0x2300008A), `Trait_Appearance_APR` and `Trait_Appearance_ColorAPR` (DID of prefix 0x20, appearance records, `setup.md` §3.3) and `Trait_Appearance_APR_Value` (float); each field occurs in all 767 traits |
+| `Trait_BundleSkill_Array` | array of `Trait_BundleSkill` | 369 traits |
+
+The seven slot-material properties named by the hash are enums of the **same mapper**
+(0x230000F3) as `Trait_Appearance_Material`, and none of them occurs in any object property
+set or bare set of the install: they are values an actor holds at run time. Reading
+(consistent with the shared mapper, not stated by the data): applying a trait sets the
+actor's slot-material property of the trait's slot to the trait's
+`Trait_Appearance_Material`.
+
+> **OPEN:** (Q23, narrowed in the second revision) The slot link is in the data (above).
+> What remains open is how a trait's appearance is applied to the mount: whether the
+> reading above is the rule, what the material key 0 means, how the two appearance sets
+> of `Trait_Appearance_List` and their keys and float values are combined with the mount's appearance (`appearance.md`), and what
+> `Trait_Appearance_ScriptID` selects.
+
+> **OPEN:** (Q29) Which dye rule wins. `Mount_Control_Slots_Allowing_Dye` (§5.3.1) lists the
+> slots 8, 9, 10, 11 and 14, but 10 saddle traits and 5 gear traits (slots 12 and 13) have
+> `Trait_Appearance_IsDyable` = true. Whether a trait in a slot that the control does not
+> list can be dyed is not in the data.
 
 <a id="s5-3"></a>
 ### 5.3 MountedCombatControl
@@ -833,8 +886,12 @@ The skills themselves carry the display data of a piece: `Collection_Piece_Custo
 (StringInfo, 1,319), `Collection_Webstore_Item` (DID, 1,319), `Collection_Piece_DisplayEntDID`
 (756), `Collection_Piece_DisplayDID` (563) and `Collection_Hide_Entry` (bool, 1,347).
 
-A collection is complete when the character has every piece skill; the reward rule is a
-server rule.
+The data lists the pieces and the reward of a collection, but not when a collection counts
+as complete. Reading (not in the data): a collection is complete when the character has
+every piece skill. The completion test and the reward rule are server rules.
+
+> **OPEN:** (Q30) The completion rule of a collection and when `Collection_TreasureDID` is
+> granted; the data gives only the piece list and the reward.
 
 <a id="s6-3"></a>
 ### 6.3 Paper-item services (Confirmed, GC21)
@@ -1169,8 +1226,14 @@ Six tables that map gameplay keys to the PIDs of reporting properties (`GRS…`,
 `GRSResistancePoints_Array` (4: resist category → PIDs), `GRSItemSocketing_SocketDataProperties_Array`
 (5 sockets: gem DID and gem level PIDs), `GRSLegacy_Array` (9 legacies: type, level, unlocks
 PIDs), `GRSStaticEffect_Array` (14 PIDs), `GRSControl_TraitTreeBranchToGRSPropertyArray` (3
-big-battle roles) and `GRSControl_QuestMedalToGRSPropertyArray` (4 medals). These feed
-server-side event reporting; no client use.
+big-battle roles) and `GRSControl_QuestMedalToGRSPropertyArray` (4 medals). Reading (from
+the property labels, not stated by the data): they feed server-side event reporting.
+
+What the client does with the control is not settled. BIN: native code does not resolve
+GRSControl by key (§2.4, GC4). Its 28 property IDs were not part of the property-ID scan of
+§2.4; a byte scan of the executable (BIN q4) finds 4-byte matches of 9 of them, all in the
+code section, which were not examined further, so a native reader by constant property ID
+is neither shown nor excluded (Q1).
 
 ---
 
@@ -1348,6 +1411,12 @@ a data error to report, never as a reason to panic.
 15. **GCI15.** The ordered rule of §2.1 assigns every one of the 316 entries exactly one
     kind, no entry reaches the end of the table without a match, and the per-kind counts
     are those of the §2.1 table (1, 1, 6, 38, 14, 23, 12, 14, 14, 193).
+16. **GCI16.** Every member of MountAppearanceTraits has no top-level `Trait_Group` and a
+    top-level `Trait_Groups` array of exactly one element, a `Trait_Group` whose key is a
+    key of `Mount_Control_Appearance_Group_To_Property_Hash`; every key of that hash is used
+    by at least one member (per-slot counts 152, 175, 105, 54, 153, 118, 10 for keys 8–14
+    here); every member's `Trait_Appearance_List` has two `Trait_Appearance_Set` elements
+    of one `Trait_Appearance_Struct` each (§5.2).
 
 Install-specific values (counts, DIDs, keys, class indices) are observations; tests compare
 them only when `TESSERA_GAME_DIR` names an install of the same data.
@@ -1420,7 +1489,7 @@ no meaning.
 
 | # | Question | Section | What would settle it |
 |---|---|---|---|
-| Q1 | Which code reads the controls that native code does not read (consideration, vital-display overrides, combat music, aggro ping, alerts, discovery distance, tracking states, perks, pets): the client's script library or only the server | §2.4 | reading the client script library's bytecode (`wlib.md`) for these keys or property IDs; M3 observation |
+| Q1 | Which code reads the controls that native code does not read (consideration, vital-display overrides, combat music, aggro ping, alerts, discovery distance, tracking states, perks, pets, GRS): the client's script library or only the server; for GRSControl also whether the code-section matches of its property IDs (§7.16) are reads | §2.4, §7.16 | reading the client script library's bytecode (`wlib.md`) for these keys or property IDs; M3 observation |
 | Q2 | What the empty marker classes are used for | §3.2 | script-library reading; server traffic is gated |
 | Q3 | Purpose of the DID sets beyond membership | §3.3 | the store and big-battle specs |
 | Q4 | The three lists of a trait slot schedule (class 1490) | §4.2 | `combat-data.md` §8 work |
@@ -1442,12 +1511,14 @@ no meaning.
 | Q20 | What discovery distance classifies | §7.9 | script-library reading; M3 |
 | Q21 | Shapeshift redirect rule | §7.11 | `appearance.md` work |
 | Q22 | Meaning of skill pruning | §7.13 | server rule |
-| Q23 | How a mount appearance trait is tied to its mount slot (the traits carry no `Trait_Group`) | §5.2 | trait and appearance code (`appearance.md`); BIN |
+| Q23 | How a mount appearance trait's material and appearance sets are applied to the mount (the slot link itself is in the data: nested `Trait_Group`, §5.2) | §5.2 | trait and appearance code (`appearance.md`); BIN; M3 |
 | Q24 | Perk purchase and per-channel limit rule | §6.1 | server rule |
 | Q25 | How vital-display overrides 1 and 2 become available | §7.1 | script-library reading; M3 |
 | Q26 | Which entities carry which map note type; what a tracking state changes | §7.10 | script-library reading; M3 |
 | Q27 | Pet property forwarding and per-channel pet limits | §7.12 | script-library reading; server rule |
 | Q28 | What an encounter whitelist filters, and where | §7.14 | M3 inside such an encounter; script-library reading |
+| Q29 | Whether `Trait_Appearance_IsDyable` or `Mount_Control_Slots_Allowing_Dye` decides dyeing for saddle and gear traits | §5.2 | M3 (dye panel with such a trait); script-library reading |
+| Q30 | Collection completion rule and reward grant | §6.2 | server rule; M3 |
 
 ---
 
@@ -1477,3 +1548,5 @@ This spec edits no other file. Proposed follow-ups for the owners of the other s
 |---|---|
 | 2026-10-07 | First version, status Review. Census of all 316 WEENIECONTENT entries by kind; 119 labels and 300 member objects of this spec's scope decoded and described; BIN pass for native WEENIECONTENT resolution, native property reads, gait multipliers, duel and guild defaults. |
 | 2026-10-07 | Revision for the first review (changes requested), status stays Review. §2.1: the kind rule is now an ordered table with a replaceable table of class indices (484, 485, 89 common root; 486 plain-object base; 223 entity base; 3399, 1728, 827, 698, 788) and cross-checks; managers are recognised by parent class 788, not by the property template; row 9 listed by label (GC1, GCI15 new). §3.4 and GCI4: three server entities share the manager template except `PhysObj`; RepositoryManager's 12 extra properties corrected (GC8). OBS row, §2.3, §9, GC3, GC30: 383,332 object property sets (the 11 0x76 objects have none); 1,618 bare sets = 1,616 in `client_gamelogic.dat` + 2 in `client_local_English.dat`, the 2 now covered by the typed and raw scans; scope of the 5,915,209 DID values stated. Provenance: §9 cites the new row GC31, §5.4 the new row GC32. §5.2: the slot examples removed (the 767 traits carry no `Trait_Group`, GC13), Q23. Readings in §6.1, §7.1, §7.10, §7.12 and §7.14 turned into OPEN Q24–Q28. |
+| 2026-10-07 | Second revision, for the second review (changes requested), status stays Review. §5.2, GC13: the earlier statement that the 767 class-3509 traits carry no `Trait_Group` was wrong (a top-level-only check); each carries exactly one, nested as the single element of `Trait_Groups`, keys 8–14 with per-slot counts, equal to the keys of the appearance-group hash; the appearance fields, dye flags and the shared material mapper added; Q23 narrowed to how the appearance is applied; new Q29 (dye rule) and GCI16. §2.3: each labelled record's own DID at payload offset 0 named as the expected raw match. §6.2: the completion rule marked as a reading, Q30. §7.16: "no client use" replaced by the BIN facts (not resolved by key; byte scan, q4, finds unexamined code-section matches of 9 of 28 property IDs) and Q1. BIN row: q4. |
+| 2026-10-07 | Third review passed; status Review → Accepted (reviewer). No content change. |

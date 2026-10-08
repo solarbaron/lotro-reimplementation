@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Review |
+| **Status** | **Accepted** (2026-10-07) |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec reviewer, not the author session) |
-| **Review record** | 2026-10-07: **changes requested**; status stays Review (CLEAN_ROOM.md §5.3; spot checks over all records: §2.1 totals, §8.4 property count and §13.1 position flags disagree with the install; §13.3 order, §6.1 wording, §10.2 entry order and kind precedence, provenance rows for §3.2–§3.4, §4.12, §5.3, §6.2). Detailed findings are kept in the dirty-room review log (decision 0018). Revised by the spec writer the same day to answer every item (§19). 2026-10-07, re-review (a third session, neither author nor first reviewer): **changes requested**; status stays Review. Every first-review item is resolved and re-checked over all records. Open: the grouped-instance order of §13.3, §10.2 item 1, N-I8 and N-I11 (it follows ascending group label, not the stored group order); the `IntroVO` value count in §3.2; the exact key set of the §10.2 item 3 map. Details are in the dirty-room review log. |
+| **Review record** | 2026-10-07: first review and re-review (separate sessions) requested changes; both rounds answered by the writer (§19). Second re-review of the second revision, 2026-10-07 (a session separate from the writer and the earlier reviewers): **passed**, Accepted. Details in the dirty-room review log (decision 0018). |
 | **Implements into** | `crates/formats` / `crates/props` (typed views of the records below, read from their property sets), `crates/wstate` (the object-state forms of §13, optional), `apps/explorer` (instance cards, §14.4), `apps/client` (the instance-finder lists of §7 and §15.1, the skirmish statistics panel of §6.4 and §15.1, the distant-battle unit display of §8.4 and §15.1); a later server or sandbox backend (`crates/net`) consumes §15.2 |
 | **Companion specs** | [`property-system.md`](property-system.md) §3–§5 (type codes, value encodings, property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels), §8 (DID maps); [`wstate.md`](wstate.md) §3–§5 (object-state records, root class at offset 4, native codecs); [`wlib.md`](wlib.md) (class indices, ancestry); [`quests.md`](quests.md) §7.1 (roles, `QuestDispenser_PrivateEncounterTemplate`), §7.9 (scene records, class 1468), §8.1–§8.3 (permission struct and quest requirements), §9.6 (medals), §14 (world events, world-event lists); [`map-data.md`](map-data.md) §3 (named places, place-key lookup), §10 (properties that name places), §11 (ripcords); [`economy.md`](economy.md) §4.7, §4.10, §4.13 (species and skirmish loot); [`creatures.md`](creatures.md) §2.1 (class 4026, distant-battle unit groups); [`sound.md`](sound.md) (sound-info records, prefix 0x2A); [`misc-records.md`](misc-records.md) §13.5 (property-response maps) |
 
@@ -69,7 +69,7 @@ How sources are marked:
 
 | Key | Source |
 |---|---|
-| OBS | Observed in the user's install (Steam, client data current) on 2026-10-07, read-only. Probes used the project's own decoders (`tessera-dat`, `tessera-props`, `tessera-wstate`, `tessera-formats`, from the commit current that day) as tools. Covered: the root class of all 383,343 object records of `client_gamelogic.dat` (383,332 with prefix 0x70, 11 singletons with prefix 0x76); every property set with prefix 0x79 (383,332) and 0x78 (1,616), all decoding with no failure; the object state of every record of every class of §2.1 (all decode, none partial); the property dictionary (0x34000000, 27,546 definitions); the class library (0x56000000); the WEENIECONTENT DID map (0x2800000E, 316 entries); the EMAPPER map (0x28000001); every enum mapper named in §3.3; the content-layer DID map 0x28000012; all 49,636 landblock-info records of the cell archives (static entities, links, instance property sets). **Revision probes** (same install, same day, after the first review): the census sums of §2.1; the flag byte of all 4,628 class-161 positions of the templates; the attribute order of the world-join object form; the order and kind bits of all 557 fellowship-maker entries against the templates; the top-level property counts of all 96 class-3725 records; the DB-object-type code and target of every DID value in the records of §2.1; the mapper or DID map of every field of §3.3; the holders of every characteristic property of §3.4 over all 0x79 and 0x78 sets; the labelled templates, manager entities and trait lists of §4.12, §5.3 and §6.2; all record pairs of class 2727. |
+| OBS | Observed in the user's install (Steam, client data current) on 2026-10-07, read-only. Probes used the project's own decoders (`tessera-dat`, `tessera-props`, `tessera-wstate`, `tessera-formats`, from the commit current that day) as tools. Covered: the root class of all 383,343 object records of `client_gamelogic.dat` (383,332 with prefix 0x70, 11 singletons with prefix 0x76); every property set with prefix 0x79 (383,332) and 0x78 (1,616), all decoding with no failure; the object state of every record of every class of §2.1 (all decode, none partial); the property dictionary (0x34000000, 27,546 definitions); the class library (0x56000000); the WEENIECONTENT DID map (0x2800000E, 316 entries); the EMAPPER map (0x28000001); every enum mapper named in §3.3; the content-layer DID map 0x28000012; all 49,636 landblock-info records of the cell archives (static entities, links, instance property sets). **Revision probes** (same install, same day, after the first review): the census sums of §2.1; the flag byte of all 4,628 class-161 positions of the templates; the attribute order of the world-join object form; the order and kind bits of all 557 fellowship-maker entries against the templates; the top-level property counts of all 96 class-3725 records; the DB-object-type code and target of every DID value in the records of §2.1; the mapper or DID map of every field of §3.3; the holders of every characteristic property of §3.4 over all 0x79 and 0x78 sets; the labelled templates, manager entities and trait lists of §4.12, §5.3 and §6.2; all record pairs of class 2727. **Second revision probes** (same install, same day, after the re-review): every `IntroVO` value of every 0x70 record's property set; the stored group order of the world-join control against its 164-element object-form array and against the template order of the 557 fellowship-maker entries; the key set and bitsets of the fellowship-maker flag-bit map; the key sets of all 735 enum mappers of the install's archives. |
 | LC | LotroCompanion `lotro-tools` (no licence file; all rights reserved): the private-encounter and instance-tree loaders. Read for facts only (which class is a template, which properties name the instance-finder lists). No code or prose copied. |
 | BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified 2026-10-07), read in the dirty room on 2026-10-07 with a headless, read-only copy of the shared Ghidra project. **Questions:** (1) which properties of this family the client reads at all; (2) how the client chooses the featured instance, the level-scaling level and the template of an instance group; (3) how the skirmish statistics panel computes its derived values; (4) how the client builds the cosmetic display of a distant-battle unit; (5) what the phasing-box flags do on the client. **Method:** a whole-program search for the PIDs of all 1,322 dictionary properties of the family prefixes (§2.2) as immediate operands, then decompilation of the functions that hold property look-ups (a PID passed as the second argument of a property-read call). **Why M1–M3 were not enough:** the data cannot show which fields the client consumes or how it combines them; no published source covers these questions; a running client shows only the result on screen. Only user-interface, data-loading and entity-display code was read. Network messages, login, launcher and anti-tamper code were not read; the world-join request properties of §7.4 were deliberately left alone because they belong to client–server messages (decision 0004). |
 
@@ -88,14 +88,14 @@ How sources are marked:
 | I11 | Entry filters: window and limit live only in the object form (§5.2) | OBS | Confirmed (layout); Derived (meaning of the numbers is OPEN) |
 | I12 | Match-parameter bands, including which level bands overlap and that no two records share a group band and a tier band with overlapping level bands (§6.1) | OBS | Confirmed (183 records, all 16,653 pairs) |
 | I13 | Skirmish control layout (§6.3) and statistic naming (§6.4) | OBS | Confirmed |
-| I14 | World-join control: available list, groups, featured list, seasonal and capped categories; object form = ordered list + index map (§7.1, §13.3) | OBS; LC (meaning of the lists) | Confirmed (layout and object form); Reported (meaning) |
+| I14 | World-join control: available list, groups, featured list, seasonal and capped categories; object form = ordered list + index map, grouped templates by ascending group label (§7.1, §13.3) | OBS; LC (meaning of the lists) | Confirmed (layout and object form; label-ascending order 164 of 164 positions, stored group order 156 of 164); Reported (meaning) |
 | I15 | Big-battle control, distant-battle scripts, distant-battle units and formation control (§8) | OBS | Confirmed |
 | I16 | Distant-battle unit: composition = units repeated by offset count; offsets lie inside the formation dimensions; dimension width ≤ the width class's actual width (§8.4) | OBS | Confirmed (96 of 96). Derived by this spec writer. |
 | I17 | Session-play control, fellowship-maker control, phasing box, dialog singletons (§9–§12) | OBS | Confirmed |
-| I18 | Fellowship-maker object form: 557 candidate entries, their order, flag word bits (kind bits disjoint in this install), per-flag bitsets, encounter → size → tier → entry map (§10.2) | OBS | Confirmed (557 of 557 entries, 107 of 107 templates in the stated order, 20 of 20 bitsets). Derived by this spec writer. |
-| I19 | Object-form correspondences of templates and controls, including the flag bytes of the template landblock positions and the stored attribute order of the world-join control (§13) | OBS | Confirmed (all records of each class; 4,628 of 4,628 positions). Derived by this spec writer. |
+| I18 | Fellowship-maker object form: 557 candidate entries, their order, flag word bits (kind bits disjoint in this install), per-flag bitsets, encounter → size → tier → entry map (§10.2) | OBS | Confirmed (557 of 557 entries, 107 of 107 templates in the stated order, 20 of 20 bitsets, key set of the flag-bit map 20 of 20; the rule behind the key set is OPEN). Derived by this spec writer. |
+| I19 | Object-form correspondences of templates and controls, including the flag bytes of the template landblock positions and the stored attribute order of the world-join control and the label-ascending order of its grouped templates (§13) | OBS | Confirmed (all records of each class; 4,628 of 4,628 positions; 164 of 164 finder positions). Derived by this spec writer. |
 | I20 | Reference graph (§14.1–§14.3) | OBS | Confirmed |
-| I21 | DID targets: declared DB-object-type codes of the DID fields, the fields that are not type 0x45, and that every non-zero 0x45 value names an existing 0x70 record (§3.2) | OBS | Confirmed (all DID values of the records of §2.1; 0 dangling) |
+| I21 | DID targets: declared DB-object-type codes of the DID fields, the fields that are not type 0x45, and that every non-zero 0x45 value names an existing 0x70 record (§3.2) | OBS | Confirmed (all DID values of the records of §2.1; 0 dangling; `IntroVO` 942 values, 908 non-zero, all prefix 0x2A) |
 | I22 | Enum sources: the mapper or DID map named by each field's definition, and the number of names of each (§3.3) | OBS | Confirmed (every row of §3.3) |
 | I23 | Characteristic properties and their holder classes (§3.4) | OBS | Confirmed (all 0x79 and 0x78 sets) |
 | I24 | Labelled templates `NewbieCinematicEncounter` and `PublicAreaDefaultEncounter` (§4.12) | OBS | Confirmed |
@@ -300,7 +300,7 @@ these, which hold DIDs of other archives:
 
 | Field | Declared type code | Targets |
 |---|---|---|
-| `PrivateEncounterTemplate_IntroVO` | 0x12 | sound-info records, prefix 0x2A, in the sound archive (908 values; 34 are 0) |
+| `PrivateEncounterTemplate_IntroVO` | 0x12 | sound-info records, prefix 0x2A, in the sound archive (942 values: 908 non-zero, 34 are 0) |
 | `DistantBattleUnit_CosmeticEntity`, `PhysObj` | 0x39 | entity descriptors, prefix 0x47 (376 and 100 values) |
 | `Appearance_AprFile` | 0x4E | prefix 0x20 (84 values) |
 | `ScriptTable_DBScriptTable` | 0x2A | script tables, prefix 0x07 (7 values) |
@@ -534,7 +534,7 @@ the default blob gates who may **enter** one (§15.2 OPEN).
 |---|---|---|---|
 | `PrivateEncounterTemplate_TeleportationSceneID` | 20 | 568 / 552 | scene 1468 (564 / 254), 0 (4 / 298) |
 | `PrivateEncounterTemplate_SuccessTeleportSceneDID` | 20 | 268 / 150 | scene 1468 |
-| `PrivateEncounterTemplate_IntroVO` | 20 | 765 / 177 | sound-info records, prefix 0x2A (765 / 143), 0 (0 / 34); 908 references in all (`sound.md`) |
+| `PrivateEncounterTemplate_IntroVO` | 20 | 765 / 177 | sound-info records, prefix 0x2A (765 / 143), 0 (0 / 34); 942 values, 908 of them non-zero references (`sound.md`) |
 | `PrivateEncounterTemplate_SkyLocalNameOverride` | 8 | 337 / 550 | 121 / 82 distinct keys; key 0 in 282 class-2651 records |
 | `PrivateEncounterTemplate_DisallowedMapNoteType` | 14 | 84 / 142 | one bit (value 0x1000000) in 83 / 142; 0 in 1 |
 | `PrivateEncounterTemplate_ShouldIgnoreWEBroadcasts` | 21 | 13 / 0 | |
@@ -781,7 +781,7 @@ stored in the data; they are per-character state.
 |---|---|---|---|
 | `WorldJoin_AvailablePETemplates_Array[]` / `WorldJoin_AvailablePETemplate` | 12 / 20 | 150 templates (2651: 149, 1368: 1), no duplicates | Templates offered by the finder |
 | `WorldJoinControl_InstanceGroups[]` / `WorldJoinControl_Instance_Grouping` | 12 / 11 | 8 groups | Grouped instances (§15.1 B3) |
-| `…Grouping/WorldJoinControl_Instance_Group_Label` | 8 | keys 1–8, each once | Group key |
+| `…Grouping/WorldJoinControl_Instance_Group_Label` | 8 | keys 1–8, each once; the groups are **not** stored in label order (this install: 3, 1, 4, 5, 2, 6, 7, 8) | Group key |
 | `…Grouping/WorldJoinControl_Grouped_Instance_List[]` / `…_Grouped_Instance` | 12 / 20 | 1–2 templates (14 in all) | The 14 big-battle templates; none of them is in the available list |
 | `WorldJoinControl_FeaturedInstance_Array[]` / `WorldJoin_AvailablePETemplate` | 12 / 20 | 6 templates, all in the available list | Featured rotation (§15.1 B1) |
 | `WorldJoinControl_FeaturedInstance_WorldEvent` | 20 | world event 1887 | |
@@ -794,7 +794,8 @@ The available list and the grouped lists together name 164 templates. The 166 te
 carry `WorldJoin_EncounterCategory` are these 164 except the class-1368 one, plus 3 that no
 list names.
 
-The object form stores the finder order (§13.3).
+The object form stores the finder order (§13.3), which takes the groups by ascending label,
+not in their stored order.
 
 <a id="s7-2"></a>
 ### 7.2 World-join tickets (class 3894)
@@ -1038,8 +1039,9 @@ root's attributes (attribute names are hashes, so position and native class iden
    integers: a **flag word** and a template DID (107 distinct class-2651 templates).
    **Order (Confirmed, 557 of 557 entries):** the entries of one template are contiguous;
    templates follow the finder order of the world-join control's object form (§13.3: the
-   available list in stored order, then the grouped instances in group order; the 107
-   templates occur at strictly increasing positions of that array); within a template, the
+   available list in stored order, then the grouped instances by ascending group label; the
+   107 templates occur at strictly increasing positions of that array, 13 of them grouped big
+   battles); within a template, the
    entries run over its `Skirmish_Template_GroupSizeArray` in stored order, skipping sizes that
    are not valid sizes, and for each size over its `Skirmish_Template_DifficultyTierArray` in
    stored order (size first, then tier; 107 of 107 templates, including the 2 whose stored
@@ -1074,9 +1076,21 @@ root's attributes (attribute names are hashes, so position and native class iden
    > entries. Of the other 57, 33 have no valid size and 1 is the fellowship maker's excluded
    > template, but 23 (22 of class 2651, 1 of class 1368) have a valid size, are not excluded
    > and still have none; the data examined does not show what sets them apart.
-3. **Per-flag bitsets**: a map from each single flag bit (20 bits, 0x1 … 0x100000) to a bitset
-   over the 557 entries; bit *i* is set exactly when entry *i*'s flag word has that flag
-   (20 of 20). A bitset stores only up to its last set bit (empty when no entry has the flag).
+3. **Per-flag bitsets**: a map from a flag bit to a bitset over the 557 entries; bit *i* is
+   set exactly when entry *i*'s flag word has that flag (20 of 20). A bitset stores only up to
+   its last set bit. **Key set (Confirmed):** exactly 20 keys, every single bit from 0x1 to
+   0x100000 (bit positions 0–20) except 0x4000 (bit 14). The 13 bits that occur in some
+   entry's flag word (0x1, 0x2, 0x4, 0x20, 0x40, 0x80, 0x100, 0x200, 0x400, 0x800, 0x1000,
+   0x80000, 0x100000) map to non-empty bitsets; the other 7 keys (0x8, 0x10, 0x2000, 0x8000,
+   0x10000, 0x20000, 0x40000) map to an empty bitset (bit count 0), not to a null reference.
+   No key outside that range and no multi-bit key occurs.
+
+   > **OPEN:** The rule that chooses the key set. It is not "every bit up to the highest used
+   > bit" (0x4000 is skipped), and it does not follow the tier formula of item 2 (0x80 << 7 =
+   > 0x4000 would be tier 7, while 0x40000 would be tier 11). No enum mapper of the install
+   > has these keys (all 735 mappers checked). A writer that rebuilds this map should emit
+   > exactly the 20 keys above, with an empty bitset for a key no entry uses, until the rule
+   > is known.
 4. **Encounter map**: template DID → (size key 2, 3 or 6 → (tier → entry index)), 121
    templates (14 with an empty map); every index points at an entry with that template, size
    bit and tier bit (557 of 557).
@@ -1092,7 +1106,7 @@ Root attributes in stored order (17; Confirmed):
 | 0 | bitset (class 57), 389 bits set | item 6 |
 | 1 | integer 6 | OPEN |
 | 2 | reference array (class 176) of 5 class-3358 objects | item 5, bonus thresholds |
-| 3 | reference map (class 35), flag bit → bitset, 20 keys | item 3 |
+| 3 | reference map (class 35), flag bit → bitset, 20 keys (item 3 gives the key set) | item 3 |
 | 4 | integer array (class 17) 2, 3, 6 | item 5, valid sizes |
 | 5 | reference array, 7 elements, null at 0–2 | item 6 |
 | 6 | set (class 18), one template | item 5, excluded templates |
@@ -1194,8 +1208,12 @@ class as well, `wstate.md` §5.3):
 
 1. a map (class 11) template → position in the array of item 3 (0–163; 164 of 164);
 2. a set (class 18) of the 5 seasonal category keys;
-3. an integer array (class 17) of 164 template DIDs: the available list in stored order
-   followed by the grouped instances in group order.
+3. an integer array (class 17) of 164 template DIDs: the available list in stored order,
+   followed by the grouped instances taken group by group in **ascending order of
+   `WorldJoinControl_Instance_Group_Label`** (1, 2, … 8), each group's
+   `…_Grouped_Instance_List` in its stored order (164 of 164 positions). The groups' stored
+   order in the property form is a different one (§7.1); following it would misplace
+   positions 150–157 of this install.
 
 The position is the finder's sort index.
 
@@ -1436,10 +1454,10 @@ fixtures and may warn (not fail) when real data breaks one.
 | N-I5 | Class 2651: `DifficultyTierArray` is 1 … *n*; `MinLevelScale` ≤ `MaxLevelScale`; the tier-minimum list has entry *k* with tier *k*; `MaxPlayers` (when present) = the largest group size. |
 | N-I6 | The lockable list of the control record equals the set of templates with `LockSize`. |
 | N-I7 | Every featured template is in the available list; no grouped template is. |
-| N-I8 | The world-join object form lists the available templates in stored order, then the grouped ones, and maps each to its position. |
+| N-I8 | The world-join object form lists the available templates in stored order, then the grouped ones group by group in ascending label order (each group's list in stored order), and maps each to its position. |
 | N-I9 | Each distant-battle script is named by exactly one template; each big-battle template is in the `BigBattles` set. |
 | N-I10 | Distant-battle unit: composition multiset = each group's unit repeated per offset; the units of `Formation` and `EntityComposition` are the same set, with equal jitter per unit; offsets have second component 0 and lie inside the dimensions; dimension width ≤ the actual width of the width class. |
-| N-I11 | Fellowship-maker index: every entry's flag word has one kind bit, one size bit and one tier bit; entries are in the order of §10.2 item 1 (finder order of templates, then sizes, then tiers, each in stored order); each per-flag bitset marks exactly the entries with that flag; every encounter-map index points at a matching entry. |
+| N-I11 | Fellowship-maker index: every entry's flag word has one kind bit, one size bit and one tier bit; entries are in the order of §10.2 item 1 (finder order of templates as in N-I8, then sizes, then tiers, each in stored order); the per-flag map has exactly the 20 keys of §10.2 item 3; each per-flag bitset marks exactly the entries with that flag; every encounter-map index points at a matching entry. |
 | N-I12 | The skirmish conversion hash has one entry per (statistic, size, on-level) for 19 statistics, 6 sizes and both level classes. |
 
 ---
@@ -1522,3 +1540,5 @@ client removes 4 figures of the second group; the first element is not applied a
 |---|---|
 | 2026-10-07 | First version (Review). Census of the family (1,833 records in 29 root classes, corrected from the 1,834 first stated; 1,322 dictionary definitions); property-form layouts of all classes; landblock-list encoding; content-layer link; entry-filter numbers and the fellowship-maker index from the object forms; reference graph and instance-card algorithm; BIN rows B1–B7 (featured instance, level-scaling level, instance groups, skirmish statistics, distant-battle unit display, phasing boxes, negative search). |
 | 2026-10-07 | Revision after the first review (status stays Review). §2.1: record total 1,833 (was 1,834), 17-class subtotal 1,821 (was 1,822); per-class rows and byte totals unchanged. §3.2: table of the non-0x45 DID fields with their type codes, `ScriptTable_DBScriptTable` added. §4.1: the second "other" template carries `WorldJoin_EncounterType` 4 without a category. §4.10: tier-array distribution scoped to class 2651, team templates added; key-4 count explained. §5.3: 36 top-level properties (was 34), exact ancestry. §6.1: band-overlap paragraph replaces "adjacent bands share no level"; new OPEN on overlapping tier bands. §8.4: 53–56 top-level properties (was 60), with the 52 common and the optional ones. §10.2: entry order stated (Confirmed); stored order of the 17 root attributes; kind bits disjoint in this install, precedence OPEN; new OPEN on which finder templates get entries. §13.1: flag bytes 0xCB / 0x8B (was "203" for all). §13.3: attributes listed in stored order (map, set, array). §16 N-I11 includes the order. §17.5 follows the stated order. Provenance: OBS revision probes; rows I1, I12, I18, I19 extended; new rows I21–I26 for §3.2, §3.3, §3.4, §4.12, §5.3, §6.2. |
+| 2026-10-07 | Second revision, after the re-review (status stays Review). §13.3 item 3, §10.2 item 1, §7.1, N-I8, N-I11: the grouped templates of the finder order follow ascending `WorldJoinControl_Instance_Group_Label`, each group's list in stored order, not the stored group order (was "in group order"). §3.2, §4.8: `IntroVO` has 942 values, 908 non-zero and 34 zero (was "908 values"). §10.2 item 3: the flag-bit map has exactly the 20 single-bit keys 0x1 … 0x100000 except 0x4000, 7 of them with empty bitsets (was "20 bits, 0x1 … 0x100000"); new OPEN on the rule behind the key set. Provenance: second-round OBS probes; rows I14, I18, I19, I21 extended. |
+| 2026-10-07 | Second re-review passed; status Accepted (reviewer). No text change besides the header. |

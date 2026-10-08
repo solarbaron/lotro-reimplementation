@@ -74,6 +74,7 @@
 //! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 //! | [`font`] | fonts (0x42): metrics, glyph table, atlas DIDs | `fonts.md` §3 |
 //! | [`ui_layout`] | UI layouts (0x22): elements, states, media items, labels, base chains | `ui-layout.md` §3–§6, §10–§13 |
+//! | [`gameplay`] | gameplay record families (items, combat, creatures, quests, economy, map data, particles, misc records) and their shared helpers ([`gameplay::common`]) | `items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `particles.md`, `misc-records.md` |
 //! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, distant-landscape sectors (kind 5, [`SectorRecord`]), region descriptors (0x0F) and their eight table slots | `landblock.md`, `distant-landscape.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
 
 mod any;
@@ -88,6 +89,7 @@ pub mod enum_mapper;
 pub mod environment;
 mod error;
 pub mod font;
+pub mod gameplay;
 pub mod instance;
 pub mod item;
 pub mod landblock;

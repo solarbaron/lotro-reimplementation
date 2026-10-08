@@ -116,8 +116,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   line (offline and with `--server`) or given as `tessera-client --command "<line>"` (old
   name `--music-command`); unknown commands post an error line and are never sent. Merged
   with M4.5 and M7 on main (2026-10-08). M5 (UI and plugins, branch `m5`) is being merged
-  into main (status below); M5.5 (extended scripting) specs are Accepted (decision 0017) and
-  wait for M5; M8 is gated.
+  into main (status below); M8 is gated.
+- **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
+  now M9, the last milestone: it starts only after full client parity and server
+  compatibility (M8; or, if the M8 gate fails, client parity on the own server). Its specs
+  stay Accepted; do not start it earlier.
 - **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
   decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,

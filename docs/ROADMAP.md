@@ -79,11 +79,15 @@ like "ARCH §8" refer to it.
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
 | **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
+| **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
 
 M1–M6 depend on M0, and mostly on each other in order, but M5 (UI) and M6 (audio) can run
 in parallel with M4 once M3's asset and world plumbing exists. M4.5 builds on M3 (streaming,
 terrain), M2 (the material chain) and M4 (the walking avatar, setup collision volumes). M5
 and M6 do not depend on it; by the owner's decision of 2026-10-06 it runs before them.
+M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it starts only
+after full parity with the original client and compatibility with the server (M8), or, if
+the M8 gate fails, after client parity with Tessera's own server.
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
@@ -1340,6 +1344,29 @@ offline world explorer, a data-file toolkit, and a client for the project's own 
 
 **Exit criteria (Phase 1):** G1–G5 each recorded in `docs/decisions/` with an outcome, and
 a go/no-go decision accepted by the project owner.
+
+---
+
+<a id="m9"></a>
+## M9: Extended scripting (after full parity)
+
+**Placement (owner, 2026-10-08).** Extended scripting is not a priority. It starts only after
+Tessera reaches full parity with the original client and compatibility with the server (M8).
+If the M8 gate fails, it starts after client parity with Tessera's own server (M7). It was
+planned earlier as M5.5, right after M5.
+
+**Plan.** [Decision 0017](decisions/0017-extended-scripting.md) holds the design: Lua 5.1
+"ext" apartments under `Ext`, modules granted by capability, a fail-closed backend gate,
+and slices 1a (core), 1b, 2 and 3. Its specs are written and Accepted: `ext-threat-model.md`,
+`ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. Ext scripts never run against an
+official server (decision 0017 §4, LEGAL §9), whatever M8 decides.
+
+**What stays in place until then.** M5 already split `tessera-script` (a plugin-free Lua core)
+from `tessera-plugins` (decision 0023), as decision 0017 asked. M9 therefore does not redo
+that work. The pinned external Lua fork that 0017 needs is created only when M9 starts,
+after the owner confirms it.
+
+**Exit criteria:** those of decision 0017's slice 1a section, re-checked when M9 starts.
 
 ---
 

@@ -1108,3 +1108,68 @@ path = "fuzz_targets/client_command_line.rs"
 test = false
 doc = false
 bench = false
+
+# --- Gameplay records (items, combat, creatures, quests, economy, map, particles, misc) ---
+
+[[bin]]
+name = "formats_gameplay_common"
+path = "fuzz_targets/formats_gameplay_common.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_particles"
+path = "fuzz_targets/formats_gameplay_particles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_economy"
+path = "fuzz_targets/formats_gameplay_economy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_map"
+path = "fuzz_targets/formats_gameplay_map.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_misc"
+path = "fuzz_targets/formats_gameplay_misc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_quests"
+path = "fuzz_targets/formats_gameplay_quests.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_combat"
+path = "fuzz_targets/formats_gameplay_combat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_creatures"
+path = "fuzz_targets/formats_gameplay_creatures.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_gameplay_items"
+path = "fuzz_targets/formats_gameplay_items.rs"
+test = false
+doc = false
+bench = false

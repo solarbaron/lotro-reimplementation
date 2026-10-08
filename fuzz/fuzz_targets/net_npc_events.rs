@@ -6,14 +6,22 @@
 //! and clock steps.
 //!
 //! Nothing may panic. Every surfaced `EntityCreated` has a valid location, a finite heading
-//! in (−π, π], a valid appearance and a clean name; every `AppearanceChanged` a valid
-//! appearance; no identifier is created twice while alive; tagged (placed) entities are
-//! all removed by `StaticsCleared`; the crowd and wanderers never exceed their configured
-//! counts.
+//! within one turn of zero (|θ| ≤ 2π; in (−π, π] for a placed, tagged entity), a valid
+//! appearance and a clean name; every `AppearanceChanged` a valid appearance; no identifier
+//! is created twice while alive; `StaticsCleared` removes every tagged (placed) entity and
+//! static object: no later event (a move, an appearance change, a despawn, a location
+//! report) names one of them unless it was created again; the crowd and wanderers never
+//! exceed their configured counts. The session ends with a disconnect, so the streamed
+//! statics are also dropped when the session closes.
+//!
+//! The session contract (`tessera-net` `Event::EntityCreated`) gives a heading's units and
+//! direction but no range; the sandbox reports placed entities in (−π, π] and simulated
+//! ones in other one-turn ranges (wanderers in [0, 2π)), hence the two checks above.
 
 #![no_main]
 
 use std::collections::BTreeSet;
+use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -150,6 +158,92 @@ struct Input {
     ops: Vec<Op>,
 }
 
+/// What the events said so far.
+#[derive(Default)]
+struct Seen {
+    /// Identifiers alive.
+    live: BTreeSet<u64>,
+    /// Alive identifiers with a tag (placed entities and static objects).
+    tagged: BTreeSet<u64>,
+    /// Identifiers removed by `StaticsCleared` and not created again.
+    cleared: BTreeSet<u64>,
+    /// Entities the backend simulates itself (wanderers and crowd).
+    simulated: usize,
+}
+
+impl Seen {
+    /// A new identifier: not alive yet; it may reuse one that was cleared.
+    fn created(&mut self, id: u64, tagged: bool) {
+        assert!(self.live.insert(id), "created twice");
+        self.cleared.remove(&id);
+        if tagged {
+            self.tagged.insert(id);
+        }
+    }
+
+    /// An event about an existing identifier: none removed by `StaticsCleared`.
+    fn about(&self, id: u64, what: &str) {
+        assert!(
+            !self.cleared.contains(&id),
+            "{what} for {id} after StaticsCleared removed it"
+        );
+    }
+
+    fn event(&mut self, e: Event) {
+        match e {
+            Event::EntityCreated {
+                id,
+                name,
+                location,
+                heading,
+                appearance,
+                tag,
+                ..
+            } => {
+                assert!(location.is_valid());
+                assert!(heading.is_finite());
+                assert!(
+                    heading.abs() <= TAU + 1e-3,
+                    "heading {heading} past one turn"
+                );
+                assert!(appearance.is_valid());
+                assert!(name.len() <= MAX_NAME_LEN);
+                assert!(name.is_empty() || is_valid_name(&name) || name.trim().is_empty());
+                if tag.is_some() {
+                    assert!(heading > -PI - 1e-4);
+                    assert!(heading <= PI + 1e-4);
+                } else {
+                    self.simulated += 1;
+                }
+                self.created(id.0, tag.is_some());
+            }
+            Event::EntitySpawned { id, .. } => {
+                self.created(id.0, false);
+                self.simulated += 1;
+            }
+            Event::StaticSpawned { id, .. } => self.created(id.0, true),
+            Event::AppearanceChanged { id, appearance } => {
+                assert!(appearance.is_valid());
+                self.about(id.0, "AppearanceChanged");
+            }
+            Event::EntityMoved { id, .. } => self.about(id.0, "EntityMoved"),
+            Event::LocationReport { id, .. } => self.about(id.0, "LocationReport"),
+            Event::EntityDespawned { id } => {
+                self.about(id.0, "EntityDespawned");
+                self.live.remove(&id.0);
+                self.tagged.remove(&id.0);
+            }
+            Event::StaticsCleared => {
+                for id in std::mem::take(&mut self.tagged) {
+                    self.live.remove(&id);
+                    self.cleared.insert(id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fuzz_target!(|input: Input| {
     static T0: OnceLock<Instant> = OnceLock::new();
     let t0 = *T0.get_or_init(Instant::now);
@@ -203,9 +297,7 @@ fuzz_target!(|input: Input| {
             character: "Wanderer".into(),
         },
     );
-    let mut live: BTreeSet<u64> = BTreeSet::new();
-    let mut tagged: BTreeSet<u64> = BTreeSet::new();
-    let mut simulated = 0usize;
+    let mut seen = Seen::default();
     let mut events = Vec::new();
     let ops = input
         .ops
@@ -245,53 +337,15 @@ fuzz_target!(|input: Input| {
         }
         session.poll_into(now, &mut events);
         for e in events.drain(..) {
-            match e {
-                Event::EntityCreated {
-                    id,
-                    name,
-                    location,
-                    heading,
-                    appearance,
-                    tag,
-                    ..
-                } => {
-                    assert!(location.is_valid());
-                    assert!(heading.is_finite());
-                    assert!(appearance.is_valid());
-                    assert!(name.len() <= MAX_NAME_LEN);
-                    assert!(name.is_empty() || is_valid_name(&name) || name.trim().is_empty());
-                    assert!(live.insert(id.0), "created twice");
-                    if tag.is_some() {
-                        assert!(heading > -std::f32::consts::PI - 1e-4);
-                        assert!(heading <= std::f32::consts::PI + 1e-4);
-                        tagged.insert(id.0);
-                    } else {
-                        simulated += 1;
-                    }
-                }
-                Event::EntitySpawned { id, .. } => {
-                    assert!(live.insert(id.0), "spawned twice");
-                    simulated += 1;
-                }
-                Event::StaticSpawned { id, .. } => {
-                    assert!(live.insert(id.0), "spawned twice");
-                    tagged.insert(id.0);
-                }
-                Event::AppearanceChanged { appearance, .. } => {
-                    assert!(appearance.is_valid());
-                }
-                Event::EntityDespawned { id } => {
-                    live.remove(&id.0);
-                    tagged.remove(&id.0);
-                }
-                Event::StaticsCleared => {
-                    for id in std::mem::take(&mut tagged) {
-                        live.remove(&id);
-                    }
-                }
-                _ => {}
-            }
+            seen.event(e);
         }
     }
-    assert!(simulated <= wanderers + crowd);
+    // The session closes: whatever it still reports keeps the same rules.
+    let _ = session.send(now, Command::Disconnect);
+    now += Duration::from_millis(100);
+    session.poll_into(now, &mut events);
+    for e in events.drain(..) {
+        seen.event(e);
+    }
+    assert!(seen.simulated <= wanderers + crowd);
 });

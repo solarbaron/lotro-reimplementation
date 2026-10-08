@@ -313,7 +313,12 @@ impl App {
                         self.status_panel.draw(pass, 20.0, 20.0);
                     }
                 }
-                gfx.renderer.end_frame(frame).map(|_| true)
+                gfx.renderer.end_frame(frame).map(|stats| {
+                    if let Some(walker) = host.walker.as_mut() {
+                        walker.record_render_stats(&stats);
+                    }
+                    true
+                })
             }
             Ok(None) => Ok(false),
             Err(RenderError::SurfaceLost) => {

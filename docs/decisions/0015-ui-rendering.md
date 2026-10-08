@@ -6,6 +6,38 @@
 questions in the owner summary answered "yes"). The open review items below are left to the
 M5 implementation.
 
+**Amended in part by [0017](0017-extended-scripting.md) (2026-10-07).** The rest of this
+record is unchanged and is not rewritten. Native panels and plugins keep every cap, slice
+and share this record gives them. 0017 "Consequences" has the full table.
+- *Superseded in part:*
+  - **§7, the surface and entry caps, and §6 U5, the totals the renderer handles.** Ext
+    has **separate pools on top of** this record's caps: 512 surfaces, 1,024 entries and
+    32/64/64 MiB of UI memory. This record's caps stay whole for native panels and
+    plugins, and the renderer's absolute limits become this record's plus ext's. Ext
+    entries are checked at creation, at every show and at every visibility change.
+    Reserved-layer surfaces are exempt from every cap and from U5 refusal.
+  - **§6, row U1.** U1 counts native panels and plugin UI only. Tessera's native work for
+    ext windows in steps 1, 7 and 8 is ext UI time, measured as 0017's E8 (0017 §4).
+  - **Decision 1, Decision 1.6 and §8 "Order", the order of the screen-space passes.**
+    After the world, the passes become:
+    1. **Ext overlays.** The depth-tested ones are drawn with the world's depth at the end
+       of the world passes. The "on top" ones are drawn right after the world passes.
+    2. The walker's overlays.
+    3. The UI pass. Ext windows are composed first, in their own z-range below every
+       plugin window and native panel.
+    4. The developer overlay.
+    5. The **reserved layer**.
+    6. The software cursor.
+
+    While a consent prompt shows, the developer console is hidden and takes no input, and
+    ext windows, labels and overlays are not drawn (0017 §4).
+- *Extended:*
+  - **§6, rows U3 and U4 (b).** Ext paint jobs have their own 1 ms paint slice and 1 MiB
+    upload share. They never use U4 (b)'s slice or U3's cap, so U4 (c) and (d) hold for
+    native and plugin surfaces whatever ext windows do.
+- 0017's open item 1 (the GPU overdraw of ext overlays and the composited area of ext
+  surfaces are unbounded) is still to be resolved by the M5.5 threat model.
+
 **Revision 1 (2026-10-06)** answered the review of the first draft. **Revision 2
 (2026-10-06)** answered the second review and aligned this record with its companion
 `0014-ui-input-bridge.md` (D7, D8), `game-panels.md` (Accepted), `ui-widgets.md` and the

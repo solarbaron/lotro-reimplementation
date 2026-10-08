@@ -31,6 +31,8 @@ tessera-install.workspace = true
 tessera-material.workspace = true
 tessera-mesh.workspace = true
 tessera-net.workspace = true
+# Walk mode on collision (ROADMAP M4.5, decision 0013): the character controller.
+tessera-physics.workspace = true
 tessera-props.workspace = true
 tessera-render.workspace = true
 tessera-script.workspace = true
@@ -47,6 +49,12 @@ winit = "0.30"
 font8x8 = { version = "0.3", default-features = false }
 # Screenshots (`--screenshot`).
 png = "0.18"
+# Character names are matched by their NFC lower-case key (`--character`).
+unicode-normalization = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+# Terminal echo off for the test-server password prompt (`--server`).
+rustix = { version = "1", default-features = false, features = ["std", "termios"] }
 
 [features]
 default = []
@@ -60,6 +68,9 @@ audio-device = ["tessera-audio/device"]
 
 [dev-dependencies]
 tempfile = "3"
+# In-process test server and its types for the headless network test (`tests/net_server.rs`).
+tessera-protocol.workspace = true
+tessera-server.workspace = true
 
 [lints]
 workspace = true

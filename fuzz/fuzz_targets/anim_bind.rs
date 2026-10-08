@@ -79,6 +79,10 @@ fn play(skeleton: Skeleton, clip: Clip, src: &mut ByteSource<'_>) {
         }
         skeleton.compose(&local, &mut model).expect("sized buffer");
         skinning_matrices(&skeleton, &model, &mut skin).expect("sized buffer");
+        assert!(
+            model.iter().chain(&skin).all(Mat4::is_finite),
+            "sampled poses give finite model and skinning matrices"
+        );
         let _ = motion_between(&bound, src.time(d), src.time(d), wrap);
     }
     let _ = bound.root_displacement();

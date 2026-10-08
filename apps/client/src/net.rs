@@ -2,12 +2,25 @@
 //! World session glue: drives a [`Session`] once per frame, logs its events and keeps a
 //! tiny entity table for the debug view. With [`World::capture_entity_events`] it also
 //! queues the entity events (created, moved, appearance, despawned, cleared) for the world
-//! walker's characters; moves are bounded by [`MAX_QUEUED_ENTITY_EVENTS`] between two
-//! drains, and a drain hands out at most the number of events the caller asks for.
+//! walker's characters, bounded by [`MAX_QUEUED_ENTITY_EVENTS`] between two drains (see
+//! there), and a drain hands out at most the number of events the caller asks for.
+//!
+//! The backend is the in-process sandbox, or with `--server` a Tessera test server
+//! ([`World::remote`], [`World::for_walker`]; `tessera-net`'s `remote::RemoteBackend`,
+//! `docs/specs/tessera-protocol.md`). With a remote backend, other entities are drawn from
+//! snapshot interpolation ([`World::sample_entity`], §8.6), [`World::net_status`] has the
+//! connection state, round-trip time and clock offset for the HUD, and the walker's chat
+//! overlay reads [`World::drain_hud_chat`].
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use tessera_net::interp::Sample;
+use tessera_net::remote::{
+    ClientFailure, Fingerprint, FirstUse, Password, RemoteBackend, RemoteConfig, RemoteFailure,
+    Trust,
+};
 use tessera_net::sandbox::world::WorldSource;
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::{
@@ -17,12 +30,106 @@ use tessera_net::{
 
 /// How long [`World::shutdown`] waits for the backend to confirm the disconnect.
 pub const DISCONNECT_GRACE: Duration = Duration::from_millis(500);
-/// Bound on the moves queued for the walker between two [`World::drain_entity_events`]:
-/// once the queue holds this many events, every queued move is dropped and further moves
-/// are dropped on arrival (the next move of an entity replaces them). Creations,
-/// appearance changes and removals are never dropped, so the walker's entity set stays
-/// exact; they are bounded by the backend's per-poll budgets (`walker.md` §10.1), not here.
+/// Bound on the entity events queued for the walker between two
+/// [`World::drain_entity_events`]. Once the queue holds this many events, every queued move
+/// is dropped and further moves are dropped on arrival (the next move of an entity
+/// replaces them). Creations, appearance changes and removals are never dropped, so the
+/// walker's entity set stays exact; instead an appearance change replaces the one still
+/// queued for the same entity, and while this many of them are queued [`World::update`]
+/// stops polling the backend. Nothing is read from the session until the walker drains,
+/// so a flood backs up into the backend (for a remote session its bounded event channel
+/// and then QUIC flow control) instead of growing this queue: it holds at most this many
+/// events plus what one poll delivers.
 pub const MAX_QUEUED_ENTITY_EVENTS: usize = 1 << 18;
+/// Most chat lines one message of the day shows (`tessera-protocol.md` §6.2.2).
+pub const MAX_MOTD_LINES: usize = 8;
+/// Chat lines kept for the walker's chat overlay ([`World::drain_hud_chat`]); older lines
+/// are dropped when nobody drains them (no walker yet).
+pub const HUD_CHAT_LINES: usize = 64;
+/// File name of the known-servers file in Tessera's settings directory
+/// (`tessera-protocol.md` §4.5).
+pub const KNOWN_SERVERS_FILE: &str = "known_servers";
+
+/// How to reach and log in to a Tessera test server (`--server`, `--account`, ...).
+/// `Debug` never shows the password.
+#[derive(Debug, Clone)]
+pub struct RemoteSettings {
+    /// Connect string `tessera://HOST:PORT[?pin=sha256:...]`.
+    pub server: String,
+    /// The fingerprint to trust (`--server-fingerprint`); it must agree with a pin in the
+    /// connect string, which is authoritative (`tessera-protocol.md` §4.5).
+    pub fingerprint: Option<Fingerprint>,
+    /// The known-servers file consulted without a pin (`None`: none).
+    pub known_servers: Option<PathBuf>,
+    /// Accept an unknown server key on first use and record it (an explicit user choice).
+    pub accept_new_key: bool,
+    /// Account name.
+    pub account: String,
+    /// Password (never logged).
+    pub password: Password,
+    /// Character to enter, matched by name key (NFC, then lower case; `test-server.md`
+    /// §6.4); the account's first character when `None`. A name the account does not have
+    /// is not entered: the session is ended with a system line listing the characters.
+    pub character: Option<String>,
+}
+
+impl RemoteSettings {
+    /// The backend configuration (default interpolation and statics parameters).
+    ///
+    /// # Errors
+    ///
+    /// [`NetError::InvalidConfig`] when the connect string does not parse, or when it pins
+    /// a fingerprint other than [`RemoteSettings::fingerprint`].
+    pub fn config(&self) -> Result<RemoteConfig, NetError> {
+        let mut config = RemoteConfig::new(&self.server, &self.account, self.password.clone())?
+            .with_trust(Trust {
+                known_servers: self.known_servers.clone(),
+                first_use: if self.accept_new_key {
+                    FirstUse::Accept
+                } else {
+                    FirstUse::Refuse
+                },
+            });
+        if let Some(fp) = self.fingerprint {
+            if config.server.pin.is_some_and(|pin| pin != fp) {
+                return Err(NetError::InvalidConfig(
+                    "--server-fingerprint differs from the connect string's pin",
+                ));
+            }
+            config = config.pinned(fp);
+        }
+        config.client.client_name = format!("tessera-client {}", env!("CARGO_PKG_VERSION"));
+        Ok(config)
+    }
+}
+
+/// The default known-servers file: next to Tessera's settings file
+/// (`tessera_settings::default_path`), `None` when no settings directory is known.
+#[must_use]
+pub fn default_known_servers() -> Option<PathBuf> {
+    tessera_settings::default_path()
+        .ok()
+        .map(|p| p.with_file_name(KNOWN_SERVERS_FILE))
+}
+
+/// What the HUD shows about the world session.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetStatus {
+    /// Backend name (`sandbox`, `tessera-server`).
+    pub backend: String,
+    /// Session state.
+    pub state: SessionState,
+    /// The remote protocol state machine's state (`None` for the sandbox).
+    pub link: Option<&'static str>,
+    /// Latest round-trip time (application ping, else the QUIC path estimate).
+    pub rtt: Option<Duration>,
+    /// Clock offset server − client in µs (§11.2), once estimated.
+    pub clock_offset_us: Option<i64>,
+    /// Interpolation delay in use (remote only).
+    pub delay: Option<Duration>,
+    /// Remote entities currently created (remote only).
+    pub entities: usize,
+}
 
 /// A visible entity, as last reported by the backend.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +149,8 @@ pub struct ChatLine {
     pub sender: String,
     /// Text.
     pub text: String,
+    /// Channel it arrived on.
+    pub channel: ChatChannel,
 }
 
 /// The player's precise position, from the latest location report.
@@ -74,6 +183,28 @@ impl crate::walker::WalkerSession for World {
     fn drain_entity_events(&mut self, out: &mut Vec<Event>, max: usize) {
         World::drain_entity_events(self, out, max);
     }
+
+    fn sample_entity(&self, id: EntityId, now: Instant) -> Option<Sample> {
+        World::sample_entity(self, id, now)
+    }
+
+    fn net_status(&self) -> Option<NetStatus> {
+        Some(World::net_status(self))
+    }
+
+    fn drain_chat(&mut self, out: &mut Vec<ChatLine>) {
+        World::drain_hud_chat(self, out);
+    }
+
+    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
+        match World::try_say(self, now, text) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("chat not sent: {e}");
+                false
+            }
+        }
+    }
 }
 
 /// The client's view of the world source.
@@ -100,6 +231,24 @@ pub struct World {
     queue_cap: usize,
     /// Moves dropped because the queue was full.
     dropped_moves: u64,
+    /// Recent chat lines for the walker's overlay (at most [`HUD_CHAT_LINES`]).
+    hud_chat: VecDeque<ChatLine>,
+    /// Character to enter (remote sessions; the first one otherwise).
+    character: Option<String>,
+    /// The server key was pinned (connect string or `--server-fingerprint`), so the
+    /// known-servers file played no part (`tessera-protocol.md` §4.5).
+    pinned: bool,
+    /// Sequence number of the front of `entity_events` (events are numbered as queued).
+    head_seq: u64,
+    /// The queued `AppearanceChanged` of an entity (its sequence number), replaced in
+    /// place by a newer one.
+    queued_appearance: HashMap<EntityId, u64>,
+    /// Appearance changes replaced by a newer one before the walker saw them.
+    coalesced_appearances: u64,
+    /// Polling is paused until the walker drains (logged once per pause).
+    paused: bool,
+    /// The message of the day was shown.
+    motd_shown: bool,
 }
 
 impl World {
@@ -123,8 +272,77 @@ impl World {
         Self::start(now, SandboxBackend::with_world(config, source)?)
     }
 
+    /// A session with a Tessera test server, already asked to connect. With `source` the
+    /// backend streams statics around the player from the client's own data, as the
+    /// sandbox does.
+    ///
+    /// # Errors
+    ///
+    /// [`NetError::InvalidConfig`] for settings the protocol refuses (connect string,
+    /// account name, empty password).
+    pub fn remote(
+        now: Instant,
+        settings: &RemoteSettings,
+        source: Option<Box<dyn WorldSource>>,
+        statics: Option<tessera_net::sandbox::world::StaticConfig>,
+    ) -> Result<Self, NetError> {
+        let mut config = settings.config()?;
+        if let Some(s) = statics {
+            config.statics = s;
+        }
+        let pinned = config.server.pin.is_some();
+        tracing::info!(
+            server = %config.server,
+            account = %settings.account,
+            pinned = config.server.pin.is_some(),
+            "connecting to a Tessera test server"
+        );
+        let backend = match source {
+            Some(s) => RemoteBackend::with_boxed_world(config, s)?,
+            None => RemoteBackend::new(config)?,
+        };
+        let mut world = Self::from_session(now, Session::new(backend))?;
+        world.character.clone_from(&settings.character);
+        world.pinned = pinned;
+        Ok(world)
+    }
+
+    /// The walker's session: the test server of `remote` when given (statics streamed from
+    /// `source` with `config`'s static settings), else the sandbox with `config`.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::remote`] or [`World::sandbox_with_world`].
+    pub fn for_walker(
+        now: Instant,
+        remote: Option<&RemoteSettings>,
+        config: SandboxConfig,
+        source: impl WorldSource + 'static,
+    ) -> Result<Self, NetError> {
+        match remote {
+            Some(r) => Self::remote(now, r, Some(Box::new(source)), Some(config.statics)),
+            None => Self::sandbox_with_world(now, config, source),
+        }
+    }
+
+    /// A session without world data: the test server of `remote` when given, else the
+    /// default sandbox.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::remote`] or [`World::sandbox`].
+    pub fn plain(now: Instant, remote: Option<&RemoteSettings>) -> Result<Self, NetError> {
+        match remote {
+            Some(r) => Self::remote(now, r, None, None),
+            None => Self::sandbox(now),
+        }
+    }
+
     fn start(now: Instant, backend: SandboxBackend) -> Result<Self, NetError> {
-        let mut session = Session::new(backend);
+        Self::from_session(now, Session::new(backend))
+    }
+
+    fn from_session(now: Instant, mut session: Session) -> Result<Self, NetError> {
         tracing::info!(backend = session.backend_name(), "world session created");
         session.send(now, Command::Connect)?;
         Ok(Self {
@@ -142,7 +360,67 @@ impl World {
             queued_moves: 0,
             queue_cap: MAX_QUEUED_ENTITY_EVENTS,
             dropped_moves: 0,
+            hud_chat: VecDeque::new(),
+            character: None,
+            pinned: false,
+            head_seq: 0,
+            queued_appearance: HashMap::new(),
+            coalesced_appearances: 0,
+            paused: false,
+            motd_shown: false,
         })
+    }
+
+    /// The test-server backend, when this session uses one.
+    #[must_use]
+    pub fn remote_backend(&self) -> Option<&RemoteBackend> {
+        self.session.backend::<RemoteBackend>()
+    }
+
+    /// The interpolated state of a remote entity at `now` (`tessera-protocol.md` §8.6:
+    /// render time = estimated server time − the interpolation delay). `None` with the
+    /// sandbox (its characters are extrapolated by the walker), for the player and for
+    /// unknown entities.
+    #[must_use]
+    pub fn sample_entity(&self, id: EntityId, now: Instant) -> Option<Sample> {
+        self.remote_backend()?.sample(id, now)
+    }
+
+    /// Connection state, round-trip time and clock offset for the HUD.
+    #[must_use]
+    pub fn net_status(&self) -> NetStatus {
+        let mut s = NetStatus {
+            backend: self.session.backend_name().to_owned(),
+            state: self.state(),
+            link: None,
+            rtt: None,
+            clock_offset_us: None,
+            delay: None,
+            entities: 0,
+        };
+        if let Some(r) = self.remote_backend() {
+            let st = r.stats();
+            s.link = Some(st.state);
+            s.rtt = st.ping_rtt.or(st.path_rtt);
+            s.clock_offset_us = st.clock_offset_us;
+            s.delay = Some(r.interpolation_delay());
+            s.entities = r.entity_count();
+        }
+        s
+    }
+
+    /// Moves the chat lines received since the last call into `out` (oldest first; at
+    /// most [`HUD_CHAT_LINES`] are kept between calls).
+    pub fn drain_hud_chat(&mut self, out: &mut Vec<ChatLine>) {
+        out.extend(self.hud_chat.drain(..));
+    }
+
+    fn push_chat(&mut self, line: ChatLine) {
+        if self.hud_chat.len() >= HUD_CHAT_LINES {
+            self.hud_chat.pop_front();
+        }
+        self.hud_chat.push_back(line.clone());
+        self.chat.push(line);
     }
 
     /// Starts (or stops) queueing entity events for [`World::drain_entity_events`].
@@ -150,6 +428,8 @@ impl World {
     pub fn capture_entity_events(&mut self, on: bool) {
         self.entity_events = on.then(VecDeque::new);
         self.queued_moves = 0;
+        self.head_seq = 0;
+        self.queued_appearance.clear();
     }
 
     /// Moves at most `max` of the queued entity events into `out` (appended, oldest
@@ -159,11 +439,50 @@ impl World {
             return;
         };
         let n = q.len().min(max);
-        for ev in q.drain(..n) {
-            if matches!(ev, Event::EntityMoved { .. }) {
-                self.queued_moves = self.queued_moves.saturating_sub(1);
+        for (seq, ev) in (self.head_seq..).zip(q.drain(..n)) {
+            match &ev {
+                Event::EntityMoved { .. } => {
+                    self.queued_moves = self.queued_moves.saturating_sub(1);
+                }
+                Event::AppearanceChanged { id, .. }
+                    if self.queued_appearance.get(id) == Some(&seq) =>
+                {
+                    self.queued_appearance.remove(id);
+                }
+                _ => {}
             }
             out.push(ev);
+        }
+        self.head_seq += n as u64;
+    }
+
+    /// Whether the queue for the walker is full of events that are never dropped, so
+    /// [`World::update`] leaves the backend's events where they are.
+    fn queue_saturated(&self) -> bool {
+        self.entity_events
+            .as_ref()
+            .is_some_and(|q| q.len().saturating_sub(self.queued_moves) >= self.queue_cap)
+    }
+
+    /// Rebuilds [`World::queued_appearance`] after the queue was compacted.
+    fn reindex_appearances(&mut self) {
+        self.queued_appearance.clear();
+        let Some(q) = &self.entity_events else {
+            return;
+        };
+        for (seq, ev) in (self.head_seq..).zip(q.iter()) {
+            match ev {
+                Event::AppearanceChanged { id, .. } => {
+                    self.queued_appearance.insert(*id, seq);
+                }
+                Event::EntityCreated { id, .. } | Event::EntityDespawned { id } => {
+                    self.queued_appearance.remove(id);
+                }
+                Event::StaticsCleared | Event::Disconnected { .. } => {
+                    self.queued_appearance.clear();
+                }
+                _ => {}
+            }
         }
     }
 
@@ -177,7 +496,30 @@ impl World {
         let Some(q) = &mut self.entity_events else {
             return;
         };
+        // An appearance change replaces the one still queued for the same entity, in place
+        // (the walker only needs the newest).
+        match ev {
+            Event::AppearanceChanged { id, .. } => {
+                if let Some(&seq) = self.queued_appearance.get(id)
+                    && let Some(slot) = seq
+                        .checked_sub(self.head_seq)
+                        .and_then(|i| usize::try_from(i).ok())
+                        .and_then(|i| q.get_mut(i))
+                    && matches!(slot, Event::AppearanceChanged { id: queued, .. } if queued == id)
+                {
+                    *slot = ev.clone();
+                    self.coalesced_appearances += 1;
+                    return;
+                }
+            }
+            Event::EntityCreated { id, .. } | Event::EntityDespawned { id } => {
+                self.queued_appearance.remove(id);
+            }
+            Event::StaticsCleared | Event::Disconnected { .. } => self.queued_appearance.clear(),
+            _ => {}
+        }
         let is_move = matches!(ev, Event::EntityMoved { .. });
+        let mut compacted = false;
         if q.len() >= self.queue_cap {
             if self.queued_moves > 0 {
                 // Drop every queued move at once (amortised O(1) per event; the
@@ -186,6 +528,7 @@ impl World {
                 q.retain(|e| !matches!(e, Event::EntityMoved { .. }));
                 self.dropped_moves += (before - q.len()) as u64;
                 self.queued_moves = 0;
+                compacted = true;
                 tracing::warn!(
                     dropped = self.dropped_moves,
                     "entity event queue full; queued moves dropped"
@@ -193,13 +536,22 @@ impl World {
             }
             if is_move && q.len() >= self.queue_cap {
                 self.dropped_moves += 1;
+                if compacted {
+                    self.reindex_appearances();
+                }
                 return;
             }
         }
         if is_move {
             self.queued_moves += 1;
         }
+        let seq = self.head_seq + q.len() as u64;
         q.push_back(ev.clone());
+        if compacted {
+            self.reindex_appearances();
+        } else if let Event::AppearanceChanged { id, .. } = ev {
+            self.queued_appearance.insert(*id, seq);
+        }
     }
 
     /// The player's latest precise position.
@@ -268,21 +620,44 @@ impl World {
         std::mem::take(&mut self.chat)
     }
 
-    /// Say something on the local channel.
+    /// Say something on the local channel (a failure is logged; see [`World::try_say`]).
     pub fn say(&mut self, now: Instant, text: &str) {
-        if let Err(e) = self.session.send(
+        if let Err(e) = self.try_say(now, text) {
+            tracing::warn!("chat not sent: {e}");
+        }
+    }
+
+    /// Say something on the local channel.
+    ///
+    /// # Errors
+    ///
+    /// As `Session::send`: [`NetError::InvalidState`] when not in the world (connecting,
+    /// failed, disconnected), [`NetError::InvalidCommand`] for text the protocol refuses.
+    pub fn try_say(&mut self, now: Instant, text: &str) -> Result<(), NetError> {
+        self.session.send(
             now,
             Command::Chat {
                 channel: ChatChannel::Say,
                 text: text.to_owned(),
             },
-        ) {
-            tracing::warn!("chat not sent: {e}");
-        }
+        )
     }
 
-    /// Poll the backend and apply its events. Call once per frame.
+    /// Poll the backend and apply its events. Call once per frame. While the walker's
+    /// queue is full of events that are never dropped ([`MAX_QUEUED_ENTITY_EVENTS`]),
+    /// nothing is polled until it drains.
     pub fn update(&mut self, now: Instant) {
+        if self.queue_saturated() {
+            if !self.paused {
+                tracing::warn!(
+                    queued = self.queued_entity_events(),
+                    "entity event queue full; not reading the session until the walker drains"
+                );
+            }
+            self.paused = true;
+            return;
+        }
+        self.paused = false;
         self.session.poll_into(now, &mut self.events);
         let events = std::mem::take(&mut self.events);
         for ev in &events {
@@ -309,11 +684,40 @@ impl World {
             Event::Connected { characters } => {
                 let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
                 tracing::info!(characters = %names.join(","), "net: connected");
-                if let Some(first) = characters.first() {
+                self.show_motd();
+                let chosen = match self.character.as_deref() {
+                    Some(w) => {
+                        let key = name_key(w);
+                        let found = characters.iter().find(|c| name_key(&c.name) == key);
+                        if found.is_none() {
+                            let text = no_such_character(w, &names);
+                            tracing::warn!("net: {text}");
+                            self.push_chat(ChatLine {
+                                sender: String::new(),
+                                text,
+                                channel: ChatChannel::System,
+                            });
+                            if let Err(e) = self.session.send(now, Command::Disconnect) {
+                                tracing::debug!("net: disconnect not sent: {e}");
+                            }
+                            return;
+                        }
+                        found
+                    }
+                    None => characters.first(),
+                };
+                if let Some(first) = chosen {
                     let character = first.name.clone();
                     if let Err(e) = self.session.send(now, Command::EnterWorld { character }) {
                         tracing::warn!("net: enter world failed: {e}");
                     }
+                } else {
+                    tracing::warn!("net: the account has no characters");
+                    self.push_chat(ChatLine {
+                        sender: String::new(),
+                        text: "This account has no characters.".into(),
+                        channel: ChatChannel::System,
+                    });
                 }
             }
             Event::WorldEntered {
@@ -322,6 +726,7 @@ impl World {
                 transform,
             } => {
                 tracing::info!(player = player.0, %name, pos = ?transform.position, "net: world entered");
+                self.show_motd();
                 self.player = Some(*player);
                 self.entities.insert(
                     *player,
@@ -402,9 +807,10 @@ impl World {
                     sender = sender.as_deref().unwrap_or("-"),
                     "net chat: {text}"
                 );
-                self.chat.push(ChatLine {
+                self.push_chat(ChatLine {
                     sender: sender.clone().unwrap_or_default(),
                     text: text.clone(),
+                    channel: channel.clone(),
                 });
             }
             Event::LocationReport {
@@ -440,12 +846,47 @@ impl World {
             }
             Event::Disconnected { reason } => {
                 tracing::info!(?reason, "net: disconnected");
+                let pinned = self.pinned;
+                if let Some(text) = self
+                    .remote_backend()
+                    .and_then(|r| r.failure())
+                    .map(|f| describe_failure(f, pinned))
+                {
+                    tracing::warn!("net: {text}");
+                    self.push_chat(ChatLine {
+                        sender: String::new(),
+                        text,
+                        channel: ChatChannel::System,
+                    });
+                }
                 self.entities.clear();
                 self.placed.clear();
                 self.player = None;
                 self.location = None;
             }
             other => tracing::debug!(?other, "net: unhandled event"),
+        }
+    }
+
+    /// Shows the server's name and message of the day (`HelloAck`,
+    /// `tessera-protocol.md` §6.2.2; `server-content.md` §6.2 makes it the carrier of the
+    /// operator's disclaimer) as system lines, once per session. The decoder has already
+    /// sanitised both; the overlay shows them as plain text.
+    fn show_motd(&mut self) {
+        if self.motd_shown {
+            return;
+        }
+        let Some(info) = self.remote_backend().and_then(|r| r.server_info()).cloned() else {
+            return;
+        };
+        self.motd_shown = true;
+        for text in motd_lines(&info.name, &info.motd) {
+            tracing::info!("net: server: {text}");
+            self.push_chat(ChatLine {
+                sender: String::new(),
+                text,
+                channel: ChatChannel::System,
+            });
         }
     }
 
@@ -466,6 +907,91 @@ impl World {
             now = Instant::now();
         }
         tracing::info!(state = ?self.state(), events = self.events_seen, "net: session shut down");
+    }
+}
+
+/// The key a character name is matched by (`test-server.md` §6.4): the full Unicode lower
+/// case of its NFC form.
+#[must_use]
+pub fn name_key(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization as _;
+    name.trim().nfc().collect::<String>().to_lowercase()
+}
+
+/// The system line for a `--character` the account does not have.
+fn no_such_character(wanted: &str, names: &[&str]) -> String {
+    let list = if names.is_empty() {
+        "none".to_owned()
+    } else {
+        names.join(", ")
+    };
+    format!("No character '{wanted}' on this account (characters: {list}); not entering the world.")
+}
+
+/// The system lines for a server's name and message of the day: `Connected to NAME.`, then
+/// the non-empty lines of `motd` (at most [`MAX_MOTD_LINES`]).
+#[must_use]
+pub fn motd_lines(name: &str, motd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if !name.trim().is_empty() {
+        out.push(format!("Connected to {}.", name.trim()));
+    }
+    out.extend(
+        motd.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .take(MAX_MOTD_LINES)
+            .map(str::to_owned),
+    );
+    out
+}
+
+/// A user-facing explanation of why a remote session failed (fingerprints are public; the
+/// password never appears). `pinned`: the expected key came from a pin (connect string or
+/// `--server-fingerprint`), not from the known-servers file (`tessera-protocol.md` §4.5).
+#[must_use]
+pub fn describe_failure(f: &RemoteFailure, pinned: bool) -> String {
+    match f {
+        RemoteFailure::Connect {
+            failure: ClientFailure::KeyUnknown,
+            presented,
+        } => match presented {
+            Some(fp) => format!(
+                "Unknown server key {fp}. Check it with the server operator, then connect with \
+                 --server-fingerprint {fp} (or --trust-new-server to record it)."
+            ),
+            None => "Unknown server key; connect with --server-fingerprint.".to_owned(),
+        },
+        RemoteFailure::Connect {
+            failure: ClientFailure::KeyMismatch,
+            presented,
+        } => {
+            let fp = presented
+                .as_ref()
+                .map_or_else(|| "?".to_owned(), ToString::to_string);
+            if pinned {
+                format!(
+                    "The server key {fp} does not match the pinned fingerprint; not \
+                     connecting. Check the fingerprint with the server operator and update \
+                     the pin."
+                )
+            } else {
+                format!(
+                    "The server key {fp} does not match the known-servers entry; not \
+                     connecting. If the operator changed the key, edit the known-servers file."
+                )
+            }
+        }
+        RemoteFailure::Connect { failure, .. } => format!("Connection failed: {failure}."),
+        RemoteFailure::Login { code, retry_after } if *retry_after > 0 => {
+            format!("Login failed: {code} (retry after {retry_after} s).")
+        }
+        RemoteFailure::Login { code, .. } => format!("Login failed: {code}."),
+        RemoteFailure::EnterWorld { code } => format!("Entering the world failed: {code}."),
+        RemoteFailure::Server { code } => format!("The server ended the session: {code}."),
+        RemoteFailure::Violation(d) => format!("Protocol violation by the server: {d}."),
+        RemoteFailure::Transport(d) => format!("Connection lost: {d}."),
+        other => format!("Session failed: {other:?}."),
     }
 }
 
@@ -616,6 +1142,221 @@ mod tests {
         let second = world.player_location().expect("location");
         assert!(second.seq > first.seq, "{second:?} after {first:?}");
         assert_eq!(second.location.x, 30.0);
+    }
+
+    fn appearance(id: u64, species: u32) -> Event {
+        Event::AppearanceChanged {
+            id: EntityId(id),
+            appearance: Box::new(tessera_net::Appearance::new(tessera_net::Body::Character {
+                species,
+                sex: 1,
+            })),
+        }
+    }
+
+    #[test]
+    fn appearance_changes_coalesce_per_entity() {
+        let mut world = World::sandbox(Instant::now()).expect("sandbox");
+        world.capture_entity_events(true);
+        world.queue_entity_event(&appearance(1, 10));
+        world.queue_entity_event(&moved(2));
+        for species in 11..1_000 {
+            world.queue_entity_event(&appearance(1, species));
+        }
+        assert_eq!(world.queued_entity_events(), 2, "replaced in place");
+        assert_eq!(world.coalesced_appearances, 989);
+        // A removal and re-creation in between: the next change is queued after them.
+        world.queue_entity_event(&despawned(1));
+        world.queue_entity_event(&appearance(1, 5));
+        world.queue_entity_event(&appearance(3, 6));
+        let mut out = Vec::new();
+        world.drain_entity_events(&mut out, 3);
+        assert_eq!(out, [appearance(1, 999), moved(2), despawned(1)]);
+        // Still coalesced against the right slot after a partial drain.
+        world.queue_entity_event(&appearance(1, 7));
+        world.queue_entity_event(&appearance(3, 8));
+        out.clear();
+        world.drain_entity_events(&mut out, usize::MAX);
+        assert_eq!(out, [appearance(1, 7), appearance(3, 8)]);
+        // Drained: a new change is queued again, and survives the moves being dropped.
+        world.queue_cap = 4;
+        world.queue_entity_event(&moved(9));
+        world.queue_entity_event(&appearance(1, 1));
+        world.queue_entity_event(&moved(9));
+        world.queue_entity_event(&moved(9));
+        world.queue_entity_event(&despawned(8));
+        assert_eq!(world.queued_entity_events(), 2, "moves dropped at the cap");
+        world.queue_entity_event(&appearance(1, 2));
+        assert_eq!(
+            world.queued_entity_events(),
+            2,
+            "coalesced after the compaction"
+        );
+        out.clear();
+        world.drain_entity_events(&mut out, usize::MAX);
+        assert_eq!(out, [appearance(1, 2), despawned(8)]);
+    }
+
+    #[test]
+    fn a_full_queue_pauses_polling_until_drained() {
+        let mut now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        world.capture_entity_events(true);
+        world.queue_cap = 4;
+        for i in 0..4 {
+            world.queue_entity_event(&despawned(100 + i));
+        }
+        for _ in 0..10 {
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        assert_eq!(world.events_seen(), 0, "the session is not read");
+        assert_eq!(world.state(), SessionState::Connecting);
+        assert_eq!(world.queued_entity_events(), 4);
+        let mut out = Vec::new();
+        world.drain_entity_events(&mut out, 2);
+        for _ in 0..10 {
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        assert!(world.events_seen() > 0, "reading again after the drain");
+        // Bounded by the cap plus one poll's events.
+        assert!(world.queued_entity_events() < 4 + 64);
+    }
+
+    #[test]
+    fn character_names_match_by_key() {
+        assert_eq!(name_key("Bramble"), name_key("bramble"));
+        assert_eq!(name_key("ÉOWYN"), name_key("éowyn"));
+        // NFC: a decomposed é matches the precomposed one.
+        assert_eq!(name_key("E\u{301}owyn"), name_key("\u{c9}owyn"));
+        assert_ne!(name_key("Bram"), name_key("Bramble"));
+        let text = no_such_character("Bramm", &["Aldith", "Bramble"]);
+        assert!(
+            text.contains("'Bramm'") && text.contains("Aldith, Bramble"),
+            "{text}"
+        );
+        assert!(no_such_character("x", &[]).contains("characters: none"));
+    }
+
+    #[test]
+    fn motd_lines_are_bounded() {
+        assert_eq!(
+            motd_lines("Test world", "Testing only.\n\n  Not affiliated.  \n"),
+            [
+                "Connected to Test world.",
+                "Testing only.",
+                "Not affiliated."
+            ]
+        );
+        assert!(motd_lines(" ", "").is_empty());
+        let many = "line\n".repeat(100);
+        assert_eq!(motd_lines("", &many).len(), MAX_MOTD_LINES);
+    }
+
+    #[test]
+    fn failures_are_described_without_the_password() {
+        use tessera_net::remote::{AppErrorCode, EnterWorldFailedCode, LoginFailedCode};
+        let fp = Fingerprint::parse(
+            "sha256:06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9",
+        )
+        .unwrap();
+        let fps = fp.to_string();
+        let connect = |failure, presented| RemoteFailure::Connect { failure, presented };
+        let cases: Vec<(RemoteFailure, bool, Vec<&str>, Vec<&str>)> = vec![
+            (
+                connect(ClientFailure::KeyUnknown, Some(fp)),
+                false,
+                vec![&fps, "--server-fingerprint", "--trust-new-server"],
+                vec![],
+            ),
+            (
+                connect(ClientFailure::KeyUnknown, None),
+                false,
+                vec!["--server-fingerprint"],
+                vec![],
+            ),
+            (
+                connect(ClientFailure::KeyMismatch, Some(fp)),
+                false,
+                vec![&fps, "known-servers"],
+                vec!["pin"],
+            ),
+            (
+                connect(ClientFailure::KeyMismatch, Some(fp)),
+                true,
+                vec![&fps, "pinned", "operator"],
+                vec!["known-servers"],
+            ),
+            (
+                connect(ClientFailure::KeyMismatch, None),
+                true,
+                vec!["key ?", "pin"],
+                vec![],
+            ),
+            (
+                connect(ClientFailure::Timeout, None),
+                false,
+                vec!["Connection failed", "TIMEOUT"],
+                vec![],
+            ),
+            (
+                RemoteFailure::Login {
+                    code: LoginFailedCode::RateLimited,
+                    retry_after: 30,
+                },
+                false,
+                vec!["Login failed", "RATE_LIMITED", "retry after 30 s"],
+                vec![],
+            ),
+            (
+                RemoteFailure::Login {
+                    code: LoginFailedCode::BadCredentials,
+                    retry_after: 0,
+                },
+                false,
+                vec!["Login failed", "BAD_CREDENTIALS"],
+                vec!["retry"],
+            ),
+            (
+                RemoteFailure::EnterWorld {
+                    code: EnterWorldFailedCode::UnknownCharacter,
+                },
+                false,
+                vec!["Entering the world failed", "UNKNOWN_CHARACTER"],
+                vec![],
+            ),
+            (
+                RemoteFailure::Server {
+                    code: AppErrorCode::SlowConsumer,
+                },
+                false,
+                vec!["The server ended the session"],
+                vec![],
+            ),
+            (
+                RemoteFailure::Violation("bad frame".into()),
+                false,
+                vec!["Protocol violation", "bad frame"],
+                vec![],
+            ),
+            (
+                RemoteFailure::Transport("reset".into()),
+                false,
+                vec!["Connection lost", "reset"],
+                vec![],
+            ),
+        ];
+        for (failure, pinned, wanted, unwanted) in cases {
+            let text = describe_failure(&failure, pinned);
+            for w in wanted {
+                assert!(text.contains(w), "{failure:?}: {text:?} lacks {w:?}");
+            }
+            for u in unwanted {
+                assert!(!text.contains(u), "{failure:?}: {text:?} has {u:?}");
+            }
+            assert!(!text.contains("correct horse"), "no password text");
+        }
     }
 
     #[test]

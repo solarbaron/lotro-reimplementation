@@ -18,18 +18,23 @@ use crate::error::{Result, WorldError};
 /// Longest text the parsers of this module accept, in bytes.
 pub const MAX_TEXT_LEN: usize = 256;
 
-/// The map-coordinate constants of a region (§8.1): origin in world units and map units
-/// per world unit. Read from the region descriptor at run time, never hard-coded.
+/// The map-coordinate constants of a region (§8.1): origin in world units, map offsets
+/// and map units per world unit. Read from the region descriptor at run time, never
+/// hard-coded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MapConstants {
-    /// (G_x0, G_y0): the world position of map (0.0, 0.0).
+    /// (G_x0, G_y0): the world position where the map coordinates equal the offsets.
     pub origin: [f64; 2],
     /// Map units per world unit (0.005 in every observed descriptor).
     pub scale: f64,
+    /// (ΔL, Δφ): map units added to the longitude and the latitude (descriptor offsets 24
+    /// and 28; 0.0 in every observed descriptor, but read, not assumed).
+    pub offset: [f64; 2],
 }
 
 impl MapConstants {
-    /// Validated constants.
+    /// Validated constants without map offsets (ΔL = Δφ = 0; see
+    /// [`MapConstants::with_offset`]).
     ///
     /// # Errors
     ///
@@ -44,38 +49,74 @@ impl MapConstants {
                 "map scale is not a positive finite number",
             ));
         }
-        Ok(Self { origin, scale })
+        Ok(Self {
+            origin,
+            scale,
+            offset: [0.0; 2],
+        })
     }
 
-    /// The constants stored in a region descriptor (§8.1: origin in 20-unit landcells at
-    /// offsets 16 and 20, scale at offset 32).
-    ///
-    /// The stored scale is an `f32`; it is widened through its shortest round-trip decimal
-    /// ([`widen_f32`]), so the stored 0.005 becomes exactly the `f64` 0.005 and positions on
-    /// a half tenth round as §8.3 says instead of toward zero.
+    /// These constants with map offsets `offset` = (ΔL, Δφ) (§8.1, §8.2).
     ///
     /// # Errors
     ///
-    /// As [`MapConstants::new`].
-    pub fn from_region_descriptor(d: &RegionDescriptor) -> Result<Self> {
-        Self::new(d.map_origin_units(), widen_f32(d.map_scale))
+    /// [`WorldError::Config`] when an offset is not finite.
+    pub fn with_offset(self, offset: [f64; 2]) -> Result<Self> {
+        if !(offset[0].is_finite() && offset[1].is_finite()) {
+            return Err(WorldError::Config("map offset is not finite"));
+        }
+        Ok(Self { offset, ..self })
     }
 
-    /// Map coordinates of region-global (G_x, G_y) (§8.2).
+    /// The constants stored in a region descriptor (§8.1: origin in 20-unit landcells at
+    /// offsets 16 and 20, the map offsets ΔL and Δφ at offsets 24 and 28, scale at offset
+    /// 32).
+    ///
+    /// The stored scale and offsets are `f32`; they are widened through their shortest
+    /// round-trip decimal ([`widen_f32`]), so the stored 0.005 becomes exactly the `f64`
+    /// 0.005 for the inverse ([`MapConstants::to_region`]: "12.3S" lands on a whole unit).
+    /// [`MapConstants::to_map`] narrows them back to the stored `f32` values (§8.2 step 3).
+    ///
+    /// # Errors
+    ///
+    /// As [`MapConstants::new`] and [`MapConstants::with_offset`].
+    pub fn from_region_descriptor(d: &RegionDescriptor) -> Result<Self> {
+        Self::new(d.map_origin_units(), widen_f32(d.map_scale))?
+            .with_offset([widen_f32(d.map_offset[0]), widen_f32(d.map_offset[1])])
+    }
+
+    /// Map coordinates of region-global (G_x, G_y) (§8.2 step 3), evaluated as the client
+    /// does: every operation in `f32`, in the order longitude = (ΔL − (G_x0 · s)) + G_x · s,
+    /// latitude = (Δφ − (G_y0 · s)) + G_y · s, with s the stored `f32` scale. The results
+    /// are the `f32` values widened exactly, so §8.3 formats them as the client would.
+    ///
+    /// G_x and G_y are narrowed to `f32` once; for a position held as landblock plus `f32`
+    /// block-local offset that is the client's (X · 160 + x) in `f32`, because the `f64` sum
+    /// is exact and the narrowing rounds it once, as the `f32` addition does.
     #[must_use]
     pub fn to_map(&self, g: [f64; 2]) -> MapCoords {
+        // Narrowing is the point here (§8.2 step 3 is single precision).
+        #[allow(clippy::cast_possible_truncation)]
+        let f = |v: f64| v as f32;
+        let s = f(self.scale);
+        let axis = |offset: f64, origin: f64, g: f64| -> f64 {
+            let b = f(origin) * s;
+            let a = f(g) * s;
+            f64::from((f(offset) - b) + a)
+        };
         MapCoords {
-            latitude: (g[1] - self.origin[1]) * self.scale,
-            longitude: (g[0] - self.origin[0]) * self.scale,
+            latitude: axis(self.offset[1], self.origin[1], g[1]),
+            longitude: axis(self.offset[0], self.origin[0], g[0]),
         }
     }
 
-    /// Region-global (G_x, G_y) of map coordinates `m` (§8.2 inverse).
+    /// Region-global (G_x, G_y) of map coordinates `m` (§8.2 inverse): G_x = G_x0 +
+    /// (longitude − ΔL) / s, G_y = G_y0 + (latitude − Δφ) / s.
     #[must_use]
     pub fn to_region(&self, m: MapCoords) -> [f64; 2] {
         [
-            self.origin[0] + m.longitude / self.scale,
-            self.origin[1] + m.latitude / self.scale,
+            self.origin[0] + (m.longitude - self.offset[0]) / self.scale,
+            self.origin[1] + (m.latitude - self.offset[1]) / self.scale,
         ]
     }
 
@@ -116,30 +157,41 @@ pub struct MapCoords {
     pub longitude: f64,
 }
 
-/// Rounds to one decimal, half away from zero, and returns tenths (§8.3 decision).
-fn tenths(v: f64) -> i64 {
-    let t = (v * 10.0).round();
-    if t.is_finite() {
-        // Clamped to a range that fits i64.
-        #[allow(clippy::cast_possible_truncation)]
-        let t = t.clamp(-1e15, 1e15) as i64;
-        t
-    } else {
-        0
+/// The rounding bias of §8.3 step 2: the `f32` nearest 0.0002, widened.
+const DISPLAY_BIAS: f64 = 0.000_199_999_994_947_575_03;
+
+/// The displayed magnitude of `v` in tenths (§8.3 steps 1–3): N = trunc((|v| + 0.0502) ·
+/// 10), with |v| the `f32` value widened, half a tenth and the bias added first, in `f64`.
+/// Non-finite values give 0 (Tessera choice; the data never produce them). Capped at
+/// 10¹⁵ tenths, far beyond any map coordinate.
+fn display_tenths(v: f32) -> u64 {
+    if !v.is_finite() {
+        return 0;
     }
+    let w = (0.05 + DISPLAY_BIAS) + f64::from(v.abs());
+    let n = (w * 10.0).trunc().clamp(0.0, 1e15);
+    // Non-negative, finite and capped above, so the conversion is exact.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let n = n as u64;
+    n
 }
 
 fn write_axis(f: &mut fmt::Formatter<'_>, v: f64, pos: char, neg: char) -> fmt::Result {
-    let t = tenths(v);
-    let letter = if t < 0 { neg } else { pos };
-    let a = t.unsigned_abs();
-    write!(f, "{}.{}{}", a / 10, a % 10, letter)
+    // §8.3 works on the f32 value; values from `to_map` are f32 already (exact).
+    #[allow(clippy::cast_possible_truncation)]
+    let v = v as f32;
+    // The letter follows the sign of the unrounded value; −0.0 and NaN are not below 0.
+    let letter = if v.is_finite() && v < 0.0 { neg } else { pos };
+    let n = display_tenths(v);
+    write!(f, "{}.{}{}", n / 10, n % 10, letter)
 }
 
 impl fmt::Display for MapCoords {
-    /// The UI form (§8.3): latitude first, absolute values with one decimal and a letter,
-    /// e.g. `4.0S, 66.6W`. Values round half away from zero; a value that rounds to 0.0 is
-    /// written with `N` / `E` (§8.3 OPEN, Tessera's choice).
+    /// The UI form (§8.3): latitude first, magnitudes with one decimal and a letter, e.g.
+    /// `4.0S, 66.6W`. The number is the magnitude plus 0.0502, truncated to tenths, so the
+    /// threshold sits 0.0498 above a tenth (66.6497 shows `66.6`, 66.6499 `66.7`); the
+    /// letter follows the sign of the unrounded value (−0.03 shows `0.0S`). English digits
+    /// and decimal point (the §8.3 OPEN on the locale record does not apply to this form).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_axis(f, self.latitude, 'N', 'S')?;
         f.write_str(", ")?;
@@ -342,9 +394,42 @@ impl LocReport {
     }
 }
 
+/// The offset threshold of §9.1 token 5 (the `f32` 0.0002, bit pattern 0x3951B717).
+const OFFSET_EPSILON: f32 = 0.0002;
+/// The heading threshold of §9.4 step 4 (the `f32` 0.011459156, bit pattern 0x3C3BBF2F).
+const HEADING_EPSILON: f32 = 0.011_459_156;
+
+/// The §9.4 step 2 reduction in `f32`: the truncating remainder by 360 (sign of the
+/// dividend, as C's `fmodf`), plus 360 when below 0, and 0 when that sum reaches 360.
+fn reduce_degrees(d: f32) -> f32 {
+    let r = d % 360.0;
+    if r < 0.0 {
+        let s = r + 360.0;
+        if s >= 360.0 { 0.0 } else { s }
+    } else {
+        r
+    }
+}
+
+/// Whether heading `h` (degrees, already reduced) is printed (§9.4 step 4): its distance
+/// from 0, wrapped to at most 180, is not below 0.011459156. A NaN is printed.
+fn heading_shown(h: f32) -> bool {
+    let mut d = reduce_degrees(h - 0.0);
+    if d > 180.0 {
+        d -= 360.0;
+    }
+    let m = reduce_degrees(d.abs());
+    // Written as the client's comparison so that a NaN is shown.
+    let omitted = HEADING_EPSILON > m;
+    !omitted
+}
+
 impl fmt::Display for LocReport {
-    /// The tokens in the §9 order: `r1 lx802 ly1204 [i43] [cInside] ox40.00 oy80.00
-    /// oz399.99 [h270.0]`.
+    /// The tokens in the §9.1 order: `r1 lx802 ly1204 [i43] [cInside] [ox40.00 oy80.00
+    /// oz399.99] [h270.0]`. The offset group is left out when all three offsets are within
+    /// 0.0002 of zero (§9.3). The heading is reduced to [0, 360) in `f32` (§9.4 step 2; a
+    /// raw heading may be passed) and left out within 0.011459156° of north (§9.4 step 4),
+    /// so 359.995 prints nothing and 359.98 prints `h360.0`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "r{} lx{} ly{}", self.region, self.lx, self.ly)?;
         if let Some(i) = self.instance {
@@ -353,9 +438,18 @@ impl fmt::Display for LocReport {
         if self.inside {
             f.write_str(" cInside")?;
         }
-        write!(f, " ox{:.2} oy{:.2} oz{:.2}", self.ox, self.oy, self.oz)?;
+        // The values are f32 widened (§9.3); compare in f32 as the client does.
+        #[allow(clippy::cast_possible_truncation)]
+        let near_zero = |v: f64| (v as f32).abs() <= OFFSET_EPSILON;
+        if !(near_zero(self.ox) && near_zero(self.oy) && near_zero(self.oz)) {
+            write!(f, " ox{:.2} oy{:.2} oz{:.2}", self.ox, self.oy, self.oz)?;
+        }
         if let Some(h) = self.heading {
-            write!(f, " h{h:.1}")?;
+            #[allow(clippy::cast_possible_truncation)]
+            let h = reduce_degrees(h as f32);
+            if heading_shown(h) {
+                write!(f, " h{:.1}", f64::from(h))?;
+            }
         }
         Ok(())
     }
@@ -372,11 +466,15 @@ fn parse_signed(s: &str) -> Option<f64> {
 impl FromStr for LocReport {
     type Err = WorldError;
 
-    /// Finds the §9 tokens in a `/loc` reply. Words that are not tokens are ignored;
-    /// trailing punctuation is stripped from each word. `r`, `lx`, `ly`, `ox`, `oy` and
-    /// `oz` are required; `i`, `cInside` and `h` are optional. The original writes them in
-    /// the §9 order, but the order is **not checked**: pasted text with the tokens in any
-    /// order parses to the same report. A token given twice is rejected.
+    /// Finds the §9 tokens in a `/loc` reply. Tokens are separated by whitespace, commas,
+    /// semicolons or colons (§9.8); words that are not tokens are ignored, and a trailing
+    /// `.` or `)` and a leading `(` are stripped from each word. `r`, `lx` and `ly` are
+    /// required; `i`, `cInside` and `h` are optional. The offset group `ox oy oz` is either
+    /// given whole or left out, as the original leaves it out at the block corner (§9.3), in
+    /// which case all three are 0; a partial group is rejected (Tessera choice, §9.8 OPEN).
+    /// The original writes the tokens in the §9.1 order, but the order is **not checked**:
+    /// pasted text with the tokens in any order parses to the same report. A token given
+    /// twice is rejected.
     fn from_str(s: &str) -> Result<Self> {
         const WHAT: &str = "/loc tokens";
         if s.len() > MAX_TEXT_LEN {
@@ -407,8 +505,9 @@ impl FromStr for LocReport {
                 .then(|| t.parse().ok())
                 .flatten()
         };
-        for word in s.split_whitespace() {
-            let w = word.trim_end_matches([',', ';', '.', ':', ')']);
+        let separator = |c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':');
+        for word in s.split(separator).filter(|w| !w.is_empty()) {
+            let w = word.trim_end_matches(['.', ')']);
             let w = w.trim_start_matches('(');
             if w == "cInside" {
                 inside = true;
@@ -438,14 +537,20 @@ impl FromStr for LocReport {
                 set(&mut heading, parse_signed(t))?;
             }
         }
-        let (Some(region), Some(lx), Some(ly), Some(ox), Some(oy), Some(oz)) =
-            (region, lx, ly, ox, oy, oz)
-        else {
-            return Err(WorldError::parse(
-                WHAT,
-                s,
-                "missing r, lx, ly, ox, oy or oz",
-            ));
+        let (Some(region), Some(lx), Some(ly)) = (region, lx, ly) else {
+            return Err(WorldError::parse(WHAT, s, "missing r, lx or ly"));
+        };
+        let (ox, oy, oz) = match (ox, oy, oz) {
+            (Some(x), Some(y), Some(z)) => (x, y, z),
+            // The original leaves the whole group out at the block corner (§9.3).
+            (None, None, None) => (0.0, 0.0, 0.0),
+            _ => {
+                return Err(WorldError::parse(
+                    WHAT,
+                    s,
+                    "ox, oy and oz must be given together",
+                ));
+            }
         };
         let region = u8::try_from(region)
             .ok()
@@ -518,11 +623,16 @@ mod tests {
         // §8.4 A.
         let g = LocalPos::new(key(100, 150), [40.0, 80.0, 0.0]).to_world();
         let m = c.to_map(g.xy());
-        assert!((m.latitude + 4.0).abs() < 1e-9 && (m.longitude + 66.6).abs() < 1e-9);
+        // f32 arithmetic (§8.2 step 3): longitude −66.600006…, latitude −4.0.
+        assert_eq!(m.longitude, f64::from(-66.600_006_f32));
+        assert_eq!(m.latitude, -4.0);
         assert_eq!(m.to_string(), "4.0S, 66.6W");
         // §8.4 C.
         let g = LocalPos::new(key(200, 170), [0.0, 0.0, 0.0]).to_world();
-        assert_eq!(c.to_map(g.xy()).to_string(), "11.6N, 13.2E");
+        let m = c.to_map(g.xy());
+        assert_eq!(m.longitude, f64::from(13.199_997_f32));
+        assert_eq!(m.latitude, f64::from(11.600_006_f32));
+        assert_eq!(m.to_string(), "11.6N, 13.2E");
         // §8.4 D.
         let m = c.to_map([29_360.0, 24_880.0]);
         assert_eq!(m, MapCoords::default());
@@ -558,10 +668,19 @@ mod tests {
             }
             .to_string()
         };
-        assert_eq!(m(-0.04, 0.04), "0.0N, 0.0E");
+        // §8.3: the letter follows the unrounded sign (−0.03 shows 0.0S); −0.0 is N / E.
+        assert_eq!(m(-0.04, 0.04), "0.0S, 0.0E");
+        assert_eq!(m(-0.03, -0.0), "0.0S, 0.0E");
+        assert_eq!(m(0.0, -0.01), "0.0N, 0.0W");
         assert_eq!(m(-0.05, 0.05), "0.1S, 0.1E");
         assert_eq!(m(12.25, -7.0), "12.3N, 7.0W");
+        // The threshold sits 0.0498 above a tenth, not 0.05.
+        assert_eq!(m(66.6497, -66.6499), "66.6N, 66.7W");
+        assert_eq!(m(4.04975, 4.0499), "4.0N, 4.1E");
+        assert_eq!(m(-4.0499, -4.0497), "4.1S, 4.0W");
+        // Non-finite values (never produced by the data) show 0.0 (Tessera choice).
         assert_eq!(m(f64::NAN, f64::INFINITY), "0.0N, 0.0E");
+        assert_eq!(m(f64::NEG_INFINITY, f64::NAN), "0.0N, 0.0E");
     }
 
     #[test]
@@ -691,10 +810,19 @@ mod tests {
         assert_eq!(l.local[1], 0.0);
     }
 
+    /// The displayed value in signed tenths: the letter's sign times N.
+    fn shown_tenths(v: f64) -> i64 {
+        #[allow(clippy::cast_possible_truncation)]
+        let v32 = v as f32;
+        let n = i64::try_from(display_tenths(v32)).unwrap();
+        if v32 < 0.0 { -n } else { n }
+    }
+
     #[test]
     fn half_tenths_round_away_from_zero_everywhere() {
         // Every 10-unit step over the grid on both axes agrees with integer arithmetic:
-        // tenths = (G - G0) / 20, rounded half away from zero.
+        // tenths = (G - G0) / 20, half tenths away from zero (§8.2 implementation note: the
+        // bias makes the f32 error irrelevant there).
         let c = descriptor_constants();
         let want = |d: i64| -> i64 {
             let (q, r) = (d.abs() / 20, d.abs() % 20);
@@ -704,11 +832,137 @@ mod tests {
         for g in (0..=40_800i64).step_by(10) {
             #[allow(clippy::cast_precision_loss)]
             let m = c.to_map([g as f64, g as f64]);
-            assert_eq!(tenths(m.longitude), want(g - 29_360), "G_x {g}");
-            assert_eq!(tenths(m.latitude), want(g - 24_880), "G_y {g}");
+            assert_eq!(shown_tenths(m.longitude), want(g - 29_360), "G_x {g}");
+            assert_eq!(shown_tenths(m.latitude), want(g - 24_880), "G_y {g}");
             checked += 1;
         }
         assert_eq!(checked, 4_081);
+    }
+
+    #[test]
+    fn spec_vectors_more_map_rows() {
+        // §8.4 "More vectors", through the stored f32 scale.
+        let c = descriptor_constants();
+        let show = |x: u8, y: u8, lx: f32, ly: f32| {
+            let g = LocalPos::new(key(x, y), [lx, ly, 0.0]).to_world();
+            c.to_map(g.xy()).to_string()
+        };
+        assert_eq!(show(183, 155, 90.0, 80.0), "0.0N, 0.1E");
+        assert_eq!(show(183, 155, 70.0, 80.0), "0.0N, 0.1W");
+        assert_eq!(show(183, 155, 74.0, 76.0), "0.0S, 0.0W");
+        assert_eq!(show(183, 155, 70.03, 80.0), "0.0N, 0.1W");
+        assert_eq!(show(183, 155, 70.06, 80.0), "0.0N, 0.0W");
+        assert_eq!(show(254, 254, 160.0, 160.0), "79.6N, 57.2E");
+        assert_eq!(show(0, 0, 0.0, 0.0), "124.4S, 146.8W");
+        // The f32 values the table lists.
+        // The f32 values the table lists (to its seven significant digits).
+        let near = |a: f64, b: f64| (a - b).abs() <= b.abs() * 1e-6;
+        let m = c.to_map(
+            LocalPos::new(key(183, 155), [90.0, 80.0, 0.0])
+                .to_world()
+                .xy(),
+        );
+        assert!(near(m.longitude, 0.049_987_8), "{m:?}");
+        let m = c.to_map(
+            LocalPos::new(key(183, 155), [70.06, 80.0, 0.0])
+                .to_world()
+                .xy(),
+        );
+        assert!(near(m.longitude, -0.049_697_9), "{m:?}");
+        let m = c.to_map(LocalPos::new(key(0, 0), [0.0, 0.0, 0.0]).to_world().xy());
+        assert_eq!(m.latitude, f64::from(-124.399_994_f32));
+    }
+
+    #[test]
+    fn loc_omissions_follow_spec() {
+        let at = |x: f32, y: f32, z: f32, h: Option<f64>| {
+            LocReport::from_local(&LocalPos::new(key(100, 150), [x, y, z]), h).to_string()
+        };
+        // §9.7 row 6: the block corner at height 0, identity rotation (h = 0).
+        assert_eq!(at(0.0, 0.0, 0.0, Some(0.0)), "r1 lx800 ly1200");
+        assert_eq!(at(0.0, 0.0, 0.0, None), "r1 lx800 ly1200");
+        // One offset beyond 0.0002 keeps the whole group; at most 0.0002 does not.
+        assert_eq!(
+            at(0.0, 0.0, 0.0003, None),
+            "r1 lx800 ly1200 ox0.00 oy0.00 oz0.00"
+        );
+        assert_eq!(at(0.0002, -0.0002, 0.0001, None), "r1 lx800 ly1200");
+        // §9.7 row 8: yaw 0.005° → heading 359.995, within 0.011459156° of north.
+        assert_eq!(
+            at(10.0, 10.0, 5.0, Some(359.995)),
+            "r1 lx800 ly1200 ox10.00 oy10.00 oz5.00"
+        );
+        // A raw heading is reduced (§9.4 step 2): −0.005 is the same heading.
+        assert_eq!(
+            at(10.0, 10.0, 5.0, Some(-0.005)),
+            "r1 lx800 ly1200 ox10.00 oy10.00 oz5.00"
+        );
+        // The heading of §9.7 row 7 (yaw 359.97°: −ψ = −359.97 reduces to 0.03, shown as
+        // h0.0). The row's x = 160 landcell (lx808) is a `LocalPos::landcell` matter
+        // (§5.2), not tested here.
+        assert_eq!(
+            at(10.0, 159.99, 12.5, Some(-359.97)),
+            "r1 lx800 ly1207 ox10.00 oy159.99 oz12.50 h0.0"
+        );
+        // §9.4 examples: 359.98 prints h360.0; −0.00001 adds to 360.0 in f32 and becomes 0.
+        assert_eq!(
+            at(10.0, 10.0, 5.0, Some(359.98)),
+            "r1 lx800 ly1200 ox10.00 oy10.00 oz5.00 h360.0"
+        );
+        assert_eq!(
+            at(10.0, 10.0, 5.0, Some(-0.00001)),
+            "r1 lx800 ly1200 ox10.00 oy10.00 oz5.00"
+        );
+        assert_eq!(
+            at(10.0, 10.0, 5.0, Some(-0.00002)),
+            "r1 lx800 ly1200 ox10.00 oy10.00 oz5.00"
+        );
+        // §9.7 rows 2 and 3 (yaw ±90°, given as raw −ψ).
+        assert_eq!(
+            at(40.0, 80.0, 399.99, Some(-90.0)),
+            "r1 lx802 ly1204 ox40.00 oy80.00 oz399.99 h270.0"
+        );
+        assert_eq!(
+            at(40.0, 80.0, 399.99, Some(90.0)),
+            "r1 lx802 ly1204 ox40.00 oy80.00 oz399.99 h90.0"
+        );
+        // The thresholds themselves: 0.0115 is shown, 0.0114 is not.
+        assert!(at(1.0, 1.0, 1.0, Some(0.0115)).ends_with(" h0.0"));
+        assert!(!at(1.0, 1.0, 1.0, Some(0.0114)).contains(" h"));
+        assert!(!at(1.0, 1.0, 1.0, Some(359.9886)).contains(" h"));
+    }
+
+    #[test]
+    fn loc_parses_omitted_offsets_and_separators() {
+        // §9.7 row 6: the offset group left out means the block corner.
+        let p: LocReport = "r1 lx800 ly1200".parse().unwrap();
+        assert_eq!((p.region, p.lx, p.ly), (1, 800, 1200));
+        assert_eq!((p.ox, p.oy, p.oz, p.heading), (0.0, 0.0, 0.0, None));
+        let l = p.to_local().unwrap();
+        assert_eq!((l.block, l.local), (key(100, 150), [0.0; 3]));
+        assert_eq!(p.to_string(), "r1 lx800 ly1200");
+        // §9.8: spaces, commas, semicolons and colons all separate tokens.
+        let want: LocReport = "r1 lx802 ly1204 ox40.00 oy80.00 oz399.99 h270.0"
+            .parse()
+            .unwrap();
+        for s in [
+            "r1;lx802;ly1204;ox40.00;oy80.00;oz399.99;h270.0",
+            "r1,lx802,ly1204,ox40.00,oy80.00,oz399.99,h270.0",
+            "r1:lx802:ly1204:ox40.00:oy80.00:oz399.99:h270.0",
+            "r1; lx802, ly1204: ox40.00 ,oy80.00;;oz399.99 h270.0.",
+        ] {
+            assert_eq!(s.parse::<LocReport>().unwrap(), want, "{s:?}");
+        }
+        let p: LocReport = "r1;lx800;ly1200".parse().unwrap();
+        assert_eq!((p.ox, p.oy, p.oz), (0.0, 0.0, 0.0));
+        // A partial offset group is rejected (Tessera choice, §9.8 OPEN).
+        for bad in [
+            "r1 lx800 ly1200 ox1",
+            "r1 lx800 ly1200 ox1 oz2",
+            "lx800 ly1200",
+        ] {
+            assert!(bad.parse::<LocReport>().is_err(), "{bad:?}");
+        }
     }
 
     #[test]
@@ -743,13 +997,44 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_map_offsets_shift_map_coordinates() {
+        let bytes =
+            crate::testkit::region_descriptor(0x0F00_0001, 1, [1468, 1244], 0.005f32, 0x1800_0001);
+        use tessera_formats::Record;
+        let mut d =
+            RegionDescriptor::parse_expecting(&bytes, tessera_formats::Did(0x0F00_0001)).unwrap();
+        d.map_offset = [1.5, -2.25];
+        let c = MapConstants::from_region_descriptor(&d).unwrap();
+        assert_eq!(c.offset, [1.5, -2.25]);
+        // At the origin the map coordinates are the offsets (§8.2: (ΔL − b) + a with a = b).
+        let m = c.to_map([29_360.0, 24_880.0]);
+        assert_eq!((m.longitude, m.latitude), (1.5, -2.25));
+        // 200 units east and north: one map unit more on each axis.
+        let m = c.to_map([29_560.0, 25_080.0]);
+        assert!((m.longitude - 2.5).abs() < 1e-12 && (m.latitude + 1.25).abs() < 1e-12);
+        // The inverse subtracts them again.
+        let back = c.to_region(m);
+        assert!((back[0] - 29_560.0).abs() < 1e-9 && (back[1] - 25_080.0).abs() < 1e-9);
+        // The formats crate's own (f32) map coordinates agree.
+        let f = d.map_coordinates([184, 156], [120.0, 120.0]);
+        assert!((f64::from(f[0]) - m.longitude).abs() < 1e-4, "{f:?} {m:?}");
+        assert!((f64::from(f[1]) - m.latitude).abs() < 1e-4, "{f:?} {m:?}");
+        // A non-finite offset is rejected.
+        d.map_offset = [f32::NAN, 0.0];
+        assert!(MapConstants::from_region_descriptor(&d).is_err());
+        assert!(constants().with_offset([0.0, f64::INFINITY]).is_err());
+    }
+
+    #[test]
     fn constants_validation() {
         assert!(MapConstants::new([f64::NAN, 0.0], 0.005).is_err());
         assert!(MapConstants::new([0.0, 0.0], 0.0).is_err());
         assert!(MapConstants::new([0.0, 0.0], -1.0).is_err());
         let c = constants();
         let g = [12_345.6, 30_000.25];
+        // to_map is f32 (§8.2 step 3): a map value near 100 is good to about 8e-6, which
+        // is 1.5e-3 world units after dividing by the scale.
         let back = c.to_region(c.to_map(g));
-        assert!((back[0] - g[0]).abs() < 1e-6 && (back[1] - g[1]).abs() < 1e-6);
+        assert!((back[0] - g[0]).abs() < 5e-3 && (back[1] - g[1]).abs() < 5e-3);
     }
 }

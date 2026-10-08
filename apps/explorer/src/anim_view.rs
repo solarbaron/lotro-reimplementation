@@ -1881,6 +1881,7 @@ fn viewport_widget(
         diffuse_tint: settings.diffuse_tint,
         explode: 0.0,
         pose,
+        collision: None,
     });
     if let Some(t) = vp.texture() {
         painter.image(

@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Error type of the crate.
 
+use std::sync::Arc;
+
 use tessera_assets::AssetError;
 use tessera_formats::FormatError;
+use tessera_physics::PhysicsError;
+
+use crate::environment::EnvironmentError;
+use crate::scenery::SceneryError;
+use crate::water::WaterError;
 
 /// Result alias of this crate.
 pub type Result<T, E = WorldError> = std::result::Result<T, E>;
@@ -87,9 +94,58 @@ pub enum WorldError {
     /// The job was cancelled while decoding.
     #[error("cancelled")]
     Cancelled,
+    /// Loading the inputs of scenery generation failed (`scenery.md` §4–§5, §9.2).
+    #[error("scenery: {0}")]
+    Scenery(#[source] Arc<SceneryError>),
+    /// Loading water inputs failed (`water.md` §4–§7).
+    #[error("water: {0}")]
+    Water(#[source] Arc<WaterError>),
+    /// Loading the environment (sky, day descriptions, game time) failed
+    /// (`environment.md` §5–§6, §11).
+    #[error("environment: {0}")]
+    Environment(#[source] Arc<EnvironmentError>),
+    /// Collision geometry was refused (`collision.md` §12.1; limits or hostile input).
+    #[error("collision: {0}")]
+    Physics(#[from] PhysicsError),
+}
+
+impl From<SceneryError> for WorldError {
+    fn from(e: SceneryError) -> Self {
+        Self::Scenery(Arc::new(e))
+    }
+}
+
+impl From<WaterError> for WorldError {
+    fn from(e: WaterError) -> Self {
+        Self::Water(Arc::new(e))
+    }
+}
+
+impl From<EnvironmentError> for WorldError {
+    fn from(e: EnvironmentError) -> Self {
+        Self::Environment(Arc::new(e))
+    }
 }
 
 impl WorldError {
+    /// Whether the failure depends on the data and so recurs on every attempt (a missing or
+    /// broken record, a refused configuration), as opposed to the asset pipeline's state
+    /// (full queue, shutdown, cancellation).
+    #[must_use]
+    pub fn is_data_error(&self) -> bool {
+        match self {
+            Self::Asset(e) => e.is_data_error(),
+            Self::Cancelled => false,
+            Self::Scenery(e) => e.is_data_error(),
+            Self::Water(e) => e.is_data_error(),
+            Self::Environment(e) => match &**e {
+                EnvironmentError::World(w) => w.is_data_error(),
+                _ => true,
+            },
+            _ => true,
+        }
+    }
+
     /// A parse error quoting at most [`MAX_QUOTED_INPUT`] characters of `input`.
     pub(crate) fn parse(what: &'static str, input: &str, reason: &'static str) -> Self {
         Self::Parse {

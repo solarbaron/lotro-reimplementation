@@ -209,6 +209,8 @@ pub(crate) struct Stores {
     pub record: AssetStore<ContextSource, RecordDecoder>,
     pub names: AssetStore<ContextSource, NameIndexDecoder>,
     pub scene: AssetStore<ContextSource, SceneDecoder>,
+    pub landblock: AssetStore<ContextSource, crate::world::LandblockDecoder>,
+    pub sky: AssetStore<ContextSource, crate::world::SkyDecoder>,
 }
 
 impl Stores {
@@ -259,7 +261,24 @@ impl Stores {
                 RecordDecoder(Arc::clone(ctx)),
                 cfg.clone(),
             ),
-            names: AssetStore::new(&pool, ContextSource, NameIndexDecoder(Arc::clone(ctx)), cfg),
+            names: AssetStore::new(
+                &pool,
+                ContextSource,
+                NameIndexDecoder(Arc::clone(ctx)),
+                cfg.clone(),
+            ),
+            landblock: AssetStore::new(
+                &pool,
+                ContextSource,
+                crate::world::LandblockDecoder(Arc::clone(ctx)),
+                cfg.clone(),
+            ),
+            sky: AssetStore::new(
+                &pool,
+                ContextSource,
+                crate::world::SkyDecoder(Arc::clone(ctx)),
+                cfg,
+            ),
             scene: AssetStore::new(
                 &pool,
                 ContextSource,
@@ -283,6 +302,8 @@ impl Stores {
             + self.record.poll_completions(256).len()
             + self.names.poll_completions(256).len()
             + self.scene.poll_completions(256).len()
+            + self.landblock.poll_completions(256).len()
+            + self.sky.poll_completions(256).len()
     }
 }
 
@@ -338,6 +359,8 @@ pub(crate) struct Current {
     pub record_filtered: Option<(String, Vec<usize>)>,
     /// The mesh view's state.
     pub mesh: MeshState,
+    /// The landblock and sky views' state.
+    pub world: crate::world_view::WorldViewState,
 }
 
 impl Current {
@@ -369,6 +392,7 @@ impl Current {
             record_filter: String::new(),
             record_filtered: None,
             mesh,
+            world: crate::world_view::WorldViewState::default(),
         }
     }
 
@@ -392,6 +416,7 @@ impl Current {
             h.cancel();
         }
         self.mesh.cancel();
+        self.world.cancel();
     }
 }
 
@@ -1541,6 +1566,8 @@ impl ExplorerApp {
             ViewKind::Character => {
                 crate::anim_view::character_ready(&self.character, self.viewport.as_ref())
             }
+            ViewKind::Landblock => fin(&cur.world.landblock),
+            ViewKind::Sky => crate::world_view::sky_ready(&cur.world),
         }
     }
 

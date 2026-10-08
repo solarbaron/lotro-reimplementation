@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-material"
-description = "Materials and images built from render surfaces: surface/material/shader records, effective parameters, feature flags, dyes, layered icon composition, mip-chain helpers"
+description = "Materials and images built from render surfaces: surface/material/shader records, effective parameters, feature flags, float curves over time, texture transforms, lighting inputs, water parameters, dyes, layered icon composition, mip-chain helpers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

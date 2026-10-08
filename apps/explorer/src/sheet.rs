@@ -389,6 +389,7 @@ pub fn run_sheet(plan: &SheetPlan) -> Result<SheetReport, ExplorerError> {
                 diffuse_tint: false,
                 explode: 0.0,
                 pose: Some(Arc::new(pose.clone())),
+                collision: None,
             });
         }
     }

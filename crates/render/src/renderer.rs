@@ -12,17 +12,31 @@ use glam::{Mat4, Vec3, Vec4};
 use crate::arena::{ArenaStats, MeshArena, MeshConfig, MeshId};
 use crate::context::{ContextOptions, GpuContext};
 use crate::error::{RenderError, Result};
-use crate::frame::{Frame, FrameTarget, Pass, PassSpace, Rgba, screen_projection, texture_runs};
-use crate::material::{AlphaMode, DyeMask, MeshShading};
+use crate::frame::{
+    Frame, FrameTarget, Pass, PassSpace, Rgba, WorldDraws, screen_projection, texture_runs,
+};
+use crate::instanced::InstancedState;
+use crate::lighting::{FrameUniform, LightReach, MAX_DRAW_LIGHTS};
+use crate::lit_pipelines::{
+    LIT_TEXTURES, LightSelector, LightTarget, LitContext, LitKey, LitKind, LitLayouts,
+    LitPipelineCache, LitTextures, SHADOW_FORMAT, lit_fields,
+};
+use crate::material::{AlphaMode, DyeMask, Gloss, MeshShading, Opacity};
 use crate::mesh::{MeshData, MeshInfo, PreparedMesh};
 use crate::mesh_pipelines::{
     Cull, DrawContext, DrawUniform, Kind, MeshKey, MeshLayouts, MeshPipelineCache, is_mirrored,
 };
+use crate::pass_hook::{HookPrepare, HookRecord, HookStage, PassHook};
 use crate::pipelines::{
     DEPTH_CLEAR, DEPTH_FORMAT, Globals, LineVertex, PipelineCache, QuadInstance, SharedLayouts,
 };
 use crate::skin::{MeshSkin, PALETTE_BINDING_BYTES, PaletteData};
-use crate::texture::{Filter, Samplers, TextureId, TextureStore, TextureUpload, Wrap};
+use crate::sky::SkyState;
+use crate::terrain_layers::TerrainState;
+use crate::texture::{
+    Filter, GpuTexture, MipChainUpload, Samplers, TextureId, TextureStore, TextureUpload, Wrap,
+};
+use crate::water::WaterState;
 
 /// Process-unique renderer ids; every handle a renderer issues carries its
 /// id so handles are never mixed between renderers (whose wgpu instances
@@ -160,6 +174,31 @@ pub struct FrameStats {
     pub palettes: u32,
     /// Bytes of skinning-palette data uploaded with the frame.
     pub palette_bytes: u64,
+    /// Mesh surface draws through the lit pipeline (included in `mesh_draws`).
+    pub lit_draws: u32,
+    /// Draws into the sun's shadow map (not included in `mesh_draws`).
+    pub shadow_draws: u32,
+    /// Shadow-map passes recorded.
+    pub shadow_passes: u32,
+    /// Edge length in texels of the sun's shadow map after this frame (1 while no lit
+    /// pass has asked for a shadow recently; it is freed after
+    /// [`Renderer::SHADOW_IDLE_FRAMES`] frames without a request).
+    pub shadow_map_size: u32,
+    /// Terrain layer draws (one per layer of each drawn chunk; `docs/specs/render.md` §5).
+    pub terrain_layers: u32,
+    /// Terrain chunks skipped by frustum culling.
+    pub terrain_chunks_culled: u32,
+    /// Water quads drawn.
+    pub water_quads: u32,
+    /// Sky objects drawn.
+    pub sky_objects: u32,
+    /// Instances drawn by the instanced scenery and frill pipeline (summed over the
+    /// surfaces of each model they use).
+    pub instances: u32,
+    /// Instances dropped by culling, distance and frill reduction.
+    pub instances_culled: u32,
+    /// Colour-buffer copies made for water refraction.
+    pub scene_copies: u32,
 }
 
 struct SurfaceState<'w> {
@@ -296,6 +335,8 @@ pub struct Renderer<'w> {
     samplers: Samplers,
     textures: TextureStore,
     white: TextureId,
+    /// View and sampler of the built-in white texture (render-world fallback binding).
+    white_view: (wgpu::TextureView, wgpu::Sampler),
     depth: SizeCache<wgpu::TextureView>,
     uniforms: StreamBuffer,
     globals_bg: wgpu::BindGroup,
@@ -323,6 +364,34 @@ pub struct Renderer<'w> {
     material_bgs: HashMap<[TextureId; 4], (wgpu::BindGroup, u64)>,
     /// Size at which `material_bgs` evicts entries not used this frame.
     material_bg_cap: usize,
+    lit_layouts: LitLayouts,
+    lit_pipelines: LitPipelineCache,
+    /// Frame uniforms of the lit passes of the current frame (dynamic offsets).
+    frame_uniforms: StreamBuffer,
+    frame_stride: u64,
+    /// Group 0 of lit passes: frame uniform, shadow map, comparison sampler.
+    frame_bg: wgpu::BindGroup,
+    /// Group 0 of shadow-map passes: the frame uniform only.
+    shadow_frame_bg: wgpu::BindGroup,
+    shadow_sampler: wgpu::Sampler,
+    /// The sun's shadow map and its size (1 × 1 until a pass asks for a shadow).
+    shadow_map: (wgpu::TextureView, u32),
+    /// Consecutive frames without a shadow request (the map shrinks back to 1 × 1 after
+    /// [`Self::SHADOW_IDLE_FRAMES`]).
+    shadow_idle_frames: u32,
+    /// A shadow-map size whose allocation failed; not retried until the request changes.
+    shadow_failed: Option<u32>,
+    /// Lit material bind groups keyed by the seven resolved textures, with the
+    /// index of the frame that last used them.
+    lit_material_bgs: HashMap<LitTextures, (wgpu::BindGroup, u64)>,
+    lit_material_bg_cap: usize,
+    /// Render-world pipelines (`docs/specs/render.md` §5).
+    terrain_state: TerrainState,
+    water_state: WaterState,
+    sky_state: SkyState,
+    instanced_state: InstancedState,
+    /// Copy of the colour target for water refraction: texture, view, size, format.
+    scene_copy: Option<SceneCopy>,
     clear_color: wgpu::Color,
     frame_index: u64,
     /// Cloned into every surface [`Frame`]; strong count > 1 means a surface
@@ -345,7 +414,10 @@ const MAX_MATERIAL_BIND_GROUPS: usize = 1024;
 /// Errors raised by `f` are attributed to it instead of reaching the shared
 /// [`crate::context`] error sink, where an unrelated later call would
 /// report them.
-fn with_error_scope<T>(device: &wgpu::Device, f: impl FnOnce() -> T) -> (T, Option<String>) {
+pub(crate) fn with_error_scope<T>(
+    device: &wgpu::Device,
+    f: impl FnOnce() -> T,
+) -> (T, Option<String>) {
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -358,10 +430,59 @@ fn with_error_scope<T>(device: &wgpu::Device, f: impl FnOnce() -> T) -> (T, Opti
     (out, v.or(i).or(o).map(|e| e.to_string()))
 }
 
+/// The pipeline of a mesh item: an M2 mesh pipeline or a lit (or shadow) one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PipeKey {
+    Mesh(MeshKey),
+    Lit(LitKey),
+}
+
+impl PipeKey {
+    fn masked(self) -> bool {
+        match self {
+            Self::Mesh(k) => k.kind == Kind::Mask,
+            Self::Lit(k) => matches!(k.kind, LitKind::Mask | LitKind::ShadowMask),
+        }
+    }
+
+    fn is_lit(self) -> bool {
+        matches!(self, Self::Lit(_))
+    }
+
+    fn skinned(self) -> bool {
+        match self {
+            Self::Mesh(k) => k.skinned,
+            Self::Lit(k) => k.skinned,
+        }
+    }
+
+    fn cull(self) -> Cull {
+        match self {
+            Self::Mesh(k) => k.cull,
+            Self::Lit(k) => k.cull,
+        }
+    }
+
+    fn with_cull(self, cull: Cull) -> Self {
+        match self {
+            Self::Mesh(k) => Self::Mesh(MeshKey { cull, ..k }),
+            Self::Lit(k) => Self::Lit(LitKey { cull, ..k }),
+        }
+    }
+}
+
+/// Material bind groups of one frame (M2 and lit layouts share the list).
+#[derive(Debug, Default)]
+struct FrameMaterials {
+    groups: Vec<wgpu::BindGroup>,
+    mesh_index: HashMap<[TextureId; 4], usize>,
+    lit_index: HashMap<LitTextures, usize>,
+}
+
 /// One mesh surface draw, resolved during the gather phase of a frame.
 #[derive(Debug, Clone)]
 struct MeshItem {
-    key: MeshKey,
+    key: PipeKey,
     page: usize,
     indices: Range<u32>,
     uniform_offset: u32,
@@ -398,12 +519,21 @@ struct PassMeshes {
     overlays: Vec<OverlayItem>,
     /// Sorted back to front.
     blended: Vec<MeshItem>,
+    /// Sun shadow casters of a lit pass (drawn into the shadow map first).
+    shadows: Vec<MeshItem>,
 }
 
 impl PassMeshes {
     fn is_empty(&self) -> bool {
         self.surfaces.is_empty() && self.overlays.is_empty() && self.blended.is_empty()
     }
+}
+
+/// Group-0 offsets of one pass: the M2 globals and, for lit passes, the frame uniform.
+#[derive(Debug, Clone, Copy)]
+struct Group0 {
+    globals_offset: u32,
+    frame_offset: Option<u32>,
 }
 
 /// Warn-once flags for one frame.
@@ -415,6 +545,103 @@ struct FrameWarnings {
     wire: bool,
     screen_mesh: bool,
     palette: bool,
+    world_unlit: bool,
+    scene_copy: bool,
+}
+
+/// The colour-buffer copy that water samples as its refraction source
+/// (`docs/specs/render.md` §5.3).
+#[derive(Debug)]
+struct SceneCopy {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: (u32, u32),
+    format: wgpu::TextureFormat,
+}
+
+/// A texture as the render-world pipelines bind it: its view and whether sampling
+/// decodes sRGB (shaders then re-encode to the stored value, `docs/specs/render.md` §4.1).
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedTexture {
+    pub view: wgpu::TextureView,
+    /// The sampler of the upload's filter and wrap modes.
+    pub sampler: wgpu::Sampler,
+    pub srgb: bool,
+}
+
+/// Resolves [`TextureId`]s for the render-world pipelines.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TextureResolver<'a> {
+    store: &'a TextureStore<GpuTexture>,
+    white: (&'a wgpu::TextureView, &'a wgpu::Sampler),
+    /// The view being rendered into (never sampled).
+    exclude: Option<&'a wgpu::TextureView>,
+}
+
+impl TextureResolver<'_> {
+    /// The texture, or `None` when the id is absent, unknown, foreign, a registered
+    /// render target that is being rendered into, or (`exclude` = `None`, retained bind
+    /// groups) any registered render target.
+    pub(crate) fn get(&self, id: Option<TextureId>) -> Option<ResolvedTexture> {
+        let t = self.store.get(id?)?;
+        let usable = match (&t.target_view, self.exclude) {
+            (None, _) => true,
+            (Some(v), Some(ex)) => v != ex,
+            (Some(_), None) => false,
+        };
+        usable.then(|| ResolvedTexture {
+            view: t.view.clone(),
+            sampler: t.sampler.clone(),
+            srgb: t.srgb,
+        })
+    }
+
+    /// Whether `id` names a texture that [`Self::get`] would not return (absent ids
+    /// are not counted).
+    pub(crate) fn is_missing(&self, id: Option<TextureId>) -> bool {
+        id.is_some() && self.get(id).is_none()
+    }
+
+    /// The built-in 1 × 1 white texture.
+    pub(crate) fn white(&self) -> ResolvedTexture {
+        ResolvedTexture {
+            view: self.white.0.clone(),
+            sampler: self.white.1.clone(),
+            srgb: true,
+        }
+    }
+}
+
+/// What a render-world module needs to build its hook for one lit pass
+/// (`docs/specs/render.md` §5.1).
+#[derive(Debug)]
+pub(crate) struct WorldFrame<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub format: wgpu::TextureFormat,
+    /// Colour target size in pixels.
+    pub size: (u32, u32),
+    pub frame_layout: &'a wgpu::BindGroupLayout,
+    pub shadow_frame_layout: &'a wgpu::BindGroupLayout,
+    pub view_proj: Mat4,
+    pub eye: Vec3,
+    pub frame: &'a FrameUniform,
+    pub lights: &'a LightSelector,
+    /// The copy of the colour target made before the pass's translucent stage.
+    pub scene_copy: Option<&'a wgpu::TextureView>,
+    pub textures: TextureResolver<'a>,
+    /// Id of the renderer (handles of other renderers are skipped).
+    pub owner: u64,
+}
+
+/// What a render-world module needs to create retained GPU objects.
+#[derive(Debug)]
+pub(crate) struct WorldUpload<'a> {
+    pub device: &'a wgpu::Device,
+    pub textures: TextureResolver<'a>,
+    pub owner: u64,
+    pub terrain: &'a mut TerrainState,
+    pub instanced: &'a mut InstancedState,
 }
 
 /// Camera position for a world pass: the explicit eye, else the centre of
@@ -545,7 +772,10 @@ impl<'w> Renderer<'w> {
         Ok(SurfaceState {
             surface,
             config: wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                // COPY_SRC where offered: water copies the colour target for its
+                // refraction (`docs/specs/render.md` §5.3).
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | (caps.usages & wgpu::TextureUsages::COPY_SRC),
                 format,
                 color_space: wgpu::SurfaceColorSpace::Auto,
                 width,
@@ -579,6 +809,10 @@ impl<'w> Renderer<'w> {
                 ..TextureUpload::rgba8(1, 1, &[255; 4])
             },
         )?;
+        let white_view = textures
+            .get(white)
+            .map(|t| (t.view.clone(), t.sampler.clone()))
+            .ok_or_else(|| RenderError::InvalidTexture("built-in white texture".into()))?;
         let uniform_stride = align_up(
             size_of::<Globals>() as u64,
             u64::from(device.limits().min_uniform_buffer_offset_alignment),
@@ -607,6 +841,35 @@ impl<'w> Renderer<'w> {
             &draw_uniforms.buffer,
             &palettes.buffer,
         );
+        let lit_layouts = LitLayouts::new(device, &mesh_layouts);
+        let frame_stride = align_up(
+            size_of::<FrameUniform>() as u64,
+            u64::from(device.limits().min_uniform_buffer_offset_alignment),
+        );
+        let frame_uniforms = StreamBuffer::with_size(
+            device,
+            "tessera-frame-lighting",
+            wgpu::BufferUsages::UNIFORM,
+            frame_stride,
+        );
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("tessera-shadow-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let shadow_map = (Self::create_shadow_map(device, 1), 1);
+        let (frame_bg, shadow_frame_bg) = Self::make_frame_bgs(
+            device,
+            &lit_layouts,
+            &frame_uniforms.buffer,
+            &shadow_map.0,
+            &shadow_sampler,
+        );
         let palette_align = u64::from(device.limits().min_uniform_buffer_offset_alignment).max(16);
         let palette_budget = MAX_PALETTE_BYTES_PER_FRAME
             .min(device.limits().max_buffer_size)
@@ -622,6 +885,7 @@ impl<'w> Renderer<'w> {
             samplers,
             textures,
             white,
+            white_view,
             depth: SizeCache::new(MAX_DEPTH_CACHE),
             uniforms,
             globals_bg,
@@ -640,6 +904,23 @@ impl<'w> Renderer<'w> {
             next_frame_serial: 0,
             material_bgs: HashMap::new(),
             material_bg_cap: MAX_MATERIAL_BIND_GROUPS,
+            lit_layouts,
+            lit_pipelines: LitPipelineCache::default(),
+            frame_uniforms,
+            frame_stride,
+            frame_bg,
+            shadow_frame_bg,
+            shadow_sampler,
+            shadow_map,
+            shadow_idle_frames: 0,
+            shadow_failed: None,
+            lit_material_bgs: HashMap::new(),
+            lit_material_bg_cap: MAX_MATERIAL_BIND_GROUPS,
+            terrain_state: TerrainState::default(),
+            water_state: WaterState::default(),
+            sky_state: SkyState::default(),
+            instanced_state: InstancedState::default(),
+            scene_copy: None,
             clear_color: wgpu::Color { r, g, b, a },
             frame_index: 0,
             frame_token: Arc::new(()),
@@ -666,6 +947,141 @@ impl<'w> Renderer<'w> {
                 }),
             }],
         })
+    }
+
+    /// A depth texture for the sun's shadow map.
+    fn create_shadow_map(device: &wgpu::Device, size: u32) -> wgpu::TextureView {
+        device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("tessera-shadow-map"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: SHADOW_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// Frames without a shadow request after which the sun's shadow map (up to 64 MiB) is
+    /// freed (replaced by a 1 × 1 map).
+    pub const SHADOW_IDLE_FRAMES: u32 = 60;
+
+    /// Make the shadow map `requested` texels wide (`None`: no lit pass of this frame
+    /// wants a shadow). Returns whether shadows can be drawn this frame.
+    ///
+    /// The allocation runs in an error scope: when it fails (out of memory on a small GPU)
+    /// the previous map stays (shadows keep working at its size if it is a real map, and
+    /// are skipped otherwise) and the failed size is not retried until the request changes.
+    fn ensure_shadow_map(&mut self, requested: Option<u32>) -> bool {
+        let Some(size) = requested else {
+            self.shadow_failed = None;
+            self.shadow_idle_frames = self.shadow_idle_frames.saturating_add(1);
+            if self.shadow_map.1 > 1 && self.shadow_idle_frames >= Self::SHADOW_IDLE_FRAMES {
+                tracing::debug!(size = self.shadow_map.1, "freeing the idle shadow map");
+                if let Err(error) = self.replace_shadow_map(1) {
+                    // Keep the large map; it stays valid.
+                    tracing::warn!(%error, "could not replace the idle shadow map");
+                }
+            }
+            return false;
+        };
+        self.shadow_idle_frames = 0;
+        let usable = |current: u32| current >= 64;
+        if size == self.shadow_map.1 {
+            return true;
+        }
+        if self.shadow_failed == Some(size) {
+            return usable(self.shadow_map.1);
+        }
+        match self.replace_shadow_map(size) {
+            Ok(()) => {
+                self.shadow_failed = None;
+                true
+            }
+            Err(error) => {
+                tracing::warn!(
+                    size,
+                    kept = self.shadow_map.1,
+                    %error,
+                    "sun shadow map allocation failed; keeping the previous map"
+                );
+                self.shadow_failed = Some(size);
+                usable(self.shadow_map.1)
+            }
+        }
+    }
+
+    /// Replace the shadow map by one of `size` texels and rebuild the frame bind groups;
+    /// on a GPU error nothing changes.
+    fn replace_shadow_map(&mut self, size: u32) -> std::result::Result<(), String> {
+        let device = &self.ctx.device;
+        let (view, error) = with_error_scope(device, || Self::create_shadow_map(device, size));
+        if let Some(e) = error {
+            return Err(e);
+        }
+        let (frame_bg, shadow_frame_bg) = Self::make_frame_bgs(
+            device,
+            &self.lit_layouts,
+            &self.frame_uniforms.buffer,
+            &view,
+            &self.shadow_sampler,
+        );
+        self.shadow_map = (view, size);
+        self.frame_bg = frame_bg;
+        self.shadow_frame_bg = shadow_frame_bg;
+        Ok(())
+    }
+
+    /// The frame bind groups of lit passes and of shadow passes.
+    fn make_frame_bgs(
+        device: &wgpu::Device,
+        layouts: &LitLayouts,
+        buffer: &wgpu::Buffer,
+        shadow_map: &wgpu::TextureView,
+        shadow_sampler: &wgpu::Sampler,
+    ) -> (wgpu::BindGroup, wgpu::BindGroup) {
+        let uniform = || {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(size_of::<FrameUniform>() as u64),
+            })
+        };
+        let frame = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tessera-frame-lighting"),
+            layout: &layouts.frame,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(shadow_map),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(shadow_sampler),
+                },
+            ],
+        });
+        let shadow = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tessera-shadow-frame"),
+            layout: &layouts.shadow_frame,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform(),
+            }],
+        });
+        (frame, shadow)
     }
 
     fn make_draw_bg(
@@ -846,7 +1262,188 @@ impl<'w> Renderer<'w> {
         }
     }
 
-    /// Overwrite all texels of an existing texture (same size).
+    /// Upload a texture with a stored mip chain (`docs/specs/texture-list.md` §5.5):
+    /// one mip per level, level 0 largest. Levels that do not halve are copied clipped
+    /// to their mip slot; missing small levels are not generated (see
+    /// [`MipChainUpload`]). Errors as for [`Self::upload_texture`]
+    /// ([`RenderError::InvalidTexture`] names the offending level).
+    pub fn upload_texture_mips(&mut self, desc: &MipChainUpload<'_>) -> Result<TextureId> {
+        let (result, gpu_error) = with_error_scope(&self.ctx.device, || {
+            self.textures.upload_mips(
+                &self.ctx.device,
+                &self.ctx.queue,
+                &self.shared.texture,
+                &self.samplers,
+                desc,
+            )
+        });
+        match (result, gpu_error) {
+            (result, None) => result,
+            (Ok(id), Some(e)) => {
+                self.textures.remove(id);
+                Err(RenderError::Gpu(e))
+            }
+            (Err(_), Some(e)) => Err(RenderError::Gpu(e)),
+        }
+    }
+
+    /// Group-0 layout of lit passes (frame uniform, shadow map, comparison sampler) for
+    /// pipelines that draw into lit passes (`docs/specs/render.md` §4.2).
+    #[allow(dead_code)]
+    pub(crate) fn frame_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.lit_layouts.frame
+    }
+
+    /// Group-0 layout of shadow-map passes (the frame uniform only, `docs/specs/render.md`
+    /// §4.2); also in [`crate::pass_hook::HookPrepare`].
+    #[allow(dead_code)]
+    pub(crate) fn shadow_frame_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.lit_layouts.shadow_frame
+    }
+
+    /// The bind group matching [`Self::frame_layout`]; bind it with the pass's frame
+    /// offset (valid while the frame that computed the offset is being recorded).
+    #[allow(dead_code)]
+    pub(crate) fn frame_bind_group(&self) -> &wgpu::BindGroup {
+        &self.frame_bg
+    }
+
+    /// The parts the render-world modules use to create retained GPU objects
+    /// (`docs/specs/render.md` §5). Registered render targets are never resolved here,
+    /// since a retained bind group could later be drawn into its own target.
+    pub(crate) fn world_upload(&mut self) -> WorldUpload<'_> {
+        WorldUpload {
+            device: &self.ctx.device,
+            textures: TextureResolver {
+                store: &self.textures,
+                white: (&self.white_view.0, &self.white_view.1),
+                exclude: None,
+            },
+            owner: self.owner,
+            terrain: &mut self.terrain_state,
+            instanced: &mut self.instanced_state,
+        }
+    }
+
+    /// Build the render-world hooks of one lit pass (`docs/specs/render.md` §5.1), in
+    /// draw order: terrain layers, instanced scenery, sky, water.
+    #[allow(clippy::too_many_arguments)]
+    fn world_hooks(
+        &mut self,
+        draws: WorldDraws,
+        frame: &FrameUniform,
+        reach: &[LightReach],
+        view_proj: Mat4,
+        eye: Vec3,
+        format: wgpu::TextureFormat,
+        size: (u32, u32),
+        target: &wgpu::TextureView,
+        scene_copy: bool,
+    ) -> Result<Vec<Arc<dyn PassHook>>> {
+        let selector = LightSelector::new(frame, reach);
+        let copy_view = if scene_copy {
+            self.scene_copy.as_ref().map(|c| c.view.clone())
+        } else {
+            None
+        };
+        let ctx = WorldFrame {
+            device: &self.ctx.device,
+            queue: &self.ctx.queue,
+            format,
+            size,
+            frame_layout: &self.lit_layouts.frame,
+            shadow_frame_layout: &self.lit_layouts.shadow_frame,
+            view_proj,
+            eye,
+            frame,
+            lights: &selector,
+            scene_copy: copy_view.as_ref(),
+            textures: TextureResolver {
+                store: &self.textures,
+                white: (&self.white_view.0, &self.white_view.1),
+                exclude: Some(target),
+            },
+            owner: self.owner,
+        };
+        let WorldDraws {
+            terrain,
+            water,
+            sky,
+            instanced,
+        } = draws;
+        let mut hooks: Vec<Arc<dyn PassHook>> = Vec::new();
+        if let Some(h) = crate::terrain_layers::build_hook(&mut self.terrain_state, terrain, &ctx)?
+        {
+            hooks.push(h);
+        }
+        if let Some(h) = crate::instanced::build_hook(&mut self.instanced_state, instanced, &ctx)? {
+            hooks.push(h);
+        }
+        if let Some(h) =
+            crate::sky::build_hook(&mut self.sky_state, &mut self.instanced_state, sky, &ctx)?
+        {
+            hooks.push(h);
+        }
+        if let Some(h) = crate::water::build_hook(&mut self.water_state, water, &ctx)? {
+            hooks.push(h);
+        }
+        Ok(hooks)
+    }
+
+    /// Make sure the scene copy matches the frame's target; `false` when the target
+    /// cannot be copied (a surface without `COPY_SRC`).
+    fn ensure_scene_copy(
+        &mut self,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+    ) -> bool {
+        let src = target.texture();
+        if !src.usage().contains(wgpu::TextureUsages::COPY_SRC)
+            || src.width() != size.0
+            || src.height() != size.1
+        {
+            return false;
+        }
+        if self
+            .scene_copy
+            .as_ref()
+            .is_some_and(|c| c.size == size && c.format == format)
+        {
+            return true;
+        }
+        let texture = self.ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("tessera-scene-copy"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.scene_copy = Some(SceneCopy {
+            texture,
+            view,
+            size,
+            format,
+        });
+        true
+    }
+
+    /// Number of mip levels of a texture (1 for single-level uploads).
+    #[must_use]
+    pub fn texture_mip_levels(&self, id: TextureId) -> Option<u32> {
+        self.textures.get(id).map(|t| t.mip_levels)
+    }
+
+    /// Overwrite all texels of an existing texture (same size). Textures with a mip
+    /// chain cannot be updated ([`RenderError::InvalidTexture`]).
     pub fn update_texture(&mut self, id: TextureId, rgba: &[u8]) -> Result<()> {
         self.textures.update(&self.ctx.queue, id, rgba)
     }
@@ -866,6 +1463,7 @@ impl<'w> Renderer<'w> {
             return false;
         }
         self.material_bgs.retain(|key, _| !key.contains(&id));
+        self.lit_material_bgs.retain(|key, _| !key.0.contains(&id));
         self.textures.remove(id)
     }
 
@@ -1060,9 +1658,55 @@ impl<'w> Renderer<'w> {
         Some(bg)
     }
 
+    /// Bind group for the seven lit material textures (cached across frames).
+    fn lit_material_bind_group(&mut self, key: LitTextures) -> Option<wgpu::BindGroup> {
+        let frame = self.frame_index;
+        if let Some((bg, used)) = self.lit_material_bgs.get_mut(&key) {
+            *used = frame;
+            return Some(bg.clone());
+        }
+        let texs: Vec<_> = key
+            .0
+            .iter()
+            .filter_map(|&id| self.textures.get(id))
+            .collect();
+        if texs.len() != LIT_TEXTURES {
+            return None;
+        }
+        let mut entries = Vec::with_capacity(2 * LIT_TEXTURES);
+        for (i, t) in texs.iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: wgpu::BindingResource::TextureView(&t.view),
+            });
+        }
+        for (i, t) in texs.iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: (LIT_TEXTURES + i) as u32,
+                resource: wgpu::BindingResource::Sampler(&t.sampler),
+            });
+        }
+        let bg = self
+            .ctx
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("tessera-lit-material"),
+                layout: &self.lit_layouts.material,
+                entries: &entries,
+            });
+        if self.lit_material_bgs.len() >= self.lit_material_bg_cap {
+            self.lit_material_bgs.retain(|_, (_, used)| *used == frame);
+            self.lit_material_bg_cap =
+                MAX_MATERIAL_BIND_GROUPS.max(self.lit_material_bgs.len() * 2);
+        }
+        self.lit_material_bgs.insert(key, (bg.clone(), frame));
+        Some(bg)
+    }
+
     /// Resolve one pass's mesh draws: append their uniforms to `uniforms`,
     /// their material bind groups to `bind_groups`, build the pipelines
-    /// they need and return them bucketed in drawing order.
+    /// they need and return them bucketed in drawing order. `lit` is the
+    /// pass's frame uniform when the pass is lit.
     #[allow(clippy::too_many_arguments)]
     fn plan_meshes(
         &mut self,
@@ -1070,9 +1714,9 @@ impl<'w> Renderer<'w> {
         view_proj: Mat4,
         format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
+        lit: Option<&FrameUniform>,
         uniforms: &mut Vec<u8>,
-        bind_groups: &mut Vec<wgpu::BindGroup>,
-        bind_group_index: &mut HashMap<[TextureId; 4], usize>,
+        materials: &mut FrameMaterials,
         frame_serial: u64,
         warnings: &mut FrameWarnings,
     ) -> Result<PassMeshes> {
@@ -1082,6 +1726,11 @@ impl<'w> Renderer<'w> {
         }
         let debug = pass.mesh_debug;
         let shading = debug.shading;
+        let lit_frame = lit.filter(|_| shading == MeshShading::Lit);
+        let casts_shadows = lit_frame.is_some_and(FrameUniform::has_shadow);
+        // Built once per pass; each draw reuses `chosen_lights` (no per-draw allocation).
+        let selector = lit_frame.map(|f| LightSelector::new(f, &pass.light_reach));
+        let mut chosen_lights: Vec<u8> = Vec::with_capacity(MAX_DRAW_LIGHTS);
         for draw in &pass.meshes {
             let Some(mesh) = self.arena.get(draw.mesh) else {
                 if !warnings.mesh {
@@ -1092,6 +1741,7 @@ impl<'w> Renderer<'w> {
             };
             let page = mesh.page;
             let has_tangents = mesh.info.has_tangents;
+            let mesh_aabb = mesh.info.aabb;
             let vertex_range = mesh.vertex_range.clone();
             // Skinned when the mesh has influences and the draw a usable
             // palette; otherwise the bind pose (static path).
@@ -1145,24 +1795,6 @@ impl<'w> Renderer<'w> {
                 Some(DyeMask::Texture(id)) => self.resolve_texture(Some(id), view, warnings),
                 _ => None,
             };
-            let spec = self.resolve_texture(m.specular.and_then(|s| s.texture), view, warnings);
-            let key = [
-                base.unwrap_or(white),
-                normal.unwrap_or(white),
-                dye_mask.unwrap_or(white),
-                spec.unwrap_or(white),
-            ];
-            let material = match bind_group_index.get(&key) {
-                Some(&i) => i,
-                None => {
-                    let Some(bg) = self.material_bind_group(key) else {
-                        continue;
-                    };
-                    bind_groups.push(bg);
-                    bind_group_index.insert(key, bind_groups.len() - 1);
-                    bind_groups.len() - 1
-                }
-            };
 
             // Wireframe and normal lines share the draw's uniform but each
             // has its own colour.
@@ -1171,19 +1803,96 @@ impl<'w> Renderer<'w> {
                 debug.normals.map_or([1.0; 4], |n| n.color),
                 debug.normals.map_or(0.0, |n| n.length),
             );
-            let uniform = DrawUniform::new(
-                draw.transform,
-                m,
-                &DrawContext {
-                    shading,
-                    normal_map: has_tangents && normal.is_some(),
-                    dye_mask: dye_mask.is_some(),
-                    specular_tex: spec.is_some(),
-                    overlay_color,
-                    normal_color,
-                    normal_length,
-                },
-            );
+            let (material, uniform) = if let Some(selector) = &selector {
+                // Lit pipeline: seven material textures (lit_pipelines::LIT_TEXTURES).
+                let l = &draw.lit;
+                let gloss = match l.gloss {
+                    Gloss::Texture(id) => self.resolve_texture(Some(id), view, warnings),
+                    _ => None,
+                };
+                let opacity = match l.opacity {
+                    Opacity::Texture(id) => self.resolve_texture(Some(id), view, warnings),
+                    _ => None,
+                };
+                let emissive = self.resolve_texture(l.emissive, view, warnings);
+                let glow = self.resolve_texture(l.glow_mask, view, warnings);
+                let resolved = [base, normal, dye_mask, gloss, emissive, glow, opacity];
+                let key = LitTextures(resolved.map(|t| t.unwrap_or(white)));
+                let material = match materials.lit_index.get(&key) {
+                    Some(&i) => i,
+                    None => {
+                        let Some(bg) = self.lit_material_bind_group(key) else {
+                            continue;
+                        };
+                        materials.groups.push(bg);
+                        materials.lit_index.insert(key, materials.groups.len() - 1);
+                        materials.groups.len() - 1
+                    }
+                };
+                let srgb = resolved.map(|t| {
+                    t.and_then(|id| self.textures.get(id))
+                        .is_some_and(|tex| tex.srgb)
+                });
+                let mut uniform = DrawUniform::new(
+                    draw.transform,
+                    m,
+                    &DrawContext {
+                        shading,
+                        normal_map: has_tangents && normal.is_some(),
+                        dye_mask: dye_mask.is_some(),
+                        specular_tex: false,
+                        overlay_color,
+                        normal_color,
+                        normal_length,
+                    },
+                );
+                let target = LightTarget::placed(mesh_aabb, draw.transform, draw.light_object);
+                selector.select(l.lights, &target, &mut chosen_lights);
+                lit_fields(
+                    &mut uniform,
+                    m,
+                    l,
+                    &LitContext {
+                        present: resolved.map(|t| t.is_some()),
+                        srgb,
+                    },
+                    &chosen_lights,
+                );
+                (material, uniform)
+            } else {
+                let spec = self.resolve_texture(m.specular.and_then(|s| s.texture), view, warnings);
+                let key = [
+                    base.unwrap_or(white),
+                    normal.unwrap_or(white),
+                    dye_mask.unwrap_or(white),
+                    spec.unwrap_or(white),
+                ];
+                let material = match materials.mesh_index.get(&key) {
+                    Some(&i) => i,
+                    None => {
+                        let Some(bg) = self.material_bind_group(key) else {
+                            continue;
+                        };
+                        materials.groups.push(bg);
+                        materials.mesh_index.insert(key, materials.groups.len() - 1);
+                        materials.groups.len() - 1
+                    }
+                };
+                let uniform = DrawUniform::new(
+                    draw.transform,
+                    m,
+                    &DrawContext {
+                        shading,
+                        normal_map: has_tangents && normal.is_some(),
+                        dye_mask: dye_mask.is_some(),
+                        specular_tex: spec.is_some(),
+                        overlay_color,
+                        normal_color,
+                        normal_length,
+                    },
+                );
+                (material, uniform)
+            };
             let offset = uniforms.len() as u64;
             let uniform_offset = u32::try_from(offset).map_err(|_| RenderError::LimitExceeded {
                 what: "mesh draw uniform bytes per frame",
@@ -1203,43 +1912,75 @@ impl<'w> Renderer<'w> {
 
             // Surfaces.
             if shading != MeshShading::Hidden {
-                let lit = shading == MeshShading::Lit;
-                let kind = match m.alpha {
-                    AlphaMode::Opaque => Kind::Opaque,
-                    AlphaMode::Mask { .. } => Kind::Mask,
-                    AlphaMode::Blend if lit => Kind::Blend,
-                    AlphaMode::Blend => Kind::Opaque,
-                };
                 let mirrored = is_mirrored(draw.transform);
                 let (back, front) = if mirrored {
                     (Cull::Front, Cull::Back)
                 } else {
                     (Cull::Back, Cull::Front)
                 };
+                let (base_key, blended) = if lit_frame.is_some() {
+                    let kind = match m.alpha {
+                        AlphaMode::Opaque => LitKind::Opaque,
+                        AlphaMode::Mask { .. } => LitKind::Mask,
+                        AlphaMode::TestBlend { .. } => LitKind::TestBlend,
+                        AlphaMode::Blend => LitKind::Blend,
+                        AlphaMode::Additive => LitKind::Additive,
+                    };
+                    let blended = matches!(
+                        kind,
+                        LitKind::TestBlend | LitKind::Blend | LitKind::Additive
+                    );
+                    let key = LitKey {
+                        format,
+                        kind,
+                        cull: Cull::Back,
+                        skinned,
+                    };
+                    (PipeKey::Lit(key), blended)
+                } else {
+                    let lit_shading = shading == MeshShading::Lit;
+                    let kind = match m.alpha {
+                        AlphaMode::Opaque => Kind::Opaque,
+                        AlphaMode::Mask { .. } | AlphaMode::TestBlend { .. } => Kind::Mask,
+                        AlphaMode::Blend | AlphaMode::Additive if lit_shading => Kind::Blend,
+                        AlphaMode::Blend | AlphaMode::Additive => Kind::Opaque,
+                    };
+                    let key = MeshKey {
+                        format,
+                        kind,
+                        cull: Cull::Back,
+                        skinned,
+                    };
+                    (PipeKey::Mesh(key), kind == Kind::Blend)
+                };
                 // Two-sided blending draws back faces first, then front faces.
-                let culls: &[Cull] = match (m.two_sided, kind) {
-                    (true, Kind::Blend) => &[front, back],
-                    (true, _) => &[Cull::None],
+                let culls: &[Cull] = match (m.two_sided, blended) {
+                    (true, true) => &[front, back],
+                    (true, false) => &[Cull::None],
                     (false, _) => &[back],
                 };
+                let shadow_kind = (casts_shadows && draw.lit.cast_shadow && !m.unlit)
+                    .then_some(m.alpha)
+                    .and_then(|a| match a {
+                        AlphaMode::Opaque => Some(LitKind::Shadow),
+                        AlphaMode::Mask { .. } | AlphaMode::TestBlend { .. } => {
+                            Some(LitKind::ShadowMask)
+                        }
+                        AlphaMode::Blend | AlphaMode::Additive => None,
+                    });
                 for s in submeshes {
                     let tris = mesh.triangles(s);
                     if tris.is_empty() {
                         continue;
                     }
-                    let depth = if kind == Kind::Blend {
+                    let depth = if blended {
                         sort_depth(view_proj, s.sphere.transformed(draw.transform).center)
                     } else {
                         0.0
                     };
                     for &cull in culls {
                         let item = MeshItem {
-                            key: MeshKey {
-                                format,
-                                kind,
-                                cull,
-                                skinned,
-                            },
+                            key: base_key.with_cull(cull),
                             page,
                             indices: tris.clone(),
                             uniform_offset,
@@ -1247,11 +1988,27 @@ impl<'w> Renderer<'w> {
                             material,
                             depth,
                         };
-                        if kind == Kind::Blend {
+                        if blended {
                             out.blended.push(item);
                         } else {
                             out.surfaces.push(item);
                         }
+                    }
+                    if let Some(kind) = shadow_kind {
+                        out.shadows.push(MeshItem {
+                            key: PipeKey::Lit(LitKey {
+                                format,
+                                kind,
+                                cull: Cull::None,
+                                skinned,
+                            }),
+                            page,
+                            indices: tris.clone(),
+                            uniform_offset,
+                            palette_offset,
+                            material,
+                            depth: 0.0,
+                        });
                     }
                 }
             }
@@ -1306,9 +2063,18 @@ impl<'w> Renderer<'w> {
         // order among equal keys).
         out.surfaces.sort_by_key(|item| {
             (
-                item.key.kind == Kind::Mask,
-                item.key.skinned,
-                item.key.cull,
+                item.key.masked(),
+                item.key.is_lit(),
+                item.key.skinned(),
+                item.key.cull(),
+                item.material,
+                item.page,
+            )
+        });
+        out.shadows.sort_by_key(|item| {
+            (
+                item.key.masked(),
+                item.key.skinned(),
                 item.material,
                 item.page,
             )
@@ -1320,9 +2086,15 @@ impl<'w> Renderer<'w> {
             .surfaces
             .iter()
             .chain(&out.blended)
+            .chain(&out.shadows)
             .map(|i| i.key)
-            .chain(out.overlays.iter().map(|o| o.key))
         {
+            match key {
+                PipeKey::Mesh(k) => self.mesh_pipelines.ensure(device, &self.mesh_layouts, k),
+                PipeKey::Lit(k) => self.lit_pipelines.ensure(device, &self.lit_layouts, k),
+            }
+        }
+        for key in out.overlays.iter().map(|o| o.key) {
             self.mesh_pipelines.ensure(device, &self.mesh_layouts, key);
         }
         Ok(out)
@@ -1566,12 +2338,34 @@ impl<'w> Renderer<'w> {
         let mut needs_depth = false;
         let mut needs_flat = false;
         let mut mesh_uniforms: Vec<u8> = Vec::new();
-        let mut material_groups: Vec<wgpu::BindGroup> = Vec::new();
-        let mut material_index: HashMap<[TextureId; 4], usize> = HashMap::new();
+        let mut materials = FrameMaterials::default();
         let mut warnings = FrameWarnings::default();
         let mut pass_meshes: Vec<PassMeshes> = Vec::with_capacity(passes.len());
+        // View of each pass (for the render-world hooks).
+        let mut pass_views: Vec<(Mat4, Vec3)> = Vec::with_capacity(passes.len());
+        // Lit passes: frame uniforms at `frame_stride` offsets, and the shadow map size
+        // (the largest any lit pass asks for).
+        let mut frame_data: Vec<u8> = Vec::new();
+        let mut frame_offsets: Vec<Option<(u32, bool)>> = Vec::with_capacity(passes.len());
+        let max_shadow = self.ctx.device.limits().max_texture_dimension_2d.min(4096);
+        // Only lit-shaded passes sample the map (debug shadings draw through M2).
+        let wants_shadow = |p: &Pass| {
+            matches!(p.space, PassSpace::World { .. }) && p.mesh_debug.shading == MeshShading::Lit
+        };
+        let shadow_size = passes
+            .iter()
+            .filter(|p| wants_shadow(p))
+            .filter_map(|p| p.frame_lighting.as_deref())
+            .filter(|l| l.sun.is_some())
+            .filter_map(|l| l.shadow)
+            .filter(|s| s.view_proj.is_finite())
+            .map(|s| s.map_size.clamp(64, 4096).min(max_shadow))
+            .max();
+        let shadows_usable = self.ensure_shadow_map(shadow_size);
+        // Passes whose colour target is copied before their translucent stage (water).
+        let mut scene_copies = vec![false; passes.len()];
 
-        for (i, pass) in passes.iter().enumerate() {
+        for (i, pass) in passes.iter_mut().enumerate() {
             let is_world = matches!(pass.space, PassSpace::World { .. });
             let view_proj = match pass.space {
                 PassSpace::World { view_proj } => {
@@ -1600,20 +2394,103 @@ impl<'w> Renderer<'w> {
                 light_color: rgb(light.color),
                 ambient: rgb(light.ambient),
             };
+            let frame_uniform = match (is_world, pass.frame_lighting.as_deref()) {
+                (true, Some(l)) => {
+                    let mut u = FrameUniform::new(l, view_proj, eye, format.is_srgb());
+                    u.shadow[3] = 1.0 / self.shadow_map.1 as f32;
+                    if !(shadows_usable && wants_shadow(pass)) {
+                        // No map this frame, or nothing in the pass samples it.
+                        u.shadow[0] = 0.0;
+                    }
+                    let offset = frame_data.len() as u64;
+                    let offset32 =
+                        u32::try_from(offset).map_err(|_| RenderError::LimitExceeded {
+                            what: "lit pass uniform bytes per frame",
+                            requested: offset,
+                            max: u64::from(u32::MAX),
+                        })?;
+                    frame_data.extend_from_slice(bytemuck::bytes_of(&u));
+                    frame_data.resize(
+                        usize::try_from(offset + self.frame_stride).unwrap_or(usize::MAX),
+                        0,
+                    );
+                    frame_offsets.push(Some((offset32, u.has_shadow())));
+                    Some(u)
+                }
+                _ => {
+                    frame_offsets.push(None);
+                    None
+                }
+            };
+            pass_views.push((view_proj, eye));
             if is_world {
                 pass_meshes.push(self.plan_meshes(
-                    pass,
+                    &*pass,
                     view_proj,
                     format,
                     &view,
+                    frame_uniform.as_ref(),
                     &mut mesh_uniforms,
-                    &mut material_groups,
-                    &mut material_index,
+                    &mut materials,
                     serial,
                     &mut warnings,
                 )?);
+                let world = std::mem::take(&mut pass.world);
+                if !world.is_empty() {
+                    match frame_uniform.as_ref() {
+                        Some(fu) => {
+                            let copy = !world.water.is_empty()
+                                && self.ensure_scene_copy(&view, (width, height), format);
+                            if !world.water.is_empty() && !copy && !warnings.scene_copy {
+                                tracing::warn!(
+                                    pass = %pass.label,
+                                    "colour target cannot be copied; water refraction \
+                                     falls back to the water fog colour"
+                                );
+                                warnings.scene_copy = true;
+                            }
+                            scene_copies[i] = copy;
+                            let hooks = self.world_hooks(
+                                world,
+                                fu,
+                                &pass.light_reach,
+                                view_proj,
+                                eye,
+                                format,
+                                (width, height),
+                                &view,
+                                copy,
+                            )?;
+                            pass.hooks.splice(0..0, hooks);
+                        }
+                        None => {
+                            if !warnings.world_unlit {
+                                tracing::warn!(
+                                    pass = %pass.label,
+                                    "terrain, water, sky and instanced draws need a lit pass \
+                                     (Pass::frame_lighting); skipped"
+                                );
+                                warnings.world_unlit = true;
+                            }
+                        }
+                    }
+                }
+                let prepare = HookPrepare {
+                    device: &self.ctx.device,
+                    queue: &self.ctx.queue,
+                    format,
+                    frame_layout: &self.lit_layouts.frame,
+                    shadow_frame_layout: &self.lit_layouts.shadow_frame,
+                    view_proj,
+                    eye,
+                    frame: frame_uniform.as_ref(),
+                    shading: pass.mesh_debug.shading,
+                };
+                for hook in &pass.hooks {
+                    hook.prepare(&prepare)?;
+                }
             } else {
-                if !pass.meshes.is_empty() && !warnings.screen_mesh {
+                if (!pass.meshes.is_empty() || !pass.world.is_empty()) && !warnings.screen_mesh {
                     tracing::warn!(pass = %pass.label, "meshes in a screen pass are ignored");
                     warnings.screen_mesh = true;
                 }
@@ -1647,6 +2524,18 @@ impl<'w> Renderer<'w> {
         // the bind group when either was replaced *before* propagating an
         // error, so a failed palette reserve cannot leave `draw_bg` pointing
         // at a draw-uniform buffer that has since been replaced.
+        if self
+            .frame_uniforms
+            .reserve(device, frame_data.len() as u64)?
+        {
+            (self.frame_bg, self.shadow_frame_bg) = Self::make_frame_bgs(
+                device,
+                &self.lit_layouts,
+                &self.frame_uniforms.buffer,
+                &self.shadow_map.0,
+                &self.shadow_sampler,
+            );
+        }
         let draws_grew = self
             .draw_uniforms
             .reserve(device, mesh_uniforms.len() as u64);
@@ -1663,6 +2552,9 @@ impl<'w> Renderer<'w> {
         palettes_grew?;
         let queue = &self.ctx.queue;
         queue.write_buffer(&self.uniforms.buffer, 0, &uniform_data);
+        if !frame_data.is_empty() {
+            queue.write_buffer(&self.frame_uniforms.buffer, 0, &frame_data);
+        }
         if !mesh_uniforms.is_empty() {
             queue.write_buffer(&self.draw_uniforms.buffer, 0, &mesh_uniforms);
         }
@@ -1694,6 +2586,7 @@ impl<'w> Renderer<'w> {
             passes: u32::try_from(passes.len()).unwrap_or(u32::MAX),
             palettes: palettes.count,
             palette_bytes: palette_bytes.len() as u64,
+            shadow_map_size: self.shadow_map.1,
             ..FrameStats::default()
         };
         let mut encoder = self
@@ -1706,6 +2599,47 @@ impl<'w> Renderer<'w> {
         let mut warned_missing = false;
         for (i, pass) in passes.iter().enumerate() {
             let is_world = matches!(pass.space, PassSpace::World { .. });
+            let frame_offset = frame_offsets.get(i).copied().flatten();
+            if let Some((offset, true)) = frame_offset {
+                // The sun's shadow map of this pass (cleared even without casters).
+                let mut sp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("tessera-shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.shadow_map.0,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if let Some(m) = pass_meshes.get(i) {
+                    self.draw_shadow_items(
+                        &mut sp,
+                        &m.shadows,
+                        offset,
+                        &materials.groups,
+                        &mut stats,
+                    );
+                }
+                let (view_proj, eye) = pass_views.get(i).copied().unwrap_or_default();
+                let ctx = HookRecord {
+                    stage: HookStage::Shadow,
+                    group0: Some((&self.shadow_frame_bg, offset)),
+                    format,
+                    view_proj,
+                    eye,
+                    shading: pass.mesh_debug.shading,
+                };
+                for hook in &pass.hooks {
+                    hook.record(&mut sp, &ctx, &mut stats);
+                }
+                stats.shadow_passes = stats.shadow_passes.saturating_add(1);
+            }
             let load = match (pass.clear_color, i) {
                 (Some(c), _) => wgpu::LoadOp::Clear(c),
                 (None, 0) => wgpu::LoadOp::Clear(self.clear_color),
@@ -1749,21 +2683,40 @@ impl<'w> Renderer<'w> {
             });
             let meshes = pass_meshes.get(i);
             let has_meshes = meshes.is_some_and(|m| !m.is_empty());
-            if pass.quads.is_empty() && pass.lines.len() < 2 && !has_meshes {
+            let has_hooks = is_world && !pass.hooks.is_empty();
+            if pass.quads.is_empty() && pass.lines.len() < 2 && !has_meshes && !has_hooks {
                 continue;
             }
             let uniform_offset = u32::try_from(i as u64 * stride).unwrap_or(0);
             rp.set_bind_group(0, &self.globals_bg, &[uniform_offset]);
 
             let mut bound_page = None;
+            let group0 = Group0 {
+                globals_offset: uniform_offset,
+                frame_offset: frame_offset.map(|(o, _)| o),
+            };
             if let Some(m) = meshes {
                 self.draw_mesh_items(
                     &mut rp,
                     &m.surfaces,
-                    &material_groups,
+                    &materials.groups,
                     &mut bound_page,
                     &mut stats,
+                    group0,
                 );
+            }
+            let (view_proj, eye) = pass_views.get(i).copied().unwrap_or_default();
+            let mut hook_ctx = HookRecord {
+                stage: HookStage::Opaque,
+                group0: group0.frame_offset.map(|o| (&self.frame_bg, o)),
+                format,
+                view_proj,
+                eye,
+                shading: pass.mesh_debug.shading,
+            };
+            if has_hooks {
+                self.record_hooks(&mut rp, &pass.hooks, &hook_ctx, group0, &mut stats);
+                bound_page = None;
             }
 
             let set = self.pipelines.lookup(format, is_world);
@@ -1823,12 +2776,64 @@ impl<'w> Renderer<'w> {
                 // Quads/lines replaced the vertex buffer binding.
                 bound_page = None;
                 self.draw_overlays(&mut rp, &m.overlays, &mut bound_page, &mut stats);
+            }
+            if scene_copies.get(i).copied().unwrap_or(false)
+                && let Some(copy) = &self.scene_copy
+            {
+                // Water refracts what the pass has drawn so far (`docs/specs/render.md`
+                // §5.3): end the render pass, copy the colour target, and continue on
+                // the stored colour and depth.
+                drop(rp);
+                encoder.copy_texture_to_texture(
+                    view.texture().as_image_copy(),
+                    copy.texture.as_image_copy(),
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                stats.scene_copies = stats.scene_copies.saturating_add(1);
+                let keep = |view| wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                };
+                rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(&pass.label),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: depth_view.as_ref().filter(|_| is_world).map(keep),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                rp.set_bind_group(0, &self.globals_bg, &[uniform_offset]);
+                bound_page = None;
+            }
+            if has_hooks {
+                hook_ctx.stage = HookStage::Translucent;
+                self.record_hooks(&mut rp, &pass.hooks, &hook_ctx, group0, &mut stats);
+                bound_page = None;
+            }
+            if let Some(m) = meshes {
                 self.draw_mesh_items(
                     &mut rp,
                     &m.blended,
-                    &material_groups,
+                    &materials.groups,
                     &mut bound_page,
                     &mut stats,
+                    group0,
                 );
             }
         }
@@ -1870,6 +2875,8 @@ impl<'w> Renderer<'w> {
         true
     }
 
+    /// Draw mesh items; group 0 is switched between the globals (M2 pipelines) and the
+    /// frame bind group (lit pipelines) as the items need, and left on the globals.
     fn draw_mesh_items(
         &self,
         rp: &mut wgpu::RenderPass<'_>,
@@ -1877,16 +2884,37 @@ impl<'w> Renderer<'w> {
         materials: &[wgpu::BindGroup],
         bound_page: &mut Option<usize>,
         stats: &mut FrameStats,
+        group0: Group0,
     ) {
         let mut current_key = None;
         let mut current_material = None;
+        // Which group 0 is bound: `Some(true)` the frame group, `Some(false)` globals.
+        let mut current_lit = Some(false);
         for item in items {
-            let Some(pipeline) = self.mesh_pipelines.lookup(item.key) else {
+            let pipeline = match item.key {
+                PipeKey::Mesh(k) => self.mesh_pipelines.lookup(k),
+                PipeKey::Lit(k) => self.lit_pipelines.lookup(k),
+            };
+            let Some(pipeline) = pipeline else {
                 continue;
             };
             let Some(material) = materials.get(item.material) else {
                 continue;
             };
+            let lit = item.key.is_lit();
+            if current_lit != Some(lit) {
+                if lit {
+                    let Some(offset) = group0.frame_offset else {
+                        continue;
+                    };
+                    rp.set_bind_group(0, &self.frame_bg, &[offset]);
+                } else {
+                    rp.set_bind_group(0, &self.globals_bg, &[group0.globals_offset]);
+                }
+                current_lit = Some(lit);
+                // The material layout differs between the two pipeline families.
+                current_material = None;
+            }
             if !self.bind_page(rp, item.page, bound_page) {
                 continue;
             }
@@ -1906,12 +2934,82 @@ impl<'w> Renderer<'w> {
             rp.draw_indexed(item.indices.clone(), 0, 0..1);
             stats.draw_calls = stats.draw_calls.saturating_add(1);
             stats.mesh_draws = stats.mesh_draws.saturating_add(1);
-            if item.key.skinned {
+            if lit {
+                stats.lit_draws = stats.lit_draws.saturating_add(1);
+            }
+            if item.key.skinned() {
                 stats.skinned_draws = stats.skinned_draws.saturating_add(1);
             }
             stats.triangles = stats.triangles.saturating_add(u64::from(
                 item.indices.end.saturating_sub(item.indices.start) / 3,
             ));
+        }
+        if current_lit != Some(false) {
+            rp.set_bind_group(0, &self.globals_bg, &[group0.globals_offset]);
+        }
+    }
+
+    /// Run the render-world hooks of a pass for one colour stage, then restore the M2
+    /// globals as group 0 (the vertex and index buffers must be re-bound by the caller).
+    fn record_hooks(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        hooks: &[Arc<dyn PassHook>],
+        ctx: &HookRecord<'_>,
+        group0: Group0,
+        stats: &mut FrameStats,
+    ) {
+        for hook in hooks {
+            hook.record(rp, ctx, stats);
+        }
+        rp.set_bind_group(0, &self.globals_bg, &[group0.globals_offset]);
+    }
+
+    /// Draw the sun's shadow casters of one pass into the shadow map.
+    fn draw_shadow_items(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        items: &[MeshItem],
+        frame_offset: u32,
+        materials: &[wgpu::BindGroup],
+        stats: &mut FrameStats,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        rp.set_bind_group(0, &self.shadow_frame_bg, &[frame_offset]);
+        let mut bound_page = None;
+        let mut current_key = None;
+        let mut current_material = None;
+        for item in items {
+            let PipeKey::Lit(key) = item.key else {
+                continue;
+            };
+            let Some(pipeline) = self.lit_pipelines.lookup(key) else {
+                continue;
+            };
+            let Some(material) = materials.get(item.material) else {
+                continue;
+            };
+            if !self.bind_page(rp, item.page, &mut bound_page) {
+                continue;
+            }
+            if current_key != Some(item.key) {
+                rp.set_pipeline(pipeline);
+                current_key = Some(item.key);
+            }
+            if current_material != Some(item.material) {
+                rp.set_bind_group(2, material, &[]);
+                current_material = Some(item.material);
+            }
+            rp.set_bind_group(
+                1,
+                &self.draw_bg,
+                &[item.uniform_offset, item.palette_offset],
+            );
+            rp.draw_indexed(item.indices.clone(), 0, 0..1);
+            stats.draw_calls = stats.draw_calls.saturating_add(1);
+            stats.shadow_draws = stats.shadow_draws.saturating_add(1);
         }
     }
 

@@ -28,6 +28,12 @@ pub enum ExplorerError {
     /// The renderer refused data.
     #[error("render: {0}")]
     Render(Arc<tessera_render::RenderError>),
+    /// The world model (landblock bundles, scenery, water, collision, sky) failed.
+    #[error("world: {0}")]
+    World(Arc<tessera_world::WorldError>),
+    /// Collision geometry was refused.
+    #[error("collision: {0}")]
+    Physics(Arc<tessera_physics::PhysicsError>),
     /// The record is not there.
     #[error("record {0:#010x} not found")]
     NotFound(u32),
@@ -72,5 +78,17 @@ impl From<tessera_mesh::MeshError> for ExplorerError {
 impl From<tessera_render::RenderError> for ExplorerError {
     fn from(e: tessera_render::RenderError) -> Self {
         Self::Render(Arc::new(e))
+    }
+}
+
+impl From<tessera_world::WorldError> for ExplorerError {
+    fn from(e: tessera_world::WorldError) -> Self {
+        Self::World(Arc::new(e))
+    }
+}
+
+impl From<tessera_physics::PhysicsError> for ExplorerError {
+    fn from(e: tessera_physics::PhysicsError) -> Self {
+        Self::Physics(Arc::new(e))
     }
 }

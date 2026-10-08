@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-server"
+description = "Project-owned headless test server speaking the Tessera protocol, with original test content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The server logic lives in a library so tests, the load tools and `fuzz/` can run it
+# in-process.
+[lib]
+name = "tessera_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tessera-server"
+path = "src/main.rs"
+doc = false
+
+# server-content.md §10 E1: this crate MUST NOT depend on tessera-dat, tessera-formats or any
+# crate that decodes game data. It needs no game installation and never reads one.
+[dependencies]
+clap = { workspace = true, features = ["env"] }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["json"] }
+tessera-protocol = { workspace = true, features = ["transport"] }
+quinn.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time", "sync", "macros", "signal"] }
+# Only the low-level Argon2id function is used; the PHC string is formatted here
+# (test-server.md §3.4).
+argon2 = { workspace = true, default-features = false, features = ["alloc"] }
+base64ct = { version = "1.8", features = ["alloc"] }
+getrandom = "0.4"
+# Spanned TOML parsing (no serde): every finding names its line (test-server.md §2.6).
+toml = { version = "1.1", default-features = false, features = ["std", "parse"] }
+unicode-normalization = "0.1"
+unicode-general-category = "1.1"
+
+[target.'cfg(unix)'.dependencies]
+# Safe wrappers for the effective user (key-file owner check, §3.3) and terminal echo
+# (password prompts, §2.7).
+rustix = { version = "1", default-features = false, features = ["std", "process", "termios"] }
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3"
+tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
+
+[lints]
+workspace = true

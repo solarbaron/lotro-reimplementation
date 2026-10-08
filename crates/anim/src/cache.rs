@@ -63,8 +63,7 @@ impl Decoder for SkeletonDecoder {
     }
 
     fn size_of(&self, value: &Self::Output) -> usize {
-        // Parents, reference transforms, two matrices and a name pointer per bone.
-        value.bone_count() * (2 + 40 + 2 * 64 + 16) + 128
+        value.heap_size()
     }
 }
 

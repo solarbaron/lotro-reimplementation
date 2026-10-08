@@ -67,6 +67,11 @@ impl Qs {
         Mat4::from_scale_rotation_translation(self.s, self.q, self.t)
     }
 
+    /// Whether every component is finite.
+    pub(crate) fn is_finite(self) -> bool {
+        self.t.is_finite() && self.q.is_finite() && self.s.is_finite()
+    }
+
     pub(crate) fn transform(self) -> Transform {
         Transform {
             translation: self.t.to_array(),
@@ -250,6 +255,28 @@ impl Skeleton {
         })
     }
 
+    /// Approximate bytes held: the struct plus every per-bone vector (by capacity) and the
+    /// heap bytes of the bone names (an `Arc<[u8]>` holds two reference counts and the
+    /// bytes). Used to charge skeletons against cache budgets.
+    #[must_use]
+    pub fn heap_size(&self) -> usize {
+        use std::mem::size_of;
+        let names: usize = self
+            .names
+            .iter()
+            .flatten()
+            .map(|n| 2 * size_of::<usize>() + n.len())
+            .sum();
+        size_of::<Self>()
+            + self.parents.capacity() * size_of::<Option<u16>>()
+            + self.reference.capacity() * size_of::<Transform>()
+            + self.reference_triples.capacity() * size_of::<Transform>()
+            + self.reference_model.capacity() * size_of::<Mat4>()
+            + self.inverse_bind.capacity() * size_of::<Mat4>()
+            + self.names.capacity() * size_of::<Option<Arc<[u8]>>>()
+            + names
+    }
+
     /// Number of bones.
     #[must_use]
     pub fn bone_count(&self) -> usize {
@@ -372,30 +399,47 @@ impl Skeleton {
     /// (§5.3, KI8).
     ///
     /// `local` and `model` must hold at least [`Skeleton::bone_count`] entries; extra
-    /// entries are left alone.
+    /// entries are left alone. Every written matrix is finite: see
+    /// [`Skeleton::compose_counted`], which this calls.
     ///
     /// # Errors
     ///
     /// [`AnimError::BufferTooSmall`] if either slice is too short.
     pub fn compose(&self, local: &[Transform], model: &mut [Mat4]) -> Result<()> {
+        self.compose_counted(local, model).map(|_| ())
+    }
+
+    /// [`Skeleton::compose`], returning how many bones fell back because their model
+    /// triple or matrix was not finite.
+    ///
+    /// Tessera Decision (`skeleton-anim.md` implementer notes, broken sample values): a
+    /// bone whose composed model triple (or its matrix) is not finite, for example because
+    /// finite but huge scales multiplied down the chain overflow, takes its parent's model
+    /// triple (it collapses onto the parent joint), and a root takes its reference model
+    /// triple. Sampled clips never get there ([`crate::BROKEN_SCALE`]); hand-built poses
+    /// can.
+    ///
+    /// # Errors
+    ///
+    /// [`AnimError::BufferTooSmall`] if either slice is too short.
+    pub fn compose_counted(&self, local: &[Transform], model: &mut [Mat4]) -> Result<u32> {
         let n = self.bone_count();
         check_len("local pose", n, local.len())?;
         check_len("model pose", n, model.len())?;
         let mut triples = [Qs::IDENTITY; MAX_BONES];
+        let mut fallbacks = 0;
         for i in 0..n {
-            let l = Qs::of(&local[i]);
-            let m = match self.parents[i] {
-                Some(p) => triples[usize::from(p)].then(l),
-                None => l,
-            };
+            let parent = self.parents[i].map(|p| triples[usize::from(p)]);
+            let (m, mat) = self.model_triple(i, parent, Qs::of(&local[i]), &mut fallbacks);
             triples[i] = m;
-            model[i] = m.matrix();
+            model[i] = mat;
         }
-        Ok(())
+        Ok(fallbacks)
     }
 
     /// Composes local transforms into model **triples** (translation, rotation, per-axis
-    /// scale; §5.4), the form [`Skeleton::compose`] turns into matrices.
+    /// scale; §5.4), the form [`Skeleton::compose`] turns into matrices, with the same
+    /// fallback for triples that are not finite ([`Skeleton::compose_counted`]).
     ///
     /// # Errors
     ///
@@ -404,15 +448,42 @@ impl Skeleton {
         let n = self.bone_count();
         check_len("local pose", n, local.len())?;
         check_len("model pose", n, model.len())?;
+        let mut fallbacks = 0;
         for i in 0..n {
-            let l = Qs::of(&local[i]);
-            let m = match self.parents[i] {
-                Some(p) => Qs::of(&model[usize::from(p)]).then(l),
-                None => l,
-            };
+            let parent = self.parents[i].map(|p| Qs::of(&model[usize::from(p)]));
+            let (m, _) = self.model_triple(i, parent, Qs::of(&local[i]), &mut fallbacks);
             model[i] = m.transform();
         }
         Ok(())
+    }
+
+    /// Bone `i`'s model triple and matrix from its parent's model triple and its local
+    /// triple, with the fallback of [`Skeleton::compose_counted`]. The parent triple is
+    /// finite by induction; the reference triples were checked when the skeleton was built.
+    fn model_triple(
+        &self,
+        i: usize,
+        parent: Option<Qs>,
+        local: Qs,
+        fallbacks: &mut u32,
+    ) -> (Qs, Mat4) {
+        let m = match parent {
+            Some(p) => p.then(local),
+            None => local,
+        };
+        let mat = m.matrix();
+        if m.is_finite() && mat.is_finite() {
+            return (m, mat);
+        }
+        *fallbacks += 1;
+        match (parent, self.reference_triples.get(i)) {
+            (Some(p), _) => (p, p.matrix()),
+            (None, Some(r)) => {
+                let r = Qs::of(r);
+                (r, r.matrix())
+            }
+            (None, None) => (Qs::IDENTITY, Mat4::IDENTITY),
+        }
     }
 
     /// The reference pose as a fresh local pose vector.

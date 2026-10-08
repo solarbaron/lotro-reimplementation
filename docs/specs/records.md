@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), 2026-10-05: passed (CLEAN_ROOM.md §5.3, every item; spot checks against the install: record prologues of every prefix in `client_general.dat` and `client_gamelogic.dat`, prefix counts of `client_general.dat`, the 4-byte VLE example and hint of 0x34000000, bucket order and group count of all 24 DID maps, the 0x0F/0x15/0x16/0x17/0x1A/0x32/0x35 prologues). Re-review 2026-10-05: passed, unchanged (spot checks: own-DID prologue of every 0x0F, 0x14, 0x16, 0x17, 0x28, 0x32, 0x35 record; 0x2B count 510, 0x31 count 13,781, 0x28 count 24). |
+| **Review record** | 2026-10-05: **passed**; re-review 2026-10-05: **passed**, unchanged. Full record moved to the review log (decision 0018). |
 | **Companion spec** | `docs/specs/dat-container.md` (archive header, block/extent layer, B-tree directory, zlib, DID routing). This spec starts where that one ends: with a fully reassembled and, if needed, decompressed subfile payload. |
 
 ## Purpose
@@ -44,6 +44,7 @@ Source abbreviations:
 | MER | Middle-earth-Revenge master-property-viewer. Facts only. |
 | DU | Middle-earth-Revenge DATUnpacker. Facts only. |
 | D3D | Public Direct3D 9 `D3DFORMAT` enumeration and the public S3TC/DXTn block-compression description. These are general references. |
+| OBS6 | Observed in user install 2026-10-06 (re-check for D3): all **11** prefix-0x08 records, only in `client_general.dat`, read with the header of [`walker.md`](walker.md) §11.5.1. Each record's size is the one §11.5.3 gives for its controller type (161, 89, 36, 94 bytes for types 1–4); the first u32 is a 0x47 DID (0x47000002 or 0x47001A7C). |
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-05. **Question:** which DB object type the client registers for each DID range (a start-up table pairing a DID range with a type code and a cache). **Why M1–M3 were not enough:** the data pairs only some type codes with prefixes (`property-system.md` §9 lists the codes that stored references exercise); no published source has the full table; M3 cannot show it. Only offline start-up code was read. |
 
 | # | Fact | Source(s) | Mark |
@@ -60,6 +61,7 @@ Source abbreviations:
 | P10 | The record types of this spec begin with their own DID; other types differ (§1.6) | LC, JT, DU; OBS (every record decoded; prologue census of 8 archives, 2026-10-05) | Confirmed. Corrected 2026-10-05: the earlier claim "records begin with their own DID" holds for most but not all prefixes. |
 | D1 | DID high-byte type table (§2) | LC routing, research notes; OBS (per-archive prefix census of all archives) | Mixed. Per row in §2. |
 | D2 | DB object type registered for each DID range (§2.1, §2.2) | BIN (the client's start-up table of DID ranges); OBS (labels from the DBOType enum mapper; every decoded prefix agrees with its type) | BIN |
+| D3 | Prefix 0x08 (camera states) is decoded in [`walker.md`](walker.md) §11.5; its prologue is the camera entity's 0x47 DID, not its own DID (§1.6, §2.1) | `walker.md` W9, W25, W-I1, W-I2; OBS6 | Confirmed (layout owned by `walker.md`) |
 | S1 | String-table layout (§3) | LC, KD, EP; OBS (282,152 tables, 806,052 entries, zero leftover bytes) | Confirmed |
 | S2 | StringInfo layout (§4) | LC; OBS (6,352 enum display values and 626 property-definition defaults) | Confirmed |
 | R1 | 0x41 surface header (§5) | LC, JT, DU; OBS (all 1,408,052 headers) | Confirmed |
@@ -205,7 +207,7 @@ This is **not** true of every record type. The earlier statement "every record b
 |---|---|---|
 | **D**: own DID at offset 0 | 0x01, 0x04, 0x06, 0x0A, 0x0F, 0x12, 0x14, 0x16–0x19, 0x1D, 0x20–0x23, 0x25, 0x27, 0x28, 0x2A, 0x2B, 0x2D, 0x30–0x35, 0x40, 0x41, 0x42, 0x51, 0x56, 0x70, 0x76, 0x78, 0x79, 0x80; most of 0x0E | nothing |
 | **xD**: one u32, then own DID | 0x02 (u32 0, `scenery.md` §5.1), 0x11 (u32 0, `scenery.md` §4.3), 0x15 (u32 version 1, `environment.md` §5.1.1), 0x1A (u32 0, `environment.md` §5.2), 0x1F (u32 flag word, `setup.md` §5.1), 0x47 (u32 flag word, `setup.md` §4.1) | the u32 named |
-| **–**: no own DID in the first 8 bytes | 0x05 (f32 clip duration first, `havok-data.md` §2.3), 0x07 (u32 table kind first, `script-table.md` §2.1), 0x0C (no prefix at all, `script-table.md`), 0x66 (VLE vertex count first, `collision.md` §4.1), 0x08, 0x39, 0x43, 0x44, 0x58, 3 of 0x0E (compression dictionaries), 0xFF (archive metadata) | type-specific; layouts of 0x08, 0x39, 0x43, 0x44, 0x58 OPEN |
+| **–**: no own DID in the first 8 bytes | 0x05 (f32 clip duration first, `havok-data.md` §2.3), 0x07 (u32 table kind first, `script-table.md` §2.1), 0x0C (no prefix at all, `script-table.md`), 0x66 (VLE vertex count first, `collision.md` §4.1), 0x08 (camera entity's 0x47 DID first, [`walker.md`](walker.md) §11.5.1), 0x39, 0x43, 0x44, 0x58, 3 of 0x0E (compression dictionaries), 0xFF (archive metadata) | type-specific; layouts of 0x39, 0x43, 0x44, 0x58 OPEN |
 
 A decoder therefore checks the DID only where its record's spec places it; the container layer must not require it (`dat-container.md` §6.2).
 
@@ -244,7 +246,7 @@ is narrower than the whole prefix it is given. "Prologue" says what the record s
 | 0x05 | anim (25,395) | 0x0F DBANIMATOR | Animation clips ([`havok-data.md`](havok-data.md) §2.3) | – | C (havok-data.md) |
 | 0x06 | mesh (37,484), mesh_aux_1 (10,079) | 0x38 RENDER_MESH | Meshes ([`mesh.md`](mesh.md)) | D | C (mesh.md) |
 | 0x07 | gamelogic (7,526) | 0x2A SCRIPTTABLE | Script tables ([`script-table.md`](script-table.md) §2) | – | C (script-table.md) |
-| 0x08 | general (11) | 0x0D CAMERASTATE | Camera states; layout OPEN | – | BIN |
+| 0x08 | general (11) | 0x0D CAMERASTATE | Camera states: header with the camera entity's 0x47 DID, clip distances and flags, then a controller body by type ([`walker.md`](walker.md) §11.5, 11 of 11 decoded) | – | C (walker.md) |
 | 0x0A | sound (12,613), sound_aux_1 (2,531), local_English (29,193) | 0x40 SOUND | Audio records (§9). Localized voice-over is in local. | D | C |
 | 0x0C | gamelogic (28,992) | 0x15 SCRIPTLET | Scriptlets ([`script-table.md`](script-table.md)) | – | C (script-table.md) |
 | 0x0D | none | 0x08 MOVIE | Registered; no record in this install | | BIN |
@@ -704,7 +706,7 @@ These were found against `research/notes/dat-format.md` (DF) and `research/notes
 7. 0x34000000 reserved and separator bytes; definition fields a/b/c/d; flag bits; subset list; colour channel order (moved to `property-system.md` §13).
 8. DID-map second group (§8.1).
 9. Sound trailer fields; where the sound-info records live (§9.1).
-10. *(Answered 2026-10-05: the kind of every prefix is now known from the client's DID-range registration, §2.1, and most are decoded in other specs.)* Layouts still OPEN: 0x08, 0x14, 0x21, 0x27, 0x2A, 0x39, 0x43, 0x44, 0x58 and most of landblock K = 5 (§2).
+10. *(Answered 2026-10-05: the kind of every prefix is now known from the client's DID-range registration, §2.1, and most are decoded in other specs.)* Layouts still OPEN: 0x14, 0x21, 0x27, 0x2A, 0x39, 0x43, 0x44, 0x58 and most of landblock K = 5 (§2). (0x08 is decoded in [`walker.md`](walker.md) §11.5, 2026-10-06.)
 
 <a id="s12"></a>
 ## 12. Validation guidance for implementers
@@ -758,3 +760,4 @@ These came up while implementing `crates/formats` from this spec alone. Each rec
 |---|---|
 | before 2026-10-05 | First version 2026-10-03 and later edits; no change log was kept (see the repository history). |
 | 2026-10-05 | Provenance: BIN row and D2; P10 corrected. §1.6 rewritten: record prologues per prefix (census of 8 archives); the claim that every record starts with its own DID is withdrawn (false for 0x05, 0x07, 0x0C, 0x66 and others). §2.1 rewritten: DB type of every prefix from the client's DID-range registration (adds the 0x15/0x1A/0x35 pairings, 0x66 = PHYSICS_MESH, 0x2A = SOUNDINFO, 0x16/0x17 = WATER_DESC/FOG_DESC, and all others), prologue column, statuses updated to the specs that decode each prefix (0x40, 0x78/0x79 now C as the former OPEN asked). §2.2: DB type per landblock kind; K = 5 is the distant-landscape sector; K = 6 registered but absent. §9.1 OPEN partly answered (sound info = 0x2A). §10: X16, X17. §11 item 10 updated. This change log added. |
+| 2026-10-06 | Alignment with [`walker.md`](walker.md) §11.5, no other change; status stays Accepted. §2.1: the 0x08 row no longer says "layout OPEN"; it points to `walker.md` §11.5, status BIN → C (walker.md). §1.6: the "–" row names the 0x08 prologue (camera entity's 0x47 DID) and drops 0x08 from the OPEN layouts. §11 item 10: 0x08 removed from the OPEN list. Provenance: OBS6 and D3 added (11 of 11 records re-checked against `walker.md` §11.5.1 and the per-type record sizes). |

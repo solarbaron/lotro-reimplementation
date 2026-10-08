@@ -7,9 +7,9 @@
 use std::ops::Range;
 
 use super::{
-    COARSE_SAMPLES, COARSE_SIDE, GRID_SAMPLES, GRID_SIDE, GRID_SPACING, INFO_DID_OFFSET,
-    LANDBLOCK_SIZE, LayoutRule, QUAD_COUNT, QUAD_SIDE, height_from_raw, put, read_landblock_did,
-    tree_build_byte_rule, vertex_xy,
+    COARSE_SAMPLES, COARSE_SIDE, GRID_SAMPLES, GRID_SIDE, GRID_SPACING, GRID_TRIANGLE_COUNT,
+    INFO_DID_OFFSET, LANDBLOCK_SIZE, LayoutRule, QUAD_COUNT, QUAD_SIDE, height_from_raw, put,
+    read_landblock_did, tree_build_byte_rule, vertex_xy,
 };
 use crate::did::{Did, LandblockId, LandblockKind};
 use crate::error::{FormatError, Result};
@@ -127,16 +127,19 @@ impl HeightGrid {
 
 /// One byte per height sample, in the height grid's (X-major) order (§3.6).
 ///
-/// Bit 7 of byte (i, j) selects the split diagonal of the quad whose south-west corner is
-/// sample (i, j); bits 0–6 are OPEN (observed 0, 1, 126, 127).
+/// Bit 7 of byte (i, j) selects the split diagonal of the **terrain** quad whose south-west
+/// corner is sample (i, j); bit 0 selects the diagonal of the **ceiling** quad there (§3.5,
+/// §3.6, `collision.md` §6.4). Bits 1–6 are OPEN; they are all set or all clear in every
+/// observed byte, and Tessera ignores them.
 #[derive(Clone, PartialEq, Eq)]
 pub struct VertexFlags(Box<[u8; GRID_SAMPLES]>);
 
 impl std::fmt::Debug for VertexFlags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let set = self.0.iter().filter(|&&b| b & 0x80 != 0).count();
+        let set = |bit: u8| self.0.iter().filter(|&&b| b & bit != 0).count();
         f.debug_struct("VertexFlags")
-            .field("sw_ne_splits", &set)
+            .field("sw_ne_splits", &set(Self::SPLIT_SW_NE))
+            .field("ceiling_sw_ne_splits", &set(Self::CEILING_SPLIT_SW_NE))
             .finish_non_exhaustive()
     }
 }
@@ -148,8 +151,10 @@ impl Default for VertexFlags {
 }
 
 impl VertexFlags {
-    /// Bit 7: the quad's diagonal runs south-west to north-east.
+    /// Bit 7: the terrain quad's diagonal runs south-west to north-east.
     pub const SPLIT_SW_NE: u8 = 0x80;
+    /// Bit 0: the ceiling quad's diagonal runs south-west to north-east (§3.5, L6a).
+    pub const CEILING_SPLIT_SW_NE: u8 = 0x01;
 
     /// Every byte equal to `value`.
     #[must_use]
@@ -174,12 +179,26 @@ impl VertexFlags {
         (i < GRID_SIDE && j < GRID_SIDE).then(|| self.0[GRID_SIDE * i + j])
     }
 
-    /// Whether quad (i, j) (corners (i, j)–(i + 1, j + 1), 0 ≤ i, j ≤ 31) is split from
-    /// south-west to north-east (bit 7 set); `false` means south-east to north-west.
+    /// Whether terrain quad (i, j) (corners (i, j)–(i + 1, j + 1), 0 ≤ i, j ≤ 31) is split
+    /// from south-west to north-east (bit 7 set); `false` means south-east to north-west.
     /// Out-of-range quads report `false`.
     #[must_use]
     pub fn split_sw_ne(&self, i: usize, j: usize) -> bool {
-        i < QUAD_SIDE && j < QUAD_SIDE && self.0[GRID_SIDE * i + j] & Self::SPLIT_SW_NE != 0
+        self.surface_split_sw_ne(GridSurface::Terrain, i, j)
+    }
+
+    /// Whether ceiling quad (i, j) is split from south-west to north-east (bit 0 set;
+    /// `landblock.md` §3.5, `collision.md` §6.4); `false` means south-east to north-west.
+    /// Bit 7 must not be used for ceilings. Out-of-range quads report `false`.
+    #[must_use]
+    pub fn ceiling_split_sw_ne(&self, i: usize, j: usize) -> bool {
+        self.surface_split_sw_ne(GridSurface::Ceiling, i, j)
+    }
+
+    /// [`VertexFlags::split_sw_ne`] or [`VertexFlags::ceiling_split_sw_ne`] by `surface`.
+    #[must_use]
+    pub fn surface_split_sw_ne(&self, surface: GridSurface, i: usize, j: usize) -> bool {
+        i < QUAD_SIDE && j < QUAD_SIDE && self.0[GRID_SIDE * i + j] & surface.diagonal_bit() != 0
     }
 
     fn read(r: &mut Reader<'_>) -> Result<Self> {
@@ -191,9 +210,36 @@ impl VertexFlags {
     }
 }
 
-/// The two triangles of quad (i, j) as grid sample coordinates (i along X, j along Y),
-/// counter-clockwise seen from above (`landblock.md` §3.6 table). `split_sw_ne` is bit 7
-/// of the vertex-flag byte (i, j) ([`VertexFlags::split_sw_ne`]).
+/// Which grid surface of a landblock a query is about: the terrain (height grid, diagonal
+/// from vertex-flag bit 7, triangles counter-clockwise from above) or the ceiling (ceiling
+/// grid, diagonal from bit 0, triangles clockwise from above; `landblock.md` §3.5–§3.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GridSurface {
+    /// The terrain surface (faces up).
+    #[default]
+    Terrain,
+    /// The ceiling surface of a cave landblock (faces down).
+    Ceiling,
+}
+
+impl GridSurface {
+    /// The vertex-flag bit that selects this surface's quad diagonal: 0x80 for the terrain,
+    /// 0x01 for the ceiling.
+    #[must_use]
+    pub fn diagonal_bit(self) -> u8 {
+        match self {
+            Self::Terrain => VertexFlags::SPLIT_SW_NE,
+            Self::Ceiling => VertexFlags::CEILING_SPLIT_SW_NE,
+        }
+    }
+}
+
+/// The two **terrain** triangles of quad (i, j) as grid sample coordinates (i along X, j
+/// along Y), counter-clockwise seen from above (`landblock.md` §3.6 table). `split_sw_ne`
+/// is bit 7 of the vertex-flag byte (i, j) ([`VertexFlags::split_sw_ne`]).
+///
+/// With the south-west/north-east diagonal, element 1 is the triangle west of the
+/// diagonal; with the other diagonal, element 0 is ([`grid_triangle_key`]).
 #[must_use]
 pub fn quad_triangles(i: usize, j: usize, split_sw_ne: bool) -> [[(usize, usize); 3]; 2] {
     if split_sw_ne {
@@ -209,6 +255,53 @@ pub fn quad_triangles(i: usize, j: usize, split_sw_ne: bool) -> [[(usize, usize)
     }
 }
 
+/// The two **ceiling** triangles of quad (i, j): the same split as [`quad_triangles`] for the
+/// diagonal, with each triangle's corners in reverse order, so they are clockwise seen from
+/// above (they face down; `landblock.md` §3.5). `split_sw_ne` is bit 0 of the vertex-flag
+/// byte (i, j) ([`VertexFlags::ceiling_split_sw_ne`]).
+#[must_use]
+pub fn ceiling_quad_triangles(i: usize, j: usize, split_sw_ne: bool) -> [[(usize, usize); 3]; 2] {
+    quad_triangles(i, j, split_sw_ne).map(|[a, b, c]| [c, b, a])
+}
+
+/// [`quad_triangles`] or [`ceiling_quad_triangles`] by `surface`.
+#[must_use]
+pub fn surface_quad_triangles(
+    surface: GridSurface,
+    i: usize,
+    j: usize,
+    split_sw_ne: bool,
+) -> [[(usize, usize); 3]; 2] {
+    match surface {
+        GridSurface::Terrain => quad_triangles(i, j, split_sw_ne),
+        GridSurface::Ceiling => ceiling_quad_triangles(i, j, split_sw_ne),
+    }
+}
+
+/// The key of a grid triangle in the numbering of terrain and ceiling collision trees
+/// (`collision.md` §6.2, `landblock.md` §3.9): 2 · (32 · j + i) for the triangle **west** of
+/// quad (i, j)'s diagonal, plus 1 for the other. Quads are numbered Y-major although the
+/// height grid is stored X-major. `None` outside 0 ≤ i, j ≤ 31.
+#[must_use]
+pub fn grid_triangle_key(i: usize, j: usize, west: bool) -> Option<u16> {
+    if i >= QUAD_SIDE || j >= QUAD_SIDE {
+        return None;
+    }
+    u16::try_from(2 * (QUAD_SIDE * j + i) + usize::from(!west)).ok()
+}
+
+/// The inverse of [`grid_triangle_key`]: (i, j, west) of key `key`, or `None` for a key
+/// ≥ 2,048.
+#[must_use]
+pub fn grid_triangle_quad(key: u16) -> Option<(usize, usize, bool)> {
+    let key = usize::from(key);
+    if key >= GRID_TRIANGLE_COUNT {
+        return None;
+    }
+    let quad = key / 2;
+    Some((quad % QUAD_SIDE, quad / QUAD_SIDE, key % 2 == 0))
+}
+
 /// How a surface layer is used (`landblock.md` §3.8.2 "Layer kinds").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LayerKind {
@@ -216,7 +309,12 @@ pub enum LayerKind {
     Masked,
     /// Triangles drawn fully opaque (no mask).
     Opaque,
-    /// `whole` = 1: no index range; probably a base layer over the whole block (OPEN).
+    /// `whole` = 1: the layer covers **all 2,048 grid triangles** of the block (the full
+    /// triangulation of §3.6: the bit-7 diagonal and counter-clockwise winding in a terrain
+    /// chunk, the bit-0 diagonal and clockwise winding in a ceiling chunk, §3.5), drawn
+    /// through the mask, or with mask value 1 when there is none. The stored index window
+    /// (`start`, `prims`, `min_vertex`, `vertex_span`, all 0) is ignored (§3.8.2;
+    /// `terrain-texturing.md` §4.3). [`LandblockData::layer_triangles`] lists them.
     Whole,
     /// No geometry: skip. (A mask named by such a layer does not exist in the install.)
     Empty,
@@ -225,12 +323,13 @@ pub enum LayerKind {
 /// One texture layer of a surface chunk (17 bytes; `landblock.md` §3.8.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct SurfaceLayer {
-    /// Material/layer id. What it indexes is OPEN (the per-region 0x19 table is the
-    /// leading candidate).
+    /// Terrain-type key: the `key` of an entry of the region's terrain type table (prefix
+    /// 0x19, region-descriptor slot 8; §3.8.2, `terrain-texturing.md` §3, §4.1).
     pub material: u32,
     /// A 0x41 render surface holding the layer's alpha mask, or 0.
     pub mask: Did,
-    /// `whole` flag (meaning OPEN; see [`LayerKind::Whole`]).
+    /// `whole` flag: the layer covers every grid triangle of the block and its index
+    /// window is ignored (see [`LayerKind::Whole`]).
     pub whole: bool,
     /// First index (not triangle) of this layer's triangles in the chunk's index list.
     pub start: u16,
@@ -296,20 +395,24 @@ pub struct SurfaceChunk {
     pub layers: Vec<SurfaceLayer>,
     /// Shared triangle list over grid vertices (three numbers per triangle).
     pub indices: Vec<u16>,
-    /// One `material` per quad (32 × 32), present exactly when there are layers. Probable
-    /// order: quad (qx, qy) at 32·qy + qx (§3.8.4; OPEN).
+    /// One `material` (terrain-type key) per quad (32 × 32), present exactly when there are
+    /// layers: quad (qx, qy) at index 32·qy + qx (§3.8.4, order Confirmed). Probably the
+    /// type most visible in the quad; not used for drawing.
     pub quads: Option<Box<[u16; QUAD_COUNT]>>,
 }
 
 impl SurfaceChunk {
-    /// The vertex numbers of `layer`'s triangles, or `None` when its window lies outside
-    /// the index list (never for a decoded chunk).
+    /// The vertex numbers of `layer`'s stored index window, or `None` when the window lies
+    /// outside the index list (never for a decoded chunk). A [`LayerKind::Whole`] layer has
+    /// an empty window although it covers the whole block; use
+    /// [`LandblockData::layer_triangles`] for the triangles a layer actually covers.
     #[must_use]
     pub fn layer_indices(&self, layer: &SurfaceLayer) -> Option<&[u16]> {
         self.indices.get(layer.index_range())
     }
 
-    /// The quad-grid entry of quad (qx, qy) under the probable Y-major order (§3.8.4).
+    /// The quad-grid entry of quad (qx, qy): index 32·qy + qx (§3.8.4). `None` without a
+    /// quad grid or outside 0 ≤ qx, qy ≤ 31.
     #[must_use]
     pub fn quad_material(&self, qx: usize, qy: usize) -> Option<u16> {
         let q = self.quads.as_ref()?;
@@ -411,10 +514,10 @@ impl SurfaceChunk {
     }
 
     /// First deviation from invariants HM5/HM6 (§3.12), or `None`. `flags` gives the split
-    /// diagonals. With `terrain`, every triangle must also use the flagged diagonal and be
-    /// counter-clockwise from above; ceiling triangles only have to lie in one quad (their
-    /// diagonal and facing are OPEN, §3.5).
-    fn first_unusual(&self, flags: &VertexFlags, terrain: bool) -> Option<&'static str> {
+    /// diagonals. Every triangle must lie in one quad and use the diagonal `surface`'s bit
+    /// gives (7 for terrain, 0 for ceiling), counter-clockwise from above for the terrain
+    /// and clockwise for the ceiling (§3.5, §3.6).
+    fn first_unusual(&self, flags: &VertexFlags, surface: GridSurface) -> Option<&'static str> {
         if self.quads.is_some() != !self.layers.is_empty() {
             return Some("quad grid present iff layers present (HM5)");
         }
@@ -432,7 +535,7 @@ impl SurfaceChunk {
                 return Some("layer vertex outside its vertex window (HM5)");
             }
             for t in tris.as_chunks::<3>().0 {
-                if let Some(why) = triangle_unusual([t[0], t[1], t[2]], flags, terrain) {
+                if let Some(why) = triangle_unusual([t[0], t[1], t[2]], flags, surface) {
                     return Some(why);
                 }
             }
@@ -441,9 +544,13 @@ impl SurfaceChunk {
     }
 }
 
-/// Checks one stored triangle against HM6: inside one quad and, for `terrain`, using the
-/// quad's flagged diagonal and counter-clockwise seen from above.
-fn triangle_unusual(t: [u16; 3], flags: &VertexFlags, terrain: bool) -> Option<&'static str> {
+/// Checks one stored triangle against HM6: inside one quad, using the quad's diagonal for
+/// `surface`, counter-clockwise (terrain) or clockwise (ceiling) seen from above.
+fn triangle_unusual(
+    t: [u16; 3],
+    flags: &VertexFlags,
+    surface: GridSurface,
+) -> Option<&'static str> {
     let mut p = [(0usize, 0usize); 3];
     for (dst, &v) in p.iter_mut().zip(&t) {
         let Some(xy) = vertex_xy(v) else {
@@ -462,43 +569,70 @@ fn triangle_unusual(t: [u16; 3], flags: &VertexFlags, terrain: bool) -> Option<&
     {
         return Some("layer triangle not inside one grid quad (HM6)");
     }
-    if !terrain {
-        return None;
-    }
-    let diagonal = if flags.split_sw_ne(i, j) {
+    let diagonal = if flags.surface_split_sw_ne(surface, i, j) {
         [(i, j), (i + 1, j + 1)]
     } else {
         [(i + 1, j), (i, j + 1)]
     };
+    let terrain = surface == GridSurface::Terrain;
     if !diagonal.iter().all(|d| p.contains(d)) {
-        return Some("terrain triangle does not use the flagged diagonal (HM6)");
+        return Some(if terrain {
+            "terrain triangle does not use the bit-7 diagonal (HM6)"
+        } else {
+            "ceiling triangle does not use the bit-0 diagonal (HM6)"
+        });
     }
-    {
-        let s = |v: usize| v as i64;
-        let cross = (s(p[1].0) - s(p[0].0)) * (s(p[2].1) - s(p[0].1))
-            - (s(p[1].1) - s(p[0].1)) * (s(p[2].0) - s(p[0].0));
-        if cross <= 0 {
-            return Some("terrain triangle not counter-clockwise from above");
-        }
+    let s = |v: usize| v as i64;
+    let cross = (s(p[1].0) - s(p[0].0)) * (s(p[2].1) - s(p[0].1))
+        - (s(p[1].1) - s(p[0].1)) * (s(p[2].0) - s(p[0].0));
+    match (terrain, cross > 0) {
+        (true, false) => Some("terrain triangle not counter-clockwise from above (HM6)"),
+        (false, true) => Some("ceiling triangle not clockwise from above (HM6)"),
+        _ => None,
     }
-    None
 }
 
-/// A collision tree block (`landblock.md` §3.9; the mesh block without its `has_code`
-/// byte). The code is opaque.
+/// A terrain or ceiling collision tree block (`landblock.md` §3.9): the container of
+/// `collision.md` §3.1 without its presence byte (`has_terrain_tree` / `has_ceiling_tree`
+/// play that role). This decoder only frames the block; the quantised bounding-volume
+/// program in [`CollisionTree::code`] is walked by the collision module's tree reader
+/// (`collision.md` §3.3–§3.7).
+///
+/// The program's keys are grid triangle numbers ([`grid_triangle_key`], `collision.md`
+/// §6.2): a terrain tree indexes the 2,048 triangles of the height grid with the bit-7
+/// diagonals, a ceiling tree those of the ceiling grid with the bit-0 diagonals
+/// (`collision.md` §6.4). The triangles themselves come from the grids
+/// ([`LandblockData::grid_triangle_positions`]); the tree is not needed to collide with
+/// them (`collision.md` §6.3).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CollisionTree {
-    /// Quantisation origin.
+    /// Minimum corner of the quantisation box, block-local units (`collision.md` §3.2).
     pub origin: [f32; 3],
-    /// Quantisation scale.
+    /// Integer units per world unit (`collision.md` §3.2, §3.3).
     pub scale: f32,
-    /// The opaque code bytes.
+    /// The program bytes (`code_length` of them), not interpreted here.
     pub code: Vec<u8>,
     /// The trailing byte (value 1) of records with stamp ≥ 38, else `None`.
     pub build_byte: Option<u8>,
 }
 
 impl CollisionTree {
+    /// Stored size of the block in bytes, without the presence byte: origin, scale,
+    /// `code_length`, code and the `build_byte` if present.
+    #[must_use]
+    pub fn stored_len(&self) -> usize {
+        4 * 3 + 4 + 4 + self.code.len() + usize::from(self.build_byte.is_some())
+    }
+
+    /// The block as stored, without the presence byte (for a reader that takes the
+    /// container bytes).
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.stored_len());
+        self.write(&mut out);
+        out
+    }
+
     /// Reads origin, scale and code; the `build_byte` is decided by the caller.
     fn read_core(r: &mut Reader<'_>) -> Result<Self> {
         let origin = [r.f32()?, r.f32()?, r.f32()?];
@@ -560,6 +694,16 @@ pub struct Ceiling {
     pub surface: SurfaceChunk,
 }
 
+impl Ceiling {
+    /// Whether ceiling sample (i, j) holds a ceiling (stored value ≠ 0, §3.5). `false`
+    /// outside 0–32. Samples without a ceiling still take part in the ceiling collision mesh,
+    /// at height 0 (`collision.md` §6.4).
+    #[must_use]
+    pub fn has_sample(&self, i: usize, j: usize) -> bool {
+        self.heights.get(i, j).is_some_and(|h| h != 0)
+    }
+}
+
 /// A decoded landblock-data record `0x800RXXYY` (`landblock.md` §3), consumed to the last
 /// byte.
 #[derive(Debug, Clone, PartialEq)]
@@ -575,7 +719,7 @@ pub struct LandblockData {
     pub heights: HeightGrid,
     /// Ceiling grid, tree and surface (cave blocks).
     pub ceiling: Option<Ceiling>,
-    /// Vertex flags (bit 7: split diagonal).
+    /// Vertex flags (bit 7: terrain split diagonal; bit 0: ceiling split diagonal).
     pub vertex_flags: VertexFlags,
     /// The 17 × 17 coarse grid of per-vertex scenery words (`landblock.md` §3.7): word
     /// (i, j) is at index 17 · i + j with i along X and belongs to height sample (2i, 2j)
@@ -839,7 +983,150 @@ impl LandblockData {
     /// vertex flags. x and y are clamped to [0, 160]; `None` for a NaN coordinate.
     #[must_use]
     pub fn terrain_height(&self, x: f32, y: f32) -> Option<f32> {
-        triangulated_height(&self.heights, &self.vertex_flags, x, y)
+        triangulated_height(
+            &self.heights,
+            &self.vertex_flags,
+            GridSurface::Terrain,
+            x,
+            y,
+        )
+    }
+
+    /// Ceiling height in world units at block-local (x, y): the §3.11 rule applied to the
+    /// ceiling grid with the quad split by **bit 0** of the vertex flags (§3.5). Samples
+    /// without a ceiling (stored 0) count as height 0, as in the ceiling collision mesh
+    /// (`collision.md` §6.4); use [`Ceiling::has_sample`] to tell them apart. `None` without
+    /// a ceiling or for a NaN coordinate.
+    #[must_use]
+    pub fn ceiling_height(&self, x: f32, y: f32) -> Option<f32> {
+        let c = self.ceiling.as_ref()?;
+        triangulated_height(&c.heights, &self.vertex_flags, GridSurface::Ceiling, x, y)
+    }
+
+    /// The grid of `surface`: the terrain heights, or the ceiling heights (`None` without a
+    /// ceiling).
+    #[must_use]
+    pub fn surface_heights(&self, surface: GridSurface) -> Option<&HeightGrid> {
+        match surface {
+            GridSurface::Terrain => Some(&self.heights),
+            GridSurface::Ceiling => self.ceiling.as_ref().map(|c| &c.heights),
+        }
+    }
+
+    /// The collision tree block of `surface`, if the record stores one (§3.9).
+    #[must_use]
+    pub fn surface_tree(&self, surface: GridSurface) -> Option<&CollisionTree> {
+        match surface {
+            GridSurface::Terrain => self.terrain_tree.as_ref(),
+            GridSurface::Ceiling => self.ceiling.as_ref()?.tree.as_ref(),
+        }
+    }
+
+    /// The two ceiling triangles of quad (i, j), 0 ≤ i, j ≤ 31, as grid sample
+    /// coordinates, split by bit 0 and clockwise from above (§3.5, §3.6). `None` outside the
+    /// grid or without a ceiling.
+    #[must_use]
+    pub fn ceiling_quad_triangles(&self, i: usize, j: usize) -> Option<[[(usize, usize); 3]; 2]> {
+        self.surface_quad_triangles(GridSurface::Ceiling, i, j)
+    }
+
+    /// The two triangles of quad (i, j) of `surface` ([`LandblockData::quad_triangles`] or
+    /// [`LandblockData::ceiling_quad_triangles`]). `None` outside the grid, or for the
+    /// ceiling of a block without one.
+    #[must_use]
+    pub fn surface_quad_triangles(
+        &self,
+        surface: GridSurface,
+        i: usize,
+        j: usize,
+    ) -> Option<[[(usize, usize); 3]; 2]> {
+        self.surface_heights(surface)?;
+        (i < QUAD_SIDE && j < QUAD_SIDE).then(|| {
+            surface_quad_triangles(
+                surface,
+                i,
+                j,
+                self.vertex_flags.surface_split_sw_ne(surface, i, j),
+            )
+        })
+    }
+
+    /// The surface chunk of `surface`: the terrain chunk, or the ceiling chunk (`None`
+    /// without a ceiling).
+    #[must_use]
+    pub fn surface_chunk(&self, surface: GridSurface) -> Option<&SurfaceChunk> {
+        match surface {
+            GridSurface::Terrain => Some(&self.terrain),
+            GridSurface::Ceiling => self.ceiling.as_ref().map(|c| &c.surface),
+        }
+    }
+
+    /// The triangles `layer` of `surface`'s chunk covers, as Y-major vertex numbers
+    /// (v = 33·y + x, like the chunk's index list; `landblock.md` §3.8.2–§3.8.3):
+    ///
+    /// - [`LayerKind::Masked`] and [`LayerKind::Opaque`]: the stored window, three numbers
+    ///   per triangle;
+    /// - [`LayerKind::Whole`]: all 2,048 grid triangles in collision-key order
+    ///   (see [`grid_triangle_key`]), split and wound as the surface is (bit 7 and
+    ///   counter-clockwise for the terrain, bit 0 and clockwise for the ceiling, §3.5–§3.6);
+    /// - an [`LayerKind::Empty`] layer: none.
+    ///
+    /// `None` for the ceiling of a block without one, or a window outside the index list
+    /// (never for a decoded record). At most 2,048 triangles for a whole layer; a stored
+    /// window is bounded by the decoded index list.
+    #[must_use]
+    pub fn layer_triangles(
+        &self,
+        surface: GridSurface,
+        layer: &SurfaceLayer,
+    ) -> Option<Vec<[u16; 3]>> {
+        let chunk = self.surface_chunk(surface)?;
+        match layer.kind() {
+            LayerKind::Empty => Some(Vec::new()),
+            LayerKind::Masked | LayerKind::Opaque => {
+                Some(chunk.layer_indices(layer)?.as_chunks::<3>().0.to_vec())
+            }
+            LayerKind::Whole => {
+                let vertex = |(i, j): (usize, usize)| u16::try_from(GRID_SIDE * j + i).ok();
+                let mut out = Vec::with_capacity(GRID_TRIANGLE_COUNT);
+                for key in 0..GRID_TRIANGLE_COUNT {
+                    let tri = self.grid_triangle(surface, u16::try_from(key).ok()?)?;
+                    out.push([vertex(tri[0])?, vertex(tri[1])?, vertex(tri[2])?]);
+                }
+                Some(out)
+            }
+        }
+    }
+
+    /// Grid triangle `key` of `surface` in the collision-tree numbering (`collision.md`
+    /// §6.2, [`grid_triangle_key`]), as grid sample coordinates in the surface's winding
+    /// (counter-clockwise from above for the terrain, clockwise for the ceiling). `None`
+    /// for a key ≥ 2,048 or the ceiling of a block without one.
+    #[must_use]
+    pub fn grid_triangle(&self, surface: GridSurface, key: u16) -> Option<[(usize, usize); 3]> {
+        let (i, j, west) = grid_triangle_quad(key)?;
+        let split = self.vertex_flags.surface_split_sw_ne(surface, i, j);
+        let tris = self.surface_quad_triangles(surface, i, j)?;
+        // quad_triangles lists the west triangle second for the SW-NE diagonal, first for
+        // the SE-NW diagonal.
+        Some(tris[usize::from(split == west)])
+    }
+
+    /// Grid triangle `key` of `surface` as three block-local positions (5 · i, 5 · j,
+    /// height), heights by §3.4, in the order of [`LandblockData::grid_triangle`]. This is
+    /// the triangle of the terrain or ceiling collision mesh with that key (`collision.md`
+    /// §6.1, §6.4); every key 0–2,047 has one.
+    #[must_use]
+    pub fn grid_triangle_positions(&self, surface: GridSurface, key: u16) -> Option<[[f32; 3]; 3]> {
+        let grid = self.surface_heights(surface)?;
+        let tri = self.grid_triangle(surface, key)?;
+        let mut out = [[0.0; 3]; 3];
+        for (dst, (i, j)) in out.iter_mut().zip(tri) {
+            #[allow(clippy::cast_precision_loss)]
+            let (x, y) = (i as f32 * GRID_SPACING, j as f32 * GRID_SPACING);
+            *dst = [x, y, grid.height(i, j)?];
+        }
+        Some(out)
     }
 
     /// The first deviation from the invariants observed on every real record (§3.12
@@ -878,11 +1165,16 @@ impl LandblockData {
         if self.boxes.is_some() && self.ceiling.is_none() {
             return Some("box list without a ceiling");
         }
-        if let Some(why) = self.terrain.first_unusual(&self.vertex_flags, true) {
+        if let Some(why) = self
+            .terrain
+            .first_unusual(&self.vertex_flags, GridSurface::Terrain)
+        {
             return Some(why);
         }
         if let Some(c) = &self.ceiling
-            && let Some(why) = c.surface.first_unusual(&self.vertex_flags, false)
+            && let Some(why) = c
+                .surface
+                .first_unusual(&self.vertex_flags, GridSurface::Ceiling)
         {
             return Some(why);
         }
@@ -903,10 +1195,11 @@ impl Record<'_> for LandblockData {
     }
 }
 
-/// §3.11 for any grid with flags.
+/// §3.11 for any grid with flags; `surface` selects the diagonal bit.
 pub(crate) fn triangulated_height(
     heights: &HeightGrid,
     flags: &VertexFlags,
+    surface: GridSurface,
     x: f32,
     y: f32,
 ) -> Option<f32> {
@@ -924,17 +1217,56 @@ pub(crate) fn triangulated_height(
     let (fx, fy) = (gx - i as f32, gy - j as f32);
     let h = |a: usize, b: usize| heights.height(a, b).unwrap_or(0.0);
     let (h00, h10, h01, h11) = (h(i, j), h(i + 1, j), h(i, j + 1), h(i + 1, j + 1));
-    Some(if flags.split_sw_ne(i, j) {
+    // The plane of the chosen triangle, evaluated with barycentric weights (≥ 0, sum 1) so
+    // that f32 rounding cannot leave the range of the three corner heights, and a query at
+    // a grid sample returns that sample exactly (a corner weight of 1, the others 0), as
+    // the neighbouring landblock does at the shared edge.
+    //
+    // Along a block edge one fraction is exactly 0 or 1 and the neighbour evaluates the
+    // same edge with that fraction at 1 or 0. Every weight is therefore written so that
+    // it is computed exactly (or as the same rounded `1 - f`) when the other fraction is
+    // 0 or 1; `fx + fy - 1` would round away the low bits of a small fraction, and
+    // `fx + fy <= 1` could pick the wrong triangle when `1 + f` rounds to 1.
+    let tri = if flags.surface_split_sw_ne(surface, i, j) {
         if fx >= fy {
-            h00 + fx * (h10 - h00) + fy * (h11 - h10)
+            [(1.0 - fx, h00), (fx - fy, h10), (fy, h11)]
         } else {
-            h00 + fy * (h01 - h00) + fx * (h11 - h01)
+            [(1.0 - fy, h00), (fx, h11), (fy - fx, h01)]
         }
-    } else if fx + fy <= 1.0 {
-        h00 + fx * (h10 - h00) + fy * (h01 - h00)
     } else {
-        h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fy) * (h10 - h11)
-    })
+        let (lo_f, hi_f) = (fx.min(fy), fx.max(fy));
+        // `1 - hi_f` is exact when hi_f ≥ 0.5 (Sterbenz); when hi_f < 0.5 the sum is
+        // below 1 and the rounded `1 - hi_f` (≥ 0.5) still exceeds lo_f. So this is the
+        // exact test fx + fy ≤ 1.
+        if lo_f <= 1.0 - hi_f {
+            [(1.0 - fx - fy, h00), (fx, h10), (fy, h01)]
+        } else {
+            // Upper triangle: hi_f > 0.5, so `1 - hi_f` is exact, and the weight is lo_f
+            // itself on the edge where hi_f is 1.
+            [(lo_f - (1.0 - hi_f), h11), (1.0 - fx, h01), (1.0 - fy, h10)]
+        }
+    };
+    // Clamp to the range of the corners that actually contribute. On a block edge the
+    // third corner has weight exactly 0 and is an interior sample that differs between the
+    // two blocks; including it would let one block keep a sum rounded 1 ulp past equal edge
+    // samples while the other clamps it back. Restricted to the positive-weight corners,
+    // both blocks clamp the same two-term edge sum to the same two shared samples.
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for &(w, v) in &tri {
+        if w > 0.0 {
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    }
+    if lo > hi {
+        // No positive weight (unreachable for finite fractions): fall back to all three.
+        for &(_, v) in &tri {
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    }
+    let sum: f32 = tri.iter().map(|&(w, v)| w.max(0.0) * v).sum();
+    Some(sum.clamp(lo, hi))
 }
 
 fn read_grid_count(r: &mut Reader<'_>, what: &'static str, expected: usize) -> Result<()> {

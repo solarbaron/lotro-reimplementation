@@ -60,7 +60,22 @@ fn sample_all(clip: &Clip, src: &mut ByteSource<'_>) {
                     if let tessera_havok::VectorChannel::Spline { curve, .. } = c {
                         let cv = b.curve(curve).expect("parsed curve fits its block");
                         let mut v = [0.0f32; 3];
-                        cv.evaluate(src.time(b.frames as f32), &mut v);
+                        let u = src.time(b.frames as f32);
+                        cv.evaluate(u, &mut v);
+                        // Inside the knot domain the blend is a convex combination, so
+                        // finite control points give finite values (spline.rs `evaluate`).
+                        let k = cv.knots();
+                        if let (Some(&lo), Some(&hi)) =
+                            (k.get(cv.degree()), k.get(cv.control_point_count()))
+                            && u >= f32::from(lo)
+                            && u <= f32::from(hi)
+                            && cv.control_points().iter().all(|p| p.is_finite())
+                        {
+                            assert!(
+                                v.iter().take(cv.dims()).all(|x| x.is_finite()),
+                                "finite control points blend to finite values"
+                            );
+                        }
                     }
                 }
                 if let tessera_havok::RotationChannel::Dynamic(curve) = &ch.rotation {

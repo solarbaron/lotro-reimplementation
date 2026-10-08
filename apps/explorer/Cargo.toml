@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-explorer"
-description = "GUI asset browser for the archives of an install: archive tree, DID search, hex, textures, icons, strings, property sets and a 3D mesh and material viewer"
+description = "GUI asset browser for the archives of an install: archive tree, DID search, hex, textures, icons, strings, property sets and a 3D mesh and material viewer, landblock scenery, water and collision views, the sky timeline"
 version.workspace = true
 edition.workspace = true
 # eframe/egui 0.36 need Rust 1.95; the explorer is a tool, so it may require a newer
@@ -37,6 +37,10 @@ tessera-render.workspace = true
 # M4 character viewer and animation browser: skeletons, clips, sampling on workers.
 tessera-havok.workspace = true
 tessera-anim.workspace = true
+# M4.5 world views: landblock scenery, water and collision (bundles built on the workers),
+# the sky and day-description timeline, and collision overlays in the 3D view.
+tessera-world.workspace = true
+tessera-physics.workspace = true
 # No "default_fonts": egui's bundled fonts are OFL-1.1 / Ubuntu Font Licence, outside the
 # licence allow list (deny.toml). UI fonts come from the system at run time (src/fonts.rs).
 eframe = { version = "0.36", default-features = false, features = [

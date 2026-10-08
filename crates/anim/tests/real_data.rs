@@ -367,7 +367,7 @@ fn every_clip_binds_and_samples() {
          extracted motion: {motion} clips ({motion_bad} non-finite)"
     );
     eprintln!(
-        "  tracks replaced by reference (non-finite or > 1e4 m): {replaced} samples in {} clips {:x?}",
+        "  tracks replaced by reference (non-finite, > 1e4 m or |scale| > 1e3): {replaced} samples in {} clips {:x?}",
         replaced_clips.len(),
         &replaced_clips[..replaced_clips.len().min(8)]
     );

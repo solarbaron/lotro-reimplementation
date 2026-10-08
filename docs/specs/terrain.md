@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-05 |
 | **Author role** | §1–§5, §8 and the Tessera Decisions of §6, §7 and §9: Implementer (clean room) of `tessera-terrain`; everything there is a **Tessera Decision**, not a description of the original client. §0, the facts about the original cited in §1 (height rule), §5 (normals note), §6 (mask and light-map orientation), §7 (meaning of the splat layers, splatting inputs) and §9: Spec writer (dirty room), revisions of 2026-10-05; each such fact has a row in §0.2. |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), re-review 2026-10-05: **passed, Accepted**. All five first-round items fixed; every CLEAN_ROOM §5.3 item holds (facts about the data and the original are cited with marks in §0.2, everything else labelled Tessera Decision; no code, no program identifiers; OPENs precise and non-blocking). Spot checks that matched (independent probes over all 390,150 landblock-data records): TR5 (777,240 east/north neighbour pairs, all shared edges equal); TR11 (5,310,848 stored ceiling triangles, every one on the bit-0 diagonal and clockwise from above); TR12 (2,368 landblocks with terrain triangles in no layer, 2,750,134 triangles, all landblocks with a ceiling, none with the ceiling above the terrain); TR6 (86,726 terrain chunks with layers); TR3/TR4 (region-3 sample of the first round). First round, review 2026-10-05: changes requested (addressed). (1) §9 ceiling OPEN contradicts `collision.md` §6.4 (C21): the ceiling quad diagonal is bit 0 of the vertex-flag byte (Confirmed on all stored ceiling triangles, BIN for the mesh builder); triangles over zero ceiling samples are answered there too. (2) §9: "holes at cave mouths" contradicts `collision.md` §6.5; holes lie where the terrain is buried under the ceiling surface or there is no ceiling. (3) No provenance table: the cited format facts and the dirty-room additions (per-block texture offset, ceiling vertex builder, per-vertex lighting of the original) carry no Confirmed/BIN marks, and Tessera design rules are not uniformly labelled Tessera Decision. (4) Header: Status "M3 design, implemented" is not a CLEAN_ROOM §5.2 state; there was no Reviewer row; the author role omits the spec-writer revisions (give per-section roles as `keymap.md` does); the introduction still says the file has no format facts beyond `landblock.md` and `coordinates.md` and nothing from dirty-room material. (5) Minor: the draw-distance OPEN callout also carries an answered item (shading model); split it. Spot checks that matched: region 3, first 3,000 no-ceiling chunks (13,436,886 stored triangles): every one is a level-0 grid triangle under vertex number 33·j + i, uses the bit-7 diagonal and is counter-clockwise; region 3 chunks satisfy m = 3·Σ prims, at most 80 layers, `whole` fields 0; the §9 note that the implementation still uses stored / 32.768 matches `crates/terrain` and `crates/formats`. |
+| **Review record** | Re-review 2026-10-05: **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/terrain`, `fuzz/fuzz_targets/terrain_mesh.rs` |
 | **Format facts from** | `landblock.md` §3 (height grid, scale, split diagonal, surface layers, §3.11 height rule), `coordinates.md` §3, §4, §12, `terrain-texturing.md` (layer meaning, masks, texture coordinates, tangent frame, blending, lighting inputs), `collision.md` §6 (terrain and ceiling triangles, holes), `water.md` (water per landblock) |
 | **Revised** | 2026-10-05 (three revisions by a spec writer, dirty room); see §10. **Implementers re-check `crates/terrain` (and the decoder constant in `crates/formats`) against §1 and §5.** |
@@ -271,6 +271,37 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
   east axis projected onto the surface, binormal = normal × tangent), so it can be derived
   from the normal stream; no extra vertex stream is required. A `whole` layer is drawn with
   the level-0 index list (§1), which already equals the client's full-grid list.
+- **Layer resolution (implemented 2026-10-06, M4.5; design is Tessera's, facts are
+  `terrain-texturing.md`'s).** `resolve_chunk` / `resolve_landblock` turn a terrain or
+  ceiling chunk into draw records in stored order (`ChunkLayers`, `DrawLayer`): the entry
+  looked up by key, the first drawn layer marked opaque, `whole` layers expanded to the
+  surface's full level-0 triangulation (bit-7 diagonal and counter-clockwise for the
+  terrain, bit-0 and clockwise for the ceiling), the exact grid-triangle coverage of every
+  layer (collision-tree keys) and the holes, the feature switches (§8.1 there), material
+  parameters (§8.2), opacity rule and alpha test (§7), textures by DID, and the light map.
+  `LayerVertices` holds the full-grid vertex streams (1,089 vertices in grid order:
+  positions, normals, tangent frame, coordinate sets 0–3); `TextureFrame` applies the
+  per-block offset rule of `terrain-texturing.md` §6.2 with the camera's landblock as the
+  reference. The height/slope shading of §6 is only a debug fallback. **Tessera Decisions**
+  beyond those in `terrain-texturing.md`: (1) after a layer skipped for a missing key, the
+  first layer actually drawn is the opaque one; (2) coarser levels and stitched level-0
+  meshes draw a layer on every triangle of the level's list that is a level-0 grid
+  triangle the layer covers, or that is a coarser or stitch triangle whose quad bounding
+  box contains a quad the layer touches (`ChunkLayers::layer_indices_for`); the original's
+  distance bands are OPEN (`terrain-texturing.md` §12); (3) ceilings are drawn at level 0
+  from their stored triangles only; (4) non-finite stored floats of a terrain type entry
+  count as 0; (5) rotations by multiples of 90° use exact sines and cosines. Added
+  2026-10-06 after the M4.5 code review: (6) a stored layer triangle that is not a level-0
+  grid triangle wound as its surface is (counter-clockwise for the terrain, clockwise for
+  the ceiling), or that repeats a triangle of the same layer, is not drawn and is counted
+  (`ChunkLayers::rejected_triangles`, one warning per chunk), so what is drawn always
+  equals the coverage, the holes and the CPU reference (none in the install, §8); (7) the
+  lists of `layer_indices_for` come back in the surface's winding (a ceiling's face down),
+  although ceilings are drawn from their stored triangles only (3); (8) all `whole` layers of
+  a chunk share one full-grid list, and missing keys and repeated keys are logged once per
+  chunk; (9) a rejected mask is dropped with a logged warning (`DrawLayer::check_mask`,
+  `terrain-texturing.md` §5.1); (10) the layer texture transform (`LayerTransform`) returns
+  finite values only, as `material.md` §8.4's does.
 
 <a id="s8"></a>
 ## 8. Verification
@@ -295,8 +326,26 @@ Layer textures use the world-space coordinate sets of `terrain-texturing.md` §6
   the level error bounds equal the maximum of |level surface − level-0 surface| over the
   2.5-unit raster (all refinement vertices) within 10⁻³ units. Per block on one thread: block
   setup 1.2 µs, level error bounds (lazy) 36 µs, normals 7 µs, level-0 mesh 28 µs.
-- Fuzzing: `terrain_mesh` (meshing, normals, shading, queries, selection, tiles, splat
-  conversion on arbitrary inputs).
+- Layers (`crates/terrain/tests/layers_real_data.rs`, release build, 2026-10-06, this
+  install): all 5 terrain type tables (4,688 entries) hold `terrain-texturing.md` §3.5
+  items 1–6 and re-encode byte for byte; every layer key and quad-grid value of all
+  390,150 landblock-data records is in its region's table (SC7): 86,726 terrain and 2,355
+  ceiling chunks with layers, 925,884 layers, 0 unresolved, draw order never decreasing,
+  no key twice in a chunk, 0 rejected layer triangles (off the level-0 grid, wound against
+  the surface or repeated; re-run 2026-10-06 after the review fixes); 2,750,134 hole
+  triangles in 2,368 landblocks, all with a ceiling (515 of them have layers but none
+  drawn); 60 + 43 drawn layers without a diffuse texture (T39); all 646,073 masks of drawn
+  layers are A8 and square (623,092 × 128, 20,624 × 256, 2,357 × 512); the 5,441
+  light-map values name 5,422 DXT1 surfaces (5,421 × 128², 1 × 64²). On every 7th block
+  (12,748 chunks) the level-0 lists of `layer_indices_for` equal the stored triangles (both
+  surfaces, winding included) and
+  the surface's vertex streams are finite with downward ceiling normals. The worked
+  example of `terrain-texturing.md` §14 is reproduced exactly
+  (`crates/terrain/tests/worked_example.rs`).
+- Fuzzing: `terrain_layers` (layer resolution, draw records, level-of-detail lists, vertex
+  streams, texture frame and masks on hostile tables and chunks) and `terrain_mesh`
+  (meshing, normals, shading, queries, selection, tiles, splat conversion on arbitrary
+  inputs).
 
 > **OPEN:** the real-data figures above overstate the seam coverage: before 2026-10-06 the
 > test kept only rows y − 1 to y + 1 resident, so a north neighbour never had all four of its
@@ -344,6 +393,19 @@ builder from the ceiling height grid and a separate ceiling normal array (TR10,
 `terrain-texturing.md` §4.8). Ceilings are not meshed by `tessera-terrain` (Tessera Decision);
 a renderer draws the stored ceiling-layer triangles.
 
+> **OPEN:** (implementer, 2026-10-06, from the M4.5 code review; for the spec writer) three
+> statements here no longer match §7 or the code. (a) §1 ("the ceiling grid … is not meshed
+> here") and the sentence above ("Ceilings are not meshed by `tessera-terrain`") predate §7:
+> the crate now builds ceiling surfaces (`TerrainBlock::from_ceiling` with the bit-0
+> diagonals, `VertexNormals::ceiling`, ceiling `LayerVertices`) and expands `whole` ceiling
+> layers to the clockwise bit-0 grid; what it does not do is level-of-detail mesh ceilings,
+> which are drawn at level 0 from their stored triangles (§7 Decision (3)). (b) The
+> height-scale answer above says the implementation "still uses stored / 32.768 and must
+> follow": it has followed since 2026-10-06 (stored × 2,000 / 65,535, §1). (c) The header
+> still reads "Last updated 2026-10-05" and Accepted although §7 and §8 carry unreviewed
+> implementer additions of 2026-10-06 (change log); the M4.5 review should record its
+> sign-off or set the status to Review.
+
 **Answered 2026-10-05 (was described wrongly): terrain triangles in no layer.** In landblocks
 with a ceiling, some terrain grid triangles belong to no layer and the original does not draw
 them. They are **not** openings at cave mouths: every one lies where the terrain is buried
@@ -387,3 +449,5 @@ on normal-mapped layers), the sun per pixel with the shadow factor, and the ligh
 | 2026-10-05 | Spec writer (dirty room): §6 height/slope shading becomes the fallback and the block-UV note warns that masks and light maps are south-row-first; §7 states the meaning of the splat layers and how a layer shader derives its coordinates; §9 answers the splatting, coarse-grid and light-map OPENs from `terrain-texturing.md`, adds the height-scale and texture-origin OPENs and notes on water and cave holes. |
 | 2026-10-05 | Spec writer (dirty room), second revision: §1 and §5 use the height rule adopted by `landblock.md` §3.4 (stored × 2,000 / 65,535; implementation to follow). §7: layer meaning follows `terrain-texturing.md` §7–§8.1 (opacity per record family, feature switches); the tangent frame for normal-mapped layers derives from the normal stream. §9: coarse-grid note corrected (it is the scenery word); height-scale and water OPENs answered (`landblock.md` §3.4, `water.md` §6, §8); texture origin marked as a Tessera Decision; ceilings and shading model updated from `terrain-texturing.md` §4.8 and §9. |
 | 2026-10-05 | Spec writer (dirty room), third revision after review. Header: Status "M3 design, implemented" replaced by the CLEAN_ROOM §5.2 state Review; per-section author roles; "Format facts from" adds `collision.md` §6; the introduction no longer claims the file has no facts from dirty-room material and separates Tessera's design from cited facts. New §0 (marks, provenance table TR1–TR15 with the owning spec and mark of every fact about the data or the original). §5, §6, §7: Tessera Decisions labelled; §7 holes text and per-vertex splatting inputs follow `terrain-texturing.md` §4.5 and §6.2. §9: ceiling diagonal and zero samples answered (bit 0, `collision.md` §6.4); "holes at cave mouths" corrected (`collision.md` §6.5); the answered shading model split out of the draw-distance OPEN; separate OPENs for the texture origin (rule now known), ceiling normals, the original's vertex normals and draw distance. |
+| 2026-10-06 | Implementer (clean room), M4.5: §7 layer resolution, vertex streams and texture frame implemented, with five Tessera Decisions (missing keys, level-of-detail lists, ceilings at level 0, non-finite floats, exact right-angle rotations); §8 layer real-data results and the `terrain_layers` fuzz target. Not yet reviewed. |
+| 2026-10-06 | Implementer (clean room), M4.5 code-review fixes: §7 Tessera Decisions (6)–(10) (rejected stored triangles, level-of-detail lists in the surface's winding, shared `whole` lists and per-chunk warnings, logged mask rejection, finite layer transform); §9 OPEN on the stale ceiling and height-scale sentences and the header. Not yet reviewed. |

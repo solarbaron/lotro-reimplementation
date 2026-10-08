@@ -13,7 +13,9 @@ use tessera_formats::{AnyRecord, Did, DidKind, Record, StringTable, StringTableE
 use crate::Out;
 use crate::input::{Ctx, Found, Input};
 use crate::output::{check_output_path, protected_dirs, write_output};
+use crate::show;
 use crate::util::{did_hex, format_time, hex_bytes, hexdump, human_bytes, path_json};
+use crate::world::{self, Decoded, Schema};
 
 /// Options of `cat`.
 #[derive(Debug)]
@@ -58,35 +60,57 @@ pub struct ExtractOpts {
     pub force: bool,
 }
 
-/// One-line description of a decoded record, if this crate set can decode it.
-fn describe(did: u32, payload: &[u8]) -> Option<String> {
-    if !AnyRecord::is_decodable(did) {
+/// One-line description of a decoded record, if this tool can decode it (anything `show`
+/// accepts). `stamp` is the directory-entry stamp (it decides the layout of collision
+/// meshes, cell geometry and landblock data); `schema` serves the records with property
+/// sets. Records that `show` prints field by field get a pointer to it.
+fn describe(did: u32, payload: &[u8], stamp: u16, schema: &Schema) -> Option<String> {
+    if !world::is_decodable(did) {
         return None;
     }
-    Some(match AnyRecord::decode(did, payload) {
-        Ok(Some(AnyRecord::Surface(s))) => format!(
-            "render surface {}x{} {} (category {}), {} data bytes",
-            s.width,
-            s.height,
-            s.format,
-            s.category,
-            s.data.len()
-        ),
-        Ok(Some(AnyRecord::StringTable(t))) => format!("string table, {} entries", t.len()),
-        Ok(Some(AnyRecord::Sound(s))) => {
-            format!(
-                "sound record, {} audio bytes ({:?})",
-                s.audio.len(),
-                s.container()
-            )
-        }
-        Ok(Some(r)) => r.type_name().to_owned(),
-        Ok(None) => return None,
-        Err(e) => format!("does not decode: {e}"),
-    })
+    let hint = if show::has_field_view(did) {
+        " (use `show` for its fields)"
+    } else if world::is_decodable(did) && !AnyRecord::is_decodable_with_schema(did) {
+        " (use `show` for a summary)"
+    } else {
+        ""
+    };
+    Some(
+        match world::decode(did, payload, Some(stamp), schema.get()) {
+            Ok(Some(Decoded::Any(r))) => match *r {
+                AnyRecord::Surface(s) => format!(
+                    "render surface {}x{} {} (category {}), {} data bytes",
+                    s.width,
+                    s.height,
+                    s.format,
+                    s.category,
+                    s.data.len()
+                ),
+                AnyRecord::StringTable(t) => {
+                    format!("string table, {} entries (use `strings` for them)", t.len())
+                }
+                AnyRecord::Sound(s) => {
+                    format!(
+                        "sound record, {} audio bytes ({:?})",
+                        s.audio.len(),
+                        s.container()
+                    )
+                }
+                r => format!("{}{hint}", r.type_name()),
+            },
+            Ok(Some(Decoded::Material { name, .. })) => format!("{name}{hint}"),
+            Ok(Some(_)) => format!("{}{hint}", Did(did).kind().name()),
+            Ok(None) => return None,
+            Err(e) => format!(
+                "does not decode as a {}: {e} (property dictionary: {})",
+                Did(did).kind().name(),
+                schema.source
+            ),
+        },
+    )
 }
 
-fn entry_json(f: &Found<'_>) -> Value {
+pub(crate) fn entry_json(f: &Found<'_>) -> Value {
     let e = &f.entry;
     json!({
         "did": did_hex(e.did),
@@ -104,7 +128,11 @@ fn entry_json(f: &Found<'_>) -> Value {
     })
 }
 
-fn write_entry_summary(w: &mut dyn Write, f: &Found<'_>, payload_len: Option<usize>) -> Result<()> {
+pub(crate) fn write_entry_summary(
+    w: &mut dyn Write,
+    f: &Found<'_>,
+    payload_len: Option<usize>,
+) -> Result<()> {
     let e = &f.entry;
     let routed = match f.routed {
         Some(true) => " (routed)",
@@ -155,7 +183,14 @@ pub fn cat(out: &mut Out, ctx: &Ctx, o: &CatOpts) -> Result<ExitCode> {
     let decoded = if o.stored {
         None
     } else {
-        describe(o.did, &data)
+        // Records with property sets need the dictionary; without one they are still
+        // named, with the reason they did not decode.
+        let schema = if world::needs_schema(o.did) {
+            Schema::load(&input, ctx).unwrap_or_else(|e| Schema::none(&format!("{e:#}")))
+        } else {
+            Schema::none("not needed")
+        };
+        describe(o.did, &data, found.entry.stamp, &schema)
     };
     if out.json {
         let mut v = entry_json(&found);

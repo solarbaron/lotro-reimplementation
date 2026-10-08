@@ -144,6 +144,28 @@ impl TerrainBlock {
         Self::new(&data.heights, &data.vertex_flags)
     }
 
+    /// The **ceiling** surface of a cave landblock as a block (`landblock.md` §3.5,
+    /// `terrain-texturing.md` §4.8): the ceiling height grid, with each quad split by
+    /// **bit 0** of its vertex-flag byte (the ceiling diagonal, §3.6), so
+    /// [`Self::height_at`] follows the ceiling triangles. Zero samples ("no ceiling here")
+    /// stay at height 0, as in the original's ceiling mesh (`collision.md` §6.4).
+    ///
+    /// Queries return upward facet normals ([`Self::normal_at`]); the ceiling itself faces
+    /// down (its triangles are clockwise from above). The level-of-detail meshing of this
+    /// crate winds triangles counter-clockwise and is meant for the terrain; ceiling layers
+    /// are drawn from their stored triangles. `None` without a ceiling.
+    #[must_use]
+    pub fn from_ceiling(data: &LandblockData) -> Option<Self> {
+        let ceiling = data.ceiling.as_ref()?;
+        let mut flags = VertexFlags::default();
+        for (dst, &src) in flags.raw_mut().iter_mut().zip(data.vertex_flags.raw()) {
+            if src & VertexFlags::CEILING_SPLIT_SW_NE != 0 {
+                *dst = VertexFlags::SPLIT_SW_NE;
+            }
+        }
+        Some(Self::new(&ceiling.heights, &flags))
+    }
+
     /// A flat block at stored height `raw`, every quad split south-east to north-west.
     #[must_use]
     pub fn flat(raw: u16) -> Self {
@@ -773,6 +795,44 @@ mod tests {
             }
         }
         assert!(!c.split_sw_ne(32, 0));
+    }
+
+    /// Review finding: the ceiling surface splits its quads by bit 0 (the ceiling
+    /// diagonal) and ignores bit 7 (the terrain diagonal).
+    #[test]
+    fn from_ceiling_uses_the_bit_zero_diagonal() {
+        use tessera_formats::landblock::Ceiling;
+        let mut data = LandblockData::from_heights(Did(0x8001_0000), HeightGrid::flat(100));
+        assert!(TerrainBlock::from_ceiling(&data).is_none());
+        // A bump at the north-east corner of quads (0, 0) and (2, 0).
+        let heights = HeightGrid::from_fn(|i, j| match (i, j) {
+            (1, 1) | (3, 1) => 5_000,
+            _ => 1_000,
+        });
+        let mut flags = VertexFlags::default();
+        flags.raw_mut()[0] = VertexFlags::CEILING_SPLIT_SW_NE; // quad (0, 0): bit 0
+        flags.raw_mut()[2 * GRID_SIDE] = VertexFlags::SPLIT_SW_NE; // quad (2, 0): bit 7
+        data.vertex_flags = flags;
+        data.ceiling = Some(Ceiling {
+            heights,
+            tree: None,
+            surface: Default::default(),
+        });
+        let c = TerrainBlock::from_ceiling(&data).unwrap();
+        assert!(c.split_sw_ne(0, 0));
+        assert!(!c.split_sw_ne(2, 0));
+        assert_eq!(c.raw(1, 1), Some(5_000));
+        assert_eq!(c.raw(0, 0), Some(1_000));
+        let near =
+            |z: Option<f32>, raw: f64| (f64::from(z.unwrap()) - raw * UNITS_PER_STEP).abs() < 1e-3;
+        // Quad (0, 0), SW-NE: (1.25, 1.25) lies on the diagonal, a quarter of the way up.
+        assert!(near(c.height_at(1.25, 1.25), 2_000.0));
+        // Quad (2, 0), SE-NW despite bit 7: (11.25, 1.25) is in the flat south-west triangle.
+        assert!(near(c.height_at(11.25, 1.25), 1_000.0));
+        // The terrain block reads bit 7 instead.
+        let t = TerrainBlock::from_landblock(&data);
+        assert!(!t.split_sw_ne(0, 0));
+        assert!(t.split_sw_ne(2, 0));
     }
 
     #[test]

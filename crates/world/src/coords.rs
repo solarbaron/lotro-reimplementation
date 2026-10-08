@@ -377,27 +377,70 @@ impl Landcell {
 }
 
 /// The yaw ψ in radians of rotation `q` (`coordinates.md` §11.3): counter-clockwise seen
-/// from above, 0 when model +Y points north. For a pure turn about +Z this is
-/// 2 · atan2(z, w); for a tilted rotation it is the yaw of the rotated +Y axis projected
-/// onto the ground (0 when that axis points straight up or down). Result in (−π, π].
+/// from above, 0 when model +Y points north. It is the yaw of the z-y-x decomposition
+/// R_Z(ψ) · R_Y(θ) · R_X(φ), ψ = atan2(2(xy + wz), w² + x² − y² − z²), evaluated in f32
+/// in the client's order (§11.3 table, as [`Quaternion::yaw`]) and widened to f64. For a
+/// pure turn about +Z this is 2 · atan2(z, w); for a tilted rotation it is **not** the yaw
+/// of the projected model +Y axis (§11.4: the bearing of the rotated model +X axis projected
+/// onto the ground, minus 90°). Result in [−π, π]; 0 for a non-finite rotation.
 #[must_use]
 pub fn yaw(q: Quaternion) -> f64 {
-    let f = q.rotate([0.0, 1.0, 0.0]);
-    let (fx, fy) = (f64::from(f[0]), f64::from(f[1]));
-    if !(fx.is_finite() && fy.is_finite()) || (fx == 0.0 && fy == 0.0) {
+    if !q.is_finite() {
         return 0.0;
     }
-    (-fx).atan2(fy)
+    let psi = f64::from(q.yaw());
+    if psi.is_finite() { psi } else { 0.0 }
 }
+
+/// The f32 radians-to-degrees factor of `coordinates.md` §9.4 step 2 (bit pattern
+/// 0x42652EE1, 57.295780181884766; client constant, decision 0012).
+pub const DEGREES_PER_RADIAN_F32: f32 = f32::from_bits(0x4265_2EE1);
 
 /// The compass heading in degrees, 0 = north, clockwise, of an object whose forward axis
-/// is model +Y and whose rotation is `q`: h = (360° − ψ) mod 360° (§11.4). In [0, 360).
+/// is model +Y and whose rotation is `q`, exactly as the client's `/loc` computes `h`
+/// (`coordinates.md` §9.4 step 2, C19): ψ of [`Quaternion::yaw`] in f32, then
+/// [`heading_from_yaw_f32`], widened to f64 for printing. In [0, 360). For a pure turn it
+/// is the bearing of model +Y; for a tilted rotation it follows the z-y-x decomposition
+/// (§11.4). 0 for a non-finite rotation.
 #[must_use]
 pub fn heading_degrees(q: Quaternion) -> f64 {
-    heading_from_yaw(yaw(q))
+    if !q.is_finite() {
+        return 0.0;
+    }
+    f64::from(heading_from_yaw_f32(q.yaw()))
 }
 
-/// The compass heading (degrees, [0, 360)) for yaw ψ in radians (§11.4).
+/// The `/loc` heading `h` in degrees for an f32 yaw ψ in radians (`coordinates.md` §9.4
+/// step 2, all in single precision): −ψ × [`DEGREES_PER_RADIAN_F32`], reduced with
+/// [`reduce_degrees_f32`]. 0 for a non-finite ψ.
+#[must_use]
+pub fn heading_from_yaw_f32(psi: f32) -> f32 {
+    if !psi.is_finite() {
+        return 0.0;
+    }
+    reduce_degrees_f32((-psi) * DEGREES_PER_RADIAN_F32)
+}
+
+/// The angle reduction of `coordinates.md` §9.4 step 2 in single precision: the truncating
+/// remainder by 360 (sign of the dividend); a negative remainder gets 360 added in f32, and
+/// a sum of 360 or more (a remainder of magnitude at most about 1.53 · 10⁻⁵) becomes 0.
+/// In [0, 360) for finite input; NaN stays NaN.
+#[must_use]
+pub fn reduce_degrees_f32(d: f32) -> f32 {
+    let mut r = d % 360.0;
+    if r < 0.0 {
+        r += 360.0;
+        if r >= 360.0 {
+            r = 0.0;
+        }
+    }
+    r
+}
+
+/// The compass heading (degrees, [0, 360)) for a yaw ψ in radians held in f64 (§11.4):
+/// (360° − ψ) mod 360° in double precision. A convenience for f64 callers; it can differ
+/// from the client's single-precision `/loc` value in the last printed decimal, which
+/// [`heading_degrees`] and [`heading_from_yaw_f32`] reproduce.
 #[must_use]
 pub fn heading_from_yaw(psi: f64) -> f64 {
     if !psi.is_finite() {
@@ -682,6 +725,119 @@ mod tests {
             }),
             0.0
         );
+    }
+
+    /// `coordinates.md` §11.4–§11.5: the heading of a tilted rotation follows the z-y-x
+    /// decomposition, not the projected model +Y axis.
+    #[test]
+    fn heading_of_tilted_rotations_uses_zyx_decomposition() {
+        let near = |got: f64, want: f64, tol: f64| {
+            let d = (got - want).rem_euclid(360.0);
+            d.min(360.0 - d) < tol
+        };
+        // 45° about +X, then 30° about +Y: ψ = 0, so `/loc` omits h.
+        let tilted = Quaternion {
+            w: 0.8924,
+            x: 0.36964,
+            y: 0.23912,
+            z: -0.09905,
+        };
+        assert!(yaw(tilted).abs() < 1e-3, "{}", yaw(tilted));
+        assert!(near(heading_degrees(tilted), 0.0, 0.05));
+        // Its model +Y axis projects to a bearing of 26.6°: the withdrawn rule's answer.
+        let f = tilted.rotate([0.0, 1.0, 0.0]);
+        let projected =
+            (360.0 - f64::from(-f[0]).atan2(f64::from(f[1])).to_degrees()).rem_euclid(360.0);
+        assert!(near(projected, 26.6, 0.1), "{projected}");
+        assert!(!near(heading_degrees(tilted), projected, 1.0));
+        // The row above, then yaw 90°: h270.0 (§11.5).
+        let turned = Quaternion {
+            w: 0.70106,
+            x: 0.0923,
+            y: 0.43046,
+            z: 0.56099,
+        };
+        assert!(
+            near(heading_degrees(turned), 270.0, 0.05),
+            "{}",
+            heading_degrees(turned)
+        );
+        // Every rotation agrees with tessera-formats (same f32 evaluation order).
+        let mut seed = 0x1234_5678_u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            f32::from(u16::try_from(seed >> 16).unwrap_or(0)) / 32_768.0 - 1.0
+        };
+        for _ in 0..1_000 {
+            let raw = Quaternion {
+                w: next(),
+                x: next(),
+                y: next(),
+                z: next(),
+            };
+            let len = raw.length();
+            if len < 0.1 {
+                continue;
+            }
+            let q = Quaternion {
+                w: raw.w / len,
+                x: raw.x / len,
+                y: raw.y / len,
+                z: raw.z / len,
+            };
+            let psi = q.yaw();
+            assert_eq!(yaw(q), f64::from(psi));
+            let a = heading_degrees(q);
+            assert_eq!(a, f64::from(heading_from_yaw_f32(psi)));
+            let b = f64::from(q.heading_degrees());
+            assert!(near(a, b, 1e-3), "{q:?}: {a} vs {b}");
+        }
+        // Non-finite input gives 0.
+        let nan = Quaternion {
+            w: 1.0,
+            x: f32::INFINITY,
+            y: 0.0,
+            z: 0.0,
+        };
+        assert_eq!(yaw(nan), 0.0);
+        assert_eq!(heading_degrees(nan), 0.0);
+    }
+
+    /// `coordinates.md` §9.4 step 2 and C19: `h` is computed and reduced in f32.
+    #[test]
+    fn heading_follows_the_single_precision_loc_rule() {
+        assert_eq!(DEGREES_PER_RADIAN_F32.to_bits(), 0x4265_2EE1);
+        assert_eq!(f64::from(DEGREES_PER_RADIAN_F32), 57.295_780_181_884_766);
+        // §9.4 examples: −ψ in degrees −0.00001 → 360 in f32 → 0; −0.00002 → the f32
+        // below 360; −0.02 → 359.98.
+        assert_eq!(reduce_degrees_f32(-0.000_01), 0.0);
+        let below = reduce_degrees_f32(-0.000_02);
+        assert_eq!(below, f32::from_bits(360.0_f32.to_bits() - 1));
+        assert_eq!(reduce_degrees_f32(-0.02), 360.0_f32 - 0.02);
+        assert_eq!(reduce_degrees_f32(725.5), 5.5);
+        assert_eq!(reduce_degrees_f32(-725.5), 360.0 - 5.5);
+        assert!(reduce_degrees_f32(f32::NAN).is_nan());
+        assert_eq!(heading_from_yaw_f32(f32::INFINITY), 0.0);
+        // A pure turn where the f64 path rounds differently: the f32 rule gives exactly
+        // 173.25 (printed 173.2 with round-half-even), the f64 one 173.2500023 (173.3).
+        let q = Quaternion {
+            w: 0.058_870_804,
+            x: 0.0,
+            y: 0.0,
+            z: -0.998_265_6,
+        };
+        assert_eq!(heading_degrees(q), 173.25);
+        assert!(heading_from_yaw(yaw(q)) > 173.25);
+        // ψ so small that −ψ in degrees is −0.00001: the f32 sum rounds to 360 → 0.
+        let psi = 0.000_01_f32 / DEGREES_PER_RADIAN_F32;
+        assert_eq!(heading_from_yaw_f32(psi), 0.0);
+        let turn = Quaternion {
+            w: (psi / 2.0).cos(),
+            x: 0.0,
+            y: 0.0,
+            z: (psi / 2.0).sin(),
+        };
+        assert_eq!(heading_degrees(turn), 0.0);
     }
 
     #[test]

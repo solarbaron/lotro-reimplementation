@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Height/slope shading: Tessera's own vertex-colour palette for terrain until the
-//! surface-layer material table is decoded (`landblock.md` §3.8.2 OPEN (1); roadmap M3
-//! "height/slope shading before that").
+//! Height/slope shading: Tessera's own vertex-colour palette for terrain, now only a
+//! **debug fallback** (`terrain.md` §6). The default path draws the surface layers resolved
+//! against the region's terrain type table ([`crate::layers`], `terrain-texturing.md`); this
+//! palette serves blocks whose layers cannot be resolved (no table, a hostile chunk) and
+//! a debug view.
 //!
 //! A colour is interpolated from height bands and then blended towards a cliff colour as
 //! the slope steepens. The palette is an original choice, not taken from any client.

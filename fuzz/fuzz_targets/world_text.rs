@@ -23,7 +23,13 @@ fuzz_target!(|input: &[u8]| {
         let c = MapConstants::new([29_360.0, 24_880.0], 0.005).expect("constants");
         let g = c.to_region(m);
         let back = c.to_map(g);
-        assert!((back.latitude - m.latitude).abs() < 1e-6);
+        // `to_map` is single precision (coordinates.md §8.2 step 3): values up to 1,000
+        // map units come back within a few f32 steps.
+        assert!((back.latitude - m.latitude).abs() < 1e-3, "{m:?} {back:?}");
+        assert!(
+            (back.longitude - m.longitude).abs() < 1e-3,
+            "{m:?} {back:?}"
+        );
         if let Ok(p) = c.to_world(1, m) {
             assert!(p.landblock().is_some());
         }

@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-06 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), third review 2026-10-06: **passed** (CLEAN_ROOM §5.3, every item). Re-review items (1)–(3) fixed and re-checked with an independent decoder on all records: 2013 is declared by 11 records, 7 with exactly one binding (semantic 4, group 2000, `slot` 0) naming permutation 1 or 2 without programs (key 22, 0, 8200, 0), none in 0x2B0006E4, 0x2B0007B7, 0x2B00080E, 0x2B0009DE; no other flag-1 id has bindings and no material entry has any (MA19, §7.3, §8.6); §8.4 centre pairs 264 in 136 materials (92 / 113 / 25 / 34, none on set 2); §20.1 "unlit" row and MA36 from the constant tables of every permutation of all four back ends: 11 records (99 surface records) read light inputs, 94 (2,043) none, of which 10 (23) read water parameters and 84 (2,020) neither; `Color`/`Color2` permutation in Direct3D 10/11 and OpenGL for 0x2B0000A8, CE, 559, 5EC, 7FD and OpenGL only for A9, DC, 84B, 89A, A8D; 0x2B0007FD reads the sun-shadow inputs in its four Direct3D 10/11 water permutations; 0x2B000A8C reads E3 and E5 in all four permutations. Further spot checks that matched: §4.2 census (material counts 6 / 13,691 / 82 / 2; `tail` 13,711 / 69 / 1; `binding_key` 6,976 / 8 / 6,797 with 203 distinct values); §7.6 bytes 0, 4, 5 and `alpha_ref` over all 31,519 blocks; §11.3 lit 158 (11,639) / unlit 352 (2,142) and every unlit table row (17 / 79 / 31 / 204 / 21 records; 2 / 1,266 / 719 / 98 / 57 surface records); 95 flag-1 ids, 148 used, none mixed. Earlier rounds: re-review 2026-10-05: **changes requested**. First-round items (1)–(9) fixed. New: (1) §20.1 row "§11.3 'unlit'" is wrong. Of the 105 unlit records used by surface records (2,142 surface records), light inputs are read by more than "the six water records": also 0x2B0000A9, 0x2B0000DC, 0x2B00084B and 0x2B00089A (5 surface records; ambient, hemispheric and per-vertex lights in their OpenGL `Color`/`Color2` permutation, the fake directional light in their water permutations), and 0x2B000A8C (1 surface record; `ColorAndOpacity`/`ColorAndOpacity2`, SRCALPHA / ONE with depth write; ambient, hemispheric and light-0 colour in its Direct3D 11 and OpenGL programs). 0x2B000A8D does so only in its OpenGL `Color`/`Color2` permutation. "126 records, 2,020 surface records" does not match: 94 records (2,043 surface records) read no light input, 84 of them (2,020) no water input either. (2) §7.3 ("every flag-1 parameter" has no binding entries), §8.6 ("None of the flag-1 parameters has binding entries") and MA19's "which is why it needs no binding entries" are false for 2013: it has one binding, semantic 4, in 7 records (0x2B00072C, 0x2B0007AC, 0x2B0009C0, 0x2B000A17, 0x2B000A18, 0x2B000A1F, 0x2B000A20), as §7.3's own semantic list (2013 → 4) says. (3) Minor: §8.4 "205 material entries" counts the U pairs only (1070/1017: 92, 1072/1019: 113); with the V pairs there are 264 pairs in 136 materials. Spot checks that matched: MA35 (95 flag-1 ids, exact ranges), 148 used ids, 197 labelled ids plus 0, 2007/2008 labelled but unused, 1150, 1172, 1181 unlabelled; §20.1 522 + 15, roles 463 / 43 / 12 / 4, 93 surface records on the six water records (55/10/5/21/1/1), 239 + 131 on 9 + 4 records (largest 158 and 122); §11.3 lit 158 records (11,639), unlit 352 (2,142); 0x2B0000A8 `Color`/`Color2` only in permutations 8 (Direct3D 11) and 9 (OpenGL). First round, review 2026-10-05: changes requested. (1) §20.1 uses 0x2B0000A8 as the generic `Color` / pass-0x00 lit example, but it is the water shader (`water.md` §8.2–§8.4; 55 surface records in this install, its `Color`/`Color2` samplers in only 2 of its 13 permutations), so it cannot be "the kind" of the 442 `Color` surface records; correct the example or cross-reference. (2) §20.1 rows on specular power 0 and on colour space still call these OPEN in `lighting.md` §15, which answers them (as do later rows of the same table); mark them superseded. Likewise the §18–§19 OPEN callouts that §20.1 answers are still shown as open. (3) §8.7 excludes 1070–1075; §8.0 excludes 1070–1085. (4) §8.6 gives water as 1170–1190, overlapping 1174, 1175–1177 and 1178–1180; the flag-1 water ids in the data are 1170, 1171, 1173 and 1182–1190 (`water.md` §8.2). (5) "Future `appearance.md`" is stale (header, §3.1, §9.3, §12.4, §17); low priority while another writer owns it. (6) §5.3.1 noise N₁ narrates the client routine loop by loop (`srand(0)`, a per-index `rand` loop, a reverse swap loop); restate it as a functional definition of the tables in terms of the generator's output sequence (the constants may stay, decision 0012). (7) The §11.3 table row "Lit: opaque, or cut-out" contradicts the revised Decision at the end of §11.3 (source-alpha blend, transparent pass unless the output alpha is 1 by construction). (8) The §1 legend does not define the marks BIN and Decision used in MA21–MA33 and the text. (9) Minor: §18 counts 522 unlit blended records without an opacity source, §20.1 counts 530. Spot checks that matched (independent decoder): every 0x31 (sizes 18 + 4n, counts 6/13,691/82/2, `tail`, `binding_key`), 0x30 (24,091 in general, zero leftover, entry-count and curve-mode census, 17,608 + local unsorted) and 0x2B record (zero leftover, 9,832 declarations by group, 29 without parameters, permutation kinds, 541 without programs, 105,119 samplers, 78,326 texture bindings in range, extra items and 121,965 arrays with n = 1, every render-state census figure of §7.6, 4004/1043 in 307 records), MA19 (95 flag-1 ids, 53 flag-0, none mixed). |
+| **Review record** | Third review 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` or `crates/material` (decoders for prefixes 0x31, 0x30 and 0x2B), `crates/material` (effective parameter set, texture roles, feature flags, dye), `crates/render` (pipeline selection from feature flags), explorer material inspector and dye preview |
 | **Companion specs** | `texture-list.md` (a texture slot names a 0x40 texture list; level selection and highres fallback). `records.md` §1 (primitives), §5 (0x41 surfaces). `dat-container.md` (routing). `mesh.md` (mesh record layout; only the surface list is used here). [`setup.md`](setup.md) §8 (normative for the 0x20 worn-appearance layout) and [`appearance.md`](appearance.md) §4.9–§4.10 (dyes and material groups of worn items); only the parts needed for material binding are repeated here, §9.3. [`lighting.md`](lighting.md) (passes, lighting equation and engine inputs that use these parameters; §4.4 colour encodings). [`terrain-texturing.md`](terrain-texturing.md) (terrain layers use the same transform and parameters, §6.3, §8.2). [`water.md`](water.md) §8 (water parameters). |
 
@@ -726,6 +726,11 @@ the base-colour layer uses matrix 0 and the second colour layer matrix 1, both a
 the same vertex UV pair; the normal map uses the base-colour coordinates (`lighting.md`
 §5.2.1, BIN).
 
+> **OPEN:** The matrix used by the other samplers in the colour passes (3013 `Glow`, 3018
+> `Emissive` / `EmissiveAndOpacity`) is not stated, and in four records some permutations
+> (glow, depth, shadow-depth, view-normal passes) bind the second set to their own matrix 0
+> (§7.3: `slot` belongs to one permutation). See §18 (texture-matrix index per permutation).
+
 **Composition (BIN-T (a), MA27).** The client builds each texture matrix from its seven
 values (§7.3), each a float curve evaluated at the clock of §5.3.1. From the input
 coordinates (u, v), in this order:
@@ -1411,6 +1416,17 @@ Added by the clean-room implementation of the 2026-10-05 revisions (`crates/mate
 > source without a texture). Such a surface goes to the transparent pass. "Opaque by
 > construction" is: no §11.2 source and effective 2000 alpha ≥ 1 (a non-finite alpha counts
 > as below 1). Undeclared 2000 counts as alpha 1.
+>
+> **OPEN (for §20.1, raised in review 2026-10-06):** does the 3020 `OpacityAlpha` or 3018
+> `EmissiveAndOpacity` alpha reach the lit base pass's output alpha (`lighting.md` §5.12)
+> when the 3000 role carries no opacity? §11.3's literal text puts a lit surface with an
+> opaque 3000 role (`Color`, `ColorAndGloss`, `ColorAndDye`) and 2000 alpha 1 in the opaque
+> pass, the cut-out coming from the alpha test alone; the Decision above sends it to the
+> sorted transparent pass. A reviewer census (not re-checked by the implementer) counts
+> 134 such surface records: 130 with 3020 and base `ColorAndDye` (0x2B00072C 60,
+> 0x2B000754 24, 0x2B000A1F 19, 0x2B000A17 13, 0x2B00076E 9, 0x2B00080E 5), all
+> alpha-tested, and 4 with 3018 and base `ColorAndGloss` (0x2B000772), 2 of them without
+> alpha test. The code keeps the Decision until §20.1 answers.
 
 > **OPEN (Decision):** Two colour layers (§11.2): the second opacity slot is 3001 when the
 > opacity (or the blend's source alpha) comes from slot 3000, the 3000 role contains
@@ -1430,6 +1446,53 @@ Added by the clean-room implementation of the 2026-10-05 revisions (`crates/mate
 > zero or non-finite `period`) is treated like *p* ≤ 0 (*p* = 0.1). The |*t*| > 3,600
 > reduction of step 1 is applied to mode 10 as well, as the section's structure says
 > ("for the other modes").
+
+Added by the clean-room implementation of M4.5 (`crates/material` modules `transform`,
+`inputs`, `water`, 2026-10-06). Each is an engineering choice where the text is silent:
+
+> **OPEN:** The texture-matrix index of §7.3 (the binding `slot`) is per permutation, but
+> §8.4 and `lighting.md` §5.2.1 describe one matrix layout per record. On the reference
+> install four records (0x2B000765, 0x2B000772, 0x2B0009CE, 0x2B0009CF) have permutations
+> (one without programs whose only sampler is a glow texture, and others) that bind the
+> second set's parameters (1003, 1004, 1019, 1020, 1034, 1072, 1073) to their matrix 0,
+> while their colour passes bind the first set there: 35 (matrix, value) pairs have two
+> candidates. Permutations whose own table differs from the record-wide one: 0x2B000765 7
+> (1, 19, 39, 85, 131, 149, 169), 0x2B000772 20 (pass codes 0x08 glow, 0x09 depth, 0x0A
+> shadow depth, 0x42 view normal; in 0x42 set 0 is also bound to matrix 1), 0x2B0009CE 6,
+> 0x2B0009CF 6. The implementation (revised after review, 2026-10-06) keeps one table per
+> permutation (`TextureMatrixLayout::for_permutation` / `evaluate_for`, and
+> `MaterialLibrary::permutation_texture_matrices`), so a pass can use the transform its own
+> permutation binds. It also keeps a record-wide table for callers that do not track
+> permutations: per (matrix, value), the parameter named by the most bindings (ties to the
+> one met first in stored order), which gives the first set on matrix 0 in all four (the
+> colour passes). Open: whether the per-permutation reading is the client's (it follows
+> §7.3, where `slot` belongs to one permutation), and which matrix each non-colour sampler
+> uses **in the colour passes**: §8.4 states only base colour → matrix 0 and second colour
+> layer → matrix 1; 3013 `Glow` (`lighting.md` §5.9) and 3018 `Emissive` /
+> `EmissiveAndOpacity` are not covered. In 9 of the 10 surface records that use these four
+> shader records, set 0 and set 1 differ (for example 0x3100422A: set 0 identity, set 1
+> scale 0.5 with sine-animated 1019/1020), so the answer changes what is drawn. 407
+> matrices carry semantics 38–44 (as §7.3 says), 393 of them in permutations with
+> programs.
+
+> **OPEN (Decision):** Values handed to a renderer are finite. A non-finite clock leaves a
+> mode-10 curve's state untouched (a running curve returns its last value, a fresh one the
+> value at its start), so one bad tick neither restarts nor freezes it and a start time
+> cannot become NaN; the other modes are evaluated at 0 (revised after review,
+> 2026-10-06: reading the clock as 0 made a running loop-0 curve look like a clock going
+> backwards and froze it at its start value). An animated 1043 whose value is non-finite
+> falls back like a non-finite constant one (§18, alpha-test threshold), not to 0. A NaN
+> curve result becomes 0
+> and an infinite one the largest finite f32 of its sign; colours are treated the same
+> way. §5.3.1 lets mode 8 overflow on finite data: with `w[9]` ≠ 0, *G* grows with time
+> and the weights 2^(−*H*·*i*) reach infinity (an amplitude of 0 then gives NaN). What the
+> original does then is not stated; on the reference install no effective curve of a
+> surface record is non-finite at 0, 1.5, 37.25 or 3,700 s.
+
+> **OPEN (Decision):** Specular colour when a shader record declares 1000 but not 2001
+> (never observed, §8.3 says they are always declared together): white × the per-object
+> tint, then black below power 0.5 as usual. The program time of `lighting.md` §4.2 E20
+> is 0 for a negative or non-finite clock.
 
 <a id="s19"></a>
 ## 19. Open items raised by the explorer mesh viewer (clean room, 2026-10-04)

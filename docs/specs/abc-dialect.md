@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-05 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), 2026-10-05: changes requested (§9.5 OPEN source, §13.2 operation-order claim, §4 digit-run limit; minor: MA trial labels vs §12 row IDs, §9.4 packed word). Revised 2026-10-05 by the spec writer (dirty room) to address every item; see the change log. Claude review session (spec-writer agent), re-review 2026-10-05: **accepted** — every §5.3 item passes; repairs spot-checked against the install and the executable (enum mappers 0x2300015E / 0x230000AF, the owner's key-mapping file, the §4.1 number branch, the §8.2 operation order and the §13.2 order table, the §9.4 packing, the §5.4 defaults). |
+| **Review record** | Re-review 2026-10-05: **accepted**. Full record moved to the review log (decision 0018). |
 | **Implements into** | `tessera-audio::abc` (`crates/audio`, M6): file lookup, text decoding, tokenizer, part selection, field and music reader, timing, note-event list, error reporting; `apps/client` (`/play`-style command, §11); `fuzz/` (one target for the reader: arbitrary bytes in, events or an error out); a conformance test suite built from §12 |
 | **Companion specs** | [`install-layout.md`](install-layout.md) §8.1 (settings folder that holds `Music/`). [`string-table.md`](string-table.md) §7, §9 (rendering a table entry with arguments, named tables). [`records.md`](records.md) §1.5 (name hash), §8 (DID maps). `instruments.md` and `sound.md` (not yet written: which sample each pitch slot plays, octave per instrument, volume curve, release). |
 

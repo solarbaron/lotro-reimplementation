@@ -1226,6 +1226,7 @@ pub fn build_character(
             notes,
             dyes: Vec::new(),
             started,
+            collision: Vec::new(),
         },
         mats,
         job,

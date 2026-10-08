@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-07 (items answered or narrowed from the client) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-07 (items answered or narrowed from the client; M7 items O70–O73 added) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -53,6 +53,10 @@ marks the item **done** here.
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still |
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look |
 | [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O21, O22, O26 partly answered (2026-10-07); the others open (M4.5) |
+| [O70](#o70) | Player movement speeds and turn rate (test-server movement limits) | `test-server.md` §4.5, §8.3; `tessera-protocol.md` §8.3 | In-game `/loc`, stopwatch | open (M7) |
+| [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7) |
+| [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7) |
+| [O73](#o73) | Range of local "say" chat (optional) | `test-server.md` §4.6, §9 | Two characters, `/loc` | open (M7, optional) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O14, O16; criterion 3 (worn and held
@@ -63,6 +67,11 @@ M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md
 criterion 4 (walking on collision): O18, O19; criterion 6 (visual checklist): O20 (terrain,
 scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
 fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
+
+M7 items O70–O73 tune defaults of Tessera's own protocol and test server so that movement
+feels like the original; no M7 exit criterion waits on them ([ROADMAP M7
+status](../ROADMAP.md#m7-status)). They are numbered from O70 because other milestone
+branches added items at the same time (M4.5 uses O18–O27); they keep their numbers.
 
 ---
 
@@ -844,3 +853,64 @@ shadows onto the terrain (hills shading valleys).
 
 **Record:** distances (to 100 m) of each visible change; visible seam yes/no; moves with the
 camera yes/no; road edge sharp/soft; sheen yes/no per row; landscape shadow yes/no.
+
+---
+
+<a id="m7-items"></a>
+<a id="o70"></a>
+## O70. Player movement speeds and turn rate (M7)
+
+**Spec:** `test-server.md` §4.5 and §8.3 (movement validation and its tolerances),
+`tessera-protocol.md` §8.3, and the load tool's bot speeds (`test-server.md` §13.1). The specs
+currently use the walker's 2 m/s walk and 6 m/s run (`walker.md`). Overlaps with
+[O14](#o14) item O14.4 and [O18](#o18) step 1 (M4.5); one set of readings answers all three.
+
+**What to do:** on flat open ground, type `/loc`, move straight for a timed 10 s, type `/loc`
+again. Do this for walking forward, running forward, walking backward, and strafing if the
+client has a strafe move. Then turn in place with the keyboard for one full turn (360°) and
+time it.
+
+**Record:** metres per second per gait (forward walk, forward run, backward, strafe or "no
+strafe"); degrees per second for the keyboard turn; whether the speeds seem to differ by
+species (if so, per species).
+
+<a id="o71"></a>
+## O71. How other players' characters move when watched (M7)
+
+**Spec:** `tessera-protocol.md` §8.6 (snapshot interpolation and its recommended delay, now
+about 167 ms at the default rates) and the client's remote-character placement
+(`walker.md` §10.8).
+
+**What to do:** watch another player's character for a few minutes in a busy place: while it
+walks, runs, stops, turns sharply and turns on the spot. An informal look is enough; a short
+video may be kept privately, never in the repository.
+
+**Record:** yes/no answers: does it trail its true position smoothly, or snap after stopping
+or turning; does it turn on the spot with a stepping animation or rotate rigidly; does it
+slide or stutter at a normal latency. Rough delays in milliseconds where you can judge them.
+
+<a id="o72"></a>
+## O72. Distance at which other player characters appear and disappear (M7)
+
+**Spec:** `tessera-protocol.md` §9 (interest management by landblock: radius 2 blocks with a
+one-block margin before an entity leaves) and `test-server.md` §8.2.
+
+**What to do:** in open terrain, with a second account or a friend, stand still and let the
+other character walk straight away from you until it vanishes, then walk back until it
+appears again. Take `/loc` readings of both characters at the moment it vanishes and at the
+moment it appears.
+
+**Record:** the distance in metres (or landblocks, from the two `/loc` readings) for
+disappearing and for appearing again; whether the two differ (hysteresis).
+
+<a id="o73"></a>
+## O73. Range of local "say" chat (M7, optional)
+
+**Spec:** `test-server.md` §4.6 (`[chat] say_range_m`) and §9 (chat relay).
+
+**What to do:** with two characters, one speaks on the local "say" channel while the other
+moves away in steps; note where the lines stop arriving. Repeat for an emote if emote text
+seems to have its own range.
+
+**Record:** metres only (from `/loc`), for say and, if different, for emote text. **Do not
+record any chat text.**

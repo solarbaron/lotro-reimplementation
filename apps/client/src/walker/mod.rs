@@ -36,6 +36,7 @@
 
 pub(crate) mod boot;
 pub mod characters;
+pub mod chat;
 pub(crate) mod controls;
 pub mod env;
 pub mod farband;
@@ -126,6 +127,27 @@ pub trait WalkerSession {
     /// call. The default has none.
     fn drain_entity_events(&mut self, out: &mut Vec<Event>, max: usize) {
         let _ = (out, max);
+    }
+    /// The interpolated state of a networked entity at `now` (a remote session,
+    /// `tessera-protocol.md` §8.6); `None` keeps the walker's extrapolation of its moves
+    /// (the sandbox, the default).
+    fn sample_entity(&self, id: EntityId, now: Instant) -> Option<tessera_net::interp::Sample> {
+        let _ = (id, now);
+        None
+    }
+    /// Connection state for the HUD. The default has none.
+    fn net_status(&self) -> Option<crate::net::NetStatus> {
+        None
+    }
+    /// Appends the chat lines received since the last call. The default has none.
+    fn drain_chat(&mut self, out: &mut Vec<crate::net::ChatLine>) {
+        let _ = out;
+    }
+    /// Says `text` on the local channel; `false` when it was not sent (not in the world).
+    /// The default sends nothing.
+    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
+        let _ = (now, text);
+        false
     }
 }
 
@@ -612,6 +634,10 @@ pub struct Walker {
     indoor: Option<(LandblockKey, Instant, IndoorInputs)>,
     /// Visibility cells drawn in the last frame from inside (HUD).
     interior_drawn: Option<usize>,
+    /// Chat overlay and input (M7).
+    chat: chat::ChatOverlay,
+    /// The HUD's network line (M7).
+    net_line: Option<String>,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -851,6 +877,8 @@ impl Walker {
             indoor_pids,
             indoor: None,
             interior_drawn: None,
+            chat: chat::ChatOverlay::default(),
+            net_line: None,
         })
     }
 
@@ -858,14 +886,17 @@ impl Walker {
     /// §14.2–§14.3): `[` and `]` move the time of day by a 24th of a day, `\` stops and
     /// restarts the clock, `-` and `=` halve and double its rate; F5–F11 switch the
     /// terrain layers, shadows, water, sky, generated scenery, frills and per-class
-    /// distances. A key that the keymap binds to an action is left to the keymap.
+    /// distances. A key that the keymap binds to an action is left to the keymap. The
+    /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
         use tessera_input::KeyCode as K;
-        if let RawEvent::Key {
-            key,
-            pressed: true,
-            repeat: false,
-        } = event
+        // While the chat input is open, keys are typed text, not walker keys.
+        if !self.chat.is_open()
+            && let RawEvent::Key {
+                key,
+                pressed: true,
+                repeat: false,
+            } = event
             && !self.taken_keys.contains(key)
         {
             match key {
@@ -891,7 +922,7 @@ impl Walker {
                 _ => {}
             }
         }
-        self.controls.handle(event);
+        chat::route(&mut self.chat, &mut self.controls, event);
     }
 
     /// Switches system `s` on or off at run time.
@@ -1119,6 +1150,15 @@ impl Walker {
             self.player_region,
             now,
         );
+        if let Some(w) = world.as_deref() {
+            self.characters
+                .apply_samples(&|id| w.sample_entity(id, now), self.player_region, now);
+            // Remote sessions only: the sandbox's HUD (and its screenshots) stay as they were.
+            self.net_line = w
+                .net_status()
+                .filter(|s| s.link.is_some())
+                .map(|s| hud::net_line(&s));
+        }
         let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
         // Input and movement: walk mode on collision once the mover has loaded.
@@ -1328,6 +1368,30 @@ impl Walker {
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
 
+        let mut chat_in = Vec::new();
+        let mut unsent = None;
+        if let Some(w) = world.as_deref_mut() {
+            w.drain_chat(&mut chat_in);
+            while let Some(text) = self.chat.take_outgoing() {
+                if !w.send_chat(now, &text) {
+                    unsent = Some("Not in the world: chat not sent");
+                }
+            }
+        } else if self.chat.take_outgoing().is_some() {
+            unsent = Some("Not connected: chat not sent");
+        }
+        let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
+        if self
+            .chat
+            .receive(&chat_in, self.net_line.is_some(), notice, now)
+        {
+            self.notice = None;
+        }
+        if let Some(text) = unsent {
+            self.chat.push_local(text, now);
+        }
+        let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
+        self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {
             self.report_move(w, now);
         }
@@ -1814,6 +1878,9 @@ impl Walker {
             ),
             WHITE,
         ));
+        if let Some(net) = &self.net_line {
+            out.push((net.clone(), GREY));
+        }
         let Some(pos) = self.focus() else {
             let s = lock(&self.shared);
             let what = match (&s.places, s.focus_request) {
@@ -2241,6 +2308,10 @@ impl Walker {
         if self.config.hud {
             self.hud.draw(overlay, 10.0, 10.0);
         }
+        // The chat stays visible while its input is open, even without the HUD.
+        if self.config.hud || self.chat.is_open() {
+            self.chat.draw(overlay, 10.0, h as f32 - 10.0);
+        }
         if let (true, Some(pos), Some(anchor)) = (self.config.hud, self.focus(), self.anchor) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
@@ -2369,6 +2440,7 @@ impl Walker {
         self.terrain.shutdown();
         self.clear_all(renderer);
         self.hud.release(renderer);
+        self.chat.release(renderer);
         if let Some(m) = self.avatar.take() {
             renderer.destroy_mesh(m);
         }

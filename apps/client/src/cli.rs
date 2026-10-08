@@ -320,14 +320,266 @@ pub struct Args {
     /// Run scripted walks headless, without a GPU, on the collision walk mode, then exit:
     /// a walk file (`docs/checklists/m4-5-visual.md` §2.1 file form) or a Markdown text
     /// holding the walk table (the checklist itself runs all its walks). Fails when a walk
-    /// fails its expected outcome.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["screenshot", "fly_path", "duration", "showcase", "smoke", "no_data"])]
+    /// fails its expected outcome. The walks run offline, so `--server` does not apply.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["screenshot", "fly_path", "duration", "showcase", "smoke", "no_data", "server"])]
     pub walk_path: Option<PathBuf>,
 
     /// Write the `--walk-path` movement log (one CSV row per 1/60 s step: position, state,
     /// cell, contacts) to this file.
     #[arg(long, value_name = "CSV", requires = "walk_path")]
     pub walk_log: Option<PathBuf>,
+
+    // ----- Tessera test server (M7) -----
+    /// Play on a Tessera test server instead of the built-in sandbox: `HOST:PORT` or a
+    /// connect string `tessera://HOST:PORT[?pin=sha256:...]`. The password comes from
+    /// `TESSERA_PASSWORD` or a prompt, never from the command line. The server places
+    /// the character, so the sandbox's `--spawn`, `--place` and `--crowd` options do not
+    /// apply.
+    #[arg(
+        long,
+        value_name = "HOST:PORT",
+        value_parser = parse_server,
+        requires = "account",
+        conflicts_with_all = ["spawn", "place", "crowd", "crowd_spacing", "crowd_ahead"]
+    )]
+    pub server: Option<String>,
+
+    /// The server key's fingerprint (`sha256:` and 64 hex digits) to trust; without it,
+    /// the known-servers file decides. A pin in the connect string must be the same.
+    #[arg(long, value_name = "FP", value_parser = parse_fingerprint, requires = "server")]
+    pub server_fingerprint: Option<tessera_net::remote::Fingerprint>,
+
+    /// Known-servers file. Default: `known_servers` next to Tessera's settings file.
+    #[arg(long, value_name = "FILE", requires = "server")]
+    pub known_servers: Option<PathBuf>,
+
+    /// Trust an unknown server key on first use and record it in the known-servers file
+    /// (check the fingerprint the client logs with the operator first).
+    #[arg(long, requires = "server")]
+    pub trust_new_server: bool,
+
+    /// Account on the test server.
+    #[arg(long, value_name = "NAME", requires = "server")]
+    pub account: Option<String>,
+
+    /// Character to enter (default: the account's first).
+    #[arg(long, value_name = "NAME", requires = "server")]
+    pub character: Option<String>,
+}
+
+/// Environment variable the test-server password is read from (else a prompt).
+pub const PASSWORD_ENV: &str = "TESSERA_PASSWORD";
+
+/// Normalises a `--server` value to a connect string and checks it
+/// (`tessera-protocol.md` §4.4): `HOST:PORT` gets the `tessera://` scheme.
+pub fn parse_server(s: &str) -> Result<String, String> {
+    let t = s.trim();
+    let text = if t.starts_with("tessera://") {
+        t.to_owned()
+    } else {
+        format!("tessera://{t}")
+    };
+    tessera_net::remote::ConnectString::parse(&text)
+        .map(|_| text)
+        .map_err(|e| format!("not a server address (HOST:PORT or tessera://HOST:PORT): {e}"))
+}
+
+fn parse_fingerprint(s: &str) -> Result<tessera_net::remote::Fingerprint, String> {
+    tessera_net::remote::Fingerprint::parse(s.trim()).map_err(|e| e.to_string())
+}
+
+/// Builds the test-server settings from `--server` and friends (`None` without
+/// `--server`). The password is `env_password` when given (the caller reads
+/// [`PASSWORD_ENV`]), else what `prompt` returns.
+///
+/// # Errors
+///
+/// No account, a `--server-fingerprint` that differs from the connect string's pin
+/// (the pin is authoritative, `tessera-protocol.md` §4.5), or no password (empty, or the
+/// prompt failed).
+pub fn remote_settings(
+    args: &Args,
+    env_password: Option<String>,
+    prompt: impl FnOnce(&str) -> std::io::Result<String>,
+) -> anyhow::Result<Option<crate::net::RemoteSettings>> {
+    let Some(server) = args.server.clone() else {
+        return Ok(None);
+    };
+    let Some(account) = args.account.clone() else {
+        anyhow::bail!("--server needs --account");
+    };
+    if let (Some(fp), Ok(cs)) = (
+        args.server_fingerprint,
+        tessera_net::remote::ConnectString::parse(&server),
+    ) && cs.pin.is_some_and(|pin| pin != fp)
+    {
+        anyhow::bail!(
+            "--server-fingerprint {fp} differs from the pin in the connect string; the pin \
+             is authoritative, so give one fingerprint only"
+        );
+    }
+    let password = match env_password.filter(|p| !p.is_empty()) {
+        Some(p) => p,
+        None => prompt(&account)
+            .map_err(|e| anyhow::anyhow!("no password ({PASSWORD_ENV} unset): {e}"))?,
+    };
+    if password.is_empty() {
+        anyhow::bail!("empty password");
+    }
+    Ok(Some(crate::net::RemoteSettings {
+        server,
+        fingerprint: args.server_fingerprint,
+        known_servers: args
+            .known_servers
+            .clone()
+            .or_else(crate::net::default_known_servers),
+        accept_new_key: args.trust_new_server,
+        account,
+        password: tessera_net::remote::Password::new(password),
+        character: args.character.clone(),
+    }))
+}
+
+/// [`remote_settings`] with the password from [`PASSWORD_ENV`], else a prompt without echo
+/// on the terminal.
+///
+/// # Errors
+///
+/// As [`remote_settings`]; without a terminal and without the variable there is no
+/// password.
+pub fn remote_settings_from_env(args: &Args) -> anyhow::Result<Option<crate::net::RemoteSettings>> {
+    remote_settings(args, std::env::var(PASSWORD_ENV).ok(), read_password)
+}
+
+/// Longest password the prompt accepts, in bytes.
+pub const MAX_PASSWORD_BYTES: usize = 1024;
+
+/// Prompts for the password of `account` on standard error and reads one line from a
+/// terminal without echo. Fails when standard input is not a terminal.
+///
+/// On unix the terminal is switched to non-canonical mode with echo and signal keys off
+/// for the prompt ([`edit_password`] does the line editing: Ctrl-C, Ctrl-\\ and Ctrl-Z
+/// cancel, so the terminal is always restored), and a guard restores the saved mode on
+/// every return and on unwinding. On other platforms the prompt is refused (no echo
+/// control yet): set `TESSERA_PASSWORD`.
+///
+/// # Errors
+///
+/// Not a terminal (or not unix), cancelled, too long, not UTF-8, or reading failed.
+pub fn read_password(account: &str) -> std::io::Result<String> {
+    use std::io::IsTerminal as _;
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Err(std::io::Error::other(format!(
+            "standard input is not a terminal; set {PASSWORD_ENV}"
+        )));
+    }
+    read_password_tty(account, &stdin)
+}
+
+#[cfg(unix)]
+fn read_password_tty(account: &str, stdin: &std::io::Stdin) -> std::io::Result<String> {
+    use rustix::termios::{
+        LocalModes, OptionalActions, SpecialCodeIndex, Termios, tcgetattr, tcsetattr,
+    };
+    use std::io::{Read as _, Write as _};
+
+    /// Restores the saved terminal mode when dropped.
+    struct Restore<'a> {
+        stdin: &'a std::io::Stdin,
+        saved: Termios,
+    }
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            let _ = tcsetattr(self.stdin, OptionalActions::Now, &self.saved);
+        }
+    }
+
+    let saved = tcgetattr(stdin)?;
+    let mut raw = saved.clone();
+    raw.local_modes
+        .remove(LocalModes::ECHO | LocalModes::ICANON | LocalModes::ISIG);
+    raw.special_codes[SpecialCodeIndex::VMIN] = 1;
+    raw.special_codes[SpecialCodeIndex::VTIME] = 0;
+    eprint!("Password for {account}: ");
+    let _ = std::io::stderr().flush();
+    let guard = Restore { stdin, saved };
+    tcsetattr(stdin, OptionalActions::Now, &raw)?;
+    let r = edit_password(stdin.lock().bytes());
+    drop(guard);
+    eprintln!();
+    r
+}
+
+#[cfg(not(unix))]
+fn read_password_tty(_account: &str, _stdin: &std::io::Stdin) -> std::io::Result<String> {
+    Err(std::io::Error::other(format!(
+        "the password prompt cannot hide typing on this platform; set {PASSWORD_ENV}"
+    )))
+}
+
+/// The prompt's line editor over raw terminal bytes (echo, canonical mode and signal keys
+/// off): Enter (CR or LF) ends the line, Backspace (DEL or BS) deletes one character,
+/// Ctrl-U clears the line, Ctrl-C, Ctrl-\\ and Ctrl-Z cancel, Ctrl-D or the end of input
+/// on an empty line is an error, other control bytes are ignored. At most
+/// [`MAX_PASSWORD_BYTES`] are kept.
+///
+/// # Errors
+///
+/// Cancelled ([`std::io::ErrorKind::Interrupted`]), no input
+/// ([`std::io::ErrorKind::UnexpectedEof`]), too long or not UTF-8
+/// ([`std::io::ErrorKind::InvalidData`]), or the read error.
+pub fn edit_password(
+    bytes: impl IntoIterator<Item = std::io::Result<u8>>,
+) -> std::io::Result<String> {
+    use std::io::{Error, ErrorKind};
+    let mut buf: Vec<u8> = Vec::new();
+    let mut too_long = false;
+    let mut ended = false;
+    for b in bytes {
+        match b? {
+            b'\r' | b'\n' => {
+                ended = true;
+                break;
+            }
+            0x03 | 0x1c | 0x1a => {
+                return Err(Error::new(
+                    ErrorKind::Interrupted,
+                    "password prompt cancelled",
+                ));
+            }
+            0x04 if buf.is_empty() => break,
+            0x04 => {
+                ended = true;
+                break;
+            }
+            0x7f | 0x08 => {
+                // One UTF-8 character: continuation bytes, then the lead byte.
+                while let Some(last) = buf.pop() {
+                    if last & 0xC0 != 0x80 {
+                        break;
+                    }
+                }
+            }
+            0x15 => {
+                buf.clear();
+                too_long = false;
+            }
+            c if c < 0x20 => {}
+            c if buf.len() < MAX_PASSWORD_BYTES => buf.push(c),
+            _ => too_long = true,
+        }
+    }
+    if !ended && buf.is_empty() {
+        return Err(Error::new(ErrorKind::UnexpectedEof, "no password typed"));
+    }
+    if too_long {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("password longer than {MAX_PASSWORD_BYTES} bytes"),
+        ));
+    }
+    String::from_utf8(buf).map_err(|_| Error::new(ErrorKind::InvalidData, "password is not UTF-8"))
 }
 
 fn parse_systems_arg(s: &str) -> Result<crate::walker::fxparse::SystemList, String> {
@@ -633,6 +885,188 @@ mod tests {
     }
 
     #[test]
+    fn server_args() {
+        let fp = "sha256:06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9";
+        let a = Args::try_parse_from([
+            "t",
+            "--server",
+            "127.0.0.1:47000",
+            "--account",
+            "alice",
+            "--server-fingerprint",
+            fp,
+            "--character",
+            "Aldith",
+        ])
+        .expect("server args");
+        assert_eq!(a.server.as_deref(), Some("tessera://127.0.0.1:47000"));
+        assert_eq!(
+            a.server_fingerprint.map(|f| f.to_string()).as_deref(),
+            Some(fp)
+        );
+        // The account is required; the other options need --server; no password option.
+        assert!(Args::try_parse_from(["t", "--server", "127.0.0.1:1"]).is_err());
+        assert!(Args::try_parse_from(["t", "--account", "alice"]).is_err());
+        assert!(Args::try_parse_from(["t", "--trust-new-server"]).is_err());
+        assert!(
+            Args::try_parse_from(["t", "--server", "h:1", "--account", "a", "--password", "x"])
+                .is_err()
+        );
+        assert!(Args::try_parse_from(["t", "--server", "nohost", "--account", "a"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "t",
+                "--server",
+                "h:1",
+                "--account",
+                "a",
+                "--server-fingerprint",
+                "x"
+            ])
+            .is_err()
+        );
+        let pinned = format!("tessera://[2001:db8::1]:47000?pin={fp}");
+        let a = Args::try_parse_from(["t", "--server", &pinned, "--account", "a"]).unwrap();
+        assert_eq!(a.server.as_deref(), Some(pinned.as_str()));
+    }
+
+    #[test]
+    fn remote_settings_take_the_password_from_env_or_prompt() {
+        let none = Args::try_parse_from(["t"]).unwrap();
+        assert!(
+            remote_settings(&none, None, |_| unreachable!())
+                .unwrap()
+                .is_none()
+        );
+        let a = Args::try_parse_from([
+            "t",
+            "--server",
+            "127.0.0.1:47000",
+            "--account",
+            "alice",
+            "--known-servers",
+            "/x/known",
+        ])
+        .unwrap();
+        let s = remote_settings(&a, Some("from env".into()), |_| unreachable!())
+            .unwrap()
+            .unwrap();
+        assert_eq!(s.password.expose(), "from env");
+        assert_eq!(
+            s.known_servers.as_deref(),
+            Some(std::path::Path::new("/x/known"))
+        );
+        assert!(
+            !format!("{s:?}").contains("from env"),
+            "password never in Debug"
+        );
+        let s = remote_settings(&a, Some(String::new()), |acct| {
+            assert_eq!(acct, "alice");
+            Ok("typed".into())
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(s.password.expose(), "typed");
+        assert!(remote_settings(&a, None, |_| Err(std::io::Error::other("no tty"))).is_err());
+        assert!(remote_settings(&a, None, |_| Ok(String::new())).is_err());
+        let cfg = s.config().expect("config");
+        assert!(cfg.server.pin.is_none());
+    }
+
+    #[test]
+    fn server_conflicts_with_sandbox_spawn_and_crowd() {
+        let base = ["t", "--server", "127.0.0.1:1", "--account", "a"];
+        for extra in [
+            &["--place", "Bree"][..],
+            &["--spawn", "1,100,150"],
+            &["--crowd", "50"],
+            &["--crowd-spacing", "2"],
+            &["--crowd-ahead", "4"],
+        ] {
+            let mut argv = base.to_vec();
+            argv.extend_from_slice(extra);
+            assert!(
+                Args::try_parse_from(&argv).is_err(),
+                "{extra:?} with --server"
+            );
+        }
+        // Walker-side options still apply.
+        let mut argv = base.to_vec();
+        argv.extend_from_slice(&["--heading", "90", "--avatar", "elf,f"]);
+        assert!(Args::try_parse_from(&argv).is_ok());
+    }
+
+    #[test]
+    fn a_fingerprint_must_agree_with_the_pin() {
+        let aaa = "sha256:06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9";
+        let bbb = "sha256:16e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9";
+        let pinned = format!("tessera://127.0.0.1:1?pin={aaa}");
+        let parse = |fp: &str| {
+            Args::try_parse_from([
+                "t",
+                "--server",
+                &pinned,
+                "--account",
+                "a",
+                "--server-fingerprint",
+                fp,
+            ])
+            .unwrap()
+        };
+        let err = remote_settings(&parse(bbb), Some("pw".into()), |_| unreachable!())
+            .expect_err("conflicting fingerprints");
+        assert!(err.to_string().contains("authoritative"), "{err}");
+        let same = remote_settings(&parse(aaa), Some("pw".into()), |_| unreachable!())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            same.config()
+                .unwrap()
+                .server
+                .pin
+                .map(|p| p.to_string())
+                .as_deref(),
+            Some(aaa)
+        );
+        // The settings refuse the conflict too (callers that build them directly).
+        let mut direct = same.clone();
+        direct.fingerprint = Some(tessera_net::remote::Fingerprint::parse(bbb).unwrap());
+        assert!(direct.config().is_err());
+    }
+
+    fn typed(bytes: &[u8]) -> std::io::Result<String> {
+        edit_password(bytes.iter().map(|&b| Ok(b)))
+    }
+
+    #[test]
+    fn the_password_editor_handles_keys_and_cancels() {
+        use std::io::ErrorKind;
+        assert_eq!(typed(b"hunter2\n").unwrap(), "hunter2");
+        assert_eq!(typed(b"hunter2\r").unwrap(), "hunter2");
+        assert_eq!(typed(b"huntex\x7f\x7fr2\r").unwrap(), "huntr2");
+        assert_eq!(
+            typed("pässwörd\x7f\x7f\x7fd\n".as_bytes()).unwrap(),
+            "pässwd"
+        );
+        assert_eq!(typed(b"junk\x15real\n").unwrap(), "real");
+        assert_eq!(typed(b"a\x1b[Ab\n").unwrap(), "a[Ab", "controls ignored");
+        assert_eq!(typed(b"abc\x04").unwrap(), "abc");
+        assert_eq!(typed(b"abc").unwrap(), "abc", "end of input after text");
+        // Ctrl-C, Ctrl-\ and Ctrl-Z cancel (signals are off while the prompt is open).
+        for cancel in [b"abc\x03".as_slice(), b"\x1c", b"x\x1a\n"] {
+            assert_eq!(typed(cancel).unwrap_err().kind(), ErrorKind::Interrupted);
+        }
+        assert_eq!(typed(b"").unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        assert_eq!(typed(b"\x04").unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        let long = vec![b'a'; MAX_PASSWORD_BYTES + 1];
+        assert_eq!(typed(&long).unwrap_err().kind(), ErrorKind::InvalidData);
+        assert_eq!(typed(&long[1..]).unwrap().len(), MAX_PASSWORD_BYTES);
+        assert_eq!(typed(b"\xff\n").unwrap_err().kind(), ErrorKind::InvalidData);
+        let failing = [Ok(b'a'), Err(std::io::Error::other("tty gone"))];
+        assert_eq!(edit_password(failing).unwrap_err().to_string(), "tty gone");
+    }
+
+    #[test]
     fn walk_path_args() {
         let a = Args::try_parse_from(["t", "--walk-path", "w.txt", "--walk-log", "w.csv"])
             .expect("walk path");
@@ -642,6 +1076,11 @@ mod tests {
         assert!(Args::try_parse_from(["t", "--walk-path", "w", "--screenshot", "a.png"]).is_err());
         // The walks need the install: never silently the windowed test scene instead.
         assert!(Args::try_parse_from(["t", "--no-data", "--walk-path", "w"]).is_err());
+        // Offline walks: never silently instead of joining a test server.
+        assert!(
+            Args::try_parse_from(["t", "--server", "h:1", "--account", "a", "--walk-path", "w"])
+                .is_err()
+        );
     }
 
     #[test]

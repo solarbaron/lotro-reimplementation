@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-protocol"
+description = "Tessera's own wire protocol: message schema, framing, versioning and handshake (no I/O)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Shared crypto and transport helpers (decision 0030): server key generation and key files,
+# the rustls configurations with the pinned-fingerprint server verifier, and the quinn
+# configurations of tessera-protocol.md §2.1. Off by default so the codec, the state
+# machines and the fuzz targets build without TLS, QUIC or an async runtime. The server
+# and the tessera-net test-server backend turn it on.
+transport = ["dep:rustls", "dep:rcgen", "dep:quinn"]
+
+[dependencies]
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+quinn = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+
+[lints]
+workspace = true

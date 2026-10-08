@@ -101,9 +101,18 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   the M4.5 re-verification results were measured with them in the tree. Do not re-run the
   milestone workflow for implementer tasks until its task text carries only the task, spec
   paths and review status. M5 waits.
+- **M7 (branch `m7`, built in parallel with M4.5–M6, verified 2026-10-07):** Tessera's own
+  protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
+  decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
+  `apps/loadtest`, the `tessera-net` `remote` backend and `tessera-client --server`.
+  Criteria 2–4 pass; criterion 1 passes on one machine (one-hour soaks in-process and across
+  a container network: 0 desync, no leak). Open: a soak between two machines on a LAN, the
+  owner's confirmation of LEGAL.md §11.1 before any public test build, re-running the soaks
+  from the merge commit, and the review notes in `tessera-protocol.md` §17 and
+  `test-server.md` §15. Evidence: ROADMAP M7 status and `docs/perf/m7-soak.md`.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
-  O18–O27). They do not block the Tessera-side work.
+  O18–O27, M7 items O70–O73). They do not block the Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
@@ -141,12 +150,15 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
-- `crates/net` — transport-agnostic session layer and a local sandbox backend
+- `crates/net` — transport-agnostic session layer, a local sandbox backend and the test-server backend (`remote`)
+- `crates/protocol` — Tessera's own network protocol: messages, framing, codec, session state machines, key pinning, QUIC setup
 - `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests)
 - `crates/script` — Lua 5.1 plugin host
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
 - `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`)
-- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test)
+- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test; `--server` joins a test server)
+- `apps/server` — `tessera-server`, the headless test server for Tessera's own protocol
+- `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests
 - `docs/specs` — clean-room specifications; `docs/decisions` — decision records;
   `docs/checklists` — visual/owner checklists; `docs/` — legal, process, roadmap, tooling, development
 - `research/` — dirty-room notes, the verified resource catalogue and `clones.txt`

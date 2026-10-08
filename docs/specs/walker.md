@@ -462,6 +462,45 @@ characters the same way when it is given wanderer appearances (the walker uses n
 Simulated characters stand on the walker's terrain (their height is the spawn's in the
 session).
 
+<a id="s10-8"></a>
+### 10.8 Test-server sessions (M7, implementer notes)
+
+What the client does with `--server` (`tessera-protocol.md`, Appendix A); these notes
+describe the implementation and list what it leaves open.
+
+- The session uses `tessera_net::remote::RemoteBackend` instead of the sandbox; the walker's
+  `WorldSource` still serves statics and placed figures (the protocol does not replicate
+  them, `tessera-protocol.md` §9.1). The password comes from `TESSERA_PASSWORD` or a
+  prompt without echo, never from the command line, and is never logged.
+- Networked characters are placed every frame at their interpolated state
+  (`tessera-protocol.md` §8.6, render time = estimated server time − *D*, *D* raised to
+  the server's recommended delay), instead of the sandbox path's extrapolation of the last
+  move (§10.5). They stand on the walker's terrain and are animated by ground speed as in
+  §10.5; a sample whose motion byte says Standing animates as standing.
+- A minimal chat overlay (last 8 lines, plain text) and a one-line input: Enter opens it,
+  Enter sends on Say, Escape cancels; the HUD shows backend, session state, round-trip
+  time, clock offset and the interpolation delay. M5 replaces this with the real chat
+  window.
+
+> **OPEN:** the motion byte's Backward flag and the Airborne gait, and the `STANCE` and
+> `EMOTE` properties (`tessera-protocol.md` §7.5), do not change a networked character's
+> animation yet: §10.5 has no backward playback, airborne clips, stance idle families or
+> emote clips. The walker plays locomotion by ground speed only.
+
+> **OPEN:** `--avatar` does not reach a test server: the avatar's appearance is the one the
+> server stores for the character (no `CharacterCreate` or `AppearanceSet` command in
+> `tessera-net`'s neutral `Command` set, `tessera-protocol.md` Appendix A OPEN).
+
+> **OPEN:** trust on first use (`tessera-protocol.md` §4.5) is not an in-connection
+> prompt: an unknown key fails as `KEY_UNKNOWN`, the client logs and shows the presented
+> fingerprint, and the user reconnects with `--server-fingerprint FP` (pin) or
+> `--trust-new-server` (accept and record it in `known_servers` next to Tessera's settings
+> file). Spec writer: confirm this counts as the user's acceptance, or specify a prompt.
+
+> **OPEN:** the chat input opens on the Enter key directly, not through the keymap's
+> `open_chat` action and `text_entry` context (`keymap.md`): the walker's controls do not
+> use contexts for text yet.
+
 ---
 
 <a id="s11"></a>
@@ -2457,6 +2496,7 @@ every day description (row W-E12).
 |---|---|
 | 2026-10-04 | §1–§9: M3 design (clean-room implementer). |
 | 2026-10-05 | §8.1, §10: M4 characters (clean-room implementer). |
+| 2026-10-07 | §10.8: test-server sessions, implementer notes and OPENs (clean-room implementer, M7). |
 | 2026-10-05 | Spec writer (dirty room): new §11 (the original's preference levels and built-in defaults, quality presets, landscape extent and the global distance limit, per-class object and character draw distances with fade and detail ranges, camera-state record layout and census, camera-state selection, third-person login placement and behaviour, default-settings profile for the walker, OPENs, corrections to other specs, invariants, worked examples); §9 draw-distance OPEN marked answered; header gains the §11 status and reviewer rows. §11 status: Review. |
 | 2026-10-05 | Spec writer (dirty room), answering the review of §11 (changes requested): §11.1 BIN-W gains a second M4 session with questions (g)–(i) and OBS-W the placement-level census; W1 extended (FrillDensity, PlayerCrowdQuality, DialBackGraphics), W5 cites (h), new rows W20–W26. §11.2: case-insensitive reading marked Tessera Decision. §11.3 step 3: the missing flag condition (*S* off, or *F* set and *V* > 0.99), where *F* and *V* come from, OPEN extended. §11.4 step 4 and §11.4.1: the no-class values now rest on BIN (render-component initial values, not the dictionary default); new §11.4.3 (how the class reaches the render component; census over all Physics SEDs; OPEN on SED versus 0x47 precedence with a Tessera Decision). §11.4.2: NPC class statement reworded with the census. §11.5.3: byte-layout tables for the type-2, type-3 and type-4 bodies. §11.7 steps 1–2: look-at height fallback, under-water switch *U* and the yaw rule with flags *R*, *X*, *P*, *Q* (BIN), three new OPEN callouts. §11.8 rows updated. §11.9: OPEN list extended; `Render_FarViewDistance` census corrected (384,845 SEDs, not 8). §11.10: corrections to `mesh.md` §8.5/§8.8 and `scenery.md` §9. §11.11: W-I7–W-I9. §11.12: fog-clip, class-resolution and yaw examples. §11 status stays Review. |
 | 2026-10-06 | New §14: world fidelity in the walker (M4.5; clean-room implementer): the lit world pass with texture layers, ceilings and the far band, objects by LOD class with fades, detail levels, lit surfaces and instancing, water, frills, sky, the clock and its controls, the switches, the default-settings profile as adopted, new frame-log columns and options, the checklist rows as rendered (§14.10a; performance in `docs/perf/reference-machine.md`), and the terrain job ranking, upload-budget start and far-band mask deferral found by the M3 flights. |

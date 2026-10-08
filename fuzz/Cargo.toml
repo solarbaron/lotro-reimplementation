@@ -35,6 +35,8 @@ tessera-terrain = { path = "../crates/terrain" }
 tessera-havok = { path = "../crates/havok" }
 tessera-anim = { path = "../crates/anim" }
 tessera-physics = { path = "../crates/physics" }
+tessera-protocol = { path = "../crates/protocol" }
+tessera-server = { path = "../apps/server" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -725,6 +727,82 @@ bench = false
 [[bin]]
 name = "client_interiors"
 path = "fuzz_targets/client_interiors.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-protocol (docs/specs/tessera-protocol.md, M7) ---
+
+[[bin]]
+name = "protocol_frame"
+path = "fuzz_targets/protocol_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_message"
+path = "fuzz_targets/protocol_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_datagram"
+path = "fuzz_targets/protocol_datagram.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_handshake"
+path = "fuzz_targets/protocol_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_fingerprint"
+path = "fuzz_targets/protocol_fingerprint.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-net test-server backend (docs/specs/tessera-protocol.md §13, M7) ---
+
+[[bin]]
+name = "net_remote_inbound"
+path = "fuzz_targets/net_remote_inbound.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_remote_world"
+path = "fuzz_targets/net_remote_world.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-server (docs/specs/test-server.md §10, tessera-protocol.md §13, M7) ---
+
+[[bin]]
+name = "server_connection"
+path = "fuzz_targets/server_connection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_world"
+path = "fuzz_targets/server_world.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_files"
+path = "fuzz_targets/server_files.rs"
 test = false
 doc = false
 bench = false

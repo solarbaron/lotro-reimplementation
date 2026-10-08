@@ -101,6 +101,14 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   the M4.5 re-verification results were measured with them in the tree. Do not re-run the
   milestone workflow for implementer tasks until its task text carries only the task, spec
   paths and review status. M5 waits.
+- **M6 audio and player music (branch m6, verified 2026-10-07):** done on Tessera's side.
+  Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
+  listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
+  decision 0010). Owner items: `docs/checklists/owner-observations.md` O28. Player music
+  (`/play`, `/playstart`, `/playlist`, `/playstop`, `/instrument`) is in
+  `apps/client/src/audio/player_music.rs`, reached through `tessera-client --music-command
+  "<line>"` (the M7 chat line does not route these commands yet). Merged with M4.5 and M7
+  on branch m6 (2026-10-08); M5 runs in a parallel worktree; M8 is gated.
 - **M7 (branch `m7`, built in parallel with M4.5–M6, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
   decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
@@ -112,7 +120,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `test-server.md` §15. Evidence: ROADMAP M7 status and `docs/perf/m7-soak.md`.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
-  O18–O27, M7 items O70–O73). They do not block the Tessera-side work.
+  O18–O27, M6 items O28, M7 items O70–O73). They do not block the Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review

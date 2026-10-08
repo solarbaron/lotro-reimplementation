@@ -12,8 +12,11 @@
 //!   `--fly-path --headless`, `--duration --headless`, and `--walk-path`, which needs no
 //!   GPU); [`avatar`] parses `--avatar`; [`walk_path`] parses the scripted walks of
 //!   `--walk-path` (`docs/checklists/m4-5-visual.md` §2.1).
+//! - [`audio`]: world audio for the walker (ROADMAP M6): the audio engine driven by the
+//!   script graphs (area music, ambience, positional emitters).
 
 pub mod app;
+pub mod audio;
 pub mod avatar;
 pub mod cli;
 pub mod data;

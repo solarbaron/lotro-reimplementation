@@ -177,6 +177,16 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
   work done on workers (worker / (worker + main thread)) and the character layer's longest
   frame.
 
+> **OPEN:** (M6 implementation, 2026-10-07; position updated when M6 merged with M4.5 and
+> M7, 2026-10-08) the walker's frame log gained four columns, appended last (after the
+> M4.5 columns of §14 that end in `frills_draw_ms`) so that existing readers of the earlier
+> columns keep working:
+> `audio_ms` (main-thread world-audio update), `audio_voices` (audible voices),
+> `audio_underruns` (device underruns so far, cumulative) and `mixer_load` (render time over
+> audio time of the last mixer call). With audio on, the summary also reports the mean and
+> longest audio update, the most audible voices, the underruns during the log and the
+> highest mixer load. The owner of this spec should fold them into the list above.
+
 <a id="s8"></a>
 ## 8. Verification (2026-10-04, this install, GTX 1070 Ti, Vulkan, release build)
 

@@ -251,6 +251,8 @@ fn world_record_kinds_are_decoded() {
         (0x3200_0000, DidKind::LodClassTable, "LOD-class table"),
         (0x3500_0000, DidKind::GameTime, "game time"),
         (0x6600_0001, DidKind::CollisionMesh, "collision mesh"),
+        // Decoded by `crate::SoundInfo` (`sound.md` §4, M6).
+        (0x2A00_0001, DidKind::SoundInfo, "sound info"),
     ];
     for (did, kind, name) in kinds {
         let did = Did(did);
@@ -266,7 +268,6 @@ fn world_record_kinds_are_decoded() {
         (0x14u8, DidKind::EncounterTable, "encounter table"),
         (0x21, DidKind::UiScene, "UI scene"),
         (0x27, DidKind::ImposterTable, "imposter table"),
-        (0x2A, DidKind::SoundInfo, "sound info"),
         (0x2D, DidKind::ComputeShader, "compute shader"),
         (
             0x39,

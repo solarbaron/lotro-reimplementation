@@ -39,6 +39,8 @@ pub struct HeadlessReport {
     pub placed: Vec<PlacedReport>,
     /// Character counters at the end.
     pub characters: crate::walker::characters::CharacterStats,
+    /// World audio at the end: counters and the music events (ROADMAP M6 criterion 2).
+    pub audio: Option<crate::audio::AudioReport>,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -246,6 +248,10 @@ fn finish(
         .collect();
     if let Some(d) = &report.description {
         tracing::info!("viewer at: {d}");
+    }
+    report.audio = walker.audio().map(crate::audio::WorldAudio::report);
+    if let Some(a) = &report.audio {
+        crate::audio::log_report(a);
     }
     if first_error.is_none()
         && let Some(path) = &args.screenshot

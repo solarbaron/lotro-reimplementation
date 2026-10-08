@@ -365,6 +365,40 @@ pub struct Args {
     /// Character to enter (default: the account's first).
     #[arg(long, value_name = "NAME", requires = "server")]
     pub character: Option<String>,
+
+    // ----- audio -----
+    /// Audio backend: `auto` (the output device, else silent mixing; the windowed
+    /// default), `device`, `null` (mixed and discarded; the default for `--headless` and
+    /// `--smoke`), `offline` (mixed into memory in real time, no device) or `off`. The
+    /// device needs a build with `--features audio-device`.
+    #[arg(long, value_name = "BACKEND", value_parser = parse_audio)]
+    pub audio: Option<crate::audio::backend::BackendChoice>,
+
+    /// Import the original client's `[Sound]` volumes, read-only: `auto` (the install's
+    /// settings folder) or the preferences file. Tessera's own `[audio]` values win.
+    #[arg(long, value_name = "auto|FILE")]
+    pub audio_prefs: Option<String>,
+
+    /// Where Tessera's own `[audio]` values come from: `user` (the settings file; the
+    /// windowed default), `default` (none; the `--headless` default, so runs do not depend
+    /// on the user's settings) or a settings file.
+    #[arg(long, value_name = "user|default|FILE")]
+    pub audio_settings: Option<String>,
+
+    /// Random seed of the sound scripts (default: 0 for `--headless`, the clock otherwise).
+    #[arg(long, value_name = "N")]
+    pub audio_seed: Option<u64>,
+
+    /// No positional emitters (static entities that make sound); music and ambience only.
+    #[arg(long)]
+    pub no_emitters: bool,
+
+    /// A player-music chat command (`/play <name> [<part>] [sync]`, `/playstart`,
+    /// `/playlist`, `/playstop`, `/instrument`), run in order once the archives are open;
+    /// its replies go to the chat log. Repeatable. (The M7 chat line does not route these
+    /// commands yet.)
+    #[arg(long = "music-command", value_name = "LINE")]
+    pub music_commands: Vec<String>,
 }
 
 /// Environment variable the test-server password is read from (else a prompt).
@@ -630,6 +664,10 @@ fn parse_rate(s: &str) -> Result<f64, String> {
     }
 }
 
+fn parse_audio(s: &str) -> Result<crate::audio::backend::BackendChoice, String> {
+    crate::audio::backend::BackendChoice::parse(s)
+}
+
 fn parse_spacing(s: &str) -> Result<f32, String> {
     let v: f32 = s.trim().parse().map_err(|e| format!("{e}"))?;
     if tessera_net::sandbox::CROWD_SPACING_RANGE.contains(&v) {
@@ -882,6 +920,40 @@ mod tests {
             Args::try_parse_from(["t", "--headless", "--duration", "60", "--crowd", "50"]).unwrap();
         assert!(a.walker_headless());
         assert!(Args::try_parse_from(["t", "--duration", "0"]).is_err());
+    }
+
+    #[test]
+    fn audio_args() {
+        use crate::audio::backend::BackendChoice;
+        let a = Args::try_parse_from(["t", "--audio", "null", "--audio-prefs", "auto"]).unwrap();
+        assert_eq!(a.audio, Some(BackendChoice::Null));
+        assert_eq!(a.audio_prefs.as_deref(), Some("auto"));
+        assert!(Args::try_parse_from(["t", "--audio", "loud"]).is_err());
+        assert_eq!(Args::try_parse_from(["t"]).unwrap().audio, None);
+        let a = Args::try_parse_from(["t", "--audio-settings", "default", "--audio-seed", "7"])
+            .unwrap();
+        assert_eq!(a.audio_settings.as_deref(), Some("default"));
+        assert_eq!(a.audio_seed, Some(7));
+        let c = crate::audio::config_from_args(&a);
+        assert_eq!(c.seed, 7);
+        assert_eq!(c.settings, crate::audio::backend::SettingsChoice::Defaults);
+        // Headless runs: pinned settings and seed 0; windowed runs: the user's settings.
+        let h = crate::audio::config_from_args(
+            &Args::try_parse_from(["t", "--headless", "--duration", "1"]).unwrap(),
+        );
+        assert_eq!(h.seed, 0);
+        assert_eq!(h.settings, crate::audio::backend::SettingsChoice::Defaults);
+        let w = crate::audio::config_from_args(&Args::try_parse_from(["t"]).unwrap());
+        assert_eq!(w.settings, crate::audio::backend::SettingsChoice::User);
+        let m = Args::try_parse_from([
+            "t",
+            "--music-command",
+            "/play tune",
+            "--music-command",
+            "/playstop",
+        ])
+        .unwrap();
+        assert_eq!(m.music_commands, vec!["/play tune", "/playstop"]);
     }
 
     #[test]

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-audio"
+description = "Audio: output backend, mixer, channels, positional voices, sound-request gates, Vorbis/WAV decoding, and player music (ABC dialect, instruments)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Owned by the audio-engine task (M6 plan). Other M6 tasks in this crate use the
+# dependencies listed here; ask that task's owner for new ones.
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+tessera-formats.workspace = true
+rand.workspace = true
+# Pure-Rust Ogg Vorbis I decoder (MIT/Apache-2.0); used by `decode` (sound.md §3.3).
+lewton = "0.10"
+# Wait-free single-producer/single-consumer ring buffers (MIT OR Apache-2.0, MSRV 1.38): the
+# command queue main -> audio thread, the event queue back, and streamed-music buffers
+# (decision 0019, ARCH §21).
+rtrb = "0.4"
+# Audio device output (Apache-2.0, MSRV 1.85). Behind the `device` feature so that headless
+# and CI builds need no system audio libraries (ALSA headers on Linux); decision 0019.
+cpal = { version = "0.18", optional = true }
+
+[features]
+default = []
+## Real audio output through cpal (ALSA on Linux, WASAPI on Windows, CoreAudio on macOS).
+## Without it only the null and offline backends exist.
+device = ["dep:cpal"]
+
+[dev-dependencies]
+tessera-dat.workspace = true
+tessera-install.workspace = true
+proptest.workspace = true
+
+[[example]]
+name = "tone"
+required-features = ["device"]
+
+[lints]
+workspace = true

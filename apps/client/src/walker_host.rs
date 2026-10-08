@@ -225,6 +225,7 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             duration: Duration::from_secs(secs),
             settle_timeout: Duration::from_secs(args.settle_timeout),
         }),
+        audio: crate::audio::config_from_args(args),
         systems: systems(args),
         clock: ClockConfig {
             day: args.day.unwrap_or(crate::walker::env::DEFAULT_DAY),
@@ -368,8 +369,12 @@ impl WalkerHost {
             self.failed = Some("archive set closed".into());
             return;
         };
+        let mut config = self.config.clone();
+        if let DataStatus::Ready { root, .. } = &rt.status {
+            config.audio.game_dir = Some(root.clone());
+        }
         match Walker::new(
-            self.config.clone(),
+            config,
             set,
             ctx,
             Arc::clone(&self.shared),

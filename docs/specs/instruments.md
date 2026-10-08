@@ -1085,6 +1085,42 @@ and map to key 0 elsewhere (§7.1), which no note switch has a case for. Within 
 > **Decision:** loop samples whose sound info has flag bit 0 by repeating the whole decoded
 > sample; apply the playback-rate factor of §7.3 by resampling.
 
+> **OPEN (implementation, 2026-10-07):** `tessera_audio::instruments` had to choose where
+> this spec is silent. Please confirm or state the original's behaviour:
+> (a) **Q2:** an instance whose sounds are all fire-and-forget completes at once and does not
+> count toward `Script_MaxNumInstances` (the Particle node is not run), following the
+> node-completion rules of `sound.md` §9.6; so a fast plucked run never hits the limit of 10.
+> (b) `/play` for a character whose performance is still queued or playing cancels that
+> performance first (§8.5) and then queues the new one.
+> (c) The end of a performance (`abc-dialect.md` §9.4 end event) cancels the character's music
+> with the note-offs due at the end time rather than at time 0 (§8.5 Decision).
+> (d) `/playstart` starts every waiting performance 0.7 s after the start command, the same
+> delay as a solo start (`abc-dialect.md` §11 OPEN (3)).
+> (e) For sample-accurate scheduling (§12) the player processes queued events up to 0.1 s
+> before they are due, so registry and instance-limit decisions (§8.4, §8.6) are taken up to
+> 0.1 s before the event time; the late-drop test (§8.3 step 2) still uses the audio clock.
+> (f) A Switch in the music scripts on a property that is not one of the five note
+> parameters of §5.2 (none in this install) reads no value and takes its Default port, as
+> does a case with an operator other than 1–3.
+> (g) A note handed to the engine ahead of its time under (e) counts as still queued for the
+> cancel of §8.5: the cancel withdraws it unless it has started by the player's next update
+> (Tessera's frame tick), fire-and-forget notes included.
+> (h) When a note parameter is not set because the dictionary gives it another type (§5.2),
+> a field driven by it (the root's `Music_Note_Volume` multiplier, §10.2) keeps its stored
+> value; what the original's driven field reads then is not stated.
+
+> **OPEN (implementation, client, 2026-10-07):** the client (`apps/client/src/audio/player_music.rs`)
+> chose: (a) the walker's `--avatar` items carry no slot, so §4.5's slot mask is the item's
+> `Inventory_DefaultSlot`; items are equipped in the order given and the last instrument item
+> sets the type. (b) The debug choice of the §12 sandbox Decision is the chat command
+> `/instrument <label|number|item>`; it overrides the equipped item until `item` is given.
+> (c) With neither an instrument item nor a debug choice, `/play` reads and checks the song
+> but nothing plays (Tessera's own message); whether the original refuses earlier and with
+> which message is not stated. (d) The player music runs its own engine instance with the
+> walker's backend choice, with the performer and the listener both at the origin; placing the
+> performer at the avatar and sharing the world-audio engine (§10.5) wait for an engine hand-off
+> in the walker.
+
 ---
 
 <a id="s13"></a>

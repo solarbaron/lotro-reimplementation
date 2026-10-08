@@ -53,6 +53,7 @@ marks the item **done** here.
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still |
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look |
 | [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O21, O22, O26 partly answered (2026-10-07); the others open (M4.5) |
+| [O28](#o28) | Audio and player music: area-music cross-fade, gaps, falloff, day/night and indoor beds, combat fade, ABC checks, live play, instance limit | `sound.md` §16, `script-runtime.md` §26, `abc-dialect.md` §11 and §17, `instruments.md` §16 | Listening, `/loc`, a recording of the client's output, small original ABC files | open (M6) |
 | [O70](#o70) | Player movement speeds and turn rate (test-server movement limits) | `test-server.md` §4.5, §8.3; `tessera-protocol.md` §8.3 | In-game `/loc`, stopwatch | open (M7) |
 | [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7) |
 | [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7) |
@@ -68,10 +69,17 @@ criterion 4 (walking on collision): O18, O19; criterion 6 (visual checklist): O2
 scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
 fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
 
+M6 exit criteria that wait on these items ([ROADMAP M6 status](../ROADMAP.md#m6-status)):
+criterion 2 (area music cross-fades at area borders): O28.1 (row O1 of
+[`m6-audio.md`](m6-audio.md)). The other O28 rows check facts the M6 specs leave OPEN or
+mark as owner observations; criteria 1, 3 and 4 need no observation in the original client
+(criterion 4 still needs an idle re-measurement on the reference machine, decision 0010).
+
 M7 items O70–O73 tune defaults of Tessera's own protocol and test server so that movement
 feels like the original; no M7 exit criterion waits on them ([ROADMAP M7
 status](../ROADMAP.md#m7-status)). They are numbered from O70 because other milestone
-branches added items at the same time (M4.5 uses O18–O27); they keep their numbers.
+branches added items at the same time (M4.5 uses O18–O27, M6 uses O28); they keep their
+numbers.
 
 ---
 
@@ -853,6 +861,48 @@ shadows onto the terrain (hills shading valleys).
 
 **Record:** distances (to 100 m) of each visible change; visible seam yes/no; moves with the
 camera yes/no; road edge sharp/soft; sheen yes/no per row; landscape shadow yes/no.
+
+---
+
+<a id="m6-items"></a>
+<a id="o28"></a>
+## O28. Audio and player music (M6)
+
+**Specs:** `sound.md` §16 (S-1 to S-5), `script-runtime.md` §26 (RT-1 to RT-5),
+`abc-dialect.md` §11 (OPEN on the commands) and §17 (OC1 to OC10), `instruments.md` §16
+(Q1, Q2, Q4, Q5, Q6). [ROADMAP](../ROADMAP.md#m6) M6 criterion 2 waits on O28.1.
+
+**First, hear ours:** device output is opt-in (decision 0019):
+`cargo run --release -p tessera-client --features audio-device -- --audio device --spawn
+<region>,<block x>,<block y>,<x>,<y>` (the walker's HUD shows the audio line). Player music:
+put the test file in the settings folder's `Music` folder and add
+`--music-command "/play <name>"` (repeatable; `/playstart`, `/playstop`, `/playlist`).
+
+**What to do:** in the original client, at places you choose (record them by `/loc` only,
+never by name), make the observations below. For ABC checks write each small test file
+yourself (original tunes only, as in the table of `abc-dialect.md` §17) and put it in the
+original client's `Music` folder. **Do not try digit runs of 128 characters or more** in an
+ABC file (`abc-dialect.md` §4.1: undefined behaviour in the original).
+
+| # | Question | Spec | What to do | Record |
+|---|---|---|---|---|
+| O28.1 | Area-border music change (S-1, RT-1; M6 criterion 2) | `sound.md` §10.5, `script-runtime.md` §6.6, §24.1 | Walk across an area border with music playing | Does the old track fade out over roughly 1–4 s while the new area's music starts at once (or a silence begins)? Are both audible for a moment? The border by `/loc` and the approximate fade length |
+| O28.2 | Crossing back and forth (RT-2) | `script-runtime.md` §6.6 | Cross a border and walk straight back within one track | Does the music restart (the track beginning again) each time? |
+| O28.3 | Silence between tracks (S-2) | `sound.md` §10.4 | Stand in one area for several tracks with a stopwatch | Gap lengths in seconds (expected 5–30 s) |
+| O28.4 | Positional falloff (S-3) | `sound.md` §6.2, §11 | Walk away from a positional emitter (waterfall, fire, torch), typing `/loc` at the emitter and where it falls silent | The distance in metres; whether loudness falls smoothly or steps |
+| O28.5 | Day/night and indoor variants (S-4) | `sound.md` §10.3.5, §10.7 | At one place compare the ambient bed and the reverb at day and at night, and outdoors versus inside a building or cave | Does each change? When: on entering, or at a time of day? |
+| O28.6 | Ogg played range (S-5) | `sound.md` §3.3.2 | Record the client's output while a short one-shot plays (ask the maintainer to name the sound info) | Its length in seconds, to compare with the spec's *M* and *N* |
+| O28.7 | Combat music fade (RT-3) | `sound.md` §10.6, `script-runtime.md` §4.4 | Enter and leave combat in an area with music; a recording of the client's output helps | Does area music fade out over about 3 s while combat music plays, and fade back in over about 8 s afterwards? Loudness at the end of the fade (about −52 dB below the track expected) |
+| O28.8 | Quest-dependent music (RT-4) | `script-runtime.md` §18 (OPEN-11) | In an area whose music depends on a quest, compare with the quest done and not done (the spec writer can name a place by `/loc`) | Same or different music |
+| O28.9 | Pacing of rapid ambient loops (RT-5) | `script-runtime.md` §10.4, §11.2 | Listen close to a dense emitter such as a fire | Any burst faster than about ten per second? |
+| O28.10 | ABC dialect checks OC1–OC10 | `abc-dialect.md` §17 | Put each OC file in `Music` and `/play` it | Per row: plays / refused (with the message, in your own words) / truncated, and the approximate timing |
+| O28.11 | ABC commands | `abc-dialect.md` §11 (OPEN) | `/play` a file with several parts and no part number; try `/playlist` with a filter and with songs in a sub-folder; time `/playstart` after a synced `/play` and a solo `/play` | Which part plays; the filter syntax and whether sub-folders are listed; the delay to the first note in both cases (about 0.7 s expected) |
+| O28.12 | Re-attack with a different volume | `abc-dialect.md` §9.3, `instruments.md` §15 (OC6) | Play a file that strikes the same pitch again with a changed `+dynamic+` mark | Does the re-struck note play or go silent? |
+| O28.13 | Live play and release (Q1) | `instruments.md` §5.1, §9.2 | Hold a sustained instrument's note key for 2 s and for 10 s, then release; compare live loudness with `+mf+` and `+ffff+` song notes; play live with the quantize option on and off against a metronome | A short (about 0.2 s) release fade yes/no; live loudness relative to the two song marks; whether quantize moves notes onto a grid, and its step |
+| O28.14 | Fast passages and the instance limit (Q2) | `instruments.md` §8.6 | Play a lute run of more than 10 notes within one second | Any dropped notes? |
+| O28.15 | Quantize and from-song flags (Q4) | `instruments.md` §5.8 | `/play` a horn part that uses the top C with the quantize option on | Is the top C missing? Do loudness marks have no effect? |
+| O28.16 | Several performers (Q6) | `instruments.md` §9.3, `sound.md` §6.6 | With several characters playing at once (a group, or several of your own clients) | Dropped notes once many voices sound? |
+| O28.17 | Handknells octave (Q5, optional) | `instruments.md` §7.4 | Compare one Handknells note against a reference tone (a tuner app) | The octave heard |
 
 ---
 

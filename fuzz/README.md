@@ -111,6 +111,14 @@ stable without libFuzzer.
 | `server_connection` | `tessera-server`'s `ConnectionCore` (decoding, session state machine, `SERVER_FULL` admission) on arbitrary control bytes, datagrams, stream ends, timeouts and simulation requests; its end reported at most once | `docs/specs/test-server.md` §10.1 |
 | `server_world` | up to four `ConnectionCore`s feeding the simulation (logins, characters, movement validation, interest, chat, teleports, flow control) with raw and well-formed fuzzed messages; everything the server sends decodes | `test-server.md` §5–§10, `tessera-protocol.md` §8–§10 |
 | `server_files` | the server's file parsers: `check-content` (with and without the SPDX rule), configuration, accounts file, PHC hash strings, character files, world state; what parses writes back to the same value | `test-server.md` §3.4–§3.6, §4, §5 |
+| `formats_sound_info` | sound-info (0x2A) and sound-payload (0x0A) decoding, `AnyRecord` routing, `SoundInfo::validate`, the strict WAV parse; Sound and SoundEnvironment nodes inside a synthetic scriptlet | `docs/specs/sound.md` §3, §4, §9.1, §9.4, §12 |
+| `audio_decode` | `tessera_audio::decode` on raw container bytes and 0x0A records, on Ogg streams built from the input with valid CRCs, and on those streams behind valid Vorbis headers (setup-header walk, played range, streaming and buffered paths) | `sound.md` §3, §12.2 |
+| `audio_engine` | the audio engine on the offline backend driven by arbitrary operations: hostile requests, stops, scheduled starts and stops, settings, listener and positioners, reverb environments, payload loads, renders, reopen; the pitch law | `sound.md` §6–§8, decision 0019 |
+| `audio_abc` | `tessera_audio::abc::parse` on arbitrary bytes (part-request byte, optional reference header), §14.1 invariant checks on accepted parts | `docs/specs/abc-dialect.md` §3–§9, §14 |
+| `audio_instruments` | the instrument-table builder on script tables decoded from the input or built as script trees, and the music player driven by arbitrary events | `docs/specs/instruments.md` §5–§10 |
+| `scriptgraph_runtime` | the script-graph runtime on decoded tables and scriptlets or on generated graphs (every control-flow kind, sounds, environments, driven pairs) under arbitrary operations and clock steps | `docs/specs/script-runtime.md` |
+| `client_audio` | the walker's world-audio inputs (`apps/client/src/audio/clock.rs` and `props.rs`, included by path): game-time decoding, area-music and monitor-volume rules, and the read-only `[Sound]` import of `tessera-settings` | `sound.md` §10.3, `environment.md` §6, `install-layout.md` §8.3 |
+| `client_player_music` | the player-music chat commands (`apps/client/src/audio/player_music/command.rs`, included by path) on arbitrary text | `abc-dialect.md` §11 |
 
 ## Running
 

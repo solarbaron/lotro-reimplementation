@@ -54,6 +54,17 @@ marks the item **done** here.
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look |
 | [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O21, O22, O26 partly answered (2026-10-07); the others open (M4.5) |
 | [O28](#o28) | Audio and player music: area-music cross-fade, gaps, falloff, day/night and indoor beds, combat fade, ABC checks, live play, instance limit | `sound.md` §16, `script-runtime.md` §26, `abc-dialect.md` §11 and §17, `instruments.md` §16 | Listening, `/loc`, a recording of the client's output, small original ABC files | open (M6) |
+| [O39](#o39) | Screenshots of at least 10 native panels in the original client | `ui-layout.md` §17, `m5-visual.md` | Screenshots (private) | open (M5 criterion 2) |
+| [O40](#o40) | The 14 plugins of the usage census installed and run in Tessera | `plugin-api-usage.md` §9, `lua-plugin-api.md` | Plugin install, look | open (M5 criterion 4) |
+| [O41](#o41) | A published user skin in the original client versus Tessera | `skin-definition.md` | Look (optional) | open (M5 criterion 3, optional) |
+| [O42](#o42) | Second right or left press during mouse-look | decision 0014 (Known difference 14) | Look | open (M5) |
+| [O43](#o43) | Wheel over a plain plugin window: does the camera zoom? | decision 0014 (D5 OPEN) | Look | open (M5) |
+| [O44](#o44) | Right press during an item drag | decision 0014 (Known difference 20) | Look | open (M5) |
+| [O45](#o45) | Escape with panels open: what closes, in what order | `game-panels.md` §16 | Look | open (M5) |
+| [O46](#o46) | Chat window at UI scales 1.0, 1.5, 0.5; auto-fade look; semi-transparent edge blend | decision 0015 (observations 1–3) | Look, frame capture | open (M5) |
+| [O47](#o47) | Owner-written nested-surface test plugin | decision 0015 (observation 4) | Test plugin, screenshot | open (M5) |
+| [O48](#o48) | Cursor during and after mouse-look; OS cursor size at scale 1.333; minimap marker edges | decision 0015 (observations 5–7) | Look | open (M5) |
+| [O49](#o49) | U1–U5 scripted UI measurement on the idle reference laptop | decision 0015 §6, decision 0010 | Measurement run | open (M5 criterion 7) |
 | [O70](#o70) | Player movement speeds and turn rate (test-server movement limits) | `test-server.md` §4.5, §8.3; `tessera-protocol.md` §8.3 | In-game `/loc`, stopwatch | open (M7) |
 | [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7) |
 | [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7) |
@@ -68,6 +79,11 @@ M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md
 criterion 4 (walking on collision): O18, O19; criterion 6 (visual checklist): O20 (terrain,
 scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
 fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
+
+M5 exit criteria that wait on these items ([ROADMAP M5 status](../ROADMAP.md#m5-status)):
+criterion 2 (native panels): O39; criterion 3 (user skin, optional cross-check): O41;
+criterion 4 (third-party plugins): O40; criterion 7 (UI budgets): O49. O42–O48 settle OPEN
+behaviour of decisions 0014 and 0015 and do not block the criteria.
 
 M6 exit criteria that wait on these items ([ROADMAP M6 status](../ROADMAP.md#m6-status)):
 criterion 2 (area music cross-fades at area borders): O28.1 (row O1 of
@@ -903,6 +919,128 @@ ABC file (`abc-dialect.md` §4.1: undefined behaviour in the original).
 | O28.15 | Quantize and from-song flags (Q4) | `instruments.md` §5.8 | `/play` a horn part that uses the top C with the quantize option on | Is the top C missing? Do loudness marks have no effect? |
 | O28.16 | Several performers (Q6) | `instruments.md` §9.3, `sound.md` §6.6 | With several characters playing at once (a group, or several of your own clients) | Dropped notes once many voices sound? |
 | O28.17 | Handknells octave (Q5, optional) | `instruments.md` §7.4 | Compare one Handknells note against a reference tone (a tuner app) | The octave heard |
+
+---
+
+<a id="m5-items"></a>
+<a id="o39"></a>
+## O39. Native panels in the original client (M5 criterion 2)
+
+**Spec:** `ui-layout.md` §17 (panels P1–P15, their G, A, T and S rows) and the method of
+[`m5-visual.md`](m5-visual.md). [ROADMAP](../ROADMAP.md#m5) M5 criterion 2.
+
+**First, see ours:** the commands in the "Tessera-side self-check" section of
+[`m5-visual.md`](m5-visual.md) (one run per panel with `--open-panel P<n>`).
+
+**What to do:** at a known screen size (record it), interface scale 1.0, no user skin and
+the default panel positions, take a screenshot of at least 10 of the panels P1–P15, plus the
+button states listed in each panel's S row.
+
+**Record:** the screenshots stay private (dirty-room scratch area). In `m5-visual.md` record
+only pass / fail / n/a per row, the screen size and the date.
+
+<a id="o40"></a>
+## O40. The 14 census plugins in Tessera (M5 criterion 4)
+
+**Spec:** `plugin-api-usage.md` §9 (the 14 plugins), `lua-plugin-api.md`. [ROADMAP](../ROADMAP.md#m5)
+M5 criterion 4. Tessera's synthetic plugin suite passes; the real plugins have never been
+run because the owner has no `Plugins` folder yet.
+
+**What to do:** install the 14 plugins into a `Plugins` folder (optionally also the
+publisher's 2010 sample package, to check that a user copy takes precedence over Tessera's
+built-in class helper). Run `cargo test --release -p tessera-plugins --test
+compat_real_plugins` with that folder in place (it prints a table per plugin and writes
+nothing into the install), then start Tessera with the folder and try each plugin's windows.
+For reference, also note in the original client what each plugin's windows look like and do.
+
+**Record:** per plugin: loads yes/no, creates its windows yes/no, responds to input yes/no,
+and any difference in your own words. The incompatibility list goes into the ROADMAP M5
+status.
+
+<a id="o41"></a>
+## O41. A user skin in both clients (M5 criterion 3, optional)
+
+**Spec:** `skin-definition.md`. Tessera's side passes with a generated skin
+(`apps/client/tests/ui_skin_real_data.rs`).
+
+**What to do:** if you use a published user skin, compare how the original client shows the
+panels it maps (art and geometry) with Tessera started with `--skin <name> --skins-root
+<folder>` on the same skin folder.
+
+**Record:** per mapped panel: same / different, in your own words.
+
+<a id="o42"></a>
+## O42. Second press during mouse-look (decision 0014, Known difference 14)
+
+**What to do:** in the original client, during mouse-look over the world, make a quick
+second right press; then, while right is held, make a quick second left press.
+
+**Record:** does the camera keep turning; does a double-click or tap fire; does the run chord
+start.
+
+<a id="o43"></a>
+## O43. Wheel over a plain plugin window (decision 0014, D5 OPEN)
+
+**What to do:** with a plugin window open that has no scrollable content, turn the mouse
+wheel with the pointer over it.
+
+**Record:** does the camera zoom, yes/no.
+
+<a id="o44"></a>
+## O44. Right press during an item drag (decision 0014, Known difference 20)
+
+**What to do:** start dragging an item from a bag or a quickslot, then press the right mouse
+button; repeat while trying the run chord.
+
+**Record:** does the camera turn; is the drag cancelled; where does the item land; does the
+run chord work during the drag.
+
+<a id="o45"></a>
+## O45. Escape with panels open (`game-panels.md` §16)
+
+**What to do:** open several panels (for example the social, options and world-map panels),
+then press Escape repeatedly.
+
+**Record:** which panel closes first and in what order, and when the main menu opens.
+
+<a id="o46"></a>
+## O46. UI scale, auto-fade and edge blending (decision 0015, observations 1–3)
+
+**What to do:** look at the chat window at interface scale 1.0, 1.5 and 0.5; watch a panel
+fade below its top level; take a frame capture of a semi-transparent panel edge.
+
+**Record:** text crispness and size at each scale; the look of the fade; the blend of the
+edge pixels (numbers from the capture).
+
+<a id="o47"></a>
+## O47. Nested-surface test plugin (decision 0015, observation 4)
+
+**What to do:** write a small test plugin for the original client: a window at opacity 0.5
+holding a stretch-mode child, an overlapping sibling, and a child window with a stretch
+control, at z = 30. Take a screenshot (kept private).
+
+**Record:** how opacity, overlap and clipping combine, in your own words.
+
+<a id="o48"></a>
+## O48. Cursor and minimap marker (decision 0015, observations 5–7)
+
+**What to do:** watch the cursor during mouse-look and when it ends; look at the OS cursor
+size at compositor scale factor 1.333; look at the minimap marker pointing north, east and
+at 45 degrees.
+
+**Record:** cursor visible during mouse-look yes/no and where it reappears; cursor size; the
+look of the marker's edges at 45 degrees.
+
+<a id="o49"></a>
+## O49. UI budgets on the idle reference laptop (M5 criterion 7)
+
+**Spec:** decision 0015 §6 (U1–U5), decision 0010, [`docs/perf/m5-ui-budgets.md`](../perf/m5-ui-budgets.md).
+The values recorded during M5 are indicative only (the machine was loaded).
+
+**What to do:** on the idle reference laptop, run the scripted UI measurement of
+`m5-ui-budgets.md` at 3840 × 2160 and at the window size the compositor gives.
+
+**Record:** the two reports, added to `m5-ui-budgets.md`.
 
 ---
 

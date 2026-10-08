@@ -71,6 +71,14 @@ pub struct ActionDef {
     pub kind: ActionKind,
     /// Modifier matching for its bindings.
     pub modifiers: ModifierPolicy,
+    /// Whether its offered holds repeat on OS auto-repeat **when no
+    /// action-map data is present** (`keymap.md` §2.1, §7.8.6). With
+    /// action-map data the command of each hold decides.
+    pub repeat: bool,
+    /// The InputActions command name used for its events when neither the
+    /// binding entry nor the (context, action) table gives one (§2.2 rule
+    /// 3). No built-in action sets it.
+    pub command: Option<String>,
 }
 
 impl ActionDef {
@@ -81,6 +89,8 @@ impl ActionDef {
             name: name.into(),
             kind: ActionKind::Button,
             modifiers: ModifierPolicy::Exact,
+            repeat: false,
+            command: None,
         }
     }
 
@@ -91,6 +101,8 @@ impl ActionDef {
             name: name.into(),
             kind: ActionKind::Axis,
             modifiers: ModifierPolicy::Subset,
+            repeat: false,
+            command: None,
         }
     }
 
@@ -100,26 +112,58 @@ impl ActionDef {
         self.modifiers = policy;
         self
     }
+
+    /// Same definition with the `repeat` flag set as given (§2.1).
+    #[must_use]
+    pub fn with_repeat(mut self, repeat: bool) -> Self {
+        self.repeat = repeat;
+        self
+    }
+
+    /// Same definition with its own command name (§2.1, §2.2 rule 3).
+    #[must_use]
+    pub fn with_command(mut self, command: &str) -> Self {
+        self.command = Some(command.to_owned());
+        self
+    }
 }
 
-/// Definition of one input context.
+/// The two bands of the context stack (`keymap.md` §3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Band {
+    /// Game band: activated by code, ordered by priority then recency.
+    #[default]
+    Game,
+    /// UI band: entries pushed and popped by owner (§3.2), consulted first.
+    Ui,
+}
+
+/// Definition of one input context (`keymap.md` §3.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextDef {
     /// Unique name used in the keymap file.
     pub name: String,
-    /// Higher priorities are consulted first; equal priorities by most
-    /// recent activation.
+    /// Game band: higher priorities are consulted first; equal priorities
+    /// by most recent activation. UI band: the priority `activate` pushes
+    /// with (§3.4).
     pub priority: i32,
-    /// An opaque context swallows every input it does not bind, so lower
-    /// contexts see nothing while it is active (text entry, modal dialogs).
+    /// An opaque context swallows every input it does not bind, so contexts
+    /// consulted after it see nothing while it is active.
     pub opaque: bool,
-    /// Whether this context receives typed text when it is the topmost
-    /// active context.
+    /// Whether this context can receive typed text (§7.6).
     pub text: bool,
+    /// The band, fixed at registration (§3.1, §3.4).
+    pub band: Band,
+    /// UI band only: keys and pad buttons that no UI-band context takes do
+    /// not reach the game band (§3.3).
+    pub opaque_keys: bool,
+    /// Its matches fire and are offered, and the input continues to lower
+    /// contexts unless the UI consumed one of their Starts (§3.1, §7.2).
+    pub pass_through: bool,
 }
 
 impl ContextDef {
-    /// A transparent context without text input.
+    /// A transparent game-band context without text input.
     #[must_use]
     pub fn new(name: &str, priority: i32) -> Self {
         Self {
@@ -127,7 +171,32 @@ impl ContextDef {
             priority,
             opaque: false,
             text: false,
+            band: Band::Game,
+            opaque_keys: false,
+            pass_through: false,
         }
+    }
+
+    /// Same definition, in the UI band.
+    #[must_use]
+    pub fn ui(mut self) -> Self {
+        self.band = Band::Ui;
+        self
+    }
+
+    /// Same definition, with `opaque_keys` (UI band only; registering a
+    /// game-band context with it is an error).
+    #[must_use]
+    pub fn with_opaque_keys(mut self) -> Self {
+        self.opaque_keys = true;
+        self
+    }
+
+    /// Same definition, pass-through.
+    #[must_use]
+    pub fn pass_through(mut self) -> Self {
+        self.pass_through = true;
+        self
     }
 
     /// Same definition, opaque.
@@ -204,11 +273,18 @@ impl Registry {
     ///
     /// # Errors
     ///
-    /// [`InputError::InvalidName`], [`InputError::Duplicate`] or
-    /// [`InputError::TooMany`].
+    /// [`InputError::InvalidName`], [`InputError::Duplicate`],
+    /// [`InputError::TooMany`], or [`InputError::InvalidContext`] for a
+    /// game-band context with `opaque_keys`.
     pub fn add_context(&mut self, def: ContextDef) -> Result<ContextId> {
         if !is_valid_name(&def.name) {
             return Err(InputError::InvalidName(def.name));
+        }
+        if def.opaque_keys && def.band == Band::Game {
+            return Err(InputError::InvalidContext {
+                name: def.name,
+                reason: "`opaque_keys` is defined only for UI-band contexts",
+            });
         }
         if self.context_names.contains_key(&def.name) {
             return Err(InputError::Duplicate {
@@ -300,6 +376,14 @@ mod tests {
         let c = r.add_context(ContextDef::new("ui.dialog", 5)).unwrap();
         assert_eq!(r.context_def(c).unwrap().priority, 5);
         assert!(r.context_def(ContextId(99)).is_none());
+        assert!(matches!(
+            r.add_context(ContextDef::new("keys", 0).with_opaque_keys()),
+            Err(InputError::InvalidContext { .. })
+        ));
+        let k = r
+            .add_context(ContextDef::new("keys", 0).ui().with_opaque_keys())
+            .unwrap();
+        assert_eq!(r.context_def(k).unwrap().band, Band::Ui);
     }
 
     #[test]

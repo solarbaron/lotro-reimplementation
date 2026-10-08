@@ -221,11 +221,7 @@ impl ChatOverlay {
     /// Shows a line of the client's own (a chat line that could not be sent) as a system
     /// line.
     pub fn push_local(&mut self, text: &str, now: Instant) {
-        let line = ChatLine {
-            sender: String::new(),
-            text: text.to_owned(),
-            channel: ChatChannel::System,
-        };
+        let line = ChatLine::system(text);
         self.push(&line, now);
     }
 
@@ -324,11 +320,7 @@ mod tests {
     }
 
     fn line(sender: &str, text: &str, channel: ChatChannel) -> ChatLine {
-        ChatLine {
-            sender: sender.into(),
-            text: text.into(),
-            channel,
-        }
+        ChatLine::from_channel(&channel, Some(sender), text)
     }
 
     #[test]

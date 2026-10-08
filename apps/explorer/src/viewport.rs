@@ -237,8 +237,8 @@ enum Reply {
         problems: Vec<String>,
         ms: f32,
     },
-    /// A frame is ready.
-    Frame(RenderedFrame),
+    /// A frame is ready (boxed: the frame statistics make it the largest reply).
+    Frame(Box<RenderedFrame>),
     /// Rendering failed (the renderer could not start, or a frame failed).
     Error { seq: u64, message: String },
 }
@@ -431,7 +431,7 @@ impl Viewport {
                     }
                     self.loaded = Some((scene, problems, ms));
                 }
-                Reply::Frame(f) => newest = Some(f),
+                Reply::Frame(f) => newest = Some(*f),
                 Reply::Error { seq, message } => {
                     tracing::warn!(seq, error = %message, "viewport render failed");
                     self.error = Some((seq, message));
@@ -647,13 +647,13 @@ fn render_loop(rx: &Receiver<Cmd>, tx: &Sender<Reply>, notify: &dyn Fn()) {
         if let Some((seq, request)) = draw {
             let started = Instant::now();
             match render(r, &mut target, gpu.as_ref(), &request) {
-                Ok((image, stats)) => send(Reply::Frame(RenderedFrame {
+                Ok((image, stats)) => send(Reply::Frame(Box::new(RenderedFrame {
                     seq,
                     scene: request.scene,
                     image,
                     stats,
                     ms: started.elapsed().as_secs_f32() * 1000.0,
-                })),
+                }))),
                 Err(message) => send(Reply::Error { seq, message }),
             }
         }

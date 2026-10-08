@@ -571,6 +571,23 @@ character *c*, applies these rules:
    past the edge, and a moved word that is already too wide is split at the next
    character.
 
+> **OPEN (implementation, M5 `tessera-ui::text`):** rule 4's edge case names only the first
+> character of the text. Whether the same empty line arises when the first character of any
+> later line (after a newline, or after a wrap that consumed a space) is wider than the
+> available width and the line has no opportunity is not stated. Tessera applies rule 4
+> literally (the line ends just before *c*, giving an empty line of §7.1 case 4) on every
+> line until answered.
+>
+> Two related readings Tessera applies until answered (review of the M5 implementation):
+> (a) an opportunity before the **first character of a line** (a space after a newline, or
+> the second space of a run after a wrap consumed the first) is not recorded, as for the first
+> character of the text: breaking there would move nothing, give an empty line and consume a
+> space that "spaces at the start of the next line stay" and "the spaces after it start the
+> next line" keep. (b) When the empty line of rule 4 follows a wrap that consumed a space,
+> that line keeps §7.1 case 4 (height, baseline and leading 0) and the consumed space counts
+> towards the height and baseline of the line holding *c*, the next line with characters.
+> Which reading the client uses for (a) and (b) is not stated.
+
 **What a break consumes.** When a line ends at an opportunity before a space, tab or
 carriage return, exactly **that one character** is consumed: it belongs to neither line,
 is not drawn, and its advance is not counted (the next line's pen starts without it; the
@@ -966,6 +983,21 @@ Rules:
    `UICore_Text_set_font_by_property` acts on both. The client remembers the PropertyId
    and uses it again when it re-applies fonts. In the data the only value is one
    `UICore_Text_set_tag_font_by_property` = 0, which names no member and changes nothing.
+
+> **OPEN (implementation, M5 `tessera-ui::text`):** the order in which the array, struct and
+> by-property sources of one slot are applied when an element (after inheritance) has more
+> than one of them, and whether rule 2 (the tag slot uses the normal slot's properties) also
+> covers `UICore_Text_set_normal_font_by_property`. Rule 3 implies that a chosen array or
+> struct entry replaces the single font. Tessera applies, per slot: the single font, then
+> the struct (through the by-property member when one is set), then the array entry; and
+> the tag slot without properties of its own takes all of the normal slot's sources.
+>
+> Also open: whether a source that changes nothing counts as "a property of its own" for
+> rule 2. Tessera does not count a by-property value of 0 (rule 5: it "names no member and
+> changes nothing", so it also does not stop the default struct member from being read), but
+> does count a single font of DID 0 (`UICore_Text_tag_font` = 0, four values in the data) and a
+> non-zero by-property PropertyId whose member is missing or not a DID: with only those, the
+> tag slot keeps the locale default font instead of taking the normal slot's.
 
 Element states may carry the same properties (52 state-level `UICore_Text_fonts`); how a
 state's properties override the element's belongs to `ui-layout.md`.

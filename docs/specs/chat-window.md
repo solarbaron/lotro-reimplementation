@@ -217,6 +217,14 @@ When a window initialises, it reads `UI_ChatWindow_PrimaryWindow`; only when it 
 it take the entry line, the entry's handlers and the initial channel mode (§6.5) (BIN, CW2b). Of
 the nine window elements only `NewChatWindow1` sets it (Confirmed, CW2a).
 
+> **OPEN (implementation, M5 clean room):** no window property names the tab list
+> (`TabListBox`) or the log element (`ChatLogElement`, the template a tab's log is created from),
+> and §4.2 does not say which element draws a tab's label. `tessera-ui` (`game::chat::window`)
+> finds the tab list as the first descendant of type `ChatWindowTabListBox` (else by the element
+> label `TabListBox`), creates logs from the top-level element `ChatLogElement`, and creates the
+> game types `ChatWindowTabListBox` as a ListBox and `ChatTab`, `IMTab` and
+> `PlayerChatTextEntry` as Text elements, the tab drawing its own label.
+
 <a id="s3-2"></a>
 ### 3.2 Window IDs and the element pool (BIN, CW3)
 
@@ -458,6 +466,13 @@ Input: the line's type mask *L*, its text (with markup, ST §4.7), and the tab w
    through a second text pass of the same routine with a different flag.
 7. If `GOP_EnableTimestampsOnChat` is true, wrap the text with a timestamp (§5.4).
 8. Apply the style of step 2 to the line element (FO §9.3 steps 2–4) and set its text.
+
+> **OPEN (implementation, M5 clean room):** FO §9.3 step 3 sets the colour and "both font
+> slots"; the line template also carries the six chat fonts as `UICore_Text_fonts`, which wins
+> over a single font under Tessera's slot order (`fonts.md` §9.1). `tessera-ui` sets
+> `UICore_Text_font_color`, `UICore_Text_font` and `UICore_Text_tag_font`, and also replaces
+> `UICore_Text_fonts` and `UICore_Text_tag_fonts` by one-entry arrays holding the font, so that
+> the line is drawn in its size step's font.
 9. If the tab is logging to a file, append the text and a line break to that file.
 10. If step 3 found the log at the bottom, scroll so that the newest line is shown.
 11. Play the feedback sound for *T* (§5.6; whole-mask match, so a multi-bit *T* usually has no
@@ -766,6 +781,21 @@ remembers its own channel (Probable: the restore reads a value the tab holds; th
 > `Tell` word gets its target (the next word cannot be part of the switch because step 1 stops
 > at a space); and what the channel button's menu does (Q3).
 
+> **OPEN (implementation, M5 clean room):** until Q12 is settled, `tessera-ui`
+> (`game::chat`) takes as the command word *C* of a mode (§6.2 step 2) the first name of the
+> first ordinary row (not a reply or tell-again word) of that chat type in the mode table, or
+> no word when there is none. The `OutputTextType` label shows the channel's display name
+> when Tessera has one for the mode, else that command word (with the tell target after it
+> for `Tell`); the original's template 0x04F7C6D9 is not used.
+
+> **OPEN (implementation, M5 clean room, 2026-10-08):** until Q12 names the game-state test,
+> `apps/client` (`panels::chat`, `ChatSetup::load_texts`) reads only the 26 fixed rows of the
+> mode table from the install and leaves out **both** variant groups (types 32, 13, 11 and 12, 13),
+> so §10 item 3 registers no channel word of a variant row and `IsCommand` answers false for
+> them. The `Say` row's names are registered even when its `Commands` entry differs from the
+> `CommandSetup` default word of §7.2 (both tokens are 0x04DA4989; the spec does not say whether
+> the two entries hold the same text).
+
 <a id="s6-6"></a>
 ### 6.6 Key-repeat guard (Confirmed: CW25a; BIN: CW25b)
 
@@ -782,6 +812,11 @@ character typed into the entry (code ≥ U+0020 and not U+007F) is checked:
    caret (as many as the repeat count), play UI sound 0x50 (OPEN Q13 which sound record),
    forget the previous character, set the start time to now, and swallow this character.
 4. Otherwise accept.
+
+> **OPEN (implementation, M5 clean room):** `tessera-ui` (`game::chat`) reports a trip to the
+> client (`TextInputOutcome::GuardTripped`) instead of raising its UI sound event, because
+> that event names a sound-info DID and 0x50 is a UI sound ID (Q13). Which record the client
+> plays for it waits for Q13.
 
 ---
 

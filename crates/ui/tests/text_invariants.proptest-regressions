@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0a661b9d2e0c2daac9d12bbbf2f6048cbc9ed9c8da41642544262243e1dbb8ca # shrinks to raw = [], lh = 1, bl = 0, border = 0, units = [2820], width = 0, height = 0, margins = (0, 0, 0, 0), hv = (0, 0), leading = 2.4277801e29, list_extra = 0, origin = (0, 0), sfx = [], one_line = true
+cc 22425fbec836d6625a43bd1651567cfdbf9c0035225ed6dc119b351510924de6 # shrinks to shapes = [Shape { w: 0, h: 1, a: 0, b: 0, t: 0 }, Shape { w: 0, h: 1, a: 0, b: 0, t: 0 }, Shape { w: 2, h: 1, a: 1, b: -3, t: 0 }, Shape { w: 0, h: 1, a: 0, b: 0, t: 0 }, Shape { w: 0, h: 1, a: 0, b: 0, t: 0 }], question = false, bl = 0, units = [97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 10, 98], slots = [0, 0, 0, 0, 0, 0, 0], width = 0, one_line = false, leading = 0.0, second_font = false

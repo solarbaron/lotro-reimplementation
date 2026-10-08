@@ -21,6 +21,7 @@ tessera-formats = { path = "../crates/formats" }
 tessera-install = { path = "../crates/install" }
 tessera-net = { path = "../crates/net" }
 tessera-script = { path = "../crates/script" }
+tessera-plugins = { path = "../crates/plugins" }
 tessera-props = { path = "../crates/props" }
 tessera-text = { path = "../crates/text" }
 tessera-material = { path = "../crates/material" }
@@ -34,6 +35,7 @@ tessera-world = { path = "../crates/world" }
 tessera-terrain = { path = "../crates/terrain" }
 tessera-havok = { path = "../crates/havok" }
 tessera-anim = { path = "../crates/anim" }
+tessera-ui = { path = "../crates/ui" }
 tessera-physics = { path = "../crates/physics" }
 tessera-protocol = { path = "../crates/protocol" }
 tessera-server = { path = "../apps/server" }
@@ -183,25 +185,41 @@ test = false
 doc = false
 bench = false
 
-# --- tessera-script (docs/specs/lua-plugin-api.md) ---
-
-[[bin]]
-name = "script_descriptor"
-path = "fuzz_targets/script_descriptor.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "script_plugindata"
-path = "fuzz_targets/script_plugindata.rs"
-test = false
-doc = false
-bench = false
+# --- tessera-script, the plugin-free Lua core (plugin-runtime.md, decision 0023) ---
 
 [[bin]]
 name = "script_pattern"
 path = "fuzz_targets/script_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_reader"
+path = "fuzz_targets/script_reader.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-plugins (plugin-descriptor.md, lua-plugin-api.md) ---
+
+[[bin]]
+name = "plugins_descriptor"
+path = "fuzz_targets/plugins_descriptor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_plugindata"
+path = "fuzz_targets/plugins_plugindata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_commands"
+path = "fuzz_targets/plugins_commands.rs"
 test = false
 doc = false
 bench = false
@@ -571,6 +589,129 @@ bench = false
 [[bin]]
 name = "net_npc_events"
 path = "fuzz_targets/net_npc_events.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats: UI layouts and fonts (ui-layout.md §4, fonts.md §3, M5) ---
+
+[[bin]]
+name = "formats_ui_layout"
+path = "fuzz_targets/formats_ui_layout.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_font"
+path = "fuzz_targets/formats_font.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-material: UI image files (skin-definition.md §7, decision 0015 §4, M5) ---
+
+[[bin]]
+name = "material_ui_image"
+path = "fuzz_targets/material_ui_image.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-input: importer of the original client's key map (keymap.md §12, M5) ---
+
+[[bin]]
+name = "input_import"
+path = "fuzz_targets/input_import.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-render: UI composition entries (render.md §6.5-§6.8, M5) ---
+
+[[bin]]
+name = "render_ui_entries"
+path = "fuzz_targets/render_ui_entries.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: painter, composition list and paint scheduler (decision 0015, M5) ---
+
+[[bin]]
+name = "ui_paint"
+path = "fuzz_targets/ui_paint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_paint_compose"
+path = "fuzz_targets/ui_paint_compose.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_paint_scheduler"
+path = "fuzz_targets/ui_paint_scheduler.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: glyph atlases, text layout and drawing (fonts.md §4-§8, M5) ---
+
+[[bin]]
+name = "ui_text"
+path = "fuzz_targets/ui_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_text_font"
+path = "fuzz_targets/ui_text_font.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: user skin definitions (skin-definition.md §4, §8, M5) ---
+
+[[bin]]
+name = "ui_skin_definition"
+path = "fuzz_targets/ui_skin_definition.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: element tree, layout, widgets, behaviour, input bridge (ui-layout.md §7-§9, ui-widgets.md, ui-behaviour.md, M5) ---
+
+[[bin]]
+name = "ui_tree"
+path = "fuzz_targets/ui_tree.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-ui: game widgets and chat (game-panels.md, chat-window.md, M5) ---
+
+[[bin]]
+name = "ui_game_command_line"
+path = "fuzz_targets/ui_game_command_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_game_map_data"
+path = "fuzz_targets/ui_game_map_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settings_prefs"
+path = "fuzz_targets/settings_prefs.rs"
 test = false
 doc = false
 bench = false

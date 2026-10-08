@@ -481,6 +481,8 @@ pub struct WalkerEvents {
     pub screenshot: bool,
     /// The scripted flight reached its end.
     pub flight_done: bool,
+    /// A `menu` press the game UI declined (only while a UI is attached).
+    pub menu: bool,
 }
 
 /// The walker's own keys, read as raw key codes (`walker.md` §14.2–§14.3): `[`, `]`,
@@ -644,6 +646,10 @@ pub struct Walker {
     chat: chat::ChatOverlay,
     /// The HUD's network line (M7).
     net_line: Option<String>,
+    /// Draw the HUD text (`walker_hud`, `walker.md` §6).
+    show_hud: bool,
+    /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
+    show_minimap: bool,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -895,6 +901,54 @@ impl Walker {
             interior_drawn: None,
             chat: chat::ChatOverlay::default(),
             net_line: None,
+            show_hud: true,
+            show_minimap: true,
+        })
+    }
+
+    /// The input mapper and its clock (the game UI's step 1, `crate::ui_host`).
+    pub fn mapper_mut(&mut self) -> (&mut tessera_input::InputMapper, std::time::Duration) {
+        self.controls.mapper_mut()
+    }
+
+    /// Attaches or detaches a game UI: Escape then gives `menu` to the UI and game code
+    /// instead of quitting, and the overlays follow `hud` and `minimap` (`walker.md`
+    /// §5–§6; they draw under the UI pass, which is recorded after [`Walker::draw`]).
+    pub fn set_ui_attached(&mut self, on: bool, hud: bool, minimap: bool) {
+        self.controls.set_ui_attached(on);
+        // The help line names `menu` "menu" while a UI is attached (`walker.md` §5).
+        self.help = if on {
+            match self.help.strip_suffix(" quit") {
+                Some(rest) => format!("{rest} menu"),
+                None => self.help.clone(),
+            }
+        } else {
+            match self.help.strip_suffix(" menu") {
+                Some(rest) => format!("{rest} quit"),
+                None => self.help.clone(),
+            }
+        };
+        self.show_hud = hud;
+        self.show_minimap = minimap;
+    }
+
+    /// The viewer's minimap input for the game UI (`game-panels.md` §8.3): region,
+    /// landblock, global coordinates and compass heading; area and coordinate labels are
+    /// not filled yet. `None` before the viewer is placed.
+    #[must_use]
+    pub fn radar_input(&self) -> Option<tessera_ui::game::radar::RadarInput> {
+        let pos = self.focus()?;
+        let key = pos.landblock()?;
+        let compass = (90.0 - self.controls.heading().to_degrees()).rem_euclid(360.0);
+        Some(tessera_ui::game::radar::RadarInput {
+            region: pos.region,
+            x: key.x(),
+            y: key.y(),
+            cell: 0,
+            global: (pos.x as f32, pos.y as f32),
+            heading: compass,
+            has_player: true,
+            ..tessera_ui::game::radar::RadarInput::default()
         })
     }
 
@@ -905,14 +959,22 @@ impl Walker {
     /// distances. A key that the keymap binds to an action is left to the keymap. The
     /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
-        use tessera_input::KeyCode as K;
         // While the chat input is open, keys are typed text, not walker keys.
-        if !self.chat.is_open()
-            && let RawEvent::Key {
-                key,
-                pressed: true,
-                repeat: false,
-            } = event
+        if !self.chat.is_open() {
+            self.world_key(event);
+        }
+        chat::route(&mut self.chat, &mut self.controls, event);
+    }
+
+    /// The walker's own keys ([`Self::input`]) without the chat overlay: what a game UI
+    /// (M5) forwards when no UI element has the keyboard focus.
+    pub fn world_key(&mut self, event: &RawEvent) {
+        use tessera_input::KeyCode as K;
+        if let RawEvent::Key {
+            key,
+            pressed: true,
+            repeat: false,
+        } = event
             && !self.taken_keys.contains(key)
         {
             match key {
@@ -938,7 +1000,6 @@ impl Walker {
                 _ => {}
             }
         }
-        chat::route(&mut self.chat, &mut self.controls, event);
     }
 
     /// Switches system `s` on or off at run time.
@@ -1203,6 +1264,7 @@ impl Walker {
         };
         let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
+        events.menu = ce.menu;
         events.screenshot = ce.screenshot;
         if ce.toggle_debug {
             self.detail = !self.detail;
@@ -2348,14 +2410,20 @@ impl Walker {
                 .clear(SKY);
         }
         let overlay = frame.pass("walker-hud", PassSpace::Screen);
-        if self.config.hud {
+        let hud = self.config.hud && self.show_hud;
+        if hud {
             self.hud.draw(overlay, 10.0, 10.0);
         }
-        // The chat stays visible while its input is open, even without the HUD.
-        if self.config.hud || self.chat.is_open() {
+        // The chat stays visible while its input is open, even without the HUD. With a game
+        // UI attached its chat window shows the chat instead (no second display).
+        if (hud && !self.controls.ui_attached()) || self.chat.is_open() {
             self.chat.draw(overlay, 10.0, h as f32 - 10.0);
         }
-        if let (true, Some(pos), Some(anchor)) = (self.config.hud, self.focus(), self.anchor) {
+        if let (true, Some(pos), Some(anchor)) = (
+            self.config.hud && self.show_minimap,
+            self.focus(),
+            self.anchor,
+        ) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
                 x: w as f32 - size - 14.0,

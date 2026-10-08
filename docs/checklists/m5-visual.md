@@ -99,6 +99,64 @@ Tessera's M5 client are available.
 | D: drawing rules | 8 | | | |
 | Panels passing all four rows | 15 | | | |
 
+## Tessera-side self-check (2026-10-08, clean-room implementer)
+
+**Owner comparison pending.** This section records only Tessera's side of criterion 2: each
+panel opened by `ui-layout.md` §17.1 in the client's walker with the game UI attached, its
+root rectangle as the client computed it (logged by the client), and a look at Tessera's own
+screenshot against the A, T and S rows above (no reference screenshot was available, so the
+Result columns of the rows stay empty until the owner's screenshots exist). The screenshots
+were kept in a private scratch directory and deleted after the check. Data of the owner's
+install as of 2026-10-08; no skin; 1920 × 1080; no cursor in screenshots.
+
+Command line (one run per panel; `P5` also selects a sandbox target so that it shows):
+
+```sh
+tessera-client --open-panel P<n> --no-ui-hud --walker-hud off --size 1920x1080 \
+    --screenshot <scratch>/p<n>.png --data-dir <scratch>/data
+```
+
+The HUD set together: `tessera-client --ui --walker-hud off --size 1920x1080 --screenshot
+<scratch>/hud.png`. Real-data tests of the same host: `cargo test --release -p
+tessera-client --test ui_panels_real_data` (HUD set, Escape → P6, `/plugins manager` → P12,
+minimap position update) and `--test panels_real_data` (G rows at 1920 × 1080 and
+2560 × 1440, A-row census).
+
+| Panel | G (computed root, 1920 × 1080) | A (Tessera screenshot) | T | S (default state) | Self-check |
+|---|---|---|---|---|---|
+| P1 | (1718, 12, 224, 280) = row | rim, buttons, compass, player marker; map tile drawn | coordinate and area labels empty (client fills neither yet) | default; drag-box frame hidden | G, A pass; T partial |
+| P2 | (5, 756, 313, 199) = row | frame, tab strip, entry art | two tab labels, the system welcome line, channel label in the entry | General tab selected | pass |
+| P3 | (448, 880, 1024, 200) = row | toolbar background, quickslot frames, experience bar frame, menu buttons | no visible text in the sandbox | `toolbar_noncombat` | pass (T not judgeable) |
+| P4 | (2, 2, 280, 300) = row | portrait ring, morale and power frames and fills | name and level empty (sandbox data absent) | meters as the layout sets them | G, A pass; T not judgeable |
+| P5 | (279, 2, 305, 300) = row | frame and rank art; a light placeholder fill where the target portrait goes | the layout's default name text, drawn twice (game code would set it) | shown with a target, hidden without | G pass; A, T partial |
+| P6 | (844, 401, 232, 278) = row | frame, title bar, close box, six buttons with the gap | five labels; the fourth button (`MainMenu_Logout_Button`) has no label | normal | G, A pass; T partial (one label missing) |
+| P7 | (224, 120, 577, 534) = row | frame, search field, page buttons, side art | title and page button labels; two of the three bottom buttons have no label | first page button highlighted | G, A pass; T partial |
+| P8 | (262, 118, 587, 577) = row | frame, five tabs, filters, empty list, buttons | tab, field and button labels | Fellowing tab selected | pass |
+| P9 | (9, 118, 770, 550) = row | frame, category icons, empty trees, buttons | title, option and button labels; the first bottom button has no label | normal | G, A pass; T partial |
+| P10 | (0, 0, 1038, 802) = row | frame, buttons and the top-level world map | menu labels and map names; title bar empty (no area) | normal | G, A pass; T partial |
+| P11 | (1566, 223, 340, 550) = row | nothing visible (empty tracker; drag-box frame hidden per §17.5) | — | — | G pass; A, T, S not judgeable |
+| P12 | (0, 0, 600, 400) = row | frame, tree, about and options tabs, buttons | tab and button labels; the about pane shows the layout's placeholder plugin entry | normal | G, A pass; T partial |
+| P13 | (0, 0, 500, 580) = row | frame, lineage tree art, description pane, buttons | lineage labels and buttons; title bar empty | normal | G, A pass; T partial |
+| P14 | (0, 650, 420, 55) = row | nothing visible (empty bar; drag-box frame hidden per §17.5) | — | — | G pass; A, T, S not judgeable |
+| P15 | (599, 164, 197, 183) = `ui-layout.md` §17.3 (see the OPEN above) | frame, title, three icons, search field | title label | store button hidden | pass against the spec |
+
+Summary (Tessera side only): G 15 / 15; A pass for 12 panels, 1 partial (P5), 2 not
+judgeable (P11, P14); T pass for 3 panels, partial for 8 (labels that game code would set or
+that the client does not resolve yet), not judgeable for 4; S default states as expected for
+13. Rollover and pressed states (S rows) were not exercised in screenshots; they are covered
+by the synthetic behaviour tests of `tessera-ui`. Criterion 2 waits for the owner's screenshots.
+
+Re-check after the review fixes of 2026-10-08 (Tessera side): session chat lines now wait
+for the chat window until the UI attaches, so the sandbox's welcome line is always in P2's
+General log (before, it depended on timing); lines with a sender are posted too, each
+reaching `Turbine.Chat.Received` once. Checked with `tessera-client --ui --walker-hud on
+--size 1280x720 --screenshot <scratch>/hud_on.png --data-dir <scratch>/data` (welcome line
+in the General log; screenshot deleted after the check) and by `cargo test --release -p
+tessera-client --test ui_review_real_data` (one `Received` per session line through the
+chat window, `ui_scale_global` on P7 opened after the HUD, no string table read on the main
+thread). The walker's screenshot action (F12 / PrintScreen) now includes the UI pass and,
+like `--screenshot`, never the software cursor.
+
 ## P. Panels
 
 Columns: the check id, the panel (§17.2 number), what is expected, the owner's reference
@@ -239,6 +297,13 @@ a note.
 | P15-A | Bag slot buttons and frame; 19 distinct surfaces | | | |
 | P15-T | No text elements | | | |
 | P15-S | Slot buttons normal and rollover | | | |
+
+> **OPEN (implementation, M5 clean room, 2026-10-08):** these P15 rows still describe the
+> retired bag panel (`backpack` / `RealBackpackField`). `ui-layout.md` §17.2–§17.4 replaced it
+> with `containerdisplay` / `PlayerBag1_Template`: root (599, 164, 197, 183) at every screen
+> size, 47 distinct surfaces, 2 text elements, the store button hidden. Tessera's panels and
+> their real-data test follow the spec. A maintainer or spec writer updates these rows; until
+> then judge P15 against `ui-layout.md` §17.2–§17.4, not against the rows above.
 
 ## D. Drawing rules
 

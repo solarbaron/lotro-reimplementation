@@ -20,7 +20,7 @@ use crate::input::{CameraAction, CameraInput};
 use crate::runtime::{DataStatus, Runtime};
 use crate::scene::{CLEAR_COLOR, Scene, default_camera};
 use crate::walker::hud::TextPanel;
-use crate::walker_host::{WalkerHost, capture, save_png};
+use crate::walker_host::{WalkerHost, save_png};
 
 /// Pixels of trackpad scrolling that count as one wheel notch.
 const PIXELS_PER_NOTCH: f64 = 40.0;
@@ -64,6 +64,36 @@ struct App {
     host: Option<WalkerHost>,
     /// Loading/status text while the walker is not running.
     status_panel: TextPanel,
+    /// The game UI attached to the walker (`--ui`, M5).
+    ui: Option<crate::ui_host::client::ClientUi>,
+    /// The settings' `[Input]` section (double-click time and rectangle, `keymap.md` §7.7).
+    input_prefs: tessera_settings::InputPrefs,
+    /// The window's scale factor the mapper's timing was last computed for.
+    scale_factor: f64,
+}
+
+/// The pointer-lock window operations over the winit window (decision 0015 §2.5).
+struct WinitCursor<'a>(&'a Window);
+
+impl crate::ui_host::cursor::CursorWindow for WinitCursor<'_> {
+    fn set_cursor_visible(&mut self, visible: bool) {
+        self.0.set_cursor_visible(visible);
+    }
+
+    fn set_grab(&mut self, grab: bool) -> bool {
+        use winit::window::CursorGrabMode;
+        if !grab {
+            return self.0.set_cursor_grab(CursorGrabMode::None).is_err();
+        }
+        self.0.set_cursor_grab(CursorGrabMode::Locked).is_ok()
+            || self.0.set_cursor_grab(CursorGrabMode::Confined).is_ok()
+    }
+
+    fn warp(&mut self, x: f64, y: f64) -> bool {
+        self.0
+            .set_cursor_position(winit::dpi::PhysicalPosition::new(x, y))
+            .is_ok()
+    }
 }
 
 fn key_action(code: KeyCode) -> Option<CameraAction> {
@@ -88,7 +118,15 @@ impl App {
             crate::runtime::refuse_install_path(&args, None, path)?;
         }
         let now = Instant::now();
-        let runtime = Runtime::start(&args, now)?;
+        let ui_args = if args.ui_script {
+            crate::ui_host::run::script_args(&args)?
+        } else {
+            args.clone()
+        };
+        let mut runtime = Runtime::start(
+            &crate::ui_host::client::ClientUi::runtime_args(&ui_args),
+            now,
+        )?;
         let host = runtime
             .walker_shared
             .clone()
@@ -98,6 +136,11 @@ impl App {
                 "controls: drag with left/right mouse or WASD/arrows to orbit, wheel or Q/E to zoom, \
                  R reset, T say hello, P list plugins, Esc quit"
             );
+        }
+        let mut ui = (host.is_some() && args.ui_enabled())
+            .then(|| crate::ui_host::client::ClientUi::new(&ui_args));
+        if let Some(u) = ui.as_mut() {
+            u.prepare(&mut runtime);
         }
         Ok(Self {
             args,
@@ -109,8 +152,11 @@ impl App {
             frames_since_title: 0,
             frames_total: 0,
             error: None,
+            ui,
             host,
             status_panel: TextPanel::default(),
+            input_prefs: crate::ui_host::cursor::input_prefs(),
+            scale_factor: 1.0,
         })
     }
 
@@ -267,6 +313,9 @@ impl App {
         rt.tick(now);
         let had_walker = host.walker.is_some();
         host.poll(rt, &mut gfx.renderer);
+        if let Some(ui) = self.ui.as_mut() {
+            ui.poll(rt, host.walker.as_mut());
+        }
         let size = gfx.window.inner_size();
         let notices = rt.take_notices();
         let mut quit = false;
@@ -276,10 +325,22 @@ impl App {
             if !had_walker {
                 walker.set_viewport(size.width, size.height);
                 self.status_panel.release(&mut gfx.renderer);
+                // T, W and H from the settings (or defaults), W and H scaled by the window's
+                // scale factor (`keymap.md` §7.7, decision 0014 D3).
+                self.scale_factor = gfx.window.scale_factor();
+                let timing = crate::ui_host::cursor::activation_timing(
+                    &self.input_prefs,
+                    None,
+                    self.scale_factor,
+                );
+                walker.mapper_mut().0.set_timing(timing);
             }
             for n in notices {
                 tracing::info!("world: {n}");
                 walker.notice(n);
+            }
+            if let Some(ui) = self.ui.as_mut() {
+                ui.before_update(walker, rt, &mut WinitCursor(&gfx.window));
             }
             let ev = walker.update(
                 &mut gfx.renderer,
@@ -293,6 +354,10 @@ impl App {
             quit = ev.quit || ev.duration_done;
             shot = ev.screenshot;
             flight_done = ev.flight_done;
+            if let Some(ui) = self.ui.as_mut() {
+                ui.after_update(walker, rt, &ev);
+                ui.step8(walker, &mut gfx.renderer, rt);
+            }
         } else {
             let text = match (&host.failed, &rt.status) {
                 (Some(reason), _) => format!("World walker unavailable: {reason}"),
@@ -305,7 +370,12 @@ impl App {
         let result = match gfx.renderer.begin_frame() {
             Ok(Some(mut frame)) => {
                 match host.walker.as_mut() {
-                    Some(walker) => walker.draw(&gfx.renderer, &mut frame),
+                    Some(walker) => {
+                        walker.draw(&gfx.renderer, &mut frame);
+                        if let Some(ui) = self.ui.as_mut() {
+                            ui.draw(&mut frame, true);
+                        }
+                    }
                     None => {
                         frame
                             .world_pass("loading", &tessera_render::Camera::default())
@@ -334,6 +404,38 @@ impl App {
             }
             Err(e) => Err(e),
         };
+        if let Some(ui) = self.ui.as_mut() {
+            ui.end_frame(rt);
+            if let Some((w, h)) = ui.take_screen_request() {
+                // The scripted run's resize: ask the window for it; the Resized event then
+                // resizes the renderer, the walker's viewport and the UI.
+                let _ = gfx.window.request_inner_size(PhysicalSize::new(w, h));
+            }
+            if ui.script_done() {
+                // The scripted run of decision 0015 §6 at the window size the compositor gave.
+                let title = format!(
+                    "{}x{} windowed, {}",
+                    size.width,
+                    size.height,
+                    gfx.renderer.adapter_info().name
+                );
+                if let Some(md) = ui.report(&title) {
+                    tracing::info!("UI budgets:\n{md}");
+                    if let Some(path) = &self.args.ui_report {
+                        let r =
+                            crate::runtime::refuse_install_path(&self.args, Some(&rt.status), path)
+                                .and_then(|()| {
+                                    std::fs::write(path, &md).map_err(anyhow::Error::from)
+                                });
+                        if let Err(e) = r {
+                            tracing::warn!(path = %path.display(), "UI report not written: {e:#}");
+                        }
+                    }
+                }
+                event_loop.exit();
+                return;
+            }
+        }
         match result {
             Ok(p) => self.frames_total += u64::from(p),
             Err(e) => {
@@ -356,9 +458,12 @@ impl App {
                 tracing::warn!("screenshot not saved: {e:#}");
                 walker.notice("screenshot not saved: the data folder is inside the install");
             } else {
-                match capture(
+                // With a game UI the image holds the UI pass too, but never the software
+                // cursor (`render.md` §6.11).
+                match crate::ui_host::run::capture_frame(
                     &mut gfx.renderer,
                     walker,
+                    self.ui.as_mut(),
                     (size.width.max(1), size.height.max(1)),
                 ) {
                     Ok(img) => {
@@ -441,6 +546,16 @@ impl App {
 
     /// Idempotent orderly shutdown.
     fn shutdown(&mut self) {
+        if let (Some(ui), Some(rt)) = (self.ui.as_mut(), self.runtime.as_mut()) {
+            // After the last frame: every apartment unloads (decision 0014 D8).
+            match self.gfx.as_mut() {
+                Some(g) => {
+                    let mut cursor = WinitCursor(&g.window);
+                    ui.shutdown(rt, Some(&mut g.renderer), &mut cursor);
+                }
+                None => ui.shutdown(rt, None, &mut crate::ui_host::cursor::NoWindow),
+            }
+        }
         if let (Some(host), Some(gfx)) = (self.host.as_mut(), self.gfx.as_mut())
             && let Some(mut walker) = host.walker.take()
         {
@@ -489,7 +604,15 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         if let Some(host) = &mut self.host {
             if let Some(walker) = host.walker.as_mut() {
-                tessera_input::winit_adapter::window_event(&event, |e| walker.input(&e));
+                match (self.ui.as_mut(), self.runtime.as_mut(), self.gfx.as_ref()) {
+                    (Some(ui), Some(rt), Some(gfx)) if ui.attached() => {
+                        let mut cursor = WinitCursor(&gfx.window);
+                        tessera_input::winit_adapter::window_event(&event, |e| {
+                            ui.raw_event(walker, rt, &e, &mut cursor);
+                        });
+                    }
+                    _ => tessera_input::winit_adapter::window_event(&event, |e| walker.input(&e)),
+                }
             }
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
@@ -501,8 +624,42 @@ impl ApplicationHandler for App {
                     if let Some(w) = host.walker.as_mut() {
                         w.set_viewport(size.width, size.height);
                     }
+                    if let Some(ui) = self.ui.as_mut() {
+                        ui.resize(size.width, size.height);
+                    }
                 }
                 WindowEvent::RedrawRequested => self.redraw(event_loop),
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    // `keymap.md` §7.7 and §7.8.9: new W and H, recorded press positions
+                    // forgotten, the cursor position (or the lock's frozen position)
+                    // rescaled by s_new ÷ s_old.
+                    let old = self.scale_factor;
+                    let ratio = if old > 0.0 { scale_factor / old } else { 1.0 };
+                    self.scale_factor = scale_factor;
+                    if let Some(walker) = host.walker.as_mut() {
+                        let timing = crate::ui_host::cursor::activation_timing(
+                            &self.input_prefs,
+                            None,
+                            scale_factor,
+                        );
+                        let area = self.gfx.as_ref().map_or((1, 1), |g| {
+                            let s = g.window.inner_size();
+                            (
+                                (f64::from(s.width) * ratio).round().max(1.0) as u32,
+                                (f64::from(s.height) * ratio).round().max(1.0) as u32,
+                            )
+                        });
+                        let handled = self
+                            .ui
+                            .as_mut()
+                            .is_some_and(|ui| ui.rescale(walker, timing, ratio, area));
+                        if !handled {
+                            let (mapper, _) = walker.mapper_mut();
+                            let cursor = crate::ui_host::rescaled_cursor(mapper.cursor(), ratio);
+                            mapper.rescale(timing, cursor);
+                        }
+                    }
+                }
                 WindowEvent::KeyboardInput { event, .. }
                     if host.walker.is_none()
                         && event.state == ElementState::Pressed
@@ -547,7 +704,15 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let Some(walker) = self.host.as_mut().and_then(|h| h.walker.as_mut()) {
-            tessera_input::winit_adapter::device_event(&event, |e| walker.input(&e));
+            match (self.ui.as_mut(), self.runtime.as_mut(), self.gfx.as_ref()) {
+                (Some(ui), Some(rt), Some(gfx)) if ui.attached() => {
+                    let mut cursor = WinitCursor(&gfx.window);
+                    tessera_input::winit_adapter::device_event(&event, |e| {
+                        ui.raw_event(walker, rt, &e, &mut cursor);
+                    });
+                }
+                _ => tessera_input::winit_adapter::device_event(&event, |e| walker.input(&e)),
+            }
         }
     }
 

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Plugin>
+  <Information>
+    <Name>Ledger</Name>
+    <Author>Tess</Author>
+    <Version>0.1</Version>
+    <Description>Synthetic test plugin.</Description>
+  </Information>
+  <Package>Tess.Ledger.Main</Package>
+  <Configuration Apartment="Ledger" />
+</Plugin>

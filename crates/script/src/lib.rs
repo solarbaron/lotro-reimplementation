@@ -1,58 +1,65 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Embedded Lua 5.1 plugin host.
+//! `tessera-script`: the plugin-free, sandboxed Lua 5.1 core (`docs/ARCHITECTURE.md` §18.1,
+//! decision 0023).
 //!
-//! Runs user-interface plugins that target the plugin API of the original client, from a
-//! read-only `Plugins/` folder, inside sandboxed Lua states ("apartments").
-//! Implemented from `docs/specs/lua-plugin-api.md` only.
+//! A [`ScriptState`] is one sandboxed Lua 5.1 state built from a [`Profile`]: which base
+//! functions exist, the [`Limits`] (memory cap, per-call instruction budget, source and
+//! data bounds), how host-compiled chunks are named, which random generator `math.random`
+//! uses, and whether the C-runtime number and string conversions of the original client
+//! apply. The core provides:
 //!
-//! - [`descriptor`]: `.plugin` XML descriptors (§5).
-//! - [`PluginManager`]: discovery (§4.3), apartments and lifecycle (§6), `import` with
-//!   per-package environments (§7), object model (§8), events (§9), `/plugins` and plugin
-//!   chat commands (§6.4, §11), deferred work.
-//! - [`HostApi`]: what the embedding client provides (chat output, time, plugin-data
-//!   folders, error reporting).
-//! - [`plugindata`]: the `.plugindata` value format and its no-execution reader (§10).
+//! - the library allow-list (base, `coroutine`, `table`, `string`, `math`; no `io`, `os`,
+//!   `package`, `debug`, `dofile`, `loadfile`, `require`, `module`) and text-only
+//!   compilation (binary chunks are refused);
+//! - the per-call instruction [`Budget`] with its count hook, and the `pcall` guard that
+//!   keeps protected calls from swallowing a spent budget;
+//! - protected calls with error description ([`describe_error`]) and [`native_fn`] /
+//!   [`api_fn`] for host functions whose errors reach Lua as plain strings;
+//! - the bounded Lua pattern matcher behind `string.find`, `match`, `gmatch` and `gsub`;
+//! - the metered finalizer proxy behind `newproxy(true)`;
+//! - collector stepping ([`ScriptState::gc_step`]);
+//! - the neutral, no-execution Lua-table data reader ([`data`]).
 //!
-//! Milestone-1 native surface: `Turbine.Object`, `Plugin`, `PluginData`, `PluginManager`,
-//! `Shell`, `ShellCommand`, `Engine`, `Chat` and the `ChatType`, `DataScope`, `Language`
-//! enumerations. The `Turbine.UI*` and `Turbine.Gameplay*` namespaces exist as empty tables
-//! for other layers to fill from [`HostApi::install_natives`] (see [`api`]), which runs in
-//! every new apartment before plugin code.
+//! The core names no plugin concept: it has no plugin API namespace, no `import`, no
+//! plugins root, no shared plugin state, no command table and no chat queue. The plugin
+//! host (`tessera-plugins`) builds on it. Its host trait, [`CoreHost`], covers the script
+//! log and error reports only.
 //!
-//! All plugin code runs on the thread that owns the [`PluginManager`]; the manager is
-//! `Send` so it can be moved to that thread.
+//! Spec: `docs/specs/plugin-runtime.md` §4 (interpreter, conversions, random numbers), §5
+//! (state creation), §9 (memory, collector, finalizers), §10 (limits), §11 (errors);
+//! `docs/specs/lua-plugin-api.md` §3.1–§3.3 (sandbox and limits).
 
-pub mod api;
-pub mod descriptor;
+mod budget;
+mod compat;
+pub mod data;
 mod error;
 mod host;
-mod manager;
-pub mod paths;
+mod limits;
+mod native;
 mod pattern;
-pub mod plugindata;
-mod runtime;
-mod turbine;
+mod sandbox;
+mod state;
 
-pub use descriptor::{DescriptorError, PluginDescriptor, parse_descriptor};
-pub use error::ScriptError;
-pub use host::{
-    DataScope, EngineDate, HostApi, LANGUAGE_ENGLISH, PluginDataLocation, ScriptErrorReport,
-    sanitize_folder_name,
-};
-pub use manager::{
-    AvailablePlugin, DEFAULT_APARTMENT, LoadedPluginInfo, ManagerConfig, PluginManager,
-    RefreshReport,
-};
+pub use budget::{BUDGET_MESSAGE, Budget};
+pub use compat::{CrtRandom, SharedRandom, format_number_g14};
+pub use error::CoreError;
+pub use host::{CoreHost, ErrorKind, ErrorReport, LogHost};
+pub use limits::{DEFAULT_MEMORY_BYTES, Limits};
 pub use mlua;
-pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
-pub use runtime::Limits;
-pub use turbine::CHAT_TYPE_STANDARD;
+pub use native::{
+    ErrorStyle, api_fn, classify, describe_error, host_error, is_budget_error, is_memory_error,
+    native_fn, native_fn_styled,
+};
+pub use state::{
+    BaseFunctions, Conversions, GC_STEP_KBYTES, Profile, RandomSource, ScriptState, call_protected,
+    compile_source,
+};
 
 #[cfg(test)]
 mod send_check {
     fn assert_send<T: Send>() {}
     #[test]
-    fn manager_is_send() {
-        assert_send::<super::PluginManager>();
+    fn state_is_send() {
+        assert_send::<super::ScriptState>();
     }
 }

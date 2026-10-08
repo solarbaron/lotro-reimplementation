@@ -151,6 +151,44 @@ pub struct ChatLine {
     pub text: String,
     /// Channel it arrived on.
     pub channel: ChatChannel,
+    /// The line's chat type for the game UI's chat window (`chat-window.md` §2): 5 `Say`,
+    /// 6 `Tell`, 8 `Log` for the session's system lines (`chat-window.md` §10 item 2), 4
+    /// `Standard` for the other channels.
+    pub chat_type: u32,
+}
+
+impl ChatLine {
+    /// A line from the session's `channel`.
+    #[must_use]
+    pub fn from_channel(channel: &ChatChannel, sender: Option<&str>, text: &str) -> Self {
+        let chat_type = match channel {
+            ChatChannel::Say => 5,
+            ChatChannel::Tell { .. } => 6,
+            ChatChannel::System => 8,
+            _ => 4,
+        };
+        Self {
+            sender: sender.unwrap_or_default().to_owned(),
+            text: text.to_owned(),
+            channel: channel.clone(),
+            chat_type: if sender.is_none_or(str::is_empty) && chat_type != 6 {
+                8
+            } else {
+                chat_type
+            },
+        }
+    }
+
+    /// A system line of the session (no sender, [`ChatChannel::System`], type 8 `Log`).
+    #[must_use]
+    pub fn system(text: impl Into<String>) -> Self {
+        Self {
+            sender: String::new(),
+            text: text.into(),
+            channel: ChatChannel::System,
+            chat_type: 8,
+        }
+    }
 }
 
 /// The player's precise position, from the latest location report.
@@ -707,11 +745,7 @@ impl World {
                         if found.is_none() {
                             let text = no_such_character(w, &names);
                             tracing::warn!("net: {text}");
-                            self.push_chat(ChatLine {
-                                sender: String::new(),
-                                text,
-                                channel: ChatChannel::System,
-                            });
+                            self.push_chat(ChatLine::system(text));
                             if let Err(e) = self.session.send(now, Command::Disconnect) {
                                 tracing::debug!("net: disconnect not sent: {e}");
                             }
@@ -728,11 +762,7 @@ impl World {
                     }
                 } else {
                     tracing::warn!("net: the account has no characters");
-                    self.push_chat(ChatLine {
-                        sender: String::new(),
-                        text: "This account has no characters.".into(),
-                        channel: ChatChannel::System,
-                    });
+                    self.push_chat(ChatLine::system("This account has no characters."));
                 }
             }
             Event::WorldEntered {
@@ -822,11 +852,7 @@ impl World {
                     sender = sender.as_deref().unwrap_or("-"),
                     "net chat: {text}"
                 );
-                self.push_chat(ChatLine {
-                    sender: sender.clone().unwrap_or_default(),
-                    text: text.clone(),
-                    channel: channel.clone(),
-                });
+                self.push_chat(ChatLine::from_channel(channel, sender.as_deref(), text));
             }
             Event::LocationReport {
                 id,
@@ -868,11 +894,7 @@ impl World {
                     .map(|f| describe_failure(f, pinned))
                 {
                     tracing::warn!("net: {text}");
-                    self.push_chat(ChatLine {
-                        sender: String::new(),
-                        text,
-                        channel: ChatChannel::System,
-                    });
+                    self.push_chat(ChatLine::system(text));
                 }
                 self.entities.clear();
                 self.placed.clear();
@@ -897,11 +919,7 @@ impl World {
         self.motd_shown = true;
         for text in motd_lines(&info.name, &info.motd) {
             tracing::info!("net: server: {text}");
-            self.push_chat(ChatLine {
-                sender: String::new(),
-                text,
-                channel: ChatChannel::System,
-            });
+            self.push_chat(ChatLine::system(text));
         }
     }
 

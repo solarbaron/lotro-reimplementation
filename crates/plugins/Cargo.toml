@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-plugins"
+description = "Plugin host: .plugin discovery, apartments, import, the compatible plugin API surface, plugin data, the built-in class helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tessera-script.workspace = true
+# The call-time header probe of plugin images (decision 0015 §4.4).
+tessera-material.workspace = true
+# The `Turbine.UI` bindings drive `tessera-ui` elements (decision 0023, `plugins` -> `ui`).
+tessera-ui.workspace = true
+# Property values written on plugin text elements (fonts, colours, justification).
+tessera-formats.workspace = true
+mlua = { version = "0.12", features = ["lua51", "vendored", "send"] }
+roxmltree = "0.21"
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+# Real-data tests only: locate the user's settings folder (read-only).
+tessera-install.workspace = true
+
+[lints]
+workspace = true

@@ -21,6 +21,8 @@ members = [
     "crates/havok",
     "crates/anim",
     "crates/entity",
+    "crates/ui",
+    "crates/plugins",
     "crates/physics",
     "crates/protocol",
     "crates/wvm",
@@ -61,6 +63,8 @@ tessera-input = { path = "crates/input" }
 tessera-havok = { path = "crates/havok" }
 tessera-anim = { path = "crates/anim" }
 tessera-entity = { path = "crates/entity" }
+tessera-ui = { path = "crates/ui" }
+tessera-plugins = { path = "crates/plugins" }
 tessera-physics = { path = "crates/physics" }
 tessera-protocol = { path = "crates/protocol" }
 tessera-server = { path = "apps/server" }

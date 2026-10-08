@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; **Accepted** (2026-10-07, re-review of the third revision passed), then **Revised** the same day for the non-blocking notes of that review (wording of §14.3 "Black or dim sun" and row W-E12; no behaviour changed); re-review of the fourth revision: **changes requested**, stays **Revised** |
-| **Last updated** | 2026-10-07 (spec writer, dirty room: §11.4 aligned with `mesh.md`; §13–§14 revised, new §14.12 interiors and §14.13 client facts and provenance; second revision of §14.3, §14.5, §14.12 (h), §14.13 and row W20 after the re-review; third revision of §2–§4 notes, §14.3, §14.5 and §14.13; fourth, wording-only revision of §14.3 and row W-E12; see §15) |
+| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; **Accepted** (2026-10-07, re-review of the third revision passed), then **Revised** the same day for the non-blocking notes of that review (wording of §14.3 "Black or dim sun" and row W-E12; no behaviour changed); re-review of the fourth revision: **changes requested**, stays **Revised** |
+| **Last updated** | 2026-10-07 (spec writer, dirty room: §11.4 aligned with `mesh.md`; §13–§14 revised, new §14.12 interiors and §14.13 client facts and provenance; second revision of §14.3, §14.5, §14.12 (h), §14.13 and row W20 after the re-review; third revision of §2–§4 notes, §14.3, §14.5 and §14.13; fourth, wording-only revision of §14.3 and row W-E12; earlier, 2026-10-06: the M5 rules of §5 and §6 for a game UI attached; see §15) |
 | **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5), revised 2026-10-07 by a spec writer (dirty room), who also wrote §14.12–§14.13. §15: change log |
 | **Reviewer** | §11: Claude review session (spec-writer agent). §13–§14: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
 | **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**. §11 unchanged: Accepted. Details in the dirty-room review log (decision 0018). |
@@ -129,8 +129,18 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 - Walk mode: the `tessera-input` walk controller on terrain heights, a third-person camera
   7 m behind the head (wheel zooms 1.5–60 m), kept 0.8 m above the terrain and then aimed at
   the head. Fly mode: the free-fly controller (wheel scales its speed). `Ctrl+F` toggles,
-  F3 toggles HUD details, F12 saves a screenshot to `<data dir>/screenshots/`, Escape quits.
+  F3 toggles HUD details, F12 saves a screenshot to `<data dir>/screenshots/`, Escape quits
+  (without a game UI attached; see the next item).
   Bindings come from Tessera's keymap file over the built-in defaults (`keymap.md` §6).
+- **Escape with a game UI attached** (M5; decision 0014, Consequences "Escape with a UI
+  attached", and its owners list). "Escape quits" holds only while no game UI is attached
+  (the walker of M3 and M4). With a UI attached, Escape gives `menu` (command `EscapeKey`),
+  which is offered to the UI first; when the UI does not consume it, the client's reaction
+  to its press is game code's handling of `EscapeKey` (`game-panels.md` §16: hide the active
+  on-demand panel, otherwise show or hide the main menu), never a quit. How the client is
+  quit while a UI is attached is outside this rule. The HUD help line (`help_text` in
+  `apps/client/src/walker/controls.rs`) labels `menu` "menu" instead of "quit" while a UI is
+  attached, and keeps "quit" without one (0014, Cost).
 
 <a id="s6"></a>
 ## 6. HUD, minimap and places
@@ -145,6 +155,21 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 - Minimap: north-up, ±320 m around the viewer, from the landblock minimap tiles of resident
   blocks (`landblock.md` §6.3, pixel frame `coordinates.md` §10, active content layer 1)
   drawn as clipped quads; blocks without a tile, or until it loads, show the overview tile.
+- **The walker's overlays with a game UI attached** (M5; decision 0015 Decision 1.6, "Walker
+  overlays with the game UI attached", and its owner question 6, answered "yes"). The HUD text
+  and the walker minimap draw **under** the game UI: after the world passes and before the UI
+  pass (`render.md` §6.9), so they never cover a native panel or a plugin window.
+  - The walker minimap is **off** by default while a game UI is attached, because the game's
+    own minimap (P1 of `ui-layout.md` §17.2) takes its place. The Tessera setting
+    `walker_minimap = auto | on | off` controls it; `auto` (the default) means off with a game
+    UI and on without one. When it is on, it still draws under the UI.
+  - The HUD is switchable with the Tessera setting `walker_hud = on | off` (default `on`, for
+    development). HUD text under semi-transparent panel art would show through it, so the M5
+    visual checklist run (`docs/checklists/m5-visual.md`) and the owner's comparison
+    screenshots use `walker_hud = off`; the scripted performance run of decision 0015 §6 reads
+    `FrameStats` instead of the HUD.
+  - Without a game UI attached nothing changes: there is no UI pass, and both overlays draw on
+    top of the world as described above.
 - Place index (`--place`): every block map of every region with a block-map descriptor is
   read for `Area_DID`; each area, territory and region name maps to the landblocks it covers;
   the target is the centre of the covered landblock nearest to their centroid. Matching is on
@@ -2529,6 +2554,7 @@ every day description (row W-E12).
 | 2026-10-06 | New §14: world fidelity in the walker (M4.5; clean-room implementer): the lit world pass with texture layers, ceilings and the far band, objects by LOD class with fades, detail levels, lit surfaces and instancing, water, frills, sky, the clock and its controls, the switches, the default-settings profile as adopted, new frame-log columns and options, the checklist rows as rendered (§14.10a; performance in `docs/perf/reference-machine.md`), and the terrain job ranking, upload-budget start and far-band mask deferral found by the M3 flights. |
 | 2026-10-06 | New §13: walk mode on collision (M4.5; clean-room implementer): the physics walker on its fixed 1/60 s step, the mover, collision-set residency (the feet's 3 × 3 landblocks; absent landblocks as a solid boundary), cell tracking through portals, water masked inside cells, scripted walks (`--walk-path`, `--walk-log`) and the 1,000-walk soak, with their first results. Supersedes §2's "controllers (30 Hz fixed step)" and §5's terrain-height walk mode when collision is built. |
 | 2026-10-06 | Review round of §14 (clean-room implementer): the change log moves to §15 (anchor `s12` kept); §14.2 walker keys yield to keymap bindings; §14.3 pause and rate keys, `--day` range, baked lights on ceilings without a light map; §14.4 chunks without layers drawn height-shaded, masks kept A8 until upload and capped at 1,024, a chunk waits only for its own images (a far cave block's ceiling never completed, so the walker never settled near one); §14.5 part priorities (visible/prefetch), the activation pass reruns on a cap, switch or setting change, characters by class distance with a fade; §14.7 frills: anchor-free sector groups, nearest-first builds, cells merged per frill values, distance rules per sector, the first part's first draw entry; §14.9 characters row; §14.10a F1 no longer passes (OPEN); §14.11 OPENs updated; §13.9 avatar OPEN answered. |
+| 2026-10-06 | Spec writer, applying the accepted decisions 0014 (owners list, "`walker.md` §5"; Consequences "Escape with a UI attached"; Cost) and 0015 (Decision 1.6; owner question 6): §5 gains the Escape rule with a game UI attached (`menu` becomes game code's `EscapeKey` handling, `game-panels.md` §16; the help label reads "menu"); §6 gains the overlay rule with a game UI attached (under the UI; `walker_minimap` off by default; `walker_hud` switchable and off in checklist runs). Tessera rules only; no format fact changed. |
 | 2026-10-07 | Clean-room implementer (M4.5 close-out, released under incident 0018): §14.4 pointer to `terrain-texturing.md` §4.9 (chunks without layers); §14.11: the interior-cell OPEN answered by `landblock.md` §4.11–§4.14 and a note on the walker's interior choices, the F1 OPEN answered, two notes on the M3-b late landblock and the streamer's lookahead. (Row added by the spec writer; the additions themselves carried no row.) |
 | 2026-10-07 | Spec writer (dirty room), answering the first review and the re-review of §13–§14 and incident 0018 (decision 0018, owner decision A): header review record shortened (details moved to the dirty-room review log); §13.2, §13.6, §13.7 references qualified with their spec; §13.3 cell-owner figures sourced (row W-C1, own probe) and the distance stated as the cell origin's; §13.4 rewritten as a Decision that departs from `collision.md` §12.3 step 8 and the §5.8.1 tie-break, with the view's set order defined; §13.8 marked a dated snapshot; §14.3 rewritten: two environment records (`landblock.md` §4.13), key A Decision and OPEN, key B and the interior overrides with the `InteriorFogType` condition, no sun indoors, fog-limit Decision, light table sides, the light lists as built against `lighting.md` §8.5 (OPEN), water without table lights, baked lights on the ground (Decision); §14.4: vertex-normal Decision and OPEN (`terrain-texturing.md` §4.10), ceilings, chunks without layers by §4.9 (replaces the height-shaded rule and the pointer OPEN), height-shaded fallback as a Decision; §14.5: distance-box Decision (`mesh.md` §8.6), character-distance Decision and OPEN, interior objects; §14.6 one-normal-layer Decision; §14.7 sector-box Decision; §14.8 136 objects cited (`environment.md` §5.4), sky from inside, the `fog_extra` departure and OPEN; §14.10 HUD and interior test; §14.10a marked a dated snapshot, rows T15/T16, F1, Y5, L5 annotated; §14.11: the interiors note moved to §14.12, cave-ceiling and L5 OPENs answered, the late-landblock notes merged into one performance note; new §14.12 (interiors, Decisions and departures) and §14.13 (client facts with provenance; BIN rows re-checked in an own copy of the Ghidra project, census rows from an own probe; table of departures). Status of §13–§14: Review. |
 | 2026-10-07 | Spec writer (dirty room), §11 (non-blocking notes of the §11 re-review, and `mesh.md` §19): §11.4 step 1 says the draw test uses the unsmoothed distance (`mesh.md` row M25; the implementer OPEN there answered); §11.4 step 4 and row W20 give `d6` −1 and `d7` 1,100 in record order (`mesh.md` row M35); new OPEN for the `tessera-world` initial values. §11 status: Accepted → Revised. |

@@ -154,20 +154,28 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             now,
             dt,
         );
-        let mut frame = renderer.begin_offscreen_frame(&target)?;
-        walker.draw(&renderer, &mut frame);
-        let t_end = Instant::now();
-        let stats = renderer.end_frame(frame)?;
-        walker.record_render_stats(&stats);
-        let t_wait = Instant::now();
-        renderer
-            .context()
-            .wait_idle()
-            .context("waiting for the GPU")?;
-        walker.record_frame_timing(
-            t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
-            t_wait.elapsed().as_secs_f64() * 1e3,
-        );
+        // A renderer error ends the loop through `finish`, which still shuts the walker
+        // down and writes what it can.
+        let drawn = (|| -> anyhow::Result<()> {
+            let mut frame = renderer.begin_offscreen_frame(&target)?;
+            walker.draw(&renderer, &mut frame);
+            let t_end = Instant::now();
+            let stats = renderer.end_frame(frame)?;
+            walker.record_render_stats(&stats);
+            let t_wait = Instant::now();
+            renderer
+                .context()
+                .wait_idle()
+                .context("waiting for the GPU")?;
+            walker.record_frame_timing(
+                t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
+                t_wait.elapsed().as_secs_f64() * 1e3,
+            );
+            Ok(())
+        })();
+        if let Err(e) = drawn {
+            break Err(e);
+        }
         report.frames += 1;
 
         if args.fly_path.is_some() {

@@ -9,7 +9,9 @@
 use std::collections::{HashMap, HashSet};
 
 use tessera_formats::property::{PropertyDictionary, PropertyNames};
-use tessera_formats::{Did, EnumMapper, PropertyValue};
+use tessera_formats::{Did, EnumMapper, PropertyType, PropertyValue};
+
+use crate::values::zero_value;
 
 /// `field_b` of a property definition that marks a script-parameter property
 /// (`property-system.md` §2.2, `script-runtime.md` §5.1).
@@ -17,12 +19,24 @@ pub const SCRIPT_PARAMETER_FIELD_B: u32 = 6;
 
 /// Per-property facts the runtime needs at run time.
 pub trait PropertyCatalog {
-    /// The value an entity reads for `pid` when no property set and no run-time write set
-    /// it (`script-runtime.md` §6.2 OPEN-5 Decision: the dictionary default).
+    /// The dictionary default of `pid` (a definition with flag 0x800,
+    /// `property-system.md` §2.2), which an entity reads for `pid` when no property set and
+    /// no run-time write set it.
     fn default_value(&self, pid: u32) -> Option<PropertyValue>;
     /// Whether `pid` is a script-parameter property, whose value is read from the run's
     /// parameter set instead of the entity (`script-runtime.md` §5.1).
     fn is_script_parameter(&self, pid: u32) -> bool;
+    /// The type of `pid`'s dictionary definition; `None` when the dictionary has no
+    /// definition for it.
+    fn property_type(&self, pid: u32) -> Option<PropertyType>;
+
+    /// The value a Switch or When starts from before it reads `pid` (`script-runtime.md`
+    /// §6.2, R27): the dictionary default, else the zero value of the definition's type.
+    /// `None` only when `pid` has no definition (the Switch then has no value).
+    fn unset_value(&self, pid: u32) -> Option<PropertyValue> {
+        let ty = self.property_type(pid)?;
+        self.default_value(pid).or_else(|| zero_value(ty))
+    }
 }
 
 impl PropertyCatalog for PropertyDictionary {
@@ -34,6 +48,10 @@ impl PropertyCatalog for PropertyDictionary {
         self.definition(pid)
             .is_some_and(|d| d.field_b == SCRIPT_PARAMETER_FIELD_B)
     }
+
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self.definition(pid).map(|d| d.ty)
+    }
 }
 
 impl<T: PropertyCatalog + ?Sized> PropertyCatalog for &T {
@@ -43,6 +61,13 @@ impl<T: PropertyCatalog + ?Sized> PropertyCatalog for &T {
 
     fn is_script_parameter(&self, pid: u32) -> bool {
         (**self).is_script_parameter(pid)
+    }
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        (**self).property_type(pid)
+    }
+
+    fn unset_value(&self, pid: u32) -> Option<PropertyValue> {
+        (**self).unset_value(pid)
     }
 }
 
@@ -54,16 +79,29 @@ impl<T: PropertyCatalog + ?Sized> PropertyCatalog for std::sync::Arc<T> {
     fn is_script_parameter(&self, pid: u32) -> bool {
         (**self).is_script_parameter(pid)
     }
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        (**self).property_type(pid)
+    }
+
+    fn unset_value(&self, pid: u32) -> Option<PropertyValue> {
+        (**self).unset_value(pid)
+    }
 }
 
-/// A catalog built in code, for tests and tools: explicit defaults and script-parameter
-/// PIDs; every other property has no default.
+/// A catalog built in code, for tests and tools: explicit types, defaults and
+/// script-parameter PIDs.
+///
+/// A PID is defined when it has a type in [`Self::types`] or a default in
+/// [`Self::defaults`] (its type is then the default's type); every other PID has no
+/// definition.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SyntheticCatalog {
     /// Default values by PID.
     pub defaults: HashMap<u32, PropertyValue>,
     /// Script-parameter PIDs.
     pub script_parameters: HashSet<u32>,
+    /// Definition types by PID (for PIDs without a default).
+    pub types: HashMap<u32, PropertyType>,
 }
 
 impl PropertyCatalog for SyntheticCatalog {
@@ -73,6 +111,13 @@ impl PropertyCatalog for SyntheticCatalog {
 
     fn is_script_parameter(&self, pid: u32) -> bool {
         self.script_parameters.contains(&pid)
+    }
+
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        self.types
+            .get(&pid)
+            .copied()
+            .or_else(|| self.defaults.get(&pid).map(PropertyValue::property_type))
     }
 }
 

@@ -153,20 +153,6 @@ pub struct RuntimeStats {
     pub compiled_nodes: usize,
 }
 
-/// What a Switch or When selects when its property has no value: unset on the entity
-/// (or in the run parameters) and without a dictionary default.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum UnsetPolicy {
-    /// No port at all, not even Default (`script-runtime.md` §6.2 OPEN-5 Decision, §6.3).
-    #[default]
-    NoPort,
-    /// The first Default port, as for a value that matches no case (`sound.md` §10.2:
-    /// "a property that is absent on the player makes its Switch take the Default port";
-    /// `script-table.md` §16 Decision). The two specs disagree; see the OPEN note under
-    /// `script-runtime.md` §6.2.
-    DefaultPort,
-}
-
 /// What a script start did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptStart {
@@ -330,7 +316,8 @@ const MAX_ISSUES: usize = 4096;
 ///
 /// Entities are identified by the caller ([`EntityId`]). Each has its tables, a layered
 /// property store (stored values from its property sets, then run-time values set by the
-/// caller or by SetProperty nodes; unset properties read the dictionary default) and its
+/// caller or by SetProperty nodes; unset properties read the dictionary default, and a
+/// Switch or When starts from the type's zero value when there is none, §6.2) and its
 /// runs. Every public call that can start or stop nodes takes the [`EffectSink`] that
 /// receives sound and environment effects.
 ///
@@ -366,7 +353,6 @@ pub struct Runtime<'a> {
     pub(crate) frame_updates: Vec<InstanceId>,
     pub(crate) player: Option<EntityId>,
     pub(crate) viewport: Option<EntityId>,
-    pub(crate) unset_policy: UnsetPolicy,
     issues: Vec<RuntimeIssue>,
     issue_set: HashSet<RuntimeIssue>,
     pub(crate) stats: RuntimeStats,
@@ -417,7 +403,6 @@ impl<'a> Runtime<'a> {
             frame_updates: Vec::new(),
             player: None,
             viewport: None,
-            unset_policy: UnsetPolicy::default(),
             issues: Vec::new(),
             issue_set: HashSet::new(),
             stats: RuntimeStats::default(),
@@ -437,14 +422,6 @@ impl<'a> Runtime<'a> {
     #[must_use]
     pub fn with_limits(mut self, limits: RuntimeLimits) -> Self {
         self.limits = limits;
-        self
-    }
-
-    /// Sets what a Switch or When selects for a property without a value
-    /// ([`UnsetPolicy`]; default [`UnsetPolicy::NoPort`]).
-    #[must_use]
-    pub fn with_unset_policy(mut self, policy: UnsetPolicy) -> Self {
-        self.unset_policy = policy;
         self
     }
 
@@ -882,6 +859,33 @@ impl<'a> Runtime<'a> {
         } else {
             self.entity_value(entity, pid)
         }
+    }
+
+    /// The value actually set for `pid`, with no dictionary default: in the run parameters
+    /// for script-parameter properties (§5.1), else a run-time write or a stored property
+    /// set of the entity. The int-list properties of a Switch case read this way (§6.2:
+    /// "those without a value are skipped, with no default").
+    pub(crate) fn read_set_value(
+        &self,
+        entity: EntityId,
+        params: &ParamSet,
+        pid: u32,
+    ) -> Option<PropertyValue> {
+        if self.catalog.is_script_parameter(pid) {
+            params.get(&pid).cloned()
+        } else {
+            let e = self.entities.get(&entity)?;
+            e.runtime
+                .get(&pid)
+                .cloned()
+                .or_else(|| e.stored.get(pid).cloned())
+        }
+    }
+
+    /// The value a Switch or When starts from for `pid` (§6.2, R27): the dictionary
+    /// default, else the zero value of the definition's type; `None` without a definition.
+    pub(crate) fn unset_value(&self, pid: u32) -> Option<PropertyValue> {
+        self.catalog.unset_value(pid)
     }
 
     pub(crate) fn is_script_parameter(&self, pid: u32) -> bool {

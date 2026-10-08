@@ -2,8 +2,55 @@
 //! Value comparisons of Switch cases, transitions and When tests (`script-runtime.md` §6.3,
 //! §6.9, §7) and typed reads of driven field values.
 
-use tessera_formats::PropertyValue;
+use tessera_formats::property::{PropertyArray, PropertyStruct, Waveform};
 use tessera_formats::script_table::{SWITCH_ALL_BITS_SET, SWITCH_ANY_BIT_SET, when_op};
+use tessera_formats::{Did, PropertyType, PropertyValue, StringInfo, StringSource, Utf16String};
+
+/// The zero value of a property type (`script-runtime.md` §6.2, R27): 0, 0.0, false, enum 0,
+/// DID 0, property ID 0; a tri-state is 255 ("undefined"); every other type its empty
+/// value (an empty string, struct, array, bitfield or waveform, a zero vector, colour or
+/// position, a StringInfo holding an empty literal).
+///
+/// `None` for a type code the format does not define ([`PropertyType::Unknown`]): such a
+/// type has no value to start from (Tessera choice, `script-runtime.md` §29).
+#[must_use]
+pub(crate) fn zero_value(ty: PropertyType) -> Option<PropertyValue> {
+    Some(match ty {
+        PropertyType::String => PropertyValue::String(String::new()),
+        PropertyType::StringToken => PropertyValue::StringToken(0),
+        PropertyType::Waveform => PropertyValue::Waveform(Box::new(Waveform {
+            subtype: 0,
+            values: Vec::new(),
+            extra: None,
+        })),
+        PropertyType::Timestamp => PropertyValue::Timestamp(0.0),
+        PropertyType::TriState => PropertyValue::TriState(TRI_STATE_UNDEFINED),
+        PropertyType::Vector3 => PropertyValue::Vector3([0.0; 3]),
+        PropertyType::InstanceId => PropertyValue::InstanceId(0),
+        PropertyType::Enum => PropertyValue::Enum(0),
+        PropertyType::Float => PropertyValue::Float(0.0),
+        PropertyType::PropertyId => PropertyValue::PropertyId(0),
+        PropertyType::Struct => PropertyValue::Struct(PropertyStruct::default()),
+        PropertyType::Array => PropertyValue::Array(PropertyArray::default()),
+        PropertyType::StringInfo => PropertyValue::StringInfo(Box::new(StringInfo {
+            source: StringSource::Literal(Utf16String::default()),
+            args: None,
+        })),
+        PropertyType::Bitfield64 => PropertyValue::Bitfield64(0),
+        PropertyType::Int => PropertyValue::Int(0),
+        PropertyType::Colour => PropertyValue::Colour([0; 4]),
+        PropertyType::Position => PropertyValue::Position(Default::default()),
+        PropertyType::Bitfield32 => PropertyValue::Bitfield32(0),
+        PropertyType::Int64 => PropertyValue::Int64(0),
+        PropertyType::DidRef => PropertyValue::DidRef(Did(0)),
+        PropertyType::Bool => PropertyValue::Bool(false),
+        PropertyType::BitfieldAny => PropertyValue::BitfieldAny(Default::default()),
+        PropertyType::Unknown(_) => return None,
+    })
+}
+
+/// The tri-state value "undefined", a tri-state's zero value (`script-runtime.md` §6.2).
+pub(crate) const TRI_STATE_UNDEFINED: u8 = 255;
 
 /// Equality of two property values: numerically when both are scalars (integers, enum keys,
 /// booleans, DIDs, bitfields, floats), structurally otherwise.
@@ -113,6 +160,29 @@ pub(crate) fn as_vec3(v: &PropertyValue) -> Option<[f32; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_values_follow_the_type() {
+        assert_eq!(zero_value(PropertyType::Enum), Some(PropertyValue::Enum(0)));
+        assert_eq!(
+            zero_value(PropertyType::Bool),
+            Some(PropertyValue::Bool(false))
+        );
+        assert_eq!(
+            zero_value(PropertyType::TriState),
+            Some(PropertyValue::TriState(255))
+        );
+        assert_eq!(
+            zero_value(PropertyType::DidRef),
+            Some(PropertyValue::DidRef(Did(0)))
+        );
+        assert_eq!(zero_value(PropertyType::Unknown(99)), None);
+        for code in 1..=22 {
+            let ty = PropertyType::from_code(code);
+            let v = zero_value(ty).expect("every defined type has a zero value");
+            assert_eq!(v.property_type(), ty);
+        }
+    }
 
     #[test]
     fn equality_is_numeric_across_scalar_types() {

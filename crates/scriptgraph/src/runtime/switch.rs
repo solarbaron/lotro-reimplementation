@@ -159,16 +159,22 @@ impl Runtime<'_> {
         self.switch_state(id).is_some_and(|s| s.eval == e)
     }
 
-    /// The Switch's current value (§6.2; OPEN-5 Decision through `read_value`).
+    /// The Switch's current value (§6.2, R27): the value read from the target entity (or
+    /// the run parameters) when it has one, else the dictionary default, else the zero
+    /// value of the property's type. `None` ("no value") only when the property ID has no
+    /// dictionary definition.
     fn switch_value(&self, id: InstanceId) -> Option<PropertyValue> {
         let i = self.insts.get(id)?;
         let KindState::Switch(s) = &i.kind else {
             return None;
         };
         self.read_value(s.target, &i.params, s.property)
+            .or_else(|| self.unset_value(s.property))
     }
 
-    /// The selected port for the current value (§6.3, §7); `None` without a value.
+    /// The selected port for the current value (§6.3, §7); `None` without a value (a
+    /// property ID without a dictionary definition; for a When a Tessera choice,
+    /// `script-runtime.md` §29).
     fn select_port(&self, id: InstanceId) -> Option<usize> {
         let i = self.insts.get(id)?;
         let KindState::Switch(s) = &i.kind else {
@@ -176,14 +182,7 @@ impl Runtime<'_> {
         };
         let nref = i.node?;
         let n = self.units.get(nref.unit as usize)?.node(nref.node)?;
-        let Some(v) = s.value.as_ref() else {
-            return match self.unset_policy {
-                super::UnsetPolicy::NoPort => None,
-                super::UnsetPolicy::DefaultPort => {
-                    n.ports_of(PortType::DEFAULT).map(|(i, _)| i).next()
-                }
-            };
-        };
+        let v = s.value.as_ref()?;
         for (idx, p) in n.ports.iter().enumerate() {
             match (&p.payload, p.port_type) {
                 (PortPayload::SwitchCase(c), PortType::SWITCH_VALUE) if !s.is_when => {
@@ -194,8 +193,11 @@ impl Runtime<'_> {
                     {
                         return Some(idx);
                     }
+                    // Int-list properties without a value are skipped, with no
+                    // default (§6.2, §6.3 step 1).
                     for &pid in &c.ints {
-                        if let Some(x) = self.read_value(s.target, &i.params, pid.cast_unsigned())
+                        if let Some(x) =
+                            self.read_set_value(s.target, &i.params, pid.cast_unsigned())
                             && case_matches(v, &x, c.operator)
                         {
                             return Some(idx);

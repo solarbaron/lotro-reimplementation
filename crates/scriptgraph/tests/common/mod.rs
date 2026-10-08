@@ -12,7 +12,9 @@ use tessera_formats::script_table::{
     BaseBlock, Node, NodeData, NodeKind, Port, PortPayload, PortType, RunNode, SoundNode,
     SwitchCase, SwitchNode, SwitchTransition, Target, TargetData, TimerNode, WhenTest,
 };
-use tessera_formats::{Did, PropertySet, PropertyValue, Script, ScriptTable, Scriptlet};
+use tessera_formats::{
+    Did, PropertySet, PropertyType, PropertyValue, Script, ScriptTable, Scriptlet,
+};
 use tessera_scriptgraph::{
     EntityId, EntityInit, MemorySource, RecordingSink, Runtime, RuntimeVocabulary, SoundHandle,
     SyntheticCatalog,
@@ -32,6 +34,14 @@ pub mod pid {
     pub const OTHER: u32 = 0x100A;
     pub const SOUND_ID: u32 = 0x100B;
     pub const OUTPUT_SOURCE: u32 = 0x100C;
+    /// An enum without a dictionary default (like the music graph's monitor properties).
+    pub const MONITOR: u32 = 0x100D;
+    /// A tri-state without a dictionary default.
+    pub const TRI: u32 = 0x100E;
+    /// An int with the dictionary default 2.
+    pub const LIST: u32 = 0x100F;
+    /// A property ID that the dictionary does not define.
+    pub const UNDEFINED: u32 = 0x1010;
 }
 
 /// The `Startup` key of the synthetic vocabulary.
@@ -69,12 +79,32 @@ pub fn vocab() -> RuntimeVocabulary {
     v
 }
 
-/// The synthetic catalog: the music volume defaults to 1.0; `PARAM` is a script parameter.
+/// The synthetic catalog: the music volume defaults to 1.0 and `LIST` to 2; `PARAM` is a
+/// script parameter; every synthetic PID but `UNDEFINED` has a definition (an unset one
+/// reads its default, else its type's zero value, `script-runtime.md` §6.2).
 pub fn catalog() -> SyntheticCatalog {
     let mut c = SyntheticCatalog::default();
     c.defaults
         .insert(pid::MUSIC_VOLUME, PropertyValue::Float(1.0));
+    c.defaults.insert(pid::LIST, PropertyValue::Int(2));
     c.script_parameters.insert(pid::PARAM);
+    for (p, ty) in [
+        (pid::AREA_MUSIC, PropertyType::Enum),
+        (pid::INTENSITY_MULTIPLIER, PropertyType::Float),
+        (pid::MAX_INSTANCES, PropertyType::Int),
+        (pid::COMBINATION, PropertyType::Enum),
+        (pid::VALUE, PropertyType::Int),
+        (pid::COUNTER, PropertyType::Int),
+        (pid::FLAG, PropertyType::Bool),
+        (pid::PARAM, PropertyType::Int),
+        (pid::OTHER, PropertyType::Int),
+        (pid::SOUND_ID, PropertyType::DidRef),
+        (pid::OUTPUT_SOURCE, PropertyType::InstanceId),
+        (pid::MONITOR, PropertyType::Enum),
+        (pid::TRI, PropertyType::TriState),
+    ] {
+        c.types.insert(p, ty);
+    }
     c
 }
 

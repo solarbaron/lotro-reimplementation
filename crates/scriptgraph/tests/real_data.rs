@@ -27,7 +27,7 @@ use tessera_formats::{
 };
 use tessera_scriptgraph::{
     EntityId, EntityInit, FetchSource, RecordingSink, Runtime, RuntimeVocabulary, SinkEvent,
-    SoundHandle, UnsetPolicy, vocab,
+    SoundHandle, vocab,
 };
 
 const PROPERTY_DICTIONARY: u32 = 0x3400_0000;
@@ -83,13 +83,11 @@ fn release() -> bool {
     !cfg!(debug_assertions)
 }
 
-fn runtime(set: &'static ArchiveSet, policy: UnsetPolicy) -> Runtime<'static> {
+fn runtime(set: &'static ArchiveSet) -> Runtime<'static> {
     let dict = dictionary(set);
     let v = RuntimeVocabulary::from_data(dict, |d| mapper(set, d));
     assert!(v.startup_key.is_some(), "the Startup label");
-    Runtime::new(FetchSource::new(dict, fetch(set)), dict, v)
-        .with_seed(1)
-        .with_unset_policy(policy)
+    Runtime::new(FetchSource::new(dict, fetch(set)), dict, v).with_seed(1)
 }
 
 /// The race table's player avatars (`skeleton-anim.md` §2.2), as game objects.
@@ -207,7 +205,7 @@ fn player_avatar_plays_area_music() {
         .unwrap();
     sample.push(no_case);
 
-    let mut rt = runtime(set, UnsetPolicy::DefaultPort);
+    let mut rt = runtime(set);
     let mut sink = RecordingSink::new();
     sink.max_events = 1_000_000;
     let player = EntityId(1);
@@ -289,14 +287,16 @@ fn player_avatar_plays_area_music() {
     assert_eq!(rt.stats().instances, 0);
     assert!(sink.playing.is_empty());
 
-    // The same with the default policy (`script-runtime.md` §6.2 OPEN-5 Decision): the
-    // Switches on properties the walker leaves unset (no dictionary default) select nothing.
+    // Only `Area_Music` set at spawn: every other property the graph's Switches read is
+    // unset on the avatar and starts from its dictionary default or its type's zero value
+    // (`script-runtime.md` §6.2, R27; `sound.md` §10.2), so the music plays without a
+    // track change.
     let chain = collect_entity_scripts(avatar, dict, &svocab, fetch_result(set)).expect("avatar");
     let mut init = EntityInit::from_scripts(&chain.scripts);
     init.properties.set(is_player, PropertyValue::Bool(true));
     init.properties
         .set(area_music, PropertyValue::Enum(sample[0]));
-    let mut rt = runtime(set, UnsetPolicy::NoPort);
+    let mut rt = runtime(set);
     let mut sink = RecordingSink::new();
     rt.spawn_entity(&mut sink, player, init).expect("spawn");
     for _ in 0..100 {
@@ -306,7 +306,11 @@ fn player_avatar_plays_area_music() {
         .sound_starts()
         .filter(|(_, s)| s.tracked && s.channel == music_channel)
         .count();
-    eprintln!("music with UnsetPolicy::NoPort: {starts} tracked channel-{music_channel} starts");
+    eprintln!("music with only Area_Music set: {starts} tracked channel-{music_channel} starts");
+    assert!(
+        starts > 0,
+        "unset properties do not silence the music (R27)"
+    );
 }
 
 #[test]
@@ -329,7 +333,7 @@ fn emitters_request_sounds() {
         (4000, 25)
     };
     let stride = (dids.len() / scan.max(1)).max(1);
-    let mut rt = runtime(set, UnsetPolicy::NoPort);
+    let mut rt = runtime(set);
     let mut sink = RecordingSink::new();
     sink.max_events = 10_000;
     let player = EntityId(u64::MAX);

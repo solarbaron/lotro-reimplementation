@@ -27,7 +27,7 @@ use tessera_formats::{
 };
 use tessera_scriptgraph::{
     EntityId, EntityInit, RecordingSink, Runtime, RuntimeLimits, RuntimeVocabulary, ScriptSource,
-    SyntheticCatalog, UnsetPolicy,
+    SyntheticCatalog,
 };
 
 /// Every PID has a type: codes 0 and 23 map to `Unknown`, the rest to types 1-22.
@@ -433,14 +433,18 @@ fuzz_target!(|data: &[u8]| {
     let mut catalog = SyntheticCatalog::default();
     catalog.script_parameters.insert(6);
     catalog.defaults.insert(7, PropertyValue::Float(1.0));
-    let policy = if ops.first().is_some_and(|b| b & 1 == 1) {
-        UnsetPolicy::DefaultPort
-    } else {
-        UnsetPolicy::NoPort
-    };
+    // With bit 0 of the first operation byte every PID the recipes use has a definition
+    // (every type, `Unknown` included), so unset Switch and When properties start from
+    // their types' zero values (`script-runtime.md` §6.2); without it they have no value.
+    if ops.first().is_some_and(|b| b & 1 == 1) {
+        for pid in 0..16 {
+            if let Some(ty) = total(pid) {
+                catalog.types.insert(pid, ty);
+            }
+        }
+    }
     let mut rt = Runtime::new(source, catalog, vocab)
         .with_seed(u64::from(ops.len() as u32))
-        .with_unset_policy(policy)
         .with_limits(RuntimeLimits {
             max_instances_per_entity: PER_ENTITY,
             max_starts_per_call: 20_000,

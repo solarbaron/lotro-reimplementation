@@ -16,7 +16,7 @@ use super::{
 use crate::error::RuntimeIssue;
 use crate::graph::{CNode, NodeRef, Unit, UnitId};
 use crate::sink::{EffectSink, EntityId};
-use crate::values::as_f32;
+use crate::values::{as_bool, as_f32};
 
 /// Stop reason of ordinary stops and completion (§3.5).
 pub(crate) const REASON_STOP: u8 = 0;
@@ -169,13 +169,19 @@ impl Runtime<'_> {
             return None;
         }
         self.stats.node_starts += 1;
-        // 1. Persistent-node gate.
-        if n.is_persistent() && !permission {
+        // The steps of §3.1 in the order the client applies them: 3, 4, 1, 2, 5, 6, 7 (R1).
+        // 3. The same node already runs under this parent.
+        if self.has_running_child_of(parent, nref) {
             return None;
         }
-        // 4. (computed first; reads only) The node copy's driven values (§5.2).
+        // 4. The node copy's driven values (§2.2, §5.2); steps 1 and 2 read the copy.
         let overrides = self.driven_values(n, nref, entity, &params, parent);
-        // 2. Probability.
+        // 1. Persistent-node gate.
+        if self.persistent_on_copy(n, &overrides) && !permission {
+            return None;
+        }
+        // 2. Probability (the stored field: no driven pair names it, `script-runtime.md`
+        // §29 item 3).
         let prob = n.base.probability;
         if prob != 1.0 {
             let u: f32 = self.rng.random();
@@ -184,10 +190,6 @@ impl Runtime<'_> {
                 self.stats.probability_skips += 1;
                 return None;
             }
-        }
-        // 3. The same node already runs under this parent.
-        if self.has_running_child_of(parent, nref) {
-            return None;
         }
         // 5. Intensity (§4.1).
         let mult = overrides
@@ -266,6 +268,22 @@ impl Runtime<'_> {
             p.children.push(Child { id, tag });
         }
         Some(id)
+    }
+
+    /// Whether the node copy is "persistent" for the gate of §3.1 step 1: a Switch, When
+    /// or WhenRunning with `Persistent` = 1, or a Timer with `LoopForever` = 1, with a
+    /// driven `TimerScript_LoopForever` taken from the copy.
+    fn persistent_on_copy(&self, n: &CNode, overrides: &[(u32, PropertyValue)]) -> bool {
+        if let NodeData::Timer(t) = &n.data {
+            let driven = self.vocab.timer.loop_forever.and_then(|f| {
+                overrides
+                    .iter()
+                    .find(|(p, _)| *p == f)
+                    .and_then(|(_, v)| as_bool(v))
+            });
+            return driven.unwrap_or(t.loop_forever);
+        }
+        n.is_persistent()
     }
 
     /// §3.1 step 3. A child that is being stopped (still listed while its stop runs) is

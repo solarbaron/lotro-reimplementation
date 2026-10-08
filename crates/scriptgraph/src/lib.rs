@@ -56,7 +56,7 @@ pub mod vocab;
 pub use error::{RuntimeError, RuntimeIssue};
 pub use runtime::{
     EntityInit, INTENSITY_EPSILON, LAG_CATCH_UP, MAX_ADVANCE, MIN_LOOP_INTERVAL, Runtime,
-    RuntimeLimits, RuntimeStats, ScriptStart, UnsetPolicy,
+    RuntimeLimits, RuntimeStats, ScriptStart,
 };
 pub use sink::{
     AnimationHandle, AnimationOutcome, EffectSink, EntityId, EnvironmentHandle, EnvironmentRequest,

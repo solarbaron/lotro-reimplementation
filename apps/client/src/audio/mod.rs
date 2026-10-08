@@ -49,9 +49,7 @@ use tessera_audio::engine::{
 };
 use tessera_dat::ArchiveSet;
 use tessera_formats::property::PropertyType;
-use tessera_scriptgraph::{
-    EntityId, EntityInit, Runtime as GraphRuntime, RuntimeVocabulary, UnsetPolicy,
-};
+use tessera_scriptgraph::{EntityId, EntityInit, Runtime as GraphRuntime, RuntimeVocabulary};
 use tessera_world::{LandblockKey, WorldPos, WorldStreamer};
 
 use self::backend::{BackendChoice, PrefsChoice, SettingsChoice};
@@ -657,10 +655,10 @@ impl WorldAudio {
                     Arc::clone(&b.data.dict),
                     b.vocab,
                 )
-                .with_seed(self.config.seed)
-                // `sound.md` §10.2: a property absent on the player makes its Switch take
-                // the Default port.
-                .with_unset_policy(UnsetPolicy::DefaultPort);
+                // A property absent on the player starts its Switch from the dictionary
+                // default or the type's zero value (`script-runtime.md` §6.2, R27;
+                // `sound.md` §10.2).
+                .with_seed(self.config.seed);
                 self.graph = Some(graph);
                 self.avatar_init = b.avatar;
                 self.avatar_since = self.time;

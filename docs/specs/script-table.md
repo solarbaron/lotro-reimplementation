@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-07, re-review of the revision after review) |
+| **Status** | Revised (2026-10-07, BIN5 edge cases of held clips and deformer nodes; awaiting review) |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
-| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. BIN5 revision of 2026-10-07: not yet reviewed. Full record in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (0x07 and 0x0C decoders: framing of every node kind, full animation-node model, skip rules for everything else), `crates/anim` (layered clip playback driven by the node fields of §6), a small graph evaluator for clip selection (§8, §11; `crates/anim` or a new `script` module of `crates/entity`), `fuzz/` (one target for each of the two record types, §12), `apps/dattool` / `apps/explorer` (table and scriptlet inspection, animation browser) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize, strings, StringInfo; this spec corrects P10 and the 0x0C row of §2.1, see §14). [`property-system.md`](property-system.md) §3–§5 (value encodings, property sets, entries with and without PID echo) and §8–§9 (enum mappers, DB-object types). [`havok-data.md`](havok-data.md) §2.3 (clip envelope: duration, track count, track weights), §4.4 (annotation tracks). [`skeleton-anim.md`](skeleton-anim.md) §2.2 (race table → avatar entity), §3.2 (positional binding), §7 (root motion, treadmill speeds). [`appearance.md`](appearance.md) §7 (NPC-like figures, idle properties). [`entity-descriptor.md`](entity-descriptor.md) §4.3 (weenie objects). Sound, VFX and camera node semantics are a later part of this spec (M6). |
 
@@ -76,6 +76,7 @@ Legend:
 | OBS2 | Observed 2026-10-07 in the user install with the repository's decoders used as a tool: the driven pairs of all SetProperty (384 with driven pairs), MeshDeformer (49) and SliderMeshDeformer (8) nodes of all records; the element form of `Entity_AdditionalScriptTables` in all 0x47 and 0x79 sets; the property dictionary entries named in this spec; the kinds of the avatar tables named in §8; the fidget scripts of §8.6 in the Hobbit M closure (0x07001CAA, 0x07000433, 0x0700077F). |
 | BIN4 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-07 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh copy of the analysis project, to answer the review of 2026-10-07: the switch node's change, delay, fade and child-finished handlers and the reflected field list of the transition port; the animation component's play request (refusals); the movement controllers' slider steps and the player physics-control setup. Questions: (8) what a matching Switch transition port does with its children, `Wait`, `RampIn`, `RampOut` and its two `Delay` fields (§4.3, §7.1); (9) which refusals of §6.10 are reported as errors; (10) the slider time *T* of the player's own input path and the other slider resets (§8.4). Why M1–M3 were not enough: the data give the fields but not their run-time meaning (1,473 of the 1,480 transition ports have `Wait` = 1, but nothing in the data says what waiting means); no published source covers them; observing the client (M3) shows a blend or a pause, not the rule. Only offline script, animation and movement-controller code was read; nothing of the network, login, launcher or anti-tamper code. |
 | OBS3 | Observed 2026-10-07 with the repository's decoders used as a tool: the tails of all 1,480 Switch transition ports (both `Delay` fields equal in 1,480; `Wait` = 1 in 1,473; `RampIn` 0 in 1,470, 0.1 in 6, 0.2 in 4, all non-zero ones with `Wait` = 1; last `Delay` positive in 1; every port has children); the `PlayerPhysicsControl` object of the `WEENIECONTENT` DID map (`skeleton-anim.md` OBS3). |
+| BIN5 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-07 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh copy of the analysis project, to settle edge cases that a clean-room audit of the River-hobbit height code found unstated or contradicted. Questions: (11) what the held-clip fraction does with values that are not finite, too large, or whose fractional part rounds to 1, and whether `StartTime` and `EndTime` crop a held clip (§6.7); (12) what a MeshDeformer with a missing clip or a time that is not finite does, and how many deformers an entity may hold (§6.9); (13) which string a SliderMeshDeformer reads when no pair drives it, and what two such nodes do (§6.9); (14) whether a layer limits its number of clips (§6.2). Why M1–M3 were not enough: none of these cases occurs in the data (every held node has `StartTime` 0, `EndTime` 1 and a finite `ManualTime` in range; every body-shape deformer names a clip; each avatar closure has one slider node), so the data cannot show the rule; no published source covers them; observing the running client (M3) cannot produce the inputs. Code read: the animation node's held-fraction routine, the animation component's held-time setter, its deformer and slider-set registration and removal, the deformation-pose builder, the layer's play routine and per-bone weight pass, and the animation middleware's control creation and time step. Nothing of the network, login, launcher or anti-tamper code. |
 | EM | Enum mappers in the data: node kinds 0x2300019A (base of 0x2300009E), port types 0x230000A1, target types 0x2300019B (base of 0x2300009F), switch-port operator 0x230000A2, when operator 0x230000A3, math operator 0x230000A4, animation layer 0x230000D5, script IDs 0x23000097 (base 0x230000F8), `Movement_MovementStyle` 0x2300017F, `Entity_Element` 0x23000069 (base 0x230001B9), story-hook type 0x230000BB (base 0x2300013D). |
 | DS | `research/notes/data-semantics.md` §10 (0x07 outline from LC, node-type names). |
 | HD, SA, AP, ED, PS | `havok-data.md`, `skeleton-anim.md`, `appearance.md`, `entity-descriptor.md`, `property-system.md` as companion specs. |
@@ -100,7 +101,7 @@ Legend:
 | T16 | Random choice uses `u32` weights on the ports of a Random node (§7.4) | OBS (137,690 ports; 96 % weight 1); BIN3 (T27) | Confirmed (layout and, since 2026-10-07, selection rule) |
 | T17 | No clip carries a timed annotation; all animation events come from script ports (§9) | HD §4.4; OBS | Confirmed |
 | T18 | Script lookup precedence across includes | BIN3 (T25) | Resolved 2026-10-07: there is no single winner; all definitions run (§8.2) |
-| T19 | A node with `ManualUpdate` = 1 never advances its clip; its time is `ManualTime` read as a fraction of the played range, wrapped (looping) or limited by `LoopCount` (§6.7) | BIN2; OBS (all 30 such nodes; 7 have `ManualTime` driven by a property) | Confirmed 2026-10-05 (rule BIN only) |
+| T19 | A node with `ManualUpdate` = 1 never advances its clip; its time is `ManualTime` read as a fraction of the played range, wrapped (looping) or limited by `LoopCount` (§6.7) | BIN2; OBS (all 30 such nodes; 7 have `ManualTime` driven by a property) | Confirmed 2026-10-05 (rule BIN only); edge cases and played length T36, T37 |
 | T20 | Layers combine by a remaining-weight budget from the highest layer down (§6.2; rule in `skeleton-anim.md` §6.6) | BIN2 | Confirmed 2026-10-05 (BIN only). Replaces the §6.2 Decision. |
 | T21 | River-hobbit and DwarfStoutAxe tables start, from `Startup`, a script that holds a layer-110 `scale_blend` clip at a time driven by `AC_Avatar_Height` (River-hobbit) or `AC_BoneScale_Test` (DwarfStoutAxe) (§6.8) | OBS (8 layer-110 nodes, their tables and scriptlets); BIN2 (§6.7 rule); RH (feet stay on the ground) | Confirmed 2026-10-05 |
 | T22 | Species tables' `Startup` scripts hold a MeshDeformer node (18) driven by `AC_BoneScale_Test` (15 tables) and, for the Human, Elf, HighElf and River-hobbit bodies, a SliderMeshDeformer node (81) driven by `AC_BoneSlider_Value_Array` (8 tables); both deform the body in bind space (§6.9) | OBS (all 74 + 8 nodes); BIN2 | Confirmed 2026-10-05 |
@@ -117,6 +118,11 @@ Legend:
 | T33 | Every element of `Entity_AdditionalScriptTables` is a `ScriptTable_DBScriptTable` DID entry; no struct element exists (§8.1) | OBS2 | Confirmed 2026-10-07 |
 | T34 | Avatars do play random idle fidgets: the shared `Startup` of 0x07001CAA reaches, after 20 s, a script that waits 180 s plus 15 s and then repeatedly picks a per-species fidget or a pause, at least 9 s apart, while the avatar stands idle (§8.6) | OBS2 (data path); node semantics Reported (Timer, Sequence) and BIN3 (Random) | Confirmed 2026-10-07 (path); timing Reported. Corrects §8.6 of 2026-10-05. |
 | T35 | A matching transition port runs its children at once (after its `Delay`, if positive); with `Wait` = 1 and a child still running, its branch fades in over the port's `RampIn` against the old case's branch and the change to the new case waits until that branch has finished; the port's `RampOut` has no effect in this build (§4.3, §7.1) | BIN4 | Confirmed 2026-10-07 (BIN only) |
+| T36 | Held fraction edge cases: the integer part *n* comes from a truncating conversion to a signed 32-bit integer. With `LoopForever` 0 a value that is not finite or whose magnitude is 2³¹ or more gives *f* = 0. With `LoopForever` 1 an infinite value gives 0, a negative fractional part whose sum with 1 rounds to 1 gives *f* = 1 (not wrapped again), and NaN reaches the player unchanged (§6.7) | BIN5 | Confirmed 2026-10-07 (BIN only); NaN on a looping node: Tessera Decision |
+| T37 | A held clip's time is *f* × its played length, limited to [0, played length]; the played length is the tagfile duration minus the end crop of `havok-data.md` §2.3 (1/30 s when the node has `LoopForever` 0 and `LoopCount` 1, else 0); `StartTime` and `EndTime` do not enter. A time equal to the played length stays there (the middleware's time step wraps only a time beyond it) (§6.7) | BIN5; HD §2.3 | Confirmed 2026-10-07 (BIN only). Resolves the §6.7 step 2 OPEN; corrects the `LoopCount` 1 column of the §6.7 example |
+| T38 | A MeshDeformer registers its clip, fraction and `UseBoneWeights` whatever they are; when the deformation pose is built, a clip that cannot be loaded (the null DID included) contributes nothing, and a clip whose track count differs from the bone count is reported as an error and contributes nothing; an entity holds any number of deformers; the time is duration × fraction limited to [0, duration] (§6.9) | BIN5 | Confirmed 2026-10-07 (BIN only); NaN fraction: Tessera Decision |
+| T39 | A SliderMeshDeformer parses whatever string its field holds when the field is set (the stored string when no pair drives it); an entity holds one slider set, which the most recently started node replaces and the stopping of any slider node removes (§6.9) | BIN5 | Confirmed 2026-10-07 (BIN only) |
+| T40 | A layer has no limit on its number of clips: when it holds 1,000 the client logs a warning and still plays the new clip (§6.2) | BIN5 | Confirmed 2026-10-07 (BIN only) |
 
 ---
 
@@ -617,7 +623,8 @@ distinguishes `scale_blend` (110) from the others. Clips on one layer cross-fade
 ramp envelopes (a new clip's `RampIn`, the old clip's `RampOut`). Starting a clip never stops
 another clip of the same layer; several clips share a layer until their own branches stop
 them. The client creates a layer when its first clip starts and refuses a layer number above
-255 (BIN3).
+255 (BIN3). A layer has no limit on its number of clips: when it holds 1,000 the client logs a
+warning and still plays the new clip (BIN5, T40).
 
 <a id="s6-3"></a>
 ### 6.3 `LocomotionDisplacement` (Confirmed)
@@ -688,33 +695,65 @@ An animation node with `ManualUpdate` = 1 starts its clip like any other (layer,
 opacity, §6.1–§6.5) but **never advances it**: its playback rate is 0 whatever `Speed` and
 `SpeedMultiplier` say, so time-based events of §6.4 do not fire from the passing of time. Its
 time comes from `ManualTime`, after the driven-property substitution of §4.2, as follows. Let
-*v* be the value, *n* its integer part (rounded toward zero) and *g* = *v* − *n*.
+*v* be the value, *n* its integer part (*v* truncated toward zero and converted to a signed
+32-bit integer) and *g* the fractional part of *v* (with the sign of *v*, so *v* = *n* + *g*
+whenever *n* is representable).
 
 1. **Fraction** *f*:
    - `LoopForever` = 1: *f* = *g*, plus 1 when *g* is negative. So 1.0 gives 0, 1.3 gives
-     0.3, −0.2 gives 0.8.
+     0.3, −0.2 gives 0.8. When *g* is negative but so close to 0 that *g* + 1 rounds to 1 in
+     single precision, *f* is 1; it is not wrapped again (BIN5, T36).
    - `LoopForever` = 0: *f* = 0 when *n* < 0; *f* = *g* when 0 ≤ *n* < `LoopCount`; *f* = 1
-     when *n* ≥ `LoopCount`. Then *f* is limited to [0, 1] (so −0.2 gives 0).
-2. **Clip time** = *f* × `duration` (the clip's, `havok-data.md` §2.3). This holds for
-   `StartTime` 0 and `EndTime` 1, the values of every held node of this install. The player
-   multiplies *f* by the clip's played length after cropping, so other values presumably
-   give `duration` × (`StartTime` + *f* × (`EndTime` − `StartTime`)); **OPEN** (not traced,
-   no instance).
+     when *n* ≥ `LoopCount`. Then *f* is limited to [0, 1] by step 2 (so −0.2 gives 0).
+   - Values that are not finite or whose magnitude is 2³¹ or more (BIN5, T36): with
+     `LoopForever` 0 the integer conversion yields its out-of-range result, which is
+     negative, so *f* = 0 (for +∞, −∞, NaN and also, for example, 3 × 10⁹). With
+     `LoopForever` 1 an infinite value has fractional part 0, so *f* = 0, and a finite value of
+     that size is a whole number, so *f* = 0 as well; NaN is passed on unchanged and the
+     client then samples the clip at an undefined time. **Tessera Decision:** NaN on a
+     looping node gives *f* = 0 (OPEN: no instance, and the client has no defined result).
+2. **Clip time** = *f* × the clip's **played length**, limited to [0, played length] (BIN5,
+   T37). The played length is the tagfile `duration` minus the end crop of `havok-data.md`
+   §2.3: 1/30 s when the node has `LoopForever` 0 and `LoopCount` exactly 1 (its clip is then
+   started for one cycle), otherwise 0. `StartTime` and `EndTime` do not enter: the client
+   never sets a start crop, and `EndTime` only schedules the end of a played one-shot clip
+   (§6.10 step 4), which a held clip does not have. The time from §6.10 step 5 that the clip
+   starts with is replaced as soon as the fraction is applied. A time equal to the played
+   length stays there: the player's time step does not move a held clip (rate 0) and wraps
+   only times beyond the played length. (This replaces the presumed cropping formula of
+   2026-10-05 and resolves its OPEN.)
 3. The fraction is applied again on every update of the node and whenever a property that
    drives one of its fields changes, so a new value takes effect at once (no ramp).
 
+The client sets no limit on held clips per entity: they are ordinary clips of their layers
+(§6.2, T40).
+
+> **Answered** (2026-10-07, BIN5; was the implementation OPEN on the three Tessera rules of
+> the §16 review record and on step 2): steps 1 and 2 now state the client's rules. A
+> `ManualTime` that is not finite gives 0 in the client too, except NaN on a looping node,
+> where the Decision of step 1 applies. A looping fraction that rounds up to 1 is **not** 0
+> in the client: it stays 1 and gives the end of the played length. The only non-finite
+> fraction that can reach the player is that NaN, so the player's "non-finite reads 0" is the
+> same Decision. The presumed cropping formula is withdrawn: use step 2 (no `StartTime` or
+> `EndTime`; end crop 1/30 s for `LoopForever` 0 with `LoopCount` 1).
+
 Census: 30 of 27,217 nodes are held: 13 on layer 40, 5 on layer 30, 4 on layer 80, 8 on
 layer 110. `ManualTime` is driven by a property in 7 of them (§6.8; one layer-80 node by
-`Character_Demo_Pose_Override_Time`). Worked example (synthetic, clip of 2.0 s, `StartTime` 0,
-`EndTime` 1):
+`Character_Demo_Pose_Override_Time`). Worked example (synthetic, clip with a tagfile
+`duration` of 2.0 s, `StartTime` 0, `EndTime` 1; played length 2.0 s in the first and last
+columns, 2.0 − 1/30 = 1.9666667 s in the middle one, step 2; revised 2026-10-07):
 
 | `ManualTime` | `LoopForever` 1 | `LoopForever` 0, `LoopCount` 1 | `LoopForever` 0, `LoopCount` 2 |
 |---|---|---|---|
-| 0.25 | 0.5 s | 0.5 s | 0.5 s |
-| 0.95 | 1.9 s | 1.9 s | 1.9 s |
-| 1.0 | 0.0 s | 2.0 s | 0.0 s |
-| 1.3 | 0.6 s | 2.0 s | 0.6 s |
+| 0.25 | 0.5 s | 0.4916667 s | 0.5 s |
+| 0.95 | 1.9 s | 1.8683333 s | 1.9 s |
+| 1.0 | 0.0 s | 1.9666667 s | 0.0 s |
+| 1.3 | 0.6 s | 1.9666667 s | 0.6 s |
 | −0.2 | 1.6 s | 0.0 s | 0.0 s |
+| −10⁻⁹ | 2.0 s (*f* = 1) | 0.0 s | 0.0 s |
+| 3 × 10⁹ | 0.0 s | 0.0 s | 0.0 s |
+| +∞ | 0.0 s | 0.0 s | 0.0 s |
+| NaN | 0.0 s (Decision) | 0.0 s | 0.0 s |
 
 <a id="s6-8"></a>
 ### 6.8 Layer 110 `scale_blend`: River-hobbit and DwarfStoutAxe proportions (Confirmed, T21)
@@ -732,7 +771,9 @@ not to animate. Where they are and what drives them:
 | DwarfStoutAxe, mounted on mount types 8, 16, 32 | same script: scriptlet 0x0C0095FB | 0x05007AC2 (1.666 s) | `AC_BoneScale_Test` | 0 (`LoopCount` 1) | 0 / 0 |
 | River-hobbit F / M, UI viewport | binding tables 0x07002F1A / 0x07002F1C, script `Viewport_Idle` (key 0x10000524) | 0x05008ECB / 0x05008ECC | constant 1.0 (so fraction 0, §6.7) | 1 | 0 / 0, 0.1 / 0.1 |
 
-All have `UseBoneOpacity` 1, `StartTime` 0, `EndTime` 1. The `Startup` script of each of the
+All have `UseBoneOpacity` 1, `StartTime` 0, `EndTime` 1. The DwarfStoutAxe nodes
+(`LoopForever` 0, `LoopCount` 1) hold their clips over a played length of `duration` − 1/30 s
+(§6.7 step 2); the River-hobbit nodes (looping) over the full `duration`. The `Startup` script of each of the
 three species tables runs `Reproportion_Idle` with a Run node; the script's root is a
 persistent WhenRunning node on keys 0x10000147 (and, for the River-hobbit tables, also
 0x10002EE4): while none of them runs (the normal, unmounted case) its NotRunning port starts
@@ -803,6 +844,32 @@ HighElf tables; a Switch and the Run node of §6.8 in the DwarfStoutAxe table; a
 `CharGen_Stage`, the SliderMeshDeformer, the Run node and an Appearance node in the
 River-hobbit tables. An implementation that runs the `Startup` script of every closure table
 (§8.2) reaches them.
+
+**Edge cases (BIN5, T38, T39).** None of these occurs in the install.
+
+- A MeshDeformer registers its clip, fraction and `UseBoneWeights` with the entity's
+  animation component whatever they are. When the deformation pose is built
+  (`appearance.md` §6.4 step 1), a clip that cannot be loaded, the null DID included,
+  contributes nothing, and a clip whose track count differs from the skeleton's bone count
+  is reported as an error and contributes nothing. With no contributing clip the pose is the
+  reference pose. The component keeps any number of deformers.
+- The deformer time is `duration` × fraction, limited to [0, `duration`]: +∞ gives the end of
+  the clip and −∞ gives 0. A NaN fraction gives the client an undefined time. **Tessera
+  Decision:** NaN reads as fraction 0 (OPEN: no instance).
+- A SliderMeshDeformer parses whatever string its `BoneSlider_ValueArray_String` field holds,
+  each time the field is set: the stored string when no driven pair names the field, the
+  property's string when one does (the parse is `appearance.md` §6.3).
+- An entity holds **one** slider set. Starting a SliderMeshDeformer replaces the set of any
+  other one, and stopping any SliderMeshDeformer removes the set, even when another is still
+  running. (Each avatar closure has exactly one such node, SI12.)
+- A change of `BoneSlider_SliderDefinitionsFile` reloads the definitions record. Whether the
+  client then parses the string again was not traced (OPEN: no node drives this field).
+
+> **Answered** (2026-10-07, BIN5; was the implementation OPEN on a null
+> `MeshDeformerScriptNode_AnimationAsset`): the client registers the entry, which then
+> contributes nothing (first point above). That looks the same as registering nothing, so
+> the implementation's choice is equivalent. Binding the driven pairs by the field PIDs of
+> the three names is right (§4.2, SI13).
 
 <a id="s6-10"></a>
 ### 6.10 What happens when an animation node starts a clip (BIN3, T29)
@@ -1649,9 +1716,10 @@ Numbers are kept from the 2026-10-05 list; resolved items say so.
    `UseBoneOpacity` change (0.2 s, `skeleton-anim.md` §6.6).
 5. `ManualTime` is resolved (a fraction with a wrap rule, §6.7). *Resolved 2026-10-07
    (BIN3):* `StartTime`, `EndTime`, `RandomizeStartTime` and `SynchronizeTiming` of a played
-   clip (§6.10) and events beyond the clip duration (never fire, §6.4). Still open: how
-   `StartTime` and `EndTime` other than 0 and 1 crop a **held** clip (§6.7 step 2; no
-   instance), and the visible effect of `DetachOnRampOut` (§6.10 step 8).
+   clip (§6.10) and events beyond the clip duration (never fire, §6.4). *Resolved
+   2026-10-07 (BIN5, T37):* `StartTime` and `EndTime` do not crop a **held** clip; its played
+   length is the duration minus the end crop (§6.7 step 2). Still open: the visible effect of
+   `DetachOnRampOut` (§6.10 step 8).
 6. *Resolved 2026-10-07 (BIN3):* there is no speed matching (§8.5). *Partly resolved
    2026-10-07 (BIN4):* the player's configured per-direction speeds come from the data
    (`skeleton-anim.md` §7.4). Still open (owner observation O14.4): the keyboard's input
@@ -1869,11 +1937,44 @@ table). Points for the spec owner:
 > layer (§6.2); all of them play and share the layer's budget. Held clips are combined like
 > any other clip and are not faded out while moving, as the implementation does.
 
+> **Corrected** (2026-10-07, BIN5): the rounding choice accepted above is not the client's.
+> A looping fraction that rounds up to 1 stays 1 and gives the end of the played length
+> (§6.7 step 1, T36). The non-finite choice matches the client except NaN on a looping node,
+> which is now a Decision in §6.7.
+
 > **OPEN** (implementation, §6.9 SliderMeshDeformer): when a node's value string is driven
 > by a property the entity lacks (Elf, HighElf), the implementation applies the
 > `appearance.md` §6.3 Decision (35 × `80`) rather than the node's stored string; when the
 > node's string is not driven at all it uses the stored string. No such node exists in the
 > install.
+
+> **Answered** (2026-10-07, BIN5, T39): the client parses whatever string the field holds,
+> so a node whose string is not driven uses its stored string, as the implementation does
+> (§6.9). The absent driving property is the `appearance.md` §6.3 OPEN; its Decision stands.
+
+> **OPEN** (implementation, 2026-10-07, engineering bounds; confirmation only): following
+> the answer above, the resolver now reports **every** held node (no most-likely pick per
+> layer), and held clips of one data layer play side by side on that layer and share its
+> budget (§6.2). Defensive bounds that no spec states: a figure keeps at most 4 held clips
+> (the install has at most one per avatar), and one layer plays at most 4 clips at a time
+> (`skeleton-anim.md` §15 implementation note). Please say if the client has limits.
+
+> **Answered** (2026-10-07, BIN5, T40): the client has no limit on held clips per figure or
+> on clips per layer; a layer logs a warning when it holds 1,000 clips and still plays the new
+> one. Tessera's bounds (4 held clips per figure, 4 clips per layer) are implementation
+> limits, not client rules. The install never reaches them (at most one held clip per
+> avatar, §6.7 census), so a dropped or refused clip is a deviation and should be logged.
+
+> **OPEN** (implementation, 2026-10-07, after the BIN5 answers): §6.7 is implemented as
+> stated (the truncating 32-bit integer part, a looping fraction that rounds up to 1 stays 1,
+> the held time *f* × the played length with the 1/30 s end crop for `LoopForever` 0 and
+> `LoopCount` 1, `StartTime` and `EndTime` not used), and the Tessera bounds now log what
+> they drop or refuse. One case the rule leaves open: a held one-shot node (`LoopCount` 1)
+> whose clip is shorter than the end crop has a played length of 0 or less (the shortest
+> clip of the install is 0.016 s, though no held node uses one). Tessera then holds the clip
+> at time 0 (Tessera guard, as for a clip without a usable duration). Please state the
+> client's result if it matters (`havok-data.md` §2.3 lowers the starting time to
+> `duration` − 1/30 s, which would then be negative).
 
 ---
 
@@ -1885,3 +1986,4 @@ table). Points for the spec owner:
 | 2026-10-05 | §1 (BIN2, RH, T19–T22), §6.1, §6.2, §6.5, new §6.7–§6.9, §8.3, §12 (SI11–SI12), new §13.2, §15, §16 | Held clips (`ManualUpdate`/`ManualTime`), layer combination, the layer-110 `scale_blend` clips of River-hobbit and DwarfStoutAxe, the deformer nodes 18 and 81 and the per-avatar species tables, from data and the client (BIN2, decision 0011); idle-emote layers per body corrected (implementation OPEN answered). | Spec writer (dirty room) |
 | 2026-10-07 | §1 (BIN3, OBS2, T14–T16, T18, new T23–T34), §4.3, §4.5, §6.1, §6.2, §6.3, §6.4, §6.5, §6.9, new §6.10, §7.1, §7.4, §7.7, §7.8, §8.1, §8.2, §8.4, §8.5, §8.6, §9, §11.3, §12 (SI6, new SI13–SI15), §13, §14, §15 (rewritten, new §15.1 owner item O16), §16 (implementation OPENs answered) | From the client (BIN3, decision 0011) and the data (OBS2): switch-case `RampOut` and `Delay` and the switch's delay and linear branch cross-fade; additive script lookup with `Overriding` pruning (replaces the first-wins Decision; every closure `Startup` runs); case-insensitive scriptlet-parameter matching in the innermost invocation; the Random pick rule; absent properties read as default or zero; the clip lifecycle (start offset, end and scheduled fade, synchronised start origin, start-up clips without ramp-in, events beyond the duration never fire); entity-scale factor on `LocomotionDisplacement`; slider update at a constant rate; no rate matching; the avatar fidget path and timing (corrects §8.6); SetProperty and deformer driven fields; element form of additional tables; §13 offset corrected. | Spec writer (dirty room) |
 | 2026-10-07 (revision after review) | §1 (new BIN4, OBS3; T23, T29, T30, T34 revised; new T35), §4.3, §6.10, §7.1, §7.4, §8.4, §8.5, §8.6, §12 (new SI16), §15 (items 3, 6, 7, 8), §15.1 | Review of 2026-10-07 answered. §4.3: the internal class names removed; the switch-case stream order stated plainly (own fields, then `RampOut`, then `Delay`); the transition-port fields explained (both `Delay` fields are one value, `Wait`, `RampIn`, `RampOut` without effect; BIN4, OBS3). §7.1: what a matching transition port does (children start at once; with `Wait` = 1 their branch fades in over `RampIn` and the change to the new case waits until they finish; BIN4); the §15 OPEN narrowed to the matching rule and two edge cases. §6.10: the two refusals reported as errors named. §7.4: the port walk order is the client's container order, not shown to be the stored order. §8.4: the player's slider time is traced (the merged `RampTime`, 0.13 s running, 0.25 s walking here; BIN4) and the 0.1 s reset on a movement freeze added (review optional item). §8.5: correction, the player's per-direction speeds come from the data (`skeleton-anim.md` §7.4); Decision revised. §8.6 and §15.1 (O16): the fidget chance under `NoRepeats` corrected (330 / 530 only for the first pick; certain after a pause; 230 / 430 or 320 / 520 after a fidget) and the pick interval made consistent (12 s after a pause; after a fidget 9 s plus the untraced time until its Run step finishes). | Spec writer (dirty room) |
+| 2026-10-07 (BIN5) | header; §1 (new BIN5, T19 note, new T36–T40); §6.2; §6.7 (steps 1 and 2, example table, implementation OPEN answered); §6.8; §6.9 (new edge cases, implementation OPEN answered); §15 item 5; §16 (one correction, two answers) | Edge cases from a clean-room audit of the River-hobbit height code, settled from the client (BIN5, decision 0011). §6.7: the integer part is a truncating 32-bit conversion, so non-looping values that are not finite or of magnitude 2³¹ or more give 0; looping infinities give 0; a looping fraction that rounds up to 1 stays 1 (corrects the Tessera rule "gives 0"); NaN on a looping node is undefined in the client and becomes a Tessera Decision (0); the held time is *f* × the played length, which is the duration minus the 1/30 s end crop for `LoopForever` 0 with `LoopCount` 1, and `StartTime`/`EndTime` do not enter (resolves the step 2 OPEN; the `LoopCount` 1 column of the example corrected, rows added). §6.8: the DwarfStoutAxe clips use that cropped length. §6.9: a deformer whose clip is missing or does not fit contributes nothing; any number of deformers; deformer time limited to [0, duration], NaN Decision; a slider node parses whatever string its field holds; one slider set per entity. §6.2: no clip limit per layer (warning at 1,000). The facts the audit found contradicted by code stand: several held clips share their layer (§6.2; re-checked in the layer's play routine, which changes no other clip, BIN5) and driven pairs bind by field PID (§4.2, SI13). | Spec writer (dirty room) |

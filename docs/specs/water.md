@@ -439,6 +439,11 @@ no landblock water type uses them.
 
 These are the sets `collision.md` §10.4 names for the water movement states.
 
+> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** the table gives
+> every flag as a boolean but does not say what a value of another type means. Tessera
+> (Decision): a flag is set only by a boolean true; an integer, enum or other value counts
+> as not set (the released code read non-zero integers and enum keys as true).
+
 <a id="s7-3"></a>
 ### 7.3 Placed water volumes (Confirmed census)
 
@@ -480,6 +485,20 @@ above its feet (`collision.md` §11.2), otherwise it wades (state 1, or 3 on ste
 > swimmer above that line sink to it (with gravity −20 the swimming layer would otherwise
 > lift the mover out of the water); the surface is the water plane's level where the liquid
 > boxes end there, else the top of the liquid boxes above the feet.
+
+> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** "the top of
+> the liquid boxes above the feet" does not say what happens when stacked liquid boxes leave
+> a dry gap above the feet. The released code searched upward with doubling probes
+> (0.25 m, 0.5 m, 1 m, … up to 2,048 m, then 24 bisections), so its answer depended on the
+> probe spacing. Tessera (Decision): the surface is the top of the **contiguous** liquid
+> above the feet, computed exactly from the heights at which the vertical line through the
+> feet is inside each `Volume_IsLiquid` box: starting at the feet, each box whose span begins
+> at most 1 mm above the top found so far extends it, and a larger dry gap ends the liquid.
+> When a landblock water plane lies over the point and its level is within 1 mm of that top,
+> the surface is the plane's level (the liquid ends at the plane, §6.3). The 1 mm tolerance
+> absorbs the rounding of boxes placed in single precision. Example: feet at 0 with boxes
+> from −1 to 0.6 and from 0.8 to 5 give the surface 0.6. Please state the client's rule or
+> confirm.
 
 > **OPEN (implementer, 2026-10-06, controller review):** `collision.md` §11.1 step 9 applies
 > the Swimming layer (gravity −20) in states 1, 2 and 3. How its upward gravity interacts

@@ -1358,6 +1358,27 @@ differences against the sections named and change the code, or raise an OPEN her
 > equal in every entry of this install (LI10); use the field, or check the equality when
 > decoding.
 
+> **OPEN (clean-room implementer, 2026-10-07, status of the differences above; for the
+> spec writer to fold into this section):** the walker code now (1) takes the portal
+> polygon named by the entry's `portal` field; (2) runs the scene-flag pass of §4.12 rule 3
+> in full: inside, the camera's cell visited with its PVS in the order cell, list A,
+> list-B group members; outdoors, every bit-0 cell of the resident landblocks visited with
+> its PVS, the landblocks taken in ascending key order (**Decision**: the client's order is
+> not traced; it matters only when bit 0 occurs); (3) skips the cell's own number, 0xFFFF
+> and numbers that are no cell of the record when it builds a PVS (a non-cell adds nothing,
+> **Decision**), and treats a list-B key 0xFFFF as no group; (4) counts toward the 4,096
+> bound only portals actually crossed, not portals tested and rejected; (5) no longer
+> limits an overriding `InteriorFogFar` itself, but the renderer still limits every fog
+> end it uploads to 10,000 (`render.md` §4.2; OPEN for the renderer implementer); (6)
+> places the render mesh of a cell without x, y, z at the landblock origin (L42), while the
+> collision cell placement (`tessera-physics`) still refuses such cells, so the camera
+> cannot be found in them and the portals out of them have no polygon (passed through
+> unchanged, §4.11 Tessera rule); (7) culls the walker's avatar placeholder by the cell it
+> stands in. Still as listed above: the negative back-reference is the i32 of the
+> decoder's two u16 halves (equal while `extra_cells` is empty); cell
+> `Appearance_InstanceList` is not applied (the object layer has no per-instance material
+> variants); characters of the character layer are drawn whatever the camera's cell.
+
 ---
 
 <a id="s5"></a>
@@ -1668,6 +1689,162 @@ These record decisions of the clean-room implementation, not facts about the dat
 > **OPEN:** Ring radii (near 480, mid 960, far 1,600 units, hysteresis 160) and the
 > 512 MiB residency budget are Tessera defaults. The original's draw distances per detail
 > setting have not been observed; they should replace these defaults once recorded.
+
+> **OPEN (implementer, 2026-10-07, stale default above):** the 512 MiB budget of the note
+> above is out of date. `tessera-world`'s default residency budget is 1 GiB, as
+> ARCHITECTURE §9.2 states since M4.5 (bundles now carry collision sets and scenery), and
+> the walker uses 4,096 MiB (`walker.md` §14.9). Which figure should this section state?
+
+> **OPEN (implementer, 2026-10-07, failure handling; Tessera choices the specs do not
+> state):** the first bullet above says only that an unreadable or undecodable optional
+> record is a bundle problem and that only the data record fails the job. `tessera-world`
+> now does the following. Please confirm these rules or replace them.
+> (a) A block map, info or properties record that the bundle frame reports as unreadable
+> is treated as the data's condition. Archive read errors are data errors in
+> `tessera-assets`. The record is a bundle problem, every world part built without it
+> counts as complete, and the bundle is cached like any other. The frame carries only the
+> error text, not whether the failure was the data's, so a record source that refuses an
+> optional record transiently also yields a cached bundle without that record.
+> (b) A block map that is absent (not unreadable) is a bundle problem, because block maps
+> are dense (§2.3 LB-E1).
+> (c) A world-system input (object chain, clearance volumes, scene record, water volume)
+> that cannot be read for a reason that is not the data's does not fail the job. The part
+> is built without that input, or left out (scenery is left out when its static list
+> cannot be built). The bundle is marked incomplete, stays resident, and is dropped from
+> the asset store's cache, so the next load of the landblock builds it again. It is not
+> rebuilt while it stays resident.
+> (d) A request that the pipeline refuses (full queue, shutdown), and a job that ends with
+> an error that is not the data's, are retried while the landblock stays desired. The
+> first retry waits 10 ms, and the wait doubles with each further consecutive failure up
+> to 2 s. A data error or a panic marks the landblock failed until it leaves the rings.
+> (e) A failed landblock is charged 0 bytes in admission, since it holds nothing. The
+> admission bullet above names charges only for resident, evicted and never-loaded
+> bundles.
+
+> **OPEN (implementer, 2026-10-07, neighbours; this section is inconsistent):** step 5 and
+> the "Neighbour heights" bullet above use the east, north and north-east neighbours, and
+> admission's seam closure guarantees only those. Step 7 and §3.14 read the edge samples
+> and vertex flags of all **eight** neighbours (X − 1 and Y − 1 included) for the normals of
+> the terrain and ceiling chunks. ARCHITECTURE §10.1 also says "the bundle loader requests
+> the 8 neighbours at low priority". `tessera-world` requests no neighbours from the bundle
+> loader. Under a binding residency budget, the west, south and south-west neighbours of a
+> resident near- or mid-ring landblock may therefore be absent after streaming has
+> settled; consumers draw one-sided normals there and re-mesh when the neighbour arrives.
+> Should admission guarantee all eight neighbours? Doing so makes the closure of any near-
+> or mid-ring landblock the whole connected near and mid area, so admission under the
+> budget would become all or nothing for those rings. Or is "consumers handle a missing
+> neighbour" the rule? The answer should also fix step 5 and ARCHITECTURE §10.1.
+
+> **OPEN (implementer, 2026-10-07, lookahead and frill details; ARCHITECTURE §9.2 states
+> none of these, Tessera's current choices in brackets):** please confirm each choice or
+> replace it.
+> (a) Velocity estimate. A step of at most one landblock (160 units) between two updates is
+> never a jump, even when it is faster than 10,000 units per second; without this, clock
+> jitter between very close updates would restart the estimate. The estimate also restarts
+> on a region change. It needs positions spanning at least 50 ms, and a speed below
+> 1 unit per second has no path. A long frame is never a jump: the step is compared with
+> 10,000 units per second times the real time between the updates.
+> (b) "The slowest recent bundle job" is a peak that halves every 30 s without a longer
+> job. One job counts for at most 10 s, and failed jobs count.
+> (c) The urgent part never extends beyond the 4 s path, and slow jobs do not lengthen the
+> path. §9.2's "longer, 1.5 times the slowest recent bundle job" could otherwise exceed it.
+> (d) Corridor hysteresis. A landblock stays on the path, and on its urgent part, until it
+> is the rings' hysteresis margin (one landblock) beyond the near radius of the segment,
+> so a wavering path does not release and re-request the same ahead landblocks every
+> frame. §9.2 says only that ahead landblocks "are released when they leave the path".
+> (e) Ahead bundles. A landblock loaded ahead of the rings is not resident for any lookup
+> (bundle, area, height, water, cells, lights, collision view, seam neighbours, frills)
+> until it enters the rings. Its load state is still visible.
+> (f) Frills. A sector job starts only while the bytes of the held sectors plus the mean
+> sector size times (running jobs + 1) fit the frill budget. Before the first sector is
+> known, one job runs at a time. Sector jobs run at `Visible` priority, and a job that
+> panics leaves an empty sector, not retried while the sector stays in the ring.
+
+> **OPEN (implementer, 2026-10-07, water in the collision set):** ARCHITECTURE §10.3 says
+> the collision set stores the landblock water plane and liquid boxes whenever `world`
+> builds the set. `tessera-world` now builds the landblock water whenever it builds a
+> collision set, whatever its `build_water` option says. The water tables are loaded only
+> when water or scenery is on (`WorldContext`), so with both off a collision set is still
+> dry. Should building collision load the water tables too?
+
+> **OPEN (implementer, 2026-10-07, absent properties record; this section is
+> inconsistent):** the first bullet above reports a *missing* properties record as a bundle
+> problem, while step 4 reads `0x804RXXYY` only "if present" and §2.3 LB-E2 says most
+> landblocks have none (60,450 properties records against 390,150 data records).
+> `tessera-world` follows step 4 and LB-E2: an absent properties record is not a problem
+> (an unreadable or undecodable one is). Should the bullet say "a missing block map or
+> info record named by the header"?
+
+> **OPEN (implementer, 2026-10-07, data errors in world-system inputs; no spec states
+> this):** rule (c) above covers only failures that are not the data's. `tessera-world`
+> absorbs data failures where a world-system input is read: a missing or broken object
+> chain, clearance or water-volume record supplies nothing, the part is built without it
+> and counts as complete, and the bundle is cached. Should a data error reach the bundle
+> job anyway (today's readers do not let one through), the part is left out: a static
+> clearance list that fails leaves out scenery generation for the landblock, and water
+> that fails leaves out the landblock water and its liquid boxes, so the collision set is
+> built dry. The bundle records a problem that is not transient, stays complete and is
+> cached, so the landblock gets no generated objects (or no water) while the data stays
+> as it is. Please confirm, or state what a data error in a world-system input does.
+
+> **OPEN (implementer, 2026-10-07, `build_water` and the water lookups; adds to the water
+> OPEN above):** because the landblock water is built with every collision set, the
+> bundle's water also holds it with `build_water` off (when scenery keeps the water tables
+> loaded), and the streamer's water lookups (`water_at`, `is_under_water`,
+> `landblock_water`) answer from it, so they agree with the controller, which reads the
+> set (ARCHITECTURE §10.3, last paragraph). With `build_water` and scenery both off nothing
+> has water. Is that the intended meaning of turning water off, or should the lookups
+> stay dry while the set alone carries the water?
+
+> **OPEN (implementer, 2026-10-07, residency charge):** `tessera-world` now charges
+> exactly the terms of "Residency charge" and "World parts": the landblock data's grids
+> and surface lists, four times the stored bytes of the info, block-map and properties
+> records (taken to cover the placed entities, figures, their instance sets and the
+> block-map pairs decoded from them, which are no longer charged again), and the heap
+> bytes of the world parts. It counts the Light entities and the LOD classes of placed
+> and generated entities as world parts, since ARCHITECTURE §9.2 lists them among the
+> world systems the bundle job builds and its residency bullet names lights; the
+> "World parts" bullet lists only collision mesh, water decision, scenery, water and
+> collision set. Please confirm that lights and LOD classes are world parts here.
+
+> **OPEN (implementer, 2026-10-07, re-admission margin of a seam closure; no spec states
+> this):** the admission bullet gives the 1/64 margin for "re-admitting an evicted
+> bundle", and admission admits seam closures whole. `tessera-world` requires the margin
+> for a whole closure when any member of it is an evicted bundle, its never-loaded and
+> resident members included; a closure without an evicted member needs no margin. Please
+> confirm, or say whether the margin should apply per member.
+
+> **OPEN (implementer, 2026-10-07, transient overshoot; no spec states this):**
+> integration makes a finished bundle resident without checking the budget, because
+> admission charged it already (the running mean, or the initial estimate before any
+> bundle has loaded). When the bundle turns out larger, the resident bytes exceed the
+> budget, beyond what the always-admitted near ring adds, until the next update, whose
+> admission charges real sizes and evicts the farthest. Please confirm that this
+> one-update overshoot is acceptable.
+
+> **OPEN (implementer, 2026-10-07, lookahead (a) continued; ARCHITECTURE §9.2 states none
+> of these):** the velocity estimate uses the newest focus position and the oldest one
+> kept: the positions of the last quarter second plus the newest one before it, so when
+> updates are more than a quarter second apart its span is the time between two updates,
+> longer than "the last quarter second". At most 256 positions are kept, so above about
+> 1,000 updates per second the span is shorter. A velocity the caller gives replaces the
+> estimate and discards its positions (the estimate starts over when the caller stops
+> giving one), a given velocity that is not finite turns lookahead off for that update,
+> and an update whose focus is rejected (not finite, or no valid region) keeps the
+> previous velocity with the previous focus. Please confirm these choices.
+
+> **OPEN (implementer, 2026-10-07, streamer defaults; no spec states these):**
+> `tessera-world`'s other streamer settings default to: asset-store cache of released
+> bundles 64 MiB (outside the residency budget); at most 32 finished bundles integrated
+> per update, and integration stops after 2 ms of main-thread time (at least one per
+> update); a never-loaded bundle is charged 512 KiB until the first bundle has loaded,
+> then the running mean of loaded bundles; frill sectors are held within 64 MiB and at
+> most 64 frill sector jobs start per frill update; the bundle store queues at most 4,096 job
+> completions between two updates. ARCHITECTURE §9.2 says only "a bounded number per
+> frame and within their own byte budget" for frills. The 64 frill jobs per update are the
+> streamer's limit on starting generation jobs, not the walker's "at most 96 per frame" of
+> `walker.md` §14.7, which limits sectors built for drawing. Please confirm or replace
+> these defaults.
 
 <a id="s8-2"></a>
 ### 8.2 Streaming measurement (`tessera-world`, 2026-10-04)

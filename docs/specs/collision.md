@@ -484,6 +484,21 @@ record's own property set (part 8, §5.7): `Physics_SurfacePropertiesToApply` an
 `Physics_AlwaysUncontrolledSurface` or an ethereality value (OBS: part 8 holds only the four
 properties listed in §5.7), so a cell body always counts as support by the rules of §11.3.
 
+> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** a cell physics
+> mesh with more triangles than one shape template may hold (Tessera's bound, 2²⁰) cannot
+> become a body. Tessera (Decision): the body is refused and counted as a body over a limit
+> (§12.1), and the cell is still placed in the cell lookup (§5.8.1) without a body. Please
+> confirm or give the client's behaviour.
+>
+> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** the same
+> Decision now covers a physics mesh that fails at a **set-level** limit of §12.1 (bodies,
+> triangles, or spheres, capsules and boxes) or whose placement cannot be applied: the body
+> is refused and counted, and the cell is still placed in the lookup without a body, so
+> both limit paths give the same cell lookup. The cell itself is refused only at the cell
+> limit or the per-set plane and hull-vertex budgets of §12.1. The body carries only the
+> two properties named above; any other §9.1 value found in part 8 (none is observed) is
+> ignored, `Physics_NoPhysics` included. Please confirm.
+
 <a id="s5-4"></a>
 ### 5.4 Cell volume (Confirmed)
 
@@ -949,6 +964,20 @@ for the first two; bit *k* − 1 stands for key *k*, `property-system.md` §7.3)
 player entities of all species carry EtherealTo = {Camera}; 2,302 creature and NPC entities
 carry {Default, Camera, Corpse, OpenDoor, Missile, ClosedDoor, Creature, NPC, Admin, Player}.
 
+> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** the table types
+> `Physics_NoPhysics`, `Physics_AlwaysUncontrolledSurface` and `Physics_CanLedgeClimb` as
+> boolean but does not say what a value of another type (integer, enum) at some level means.
+> Tessera (Decision, as §10.3 does for movement fields): only a boolean value counts; a value
+> of another type is treated as absent at that level, so the lookup goes on along the
+> chain. The released code read non-zero integers and enum keys as true.
+>
+> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** the same
+> question for the three ethereality properties, typed as bitfields above. Tessera
+> (Decision): only a bitfield value (32-bit, 64-bit or any-width) counts, read as its low
+> 64 bits; an integer, 64-bit integer, enum or other value is treated as absent at that
+> level and the lookup goes on along the chain (the released code read integers and enum
+> keys as bit sets). Please confirm or state the client's reading.
+
 <a id="s9-2"></a>
 ### 9.2 Pass-through rule (Probable)
 
@@ -1046,6 +1075,22 @@ effective creation type of 0 (its own set says 0 while its object says 3; `entit
 > and `Physics_AdjustableScale` from the SED's own set only, while the client falls back
 > along the 0x47 chain (the paragraph after item 3). The result is the same in this
 > install, but the implementation should use the SED-then-chain lookup for both.
+
+> **OPEN (implementer, 2026-10-07, answer to the implementer OPEN above):**
+> `tessera-physics` now reads `Entity_CreationType`, `Entity_ContentLayers` and
+> `Physics_AdjustableScale` with the SED-then-chain lookup (0x47 extra sets included, as in
+> §9.1) and refuses creation types 0, 7 and 8, with no value anywhere counting as 0; its
+> census test expects the last row of the table below and CO14. The OPEN above can be
+> closed. Points the spec leaves to the implementation, chosen as follows (please confirm):
+> (1) "an integer" is taken as the 32-bit integer type (`property-system.md` §3, type 15)
+> keeping its bit pattern, so a negative value is an "any other" value (class Static); a
+> 64-bit integer (type 19), a bitfield or any other type counts as 0. (2) A found
+> `Physics_AdjustableScale` that is not a vector, or has a component outside the range
+> `entity-descriptor.md` accepts for SED scales (10⁻⁴ to 10⁴), ends the lookup and gives
+> (1, 1, 1). (3) A found `Entity_ContentLayers` that is not an array ends the lookup and
+> counts as no list (`entity-descriptor.md` §4.5.1 item 1). (4) When the property dictionary
+> has no `Entity_CreationType`, no static finds a value, so every landblock-info static is
+> refused (logged at debug level).
 
 **Census vs. run-time count (OBS, 2,380,675 Physics SEDs with a position).**
 
@@ -1351,6 +1396,16 @@ the layers of §10.3 in this order; each listed field replaces the value so far:
 The controller kind is Generic (PHYSICSCONTROLLER key 3), or Mounted (key 0x10000001) when
 `Mount_Movement_Use_RampUp_Controller` is true. The same layering fills the MoveTo set from
 each layer's MoveTo struct.
+
+> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** steps 3,
+> 5, 6, 7, 9 and 10 test `Mount_Is_Mounted`, `Mount_Movement_Use_RampUp_Controller`,
+> `Physics_OnSlide`, `Physics_OnIce`, `Stealth_IsStealthed` and
+> `Movement_ActiveMovementFrozen` for "true" without saying what a value of another type
+> means. Tessera (Decision, as §10.3 does for movement fields and §9.1 for the physics
+> booleans): only a boolean true makes a condition hold; an integer, enum or other value
+> counts as absent (the released code read non-zero integers and enum keys as true). The
+> same rule applies to `GenericPhysicsController_ForceStrafe` and `…_AllowContactLoss`
+> (§10.1, boolean): a value of another type counts as not listed (§10.3).
 
 Example: a player on foot in deep water uses Swimming over BasePlayer: forward 3.2, backward 2,
 strafe 2, control acceleration (65, 65, 0) (from BasePlayer), damper 0.4, ramp 0.4, gravity
@@ -1756,6 +1811,50 @@ known (§11.4 OPEN) or owner measurements (Q9) settle it.
   mesh, §4.2, or a ceiling triangle seen from above) is supported as on its front face. The
   face normal also serves the crease rule (n). Differences from the client: §12.5.
 
+> **OPEN (implementer, 2026-10-07, `tessera-physics` conformance fixes):** three solver
+> details that (k), (v) and (w) do not state:
+> 1. **(w) near contacts.** The sweep's hit threshold is one skin, or half the capsule's
+>    *clearance* (its smallest starting gap to anything the sweep tests) when that is
+>    smaller; and a starting gap below 10⁻⁶ m counts as touching (stopped at once when moving
+>    in, free otherwise), like an overlap. Both matter only for a capsule that starts closer
+>    than two skins to something; for any other start the threshold is exactly one skin. The
+>    lowered threshold keeps a capsule that starts closer than one skin to a surface from
+>    being stopped at the shared edge of a coplanar neighbour (whose gap equals the
+>    surface's). The code keeps both; please state them in (w) or give another rule.
+> 2. **(k) "climbs in proportion".** Tessera compares with a slack of 0.001 m: the move's
+>    own length counts as climbing in proportion when its climb is at least the raised
+>    move's climb × (move length / raised length) − 0.001 m (floating-point rounding would
+>    otherwise reject an exact proportion). "Raised length" is the length the raised move
+>    actually taken covered: the first reach of (d), or the full capsule radius after the
+>    retry of (o). The move's own length must also pass the acceptance test of (k) (more
+>    than 0.01 m climbed, further than the unraised slide); otherwise the longer raised
+>    move is taken. "Gets further along the move than the unraised slide" is now strict,
+>    with no slack (the released code required 0.001 m more).
+> 3. **(v) and the mover's state.** (v) names no state, so `tessera-physics` now applies it
+>    in the air, while swimming and on steep support too (it never applies to the step-up's
+>    raised move, whose planes are vertical walls, (k)); the released code applied it only on
+>    walkable support. A consequence: a mover that falls onto a walkable side slope keeps the
+>    horizontal heading of its fall in the landing step, and the horizontal length of its
+>    clipped velocity, which includes part of its fall speed, now points along that heading
+>    instead of downhill. Please confirm that (v) is meant for every state, or limit it.
+> 4. **(v) and the speed limit** (2026-10-07, second conformance pass). Keeping the
+>    horizontal length and lifting the velocity onto a walkable plane makes it longer than
+>    the clipped velocity, and can make it longer than the limit of §12.3 step 3 (with a
+>    hostile record of forward and terminal speed 120 m/s and damper 1, about 120.9 m/s).
+>    Tessera (Decision): after the slide and the step-up the velocity's length is limited
+>    again to the terminal velocity and 120 m/s, as (p) does after buoyancy. The
+>    displacement already taken is not changed.
+> 5. **(u) and (g) solver details** (2026-10-07, second conformance pass). (u) does not
+>    say in which order the single planes are tried or how exactly "keeps it out of all
+>    the others" is tested; (g) does not say which contacts count. Tessera (Decision): the
+>    single planes are tried latest first (the latest contact is the one the motion runs
+>    into, as in (u)'s replacement rule) and the first that works is used; a clipped
+>    motion *c* is out of a plane with normal *n* when *c* · *n* ≥ −10⁻⁵ · |*v*| (*v* the
+>    motion before clipping; rounding tolerance); the crease line is that of the last two
+>    planes listed. The push-out of (g) uses only contacts whose separation is finite and
+>    whose normal has unit length within 10⁻³ (others are hostile values and ignored).
+>    Please state the original's rule or confirm.
+
 <a id="s12-5"></a>
 ### 12.5 Where Tessera differs from the original's known rules
 
@@ -1873,6 +1972,13 @@ at +1), points on whole byte values: bytes (100, 150, 0) give 125 → left only 
 Quad *i* = 3, *j* = 7: *base* = 2 · (32 · 7 + 3) = 454. With bit 7 set at sample (3, 7):
 key 454 = corners (3, 7), (4, 8), (3, 8); key 455 = (3, 7), (4, 7), (4, 8). With bit 7 clear:
 key 454 = (3, 7), (4, 7), (3, 8); key 455 = (4, 7), (4, 8), (3, 8).
+
+> **OPEN (implementer, 2026-10-07, second `tessera-physics` conformance pass):** §6.1 gives
+> the client's corner order of the key-base triangle of a south-west/north-east quad as
+> (i, j + 1), (i, j), (i + 1, j + 1), here (3, 8), (3, 7), (4, 8); this example lists the same
+> corners in the same winding starting from (3, 7). `tessera-physics` follows §6.1 (the
+> ceiling reverses that order, §6.4). Please align the example, or say whether the
+> example's order is meant as a set.
 
 ### 14.5 Minimal cell record
 

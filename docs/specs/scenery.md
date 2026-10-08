@@ -209,6 +209,16 @@ When slot 1 or slot 2 is empty, or its table cannot be read (BIN (v), S49):
 > has no procedural scenery and no frills. An implementation may log one diagnostic per
 > region (or per landblock) instead of one per vertex.
 
+> **OPEN (raised by the `world` implementation, 2026-10-07):** this section and the
+> Tessera Decisions of §7.4 step 15 do not say what a read of a slot-1, slot-2 or slot-8
+> table that fails for a reason outside the data and outside the archive (Tessera's work
+> queue is full, the asset pipeline is shutting down, a worker panicked) does. Conservative
+> engineering choice until answered, following the step-15 decision for scene reads: such
+> a failure is not a property of the data, so the region is left out of that load only,
+> nothing about it is remembered, and the loader reports the region as retryable so that
+> the caller can load its tables again later (`SceneryTables::load_all_regions`). Archive
+> errors and decode failures stay data faults (the Tessera Decision above).
+
 A missing slot-8 table only disables the terrain-type test (§7.4 step 7). Every region of
 this install has all three (§4.1 table).
 
@@ -834,6 +844,19 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
        > **OPEN:** which run mode of the static-entity filter an offline client is in, and so
        > whether Generator targets are dropped from the static list (§15 item 6).
 
+       > **OPEN (raised by the `world` implementation, 2026-10-07):** (a) what makes an
+       > object DID "invalid" for the validity check. `entity-descriptor.md` §3.4 says an
+       > absent `object` field is the invalid DID; whether a stored value can also be invalid
+       > (for example 0, or a DID whose prefix is neither 0x47 nor a game object) is not
+       > stated. (b) What the check does when the property dictionary does not define
+       > `Entity_CreationType` (the lookup can then find nothing, which would make every
+       > Physics and PatrolPoint entity invalid). (c) Which z′ the `spacing_3d` cylinder
+       > test uses when `Entity_Clearance_Height` is negative, where "above" and "below"
+       > overlap (no element of this install has one). Conservative engineering choices until
+       > answered: (a) only an absent object or the DID 0 is invalid; (b) the creation-type
+       > part of the check is not applied; (c) a mapped z below cz takes cz, else one above
+       > cz + h takes cz + h, else z itself.
+
     b. **Footprints of placed nodes**, unless `no_spacing*`: every *closed* footprint
        marker in the landblock's generated list (step 15; markers of the current node and
        its ancestors are still open and are skipped). Overlap when
@@ -1004,6 +1027,14 @@ generated objects, from the **last** entry of the generated list to the first. M
 entries are skipped. Generated objects pass no creation-type filter at this point: an
 object whose `Entity_CreationType` is 7 or 8 still becomes a request. Its creation type
 travels with the request.
+
+> **OPEN (implementer note, `world`, 2026-10-07):** representation choice for the record of
+> the first paragraph. Tessera's generator output carries the object DID, frame, scale and
+> generating vertex, but not the `Entity_CreationType`: placement never reads it, and it
+> depends on the object alone, so generation does not read 0x47 records to fill it in. A
+> consumer that needs it (creation requests, `collision.md` §9.4) resolves it from the
+> object along the 0x47 chain as §9.2 rule 2 states (0 when no level has it), which gives
+> the client's value. A spec revision may confirm this or require the field.
 
 > **For `collision.md` (§9.3–§9.4), from the footprint revision (BIN (o), (q); no change
 > to the scenery rules):**
@@ -1211,6 +1242,16 @@ Tessera does not draw the records of source (b) (§8.6).
 > is above 0 and the camera and the player lie in different regions, the centre is the
 > player's position (the two positions share no coordinate system); with a blend of 0 or
 > less the camera position applies, as above.
+>
+> **OPEN (implementer note, `world`, 2026-10-07):** an engineering cap on the sector set,
+> which the spec does not state. `FrillEngine.ExtraPreCacheRadiusLevels` is user input, so
+> the client's square of *n* + *e* sectors is unbounded. Conservative choice until a
+> revision states a cap: the square is kept up to 64 sectors; above that it is cut to
+> max(64, ⌊D / S⌋ + 1) sectors, the smallest square that holds every sector with some point
+> within D (boundary included) of the centre sector. So the set always holds either the
+> client's square or every sector the first Tessera Decision above requires; with
+> `FrillEngine.UseDepthTransitions` off (D = 1,000 units) a large *e* gives 101 sectors,
+> with it on (D below *n* sectors) at most 64. Only non-default settings reach the cap.
 
 <a id="s8-3"></a>
 ### 8.3 Drawing (BIN; shader formulas OPEN)
@@ -1309,6 +1350,13 @@ The frill engine's rules (BIN), with S = 10 units the frill sector size (160 / 1
    off) means no frill sector is generated or drawn. `Render.FrillDensity` is clamped to
    0 … 1 (NaN counts as 0); a `FrillEngine.DepthFadeDistance` that is negative or NaN gives
    a fade length of 0. A group with no instances draws none (rule 4).
+
+   > **OPEN (raised by the `world` implementation, 2026-10-07):** which property types are
+   > "integer-like" for the boolean rule above. Not stated: whether DID references, string
+   > tokens, property IDs, instance IDs, the tri-state byte and bitfields wider than 64 bits
+   > count. Conservative engineering choice until answered: the signed integers (32 and 64
+   > bits), enum keys and bitfields of every width count (a bitfield is true when any bit
+   > is set); every other type counts as absent, so the default of rules 6–7 applies.
 
 > **OPEN:** the shader-side fade or scale formula, the terrain-colour blend and the sway
 > formula (frill shader programs, prefix 0x2B); the third variant flag; the renderer
@@ -1864,6 +1912,15 @@ restated by the second repair revision to match the released code; it is not a d
 > the player's). With the default blend 1.0 and with blend 0 in one region the code and the
 > body agree, so no default setting is affected. Blends above 1 are not clamped in either.
 > SC25 tests the rule.
+
+> **OPEN (raised by the `world` implementation, 2026-10-07):** the three callouts above,
+> and §15 item 18, look stale. A clean conformance review of the current `world` code
+> against this revision's body found that it follows §7.4 step 14a (the `PhysObj` chain of
+> a weenie, sorted box corners, statics without a frame at the origin, the first bad
+> element ending a list (a cylinder without `Entity_Clearance_Height` counts as bad), the
+> validity check, the `spacing_3d` cylinder test), the client's square of §8.2 and the
+> ring centre of §8.2 with its Tessera Decision (SC22, SC23, SC25 and SC26 have synthetic
+> tests). No code change is pending for them; a spec revision may close this section.
 
 ---
 

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Review, changes requested (re-review of 2026-10-07; never Accepted, so it stays in Review). |
+| **Status** | Review, changes requested (re-review of 2026-10-07; never Accepted, so it stays in Review). BIN4 slider and deformer edge cases added 2026-10-07; awaiting review. |
 | **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-reviewer, a different session from the writer), 2026-10-07: first review and re-review |
@@ -69,6 +69,7 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | OBS2 | Observed 2026-10-07 (same Steam install, data current that day), read-only, with throwaway probes on the repository's own decoders: **all 7,524** decodable script tables (0x07; 2 of 7,526 do not decode with the current decoder and were skipped) and **all** scriptlets (0x0C), every node walked (632,847 nodes), with the enclosing Switch, When and port context of each Appearance (58), MeshFX (41), EditMaterial (60), ModifyCompositorColor (33), ModifyCompositorLayer (44), TextureCompositor (53), Run (5) and SetProperty (40) node and its driven fields; the include graph of all tables; all 27,546 property definitions; the enum mappers `Item_EquipmentCategory`, `HoldingLocation`, `Combat_SkillMode`, `TextureCompositorNames`, `ImageCompositorColorNames`, `MeshTypeID`, `MaterialTypeID`, the script-key mapper 0x23000097 and the DID map 0x28000007; the inventory-control object 0x70000230; all 0x47 property sets for scale and location properties; all 383,343 game-object property sets for location properties; all 49,636 landblock-info records for `Appearance_RandomAppearanceType`; all 12,199 appearance-list elements of the 0x47 records against all 4,201 0x20 records. |
 | BIN2 | The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read in the dirty room on 2026-10-07 with Ghidra (headless, read-only copy of the shared project, deleted afterwards), method M4 under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the routine that builds a figure's appearance from `Appearance_ClassList` and `Appearance_InstanceList`; the toggle-file test; the visual-template object (0x1F) merge, flag computation and parent flattening; the appearance-record (0x20) block choice; the per-record key table and the record order of a figure's appearance; the block application (material groups, parts); the Appearance script node's apply routine; the render component's scale computation and its property-change handler; the registration of the two avatar graphics options and their character-creation and options-panel bindings; the client's object property lookup. Searches by value and by name for the PIDs of the worn-item map structs, the random-appearance properties, the cosmetic-inventory properties and the held-item script properties. **Questions:** O8 (does the template scale combine with the entity scale), O10 (equal-priority ties and source order), O11 (the updated-avatar option and its default), O12 (does the client turn a random-appearance type into an outfit), O13 (does client code choose stowed and wielded locations), O15 (does client code pair colours with face layers); and the implementation OPENs of §14–§15 on block choice, dye pairing, scale type and cosmetic-inventory visibility. **Why M1–M3 were not enough:** the data names the properties, records and nodes but not the rules that combine them (tie order, block choice for a modifier that matches no block, whether a property is read by code at all); no published source covers them; an owner observation (M3) shows one outcome but cannot give a rule. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
 | BIN3 | Same executable and build (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-07 after the review, with Ghidra (headless, read-only copy of the shared project, deleted afterwards), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). **Code read:** the render component's scale computation again (threshold comparison, the holder factor and its two flag bits, the holder's final scale); the property lookup call that reads `Model_ParticleScale`; the block-applying routine of a 0x20 record; the 0x20 record reader (the fields after the DID, the `section` byte and the entry table). **Questions:** review items 1, 5 and 9 (is the 0.0002 limit inclusive; which holder factors enter the render scale; what the list applied before a record's own entry is and where it is stored), and the `section` OPEN of §4.2. **Why M1–M3 were not enough:** the u32 after the DID is 0 and the `section` byte has no visible effect in every record, so the data cannot show their use; the limit and the holder factors only change the result for values no record carries (components near 0.0002, attached figures with flags whose source is not in the data); no published source covers them; observing the client (M3) cannot separate them. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper. |
+| BIN4 | Same executable and build (file version 4906.0071.1794.4035), read again in the dirty room on 2026-10-07 with Ghidra (headless, read-only fresh copy of the shared project), method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), to settle edge cases that a clean-room audit of the River-hobbit height code found unstated. **Questions:** how the slider value string is cut and read when a piece is not a clean hexadecimal pair or the string is short or of odd length (§6.3); what happens to a slider entry for a bone outside the skeleton and to limits that are not finite (§6.3); what a body-shape deformer with a missing clip or a time that is not finite does, how many deformers and slider sets a figure may hold, and how track weights are converted (§6.4). **Why M1–M3 were not enough:** every value string of the install is 70 hexadecimal digits, every bone index is in range and every deformer names a clip, so the data cannot show these rules; no published source covers them; observing the running client (M3) cannot produce such inputs. **Code read:** the slider node's string parser and per-bone entry builder, the animation component's slider-set and deformer registration, the deformation-pose builder (deformer clips and slider application) and the string class's append routine (to read its length field). Nothing of the network, login, launcher or anti-tamper code. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -87,7 +88,7 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A13 | Static NPC-like figures are Physics SEDs whose object resolves to a humanoid rig and whose instance property set adds appearance lists, a random-appearance type, an idle animation and held items (§7.2–§7.4) | OBS | Confirmed |
 | A14 | No **property set** maps `Appearance_RandomAppearanceType` to an outfit (§7.4) | OBS (property sets of all prefixes holding property sets; raw search of the PID) | Confirmed for property sets; superseded by A26 (the mapping is in script tables) |
 | A15 | `AC_Avatar_Height` is the held time (as a fraction) of the River-hobbit layer-110 `scale_blend` clip; `AC_BoneScale_Test` is the held fraction of every avatar's body-shape deformer clip and of the DwarfStoutAxe layer-110 clip (§6.2) | OBS (the 7 driven nodes, the 14 species tables); BIN (§6.7 of ST) | Confirmed 2026-10-05 |
-| A16 | Bone sliders: one value per slider *t* = byte / 255 in definition order, 0.5 for sliders past the end of the string; channel = min + *t* × (max − min), negated per reversed bone; later sliders overwrite earlier ones per bone and channel (§6.3) | BIN; OBS (definition records, node strings) | Confirmed 2026-10-05 (BIN only for the rule). Replaces the §6.3 value Decision. |
+| A16 | Bone sliders: one value per slider *t* = byte / 255 in definition order, 0.5 for sliders past the end of the string; channel = min + *t* × (max − min), negated per reversed bone; later sliders overwrite earlier ones per bone and channel (§6.3) | BIN; OBS (definition records, node strings) | Confirmed 2026-10-05 (BIN only for the rule). Replaces the §6.3 value Decision. Parse details A29. |
 | A17 | Sliders and body-shape deformers are not applied to the animated pose: they deform the skinned meshes once in bind space, using the scale composition of SA2 (§6.4) | BIN; RH (feet within 1 cm of the ground for River-hobbit M and F at every height value) | Confirmed 2026-10-05. Replaces the §6.3 application Decision. |
 | A18 | Expected standing heights with all mechanisms applied (§6.5) | RH | Confirmed 2026-10-05 as a computation on real data; not yet compared with the original client by eye |
 | A19 | Block choice: the block with the greatest `variant` not above the modifier; none if the modifier is below every variant; a modifier of −1.0 means "no block" (§3.2.1) | BIN2; OBS2 (12,199 elements: 11,774 exact, 265 a lower block, 79 none, 67 key missing, 14 null) | Confirmed (rule BIN only) |
@@ -100,6 +101,9 @@ the data is silent; it is marked as such and has an OPEN next to it.
 | A26 | Random-appearance types select outfits through Appearance nodes under Switches on `Appearance_RandomAppearanceType` in figure script tables, with a random choice per piece group (§7.4) | OBS2 (21,780 nodes under explicit cases in key 5, 830 (table, case) pairs in 61 tables; 21,841 in all scripts and ports, 62 tables; 433 case values; 316 of the 318 non-zero types placed by landblocks covered; counting rule in §7.4) | Confirmed |
 | A27 | Render scale of an object, per axis: `Render_AdjustableScale_Checkpointed` or else `Render_AdjustableScale`, × one uniform holder factor, × `Model_Scale`, × a vector of a related object, × the holder's final render scale when attached; a result with a non-finite component or a component **strictly below** 0.0002 becomes (1, 1, 1). Template `vec3` values multiply along the template parent chain (§6.1) | BIN2, BIN3; OBS2 (types and census) | BIN (rule); Confirmed (types) |
 | A28 | The u32 after the DID of a 0x20 record is the count of a list of further 0x20 DIDs that follow it; the client applies those records, recursively and with the same key and modifier, before the record's own entry. The count is 0 in all 4,201 records. The `section` byte is the size class of the client's in-memory entry lookup (an index 0–22), with no appearance meaning (§4.2, §4.7) | BIN3; OBS (4,201 of 4,201 records, zero trailing bytes) | BIN (meaning); Confirmed (all counts 0) |
+| A29 | Slider value string: cut into two-character pieces from the start; an odd last character is a piece of its own; after an even number of characters one more, empty, piece follows; each piece is read like C `strtol` in base 16, the result taken as an unsigned 32-bit number and divided by 255; sliders beyond the pieces get 0.5 (§6.3) | BIN4 | BIN (rule); Confirmed (strings of the install, OBS) |
+| A30 | Slider entries are applied by walking the skeleton's bones 0 to bone count − 1, so an entry for a bone outside that range is never used and the slider's other bones still apply; a figure holds one slider set, the most recently started slider node's (§6.3, §6.4) | BIN4 | BIN |
+| A31 | Body-shape deformers: a clip that cannot be loaded or whose track count differs from the bone count contributes nothing; any number of deformers; time = duration × fraction limited to [0, duration]; track weights 255 × weight converted to an integer by truncation, no tolerance (§6.4) | BIN4 | BIN; NaN fraction and non-finite slider limits: Tessera Decisions |
 
 ---
 
@@ -1126,16 +1130,42 @@ value: in the bind-space deformation of §6.4 the thigh vertices shrink to 0.8 o
 height about the hip joints and the shin and foot vertices to 0.8 × 1.15 = 0.92 about the
 knee and ankle joints, while no joint moves (`skeleton-anim.md` §5.4).
 
-**Values (BIN, A16).** The value string holds hexadecimal byte pairs. The client reads
-it pair by pair from the start (each pair read as a base-16 number, so a pair that is not
-hexadecimal reads 0) and gives the *k*-th pair to the *k*-th slider **of the definition
-array, hidden ones included**, as *t* = byte / 255; it stops when every slider has a value or
-the string ends; every slider left without a value gets *t* = **0.5** exactly. With the
-35-pair strings of this install, the hidden River-hobbit sliders (definitions 36 and 37) get
-0.5, which changes nothing because their minimum equals their maximum. The avatar entities'
+**Values (BIN, A16; parse BIN4, A29).** The value string holds hexadecimal byte pairs. The
+client cuts it into **pieces** from the start, two characters at a time. When the string has
+an odd number of characters, its last character is a piece of its own. When it has an even
+number of characters (none included), one more piece follows the last pair, and that piece
+is **empty**. The client gives the *k*-th piece to the *k*-th slider **of the definition
+array, hidden ones included**, and stops when every slider has a value or the pieces run
+out; every slider left without a value gets *t* = **0.5** exactly.
+
+A piece is read the way the C library function `strtol` reads text in base 16 (named only to
+pin the rule down): optional leading white space, an optional `+` or `-`, an optional `0x`
+or `0X`, then hexadecimal digits of either case up to the first other character; a piece
+with no digit reads 0. So `80` reads 128, `8z` reads 8, `z8` reads 0, a lone `8` reads 8 and
+the empty piece reads 0. The result is taken as an unsigned 32-bit number (a negative result
+becomes 2³² minus its magnitude), converted to single precision and divided by 255: that is
+*t*. Consequences:
+
+- A string of 2*m* characters with fewer pairs than sliders (*m* below the slider count)
+  gives slider *m* + 1 the value *t* = 0 (from the empty piece) and the sliders after it 0.5.
+  An empty string gives the first slider 0 and every other slider 0.5.
+- A piece with a minus sign gives a *t* far outside [0, 1] (for `-1`, (2³² − 1) / 255 in
+  single precision). No string of the install has one.
+
+With the 35-pair (70-character) strings of this install, the Human, Elf and HighElf records
+(35 sliders) take one pair per slider. The River-hobbit records (37 sliders) give the first
+hidden slider (definition 36) *t* = 0 from the empty piece and the second (definition 37)
+*t* = 0.5. Neither changes anything, because each has its minimum equal to its maximum. The avatar entities'
 strings are 35 × `80` (*t* = 128 / 255 = 0.50196, so for example a 0.7–1.3 scale slider gives
 1.00118, not exactly 1). The SliderMeshDeformer node's own stored string is 34 × `80` with
 `00` at slider 24 (`Eye_Rotation`).
+
+> **Answered** (2026-10-07, BIN4; was the implementation OPEN on `8z` and a trailing single
+> character): `8z` reads 8, not 0 (the client stops at the first non-digit), and a trailing
+> single character is a piece of its own (a lone `8` reads 8 for the next slider). Also note
+> the empty piece after an even-length string that is shorter than the slider list. The
+> implementation's strict pair rule and its dropping of the last character differ from the
+> client; follow the paragraph above.
 
 > **OPEN** (driven value of an absent property): the Elf and HighElf avatar entities carry no
 > `AC_BoneSlider_Value_Array`. Whether the driven field then keeps the node's stored string
@@ -1171,6 +1201,21 @@ deformation pose of §6.4 (never on the animated pose):
 
 Unmasked components hold their start values (0, or 1 for scale), so they change nothing.
 
+**Bones outside the skeleton and limits that are not finite (BIN4, A30).** The client
+applies the entries by walking the skeleton's bones from 0 to its bone count − 1 and taking
+each bone's entry. An entry for a bone index outside that range, negative ones included, is
+therefore never used, and the slider's other bones still get theirs. The client does not
+check limits or values for being finite. **Tessera Decision:** a slider with a limit that is
+not finite contributes no entry (OPEN: no instance, and the client's result would not be
+finite). A slider with no channel bit writes no channel, so it changes nothing.
+
+> **Answered** (2026-10-07, BIN4; was the implementation OPEN on bones outside the skeleton
+> and limits that are not finite): an index outside the skeleton loses only that bone's
+> entry; dropping the whole slider is not the client's rule. Keep the slider's other bones
+> (AI7's "dropping the offending element" means that bone index). The handling of limits
+> that are not finite is the Decision above. Skipping a slider with no channel bit is
+> equivalent to the client.
+
 <a id="s6-4"></a>
 ### 6.4 Bind-space deformation: body shape and sliders (BIN, A17)
 
@@ -1179,7 +1224,9 @@ pose. It deforms the skinned meshes **once, in bind space**, and animates the de
 meshes with the ordinary skeleton. Inputs, all from the avatar's species table
 (`script-table.md` §6.9): the MeshDeformer node(s) (clip, time fraction from
 `AC_BoneScale_Test`, `UseBoneWeights`) and, on Human, Elf, HighElf and River-hobbit bodies, the SliderMeshDeformer node
-(entries of §6.3).
+(entries of §6.3). A figure holds one slider set: with more than one SliderMeshDeformer the
+most recently started one's set is used, and stopping any of them removes the set
+(`script-table.md` §6.9; each species table has one).
 
 Algorithm (run at assembly and again whenever a deformer time or the slider string
 changes):
@@ -1190,6 +1237,14 @@ changes):
    else 1; combine all deformer clips per bone by steps 4–5 of `skeleton-anim.md` §6.6
    (normalised weighted average, reference pose filling a total below 0.1). Without one:
    the skeleton's reference pose. No animation clip takes part, whatever is playing.
+   Details (BIN4, A31): the track weight is 255 × weight converted to an integer by
+   truncation, with no tolerance added. A deformer whose clip cannot be loaded (the null DID
+   included) or whose track count differs from the bone count contributes nothing (the
+   second is reported as an error); with no contributing deformer the pose is the reference
+   pose. The client keeps any number of deformers. The time is limited to [0, duration]
+   after the multiplication, so a fraction of +∞ gives the end and −∞ gives 0. **Tessera
+   Decision:** a NaN fraction reads as 0 (OPEN: no instance; the client then samples at an
+   undefined time).
 2. **Sliders.** Apply every bone entry of §6.3 to this local pose.
 3. **Deformation transforms.** Compose model triples and form each bone's skinning
    transform *D_b* by `skeleton-anim.md` §5.4 (against the ordinary reference pose).
@@ -1215,6 +1270,16 @@ Why this matters (RH): applied per frame to the animated pose with matrix compos
 same two leg sliders lift the River-hobbit feet 8.5 cm (M) and 8.8 cm (F) off the ground,
 the float the M4 viewer showed; by this algorithm the lowest vertex stays within 1 cm of the
 ground (§6.5).
+
+> **Answered** (2026-10-07, BIN4; was the implementation OPEN on a deformer time that is
+> not finite, the 16-clip bound and vertices without a usable influence): the time rule is
+> now in step 1. +∞ gives the **end** of the clip in the client, not 0; −∞ gives 0; NaN is
+> the Decision of step 1 (0). The client keeps any number of deformers; 16 is an
+> implementation limit, not a client rule, and the install has one deformer per figure
+> (`script-table.md` SI12), so log any deformer it drops. Leaving a vertex unchanged when
+> none of its influences is usable is accepted as a **Tessera rule** for malformed meshes
+> (the client's handling of such vertices was not traced). The truncation without tolerance
+> and the use of the K26 transform in step 3 are right.
 
 <a id="s6-5"></a>
 ### 6.5 Expected standing heights (Confirmed computation, A18)
@@ -1934,6 +1999,21 @@ Review follow-up (clean room, 2026-10-05):
 > transform taken as the matrix product of `skeleton-anim.md` §5.4 OPEN below. Only the
 > lowest bone of River-hobbit M at 0.95 differs (0.015 against 0.016, rounding).
 
+> **OPEN** (implementation, 2026-10-07, after the BIN4 answers; engineering choices,
+> confirmation only): (1) §6.3 values now follow the piece rule (two characters at a time,
+> a trailing one-character piece, the empty piece after an even-length string, `strtol`
+> reading, *t* not limited to [0, 1]); a bone index outside the skeleton loses only its own
+> entry. (2) Extension of the §6.3 Tessera Decision: a slider whose limits and *t* are finite
+> but whose channel value *c* = min + *t* × (max − min) is not (overflow, possible only with
+> limits near the single-precision range or a huge *t* from a minus sign) also contributes
+> no entry. Please say if the client's result differs in a way that matters. (3) §6.4 step 1:
+> Tessera combines at most 16 deformer clips per figure (an implementation limit; the rest
+> are dropped and logged); a clip whose track count differs from the bone count is skipped
+> and logged as an error, the others still contribute. (4) §6.4, one slider set per figure:
+> the resolver evaluates a `Startup` script without time, so "the most recently started"
+> SliderMeshDeformer is taken to be the **last one in evaluation order**. Please confirm that
+> the client starts the nodes of one script in that order (no instance: SI12).
+
 ---
 
 <a id="s16"></a>
@@ -1944,6 +2024,7 @@ Review follow-up (clean room, 2026-10-05):
 | 2026-10-05 | §1 (BIN, ST/SA2, RH, A10, A15–A18), §6.2, §6.3, new §6.4 and §6.5, §8 step 7, §11, §12.3, new §12.4–§12.5, §13, §14 | Height controls, bone-slider values and application, and bind-space deformation from the client (BIN, decision 0011), checked on real data (RH); the earlier Decisions of §6.2 and §6.3 withdrawn; expected standing heights added; implementation OPENs on absent slider strings and rotation order answered (the first in part). | Spec writer (dirty room) |
 | 2026-10-07 | header; §1 (OBS2, BIN2, A14, A19–A27); §3.2.1; §3.3; new §3.5; §4.7; §4.9; §4.10; §4.11; §5.3; §5.4; §5.5; new §5.6; §6.1; §6.3; §7.4; §8; §11; §12.2; §13; §14; §15; new §17 | Owner items O8, O10, O11, O12, O13, O15 answered from the client where the client can settle them (BIN2, decision 0011) and from script-table data (OBS2): block choice (largest variant not above the modifier) replaces the old rule and Decision; tie rule and record order; figure-wide material-group list (dye pairing withdrawn); updated-avatar and face-compositing options; face layers and colour tints from species-table script nodes; stowed and wielded weapon placements from the shared avatar table (old stowing Decision replaced); random-appearance outfits from script tables (old Decision replaced); render-scale composition and the vector3 type; eleven implementation OPENs answered. | Spec writer (dirty room) |
 | 2026-10-07 | header; §1 (OBS2, A21, A26, A27, new A28, new BIN3); §3.2.1; §3.3; §3.5; §4.2; §4.7 (new rule 4 and OPEN); §6.1; §7.4; §8 step 4; §9 (AI12, new AI13); §11; §13; §14; §17 (new O9 and O17 rows, O8 row) | Answers the review of 2026-10-07. Blocking: the render-scale limit is **strictly below** 0.0002 (A27, §6.1 twice including the Decision, §14); the §3.2.1 census splits the 79 "none" into 13 by rule 1 and 66 by rule 3; §17 gains the O9 row. Non-blocking: §7.4 states its counting rule and the corrected counts (21,780 nodes, 830 cases, 61 tables in key 5; 21,841 and 62 tables over all scripts); §6.1 states the holder factors (uniform holder scalar with its two flag bits and `Model_ParticleScale`, then the holder's final scale, BIN3); §3.3 names the two sources and the dictionary default (false); §3.5 and A21 attribute the 297 nodes and the compositor counts by kind; OBS2 node total 632,847. From BIN3: the u32 after a 0x20 record's DID counts a linked-record list applied first (§4.2, §4.7 rule 4), and the `section` byte is a lookup-table size class (its OPEN resolved). | Spec writer (dirty room) |
+| 2026-10-07 (BIN4) | header; §1 (new BIN4, A16 note, new A29–A31); §6.3 (values: piece rule and reading; River-hobbit hidden slider 36 gets *t* = 0; new paragraph on bones outside the skeleton and limits that are not finite; two implementation OPENs answered); §6.4 (one slider set per figure; step 1 details; implementation OPEN answered) | Edge cases from a clean-room audit of the River-hobbit height code, settled from the client (BIN4, decision 0011). §6.3: the value string is cut into two-character pieces, an odd last character is a piece of its own, and an even-length string gets one more empty piece; each piece is read as base-16 text up to the first non-digit (`8z` reads 8), taken as unsigned and divided by 255. Correction: with 35-pair strings, the first hidden River-hobbit slider gets *t* = 0, not 0.5 (no visible change, its limits are equal). An entry for a bone outside the skeleton is not used, and the slider's other bones still apply (the implementation drops the whole slider; that differs). Limits that are not finite: Tessera Decision. §6.4: one slider set per figure; track weights truncated without tolerance; a deformer with a missing or non-fitting clip contributes nothing; no limit on deformers; time limited to [0, duration] (+∞ gives the end); NaN: Tessera Decision. The fact the audit found contradicted by the explorer (River-hobbit M body-shape control range 0 to 0.6, §6.2, Confirmed 2026-10-05 from the character-creation control data; not re-measured here) stands, as do the step 1 quantisation (re-read, no tolerance) and the §6.4 step 3 reference to the K26 transform. | Spec writer (dirty room) |
 
 ---
 

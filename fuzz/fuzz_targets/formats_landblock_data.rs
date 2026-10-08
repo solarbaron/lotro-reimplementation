@@ -206,6 +206,11 @@ fuzz_target!(|input: &[u8]| {
             .expect("finite coordinates have a height");
         // The largest stored sample, 65,535, is 2,000 units (landblock.md §3.4).
         assert!(h.is_finite() && (0.0..=2000.0).contains(&h));
+        let n = d
+            .terrain_normal(x, y)
+            .expect("finite coordinates have a normal");
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        assert!(n[2] > 0.0 && (len - 1.0).abs() < 1e-3, "{n:?}");
     }
     for i in 0..32 {
         assert!(d.quad_triangles(i, 31 - i).is_some());

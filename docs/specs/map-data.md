@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (OPEN sweep of 2026-10-09, change log last row; waiting for review). Previously Accepted |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author; re-review by a second separate dirty-room reviewer session, AI-assisted, not the author |
-| **Review record** | Re-review 2026-10-07: **passed**, Accepted. OPEN-closing revision 2026-10-08: changes requested (four items), then repaired. Re-review of the repair 2026-10-08 by a separate dirty-room reviewer session (AI-assisted, not the author): **passed**, Accepted; three non-blocking notes. Details in the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-07: **passed**, Accepted. OPEN-closing revision 2026-10-08: changes requested (four items), then repaired. Re-review of the repair 2026-10-08 by a separate dirty-room reviewer session (AI-assisted, not the author): **passed**, Accepted; three non-blocking notes. Details in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §2.3, §2.4, §7, §9.7 and §11 changed (rows MD44–MD48); status Revised until a separate session reviews it. |
 | **Implements into** | `crates/formats` (decoders for the three singleton tables of §3–§5), `crates/world` (place lookup §3.4, map-note index §4.6, travel and housing graphs §8–§9), `apps/explorer` (world-map overlays: places, notes, links, travel routes, neighbourhoods), `apps/client` (walker place lookup), `crates/net` sandbox backend (travel and housing data for a local server) |
 | **Companion specs** | [`records.md`](records.md) (**RC**: §1.2 VLE, §1.3 TSize and bucket order, §1.4 strings, §1.5 name hash, §2.1 DID table, §4 StringInfo); [`property-system.md`](property-system.md) (**PS**: §4.6 positions, §4.8 StringInfo, §5 property sets and list/table entry forms, §6.2 the +0x09000000 rule, §7.3 bit-to-key rule, §8.1 DID maps, §17.4 StringInfo reader); [`wstate.md`](wstate.md) (**WS**: object-state header and root class, §11 areas, territories, regions, dungeons); [`landblock.md`](landblock.md) (**LB**: §4.6 links, §6 landblock properties and minimap tiles); [`entity-descriptor.md`](entity-descriptor.md) (**ED**: SED types, §4.5.1 content layers); [`game-panels.md`](game-panels.md) (**GP**: §8 minimap, §9 world map, map georeference); [`coordinates.md`](coordinates.md) (**CO**: §5–§8 frames and map coordinates, §9 `/loc` text); [`string-table.md`](string-table.md) (**ST**: §9 rendering a StringInfo) |
 
@@ -57,6 +57,7 @@ analysis and are marked OPEN or Reported.
 | OBS | Observed in the user's install (Steam, data current on 2026-10-06/07) with throwaway read-only probes in the dirty-room scratch area, using the repository's decoders as tools. **Full censuses:** every byte of 0x0E000004, 0x0E000006 and 0x0E400000 (all rows decoded, zero bytes left over); every 0x70 record header (root class) and every 0x79 property set of the classes named in this spec, and of every 0x70 and 0x78 set when looking for references to them (inbound-reference scan over all 383,332 object property sets and 1,616 stand-alone sets, plus the bundles of all object-state records); all 49,636 landblock-info records (SEDs, links, weenies); the DID maps UNIQUEDB 0x28000002, WEENIECONTENT 0x2800000E, CONTENT_LAYER 0x28000012 and RIPCORDS 0x2800002C; the enum mappers named in §6.3 and §9. **2026-10-08** (new read-only probe, all records of each kind): the UNIQUEDB entries 0x1000001B and 0x10000013 and the two property sets they name, every element of their note-type arrays, the `extra` set of all 13,485 map-note rows (every world-event state), and the content-layer test of §4.8.2 on every row for *L* = 0 and *L* = 1. **2026-10-08, second probe** (read-only): the dictionary entries of all 53 `Discount_Travel_…` properties; a byte scan of every section of the client executable for the property IDs of MD38; a full instruction sweep of the class library's code block (record 0x56000000, by `wlib-bytecode.md` §3.2: 362,178 instructions, ending exactly at the block's end) for integer immediates equal to the property IDs of MD41, with the bodies, classes and static call graph involved; the `UIElementID` labels (mapper chain from 0x230000D1) of the element IDs named in MD38–MD40. |
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of the other world specs), read in the dirty room on 2026-10-07 in a copy of the shared analysis project, by address range. **Questions:** (q1) the stored layout of a map-note row: field order and identity of the three DIDs, whether the byte after the type is padding or a value, the exact condition for the link block, and when the trailing property set is read; (q2) which rows the client rejects as invalid, and how it indexes rows after loading; (q3) the places-table reader and lookup: entry order, the key used for hashing, case handling, and which DID the two u32 fields are; (q4) the dungeon quest-note row and table readers and how rows are grouped; (q5) how the client finds the three tables. **Why M1–M3 were not enough:** M1 decodes every row exactly but cannot tell padding from an always-zero value, `type = 1` from "bit 0 set" (no row has bit 0 with another bit), "area" from "dungeon" in the places table (both fields are equal in every record), or the client's validity and indexing rules (they leave no trace in data); no published source states them; M3 cannot isolate them. **Read:** the map-note base, row and quest-row serializers and their reset and validity routines, the two table serializers, the places-table entry serializer, its two name lookups and its debug dump, the map-note manager's two load routines, its add-note routine and its per-zone list lookup. No network, login, launcher or anti-tamper code. **Second use, 2026-10-07 (revision after review, same build, same method, by address range):** (q6) what the client's "valid position" test checks, for the row's own position and for `link_position`; (q7) what its "valid text" test of a map-note row checks; (q8) which lower-case mapping the places-table lookup applies to code units, and under which locale; (q9) the unit of `min_range` and `max_range` and the test that uses them. **Why M1–M3 were not enough for (q6)–(q9):** every position, text and key in the data already passes or is ASCII (no invalid position, no unresolved text, no non-ASCII key), so the data cannot show the rule or its edge cases; no published source states them; the owner's in-game observations cannot isolate them. **Read (second use):** the position class's validity routine and the orientation check it calls, the StringInfo validity routine, the start-up routine that selects the C-runtime locale from the game language, the map-note manager's ranged-note query and the radar's note-update routine with the range predicate it calls. The meaning of the C-runtime functions named by import is taken from their public documentation. **Third use, 2026-10-08 (OPEN-closing session; same build, SHA-256 prefix d22363eb9aff0fb5 checked again; Ghidra headless decompiler on a read-only copy of the analysis project, single functions by address):** (q10) what the client does with `flag_b`, and where the version that gates `extra` comes from; (q11) which check the valid-text test applies to each kind of StringInfo argument; (q12) how the client selects, filters and draws table notes on the radar and in the map window: content layers, `discovery`, `type` filters, icons, `level`, and the world-event states in `extra`; and which dungeon quest notes the radar fetches; (q13) which position the radar measures ranges from, and whether the map window applies the range test; (q14) whether the client reads an entity's own map-note properties for a table row; (q15) whether the client's code reads the travel-mode, hop, segment, discount and sell-multiplier properties of §8 directly. **Why M1–M3 were not enough for (q10)–(q15):** these are client rules with no trace in any record (`flag_b` is 0 everywhere, no record stores a version, no StringInfo has arguments, the selection and drawing rules combine data with player and UI state); no published source states them; observing the client could show that a note appears but not the rule, the reference position or the filter that decides it. **Read (third use):** the map-note row class (its serialiser, reset, validity routines and per-row link test), the stream's version query and the version table compiled into the client, the StringInfo validity routine, the StringInfo argument-value factory and the five value classes' check routines, the map-note manager's start-up, its two icon-table loaders, its post-filing hook and its region, dungeon and zone queries, its world-event state evaluator, the radar's note update, note placement, ranged-note update, type filter, content-layer source and reference-position update (with the user option that selects the position record), the map window's note pass and its map-node relation, and a search of the whole executable, as instruction operands, for the property IDs of §6.1, of the `TravelMode_…`, `TravelHop_…` and `TravelSegment_…` properties, of the four properties named in §8.8 and of the three instancing properties of §9.3 (the `Discount_Travel_…` properties were not in this search; the fourth use covers them). No network, login, launcher or anti-tamper code. **Fourth use, 2026-10-08 (revision after the review of the same date; same build, SHA-256 prefix checked again; same method, single functions by address):** (q16) what the client does at the 13 instructions whose operand equals a `Discount_Travel_…` property ID, and where the travel window takes its destinations and prices from; (q17) which region and landblock rectangle the radar's area query uses, and what it queries while its recorded position is invalid; (q18) how the map window relates an area to a map node when two nodes list the area or none does. **Why M1–M3 were not enough for (q16)–(q18):** an operand equal to a property ID may be a UI element ID or a property use, which only the code shows; the radar's rectangle and the map window's registration rule leave no trace in data (no area is listed twice, no row lies in an unlisted area); no published source states them; observing the client shows which notes appear, not the rectangle or rule behind them. **Read (fourth use):** the 13 instructions and the routines around them; the travel window's constructor, its property-change registration and handler, its refresh routines and its two calls into the script machine; the radar's note update with the rectangle routine, the georeference setter and the position normaliser it calls; the map window's area-to-node registration, its area lookup and its node-ancestry test. No network, login, launcher or anti-tamper code. |
 | LC | LotroCompanion `lotro-tools` (places, map-note, quest-note, travel and housing loaders), read for facts only. Marked **Reported** where only LC supports a fact. |
+| OBS3 | Observed in the user's install on 2026-10-09 (OPEN sweep, spec writer), read-only; archives unchanged since 2026-10-04 (file times). A dump of **every** 0x70 record with its 0x79 set and of the 0x78 sets of `client_gamelogic.dat`, made on 2026-10-07 with the repository's own decoders, walked at every nesting depth; the property dictionary for types; `tessera-dattool stat` for the 0x78 count of every archive. |
 | RC, PS, WS, LB, ED, GP, CO, ST | The companion specs listed in the header. |
 
 Marks: **Confirmed** = checked over every record, row or value of the kind (OBS), or a BIN fact
@@ -108,6 +109,11 @@ third-party only.
 | MD41 | The class library's code pushes as 32-bit integer immediates (`wlib-bytecode.md` §5.1, op 0x01, type 2) the IDs of `Travel_DiscountArray`, `TravelWebSellMultiplier` and `Travel_BypassUsageChecks`, once each, in three bodies of class 1507 that class 460 inherits (slots 10, 27, 36 here); `TravelDestinationAllowPaperItems` once (class 1499, the destination class of §8.3, slot 86) and `TravelDestinationCost` once (classes 2115 and 2122, slot 119). The static calls of function 0x01CC0003 reach the three class-1507 bodies. No `Discount_Travel_…`, `TravelMode_…`, `TravelHop_…`, `TravelSegment_…` or instancing ID occurs as an immediate (§8.5, §8.6, §8.8, §9.3) | OBS (every instruction of the code block; the static call graph; class indices and slots are this install's) | Confirmed |
 | MD42 | The radar's area query uses the region of its recorded position and the landblock rectangle from the block offsets (*bx*, *by*) of its map georeference to the block that contains the point *W*/*s* east and *H*/*s* north of block (*bx*, *by*)'s south-west corner (*W* × *H* the pixel size of `MinimapMapImage`, *s* the georeference scale, 1.0 when \|*s*\| ≤ 0.0002), found with CO §4's normaliser without clamping; the radar queries only while it holds a georeference; with region 0 the result is empty (§4.8.1) | BIN (q17); OBS (element label) | BIN |
 | MD43 | The map window registers each area of a map node's `UI_Map_AreaDIDs_Array` once: an area already registered keeps its first node and the client reports the conflict; an area that no node lists, or a node whose element is 0, maps to the element `WorldMap`, the active element of the root node (§4.8.4) | BIN (q18); OBS (element label; no area is listed by two nodes, GP §9.4) | BIN (rule); Confirmed (no duplicate here) |
+| MD44 | Landmarks are exactly the property sets whose `WeenieType` has the label `Landmark` and that carry `MapNote_Type`: 2,733, all of class 1210; `Landmark_Music` is in 2,731 of them. The only other set with `WeenieType` `Landmark` (class 1995 here) has no `MapNote_Type` (§2.3) | OBS3 (every 0x79 set) | Confirmed 2026-10-09 |
+| MD45 | `QuestEvent_LandmarkDID` values in quest records, any depth: 3,434; 3,419 name landmarks; 15 (8 distinct DIDs) name no record of the install (§2.4) | OBS3 | Confirmed 2026-10-09 |
+| MD46 | Stand-alone property sets (0x78): 1,616 in `client_gamelogic.dat`, 2 in `client_local_English.dat`, 1,618 in all; the 1,300 map sets are all in the first (§7) | OBS3 (`tessera-dattool stat` over all 29 archives); implementation census 2026-10-07 | Confirmed 2026-10-09 |
+| MD47 | `HousingControl` labels and value types (§9.7); `HousingControl_HouseValueTier_StoragePriceModifier` is defined in the dictionary but is not an allowed field of the tier entry and occurs in no set | OBS3 (dictionary; the one record) | Confirmed 2026-10-09 |
+| MD48 | Ripcord field types: `RipCord_WorldProperty`, `RipCord_WorldPropertyTableProperty`, `RipCord_WorldPropertyArrayElement` are PIDs; `RipCord_UIElement_ID` an enum of mapper 0x230000D1; `RipCord_UIElement_Layout` a DID; `RipCord_Name`, `RipCord_Help` strings; `RipCord_DisableEditingInAdminPanel` a bool in all 348 (§11) | OBS3 (dictionary; all 348 ripcord records) | Confirmed 2026-10-09 |
 
 ---
 
@@ -170,7 +176,7 @@ Found through WEENIECONTENT (root key 0xA, PS §8.1) by label:
 | Travel pad | `TravelPad_Location` (and no other property) | 1502 | 73 |
 | Travel mode | `TravelMode_PathNodeDistance` | 2130 | 8 |
 | Travel versioning | `TravelVersioning_DestinationPairArray` | 2191 | 1 |
-| Landmark (map-note entity) | `MapNote_Type`, `Landmark_Music` | 1210 | 2,733 |
+| Landmark (map-note entity) | `WeenieType` label `Landmark` together with `MapNote_Type` (all 2,733; MD44). `Landmark_Music` is in 2,731 of them, so it is not a sufficient test | 1210 | 2,733 |
 | Neighbourhood | `Neighborhood_NeighborhoodTemplate` | 1185 | 3,248 |
 | Neighbourhood template | `NeighborhoodTemplate_HouseList` | 1956 | 14 |
 | House list | `HouseList_HouseArray` | 1952 | 14 |
@@ -223,7 +229,7 @@ all records. "All" means every value of that property pointed to a record of the
 | landblock-info weenie | `HouseKeeper_HouseDID` | house | 454 (+3 on SEDs) |
 | landblock-info weenie | `HousingSystem_NeighborhoodGateDID` | gate | 43 |
 | landblock-info SED type 6 | the SED's object DID | housing hook | 32,338 SEDs |
-| quest (class 1398) | `QuestEvent_LandmarkDID` (in objective and loot structures) | landmark | 3,419 |
+| quest (class 1398) | `QuestEvent_LandmarkDID` (in objective and loot structures) | landmark (3,419 of 3,434 values; the other 15, 8 distinct DIDs, name no record, MD45; a reader treats such a value as "no landmark") | 3,434 |
 | map-note row (§4) | entity slot | landmark, NPC, item and other entity classes | 13,485 |
 | area | `Area_Territory` → territory `Area_Region` → region | WS §11.2 | 675, 86 |
 | dungeon | `Dungeon_MapData`, `Dungeon_MiniMapData` | 0x78 set with `UI_Map_GameMap` | 1,303 + 1,303 |
@@ -848,7 +854,9 @@ mappers of §6.1 at run time:
 Map images and their georeference are covered elsewhere: outdoor minimap tiles in LB §6,
 the world-map tree in GP §9, dungeon maps in GP §8.5, names in WS §11. Facts for overlays:
 
-- 1,300 of the 1,616 stand-alone property sets (0x78) hold `UI_Map_GameMap` (fields
+- 1,300 of the 1,616 stand-alone property sets (0x78) of `client_gamelogic.dat` hold
+  `UI_Map_GameMap` (the install has 1,618 0x78 sets in all: 2 more in `client_local_English.dat`,
+  neither a map set; MD46) (fields
   `UI_Map_MapImage`, `UI_Map_BlockOffsetX/Y`, `UI_Map_PixelOffsetX/Y`, `UI_Map_Scale`, and in most
   `UI_Map_FogOfWar` and `UI_Map_FogOfWar_Color`); 21 of them also carry `Landblock_LightMap`
   and 3 `Landblock_CeilingLightMap`.
@@ -1165,13 +1173,25 @@ landmark, for-sale sign, storage).
 <a id="s9-7"></a>
 ### 9.7 The housing-control record (Confirmed properties; Reported formula)
 
-`HousingControl` carries the price and upkeep tables a server needs: `HousingControl_HouseTypeInfoArray`
-(per `HousingControl_HouseType`: `HousingControl_HousePrice`, `HousingControl_HouseUpkeep` and
-icons), `HousingControl_HouseValueTierArray` (per `HousingControl_HouseValueTier`:
-`…_PriceModifier`, `…_UpkeepPriceModifier`, `…_StoragePriceModifier`), `HousingControl_UpkeepInterval`,
-`HousingControl_MaxPlayersPerNeighborhoodInstance`, `HousingControl_MinLevelToBuyHouse`,
-`HousingControl_NeighborhoodContentLayer` (a content layer; the same named layer appears in 108
-map-note layer lists) and further limits. Values are data and are read at run time.
+`HousingControl` (one record, class 1184 here) carries the price and upkeep tables a server
+needs (MD47; value types from the dictionary, every field present in every entry unless a count
+is given):
+
+| Label | Type | Content |
+|---|---|---|
+| `HousingControl_HouseTypeInfoArray` | array of `HousingControl_HouseTypeInfoEntry` (37) | `HousingControl_HouseType` (enum, mapper 0x23000257), `HousingControl_HousePrice` (int), `HousingControl_HouseUpkeep` (int), `HousingControl_Icon`, `…_Icon16`, `…_Icon32`, `…_Icon_Large`, `…_Icon_Panorama` (DIDs → 0x41), `HousingControl_SkillDeco_Mount_Tokens` (int, 21 of 37) |
+| `HousingControl_HouseValueTierArray` | array of `HousingControl_HouseValueTierEntry` (10) | `HousingControl_HouseValueTier` (enum, mapper 0x23000259), `HousingControl_HouseValueTier_PriceModifier` (float), `HousingControl_HouseValueTier_UpkeepPriceModifier` (float). The dictionary also defines `HousingControl_HouseValueTier_StoragePriceModifier` (float), but it is not an allowed field of the entry and no set carries it |
+| `HousingControl_HookRotationArray` | array of `HousingControl_HookRotationEntry` (14) | `HousingControl_HookCategory` (64-bit bitfield, mapper 0x23000264), `HousingControl_RotationType` (enum, mapper 0x23000271) |
+| `HousingControl_HousingGroupInfo_Personal`, `…_Kinship` | arrays of `HousingControl_HousingGroupInfo_Struct` (3, 5) | `HousingControl_HousingGroupInfo_Group` (enum, mapper 0x2300025A), `…_DefaultPermission` and `…_CantChangePermission` (32-bit bitfields, mapper 0x2300025B) |
+| `HousingControl_PermissionTypeIcons_List` | array of `HousingControl_PermissionTypeIcons_Struct` (6) | `HousingControl_PermissionType` (32-bit bitfield, mapper 0x2300025B), `…_PermissionTypeIcon`, `…_PermissionTypeActiveIcon`, `…_PermissionTypeInactiveIcon` (DIDs → 0x41) |
+| `HousingControl_UpkeepInterval`, `HousingControl_PurchasePersonalHouseInterval`, `HousingControl_PurchaseKinshipHouseInterval` | int | Intervals (604,800 and 86,400 here; seconds by their size, not confirmed) |
+| `HousingControl_MaxPlayersPerNeighborhoodInstance`, `HousingControl_MinLevelToBuyHouse`, `HousingControl_InitialUpkeepCredits`, `HousingControl_MaxUpkeepCredits`, `HousingControl_Permissions_MaxEntries` | int | Limits |
+| `HousingControl_HouseRestoralUpkeepMultiplier`, `HousingControl_MaximumRestoralFeeMultiplier`, `HousingControl_PremiumAbandonRefundPercent`, `HousingControl_PremiumForeclosureRefundPercent`, `HousingControl_MithrilToWritConversionRate`, `HousingControl_AbsoluteBankingRestriction` | float | Factors and rates |
+| `HousingControl_ForSaleSignDataID`, `HousingControl_StorageKeeperDataID`, `HousingControl_MountSkillDecoTokenDataID`, `HousingControl_PetSkillDecoTokenDataID`, `HousingControl_PremiumWritDataID` | DID → 0x70 | Objects the system uses |
+| `HousingControl_PremiumWritIcon` | DID → 0x41 | Icon |
+| `HousingControl_NeighborhoodContentLayer` | enum of DID map 0x28000012 | A content layer; the same named layer appears in 108 map-note layer lists |
+
+Values are data and are read at run time.
 
 LC computes a house's price as the type's price times the tier's price modifier, truncated to
 an integer, and upkeep likewise (MD21, Reported).
@@ -1212,9 +1232,12 @@ The root DID map's key 0x10000002 (`RIPCORDS`, 0x2800002C here; PS §8.1) has 29
 null sentinel and 291 records of two ripcord classes (284 of class 2801, 7 of class 3166; the
 classes have 341 and 7 records in all). A ripcord record names a world property it switches
 (`RipCord_WorldProperty`, a PID; class 3166 adds `RipCord_WorldPropertyTableProperty` and
-`RipCord_WorldPropertyArrayElement`), a category (`RipCord_Category`, enum mapper 0x2300030B),
-a name and help string (`RipCord_Name`, `RipCord_Help`, Latin-1 strings), and a UI element in
-one layout (`RipCord_UIElement_ID`, `RipCord_UIElement_Layout`). They are administrator
+`RipCord_WorldPropertyArrayElement`, both PIDs), a category (`RipCord_Category`, enum mapper
+0x2300030B), a name and help string (`RipCord_Name`, `RipCord_Help`, Latin-1 strings), a UI
+element in one layout (`RipCord_UIElement_ID`, an enum of mapper 0x230000D1;
+`RipCord_UIElement_Layout`, a DID of a UI layout), and `RipCord_DisableEditingInAdminPanel`
+(bool). Every field is in every one of the 348 records, the two class-3166 fields in its 7
+(MD48). They are administrator
 switches over world state, not map or travel data; they are listed here because the map and
 travel features read world properties that ripcords may switch.
 
@@ -1374,8 +1397,8 @@ two short paths S1 and S2.
 <a id="s14-4"></a>
 ### 14.4 Implementer notes
 
-> **OPEN:** (implementer, 2026-10-07; engineering choices where the spec is silent, recorded
-> for review) (a) The places-table entry count is bounded by remaining bytes / 10 (smallest
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07; engineering choices where the spec is silent, recorded
+> for review):** (a) The places-table entry count is bounded by remaining bytes / 10 (smallest
 > entry: a 1-byte name count, a 1-byte position, two u32 slots). (b) The dungeon quest-note row
 > count is bounded by remaining bytes / 19 (a 1-byte position, three DIDs, a null `layers`
 > property, an empty set). (c) The ripcord fields whose value type §11 does not give
@@ -1384,8 +1407,14 @@ two short paths S1 and S2.
 > dictionary types do they have? (d) No typed view of `HousingControl` (§9.7) is implemented:
 > the value-tier modifier labels are elided (`…_PriceModifier` and the others) and the value
 > types of prices, upkeep and modifiers are not given. What are the full labels and types?
+>
+> *Answer:* (a) and (b) are confirmed: both bounds follow from the smallest possible entry and
+> are safe allocation limits. (c) The four fields are PIDs (the two class-3166 fields), an enum
+> of mapper 0x230000D1 and a DID; §11 now gives every ripcord field type (MD48). (d) §9.7 now
+> has a table of every `HousingControl` label with its type (MD47); the stated
+> `…_StoragePriceModifier` was wrong: it is defined but never stored.
 
-> **OPEN:** (implementer, 2026-10-07; real-data census differs from the spec) (a) §2.3
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07; real-data census differs from the spec):** (a) §2.3
 > landmarks: recognising them by `MapNote_Type` and `Landmark_Music` finds 2,731 sets, while
 > §2.3 counts 2,733 landmark records. Measured: 2,731 sets carry `Landmark_Music`, all of them
 > with `MapNote_Type`; the 2,731 recognised records share one root class (taken from the
@@ -1402,6 +1431,15 @@ two short paths S1 and S2.
 > **Tessera choice** until answered: the census reports them; they are not an MI14 failure.
 > Every other census count of §2.4, §3.5, §4.5, §5.3, §7, §8 (including the SegmentNode counts
 > of §8.5.1), §9 and §11 that the test checks reproduces.
+>
+> *Answer:* (a) Class 1210 has exactly 2,733 records, all with `MapNote_Type`; 2 lack
+> `Landmark_Music`. The property rule that finds all 2,733 and nothing else is `WeenieType`
+> label `Landmark` together with `MapNote_Type` (MD44; one other set has that `WeenieType` but
+> no `MapNote_Type`); §2.3 now states it. (b) Both: 1,616 is the count of
+> `client_gamelogic.dat`, the install has 2 more in `client_local_English.dat` (MD46); §7 now
+> says so. (c) The 3,419 counted only values that name a landmark; the 15 dangling values (8
+> DIDs) were left out. §2.4 now gives 3,434 values with the split, and a reader treats a
+> missing target as "no landmark", as the Tessera choice does (MD45).
 
 ---
 
@@ -1468,3 +1506,4 @@ default map node for unlisted areas (§4.8.4, MD43). Remaining:
 | 2026-10-08 | OPEN-closing revision (Status Revised). Provenance: OBS extended (icon tables, world-event states, layer-test counts); BIN third use with questions q10–q15; MD7 and MD27 revised; rows MD28–MD38 added. §4.2: the version gating `extra` comes from the client's own version table (2 here), `flag_b` has no display effect; OPEN closed. §4.4.2: mode-2 references and the argument check per kind; OPEN closed. §4.6: OPEN moved to §4.8 and narrowed. §4.7: the reference position is the player's position as the radar records it; the map window applies no range test; OPEN closed. New §4.8 (queries with link extension, discovery check, the map-note content-layer rule, radar and map-window filters, the two icon tables, world-event states; `level` unused by both views) with a narrower OPEN (filter defaults and controls, discovered state, the row's `icon` field, default map node). §5.3: the radar fetches quest notes of linked zones; OPEN made precise. §6.2: the client takes table notes from the row only; OPEN closed. §8.5.1, §8.5.2, §8.6, §8.8, §9.3: OPENs made precise (MD38: the client's code reads none of those properties). MI16 and MI17 added. §13.2 notation of the `type` value. §14.1 explorer rules follow §4.8. §15 and §16 updated. | Spec writer (dirty room) |
 | 2026-10-08 | Revision after the review of the OPEN-closing revision (changes requested; status stays Revised). Blocking item: the third BIN use's search text now lists the properties actually searched; BIN fourth use (q16–q18) and a second OBS probe added. MD38 narrowed and re-stated: no operand and no 32-bit value anywhere in the executable for the `TravelMode_…`, `TravelHop_…`, four §8.8 and three instancing IDs; the 13 instructions with `Discount_Travel_…` operands classified (12 UI element IDs, one property use). New MD39 (the travel window watches the player's `Discount_Travel_Special` and other properties and rebuilds on change), MD40 (the travel window takes destinations and shown cost and level from class-library functions 0x01CC0001 and 0x01CC0003), MD41 (OBS, full instruction sweep: the class library names `Travel_DiscountArray`, `TravelWebSellMultiplier`, `Travel_BypassUsageChecks`, `TravelDestinationAllowPaperItems` and `TravelDestinationCost`; function 0x01CC0003 reaches the first three; no `Discount_Travel_…`, travel-mode, hop, segment or instancing ID). §8.8: three new bullets, the "server rules" conclusion replaced and the OPEN restated as the price formula in class-library code; §8.5.1, §8.5.2, §8.6, §9.3 cite MD41 beside MD38; §14.3 and §15 item 5 follow. Minor items: §4.8.1 radar query rewritten with the rectangle (MD42: georeference block offsets, `MinimapMapImage` size over the scale, CO §4 normaliser), the georeference gate, the empty result for region 0, and a narrow OPEN with a Tessera rule (§15 item 10); §4.8.4 step 3: first registered node keeps a repeated area, no repeat here, Tessera rule for repeats, unlisted areas map to the root node (MD43), so former OPEN (d) of §4.8.6 is closed. Editorial: §4.7 step 2 sentence rephrased and re-wrapped. §16 notes for GP, `wlib-bytecode.md` and the UI specs. | Spec writer (dirty room) |
 | 2026-10-08 | Re-review of the revision after review: passed; status Accepted. No text change outside the header and this row; three non-blocking notes in the review log. | Spec reviewer (dirty room) |
+| 2026-10-09 | OPEN sweep (status Revised, waiting for review). New provenance key OBS3 and rows MD44–MD48. Answered both implementer notes of §14.4: landmark recognition rule (`WeenieType` `Landmark` with `MapNote_Type`, §2.3, MD44); landmark references with 15 dangling values (§2.4, MD45); 0x78 count per archive (§7, MD46); `HousingControl` labels and types, with the correction that no storage price modifier is stored (§9.7, MD47); ripcord field types (§11, MD48); the two allocation bounds confirmed. Still OPEN: locale lower-casing, the radar's invalid-position rectangle, note filters and discovery, quest-note selection, travel paths, hop and mode units, travel price, instancing, house links, ripcord gating. | Spec writer (dirty room) |

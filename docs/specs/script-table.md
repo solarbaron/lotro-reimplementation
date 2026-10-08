@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Revised (2026-10-07, BIN5 edge cases of held clips and deformer nodes; awaiting review) |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (2026-10-08, narrow review of the BIN7 revision passed) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
-| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. BIN5 revision of 2026-10-07: not yet reviewed. Full record in the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. Review 2026-10-08 of the BIN5 (2026-10-07) and BIN6 (2026-10-08) revisions: **passed**, Accepted (two non-blocking notes). Full record in the review log (decision 0018). Writer's revision 2026-10-08 (non-blocking notes, BIN7). Narrow review 2026-10-08 of BIN7, T41, T42, §7.5 step 2, §8.2 step 3: **passed**, Accepted. |
 | **Implements into** | `crates/formats` (0x07 and 0x0C decoders: framing of every node kind, full animation-node model, skip rules for everything else), `crates/anim` (layered clip playback driven by the node fields of §6), a small graph evaluator for clip selection (§8, §11; `crates/anim` or a new `script` module of `crates/entity`), `fuzz/` (one target for each of the two record types, §12), `apps/dattool` / `apps/explorer` (table and scriptlet inspection, animation browser) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize, strings, StringInfo; this spec corrects P10 and the 0x0C row of §2.1, see §14). [`property-system.md`](property-system.md) §3–§5 (value encodings, property sets, entries with and without PID echo) and §8–§9 (enum mappers, DB-object types). [`havok-data.md`](havok-data.md) §2.3 (clip envelope: duration, track count, track weights), §4.4 (annotation tracks). [`skeleton-anim.md`](skeleton-anim.md) §2.2 (race table → avatar entity), §3.2 (positional binding), §7 (root motion, treadmill speeds). [`appearance.md`](appearance.md) §7 (NPC-like figures, idle properties). [`entity-descriptor.md`](entity-descriptor.md) §4.3 (weenie objects). Sound, VFX and camera node semantics are a later part of this spec (M6). |
 
@@ -77,6 +77,9 @@ Legend:
 | BIN4 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-07 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh copy of the analysis project, to answer the review of 2026-10-07: the switch node's change, delay, fade and child-finished handlers and the reflected field list of the transition port; the animation component's play request (refusals); the movement controllers' slider steps and the player physics-control setup. Questions: (8) what a matching Switch transition port does with its children, `Wait`, `RampIn`, `RampOut` and its two `Delay` fields (§4.3, §7.1); (9) which refusals of §6.10 are reported as errors; (10) the slider time *T* of the player's own input path and the other slider resets (§8.4). Why M1–M3 were not enough: the data give the fields but not their run-time meaning (1,473 of the 1,480 transition ports have `Wait` = 1, but nothing in the data says what waiting means); no published source covers them; observing the client (M3) shows a blend or a pause, not the rule. Only offline script, animation and movement-controller code was read; nothing of the network, login, launcher or anti-tamper code. |
 | OBS3 | Observed 2026-10-07 with the repository's decoders used as a tool: the tails of all 1,480 Switch transition ports (both `Delay` fields equal in 1,480; `Wait` = 1 in 1,473; `RampIn` 0 in 1,470, 0.1 in 6, 0.2 in 4, all non-zero ones with `Wait` = 1; last `Delay` positive in 1; every port has children); the `PlayerPhysicsControl` object of the `WEENIECONTENT` DID map (`skeleton-anim.md` OBS3). |
 | BIN5 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-07 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh copy of the analysis project, to settle edge cases that a clean-room audit of the River-hobbit height code found unstated or contradicted. Questions: (11) what the held-clip fraction does with values that are not finite, too large, or whose fractional part rounds to 1, and whether `StartTime` and `EndTime` crop a held clip (§6.7); (12) what a MeshDeformer with a missing clip or a time that is not finite does, and how many deformers an entity may hold (§6.9); (13) which string a SliderMeshDeformer reads when no pair drives it, and what two such nodes do (§6.9); (14) whether a layer limits its number of clips (§6.2). Why M1–M3 were not enough: none of these cases occurs in the data (every held node has `StartTime` 0, `EndTime` 1 and a finite `ManualTime` in range; every body-shape deformer names a clip; each avatar closure has one slider node), so the data cannot show the rule; no published source covers them; observing the running client (M3) cannot produce the inputs. Code read: the animation node's held-fraction routine, the animation component's held-time setter, its deformer and slider-set registration and removal, the deformation-pose builder, the layer's play routine and per-bone weight pass, and the animation middleware's control creation and time step. Nothing of the network, login, launcher or anti-tamper code. |
+| BIN6 | The same executable (file version 4906.0071.1794.4035), disassembled again on 2026-10-08 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), in a fresh read-only copy of the analysis project (deleted afterwards), to answer two clean-room implementation OPENs. Questions: (15) in which order the client starts the nodes of one script, so that "the most recently started" slider node of `appearance.md` §6.4 can be found (§7.5, §8.2, §11.3); (16) what a held one-shot clip does when its clip is not longer than the 1/30 s end crop (§6.7). Why M1–M3 were not enough: no avatar closure has two slider nodes and no held one-shot node names so short a clip, so the data cannot show either result; the start order is code, not data; no published source covers them; observing the running client (M3) cannot separate start orders that give the same picture. Code read: the script run routine and its three start passes, the per-table gathering of definitions and the table record's kind field, the routine that starts the children of one port, the Collection and Scriptlet node start routines, the port class of Collection ports and its ordering method, the held-time setter, the animation control's creation and the middleware's time step. Nothing of the network, login, launcher or anti-tamper code. |
+| OBS4 | Observed 2026-10-08 with the repository's decoders used as a tool: every port of every Collection node in all 7,524 decodable tables and all 28,992 scriptlets (46,656 Collection nodes, 72,798 ports; ordinal order, repeated ordinals, port and child counts, Appearance nodes below the ports). |
+| BIN7 | The same executable (file version 4906.0071.1794.4035), read again on 2026-10-08 under [decision 0011](../decisions/0011-standing-m4-authorisation.md) with Ghidra (headless, read-only fresh copy of the shared project, deleted afterwards), to answer two non-blocking items of the 2026-10-08 review. Questions: how a table's kind is compared with a list's kind while gathering definitions (§8.2 step 3); whether the Collection port sort keeps the container order of equal ordinals (§7.5 step 2). Why M1–M3 were not enough: every table kind of the install is a single bit and no Collection exceeds 26 ports, so the data cannot separate the alternatives; the sort is code, not data. Code read: the per-table gathering routine and the general sort routine used for Collection ports. Nothing of the network, login, launcher or anti-tamper code. |
 | EM | Enum mappers in the data: node kinds 0x2300019A (base of 0x2300009E), port types 0x230000A1, target types 0x2300019B (base of 0x2300009F), switch-port operator 0x230000A2, when operator 0x230000A3, math operator 0x230000A4, animation layer 0x230000D5, script IDs 0x23000097 (base 0x230000F8), `Movement_MovementStyle` 0x2300017F, `Entity_Element` 0x23000069 (base 0x230001B9), story-hook type 0x230000BB (base 0x2300013D). |
 | DS | `research/notes/data-semantics.md` §10 (0x07 outline from LC, node-type names). |
 | HD, SA, AP, ED, PS | `havok-data.md`, `skeleton-anim.md`, `appearance.md`, `entity-descriptor.md`, `property-system.md` as companion specs. |
@@ -123,6 +126,9 @@ Legend:
 | T38 | A MeshDeformer registers its clip, fraction and `UseBoneWeights` whatever they are; when the deformation pose is built, a clip that cannot be loaded (the null DID included) contributes nothing, and a clip whose track count differs from the bone count is reported as an error and contributes nothing; an entity holds any number of deformers; the time is duration × fraction limited to [0, duration] (§6.9) | BIN5 | Confirmed 2026-10-07 (BIN only); NaN fraction: Tessera Decision |
 | T39 | A SliderMeshDeformer parses whatever string its field holds when the field is set (the stored string when no pair drives it); an entity holds one slider set, which the most recently started node replaces and the stopping of any slider node removes (§6.9) | BIN5 | Confirmed 2026-10-07 (BIN only) |
 | T40 | A layer has no limit on its number of clips: when it holds 1,000 the client logs a warning and still plays the new clip (§6.2) | BIN5 | Confirmed 2026-10-07 (BIN only) |
+| T41 | Start order of one script run: the gathered definitions of kind-1 tables first, then those of kind-2 tables, then kind-4 (which hold no scripts); within a kind, definitions in gathering order and each definition's root nodes in stored order; a Scriptlet node starts its record's roots in stored order; a port's children start in stored order; every node completes its own immediate starts before its next sibling starts. Gathering into the three lists: a table's kind is tested against the list's kind as a bit mask (a common set bit), a table that does not match is still descended into for its includes (a null include or one naming the table itself is skipped), and a root node already in a list is not added again (§8.2 step 3, §11.3) | BIN6; BIN7 (bit mask, include skips) | Confirmed 2026-10-08 (BIN only; gathering re-read 2026-10-08, BIN7); resolves the §8.2 step 3 OPEN. Stored order = the order of the loaded lists; the loader itself was not traced |
+| T42 | A Collection starts its Default ports in **ascending ordinal** (unsigned 32-bit comparison), whatever their stored order; ports with equal ordinals keep the order of the client's port container, which was not traced (they keep it because the client sorts 32 ports or fewer by a stable insertion sort and no Collection has more than 26 ports, SI17; above 32 ports its sort is not stable); a Collection stopped during its own start starts no further ports (§7.5) | BIN6; BIN7 (sort stability); OBS4 | Confirmed 2026-10-08 (rule BIN only; census OBS4) |
+| T43 | A held clip whose played length is 0 or less (a one-shot held node whose clip lasts at most 1/30 s) is held at local time 0: the setter limits the time to [0, played length] with the lower limit applied last, and the middleware's time step raises a negative local time to 0 and advances nothing when the played length is 0 (§6.7) | BIN6 | Confirmed 2026-10-08 (BIN only) |
 
 ---
 
@@ -722,6 +728,15 @@ whenever *n* is representable).
    length stays there: the player's time step does not move a held clip (rate 0) and wraps
    only times beyond the played length. (This replaces the presumed cropping formula of
    2026-10-05 and resolves its OPEN.)
+   **Played length 0 or less** (BIN6, T43): a held node with `LoopForever` 0 and
+   `LoopCount` 1 whose clip lasts at most 1/30 s has a played length of `duration` − 1/30 s,
+   which is 0 or negative. The client takes the smaller of the played length and *f* × the
+   played length, then the larger of that and 0, so the clip time is **0** for every *f*:
+   the clip shows its first frame. The negative starting time that `havok-data.md` §2.3
+   gives such a clip (lowered to `duration` − 1/30 s) does not survive: the middleware's
+   time step raises any negative time to 0 and, with a played length of 0 or less, advances
+   nothing and never ends the clip. No held node of this install names such a clip (the
+   shortest clip of the install lasts 0.016 s).
 3. The fraction is applied again on every update of the node and whenever a property that
    drives one of its fields changes, so a new value takes effect at once (no ramp).
 
@@ -861,7 +876,9 @@ River-hobbit tables. An implementation that runs the `Startup` script of every c
   property's string when one does (the parse is `appearance.md` §6.3).
 - An entity holds **one** slider set. Starting a SliderMeshDeformer replaces the set of any
   other one, and stopping any SliderMeshDeformer removes the set, even when another is still
-  running. (Each avatar closure has exactly one such node, SI12.)
+  running. (Each avatar closure has exactly one such node, SI12.) Which of two nodes
+  started in the same script run counts as the later one follows the client's start order
+  (§8.2 step 3, §7.5; BIN6, T41, T42).
 - A change of `BoneSlider_SliderDefinitionsFile` reloads the definitions record. Whether the
   client then parses the string again was not traced (OPEN: no node drives this field).
 
@@ -1041,6 +1058,35 @@ reproduced; any uniform generator gives the same distribution.
 Collection starts all children of all ports together (the port payload is only an ordinal).
 OnStop runs its Default children when its parent branch stops.
 
+**Start order (BIN6, T42; census OBS4).** "Together" means within the same start, one after
+another, which matters wherever the later of two starts wins (equal-priority appearance
+pieces, `appearance.md` §4.7; the slider set, §6.9):
+
+1. The Collection gathers its Default ports (every Collection port in this install is a
+   Default port with a u32 ordinal, SI17) and sorts them by **ascending ordinal**, compared
+   as unsigned 32-bit numbers, whatever their stored order.
+2. Ports with equal ordinals keep the order of the client's port container. That container
+   is hashed and its order for equal ordinals was not traced (OPEN). The sort itself keeps
+   that order: for 32 ports or fewer the client sorts by insertion, moving a port only past
+   ports with a strictly greater ordinal, which is stable; above 32 ports it partitions,
+   which is not stable (BIN7). No Collection of the install has more than 26 ports (SI17),
+   so only the stable case occurs. **Tessera Decision:** equal ordinals keep their stored
+   order.
+3. Port by port, it starts the port's children in their stored order (§11.3). Each child
+   completes its own immediate starts (its children that start at once, recursively) before
+   the next child starts.
+4. If the Collection is stopped while it is still starting (by one of its own children),
+   it starts no further ports.
+
+Census (OBS4): 46,656 Collection nodes, 17,934 with more than one port; their ordinals are
+stored in **descending** order in 15,847, ascending in 112 and unordered in 1,975, so the
+client usually starts the ports in the **reverse** of their stored order. 1,860 Collections
+repeat an ordinal (394 use one ordinal for every port), and in 218 of them two ports with the
+same ordinal both lead to Appearance nodes; of the 2,007 Collections with Appearance nodes
+below two or more of their ports, 2,000 do not store their ports in ascending ordinal
+order. No Collection has more than 26 ports, and one port of one Collection has more than
+one child.
+
 <a id="s7-6"></a>
 ### 7.6 Sequence (6) and Timer (65)
 
@@ -1150,11 +1196,21 @@ Running a script key on an entity runs **all** of its definitions, gathered as f
    table's** includes (its siblings are still visited). The default, and the value of every
    definition without the property, is 2 (`Additive`).
 3. Definitions from tables of kind 2, kind 4 and kind 1 are gathered into separate lists
-   (kind 4 tables hold no scripts, §2.2). The order in which the client then runs the lists
-   and their definitions was not traced (OPEN, §15); Tessera runs kind 2 and kind 1
-   definitions in gathering order. Avatar binding, species and fidget tables are of kind 1
-   (0x07000436, 0x07000466, 0x07002DAD, 0x07001CAA, 0x0700077F …), class tables of kind 2,
-   so both kinds run on the client.
+   (kind 4 tables hold no scripts, §2.2). The kind is the table's leading u32 (§2.1),
+   tested against each list's kind **as a bit mask**: a table contributes to a list when its
+   kind and the list's kind (1, 2 or 4) have a set bit in common (BIN7). A table whose kind
+   does not match is still descended into for its includes; an include that is null or names
+   the table itself is skipped. A root node already in a list is not added again. Avatar
+   binding, species and fidget tables are of kind 1 (0x07000436, 0x07000466, 0x07002DAD,
+   0x07001CAA, 0x0700077F …), class tables of kind 2, so both kinds run on the client.
+   **Run order (BIN6, T41; resolves the OPEN of 2026-10-07):** the client starts the
+   **kind-1** list first, then the **kind-2** list, then the kind-4 list. Within a list it
+   starts the root nodes in list order: definitions in gathering order (step 2), and the
+   roots of one definition in their stored order. Each root completes its own immediate
+   starts before the next root starts (the order inside a node: §7.5, §11.3). The client has
+   one further start path, which handles the kind-2 list first and then kind 1 and kind 4;
+   it is selected by a per-run list of values whose purpose and source were not traced
+   (OPEN, §15 item 1). Tessera uses the order above.
 4. The result is cached per entity and key.
 
 In this install 68 per-script property sets carry `Script_CombinationType`, all with value 1
@@ -1520,7 +1576,12 @@ A 0x0C record is: VLE root count, nodes, u32 dependency count, DIDs, end.
    unless set).
 3. Run the `Startup` script of every closure table once (Decision, §8.2), then each script
    named by `ScriptTable_StartupScriptNames` that the lookup finds (§8.1; skip names
-   defined in no table, such as 0x10000837). Running a node:
+   defined in no table, such as 0x10000837). Start the nodes in the client's order (BIN6,
+   T41, T42): for one script run, the roots of the kind-1 definitions, then those of the
+   kind-2 definitions (§8.2 step 3); a node's children port by port, children of one port in
+   stored order, a Collection's ports by ascending ordinal (§7.5), each child with its
+   immediate starts before the next. Where a later start wins (the slider set of §6.9,
+   equal-priority appearance pieces), "later" means later in this order. Running a node:
    - Switch / When / ScalarBlend / Random / Sequence / Collection / Timer / OnStop /
      WhenRunning / Goto as in §7; skip a node with its subtree when a draw against
      `Probability` fails;
@@ -1566,6 +1627,7 @@ A 0x0C record is: VLE root count, nodes, u32 dependency count, DIDs, end.
 | SI14 | Every element of `Entity_AdditionalScriptTables` is an entry of PID 0x2E (`ScriptTable_DBScriptTable`) holding a DID. |
 | SI15 | `Script_CombinationType` occurs in 68 per-script property sets, always with value 1 (`Overriding`). |
 | SI16 | In every Switch transition port (12, 28) the two `Delay` fields are equal (1,480 of 1,480), and every transition port has at least one child (OBS3). |
+| SI17 | Every port of every Collection node is a Default port (type 6) with a u32 ordinal (72,798 of 72,798 ports in 46,656 Collection nodes), and no Collection has more than 26 ports (OBS4). |
 
 Fuzzing (§0): one target decodes arbitrary bytes as a 0x07 record, one as a 0x0C record; both
 must return an error, never panic, and respect the limits of §4.5.
@@ -1696,11 +1758,15 @@ which is the wrong behaviour (the figure grows and shrinks).
 Numbers are kept from the 2026-10-05 list; resolved items say so.
 
 1. *Resolved 2026-10-07 (BIN3, T25):* lookup across includes gathers every definition
-   (additive, `Overriding` prunes, §8.2), and every closure table's `Startup` runs. Still
-   open: the order in which the client runs the gathered kind-1 and kind-2 definitions.
+   (additive, `Overriding` prunes, §8.2), and every closure table's `Startup` runs.
+   *Resolved 2026-10-08 (BIN6, T41):* the client runs the kind-1 definitions first, then the
+   kind-2 ones, each in gathering order (§8.2 step 3). Still open: when the second start
+   path (kind 2 first) is taken, and the order among Collection ports with equal ordinals
+   (§7.5).
 2. **CinematicCamera data** layout (§10.3); ListenerEvent and CustomLighting custom fields
    (no instances).
-3. Meaning of table kinds 1 and 2 (both run on the client, §8.2); of the switch-case int
+3. Meaning of table kinds 1 and 2 beyond their start order (both run on the client, kind 1
+   first, §8.2); of the switch-case int
    list (`Names`) and reserved value; the matching rule of transition ports (`ValueFrom`,
    `ValueTo`, `FromIsDefault`, `ToIsDefault`), whether the children of a non-waiting
    transition port run to their end, and a wait with no port matching the new value (§7.1);
@@ -1976,6 +2042,15 @@ table). Points for the spec owner:
 > client's result if it matters (`havok-data.md` §2.3 lowers the starting time to
 > `duration` − 1/30 s, which would then be negative).
 
+> **Answered** (2026-10-08, BIN6, T43): the client gives the same result as the Tessera
+> guard. Its held-time setter takes the smaller of the played length and *f* × the played
+> length and then the larger of that and 0, so a played length of 0 or less gives time 0
+> for every fraction. The negative starting time of `havok-data.md` §2.3 is raised to 0 by
+> the middleware's time step, which also advances nothing and never ends the clip while
+> the played length is 0 or less. §6.7 step 2 now states this; keep the guard (it is the
+> client's rule, not only a guard). The other §6.7 items of this note are confirmed as
+> implemented.
+
 ---
 
 <a id="s17"></a>
@@ -1987,3 +2062,5 @@ table). Points for the spec owner:
 | 2026-10-07 | §1 (BIN3, OBS2, T14–T16, T18, new T23–T34), §4.3, §4.5, §6.1, §6.2, §6.3, §6.4, §6.5, §6.9, new §6.10, §7.1, §7.4, §7.7, §7.8, §8.1, §8.2, §8.4, §8.5, §8.6, §9, §11.3, §12 (SI6, new SI13–SI15), §13, §14, §15 (rewritten, new §15.1 owner item O16), §16 (implementation OPENs answered) | From the client (BIN3, decision 0011) and the data (OBS2): switch-case `RampOut` and `Delay` and the switch's delay and linear branch cross-fade; additive script lookup with `Overriding` pruning (replaces the first-wins Decision; every closure `Startup` runs); case-insensitive scriptlet-parameter matching in the innermost invocation; the Random pick rule; absent properties read as default or zero; the clip lifecycle (start offset, end and scheduled fade, synchronised start origin, start-up clips without ramp-in, events beyond the duration never fire); entity-scale factor on `LocomotionDisplacement`; slider update at a constant rate; no rate matching; the avatar fidget path and timing (corrects §8.6); SetProperty and deformer driven fields; element form of additional tables; §13 offset corrected. | Spec writer (dirty room) |
 | 2026-10-07 (revision after review) | §1 (new BIN4, OBS3; T23, T29, T30, T34 revised; new T35), §4.3, §6.10, §7.1, §7.4, §8.4, §8.5, §8.6, §12 (new SI16), §15 (items 3, 6, 7, 8), §15.1 | Review of 2026-10-07 answered. §4.3: the internal class names removed; the switch-case stream order stated plainly (own fields, then `RampOut`, then `Delay`); the transition-port fields explained (both `Delay` fields are one value, `Wait`, `RampIn`, `RampOut` without effect; BIN4, OBS3). §7.1: what a matching transition port does (children start at once; with `Wait` = 1 their branch fades in over `RampIn` and the change to the new case waits until they finish; BIN4); the §15 OPEN narrowed to the matching rule and two edge cases. §6.10: the two refusals reported as errors named. §7.4: the port walk order is the client's container order, not shown to be the stored order. §8.4: the player's slider time is traced (the merged `RampTime`, 0.13 s running, 0.25 s walking here; BIN4) and the 0.1 s reset on a movement freeze added (review optional item). §8.5: correction, the player's per-direction speeds come from the data (`skeleton-anim.md` §7.4); Decision revised. §8.6 and §15.1 (O16): the fidget chance under `NoRepeats` corrected (330 / 530 only for the first pick; certain after a pause; 230 / 430 or 320 / 520 after a fidget) and the pick interval made consistent (12 s after a pause; after a fidget 9 s plus the untraced time until its Run step finishes). | Spec writer (dirty room) |
 | 2026-10-07 (BIN5) | header; §1 (new BIN5, T19 note, new T36–T40); §6.2; §6.7 (steps 1 and 2, example table, implementation OPEN answered); §6.8; §6.9 (new edge cases, implementation OPEN answered); §15 item 5; §16 (one correction, two answers) | Edge cases from a clean-room audit of the River-hobbit height code, settled from the client (BIN5, decision 0011). §6.7: the integer part is a truncating 32-bit conversion, so non-looping values that are not finite or of magnitude 2³¹ or more give 0; looping infinities give 0; a looping fraction that rounds up to 1 stays 1 (corrects the Tessera rule "gives 0"); NaN on a looping node is undefined in the client and becomes a Tessera Decision (0); the held time is *f* × the played length, which is the duration minus the 1/30 s end crop for `LoopForever` 0 with `LoopCount` 1, and `StartTime`/`EndTime` do not enter (resolves the step 2 OPEN; the `LoopCount` 1 column of the example corrected, rows added). §6.8: the DwarfStoutAxe clips use that cropped length. §6.9: a deformer whose clip is missing or does not fit contributes nothing; any number of deformers; deformer time limited to [0, duration], NaN Decision; a slider node parses whatever string its field holds; one slider set per entity. §6.2: no clip limit per layer (warning at 1,000). The facts the audit found contradicted by code stand: several held clips share their layer (§6.2; re-checked in the layer's play routine, which changes no other clip, BIN5) and driven pairs bind by field PID (§4.2, SI13). | Spec writer (dirty room) |
+| 2026-10-08 (BIN6) | header; §1 (new BIN6, OBS4, T41–T43); §6.7 step 2; §7.5 (new start-order paragraph and census); §8.2 step 3 (run order; OPEN resolved); §11.3 step 3; §12 (new SI17); §15 items 1 and 3; §16 (implementation OPEN on short held clips answered) | Two clean-room implementation OPENs answered from the client (BIN6, decision 0011). Start order of one script run: kind-1 definitions, then kind-2, then kind-4, roots in stored order, each node completing its immediate starts first; a Collection starts its ports by ascending ordinal (the reverse of the stored order in most Collections), equal ordinals in an untraced order (Tessera Decision: stored order); this fixes what "most recently started" means for `appearance.md` §6.4 and the order of equal-priority script appearance pieces. A held one-shot clip not longer than the 1/30 s end crop is held at time 0 (the Tessera guard is the client's result). | Spec writer (dirty room) |
+| 2026-10-08 (BIN7) | header; §1 (new BIN7; T41, T42); §7.5 step 2; §8.2 step 3 | Non-blocking notes of the review of 2026-10-08. T41 now covers the gathering sentences of §8.2 step 3 (kind match, descent into includes, a root not added twice), and the kind is stated to be tested as a bit mask (a common set bit), with null and self-naming includes skipped (BIN7). §7.5 step 2 and T42 state why equal ordinals keep the container order: the client sorts 32 ports or fewer by a stable insertion sort, and no Collection has more than 26 ports (SI17); above 32 its sort is not stable. The Tessera Decision is unchanged. Status Revised. | Spec writer (dirty room) |

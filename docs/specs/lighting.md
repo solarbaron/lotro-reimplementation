@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-07, sixth revision, see §16) |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (2026-10-08, seventh revision, see §16) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Sixth revision: Claude review session (spec-writer agent), 2026-10-07, **passed** (Accepted). Earlier rounds and detailed findings: dirty-room review log (incident 0018). |
+| **Review record** | Seventh revision: separate Claude review session (spec-reviewer role), 2026-10-08, **passed** (Accepted). Sixth revision: Claude review session (spec-writer agent), 2026-10-07, **passed** (Accepted). Earlier rounds and detailed findings: dirty-room review log (incident 0018). |
 | **Implements into** | `crates/render` (lit and unlit pipelines, light uniforms, shadow pass, fog), `crates/material` (per-surface lighting inputs derived from parameters), `crates/world` (light selection per object, sun and ambient from the environment, light records from Light entities) |
 | **Companion specs** | [`material.md`](material.md) (parameters, texture roles, feature flags, permutation records, texture transforms §8.4, float curves §5.3). [`environment.md`](environment.md) (sky description, day description keyframes, game clock: the source of sun, ambient and fog values). [`entity-descriptor.md`](entity-descriptor.md) §4.5 (light properties on placed entities). [`mesh.md`](mesh.md) §5 (normals, tangent frame, vertex colours). [`terrain-texturing.md`](terrain-texturing.md) §9 (terrain layers' use of these inputs). [`water.md`](water.md) §8 (water shading; uses the fake-light inputs of §4.2). [`property-system.md`](property-system.md) §4.7 (property colour values). |
 
@@ -45,7 +45,7 @@ original's behaviour is not known; tests must not treat them as the original's b
 | OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratch area: all 510 shader records (0x2B) and their 31,519 permutations parsed with `material.md` §7; the reflection tables of every compiled program read (constant names, sizes and offsets; sampler names; vertex input semantics); all 0x30 materials and 0x31 surface records resolved with `material.md` §9. |
 | BIN-S | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`lotroclient64.exe`, `lotro_live`). The compiled programs inside the shader records of that build were disassembled with a public shader disassembler (Direct3D 9 shader model 2/3 and Direct3D 10/11 shader model 4 bytecode; the OpenGL back end stores GLSL text) and read for representative permutations of every pass code (§3.2). **Question:** what each pass computes from its inputs (the lighting equation, attenuation, shadow filtering, fog, alpha test, normal-map convention). **Why M1–M3 were not enough:** the data stores only parameter defaults and program bytecode; the equations exist only as program code; no frame capture of the original is available to this session (M3) and no published source describes them (M2). Third pass 2026-10-05: every Direct3D 10/11 permutation, following each sampler's texture coordinate back to the vertex inputs (§4.3), and the colour programs of the unlit blended records of `material.md` §20.1. **Question:** which UV set feeds which texture; what reaches the output alpha. Same reasons. |
 | BIN-C | **M4 (decision 0011).** Same client build, client executable disassembled around the day-description keyframe blending and the shader-constant registration table. **Question:** how the sun direction, ambient and fog values are produced from data, and which engine constants exist. **Why M1–M3 were not enough:** the data gives keyframe values but not how they are combined or converted into light parameters. |
-| BIN-L | **M4 (decision 0011), second pass 2026-10-05.** Same build (`x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5), plus the graphics back-end libraries shipped beside it (`x64/D3D11GraphicsCore.dll`, `x64/OpenGLGraphicsCore.dll`), disassembled with objdump; constants read from the files. **Questions:** (a) how the frame's ambient and hemispheric inputs are formed from the environment; (b) how the environment's light values are carried and cross-faded; (c) what the per-material setup uploads (material times ambient, per-object terms, specular rule); (d) which lights an object receives and in which slot; (e) how a light's record (colour, specular, range, attenuation factor, type) is built from its fields; (f) the field labels of the light class; (g) the "fake" light inputs; (h) the texture and frame-buffer formats of the back ends (sRGB); (i) the clock behind the programs' time input; third pass 2026-10-05: (j) the depth comparison of the passes (the back ends' depth-state translation, `D3D11GraphicsCore.dll` and `OpenGLGraphicsCore.dll`); (k) the engine values of the sun-shadow inputs (the client's registration of those inputs); fourth pass 2026-10-06 (same build, read with the Ghidra 12.1.3 decompiler in the dirty room): (l) which objects a placed light reaches: the selection radius, the distance test, the order of an object's light list, the treatment of landscape chunks and the parent flags; (m) the light class's field registration (each field's offset, label and property id); sixth pass 2026-10-07 (same build, own copy of the Ghidra project, decompiler and listings): (n) which objects are candidates of the light-list walk and how the parent switches behave for a light without a parent; (o) the client's second path for `Light_BakedLandscapeLight` lights (drawing them into the baked-lighting texture of terrain and ceiling chunks): when it runs, its inputs, how it composites; (p) the graphics options and device conditions that gate that path. No network, login, launcher or anti-tamper code was examined. **Why M1–M3 were not enough:** these are code paths; the data stores the inputs only; no frame capture is available (M3); nothing is published (M2). |
+| BIN-L | **M4 (decision 0011), second pass 2026-10-05.** Same build (`x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5), plus the graphics back-end libraries shipped beside it (`x64/D3D11GraphicsCore.dll`, `x64/OpenGLGraphicsCore.dll`), disassembled with objdump; constants read from the files. **Questions:** (a) how the frame's ambient and hemispheric inputs are formed from the environment; (b) how the environment's light values are carried and cross-faded; (c) what the per-material setup uploads (material times ambient, per-object terms, specular rule); (d) which lights an object receives and in which slot; (e) how a light's record (colour, specular, range, attenuation factor, type) is built from its fields; (f) the field labels of the light class; (g) the "fake" light inputs; (h) the texture and frame-buffer formats of the back ends (sRGB); (i) the clock behind the programs' time input; third pass 2026-10-05: (j) the depth comparison of the passes (the back ends' depth-state translation, `D3D11GraphicsCore.dll` and `OpenGLGraphicsCore.dll`); (k) the engine values of the sun-shadow inputs (the client's registration of those inputs); fourth pass 2026-10-06 (same build, read with the Ghidra 12.1.3 decompiler in the dirty room): (l) which objects a placed light reaches: the selection radius, the distance test, the order of an object's light list, the treatment of landscape chunks and the parent flags; (m) the light class's field registration (each field's offset, label and property id); sixth pass 2026-10-07 (same build, own copy of the Ghidra project, decompiler and listings): (n) which objects are candidates of the light-list walk and how the parent switches behave for a light without a parent; (o) the client's second path for `Light_BakedLandscapeLight` lights (drawing them into the baked-lighting texture of terrain and ceiling chunks): when it runs, its inputs, how it composites; (p) the graphics options and device conditions that gate that path; seventh pass 2026-10-08 (same build, own copy of the Ghidra project, decompiler and listings in the dirty scratch area): (q) how the world box that the light-list walk tests (§8.5 step 2) is formed; (r) whether the walk treats directional lights differently from point lights. No network, login, launcher or anti-tamper code was examined. **Why M1–M3 were not enough:** these are code paths; the data stores the inputs only; no frame capture is available (M3); nothing is published (M2). |
 | ENV | [`environment.md`](environment.md) (this session): day-description layout and keyframe blending. |
 | MAT | [`material.md`](material.md): parameter ids, texture roles, permutation layout, texture transforms, float curves. |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §3.3, §9 (record colours, terrain lighting). |
@@ -75,7 +75,7 @@ Decision** = this project's rule where the original is unknown.
 | L15 | Light SED property census: colours, intensity curves, ranges, falloffs (§8.3) | OBS (all 73,711 Light SEDs of every landblock-info record, 2026-10-05) | Confirmed census |
 | L16 | Frame ambient = ½(X + Y) and frame hemispheric = ½(X − Y), with X and Y the two ambient colours of the scene, each = ambient colour × ambient brightness (§8.1) | BIN-L (a), (b) | BIN |
 | L17 | Per-material ambient inputs: *A₀* = *M* × (frame ambient + a per-object ambient term), *H₀* = *M* × frame hemispheric (§4.2, §8.1) | BIN-L (c) | BIN |
-| L18 | Environment changes cross-fade with a sine-shaped factor, field by field (§8.1) | BIN-L (b) | BIN |
+| L18 | A change of a record's sky key cross-fades the lighting values with a sine-shaped factor, field by field (the light direction as a normalised vector); a new day description under the same key does not (§8.1) | BIN-L (b); `environment.md` E27 (the trigger, corrected 2026-10-08) | BIN |
 | L19 | Light record: colour × clamp(intensity curve × scale, 0, 1); specular defaults to the diffuse colour; range *R*; *k* = 10 × falloff / *R*²; point or directional by the light's mode (§8.3) | BIN-L (e), (f), (m) | BIN |
 | L20 | Light selection: the main light first, then the object's lights in list order; key lights are per-pixel candidates (the first becomes light 0), others go to the per-vertex lists; at most 8 (§8.5) | BIN-L (d) | BIN |
 | L21 | Specular colour uploaded black when the specular power is below 0.5 (§5.8) | BIN-L (c) | BIN |
@@ -95,6 +95,9 @@ Decision** = this project's rule where the original is unknown.
 | L35 | The client contains a light-map bake: it draws every `Light_BakedLandscapeLight` light that reaches a terrain or ceiling chunk with pass code 0x41 into an off-screen target of at most 1,024 × 1,024 and adds the results into the chunk's baked-lighting texture, which it first clears (§8.6) | BIN-L (o), (p) | BIN |
 | L36 | The bake runs only after a landscape renderer flag requests it; that flag is raised only while a renderer switch is on, and the switch is set only in a special client mode; the per-layer pass-0x41 draw items exist only in that mode too (§8.6) | BIN-L (o) | BIN; "not in normal play" Inferred |
 | L37 | Indoors (camera inside, outdoor-visible clear) the frame's ambient, fog and main light come from the indoor record of `landblock.md` §4.13 (§8.1) | `landblock.md` §4.13 (BIN2 there) | BIN (by reference) |
+| L38 | The world box of the light-list walk is the axis-aligned box around the eight corners of **one** local box of the object, carried through the object's full transform (rotation, scale and translation); the box is not built from the object's parts or vertices. Each object kind supplies its own local box (§8.5 step 2) | BIN-L (q) | BIN; which local box each kind supplies (in particular skinned and instanced objects) not traced |
+| L39 | Steps 1–4 of the light-list walk do not test the light's kind: a directional light that is among the walked lights is tested with its own world position and ρ like a point light and is placed in the object's list by the key-light rule of step 4; only the submission routes it by kind (§8.5) | BIN-L (r) | BIN |
+| L40 | The switch between the outdoor and the indoor record has no blend of its own; it is smoothed only by the 5 s sun-change fade of `environment.md` §11.6, so it fades exactly when it changes "sun present" (§8.1) | `environment.md` E37 (BIN-E2 there) | BIN (by reference) |
 
 ---
 
@@ -454,7 +457,8 @@ so such surfaces have no highlight.
 
 With an emissive texture *Em* (slot 3018): colour ← 2 × *C* × *Σ* + *Em*.rgb × *G*, before fog.
 The glow pass (code 0x08) draws the glow mask (slot 3013) times *G* into a separate target for
-bloom; its composition is OPEN.
+bloom; its composition is OPEN. (Tessera's interim rule, adding the glow term like the emissive
+one, is a Decision of `render.md` §4.1, not a fact of this spec.)
 
 <a id="s5-10"></a>
 ### 5.10 Environment reflection
@@ -550,11 +554,15 @@ keyframes §5.3) gives, after keyframe blending at the current time of day
 With no day description the client uses: ambient brightness 0.7, ambient colours white,
 directional brightness 0.1, colours white and travel direction (1, 0, −0.4).
 
-**Cross-fade (BIN-L (b), L18).** When the environment changes (a new day description, a new
-sky), the client builds the lighting values of the old and the new state and interpolates every
-value linearly with the factor *f* = ½ + ½ · sin(π · (min(*t* / *T*, 1) − ½)), where *t* is the
-time since the change on the global clock and *T* the transition time (`environment.md` §11.2
-step 5). Below *f* = 0.0002 the old values are used unchanged, above 0.9998 the new ones.
+**Cross-fade (BIN-L (b), L18).** When a record's sky key changes (a new sky), the client
+builds the lighting values of the old and the new state and interpolates them with the factor
+*f* = ½ + ½ · sin(π · (min(*t* / *T*, 1) − ½)), where *t* is the time since the change on the
+client's raw timer and *T* the transition time (`environment.md` §11.6 steps 1–4). Numbers and
+colour channels blend linearly; the light direction blends as a unit vector and is normalised,
+and the sun, fog and `effect` follow the rules of `environment.md` §11.6 step 4. Below
+*f* = 0.0002 the old values are used unchanged, above 0.9998 the new ones. A new day
+description under the same sky key (a new game day or day type) is **not** cross-faded
+(`environment.md` E27; the first text of this paragraph said it was, corrected 2026-10-08).
 
 **Ambient (BIN-L (a), (b), (c); L16, L17).** The client forms two ambient colours
 
@@ -579,12 +587,36 @@ property lookup). For lighting this means: in the indoor record *X* = `InteriorU
 *ba* is not applied) when any of the three properties is present, otherwise the keyframe
 values of the indoor sky key; the frame inputs are then formed from *X* and *Y* as above. The
 indoor record has **no main directional light** (no sun or moon, so no sun shadow either), and
-its fog follows the interior overrides and the limits of §10. The switch between the two
-records is immediate (no cross-fade); each record cross-fades on its own.
+its fog follows the interior overrides and the limits of §10.
+
+**Switching between the records (L40).** "Immediate" means that the switch has no transition
+of its own: on every environment update the client takes the record selected by the camera
+(indoor or outdoor), without blending the two records and without starting the sky-key
+cross-fade above, which belongs to each record separately. The record taken then passes
+through the client's **sun-change fade** (`environment.md` §11.6, E34, E37), and that fade is
+what the frame sees:
+
+- **The switch changes "sun present"** (the outdoor record has a main light; the indoor record
+  never has one): the lighting values (*X*, *Y*, *Cd*, *bd*, *Cs*, the light direction and the
+  fog) fade from the values shown before the switch to the new record's over 5 seconds of the
+  raw timer, with the weight shape of the cross-fade above. During those 5 s the main light
+  stays on, its colour fading toward black, so stepping indoors by day dims the sun over 5 s
+  rather than cutting it.
+- **The switch does not change "sun present"** (the outdoor record has no main light, see
+  **Sun** below): the new record's values are used from the same update on, a hard cut, unless
+  a sun-change fade is still running, which then continues toward the new record.
+- **An update marked immediate** (`environment.md` §11.6 step 2; Inferred there: entering the
+  world or a teleport): the new record's values at once in every case.
+
+`landblock.md` §4.13 says the same in one word ("changing from one record to the other is
+immediate"); this paragraph is the full statement.
 
 **Sun.** The environment's lighting record carries *Cd*, *bd*, *Cs* and the travel direction
 separately (BIN-L (b)); the main light's colour *E₀* (before ×*M*) and specular colour are its
-light record (§8.3).
+light record (§8.3). The outdoor record has **no** main light (no sun light, no sun shadow)
+when the keyframe light colour *Cd* is opaque black within 0.0002 per channel, when *bd* is
+below 0.0002, or while a keyframe `effect` is active (`landblock.md` §4.13 and
+`environment.md` §11.7 step 9, "sun present"); the indoor record never has one.
 
 > **OPEN:** How *Cd* and *bd* combine into the main light's colour, and the main light's
 > specular colour. **Tessera Decision:** *E₀* = *Cd* × *bd* and specular = *Cs*. Support
@@ -743,7 +775,12 @@ the drawn objects near it:
    frame** (for the view being built) and that carry **none of three scene flags** of the
    object (L34; what the three flags mean was not traced). A candidate is reached when the
    squared distance from the light's world position to the object's world-space axis-aligned
-   bounding box (0 inside the box) is less than ρ².
+   bounding box (0 inside the box) is less than ρ². That box is the axis-aligned box around
+   the eight corners of one local box of the object after the object's full transform
+   (rotation, scale and translation), not a box of its parts or vertices (L38); each object
+   kind supplies its local box, and which box a skinned or instanced object supplies was not
+   traced. The light's kind plays no part in steps 1–4: a directional light that is among the
+   walked lights is tested with its own world position and ρ like a point light (L39).
 3. **Exclusions.** A light with `Light_BakedLandscapeLight` set skips terrain and ceiling
    chunks (above). The parent rule (L34): for the object the light is attached to (its
    parent), the light is added only when `Light_NeverInfluenceParent` is off; for **every
@@ -787,10 +824,32 @@ the drawn objects near it:
 > and is withdrawn; implementers align the renderer's automatic selection. (b) and (c) stay
 > open.
 >
+> **Answered in part (spec writer, 2026-10-08, seventh revision, BIN-L (q), (r)):**
+> (b) The client forms the box as the Tessera Decision below does for a rigid object: the
+> axis-aligned box around the eight corners of the object's local box after its full
+> transform, rotation and scale included (L38); it never builds the box from parts or
+> vertices. Which local box a skinned (animated) object or an instanced object supplies, and
+> whether the box follows the animated pose, were not traced; for those the Decision stays.
+> The client builds a list for each object against that object's own box (L32), so a
+> per-instance selection, which `render.md` §4.3 now makes, is the client's behaviour for
+> instances that are separate objects. (c) A directional light has a world position like any
+> placed light, and the walk tests it by the same box distance and ρ as a point light (L39);
+> it stands in the object's list where step 4 puts it (at the front when KeyLight is on,
+> otherwise in walk order with the other lights), not after the point lights. The submission
+> then routes it by kind (per-pixel candidate if key, else the extra directional slot, §8.2).
+> **Still open:** which directional light the submission keeps when an object's list holds
+> more than one non-key directional light (there is one extra directional slot), and whether
+> a second key directional light can take the directional light-0 slot when the pass has no
+> main light (`render.md` §4.3 implementer OPENs (c), (g), (n)); the submission routine
+> itself was not re-traced in this pass.
+>
 > **Tessera Decision (`render.md` §4.3), for (b) and (c):** (b) the box around the eight
 > corners of the model-space box after the object's transform (bind pose for skinned meshes;
-> an instance batch is one object enclosing its instances); (c) directional lights reach every
-> object and follow the point lights. A light for which the caller supplies no selection data
+> an instance batch is one object enclosing its instances; `render.md` §4.3 now selects per
+> instance); (c) directional lights reach every object and follow the point lights. Part (c) of
+> this Decision now **departs from the client** (L39: the client tests a directional light by
+> distance and orders it by step 4); implementers align it, giving a directional light its
+> world position and ρ. A light for which the caller supplies no selection data
 > uses ρ = *R* and no switches (`render.md` §4.3); that default is Tessera's.
 
 <a id="s8-6"></a>
@@ -978,6 +1037,12 @@ down-facing one (0.08, 0.08, 0.1).
 <a id="s15"></a>
 ## 15. Open questions
 
+Answered 2026-10-08 (seventh revision, BIN-L (q), (r)): how the client forms the world box
+of the light-list walk (§8.5 step 2, L38; implementer OPEN part (b), except skinned and
+instanced objects); where a directional light stands in an object's list (§8.5, L39; part
+(c)); what the "immediate" switch between the outdoor and indoor records means (§8.1, L40, by
+reference to `environment.md` E37).
+
 Answered 2026-10-07 (sixth revision, BIN-L (n)–(p)): the candidates of the light-list walk
 and the parent rule for lights without a parent (§8.5, L34; the implementer OPEN part (a));
 the client's second path for baked-landscape lights, its light-map bake (§8.6, L35, L36);
@@ -1014,9 +1079,10 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 > terrain records' pass-0x41 programs compute (§8.6). Tessera Decision there (no bake).
 
 > **OPEN:** The meaning of the three scene flags that exclude an object from the light-list
-> walk (§8.5 step 2), the client's world box of a rotated, scaled, skinned or instanced object,
-> and where a directional light of an object's list stands (§8.5, implementer OPEN (b), (c)).
-> Tessera Decisions there.
+> walk (§8.5 step 2); which local box a skinned or instanced object supplies to the walk; which
+> directional light the submission keeps when an object's list holds more than one, and
+> whether a key directional light takes the light-0 slot of a pass without a main light (§8.5,
+> implementer OPEN (b), (c) remainder). Tessera Decisions there.
 
 > **OPEN (for implementers):** align the walker's terrain light selection and the renderer's
 > handling of unattached lights with §8.3 and §8.5 (callouts there).
@@ -1044,3 +1110,4 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 | 2026-10-06 | Fourth revision after the re-review of 2026-10-05 (spec writer; M1 only). §4.1, last row: 2013 is the one `c_` id with a binding (semantic 4, in 7 of its 11 records, naming a permutation without programs; aligned with `material.md` §7.3, §8.6); it still reaches the programs by name. §16: the second-revision row no longer quotes a program constant name; it names the time input E20 and the terrain blend maximum (parameter 1203) instead. |
 | 2026-10-07 | Fifth revision (spec writer; M4 under decision 0011, BIN-L fourth pass with the Ghidra decompiler). Status Accepted → Revised. §1: BIN-L questions (l), (m); rows L30–L33; L19 cites (m). §8.3: light fields mapped to properties by the ids the client registers (replaces the Inferred mapping by name); the `Light_BakedLandscapeLight` OPEN answered: such lights never reach terrain or ceiling chunks (the former Tessera Decision limited this to chunks with a light map). §8.5: the object-light-list OPEN answered (selection radius ρ with the constant 0.85, box distance test, exclusions, key lights first); a narrower OPEN on the scene's light order with a Tessera Decision. §15 updated. Implementers: `walker.md` §14.3 (terrain light table) and `render.md` §4.3 (automatic selection) differ from these rules. |
 | 2026-10-07 | Sixth revision (spec writer; M4 under decision 0011, BIN-L sixth pass in an own copy of the Ghidra project; incident 0018 follow-up). Status Revised → Review. Header: the long review records moved to the dirty-room review log; a short record remains. §1: BIN-L questions (n)–(p); row L30 narrowed (light lists BIN, "normal play" Inferred); new rows L34–L37. §3.1: the bone-matrix share stated (review census). §3.2: pass 0x41 reading names the light-map bake. §5.6: Tessera Decision for per-pixel evaluation of the listed lights (what `tessera-render` does). §8.1: the indoor record (by reference to `landblock.md` §4.13) replaces the Inferred indoor sentence. §8.3: field-table row and the baked-landscape paragraph aligned with §8.6; implementer OPEN on the walker's terrain light selection. §8.5: step 2 states the candidates (drawn this frame, no scene flags); step 3 the parent rule for lights without a parent (BIN; withdraws the render.md Decision (a)); implementer OPEN of 2026-10-07 part (a) answered, (b) and (c) kept with their Decisions. New §8.6: the client's light-map bake (trigger, inputs, composite; Inferred not in normal play; OPEN and Tessera Decision "no bake"). §9: the shadow Tessera Decision covers the variants the renderer and walker use. §15 updated. Change-log rows put in date order. Implementers: `render.md` §4.3 Decision (a) and the walker's terrain light selection differ from §8.3, §8.5. |
+| 2026-10-08 | Seventh revision (spec writer; M4 under decision 0011, BIN-L seventh pass in an own copy of the Ghidra project, questions (q), (r)). Status Accepted → Revised, waiting for review. No section number or anchor changed. §8.1: the "immediate" switch between the outdoor and indoor records is explained (no transition of its own; the 5 s sun-change fade of `environment.md` §11.6 smooths it exactly when it changes "sun present"; immediate updates cut), row L40; the cross-fade paragraph corrected to follow `environment.md` §11.6 and E27 (a sky-key change starts it, not a new day description; raw timer; direction blended as a vector); the **Sun** paragraph points to the outdoor no-main-light rule (review note 3 of the sixth revision). §5.9: pointer to the glow Decision of `render.md` §4.1 (review note 4). §8.5 step 2 and the implementer OPEN of 2026-10-07: (b) answered for rigid objects (L38: eight corners of one local box under the full transform), skinned and instanced boxes stay open; (c) answered (L39: the walk does not test the light's kind; a directional light is tested by distance and placed by step 4), so Decision (c) of `render.md` §4.3 now departs from the client; the remainder (more than one directional light; key directional light without a main light) stays open. §1: BIN-L questions (q), (r); rows L38–L40. §15 updated. Not done in this revision: review notes 1 and 2 of the sixth revision (§8.6 step 5 reset state; moving the §8.6 evidence narrative). |

@@ -91,19 +91,42 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   L2, L7 not judgeable from their cameras), 9 (`walker.md` §13–§14 and `render.md` §4–§5
   reviewed twice, changes requested; ten specs of the M4.5 table are Revised, not
   Accepted). 5: one M3-b run under load passed (0 over 50 ms, 0 holes), indicative; the
-  owner re-measures on a quiet machine. `cargo clippy -D warnings` fails on one lint in
-  `crates/physics/src/controller/step.rs`; full release test run 2,613 passed, 1 failed
-  (load-sensitive `flight_across_a_region`, passes alone).
-- **Held diffs (2026-10-07):** the uncommitted `crates/render/**`, `apps/client/**`,
-  `crates/physics/**` and `crates/world/src/scenery/**`/`frills/**` diffs are held by
-  `docs/decisions/proposed-incident-2026-10-07-review-notes.md` (implementer task texts
-  carried dirty-room reviewer reports). A maintainer decides on them before any commit;
-  the M4.5 re-verification results were measured with them in the tree. Do not re-run the
-  milestone workflow for implementer tasks until its task text carries only the task, spec
-  paths and review status. M5 waits.
+  owner re-measures on a quiet machine. Frame-time assertions in real-data tests run only
+  with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`), so loaded machines no longer fail them.
+  Checks on main after the M6 merge (2026-10-08): fmt, clippy `-D warnings` (workspace,
+  `--all-features`, fuzz) clean; release tests with the install 3,715 passed, 0 failed.
+- **Incident 0018 (2026-10-07):** dirty-room reports reached clean implementer prompts in a
+  hand-written close-out workflow. The owner released the held work (A) and kept the
+  River-hobbit code after a clean audit (B); see `docs/decisions/0018-incident-review-notes-in-clean-prompts.md`. Rule: clean
+  prompts carry only the task, spec paths, review status and clean findings. Remediation
+  round 1 is on main (`5863586`); round 2 (open verifier items, `walker.md`/`render.md`
+  repair, implementer OPENs) runs on branch `remediation-2`.
+- **Data decoders beyond the milestones (2026-10-08):** census-2 specs (distant-landscape,
+  player-character, instances, wlib-bytecode with the new `tessera-wvm` crate,
+  game-controls) are implemented on main; the eight gameplay decoders (items, combat,
+  creatures, quests, economy, map, particles, misc records) and explorer gameplay cards
+  are on branch `gameplay-formats`, to be merged.
+- **M6 audio and player music (merged to main 2026-10-08, verified 2026-10-07):** done on Tessera's side.
+  Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
+  listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
+  decision 0010). Owner items: `docs/checklists/owner-observations.md` O28. Player music
+  (`/play`, `/playstart`, `/playlist`, `/playstop`, `/instrument`) is in
+  `apps/client/src/audio/player_music.rs`, reached through `tessera-client --music-command
+  "<line>"` (the M7 chat line does not route these commands yet). Merged with M4.5 and M7
+  on main (2026-10-08). M5 (UI and plugins) runs in the worktree branch `m5`; M5.5
+  (extended scripting) specs are Accepted (decision 0017) and wait for M5; M8 is gated.
+- **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
+  protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
+  decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
+  `apps/loadtest`, the `tessera-net` `remote` backend and `tessera-client --server`.
+  Criteria 2–4 pass; criterion 1 passes on one machine (one-hour soaks in-process and across
+  a container network: 0 desync, no leak). Open: a soak between two machines on a LAN, the
+  owner's confirmation of LEGAL.md §11.1 before any public test build, re-running the soaks
+  from the merge commit, and the review notes in `tessera-protocol.md` §17 and
+  `test-server.md` §15. Evidence: ROADMAP M7 status and `docs/perf/m7-soak.md`.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
-  O18–O27). They do not block the Tessera-side work.
+  O18–O27, M6 items O28, M7 items O70–O73). They do not block the Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
@@ -125,7 +148,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 ## Layout
 
 - `crates/dat` — `.dat`/`.datx` container: header, extent/block layer, B-tree directory, zlib, archive set, DID routing
-- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver
+- `crates/formats` — record decoders on top of `dat`: primitives, string tables, surfaces, property sets, setups, landblocks, distant-landscape sectors, entity descriptors, appearance (wardrobe) records, items, avatar bodies (race table), script tables and scriptlets with the idle/walk/run clip resolver, instanced-content views
 - `crates/props` — property registry, values, property sets, enum mappers, DID maps
 - `crates/text` — string tables, StringInfo resolution, substitution, markup
 - `crates/assets` — prioritised worker pool, cancellation, decoded-asset cache
@@ -134,19 +157,23 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/havok` — clean-room reader for the Havok tagfile subset in the archives: skeletons (in 0x04 setups) and clips (0x05: spline-compressed, interleaved, annotation tracks, reference frames)
 - `crates/anim` — skeletons, clip binding and sampling, blending, root motion, attach points, bone sliders, skinning palettes, animation scheduler on the asset workers
 - `crates/entity` — the client's entity store (decision 0008): entities, transforms, network IDs, render/animation handles, landblock membership, per-frame change lists
-- `crates/wstate` — WLib class library and WState object graph
+- `crates/wstate` — WLib class library and WState object graph; player-character and game-control views
+- `crates/wvm` — script machine of the class library (WLib bytecode): code-block decoder, load-time rules, disassembly, census and cross-references
 - `crates/world` — coordinates, landblock streaming, residency budget, area lookups
 - `crates/terrain` — heightmap meshing with LODs, crack-free seams, height queries
 - `crates/physics` — collision and movement (M4.5): terrain/ceiling collision, cells, per-landblock collision sets with a BVH (water planes and liquid boxes included), capsule sweeps, the character controller (fixed 1/60 s step, constants owned here); depends only on `formats` and `props`, `world` may depend on it (decision 0013)
 - `crates/input` — actions, contexts, keymap file, free-fly and walk controllers
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
-- `crates/net` — transport-agnostic session layer and a local sandbox backend
+- `crates/net` — transport-agnostic session layer, a local sandbox backend and the test-server backend (`remote`)
+- `crates/protocol` — Tessera's own network protocol: messages, framing, codec, session state machines, key pinning, QUIC setup
 - `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests)
 - `crates/script` — Lua 5.1 plugin host
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
 - `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`)
-- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test)
+- `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test; `--server` joins a test server)
+- `apps/server` — `tessera-server`, the headless test server for Tessera's own protocol
+- `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests
 - `docs/specs` — clean-room specifications; `docs/decisions` — decision records;
   `docs/checklists` — visual/owner checklists; `docs/` — legal, process, roadmap, tooling, development
 - `research/` — dirty-room notes, the verified resource catalogue and `clones.txt`

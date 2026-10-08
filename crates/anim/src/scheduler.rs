@@ -57,7 +57,7 @@ pub struct PoseOutput {
     pub local: Vec<Transform>,
     /// Model-space transforms per bone (§5.3).
     pub model: Vec<Mat4>,
-    /// Skinning matrices per bone (§4.4), the palette indexed by bone index (§4.3).
+    /// Skinning matrices per bone (§4.4, §5.4), the palette indexed by bone index (§4.3).
     pub skin: Vec<Mat4>,
     /// Holding-location model transforms, (key, transform) in key order (§8.2).
     pub attach: Vec<(u32, Mat4)>,
@@ -74,6 +74,8 @@ struct Buffers {
     out: PoseOutput,
     layers: Vec<LayerSnapshot>,
     scratch: EvalScratch,
+    /// Model triples of the pose (the input of the skinning matrices, §5.4).
+    triples: Vec<Transform>,
 }
 
 impl Buffers {
@@ -137,6 +139,7 @@ fn sample_pose(inputs: &JobInputs, b: &mut Buffers) {
         out,
         layers,
         scratch,
+        triples,
     } = b;
     out.local.resize(n, Transform::IDENTITY);
     out.model.resize(n, Mat4::IDENTITY);
@@ -150,11 +153,12 @@ fn sample_pose(inputs: &JobInputs, b: &mut Buffers) {
             SampleReport::default()
         }
     };
+    triples.resize(n, Transform::IDENTITY);
     let composed = skeleton
-        .compose_counted(&out.local, &mut out.model)
+        .compose_with_triples(&out.local, &mut out.model, triples)
         .and_then(|fallbacks| {
             out.report.model_fallbacks = fallbacks;
-            skinning_matrices(skeleton, &out.model, &mut out.skin)
+            skinning_matrices(skeleton, triples, &mut out.skin)
         });
     if let Err(e) = composed {
         out.error.get_or_insert(e);

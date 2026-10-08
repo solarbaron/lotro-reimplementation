@@ -3,23 +3,25 @@
 //! `TESSERA_GAME_DIR` points at an install.
 //!
 //! - `records_sc1_to_sc5_sc9_sc10`: the region tables read through the region descriptors'
-//!   slots 1, 2 and 8 ([`SceneryTables::for_all_regions`]) and every 0x11, 0x12, 0x02 and
+//!   slots 1, 2 and 8 ([`SceneryTables::load_all_regions`]) and every 0x11, 0x12, 0x02 and
 //!   0x32 record of the install: SC1 (decode to the last byte), SC2 (scene DIDs and
 //!   references exist, acyclic), SC3 (objects are existing 0x47 records), SC4, SC5, SC9 and
 //!   SC10 of `scenery.md` §13.
 //! - `coarse_grid_sc6_and_census`: SC6 (bits 15–31 zero, edge words equal the neighbour's)
-//!   over every landblock-data record, and the census of `scenery.md` §12 (78,114 blocks;
-//!   11,921,024 vertices with a group scene, 11,854,954 with a frill layer, 7,295 without
-//!   a scene).
+//!   over every landblock-data record, and the census of `scenery.md` §12 (blocks,
+//!   vertices with a group scene, with a frill layer, without a scene), printed and not
+//!   asserted: counts are observations of one install (`scenery.md` §0).
 //! - `generation_is_deterministic`: ROADMAP M4.5 exit criterion 3 (SC8): the scenery of
 //!   every landblock with a non-zero coarse grid is generated twice, with 1 worker in
 //!   ascending order and with the default worker count in descending order; the object
 //!   lists (DID, position, rotation, scale) must be identical bit for bit. No hostile-input
 //!   bound may be hit on real data. Water comes from no landblock here (the world's water
 //!   module wires the real surface in).
-//! - `frill_sectors`: every sector of a sample of landblocks, spaced against the static
-//!   pass's footprint markers (`scenery.md` §8.2 item 5); frill instances lie in their
-//!   landblock; density 1 is deterministic; no child fails (§7.4 step 15).
+//! - `frill_sectors`: every sector of a sample of landblocks, spaced against the
+//!   landblock's static list (§7.4 step 14a) and the footprint markers of its static pass
+//!   run with that list (`scenery.md` §8.2 item 5: the frill pass runs on the generator
+//!   that ran the static pass); frill instances lie in their landblock; density 1 is
+//!   deterministic; no child fails (§7.4 step 15).
 //! - `checklist_generated_lists`: the generated lists of the 11 landblocks of
 //!   `docs/checklists/m4-5-visual.md` §4.2 (rows S1–S11), built through the bundle path
 //!   (water and statics included), have the checklist's totals, and the objects of walks
@@ -47,8 +49,8 @@ use tessera_physics::geometry::GridMesh;
 use tessera_world::frills::{DensityThinner, generate_sector};
 use tessera_world::scenery::{
     ClearancePids, MAX_STATIC_VOLUMES, NoWater, ObjectPropertyCache, SceneLibrary, SceneSource,
-    SceneryInput, SceneryLimits, SceneryStats, SceneryTables, VertexLookup, generate_landblock,
-    static_clearances, sum_stats,
+    SceneryInput, SceneryLimits, SceneryStats, SceneryTables, StaticClearance, VertexLookup,
+    generate_landblock, static_clearances, sum_stats,
 };
 use tessera_world::{
     BundleOptions, BundleSource, LandblockKey, WorldContext, WorldSource, build_bundle,
@@ -152,13 +154,20 @@ fn workers() -> usize {
 fn records_sc1_to_sc5_sc9_sc10() {
     let Some((set, ctx)) = open() else { return };
     // The tables through the region descriptors (slots 1, 2, 8).
-    let by_region = SceneryTables::for_all_regions(&ctx);
+    let loaded = SceneryTables::load_all_regions(&ctx);
+    assert!(
+        loaded.retry.is_empty(),
+        "pipeline failures reading tables: {:?}",
+        loaded.retry
+    );
+    let by_region = loaded.tables;
     assert!(!by_region.is_empty(), "no region has scenery tables");
     for (r, t) in &by_region {
-        assert!(
-            t.terrain_types.is_some(),
-            "region {r}: no terrain-type table"
-        );
+        // §4.1 observation, not an invariant: a region without a slot-8 table only loses
+        // the terrain-type test (§7.4 step 7).
+        if t.terrain_types.is_none() {
+            eprintln!("region {r}: no terrain-type table (slot 8)");
+        }
         assert_eq!(
             t.terrain_scenes.did.0 & 0x00FF_FFFF,
             t.scene_choices.did.0 & 0x00FF_FFFF,
@@ -230,8 +239,11 @@ fn records_sc1_to_sc5_sc9_sc10() {
         scenes.len(),
         named.len()
     );
-    assert_eq!((n12, n11), (5, 5));
-    assert_eq!(scenes.len(), 3_402);
+    // Counts are observations of one install (§0); only make sure the test saw records.
+    assert!(
+        n12 > 0 && n11 > 0 && !scenes.is_empty(),
+        "no scenery records"
+    );
 
     // SC2: references exist, the graph is acyclic.
     let mut checker = SceneReferenceChecker::new();
@@ -287,13 +299,10 @@ fn records_sc1_to_sc5_sc9_sc10() {
         "SC3: {} objects exist; SC4 and SC10 hold over {nodes} nodes ({clear0} with clearance 0)",
         objects.len()
     );
-    assert_eq!(objects.len(), 4_261);
-    assert_eq!(nodes, 66_191);
-    assert_eq!(clear0, 49_405);
 
     // SC9.
     let lods = records(&set, 0x32);
-    assert_eq!(lods.len(), 1, "one LOD-class record");
+    eprintln!("SC9: {} LOD-class records", lods.len());
     for (&did, bytes) in &lods {
         let t = LodClassTable::parse_expecting(bytes, did).expect("0x32 decodes");
         assert_eq!(bytes.len(), 8 + 36 * t.len(), "SC9: payload size");
@@ -304,7 +313,6 @@ fn records_sc1_to_sc5_sc9_sc10() {
             t.len(),
             bytes.len()
         );
-        assert_eq!(t.len(), 32);
     }
 }
 
@@ -449,12 +457,8 @@ fn coarse_grid_sc6_and_census() {
          children), {} without a scene",
         tot.0, tot.1, tot.2, tot.3, tot.4
     );
-    if full() {
-        assert_eq!(tot.0, 78_114, "blocks with a non-zero coarse grid");
-        assert_eq!(tot.1, 11_921_024, "vertices with a group scene");
-        assert_eq!(tot.2, 11_854_954, "vertices with a frill layer");
-        assert_eq!(tot.4, 7_295, "vertices without a scene");
-    }
+    // The census is an observation of one install (§0, §12): printed, not asserted.
+    assert!(tot.0 > 0, "no landblock has a non-zero coarse grid");
 }
 
 /// FNV-1a over the bit patterns of a landblock's objects.
@@ -473,6 +477,29 @@ fn digest(objects: &[tessera_world::scenery::SceneryObject]) -> u64 {
         o.scale.iter().for_each(|c| eat(c.to_bits()));
     }
     h
+}
+
+/// The static list of landblock `key` (§7.4 step 14a), empty without a landblock-info
+/// record.
+fn static_list(
+    ctx: &WorldContext,
+    key: LandblockKey,
+    pids: &ClearancePids,
+    objects: &ObjectPropertyCache,
+) -> Vec<StaticClearance> {
+    match ctx
+        .source()
+        .read_stamped(key.info_did())
+        .expect("info read")
+    {
+        Some((b, stamp)) => {
+            let info = LandblockInfo::parse_expecting(&b, key.info_did(), stamp, ctx.schema())
+                .expect("info decodes");
+            static_clearances(&info, &**ctx.source(), ctx.schema(), pids, objects)
+                .expect("static list")
+        }
+        None => Vec::new(),
+    }
 }
 
 struct Generator<'a> {
@@ -494,27 +521,7 @@ impl Generator<'_> {
         }
         let key = LandblockKey::from_did(e.did).expect("key");
         let tables = self.tables.get(&key.region())?;
-        let statics = match self
-            .ctx
-            .source()
-            .read_stamped(key.info_did())
-            .expect("info read")
-        {
-            Some((b, stamp)) => {
-                let info =
-                    LandblockInfo::parse_expecting(&b, key.info_did(), stamp, self.ctx.schema())
-                        .expect("info decodes");
-                static_clearances(
-                    &info,
-                    &**self.ctx.source(),
-                    self.ctx.schema(),
-                    &self.pids,
-                    &self.objects,
-                )
-                .expect("static list")
-            }
-            None => Vec::new(),
-        };
+        let statics = static_list(self.ctx, key, &self.pids, &self.objects);
         let terrain = GridMesh::terrain(&data);
         let input = SceneryInput {
             key,
@@ -612,9 +619,7 @@ fn generation_is_deterministic() {
         stats.failed_vertices, 0,
         "no record of the install makes a child fail (§7.4 step 15)"
     );
-    if full() {
-        assert_eq!(ma.len(), 78_114);
-    }
+    assert!(!ma.is_empty(), "no landblock generated");
 }
 
 #[test]
@@ -622,6 +627,8 @@ fn frill_sectors() {
     let Some((set, ctx)) = open() else { return };
     let tables = SceneryTables::for_all_regions(&ctx);
     let scenes = SceneLibrary::new(Arc::clone(ctx.source()));
+    let pids = ClearancePids::from_context(&ctx).expect("dictionary");
+    let objects = ObjectPropertyCache::default();
     let entries = data_entries(&set);
     let step = if full() { 97 } else { 7 };
     let (mut blocks, mut instances, mut late, mut outside) = (0usize, 0usize, 0u64, 0u64);
@@ -637,6 +644,7 @@ fn frill_sectors() {
             continue;
         };
         let terrain = GridMesh::terrain(&data);
+        let statics = static_list(&ctx, key, &pids, &objects);
         let input = SceneryInput {
             key,
             data: &data,
@@ -644,11 +652,12 @@ fn frill_sectors() {
             tables: t,
             scenes: &scenes,
             water: &NoWater,
-            statics: &[],
+            statics: &statics,
             limits: SceneryLimits::default(),
         };
         blocks += 1;
-        // §8.2 item 5: the frill pass is spaced against the static pass's markers.
+        // §8.2 item 5: the frill pass is spaced against the static list and the markers of
+        // the static pass run with the same input.
         let markers = generate_landblock(&input).spacing_markers();
         let mut thinner = DensityThinner::new();
         for sx in 0..16 {

@@ -56,7 +56,156 @@ pub enum AlphaMode {
     /// (1 − *f*) (Tessera Decision: `lighting.md` §6 and §10 state that rule for the
     /// additive light passes; lerping an additive effect toward the fog colour would
     /// brighten fogged distance). Outside lit passes it draws as [`AlphaMode::Blend`].
+    ///
+    /// The same as [`AlphaMode::Fixed`] with [`FixedBlend::ADDITIVE`]. An additive surface
+    /// whose render state writes depth (`material.md` §7.6: the unlit SRCALPHA / ONE
+    /// shaders have depth write on) uses [`AlphaMode::Fixed`] with `depth_write` set.
     Additive,
+    /// The fixed-function blend state of an unlit record (`material.md` §11.3 rule for
+    /// unlit records: the most common (src, dst, op) triple of the record's render-state
+    /// blocks, the D3D factor codes of §7.6 mapped by the caller, depth write from the
+    /// same block). No alpha test; drawn with the blended draws, sorted back to front; casts
+    /// no shadow. The opacity a factor reads is the output alpha (opacity × *M*.alpha, as
+    /// for [`AlphaMode::Blend`]). In lit passes fog follows [`FixedBlend`]'s fog rule.
+    /// Outside lit passes it draws as [`AlphaMode::Blend`].
+    Fixed(FixedBlend),
+}
+
+/// A blend factor of [`FixedBlend`] (the D3D blend codes of `material.md` §7.6, mapped by
+/// the caller: ZERO, ONE, SRCCOLOR, INVSRCCOLOR, SRCALPHA, INVSRCALPHA, DESTALPHA,
+/// INVDESTALPHA, DESTCOLOR, INVDESTCOLOR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlendFactor {
+    /// 0.
+    Zero,
+    /// 1.
+    One,
+    /// The source colour.
+    SrcColor,
+    /// 1 − the source colour.
+    OneMinusSrcColor,
+    /// The source alpha (the surface's output alpha).
+    SrcAlpha,
+    /// 1 − the source alpha.
+    OneMinusSrcAlpha,
+    /// The destination alpha.
+    DstAlpha,
+    /// 1 − the destination alpha.
+    OneMinusDstAlpha,
+    /// The destination colour.
+    DstColor,
+    /// 1 − the destination colour.
+    OneMinusDstColor,
+}
+
+/// The operation of [`FixedBlend`] (D3D blend operations, `material.md` §7.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BlendOp {
+    /// src · *s* + dst · *d*.
+    Add,
+    /// src · *s* − dst · *d*.
+    Subtract,
+    /// dst · *d* − src · *s*.
+    ReverseSubtract,
+    /// min(src, dst); the factors are ignored.
+    Min,
+    /// max(src, dst); the factors are ignored.
+    Max,
+}
+
+/// A fixed-function blend state ([`AlphaMode::Fixed`]): colour = op(src · `src`, dst ·
+/// `dst`), and whether the surface writes depth. The target's alpha channel is kept
+/// (Tessera's choice; the presented image is opaque).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FixedBlend {
+    /// Source factor.
+    pub src: BlendFactor,
+    /// Destination factor.
+    pub dst: BlendFactor,
+    /// Operation.
+    pub op: BlendOp,
+    /// Depth write (`depth_write` of the render-state block, `material.md` §7.6, §11.3).
+    pub depth_write: bool,
+}
+
+/// How fog acts on an [`AlphaMode::Fixed`] surface in lit passes (Tessera Decision,
+/// `render.md` §4.3 implementer OPEN: fog fades a blended contribution toward what leaves
+/// the destination unchanged).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FogRule {
+    /// Lerp toward the fog colour (as a base pass).
+    Lerp,
+    /// Scale the colour by (1 − *f*): the destination factor is ONE, so a black source
+    /// leaves the destination unchanged (as [`AlphaMode::Additive`]).
+    FadeOut,
+    /// Lerp toward white: a modulating blend (ZERO / SRCCOLOR or DESTCOLOR / ZERO, add),
+    /// where a white source leaves the destination unchanged.
+    TowardWhite,
+}
+
+impl FixedBlend {
+    /// SRCALPHA / ONE, add, no depth write: [`AlphaMode::Additive`].
+    pub const ADDITIVE: Self = Self {
+        src: BlendFactor::SrcAlpha,
+        dst: BlendFactor::One,
+        op: BlendOp::Add,
+        depth_write: false,
+    };
+
+    /// The wgpu blend state: the colour by the factors and operation (factors ONE for
+    /// min and max, which ignore them), the alpha channel kept.
+    pub(crate) fn blend_state(self) -> wgpu::BlendState {
+        let factor = |f: BlendFactor| match f {
+            BlendFactor::Zero => wgpu::BlendFactor::Zero,
+            BlendFactor::One => wgpu::BlendFactor::One,
+            BlendFactor::SrcColor => wgpu::BlendFactor::Src,
+            BlendFactor::OneMinusSrcColor => wgpu::BlendFactor::OneMinusSrc,
+            BlendFactor::SrcAlpha => wgpu::BlendFactor::SrcAlpha,
+            BlendFactor::OneMinusSrcAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,
+            BlendFactor::DstAlpha => wgpu::BlendFactor::DstAlpha,
+            BlendFactor::OneMinusDstAlpha => wgpu::BlendFactor::OneMinusDstAlpha,
+            BlendFactor::DstColor => wgpu::BlendFactor::Dst,
+            BlendFactor::OneMinusDstColor => wgpu::BlendFactor::OneMinusDst,
+        };
+        let (operation, minmax) = match self.op {
+            BlendOp::Add => (wgpu::BlendOperation::Add, false),
+            BlendOp::Subtract => (wgpu::BlendOperation::Subtract, false),
+            BlendOp::ReverseSubtract => (wgpu::BlendOperation::ReverseSubtract, false),
+            BlendOp::Min => (wgpu::BlendOperation::Min, true),
+            BlendOp::Max => (wgpu::BlendOperation::Max, true),
+        };
+        let (src_factor, dst_factor) = if minmax {
+            (wgpu::BlendFactor::One, wgpu::BlendFactor::One)
+        } else {
+            (factor(self.src), factor(self.dst))
+        };
+        wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor,
+                dst_factor,
+                operation,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        }
+    }
+
+    /// The fog rule of this blend in lit passes.
+    pub(crate) fn fog_rule(self) -> FogRule {
+        match (self.op, self.src, self.dst) {
+            // A black source leaves the destination unchanged.
+            (BlendOp::Max, _, _)
+            | (BlendOp::Add | BlendOp::ReverseSubtract, _, BlendFactor::One) => FogRule::FadeOut,
+            // A white source leaves the destination unchanged.
+            (BlendOp::Min, _, _)
+            | (BlendOp::Add, BlendFactor::Zero, BlendFactor::SrcColor)
+            | (BlendOp::Add, BlendFactor::DstColor, BlendFactor::Zero) => FogRule::TowardWhite,
+            _ => FogRule::Lerp,
+        }
+    }
 }
 
 impl AlphaMode {
@@ -309,15 +458,17 @@ pub enum LightSelection {
     /// whose squared distance to the draw's world box is below the square of their
     /// selection radius ρ ([`crate::LightReach`]), without lights baked into the landscape
     /// on terrain chunks and with the parent switches applied; key lights first, each group
-    /// nearest first (Tessera Decision of §8.5); then the directional ones; at most
-    /// [`crate::MAX_DRAW_LIGHTS`] in all with the sun counted (7 from the table when the
-    /// pass has a sun).
+    /// nearest first (Tessera Decision of §8.5); then one directional light; at most
+    /// [`crate::MAX_DRAW_LIGHTS`] in all with light 0 counted: 7 from the table (light 0 is
+    /// the sun or, without one, the default directional light), 8 when a key directional
+    /// table light takes light 0 in a pass without a sun.
     #[default]
     Auto,
     /// No light from the table (the sun and ambient still apply).
     None,
     /// These table indices (`count` ≤ 8 used; indices past the table are skipped; at most
-    /// 7 kept when the pass has a sun, `lighting.md` §8.5).
+    /// 7 kept, or 8 when the pass has no sun and the list holds a key directional light,
+    /// `lighting.md` §8.5).
     List {
         /// Light-table indices.
         indices: [u8; 8],
@@ -352,7 +503,10 @@ pub struct LitSurface {
     /// Multiply *M* by the vertex colour (only records whose programs take a colour input,
     /// §5.13).
     pub vertex_colors: bool,
-    /// Apply distance fog.
+    /// Apply distance fog to an unlit surface ([`Material::unlit`]; `lighting.md` §7 code
+    /// 0x00, §12: fog when its programs read the fog inputs). A lit surface is always
+    /// fogged (`lighting.md` §2.1: the base pass always contains distance fog), whatever
+    /// this says.
     pub fog: bool,
     /// Cast a sun shadow (opaque and alpha-tested lit surfaces only).
     pub cast_shadow: bool,
@@ -453,6 +607,55 @@ impl MeshDraw {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `AlphaMode::Additive` keeps the blend state it always had (SRCALPHA / ONE, the
+    /// target alpha kept); min and max ignore the factors.
+    #[test]
+    fn fixed_blend_states() {
+        let add = FixedBlend::ADDITIVE.blend_state();
+        assert_eq!(add.color.src_factor, wgpu::BlendFactor::SrcAlpha);
+        assert_eq!(add.color.dst_factor, wgpu::BlendFactor::One);
+        assert_eq!(add.color.operation, wgpu::BlendOperation::Add);
+        assert_eq!(add.alpha.src_factor, wgpu::BlendFactor::Zero);
+        assert_eq!(add.alpha.dst_factor, wgpu::BlendFactor::One);
+        let max = FixedBlend {
+            src: BlendFactor::DstColor,
+            dst: BlendFactor::Zero,
+            op: BlendOp::Max,
+            depth_write: true,
+        };
+        let s = max.blend_state();
+        assert_eq!(s.color.src_factor, wgpu::BlendFactor::One);
+        assert_eq!(s.color.dst_factor, wgpu::BlendFactor::One);
+        assert_eq!(s.color.operation, wgpu::BlendOperation::Max);
+    }
+
+    /// The fog rule fades a blended contribution toward what leaves the destination
+    /// unchanged.
+    #[test]
+    fn fixed_blend_fog_rules() {
+        let f = |src, dst, op| {
+            FixedBlend {
+                src,
+                dst,
+                op,
+                depth_write: false,
+            }
+            .fog_rule()
+        };
+        use BlendFactor as F;
+        assert_eq!(FixedBlend::ADDITIVE.fog_rule(), FogRule::FadeOut);
+        assert_eq!(f(F::One, F::One, BlendOp::Add), FogRule::FadeOut);
+        assert_eq!(f(F::DstColor, F::One, BlendOp::Add), FogRule::FadeOut);
+        assert_eq!(f(F::Zero, F::SrcColor, BlendOp::Add), FogRule::TowardWhite);
+        assert_eq!(f(F::DstColor, F::Zero, BlendOp::Add), FogRule::TowardWhite);
+        assert_eq!(f(F::One, F::One, BlendOp::Min), FogRule::TowardWhite);
+        assert_eq!(
+            f(F::SrcAlpha, F::OneMinusSrcAlpha, BlendOp::Add),
+            FogRule::Lerp
+        );
+        assert_eq!(f(F::One, F::Zero, BlendOp::Add), FogRule::Lerp);
+    }
 
     #[test]
     fn light_direction_is_sanitised() {

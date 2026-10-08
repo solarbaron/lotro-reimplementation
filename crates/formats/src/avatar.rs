@@ -654,43 +654,106 @@ pub const SLIDER_DEFAULT_POSITION: f32 = 0.5;
 
 /// Bytes of the value string used when an avatar entity carries no
 /// `AC_BoneSlider_Value_Array` (§6.3 Decision while the driven value of an absent property
-/// is OPEN): 35 × `80`, the value every other slider avatar carries.
+/// is OPEN): 35 × `80`, the property's dictionary default and the value every other slider
+/// avatar carries.
 pub const ABSENT_SLIDER_BYTES: [u8; 35] = [0x80; 35];
 
-/// Reads a slider value string as the client does (§6.3, A16): byte pairs from the start,
-/// each pair read as a base-16 number, so a pair that is not hexadecimal reads 0. Tessera
-/// Decisions (OPEN in the spec): a pair is hexadecimal only when both characters are hex
-/// digits (a pair such as `8z` reads 0); a trailing single character is no pair. At most
-/// [`MAX_SLIDER_BYTES`] pairs are read.
+/// The value string of [`ABSENT_SLIDER_BYTES`]: 35 × `80` (70 characters).
+pub const ABSENT_SLIDER_STRING: &str =
+    "8080808080808080808080808080808080808080808080808080808080808080808080";
+
+/// Reads one piece of a slider value string as §6.3 states (BIN4, A29): optional leading
+/// white space, an optional `+` or `-`, an optional `0x` or `0X`, then hexadecimal digits of
+/// either case up to the first other character; no digit reads 0. The result is taken as an
+/// unsigned 32-bit number (a negative result becomes 2³² minus its magnitude). A piece has
+/// at most two characters, so the number cannot overflow; longer input wraps.
 #[must_use]
-pub fn slider_value_pairs(s: &str) -> Vec<u8> {
-    s.as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .take(MAX_SLIDER_BYTES)
-        .map(|&[hi, lo]| {
-            let d = |c: u8| char::from(c).to_digit(16);
-            match (d(hi), d(lo)) {
-                // Both digits are below 16, so the value fits a byte.
-                (Some(h), Some(l)) => u8::try_from(h * 16 + l).unwrap_or(0),
-                _ => 0,
-            }
-        })
-        .collect()
+pub fn slider_piece_value(piece: &[u8]) -> u32 {
+    let mut rest = piece;
+    while let [c, tail @ ..] = rest
+        && matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
+    {
+        rest = tail;
+    }
+    let negative = match rest {
+        [b'-', tail @ ..] => {
+            rest = tail;
+            true
+        }
+        [b'+', tail @ ..] => {
+            rest = tail;
+            false
+        }
+        _ => false,
+    };
+    // `0x` counts as a prefix only when a hexadecimal digit follows; otherwise the `0` is
+    // the number (either way a piece of two characters reads 0 there).
+    if let [b'0', b'x' | b'X', d, ..] = rest
+        && d.is_ascii_hexdigit()
+    {
+        rest = &rest[2..];
+    }
+    let mut value: u32 = 0;
+    for &c in rest {
+        let Some(d) = char::from(c).to_digit(16) else {
+            break;
+        };
+        value = value.wrapping_mul(16).wrapping_add(d);
+    }
+    if negative {
+        value.wrapping_neg()
+    } else {
+        value
+    }
 }
 
-/// The positions *t* of `count` sliders in definition order for value bytes `values`
-/// (§6.3, A16): the *k*-th byte goes to the *k*-th slider **of the definition array,
-/// hidden ones included**, as byte / 255; every slider left without a byte gets
-/// [`SLIDER_DEFAULT_POSITION`]. The one implementation of the rule (assembly, both apps).
+/// Cuts a slider value string into its pieces and reads each one (§6.3, BIN4, A29): two
+/// characters at a time from the start; an odd-length string ends with a piece of one
+/// character, and an even-length string (the empty one included) ends with one more,
+/// **empty** piece, which reads 0. At most [`MAX_SLIDER_BYTES`] + 1 pieces are read
+/// (Tessera bound; the install's strings have 36).
 #[must_use]
-pub fn slider_positions(count: usize, values: &[u8]) -> Vec<f32> {
+pub fn slider_value_pieces(s: &str) -> Vec<u32> {
+    let b = s.as_bytes();
+    let mut out: Vec<u32> = b
+        .chunks(2)
+        .take(MAX_SLIDER_BYTES + 1)
+        .map(slider_piece_value)
+        .collect();
+    if b.len().is_multiple_of(2) && out.len() <= MAX_SLIDER_BYTES {
+        out.push(0);
+    }
+    out
+}
+
+/// The slider value pieces of a string made of `bytes` written as hexadecimal pairs: each
+/// byte, then the empty piece that follows an even-length string (§6.3), so the result is
+/// what [`slider_value_pieces`] gives for that string.
+#[must_use]
+pub fn slider_values_of_bytes(bytes: &[u8]) -> Vec<u32> {
+    let mut out: Vec<u32> = bytes
+        .iter()
+        .take(MAX_SLIDER_BYTES)
+        .map(|&b| u32::from(b))
+        .collect();
+    out.push(0);
+    out
+}
+
+/// The positions *t* of `count` sliders in definition order for the value pieces `values`
+/// ([`slider_value_pieces`]; §6.3, A16): the *k*-th piece goes to the *k*-th slider **of the
+/// definition array, hidden ones included**, as the piece's value converted to single
+/// precision and divided by 255 (not limited to [0, 1]: a piece with a minus sign gives a
+/// large *t*); every slider left without a piece gets [`SLIDER_DEFAULT_POSITION`]. The one
+/// implementation of the rule (assembly, both apps).
+#[must_use]
+pub fn slider_positions(count: usize, values: &[u32]) -> Vec<f32> {
     (0..count)
         .map(|k| {
+            #[allow(clippy::cast_precision_loss)]
             values
                 .get(k)
-                .map_or(SLIDER_DEFAULT_POSITION, |&b| f32::from(b) / 255.0)
+                .map_or(SLIDER_DEFAULT_POSITION, |&v| v as f32 / 255.0)
         })
         .collect()
 }
@@ -729,13 +792,60 @@ mod tests {
             vec![128.0 / 255.0, 0.0]
         );
         assert_eq!(slider_positions(0, &[0x80]), Vec::<f32>::new());
-        assert_eq!(slider_value_pairs("80ff00"), vec![0x80, 0xFF, 0]);
-        assert_eq!(slider_value_pairs("zz80"), vec![0, 0x80]);
-        assert_eq!(slider_value_pairs("8z1"), vec![0]);
-        assert_eq!(slider_value_pairs(""), Vec::<u8>::new());
+    }
+
+    /// `appearance.md` §6.3 Values (BIN4, A29): pieces of two characters, a trailing single
+    /// character, the empty piece after an even-length string, `strtol`-style reading.
+    #[test]
+    fn slider_pieces_follow_the_client() {
+        assert_eq!(slider_value_pieces("80ff00"), vec![0x80, 0xFF, 0, 0]);
+        assert_eq!(slider_value_pieces("zz80"), vec![0, 0x80, 0]);
+        assert_eq!(slider_value_pieces("8z1"), vec![8, 1]);
+        assert_eq!(slider_value_pieces("808"), vec![0x80, 8]);
+        assert_eq!(slider_value_pieces(""), vec![0]);
+        assert_eq!(slider_piece_value(b"8z"), 8);
+        assert_eq!(slider_piece_value(b"z8"), 0);
+        assert_eq!(slider_piece_value(b"8"), 8);
+        assert_eq!(slider_piece_value(b""), 0);
+        assert_eq!(slider_piece_value(b"Ab"), 0xAB);
+        assert_eq!(slider_piece_value(b" 8"), 8);
+        assert_eq!(slider_piece_value(b"+8"), 8);
+        assert_eq!(slider_piece_value(b"0x"), 0);
+        assert_eq!(slider_piece_value(b"0x1f"), 0x1F);
+        assert_eq!(slider_piece_value(b"-1"), u32::MAX);
+        assert_eq!(slider_piece_value(b"-"), 0);
+        // A minus sign gives a t far outside [0, 1]: (2³² − 1) / 255 in single precision.
+        let t = slider_positions(1, &slider_value_pieces("-1"))[0];
+        #[allow(clippy::cast_precision_loss)]
+        let expect = u32::MAX as f32 / 255.0;
+        assert_eq!(t, expect);
+        // Fewer pairs than sliders: the empty piece gives slider m + 1 the value 0, later
+        // sliders 0.5; an empty string gives the first slider 0.
         assert_eq!(
-            slider_value_pairs(&"80".repeat(MAX_SLIDER_BYTES + 3)).len(),
-            MAX_SLIDER_BYTES
+            slider_positions(4, &slider_value_pieces("ff00")),
+            vec![1.0, 0.0, 0.0, 0.5]
+        );
+        assert_eq!(
+            slider_positions(3, &slider_value_pieces("")),
+            vec![0.0, 0.5, 0.5]
+        );
+        // The install's 70-character strings on a 37-slider record: definition 36 gets 0,
+        // definition 37 gets 0.5.
+        let p = slider_positions(37, &slider_value_pieces(ABSENT_SLIDER_STRING));
+        assert!(p[..35].iter().all(|&t| t == 128.0 / 255.0));
+        assert_eq!((p[35], p[36]), (0.0, 0.5));
+        assert_eq!(ABSENT_SLIDER_STRING, "80".repeat(35));
+        assert_eq!(
+            slider_values_of_bytes(&ABSENT_SLIDER_BYTES),
+            slider_value_pieces(ABSENT_SLIDER_STRING)
+        );
+        assert_eq!(
+            slider_value_pieces(&"80".repeat(MAX_SLIDER_BYTES + 3)).len(),
+            MAX_SLIDER_BYTES + 1
+        );
+        assert_eq!(
+            slider_value_pieces(&"80".repeat(MAX_SLIDER_BYTES)).len(),
+            MAX_SLIDER_BYTES + 1
         );
     }
 }

@@ -185,8 +185,9 @@ pub struct ClipPlay {
     pub layer: u32,
     /// The node asks for per-track weights (`UseBoneOpacity`, `script-table.md` §6.5).
     pub track_weights: bool,
-    /// For a held clip (`ManualUpdate`, `script-table.md` §6.7): the fraction of the clip
-    /// it shows; it never advances.
+    /// For a held clip (`ManualUpdate`, `script-table.md` §6.7): the fraction of the clip's
+    /// whole duration it shows (the held fraction × the played length, over the duration,
+    /// `tessera_anim::held_clip_fraction`); it never advances.
     pub held: Option<f32>,
 }
 
@@ -200,8 +201,8 @@ pub struct FigureClips {
     pub walk: Option<ClipPlay>,
     /// Run forward.
     pub run: Option<ClipPlay>,
-    /// Held proportion clips (`script-table.md` §6.8), one per data layer, lowest first:
-    /// shown in every motion state.
+    /// Held proportion clips (`script-table.md` §6.8), all of them, lowest data layer
+    /// first (several may share a layer, §6.2): shown in every motion state.
     pub held: Vec<ClipPlay>,
 }
 
@@ -222,7 +223,7 @@ pub struct FigureAsset {
     /// The bind-space deformation the skinned parts were built with (`appearance.md`
     /// §6.4); `None` when the figure has none or it changes nothing.
     pub deformation: Option<Arc<BindDeformation>>,
-    /// The shape inputs it was built from (held clips, body shape, slider bytes).
+    /// The shape inputs it was built from (held clips, body shape, slider values).
     pub shape: FigureShape,
     /// Whole-body scale (`appearance.md` §6.1).
     pub model_scale: f32,
@@ -449,7 +450,7 @@ pub fn build_figure(
                 speed: 0.0,
                 layer: h.held.layer,
                 track_weights: h.held.use_bone_opacity,
-                held: Some(h.held.fraction),
+                held: Some(h.clip_fraction),
             })
             .collect();
     }

@@ -21,11 +21,15 @@
 //!    last real size; one never loaded the running mean ([`WorldStreamer::size_estimate`]).
 //!    A near- or mid-ring landblock is admitted together with its *seam closure*: its
 //!    desired east, north and north-east neighbours ([`LandblockKey::seam_neighbours`]),
-//!    whose heights its terrain edges need (`landblock.md` §3.3, §8 step 5), and theirs in
-//!    turn while they are near or mid — or not at all. The first closure that does not
+//!    whose heights its terrain edges need (`landblock.md` §3.3, §8 step 5, §8.1), and
+//!    theirs in turn while they are near or mid — or not at all. The west, south and
+//!    diagonal neighbours that the normals of `landblock.md` §3.14 also read are not part
+//!    of the closure (OPEN in `landblock.md` §8.1, 2026-10-07). The first closure that does not
 //!    fit ends admission: everything farther is cancelled or evicted, so eviction is
 //!    strictly farthest first. Re-admitting a landblock that was evicted needs a margin
-//!    of 1/64 of the budget, so a block on the boundary does not flip every frame. When
+//!    of 1/64 of the budget, so a block on the boundary does not flip every frame; a seam
+//!    closure with an evicted member needs the margin as a whole, its never-loaded members
+//!    included (Tessera's reading, `landblock.md` §8.1 OPEN on closures). When
 //!    [`StreamConfig::always_admit_near`] is set, the near ring and the direct seam
 //!    neighbours of its landblocks are admitted beyond the budget; a mid-ring neighbour
 //!    admitted only that way gets its own neighbours when the budget allows. Admitted
@@ -37,16 +41,20 @@
 //!    (measured from the start of integration) is reached; at least one finished request
 //!    is integrated every frame, so streaming always makes progress. Integration only
 //!    moves an `Arc`, so it costs microseconds. A data error or a panic in the job marks
-//!    the landblock failed until it leaves the rings; a full queue, a shut-down pipeline,
-//!    or a bundle job that failed because a record could not be read *now* (its
-//!    [`WorldError::is_data_error`] is false) is retried with exponential backoff. A
-//!    bundle that is not complete ([`LandblockBundle::is_complete`]: a read failed for a
-//!    reason that is not the data's while scenery or collision was built) becomes
-//!    resident, and is dropped from the asset store's cache so that it is rebuilt when the
-//!    landblock loads again.
+//!    the landblock failed until it leaves the rings (a failed landblock holds nothing and
+//!    is charged nothing in admission); a request refused by the pipeline (full queue,
+//!    shut-down pipeline) or a job that ended for a reason that is not the data's (its
+//!    [`WorldError::is_data_error`] is false) is retried after 10 ms, doubled for each
+//!    further consecutive failure up to 2 s. A bundle
+//!    that is not complete ([`LandblockBundle::is_complete`]: a world-system input could
+//!    not be read for a reason that is not the data's) becomes resident, and is dropped
+//!    from the asset store's cache so that it is rebuilt when the landblock loads again.
+//!    These failure rules are Tessera's (`landblock.md` §8.1 OPEN of 2026-10-07).
 //!
-//! Resident bytes can exceed the budget until the next update when a bundle turns out
-//! larger than its estimate; that update evicts the farthest to compensate.
+//! Integration does not check the budget: resident bytes can exceed it until the next
+//! update when a bundle turns out larger than its charge at admission (the running mean or
+//! the initial estimate); that update evicts the farthest to compensate (Tessera's choice,
+//! `landblock.md` §8.1 OPEN on the transient overshoot).
 //!
 //! The work is linear in the number of desired landblocks (a few hundred with the default
 //! rings); when neither the focus nor the desired set changed, the previous nearest-first
@@ -56,26 +64,45 @@
 //!
 //! A bundle can take longer to build than a fast focus needs to cross the rings (a
 //! landblock with a large collision set takes over half a second on one worker; at
-//! 3,000 m/s the focus crosses the 1,600 m between the default far and near radii in
-//! about as long). So the streamer also loads along the focus's **path**: with the focus's
-//! velocity *v* ([`WorldStreamer::update_with_velocity`], or estimated by
-//! [`WorldStreamer::update`] from the focus positions of the last quarter of a second)
-//! the path is the segment from the focus to the focus plus *v* · *T_e*, at most
-//! [`StreamConfig::lookahead_max`] long. It has two parts:
+//! 3,000 m/s the focus crosses the 1,120 m between the default far (1,600 m) and near
+//! (480 m) radii in about 0.37 s). So the streamer also loads along the focus's **path**
+//! (ARCHITECTURE §9.2): with the focus's velocity *v*
+//! ([`WorldStreamer::update_with_velocity`], or estimated by [`WorldStreamer::update`]
+//! from the focus positions of the last quarter of a second) the path is the segment from
+//! the focus to the focus plus *v* · *T_e*, at most [`StreamConfig::lookahead_max`] long,
+//! with *T_e* = max([`StreamConfig::lookahead_early`], [`StreamConfig::lookahead`])
+//! (4 s by default). It has two parts:
 //!
-//! - the **urgent** part, out to *v* · *T*: its landblocks are requested with `Visible`
-//!   priority (`Immediate` once in the near ring). The horizon *T*
-//!   ([`WorldStreamer::lookahead_horizon`]) is [`StreamConfig::lookahead`], lengthened to
-//!   [`StreamConfig::lookahead_job_margin`] times the *slow-job time* when that is
-//!   longer: the longest bundle job (read and decode, wall time on its worker) seen
-//!   recently, a peak that halves every 30 s without a longer job;
-//! - the **early** part beyond it, out to *T_e* = max([`StreamConfig::lookahead_early`],
-//!   *T*): its landblocks are requested with their ring's own priority, `Prefetch` ahead
-//!   of the rings, and raised to `Visible` when the urgent part reaches them.
+//! - the **urgent** part, out to *v* · *T* but never beyond the path: its landblocks are
+//!   requested with `Visible` priority (`Immediate` once in the near ring). The horizon
+//!   *T* ([`WorldStreamer::lookahead_horizon`]) is [`StreamConfig::lookahead`], lengthened
+//!   to [`StreamConfig::lookahead_job_margin`] times the *slow-job time* when that is
+//!   longer: the longest bundle job (read and decode, wall time on its worker, failed jobs
+//!   included) seen recently, a peak that halves every 30 s without a longer job and takes
+//!   in at most 10 s per job (Tessera's reading of "the slowest recent bundle job",
+//!   `landblock.md` §8.1 OPEN of 2026-10-07);
+//! - the **early** part beyond it, out to *T_e*: its landblocks are requested with their
+//!   ring's own priority, `Prefetch` ahead of the rings, and raised to `Visible` when the
+//!   urgent part reaches them.
+//!
+//! The velocity estimate restarts on a step faster than 10,000 units per second however
+//! long the update took (a long frame is not a jump), on a region change, and needs
+//! positions spanning 50 ms; steps up to a landblock are never jumps, and a speed below
+//! 1 unit per second has no path (Tessera's choices, same OPEN). It is taken from the
+//! newest position and the oldest kept one: the positions of the last quarter second plus
+//! the newest one before it, so with updates further apart than a quarter second the span
+//! is the time between two updates; at most 256 positions are kept, so above about
+//! 1,000 updates per second the span is shorter. A velocity given to
+//! [`WorldStreamer::update_with_velocity`] replaces the estimate and discards its
+//! positions (the estimate starts over on the next [`WorldStreamer::update`]), a given
+//! velocity that is not finite turns lookahead off for that update, and a rejected focus
+//! keeps the previous velocity (Tessera's choices, `landblock.md` §8.1 lookahead OPEN).
 //!
 //! A request must start at least one job time before its landblock reaches the near ring,
 //! and job times grow with the landblock (a large collision set: M3-b's late landblock
-//! took 0.9–3.3 s, almost all of it the collision set) and with the machine's load. The
+//! r2 (239, 242) took 0.53–0.75 s on a loaded machine and up to about 2 s under a load
+//! average of 40, almost all of it the collision set; `walker.md` §14.11, performance
+//! note) and with the machine's load. The
 //! slow-job time only learns from jobs that have finished, so on its own the urgent part
 //! comes too late for the first very slow landblock of a flight. The early part starts
 //! such jobs seconds ahead whenever a worker is free while they are still `Prefetch`,
@@ -90,15 +117,18 @@
 //! ring within that time if the focus keeps going) form the *corridor*
 //! ([`FrameReport::corridor`], [`FrameReport::urgent`]); those beyond the far radius
 //! become desired ahead of their ring ([`FrameReport::ahead`]). A block stays in the
-//! corridor (or its urgent part) until it is a hysteresis margin outside the near radius
-//! of the path (or of the urgent part); an ahead block that leaves the corridor without
-//! entering the rings is released. Ahead blocks are charged and admitted like far-ring
+//! corridor (or its urgent part) until it is the rings' hysteresis margin outside the
+//! near radius of the path (or of the urgent part), so a path that wavers does not
+//! release and request the same blocks every frame (Tessera's choice, same OPEN); an
+//! ahead block that leaves the corridor without entering the rings is released. Ahead
+//! blocks are charged and admitted like far-ring
 //! blocks, by distance from the focus: they lie beyond the far radius, so they are cut
 //! before every near- and mid-ring block and every far-ring block nearer than the far
 //! radius, but they interleave with far-ring blocks in the hysteresis band (a ring
 //! member stays until it is the hysteresis margin outside the far radius). Their bundles
-//! are not in [`WorldStreamer::resident`] until they enter the rings
-//! ([`WorldStreamer::is_ahead`]), so consumers do not draw or populate them early.
+//! are not resident until they enter the rings ([`WorldStreamer::is_ahead`]): neither
+//! [`WorldStreamer::resident`] nor [`WorldStreamer::bundle`] nor any lookup sees them, so
+//! consumers do not draw or populate them early.
 //! Lookahead changes only when bundles are requested, never what a bundle holds: bundles
 //! stay the data's deterministic ones and the residency budget binds as before.
 //!
@@ -107,8 +137,11 @@
 //! Each bundle is built on a worker with its scenery, water, collision set, lights and LOD
 //! classes ([`crate::bundle`] module docs), and its [`LandblockBundle::heap_bytes`]
 //! includes them, so the residency budget accounts for collision sets and scenery. When a
-//! bundle becomes resident its water joins the streamer's [`WaterMap`]; when it leaves,
-//! the water leaves too. The lookups over what is resident:
+//! bundle becomes resident as a ring member its water joins the streamer's [`WaterMap`];
+//! when it leaves, the water leaves too. A bundle has water whenever it has a collision set
+//! and its region's water tables loaded, even with [`crate::BundleOptions::build_water`]
+//! off (see that option). The lookups over what is resident (ring members;
+//! not bundles loaded ahead of the rings):
 //!
 //! | Lookup | Spec |
 //! |---|---|
@@ -121,8 +154,8 @@
 //! Cells are not confined to their landblock's square (the client's own bound is about
 //! 2,756 units from the owning landblock's origin, `collision.md` §5.8.1 step 1), so the
 //! streamer keeps the region-frame bounds of every resident landblock's cells
-//! ([`BlockCollision::cell_bounds`]) and asks every landblock whose cells can contain a
-//! point.
+//! ([`BlockCollision::cell_bounds`]) and of its Light entities, and asks every landblock
+//! whose cells can contain a point, or whose lights can lie within a radius of it.
 //!
 //! # Frills
 //!
@@ -131,8 +164,12 @@
 //! [`FrillSettings::player_position_blend`], drops the sectors that left, and generates
 //! entering sectors nearest first on the same asset workers, once their landblock is
 //! resident with its scenery inputs. At most [`StreamConfig::max_frill_jobs_per_frame`]
-//! sectors start per frame and new ones wait while the held sectors exceed
-//! [`StreamConfig::frill_budget`] bytes. Frills never collide (§8.1).
+//! sectors start per frame, and a sector starts only while the bytes of the held sectors
+//! plus the expected bytes of the running jobs and its own (the mean sector size so far)
+//! fit [`StreamConfig::frill_budget`]; before the first sector is known one job runs at a
+//! time. Sector jobs run at `Visible` priority; a job that panics leaves an empty sector,
+//! not retried while the sector is held (Tessera's choices, `landblock.md` §8.1 OPEN of
+//! 2026-10-07). Frills never collide (§8.1).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -178,24 +215,33 @@ pub struct StreamConfig {
     pub residency_budget: usize,
     /// Bytes the asset store keeps of recently released bundles, so a landblock that comes
     /// back soon is not decoded again. Counted separately from the residency budget.
+    /// Default 64 MiB (Tessera's choice; no spec states it, `landblock.md` §8.1 OPEN on
+    /// streamer defaults).
     pub cache_budget: usize,
-    /// Most finished requests integrated per frame.
+    /// Most finished requests integrated per frame. Default 32 (Tessera's choice, same
+    /// OPEN).
     pub max_integrations_per_frame: usize,
-    /// Main-thread time after which integration stops for this frame.
+    /// Main-thread time after which integration stops for this frame. Default 2 ms
+    /// (Tessera's choice, same OPEN).
     pub frame_budget: Duration,
     /// Admit the near ring, and the east, north and north-east neighbours of its
     /// landblocks, even beyond the residency budget.
     pub always_admit_near: bool,
-    /// Size assumed for a bundle before any has loaded.
+    /// Charge of a never-loaded bundle before any bundle has loaded; afterwards admission
+    /// charges the running mean of loaded bundles ([`WorldStreamer::size_estimate`]).
+    /// Default 512 KiB (Tessera's choice, same OPEN).
     pub initial_size_estimate: usize,
     /// The frill engine's options (`scenery.md` §8.4); a radius of 0 (level 0 or
     /// `draw_frills` off) holds no sectors: that is how frills are turned off. Change them
     /// at run time with [`WorldStreamer::set_frill_settings`].
     pub frills: FrillSettings,
     /// Bytes of frill sectors held; beyond it no new sector starts until some leave.
-    /// Positive ([`StreamConfig::validate`]).
+    /// Positive ([`StreamConfig::validate`]). Default 64 MiB (Tessera's choice, same OPEN;
+    /// ARCHITECTURE §9.2 says only "within their own byte budget").
     pub frill_budget: usize,
-    /// Most frill sectors started per frame. Positive ([`StreamConfig::validate`]).
+    /// Most frill sector *jobs* started per frame on the asset workers. Positive
+    /// ([`StreamConfig::validate`]). Default 64 (Tessera's choice, same OPEN). Not the
+    /// walker's limit of 96 sectors *built for drawing* per frame (`walker.md` §14.7).
     pub max_frill_jobs_per_frame: usize,
     /// How far ahead in time the focus's path is loaded with `Visible` priority (module
     /// docs, "Lookahead": the *urgent* part of the path); zero turns lookahead off.
@@ -203,7 +249,8 @@ pub struct StreamConfig {
     pub lookahead: Duration,
     /// How far ahead in time the focus's path is requested at all (module docs,
     /// "Lookahead": beyond the urgent part with the ring's own priority, `Prefetch` ahead
-    /// of the rings). A value below the urgent horizon is raised to it. Default 4 s.
+    /// of the rings). A value below [`StreamConfig::lookahead`] is raised to it; slow jobs
+    /// do not lengthen it. Default 4 s.
     pub lookahead_early: Duration,
     /// Longest lookahead path in world units; finite, 0 to [`MAX_LOOKAHEAD_DISTANCE`]
     /// ([`StreamConfig::validate`]). Default [`MAX_LOOKAHEAD_DISTANCE`] (12,800, 80
@@ -397,12 +444,26 @@ impl Slot {
     }
 }
 
-/// Fraction of the residency budget kept free before re-admitting an evicted bundle.
+/// Fraction of the residency budget kept free before re-admitting an evicted bundle. A
+/// seam closure that contains an evicted bundle needs the margin as a whole, whatever its
+/// other members are (Tessera's reading, `landblock.md` §8.1 OPEN on closures).
 const READMIT_MARGIN_DIVISOR: usize = 64;
-/// Delay before the first retry after a transient failure; doubled per further failure.
+/// Most job completions the bundle store queues for [`WorldStreamer`]'s job timings
+/// between two updates (Tessera's choice, `landblock.md` §8.1 OPEN on streamer defaults).
+const STORE_MAX_COMPLETIONS: usize = 4_096;
+/// Delay before the first retry after a transient failure; doubled per further failure
+/// ([`retry_delay`]; Tessera's policy, `landblock.md` §8.1 OPEN of 2026-10-07).
 const RETRY_BASE: Duration = Duration::from_millis(10);
 /// Longest retry delay.
 const RETRY_MAX: Duration = Duration::from_secs(2);
+
+/// The delay before retry number `n` (1 for the first) after consecutive transient
+/// failures: [`RETRY_BASE`], doubled for each failure after the first, at most
+/// [`RETRY_MAX`].
+fn retry_delay(n: u32) -> Duration {
+    let doublings = n.saturating_sub(1).min(16);
+    RETRY_BASE.saturating_mul(1u32 << doublings).min(RETRY_MAX)
+}
 /// Bundle jobs and near-ring load latencies this long are logged (debug).
 const SLOW_JOB: Duration = Duration::from_millis(250);
 /// Focus positions this old and newer give the velocity estimate.
@@ -412,17 +473,16 @@ const VELOCITY_MIN_SPAN: Duration = Duration::from_millis(50);
 /// Most focus positions kept for the estimate (bounds the history at very high update
 /// rates).
 const VELOCITY_MAX_SAMPLES: usize = 256;
-/// Fastest focus the velocity estimate follows (units per second; M3-b flies at 3,000):
-/// a step between two updates faster than this, and longer than [`JUMP_MIN_STEP`], is a
-/// jump (a teleport, or the caller moving the focus elsewhere), and the estimate restarts.
+/// Fastest focus the velocity estimate follows (units per second; M3-b flies at 3,000;
+/// ARCHITECTURE §9.2): a step between two updates faster than this, and longer than
+/// [`JUMP_MIN_STEP`], is a jump (a teleport, or the caller moving the focus elsewhere),
+/// and the estimate restarts. The speed is the step over the time between the updates,
+/// however long that was: a long frame is not a jump.
 const MAX_TRACKED_SPEED: f64 = 10_000.0;
-/// Steps up to this long are never jumps (a focus that crosses a landblock edge in a very
-/// short update is not a teleport).
+/// Steps up to this long are never jumps (two updates very close together, whose clock
+/// jitter would otherwise make an ordinary step look faster than [`MAX_TRACKED_SPEED`]).
+/// Tessera's choice; `landblock.md` §8.1 OPEN of 2026-10-07.
 const JUMP_MIN_STEP: f64 = LANDBLOCK_SIZE;
-/// The time between updates the jump test allows at most: after a longer gap (a stalled
-/// frame, a loading pause) a step beyond [`MAX_TRACKED_SPEED`] times this is a jump
-/// however long the gap was.
-const JUMP_MAX_GAP: Duration = Duration::from_millis(500);
 /// Slowest focus speed (units per second) whose path is loaded ahead; below it the
 /// estimate is treated as standing still.
 const LOOKAHEAD_MIN_SPEED: f64 = 1.0;
@@ -541,14 +601,13 @@ impl Motion {
     }
 
     /// Whether the step from `q` to `p` taken in `dt` is a jump: longer than
-    /// [`JUMP_MIN_STEP`] and faster than [`MAX_TRACKED_SPEED`] (with `dt` at most
-    /// [`JUMP_MAX_GAP`]). Relative to the time, so a long frame of a fast flight is not a
-    /// jump.
+    /// [`JUMP_MIN_STEP`] and faster than [`MAX_TRACKED_SPEED`]. Relative to the time
+    /// however long it was, so a long frame (a stall, a loading pause) of a fast flight is
+    /// not a jump (ARCHITECTURE §9.2).
     fn is_jump(dt: Duration, q: [f64; 2], p: [f64; 2]) -> bool {
         let step = (p[0] - q[0]).hypot(p[1] - q[1]);
-        let gap = dt.min(JUMP_MAX_GAP).as_secs_f64();
         // A step that is not finite cannot come from a valid focus; treat it as a jump.
-        !step.is_finite() || (step > JUMP_MIN_STEP && step > MAX_TRACKED_SPEED * gap)
+        !step.is_finite() || (step > JUMP_MIN_STEP && step > MAX_TRACKED_SPEED * dt.as_secs_f64())
     }
 }
 
@@ -686,6 +745,11 @@ pub struct FrameReport {
     pub deferred: usize,
     /// Of those, landblocks waiting to retry after a transient failure.
     pub waiting_retry: usize,
+    /// Of [`FrameReport::deferred`], landblocks this update admitted that have no request
+    /// yet: waiting to retry after a transient failure, or whose request ended without a
+    /// bundle during the update. A later update requests them; [`WorldStreamer::settle`]
+    /// waits for them.
+    pub pending: usize,
     /// Near-ring landblocks not resident yet (holes the camera might see).
     pub near_missing: usize,
     /// Landblocks desired ahead of the rings, on the focus's path (module docs,
@@ -877,14 +941,14 @@ pub struct WorldStreamer {
     /// Desired landblocks nearest first, valid for `order_focus`.
     order: Vec<(f64, LandblockKey)>,
     order_focus: Option<[f64; 2]>,
-    /// Water of the resident bundles.
-    water: WaterMap,
+    /// The lookup indexes over the resident bundles of ring members.
+    lookups: Lookups,
     frill_ring: FrillRing,
     frills: HashMap<FrillSectorKey, FrillState>,
     frill_bytes: usize,
-    /// Region-frame bounds (min, max) of the cells of resident landblocks that have
-    /// placed cells, grown by the lookup's broad-phase margin.
-    cell_bounds: HashMap<LandblockKey, ([f64; 3], [f64; 3])>,
+    /// Sectors generated and their bytes, for the size estimate of a sector job not yet
+    /// finished ([`WorldStreamer::update_frills`]).
+    frill_sizes: (u64, u128),
     /// The focus positions behind the velocity estimate.
     motion: Motion,
     /// The focus velocity of the last update (units per second), when known.
@@ -893,22 +957,78 @@ pub struct WorldStreamer {
     slow_jobs: SlowJobs,
 }
 
-/// Adds the water and cell bounds of a bundle that became resident to the lookups.
-fn track_resident(
-    water: &mut WaterMap,
-    cell_bounds: &mut HashMap<LandblockKey, ([f64; 3], [f64; 3])>,
-    b: &Arc<LandblockBundle>,
-) {
-    if let Some(w) = &b.water {
-        water.insert(Arc::clone(w));
+/// Region-frame bounds (min, max).
+type Bounds = ([f64; 3], [f64; 3]);
+
+/// The indexes the lookups use over the resident bundles of ring members (ARCHITECTURE
+/// §9.2, "Lookups": over what is resident; bundles loaded ahead of the rings are not, and
+/// join when their landblock enters the rings): their water, the bounds of their placed
+/// cells (cells are not confined to their landblock's square) and the bounds of their Light
+/// entities (interior lights of such cells lie far outside it too).
+#[derive(Debug, Default)]
+struct Lookups {
+    water: WaterMap,
+    /// Region-frame bounds of the placed cells of each landblock that has some, grown by
+    /// the lookup's broad-phase margin.
+    cell_bounds: HashMap<LandblockKey, Bounds>,
+    /// Region-frame bounds of the Light entities of each landblock that has some.
+    light_bounds: HashMap<LandblockKey, Bounds>,
+}
+
+impl Lookups {
+    /// Adds a bundle that became resident as a ring member.
+    fn insert(&mut self, b: &Arc<LandblockBundle>) {
+        if let Some(w) = &b.water {
+            self.water.insert(Arc::clone(w));
+        }
+        if let Some(bounds) = region_cell_bounds(b) {
+            self.cell_bounds.insert(b.key, bounds);
+        }
+        if let Some(bounds) = region_light_bounds(b) {
+            self.light_bounds.insert(b.key, bounds);
+        }
     }
-    if let Some(bounds) = region_cell_bounds(b) {
-        cell_bounds.insert(b.key, bounds);
+
+    /// Removes landblock `key` (released, evicted, or never added: idempotent).
+    fn remove(&mut self, key: LandblockKey) {
+        self.water.remove(key);
+        self.cell_bounds.remove(&key);
+        self.light_bounds.remove(&key);
     }
 }
 
+/// The region-frame bounds of `b`'s Light entities.
+fn region_light_bounds(b: &LandblockBundle) -> Option<Bounds> {
+    let o = b.key.origin();
+    let o = [o[0], o[1], 0.0];
+    b.lights.iter().fold(None, |acc: Option<Bounds>, l| {
+        let p: [f64; 3] = std::array::from_fn(|i| o[i] + f64::from(l.position[i]));
+        if !p.iter().all(|c| c.is_finite()) {
+            return acc;
+        }
+        Some(match acc {
+            None => (p, p),
+            Some((lo, hi)) => (
+                std::array::from_fn(|i| lo[i].min(p[i])),
+                std::array::from_fn(|i| hi[i].max(p[i])),
+            ),
+        })
+    })
+}
+
+/// The distance from `p` to the box `b` (0 inside).
+fn box_distance(b: &Bounds, p: [f64; 3]) -> f64 {
+    (0..3)
+        .map(|i| {
+            let d = (b.0[i] - p[i]).max(p[i] - b.1[i]).max(0.0);
+            d * d
+        })
+        .sum::<f64>()
+        .sqrt()
+}
+
 /// The region-frame bounds of `b`'s placed cells, grown by [`CELL_BROAD_PHASE_HALF`].
-fn region_cell_bounds(b: &LandblockBundle) -> Option<([f64; 3], [f64; 3])> {
+fn region_cell_bounds(b: &LandblockBundle) -> Option<Bounds> {
     let bb = b.collision.as_ref()?.cell_bounds?;
     let o = b.key.origin();
     let o = [o[0], o[1], 0.0];
@@ -953,7 +1073,7 @@ impl WorldStreamer {
             BundleDecoder::new(Arc::clone(&ctx)),
             StoreConfig {
                 cache_budget: config.cache_budget,
-                max_completions: 4_096,
+                max_completions: STORE_MAX_COMPLETIONS,
                 max_completion_bytes: config.residency_budget.max(64 << 20),
                 ..StoreConfig::default()
             },
@@ -972,11 +1092,11 @@ impl WorldStreamer {
             stats: StreamStats::default(),
             order: Vec::new(),
             order_focus: None,
-            water: WaterMap::new(),
+            lookups: Lookups::default(),
             frill_ring,
             frills: HashMap::new(),
             frill_bytes: 0,
-            cell_bounds: HashMap::new(),
+            frill_sizes: (0, 0),
             motion: Motion::default(),
             velocity: None,
             slow_jobs: SlowJobs::default(),
@@ -1178,8 +1298,12 @@ impl WorldStreamer {
         }
         for e in &diff.entered {
             match self.slots.get_mut(&e.key) {
-                // Loaded ahead of its ring: it keeps its request or bundle.
+                // Loaded ahead of its ring: it keeps its request or bundle, which now joins
+                // the lookups.
                 Some(slot) => {
+                    if let (true, SlotState::Ready(b)) = (slot.ahead, &slot.state) {
+                        self.lookups.insert(b);
+                    }
                     slot.ahead = false;
                     slot.ring = e.ring;
                     slot.distance = e.distance;
@@ -1209,7 +1333,9 @@ impl WorldStreamer {
             self.order_focus = Some(g);
         }
 
-        self.admit(&order, &mut report);
+        // One clock reading for the update: admission and the summary agree on which
+        // retries are still waiting.
+        self.admit(&order, &mut report, t0);
         self.poll_jobs();
         self.integrate(&order, &mut report);
         self.order = order;
@@ -1229,16 +1355,17 @@ impl WorldStreamer {
         let rings = self.config.rings;
         let p = focus.xy();
         let horizon = self.horizon_at(now);
-        let early = self.config.lookahead_early.max(horizon);
+        // The whole path covers the configured time (ARCHITECTURE §9.2: the next 4 s); slow
+        // jobs lengthen only its urgent part, never the path.
+        let early = self.config.lookahead_early.max(self.config.lookahead);
         // The direction and the lengths of the urgent and the whole path.
         let path = self.velocity.filter(|_| !horizon.is_zero()).and_then(|v| {
             let speed = v[0].hypot(v[1]);
             if !speed.is_finite() || speed < LOOKAHEAD_MIN_SPEED {
                 return None;
             }
-            let max = self.config.lookahead_max;
-            let urgent = (speed * horizon.as_secs_f64()).min(max);
-            let whole = (speed * early.as_secs_f64()).min(max);
+            let whole = (speed * early.as_secs_f64()).min(self.config.lookahead_max);
+            let urgent = (speed * horizon.as_secs_f64()).min(whole);
             let end = |len: f64| [p[0] + v[0] / speed * len, p[1] + v[1] / speed * len];
             (whole > 0.0).then(|| (end(urgent), end(whole)))
         });
@@ -1300,15 +1427,18 @@ impl WorldStreamer {
         changed
     }
 
-    /// Fills the summary counts of `report` and the statistics.
+    /// Fills the summary counts of `report` and the statistics. `t0` is the update's clock
+    /// reading, the one admission used.
     fn finish(&mut self, t0: Instant, report: &mut FrameReport) {
-        let now = Instant::now();
         for slot in self.slots.values() {
             match &slot.state {
                 SlotState::Deferred => {
                     report.deferred += 1;
-                    if slot.retry_after.is_some_and(|t| t > now) {
+                    if slot.retry_after.is_some_and(|t| t > t0) {
                         report.waiting_retry += 1;
+                    }
+                    if slot.admit {
+                        report.pending += 1;
                     }
                 }
                 SlotState::Requested(_) => report.loading += 1,
@@ -1370,16 +1500,15 @@ impl WorldStreamer {
             }
             SlotState::Ready(b) => {
                 self.resident_bytes = self.resident_bytes.saturating_sub(b.heap_bytes);
-                self.water.remove(b.key);
-                self.cell_bounds.remove(&b.key);
+                self.lookups.remove(b.key);
             }
             SlotState::Deferred | SlotState::Failed(_) => {}
         }
     }
 
     /// Admission (module docs, step 3): decides the admitted set nearest first, then
-    /// requests, cancels and evicts.
-    fn admit(&mut self, order: &[(f64, LandblockKey)], report: &mut FrameReport) {
+    /// requests, cancels and evicts. `now` is the update's clock reading.
+    fn admit(&mut self, order: &[(f64, LandblockKey)], report: &mut FrameReport, now: Instant) {
         let estimate = self.size_estimate();
         let budget = self.config.residency_budget;
         let margin = budget / READMIT_MARGIN_DIVISOR;
@@ -1495,7 +1624,6 @@ impl WorldStreamer {
         }
 
         // Pass 2: apply.
-        let now = Instant::now();
         for &(_, key) in order {
             let Some(slot) = self.slots.get_mut(&key) else {
                 continue;
@@ -1525,8 +1653,7 @@ impl WorldStreamer {
                 SlotState::Ready(b) => {
                     slot.known_size = Some(b.heap_bytes);
                     self.resident_bytes = self.resident_bytes.saturating_sub(b.heap_bytes);
-                    self.water.remove(b.key);
-                    self.cell_bounds.remove(&b.key);
+                    self.lookups.remove(b.key);
                     report.evicted += 1;
                     self.stats.evicted += 1;
                 }
@@ -1579,7 +1706,10 @@ impl WorldStreamer {
             match h.state() {
                 AssetState::Ready(b) => {
                     self.resident_bytes = self.resident_bytes.saturating_add(b.heap_bytes);
-                    track_resident(&mut self.water, &mut self.cell_bounds, &b);
+                    if !slot.ahead {
+                        // Ahead of the rings, it joins the lookups when it enters them.
+                        self.lookups.insert(&b);
+                    }
                     if !b.is_complete() {
                         // Not the data's result: forget it (cache, weak reference), so the
                         // next load of this landblock builds it again.
@@ -1619,10 +1749,7 @@ impl WorldStreamer {
                         // so forget this one first.
                         self.store.invalidate(key.data_did().0);
                         slot.retries = slot.retries.saturating_add(1);
-                        let delay = RETRY_BASE
-                            .saturating_mul(1u32 << slot.retries.min(16))
-                            .min(RETRY_MAX);
-                        slot.retry_after = Some(Instant::now() + delay);
+                        slot.retry_after = Some(Instant::now() + retry_delay(slot.retries));
                         slot.state = SlotState::Deferred;
                         report.retried += 1;
                         self.stats.retried += 1;
@@ -1651,7 +1778,7 @@ impl WorldStreamer {
             self.release(old.state, &mut report);
         }
         self.resident_bytes = self.resident_bytes.saturating_add(b.heap_bytes);
-        track_resident(&mut self.water, &mut self.cell_bounds, &b);
+        self.lookups.insert(&b);
         let mut slot = Slot::new(Ring::Near, 0.0);
         slot.known_size = Some(b.heap_bytes);
         slot.state = SlotState::Ready(Arc::clone(&b));
@@ -1670,8 +1797,7 @@ impl WorldStreamer {
         self.focus = None;
         self.order.clear();
         self.order_focus = None;
-        self.water = WaterMap::new();
-        self.cell_bounds.clear();
+        self.lookups = Lookups::default();
         self.motion.clear();
         self.velocity = None;
         self.clear_frills();
@@ -1679,8 +1805,11 @@ impl WorldStreamer {
 
     /// Repeats [`WorldStreamer::update_with_velocity`] at `focus` with zero velocity (so
     /// nothing is loaded ahead, module docs "Lookahead") until an update changes nothing
-    /// (nothing loading or waiting to retry, nothing requested, integrated or evicted) or
-    /// `timeout` passes (loading screens, tools, tests). Returns whether it settled.
+    /// (nothing loading, no admitted landblock without a request ([`FrameReport::pending`]),
+    /// nothing requested, integrated or evicted) or `timeout` passes (loading screens,
+    /// tools, tests). Returns whether it settled: then every admitted landblock is resident
+    /// or failed, so the near ring (always admitted by default) has no landblock loading,
+    /// deferred or missing (`walker.md` §7).
     /// A timeout too large for an [`Instant`] (such as `Duration::MAX`) means no deadline.
     pub fn settle(&mut self, focus: WorldPos, timeout: Duration) -> bool {
         let deadline = Instant::now().checked_add(timeout);
@@ -1688,6 +1817,7 @@ impl WorldStreamer {
             // The focus stands still: nothing is loaded ahead.
             let r = self.update_with_velocity(focus, [0.0; 2]);
             if r.loading == 0
+                && r.pending == 0
                 && r.waiting_retry == 0
                 && r.requested == 0
                 && r.integrated == 0
@@ -1702,7 +1832,10 @@ impl WorldStreamer {
         }
     }
 
-    /// The state of a desired landblock; `None` when it is not desired.
+    /// The state of a desired landblock; `None` when it is not desired. A landblock loaded
+    /// ahead of the rings ([`WorldStreamer::is_ahead`]) reports [`BlockState::Ready`] once
+    /// its bundle is built, but [`WorldStreamer::bundle`] and the lookups see it only when
+    /// it enters the rings.
     #[must_use]
     pub fn state_of(&self, key: LandblockKey) -> Option<BlockState> {
         self.slots.get(&key).map(|s| match &s.state {
@@ -1720,11 +1853,14 @@ impl WorldStreamer {
         self.slots.get(&key).map(|s| s.ring)
     }
 
-    /// A resident bundle.
+    /// A resident bundle of a ring member. Bundles loaded ahead of the rings are not
+    /// resident (ARCHITECTURE §9.2) until their landblock enters the rings: like every
+    /// lookup of this type, this one does not see them ([`WorldStreamer::state_of`] does).
     #[must_use]
     pub fn bundle(&self, key: LandblockKey) -> Option<&Arc<LandblockBundle>> {
-        match &self.slots.get(&key)?.state {
-            SlotState::Ready(b) => Some(b),
+        let slot = self.slots.get(&key)?;
+        match &slot.state {
+            SlotState::Ready(b) if !slot.ahead => Some(b),
             _ => None,
         }
     }
@@ -1754,8 +1890,8 @@ impl WorldStreamer {
     /// Bundles loaded ahead of the rings (module docs, "Lookahead") are left out until
     /// their landblock enters the rings: they lie beyond the far radius, so consumers that
     /// draw, upload or populate what is resident would only add and drop them again on a
-    /// turn. [`WorldStreamer::bundle`] and the lookups still see them;
-    /// [`WorldStreamer::is_ahead`] tells them apart.
+    /// turn. [`WorldStreamer::bundle`] and the lookups leave them out too (ARCHITECTURE
+    /// §9.2); [`WorldStreamer::state_of`] and [`WorldStreamer::is_ahead`] report them.
     pub fn resident(&self) -> impl Iterator<Item = (LandblockKey, Ring, &Arc<LandblockBundle>)> {
         self.slots.iter().filter_map(|(k, s)| match &s.state {
             SlotState::Ready(b) if !s.ahead => Some((*k, s.ring, b)),
@@ -1832,7 +1968,7 @@ impl WorldStreamer {
     /// The water of the resident landblocks.
     #[must_use]
     pub fn water_map(&self) -> &WaterMap {
-        &self.water
+        &self.lookups.water
     }
 
     /// The water at `pos` (`water.md` §6.3, §7): the top of the liquid column through it,
@@ -1840,21 +1976,21 @@ impl WorldStreamer {
     /// not in liquid or its landblock is not resident.
     #[must_use]
     pub fn water_at(&self, pos: &WorldPos) -> Option<WaterSample> {
-        self.water.water_at(pos)
+        self.lookups.water.water_at(pos)
     }
 
     /// The client's "is this position under water" (`water.md` §6.3, §10) over what is
     /// resident.
     #[must_use]
     pub fn is_under_water(&self, pos: &WorldPos) -> bool {
-        self.water.is_under_water(pos)
+        self.lookups.water.is_under_water(pos)
     }
 
     /// The landblock water (`water.md` §6.2) at `pos`, when its landblock is resident and
     /// wet.
     #[must_use]
     pub fn landblock_water(&self, pos: &WorldPos) -> Option<LandblockWater> {
-        self.water.landblock_water(pos)
+        self.lookups.water.landblock_water(pos)
     }
 
     /// The sky library (sky description, game time, day descriptions), when loaded.
@@ -1884,42 +2020,40 @@ impl WorldStreamer {
 
     /// The Light entities of resident landblocks (`lighting.md` §8.3) whose position lies
     /// within `radius` units of `pos` (3-D distance), nearest first (ties by landblock and
-    /// entity index). Landblocks within ⌈`radius` / 160⌉ + 1 of `pos`'s (at most 8) are
-    /// searched.
+    /// entity index). Every resident landblock of `pos`'s region whose Light entities can
+    /// lie that close is searched, wherever it lies: interior lights of cells placed far
+    /// from their owner landblock (`walker.md` §13.3, row W-C1) are found too.
     #[must_use]
     pub fn lights_near(&self, pos: &WorldPos, radius: f64) -> Vec<NearbyLight<'_>> {
-        let (Some(centre), true) = (pos.landblock(), pos.is_finite() && radius >= 0.0) else {
+        if !(pos.is_finite() && radius >= 0.0) {
             return Vec::new();
-        };
-        #[allow(clippy::cast_possible_truncation)]
-        let n = ((radius / LANDBLOCK_SIZE).ceil().min(7.0) as i32) + 1;
+        }
+        let at = [pos.x, pos.y, pos.z];
         let mut out: Vec<(f64, NearbyLight<'_>)> = Vec::new();
-        for dy in -n..=n {
-            for dx in -n..=n {
-                let Some(key) = centre.offset(dx, dy) else {
-                    continue;
-                };
-                let Some(b) = self.bundle(key) else { continue };
-                let o = key.origin();
-                for light in &b.lights {
-                    let p = WorldPos::new(
-                        pos.region,
-                        o[0] + f64::from(light.position[0]),
-                        o[1] + f64::from(light.position[1]),
-                        f64::from(light.position[2]),
-                    );
-                    let d = ((p.x - pos.x).powi(2) + (p.y - pos.y).powi(2) + (p.z - pos.z).powi(2))
-                        .sqrt();
-                    if d <= radius {
-                        out.push((
-                            d,
-                            NearbyLight {
-                                key,
-                                position: p,
-                                light,
-                            },
-                        ));
-                    }
+        for (&key, bounds) in &self.lookups.light_bounds {
+            if key.region() != pos.region || box_distance(bounds, at) > radius {
+                continue;
+            }
+            let Some(b) = self.bundle(key) else { continue };
+            let o = key.origin();
+            for light in &b.lights {
+                let p = WorldPos::new(
+                    pos.region,
+                    o[0] + f64::from(light.position[0]),
+                    o[1] + f64::from(light.position[1]),
+                    f64::from(light.position[2]),
+                );
+                let d =
+                    ((p.x - pos.x).powi(2) + (p.y - pos.y).powi(2) + (p.z - pos.z).powi(2)).sqrt();
+                if d <= radius {
+                    out.push((
+                        d,
+                        NearbyLight {
+                            key,
+                            position: p,
+                            light,
+                        },
+                    ));
                 }
             }
         }
@@ -2025,6 +2159,7 @@ impl WorldStreamer {
             o[1] + f64::from(r + 1) * side,
         ];
         let mut extra: Vec<LandblockKey> = self
+            .lookups
             .cell_bounds
             .iter()
             .filter(|(k, (bmin, bmax))| {
@@ -2063,6 +2198,7 @@ impl WorldStreamer {
         let own = pos.landblock();
         let p = [pos.x, pos.y, pos.z];
         let mut candidates: Vec<(bool, u32, LandblockKey)> = self
+            .lookups
             .cell_bounds
             .iter()
             .filter(|(k, (bmin, bmax))| {
@@ -2167,6 +2303,8 @@ impl WorldStreamer {
                 (Some(sector), _) => {
                     let bytes = sector_bytes(&sector);
                     self.frill_bytes = self.frill_bytes.saturating_add(bytes);
+                    self.frill_sizes.0 += 1;
+                    self.frill_sizes.1 += bytes as u128;
                     *st = FrillState::Ready(Arc::new(sector), bytes);
                     report.finished += 1;
                     self.stats.frill_sectors += 1;
@@ -2181,7 +2319,19 @@ impl WorldStreamer {
             }
         }
 
-        // Start waiting sectors nearest first.
+        // Start waiting sectors nearest first, within the byte budget: the bytes held plus
+        // the expected bytes of the jobs running and of the one to start (the mean of the
+        // sectors generated so far) must fit, so jobs started in one frame cannot all land
+        // over the budget. Before any sector has been generated one job runs at a time.
+        let mut running = self
+            .frills
+            .values()
+            .filter(|st| matches!(st, FrillState::Running(..)))
+            .count();
+        let (generated, generated_bytes) = self.frill_sizes;
+        let expected = (generated > 0).then(|| {
+            usize::try_from(generated_bytes / u128::from(generated)).unwrap_or(usize::MAX)
+        });
         if let Some(c) = self.frill_ring.centre() {
             let dist2 = |k: &FrillSectorKey| {
                 let dx = i64::from(k.gx) - i64::from(c.gx);
@@ -2196,9 +2346,15 @@ impl WorldStreamer {
                 .collect();
             waiting.sort_unstable();
             for (_, k) in waiting {
-                if report.started >= self.config.max_frill_jobs_per_frame
-                    || self.frill_bytes >= self.config.frill_budget
-                {
+                let fits = match expected {
+                    Some(e) => {
+                        self.frill_bytes
+                            .saturating_add(e.saturating_mul(running.saturating_add(1)))
+                            <= self.config.frill_budget
+                    }
+                    None => running == 0 && self.frill_bytes < self.config.frill_budget,
+                };
+                if report.started >= self.config.max_frill_jobs_per_frame || !fits {
                     break;
                 }
                 let Some(bundle) = k.landblock().and_then(|lb| self.bundle(lb)) else {
@@ -2241,6 +2397,7 @@ impl WorldStreamer {
                     match spawned {
                         Ok(h) => {
                             report.started += 1;
+                            running += 1;
                             FrillState::Running(h, cell)
                         }
                         Err(e) => {

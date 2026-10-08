@@ -4,7 +4,8 @@
 //!
 //! [`resolve_object_collision`] follows the chain 0x47 → (0x47)* → 0x1F → (0x1F)* → 0x04
 //! with [`tessera_formats::resolve_setup`] (hop limit and cycle detection included), reads
-//! the §9.1 properties from every 0x47 level (first value found wins), and reads the
+//! the §9.1 properties, `Entity_ContentLayers` and `Physics_AdjustableScale` from every
+//! 0x47 level (first value found wins; [`CollisionFlags`], [`EntityLookups`]), and reads the
 //! setup's 0x66 collision mesh. A level's own properties are its 0x78 extra sets in list
 //! order, each later set overriding the earlier ones, with its embedded set on top
 //! (`scenery.md` §9.2 rule 1, BIN). Records are decoded as they are fetched and their bytes
@@ -20,7 +21,7 @@ use tessera_formats::collision::CollisionMesh;
 use tessera_formats::setup::{ENTITY_PREFIX, MAX_CHAIN_HOPS};
 use tessera_formats::{Did, EntityDescriptor, PropertySchema, PropertySetRecord, resolve_setup};
 
-use super::flags::{CollisionFlags, PhysicsPids, SetupCollision};
+use super::flags::{CollisionFlags, EntityLookups, PhysicsPids, SetupCollision};
 use super::shape::ShapeTemplate;
 use crate::error::PhysicsError;
 
@@ -52,6 +53,10 @@ pub struct ObjectCollision {
     /// §9.1 properties layered along the 0x47 chain, extra sets included (no SED-level
     /// values).
     pub flags: CollisionFlags,
+    /// `Entity_ContentLayers` and `Physics_AdjustableScale` layered along the 0x47 chain,
+    /// extra sets included (no SED-level values; `collision.md` §9.3, the paragraph after
+    /// item 3).
+    pub lookups: EntityLookups,
     /// What collision the setup has.
     pub collision: SetupCollision,
     /// The shape in the setup frame (`None` without collision, or when the 0x66 mesh could
@@ -76,6 +81,7 @@ impl ObjectCollision {
         };
         std::mem::size_of::<Self>()
             + 4 * self.chain.capacity()
+            + self.lookups.heap_size()
             + error
             + self.template.as_ref().map_or(0, |t| t.heap_size())
     }
@@ -117,9 +123,10 @@ pub fn resolve_object_collision<S: PropertySchema + ?Sized>(
     };
     let mut first_error: Option<PhysicsError> = None;
     let mut flags = CollisionFlags::default();
+    let mut lookups = EntityLookups::default();
     let mut levels = 0usize;
     // Extra sets already read in this resolution.
-    let mut extra_seen: HashMap<Did, CollisionFlags> = HashMap::new();
+    let mut extra_seen: HashMap<Did, (CollisionFlags, EntityLookups)> = HashMap::new();
     let chain = resolve_setup(object, |did: Did| {
         let r = fetch(did)?;
         if let Some(rec) = &r
@@ -131,22 +138,27 @@ pub fn resolve_object_collision<S: PropertySchema + ?Sized>(
             match EntityDescriptor::parse_expecting(&rec.bytes, did, schema) {
                 Ok(d) => {
                     let mut own = CollisionFlags::from_set(&d.properties, pids);
+                    let mut own_lookups = EntityLookups::from_set(&d.properties, pids);
                     // Later extra sets override earlier ones; the embedded set wins.
                     for &set in d.extra_sets.iter().rev() {
-                        if let Some(f) = extra_seen.get(&set) {
+                        if let Some((f, l)) = extra_seen.get(&set) {
                             own = own.or(*f);
+                            own_lookups = own_lookups.or(l.clone());
                             continue;
                         }
-                        let f = match fetch(set) {
+                        let (f, l) = match fetch(set) {
                             Ok(Some(x)) => {
                                 match PropertySetRecord::parse_expecting(&x.bytes, set, schema) {
-                                    Ok(rec) => CollisionFlags::from_set(&rec.set, pids),
+                                    Ok(rec) => (
+                                        CollisionFlags::from_set(&rec.set, pids),
+                                        EntityLookups::from_set(&rec.set, pids),
+                                    ),
                                     Err(e) => {
                                         note(
                                             &mut first_error,
                                             record_error(set, "extra property set", e),
                                         );
-                                        CollisionFlags::default()
+                                        Default::default()
                                     }
                                 }
                             }
@@ -155,17 +167,19 @@ pub fn resolve_object_collision<S: PropertySchema + ?Sized>(
                                     &mut first_error,
                                     record_error(set, "extra property set", "missing"),
                                 );
-                                CollisionFlags::default()
+                                Default::default()
                             }
                             Err(e) => {
                                 note(&mut first_error, record_error(set, "extra property set", e));
-                                CollisionFlags::default()
+                                Default::default()
                             }
                         };
-                        extra_seen.insert(set, f);
                         own = own.or(f);
+                        own_lookups = own_lookups.or(l.clone());
+                        extra_seen.insert(set, (f, l));
                     }
                     flags = flags.or(own);
+                    lookups = std::mem::take(&mut lookups).or(own_lookups);
                 }
                 Err(e) => note(&mut first_error, record_error(did, "object properties", e)),
             }
@@ -173,6 +187,7 @@ pub fn resolve_object_collision<S: PropertySchema + ?Sized>(
         Ok::<_, String>(r)
     });
     out.flags = flags;
+    out.lookups = lookups;
     let chain = match chain {
         Ok(c) => c,
         Err(e) => {

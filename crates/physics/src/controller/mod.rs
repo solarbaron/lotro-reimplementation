@@ -47,9 +47,8 @@ pub use state::{MovementState, Support, WaterDepth};
 pub use step::{
     Controller, ControllerConfig, FLOAT_TOLERANCE, MAX_DEPENETRATION, MAX_SLIDE_ITERATIONS,
     MAX_STEP_DISPLACEMENT, MAX_STEPS_PER_FRAME, MIN_SINK_ACCELERATION, MoveInput, MoverState,
-    SCRATCH_KEEP, SNAP_DISTANCE, STEP_OVER_FRACTION, STEP_SECONDS, STEP_UP_MIN_RISE,
-    STEPS_PER_SECOND, SUPPORT_MARGIN, StepEnv, StepOutcome, StepReport, WaterContact,
+    PROPORTION_SLACK, SCRATCH_KEEP, SNAP_DISTANCE, STEP_OVER_FRACTION, STEP_SECONDS,
+    STEP_UP_MIN_RISE, STEPS_PER_SECOND, SUPPORT_MARGIN, StepEnv, StepOutcome, StepReport,
+    WaterContact,
 };
-pub use water::{
-    LiquidWater, MAX_COLUMN_BOXES, NoWater, SURFACE_SEARCH_RANGE, WaterQuery, WaterSample,
-};
+pub use water::{LIQUID_JOIN_TOLERANCE, LiquidWater, NoWater, WaterQuery, WaterSample};

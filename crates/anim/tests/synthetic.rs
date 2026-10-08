@@ -30,10 +30,23 @@ fn skeleton_round_trip_through_setup_record() {
         assert_eq!(s.name(i), Some(format!("rig_bone{i}").as_bytes()));
     }
     assert_eq!(s.find_bone(b"rig_bone7"), Some(7));
-    // B_b · B_b⁻¹ = I for every bone.
-    for (m, inv) in s.reference_model().iter().zip(s.inverse_bind()) {
-        assert!((*m * *inv).abs_diff_eq(Mat4::IDENTITY, 1e-4));
+    // B_b · B_b⁻¹ = I for every bone whose reference model scale is 1; the others have the
+    // inverse reference triple of §5.4 (K26), which is not the exact inverse.
+    let mut scaled = 0;
+    for ((m, inv), r) in s
+        .reference_model()
+        .iter()
+        .zip(s.inverse_bind())
+        .zip(s.reference_triples())
+    {
+        if r.scale.iter().all(|v| (v - 1.0).abs() < 1e-6) {
+            assert!((*m * *inv).abs_diff_eq(Mat4::IDENTITY, 1e-4));
+        } else {
+            scaled += 1;
+            assert!(!(*m * *inv).abs_diff_eq(Mat4::IDENTITY, 1e-4));
+        }
     }
+    assert!(scaled > 0, "the tree has scaled reference bones");
     // Model transforms follow the triple rule of §5.4, built here independently.
     for i in 0..40 {
         let expect = independent_model(&s, s.reference_local(), i);
@@ -47,6 +60,17 @@ fn skeleton_round_trip_through_setup_record() {
 fn independent_model(s: &Skeleton, local: &[Transform], b: usize) -> Mat4 {
     let (t, r, sc) = independent_triple(s, local, b);
     Mat4::from_translation(t) * r * Mat4::from_scale(sc)
+}
+
+/// The skinned position of bind-space vertex `v` on bone `b` for pose `local` by the rule of
+/// `skeleton-anim.md` §5.4 (K26), from independently built triples:
+/// t − R (s ⊙ (R_rᵀ t_r)) + R R_rᵀ ((s ⊙ 1/s_r) ⊙ v).
+fn independent_skin(s: &Skeleton, local: &[Transform], b: usize, v: Vec3) -> Vec3 {
+    let (t, r, sc) = independent_triple(s, local, b);
+    let (tr, rr, sr) = independent_triple(s, s.reference_local(), b);
+    let rr_inv = rr.transpose();
+    t - r.transform_vector3(sc * rr_inv.transform_vector3(tr))
+        + (r * rr_inv).transform_vector3(sc / sr * v)
 }
 
 fn independent_triple(s: &Skeleton, local: &[Transform], b: usize) -> (Vec3, Mat4, Vec3) {
@@ -184,18 +208,27 @@ fn reference_pose_reproduces_bind_pose() {
     for (a, b) in model.iter().zip(s.reference_model()) {
         assert!(a.abs_diff_eq(*b, 2e-4));
     }
+    let mut triples = vec![Transform::IDENTITY; 30];
+    s.compose_triples(&local, &mut triples).unwrap();
     let mut skin = vec![Mat4::IDENTITY; 30];
-    skinning_matrices(&s, &model, &mut skin).unwrap();
-    for m in &skin {
-        assert!(m.abs_diff_eq(Mat4::IDENTITY, 2e-4), "{m}");
+    skinning_matrices(&s, &triples, &mut skin).unwrap();
+    for (m, r) in skin.iter().zip(s.reference_triples()) {
+        if r.scale.iter().all(|v| (v - 1.0).abs() < 1e-6) {
+            assert!(m.abs_diff_eq(Mat4::IDENTITY, 2e-4), "{m}");
+        }
     }
-    // Skinning stored vertices at the reference pose leaves them in place (§4.4).
+    // Skinning stored vertices at the reference pose leaves them in place (§4.4) on bones
+    // whose reference model scale is 1, and moves them by the client's offset
+    // t_r − q_r (s_r ⊙ (q_r⁻¹ t_r)) on the others (§5.4, K26).
+    let reference = s.reference_local().to_vec();
     for i in 0..50 {
         let v = Vec3::new((i as f32).sin(), (i as f32 * 0.7).cos(), 0.02 * i as f32);
         let j = [(i % 30) as u8, ((i * 7) % 30) as u8, 0, 0];
         let w = [0.6, 0.4, 0.0, 0.0];
         let p = skin_position(&skin, &j, &w, v);
-        assert!(p.abs_diff_eq(v, 5e-4));
+        let expect = independent_skin(&s, &reference, usize::from(j[0]), v) * w[0]
+            + independent_skin(&s, &reference, usize::from(j[1]), v) * w[1];
+        assert!(p.abs_diff_eq(expect, 5e-4), "{i}: {p} vs {expect}");
     }
 }
 
@@ -304,7 +337,7 @@ fn blending_weights() {
     );
     anim.advance(0.2);
     anim.snapshot(&mut snap);
-    assert!(snap[0].blends[0].is_none(), "fade finished");
+    assert_eq!(snap[0].clips().count(), 1, "fade finished");
     evaluate(&s, &snap, &mut scratch, &mut out).unwrap();
     assert!((out[3].translation[0] - 2.0).abs() < 1e-3);
 
@@ -497,9 +530,11 @@ fn palette_matches_cpu_skinned_reference() {
     let mut local = vec![Transform::IDENTITY; 64];
     c.sample(0.37, &mut local).unwrap();
     let mut model = vec![Mat4::IDENTITY; 64];
-    s.compose(&local, &mut model).unwrap();
+    let mut triples = vec![Transform::IDENTITY; 64];
+    s.compose_with_triples(&local, &mut model, &mut triples)
+        .unwrap();
     let mut skin = vec![Mat4::IDENTITY; 64];
-    skinning_matrices(&s, &model, &mut skin).unwrap();
+    skinning_matrices(&s, &triples, &mut skin).unwrap();
     let mut palette = vec![[0.0f32; 16]; PALETTE_CAPACITY];
     write_palette_mat4(&skin, &mut palette).unwrap();
     for i in 0..400u32 {
@@ -521,13 +556,11 @@ fn palette_matches_cpu_skinned_reference() {
             let m = Mat4::from_cols_array(&palette[usize::from(joints[k])]);
             gpu += m * v.extend(1.0) * w[k];
         }
-        // The CPU reference: Σ w · W_b · B_b⁻¹ · v with W_b and B_b built independently.
+        // The CPU reference: Σ w · (the §5.4 skinning of v on bone b), from triples built
+        // independently.
         let mut cpu = Vec3::ZERO;
         for k in 0..4 {
-            let b = usize::from(joints[k]);
-            let wb = independent_model(&s, &local, b);
-            let bb = independent_model(&s, s.reference_local(), b);
-            cpu += (wb * bb.inverse()).transform_point3(v) * w[k];
+            cpu += independent_skin(&s, &local, usize::from(joints[k]), v) * w[k];
         }
         assert!(gpu.truncate().abs_diff_eq(cpu, 1e-3), "{i}: {gpu} vs {cpu}");
         let lib = skin_position(&skin, &joints, &w, v);

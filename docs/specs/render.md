@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | §1–§2: **M2 design** (meshes, materials and shared buffers), §2.4 **M4 skinning**, implemented. §4: **M4.5 lit pipelines, shared frame uniform and mip chains**, §5: **M4.5 render-world pipelines** (terrain layers, water, sky, instanced scenery and frills), implemented; §4–§5 and §7 **Accepted** (2026-10-07, re-review of the second revision passed) |
-| **Last updated** | 2026-10-07 (spec writer, dirty room: §3, §4.1, §4.3, §4.4, §4.6, §5.1–§5.5, §5.7 revised; new §7 client facts and provenance; §6 change log completed; second revision of §4.3, §5.5 and §7 after the re-review) |
+| **Status** | §1–§2: **M2 design** (meshes, materials and shared buffers), §2.4 **M4 skinning**, implemented. §4: **M4.5 lit pipelines, shared frame uniform and mip chains**, §5: **M4.5 render-world pipelines** (terrain layers, water, sky, instanced scenery and frills), implemented; §4–§5 and §7 **Accepted** (2026-10-07, re-review of the second revision passed), then **Revised** the same day for the two non-blocking notes of that review (wording of §4.4 and row R-D4, a sentence in the §5.3 fake-light row, new row R-E4; no behaviour changed); **Accepted** again (2026-10-07, re-review of the third revision passed); implementer OPENs added after that acceptance, re-review 2026-10-07: **changes requested**, now **Revised** |
+| **Last updated** | 2026-10-07 (spec writer, dirty room: §3, §4.1, §4.3, §4.4, §4.6, §5.1–§5.5, §5.7 revised; new §7 client facts and provenance; §6 change log completed; second revision of §4.3, §5.5 and §7 after the re-review; third, wording-only revision of §4.4, §5.3 and §7 after the acceptance) |
 | **Author role** | §1–§6: Clean-room implementer of `tessera-render`; §4–§5 revised 2026-10-07 by a spec writer (dirty room), who also wrote §7 |
 | **Reviewer** | §4–§5, §7: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
-| **Review record** | §4–§5: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision (§4–§5, §7): **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **passed, Accepted**. Details in the dirty-room review log (decision 0018). |
+| **Review record** | §4–§5: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision (§4–§5, §7): **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a third revision (Revised); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; 2026-10-07 re-review of the text with the implementer's conformance OPENs (Claude review session, spec-writer agent): **changes requested**. Details in the dirty-room review log (decision 0018). |
 
 The clean-room implementer of `tessera-render` wrote this file. It holds Tessera's own design
 decisions and the open questions that need spec facts. The client facts that §4–§5 rely on
@@ -373,6 +373,79 @@ renderer selects only for the draws it is given.
 > per-instance lists reach the GPU (instance data, a storage buffer, or splitting a batch
 > into groups that share a list) is Tessera's choice.
 
+> **OPEN (implementer, 2026-10-07, `tessera-render`, conformance fixes; for the spec
+> writer to fold into the rows above):**
+> (a) **Unattached lights (R-D1):** done. `LightSelector` now tests the only-parent switch
+> for every object other than the light's parent, with or without a parent, so an unattached
+> light with `Light_OnlyInfluenceParent` reaches nothing; a draw without an object handle
+> is never a parent. The "unattached lights" Decision row above can be retired.
+> (b) **Per-instance lights (R-D9):** done. With `LightSelection::Auto` each instance drawn
+> in colour gets its own selection against the box around the eight corners of the model's
+> box after the instance transform (Decision (b) of `lighting.md` §8.5), with the parent
+> switches by the new `Instance::light_object` (default `None`). The lists travel in the
+> instance data: the per-instance record grows from 80 to 96 bytes (one `vec4<u32>`: two
+> words of eight byte indices and the count), so §5.5's GPU-layout row should read 96 bytes;
+> the batch uniform's light fields are unused. `None` and `List` selections, and `Auto` in a
+> pass without usable point lights, are made once per batch (they cannot differ per
+> instance). Instances outside the view (shadow-only casters) carry no list. The "one list
+> per instance batch" Decision row above can be retired.
+> (c) **Number of directional table lights per draw:** `lighting.md` §5.6 and §8.2 give one
+> extra directional slot ("count 0 or 1"); the Decision (c) row above fixes only the
+> position. **Implementer choice (conservative):** `Auto` appends at most **one**
+> directional table light, the first in table order, after the point lights; `List` keeps
+> what the caller gives. Open for the spec: which directional light the client keeps when an
+> object's list holds more than one, and whether a pass without a main light lets a second
+> one take the directional light-0 slot.
+> (d) **Fog switch:** `LitSurface::fog` now acts only on unlit surfaces (§4.1 Unlit pass,
+> `lighting.md` §7 code 0x00); a lit surface is always fogged (`lighting.md` §2.1: the base
+> pass always contains distance fog). The `fog` entry in the `LitSurface` list above means
+> this.
+> (e) **Tangent frame of the lit and instanced pipelines:** the stored tangent is used as
+> given (normalised after the transform, no longer made orthogonal to the normal), per
+> `lighting.md` §5.2.4. `MeshData` has no binormal stream (§2.1), so **B** is the §2.1
+> convention w × cross(**N₀**, **T**), normalised, built per pixel from the interpolated
+> normal and tangent. Open for the spec: whether mesh records store a binormal that differs
+> from that cross product (then `MeshData` needs a binormal stream to follow §5.2.4 exactly).
+
+> **OPEN (implementer, 2026-10-07, `tessera-render`, second conformance round; for the
+> spec writer to fold into §4.1 and §4.3):**
+> (f) **Fixed blends (`material.md` §11.3, unlit records):** new
+> `AlphaMode::Fixed(FixedBlend { src, dst, op, depth_write })` with `BlendFactor` (ZERO,
+> ONE, SRCCOLOR, INVSRCCOLOR, SRCALPHA, INVSRCALPHA, DESTALPHA, INVDESTALPHA, DESTCOLOR,
+> INVDESTCOLOR; the caller maps the §7.6 codes) and `BlendOp` (ADD, SUBTRACT,
+> REVSUBTRACT, MIN, MAX), so the pairs DESTCOLOR / ONE, ZERO / SRCCOLOR, ONE / ONE and an
+> additive surface **with** depth write (`material.md` §7.6: the unlit SRCALPHA / ONE
+> shaders have depth write on) can be drawn. `Additive` stays, as the shorthand for
+> `Fixed(FixedBlend::ADDITIVE)` (SRCALPHA / ONE, ADD, no depth write); the "no depth write"
+> of the `Additive` row above is that shorthand's, not a rule for additive surfaces.
+> **Implementer choices (the spec is silent):** no alpha test; drawn with the blended
+> draws, sorted; no shadow; outside lit passes drawn as `Blend`; the target's alpha
+> channel is kept (alpha factors ZERO / ONE, as `Additive` always did); MIN and MAX ignore
+> the factors (ONE / ONE, as Direct3D); sky objects keep depth write off (§5.4 Depth).
+> **Decision (fog of fixed blends, extending the `Additive` Decision):** fog fades the
+> contribution toward what leaves the destination unchanged: destination factor ONE with
+> ADD or REVSUBTRACT, and MAX: colour × (1 − *f*); ZERO / SRCCOLOR and DESTCOLOR / ZERO with
+> ADD, and MIN: colour lerped toward white by *f*; every other blend lerps toward the fog
+> colour. Open for the spec: how the client fogs unlit effects of each blend pair
+> (`lighting.md` §7 code 0x00 says only whether the program reads the fog inputs).
+> (g) **Lights per draw without a main light:** the code now follows the Tessera Decision
+> of `lighting.md` §8.5 (implementer OPEN of 2026-10-06), which contradicts §4.1 "8
+> without": with no main light the default directional light holds the light-0 slot and
+> counts toward the 8, so a draw gets at most **7** table lights; a directional table light
+> with `LightReach::key_light` (a per-pixel candidate, §8.5 step 2) takes that slot
+> instead, and then the draw gets 8 (`Auto`: the first key directional light in table
+> order, after at most 7 point lights; `List`: the cap is 8 when the list holds one). With
+> a main light nothing changed (7). The §4.1 Light passes row ("8 without") and the
+> sentence of §4.3 above ("7 table lights when the pass has a sun") should be reworded.
+> (h) **Hostile light fields (§7 row R-E3):** `reference::light_record` and
+> `reference::selection_radius` (hence `LightReach::from_fields`) now sanitise by **one**
+> rule, Tessera's choice for input the spec does not cover: a non-finite field takes its
+> default of a new light (`lighting.md` §8.3: Range 25, Falloff 1.0, intensity 0.5, *σ* 1,
+> Diffuse and Specular white, a colour with any non-finite channel as a whole) and a
+> negative Falloff counts as 0. So ρ ≤ *R* always, and a light whose record contributes
+> nothing (Range ≤ 0) is never selected. (Before: a NaN Range gave *R* = 0.0002 but
+> ρ = 21.25, a NaN Falloff *k* = 0 but ρ with Falloff 1, a NaN intensity 0.)
+
 Draw uniform: the M2 `DrawUniform` (224 bytes, §2) grows by two vectors to 256 bytes, still one
 256-byte dynamic-offset slot: `lit` (offset 224: rgb *G*, w specular power *p*) and
 `lit_lights` (offset 240: x, y = eight light indices as bytes, z = count, w = flags: vertex
@@ -382,14 +455,20 @@ bits 7–8, sRGB re-encode bits 9–15 per material texture). Group 2 holds seve
 or unresolved texture binds the white texture.
 
 <a id="s4-4"></a>
-### 4.4 Sun shadow (`lighting.md` §9; departs from the Tessera Decision "simple form" there)
+### 4.4 Sun shadow (`lighting.md` §9; within the Tessera Decision "simple form" there, using its listed variants)
 
 The equations are those of `lighting.md` §9 (steps 2, 4–7). The engine values are OPEN there
 and its Tessera Decision (simple form) is one cascade, one tap, shadow colour 0, colour range
-1 and *φ* fading linearly to 0 at the shadow distance. **Decision:** the renderer keeps one
-cascade, colour 0 and range 1, but uses five taps (quality 2) and a linear fade over the
-last fifth of the shadow distance; the depth bias is 0.006 × the fitted sphere's radius when
-`SunShadow::fit` builds the shadow, else the field default 0.0015.
+1 and *φ* fading linearly to 0 at the shadow distance; that Decision lists as variants that
+stay within it the five-tap filter, a fade that starts later than the camera, a single map
+fitted around a point ahead of the camera, a depth bias, points outside the map counted as
+lit, and no sun shadow while the sun is low or indoors. **Decision:** the renderer keeps one
+cascade, colour 0 and range 1 and uses these variants: five taps (quality 2), a linear fade
+over the last fifth of the shadow distance, one map fitted around a sphere chosen by the
+caller, points outside the map lit; the depth bias is 0.006 × the fitted sphere's radius
+when `SunShadow::fit` builds the shadow, else the field default 0.0015. The radius,
+distance, map size and bias are Tessera's values, not the original's; the minimum sun
+elevation is the caller's (`walker.md` §14.3).
 
 | Topic | Choice |
 |-------|--------|
@@ -464,6 +543,15 @@ and on llvmpipe GL (Mesa 26.1.8), and the M2 and M4 golden images are unchanged.
 > (row R-F1, departure R-D2). Let the caller apply the 10,000 cap to the keyframe's end
 > before the override, and keep only the lower limits (end ≥ 20, start in −10,000 … end − 20)
 > in the renderer. No stored `InteriorFogFar` of this install exceeds 7,000 (R-F2).
+
+> **OPEN (implementer, 2026-10-07, `tessera-render`; for the walker implementer):** the
+> renderer half is done. `FrameUniform` applies `Fog::lower_limits` (end ≥ 20, start in
+> −10,000 … end − 20, end not capped; a non-finite end becomes 10,000, a non-finite start
+> −10,000). The cap is the caller's: `Fog::keyframe_capped` (or the constant `FOG_FAR_CAP`)
+> caps the keyframe's end, to be applied **before** an interior override; `Fog::limited`
+> stays as the keyframe cap followed by the lower limits, for fog without an override. The
+> walker (`apps/client`, `walker/env.rs`) still calls `Fog::limited()` after the override,
+> so departure R-D2 remains there until it caps `fog_far` before the override instead.
 
 > **OPEN:** Blending on sRGB targets happens on decoded values, so translucent and additive
 > surfaces differ slightly from the original, which blends stored values. Rendering lit passes
@@ -551,7 +639,7 @@ emissive, glow, mask). The terrain crate's `DrawLayer`, `LayerVertices`, `LayerF
 | Pixel stage | §8.4 steps 1–7: the three normal-map samples (re-encoded to the stored texels when the map was uploaded `ColorSpace::Srgb`, §5.1) mapped to 2(rgb − 0.5), summed and normalised; screen coordinates; refraction *F* of the scene copy offset by the world normal's x, y × `RefractionBumpDistortionAmount`, the under-water tint *U*, the shoreline blend with *w* = clamp((distance − 5) × 0.1, 0, 1); reflection = the unmodified *F* (§8.4 Tessera rule: no reflection texture); Fresnel; specular sat(*n* · normalize(*v* − *L*))^power + the sparkle term; colour × `WaterColor` × overbright + *s* × fake specular × `SpecularColor`; fog. |
 | Render state | Source ONE, destination ZERO, alpha 1, depth test and write, both faces (§8.4 Tessera rule). |
 | **Decision**: normal frame | The tangent-space normal is turned into world space with **T** = +x, **B** = +y (tilted by the waves) and the sign convention of `lighting.md` §5.2.4: *N* = *n*.x **T** − *n*.y **B** + *n*.z **N**. (`water.md` §8.4 step 1 says "the surface frame" without the signs; OPEN there.) |
-| **Decision**: fake light | *L* = the main light's travel direction (−`sun_dir`) and its specular colour when the pass has a main light; otherwise straight down with a black specular colour (the engine's default direction and specular colour are not given, `lighting.md` E18; OPEN in `water.md`). |
+| **Decision**: fake light | *L* = the main light's travel direction (−`sun_dir`) and its specular colour when the pass has a main light; otherwise straight down with a black specular colour (the engine's default direction and specular colour are not given, `lighting.md` E18; OPEN in `water.md`). Whether the pass has a main light is the caller's choice (`FrameLighting::sun`): the client has none while the sun-present flag of `environment.md` §11.7 step 9 is false (blended keyframe `effect` not null, sun colour opaque black, or sun brightness below 0.0002, and always indoors). The walker passes a sun in every outdoor frame, a departure labelled in `walker.md` §14.3; the renderer needs no change for it. |
 | Missing normal map | A flat tangent-space normal (0, 0, 1): no ripples, no sparkle. |
 
 <a id="s5-4"></a>
@@ -658,6 +746,86 @@ and on lavapipe):
 > water's ONE/ZERO write (§5.1 Stages). Either order is a Tessera choice; the original's is
 > not specified.
 
+> **OPEN (implementer, 2026-10-07, `tessera-render`, conformance fixes; for the spec
+> writer to fold into §5.2–§5.5):**
+> (a) **Sky placement (R-D6):** done. A sky vertex is drawn at eye + R_Y(−*A*) · R_Z(−*B*) ·
+> (scale · *v*), first about +Z by −*B* (wrapped into [0, 360)), then about +Y by −*A*
+> (`environment.md` §11.4 step 5, the §14 worked example as a unit test). The §5.4
+> placement Decision row can be retired. The golden images of `sky_golden.rs` did not change:
+> the test's sun card now lies on +X with the angles that point it at the same sun direction.
+> (b) **Terrain shadows (§5.2 Shadows):** the shadow stage now draws each covered triangle
+> **once**: at upload the chunk's distinct triangles (same three vertices in any order) are
+> appended after the layers' lists when some triangle repeats, and the shadow draw uses that
+> range (else the layers' list, which then has no repeats). The depth image is the same; the
+> row's "draw their whole index buffer" should read "draw every covered triangle once".
+> (c) **Mask and light-map sampler (§5.2 Bindings):** clamp to edge, linear within a mip
+> level, the **nearest** mip level (no blend between levels), following "bilinear" of
+> `terrain-texturing.md` §5.2 and §10. Open for the spec: whether the client's sampler for
+> masks and light maps uses their mip levels at all.
+> (d) **Water exponents (§5.3):** the spec gives no range for `FresnelExponent` and
+> `SpecularPower`. **Implementer choice:** both are clamped to 0–4096 (non-finite: the
+> default, as before), and the shader takes x⁰ = 1 also for x = 0, so a negative value from
+> data can no longer produce inf or NaN.
+> (e) **Instance culling (§5.5 Culling):** the frill sway and the frill distance scale move
+> vertices outside the model sphere × transform. **Implementer choice:** for frill groups the
+> culling sphere is the model sphere with its radius grown by the largest sway displacement
+> (intensity × *h* × √1.25, when the group sways) and at least the distance from the model
+> origin to the sphere centre (the scale shrinks toward the origin); the distance limit
+> still uses the plain sphere. A frill group's box (rules 2 and 4) is built only from
+> instances with a finite transform and a finite placed sphere; a group with none is culled
+> whole.
+> (f) **Mirrored instances (§5.5 Lighting "as the lit mesh pipeline", §2.3):** instances with
+> a negative determinant are drawn with the other face culled (each batch's colour instances
+> are ordered upright first, then mirrored; one-sided surfaces get one draw per group,
+> two-sided surfaces one draw for both).
+> (g) **World models:** `upload_world_model` now validates under the renderer's own
+> `MeshLimits` (`RendererConfig::meshes`), as `upload_mesh` does.
+> (h) **Opacity of world surfaces (§5.5 Models):** `WorldSurface` has no opacity-source
+> field (it would break the callers' struct literals). **Implementer choice:** the base
+> alpha is the opacity (alpha test, output alpha, shadow cut-outs) unless
+> `gloss_from_base_alpha` is set; then the surface has no opacity source (opacity 1:
+> `material.md` §11.2 "no source, no alpha test", §11.3 "a gloss alpha never reaches the
+> output"). A caller whose base alpha means something else (a dye mask) must not pass a
+> non-opaque `AlphaMode` for it. Open: add an explicit opacity source to `WorldSurface`
+> when the callers can supply one.
+
+> **OPEN (implementer, 2026-10-07, `tessera-render`, second conformance round; for the
+> spec writer to fold into §5.3–§5.5):**
+> (i) **Mirrored frills:** the frill branch of the instanced vertex stage now flips the
+> tangent's w (the bitangent sign) for an instance with a negative determinant, as the
+> scenery branch does (§2.3, §4.1 Normal maps). Before, a normal-mapped frill mirrored by a
+> negative scale shaded with **B** reversed.
+> (j) **Instance tint and the highlight (`material.md` §8.3, BIN-T (f)):** `Instance::tint`
+> now multiplies the specular colour *Ms* (RGB) as well as *M*, so the §5.5 Batches row
+> should read "tint multiplying *M* and *Ms*".
+> (k) **Water specular and sparkle (§5.3, `water.md` §8.4 step 6):** the highlight now uses
+> the same power function as the Fresnel term, clamp(*x*, 0, 1)^*e* with *x*⁰ = 1 for every
+> *x* (before, a power of 0 gave 0 where *n* · *h* ≤ 0), so OPEN (d) above now holds for
+> both exponents. The sparkle term is added only when the normal map resolved, per the
+> "Missing normal map" row (no sparkle); before, a negative `FakeSpecularThreshold` gave a
+> sparkle of 8 × (−threshold) on flat water. The threshold itself is not clamped (with a
+> map, the step 6 formula holds for any value).
+> (l) **Fog of unlit world surfaces:** `WorldSurface` has no fog switch, so an unlit world
+> surface (instanced scenery, frills) is **always** fogged; §5.5 Lighting ("as the lit mesh
+> pipeline") implies the `LitSurface::fog` switch of §4.1 (`lighting.md` §7 code 0x00: fog
+> only when the program reads the fog inputs). **Not changed:** adding a field to
+> `WorldSurface` breaks the struct literal of its caller (`apps/client`,
+> `walker/objects.rs`), which this round does not own; until a coordinated change adds
+> `fog` (together with the opacity source of OPEN (h) above), "unlit world surfaces are
+> fogged" is a
+> Tessera Decision that departs from §5.5. Sky objects stay unfogged (§5.4).
+> (m) **Spec rows still to fold** (the code follows the implementer OPENs and the Accepted
+> facts, not these rows): §4.2 fog row and R-D2 (renderer half done, §4.8); §4.3 "appends
+> the directional table lights in table order" (at most one, OPEN (c) of §4.3); §4.3
+> "instance batches have none", the "one list per instance batch" Decision, §5.5 Batches
+> and R-D9 (per instance, OPEN (b) of §4.3); the "unattached lights" Decision and R-D1
+> (OPEN (a) of §4.3); the `fog` entry of `LitSurface` (lit surfaces always fogged, OPEN (d)
+> of §4.3); §5.2 Shadows and Bindings (OPEN (b), (c) above); §5.4 placement and R-D6
+> (OPEN (a) above); §5.5 GPU layout (per instance 96 bytes with a `vec4<u32>` light list,
+> the batch uniform's light fields unused, one-sided surfaces drawn once for upright and
+> once for mirrored instances, OPEN (f) above); §5.5 Culling (the grown frill sphere,
+> OPEN (e) above); §5.5 Models (the opacity rule of OPEN (h) above).
+
 <a id="s6"></a>
 ## 6. Change log
 
@@ -670,6 +838,7 @@ and on lavapipe):
 | 2026-10-07 | §4.3, §5.2 (implementer, `tessera-render`): automatic light selection follows the revised `lighting.md` §8.5 (selection radius ρ, squared distance to the world box, key lights first, parent switches; `Pass::light_reach`, `LightReach`, `MeshDraw::light_object`, `TerrainChunkInfo::aabb`) and L30 (baked-landscape lights never reach terrain or ceiling chunks under `Auto`); terrain layers without a normal map shade the ambient and sun terms with the stored, unnormalised vertex normal (`terrain-texturing.md` §4.10), and the terrain normal matrix keeps the normal's length under a uniform scale. New tests: `stored_normals_shade_as_they_are`, `specular_is_a_sheen_scaled_by_the_gloss`, `baked_lights_skip_terrain_chunks` (GPU) and the selector's unit tests. No golden image changed. Earlier §4–§5 additions (M4.5) are listed in the ROADMAP M4.5 status. |
 | 2026-10-07 | Spec writer (dirty room), answering the first review and the re-review of §4–§5 and incident 0018 (decision 0018, owner decision A): header review record shortened (details moved to the dirty-room review log); §3: the mip-chain, green-channel and per-draw-cost OPENs marked answered; §4.1 per-pixel lists labelled a Decision that departs from `lighting.md` §5.6, §8.3; §4.2 fog row names the limits; §4.3: the entry-less light and the `List` behaviour labelled Decisions, the unattached-light Decision marked as departing from the client (BIN, row R-L2) with an OPEN, the world-box and directional Decisions tied to the `lighting.md` §8.5 OPEN; §4.4 heading and text: departs from the simple-form Decision (five taps, fade over the last fifth, depth bias); §4.6 stale sentence replaced; §5.1 Stages corrected to the built order (blended instances, then water) with its consequences, labelled a Decision; §5.2: the baked-landscape light row (no bake, `lighting.md` §8.6 Decision; row R-L5) and the stored-normal row's assumption about its input; §5.3 wave frame labelled a Decision that departs from `water.md` §8.3; §5.4 placement marked as departing from `environment.md` §11.4 step 5 (BIN-E), shading labelled this file's Decision with the `fog_extra` fact, draw order stated as assumed; §5.5 frill Decisions labelled; §5.7 OPENs updated and two new implementer OPENs (sky rotation, water order); new §7 (client facts with provenance; table of departures). Status of §4–§5: Review. |
 | 2026-10-07 | Spec writer (dirty room), second revision answering the re-review of §4–§5 and §7 (changes requested): §4.3 the world-box Decision split in two: the box rule stays tied to `lighting.md` §8.5 OPEN (b); treating an instance batch as one light-list object is a new Decision labelled as departing from the client's per-object lists (L32), with its effect and an implementer OPEN; §5.5 Batches row points to it; §7: new rows R-E3 (the light record and attenuation of `lighting.md` §8.3: range floor 0.0002, colour, specular and attenuation rules, used by the light-record builder, the range floor of uploaded point lights and the CPU reference) and R-L6 (per-object lists), new departure R-D9. Status of §4–§5 and §7: Review. |
+| 2026-10-07 | Spec writer (dirty room), third revision after the acceptance, applying the two non-blocking notes of that review; no fact about the renderer's behaviour changed: §4.4 heading and text say the renderer's shadow lies within the `lighting.md` §9 simple-form Decision, using the variants that Decision now lists (five taps, later fade, fitted map, depth bias, outside lit), and which values are Tessera's; row R-D4 marked as no longer a departure (kept for stable numbering); §5.3 fake-light row: whether a pass has a main light is the caller's, with the client's sun-present rule and a pointer to the walker's departure (`walker.md` §14.3); new row R-E4 for that rule. Status of §4–§5 and §7: Accepted → Revised. |
 
 <a id="s7"></a>
 ## 7. Client facts §4–§5 rely on, and their provenance (spec writer, dirty room, 2026-10-07)
@@ -694,6 +863,7 @@ rendering and environment code was read; no network, login, launcher or anti-tam
 | R-E1 | Lighting equations of the lit base pass: ambient and hemispheric terms, main light with *N* · *L₀*, normal-map sign *N* = *n*.x **T** − *n*.y **B** + *n*.z **N₀**, no specular below power 0.5, emissive added before fog, output alpha and the alpha test before vertex alpha, time input modulo 3,600 | §4.1–§4.3 | `lighting.md` §4–§5, `material.md` §5.3.1, §11 | Spec (BIN) |
 | R-E2 | At most 8 lights per object in all, the main light included | §4.2, §4.3 | `lighting.md` §8.5 | Spec (BIN) |
 | R-E3 | Light record of a placed light: colour = Diffuse × clamp(DiffuseIntensity(*t*) × *σ*, 0, 1); specular = Specular × clamp(2 × *σ* × DiffuseIntensity(*t*), 0, 1), with the Diffuse colour in place of a white Specular (within 0.0002 per channel) when KeyLight is off; range *R* = max(Range, 0.0002), uploaded as *R²*; attenuation *k* = 10 × Falloff / *R²*; the field defaults (Range 25, Diffuse and Specular white, intensity 0.5, Falloff 1, *σ* 1); attenuation 1 / (1 + *k* *d²*) inside *R*, nothing at or beyond it, with the smoothstep fade above 0.75 *R²* for the newer back end's light 0 and per-pixel lists | §4.2 (the light table: the record built from a placed light's fields, the range floor of every uploaded point light; the CPU reference of the frame functions) | `lighting.md` §8.3 (attenuation, light record, L19) | Spec (BIN) |
+| R-E4 | The scene has no main light while the environment state's sun-present flag is false: on the indoor record always, on the outdoor record while the blended keyframe `effect` is not null, the sun colour is opaque black or the sun brightness is below 0.0002; then one submission path adds the default directional light of `lighting.md` §8.5 (its slot a Tessera Decision there), and the fake light takes its default (E18) | §5.3 (fake light; the caller decides) | `environment.md` §11.7 step 9; `lighting.md` §8.1, §8.5, E18; `walker.md` §14.13 rows W-E10, W-E11 | Spec (BIN-E, Accepted); re-checked 2026-10-07 for `walker.md` |
 | R-L1 | Selection radius ρ = Range × (1 − (1 − 0.85) × min(Falloff, 1)), Range for `Light_GlobalLight` (0.85 a client constant, decision 0012) | §4.3 | `lighting.md` §8.5 step 1 | Spec (BIN) |
 | R-L2 | A light reaches an object when the squared distance from the light's position to the object's world-space axis-aligned box (0 inside) is below ρ², strict; key lights are inserted at the front, the others appended; the never-parent switch is tested for the light's parent, the only-parent switch for every other object whether or not the light has a parent (one special light record's parent is looked up separately, not traced). No Light SED of this install's landblock infos sets `Light_OnlyInfluenceParent` true (136 store false) | §4.3 | `lighting.md` §8.5 steps 2–4, row L34; census own probe | BIN, re-checked 2026-10-07; census Confirmed 2026-10-07 |
 | R-L3 | Only objects drawn in the current frame are candidates; objects with any of three scene flags are skipped | §4.3 | `lighting.md` §8.5 step 2, row L34 | BIN, re-checked 2026-10-07 |
@@ -718,7 +888,7 @@ rendering and environment code was read; no network, login, launcher or anti-tam
 | R-D1 | §4.3 unattached lights | parent switches only for attached lights | only-parent switch for every non-parent object, attached or not | OPEN for the implementer (§4.3) |
 | R-D2 | §4.2 fog | caps every fog end at 10,000, an interior override too | caps only the keyframe's end, before the override | OPEN (§4.8; `walker.md` §14.3, `landblock.md` §4.15); no effect on this install (R-F2) |
 | R-D3 | §4.1 per-pixel lists | every table light per pixel with the smooth fade and specular | per-vertex lists with the hard cut-off, no specular | Decision |
-| R-D4 | §4.4 shadow | five taps, fade over the last fifth | engine values OPEN; `lighting.md` simple form: one tap, fade to 0 | Decision |
+| R-D4 | §4.4 shadow | five taps, fade over the last fifth, fitted map, depth bias | engine values OPEN; `lighting.md` §9 simple form (one tap, fade to 0) with the variants it lists, these among them | No longer a departure: within the `lighting.md` §9 Decision as that spec now words it (row kept so the numbers stay stable) |
 | R-D5 | §5.3 waves | world x, y of the pass | model x, y | Decision |
 | R-D6 | §5.4 sky placement | R_z(−*B*) · R_x(*A*) | R_Y(−*A*) ⊗ R_Z(−*B*) | OPEN for the implementer (§5.7) |
 | R-D7 | §5.4 sky shading | unlit, unfogged | lighting unstated, fog OPEN; `fog_extra` > 0.99 hides the sky (caller) | Decision |

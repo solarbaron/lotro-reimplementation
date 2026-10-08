@@ -3,7 +3,7 @@
 //! terrain-scene table 0x12, slot 8 terrain-type table 0x19) and the scene records (0x02)
 //! that generation reads.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tessera_formats::scenery::{
@@ -33,6 +33,16 @@ pub struct SceneryTables {
     /// Slot 8: terrain-type table (0x19). Without it the terrain-type test of §7.4 step 7
     /// finds no key and passes.
     pub terrain_types: Option<Arc<TerrainTypeTable>>,
+}
+
+/// The result of [`SceneryTables::load_all_regions`].
+#[derive(Debug, Clone, Default)]
+pub struct RegionSceneryTables {
+    /// The tables of every region that has them.
+    pub tables: BTreeMap<u8, Arc<SceneryTables>>,
+    /// Regions whose tables could not be read for a reason that is not the data's (full
+    /// queue, shutdown, worker panic); load them again later.
+    pub retry: BTreeSet<u8>,
 }
 
 /// How a coarse-grid word resolves to a scene (`scenery.md` §4.2–§4.3, §7.2 steps 1–2).
@@ -140,20 +150,47 @@ impl SceneryTables {
         Self::load(&**ctx.source(), region, desc)
     }
 
-    /// The tables of every region of the context that has them; regions whose tables are
-    /// missing or broken are logged and left out.
+    /// The tables of every region of the context that has them, with the regions whose
+    /// tables could not be read for a reason outside the data reported for a retry.
+    ///
+    /// - A region whose slot-1 or slot-2 table is missing, empty or broken is a property of
+    ///   the data (`scenery.md` §4.1 Tessera Decision): it is logged and left out of both
+    ///   sets, and gets no scenery or frills.
+    /// - A region whose slot-1, slot-2 or slot-8 read fails for a reason that is not the
+    ///   data's ([`SceneryError::is_data_error`] false: the asset pipeline's queue is full,
+    ///   it shut down, a worker panicked) is left out of [`RegionSceneryTables::tables`]
+    ///   and listed in [`RegionSceneryTables::retry`]. Nothing about the region is
+    ///   remembered; the caller loads it again later ([`SceneryTables::for_region`]).
+    ///   `scenery.md` is silent on table reads; this follows its §7.4 step 15 Tessera
+    ///   Decision for scene reads (implementer note in `scenery.md` §4.1).
     #[must_use]
-    pub fn for_all_regions(ctx: &WorldContext) -> BTreeMap<u8, Arc<Self>> {
-        let mut out = BTreeMap::new();
+    pub fn load_all_regions(ctx: &WorldContext) -> RegionSceneryTables {
+        let mut out = RegionSceneryTables::default();
         for &region in ctx.regions().keys() {
             match Self::for_region(ctx, region) {
                 Ok(t) => {
-                    out.insert(region, Arc::new(t));
+                    out.tables.insert(region, Arc::new(t));
                 }
-                Err(e) => tracing::warn!(region, error = %e, "no scenery tables"),
+                Err(e) if e.is_data_error() => {
+                    tracing::warn!(region, error = %e, "no scenery tables");
+                }
+                Err(e) => {
+                    tracing::warn!(region, error = %e, "scenery tables unavailable; retry later");
+                    out.retry.insert(region);
+                }
             }
         }
         out
+    }
+
+    /// The tables of every region of the context that has them
+    /// ([`SceneryTables::load_all_regions`] without the retry list). A region whose tables
+    /// are missing or broken is logged and left out; so is a region whose read failed for
+    /// a reason outside the data, which is logged as retryable. Callers that live longer
+    /// than one load should use [`SceneryTables::load_all_regions`] and retry those.
+    #[must_use]
+    pub fn for_all_regions(ctx: &WorldContext) -> BTreeMap<u8, Arc<Self>> {
+        Self::load_all_regions(ctx).tables
     }
 
     /// Resolves a coarse-grid word to its scene-choice entry (`scenery.md` §4.2 lookup,
@@ -209,16 +246,20 @@ fn read_record<T: for<'a> Record<'a>>(
 /// Where generation gets scene records (0x02) from. Implementations are shared by every
 /// worker.
 pub trait SceneSource: Send + Sync {
-    /// The scene `did`: `Ok(None)` when it is missing or does not decode (a property of the
-    /// data: generation places nothing for it, every time).
+    /// The scene `did`: `Ok(None)` when it is missing, unreadable or does not decode (a
+    /// property of the data, the same every time). Either way the child that references it
+    /// **fails** (`scenery.md` §7.4 step 15, S41): its node stops and the failure climbs to
+    /// the vertex, whose remaining scene is abandoned (in the frill pass it stops at the
+    /// innermost frill layer).
     ///
     /// # Errors
     ///
     /// When the scene could not be read for a reason that is not the data's (the asset
     /// pipeline's queue is full, it shut down, a worker panicked;
-    /// [`SceneryError::is_data_error`] false). Generation then counts
-    /// [`SceneryStats::scenes_unavailable`](super::SceneryStats::scenes_unavailable) and
-    /// its result is incomplete: the caller should build the landblock again later.
+    /// [`SceneryError::is_data_error`] false). The child fails in the same way, and
+    /// generation also counts
+    /// [`SceneryStats::scenes_unavailable`](super::SceneryStats::scenes_unavailable): its
+    /// result is incomplete and the caller should build the landblock again later.
     fn scene(&self, did: Did) -> Result<Option<Arc<Scene>>, SceneryError>;
 }
 

@@ -363,11 +363,13 @@ impl MovementLayer {
     }
 }
 
+/// A boolean value; a value of another type (integer, enum, ...) counts as not listed
+/// (§10.3 "Hostile values": a field whose value has the wrong type; §10.1 types
+/// `ForceStrafe` and `AllowContactLoss` as boolean). The entity conditions of §11.1 read
+/// the same way: only a boolean true makes a condition hold.
 fn value_bool(v: &Value) -> Option<bool> {
     match v {
         Value::Bool(b) => Some(*b),
-        Value::Int(i) => Some(*i != 0),
-        Value::Enum(k) => Some(*k != 0),
         _ => None,
     }
 }
@@ -719,11 +721,11 @@ impl PlayerMovementRecord {
         float_height(conditions.avatar_float_height, self.default_float_height)
     }
 
-    /// The ramp time a jump's push is applied for (`collision.md` §12.3 step 2: "for one
-    /// ramp time (0.13 s for players)"): the BasePlayer layer's ramp time, else
-    /// [`MovementParams::BUILTIN`]'s. Tessera reading (recorded as OPEN in §12.3): the
-    /// BasePlayer value, not the composed layer's, so the Walking and mounted layers (ramp
-    /// 0.25 s) keep the stated 5.2 m/s and ≈ 0.9 m apex.
+    /// The ramp time a jump's push is applied for (`collision.md` §12.4 (c): "for one ramp
+    /// time"): the BasePlayer layer's ramp time, else [`MovementParams::BUILTIN`]'s.
+    /// Tessera Decision `collision.md` §12.4 (i): the BasePlayer value, not the composed
+    /// layer's, so the Walking and mounted layers (ramp 0.25 s) keep the stated 5.2 m/s and
+    /// ≈ 0.9 m apex.
     #[must_use]
     pub fn jump_ramp_time(&self) -> f32 {
         self.layer(LayerKind::BasePlayer)
@@ -1077,7 +1079,8 @@ pub struct LayerConditions {
 
 impl LayerConditions {
     /// Reads the conditions from an entity's property set (absent properties are false
-    /// or `None`).
+    /// or `None`). The boolean conditions of §11.1 hold only for a boolean true; a value of
+    /// another type counts as absent (Tessera Decision, as §10.3 does for movement fields).
     #[must_use]
     pub fn from_set(set: &PropertySet, pids: &MovementPids) -> Self {
         let get = |p: Option<u32>| p.and_then(|p| set.get(p));
@@ -1214,4 +1217,82 @@ pub struct ComposedParams {
     pub layers: LayerList,
     /// The controller kind.
     pub kind: ControllerKind,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pids() -> MovementPids {
+        MovementPids::from_names(|n| {
+            if let Some(i) = MOVEMENT_FIELD_NAMES.iter().position(|f| *f == n) {
+                return u32::try_from(i).ok().map(|i| 100 + i);
+            }
+            match n {
+                "Mount_Is_Mounted" => Some(200),
+                "Physics_OnSlide" => Some(201),
+                "Physics_OnIce" => Some(202),
+                "Stealth_IsStealthed" => Some(203),
+                "Movement_ActiveMovementFrozen" => Some(204),
+                "Mount_Movement_Use_RampUp_Controller" => Some(205),
+                _ => None,
+            }
+        })
+    }
+
+    /// Finding (§10.3 "Hostile values", §10.1): `ForceStrafe` and `AllowContactLoss` read
+    /// non-zero integers and enum keys as true; a value of the wrong type counts as not
+    /// listed.
+    #[test]
+    fn movement_booleans_take_only_boolean_values() {
+        let p = pids();
+        let set = |v: Value| {
+            PropertySet::from_properties([Property::new(114, v.clone()), Property::new(115, v)])
+        };
+        for v in [
+            Value::Int(1),
+            Value::Enum(1),
+            Value::Int64(1),
+            Value::Float(1.0),
+        ] {
+            let l = MovementLayer::from_set(&set(v.clone()), &p);
+            assert_eq!(
+                (l.force_strafe, l.allow_contact_loss),
+                (None, None),
+                "{v:?}"
+            );
+        }
+        let l = MovementLayer::from_set(&set(Value::Bool(true)), &p);
+        assert_eq!(
+            (l.force_strafe, l.allow_contact_loss),
+            (Some(true), Some(true))
+        );
+        // Not listed: the layer below keeps its value.
+        let below = MovementLayer {
+            force_strafe: Some(true),
+            ..MovementLayer::default()
+        };
+        let over = MovementLayer::from_set(&set(Value::Int(0)), &p).over(below);
+        assert_eq!(over.force_strafe, Some(true));
+    }
+
+    /// Finding (§11.1): integer and enum values of the boolean entity conditions became
+    /// layer conditions; only a boolean true makes a condition hold.
+    #[test]
+    fn layer_conditions_take_only_boolean_values() {
+        let p = pids();
+        let all = |v: Value| {
+            PropertySet::from_properties((200..=205).map(|pid| Property::new(pid, v.clone())))
+        };
+        for v in [Value::Int(1), Value::Enum(1), Value::Int64(-1)] {
+            assert_eq!(
+                LayerConditions::from_set(&all(v.clone()), &p),
+                LayerConditions::default(),
+                "{v:?}"
+            );
+        }
+        let c = LayerConditions::from_set(&all(Value::Bool(true)), &p);
+        assert!(c.mounted && c.on_slide && c.on_ice && c.stealthed && c.frozen);
+        assert!(c.ramp_up_controller);
+    }
 }

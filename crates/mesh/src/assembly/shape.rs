@@ -11,7 +11,8 @@
 //! both show the same figure.
 
 use tessera_formats::avatar::{
-    ABSENT_SLIDER_BYTES, BoneSliderDefinition, BoneSliderPids, slider_positions, slider_value_pairs,
+    ABSENT_SLIDER_STRING, BoneSliderDefinition, BoneSliderPids, slider_positions,
+    slider_value_pieces,
 };
 use tessera_formats::script_table::resolve::{ClipResolution, DeformerCandidate};
 use tessera_formats::{Did, PropertySetRecord};
@@ -212,8 +213,13 @@ pub struct HeldClip {
     pub clip: Did,
     /// The data's animation layer.
     pub layer: u32,
-    /// The held fraction of the clip (§6.7 step 1, for the figure's driving value).
+    /// The held fraction *f* of §6.7 step 1 for the figure's driving value (`0 ..= 1`).
     pub fraction: f32,
+    /// Seconds cut from the end of the clip's played length (§6.7 step 2: 1/30 s for
+    /// `LoopForever` 0 with `LoopCount` 1, else 0). The clip time is *f* × (duration −
+    /// `end_crop`), limited to that length
+    /// ([`tessera_formats::script_table::resolve::held_clip_time`]).
+    pub end_crop: f32,
     /// `UseBoneOpacity`.
     pub use_bone_opacity: bool,
     /// What drives `ManualTime` (`None`: the node's own value).
@@ -237,17 +243,18 @@ pub struct BodyShapeClip {
 pub struct FigureSliders {
     /// The definitions record the SliderMeshDeformer node names.
     pub table: SliderTable,
-    /// The value bytes in use (`appearance.md` §6.3, A16).
-    pub bytes: Vec<u8>,
-    /// Position *t* of every slider of `table`, in definition order: byte / 255, or 0.5 for
-    /// a slider without a byte.
+    /// The value pieces in use (`appearance.md` §6.3, A16, A29; see [`slider_values`]).
+    pub values: Vec<u32>,
+    /// Position *t* of every slider of `table`, in definition order: piece / 255, or 0.5
+    /// for a slider without a piece.
     pub positions: Vec<f32>,
 }
 
 /// Everything that shapes a figure beyond its parts and clips.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FigureShape {
-    /// Held clips, one per layer, in layer order (`script-table.md` §6.8).
+    /// Held clips, all of them (several may share a layer, `script-table.md` §6.2), in
+    /// layer order (`script-table.md` §6.7, §6.8).
     pub held: Vec<HeldClip>,
     /// Body-shape deformer clips (`appearance.md` §6.4).
     pub body_shape: Vec<BodyShapeClip>,
@@ -271,43 +278,52 @@ fn figure_value(
     }
 }
 
-/// The value bytes of a SliderMeshDeformer node (`appearance.md` §6.3, A16;
-/// `script-table.md` §16 implementation Decision):
+/// The value pieces of a SliderMeshDeformer node (`appearance.md` §6.3, A16, A29;
+/// `script-table.md` §6.9: the node parses whatever string its field holds):
 ///
 /// - the node's string is **not driven** (`values_source` `None`): its stored string
 ///   (`node_values`), whatever the figure carries;
-/// - driven by **`AC_BoneSlider_Value_Array`** (`value_array`): the figure's own bytes
-///   (`figure_values`, the request's or else the entity's) when it has any, else the
-///   resolved driven string;
+/// - driven by **`AC_BoneSlider_Value_Array`** (`value_array`): the figure's own pieces
+///   (`figure_values`, from the request's or else the entity's string) when it has any,
+///   else the resolved driven string;
 /// - driven by **another property**: the resolved driven string;
 /// - a driven string the entity lacks ([`DeformerCandidate::Slider::values`] `None`):
-///   [`ABSENT_SLIDER_BYTES`] (the §6.3 Decision while the absent-property behaviour is
+///   [`ABSENT_SLIDER_STRING`] (the §6.3 Decision while the absent-property behaviour is
 ///   OPEN).
+///
+/// Strings are cut into pieces by [`slider_value_pieces`].
 #[must_use]
-pub fn slider_bytes(
+pub fn slider_values(
     values_source: Option<u32>,
     node_values: Option<&str>,
-    figure_values: &[u8],
+    figure_values: &[u32],
     value_array: Option<u32>,
-) -> Vec<u8> {
+) -> Vec<u32> {
     let figure_driven = values_source.is_some() && values_source == value_array;
     if figure_driven && !figure_values.is_empty() {
         return figure_values.to_vec();
     }
-    match node_values {
-        Some(s) => slider_value_pairs(s),
-        None => ABSENT_SLIDER_BYTES.to_vec(),
-    }
+    slider_value_pieces(node_values.unwrap_or(ABSENT_SLIDER_STRING))
 }
+
+/// Most body-shape deformer clips kept per figure: a Tessera bound, not a client rule
+/// (`script-table.md` §6.9: the client keeps any number; the install has one per figure).
+/// A deformer beyond it is dropped and logged.
+pub const MAX_BODY_SHAPE_CLIPS: usize = 16;
 
 /// Collects the shape inputs of figure `c` from a clip resolution of its scripts (any
 /// motion state: the species table's `Startup` registers them in every state).
 ///
-/// - **Held clips**: [`ClipResolution::held`]; the driving value is the figure's height or
-///   body-shape value when the node is driven by it, else the resolved `ManualTime`.
-/// - **Body shape**: every MeshDeformer; its fraction likewise.
-/// - **Sliders**: the first SliderMeshDeformer's definitions record; the bytes by
-///   [`slider_bytes`].
+/// - **Held clips**: every one of [`ClipResolution::held`]; the driving value is the
+///   figure's height or body-shape value when the node is driven by it, else the resolved
+///   `ManualTime`; the fraction follows §6.7 step 1
+///   ([`tessera_formats::script_table::resolve::ClipCandidate::held_fraction_at`]) and the
+///   end crop §6.7 step 2.
+/// - **Body shape**: every MeshDeformer (at most [`MAX_BODY_SHAPE_CLIPS`]); its fraction
+///   likewise.
+/// - **Sliders**: the entity holds one slider set, that of the **most recently started**
+///   SliderMeshDeformer (`script-table.md` §6.9, `appearance.md` §6.4): the last one in
+///   evaluation order. Its definitions record; the pieces by [`slider_values`].
 pub fn figure_shape<S: RecordSource>(
     data: &GameData<S>,
     vocab: &AssemblyVocabulary,
@@ -321,11 +337,14 @@ pub fn figure_shape<S: RecordSource>(
             clip: h.clip,
             layer: h.layer,
             fraction: h.held_fraction_at(value),
+            end_crop: h.held_end_crop(),
             use_bone_opacity: h.use_bone_opacity,
             driver: ShapeDriver::of(vocab, h.manual_time_source),
         });
     }
     let mut slider_node = None;
+    let mut dropped_deformers = 0usize;
+    let mut replaced_slider_sets = 0usize;
     for d in &resolution.deformers {
         match d {
             DeformerCandidate::Mesh {
@@ -335,12 +354,14 @@ pub fn figure_shape<S: RecordSource>(
                 use_bone_weights,
                 ..
             } => {
-                if out.body_shape.len() < 16 {
+                if out.body_shape.len() < MAX_BODY_SHAPE_CLIPS {
                     out.body_shape.push(BodyShapeClip {
                         clip: *clip,
                         fraction: figure_value(vocab, c, *time_source).unwrap_or(*time),
                         use_bone_weights: *use_bone_weights,
                     });
+                } else {
+                    dropped_deformers += 1;
                 }
             }
             DeformerCandidate::Slider {
@@ -349,15 +370,29 @@ pub fn figure_shape<S: RecordSource>(
                 values_source,
                 ..
             } => {
-                if slider_node.is_none() {
-                    slider_node = Some((*definitions, values.as_deref(), *values_source));
-                } else {
-                    out.notes
-                        .push("more than one slider deformer; the first is used".into());
+                if slider_node.is_some() {
+                    replaced_slider_sets += 1;
                 }
+                slider_node = Some((*definitions, values.as_deref(), *values_source));
             }
             _ => {}
         }
+    }
+    if dropped_deformers > 0 {
+        tracing::warn!(
+            dropped = dropped_deformers,
+            kept = MAX_BODY_SHAPE_CLIPS,
+            "body-shape deformers beyond the Tessera bound dropped"
+        );
+        out.notes.push(format!(
+            "{dropped_deformers} body-shape deformers beyond {MAX_BODY_SHAPE_CLIPS} dropped"
+        ));
+    }
+    if replaced_slider_sets > 0 {
+        out.notes.push(format!(
+            "{} slider deformers; the most recently started one's set is used",
+            replaced_slider_sets + 1
+        ));
     }
     if let Some((record, node_values, values_source)) = slider_node {
         match read_slider_table(data, record) {
@@ -368,16 +403,16 @@ pub fn figure_shape<S: RecordSource>(
                         table.unknown_channel_bits
                     ));
                 }
-                let bytes = slider_bytes(
+                let values = slider_values(
                     values_source,
                     node_values,
                     &c.sliders.values,
                     vocab.slider_values,
                 );
-                let positions = slider_positions(table.sliders.len(), &bytes);
+                let positions = slider_positions(table.sliders.len(), &values);
                 out.sliders = Some(FigureSliders {
                     table,
-                    bytes,
+                    values,
                     positions,
                 });
             }
@@ -398,52 +433,54 @@ mod tests {
         assert_eq!(channel::of_label("Bogus"), None);
     }
 
-    /// The precedence of `slider_bytes` (`script-table.md` §16 Decision, `appearance.md`
-    /// §6.3): figure bytes only for a string driven by `AC_BoneSlider_Value_Array`.
+    /// The precedence of `slider_values` (`script-table.md` §6.9, `appearance.md` §6.3):
+    /// the figure's pieces only for a string driven by `AC_BoneSlider_Value_Array`; strings
+    /// cut by the client's rule (the empty piece after an even-length string).
     #[test]
-    fn slider_byte_precedence() {
+    fn slider_value_precedence() {
         const ARRAY: u32 = 0x1000_0001;
         const OTHER: u32 = 0x1000_0002;
-        let figure = [0x10, 0x20];
-        // Driven by the value array: the figure's bytes win over the resolved string.
+        let figure = [0x10, 0x20, 0];
+        let absent = slider_value_pieces(&"80".repeat(35));
+        // Driven by the value array: the figure's pieces win over the resolved string.
         assert_eq!(
-            slider_bytes(Some(ARRAY), Some("8080"), &figure, Some(ARRAY)),
-            vec![0x10, 0x20]
+            slider_values(Some(ARRAY), Some("8080"), &figure, Some(ARRAY)),
+            vec![0x10, 0x20, 0]
         );
         // ... else the resolved driven string, else the absent-property Decision.
         assert_eq!(
-            slider_bytes(Some(ARRAY), Some("80ff"), &[], Some(ARRAY)),
-            vec![0x80, 0xFF]
+            slider_values(Some(ARRAY), Some("80ff"), &[], Some(ARRAY)),
+            vec![0x80, 0xFF, 0]
+        );
+        assert_eq!(slider_values(Some(ARRAY), None, &[], Some(ARRAY)), absent);
+        assert_eq!(absent.len(), 36);
+        assert!(absent[..35].iter().all(|&b| b == 0x80));
+        // Not driven: the node's stored string, even with figure pieces.
+        assert_eq!(
+            slider_values(None, Some("00ff"), &figure, Some(ARRAY)),
+            vec![0x00, 0xFF, 0]
+        );
+        // Driven by another property: its resolved value, never the figure's pieces.
+        assert_eq!(
+            slider_values(Some(OTHER), Some("01"), &figure, Some(ARRAY)),
+            vec![0x01, 0]
         );
         assert_eq!(
-            slider_bytes(Some(ARRAY), None, &[], Some(ARRAY)),
-            ABSENT_SLIDER_BYTES.to_vec()
-        );
-        assert_eq!(ABSENT_SLIDER_BYTES.len(), 35);
-        assert!(ABSENT_SLIDER_BYTES.iter().all(|&b| b == 0x80));
-        // Not driven: the node's stored string, even with figure bytes.
-        assert_eq!(
-            slider_bytes(None, Some("00ff"), &figure, Some(ARRAY)),
-            vec![0x00, 0xFF]
-        );
-        // Driven by another property: its resolved value, never the figure's bytes.
-        assert_eq!(
-            slider_bytes(Some(OTHER), Some("01"), &figure, Some(ARRAY)),
-            vec![0x01]
-        );
-        assert_eq!(
-            slider_bytes(Some(OTHER), None, &figure, Some(ARRAY)),
-            ABSENT_SLIDER_BYTES.to_vec()
+            slider_values(Some(OTHER), None, &figure, Some(ARRAY)),
+            absent
         );
         // Without the value-array PID in the dictionary nothing is the figure's.
         assert_eq!(
-            slider_bytes(Some(ARRAY), Some("02"), &figure, None),
-            vec![0x02]
+            slider_values(Some(ARRAY), Some("02"), &figure, None),
+            vec![0x02, 0]
         );
-        // Positions of the bytes in use (A16): hidden sliders included, 0.5 past the end.
+        // An odd-length string ends with a one-character piece and no empty piece.
+        assert_eq!(slider_values(None, Some("8z1"), &[], None), vec![8, 1]);
+        // Positions of the pieces in use (A16): hidden sliders included, 0 for the empty
+        // piece, 0.5 past the end.
         assert_eq!(
-            slider_positions(3, &slider_bytes(None, Some("ff00"), &[], None)),
-            vec![1.0, 0.0, 0.5]
+            slider_positions(4, &slider_values(None, Some("ff00"), &[], None)),
+            vec![1.0, 0.0, 0.0, 0.5]
         );
     }
 }

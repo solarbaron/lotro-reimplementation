@@ -6,7 +6,8 @@
 //! and hulls, a 0x66 record decoded from the input, and the query capsules, sweeps, rays,
 //! contacts, radius and plane queries and cell lookups all come from the input. With header
 //! bit 0x80 the set is also built the way `tessera-world` builds it: a landblock-info value
-//! (static entities with fuzzed kinds, placements, flags, scales and content layers; cells
+//! (static entities with fuzzed kinds, placements, flags, scales, content layers and
+//! creation types, checked against the §9.3 filters; cells
 //! with fuzzed geometry) and an in-memory archive of 0x47 / 0x1F / 0x04 / 0x66 / 0x78
 //! records, each either synthetic or raw input bytes, go through `add_statics`,
 //! `add_generated`, `add_cells` and `resolve_object_collision`. Nothing may panic; every
@@ -26,7 +27,7 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::collision::{CellGeometry, CellPlane, CollisionMesh, PlaneListEnd, TreeBlock};
 use tessera_formats::landblock::{
     Cell, GRID_SAMPLES, GridSurface, HeightGrid, LandblockInfo, LayoutRule, Placement,
-    StaticEntity, TSizeList, VertexFlags,
+    StaticEntity, StaticEntityType, TSizeList, VertexFlags,
 };
 use tessera_formats::reader::{TSIZE_BUCKET_COUNTS, write_vle};
 use tessera_formats::setup::{
@@ -39,8 +40,9 @@ use tessera_formats::{
 use tessera_physics::geometry::{
     BodyId, BodyPurpose, BodySource, Capsule, CellPlacement, CellVolume, CollisionFlags,
     CollisionLimits, CollisionQuery, CollisionSet, CollisionSetBuilder, CollisionView,
-    FetchedRecord, GeneratedObject, GridMesh, ObjectCollisionCache, PhysicsPids, PlacedCell,
-    QueryFilter, SKIN, ShapeTemplate, StaticOptions, Transform, resolve_object_collision,
+    EntityLookups, FetchedRecord, GeneratedObject, GridMesh, ObjectCollisionCache, PhysicsPids,
+    PlacedCell, QueryFilter, SKIN, ShapeTemplate, StaticOptions, Transform, content_layers_pass,
+    resolve_object_collision, static_blocks_walker, static_has_walker_collision,
 };
 
 /// Reads little-endian values from the input, cycling, zero when it is empty.
@@ -247,14 +249,44 @@ fuzz_target!(|data: &[u8]| {
             &hull,
             placement,
         ) {
-            let _ = builder.add_cell(cell, None);
+            // Sometimes with a small box mesh and arbitrary flags: the body keeps only the
+            // two cell flags (`collision.md` §5.3), and a refused body still places the cell.
+            if b.byte() & 1 == 0 {
+                let mut mesh = ShapeTemplate::default();
+                let _ = mesh.push_box(&CollisionBox {
+                    min: [0.0; 3],
+                    max: [1.0; 3],
+                    frame: Frame::IDENTITY,
+                });
+                let flags = CollisionFlags {
+                    no_physics: Some(b.byte() & 1 == 0),
+                    ethereal_to: Some(u64::from(b.u32())),
+                    always_uncontrolled_surface: Some(b.byte() & 1 == 0),
+                    can_ledge_climb: Some(b.byte() & 1 == 0),
+                    ..CollisionFlags::default()
+                };
+                let cells = builder.report().cells;
+                if builder
+                    .add_cell_with_flags(cell, Some(&mesh), flags)
+                    .is_ok()
+                {
+                    assert_eq!(builder.report().cells, cells + 1);
+                }
+            } else {
+                let _ = builder.add_cell(cell, None);
+            }
         }
     }
     if head[0] & 0x80 != 0 {
-        build_from_records(&mut builder, &mut b, rest);
+        build_from_records(&mut builder, &mut b, rest, head[1] & 0x80 != 0);
     }
     let _ = builder.report();
     let set = builder.build();
+    for body in set.bodies() {
+        if matches!(body.source, BodySource::Cell { .. }) {
+            assert_eq!(body.flags, body.flags.cell_body());
+        }
+    }
     static OTHER: OnceLock<CollisionSet> = OnceLock::new();
     let other = OTHER.get_or_init(|| {
         // A small neighbour (one box) keeps the view cheap to query.
@@ -367,19 +399,27 @@ const LAYERS: u32 = 0x1000_0007;
 const LAYER: u32 = 0x1000_0008;
 const CREATION: u32 = 0x1000_0009;
 
-fn schema() -> &'static HashMap<u32, PropertyType> {
+fn schema_with(creation: PropertyType) -> HashMap<u32, PropertyType> {
+    HashMap::from([
+        (NO_PHYSICS, PropertyType::Bool),
+        (ETHEREAL_TO, PropertyType::Bitfield32),
+        (SURFACE, PropertyType::DidRef),
+        (SCALE, PropertyType::Vector3),
+        (LAYERS, PropertyType::Array),
+        (LAYER, PropertyType::Enum),
+        (CREATION, creation),
+    ])
+}
+
+/// The schema: `Entity_CreationType` as an enum, or (`wrong`) as a float.
+fn schema_of(wrong: bool) -> &'static HashMap<u32, PropertyType> {
     static S: OnceLock<HashMap<u32, PropertyType>> = OnceLock::new();
-    S.get_or_init(|| {
-        HashMap::from([
-            (NO_PHYSICS, PropertyType::Bool),
-            (ETHEREAL_TO, PropertyType::Bitfield32),
-            (SURFACE, PropertyType::DidRef),
-            (SCALE, PropertyType::Vector3),
-            (LAYERS, PropertyType::Array),
-            (LAYER, PropertyType::Enum),
-            (CREATION, PropertyType::Enum),
-        ])
-    })
+    static W: OnceLock<HashMap<u32, PropertyType>> = OnceLock::new();
+    if wrong {
+        W.get_or_init(|| schema_with(PropertyType::Float))
+    } else {
+        S.get_or_init(|| schema_with(PropertyType::Enum))
+    }
 }
 
 fn pids() -> PhysicsPids {
@@ -434,11 +474,19 @@ fn set_bytes(b: &mut Bytes) -> Vec<u8> {
         entries.push((LAYERS, v));
     }
     if mask & 32 != 0 {
-        // Entity_CreationType: mostly 7 and 8 (the §9.3 drop), sometimes anything.
-        let key = match b.byte() % 4 {
-            0 => 7,
-            1 => 8,
-            2 => 3,
+        // Entity_CreationType (§9.3 item 3): the refused values 0, 7 and 8, the created
+        // values 3, 5, 6 and 9, and sometimes anything. Whether it is the SED's own value
+        // or a chain level's depends on where this set ends up, so both precedences are
+        // exercised; with bit 0x80 of the second header byte the schema types it as a float
+        // (a value that is not an integer or enum counts as 0).
+        let key = match b.byte() % 8 {
+            0 => 0,
+            1 => 7,
+            2 => 8,
+            3 => 3,
+            4 => 5,
+            5 => 6,
+            6 => 9,
             _ => b.u32(),
         };
         entries.push((CREATION, key.to_le_bytes().to_vec()));
@@ -476,7 +524,13 @@ fn record(
     }
 }
 
-fn build_from_records(builder: &mut CollisionSetBuilder, b: &mut Bytes, rest: &[u8]) {
+fn build_from_records(
+    builder: &mut CollisionSetBuilder,
+    b: &mut Bytes,
+    rest: &[u8],
+    wrong_creation_type: bool,
+) {
+    let schema = || schema_of(wrong_creation_type);
     // The archive: four objects 0x47 (some with a 0x47 parent and extra sets), one template,
     // setups and meshes.
     let mut archive: HashMap<u32, Vec<u8>> = HashMap::new();
@@ -714,7 +768,48 @@ fn build_from_records(builder: &mut CollisionSetBuilder, b: &mut Bytes, rest: &[
         active_content_layers: (0..b.byte() % 3).map(|_| u32::from(b.byte() % 4)).collect(),
         instance: u32::from(b.byte() % 2),
     };
+    // §9.3 items 2–3 with the SED-then-chain lookup: exactly the Physics SEDs with a
+    // position and an object that fail the content-layer test or whose effective creation
+    // type is 0, 7 or 8 are filtered, and only the others can get a body.
+    let before = *builder.report();
+    let (mut filtered, mut allowed) = (0u32, 0u32);
+    for e in &info.entities {
+        if e.kind() != Some(StaticEntityType::Physics) {
+            continue;
+        }
+        let (Some(_), Some(obj)) = (e.placement, e.object) else {
+            continue;
+        };
+        let resolved = object(obj);
+        let (own, own_lookups) = e.properties.as_ref().map_or_else(Default::default, |s| {
+            (
+                CollisionFlags::from_set(s, &pids),
+                EntityLookups::from_set(s, &pids),
+            )
+        });
+        let lookups = own_lookups.or(resolved.lookups.clone());
+        let flags = CollisionFlags::of_static(own, resolved.flags);
+        let layers = content_layers_pass(
+            lookups.layer_list(),
+            &options.active_content_layers,
+            options.instance,
+        );
+        if !layers || flags.refuses_static_creation() {
+            filtered += 1;
+        } else {
+            allowed += 1;
+        }
+        assert_eq!(
+            static_blocks_walker(true, layers, &flags, resolved.collision),
+            layers
+                && !flags.refuses_static_creation()
+                && static_has_walker_collision(&flags, resolved.collision)
+        );
+    }
     builder.add_statics(&info, &pids, &options, object);
+    let after = *builder.report();
+    assert_eq!(after.statics_filtered - before.statics_filtered, filtered);
+    assert!(after.statics_blocking - before.statics_blocking <= allowed);
     let generated: Vec<GeneratedObject> = (0..b.byte() % 6)
         .map(|_| GeneratedObject {
             object: Did(0x4700_0000 | u32::from(b.byte() % 5)),

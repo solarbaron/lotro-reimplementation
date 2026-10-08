@@ -278,7 +278,8 @@ pub enum DidKind {
     ImposterTable,
     /// 0x28: DID maps.
     DataIdMap,
-    /// 0x2A: sound-info records (DB type SOUNDINFO; layout OPEN).
+    /// 0x2A: sound infos (playback parameters naming a 0x0A payload; `sound.md` §4),
+    /// decoded by [`crate::SoundInfo`].
     SoundInfo,
     /// 0x2B: compiled shader programs (shader records, `material.md` §7; decoded by
     /// `tessera-material`).
@@ -430,6 +431,7 @@ impl DidKind {
     pub fn evidence(self) -> Evidence {
         match self {
             Self::Sound
+            | Self::SoundInfo
             | Self::EnumMapper
             | Self::StringTable
             | Self::DataIdMap
@@ -483,7 +485,6 @@ impl DidKind {
             | Self::UiLayout
             | Self::StringTableReported
             | Self::ImposterTable
-            | Self::SoundInfo
             | Self::ComputeShader
             | Self::ParticleSystemDescriptor
             | Self::ScriptChannels
@@ -508,7 +509,6 @@ impl DidKind {
             Self::EncounterTable => "encounter table",
             Self::UiScene => "UI scene",
             Self::ImposterTable => "imposter table",
-            Self::SoundInfo => "sound info",
             Self::ComputeShader => "compute shader",
             Self::ParticleSystemDescriptor => "particle-system descriptor",
             Self::ScriptChannels => "script channels",
@@ -539,6 +539,7 @@ impl DidKind {
             Self::StringTable => "string table",
             Self::StringTableReported => "string table (reported)",
             Self::DataIdMap => "DID map",
+            Self::SoundInfo => "sound info",
             Self::ShaderProgram => "shader program",
             Self::Material => "material",
             Self::SurfaceDescriptor => "surface descriptor",

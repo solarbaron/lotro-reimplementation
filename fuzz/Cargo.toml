@@ -35,6 +35,12 @@ tessera-terrain = { path = "../crates/terrain" }
 tessera-havok = { path = "../crates/havok" }
 tessera-anim = { path = "../crates/anim" }
 tessera-physics = { path = "../crates/physics" }
+tessera-protocol = { path = "../crates/protocol" }
+tessera-server = { path = "../apps/server" }
+tessera-wvm = { path = "../crates/wvm" }
+tessera-audio = { path = "../crates/audio" }
+tessera-scriptgraph = { path = "../crates/scriptgraph" }
+tessera-assets = { path = "../crates/assets" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -349,6 +355,29 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wstate_character"
+path = "fuzz_targets/wstate_character.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_game_controls"
+path = "fuzz_targets/wstate_game_controls.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-wvm (docs/specs/wlib-bytecode.md) ---
+
+[[bin]]
+name = "wvm_code"
+path = "fuzz_targets/wvm_code.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-formats landblock family (docs/specs/landblock.md, entity-descriptor.md) ---
 
 [[bin]]
@@ -375,6 +404,22 @@ bench = false
 [[bin]]
 name = "formats_landblock_properties"
 path = "fuzz_targets/formats_landblock_properties.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_distant_sector"
+path = "fuzz_targets/formats_distant_sector.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats instanced content (docs/specs/instances.md) ---
+
+[[bin]]
+name = "formats_instances"
+path = "fuzz_targets/formats_instances.rs"
 test = false
 doc = false
 bench = false
@@ -725,6 +770,193 @@ bench = false
 [[bin]]
 name = "client_interiors"
 path = "fuzz_targets/client_interiors.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-protocol (docs/specs/tessera-protocol.md, M7) ---
+
+[[bin]]
+name = "protocol_frame"
+path = "fuzz_targets/protocol_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_message"
+path = "fuzz_targets/protocol_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_datagram"
+path = "fuzz_targets/protocol_datagram.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_handshake"
+path = "fuzz_targets/protocol_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_fingerprint"
+path = "fuzz_targets/protocol_fingerprint.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-net test-server backend (docs/specs/tessera-protocol.md §13, M7) ---
+
+[[bin]]
+name = "net_remote_inbound"
+path = "fuzz_targets/net_remote_inbound.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_remote_world"
+path = "fuzz_targets/net_remote_world.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-server (docs/specs/test-server.md §10, tessera-protocol.md §13, M7) ---
+
+[[bin]]
+name = "server_connection"
+path = "fuzz_targets/server_connection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_world"
+path = "fuzz_targets/server_world.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_files"
+path = "fuzz_targets/server_files.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats: sound infos, payload trailer, sound nodes (sound.md §3, §4, §9; M6) ---
+
+[[bin]]
+name = "formats_sound_info"
+path = "fuzz_targets/formats_sound_info.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: sound payload decoding (sound.md §3, §12.2; M6) ---
+
+[[bin]]
+name = "audio_decode"
+path = "fuzz_targets/audio_decode.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: engine driven by arbitrary operations (sound.md §6–§8; decision 0019; M6) ---
+
+[[bin]]
+name = "audio_engine"
+path = "fuzz_targets/audio_engine.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: player-music ABC reader (abc-dialect.md §3–§9, §14; M6) ---
+
+[[bin]]
+name = "audio_abc"
+path = "fuzz_targets/audio_abc.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-scriptgraph: the script-graph runtime on arbitrary graphs and operations (script-runtime.md; M6) ---
+
+[[bin]]
+name = "scriptgraph_runtime"
+path = "fuzz_targets/scriptgraph_runtime.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-audio: instrument table on arbitrary scripts, player on arbitrary events (instruments.md §5–§10; M6) ---
+
+[[bin]]
+name = "audio_instruments"
+path = "fuzz_targets/audio_instruments.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-client world audio: game clock, place rules, [Sound] import (sound.md §10.3; M6) ---
+
+[[bin]]
+name = "client_audio"
+path = "fuzz_targets/client_audio.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-client player music: /play, /playstart, /playlist commands (abc-dialect.md §11; M6) ---
+
+[[bin]]
+name = "client_player_music"
+path = "fuzz_targets/client_player_music.rs"
+test = false
+doc = false
+bench = false
+
+# --- Fuzz hardening: entry points without a target before (archive names, GameData, object store and
+# geography, world-context loading, explorer search box and hex view). The world-level targets
+# damage a valid synthetic install through fuzz_targets/common/mutate.rs. ---
+
+[[bin]]
+name = "dat_archive_names"
+path = "fuzz_targets/dat_archive_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "props_game_data"
+path = "fuzz_targets/props_game_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_store_geo"
+path = "fuzz_targets/wstate_store_geo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_context"
+path = "fuzz_targets/world_context.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "explorer_query_hex"
+path = "fuzz_targets/explorer_query_hex.rs"
 test = false
 doc = false
 bench = false

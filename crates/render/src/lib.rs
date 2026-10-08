@@ -188,12 +188,13 @@ pub use instanced::{
     frill_distances, frill_fade_in, frill_radius_sectors, frill_reduced_count,
 };
 pub use lighting::{
-    FRAME_SHADING_WGSL, FRAME_WGSL, Fog, FrameLighting, Light, LightFields, LightKind, LightReach,
-    LightRecord, MAX_DRAW_LIGHTS, MAX_FRAME_LIGHTS, SELECTION_FRACTION, SunLight, SunShadow,
+    FOG_FAR_CAP, FRAME_SHADING_WGSL, FRAME_WGSL, Fog, FrameLighting, Light, LightFields, LightKind,
+    LightReach, LightRecord, MAX_DRAW_LIGHTS, MAX_FRAME_LIGHTS, SELECTION_FRACTION, SunLight,
+    SunShadow,
 };
 pub use material::{
-    AlphaMode, Dye, DyeMask, Gloss, LightSelection, Lighting, LitSurface, Material, MeshDebug,
-    MeshDraw, MeshShading, NormalLines, Opacity, Specular,
+    AlphaMode, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss, LightSelection, Lighting,
+    LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines, Opacity, Specular,
 };
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,

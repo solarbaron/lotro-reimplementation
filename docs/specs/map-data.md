@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author; re-review by a second separate dirty-room reviewer session, AI-assisted, not the author |
-| **Review record** | Re-review 2026-10-07: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-07: **passed**, Accepted. OPEN-closing revision 2026-10-08: changes requested (four items), then repaired. Re-review of the repair 2026-10-08 by a separate dirty-room reviewer session (AI-assisted, not the author): **passed**, Accepted; three non-blocking notes. Details in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for the three singleton tables of §3–§5), `crates/world` (place lookup §3.4, map-note index §4.6, travel and housing graphs §8–§9), `apps/explorer` (world-map overlays: places, notes, links, travel routes, neighbourhoods), `apps/client` (walker place lookup), `crates/net` sandbox backend (travel and housing data for a local server) |
 | **Companion specs** | [`records.md`](records.md) (**RC**: §1.2 VLE, §1.3 TSize and bucket order, §1.4 strings, §1.5 name hash, §2.1 DID table, §4 StringInfo); [`property-system.md`](property-system.md) (**PS**: §4.6 positions, §4.8 StringInfo, §5 property sets and list/table entry forms, §6.2 the +0x09000000 rule, §7.3 bit-to-key rule, §8.1 DID maps, §17.4 StringInfo reader); [`wstate.md`](wstate.md) (**WS**: object-state header and root class, §11 areas, territories, regions, dungeons); [`landblock.md`](landblock.md) (**LB**: §4.6 links, §6 landblock properties and minimap tiles); [`entity-descriptor.md`](entity-descriptor.md) (**ED**: SED types, §4.5.1 content layers); [`game-panels.md`](game-panels.md) (**GP**: §8 minimap, §9 world map, map georeference); [`coordinates.md`](coordinates.md) (**CO**: §5–§8 frames and map coordinates, §9 `/loc` text); [`string-table.md`](string-table.md) (**ST**: §9 rendering a StringInfo) |
 
@@ -54,8 +54,8 @@ analysis and are marked OPEN or Reported.
 
 | Tag | Source |
 |---|---|
-| OBS | Observed in the user's install (Steam, data current on 2026-10-06/07) with throwaway read-only probes in the dirty-room scratch area, using the repository's decoders as tools. **Full censuses:** every byte of 0x0E000004, 0x0E000006 and 0x0E400000 (all rows decoded, zero bytes left over); every 0x70 record header (root class) and every 0x79 property set of the classes named in this spec, and of every 0x70 and 0x78 set when looking for references to them (inbound-reference scan over all 383,332 object property sets and 1,616 stand-alone sets, plus the bundles of all object-state records); all 49,636 landblock-info records (SEDs, links, weenies); the DID maps UNIQUEDB 0x28000002, WEENIECONTENT 0x2800000E, CONTENT_LAYER 0x28000012 and RIPCORDS 0x2800002C; the enum mappers named in §6.3 and §9. |
-| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of the other world specs), read in the dirty room on 2026-10-07 in a copy of the shared analysis project, by address range. **Questions:** (q1) the stored layout of a map-note row: field order and identity of the three DIDs, whether the byte after the type is padding or a value, the exact condition for the link block, and when the trailing property set is read; (q2) which rows the client rejects as invalid, and how it indexes rows after loading; (q3) the places-table reader and lookup: entry order, the key used for hashing, case handling, and which DID the two u32 fields are; (q4) the dungeon quest-note row and table readers and how rows are grouped; (q5) how the client finds the three tables. **Why M1–M3 were not enough:** M1 decodes every row exactly but cannot tell padding from an always-zero value, `type = 1` from "bit 0 set" (no row has bit 0 with another bit), "area" from "dungeon" in the places table (both fields are equal in every record), or the client's validity and indexing rules (they leave no trace in data); no published source states them; M3 cannot isolate them. **Read:** the map-note base, row and quest-row serializers and their reset and validity routines, the two table serializers, the places-table entry serializer, its two name lookups and its debug dump, the map-note manager's two load routines, its add-note routine and its per-zone list lookup. No network, login, launcher or anti-tamper code. **Second use, 2026-10-07 (revision after review, same build, same method, by address range):** (q6) what the client's "valid position" test checks, for the row's own position and for `link_position`; (q7) what its "valid text" test of a map-note row checks; (q8) which lower-case mapping the places-table lookup applies to code units, and under which locale; (q9) the unit of `min_range` and `max_range` and the test that uses them. **Why M1–M3 were not enough for (q6)–(q9):** every position, text and key in the data already passes or is ASCII (no invalid position, no unresolved text, no non-ASCII key), so the data cannot show the rule or its edge cases; no published source states them; the owner's in-game observations cannot isolate them. **Read (second use):** the position class's validity routine and the orientation check it calls, the StringInfo validity routine, the start-up routine that selects the C-runtime locale from the game language, the map-note manager's ranged-note query and the radar's note-update routine with the range predicate it calls. The meaning of the C-runtime functions named by import is taken from their public documentation. |
+| OBS | Observed in the user's install (Steam, data current on 2026-10-06/07) with throwaway read-only probes in the dirty-room scratch area, using the repository's decoders as tools. **Full censuses:** every byte of 0x0E000004, 0x0E000006 and 0x0E400000 (all rows decoded, zero bytes left over); every 0x70 record header (root class) and every 0x79 property set of the classes named in this spec, and of every 0x70 and 0x78 set when looking for references to them (inbound-reference scan over all 383,332 object property sets and 1,616 stand-alone sets, plus the bundles of all object-state records); all 49,636 landblock-info records (SEDs, links, weenies); the DID maps UNIQUEDB 0x28000002, WEENIECONTENT 0x2800000E, CONTENT_LAYER 0x28000012 and RIPCORDS 0x2800002C; the enum mappers named in §6.3 and §9. **2026-10-08** (new read-only probe, all records of each kind): the UNIQUEDB entries 0x1000001B and 0x10000013 and the two property sets they name, every element of their note-type arrays, the `extra` set of all 13,485 map-note rows (every world-event state), and the content-layer test of §4.8.2 on every row for *L* = 0 and *L* = 1. **2026-10-08, second probe** (read-only): the dictionary entries of all 53 `Discount_Travel_…` properties; a byte scan of every section of the client executable for the property IDs of MD38; a full instruction sweep of the class library's code block (record 0x56000000, by `wlib-bytecode.md` §3.2: 362,178 instructions, ending exactly at the block's end) for integer immediates equal to the property IDs of MD41, with the bodies, classes and static call graph involved; the `UIElementID` labels (mapper chain from 0x230000D1) of the element IDs named in MD38–MD40. |
+| BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of the other world specs), read in the dirty room on 2026-10-07 in a copy of the shared analysis project, by address range. **Questions:** (q1) the stored layout of a map-note row: field order and identity of the three DIDs, whether the byte after the type is padding or a value, the exact condition for the link block, and when the trailing property set is read; (q2) which rows the client rejects as invalid, and how it indexes rows after loading; (q3) the places-table reader and lookup: entry order, the key used for hashing, case handling, and which DID the two u32 fields are; (q4) the dungeon quest-note row and table readers and how rows are grouped; (q5) how the client finds the three tables. **Why M1–M3 were not enough:** M1 decodes every row exactly but cannot tell padding from an always-zero value, `type = 1` from "bit 0 set" (no row has bit 0 with another bit), "area" from "dungeon" in the places table (both fields are equal in every record), or the client's validity and indexing rules (they leave no trace in data); no published source states them; M3 cannot isolate them. **Read:** the map-note base, row and quest-row serializers and their reset and validity routines, the two table serializers, the places-table entry serializer, its two name lookups and its debug dump, the map-note manager's two load routines, its add-note routine and its per-zone list lookup. No network, login, launcher or anti-tamper code. **Second use, 2026-10-07 (revision after review, same build, same method, by address range):** (q6) what the client's "valid position" test checks, for the row's own position and for `link_position`; (q7) what its "valid text" test of a map-note row checks; (q8) which lower-case mapping the places-table lookup applies to code units, and under which locale; (q9) the unit of `min_range` and `max_range` and the test that uses them. **Why M1–M3 were not enough for (q6)–(q9):** every position, text and key in the data already passes or is ASCII (no invalid position, no unresolved text, no non-ASCII key), so the data cannot show the rule or its edge cases; no published source states them; the owner's in-game observations cannot isolate them. **Read (second use):** the position class's validity routine and the orientation check it calls, the StringInfo validity routine, the start-up routine that selects the C-runtime locale from the game language, the map-note manager's ranged-note query and the radar's note-update routine with the range predicate it calls. The meaning of the C-runtime functions named by import is taken from their public documentation. **Third use, 2026-10-08 (OPEN-closing session; same build, SHA-256 prefix d22363eb9aff0fb5 checked again; Ghidra headless decompiler on a read-only copy of the analysis project, single functions by address):** (q10) what the client does with `flag_b`, and where the version that gates `extra` comes from; (q11) which check the valid-text test applies to each kind of StringInfo argument; (q12) how the client selects, filters and draws table notes on the radar and in the map window: content layers, `discovery`, `type` filters, icons, `level`, and the world-event states in `extra`; and which dungeon quest notes the radar fetches; (q13) which position the radar measures ranges from, and whether the map window applies the range test; (q14) whether the client reads an entity's own map-note properties for a table row; (q15) whether the client's code reads the travel-mode, hop, segment, discount and sell-multiplier properties of §8 directly. **Why M1–M3 were not enough for (q10)–(q15):** these are client rules with no trace in any record (`flag_b` is 0 everywhere, no record stores a version, no StringInfo has arguments, the selection and drawing rules combine data with player and UI state); no published source states them; observing the client could show that a note appears but not the rule, the reference position or the filter that decides it. **Read (third use):** the map-note row class (its serialiser, reset, validity routines and per-row link test), the stream's version query and the version table compiled into the client, the StringInfo validity routine, the StringInfo argument-value factory and the five value classes' check routines, the map-note manager's start-up, its two icon-table loaders, its post-filing hook and its region, dungeon and zone queries, its world-event state evaluator, the radar's note update, note placement, ranged-note update, type filter, content-layer source and reference-position update (with the user option that selects the position record), the map window's note pass and its map-node relation, and a search of the whole executable, as instruction operands, for the property IDs of §6.1, of the `TravelMode_…`, `TravelHop_…` and `TravelSegment_…` properties, of the four properties named in §8.8 and of the three instancing properties of §9.3 (the `Discount_Travel_…` properties were not in this search; the fourth use covers them). No network, login, launcher or anti-tamper code. **Fourth use, 2026-10-08 (revision after the review of the same date; same build, SHA-256 prefix checked again; same method, single functions by address):** (q16) what the client does at the 13 instructions whose operand equals a `Discount_Travel_…` property ID, and where the travel window takes its destinations and prices from; (q17) which region and landblock rectangle the radar's area query uses, and what it queries while its recorded position is invalid; (q18) how the map window relates an area to a map node when two nodes list the area or none does. **Why M1–M3 were not enough for (q16)–(q18):** an operand equal to a property ID may be a UI element ID or a property use, which only the code shows; the radar's rectangle and the map window's registration rule leave no trace in data (no area is listed twice, no row lies in an unlisted area); no published source states them; observing the client shows which notes appear, not the rectangle or rule behind them. **Read (fourth use):** the 13 instructions and the routines around them; the travel window's constructor, its property-change registration and handler, its refresh routines and its two calls into the script machine; the radar's note update with the rectangle routine, the georeference setter and the position normaliser it calls; the map window's area-to-node registration, its area lookup and its node-ancestry test. No network, login, launcher or anti-tamper code. |
 | LC | LotroCompanion `lotro-tools` (places, map-note, quest-note, travel and housing loaders), read for facts only. Marked **Reported** where only LC supports a fact. |
 | RC, PS, WS, LB, ED, GP, CO, ST | The companion specs listed in the header. |
 
@@ -71,7 +71,7 @@ third-party only.
 | MD4 | Place lookup is case-insensitive (mapping in MD26); one lookup returns the position, another the area slot (§3.4) | BIN (q3, q8) | BIN |
 | MD5 | Place census: names, positions, area/dungeon slots (§3.5) | OBS | Confirmed |
 | MD6 | Map-note table layout: DID, u32 row count, rows; the reader fails when the count exceeds the remaining bytes (§4.1) | OBS (13,485 rows, 0 bytes left); BIN (q1, q4: the table serializers) | Confirmed |
-| MD7 | Map-note row layout, field identities, the boolean byte, the link block read when bit 0 of `type` is set, the trailing property set (§4.2–§4.3) | OBS (every row decodes exactly; link block present in exactly the 2,754 rows with bit 0); BIN (q1) | Confirmed (layout); BIN (byte checked as boolean, version gate) |
+| MD7 | Map-note row layout, field identities, the boolean byte, the link block read when bit 0 of `type` is set, the trailing property set (§4.2–§4.3) | OBS (every row decodes exactly; link block present in exactly the 2,754 rows with bit 0); BIN (q1) | Confirmed (layout); BIN (byte checked as boolean); version gate MD29 |
 | MD8 | Validity rules: a valid position (MD24); `type` ≠ 0; for non-link rows a valid text (MD25), a non-zero level and `min_range` not above `max_range` by more than 0.0002 (§4.4) | BIN (q2, q6, q7); OBS (all rows satisfy them) | Confirmed |
 | MD9 | Row census (§4.5) | OBS | Confirmed |
 | MD10 | After loading, the client files each row by dungeon, else by (region, landblock) when either range is zero, else in a list of ranged notes; link rows whose target is non-zero and not their own dungeon, and whose two positions are valid, also register an entry under their target zone (§4.6) | BIN (q2, q6); OBS (2,590 of the 2,754 link rows qualify; the other 164 lead into their own dungeon) | BIN (rule); Confirmed (counts) |
@@ -91,7 +91,23 @@ third-party only.
 | MD24 | The client's valid-position test: region ≠ 0, landblock X ≠ 0xFF and Y ≠ 0xFF, cell ≠ 0xFFFF (the tests of CO §4), x, y, z finite, orientation components finite and \|w² + x² + y² + z² − 1\| ≤ 0.0002 in f32; applied to a map-note row's position (§4.4) and, for the link entry of §4.6, to both the row's position and `link_position` (§4.4.1) | BIN (q6); OBS (all 13,485 row positions, 2,754 link positions, 9,025 place positions and 5,638 quest-note positions pass; the largest \|w² + x² + y² + z² − 1\| is 2.4 · 10⁻⁷) | Confirmed (rule BIN; every stored position passes) |
 | MD25 | The valid-text test of a non-link row: a literal passes whatever its content; a reference passes when token ≠ 0, table ≠ 0, the table exists in the active locale and holds the token, and every argument passes its own check; the text is not rendered (§4.4.2) | BIN (q7); OBS (all 10,731 non-link texts are references that resolve in the English tables, 87 of them to an entry with empty text; none has arguments) | Confirmed (rule BIN; every row passes) |
 | MD26 | Places lookup lower-cases each UTF-16 code unit on its own with the C runtime's locale-dependent mapping, under the locale the client sets at start-up from the game language, adds the full 16-bit lowered unit into the hash, compares names case-insensitively under the same locale, and stops at a code unit 0 (§3.3.1) | BIN (q8; C-runtime behaviour from its public documentation); OBS (all 296,009 code units of the 9,025 names are below 0x80, none is 0) | BIN (ASCII part Confirmed by MD3) |
-| MD27 | `min_range` and `max_range` are distances in world units; the radar hides a note whose two ranges both exceed 0.0002 in magnitude when its straight-line distance from the radar's reference position is above `max_range` or below `min_range` (§4.7) | BIN (q9) | BIN |
+| MD27 | `min_range` and `max_range` are distances in world units; the radar hides a note whose two ranges both exceed 0.0002 in magnitude when its straight-line distance from the radar's reference position (MD35) is above `max_range` or below `min_range`, and draws a shown one at the rim in the player's horizontal direction to it (§4.7) | BIN (q9, q13) | BIN |
+| MD28 | `flag_b` is stored and copied with the row, but neither the radar nor the map window reads it; it has no display effect (§4.2) | BIN (q10); OBS (0 in all 13,485 rows) | BIN |
+| MD29 | The version that gates `extra` is the client's own current version for this record kind, taken from a table compiled into the executable (2 in this build); records carry no version, so archive rows always have `extra` (§4.2) | BIN (q10); OBS (every row decodes exactly only with `extra`) | Confirmed |
+| MD30 | Valid-text test per argument: a nested-StringInfo argument passes when it passes the same test; numeric arguments always pass; an entry without a value is skipped; a mode-2 reference passes on token ≠ 0 and table ≠ 0 alone (§4.4.2) | BIN (q11) | BIN (no StringInfo here has arguments or mode 2) |
+| MD31 | The client's note queries: a region and landblock range (ranged notes of the region, the notes filed in each landblock), or a zone (its filed notes), each extended by the notes filed under every zone a returned link row leads into; every returned note passes the discovery check and the content-layer test of §4.8.2 with *L* = the player's `Volume_ContentLayer` (§4.8.1, §4.8.2) | BIN (q12); OBS (12,620 rows pass the layer test at *L* = 0 and at *L* = 1) | BIN (rule); Confirmed (counts) |
+| MD32 | Radar and map-window filters: `type` against the window's note-type filter, minus the current private encounter's disallowed types on the radar; on outdoor maps, the map node listing the note's `area` and its ancestors; neither reads `level` (§4.8.3, §4.8.4) | BIN (q12) | BIN |
+| MD33 | Note icons come from two UI property sets named by UNIQUEDB keys 0x1000001B (`UI_MapNoteIcons_Map`, map window) and 0x10000013 (`UI_RadarNoteIcons_Map`, radar), looked up by the exact `type` value; no entry means no icon; ranged notes on the radar use the entry of bit 45 (§4.8.5) | BIN (q12); OBS (0x78000001: 46 entries, 0x78000002: 47; every entry a single bit, no duplicate; every non-link row's type has an entry except the 11 rows of bit 62) | Confirmed (data); BIN (rule) |
+| MD34 | A row whose `extra` holds world-event map-note states is shown only while one state's condition holds; the first such state replaces the icons and the text it carries (§4.8.6) | BIN (q12); OBS (663 rows with states, 849 states, each with exactly one condition form) | Confirmed (data); BIN (rule) |
+| MD35 | The radar's reference position is the player's position, recorded by the radar when the player moves; the map window applies no range test (§4.7) | BIN (q13) | BIN |
+| MD36 | For table rows the client takes every map-note value from the row; it does not consult the entity's map-note properties (§6.2) | BIN (q12, q14: the display copy and the selection read only row fields) | BIN |
+| MD37 | The radar fetches the dungeon quest notes (§5) of each zone that a selected link row leads into (§5.3) | BIN (q12) | BIN |
+| MD38 | No instruction of the client executable has as an operand the property ID of a `TravelMode_…` or `TravelHop_…` property, of `Travel_DiscountArray`, `TravelWebSellMultiplier`, `TravelDestinationCost` or `TravelDestinationAllowPaperItems`, or of the three instancing properties of §9.3; none of these IDs occurs anywhere in the file as a 32-bit value. The operands equal to `TravelSegment_…` IDs are UI element IDs of equal value. Of the 53 `Discount_Travel_…` properties, 10 occur as operands of 13 instructions: 12 of them are UI element IDs of equal value (9 child-element lookups, a UI-message test, a switch that picks element IDs, the value of an element-valued UI property), and one is the property use of MD39 (§8.5, §8.6, §8.8, §9.3) | BIN (q15: operand search for every ID listed except the `Discount_Travel_…` ones; q16: the 13 `Discount_Travel_…` instructions); OBS (byte scan of the executable; element labels) | BIN (operand uses); Confirmed (byte scan) |
+| MD39 | The travel window (top-level UI element `Travel_Window`) registers with the local player for change notification of `Discount_Travel_Special`, `Advancement_Level`, `Travel_BypassUsageChecks`, `WE_Ettenmoors_Freep_Population_Tracker`, `WE_Ettenmoors_Freep_Population_Cap` and `Shapeshift_MeshIID`, among others; when one changes it rebuilds its destination list and buttons, without looking at which property changed or at its value (§8.8) | BIN (q16); OBS (property and element labels) | BIN |
+| MD40 | The travel window takes its destination list, and per destination the values it shows (among them the cost shown in `Travel_Currency_DestinationCost`, replaced by `Travel_Currency_DestinationCost_Free` when the cost is 0, and the minimum level shown in `Travel_Currency_MinLevel`), from two script functions of the class library that it starts by function ID: 0x01CC0001 (the list) and 0x01CC0003 (one destination); both are functions of class 460 here (`wlib-bytecode.md` §6.4) (§8.8) | BIN (q16); OBS (both IDs resolve to bodies of class 460) | BIN |
+| MD41 | The class library's code pushes as 32-bit integer immediates (`wlib-bytecode.md` §5.1, op 0x01, type 2) the IDs of `Travel_DiscountArray`, `TravelWebSellMultiplier` and `Travel_BypassUsageChecks`, once each, in three bodies of class 1507 that class 460 inherits (slots 10, 27, 36 here); `TravelDestinationAllowPaperItems` once (class 1499, the destination class of §8.3, slot 86) and `TravelDestinationCost` once (classes 2115 and 2122, slot 119). The static calls of function 0x01CC0003 reach the three class-1507 bodies. No `Discount_Travel_…`, `TravelMode_…`, `TravelHop_…`, `TravelSegment_…` or instancing ID occurs as an immediate (§8.5, §8.6, §8.8, §9.3) | OBS (every instruction of the code block; the static call graph; class indices and slots are this install's) | Confirmed |
+| MD42 | The radar's area query uses the region of its recorded position and the landblock rectangle from the block offsets (*bx*, *by*) of its map georeference to the block that contains the point *W*/*s* east and *H*/*s* north of block (*bx*, *by*)'s south-west corner (*W* × *H* the pixel size of `MinimapMapImage`, *s* the georeference scale, 1.0 when \|*s*\| ≤ 0.0002), found with CO §4's normaliser without clamping; the radar queries only while it holds a georeference; with region 0 the result is empty (§4.8.1) | BIN (q17); OBS (element label) | BIN |
+| MD43 | The map window registers each area of a map node's `UI_Map_AreaDIDs_Array` once: an area already registered keeps its first node and the client reports the conflict; an area that no node lists, or a node whose element is 0, maps to the element `WorldMap`, the active element of the root node (§4.8.4) | BIN (q18); OBS (element label; no area is listed by two nodes, GP §9.4) | BIN (rule); Confirmed (no duplicate here) |
 
 ---
 
@@ -368,12 +384,15 @@ and an empty `extra`, 1 + 12 + 4 + 5 + 17 + 12 + 2 = 53 bytes.
 | 16 | `extra` | property set | see below | Game-specific properties (§4.5) |
 
 `extra` is read only when the stream version the client associates with this record kind is
-2 or more (BIN q1); otherwise the row ends after `discovery`. Every row of this install has
-`extra` (all rows decode exactly with it), so readers always read it.
+2 or more (BIN q1); otherwise the row ends after `discovery`. That version is not stored in the
+archives: the client takes it from a table of current record-kind versions compiled into its own
+executable, where this record kind has version 2 in the build of the provenance table (MD29). So
+every row read from the archives has `extra` (all rows of this install decode exactly with it),
+and readers always read it. A writer always writes it.
 
-> **OPEN:** (a) The meaning of `flag_b` (BIN: stored as a boolean; never 1 here). (b) Where the
-> client takes the version that gates `extra` for records read from the archives; only the
-> "present" case occurs in data.
+`flag_b` (MD28): the client checks it as a boolean when reading and copies it with the row, but
+neither the radar nor the map window (§4.8) reads it, so it has no visible effect. Readers keep
+it for rewriting and otherwise ignore it.
 
 <a id="s4-3"></a>
 ### 4.3 Link rows (Confirmed, MD7)
@@ -428,9 +447,11 @@ install every position of the three tables passes: 13,485 row positions, 2,754 l
 The client checks `text` without rendering it (BIN q7). The text passes when:
 
 - it is a **literal**: always, whatever its content, the empty literal included;
-- it is a **reference**: the token is not 0, the table DID is not 0, the string table with that
-  DID exists in the active locale's archives, the table holds the token, and every argument of
-  the argument block (if any) passes its own check.
+- it is a **reference** of mode 2 (PS §17.4 step 1): the token is not 0 and the table DID is not
+  0; nothing is looked up;
+- it is any other **reference**: the token is not 0, the table DID is not 0, the string table
+  with that DID exists in the active locale's archives, the table holds the token, and every
+  argument of the argument table (if any) passes its own check (below).
 
 So a reference fails when it is null (token 0 or table 0, PS §4.8), when its table is missing,
 or when the token is missing from the active locale's table. An entry whose text is empty still
@@ -438,9 +459,16 @@ passes: the result of rendering is never looked at. In this install all 10,731 n
 are references with no arguments that resolve in the English tables; 87 of them resolve to an
 entry with empty text, and pass.
 
-> **OPEN:** the check applied to each argument kind (PS §17.4.1). No StringInfo in this install
-> has arguments. **Tessera rule:** an argument passes when it is itself a StringInfo that passes
-> this test, or any other kind of value.
+**Argument check** (MD30, BIN q11), by the entry's argument kind (PS §17.4.1):
+
+| Kind | Check |
+|---|---|
+| 1 (nested StringInfo) | Passes when the nested StringInfo passes this whole test, arguments included (recursively, up to the nesting limit of PS §5.3) |
+| 2–7 (floats and integers) | Always passes |
+| 0, 8–65,535 (entry without a value) | Skipped: it neither passes nor fails the text |
+
+This is the deep form of the validity test of PS §17.4.2. No StringInfo in this install has
+arguments or mode 2, so only the null and resolving cases occur.
 
 <a id="s4-5"></a>
 ### 4.5 Census (Confirmed, MD9)
@@ -488,11 +516,7 @@ the zone `link_target` when all of these hold (BIN q2, q6): `link_target` is non
 `link_position` passes §4.4.1. So every zone knows the doors that lead into it. In this install
 2,590 of the 2,754 link rows get such an entry; the other 164 lead into their own dungeon.
 
-> **OPEN:** how the maps use the lists afterwards: which `level` bits each map level shows,
-> how `type` bits select icons and filters (GP §8.8, `UI_Map_MapNoteFilterProperty`), whether
-> `min_range` and `max_range` limit anything besides the radar (§4.7), how `discovery` hides
-> undiscovered notes, and whether the content-layer test of
-> ED §4.5.1 applies to `layers`. **Tessera rule** until settled: §14.1.
+How the radar and the map window use these lists is §4.8.
 
 <a id="s4-7"></a>
 ### 4.7 Range test in the radar (BIN, MD27)
@@ -504,7 +528,13 @@ applies them to the notes it places (BIN q9):
    not range-tested.
 2. For a ranged note, the radar takes the straight-line three-dimensional distance *d* between
    the note's position and the radar's reference position, both expressed in one world frame
-   (CO §5–§7).
+   (CO §5–§7). The **reference position** is the player's position as the radar last recorded it
+   (MD35, BIN q13). The radar records the player's position when the radar is set up and refreshes
+   the record as the player moves, at the latest once the player has moved farther than a small
+   threshold distance of the radar's own from the recorded position. The client keeps two
+   records of the player's position; a user option for smoother radar movement (on by default)
+   selects which of them the radar uses. Both are the player's position. While the recorded
+   position is invalid (§4.4.1 tests 1–4), ranged notes are not range-tested.
 3. The note is hidden when *d*² > `max_range`² or *d*² < `min_range`², computed in f32. So it
    shows when `min_range` ≤ *d* ≤ `max_range`, both ends included.
 4. A shown ranged note is drawn at the rim of the radar, in the horizontal direction from the
@@ -514,9 +544,188 @@ With the stored values, ranged notes show between 80 and 800 units (811 rows), 8
 (23 rows), and so on (§4.5). This ties in with §4.6 step 3: the notes with both ranges non-zero
 are the ones kept in the separate list of ranged notes.
 
-> **OPEN:** (a) which position is the radar's reference (the player's, or the radar view's
-> centre when they differ); (b) whether the world map applies the same test.
-> **Tessera rule:** use the player's position (the camera's in the explorer).
+The **map window** (the world-map panel, GP §9) applies no range test: its note pass (§4.8.4)
+reads neither range, so ranged notes appear there like any other note (MD35). In the explorer,
+which has no player, Tessera uses the camera's position as the reference.
+
+<a id="s4-8"></a>
+### 4.8 How the client selects and draws notes (BIN, MD31–MD34)
+
+Two views of the client use the map-note table: the radar (GP §8) and the map window (GP §9).
+Both ask the map-note manager for notes with the queries of §4.8.1, which apply the tests of
+§4.8.2, and then filter and draw the result (§4.8.3, §4.8.4) with the icons of §4.8.5 and the
+world-event states of §4.8.6. Neither view reads `level` or `flag_b`: **`level` has no effect
+on what either view shows** (its only use is the validity check of §4.4).
+
+<a id="s4-8-1"></a>
+#### 4.8.1 Queries (MD31)
+
+1. **Area query**: a region *R* and an inclusive rectangle of landblocks (X from *x*₀ to *x*₁, Y
+   from *y*₀ to *y*₁), normally the landblocks the view covers. The result is, in this order:
+   every ranged note (§4.6 step 3) whose position lies in region *R*, whatever its landblock;
+   the notes filed under (*R*, landblock) for each landblock of the rectangle (§4.6 step 2); then,
+   for each distinct non-zero `link_target` of the link rows among those landblock notes, the
+   notes filed under that zone (§4.6 step 1).
+2. **Zone query**: a zone DID *Z*. The result is the notes filed under *Z*, then, for each
+   distinct `link_target` of the link rows among them other than *Z*, the notes filed under that
+   zone.
+
+The extension through link rows is one level deep: the notes added for a linked zone are not
+themselves followed. A note enters the result only when it passes both tests of §4.8.2; link rows
+are tested and returned like other notes.
+
+**Radar** (MD42). The radar queries from its recorded position (§4.7), and only while it holds a
+map georeference (the one with which it places notes, GP §8.6.1); without one its result is
+empty.
+
+- **Recorded position outdoors (cell 0) or invalid** (§4.4.1 tests 1–4): an area query with
+  *R* = the recorded position's region and this rectangle:
+  1. *x*₀ = *bx* and *y*₀ = *by*, the block offsets of the georeference. Outdoors this is the
+     georeference the radar takes from its tile grid (GP §8.6.1), normally the grid's
+     south-west block.
+  2. Take the position in block (*bx*, *by*) of the georeference's region with block-local offset
+     (*W*/*s*, *H*/*s*), in f32, where *W* and *H* are the width and height in pixels of the
+     element `MinimapMapImage` and *s* is the georeference scale in pixels per world unit (1.0
+     instead when |*s*| ≤ 0.0002). Normalise it with CO §4 (C22) without clamping. *x*₁ and *y*₁
+     are its block X and Y. When the normaliser fails, the block it leaves is used.
+  3. The rectangle is *x*₀ … *x*₁ × *y*₀ … *y*₁, both ends included; an empty range gives no
+     landblock notes.
+
+  With *R* = 0 the query returns nothing (no row has region 0, MI8), so a recorded position that
+  is invalid through its region shows no notes. Example: `MinimapMapImage` at its layout size
+  2048 × 1536 (GP §8.1) and the tile scale 1.25 give offsets of 1638.4 and 1228.8 units, so
+  *x*₁ = *bx* + 10 and *y*₁ = *by* + 7: a rectangle of 11 × 8 blocks with the georeference block at
+  its south-west corner, larger than the 3 × 3 tile grid. The radar resizes `MinimapMapImage` to
+  each dungeon image it shows (GP §8.5.2), so after a visit indoors the rectangle follows that
+  image's size.
+- **Recorded position in a cell:** a zone query for the dungeon it is showing (GP §8.5), when
+  that dungeon is non-zero.
+
+> **OPEN:** the rectangle for an invalid recorded position whose region is not 0 depends on the
+> georeference the radar last set; after an indoor georeference its block offsets were not traced.
+> **Tessera rule:** while the recorded position is invalid, the radar shows no table notes.
+
+The map window makes an area query for an outdoor map node and a zone query for a dungeon map.
+
+<a id="s4-8-2"></a>
+#### 4.8.2 Discovery and content layers (MD31)
+
+- **Discovery.** A note with `discovery` = 0 passes. A note with a non-zero `discovery` passes only
+  when a player exists and the client's game logic reports that the player has discovered that
+  key. Without a player such notes fail.
+- **Content layer.** Let *L* be the player's `Volume_ContentLayer` (enum; 0 when absent or when
+  there is no player), as in GP §8.4. The note passes when its `layers` value is an array and
+  either the array is empty or some element *e* satisfies *e* = *L*, *e* = 2 (`All`), or *e* = 1
+  (`InstanceZero`) with *L* = 0. Elements whose value type is neither enum nor property ID are
+  ignored. A `layers` value
+  that is not an array (or a null property) fails.
+
+This layer rule is the map-note manager's own; it differs from the SED test of ED §4.5.1 (no
+instance number; `InstanceZero` matches the layer 0 as well as 1). In this install 12,620 of the
+13,485 rows pass for *L* = 0 and the same 12,620 for *L* = 1; the other 865 name only named layers
+(0x1000xxxx).
+
+<a id="s4-8-3"></a>
+#### 4.8.3 Radar (MD32)
+
+For each note of its query result the radar:
+
+1. **Link rows** are not drawn. The radar collects the zones they lead into and fetches the
+   dungeon quest notes of those zones (§5.3).
+2. **Type filter.** Any other note is drawn only when its `type` shares a bit with the radar's
+   note-type filter: a 64-bit mask kept by the radar (the user's radar note settings, GP §8.8)
+   from which the bits of `PrivateEncounterTemplate_DisallowedMapNoteType` of the private
+   encounter the player is in (`instances.md`) are removed.
+3. **Placement.** A note whose two ranges both exceed 0.0002 in magnitude is a ranged note and
+   follows §4.7; any other note is placed at its own position on the radar.
+4. **Icon.** The images of §4.8.5 from the radar's table for the note's `type`; for a ranged note
+   the entry for the value with only bit 45 set is used instead of the note's own `type`.
+5. **World-event states** (§4.8.6) are applied last.
+
+<a id="s4-8-4"></a>
+#### 4.8.4 Map window (MD32)
+
+1. The window queries as §4.8.1 says, with *L* of §4.8.2.
+2. A note is kept only when its `type` shares a bit with the window's note-type filter (a 64-bit
+   mask held by the window, set from the user's map filter controls, GP §9).
+3. On an **outdoor map node** a note is kept only when the map node whose
+   `UI_Map_AreaDIDs_Array` lists the note's `area` (GP §9.1) is the node being viewed or one of
+   its descendants (the client walks parent links from the note's node towards the root). For a
+   note with no `area` the client derives the area from the note's position instead (no row here
+   lacks an `area`). The client registers each area once, when it builds its node tree (MD43):
+   if a second node lists an area already registered, the area keeps the node registered first
+   and the client reports the conflict; its registration order is that of its internal node
+   table, not the tree order. No area is listed by two nodes in this install (GP §9.4). An area
+   that no node lists maps to the **root node** (its active element `WorldMap`), so such a note is
+   kept only while the root map is viewed.
+   On a **dungeon map** every selected note is kept.
+
+   **Tessera rule:** when two nodes list one area, the first in depth-first tree order (children
+   in array order) keeps it, and a warning is logged.
+4. Kept notes are drawn at their positions with the images of §4.8.5 from the window's table,
+   then §4.8.6 is applied. The window does not read `min_range` or `max_range` (§4.7).
+
+<a id="s4-8-5"></a>
+#### 4.8.5 Icon tables (MD33)
+
+Each view has an icon table: a stand-alone property set (0x78) found through UNIQUEDB (§2.1).
+
+| View | UNIQUEDB key | Label | DID here | Entries here |
+|---|---|---|---|---|
+| Map window | 0x1000001B | `UI_MapNoteIcons_Map` | 0x78000001 | 46 |
+| Radar | 0x10000013 | `UI_RadarNoteIcons_Map` | 0x78000002 | 47 |
+
+Each set holds one property, `UI_Map_MapNoteTypeArray`, an array of structs:
+
+| Field | Type | Present here | Meaning |
+|---|---|---|---|
+| `UI_Map_MapNoteType` | bitfield 64 | all | The `type` value the entry serves; matched against the whole 64-bit value |
+| `UI_Map_MapNoteOnscreenImageStruct` | struct of `UI_Map_MapNoteImage`, `UI_Map_MapNoteSelectedImage`, `UI_Map_MapNoteHighlightImage` (DIDs) | all | Images of the note's normal, selected and highlighted states |
+| `UI_Map_MapNoteOffscreenImageStruct` | struct of the same three DIDs | 14 of each table | The same three images for the note's off-screen marker |
+| `UI_Map_MapNoteMenuImage` | DID | all | A further image; not used when notes are placed |
+| `UI_Map_MapNoteRelativeZLevel` | int | 7 of each table | Added to the drawing level of the note's icon (absent = 0) |
+
+The client reads the table at start-up, before the map-note table, keyed by `UI_Map_MapNoteType`
+(the first entry wins for a repeated value; none is repeated here). For a note it looks up the
+`type` value: an entry gives its images; no entry gives empty images, so the note shows no icon.
+In this install every entry has exactly one bit set: bits 1, 16–23, 25–60 and 63 in both tables,
+and bit 24 in the radar's only. Every non-link row's `type` has an entry in both tables except
+bit 62 (11 rows); link rows (bit 0) have none.
+
+<a id="s4-8-6"></a>
+#### 4.8.6 World-event states (MD34)
+
+A row whose `extra` holds `MapNote_GameSpecific` with a `WorldEvent_MapNoteStateArray` (§4.5)
+depends on world state:
+
+1. The client evaluates the states in array order. The condition of a state is the first present
+   of `WorldEvent_Condition`, `WorldEvent_AllConditionList` and `WorldEvent_AnyConditionList`; their
+   meaning is that of `quests.md` §14 (world events).
+2. At the **first state whose condition holds**, the note is shown, and each of the following that
+   the state carries replaces the corresponding value: `MapNote_Icon` the normal image,
+   `MapNote_SelectIcon` the selected image, `MapNote_MouseOverIcon` the highlighted image,
+   `MapNote_OffScreenIcon` the off-screen marker's normal image, and `MapNote_StringInfo` the row's
+   `text`.
+3. When no state's condition holds, or the array is empty, the note is **hidden**.
+4. The manager indexes such rows by the world properties that their conditions name (through each
+   named world event's `WorldEvent_WorldPropertyName`) and evaluates them again when one of those
+   properties changes.
+
+The other fields that occur in `MapNote_GameSpecific` (`Entity_ContentLayers`, `MapNote_Enabled`,
+`Usage_QuestRequirements`) are not read by these paths. Census: 663 rows have a state array (485
+with one state, 170 with two, 8 with three); each of the 849 states has exactly one condition form
+(`WorldEvent_Condition` 364, `WorldEvent_AllConditionList` 473, `WorldEvent_AnyConditionList` 12);
+659 states carry all four icons and 11 all but `MapNote_OffScreenIcon`; 843 carry
+`MapNote_StringInfo`; 6 carry only a condition.
+
+> **OPEN:** (a) the initial contents of the radar's and the map window's note-type filters and how
+> the filter controls change them (`UI_Map_MapNoteFilterProperty`,
+> `UI_Map_IncludeCommonMapNoteTypes`, `UI_Map_MapNoteDisplayType`, GP §8.8); (b) which discovery
+> keys a player has discovered (player state supplied by the server; the client only asks its game
+> logic); (c) what the row's `icon` field changes (it is copied with the note; its use was not
+> traced). (a) and (c) can be settled by observing the original client (owner); (b) is server
+> state. The former item (d), the default map node for unlisted areas, is answered in §4.8.4 step 3
+> (MD43). **Tessera rule:** §14.1.
 
 ---
 
@@ -562,9 +771,14 @@ Every set has one or two entries (5,460 and 178 rows; hint 0):
 - `layers` lengths: 0 (3,099), 1 (2,520), 2 (10), 4 (1), 5 (8).
 - The client files each row with a non-zero `dungeon` in that dungeon's list (BIN q4). Outdoor
   quest markers do not come from this table.
+- The radar (§4.8.3 step 1) fetches the rows filed under each zone that a link row of its query
+  result leads into, keeping those that pass the content-layer test of §4.8.2; the discovery check
+  does not apply to them (MD37, BIN q12).
 
-> **OPEN:** how the client decides which quest notes to show (quest state of the player and
-> role matching are server-side state).
+> **OPEN:** which of the fetched quest notes the client finally shows, and with which icon: that
+> depends on the player's quests and on matching `QuestDispenser_RoleConstraint` and the role
+> names, which are player state supplied by the server. Observing the original client (owner) can
+> show the result for given quests, not the rule.
 
 ---
 
@@ -608,9 +822,10 @@ entity's. Landmarks (class 1210) also carry `Landmark_Music` (enum) and the
 `Landmark_OverrideMountedCombat_…` booleans, and are named as objective targets by quests
 (`QuestEvent_LandmarkDID`, §2.4).
 
-> **OPEN:** why the 21 + 13 + 232 + 60 + 50 rows differ from their entity (probably per-placement
-> overrides in the world-building data), and which value the client shows if it ever reads the
-> entity's properties.
+For table rows the client never consults the entity's map-note properties (MD36, BIN q12, q14):
+the note the views select and draw (§4.8) is built from the row's fields alone. So the 21 + 13 +
+232 + 60 + 50 differences above have no effect on what the client shows; the row wins. (Where the
+differences come from lies in the world-building process, outside both the data and the client.)
 
 <a id="s6-3"></a>
 ### 6.3 Bits and labels (Confirmed, MD14)
@@ -755,9 +970,13 @@ of type 9 (`Segment`; LB §4.6): 44,259 such links join two SegmentNode SEDs of 
 18,139 cross a landblock edge and have one end id of 0.
 
 > **OPEN:** the walking rule along a path: which link end is "next", how a link that leaves the
-> landblock is continued (LB §4.6 leaves the link ids and block pair OPEN), and where a segment
-> ends (the next segment's head, or a node without a further link). SegmentNode SEDs also carry
-> `Entity_ContentLayers` (42,824) and scale properties; whether layers prune paths is not known.
+> landblock is continued (LB §4.6 leaves the link ids and block pair OPEN), where a segment ends
+> (the next segment's head, or a node without a further link), and whether the
+> `Entity_ContentLayers` of SegmentNode SEDs (42,824) prune paths. The client executable does not
+> read `TravelSegment_HeadName` or `TravelSegment_SubSegmentArray` by property ID (MD38), and the
+> class library's code does not name them either (MD41), so the rule is server behaviour or lives
+> in other data-driven logic; it cannot be settled from the client binary. Observing a ride in
+> the original client (owner) can show the path taken.
 
 <a id="s8-5-2"></a>
 #### 8.5.2 Hop (class 1501 here; Confirmed)
@@ -766,6 +985,10 @@ of type 9 (`Segment`; LB §4.6): 44,259 such links join two SegmentNode SEDs of 
 class 1468). A hop is a pause or a scene between two parts of a route.
 
 > **OPEN:** the unit of `TravelHop_Delay` (seconds is likely) and what the scene record does.
+> Neither the client executable (MD38) nor the class library's code (MD41) names
+> `TravelHop_Delay` or `TravelHop_SceneID` by property ID; both are taken to be server-side
+> travel rules. Timing a hop in the original client (owner) can
+> settle the unit.
 
 <a id="s8-5-3"></a>
 #### 8.5.3 Pad (class 1502 here; Confirmed)
@@ -790,8 +1013,11 @@ Eight records, each named by routes (2,665, 669, 488, 477, 366, 202, 109, 32 rou
 LC labels the modes by mount kind (horse, boat, goat and others) by their DIDs (Reported); the
 data distinguish them only by `TravelMode_ScriptPants`.
 
-> **OPEN:** units of the five floats (metres and degrees per second are likely) and how a
-> client moves the rider along a path with them.
+> **OPEN:** units of the five floats (metres and degrees per second are likely) and how the
+> rider is moved along a path with them. Neither the client executable (MD38) nor the class
+> library's code (MD41) names any `TravelMode_…` property by property ID, so the movement is
+> driven from outside both (server or other data-driven logic). Observing a ride in the original
+> client (owner) can bound the speeds and turn rates.
 
 <a id="s8-7"></a>
 ### 8.7 Stations, NPCs and other users (Confirmed)
@@ -815,12 +1041,39 @@ data distinguish them only by `TravelMode_ScriptPants`.
 - `TravelDestinationCost` is a money amount in the smallest coin unit (LC, MD19).
 - Route requirements are the generic usage checks (`Usage_MinLevel`, quest and faction
   requirements, subscription) (LC).
+- **The travel window takes its values from script code** (BIN, MD40). The client's travel
+  window (the stable-master panel, top-level element `Travel_Window`) asks the class library's
+  script code for the destinations of a travel web (function 0x01CC0001) and, per destination,
+  for the values it shows (function 0x01CC0003); `wlib-bytecode.md` §6.4 gives how such a
+  function is started. The cost element (`Travel_Currency_DestinationCost`) shows the returned
+  cost; when the cost is 0 the window shows `Travel_Currency_DestinationCost_Free` instead. The
+  minimum-level text (`Travel_Currency_MinLevel`) shows a returned level (a fixed text instead
+  when that level is below 2).
+- **The script code names the price properties** (OBS, MD41). The class library pushes the
+  property IDs of `Travel_DiscountArray`, `TravelWebSellMultiplier` and `Travel_BypassUsageChecks`
+  in three bodies that the static calls of function 0x01CC0003 reach, and the IDs of
+  `TravelDestinationAllowPaperItems` (in code of the destination class) and `TravelDestinationCost`
+  elsewhere. The client executable itself names none of the four price properties (MD38).
+- **The window follows the player's discounts** (BIN, MD39). It rebuilds its list when the local
+  player's `Discount_Travel_Special`, `Advancement_Level`, `Travel_BypassUsageChecks`, two
+  Ettenmoors population properties or `Shapeshift_MeshIID` change, among others; it does not read
+  those values itself. No other `Discount_Travel_…` property is named by the client executable
+  except as a UI element ID of equal value (MD38), and none is named by the class library (MD41).
 
-> **OPEN:** how discounts (`Travel_DiscountArray` names PIDs of float properties, all labelled
-> `Discount_Travel_…`, 46 distinct) and `TravelWebSellMultiplier` change the price; what
-> `TravelDestinationAllowPaperItems` allows; how the 26 routes listed in
-> `TravelHomeLocationsArray` are meant; the meaning of the `Usage_QuestStatus` and
-> `Usage_Operator` values. These are server rules; a local server needs its own (§14.3).
+So the price the original client shows comes from the class library's script code, whose call
+graph names the discount array and the sell multiplier. That code is client-side data in the
+user's install, not server software.
+
+> **OPEN:** the price formula: how the discounts (`Travel_DiscountArray` names PIDs of float
+> properties, all labelled `Discount_Travel_…`, 46 distinct) and `TravelWebSellMultiplier` change
+> `TravelDestinationCost`, what `TravelDestinationAllowPaperItems` allows, and whether the script
+> computes the price or passes on a value it obtains through a native function. It can be derived
+> by reading function 0x01CC0003 and the bodies it reaches with `wlib-bytecode.md`, once the native
+> functions they call are specified (`wlib-bytecode.md` §7 leaves them open). Whether the server
+> charges the price the window shows is server state. Also open: how the 26 routes listed in
+> `TravelHomeLocationsArray` are meant, and the meaning of the `Usage_QuestStatus` and
+> `Usage_Operator` values. A local server needs its own rule until then (§14.3). Prices shown by
+> the original client's stable-master panel (owner) can test a candidate formula.
 
 ---
 
@@ -862,7 +1115,10 @@ boundary. The dictionary also defines `NeighborhoodTemplate_InstanceProperties` 
 never stored.
 
 > **OPEN:** the instancing rule (how `InitialInstances`, `OccupancyThresholdPercentage` and
-> `RolloutStep` drive the number of live copies) is server behaviour.
+> `RolloutStep` drive the number of live copies). It is server behaviour: neither the client
+> executable (MD38) nor the class library's code (MD41) names these properties by property ID,
+> and it cannot be observed from one client. A
+> local server needs its own rule (§14.3).
 
 <a id="s9-4"></a>
 ### 9.4 House list and house (classes 1952 and 1181 here; Confirmed)
@@ -989,6 +1245,8 @@ Checked on this install unless marked; readers report violations as warnings, ex
 | MI13 | Housing: every house is in exactly one house list; every template's house list, scene and telepad keys resolve. |
 | MI14 | Every DID edge of §2.4 points to a record of the listed kind. |
 | MI15 | Every position of the three tables, and every `link_position`, passes the position test of §4.4.1. Places: no name contains a code unit 0 (§3.3.1). |
+| MI16 | Icon tables (§4.8.5): both UNIQUEDB keys resolve to a property set holding `UI_Map_MapNoteTypeArray`; every element has `UI_Map_MapNoteType`, `UI_Map_MapNoteOnscreenImageStruct` and `UI_Map_MapNoteMenuImage`; no `UI_Map_MapNoteType` value repeats within a table (a repeat is a warning; the first entry wins). |
+| MI17 | World-event states (§4.8.6): every state of a `WorldEvent_MapNoteStateArray` has exactly one of `WorldEvent_Condition`, `WorldEvent_AllConditionList`, `WorldEvent_AnyConditionList` (a state with none is a warning; with several, the first in that order is used). |
 
 ---
 
@@ -1029,7 +1287,7 @@ and returns the first position and area 0. Looking up "b" finds "B".
 | `00` `11 00 00 00` `01 00 00 25` `00` `01 00` | `text`: reference, token 0x11, table 0x25000001, no args, empty argument table |
 | `00 00 00 00` | `icon` 0 |
 | `00 00 01 00` | `level` 0x10000 (bit 16, key 0x11) |
-| `00 00 00 00 20 00 00 00` | `type` 1 << 37 (key 0x26) |
+| `00 00 00 00 20 00 00 00` | `type` with only bit 37 set, 2³⁷ (key 0x26) |
 | `00` | `flag_b` |
 | `00 00 00 00` `00 00 00 00` `00 00 00 00` | `min_range` 0, `max_range` 0, `discovery` 0 |
 | `00 00` | `extra`: empty set |
@@ -1076,12 +1334,16 @@ two short paths S1 and S2.
 
 - Places (§3): list keys with region, landblock, map coordinates (CO §8) and zone name (WS
   §11.2/§11.4); "go to place" moves the camera to the position.
-- Map notes (§4): **Tessera rule** until §4.6's OPEN is settled: draw every valid non-link row on
-  the map node or dungeon map that contains its position (GP §9.4, §8.5), with a symbol chosen
-  by the label of its single `type` bit and its `text` rendered by ST §9; show rows whose
-  `layers` pass the ED §4.5.1 test for the content layer being viewed (layer 1 by default);
-  ignore `level`, ranges and `discovery`. Draw link rows as arrows from the row's position to
-  the `link_target` zone's map, at `link_position`.
+- Map notes (§4): select and draw valid rows as the map window does (§4.8.1, §4.8.4), with the
+  content-layer test of §4.8.2 for the layer being viewed (*L* = 0 by default), the icons of
+  §4.8.5 from the map window's table and `text` rendered by ST §9; `level` and `flag_b` play no
+  part. **Tessera rules** for what §4.8 leaves to player and UI state (the OPEN of §4.8.6): the
+  type filter starts with every bit set and is a user toggle per `type` bit (labels of §6.3);
+  rows with a non-zero `discovery` are shown and marked "discovery"; rows with world-event states
+  are shown with their own values and marked "world event" unless the explorer offers a world
+  state to evaluate §4.8.6 with; a row's `icon` field is ignored. Draw link rows (which have no
+  icon entry) as arrows from the row's position to the `link_target` zone's map, at
+  `link_position`.
 - Dungeon quest notes (§5): optional layer on dungeon maps, labelled with the quest names of
   `QuestDispenser_ActiveQuests`.
 - Travel (§8): stations at their NPCs' pads; edges per route to the destination's position
@@ -1104,7 +1366,8 @@ two short paths S1 and S2.
 - Travel: offer, at a station, the routes of its `TravelDestinationRecordArray` whose usage
   requirements the character meets, at `TravelDestinationCost`; on purchase, move the character
   to the route's end (a pad's place, or the destination's station) after the hops' delays.
-  Discounts and sell multipliers are OPEN (§8.8); **Tessera rule:** ignore them.
+  Discounts and sell multipliers are OPEN (§8.8: the original takes the shown price from
+  class-library script code); **Tessera rule:** ignore them until that formula is specified.
 - Housing: one neighbourhood per `Neighborhood` record, created on first entry, holding the
   template's houses; entrance and exit by the template's place keys. Prices per §9.7 (Reported).
 
@@ -1145,19 +1408,22 @@ two short paths S1 and S2.
 <a id="s15"></a>
 ## 15. Open questions (summary)
 
-1. §4.2: meaning of `flag_b`; the version source that gates `extra`.
-2. §4.6: how the maps use `level`, `type`, `discovery` and `layers` of notes, and whether ranges limit anything besides the radar (with GP §8.8).
-3. §5.3: which dungeon quest notes the client shows.
-4. §6.2: why some rows differ from their entity.
-5. §8.5.1: the walking rule along SegmentNode links, and segment ends.
-6. §8.5.2, §8.6: units and use of hop delay, hop scene and travel-mode values.
-7. §8.8: discounts, sell multiplier, paper items, routes listed as home locations, usage-requirement values.
-8. §9.3: neighbourhood instancing rule.
-9. §9.6: how `House_…` links name houses and hooks.
-10. §11: which ripcords gate travel or map features.
-11. §3.3.1: the lower-case table for non-ASCII code units under the client's locales.
-12. §4.4.2: the validity check applied to each StringInfo argument kind.
-13. §4.7: which position is the radar's reference; whether the world map applies the range test.
+Closed on 2026-10-08 (former items 1, 4, 12 and 13 of the previous list, and most of 2): `flag_b` and the version
+gate (§4.2), the argument check (§4.4.2), the radar's reference position and the map window's
+range behaviour (§4.7), how the views select, filter and draw notes (§4.8), and the entity's
+properties versus the row (§6.2). Also closed in the revision after review (2026-10-08): the
+default map node for unlisted areas (§4.8.4, MD43). Remaining:
+
+1. §4.8.6: the initial note-type filters and the filter controls; the discovered state; the row's `icon` field (owner; discovered state is server state).
+2. §5.3: which fetched dungeon quest notes the client shows (server-side quest state).
+3. §8.5.1: the walking rule along SegmentNode links, and segment ends (server or data-driven logic; owner can observe a ride).
+4. §8.5.2, §8.6: units and use of hop delay, hop scene and travel-mode values (same).
+5. §8.8: the price formula (discounts, sell multiplier, paper items), which the original takes from class-library script code (readable with `wlib-bytecode.md` once its native functions are specified); routes listed as home locations and usage-requirement values (server rules).
+6. §9.3: neighbourhood instancing rule (server).
+7. §9.6: how `House_…` links name houses and hooks (waits for LB §4.6).
+8. §11: which ripcords gate travel or map features (server administration).
+9. §3.3.1: the lower-case table for non-ASCII code units under the client's locales (operating system).
+10. §4.8.1: the radar's area rectangle for an invalid recorded position with a non-zero region, after an indoor georeference (Tessera rule given).
 
 ---
 
@@ -1168,10 +1434,26 @@ two short paths S1 and S2.
   given here (Confirmed); the UNIQUEDB labels are `PlacesTable`, `MapNotes` and
   `DungeonQuestMapNotes`; the `SegmentTable` entry (0x0E000002) names a record that does not
   exist in this install.
-- `game-panels.md` §8.8: §4.6 here gives how the client files notes after loading, and §4.7 the
-  radar's range test for ranged notes; the other display rules remain OPEN there and here.
+- `game-panels.md` §8.8: §4.6 here gives how the client files notes after loading, §4.7 the
+  radar's range test and reference position, and §4.8 how the radar and the map window select,
+  filter and draw table notes (content layers, discovery, type filters, the two icon tables,
+  world-event states). The filter defaults and controls remain OPEN (§4.8.6 here).
+  §4.8.1 here gives the radar's area-query rectangle, which is derived from the georeference and
+  the size of `MinimapMapImage` and is larger than the 3 × 3 tile grid of §8.4.1 (MD42); §4.8.4
+  gives the map window's area-to-node registration, with the root node as the default (MD43),
+  which bears on the §9.4 OPEN about areas in no node.
+- `instances.md`: `PrivateEncounterTemplate_DisallowedMapNoteType` removes note types from the
+  radar's filter while the player is in that private encounter (§4.8.3 here).
+- `property-system.md` §17.4.2: the argument check of the deep validity test is given per kind
+  in §4.4.2 here.
 - `landblock.md` §4.6: links of type 9 join SegmentNode SEDs (§8.5.1 here), which bears on the
   OPEN about link ends.
+- `wlib-bytecode.md` §6.4 and §10: the travel window starts class-460 functions 0x01CC0001 and
+  0x01CC0003 by function ID; the second reaches the class-1507 bodies that name
+  `Travel_DiscountArray` and `TravelWebSellMultiplier` (MD40, MD41, §8.8 here).
+- `ui-layout.md` / `game-panels.md`: the travel window's elements named in §8.8 here
+  (`Travel_Window`, `Travel_Currency_DestinationCost`, `Travel_Currency_DestinationCost_Free`,
+  `Travel_Currency_MinLevel`) belong to a panel no spec yet describes.
 
 ---
 
@@ -1183,3 +1465,6 @@ two short paths S1 and S2.
 | 2026-10-07 | First version: singleton tables (§3–§5), map-note properties (§6), map images (§7), travel (§8), housing (§9), place consumers (§10), ripcords (§11). Status Review. | Spec writer (dirty room) |
 | 2026-10-07 | Revision after review (changes requested). Header: review issues moved below the header table, which they had split, with a resolution note. Provenance: BIN second use with questions q6–q9; rows MD24–MD27 added; MD4, MD8 and MD10 revised; unused **Probable** mark removed. §3.2: debug-dump labels paraphrased. §3.3: the full 16-bit lowered unit enters the hash; new §3.3.1 (per-unit, locale-dependent lower-casing, key ends at unit 0, Tessera rule, OPEN for non-ASCII). §3.4: lookup cites §3.3.1; the sentence on an untraced routine dropped. §3.5: code-unit census (296,009 units, none 0, five 0x1F). §4.2: units of the ranges. §4.4: new §4.4.1 (position test) and §4.4.2 (text test, OPEN for arguments). §4.6: link entry needs both positions valid; 2,590 of 2,754 link rows qualify. New §4.7 (radar range test). MI8 revised, MI15 added; §15 items 2 and 11–13; §16 note for GP §8.8. Re-measured over all records with a new probe: entry and row counts with 0 bytes left over (9,025, 13,485, 5,638), the flag-byte and region histograms of §3.5, §4.5 and §5.3, interior places (2,330) and orientations (7,351), the link-position flag bytes of §4.3, all eleven (`min_range`, `max_range`) pairs of §4.5, and level 0 exactly in the link rows; all reproduce, no count changed. Status stays Review. | Spec writer (dirty room) |
 | 2026-10-07 | Second re-measurement after review, over all records (no text change outside this row): every position of the three tables and every `link_position` passes §4.4.1 (13,485, 2,754, 9,025, 5,638; largest \|w² + x² + y² + z² − 1\| 2.4 · 10⁻⁷); the 10,731 non-link texts are references without arguments that resolve in the English tables, 87 of them to empty text (§4.4.2); 2,590 link rows get a zone entry and 164 lead into their own dungeon (§4.6); the eleven range pairs (12,611 / 811 / 23 / 40 in eight pairs, §4.5, §4.7); place names: 296,009 code units, 296,004 in 0x20–0x7F and five 0x1F, none 0, 168 with upper-case letters, no two equal ignoring case; 412 link rows whose `link_position` shares the row's landblock (§4.3); the §5.3 flag-byte and region lines. All reproduce; no count changed. Status stays Review. | Spec writer (dirty room) |
+| 2026-10-08 | OPEN-closing revision (Status Revised). Provenance: OBS extended (icon tables, world-event states, layer-test counts); BIN third use with questions q10–q15; MD7 and MD27 revised; rows MD28–MD38 added. §4.2: the version gating `extra` comes from the client's own version table (2 here), `flag_b` has no display effect; OPEN closed. §4.4.2: mode-2 references and the argument check per kind; OPEN closed. §4.6: OPEN moved to §4.8 and narrowed. §4.7: the reference position is the player's position as the radar records it; the map window applies no range test; OPEN closed. New §4.8 (queries with link extension, discovery check, the map-note content-layer rule, radar and map-window filters, the two icon tables, world-event states; `level` unused by both views) with a narrower OPEN (filter defaults and controls, discovered state, the row's `icon` field, default map node). §5.3: the radar fetches quest notes of linked zones; OPEN made precise. §6.2: the client takes table notes from the row only; OPEN closed. §8.5.1, §8.5.2, §8.6, §8.8, §9.3: OPENs made precise (MD38: the client's code reads none of those properties). MI16 and MI17 added. §13.2 notation of the `type` value. §14.1 explorer rules follow §4.8. §15 and §16 updated. | Spec writer (dirty room) |
+| 2026-10-08 | Revision after the review of the OPEN-closing revision (changes requested; status stays Revised). Blocking item: the third BIN use's search text now lists the properties actually searched; BIN fourth use (q16–q18) and a second OBS probe added. MD38 narrowed and re-stated: no operand and no 32-bit value anywhere in the executable for the `TravelMode_…`, `TravelHop_…`, four §8.8 and three instancing IDs; the 13 instructions with `Discount_Travel_…` operands classified (12 UI element IDs, one property use). New MD39 (the travel window watches the player's `Discount_Travel_Special` and other properties and rebuilds on change), MD40 (the travel window takes destinations and shown cost and level from class-library functions 0x01CC0001 and 0x01CC0003), MD41 (OBS, full instruction sweep: the class library names `Travel_DiscountArray`, `TravelWebSellMultiplier`, `Travel_BypassUsageChecks`, `TravelDestinationAllowPaperItems` and `TravelDestinationCost`; function 0x01CC0003 reaches the first three; no `Discount_Travel_…`, travel-mode, hop, segment or instancing ID). §8.8: three new bullets, the "server rules" conclusion replaced and the OPEN restated as the price formula in class-library code; §8.5.1, §8.5.2, §8.6, §9.3 cite MD41 beside MD38; §14.3 and §15 item 5 follow. Minor items: §4.8.1 radar query rewritten with the rectangle (MD42: georeference block offsets, `MinimapMapImage` size over the scale, CO §4 normaliser), the georeference gate, the empty result for region 0, and a narrow OPEN with a Tessera rule (§15 item 10); §4.8.4 step 3: first registered node keeps a repeated area, no repeat here, Tessera rule for repeats, unlisted areas map to the root node (MD43), so former OPEN (d) of §4.8.6 is closed. Editorial: §4.7 step 2 sentence rephrased and re-wrapped. §16 notes for GP, `wlib-bytecode.md` and the UI specs. | Spec writer (dirty room) |
+| 2026-10-08 | Re-review of the revision after review: passed; status Accepted. No text change outside the header and this row; three non-blocking notes in the review log. | Spec reviewer (dirty room) |

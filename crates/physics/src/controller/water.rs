@@ -10,11 +10,13 @@
 //! Water reaches the controller through [`WaterQuery`]. `tessera-world` may implement it
 //! itself; [`LiquidWater`] implements it over any [`CollisionQuery`] from the water plane
 //! and liquid boxes the sets carry (decision 0013 "Water"), and a [`CollisionSet`] or
-//! [`CollisionView`] implements it directly with the same answers at a cost bounded by the
-//! boxes over the mover's column.
+//! [`CollisionView`] implements it directly with the same answers. The surface is the top
+//! of the contiguous liquid over the feet (Decision, recorded as an OPEN note in
+//! `water.md` §7.4), computed exactly from the boxes' spans over the mover's column: one
+//! pass over the boxes (at most [`crate::geometry::MAX_LIQUID_BOXES`] per set) and a sort.
 
 use crate::geometry::{
-    CollisionQuery, CollisionSet, CollisionView, LiquidBox, LiquidFlags, WaterPlane,
+    CollisionQuery, CollisionSet, CollisionView, LiquidFlags, LiquidSpan, WaterPlane,
 };
 
 /// The water at a point.
@@ -49,98 +51,64 @@ impl WaterQuery for NoWater {
     }
 }
 
-/// Highest the surface search looks above a point, m (the deep zone of `water.md` §7.1 is
-/// 1,600 units deep).
-pub const SURFACE_SEARCH_RANGE: f32 = 2048.0;
-/// Bisection rounds of the surface search (2,048 m / 2²⁴ ≈ 0.1 mm).
-const SURFACE_BISECTIONS: usize = 24;
-/// Offset used to test that a water plane's level is the top of the liquid, m.
-const PLANE_PROBE: f32 = 0.001;
-/// Most liquid boxes the column search of a [`CollisionSet`] or [`CollisionView`] keeps
-/// (Tessera bound: a landblock's volume entity has three, `water.md` §7.1, and a column
-/// lies in at most four landblocks). Boxes beyond it are not seen (logged at `debug`).
-pub const MAX_COLUMN_BOXES: usize = 64;
-/// Slack of the column filter, m: a box whose bounds miss the column by less still counts
-/// (the bounds are f32, the containment test f64).
-const COLUMN_SLACK: f32 = 1e-3;
+/// Liquid boxes whose spans over the mover's column are at most this far apart count as one
+/// body of liquid, and a water plane whose level lies at most this far from the top of the
+/// liquid is taken as its surface, m (Tessera Decision, implementer OPEN in `water.md`
+/// §7.4: the boxes are placed in f32, so two boxes that meet in the data may miss each
+/// other by rounding).
+pub const LIQUID_JOIN_TOLERANCE: f64 = 1e-3;
 
-/// The surface search shared by every implementation: `liquid(q)` gives the flags of the
-/// liquid at `q`, `plane` the water plane over the point. At most 3 + 14 + 24 calls of
-/// `liquid`: the test of the point, two plane probes, 14 doubling steps (0.25 m to
-/// 2,048 m) and 24 bisections.
-fn search(
+/// The water at `p` from the liquid spans over its column (`spans`, any order) and the water
+/// plane over it (`water.md` §7.4, Tessera rule). The point is in water when a liquid box
+/// contains it; the sample's flags are those of every box containing it. The surface is the
+/// top of the **contiguous** liquid above the feet: the spans of `Volume_IsLiquid` boxes are
+/// joined upward from the point, each span starting at most [`LIQUID_JOIN_TOLERANCE`]
+/// above the top so far, so a dry gap between stacked boxes ends the liquid. When a water
+/// plane lies over the point and its level is within the tolerance of that top (the liquid
+/// ends at the plane, `water.md` §6.3), the plane's level is the surface.
+fn surface_from_spans(
     p: [f32; 3],
     plane: Option<WaterPlane>,
-    liquid: impl Fn([f32; 3]) -> LiquidFlags,
+    spans: &mut [LiquidSpan],
 ) -> Option<WaterSample> {
     if !p.iter().all(|c| c.is_finite()) {
         return None;
     }
-    let flags = liquid(p);
+    let z = f64::from(p[2]);
+    let flags = spans
+        .iter()
+        .filter(|s| s.bottom <= z && z <= s.top)
+        .fold(LiquidFlags::default(), |acc, s| acc.union(s.flags));
     if !flags.liquid {
         return None;
     }
-    let at = |z: f32| [p[0], p[1], z];
-    let wet = |z: f32| liquid(at(z)).liquid;
-    // The landblock water plane, when the liquid ends at its level.
-    if let Some(w) = plane
-        && w.level >= p[2]
-        && wet(w.level - PLANE_PROBE)
-        && !wet(w.level + PLANE_PROBE)
-    {
-        return Some(WaterSample {
-            surface: w.level,
-            flags,
-        });
-    }
-    // Upward search: double the step until the point is dry, then bisect.
-    let mut wet_z = p[2];
-    let mut step = 0.25_f32;
-    let mut dry = None;
-    while step <= SURFACE_SEARCH_RANGE {
-        let z = p[2] + step;
-        if !z.is_finite() {
+    spans.sort_unstable_by(|a, b| a.bottom.total_cmp(&b.bottom));
+    let mut top = z;
+    for s in spans.iter().filter(|s| s.flags.liquid && s.top >= z) {
+        if s.bottom > top + LIQUID_JOIN_TOLERANCE {
             break;
         }
-        if wet(z) {
-            wet_z = z;
-            step *= 2.0;
-        } else {
-            dry = Some(z);
-            break;
-        }
+        top = top.max(s.top);
     }
-    let Some(mut dry) = dry else {
-        return Some(WaterSample {
-            surface: wet_z.max(p[2]),
-            flags,
-        });
+    let surface = match plane {
+        Some(w) if w.level >= p[2] && (f64::from(w.level) - top).abs() <= LIQUID_JOIN_TOLERANCE => {
+            w.level
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        _ => (top as f32).max(p[2]),
     };
-    for _ in 0..SURFACE_BISECTIONS {
-        let mid = 0.5 * wet_z + 0.5 * dry;
-        if mid <= wet_z || mid >= dry {
-            break;
-        }
-        if wet(mid) {
-            wet_z = mid;
-        } else {
-            dry = mid;
-        }
-    }
-    Some(WaterSample {
-        surface: wet_z,
-        flags,
-    })
+    surface
+        .is_finite()
+        .then_some(WaterSample { surface, flags })
 }
 
 /// [`WaterQuery`] over the liquid boxes of any [`CollisionQuery`]: a point is in water when
 /// a liquid box with `Volume_IsLiquid` contains it (`water.md` §7.4). The surface is the
-/// top of the liquid above the point: the water plane's level when the liquid ends there
-/// (`water.md` §6.3), otherwise found by a bounded upward search of the boxes (doubling
-/// steps, then bisection): at most 14 + 24 point tests plus the test of the point and two
-/// plane probes, each a [`CollisionQuery::liquid_at`] over every box of the query. A
-/// [`CollisionSet`] and a [`CollisionView`] are [`WaterQuery`]s themselves with the same
-/// answers, testing only the boxes over the point's column.
+/// top of the contiguous liquid above the point, or the water plane's level where that
+/// liquid ends at the plane (`water.md` §6.3, §7.4), found exactly from the boxes' spans
+/// over the point's column ([`CollisionQuery::liquid_spans`]): one pass over the boxes and
+/// a sort of the spans. A [`CollisionSet`] and a [`CollisionView`] are [`WaterQuery`]s
+/// themselves with the same answers.
 #[derive(Debug, Clone, Copy)]
 pub struct LiquidWater<'a, Q: ?Sized>(pub &'a Q);
 
@@ -149,97 +117,128 @@ impl<Q: CollisionQuery + ?Sized> WaterQuery for LiquidWater<'_, Q> {
         if !p.iter().all(|c| c.is_finite()) {
             return None;
         }
-        search(p, self.0.water_plane_at(p[0], p[1]), |q| {
-            self.0.liquid_at(q)
-        })
-    }
-}
-
-/// The liquid boxes over one column (x, y) from a height up, with their sets' offsets.
-struct Column<'a> {
-    boxes: [Option<(&'a LiquidBox, [f32; 3])>; MAX_COLUMN_BOXES],
-    len: usize,
-    full: bool,
-}
-
-impl<'a> Column<'a> {
-    fn new() -> Self {
-        Self {
-            boxes: [None; MAX_COLUMN_BOXES],
-            len: 0,
-            full: false,
-        }
-    }
-
-    /// Adds the boxes of `set` (at `offset`) that may contain a point (p.x, p.y, z ≥ p.z).
-    fn gather(&mut self, set: &'a CollisionSet, offset: [f32; 3], p: [f32; 3]) {
-        let local = [p[0] - offset[0], p[1] - offset[1], p[2] - offset[2]];
-        for b in set.liquid_boxes() {
-            let Some(bb) = b.aabb() else { continue };
-            let over = bb.min[0] - COLUMN_SLACK <= local[0]
-                && local[0] <= bb.max[0] + COLUMN_SLACK
-                && bb.min[1] - COLUMN_SLACK <= local[1]
-                && local[1] <= bb.max[1] + COLUMN_SLACK
-                && bb.max[2] + COLUMN_SLACK >= local[2];
-            if !over {
-                continue;
-            }
-            if let Some(slot) = self.boxes.get_mut(self.len) {
-                *slot = Some((b, offset));
-                self.len += 1;
-            } else {
-                self.full = true;
-                break;
-            }
-        }
-    }
-
-    fn liquid_at(&self, q: [f32; 3]) -> LiquidFlags {
-        self.boxes[..self.len]
-            .iter()
-            .flatten()
-            .filter(|(b, o)| b.contains([q[0] - o[0], q[1] - o[1], q[2] - o[2]]))
-            .fold(LiquidFlags::default(), |acc, (b, _)| acc.union(b.flags))
-    }
-
-    fn report(&self) {
-        if self.full {
-            tracing::debug!(
-                limit = MAX_COLUMN_BOXES,
-                "liquid boxes over one column beyond the limit are not seen"
-            );
-        }
+        let mut spans = Vec::new();
+        self.0.liquid_spans(p[0], p[1], &mut spans);
+        surface_from_spans(p, self.0.water_plane_at(p[0], p[1]), &mut spans)
     }
 }
 
 impl WaterQuery for CollisionSet {
-    /// As [`LiquidWater`] over the set, testing only the boxes over the point's column (at
-    /// most [`MAX_COLUMN_BOXES`]).
+    /// As [`LiquidWater`] over the set.
     fn water_at(&self, p: [f32; 3]) -> Option<WaterSample> {
-        if !p.iter().all(|c| c.is_finite()) {
-            return None;
-        }
-        let mut column = Column::new();
-        column.gather(self, [0.0; 3], p);
-        column.report();
-        search(p, self.water_plane_at(p[0], p[1]), |q| column.liquid_at(q))
+        LiquidWater(self).water_at(p)
     }
 }
 
 impl WaterQuery for CollisionView<'_> {
-    /// As [`LiquidWater`] over the view, testing only the boxes over the point's column (at
-    /// most [`MAX_COLUMN_BOXES`], in set order).
+    /// As [`LiquidWater`] over the view.
     fn water_at(&self, p: [f32; 3]) -> Option<WaterSample> {
-        if !p.iter().all(|c| c.is_finite()) {
-            return None;
+        LiquidWater(self).water_at(p)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(bottom: f64, top: f64) -> LiquidSpan {
+        LiquidSpan {
+            bottom,
+            top,
+            flags: LiquidFlags {
+                liquid: true,
+                ..LiquidFlags::default()
+            },
         }
-        let mut column = Column::new();
-        for (set, offset) in self.members() {
-            column.gather(set, *offset, p);
-        }
-        column.report();
-        search(p, CollisionQuery::water_plane_at(self, p[0], p[1]), |q| {
-            column.liquid_at(q)
-        })
+    }
+
+    /// Finding (`water.md` §7.4 OPEN): the doubling search jumped dry gaps between stacked
+    /// boxes depending on its probe spacing. The surface is now the top of the contiguous
+    /// liquid: boxes [−1, 0.6] and [0.8, 5] give 0.6, and so do [−1, 0.4] and [0.6, 5]
+    /// (0.4).
+    #[test]
+    fn a_dry_gap_ends_the_liquid() {
+        let at = |spans: &[LiquidSpan]| {
+            surface_from_spans([0.0; 3], None, &mut spans.to_vec()).map(|w| w.surface)
+        };
+        assert_eq!(at(&[span(-1.0, 0.6), span(0.8, 5.0)]), Some(0.6));
+        assert_eq!(at(&[span(0.6, 5.0), span(-1.0, 0.4)]), Some(0.4));
+        // Touching or overlapping boxes join, in any order.
+        assert_eq!(at(&[span(0.6, 5.0), span(-1.0, 0.6)]), Some(5.0));
+        assert_eq!(
+            at(&[span(2.0, 7.0), span(-1.0, 3.0), span(-5.0, -2.0)]),
+            Some(7.0)
+        );
+        // A gap within the tolerance joins.
+        assert_eq!(at(&[span(-1.0, 0.6), span(0.6005, 5.0)]), Some(5.0));
+        // Not in liquid.
+        assert_eq!(at(&[span(0.5, 5.0)]), None);
+        // A box without Volume_IsLiquid neither wets nor joins.
+        let mut dry = span(0.6, 9.0);
+        dry.flags.liquid = false;
+        assert_eq!(at(&[span(-1.0, 0.6), dry]), Some(0.6));
+    }
+
+    /// The water plane is the surface where the liquid ends at its level (`water.md` §6.3).
+    #[test]
+    fn the_plane_is_the_surface_where_the_liquid_ends_there() {
+        let plane = |level: f32| Some(WaterPlane::new(level, 1).expect("plane"));
+        let at = |plane: Option<WaterPlane>, spans: &[LiquidSpan]| {
+            surface_from_spans([0.0, 0.0, -3.0], plane, &mut spans.to_vec()).map(|w| w.surface)
+        };
+        assert_eq!(at(plane(2.0), &[span(-10.0, 2.0004)]), Some(2.0));
+        // Liquid above the plane (a placed volume on the lake) or ending below it.
+        assert_eq!(at(plane(2.0), &[span(-10.0, 3.0)]), Some(3.0));
+        assert_eq!(at(plane(2.0), &[span(-10.0, 1.0)]), Some(1.0));
+    }
+
+    /// The review's worked case on a real set and view: boxes [−1, 0.6] and [0.8, 5] over
+    /// feet at 0 give the surface 0.6 (the probes once found about 5 m).
+    #[test]
+    fn stacked_boxes_in_a_set_and_a_view() {
+        use crate::geometry::{CollisionLimits, CollisionSetBuilder, LiquidBox, Transform};
+        use tessera_formats::{LandblockId, LandblockKind};
+        let liquid = LiquidFlags {
+            liquid: true,
+            deep: true,
+            ..LiquidFlags::default()
+        };
+        let build = |boxes: &[(f32, f32)]| {
+            let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+            b.set_landblock(LandblockId {
+                kind: LandblockKind::Heightmap,
+                region: 1,
+                x: 10,
+                y: 20,
+            });
+            for &(lo, hi) in boxes {
+                b.add_liquid_box(
+                    LiquidBox::new(
+                        [0.0, 0.0, lo],
+                        [160.0, 160.0, hi],
+                        &Transform::IDENTITY,
+                        liquid,
+                    )
+                    .expect("box"),
+                )
+                .expect("fits");
+            }
+            b.build()
+        };
+        let set = build(&[(-1.0, 0.6), (0.8, 5.0)]);
+        let w = set.water_at([50.0, 50.0, 0.0]).expect("in water");
+        assert_eq!(w.surface, 0.6);
+        assert!(w.flags.deep);
+        let set2 = build(&[(-1.0, 0.4), (0.6, 5.0)]);
+        assert_eq!(
+            set2.water_at([50.0, 50.0, 0.0]).map(|w| w.surface),
+            Some(0.4)
+        );
+        // A view at another origin gives the same surface, moved into its frame.
+        let mut view = CollisionView::with_origin([1600.0, 3200.0, 10.0]);
+        view.push_landblock(&set).expect("keyed");
+        let v = view.water_at([50.0, 50.0, -10.0]).expect("in water");
+        assert!((v.surface - (0.6 - 10.0)).abs() < 1e-5, "{v:?}");
+        assert_eq!(LiquidWater(&view).water_at([50.0, 50.0, -10.0]), Some(v));
     }
 }

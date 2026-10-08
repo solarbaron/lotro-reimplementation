@@ -123,8 +123,9 @@ constraints that show up as structure:
         │      │      │     │                   │               │
  L3 world & assets   world*(→physics)  physics*  terrain*       │
                      anim*(→mesh)  mesh*  material*             │
+                     scriptgraph*                               │
         └──────┴──────┴──────┬─────────────────────────────────┘
- L2 asset system          assets*   props*/wstate*/text*
+ L2 asset system          assets*   props*/wstate*/text*/wvm*
                              │
  L1 record decoders       formats  (+ havok*)
                              │
@@ -169,7 +170,8 @@ Rules:
 | `tessera-havok` (`crates/havok`) | L1 | M4 | Clean-room reader for Havok binary tagfile (version 3) data as stored in the archives: skeletons and animation clips (spline-compressed and uncompressed). |
 | `tessera-props` (`crates/props`) | L2 | M1 | Property registry, typed values, property sets, enum mappers, DID maps (§7). |
 | `tessera-text` (`crates/text`) | L2 | M1 | String-table lookup, StringInfo resolution, `${VAR}` substitution and grammar-tag selection. |
-| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). |
+| `tessera-wstate` (`crates/wstate`) | L2 | M3 | Class library (WLib) schema and the generic scripted-object graph (WState) (§7.4). From census 2 also typed views of the player-character records (`player-character.md`) and of the game-control singletons (`game-controls.md`). |
+| `tessera-wvm` (`crates/wvm`) | L2 | census 2 | Script machine of the class library: decodes and validates the compiled code (chunk 1 of 0x56000000) and its message list (chunk 2), resolves function IDs and slots against the class library, disassembles, counts and cross-references function bodies (`wlib-bytecode.md`). Decoder level only; no interpreter yet. Depends on `formats` and `wstate` (the L2 scripted-object group, like `wstate` on `props` and `text`). |
 | `tessera-assets` (`crates/assets`) | L2 | M1 | Asset server: typed handles, decode jobs on worker threads, caches, priorities, cancellation, GPU-upload hand-off (§8). |
 | `tessera-world` (`crates/world`) | L3 | M3 | Coordinates, landblock and cell IDs, streaming rings, landblock info (cells, static entities, links), block maps (§9). From M4.5 also: scenery generation and the frill (grass) ring, landblock water and water volumes, the game clock and sky state (§10), light selection (`lighting.md` §8.3–§8.5), per-class draw distances (`walker.md` §11.4). Builds each landblock's collision set, water included, on the asset workers and hands it to `physics` (§10.3, §20.3). May depend on `physics` (sibling allowance, §3). |
 | `tessera-physics` (`crates/physics`) | L3 | M4.5 | Collision and movement: terrain and ceiling collision triangles with the client's numbering, the terrain radius and plane queries that scenery placement uses, cell volumes and the point-in-cell lookup, per-landblock collision sets (statics, generated scenery, cells) with Tessera's own bounding-volume hierarchy, capsule sweeps, and the character controller with its water states (`collision.md` §5.4, §5.8.1, §6, §9–§12; `water.md` §7.4). A collision set also carries its landblock's water plane and liquid boxes, so the controller reads water only from its own sets (§10.3). Owns the step constants (1/60 s, at most 5 per frame) and validates every input at its API boundary: non-finite or out-of-range movement parameters, bounded speeds and per-step displacement, no panicking clamps ([0013](decisions/0013-physics-crate.md)). Sets are keyed by `formats::LandblockId` in landblock frames; the mover is in the f64 region frame (§9.1). Depends only on `formats` and `props`; no GPU, asset-server or streaming dependency. Record decoders (quantised trees, 0x66, 0x01) stay in `formats`. The M7 test server reuses the controller and the collision-set types; building the sets from install data is `world`'s work (§10.3, §10.5). |
@@ -179,25 +181,31 @@ Rules:
 | `tessera-material` (`crates/material`) | L3 | M2 | Surface → material → texture-list → texture chains, shader-feature classification, dye rules (§12). |
 | `tessera-entity` (`crates/entity`) | L4 | M4 | Main-thread entity store: generational entity IDs, sparse-set component columns, the client's component sets (transform, network ID, render and animation handles as type parameters, landblock membership of streamed statics), per-frame change and despawn lists, deferred removal ([0008](decisions/0008-entity-storage.md)). Depends on no other Tessera crate; L4 because it holds the client's game state, which lower layers never see. |
 | `tessera-render` (`crates/render`) | L4 | M0 | wgpu renderer: device and surface, frame graph, pipelines and WGSL shaders, texture/mesh uploads, headless mode (§13). |
-| `tessera-audio` (`crates/audio`) | L4 | M6 | Mixer, 3D sound, music regions, Vorbis/WAV decoding, player-music (ABC) synthesis (§14). |
+| `tessera-audio` (`crates/audio`) | L4 | M6 | Output backend (cpal behind the `device` feature; null and offline backends otherwise) and the project-owned mixer: channels and volumes, positional voices, gain chain, distance law, voice limit, request gates, reverb environments, sample-accurate scheduling; Vorbis/WAV decoding; player music (ABC dialect, instruments) (§14, [0019](decisions/0019-audio-backend.md)). |
+| `tessera-scriptgraph` (`crates/scriptgraph`) | L3 | M6 | Continuous script-graph runtime: keeps script-table and scriptlet node instances alive over time (Switches, Sequences, Timers, Randoms, driven properties, intensities) and hands sound and sound-environment effects to sinks that the client wires to `tessera-audio`. Depends on `formats` only, not on `audio`. |
 | `tessera-ui` (`crates/ui`) | L4 | M5 | Retained widget tree built from UI layout records, user skins and plugin controls; text layout; 2D batching (§15). |
 | `tessera-input` (`crates/input`) | L4 | M3 | Raw input → actions via a keymap; input contexts; gamepad (§16). |
 | `tessera-settings` (`crates/settings`) | L4 | M1 | Tessera's own settings file (INI-shaped), with a read-only importer for the original client's preferences file (§17). |
 | `tessera-script` (`crates/script`) | L4 | M0 | Sandboxed Lua 5.1 host: state creation, library allow-list, limits, binding helpers (§18). |
 | `tessera-plugins` (`crates/plugins`) | L4 | M5 | Plugin discovery (`.plugin` XML), apartments, lifecycle, the compatible Lua API surface, plugin-data persistence (§18). |
-| `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend; later the test-server backend (§19). |
-| `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol: message schema, framing, versioning. Shared by the client backend and the test server. |
+| `tessera-net` (`crates/net`) | L4 | M0 | Transport-agnostic session layer: `Backend` trait, domain events, sandbox backend, test-server backend (`remote`, decision 0030; M7), snapshot interpolation (§19). |
+| `tessera-protocol` (`crates/protocol`) | L1 | M7 | Tessera's own wire protocol (`docs/specs/tessera-protocol.md`): message schema, framing, versioning, the sans-IO client and server connection state machines, property values, movement and time-sync helpers, key fingerprints and connect strings. No I/O and no async code; feature `transport` adds the server key files and the rustls/quinn configurations of decision 0030. Shared by the `tessera-net` test-server backend, the test server and the load tools. |
 | `tessera-client` (`apps/client`) | app | M0 | The game client binary: window, frame loop, wiring (§20). |
 | `tessera-dattool` (`apps/dattool`) | app | M0 | CLI: `detect`, `info`, `ls`, `stat`, `cat`, `extract`, `strings`, `validate`, later `diff` (§24). |
 | `tessera-explorer` (`apps/explorer`) | app | M1 | GUI asset browser: archives, strings, textures, icons, later meshes and maps (§24). |
-| `tessera-server` (`apps/server`) | app | M7 | Project-owned test server speaking the Tessera protocol with original test content (§19). Runs server-side movement on `tessera-physics` with the same fixed step as the client (§20.3). It moves exactly like the client only over the same collision sets: on install data these include generated scenery, statics and water, which `world` builds (§10.3, §10.5). |
+| `tessera-server` (`apps/server`) | app | M7 | Project-owned headless test server speaking the Tessera protocol over QUIC (decision 0030), with original test content only (`docs/specs/server-content.md`, `test-server.md`): accounts with Argon2id, characters, world instances, the 30 Hz simulation, interest management by landblock, chat relay (§19). A library plus a binary, so tests and the load tools run it in-process. Movement design (M4.5): runs server-side movement on `tessera-physics` with the same fixed step as the client (§20.3). It moves exactly like the client only over the same collision sets: on install data these include generated scenery, statics and water, which `world` builds (§10.3, §10.5). |
+| `tessera-loadtest` (`apps/loadtest`) | app | M7 | Headless bot clients built on the `tessera-net` test-server backend: connect storms, walking, chat, churn, cheating and soak scenarios against an in-process or remote `tessera-server`, with desync, leak and latency reports (`test-server.md` §13). |
 
 > **OPEN (M7, [0013](decisions/0013-physics-crate.md)):** whether `apps/server` depends on
 > `tessera-world` for collision-set building on install data, or the asset-free part of that
 > building (sets from decoded records, scenery placement, the `water.md` §6.2 rule) moves
 > into a module the server can use without `world`'s asset, animation and text
 > dependencies. Decide with `server-content.md`; until then `physics` alone does not give
-> movement identical to the client's.
+> movement identical to the client's. The M7 server as built has neither: `server-content.md`
+> §3.2 and §10 E1 keep v1 servers free of game data (no terrain heights, no collision; no
+> dependency on `tessera-dat`, `tessera-formats` or any crate that decodes game data, which
+> `tessera-physics` does today), and movement is validated by speed and extent only. The
+> owner OPEN in `server-content.md` §3.2 governs any change.
 
 > **OPEN:** whether `props`, `text` and `wstate` stay separate crates or become modules of
 > one `tessera-gamedata` crate. Decide in M1 when `props` is written; the module boundaries
@@ -398,9 +406,11 @@ nodes. A full DID → (archive, entry) index built by walking every tree is opti
 | 0x16, 0x17 | water table, fog-zone table | `water` | M4.5 | `water.md` §4–§5 |
 | 0x15, 0x1A, 0x35, 0x32, 0x08 | sky description, day description, game time, LOD-class table, camera state | `environment` | M4.5 | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 | 0x800R/0x802R/0x804R, 0x801R | landblock data, info, properties; block map | `landblock` | M3 | `landblock.md` |
+| 0x805R | distant-landscape sector (3 × 3 landblocks: terrain and ceiling meshes, water, billboards, far-visible entities) | `landblock` (`sector`) | census 2 | `distant-landscape.md` |
+| 0x79 (property sets) | instanced and group content views: encounter templates and controls, skirmish, world join, battles, session play, fellowship maker, phasing | `instance` | census 2 | `instances.md` |
 | 0x18 | block-map descriptors | `block_map` | M3 | `landblock.md` |
 | — (inside 0x04), 0x05 | skeleton (the Havok tagfile slice of a 0x04 setup, handed over by `setup`), animation clip | `tessera-havok` | M4 | `havok-data.md` |
-| 0x56000000 | class library (WLib) | `wlib` | M3 | `wlib.md` |
+| 0x56000000 | class library (WLib); its compiled code and message chunks in `tessera-wvm` | `wlib` | M3 (code: census 2) | `wlib.md`, `wlib-bytecode.md` |
 | 0x70–0x77 | object state (WState) | `wstate` | M3 | `wstate.md` |
 | 0x22 | UI layout | `ui_layout` | M5 | `ui-layout.md` |
 | 0x0A | sound info and sound payload | `sound` | M6 | `sound.md` |
@@ -477,6 +487,11 @@ game concept.
   object it is (item, quest, skill, effect, NPC, ...).
 - Attribute names are only known as hashes. Tessera does not ship third-party name lists;
   names are recovered at run time where the data contains them, or shown as hashes.
+- Typed views on top of these (census 2): `wstate::character` for the player-character
+  records (`player-character.md`) and `wstate::game_controls` for the game-control
+  singletons (`game-controls.md`). They read decoded property sets and object states and
+  need no byte decoder of their own. The compiled code of the class library is decoded by
+  `tessera-wvm` (`wlib-bytecode.md`).
 
 The client runtime's entity model (§20) stores a `PropertySet` per live entity. Gameplay
 features (tooltips, vitals, quest log) read properties by name, so the same code works for
@@ -616,6 +631,31 @@ constants live in `docs/specs/coordinates.md`, not in code comments.
   view around a position (decision 0013 frames) and the interior cell containing a point
   (`collision.md` §5.8.1).
 
+> **OPEN (implementer, 2026-10-07):** `tessera-world` makes engineering choices that this
+> section does not state: the retry and failure rules, the velocity-estimate details, the
+> decay of "the slowest recent bundle job", corridor hysteresis, and the frill budget
+> projection. The default residency budget is also out of date in `landblock.md` §8.1. These
+> are listed for confirmation in the implementer OPENs of
+> [`landblock.md` §8.1](specs/landblock.md#s8-1) (2026-10-07).
+
+> **OPEN (implementer, 2026-10-07, meshes and materials):** the third bullet of this
+> section says "the bundle loader then requests the meshes and materials those
+> reference". `tessera-world`'s bundle job requests none: it resolves each object chain to
+> its setup and part DIDs and stops there. The walker requests parts and textures itself,
+> by draw distance and within its GPU budget (`walker.md` §4, §14.5), which a request at
+> bundle time would bypass (every resident landblock's parts would load, whatever their
+> distance). The two specs disagree; which one holds? If `walker.md` does, the bullet
+> should say that the bundle resolves objects to setups and parts and the consumer loads
+> them.
+
+> **OPEN (implementer, 2026-10-07, streamer details):** further `tessera-world` choices
+> that this section does not state (default byte budgets and per-frame limits, the
+> one-update overshoot of the residency budget at integration, the re-admission margin
+> of a seam closure, the velocity estimate's sample rules, what a data error in a
+> world-system input does, and the water lookups with `build_water` off) are listed for
+> confirmation in the implementer OPENs of [`landblock.md` §8.1](specs/landblock.md#s8-1)
+> (2026-10-07, second set).
+
 > **OPEN:** interior cell geometry, portals and the role of the original's PVS data are
 > unknown (Reported as unexplored, data-semantics.md §13). M3 exit criteria do not depend
 > on interiors. *Answered in part (M4.5):* cell geometry, cell volumes, portals and the
@@ -642,6 +682,12 @@ flow. Grass and procedural scenery are in §10.5 because they hang off the terra
   pattern), normals computed across landblock edges (needs neighbour heights; the bundle
   loader requests the 8 neighbours at low priority) (`terrain.md` §3–§5). Landblocks with a
   ceiling also get a ceiling mesh (`terrain-texturing.md` §4.8).
+
+> **OPEN (implementer, 2026-10-07):** the bundle loader requests no neighbours.
+> `tessera-world`'s residency admission guarantees the east, north and north-east
+> neighbours of near- and mid-ring landblocks (`landblock.md` §8.1). The normals of
+> `landblock.md` §3.14 read all eight. See the neighbours OPEN in `landblock.md` §8.1.
+
 - Far terrain: coarser LOD meshes from the same heights. How far the original draws full
   layers and what replaces them beyond that is OPEN (`terrain-texturing.md` §12); Tessera
   draws full layers at every distance it meshes until it is known.
@@ -665,6 +711,12 @@ physics-material property set.
 
 - Layer products are CPU data built on the asset workers with the landblock bundle and handed
   to the renderer like any mesh product (§8, §20.2).
+
+> **OPEN (implementer, 2026-10-07):** the bullet above does not match the code. The landblock
+> bundle (`tessera-world`) does not build layer products. The walker builds layer
+> resolution, masks, light maps and far-band bakes from the bundle's landblock data on its
+> own terrain workers (`walker.md` §14.1). Should this bullet describe that split?
+
 - Whether layers are drawn one pass per layer or folded into one splatting shader per block
   is the renderer's choice; the result is the same "over" chain (`terrain-texturing.md` §8).
   The depth comparison for stacked layers is a Tessera Decision there ("less or equal").
@@ -709,6 +761,11 @@ set, as plain physics data in the landblock frame:
   placed volume entity of the landblock (§7.3), transformed by its entity's placement
   (position, rotation, and scale when `Monitor_ScaleWithEntity` is true) into an oriented
   box, with the flags of its property set (§7.2: liquid, lava, surface, wading, deep).
+
+> **OPEN (implementer, 2026-10-07):** `tessera-world` builds the landblock water with every
+> collision set, whatever its `build_water` option says. It loads the water tables only
+> when water or scenery is on, so with both off the set is dry (`landblock.md` §8.1, water
+> OPEN).
 
 The controller reads water only from the resident sets, like the triangles, so the
 determinism of §20.3 covers water too, and `physics` needs nothing from `world` at step
@@ -845,9 +902,31 @@ surfaces (0x41), with a reference to a compiled shader record (0x2B).
 <a id="audio"></a>
 ## 14. Audio and music (`tessera-audio`)
 
-- **Output:** kira on cpal (Decision, to be confirmed by an ADR at M6). Requirements:
-  streamed playback for music, many short positional sounds, per-bus volumes, smooth
-  crossfades between music regions.
+- **Output:** cpal behind the `tessera-audio` feature `device`, with a project-owned mixer
+  (Decision, [0019](decisions/0019-audio-backend.md); kira was considered and not used).
+  Without the feature, the crate builds with no system audio libraries and offers a null
+  backend (wall-clock mixing, output discarded; `--headless`) and an offline backend
+  (renders into a buffer; tests and tools). Requirements: streamed playback for music, many
+  short positional sounds, per-channel volumes, smooth crossfades between music regions.
+- **Engine (`tessera_audio::engine`, Decision 0019):**
+  - **Main thread:** `AudioEngine` takes `SoundRequest`s and applies the request gates of
+    `sound.md` §6.8. Once per frame it computes each voice's gain (gain chain §6.1, distance
+    law §6.2), panning relative to the camera (§6.7), the gain-0 rule and the voice limit
+    (§6.6).
+  - **Audio thread:** the mixer receives the results through a wait-free command ring
+    (§21). It resamples by pitch, loops, starts and stops at audio-clock frames with sample
+    accuracy (`instruments.md` §12), fades out linearly (§6.5) and feeds the reverb of the
+    active environment (§8). It never allocates, frees or locks.
+  - **Back to the main thread:** finished voices return through an event ring, and tracked
+    requests produce completion events for their script nodes.
+  - **Payloads:** decoded payloads come from the asset workers through a one-shot payload
+    channel. Streamed sources are decoded by a feeder thread (device and null backends;
+    inline between blocks for the offline backend), never by the audio thread; the first
+    4,096 frames of a new stream are decoded on the main thread when its voice starts.
+  - **Back-end loss:** a lost device completes every live request and refuses new ones
+    until the client calls `AudioEngine::reopen()` (decision 0019).
+  - **Stats:** active and virtualised voices, device xruns, mixer overloads and mixer load
+    (M6 exit criterion 4).
 - **Decoding:** Ogg Vorbis and WAV payloads (Reported) decoded by pure-Rust decoders on
   worker threads; long tracks streamed.
 - **Spatial:** listener follows the camera; emitters attached to entities; distance
@@ -992,8 +1071,41 @@ The client never talks to sockets directly. It talks to a `Session` that wraps a
 | Backend | Status | Description |
 |---|---|---|
 | **Sandbox** | M0 skeleton, grows each milestone | In-process, no sockets. Spawns the local avatar at a chosen position in the user's data and serves a static world: landblock-placed static entities only. This is the offline world walker of M3. |
-| **Test server** | M7 | `tessera-server` + `tessera-protocol`: a protocol designed and documented by this project (spec `docs/specs/tessera-protocol.md`), with its own handshake, its own encryption (standard, documented algorithms) and its own content: original test content, or the server operator's own data limited to what LEGAL.md allows. |
+| **Test server** | M7 (`tessera_net::remote::RemoteBackend`, feature `remote`, on by default) | `tessera-server` + `tessera-protocol`: a protocol designed and documented by this project (spec `docs/specs/tessera-protocol.md`, transport per [0030](decisions/0030-tessera-protocol-transport.md)), with its own handshake (QUIC v1 + TLS 1.3, the server's own Ed25519 key pinned by SHA-256 fingerprint or recorded in the client's `known_servers` file), its own encryption (standard, documented algorithms) and its own content: original test content, or the server operator's own data limited to what LEGAL.md allows. See below. |
 | **Compatibility** | M8, **gated** | See §19.3. |
+
+The test-server backend implements the same `Backend` trait, so `Session` and everything
+above it work unchanged:
+
+- **Configuration** (`RemoteConfig`): a connect string `tessera://host:port[?pin=sha256:…]`,
+  the trust policy (known-servers file in Tessera's own settings directory, never the game
+  install, nor below one; trust on first use only when explicitly enabled, and never when
+  the file exists but cannot be read completely), the account name and a password
+  supplied by the caller (never logged, sent only after the server key was verified), the
+  `Hello` parameters, statics streaming and interpolation parameters.
+- **Events** follow the protocol spec's Appendix A: `LoginOk` → `Connected`; `WorldEnter` →
+  `WorldEntered`, `AppearanceChanged`, `LocationReport`; entities → `EntityCreated` (with
+  appearance), `EntityMoved` (with velocity), `AppearanceChanged`, `EntityDespawned`; chat,
+  notices and refusals → `ChatMessage`; every way a connection ends → exactly one
+  `Disconnected` with a reason (`RemoteBackend::failure` gives the detail: key mismatch,
+  login code, server code, violation). Everything from the network is decoded strictly and
+  checked by the protocol's client state machine first (`tessera-protocol.md` §13).
+- **Statics are not replicated.** As in the sandbox, the client may hand the backend its own
+  `WorldSource`; the backend streams the statics of the player's neighbourhood from the
+  user's install with the sandbox's streaming code (`StaticSpawned`, `StaticsCleared`).
+- **Movement**: `Command::Move` updates a single "newest move" slot; the network thread sends
+  `MoveInput` by the client send rules (15 Hz moving, 1 Hz heartbeat, immediate on gait
+  changes, teleports and corrections) and never sends a move the client made before it saw
+  a teleport or correction.
+- **Remote entities** are interpolated by `tessera_net::interp` (snapshot buffers on server
+  timestamps, render time = estimated server time − *D*, bounded extrapolation, snap across
+  teleports; *D* and the kept history grow together to the server's snapshot rate). `RemoteBackend::sample` gives an entity's state at the current render time;
+  `RemoteBackend::stats` gives RTT, clock offset, traffic and drop counters for the HUD and
+  the load tools. Replicated properties (stance, emote, speeds) are read with
+  `RemoteBackend::entity_state`; commands beyond the neutral `Command` set (emote, stance,
+  appearance) go through `RemoteBackend::handle`.
+- A network-free `InboundHarness` runs the same driver and mapper from a script of server
+  bytes; it backs the `net_remote_*` fuzz targets.
 
 <a id="net-compat"></a>
 ### 19.3 The gated compatibility tier
@@ -1021,10 +1133,28 @@ Architecturally this means:
 <a id="net-threading"></a>
 ### 19.4 Network threading
 
-Socket I/O runs on a dedicated network thread (a single-threaded async runtime inside
-`tessera-net`), which decodes messages into `Event`s and posts them over a bounded
-channel. The main thread drains the channel in `Session::poll_into`. The sandbox backend runs
-inline on the main thread.
+Socket I/O runs on a dedicated network thread inside `tessera-net`
+([decision 0030](decisions/0030-tessera-protocol-transport.md)): one thread per process,
+started by the first `Command::Connect` and kept for the life of the process, runs a tokio
+`current_thread` runtime and one quinn client endpoint per address family. Each
+test-server backend is a task on it with its own connection, the protocol's client state
+machine and a 30 Hz tick (timeouts, time sync, ping, the movement schedule). (A thread,
+runtime and endpoint per session, as first built, left memory behind in the allocator at
+every reconnection; see `docs/perf/m7-soak.md`.) The main thread and the network thread share only:
+
+| Direction | Channel | Bound | When full |
+|---|---|---|---|
+| Main → network | commands (enter world, teleport, chat, emote, ...) | 256 | `submit` returns `NetError::SendQueueFull`; never blocks |
+| Main → network | newest player move (a `watch` slot) | 1 | Replaced; moves can never fill a queue |
+| Main → network | shutdown flag (`Disconnect`, or the backend dropped) | 1 | — |
+| Network → main | decoded, validated items | 1,024 | The network thread stops reading the world, chat and control streams (QUIC flow control then holds the server back) and drops movement; reliable state is never lost. Reading stops once 256 items wait, but one read (8 KiB) that started below that is decoded in full, so at the peak about 1,620 items (256 + 8,192 / 6, the smallest world frame being 6 bytes) wait on the network thread |
+| Network → main | statistics snapshot (mutex, `try_lock` on the main thread) | 1 | The main thread keeps its previous copy |
+
+`Session::poll_into` drains the channel without waiting and maps items to `Event`s on the
+main thread, where the entity table, interpolation buffers and statics streaming live (the
+`WorldSource` is the client's and stays on the main thread). Dropping the backend asks the
+session task to say `Disconnect` and end; nothing waits for it. The sandbox backend runs
+inline on the main thread, as before.
 
 ---
 
@@ -1161,7 +1291,8 @@ subtracts its camera anchor in `f64` and narrows to `f32` (the §9.1 render posi
 |---|---|---|
 | **Main** (winit event loop thread) | Window, input, entity store, streamer, UI tree, Lua states, wgpu queue submission and resource creation | Request queue to workers; completion channel from workers; command channel to audio; event channel from network |
 | **Asset workers** (N = available cores − 2, at least 1) | Nothing long-lived; run jobs: read, inflate, decode, transcode, mesh/terrain generation, animation decompression and sampling | Priority job queue in; completion channel out; cancellation tokens |
-| **Audio** (owned by the audio backend) | Mixer state, voices, streams | Lock-free command queue from main |
+| **Audio** (owned by the audio backend) | Mixer state, voices, streams | Lock-free command queue from main; event ring back to main (finished voices are dropped there) |
+| **Audio feeder** (`tessera-audio`, device and null backends) | Stream decoders of playing streamed voices | Job channel from main; wait-free sample rings to the audio thread |
 | **Network** (when a socket backend is active) | Sockets, protocol state machine, crypto | Bounded channels to and from main |
 | **Index builder** (tools only) | Full DID index build | Result handed to the UI thread |
 

@@ -119,10 +119,13 @@ fn lit_shade(in: LitVsOut) -> Shaded {
     // Shading normal (§5.2.4). Back faces keep the front normal (material.md §11.4).
     var n = frame_normalize(in.normal, vec3<f32>(0.0, 0.0, 1.0));
     if ((f & F_NORMAL_MAP) != 0u) {
-        let t_raw = in.tangent.xyz - n * dot(n, in.tangent.xyz);
-        if (dot(t_raw, t_raw) > 1e-12) {
-            let t = normalize(t_raw);
-            let b = cross(n, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
+        // The tangent as given (normalised, not made orthogonal to N0) and the binormal
+        // w x cross(N0, T) of the mesh convention (docs/specs/render.md §2.1).
+        let t_len2 = dot(in.tangent.xyz, in.tangent.xyz);
+        let b_raw = cross(n, in.tangent.xyz);
+        if (t_len2 > 1e-12 && dot(b_raw, b_raw) > 1e-12 * t_len2) {
+            let t = in.tangent.xyz * inverseSqrt(t_len2);
+            let b = normalize(b_raw) * select(-1.0, 1.0, in.tangent.w >= 0.0);
             var tn = normal_tex.xyz * 2.0 - 1.0;
             tn.y = tn.y * draw.params.y;
             n = frame_normalize(t * tn.x + b * tn.y + n * tn.z, n);
@@ -211,4 +214,12 @@ fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
 fn fs_lit_additive(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
     return vec4<f32>(frame_output(s.unfogged * (1.0 - s.fog)), clamp(s.alpha, 0.0, 1.0));
+}
+
+// Modulating fixed blends (ZERO / SRCCOLOR, DESTCOLOR / ZERO, MIN): fogged distance fades
+// the colour toward white, which leaves the destination unchanged (render.md §4.3).
+@fragment
+fn fs_lit_modulate(in: LitVsOut) -> @location(0) vec4<f32> {
+    let s = lit_shade(in);
+    return vec4<f32>(frame_output(mix(s.unfogged, vec3<f32>(1.0), s.fog)), clamp(s.alpha, 0.0, 1.0));
 }

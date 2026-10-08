@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-07) |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (revision of 2026-10-08 and its repair, accepted on re-review 2026-10-08). Implementers re-check code against the sections changed on 2026-10-08 (§19, last two rows). |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted), not the author: first review, re-review and acceptance review, all 2026-10-07 |
-| **Review record** | Acceptance review 2026-10-07 (third review session, not the author): **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted), not the author: first review, re-review and acceptance review, all 2026-10-07; review and re-review of the 2026-10-08 revision, 2026-10-08 |
+| **Review record** | Acceptance review 2026-10-07 (third review session, not the author): **passed**, Accepted. Revision of 2026-10-08 (OPEN closure, §19): reviewed 2026-10-08 (separate review session, not the author): **changes requested** (§6.2 steps 3–4, §5.3 64-bit types, §10.2 weapon duration; 5 spot checks reproduce). Fixes by the author 2026-10-08 (§19). Re-review 2026-10-08 (separate review session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/props` (progression evaluation and modifier-entry reading, §4, §5); a future gameplay-data crate (skills, effects, traits, class tables); `apps/explorer` (skill, effect and trait cards, §15); `apps/dattool` |
 | **Companion specs** | `property-system.md` (property sets, value types, DID maps, enum mappers), `wstate.md` (object records 0x70, their bundles), `wlib.md` (class library, parent map, method tables), `records.md` §7 and §8 (enum mapper and DID map layouts), `coordinates.md` (world units) |
 
@@ -47,13 +47,17 @@ inputs into hit chances, damage and healing (§13). The spec says where that bou
 | OBS | Observed in the user's install (Steam, client data current on 2026-10-06), 2026-10-06 and 2026-10-07, with throwaway probes in the dirty scratch area built on the project's own decoders. **Every census in this spec covers all records of the family named**, not a sample: all 383,332 object records were classified, and all records of each family were decoded on both halves (0x70 and 0x79). Counts are observations of this install and must be read at run time. |
 | LC | LotroCompanion `lotro-tools` and `lotro-core` source (third-party extraction tools; read for facts only, no code or prose copied): which properties their extractors read per family, their interpretation of a few operators and formulas. Marked **Reported** unless the data confirms it. |
 | DS | `research/notes/data-semantics.md` §5.1 and §12 (class-index list and property naming conventions). |
+| BC | The client library's bytecode (record 0x56000000, chunk type 1), read on 2026-10-08 in the dirty room with a throwaway disassembler that follows `wlib-bytecode.md` (Accepted), by class and body offset. This is data in the user's install (method M1). Bodies read: the progression classes 1386, 1385, 1389, 2402, 2519, 3810, 3918, 3920 and the segment and point classes 3916, 3917; the index helper class 1388; the modifier classes 1338–1342; the effect base class 698 (duration, interval, pulse-count and spellcraft functions); the property-modification effect family (class 734 and the classes that share its bodies), the applied-effect record class 700 and the override holder class 732; the instant-vital effect class 725; the point-based trait functions of class 3438 and the ranked-trait functions they call; the combat control class 1659; the DPS and value table classes 1660 and 1688; the weapon-data functions of class 256; class 3800. Read on the same day for the fixes of the 2026-10-08 review: the vital-over-time amount functions of class 755; the represented-property functions of classes 2402, 2519 and 3810; the weapon-data function of class 256 in full, with the weapon timing classes 1692 and 1691, the weapon variance class 2618, the damage function of class 1659 and the modified-value function of class 1046 it calls; the duration, interval, pulse-count and permanence functions of class 698 again. Plus byte and immediate searches of the whole block for the property IDs named in §4.6, §9.1 and §10.1. Facts from this source describe what the **client's** library computes; the server-side library is not in the archives (§13.1). |
 | DEC | Tessera's own choices where the data, the client and published sources say nothing. Each is marked **Decision** below and is not a claim about the original game. |
-| BIN | **M4 under decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 with a headless disassembler/decompiler in the dirty room, by address range only. **Questions:** (b1) does native client code read the progression, modifier-entry, skill or effect properties by property ID; (b2) does native code call the script functions of the progression, effect, skill or trait classes by a constant function ID (`wlib.md` §6.4); (b3) where is the script machine's bytecode dispatch, so that the client-side progression and modifier functions could be read. **Why M1–M3 were not enough:** the out-of-range behaviour of progressions and the order in which modifiers combine are not stored in any record; no published source states them with authority; no running client is available to this session (M3). **Results:** (b1) no: 10 property IDs of §4 and §5 and the 7 attribute hashes of §4.7 were searched as instruction immediates; the attribute hashes have no hit, and every property-ID hit is an argument of a child-element lookup in user-interface code, a separate identifier space that shares the numeric range; no defined string in the executable contains `Progression`, `Mod_` or `Combat_Control`; (b2) no: none of the 986 function IDs of classes 484, 486, 698, 827, 1385, 1386, 1389, 1479, 2402, 2519, 3810, 3916–3918 and 3920 occurs as an immediate; (b3) not located in this pass (the library loader and its chunk dispatcher were found; the interpreter loop was not). Nothing from network, login, launcher or anti-tamper code was read. |
+| BIN | **M4 under decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 with a headless disassembler/decompiler in the dirty room, by address range only. **Questions:** (b1) does native client code read the progression, modifier-entry, skill or effect properties by property ID; (b2) does native code call the script functions of the progression, effect, skill or trait classes by a constant function ID (`wlib.md` §6.4); (b3) where is the script machine's bytecode dispatch, so that the client-side progression and modifier functions could be read. **Why M1–M3 were not enough:** the out-of-range behaviour of progressions and the order in which modifiers combine are not stored in any record; no published source states them with authority; no running client is available to this session (M3). **Results:** (b1) no: 10 property IDs of §4 and §5 and the 7 attribute hashes of §4.7 were searched as instruction immediates; the attribute hashes have no hit, and every property-ID hit is an argument of a child-element lookup in user-interface code, a separate identifier space that shares the numeric range; no defined string in the executable contains `Progression`, `Mod_` or `Combat_Control`; (b2) no: none of the 986 function IDs of classes 484, 486, 698, 827, 1385, 1386, 1389, 1479, 2402, 2519, 3810, 3916–3918 and 3920 occurs as an immediate; (b3) not located in this pass (the library loader and its chunk dispatcher were found; the interpreter loop was not). Nothing from network, login, launcher or anti-tamper code was read. **Second pass, 2026-10-08** (same build and executable, a disassembler on the read-only executable only, no analysis database), by address range only, to establish what the native functions called by the BC bodies do. **Questions:** (b4) what the native functions used by the progression, modifier, duration and combat-table bodies return (integer and float minimum and maximum, clamp, array element access and count, the property arithmetic used by the modifier operators, the float-to-property conversion, the map insertion used by modifier lists, the two level readers); (b5) whether array access checks the index. **Why M1–M3 were not enough:** the bytecode passes values to these natives by function ID only (`wlib-bytecode.md` §7); what they compute is in the executable alone, no published source describes them, and no running client is available to this session. **Results** (registered entry points located with the native-registration pairing of `wlib-bytecode.md`'s BIN row): package 122 functions 24 and 25 are signed 32-bit minimum and maximum, functions 22 and 23 are single-precision minimum and maximum (SSE `minss`/`maxss`); package 2574 function 4 clamps a float to [low, high]; package 17 function 4 and package 176 function 3 read an array element **without** a bounds check, functions 12 and 11 return the element count, package 176 function 10 tests for an empty array; package 3176 function 32 stores a float into a property object, as f32 for float properties, truncated toward zero for int and int64 properties, and not at all for other types; package 39 functions 65, 66, 67, 68, 69 and 78 implement add, subtract, multiply, divide, set and or on property objects (§5.3); package 35 function 1 inserts into a reference map and does **not** replace an existing key (returns 0); package 3703 functions 1 and 2 read the actor's `Advancement_Level` and `Apparent_Level` (1 when absent or not an int). Nothing from network, login, launcher or anti-tamper code was read. **Third pass, 2026-10-08** (same build and executable, a command-line disassembler on the read-only executable, no analysis database, by address range only). **Question:** (b6) what the set and or natives of package 39 (functions 69 and 78) and the add, subtract, multiply and divide natives (functions 65–68) do for the value types whose values are held in a separate value object (int64, 64-bit bitfield, any-width bitfield), which the second pass had not followed. **Why M1–M3 were not enough:** as for b4; the data holds `Or` entries on 64-bit and any-width bitfields, and the per-type code is in the executable alone. **Results** (the value-object kind of each property type taken from the client's value factory, a switch on the type code): set copies the source value into the property for every type, without a type-specific step; or works on bool and 32-bit bitfield values directly and, for the 64-bit and any-width bitfields, through the value object's own or operation (64-bit or; any-width or after widening the shorter operand with zero bits); the int64 value object implements add, subtract, multiply and divide in 64 bits (wrapping, low 64 bits, signed division truncated toward zero) and does nothing for or; every other type is left unchanged by or (§5.3). Nothing from network, login, launcher or anti-tamper code was read. |
 
 Marks: **Confirmed** = observed in the user's install over every record of the kind named (not a
-sample), on the date given; **Reported** = published third-party material only; **BIN only** =
-read from the client executable under M4 (decision 0011); **Decision** = a Tessera choice (DEC),
-not a fact about the original.
+sample), on the date given; **Confirmed (bytecode)** = read from the client library's code in the
+install (BC), which is data, with every observed record agreeing where a census applies;
+**Confirmed (bytecode + BIN)** = as before, where the meaning of a native function the code calls
+comes from BIN; **Reported** = published third-party material only; **BIN only** = read from the
+client executable under M4 (decision 0011); **Decision** = a Tessera choice (DEC), not a fact about
+the original.
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -65,24 +69,24 @@ not a fact about the original.
 | C6 | `Progression_MinimumIndexValue` absent ⇒ 0 (the dictionary default), and the compiled form stores 0 (§4.2) | OBS (6 of 6 float progressions without it) | Confirmed. Disagrees with LC, which assumes 1 (§16) |
 | C7 | Linear-interpolating keys are strictly increasing; the compiled form stores one segment per adjacent pair with the slope (y₁ − y₀) / (x₁ − x₀) computed in single precision, bit-exact; the compiled minimum index equals the first key (§4.4) | OBS (1,814 of 1,814 records, 30,100 segments) | Confirmed 2026-10-07 |
 | C8 | Array index rule: element *k* (0-based) belongs to index MinimumIndexValue + *k* (§4.3) | OBS (consistency of minimum index and compiled form); LC | Layout Confirmed; use as an index Reported |
-| C9 | Behaviour outside the covered index range (§4.8) | LC (extrapolate along the last segment above; undefined below) | Reported only; **OPEN** (Tessera's rule is D1) |
+| C9 | Behaviour outside the covered index range (§4.8) | LC (extrapolate along the last segment above; undefined below); now settled by C38 and C39 | Reported; superseded 2026-10-08 by C38, C39 (LC agrees above the range, not below) |
 | C10 | Modifier-entry layout and its three kinds: empty, inline value, progression-driven; never both value and progression (§5.1, §5.2) | OBS (all 372,834 entries in all 116,435 `Mod_Array` values) | Confirmed 2026-10-07 |
-| C11 | Operator enum 0x23000046 and which operators occur with which value types (§5.3) | OBS (mapper and all entries); LC (operator meanings) | Keys and co-occurrence Confirmed; arithmetic Reported |
-| C12 | Level ranges: entries for one property within one array have disjoint ranges (stored order not guaranteed; 100 groups are not ascending as stored), are never mixed with unranged entries for the same property, and occur only in non-combat holders (§5.5) | OBS (all 14,798 ranged groups, all 19,533 ranged entries; re-measured 2026-10-07) | Confirmed 2026-10-07; which level is compared Reported (LC) |
+| C11 | Operator enum 0x23000046 and which operators occur with which value types (§5.3) | OBS (mapper and all entries); LC (operator meanings); C41 (arithmetic) | Keys and co-occurrence Confirmed; arithmetic Confirmed (bytecode + BIN) 2026-10-08 |
+| C12 | Level ranges: entries for one property within one array have disjoint ranges (stored order not guaranteed; 100 groups are not ascending as stored), are never mixed with unranged entries for the same property, and occur only in non-combat holders (§5.5) | OBS (all 14,798 ranged groups, all 19,533 ranged entries; re-measured 2026-10-07) | Confirmed 2026-10-07; which level is compared: C42 (client rule), LC for items (Reported) |
 | C13 | Effect classes, their distinctive properties and counts (§6.1) | OBS (all 32,971 effects, 87 classes) | Confirmed 2026-10-07; role names are this spec's descriptions |
-| C14 | Duration and application-probability property census, and the duration groups by stored value (§6.2) | OBS (all 32,971 effects; re-measured 2026-10-07) | Confirmed 2026-10-07; semantics Reported (LC) |
-| C15 | Vital-change amount pattern (constant, progression, random, variable, variance, modifier lists) and its co-occurrence census (§6.4) | OBS (all 1,103 instant-vital and 2,438 vital-over-time effects); LC (meaning) | Layout Confirmed; meaning Reported |
+| C14 | Duration and application-probability property census, and the duration groups by stored value (§6.2) | OBS (all 32,971 effects; re-measured 2026-10-07) | Confirmed 2026-10-07; duration semantics C45 (client library), the rest Reported (LC) |
+| C15 | Vital-change amount pattern (constant, progression, random, variable, variance, modifier lists) and its co-occurrence census (§6.4) | OBS (all 1,103 instant-vital and 2,438 vital-over-time effects); LC (meaning); C46 (source selection) | Layout Confirmed; source selection Confirmed 2026-10-08 (C46); other meaning Reported |
 | C16 | Equivalence-class data in the effect control object (§6.6) | OBS | Layout Confirmed; meaning **OPEN** |
 | C17 | Skill property census; 56 properties present in every skill (§7) | OBS (all 13,247 skills) | Confirmed 2026-10-07 |
 | C18 | Attack hooks: one compiled object per `Skill_AttackHookInfo` in every skill (§7.7) | OBS (13,733 of 13,733) | Confirmed |
 | C19 | Trait classes, trait trees (class 3486), trait-cell key structure (§8) | OBS | Confirmed; row/column meaning **OPEN** |
 | C20 | Class advancement tables (class 853), derived-stat formula lists, monster-play tables, advancement lines (§9) | OBS | Layout Confirmed; formula reading Reported |
-| C21 | Combat control object, DPS and value lookup tables, thresholds, battle statistics, DID maps COMBATEFFECTS and BATTLESTATS (§10) | OBS; LC (curve and table formulas) | Layout Confirmed; formulas Reported |
+| C21 | Combat control object, DPS and value lookup tables, thresholds, battle statistics, DID maps COMBATEFFECTS and BATTLESTATS (§10) | OBS; LC (curve and table formulas); C47, C48 (client formulas) | Layout Confirmed; curve and table formulas Confirmed (bytecode) 2026-10-08 |
 | C22 | Enum mappers used by these families (§11) | OBS | Confirmed |
 | C23 | Reference graph census; no family record names a missing object record (§12) | OBS (every DID value in every 0x78 and 0x79 set) | Confirmed 2026-10-07 |
 | C24 | The client library contains bytecode bodies for the progression, effect, skill, trait and modifier classes, and its bytecode contains the IDs of `Mod_Op`, `Mod_Modified`, `Mod_Progression`, `Mod_ModifierList`, `Mod_ProgressionFloor`, `Combat_DPS_LUT`, `Item_ValueLookupTable` and others as 32-bit literals (§13.2) | OBS (method tables of `wlib.md` §6.4; byte search of the bytecode chunk) | Confirmed |
 | C25 | Native client code neither reads these properties by ID nor calls these script classes by constant function ID (§14) | BIN (b1, b2) | BIN only |
-| C26 | Third-party formulas for rating percentages, weapon damage and skill hook damage (§13.3) | LC | Reported only |
+| C26 | Third-party formulas for rating percentages, weapon damage and skill hook damage (§13.3) | LC | Reported; rating and weapon formulas superseded by C47, C48, C52; hook damage still Reported only |
 | C27 | Who uses progressions: holder, property path, reference count and target classes (§4.9); all 50 references to class 3810 sit in modifier entries of class-3438 traits (§4.5) | OBS (every DID value of every 0x78 and 0x79 set) | Confirmed 2026-10-07 |
 | C28 | Effect-reference structs, their fields, holders and counts; every occurrence of `EffectGenerator_EffectID` by enclosing struct and holder, its 59 zero values (one class-1932 record) and its targets (§6.3); placeholder `Skill_Effect` counts (§3.2, §7.8) | OBS (every 0x78 and 0x79 set; `EffectGenerator_EffectID` occurrences re-measured 2026-10-07) | Confirmed 2026-10-07 |
 | C29 | Class-specific effect properties: presence, value ranges and holders of `Mod_Array` per effect class (§6.5) | OBS (all records of the classes named) | Presence and ranges Confirmed 2026-10-07; meanings are this spec's descriptions from the labels |
@@ -91,13 +95,29 @@ not a fact about the original.
 | C32 | Equivalence-class data counts and value histogram (§6.6); DPS and value table lengths and holders (§10.2) | OBS (the one class-1666 record; all 8 class-1660 and all 99 class-1688 records; every 0x78 and 0x79 set for holders) | Confirmed 2026-10-07 |
 | C33 | Enum-mapper labels of §11 | OBS (EMAPPER DID map 0x28000001 and each mapper) | Confirmed 2026-10-07 |
 | C34 | No integer-typed value equals the DID of an object record, so combat references are stored only as DIDs (§3.4) | OBS (every int, 64-bit int, 32- and 64-bit bitfield and enum value in all 1,616 0x78 and 383,332 0x79 sets, compared with the DIDs of all 383,332 object records; re-measured 2026-10-07) | Confirmed 2026-10-07 |
-| C35 | Modifier lists: 1,946 non-empty entries with at least one non-zero PID, lists of 1 or 2 PIDs, `Mod_ModifierOp` counts 668 / 108 / 887 / 283 for keys 5–8 (§5.4); how listed values combine with the entry | OBS (all 372,834 entries); LC (combination) | Counts Confirmed 2026-10-07; combination Reported |
+| C35 | Modifier lists: 1,946 non-empty entries with at least one non-zero PID, lists of 1 or 2 PIDs, `Mod_ModifierOp` counts 668 / 108 / 887 / 283 for keys 5–8 (§5.4); how listed values combine with the entry | OBS (all 372,834 entries); LC (combination) | Counts Confirmed 2026-10-07; combination Confirmed (bytecode + BIN) 2026-10-08 (C44) |
 | C36 | Other modifier-like arrays and their progression-reference counts, 18 and 10 (§5.7) | OBS (every DID value of every 0x78 and 0x79 set, as C27) | Confirmed 2026-10-07 |
 | C37 | Declared functions and functions with bodies of classes 698 (282, 123) and 827 (477, 166) in the client library; the server-side library DID is in no archive (§13.1) | OBS (method tables of the client library, decoded as `wlib.md` §6.4 describes; re-measured 2026-10-07); `wlib.md` §2 (missing server-side library) | Counts Confirmed 2026-10-07; the missing library as `wlib.md` §2 states it |
-| D1 | Out-of-range progression index: clamp to the covered range and log (§4.8, §4.10) | DEC | Decision |
+| D1 | Out-of-range progression index: clamp to the covered range and log (§4.8, §4.10) | DEC | Decision; superseded 2026-10-08 by C38 (arrays clamp, as D1 chose) and C39 (linear progressions extrapolate) |
 | D2 | Sandbox combination order of modifier entries (§5.3), used by the §5.9 example | DEC | Decision |
-| D3 | Value at a linear key, including the last key: the key's stored value (§4.4) | DEC | Decision |
-| D4 | Progression of progressions evaluated without an inner index gives none; chain depth limit 4 (§4.10) | DEC | Decision |
+| D3 | Value at a linear key, including the last key: the key's stored value (§4.4) | DEC | Decision; superseded 2026-10-08 by C39 (the last key is computed from the last segment) |
+| D4 | Progression of progressions evaluated without an inner index gives none; chain depth limit 4 (§4.10) | DEC | Decision; superseded 2026-10-08 by C43 |
+| C38 | Array progressions (property, float, text, DID, progression of progressions) clamp the index to [minimum index, minimum index + count − 1] with signed comparisons before reading the element; the element read itself has no bounds check (§4.3, §4.8) | BC (classes 1386, 1388, 1385, 1389, 2402, 2519); BIN (b4, b5: integer minimum and maximum, unchecked element read) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C39 | Linear progressions: segment search with half-open segments, the f32 formula and its operation order, extrapolation along the first segment below the first key and along the last segment from the last key on (the last key included), 0.0 when there is no segment; storing the result in an int or int64 property truncates toward zero (§4.4, §4.8, §4.10) | BC (classes 3918, 3917, 3916); BIN (b4: float-to-property store) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C40 | Modifier-entry load checks and the valid operators per value type, as the client library applies them; the property each progression kind represents, text and DID arrays included; census: all 60,295 inline and all 299,143 progression-driven entries pass them, and every progression-driven entry's progression represents exactly the modified property (§5.2, §5.3, §5.6, §5.9) | BC (classes 1340–1342 load and verify functions; represented-property functions of classes 1385, 1389, 2402, 2519, 3810, 3918); OBS (all 372,834 entries, every progression they name) | Confirmed (bytecode) 2026-10-08 |
+| C41 | Operator arithmetic and the identity value of each operator (§5.3), for every value type the load check allows: float, int and int64 arithmetic; `Or` on bool, 32-bit, 64-bit and any-width bitfields; `Set` on every type; `ArrayAdd` on arrays | BC (class 1341 operator switch, identity function); BIN (b4: property arithmetic natives; b6: set, or and the int64 arithmetic for the separately held value types) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C42 | Level ranges compare the entry's evaluation level, truncated toward zero, inclusive at both ends; an entry outside its range yields its operator's identity value; the load check rejects a stored floor or ceiling ≤ 0 and floor ≥ ceiling; no entry in the data violates it, and every ranged entry is progression-driven (§5.5) | BC (class 1342); OBS (all 19,533 ranged entries) | Confirmed (bytecode) 2026-10-08 |
+| C43 | Progression of progressions inside a modifier entry: outer index = the entry's evaluation level, inner index = the integer `Mod_ProgressionProgressionInnerIndex` of the evaluation's property set, or outer 1 and inner = the level when that property is absent; point-based traits write the character's `Advancement_Level` into that property of their applied-effect records; the compiled applied-effect records of the 946 class-3438 traits store spellcraft −1 (1,169 records) or 0 (85), none of the 46 traits holding the 50 references has `Trait_PointBasedTrait_LevelBasedSpellcraft`, and in all 761 traits with compiled modifier entries those entries are reachable from the applied-effect record's override holder (class 732) (§4.5) | BC (classes 1342, 3438, 700, 732, 734); BIN (b4: level readers); OBS (all 946 class-3438 traits) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C44 | Modifier lists: combination order and operand, the property set they read, and the client's refusal of a modifier array in which two applying entries change one property; census: 79 arrays hold two unranged entries for one property, all in class-1346 objects, none in an effect or trait (§5.4) | BC (classes 1340, 1341); BIN (b4: map insertion keeps the first key); OBS (all 116,435 arrays) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C45 | Effect duration as the client library computes it: override, permanent, interval × pulse count, interval and pulse-count sources and modifier sums, interval 0 without a source, minimum interval 0.5 s, equivalence-class duration factors clamped to [0.1, 5.0], minimum duration 0.5 s; the separate "is permanent" query (§6.2, §6.6) | BC (class 698, class 1046 duration-modifier function, class 1666 lookups); BIN (b4: float maximum, clamp) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C46 | Vital amounts: exactly one source is used, selected by flag bits compiled into the object state; the bit of each source for the instant amount (725) and for the initial and per-interval amounts (755), and the order in which class 755 tests them; where several sources are stored the compiled flags select the progression over a constant, a variable or a random amount, and the variable amount over a constant; which class-755 bits occur (§6.4) | BC (class 725 amount function; class 755 initial and per-interval amount functions); OBS (compiled flags of all 1,103 class-725 and 2,438 class-755 records) | Confirmed (bytecode) 2026-10-08 |
+| C47 | Rating curve of the combat control object: formula, operation order, guards; its three compiled arrays hold 31 elements indexed by calculation type (element 0 empty) and match `Combat_Control_Rating`, `_Target_Cap`, `_Hard_Cap` in 30 of 30 structs (§10.1) | BC (class 1659); OBS (object 0x70000235 both halves); BIN (b4: float minimum) | Confirmed (bytecode + BIN) 2026-10-08 |
+| C48 | DPS table and item value table lookups (element 0 = level 1, range handling, quality factor) and the item value formula (§10.2) | BC (classes 1660, 1688, 1659, 256) | Confirmed (bytecode) 2026-10-08 |
+| C49 | Spellcraft in the client library: effect progressions (amounts, interval, pulse count, modifier entries) are evaluated at the applied effect's spellcraft truncated toward zero; a spellcraft argument other than −1 replaces the stored one (§1) | BC (classes 698, 700, 725, 734, 828) | Confirmed (bytecode) 2026-10-08 |
+| C50 | No bytecode body names class 3800, and none of the property IDs of sparse DID progressions (`SparseDIDProgression*`), trait trees (`Trait_TraitTree_Trait*`, `_Specialization*`), derived-stat formulas (`AdvTable_DerivedStat*`) or the rating-curve structs (`Combat_Control_CalcControlInfo*`, `_CalculationType`, `_Rating`, `_Target_Cap`, `_Hard_Cap`) occurs anywhere in the bytecode block (§4.6, §8.5, §9.1, §10.1) | OBS (byte and immediate search of the whole block) | Confirmed 2026-10-08 |
+| C51 | The property-half source of the pulse-count modifier list is `Effect_PulseCount_AdditiveModifiers`: in all 32,971 effects the compiled list is present exactly when the property is (277 effects: classes 755, 708, 734, 2282 with 251, 13, 12, 1) and holds the same non-zero PIDs in the same order; no other record holds the property; the values are summed as integers (§6.2) | OBS (all 32,971 effects, both halves; every 0x78 and 0x79 set); BC (class 698 pulse-count functions) | Confirmed 2026-10-08 |
+| C52 | Weapon data procedure of the client library: the checks, the action duration and animation modifier from the weapon timing tables (classes 1692, 1691) by equipment category and `Combat_WeaponSpeed`, the variance from the weapon variance table (class 2618) by category mask, the `Combat_Damage_Mod` addition for objects whose `WeenieType` has bits 0x01 and 0x80, and the maximum-damage formula; census: every weapon's category is a single bit and a key of the timing map, its speed a key of that table, and its category lies in exactly one variance mask, whose value equals the stored variance; every weapon's `WeenieType` has both bits; no 0x79 set holds `Combat_Damage_Mod` or names it in `Mod_Modified` (§10.2) | BC (class 256 weapon function and the bodies it calls in classes 256, 1659, 1691, 1692, 2618, 1046, 492); OBS (all 23,204 weapons, the class-1692, 24 class-1691 and one class-2618 records, every 0x79 set) | Confirmed (bytecode) 2026-10-08 |
+| D5 | A weapon category that lies in several variance masks takes the first matching entry in stored order (§10.2.1) | DEC | Decision (no weapon in this install has more than one match) |
 
 ---
 
@@ -112,13 +132,18 @@ not a fact about the original.
 | **Property reference** | A value of type 10 (property ID, `property-system.md` §7.4). In combat data it names a property **of an actor** (the caster, the target, the item's wearer) whose current value is read or written at run time. 0 means "none". |
 | **Progression** | An object that maps an integer index (a level, a rank, a tier) to a value. §4. |
 | **Modifier entry** | One `Mod_Entry` struct in a `Mod_Array`: "change property *P* by operator *op* with this value or progression". §5. |
-| **Spellcraft** | A float stored next to effect references (`*_Spellcraft`, `Skill_EffectSpellcraft`). −1 means "not given". Reported (LC, community usage): the index at which the referenced effect's progressions are evaluated; when not given, the applier's level. Unsettled, see the callout below. |
+| **Spellcraft** | A float stored next to effect references (`*_Spellcraft`, `Skill_EffectSpellcraft`). −1 means "not given". In the client library (C49) it is the **evaluation level** of an applied effect: the effect's amount, interval and pulse-count progressions and its modifier entries are evaluated at the applied effect's spellcraft truncated toward zero, and a spellcraft passed with a request that is not −1 replaces the stored one. Reported (LC, community usage): when no spellcraft is given anywhere, the applier's level is used. See the callout below. |
 | **Placeholder entry** | A struct or reference present only because the record stores a full default set: a `Skill_EffectData` with `Skill_Effect` = 0, a `Mod_Entry` with `Mod_Modified` = 0. Readers skip them. |
 
-> **OPEN:** (§18 Q9) What spellcraft means. The reading above (the index at which the
-> referenced effect's progressions are evaluated, the applier's level when −1) is Reported only;
-> no record and no BIN result states it. A bytecode reading of the effect classes (§13.2) or M3
-> tooltip observation would settle it. Until then a viewer evaluates at a user-chosen index (§15).
+> **OPEN:** (§18 Q9) Where an applied effect's spellcraft comes from when every source says
+> "not given" (−1): the applier's level (LC's reading, Reported) or another value. The applied-effect
+> records compiled into the data store −1 (1,169 trait records) or 0 (85), so the value is supplied
+> when the effect is applied, by code that is not in the client library's effect classes read here
+> (§13.2). Related: for ranked traits that are not level-based, the client derives the trait's
+> spellcraft from the character's rank in the trait through ranked-trait functions (class 1494
+> family) that this pass did not read. M3 tooltip observation at several character levels, or a
+> reading of those functions, would settle both. Until then a viewer evaluates at a user-chosen index
+> (§15).
 
 Units used below: durations and recovery times are **seconds**; ranges, radii and distances are
 **world units** (metres by convention, `coordinates.md`); probabilities and chances are
@@ -244,6 +269,9 @@ Many fields hold a property ID (type 10) rather than a value. Five naming patter
 | `X_AdditiveModProp` | one PID | An actor property whose value is added to *X* (for example to an application probability). |
 
 Readers display such a field by the property's label and resolve it only when an actor exists.
+Two of these patterns are now Confirmed for the client library: `Mod_ModifierList` (combined with
+the entry's value by `Mod_ModifierOp`, §5.4, C44) and `Effect_Duration_ConstantInterval_ModifierList`
+(its values are added to the interval, §6.2, C45).
 
 <a id="s3-4"></a>
 ### 3.4 Defaults and placeholders (Confirmed)
@@ -303,8 +331,8 @@ Observed lengths (records):
 | Property | PID | Type | Present in | Meaning |
 |---|---|---|---|---|
 | `Progression_MinimumIndexValue` | 0x100002C8 | int | 5,738 records: every kind except linear interpolating, and 1,332 of 1,338 float arrays | Index of the first array element. Values: 1 (5,721), 0 (9), −9 (6), −100 (2). **Absent ⇒ 0**, the dictionary default; the compiled form of the 6 float arrays without it stores 0 (C6). |
-| `FloatProgression_ValueProperty` | 0x10000766 | PID | 698 float arrays | The property the curve stands for (§3.3). Informational. |
-| `LinearInterpolatingProgression_ValueProperty` | 0x10005E5D | PID | all 1,814 linear progressions | As above. |
+| `FloatProgression_ValueProperty` | 0x10000766 | PID | 698 float arrays | The property the curve represents (§3.3); absent ⇒ `FloatProgression_FloatValue`. Not needed to evaluate the curve, but the client's load check of a modifier entry compares it with the modified property (§5.6 step 1, C40). |
+| `LinearInterpolatingProgression_ValueProperty` | 0x10005E5D | PID | all 1,814 linear progressions | As above (without a fallback); also decides how the value is stored into a property (§4.4). |
 | `ProgressionProgression_InnerRepresentedPropertyName` | 0x100058D8 | PID | all 45 progressions of progressions | The property the inner progressions produce. |
 | `Progression_Type` | 0x10001F0D | enum, mapper 0x2300028A (95 keys) | 5,029 records (3,207 property arrays, all 1,814 linear, 8 float) | A curve-family label used by item advancement tables. Not needed to evaluate. |
 | `Progression_PointTier` | 0x10001F0A | enum, mapper 0x23000289 (10 keys) | same 5,029 records | A tier label, as above. |
@@ -313,7 +341,8 @@ Observed lengths (records):
 ### 4.3 Array progressions (property, float, text, DID)
 
 Element *k* (counting from 0) is the value at index *m* + *k*, where *m* is the minimum index
-(§4.2). The covered range is *m* … *m* + *n* − 1 for *n* elements.
+(§4.2). The covered range is *m* … *m* + *n* − 1 for *n* elements. An index outside the range is
+clamped to it first (§4.8, C38).
 
 - **Property array:** the value is the element's value, of the element's own type. Because all
   elements share one PID, the progression also tells which property it produces.
@@ -341,44 +370,71 @@ Facts over all 1,814 records:
   difference of the values, then the integer difference of the keys converted to f32, then
   one f32 division.
 
-**Evaluation inside the range** (*x₀* ≤ *x* ≤ *x_last*):
+**Evaluation** (Confirmed, bytecode + BIN, C39). The client library evaluates a linear
+progression at an integer index *x* as follows; *x* is not clamped first.
 
-1. If *x* equals a key *xⱼ* (any key, the first and the last included), the value is that
-   key's stored value *yⱼ* (Decision D3).
-2. Otherwise find the segment with *xᵢ* < *x* < *xᵢ₊₁*; exactly one exists because the keys
-   strictly increase. The value is *yᵢ* + *s* × f32(*x* − *xᵢ*), computed in f32, with *s* the
-   stored or recomputed slope.
+1. **Segment choice.** Segment *i* (from point *i* to point *i* + 1) **contains** *x* when
+   *xᵢ* ≤ *x* < *xᵢ₊₁* (half-open: the end key belongs to the next segment). The segment used is
+   the one that contains *x*; if none does, it is the **first** segment when *x* < *x₀* and the
+   **last** segment when *x* ≥ *xₙ₋₁*. (The original finds it with a binary search over the
+   segments, which gives exactly this result because the keys strictly increase, P3; with keys
+   that do not increase its result is not defined, and Tessera treats such a record as malformed,
+   §4.10.)
+2. **Value.** With the chosen segment's start point (*xᵢ*, *yᵢ*) and stored slope *s*: compute
+   *d* = *x* − *xᵢ* as a 32-bit integer (wrapping), convert *d* to f32 (round to nearest), multiply
+   by *s* in f32, then add *yᵢ* in f32. The result is *yᵢ* + *s* × f32(*x* − *xᵢ*).
+3. **No segment** (fewer than two points): the value is 0.0.
 
-Step 1 agrees with step 2's form at every inner key (the segment that starts at the key gives
-*yᵢ* + *s* × 0 = *yᵢ* exactly). At the last key no segment starts; the last segment, which ends
-there, would give *yₙ₋₂* + *s* × (*xₙ₋₁* − *xₙ₋₂*), which can differ from *yₙ₋₁* in the last bit
-of f32. D3 picks the stored value so that the result at a key never depends on rounding.
+Consequences, all following from steps 1–2:
 
-> **OPEN:** (§18 Q2) The original's exact f32 evaluation inside a segment: whether it computes
-> *yᵢ* + *s* × (*x* − *xᵢ*) with the stored slope (the form the stored slopes suggest), or
-> interpolates the two points directly, and what it returns at the last key. The form above
-> follows from the stored slopes but is not Confirmed: the evaluation code is bytecode (§13.2)
-> and native code does not evaluate progressions (C25).
+- Inside the range, every *x* with *x₀* ≤ *x* < *x_last* is found in the segment that contains it;
+  at an inner key *xⱼ* the result is *yⱼ* + *s* × 0.0, which is *yⱼ*.
+- At the **last key** no segment contains *x*; the search ends on the last segment, so the value
+  is *yₙ₋₂* + *s* × f32(*xₙ₋₁* − *xₙ₋₂*), which can differ from the stored *yₙ₋₁* in the last bit
+  of f32. The stored last value is not returned.
+- Outside the range see §4.8.
+
+When the progression's value is stored into a property object (the form in which modifier entries
+use it, §5.6), the represented property's type decides: a float property receives the f32; an
+int or int64 property receives the f32 truncated toward zero; other types are not set (BIN). In
+this install 1,439 linear progressions represent float properties and 375 represent int
+properties (OBS, C39).
 
 <a id="s4-5"></a>
 ### 4.5 Progressions of progressions (class 3810)
 
 The DID array names 5 to 10 inner progressions (302 elements: targets 287 linear, 10 float,
-5 property arrays; never 0). `Progression_MinimumIndexValue` is 1 in all 45 records. Evaluation
-takes **two** indices: the **outer** index *t* selects the element as in §4.3 (element *k* =
-*t* − *m*), and that element's progression is then evaluated at the **inner** index (§4.10).
-Reported (LC): the outer index is a tier counted from 1 and the inner index a level.
+5 property arrays; never 0). `Progression_MinimumIndexValue` is 1 in all 45 records. Evaluated on
+its own, a progression of progressions behaves like a DID array (§4.3): the index selects an
+element DID, with the clamp of §4.8. The **two-index** evaluation exists only inside a modifier
+entry (§5.6, C43): the **outer** index *t* selects the element as in §4.3 (element *k* = *t* − *m*,
+clamped), and that element's progression is then evaluated at the **inner** index *u*:
+
+- *t* is the entry's evaluation level (the level the entry is evaluated at, truncated toward zero:
+  for an applied effect its spellcraft, §1) and *u* is the integer property
+  `Mod_ProgressionProgressionInnerIndex` of the property set that accompanies the evaluation
+  (§5.6), when that property is present;
+- when it is absent, *t* = 1 and *u* = the evaluation level.
+
+The inner progression is evaluated with its own rules (§4.3, §4.4); if it is itself a progression
+of progressions, it yields a DID (no further nesting). If the selected element does not load, the
+entry fails (§5.6).
+
+Point-based traits supply the inner index: when the client builds a class-3438 trait's applied-effect
+records for a character (the trait's `Mod_Array` travels in those records as an override modifier
+list: in all 761 class-3438 traits with compiled modifier entries they hang under the record's
+override holder, class 732, OBS), it writes the character's `Advancement_Level` (1 when absent) into
+`Mod_ProgressionProgressionInnerIndex` of each record's property set (C43). So for these traits the
+inner index is the character's level and the outer index is the trait's spellcraft. Reported (LC):
+the outer index is a tier counted from 1 and the inner index a level, which agrees.
 
 Holders (C27): exactly 50 `Mod_Progression` values point at class 3810, and all 50 are
 modifier entries of point-based traits (class 3438, §8.1). No item, effect or skill references
 a progression of progressions in this install.
 
-> **OPEN:** (§18 Q3) Which actor value supplies the outer index and which the inner index. The
-> holders are ranked trait-tree traits, so the trait's rank and the character's level are
-> candidates, but nothing in the data or BIN says so. A property
-> `Mod_ProgressionProgressionInnerIndex` exists in the dictionary and in the client library's
-> bytecode (§13.2) but in no record. Until settled, an evaluator takes both indices from its
-> caller and returns none when the inner index is missing (§4.10, Decision D4).
+`Mod_ProgressionProgressionInnerIndex` is in the dictionary and in the client library's bytecode
+but in no record: it is written at run time only. How a non-level-based trait's spellcraft follows
+from its rank is part of the §1 callout (Q9).
 
 <a id="s4-6"></a>
 ### 4.6 Sparse DID progressions (class 3800, outside subtree 1386)
@@ -397,7 +453,11 @@ largest key not above it applies.
 > **OPEN:** (§18 Q4) The lookup rule of sparse DID progressions: whether the entry with the
 > largest key not above the value applies (LC's reading, Reported), what is returned below the
 > first key, and what value is compared with the f32 keys (a rank, a point total, a level). The
-> data stores only the key-DID pairs.
+> data stores only the key-DID pairs, and the client library holds no lookup code for them: class
+> 3800 has no functions of its own besides its initializers (which create a native map object for
+> the compiled pairs), no bytecode names class 3800, and none of its property IDs occurs in the
+> bytecode (C50). The lookup is therefore in native or server code. M3 observation of the trait
+> panel's specialisation choice at several point totals would settle the rule.
 
 <a id="s4-7"></a>
 ### 4.7 Compiled form (Confirmed)
@@ -414,15 +474,22 @@ largest key not above it applies.
 <a id="s4-8"></a>
 ### 4.8 Indices outside the range
 
-> **OPEN:** What the original returns for an index below the first index or above the last.
-> Nothing in the data shows it, and the native client does not evaluate progressions (C25); the
-> client library's bytecode for classes 1385, 1389, 3918 and their base 1386 has 6, 5, 8 and 9
-> function bodies of its own (`wlib.md` §6.4) that a bytecode reader could settle. LC clamps
-> nothing and extrapolates linear progressions above the last key along the last segment, and
-> returns no value below the first key (Reported). Until settled, Tessera clamps the index to
-> the covered range for every kind and logs the clamp (Decision D1, not a fact): an index below
-> the first index gives the first element or first key's value, an index above the last gives
-> the last element or last key's value.
+Confirmed (bytecode + BIN, C38, C39). The client library treats the kinds differently:
+
+- **Array kinds** (property, float, text, DID arrays and progressions of progressions): the index
+  is clamped to the covered range before the element is read. With minimum index *m* and *n*
+  elements, the index becomes max(*m*, min(*m* + *n* − 1, *x*)), signed 32-bit comparisons; an
+  index below the range gives the first element, above it the last. (With *n* = 0 the clamp
+  yields *m* − 1 and the original then reads outside the array, unchecked; no record has an empty
+  array, P1. Tessera returns none, §4.10.)
+- **Linear progressions**: no clamp. Below the first key the value is extrapolated along the
+  **first** segment, from the last key on along the **last** segment, with the formula of §4.4
+  step 2 (for example, with points (1, 10.0) and (11, 30.0), index 0 gives 8.0 and index 15 gives
+  38.0).
+
+LC agrees for linear progressions above the range and returns no value below it (Reported, §16).
+Decision D1 is superseded: its clamp is the original's rule for array kinds, not for linear
+progressions.
 
 <a id="s4-9"></a>
 ### 4.9 Who uses progressions (Confirmed, every DID value of every 0x78 and 0x79 set)
@@ -460,33 +527,31 @@ Two item properties that read like progressions are not: `Combat_DPS_LUT` points
 <a id="s4-10"></a>
 ### 4.10 Evaluation algorithm (in words)
 
-Inputs: a progression DID, an integer index *x* (the outer index for class 3810), and an
-optional integer **inner index** *u*, used only by progressions of progressions (§4.5).
-Output: a value or "none".
+Inputs: a progression DID and a signed 32-bit integer index *x*. A caller that holds a float
+level converts it first by truncation toward zero (the original's conversion gives −2³¹ for NaN or
+out-of-range values). Output: a value or "none". The rules are the original's (C38, C39) except
+where a step says "Tessera".
 
 1. Load the property set of the DID. If it is missing, return none. If it has a linear array
    (`LinearInterpolatingProgression_Array`), go to step 6.
 2. Find the value array of §4.1. If none is present, return none.
 3. Let *m* be `Progression_MinimumIndexValue`, or 0 when absent, and *n* the element count.
-   If *n* = 0, return none.
-4. Let *k* = *x* − *m*. If *k* < 0 or *k* ≥ *n*, apply §4.8 (Decision D1: replace *k* by 0 or
-   by *n* − 1 and log the clamp).
-5. If the record is not a progression of progressions (class 3810), return element *k*.
-   Otherwise: if no inner index *u* was given, return none (Decision D4). If element *k* is 0
-   or does not name a progression, return none. Else evaluate element *k*'s progression with
-   this same algorithm at index *u* and **no** inner index, and return its result. Done.
-6. Linear, with *n* points (*x₀*, *y₀*) … (*xₙ₋₁*, *yₙ₋₁*) in stored order: if *n* = 0, return
-   none. If the keys do not strictly increase (they do in every record, P3), the record is
-   malformed: return none and log it. If *x* < *x₀* or *x* > *xₙ₋₁*, apply §4.8 (D1:
-   replace *x* by *x₀* or *xₙ₋₁* and log the clamp). If *x* equals a key, return that key's
-   value (§4.4 step 1, D3). Otherwise find the segment with *xᵢ* < *x* < *xᵢ₊₁* and return
-   *yᵢ* + *s* × f32(*x* − *xᵢ*), computed in f32 (§4.4 step 2). A record with one point returns
-   that point's value for every *x* after the clamp.
+   If *n* = 0, return none (Tessera; the original would read outside the array, §4.8).
+4. Clamp: replace *x* by max(*m*, min(*m* + *n* − 1, *x*)) and let *k* = *x* − *m* (§4.8).
+5. Return element *k*: a property value (1389), an f32 (1385), a StringInfo (2402) or a DID (2519
+   and 3810). For a progression of progressions the two-index evaluation of §4.5 is performed by
+   the modifier-entry evaluation (§5.6), which calls this algorithm twice: once here for the outer
+   element DID, once for the inner progression at the inner index. Done.
+6. Linear, with *n* points (*x₀*, *y₀*) … (*xₙ₋₁*, *yₙ₋₁*) in stored order: if *n* < 2, return 0.0
+   (the original's value without segments, §4.4 step 3). If the keys do not strictly increase
+   (they do in every record, P3), the record is malformed: return none and log it (Tessera).
+   Otherwise choose the segment by §4.4 step 1 (the containing segment, else the first below *x₀*,
+   else the last from *xₙ₋₁* on) and return *yᵢ* + *s* × f32(*x* − *xᵢ*) computed as in §4.4
+   step 2, with *s* the stored or recomputed slope (P4).
 
 Limits for hostile data: refuse arrays longer than the record allows (the decoder already
-bounds them). Because step 5 passes no inner index on, a chain of progressions of progressions
-ends after one level with none; a reader that extends this must still stop after 4 levels and
-report a cycle (Decision D4; observed depth is 1).
+bounds them). Nesting cannot recur: the modifier-entry evaluation evaluates an inner progression
+with steps 1–6 only, so an inner progression of progressions yields a DID and stops (§4.5).
 
 <a id="s4-11"></a>
 ### 4.11 Invariants
@@ -500,25 +565,32 @@ report a cycle (Decision D4; observed depth is 1).
   (302 of 302).
 - **P7** Every reference to a progression of progressions is a `Mod_Progression` in a
   class-3438 trait (50 of 50).
+- **P8** Every linear progression has at least two points (1,814 of 1,814, §4.1 lengths), so
+  every one has at least one segment.
 
 <a id="s4-12"></a>
 ### 4.12 Worked synthetic examples
 
 - Float array, minimum index 1, elements (0.5, 0.75, 1.0): index 1 → 0.5, index 3 → 1.0,
-  index 4 → out of range (§4.8); with D1 it is clamped to 3 → 1.0.
+  index 4 → clamped to 3 → 1.0, index −5 → clamped to 1 → 0.5 (§4.8).
 - Float array without a minimum index, elements (2.0, 4.0): index 0 → 2.0, index 1 → 4.0.
 - Linear, points (1, 10.0), (11, 30.0), (21, 30.0): slopes f32(20.0 / 10.0) = 2.0 and 0.0;
-  index 6 → 10.0 + 2.0 × 5 = 20.0; index 11 → 30.0 (stored value of the key); index 15 → 30.0;
-  index 21 (the last key) → 30.0, the stored value (D3); index 25 → clamped to 21 → 30.0 (D1).
+  index 6 → segment 0 → 10.0 + 2.0 × 5 = 20.0; index 11 → segment 1 (half-open) → 30.0 + 0.0 × 0
+  = 30.0; index 21 (the last key) → last segment → 30.0 + 0.0 × 10 = 30.0; index 25 → last
+  segment → 30.0; index 0 → first segment → 10.0 + 2.0 × (−1) = 8.0 (§4.8).
+- Linear, points (1, 0.1), (3, 0.7): slope f32(0.6 / 2.0); index 3 (the last key) is computed as
+  0.1 + slope × 2.0 in f32, which a reader must not replace by the stored 0.7 (the two can differ
+  in the last bit).
 - Progression of progressions *P*, minimum index 1, elements (*A*, *B*), where *A* is a float
   array with minimum index 1 and elements (10.0, 20.0, 30.0), and *B* is linear with points
-  (1, 100.0), (3, 300.0) (slope f32(200.0 / 2.0) = 100.0):
-  - outer 2, inner 2: *k* = 1 selects *B*; *B* at 2 is not a key, segment (1, 3):
+  (1, 100.0), (3, 300.0) (slope f32(200.0 / 2.0) = 100.0), used by a modifier entry (§5.6):
+  - evaluation level 2, inner-index property 2: outer 2 selects *B*; *B* at 2 is in segment 0:
     100.0 + 100.0 × 1 = 200.0;
-  - outer 1, inner 3: *k* = 0 selects *A*; *A* at 3 is element 2 = 30.0;
-  - outer 3, inner 1: *k* = 2 is out of range, clamped to 1 (D1), selects *B*; *B* at 1 is a
-    key → 100.0;
-  - outer 1 with no inner index: none (D4).
+  - evaluation level 1, inner-index property 3: outer 1 selects *A*; *A* at 3 is element 2 = 30.0;
+  - evaluation level 3, inner-index property 1: outer 3 is clamped to 2 and selects *B*; *B* at 1
+    → 100.0;
+  - evaluation level 3, no inner-index property: outer 1 selects *A*, inner 3 → 30.0;
+  - evaluated on its own at index 2 (§4.10 step 5): the DID of *B*.
 
 ---
 
@@ -569,39 +641,86 @@ Readers skip empty and field-less entries.
 > nested arrays (they sit inside item structs whose meaning is `items.md`'s, not this spec's).
 
 <a id="s5-3"></a>
-### 5.3 Operators (keys Confirmed, arithmetic Reported)
+### 5.3 Operators (keys Confirmed, arithmetic Confirmed for the client library)
 
 Mapper 0x23000046 has 12 keys. The labels are interoperability identifiers; a reader resolves
-the operator by label at run time and falls back to the key numbers below.
+the operator by label at run time and falls back to the key numbers below. The "Effect" column is
+what the client library does when it applies a value *v* to a property *P* (*P* := *P* op *v*;
+C41); LC's reading (Reported, keys 5–8 only) agrees.
 
-| Key | Label | Entries (inline / progression) | Value types seen | Meaning (Reported, LC; LC handles only 5–8) |
-|---|---|---|---|---|
-| 0 | `Invalid` | empty entries only | | none |
-| 1 | `Difference` | 0 | | not used |
-| 2 | `Divide` | 0 | | not used |
-| 3 | `Or` | 2,227 / 20 | bool, 32/64-bit and any-width bitfields | Bitwise or of the value into the property |
-| 4 | `Random` | 0 | | not used |
-| 5 | `Set` | 8,365 / 28 | every type, including DIDs, enums and arrays | Replace the property's value |
-| 6 | `Subtract` | 3,762 / 357 | float, int | Subtract the value |
-| 7 | `Add` | 34,821 / 298,697 | float, int | Add the value |
-| 8 | `Multiply` | 10,939 / 41 | float, int | Multiply by the value |
-| 10 | `ArrayAdd` | 181 / 0 | arrays | Append the array's elements |
-| 11 | `And` | 0 | | not used |
-| 12 | `Xor` | 0 | | not used |
+| Key | Label | Entries (inline / progression) | Value types seen | Effect | Identity value |
+|---|---|---|---|---|---|
+| 0 | `Invalid` | empty entries only | | entry rejected (§5.6) | |
+| 1 | `Difference` | 0 | | not handled | none |
+| 2 | `Divide` | 0 | | *P* ÷ *v* (float: f32 division; int and int64: signed, truncated toward zero; no zero check) | 1 |
+| 3 | `Or` | 2,227 / 20 | bool, 32/64-bit and any-width bitfields | bitwise or: bool true when either is true; 32-bit and 64-bit bitfields or their 32 or 64 bits; an any-width bitfield first widens the shorter operand with zero bits to the longer one's width, so the result has the larger width | 0 |
+| 4 | `Random` | 0 | | not handled | none |
+| 5 | `Set` | 8,365 / 28 | only types the client allows for it (below) | *P* becomes a copy of *v*, for every type (no type-specific step) | none (an error) |
+| 6 | `Subtract` | 3,762 / 357 | float, int | *P* − *v* (f32; 32-bit wrapping for int; 64-bit wrapping for int64) | 0 |
+| 7 | `Add` | 34,821 / 298,697 | float, int | *P* + *v* (f32; 32-bit wrapping for int; 64-bit wrapping for int64) | 0 |
+| 8 | `Multiply` | 10,939 / 41 | float, int | *P* × *v* (f32; the low 32 bits for int; the low 64 bits for int64) | 1 |
+| 10 | `ArrayAdd` | 181 / 0 | arrays | each element of the array *v* is appended to *P*; nothing happens when *v* is not an array | none (an error) |
+| 11 | `And` | 0 | | not handled | none |
+| 12 | `Xor` | 0 | | not handled | none |
 
-> **OPEN:** The order in which several entries (from several effects, items and traits)
-> touching one property are combined, and whether `Set` wins over arithmetic. This is server
-> logic (§13.1). Tessera's sandbox uses (Decision D2, not a fact): start from the property's
-> base value, apply `Set` entries (last applied wins), then `Add`/`Subtract`, then `Multiply`,
-> then bitwise operators, then `ArrayAdd`.
+For float, int, bool and 32-bit bitfield properties the arithmetic reads *v*'s stored 32 bits as
+the type of *P* (the two types always agree in the data, M2). For int64 properties and for 64-bit
+and any-width bitfields the client holds the value in a separate value object and calls that
+object's own operation (BIN b6): int64 implements `Add`, `Subtract`, `Multiply` and `Divide`
+(signed, truncated toward zero) in 64 bits as the table says and leaves *P* unchanged for `Or`;
+the two bitfield kinds implement `Or` as the table says. An operator applied to a type the table
+does not list for it leaves *P* unchanged (the load check below rejects such entries first). No
+entry with key 6, 7 or 8 modifies an int64 property in this install, so the int64 arithmetic is
+read from the code only (C41).
+
+**Valid operators per value type** (the client's load check, C40; every entry in the data passes):
+
+| Value type of the modified property (`property-system.md` §3) | Operators allowed |
+|---|---|
+| float (9), int (15), int64 (19) | `Set`, `Subtract`, `Add`, `Multiply` |
+| array (12) | `Set`, `ArrayAdd` |
+| enum (8), DID (20) | `Set` |
+| 64-bit bitfield (14), 32-bit bitfield (18), boolean (21), any-width bitfield (22) | `Or`, `Set` |
+| every other type | none (the entry is rejected) |
+
+`Divide` is handled by the arithmetic but allowed for no type. The **identity value** is what an
+entry yields when it does not apply at the evaluation level (§5.5): applying it leaves *P*
+unchanged. It is created in the modified property's type.
+
+> **OPEN:** (§18 Q6) The order in which several entries (from several effects, items and traits)
+> touching one property are combined, and whether `Set` wins over arithmetic. The client library
+> turns each entry into an (operator, value) pair (§5.6) and applies one pair as in the table above,
+> but the code that collects the pairs of all active sources and orders them is not in the client
+> library's effect, trait or modifier classes read here (§13.2); it is native or server code
+> (§13.1). M3 observation (a stat panel with one additive and one multiplicative bonus active)
+> would settle the order. Tessera's sandbox uses (Decision D2, not a fact): start from the
+> property's base value, apply `Set` entries (last applied wins), then `Add`/`Subtract`, then
+> `Multiply`, then bitwise operators, then `ArrayAdd`.
 
 <a id="s5-4"></a>
 ### 5.4 Modifier lists
 
 (C35.) 1,946 non-empty entries carry a modifier list with at least one non-zero PID (lists hold 1 or
-2 PIDs). `Mod_ModifierOp` is then 5, 6, 7 or 8 (668, 108, 887, 283 entries). Reported (LC):
-the current values of the listed actor properties are combined with the entry's value by
-`Mod_ModifierOp` before the entry is applied (key 7 adds them). Zero PIDs are padding.
+2 PIDs). `Mod_ModifierOp` is then 5, 6, 7 or 8 (668, 108, 887, 283 entries). Zero PIDs are
+padding: the client keeps only the non-zero PIDs, in stored order, and treats a list without any
+as absent. `Mod_ModifierOp` is non-zero exactly when a non-zero PID is present (the client rejects
+the entry otherwise; every entry passes, C40), and must be an operator allowed for the modified
+property's type (§5.3).
+
+Combination (Confirmed, bytecode + BIN, C44): after the entry's value *v* is obtained (§5.6), for
+each listed PID in order whose property is present in the property set that accompanies the
+evaluation, *v* := *v* op *a*, where op is `Mod_ModifierOp` and *a* that property's value (§5.3
+semantics, *v* in the role of *P*). Absent properties are skipped; without a property set the list
+is ignored. So with key 7 the listed values are added to *v*; with `Set` the last present listed
+property replaces it. LC's reading (Reported) agrees for key 7. For an applied effect the property
+set is the one its applied-effect record holds (§4.5); which actor's properties the server puts
+there is not in the client library.
+
+One more client rule (C44): when the client evaluates an effect's `Mod_Array` it keeps at most one
+(operator, value) pair per modified property; if two entries that apply at the evaluation level
+modify the same property, the second is refused and the client drops the **whole** array's result.
+No effect or trait array has two such entries (79 arrays with two unranged entries for one property
+exist, all in class-1346 objects, which this rule does not concern).
 
 <a id="s5-5"></a>
 ### 5.5 Level ranges (Confirmed structure)
@@ -630,26 +749,59 @@ where at least one entry stores `Mod_ProgressionFloor` or `Mod_ProgressionCeilin
 
 So an entry applies when the governing level *L* satisfies floor ≤ *L* ≤ ceiling, both ends
 inclusive, a missing end (absent, or −1 in other data) being open. At most one entry of a group
-applies at any *L*, because the ranges are disjoint; in a gap none applies. Reported (LC): *L*
-is the level of the item or character that owns the array.
+applies at any *L*, because the ranges are disjoint; in a gap none applies.
 
-> **OPEN:** (§18 Q5) Which level governs a ranged entry in an effect's or trait's modifier
-> array (the applier's level, the target's level, or the effect's spellcraft). This install has
-> no such entry, so the question matters only for other builds. A bytecode reading of the
-> modifier classes (§13.2) would settle it.
+Client rule (Confirmed, bytecode, C42):
+
+- Only progression-driven entries have a range: the client's inline-entry object has no floor or
+  ceiling, and every ranged entry in the data is progression-driven.
+- *L* is the entry's **evaluation level** truncated toward zero: the same integer that indexes the
+  entry's progression (§5.6). For an effect's or trait's array it is the applied effect's
+  spellcraft (§1); for items LC reports the item's level (Reported).
+- The range is tested before the progression is loaded. Outside it the entry yields the identity
+  value of its operator (§5.3), which leaves the property unchanged (a `Set` or `ArrayAdd` entry
+  outside its range is logged as an error by the client; no such ranged entry exists).
+- At load the client rejects an entry whose stored floor is ≤ 0, whose stored ceiling is ≤ 0, or
+  whose floor is not below its ceiling (floor = ceiling is rejected). No entry in the data is
+  rejected (C42); floors are 1–300 and ceilings 9–1000.
 
 <a id="s5-6"></a>
 ### 5.6 Evaluation of one entry (in words)
 
-1. Skip the entry if `Mod_Modified` = 0 or the struct is empty.
-2. If a level range is present, skip the entry when the governing level is outside it.
-3. Value: the inline field if present; otherwise evaluate `Mod_Progression` (§4.10) at the
-   governing level (Reported) or the spellcraft index (§1); for a progression of progressions
-   (class 3810) the caller supplies the outer and the inner index (§4.5, Q3). If the
-   progression gives none, skip the entry.
-4. If a modifier list with non-zero PIDs is present, combine the actor's values of those
-   properties with the value by `Mod_ModifierOp` (Reported).
-5. Apply the value to the modified property with `Mod_Op` (§5.3).
+Confirmed (bytecode + BIN) as the client library's rule (C40–C44). Inputs: the entry, an
+**evaluation level** (a float: for an applied effect its spellcraft, §1) and an optional
+**property set** that accompanies the evaluation (for an applied effect, the set its record holds).
+
+1. **Checks** (made by the client's load and verification functions for entries, before any
+   evaluation): skip the entry if `Mod_Modified` = 0 or the
+   struct is empty; reject it if `Mod_Op` is 0 or not allowed for the modified property's type,
+   if `Mod_ModifierOp` and the modifier list disagree (§5.4), if a stored floor or ceiling fails
+   the checks of §5.5, if a progression-driven entry's progression does not load, or if that
+   progression does not **represent** the modified property. A progression represents: for a
+   property array, the PID of its elements; for a float array, `FloatProgression_ValueProperty`,
+   or `FloatProgression_FloatValue` when absent; for a linear progression,
+   `LinearInterpolatingProgression_ValueProperty`; for a text array (2402),
+   `StringInfoProgression_ValueProperty`, or `StringInfoProgression_Value` when absent; for a DID
+   array (2519), `DataIDProgression_ValueProperty`, or `DataIDProgression_DataIDValue` when absent;
+   for a progression of progressions, `ProgressionProgression_InnerRepresentedPropertyName` (the
+   client tests for class 3810 first, so the DID-array rule does not apply to it). No modifier
+   entry in this install names a text or DID array (the `Mod_Progression` targets of §4.9 are
+   classes 3918, 1389, 1385 and 3810 only). Under the rules above, an entry naming a text array
+   would always be rejected, because no operator is allowed for StringInfo properties (§5.3), and
+   one naming a DID array passes only with `Set` on a DID property. Every entry in the data
+   passes (C40).
+2. **Level**: *L* = the evaluation level truncated toward zero.
+3. **Range** (progression-driven entries only): if *L* is outside the stored range, the result is
+   the operator's identity value (§5.3, §5.5); stop.
+4. **Value**: the inline field, or `Mod_Progression` evaluated at *L* (§4.10). For a progression of
+   progressions use the two indices of §4.5: outer *L* and inner = the property set's
+   `Mod_ProgressionProgressionInnerIndex`, or outer 1 and inner *L* when that property is absent.
+   If a progression does not load, the entry fails (and with it the whole array's result in the
+   effect path, §5.4).
+5. **Modifier list**: combine the property set's values of the listed properties into the value
+   with `Mod_ModifierOp` (§5.4).
+6. The result is the pair (`Mod_Op`, value). Applying it to a property *P* is *P* := *P* op value
+   (§5.3); the order across entries and sources is OPEN (Q6).
 
 <a id="s5-7"></a>
 ### 5.7 Other modifier-like arrays
@@ -680,6 +832,13 @@ differ in one record only.
   an invariant (100 groups are not ascending).
 - **M4** Bitwise operator 3 occurs only with bool and bitfield values; operators 6–8 only with
   int and float; operator 10 only with arrays.
+- **M5** Every non-empty entry passes the client's checks of §5.6 step 1 (60,295 inline and
+  299,143 progression-driven entries); in particular every progression-driven entry's progression
+  represents exactly `Mod_Modified` (299,143 of 299,143), every stored floor and ceiling is > 0,
+  and floor < ceiling wherever both are stored (C40, C42).
+- **M6** Every ranged entry is progression-driven (19,533 of 19,533).
+- **M7** No effect or trait `Mod_Array` has two entries for one property that can apply at the
+  same level (C44).
 
 Synthetic example: a property `P` (float, PID 0x10009999) with base value 1.0 and an array of
 two entries: {`Mod_Modified` = P, `Mod_Op` = 7, P = 0.25} and {`Mod_Modified` = P,
@@ -776,7 +935,8 @@ half of the class's records and rarely elsewhere ("distinctive properties", OBS)
 | | `Effect_Instantaneous` | 0x1000025C | bool, no dictionary default | 4,317 (3,594 true, 723 false) | A stored false means "not instantaneous", the same as absent |
 | | `Effect_Duration_ProgressionPulseCount`, `Effect_Duration_ProgressionInterval` | 0x100014E1, 0x100013F1 | DID (progression) | 23, 1 | Pulse count or interval taken from a progression (Reported reading of the labels) |
 | | `Effect_Duration_ExpiresInRealTime`, `Effect_Duration_CombatOnly` | | bool | 14,379, 18,372 | |
-| | `Effect_Duration_ConstantInterval_ModifierList` | | PID array | 486 | §3.3 |
+| | `Effect_Duration_ConstantInterval_ModifierList` | 0x10000712 | PID array | 486 | §3.3 |
+| | `Effect_PulseCount_AdditiveModifiers` | 0x100009CB | PID array | 277 (classes 755: 251, 708: 13, 734: 12, 2282: 1) | Pulse-count modifier list (§3.3, C51) |
 | Stacking | `Effect_EquivalenceClass` | 0x100009CC | enum, mapper 0x23000005 (3,081 keys) | 22,638 (12,478 are 0) | §6.6 |
 | | `Effect_ClassPriority` | 0x100012EF | int 1–99,999 | 22,676 | |
 | | `Effect_Cap` | 0x1000210A | int 1–100 | 2,709 | |
@@ -807,10 +967,53 @@ The 23 records with `Effect_Duration_ProgressionPulseCount` are in the "interval
 one record with `Effect_Duration_ProgressionInterval` is in the first row (no constant duration
 property).
 
-> **OPEN:** Whether `Effect_Duration_ConstantInterval` is the whole duration or the time
-> between pulses when a pulse count is present, and how "permanent" combines with an interval
-> (1,658 records have both). LC reads the interval as the duration and the pulse count
-> separately (Reported). Server logic.
+**Duration as the client library computes it** (Confirmed, bytecode + BIN, C45). Inputs: the
+effect, its spellcraft (§1) and a property source supplied with the request (may be absent). The
+duration override, the modifier-list values and the equivalence-class factor values below are all
+read from that one source.
+
+1. **Override.** If the source holds `EffectGenerator_EffectData_BaseDurationOverride` (a field of
+   the effect data of §6.3), the duration is that value, whatever its sign (0 and negative values
+   included); go to step 5.
+2. **Permanent.** If `Effect_Duration_Permanent` is true, the duration is unbounded (the client
+   uses the largest finite f32, 3.4028235 × 10³⁸ s); stop. So the 1,658 records with both a
+   permanent flag and an interval are permanent; their interval does not set the duration.
+3. **Interval** *I*:
+   - If `Effect_Duration_ConstantInterval` is greater than 0, *I* starts as that value.
+   - Otherwise, if `Effect_Duration_ProgressionInterval` is a non-zero DID, *I* starts as that
+     progression's value at the truncated spellcraft.
+   - Otherwise there is no interval source: *I* = 0.0 at once. The modifier list below is not
+     added and the 0.5 s minimum is not applied.
+   When a source exists, add the current values of the properties in the interval's modifier list
+   (`Effect_Duration_ConstantInterval_ModifierList`, §3.3; its compiled form is present in exactly
+   the 486 effects that store the property, with the same PIDs in the same order) that the property
+   source holds, as f32, and raise *I* to at least 0.5 s.
+4. **Pulses.** If the effect has a pulse count (`Effect_Duration_ConstantPulseCount` > 0, or a
+   non-zero `Effect_Duration_ProgressionPulseCount`), the duration is *I* × f32(*N*), where *N* is
+   the constant, or the progression's integer value at the truncated spellcraft, plus the integer
+   values of the properties in the pulse-count modifier list `Effect_PulseCount_AdditiveModifiers`
+   that the property source holds, raised to at least 1. (The compiled half holds that list in
+   exactly the 277 effects that store the property, with the same PIDs in the same order, C51.)
+   Otherwise the duration is *I*. So `Effect_Duration_ConstantInterval` is the time **between
+   pulses** when a pulse count is present (3,206 records) and the whole duration otherwise. With
+   no interval source *I* is 0, so the duration is 0 here, pulses or not.
+5. **Equivalence-class factors.** If the effect's `Effect_EquivalenceClass` is not 0 and a property
+   source is given: for each of `Effect_EqvClassData_DurationModifier_Source` and `_Target` that the
+   class's data names (§6.6), multiply the duration by clamp(1 + *v*, 0.1, 5.0), *v* being the
+   source's float value of the named property (0 when absent); then raise the duration to at least
+   0.5 s. This last step applies whenever both conditions hold, even when the class's data names
+   neither property, and even to a duration of 0 from step 3 or a non-positive override from step
+   1: such an effect gets 0.5 s. Without an equivalence class, or without a property source, step 5
+   changes nothing, and an effect without any duration source keeps 0.
+
+A separate client query asks whether an effect **is permanent** (this is not the duration): it
+answers no when the property source holds `EffectGenerator_EffectData_BaseDurationOverride`
+greater than 0, and otherwise returns `Effect_Duration_Permanent`. The duration computation above
+uses a present override of any sign before it looks at the permanent flag.
+
+All arithmetic is f32. Whether the server uses the same rule is not in the data (§13.1); LC reads
+the interval as the duration and the pulse count separately (Reported), which agrees for effects
+without pulses.
 
 <a id="s6-3"></a>
 ### 6.3 Effect references
@@ -870,8 +1073,42 @@ variable 5, progression and variable 4, constant and variance 3, random 1, progr
 1,651, per-interval progression only 716, initial and per-interval constants 32, initial
 progression with per-interval constant and progression 29, and 10 others.
 
-> **OPEN:** Which source wins when both a constant and a progression are present (19 + 29 + 2
-> records). LC prefers the constant (Reported).
+**Which source is used** (Confirmed, C46). The client uses exactly **one** source per amount. The
+choice is not made from the property half at run time: it is stored in the compiled half, as flag
+bits of the effect's flags attribute (class 698, attribute hash 0x0C868373). For the instant-vital
+amount (class 725) the client's amount function reads bit 0x10 as "constant", 0x20 as "random",
+0x40 as "variable" and 0x80 as "progression" (evaluated at the truncated spellcraft), and at most
+one of these bits is set in every record. Where a record stores several sources, the flags select:
+
+| Sources stored | Records | Source used |
+|---|---|---|
+| constant and progression (class 725) | 19 | progression |
+| per-interval constant and progression, with an initial progression (class 755) | 29 | progression (per-interval) |
+| per-interval constant and progression (class 755) | 2 | progression |
+| progression and variable (725: 4; 755 per-interval: 5) | 9 | progression |
+| progression and random (725) | 1 | progression |
+| constant and variable (725) | 5 | variable |
+
+A reader takes the source from the compiled flags when it has the compiled half; from the property
+half alone the rule is: progression, else variable, else random, else constant (random and constant
+never occur together). The 4 class-725 records without any source have none of the bits set and
+an amount of 0. LC prefers the constant (Reported), which disagrees (§16).
+
+For class 755 the client's two amount functions (C46) read the same attribute:
+
+| Amount | Constant | Random | Variable | Progression | No bit of the group set |
+|---|---|---|---|---|---|
+| Initial change | 0x10 | 0x20 | 0x40 | 0x80 | amount 0 |
+| Change per interval | 0x100 | 0x200 | 0x400 | 0x800 | amount 0 |
+
+Each function tests its four bits in the order of the table (constant, random, variable,
+progression) and uses the first that is set; in every class-755 record at most one bit of each
+group is set, so the order never decides (OBS, all 2,438). Bits observed in this install: 0x10,
+0x80, 0x100, 0x200 and 0x800. The bits 0x20, 0x40 and 0x400 are set in no record: no class-755
+record stores an initial random or variable amount, and the 5 records that store both a
+per-interval progression and a per-interval variable amount have only 0x800 (the progression). The
+lower bits 0x1, 0x2 and 0x4 of the same attribute are set in records too; the amount functions do
+not test them.
 
 > **OPEN:** (implementation census, 2026-10-07) The class-755 co-occurrence counts (1,651, 716,
 > 32, 29, 10) are reproduced only when *S*`Variance` is left out of the grouping (for class 725
@@ -923,10 +1160,18 @@ effect control object (class 1666, one record, 0x70000225 here, named in the WEE
 The object also holds `Effect_Control_DefaultSorter` (DID), `Effect_Control_SpellcraftCapProgression`
 (DID) and `Effect_Control_ResistCategoryToUIState_Array` (11 entries).
 
-> **OPEN:** The stacking rule. The names suggest: at most *MaxDepth* effects of one class held
-> at once, at most *MaxExpressedEffs* of them active, ordered by a sorter, counted per caster
+`Effect_EqvClassData_DurationModifier_Source` and `_Target` name float properties whose values
+scale the duration of every effect of the class by clamp(1 + *v*, 0.1, 5.0) each (§6.2 step 5,
+C45).
+
+> **OPEN:** (§18 Q10) The stacking rule. The names suggest: at most *MaxDepth* effects of one class
+> held at once, at most *MaxExpressedEffs* of them active, ordered by a sorter, counted per caster
 > when *IsPerCaster*; `Effect_ClassPriority` and `Effect_Cap` take part. None of this is stated
-> by the data or a source with authority. Server logic.
+> by the data or a source with authority. The client library's effect control class keeps the
+> per-class data in compiled lookup maps (looked up by equivalence class, with defaults 0 or 1 for
+> a class without data), but this pass did not identify which map holds which field nor find code
+> that enforces a limit; applying effects is server logic (§13.1). M3 observation (applying more
+> effects of one class than *MaxDepth* allows, and watching which stay) would settle it.
 
 <a id="s6-7"></a>
 ### 6.7 The COMBATEFFECTS map
@@ -1174,8 +1419,11 @@ tree. `Trait_TraitTree_TraitArray` holds 1,216 structs `Trait_TraitTree_TraitStr
 numbers joined by an underscore (an interoperability fact; a viewer can lay cells out from the
 key alone).
 
-> **OPEN:** Which of *a* and *b* is the row and which the column, and what the 0x10000000 group
-> is. A tree view needs it; LC passes the labels through without interpreting them.
+> **OPEN:** (§18 Q11) Which of *a* and *b* is the row and which the column, and what the
+> 0x10000000 group is. A tree view needs it; LC passes the labels through without interpreting
+> them, and the client library's bytecode never names the trait-tree properties (C50), so the
+> layout is not computed by script code read in this pass. M3 observation of the trait panel (which
+> cell a known trait occupies), or a reading of the panel's layout data, would settle it.
 
 Further tree fields: `Trait_TraitTree_SpecializationsArray` (13 trees, 39 entries: a branch and
 `Trait_TraitTree_SpecializationProgression`, a class-3800 sparse DID progression of traits,
@@ -1235,8 +1483,10 @@ equals the sum over the 7 pairs of coefficient × the actor's primary stat of th
 
 > **OPEN:** (§18 Q13) Whether the derived-stat formula is complete: whether further terms
 > (level, the class's `AdvTable_*Control*` coefficients, item bonuses) are added, and in which
-> order. This is server logic; M3 observation of the character panel could test the reading
-> above.
+> order. None of the `AdvTable_DerivedStat*` property IDs occurs in the client library's bytecode
+> (C50); whether script code reads the formula through the class-853 compiled attributes was not
+> checked. This is server logic; M3 observation of the character panel (a primary stat changed by a
+> known amount) could test the reading above.
 
 > **OPEN:** (implementation) The field labels of `AdvTable_AvailableSkillEntryList` and
 > `AdvTable_AvailableMountSkillEntryList` entries ("skill DID, level, prerequisite skill, rank,
@@ -1281,14 +1531,21 @@ One record (0x70000235 here; WEENIECONTENT label). Its gameplay tables:
 | Scalars | | `Combat_Control_MaxCombatLevel` (int), duel timings (s), induction interruption cooldown (s), mounted conversion factors |
 | `Combat_Control_*EquationLevelAdjustment_Progression` | 4 DIDs | Level-adjustment progressions |
 
-Reported rating curve (LC, unverified): for rating *R* at level *L*, the percentage is
-TargetCap(*L*) / (1 + Rating(*L*) / *R*), capped at HardCap(*L*), where the three are the
-progressions of the entry.
+**Rating curve** (Confirmed, bytecode + BIN, C47). The compiled half of the control object holds
+three arrays of 31 progression DIDs, indexed by calculation type (element 0 empty, elements 1–30 =
+the structs' `Combat_Control_Rating`, `Combat_Control_Target_Cap` and `Combat_Control_Hard_Cap`,
+30 of 30 matching). The client converts a rating *R* (f32) into a fraction for calculation type
+*c* at level *L* (integer) with an additive cap bonus *b* (f32, 0 unless a caller supplies one):
 
-> **OPEN:** (§18 Q12) Whether this is the original's rating-curve formula, including what
-> happens at *R* = 0 and how the hard cap applies. It is Reported only (LC); the client
-> library's bytecode (§13.2) holds the tooltip version, and the server's version is not in the
-> data.
+1. If *R* ≤ 0, or *c* = 0, the result is 0. If *L* < 1, the client logs an error and the result is 0.
+2. Evaluate the three float progressions of type *c* at *L* (§4.10, so *L* is clamped to each
+   curve's range): *Rt* = Rating(*L*), *T* = TargetCap(*L*), *H* = HardCap(*L*) + *b*.
+3. The result is min(*H*, *T* × (*R* / (*R* + *Rt*))), computed in f32 in that order: *R* + *Rt*,
+   then the division, then the product with *T*, then the minimum.
+
+Some callers then subtract a value from the result and raise it to at least 0. LC's form
+TargetCap / (1 + Rating / *R*), capped at HardCap, is the same function in exact arithmetic but
+rounds differently in f32 (§16). Whether the server uses the same code is not in the data (§13.1).
 
 <a id="s10-2"></a>
 ### 10.2 DPS and value lookup tables
@@ -1304,10 +1561,79 @@ Each record holds exactly the two properties named, nothing else (no minimum-ind
 In every record of both classes the five quality structs are stored in key order 5, 4, 2, 3,
 1. A reader looks a quality up by its key, never by position.
 
-Reported (LC): value at item level *L* and quality *q* = base array element *L* (1-based,
-first element at level 1) × the quality factor of *q*; for weapons, maximum hit damage =
-2 × DPS / (2 − `Combat_DamageVariance`) × weapon speed, and minimum = maximum ×
-(1 − variance).
+**Lookups** (Confirmed, bytecode, C48). Element 0 of both base arrays belongs to level 1:
+
+- **DPS table** (class 1660) at item level *L* and quality *q*: if the table has no quality struct
+  for *q*, or *L* = 0, or *L* is greater than the element count (compared unsigned, so a negative
+  *L* also fails), the client logs an error and returns −1.0. Otherwise the result is
+  `Combat_BaseDPS`[*L* − 1] × `Combat_DPSMod`(*q*), one f32 product.
+- **Value table** (class 1688) at item level *L* and quality *q*: if *L* is greater than the
+  element count, the client logs an error and uses the last element; *L* ≤ 0 is not checked (the
+  original reads outside the array; Tessera treats it as no value). The quality factor is
+  `Item_QualityModVal`(*q*), 0.0 when the table has no struct for *q*. The item's value is
+  `Item_BaseVal`[*L* − 1] × factor + 0.5, computed in f32 and truncated toward zero to an integer.
+- **Weapon damage**: see §10.2.1.
+
+<a id="s10-2-1"></a>
+#### 10.2.1 Weapon data (Confirmed, bytecode, C52)
+
+Two lookup tables take part besides the DPS table:
+
+| Table | Records | Property half | Compiled half |
+|---|---|---|---|
+| Weapon timing | one class-1692 record (0x70000254 here) and 24 class-1691 records | `Item_WeaponActionDurationTable`: 24 DIDs of class-1691 records; each of those holds `Item_EquipmentCategory` (64-bit bitfield, one bit) and `Item_WeaponActionDurationDataArray` of 6 structs {`Item_WeaponSpeed` (enum 0x23000066, keys 1–6), `Item_BaseActionDuration` (f32, seconds), `Item_BaseAnimDurationMultiplierMod` (f32)}; layout as `items.md` §6.3 gives it | class 1692, attribute 0x01D52CB5: a map from category value to class-1691 DID (24 pairs, each the DID whose `Item_EquipmentCategory` is the key); class 1691, attribute 0x0DF47C71: a reference map from speed key (1–6) to an object with the duration and the animation modifier |
+| Weapon variance | one class-2618 record (0x7001BA69 here) | `Item_WeaponVarianceTable` of 3 structs {`Item_WeaponVarianceValue` (f32), `Item_WeaponVarianceEquipmentCategory` (64-bit bitfield, several bits: a category mask)} | attribute 0x0329CE35: a map from mask to the variance's f32 bits (the same 3 pairs) |
+
+The client library's weapon-data function takes a weapon, a level *G* passed in by its caller (the
+item-level computation of `items.md` §5.2) and an output property set. It runs these steps; "fail"
+means it logs an error and writes nothing further:
+
+1. If the weapon's `ItemAdvancement_Imbued` is true, it does nothing and reports success.
+2. The object must be a weapon; `Item_EquipmentCategory` must be non-zero, `Combat_WeaponSpeed`
+   non-zero; otherwise fail.
+3. **DPS level** *L*: if the weapon has `ItemAdvancement_Item` true and its
+   `ItemAdvancement_CombatPropertyModLevel` is 0 or absent, *L* = *G* − 3 when *G* > 3 and *L* = *G*
+   otherwise, and the client writes *L* into the output as `ItemAdvancement_CombatDPSLevel`.
+   Otherwise *L* = *G* + the level offset of the weapon's `Item_DistributionType` (`items.md`
+   §6.4). If *L* ≤ 0, fail. `Item_Quality` must be non-zero; otherwise fail.
+4. **Action duration *D*** and animation modifier: find the timing table whose category equals the
+   weapon's `Item_EquipmentCategory` (the class-1692 map), and in it the entry whose speed key
+   equals `Combat_WeaponSpeed`; its `Item_BaseActionDuration` is *D*, its
+   `Item_BaseAnimDurationMultiplierMod` the modifier. No table or no entry: fail.
+5. `Combat_DPS_LUT` must be non-zero; otherwise fail.
+6. **Variance *v***: the entry of the variance table whose mask contains every bit of the weapon's
+   category (mask AND category = category). No such entry: fail. If *v* < 0 or *v* ≥ 1, fail.
+7. Write *v* as `Combat_DamageVariance`, *D* as `Item_BaseActionDuration` and the modifier as
+   `Item_BaseAnimDurationMultiplierMod` into the output.
+8. **DPS**: the DPS table lookup above at *L* and `Item_Quality`. If the result is ≤ 0, fail. If
+   the weapon's `WeenieType` has both bits 0x01 and 0x80 set (`items.md` §2.3: the item marker,
+   true for all 23,204 weapons here), add the weapon's `Combat_Damage_Mod` (0.0 when absent), read
+   as the value after the weapon's own static effect list is applied to it (`items.md` §3.2, F32).
+   No 0x79 set in this install holds `Combat_Damage_Mod` or names it as `Mod_Modified`, so the
+   addition is 0 for every stored weapon.
+9. **Maximum damage**: with *D*′ the weapon record's own `Item_BaseActionDuration` (−1.0 when
+   absent) and *v*′ its own `Combat_DamageVariance` (0.0 when absent), damage =
+   (2.0 × *D*′ × DPS) / (2.0 − *v*′), computed in f32 in that order: 2.0 × *D*′, then × DPS, then
+   2.0 − *v*′, then the division. If damage ≤ 0, or the DPS of step 8 (after the addition) is
+   ≤ 0, fail.
+10. Write damage as `Combat_Damage` and DPS as `Combat_BaseDPS` into the output.
+
+Step 9 reads the duration and variance from the weapon record, not the values written in step 7.
+In this install they are the same: every weapon's stored `Item_BaseActionDuration` equals its
+timing-table entry (`items.md` §9.7, 23,204 of 23,204) and its stored `Combat_DamageVariance`
+equals the variance-table value (C52, 23,204 of 23,204). Census (C52): every weapon's category is a
+single bit and a key of the timing map, every weapon's speed is a key of its table, and every
+weapon's category lies in exactly one variance mask.
+
+> **OPEN:** (§18 Q15) Which entry the client takes when a category lies in several variance masks:
+> the function walks the compiled map and takes the first match, and the order of that walk is the
+> native map's, which this pass did not read. No weapon in this install has more than one match, so
+> the data does not decide. Tessera takes the first match in the property half's stored order
+> (Decision D5).
+
+LC's formula (maximum = 2 × DPS / (2 − variance) × weapon speed) agrees, with the weapon speed being
+the action duration; LC's minimum (maximum × (1 − variance)) is not computed by this function
+(Reported).
 
 <a id="s10-3"></a>
 ### 10.3 Threshold policies (class 3531)
@@ -1421,13 +1747,14 @@ but only some of their functions have bodies: for example the effect base class 
   are rolled;
 - how skill hook damage, effect amounts and costs are scaled and combined;
 - how modifier entries from several sources are combined (§5.3);
-- stacking and removal rules (§6.6) and duration semantics (§6.2);
+- stacking and removal rules (§6.6), and whether the server computes durations as the client
+  library does (§6.2);
 - threat.
 
 A server implementation (out of scope before M8; decision 0004) has to define these itself.
 
 <a id="s13-2"></a>
-### 13.2 What the client library's bytecode may contain
+### 13.2 What the client library's bytecode contains
 
 The client library holds bytecode bodies for the progression classes (1386: 9 own bodies;
 1385: 6; 1389: 5; 3918: 8; 2402: 7; 2519: 7; 3810: 3; segments 3917: 6), for the compiled
@@ -1438,43 +1765,55 @@ the bytecode chunk (`wlib.md` §4.1) finds the property IDs of `Mod_Op`, `Mod_Mo
 `Combat_QualityModData`, `Item_ValueLookupTable`, `Item_Armor_Value_Lookup_Table`,
 `Progression_Type`, `Progression_PointTier`, `FloatProgression_FloatValue`,
 `LinearInterpolatingProgression_ValueProperty` and `Mod_ProgressionProgressionInnerIndex` as
-32-bit literals; in all, 5,993 of the 27,546 property IDs occur. So the client evaluates at
-least modifier entries, DPS tables and progressions in script, most likely for examination
-tooltips. (A 4-byte literal can match by chance, about once in 2,000 IDs for a block of this
-size; the IDs named here occur 1 to 18 times.)
+32-bit literals; in all, 5,993 of the 27,546 property IDs occur. (A 4-byte literal can match by
+chance, about once in 2,000 IDs for a block of this size; the IDs named here occur 1 to 18
+times.)
 
-> **OPEN:** (needs a bytecode spec) The client-side evaluation of progressions (in and out of
-> range), modifier entries and the DPS and value tables is in these bodies. Reading them needs
-> the script machine's instruction set, which `wlib.md` §4.1 leaves out of scope and which the
-> BIN pass of this spec did not locate (§14). A future pass should start from the library
-> loader (found) and the function-call routine named in `wlib.md`'s BIN row.
+With `wlib-bytecode.md` these bodies were read on 2026-10-08 (BC, and BIN for the natives they
+call). What they settle, by section:
+
+| Behaviour | Section | Row |
+|---|---|---|
+| Array progressions clamp the index; linear progressions choose a segment and extrapolate; f32 order; the last key | §4.3, §4.4, §4.8, §4.10 | C38, C39 |
+| Progression of progressions in a modifier entry: outer and inner index; point-based traits supply the inner index | §4.5 | C43 |
+| Modifier-entry checks, valid operators per type, operator arithmetic and identity values | §5.3, §5.6 | C40, C41 |
+| Level ranges: which level, inclusive ends, identity outside | §5.5 | C42 |
+| Modifier lists: order, operand, refusal of two entries for one property | §5.4 | C44 |
+| Effect duration: override, permanent, interval × pulses, minimums, equivalence-class factors | §6.2, §6.6 | C45 |
+| Vital amounts: one source, selected by compiled flags | §6.4 | C46 |
+| Rating curve | §10.1 | C47 |
+| DPS and value table lookups, weapon maximum damage, item value | §10.2 | C48 |
+| Spellcraft as the evaluation level | §1 | C49 |
+
+The bodies compute these values for the client's own purposes (examination tooltips and local
+displays among them); which client feature calls each function was not traced. The server-side
+library is not in the archives (§13.1), so these are facts about the client library, not proofs of
+the server's arithmetic.
 
 <a id="s13-3"></a>
 ### 13.3 Third-party formulas (Reported only)
 
-LC reconstructs some tooltip numbers. They are recorded here as hypotheses for a later BIN or
-M3 check, not as facts:
+LC reconstructs some tooltip numbers. Its rating curve and weapon damage agree with the client
+library (§10.1, §10.2, §10.2.1, C47, C48, C52). One formula remains a hypothesis:
 
-- rating curves (§10.1);
-- weapon damage from the DPS table (§10.2);
 - skill hook maximum damage at character level *L*: (`HookDamageMax` + HookDamageMax
   progression(*L*) + Σ max-damage modifier properties + action duration × (DPS-add progression(*L*)
   + Σ DPS modifier properties) × `DamageAddContributionMultiplier`) × damage qualifier ×
   (`HookDamageModifier` + Σ modifier properties); minimum = maximum × (1 − `HookDamageMaxVariance`).
   The damage qualifier itself comes from a rating curve and percentage properties of the actor.
 
-> **OPEN:** (§18 Q12) Whether any of these three formulas is the original's, for tooltips
-> (client bytecode, §13.2) or for the server's results (not in the data). In particular: the
-> index base of the DPS and value arrays (whether element 0 is level 1, as LC assumes, given
-> 701 and 601 elements and no minimum-index property), and the order of the sums and products in
-> the hook-damage formula.
+> **OPEN:** (§18 Q12) Whether the hook-damage formula above is the original's, and the order of
+> its sums and products in f32. The client library has bodies that read
+> `Skill_AttackHook_DPSAddMod_Progression` (13 sites, mostly class 364) and
+> `Skill_AttackHook_HookDamageMax` (class 293 family); reading them with `wlib-bytecode.md`, as
+> was done for §10, would settle the tooltip form. The server's form is not in the data (§13.1).
 
 ---
 
 <a id="s14"></a>
 ## 14. Client behaviour settled by BIN
 
-Only negative results (C25):
+Negative results of the first pass (C25):
 
 - The native client does not read the searched properties by ID and does not contain the
   searched labels as strings. The hits for the 10 searched property IDs (`Mod_Op`,
@@ -1484,8 +1823,17 @@ Only negative results (C25):
 - No native code calls a function of the progression, effect, skill or trait classes by a
   constant function ID.
 
-Consequence for Tessera: progression and modifier evaluation is entirely Tessera's own code,
-specified by §4.10 and §5.6, with the OPEN points marked there.
+Positive results of the second pass (2026-10-08, b4–b5) concern only the native helpers that the
+client library's bytecode calls (BIN row): integer and float minimum, maximum and clamp, unchecked
+array element access, element counts, the float-to-property store, the property arithmetic of the
+modifier operators, the map insertion that keeps the first key, and the two level readers. They
+are used in §4.4, §4.8, §5.3, §5.4, §6.2 and §10.1. The third pass (2026-10-08, b6) followed the
+set, or and arithmetic operations into the value objects of int64, 64-bit and any-width bitfield
+properties (§5.3).
+
+Consequence for Tessera: native client code does not evaluate progressions or modifiers; the
+client's evaluation is script code in the client library (§13.2), and §4.10 and §5.6 describe it in
+words. Tessera implements those rules itself; it does not need to run the bytecode.
 
 ---
 
@@ -1502,10 +1850,12 @@ open the target through normal routing.
 | **Trait** | `Trait_Name`, `Trait_Icon`, class and role (§8.1), DID | description, nature, category, tier, minimum level, cost to slot; ranks and maximum rank; prerequisites; `Mod_Array` table; trait effect lists, granted skills; for point-based traits the tree, branch and cell (§8.5) and the point-cost progression |
 | **Progression** | class and kind (§4.1), DID | minimum index, represented property; a value table and a small plot over the covered range; for linear kinds the control points and slopes; the list of holders is optional (expensive) |
 
-A level or spellcraft selector (default 1) drives every progression shown on a card. Values the
-spec marks OPEN (out-of-range indices of §4.8, a progression of progressions without an inner
-index, stacking) are shown as "not evaluated" rather than guessed; a card does not apply the
-D1 clamp, so that the viewer never shows a Tessera choice as data.
+A level or spellcraft selector (default 1) drives every progression shown on a card, evaluated
+with §4.10 (out-of-range indices follow the original's rules of §4.8; a card marks such values as
+"outside the stored range"). A progression of progressions is shown with an inner-index selector
+as well (§4.5). Values the spec marks OPEN (stacking, the combination order of several sources)
+are shown as "not evaluated" rather than guessed, so that the viewer never shows a Tessera choice
+as data.
 
 ---
 
@@ -1516,6 +1866,10 @@ D1 clamp, so that the viewer never shows a Tessera choice as data.
 |---|---|---|---|
 | Missing `Progression_MinimumIndexValue` | LC: 1 | 0 | dictionary default and compiled form (C6) |
 | Effect classes with property modifications | DS: 713, 734, 748, 763 are "effects", 718 "flag effect" | 713, 748 derive from 734 and carry `Mod_Array`; 763 is a pet summon (§6.1) | OBS |
+| Linear progression below the first key | LC: no value | extrapolated along the first segment (§4.8) | C39 |
+| Linear progression at the last key | (Tessera's earlier Decision D3: the stored value) | computed from the last segment (§4.4) | C39 |
+| Vital amount with both a constant and a progression | LC: the constant | the progression (§6.4) | C46 |
+| Rating curve evaluation order | LC: TargetCap / (1 + Rating / *R*), then the cap | *T* × (*R* / (*R* + *Rt*)), then the minimum with the cap (same in exact arithmetic, different f32 rounding) (§10.1) | C47 |
 
 ---
 
@@ -1535,6 +1889,13 @@ D1 clamp, so that the viewer never shows a Tessera choice as data.
 | T1 | Every `Trait_TraitTree_Trait` names a class-3438 trait. |
 | T2 | Trait-cell keys have the form of §8.5. |
 | G1 | No combat-family record names a missing object record. |
+| P8 | §4.11 |
+| M5–M7 | §5.9 |
+| R1 | The combat control object's three compiled rating-curve arrays have 31 elements each, element 0 empty, and element *c* equals the struct of calculation type *c* (30 of 30, §10.1). |
+| V1 | In every class-725 record at most one of the amount-source flag bits 0x10, 0x20, 0x40, 0x80 is set, and where several sources are stored the selection of §6.4 holds (1,103 of 1,103). |
+| V2 | In every class-755 record at most one of the bits 0x10, 0x20, 0x40, 0x80 and at most one of 0x100, 0x200, 0x400, 0x800 is set; 0x20, 0x40 and 0x400 are set in none (2,438 of 2,438, §6.4). |
+| E3 | In every effect the compiled interval and pulse-count modifier lists exist exactly when `Effect_Duration_ConstantInterval_ModifierList` (486) and `Effect_PulseCount_AdditiveModifiers` (277) are stored, and hold their non-zero PIDs in stored order (32,971 of 32,971, §6.2). |
+| W1 | Every weapon's `Item_EquipmentCategory` is one bit and a key of the timing map, its `Combat_WeaponSpeed` a key of that table, and its category lies in exactly one variance mask whose value equals its stored `Combat_DamageVariance` (23,204 of 23,204, §10.2.1). |
 
 ---
 
@@ -1543,19 +1904,21 @@ D1 clamp, so that the viewer never shows a Tessera choice as data.
 
 | # | Question | Where | Settles it |
 |---|---|---|---|
-| Q1 | Out-of-range progression indices | §4.8 | client library bytecode (needs a bytecode spec) |
-| Q2 | Exact f32 evaluation inside a linear segment and at the last key | §4.4 | as Q1 |
-| Q3 | Which actor values supply the outer and inner index of a progression of progressions (all holders are class-3438 traits) | §4.5 | as Q1; or M3 tooltips |
-| Q4 | Lookup rule of sparse DID progressions | §4.6 | as Q1 |
-| Q5 | Which level governs modifier level ranges in effects and traits (none in this install) | §5.5 | as Q1 |
-| Q6 | Combination order of modifier entries; `Set` precedence | §5.3 | server logic; M3 observation |
-| Q7 | Duration semantics (interval vs. pulses; permanent with interval) | §6.2 | server logic; M3 |
-| Q8 | Constant vs. progression precedence in vital amounts | §6.4 | as Q1 (tooltips) |
-| Q9 | Meaning of spellcraft | §1 | as Q1 |
-| Q10 | Stacking rules of equivalence classes | §6.6 | server logic |
-| Q11 | Row/column of trait-cell keys; the 0x10000000 group | §8.5 | M3 (trait panel) or UI layout data |
-| Q12 | Rating-curve and damage formulas; index base of DPS and value arrays | §10.1, §13.3 | as Q1 for tooltip values; server logic otherwise |
-| Q13 | Derived-stat formula completeness | §9.1 | server logic; M3 character panel |
+| Q1 | Out-of-range progression indices | §4.8 | **Closed** 2026-10-08 (C38, C39) |
+| Q2 | Exact f32 evaluation inside a linear segment and at the last key | §4.4 | **Closed** 2026-10-08 (C39) |
+| Q3 | Which actor values supply the outer and inner index of a progression of progressions | §4.5 | **Closed** 2026-10-08 (C43); the trait-spellcraft part moved to Q9 |
+| Q4 | Lookup rule of sparse DID progressions | §4.6 | open: no client-library code (C50); M3 trait panel |
+| Q5 | Which level governs modifier level ranges in effects and traits | §5.5 | **Closed** 2026-10-08 (C42) |
+| Q6 | Combination order of modifier entries from several sources; `Set` precedence | §5.3 | open: native or server code; M3 observation |
+| Q7 | Duration semantics (interval vs. pulses; permanent with interval) | §6.2 | **Closed** 2026-10-08 for the client library (C45) |
+| Q8 | Constant vs. progression precedence in vital amounts | §6.4 | **Closed** 2026-10-08 (C46) |
+| Q9 | Origin of an applied effect's spellcraft when none is given; rank-based trait spellcraft | §1 | open: M3 tooltips, or a reading of the ranked-trait functions |
+| Q10 | Stacking rules of equivalence classes | §6.6 | open: server logic; M3 observation |
+| Q11 | Row/column of trait-cell keys; the 0x10000000 group | §8.5 | open: M3 (trait panel) or UI layout data |
+| Q12 | Rating-curve and damage formulas; index base of DPS and value arrays | §10.1, §10.2, §13.3 | rating curve, table index base, weapon damage **closed** 2026-10-08 (C47, C48, C52); hook-damage formula open (§13.3) |
+| Q13 | Derived-stat formula completeness | §9.1 | open: server logic; M3 character panel |
+| Q14 | Property-half source of the pulse-count modifier list | §6.2 | **Closed** 2026-10-08 (C51: `Effect_PulseCount_AdditiveModifiers`) |
+| Q15 | Variance entry chosen when a weapon category lies in several masks | §10.2.1 | open: native map order (BIN); no case in the data; Tessera uses D5 |
 
 ---
 
@@ -1576,16 +1939,34 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 > decided by the record's class (§4.1), not by `ProgressionProgression_InnerRepresentedPropertyName`.
 > Index arithmetic is done in 64 bits (128 for *x* − *m*), so no index overflows. The D1 clamp is
 > logged at debug level.
+>
+> **Answered in part (2026-10-08, merge):** §4.8 (C38, C39) now gives the client library's rule
+> for out-of-range indices: array kinds clamp (as D1 chose), linear progressions extrapolate
+> along the first or last segment; D1 is superseded. The class test of a progression of
+> progressions is in §5.6 step 1 (the client tests for class 3810 first).
 
 > **OPEN:** (implementation choice) A `Mod_Entry` without `Mod_Modified` is treated like
 > `Mod_Modified` = 0 (empty). An entry with both an inline value and a progression, or with
 > neither, is kept and marked (M1 says neither occurs) rather than rejected.
+>
+> **Answered in part (2026-10-08, merge):** §5.6 step 1 gives the client's checks: an entry
+> with `Mod_Modified` = 0 or an empty struct is skipped; the reject conditions are listed
+> there. An entry with both an inline value and a progression, or with neither, is not
+> addressed and stays open.
 
 > **OPEN:** (implementation choice) The D2 sandbox combines only values of the base value's own
 > type (M2); a value of another type is skipped and logged. Integer arithmetic saturates. Bitwise
 > operators on any-width bitfields work byte by byte at the base's width. `ArrayAdd` appends the
 > elements and adds the counts. Operators with no Reported meaning (`Invalid`, `Difference`,
 > `Divide`, `Random`) are skipped and logged.
+>
+> **Answered in part (2026-10-08, merge):** §5.3 now gives the client library's arithmetic per
+> operator and type (C41), which differs from these choices: int and int64 `Add`, `Subtract` and
+> `Multiply` wrap rather than saturate; `Or` on an any-width bitfield first widens the shorter
+> operand with zero bits, so the result has the larger width; `Divide` is handled but allowed for
+> no type by the load check (§5.3 valid-operator table), `Difference`, `Random`, `And` and `Xor`
+> are not handled; an operator applied to a type the table does not list leaves the property
+> unchanged. The combination order across entries and sources (D2) stays OPEN (§18 Q6).
 
 > **OPEN:** (implementation choice) Effect references (§6.3) are recognised by their ID field
 > wherever a struct carries one (`EffectGenerator_EffectID`, `Skill_Effect`,
@@ -1597,6 +1978,10 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 > family (§2.1) and report a missing one as an error; every other property is optional. The DPS
 > and value tables (§10.2) offer base values by position only, because the index base is OPEN
 > (Q12), and quality factors by key.
+>
+> **Answered in part (2026-10-08, merge):** the index base is closed (§18 Q12): §10.2
+> "Lookups" (C48) states that element 0 of both base arrays belongs to level 1, with the
+> out-of-range behaviour of each table. The signature-property choice stays open.
 
 ---
 
@@ -1608,3 +1993,7 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 | 2026-10-07 | First version (Review). Families, census, progressions, modifier entries, effects, skills, traits, class and control tables, enum mappers, reference graph, BIN results. |
 | 2026-10-07 | Revision after review (status stays Review). Every disputed count re-measured over all records. (1) §5.5, M3, C12: ranges are disjoint, but the stored order is not guaranteed (100 groups not ascending, patterns given); readers sort by floor; added holders (all ranged groups are in non-combat objects), ends present, floor and ceiling ranges, group sizes. (2) §6.2, E1, C14: duration groups now go by stored value; the 722 + 1 records with `Effect_Instantaneous` false moved to the "permanent" and "interval" rows (12,561 and 5,250); stored false means not instantaneous; added the two duration-progression properties. (3) §4.4, §4.10, §4.12: the algorithm takes an outer and an optional inner index; class 3810 without an inner index gives none (D4); value at any key, including the last, is the stored value (D3); worked examples for both. (4) Q2, Q3, Q4, Q5, Q9, Q12 and Q13 are now `> **OPEN:**` callouts (§1, §4.4, §4.5, §4.6, §5.5, §9.1, §10.1, §13.3). (5) Provenance: legend of marks; rows C27–C33 for §4.9, §6.3, §6.5, §7.9, §8.6, §6.6/§10.2 and §11; Decision rows D1 (clamp, §4.8), D2 (sandbox order, §5.3, now including `ArrayAdd` last), D3, D4. (6) §10.2: all 8 class-1660 records have 701 elements, all 99 class-1688 records 601; quality structs stored in key order 5, 4, 2, 3, 1; `Item_ValueLookupTable` totals 150,622 values. (7) §6.6 `MaxDepth` histogram spelled out; §11 labels checked against the EMAPPER map (two mappers have none). Other corrections found while re-measuring: §6.3 `EffectGenerator_EffectID` targets 66 of 87 effect classes, not every class; struct counts, optional fields and holders completed (`Skill_EffectData` also in effects); §3.2 and §7.8 placeholder count is 97,268 in skills (the former 99,817 included 2,549 in effects); §6.5 `Mod_Array` holders by class (708 is the only holder outside 734's subtree), class 3124 properties corrected, `Effect_SkillProc_RequiredCombatResult` is a bitfield; §4.9 target classes filled in, all 50 class-3810 references are in class-3438 traits (P7); §7.9 counts and the induction (1,779) and channelling (401) objects; §8.6 list lengths and lookup through the WEENIECONTENT map. |
 | 2026-10-07 | Second revision after re-review (status stays Review; text only, no section renumbered). (R1) §6.3: the `EffectGenerator_EffectID` sentence now states its population: 0 of the 54,832 struct values are 0; over all 55,825 occurrences (by enclosing struct and holder) 59 are 0, all in `Threshold_State_EffectStruct` structs of one class-1932 record; targets 66 effect classes either way; re-measured over every 0x78 and 0x79 set, and C28 widened. (R2) Provenance rows added for facts that had none: C34 (§3.4 integer census, re-measured over every integer-typed value), C35 (§5.4 modifier lists, with the LC reading marked Reported), C36 (§5.7), C37 (§13.1 function and body counts, re-measured); the sections now cite them. |
+| 2026-10-08 | Revision (status Revised; awaiting review): OPEN closure from the client library's bytecode (new source BC, read with `wlib-bytecode.md`) and a second BIN pass on the natives it calls; every census re-run over all records. Closed: Q1 and Q2 (§4.4, §4.8, §4.10: array kinds clamp, linear progressions choose a half-open segment and extrapolate, the last key is computed from the last segment; Decisions D1 and D3 superseded), Q3 (§4.5: outer = evaluation level, inner = `Mod_ProgressionProgressionInnerIndex`, which point-based traits set to `Advancement_Level`; D4 superseded), Q5 (§5.5), Q7 (§6.2, client duration rule), Q8 (§6.4, compiled source flags), Q12 except hook damage (§10.1 rating curve, §10.2 lookups and formulas), and the §13.2 bytecode callout. Added: §5.3 arithmetic, identity values and valid operators per type; §5.4 combination and duplicate rule; §5.6 rewritten as the client's rule; §6.6 duration factors; §14 second-pass results; §16 four rows; invariants P8, M5–M7, R1, V1; rows C38–C50; C9, C11, C12, C14, C15, C21, C26, C35 and D1, D3, D4 updated. Remaining OPEN, made precise: Q4, Q6, Q9 (now also the rank-based trait spellcraft), Q10, Q11, Q12 (hook damage), Q13. |
+| 2026-10-08 | Fixes for the review of 2026-10-08 (status stays Revised; no section renumbered; new subsection §10.2.1). (1) §6.2 step 3: without an interval source the interval is 0.0 at once, with no modifier list and no 0.5 s minimum; step 5 states that it raises any duration, 0 included, to 0.5 s when an equivalence class and a property source are present. (2) §6.2 step 4: the pulse-count modifier list's property-half source identified as `Effect_PulseCount_AdditiveModifiers` (C51, all 32,971 effects; property row added; Q14 recorded and closed). (3) §5.3: a third BIN pass (b6) read set, or and the int64 arithmetic in the value objects of int64, 64-bit and any-width bitfields; the table and the paragraph after it now give those cases; C41 states its scope. (4) §10.2: weapon damage moved to §10.2.1 and specified step by step from the class-256 function: the timing and variance tables (property and compiled halves), the action duration from category and `Combat_WeaponSpeed`, the DPS level, the `Combat_Damage_Mod` rule (`WeenieType` bits 0x01 and 0x80), the formula and its inputs (C52, census over all 23,204 weapons); C48 narrowed; open question Q15 and Decision D5 for several matching variance masks. (5) §4.2: `FloatProgression_ValueProperty` is used by the load check. (6) §5.6 step 1: represented property of text and DID arrays; no modifier entry names them (C40). (7) §6.4: class-755 bit table read from the code, with the bits never set (C46, V2). (8) §6.2: the override remark replaced by the separate "is permanent" query (C45). (9) Change log in date order. Invariants V2, E3, W1 added; BC and BIN rows extended. |
+| 2026-10-08 | Re-review of the fixes (separate review session, not the author): passed; status moved to Accepted. No text change besides the header. |
+| 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: Implementer notes: out-of-range indices (§4.8), skipped entries (§5.6), operator arithmetic (§5.3) and the table index base (§10.2, Q12), each answered in part. No fact changed; status unchanged. |

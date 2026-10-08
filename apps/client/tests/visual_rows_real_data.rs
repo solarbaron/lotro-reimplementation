@@ -7,12 +7,12 @@
 //!
 //! | Rows | Checked |
 //! |---|---|
-//! | T1–T16 | the layer stack (terrain-type keys, bottom first) over the triangle under the target, terrain or ceiling chunk, against the region's table; the diffuse texture of the top layer; the light map where the row names one |
+//! | T1–T16 | the layer stack (terrain-type keys, bottom first) over the triangle under the target, terrain or ceiling chunk, resolved by the walker's `terrain-texturing.md` §4.9 path against the region's table; the light map where the row names one |
 //! | S1–S11 | the landblock's total of generated objects; the two nearest: DID, position (0.01 m), heading (0.1°), scale (0.0001) |
-//! | F1–F6 | frill records of the block (all 256 sectors at density 1) |
+//! | F1–F6 | frill records of the block (all 256 sectors at density 1); F1: the block stores no terrain layers, is open and is drawn with one whole layer of the table's smallest-`draw_order` entry, key 0 (`walker.md` §14.10a) |
 //! | W1–W8 | landblock water: height and surface (W8: none) |
-//! | Y1–Y4 | sky key → day description at day 12,240 and the row's time (day type 2); fog near and far, sun and ambient brightness, toward-sun vector |
-//! | Y5 | interior fog of the landblock info's property set |
+//! | Y1–Y4 | sky key A by the walker's lookup (`camera_sky_key`: landblock-info set, block map, else 2) → day description at day 12,240 and the row's time (day type 2); fog near and far, sun and ambient brightness, toward-sun vector |
+//! | Y5 | the indoor record's inputs at the IN1 start (cell 9 of 0x802191A6) by the walker's lookup (cell, landblock info, block map): key B 1, ambient *X* = *Y*, linear fog 0.059–90 in R 11, G 14, B 2 (`landblock.md` §4.13 worked example) |
 //! | L2 | the Light entities: positions, range, falloff, colour, baked flag |
 //!
 //! Run with `cargo test --release -p tessera-client --test visual_rows_real_data --
@@ -23,12 +23,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tessera_assets::{PoolConfig, WorkerPool};
-use tessera_client::walker::fxparse::clock_seconds;
+use tessera_client::walker::env::{
+    IndoorPids, camera_sky_key, compose, fog_distances, indoor_inputs_of,
+};
+use tessera_client::walker::fxparse::{Systems, clock_seconds};
+use tessera_client::walker::{block_open, layerless_key, resolve_block_surface};
 use tessera_dat::{ArchiveSet, SetOptions};
-use tessera_formats::Did;
 use tessera_formats::landblock::{GridSurface, LightMaps};
-use tessera_terrain::{ResolveOptions, resolve_landblock};
-use tessera_world::environment::InteriorFog;
+use tessera_formats::{Did, PropertyDictionary, Record};
+use tessera_terrain::ResolveOptions;
 use tessera_world::frills::DensityThinner;
 use tessera_world::{
     BundleOptions, LandblockKey, RingConfig, StreamConfig, WorldContext, WorldPos, WorldStreamer,
@@ -131,7 +134,8 @@ fn terrain_rows_have_their_layer_stacks() {
             terrain: bundle.light_map,
             ceiling: bundle.ceiling_light_map,
         };
-        let layers = resolve_landblock(
+        // The walker's path (`walker.md` §14.4): the open flag, then the chunk's layers.
+        let (layers, hidden) = resolve_block_surface(
             &bundle.data,
             surface,
             &table,
@@ -145,6 +149,9 @@ fn terrain_rows_have_their_layer_stacks() {
             .unwrap_or_default();
         let lm = maps.for_surface(surface).map(|d| d.0);
         let mut fails = Vec::new();
+        if hidden {
+            fails.push("chunk hidden (§4.9 rule 3)".to_owned());
+        }
         if keys != row.stack {
             fails.push(format!("stack {keys:?} ≠ {:?}", row.stack));
         }
@@ -284,11 +291,50 @@ fn frill_rows_count_their_records() {
                     .len();
             }
         }
-        let fails = if total == count {
+        let mut fails = if total == count {
             Vec::new()
         } else {
             vec![format!("{total} frill records ≠ {count}")]
         };
+        if id == "F1" {
+            // The F1 block stores no terrain layers and has no ceiling: §4.9 draws it with
+            // one whole layer of the entry with the smallest `draw_order`, key 0 here.
+            let table = ctx
+                .region(region)
+                .and_then(|r| r.scenery.as_ref())
+                .and_then(|s| s.terrain_types.clone())
+                .expect("terrain type table");
+            let maps = LightMaps {
+                terrain: bundle.light_map,
+                ceiling: bundle.ceiling_light_map,
+            };
+            let (layers, hidden) = resolve_block_surface(
+                &bundle.data,
+                GridSurface::Terrain,
+                &table,
+                &maps,
+                &ResolveOptions::default(),
+            )
+            .expect("layers resolve");
+            let stored = bundle.data.terrain.layers.len();
+            let drawn: Vec<(u32, bool)> = layers
+                .layers()
+                .iter()
+                .map(|l| (l.key(), l.whole()))
+                .collect();
+            if stored != 0 || !block_open(&bundle.data) || hidden {
+                fails.push(format!(
+                    "stored layers {stored}, open {}, hidden {hidden}",
+                    block_open(&bundle.data)
+                ));
+            }
+            if layerless_key(&table) != Some(0) || drawn != [(0, true)] {
+                fails.push(format!(
+                    "drawn {drawn:?}, layerless key {:?}",
+                    layerless_key(&table)
+                ));
+            }
+        }
         report(id, &fails, &mut failed, &format!("{total} frill records"));
     }
     assert!(failed.is_empty(), "rows failing: {failed:?}");
@@ -362,11 +408,13 @@ fn sky_rows_blend_their_keyframes() {
         )
         .expect("clock");
         let mut fails = Vec::new();
-        let k = w.sky_key_at(&pos);
-        if k != Some(sky) {
-            fails.push(format!("sky key {k:x?} ≠ {sky:#x}"));
+        // Key A by the walker's own lookup (`walker.md` §14.3 OPEN (d), `environment.md`
+        // §7.1.1): landblock-info set, then block map, else 2; outdoors, no camera cell.
+        let k = camera_sky_key(&w, None, &pos);
+        if k != sky {
+            fails.push(format!("sky key {k:#x} ≠ {sky:#x}"));
         }
-        let e = w.sky_at(&pos, 2, g).expect("sky");
+        let e = lib.evaluate(Some(k), 2, g);
         let v = &e.values;
         if e.choice.map(|c| c.day) != Some(Did(day)) {
             fails.push(format!("day {:?} ≠ {day:#010x}", e.choice.map(|c| c.day)));
@@ -395,30 +443,61 @@ fn sky_rows_blend_their_keyframes() {
             ),
         );
     }
-    // Y5: the interior fog of the IN1 landblock's info.
+    // Y5: the indoor record at the IN1 start, cell 9 of 0x802191A6, by the walker's
+    // lookup (`landblock.md` §4.13 worked example).
     settle(&mut w, 1, 0x91A6, 80.0, 80.0);
-    let info = w
-        .bundle(key(1, 0x91A6))
-        .and_then(|b| b.info.clone())
-        .expect("landblock info");
-    let fog = InteriorFog::from_set(&info.properties, &ctx.systems().pids.environment);
+    let bundle = w.bundle(key(1, 0x91A6)).expect("IN1 landblock");
+    let dict_bytes = ctx
+        .source()
+        .read(Did(0x3400_0000))
+        .expect("read")
+        .expect("property dictionary");
+    let dict = PropertyDictionary::parse_expecting(&dict_bytes, 0x3400_0000_u32)
+        .expect("property dictionary");
+    let pids = IndoorPids::from_names(|n| dict.pid(n));
+    let ind = indoor_inputs_of(Some(bundle), 9, &pids);
+    let byte = |v: f32| v * 255.0;
+    let near_rgb = |c: [f32; 3], want: [f32; 3]| (0..3).all(|i| (byte(c[i]) - want[i]).abs() < 0.6);
     let mut fails = Vec::new();
-    match fog {
-        Some(f) => {
-            if f.near.is_none_or(|n| (n - 0.059).abs() > 0.001)
-                || f.far.is_none_or(|n| (n - 90.0).abs() > 0.001)
-            {
-                fails.push(format!("interior fog {:?} / {:?}", f.near, f.far));
-            }
-            if f.colour.is_none_or(|c| {
-                (c[0] * 255.0 - 11.0).abs() > 0.6 || (c[2] * 255.0 - 2.0).abs() > 0.6
-            }) {
-                fails.push(format!("interior fog colour {:?}", f.colour));
-            }
-        }
-        None => fails.push("no interior fog".into()),
+    if ind.sky_key != 1 {
+        fails.push(format!("key B {}", ind.sky_key));
     }
-    report("Y5", &fails, &mut failed, "interior fog");
+    match ind.ambient_xy() {
+        Some((x, y)) if x == y && near_rgb(x, [8.0, 25.0, 8.0]) => {}
+        other => fails.push(format!("ambient X, Y {other:?}")),
+    }
+    if !ind.fog_on(true) || ind.fog_on(false) {
+        fails.push(format!("fog type {:?}", ind.fog_type));
+    }
+    let (near, far) = fog_distances(0.0, 10_000.0, ind.fog_near, ind.fog_far);
+    if (near - 0.059).abs() > 0.001 || (far - 90.0).abs() > 0.001 {
+        fails.push(format!("interior fog {near} / {far}"));
+    }
+    if ind
+        .fog_colour
+        .is_none_or(|c| !near_rgb(c, [11.0, 14.0, 2.0]))
+    {
+        fails.push(format!("interior fog colour {:?}", ind.fog_colour));
+    }
+    // The composed indoor frame: no sun, the fog of the overrides.
+    let values = tessera_world::environment::SkyValues::defaults();
+    let lit = compose(
+        Some(&values),
+        Some(&ind),
+        &Systems::all(),
+        tessera_render::glam::Vec3::ZERO,
+        tessera_render::glam::Vec3::X,
+        0.0,
+    );
+    if lit.lighting.sun.is_some()
+        || lit
+            .lighting
+            .fog
+            .is_none_or(|f| (f.near - near).abs() > 1e-6 || (f.far - far).abs() > 1e-6)
+    {
+        fails.push("composed indoor frame".to_owned());
+    }
+    report("Y5", &fails, &mut failed, "indoor record");
     assert!(failed.is_empty(), "rows failing: {failed:?}");
 }
 

@@ -10,8 +10,9 @@ use tessera_assets::AssetError;
 use tessera_formats::Did;
 
 use super::{
-    JUMP_MAX_GAP, JUMP_MIN_STEP, LOOKAHEAD_MIN_SPEED, MAX_LOOKAHEAD_DISTANCE, MAX_TRACKED_SPEED,
-    Motion, SLOW_JOB_HALF_LIFE, SLOW_JOB_MAX, SlowJobs, VELOCITY_MAX_SAMPLES, segment_blocks,
+    JUMP_MIN_STEP, LOOKAHEAD_MIN_SPEED, MAX_LOOKAHEAD_DISTANCE, MAX_TRACKED_SPEED, Motion,
+    READMIT_MARGIN_DIVISOR, RETRY_BASE, RETRY_MAX, SLOW_JOB_HALF_LIFE, SLOW_JOB_MAX,
+    STORE_MAX_COMPLETIONS, SlotState, SlowJobs, VELOCITY_MAX_SAMPLES, retry_delay, segment_blocks,
     square_segment_distance,
 };
 use crate::testkit::SyntheticWorld;
@@ -69,6 +70,15 @@ fn sampled_distance(key: LandblockKey, p: [f64; 2], q: [f64; 2]) -> f64 {
             key.distance_to([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])])
         })
         .fold(f64::INFINITY, f64::min)
+}
+
+/// The bundle of `k` once it is built, whether `k` is a ring member or ahead of the rings
+/// ([`WorldStreamer::bundle`] sees only ring members).
+fn loaded(w: &WorldStreamer, k: LandblockKey) -> Option<Arc<LandblockBundle>> {
+    match w.state_of(k) {
+        Some(BlockState::Ready(b)) => Some(b),
+        _ => None,
+    }
 }
 
 /// Updates with `velocity` until `done` holds (or 20 s pass).
@@ -226,24 +236,40 @@ fn motion_estimates_velocity_and_restarts_on_jumps() {
         [JUMP_MIN_STEP, 0.0]
     ));
     // A focus moved three landblocks in one 16 ms update (the caller switching between
-    // places) is; so is any step beyond the tracked speed times the longest gap, however
-    // long the gap was, and a step that is not finite.
+    // places) is, and so is a step that is not finite.
     assert!(Motion::is_jump(
         Duration::from_millis(16),
         [0.0, 0.0],
         [0.0, 3.0 * LANDBLOCK_SIZE]
     ));
-    let far = MAX_TRACKED_SPEED * JUMP_MAX_GAP.as_secs_f64() + 1.0;
-    assert!(Motion::is_jump(
-        Duration::from_secs(60),
+    // A long frame is not a jump (ARCHITECTURE §9.2): a 2 s stall of a 3,000 units per
+    // second flight is a 6,000-unit step, slower than the tracked speed over its time.
+    assert!(!Motion::is_jump(
+        Duration::from_secs(2),
         [0.0, 0.0],
-        [far, 0.0]
+        [6_000.0, 0.0]
+    ));
+    // Over the same 2 s, a step faster than the tracked speed is a jump.
+    let fast = MAX_TRACKED_SPEED * 2.0;
+    assert!(Motion::is_jump(
+        Duration::from_secs(2),
+        [0.0, 0.0],
+        [fast + 1.0, 0.0]
     ));
     assert!(!Motion::is_jump(
-        Duration::from_secs(60),
+        Duration::from_secs(2),
         [0.0, 0.0],
-        [far - 2.0, 0.0]
+        [fast - 1.0, 0.0]
     ));
+    // The estimate keeps going across such a stall.
+    let mut m = Motion::default();
+    for i in 0..10u32 {
+        let _ = m.push(at(u64::from(i) * 16), 1, [f64::from(i) * 48.0, 0.0]);
+    }
+    let v = m
+        .push(at(9 * 16 + 2_000), 1, [9.0 * 48.0 + 6_000.0, 0.0])
+        .expect("kept across the stall");
+    assert!(v[0] > 2_000.0, "{v:?}");
     assert!(Motion::is_jump(
         Duration::from_millis(16),
         [0.0, 0.0],
@@ -303,10 +329,16 @@ fn lookahead_loads_the_path_beyond_the_far_ring() {
     }
     // The corridor counts its ring members too (x 9–13 of rows 2–4 are in the rings).
     assert_eq!(r.corridor, 24 + 15, "{r:?}");
-    let r = stream_until(&mut w, focus, v, |w| w.bundle(key(21, 3)).is_some());
+    let r = stream_until(&mut w, focus, v, |w| loaded(w, key(21, 3)).is_some());
     assert!(w.stats().ahead_requested >= 24);
-    // Bundles ahead are resident but not ring members: `resident` leaves them out.
+    // Bundles ahead are loaded but not ring members: `resident`, `bundle` and the lookups
+    // leave them out (ARCHITECTURE §9.2).
     assert!(w.is_ahead(key(21, 3)) && !w.is_ahead(key(10, 3)));
+    assert!(w.bundle(key(21, 3)).is_none());
+    assert!(w.terrain_height_at(&centre(21, 3)).is_none());
+    assert!(w.block_props_at(&centre(21, 3)).is_none());
+    assert!(w.seam_neighbours(key(20, 3))[0].is_none());
+    assert!(w.terrain_height_at(&centre(10, 3)).is_some());
     assert!(
         r.ahead_resident > 0 && r.ahead_resident <= r.resident_blocks,
         "{r:?}"
@@ -318,16 +350,18 @@ fn lookahead_loads_the_path_beyond_the_far_ring() {
     }
 
     // Moving on, an ahead block that enters the rings keeps its bundle.
-    stream_until(&mut w, focus, v, |w| w.bundle(key(14, 3)).is_some());
-    let before = Arc::clone(w.bundle(key(14, 3)).unwrap());
+    stream_until(&mut w, focus, v, |w| loaded(w, key(14, 3)).is_some());
+    let before = loaded(&w, key(14, 3)).unwrap();
+    assert!(w.bundle(key(14, 3)).is_none());
     let requested = w.stats().requested;
     let r = w.update_with_velocity(centre(11, 3), v);
     assert_eq!(w.ring_of(key(14, 3)), Some(Ring::Far));
     assert!(w.rings().members().contains_key(&key(14, 3)));
     assert!(Arc::ptr_eq(&before, w.bundle(key(14, 3)).unwrap()));
-    // In the rings, it is no longer ahead and `resident` has it.
+    // In the rings, it is no longer ahead: `resident` and the lookups have it.
     assert!(!w.is_ahead(key(14, 3)));
     assert!(w.resident().any(|(k, _, _)| k == key(14, 3)));
+    assert!(w.terrain_height_at(&centre(14, 3)).is_some());
     // Only the new column x = 22 (y 2–4) was requested ahead; (14, 3) was not again.
     assert_eq!(r.ahead, 24, "{r:?}");
     assert!(w.stats().requested - requested <= 3 + 7, "{:?}", w.stats());
@@ -451,24 +485,27 @@ fn slow_job_peak_holds_the_longest_and_halves() {
 }
 
 #[test]
-fn slow_jobs_lengthen_the_lookahead_path() {
+fn slow_jobs_lengthen_the_urgent_part_not_the_path() {
     let ctx = strip();
     let pool = pool();
     let focus = centre(10, 3); // (1680, 560)
     let v = [1_600.0, 0.0];
+    // A 4 s path capped at 6,400 units: it ends at x = 8,080 (blocks x 14–51 of rows 2–4
+    // ahead of the rings), whatever the job times (ARCHITECTURE §9.2).
     let adaptive = StreamConfig {
+        lookahead_early: Duration::from_secs(4),
         lookahead_job_margin: 1.5,
         lookahead_max: 6_400.0,
         ..config()
     };
     let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, adaptive.clone()).unwrap();
-    // No slow job yet: the configured 1 s (blocks x 14–21 of rows 2–4).
+    // No slow job yet: the urgent part is the configured 1 s (blocks x 14–21).
     w.observe_job_time(Duration::from_millis(100));
     let r = w.update_with_velocity(focus, v);
-    assert_eq!(r.ahead, 24, "{r:?}");
+    assert_eq!((r.ahead, r.urgent), (38 * 3, 8 * 3 + 15), "{r:?}");
     assert_eq!(r.lookahead, Duration::from_secs(1));
-    // A 2 s job: the horizon is 1.5 × 2 s, the path 4,800 long and ends at x = 6,480
-    // (less the decay of a few microseconds): blocks x 14–41.
+    // A 2 s job: the horizon is 1.5 × 2 s, the urgent part 4,800 long, ending at x = 6,480
+    // (less the decay of a few microseconds): blocks x 14–41. The path is unchanged.
     w.observe_job_time(Duration::from_secs(2));
     let horizon = w.lookahead_horizon();
     assert!(
@@ -476,18 +513,35 @@ fn slow_jobs_lengthen_the_lookahead_path() {
         "{horizon:?}"
     );
     let r = w.update_with_velocity(focus, v);
-    assert_eq!(r.ahead, 28 * 3, "{r:?}");
+    assert_eq!((r.ahead, r.urgent), (38 * 3, 28 * 3 + 15), "{r:?}");
     assert!(r.lookahead > Duration::from_millis(2_999), "{r:?}");
-    assert!(w.state_of(key(41, 3)).is_some() && w.state_of(key(42, 3)).is_none());
+    assert_eq!(w.request_priority(key(41, 3)), Some(Priority::Visible));
+    assert_eq!(w.request_priority(key(42, 3)), Some(Priority::Prefetch));
     assert_eq!(w.stats().max_lookahead, r.lookahead);
-    // The path stays within lookahead_max (6,400 here): it ends at x = 8,080.
+    // A 9 s job: the urgent part covers the whole path, which does not grow beyond 4 s.
     w.observe_job_time(Duration::from_secs(9));
     let r = w.update_with_velocity(focus, v);
-    assert_eq!(r.ahead, 38 * 3, "{r:?}");
+    assert_eq!((r.ahead, r.urgent), (38 * 3, 38 * 3 + 15), "{r:?}");
     assert!(w.state_of(key(51, 3)).is_some() && w.state_of(key(52, 3)).is_none());
+    // Without the early part (all of the path urgent) a slow job does not lengthen it
+    // either: 1 s at 1,600 units per second, blocks x 14–21.
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            lookahead_early: Duration::ZERO,
+            ..adaptive.clone()
+        },
+    )
+    .unwrap();
+    w.observe_job_time(Duration::from_secs(9));
+    let r = w.update_with_velocity(focus, v);
+    assert_eq!((r.ahead, r.urgent), (24, 39), "{r:?}");
+    assert!(r.lookahead > Duration::from_secs(13), "{r:?}");
     // Bundles ahead are the data's: the same as those of a streamer without lookahead.
-    stream_until(&mut w, focus, v, |w| w.bundle(key(51, 3)).is_some());
-    let far = Arc::clone(w.bundle(key(51, 3)).unwrap());
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, adaptive.clone()).unwrap();
+    stream_until(&mut w, focus, v, |w| loaded(w, key(51, 3)).is_some());
+    let far = loaded(&w, key(51, 3)).unwrap();
     let mut plain = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
     assert!(plain.settle(centre(51, 3), Duration::from_secs(20)));
     let near = plain.bundle(key(51, 3)).unwrap();
@@ -629,8 +683,8 @@ fn early_part_of_the_path_is_requested_at_prefetch_priority() {
     let r = w.update_with_velocity(focus, v);
     assert_eq!((r.ahead, r.urgent), (13 * 3, 8 * 3 + 15), "{r:?}");
     // The early bundles are the data's: streaming them changes nothing in them.
-    stream_until(&mut w, focus, v, |w| w.bundle(key(26, 3)).is_some());
-    let early = Arc::clone(w.bundle(key(26, 3)).unwrap());
+    stream_until(&mut w, focus, v, |w| loaded(w, key(26, 3)).is_some());
+    let early = loaded(&w, key(26, 3)).unwrap();
     let mut plain = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
     assert!(plain.settle(centre(26, 3), Duration::from_secs(20)));
     let near = plain.bundle(key(26, 3)).unwrap();
@@ -796,4 +850,242 @@ fn requests_in_flight_follow_the_path_priority() {
     }
     assert!(w.is_in_flight(key(25, 3)));
     assert_eq!(w.request_priority(key(25, 3)), Some(Priority::Prefetch));
+}
+
+#[test]
+fn retries_wait_the_base_delay_first_and_double() {
+    assert_eq!(retry_delay(1), RETRY_BASE);
+    assert_eq!(retry_delay(1), Duration::from_millis(10));
+    assert_eq!(retry_delay(2), 2 * RETRY_BASE);
+    assert_eq!(retry_delay(3), 4 * RETRY_BASE);
+    assert_eq!(retry_delay(8), RETRY_MAX.min(128 * RETRY_BASE));
+    assert_eq!(retry_delay(u32::MAX), RETRY_MAX);
+    // Defensive: no failure yet gives the base delay.
+    assert_eq!(retry_delay(0), RETRY_BASE);
+    for n in 1..40u32 {
+        assert!(retry_delay(n) <= retry_delay(n + 1));
+        assert!(retry_delay(n) <= RETRY_MAX);
+    }
+}
+
+#[test]
+fn admitted_landblocks_without_a_request_keep_settle_waiting() {
+    // An admitted landblock left without a request at the end of an update (waiting to
+    // retry, whatever the clock says by then, or a request that ended without a bundle)
+    // is pending: `settle` must not report the near ring settled while it is.
+    let ctx = strip();
+    let pool = pool();
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
+    let focus = centre(10, 3);
+    assert!(w.settle(focus, Duration::from_secs(20)));
+    let r = w.update_with_velocity(focus, [0.0; 2]);
+    assert_eq!((r.pending, r.near_missing), (0, 0), "{r:?}");
+    let k = key(10, 3);
+    let t0 = Instant::now();
+    let old = {
+        let slot = w.slots.get_mut(&k).unwrap();
+        assert!(slot.admit);
+        // A retry due exactly at the update's clock reading: no longer waiting, yet not
+        // requested in this update.
+        slot.retry_after = Some(t0);
+        std::mem::replace(&mut slot.state, super::SlotState::Deferred)
+    };
+    let mut r = FrameReport::default();
+    w.release(old, &mut r);
+    w.finish(t0, &mut r);
+    assert_eq!(
+        (r.pending, r.near_missing, r.waiting_retry),
+        (1, 1, 0),
+        "{r:?}"
+    );
+    // The next update requests it, and settling brings it back.
+    assert!(w.settle(focus, Duration::from_secs(20)));
+    assert!(w.bundle(k).is_some());
+}
+
+#[test]
+fn frill_jobs_stay_within_the_byte_budget() {
+    // Many sector jobs may start in one frame; together with the sectors held they must
+    // fit the frill budget (ARCHITECTURE §9.2: "within their own byte budget"), so a frame
+    // cannot start more than the budget holds and land them all over it.
+    let world = SyntheticWorld {
+        scenery: true,
+        ..SyntheticWorld::rectangle(1, 10..=13, 20..=21)
+    };
+    let ctx = Arc::new(
+        WorldContext::load(Arc::new(world.build()), BundleOptions::default())
+            .expect("synthetic context"),
+    );
+    let pool = pool();
+    let budget = 8 * std::mem::size_of::<FrillSector>();
+    let mut w = WorldStreamer::new(
+        ctx,
+        &pool,
+        StreamConfig {
+            frills: FrillSettings {
+                distance_level: 1,
+                ..FrillSettings::default()
+            },
+            frill_budget: budget,
+            max_frill_jobs_per_frame: 64,
+            ..config()
+        },
+    )
+    .unwrap();
+    let here = centre(10, 20);
+    assert!(w.settle(here, Duration::from_secs(30)));
+    let mut peak = 0usize;
+    let mut largest = 0usize;
+    let mut last = FrillReport::default();
+    for _ in 0..400 {
+        last = w.update_frills(&here, &here);
+        peak = peak.max(w.frill_bytes());
+        for (_, s) in w.frill_sectors() {
+            largest = largest.max(super::sector_bytes(s));
+        }
+        assert!(last.started <= 64);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(last.ready > 0, "{last:?}");
+    assert!(last.waiting > 0, "the budget binds: {last:?}");
+    assert_eq!(last.running, 0, "{last:?}");
+    assert!(
+        peak <= budget + largest,
+        "peak {peak} over the budget {budget} by more than one sector ({largest})"
+    );
+    assert_eq!(w.stats().peak_frill_bytes, peak);
+}
+
+#[test]
+fn velocity_spans_the_window_plus_one_older_position() {
+    // `landblock.md` §8.1 lookahead OPEN, continued: with updates further apart than the
+    // quarter-second window, the estimate spans the time between two updates.
+    let t0 = Instant::now();
+    let at = |ms: u64| t0 + Duration::from_millis(ms);
+    let mut m = Motion::default();
+    assert_eq!(m.push(at(0), 1, [0.0, 0.0]), None);
+    let v = m
+        .push(at(400), 1, [400.0, 0.0])
+        .expect("estimate over 400 ms");
+    assert!((v[0] - 1_000.0).abs() < 1e-9, "{v:?}");
+    assert_eq!(m.samples.len(), 2);
+    let v = m.push(at(800), 1, [1_200.0, 0.0]).expect("estimate");
+    assert!(
+        (v[0] - 2_000.0).abs() < 1e-9,
+        "only the last two count: {v:?}"
+    );
+    assert_eq!(m.samples.len(), 2);
+}
+
+#[test]
+fn a_given_velocity_replaces_the_estimate_and_its_history() {
+    let ctx = strip();
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            lookahead: Duration::ZERO,
+            ..config()
+        },
+    )
+    .unwrap();
+    let start = centre(10, 3);
+    let mut x = start.x;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while w.velocity().is_none() {
+        assert!(Instant::now() < deadline, "no estimate");
+        x += 2.0;
+        w.update(WorldPos::new(1, x, start.y, 0.0));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!w.motion.samples.is_empty());
+    w.update_with_velocity(WorldPos::new(1, x, start.y, 0.0), [100.0, 0.0]);
+    assert_eq!(w.velocity(), Some([100.0, 0.0]));
+    assert!(
+        w.motion.samples.is_empty(),
+        "the estimate's positions are discarded"
+    );
+    // The estimate starts over: one position is no velocity.
+    w.update(WorldPos::new(1, x + 2.0, start.y, 0.0));
+    assert_eq!(w.velocity(), None);
+}
+
+#[test]
+fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
+    // `landblock.md` §8.1, OPEN on closures: the 1/64 re-admission margin applies to a
+    // whole seam closure when any member is an evicted bundle, never-loaded members
+    // included; without an evicted member it does not apply.
+    let ctx = strip();
+    let pool = pool();
+    let each = 1_000usize;
+    let budget = 2 * each + 10;
+    assert!(2 * each > budget - budget / READMIT_MARGIN_DIVISOR);
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            residency_budget: budget,
+            initial_size_estimate: each,
+            always_admit_near: false,
+            lookahead: Duration::ZERO,
+            ..config()
+        },
+    )
+    .unwrap();
+    let focus = centre(10, 3);
+    w.update_with_velocity(focus, [0.0, 0.0]);
+    let k = key(10, 3);
+    let east = key(11, 3);
+    assert_eq!(k.seam_neighbours()[0], Some(east));
+    let mut order: Vec<(f64, LandblockKey)> =
+        w.slots.iter().map(|(key, s)| (s.distance, *key)).collect();
+    order.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    assert_eq!(order[0].1, k);
+    // Every landblock holds nothing (failed: charged 0) but `k` and its east neighbour,
+    // each charged `each`: the closure of `k` costs 2 × `each`.
+    let reset = |w: &mut WorldStreamer, evicted: bool| {
+        for (key, slot) in &mut w.slots {
+            if let SlotState::Requested(h) = &slot.state {
+                h.cancel();
+            }
+            slot.state = if *key == k || *key == east {
+                SlotState::Deferred
+            } else {
+                SlotState::Failed(tessera_assets::AssetError::QueueFull { capacity: 0 })
+            };
+            slot.known_size = None;
+            slot.retry_after = None;
+        }
+        if evicted {
+            w.slots.get_mut(&k).unwrap().known_size = Some(each);
+        }
+    };
+    reset(&mut w, true);
+    let mut report = FrameReport::default();
+    w.admit(&order, &mut report, Instant::now());
+    assert!(!w.slots[&k].admit && !w.slots[&east].admit);
+    reset(&mut w, false);
+    let mut report = FrameReport::default();
+    w.admit(&order, &mut report, Instant::now());
+    assert!(w.slots[&k].admit && w.slots[&east].admit);
+}
+
+#[test]
+fn stream_config_defaults_are_the_recorded_choices() {
+    // `landblock.md` §8.1, OPEN on streamer defaults; ARCHITECTURE §9.2 (budget, lookahead).
+    let c = StreamConfig::default();
+    assert_eq!(c.residency_budget, 1 << 30);
+    assert_eq!(c.cache_budget, 64 << 20);
+    assert_eq!(c.max_integrations_per_frame, 32);
+    assert_eq!(c.frame_budget, Duration::from_millis(2));
+    assert_eq!(c.initial_size_estimate, 512 << 10);
+    assert_eq!(c.frill_budget, 64 << 20);
+    assert_eq!(c.max_frill_jobs_per_frame, 64);
+    assert_eq!(c.lookahead, Duration::from_millis(1_500));
+    assert_eq!(c.lookahead_early, Duration::from_secs(4));
+    assert!((c.lookahead_max - 12_800.0).abs() < f64::EPSILON);
+    assert!((c.lookahead_job_margin - 1.5).abs() < f64::EPSILON);
+    assert!(c.always_admit_near);
+    assert_eq!(STORE_MAX_COMPLETIONS, 4_096);
 }

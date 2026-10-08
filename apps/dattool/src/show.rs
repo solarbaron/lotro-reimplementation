@@ -4,14 +4,17 @@
 //! Covers the world records of M4.5 (terrain type tables, terrain-scene and scene-choice
 //! tables, scenes, water and fog-zone tables, the sky description, day descriptions, game
 //! time, the LOD-class table, camera states, collision meshes and cell geometry), the region
-//! descriptor's eight table slots, and the landblock family (trees, ceilings, light maps).
+//! descriptor's eight table slots, and the landblock family (trees, ceilings, light maps,
+//! distant-landscape sectors).
 //! Other decodable records get a one-line summary. Text output lists at most `--max-list`
 //! rows per list. JSON output lists every row of the records with a field view
 //! ([`has_field_view`]), except that cell geometry gives its property set as a count and its
 //! embedded render mesh as a byte length, and landblock properties give their property set
-//! as a count; landblock info, block maps, block-map descriptors and distant-landscape
-//! sectors are summarised as counts in both outputs. Field names follow the decoders in
-//! `tessera-formats`, which cite the spec section of every field.
+//! as a count; landblock info, block maps and block-map descriptors are summarised as counts
+//! in both outputs. Distant-landscape sectors (`distant-landscape.md`) show their header,
+//! per-landblock heights, water and ceilings, the water list, the DID tail and the invariant
+//! report, with sprites and entities listed (text: up to `--max-list`). Field names follow
+//! the decoders in `tessera-formats`, which cite the spec section of every field.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -26,7 +29,7 @@ use tessera_formats::environment::{
 };
 use tessera_formats::landblock::{
     CollisionTree, LandblockData, LandblockPids, LandblockProperties, LayoutRule, RegionDescriptor,
-    SurfaceChunk,
+    SectorMesh, SectorRecord, SurfaceChunk,
 };
 use tessera_formats::scenery::{
     ChildRef, PlacementNode, Scene, SceneChild, SceneChoiceTable, SceneSite, TerrainSceneEntry,
@@ -126,7 +129,7 @@ pub fn has_field_view(did: u32) -> bool {
             | K::CollisionMesh
             | K::CollisionGeometry
             | K::RegionDescriptor
-            | K::Landblock(L::Heightmap | L::Properties)
+            | K::Landblock(L::Heightmap | L::Properties | L::Other(5))
     )
 }
 
@@ -335,12 +338,7 @@ impl View<'_> {
                 "weenies": i.weenies.items.len(),
                 "layout_rule": rule(i.layout_rule),
             }),
-            Decoded::LandblockGroup(g) => json!({
-                "type": "distant-landscape sector",
-                "did": jd(g.did),
-                "samples": g.sample_count(),
-                "tail_bytes": g.tail.len(),
-            }),
+            Decoded::LandblockGroup(g) => sector_json(g),
             Decoded::Material { did, name } => json!({"type": name, "did": jd(*did)}),
         })
     }
@@ -397,13 +395,7 @@ impl View<'_> {
                 i.weenies.items.len(),
                 rule(i.layout_rule)
             )?,
-            Decoded::LandblockGroup(g) => writeln!(
-                s,
-                "distant-landscape sector {}: {} samples, {} tail bytes",
-                hx(g.did),
-                g.sample_count(),
-                g.tail.len()
-            )?,
+            Decoded::LandblockGroup(g) => self.sector_text(g, s)?,
             Decoded::Material { did, name } => writeln!(
                 s,
                 "{name} {} decodes (the explorer shows the material family's fields)",
@@ -1901,6 +1893,214 @@ impl View<'_> {
                 m.pixel_offset,
                 m.scale
             )?;
+        }
+        Ok(())
+    }
+}
+
+// ------------------------------------------------------------------- 0x805RXXYY
+
+fn sector_mesh_json(m: &SectorMesh) -> Value {
+    json!({
+        "samples": m.samples.len(),
+        "indices": m.indices.len(),
+        "bounds_min": m.bounds_min,
+        "bounds_max": m.bounds_max,
+        "chunks": m.chunks.iter().map(|c| json!({
+            "vertex_start": c.vertex_start,
+            "vertex_count": c.vertex_count,
+            "min": c.min,
+            "max": c.max,
+            "wet": c.wet,
+            "water_index": c.water_index,
+            "lods": c.lods.iter().map(|l| [l.first_index, l.triangles]).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn sector_json(g: &SectorRecord) -> Value {
+    json!({
+        "type": "distant-landscape sector",
+        "did": jd(g.did),
+        "key": g.key(),
+        "terrain": sector_mesh_json(&g.terrain),
+        "mode": g.mode,
+        "ceiling_mask": g.ceiling_mask,
+        "ceiling": g.ceiling.as_ref().map(sector_mesh_json),
+        "block_size": g.block_size,
+        "water": g.water.iter().map(|p| json!({"type": p.water_type, "height": p.height}))
+            .collect::<Vec<_>>(),
+        "sprites": g.sprites.iter().map(|p| json!({
+            "name_key": p.name_key,
+            "east": p.east,
+            "height": p.height,
+            "north": p.north,
+            "scale": p.scale,
+            "distance": p.distance,
+            "byte": p.byte,
+        })).collect::<Vec<_>>(),
+        "entities": g.entities.iter().map(|e| json!({
+            "type": e.entity_type,
+            "object": jd(e.object),
+            "iid": format!("0x{:016X}", e.iid.0),
+            "scale": e.scale,
+            "position_flags": e.position.flags(),
+            "landblock": e.position.landblock(),
+            "cell": e.position.cell(),
+            "offset": e.position.offset(),
+            "orientation": e.position.orientation(),
+            "property": e.property.as_ref().map(|p| format!("{:#x}", p.pid)),
+            "view_distance_sq": e.view_distance_sq,
+        })).collect::<Vec<_>>(),
+        "colour_list": jd(g.colour_list),
+        "ceiling_colour_list": jd(g.ceiling_colour_list),
+        "tile": jd(g.tile),
+        "ceiling_tile": jd(g.ceiling_tile),
+        "flow_map": jd(g.flow_map),
+        "imposter_table": jd(g.imposter_table),
+        "deviations": g.deviations(),
+    })
+}
+
+impl View<'_> {
+    fn sector_text(&self, g: &SectorRecord, s: &mut String) -> Result<()> {
+        writeln!(
+            s,
+            "distant-landscape sector {} (key {}): mode {}, ceiling mask {:#05x}, block size {}, \
+             {} water pairs, {} sprites, {} entities",
+            hx(g.did),
+            g.key().map_or("-".into(), |(x, y)| format!("{x}, {y}")),
+            g.mode,
+            g.ceiling_mask,
+            g.block_size,
+            g.water.len(),
+            g.sprites.len(),
+            g.entities.len()
+        )?;
+        writeln!(
+            s,
+            "terrain: {} samples, {} stored indices, bounds {} – {}",
+            g.terrain.samples.len(),
+            g.terrain.indices.len(),
+            v3(g.terrain.bounds_min),
+            v3(g.terrain.bounds_max)
+        )?;
+        if let Some(c) = &g.ceiling {
+            writeln!(
+                s,
+                "ceiling: {} samples, {} stored indices, bounds {} – {}",
+                c.samples.len(),
+                c.indices.len(),
+                v3(c.bounds_min),
+                v3(c.bounds_max)
+            )?;
+        }
+        let mut tab = Table::new(&[
+            ("X", Align::Right),
+            ("Y", Align::Right),
+            ("HEIGHTS", Align::Left),
+            ("WATER", Align::Left),
+            ("CEILING", Align::Left),
+        ]);
+        let (x0, y0) = g.origin().unwrap_or((0, 0));
+        for y in (0..3usize).rev() {
+            for x in 0..3usize {
+                let Some(c) = g.terrain.chunk(x, y) else {
+                    continue;
+                };
+                let water = g.water_at(x, y).map_or("-".into(), |p| {
+                    format!("type {} at {}", p.water_type, p.height)
+                });
+                let ceiling = g
+                    .ceiling
+                    .as_ref()
+                    .and_then(|m| m.chunk(x, y))
+                    .filter(|c| c.is_present())
+                    .map_or("-".into(), |c| format!("{} – {}", c.min[2], c.max[2]));
+                tab.row(vec![
+                    (usize::from(x0) + x).to_string(),
+                    (usize::from(y0) + y).to_string(),
+                    format!("{} – {}", c.min[2], c.max[2]),
+                    water,
+                    ceiling,
+                ]);
+            }
+        }
+        table_into(s, &tab)?;
+        writeln!(
+            s,
+            "colour list {}, ceiling colour list {}, tile {}, ceiling tile {}, flow map {}, \
+             imposter table {}",
+            od(g.colour_list),
+            od(g.ceiling_colour_list),
+            od(g.tile),
+            od(g.ceiling_tile),
+            od(g.flow_map),
+            od(g.imposter_table)
+        )?;
+        if !g.sprites.is_empty() {
+            let mut tab = Table::new(&[
+                ("KEY", Align::Right),
+                ("EAST", Align::Right),
+                ("NORTH", Align::Right),
+                ("HEIGHT", Align::Right),
+                ("SCALE", Align::Right),
+                ("DISTANCE", Align::Right),
+                ("BYTE", Align::Right),
+            ]);
+            let mut shown = 0;
+            for p in g.sprites.iter().take(self.max) {
+                shown += 1;
+                tab.row(vec![
+                    p.name_key.to_string(),
+                    p.east.to_string(),
+                    p.north.to_string(),
+                    p.height.to_string(),
+                    p.scale.to_string(),
+                    p.distance.to_string(),
+                    p.byte.to_string(),
+                ]);
+            }
+            writeln!(s, "sprites:")?;
+            table_into(s, &tab)?;
+            more(s, g.sprites.len(), shown)?;
+        }
+        if !g.entities.is_empty() {
+            let mut tab = Table::new(&[
+                ("TYPE", Align::Right),
+                ("OBJECT", Align::Left),
+                ("IID", Align::Left),
+                ("SCALE", Align::Right),
+                ("OFFSET", Align::Left),
+                ("PROPERTY", Align::Left),
+                ("VIEW", Align::Right),
+            ]);
+            let mut shown = 0;
+            for e in g.entities.iter().take(self.max) {
+                shown += 1;
+                tab.row(vec![
+                    e.entity_type.to_string(),
+                    hx(e.object),
+                    format!("0x{:016X}", e.iid.0),
+                    e.scale[0].to_string(),
+                    e.position.offset().map_or("-".into(), v3),
+                    e.property
+                        .as_ref()
+                        .map_or("-".into(), |p| format!("{:#x}", p.pid)),
+                    e.view_distance().to_string(),
+                ]);
+            }
+            writeln!(s, "entities:")?;
+            table_into(s, &tab)?;
+            more(s, g.entities.len(), shown)?;
+        }
+        let dev = g.deviations();
+        if dev.is_empty() {
+            writeln!(s, "invariants (distant-landscape.md §7): all hold")?;
+        } else {
+            for d in dev {
+                writeln!(s, "invariant broken: {d}")?;
+            }
         }
         Ok(())
     }

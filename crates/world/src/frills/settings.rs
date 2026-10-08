@@ -3,7 +3,7 @@
 //! 1–7, §8.4). The numbers are the client's defaults and thresholds (decision 0012).
 
 use crate::context::WorldContext;
-use crate::scenery::{ObjectProperties, SceneryError, property_dictionary, value_bool};
+use crate::scenery::{ObjectProperties, SceneryError, property_dictionary, value_flag};
 
 /// Frill sector edge in units (160 / 16; §8.2).
 pub const FRILL_SECTOR_SIZE: f32 = 10.0;
@@ -286,11 +286,11 @@ impl FrillObjectValues {
             if let Some(b) = pids
                 .allow_reduction
                 .and_then(|k| p.get(k))
-                .and_then(value_bool)
+                .and_then(value_flag)
             {
                 v.allow_distance_reduction = b;
             }
-            if let Some(b) = pids.opaque.and_then(|k| p.get(k)).and_then(value_bool) {
+            if let Some(b) = pids.opaque.and_then(|k| p.get(k)).and_then(value_flag) {
                 v.opaque = b;
             }
             if let Some(f) = pids.animation_intensity.and_then(|k| p.float(k)) {

@@ -28,9 +28,10 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::Setup;
 use tessera_formats::setup::{CollisionBox, CollisionCapsule, CollisionSphere, Frame, Quaternion};
 use tessera_physics::controller::{
-    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind, MAX_SPEED,
-    MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
+    CharacterShape, Controller, ControllerConfig, LayerConditions, LayerKind, LiquidWater,
+    MAX_SPEED, MAX_STEP_DISPLACEMENT, MOVEMENT_FIELD_NAMES, MoveInput, MovementLayer, MovementPids,
     MovementState, MoverState, NoWater, PlayerMovementRecord, StepEnv, StepOutcome, WaterContact,
+    WaterQuery,
 };
 use tessera_physics::geometry::{
     BodyPurpose, BodySource, CollisionFlags, CollisionLimits, CollisionSetBuilder, CollisionView,
@@ -461,6 +462,23 @@ fuzz_target!(|data: &[u8]| {
         }),
         ..MoverState::at(view.to_region(local), b.f())
     };
+    // The water at a few points: the set, the view and the generic query agree, and the
+    // surface (the top of the contiguous liquid, `water.md` §7.4) is never below the point.
+    for _ in 0..4 {
+        let q = [b.small() - 2.0, b.small() - 2.0, b.small() - 4.0];
+        let w = set.water_at(q);
+        assert_eq!(w, LiquidWater(&set).water_at(q));
+        if let Some(w) = w {
+            assert!(w.surface.is_finite() && w.surface >= q[2], "{q:?} {w:?}");
+            assert!(w.flags.liquid);
+        }
+        let v = [q[0] + offset[0], q[1] + offset[1], q[2] + offset[2]];
+        let vw = view.water_at(v);
+        assert_eq!(vw, LiquidWater(&view).water_at(v));
+        if let Some(w) = vw {
+            assert!(w.surface.is_finite() && w.surface >= v[2], "{v:?} {w:?}");
+        }
+    }
     let mut c = Controller::new(config, Arc::new(record), pids, conditions, start);
     let p = c.params();
     assert!(p.forward_speed.is_finite() && p.forward_speed <= MAX_SPEED);

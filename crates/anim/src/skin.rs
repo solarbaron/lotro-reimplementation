@@ -7,34 +7,45 @@
 //! (§4.3): [`write_palette_mat4`] or [`write_palette_rows3x4`] into a renderer buffer of
 //! [`PALETTE_CAPACITY`] entries. A renderer that wants smaller per-draw palettes can use a
 //! [`CompactPalette`] per submesh (sorted distinct bones with a vertex-index remap applied
-//! at upload, an implementation choice §4.3 allows). Skinning is linear blend skinning
-//! (§4.7).
+//! at upload, an implementation choice §4.3 allows). Skinning matrices come from model
+//! triples by the rule of §5.4 (K26); skinning is linear blend skinning (§4.7).
 
 use glam::{Mat4, Vec3, Vec4};
+use tessera_havok::Transform;
 
 use crate::error::{AnimError, Result};
-use crate::skeleton::{Skeleton, check_len};
+use crate::skeleton::{Qs, Skeleton, check_len};
 
 /// Palette entries per skeleton instance: covers every observed skeleton and bone index
 /// (`skeleton-anim.md` §4.3: at most 248 bones, largest index 247).
 pub const PALETTE_CAPACITY: usize = 256;
 
-/// Skinning matrices **P**_b · **B**_b⁻¹ for a model pose (§4.4): `out[b]` for every bone.
+/// Skinning matrices for a pose given by its model **triples** (`model[b]` = bone *b*'s
+/// (translation, rotation, per-axis scale), as [`Skeleton::compose_triples`] or
+/// [`Skeleton::compose_with_triples`] write them, or [`Skeleton::reference_triples`]):
+/// `out[b]` for every bone, by the client's rule (`skeleton-anim.md` §5.4, K26).
 ///
-/// Tessera Decision (`skeleton-anim.md` implementer notes, broken sample values): a product
-/// that is not finite (a hand-built model pose, or one whose scale overflows against the
-/// inverse bind) is written as the identity, so the bone's vertices stay in the bind pose
-/// and no infinity or NaN reaches a GPU palette.
+/// With the pose triple (*t*, *q*, *s*) and the inverse reference triple *X*_b
+/// ([`Skeleton::inverse_reference`]), the skinning triple is (*t* + *q* applied to
+/// (*s* ⊙ *X*_b.t), *q* · *X*_b.q, *s* ⊙ *X*_b.s) and the matrix is T · R · S of it: a
+/// bind-space vertex is scaled along the bind axes, then rotated by *q* · *q*_r⁻¹. With
+/// every scale 1 this equals **P**_b · **B**_b⁻¹ (§4.4); for a bone whose reference model
+/// scale is not 1 the reference pose does **not** give the identity (a uniform reference
+/// scale σ moves a vertex by (1 − σ) *t*_r, worked example §14.10).
+///
+/// Tessera rule (`skeleton-anim.md` §15, bounds and fallbacks): a skinning matrix that is
+/// not finite is written as the identity, so the bone's vertices stay in the bind pose and
+/// no infinity or NaN reaches a GPU palette.
 ///
 /// # Errors
 ///
 /// [`AnimError::BufferTooSmall`] when `model` or `out` is shorter than the bone count.
-pub fn skinning_matrices(skeleton: &Skeleton, model: &[Mat4], out: &mut [Mat4]) -> Result<()> {
+pub fn skinning_matrices(skeleton: &Skeleton, model: &[Transform], out: &mut [Mat4]) -> Result<()> {
     let n = skeleton.bone_count();
     check_len("model pose", n, model.len())?;
     check_len("skinning matrices", n, out.len())?;
-    for ((o, p), inv) in out.iter_mut().zip(model).zip(skeleton.inverse_bind()) {
-        let m = *p * *inv;
+    for ((o, p), x) in out.iter_mut().zip(model).zip(skeleton.inverse_reference()) {
+        let m = Qs::of(p).skinning(Qs::of(x)).matrix();
         *o = if m.is_finite() { m } else { Mat4::IDENTITY };
     }
     Ok(())
@@ -263,7 +274,7 @@ pub fn check_joints(joints: &[[u8; 4]], weights: &[[f32; 4]], bones: usize) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tessera_havok::Transform;
+    use crate::skeleton::local_matrix;
 
     fn example() -> Skeleton {
         let h = std::f32::consts::FRAC_1_SQRT_2;
@@ -289,8 +300,8 @@ mod tests {
         let s = example();
         let mut local = s.reference_pose();
         local[1].rotation = [0.0, 0.0, 0.0, 1.0];
-        let mut model = vec![Mat4::IDENTITY; 3];
-        s.compose(&local, &mut model).unwrap();
+        let mut model = vec![Transform::IDENTITY; 3];
+        s.compose_triples(&local, &mut model).unwrap();
         let mut skin = vec![Mat4::IDENTITY; 3];
         skinning_matrices(&s, &model, &mut skin).unwrap();
         let v = Vec3::new(-1.2, 0.5, 1.0);
@@ -302,7 +313,7 @@ mod tests {
         assert!(p.abs_diff_eq(Vec3::new(-0.6, 1.1, 1.0), 1e-5), "{p}");
         // Reference pose: identity skinning.
         let mut skin_ref = vec![Mat4::IDENTITY; 3];
-        skinning_matrices(&s, s.reference_model(), &mut skin_ref).unwrap();
+        skinning_matrices(&s, s.reference_triples(), &mut skin_ref).unwrap();
         for m in &skin_ref {
             assert!(m.abs_diff_eq(Mat4::IDENTITY, 1e-5));
         }
@@ -310,6 +321,60 @@ mod tests {
         assert!(q.abs_diff_eq(v, 1e-5));
         let n = skin_direction(&skin, &[2], &[1.0], Vec3::X);
         assert!((n.length() - 1.0).abs() < 1e-5);
+    }
+
+    /// `skeleton-anim.md` §14.10 (K26): a root with reference translation (0, 0, 1) and
+    /// uniform reference scale 0.5. The inverse reference triple keeps the undivided
+    /// translation, so the reference pose moves a vertex by (1 − σ) *t*_r.
+    #[test]
+    fn skinning_with_reference_scale_example_14_10() {
+        let s = Skeleton::from_parts(
+            &[-1],
+            &[Transform {
+                translation: [0.0, 0.0, 1.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [0.5; 3],
+            }],
+        )
+        .unwrap();
+        let x = s.inverse_reference()[0];
+        assert_eq!(x.translation, [0.0, 0.0, -1.0]);
+        assert_eq!(x.scale, [2.0; 3]);
+        let mut skin = vec![Mat4::IDENTITY; 1];
+        skinning_matrices(&s, s.reference_triples(), &mut skin).unwrap();
+        let p = skin_position(&skin, &[0], &[1.0], Vec3::new(0.0, 0.0, 1.0));
+        assert!(p.abs_diff_eq(Vec3::new(0.0, 0.0, 1.5), 1e-6), "{p}");
+        // Not the exact inverse: the 2026-10-05 rule would have left it at (0, 0, 1).
+        assert!(!skin[0].abs_diff_eq(Mat4::IDENTITY, 1e-3));
+    }
+
+    /// §5.4 (K26): the scale acts along the bind axes before the rotation q · q_r⁻¹. A bone
+    /// whose reference rotation is 90° about z, posed at that rotation with model scale
+    /// (2, 1, 1): a vertex 1 m along model +x from the joint is doubled along model x
+    /// (`s ⊙ v` in bind axes), not along the bone's own x axis.
+    #[test]
+    fn skinning_scales_along_bind_axes() {
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        let s = Skeleton::from_parts(
+            &[-1],
+            &[Transform {
+                translation: [0.0; 3],
+                rotation: [0.0, 0.0, h, h],
+                scale: [1.0; 3],
+            }],
+        )
+        .unwrap();
+        let mut pose = s.reference_triples().to_vec();
+        pose[0].scale = [2.0, 1.0, 1.0];
+        let mut skin = vec![Mat4::IDENTITY; 1];
+        skinning_matrices(&s, &pose, &mut skin).unwrap();
+        let p = skin_position(&skin, &[0], &[1.0], Vec3::X);
+        // t + q(s ⊙ X.t) + (q · q_r⁻¹)((s ⊙ 1/s_r) ⊙ v) = (2, 0, 0).
+        assert!(p.abs_diff_eq(Vec3::new(2.0, 0.0, 0.0), 1e-5), "{p}");
+        // The matrix product P · B⁻¹ would scale along the bone's x (model y) instead.
+        let product = local_matrix(&pose[0]) * s.reference_model()[0].inverse();
+        let q = product.transform_point3(Vec3::X);
+        assert!(q.abs_diff_eq(Vec3::new(1.0, 0.0, 0.0), 1e-5), "{q}");
     }
 
     /// `skeleton-anim.md` §14.3 / `mesh.md` §6.2.

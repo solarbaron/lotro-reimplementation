@@ -736,6 +736,45 @@ fn light_map_is_added_and_masks_start_in_the_south() -> Result<(), RenderError> 
         "{south:?}"
     );
     assert!(near(north, [c, c, c], 3.0), "{north:?}");
+
+    // Mask (terrain-texturing.md §5.2): stored row 0 covers the south edge. Row 0 fully on,
+    // row 1 off; the green layer with the mask rule (α = m) over a red base shows green in
+    // the south only (α = 0 in the north is discarded at τ = 0).
+    let red = solid(&mut r, [255, 0, 0, 255])?;
+    let green = solid(&mut r, [0, 255, 0, 255])?;
+    let mask = r.upload_texture(&TextureUpload {
+        color_space: ColorSpace::Linear,
+        filter: Filter::Nearest,
+        wrap: Wrap::Clamp,
+        ..TextureUpload::rgba8(1, 2, &[255, 255, 255, 255, 255, 255, 255, 0])
+    })?;
+    let base = TerrainLayer {
+        textures: TerrainLayerTextures {
+            diffuse: Some(red),
+            ..TerrainLayerTextures::default()
+        },
+        ..layer
+    };
+    let masked = TerrainLayer {
+        opacity: TerrainOpacity::Mask,
+        alpha_test_ref: 0.0,
+        textures: TerrainLayerTextures {
+            diffuse: Some(green),
+            mask: Some(mask),
+            ..TerrainLayerTextures::default()
+        },
+        ..layer
+    };
+    let img = draw_flat(&mut r, &[base, masked], None, neutral())?;
+    for (x, y, want, what) in [
+        (8, 13, [0.0, 1.0, 0.0], "south"),
+        (3, 14, [0.0, 1.0, 0.0], "south-west"),
+        (8, 2, [1.0, 0.0, 0.0], "north"),
+        (12, 1, [1.0, 0.0, 0.0], "north-east"),
+    ] {
+        let px = img.pixel(x, y);
+        assert!(near(px, want, 3.0), "mask {what}: {px:?} vs {want:?}");
+    }
     Ok(())
 }
 
@@ -806,6 +845,19 @@ fn normal_map_turns_with_the_texture_rotation() -> Result<(), RenderError> {
         "{:?}",
         img.pixel(8, 8)
     );
+    // T and B are unit vectors (§6.4): a scaled chunk transform does not strengthen the
+    // tilt (unnormalised, 3 T against the unit N would give N · L = 0.91, not n.x).
+    for scale in [3.0, 0.25] {
+        let chunk = flat_chunk(&mut r, &[layer(0.0)], None, true)?;
+        let draw = TerrainDraw::new(chunk, Mat4::from_scale(Vec3::splat(scale)));
+        let img = draw_chunk(&mut r, draw, lighting(toward))?;
+        // Pixel (1, 14) is world (0.375, 0.375), on the chunk at either scale.
+        assert!(
+            near(img.pixel(1, 14), [want; 3], 3.0),
+            "scale {scale}: {:?} vs {want}",
+            img.pixel(1, 14)
+        );
+    }
     Ok(())
 }
 

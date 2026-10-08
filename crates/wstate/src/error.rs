@@ -133,6 +133,29 @@ pub enum WStateError {
         problem: &'static str,
     },
 
+    /// A property a typed record view needs is absent or has another type
+    /// (`player-character.md`).
+    #[error("{record}: property {property} {problem}")]
+    BadProperty {
+        /// The record kind being read.
+        record: &'static str,
+        /// The property name.
+        property: &'static str,
+        /// What is wrong.
+        problem: &'static str,
+    },
+
+    /// A list of a typed record view holds more entries than the reader accepts.
+    #[error("{what}: {count} entries exceed the limit of {limit}")]
+    TooMany {
+        /// What was being read.
+        what: &'static str,
+        /// The number found.
+        count: usize,
+        /// The limit.
+        limit: usize,
+    },
+
     /// Reading or decoding through the property layer failed.
     #[error(transparent)]
     Props(#[from] PropsError),

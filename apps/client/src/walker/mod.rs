@@ -36,6 +36,7 @@
 
 pub(crate) mod boot;
 pub mod characters;
+pub mod chat;
 pub(crate) mod controls;
 pub mod env;
 pub mod farband;
@@ -57,6 +58,9 @@ pub(crate) mod source;
 pub(crate) mod terrain;
 pub(crate) mod view;
 pub mod water;
+
+/// The walker's `terrain-texturing.md` §4.9 path, for the real-data row checks.
+pub use self::terrain::{block_open, layerless_key, resolve_block_surface};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -95,7 +99,7 @@ use self::parse::FlyPath;
 use self::places::PlaceBuild;
 use self::resolver::Resolver;
 use self::source::{FigureBlock, Places, SourceShared, describe, loc_text, lock};
-use self::terrain::{BlockInputs, TerrainFrame, TerrainLayer, TerrainLight};
+use self::terrain::{BlockInputs, TerrainFrame, TerrainLayer};
 use self::view::{Anchor, Frustum};
 use self::water::WaterLayer;
 use crate::net::PlayerLocation;
@@ -123,6 +127,27 @@ pub trait WalkerSession {
     /// call. The default has none.
     fn drain_entity_events(&mut self, out: &mut Vec<Event>, max: usize) {
         let _ = (out, max);
+    }
+    /// The interpolated state of a networked entity at `now` (a remote session,
+    /// `tessera-protocol.md` §8.6); `None` keeps the walker's extrapolation of its moves
+    /// (the sandbox, the default).
+    fn sample_entity(&self, id: EntityId, now: Instant) -> Option<tessera_net::interp::Sample> {
+        let _ = (id, now);
+        None
+    }
+    /// Connection state for the HUD. The default has none.
+    fn net_status(&self) -> Option<crate::net::NetStatus> {
+        None
+    }
+    /// Appends the chat lines received since the last call. The default has none.
+    fn drain_chat(&mut self, out: &mut Vec<crate::net::ChatLine>) {
+        let _ = out;
+    }
+    /// Says `text` on the local channel; `false` when it was not sent (not in the world).
+    /// The default sends nothing.
+    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
+        let _ = (now, text);
+        false
     }
 }
 
@@ -327,7 +352,7 @@ pub struct WalkerConfig {
     /// Terrain worker threads.
     pub terrain_threads: usize,
     /// Load and draw every interior cell and interior entity whatever the camera's cell
-    /// (a debugging view; `walker.md` §14.11). Without it interiors are drawn through the
+    /// (a debugging view; `walker.md` §14.12 (k)). Without it interiors are drawn through the
     /// portal system of `landblock.md` §4.11 from inside only.
     pub interiors: bool,
     /// Keymap file.
@@ -355,6 +380,8 @@ pub struct WalkerConfig {
     pub bench: Option<BenchPlan>,
     /// Move forward on its own from the start: `Some(true)` walking, `Some(false)` running.
     pub autorun: Option<bool>,
+    /// World audio (ROADMAP M6); off by default.
+    pub audio: crate::audio::AudioConfig,
     /// Walk on collision (`tessera-physics`, ROADMAP M4.5) when the world builds collision
     /// sets; otherwise, or when false, walk mode follows terrain heights.
     pub collision_walk: bool,
@@ -425,6 +452,7 @@ impl Default for WalkerConfig {
             characters: CharacterConfig::default(),
             bench: None,
             autorun: None,
+            audio: crate::audio::AudioConfig::default(),
             collision_walk: true,
             avatar: crate::avatar::AvatarSpec::default(),
             systems: Systems::all(),
@@ -498,6 +526,23 @@ pub fn keys_taken_by(keymap: &tessera_input::Keymap) -> HashSet<tessera_input::K
     taken
 }
 
+/// The camera's interior cell (`walker.md` §14.12 (a), `landblock.md` §4.12 Tessera
+/// Decision): the cell lookup of the resident landblocks at `eye` (the eye as the camera
+/// controller placed it, before any terrain clamp), else `mover` (the walking character's
+/// cell, in walk mode on collision); `None` outdoors. Owner landblock and cell number.
+#[must_use]
+pub fn camera_cell_at(
+    streamer: &WorldStreamer,
+    eye: &WorldPos,
+    mover: Option<(LandblockKey, u16)>,
+) -> Option<(LandblockKey, u16)> {
+    streamer
+        .cell_at(eye)
+        .map(|(k, c)| (k, c.index))
+        .filter(|(_, c)| *c != OUTDOORS)
+        .or(mover)
+}
+
 /// The walker (module docs).
 pub struct Walker {
     config: WalkerConfig,
@@ -505,6 +550,9 @@ pub struct Walker {
     set: Arc<ArchiveSet>,
     pool: WorkerPool,
     streamer: WorldStreamer,
+    /// The landblocks the collision walk pins (`walker.md` §13.3: the owner of the
+    /// mover's cell), streamed wherever they lie.
+    pins: movement::PinStreamers,
     terrain: TerrainLayer,
     objects: ObjectLayer,
     minimap: MinimapLayer,
@@ -541,6 +589,8 @@ pub struct Walker {
     player_region: u8,
     /// Main-thread time of the character layer this frame (events, figures, animation).
     chars_ms: f64,
+    /// World audio (`None` with audio off).
+    audio: Option<crate::audio::WorldAudio>,
     /// The collision walk mode's mover, loading on its own thread.
     mover_job: Option<std::thread::JoinHandle<movement::setup::MoverSetup>>,
     /// The M4.5 systems in effect (`walker.md` §14.2).
@@ -553,9 +603,11 @@ pub struct Walker {
     frills: FrillLayer,
     /// The environment of this frame.
     frame_env: Option<FrameEnv>,
-    /// The frame's light table (render frame) and the same lights as the terrain sees them.
+    /// The frame's light table (render frame).
     lights: Vec<Light>,
-    terrain_lights: Vec<TerrainLight>,
+    /// The reach of each light of [`Self::lights`] for the renderer's selection
+    /// (`lighting.md` §8.5).
+    light_reach: Vec<tessera_render::LightReach>,
     /// Start of the material and light clock (`material.md` §5.3.1).
     clock_start: Instant,
     /// The eye of the previous frame (camera travel for fades).
@@ -587,6 +639,10 @@ pub struct Walker {
     indoor: Option<(LandblockKey, Instant, IndoorInputs)>,
     /// Visibility cells drawn in the last frame from inside (HUD).
     interior_drawn: Option<usize>,
+    /// Chat overlay and input (M7).
+    chat: chat::ChatOverlay,
+    /// The HUD's network line (M7).
+    net_line: Option<String>,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -738,6 +794,15 @@ impl Walker {
             budget_mib = config.stream.residency_budget >> 20,
             "world walker ready"
         );
+        let audio =
+            (config.audio.backend != crate::audio::backend::BackendChoice::Off).then(|| {
+                crate::audio::WorldAudio::new(
+                    config.audio.clone(),
+                    Arc::clone(&set),
+                    pool.clone(),
+                    ctx.options().active_content_layers.clone(),
+                )
+            });
         // The collision walk mode: the mover (capsule, movement record, conditions) loads on
         // its own thread (locating the movement record reads the 0x79 sets).
         let mover_job = if config.collision_walk && ctx.options().build_collision {
@@ -765,6 +830,7 @@ impl Walker {
             config,
             ctx,
             set,
+            pins: movement::PinStreamers::new(Some(pool.clone())),
             pool,
             streamer,
             terrain,
@@ -802,6 +868,7 @@ impl Walker {
             char_draws: Vec::new(),
             player_region: config_region,
             chars_ms: 0.0,
+            audio,
             mover_job,
             systems,
             env,
@@ -810,7 +877,7 @@ impl Walker {
             frills: FrillLayer::default(),
             frame_env: None,
             lights: Vec::new(),
-            terrain_lights: Vec::new(),
+            light_reach: Vec::new(),
             clock_start: now,
             last_eye: None,
             env_ms: 0.0,
@@ -825,6 +892,8 @@ impl Walker {
             indoor_pids,
             indoor: None,
             interior_drawn: None,
+            chat: chat::ChatOverlay::default(),
+            net_line: None,
         })
     }
 
@@ -832,14 +901,17 @@ impl Walker {
     /// §14.2–§14.3): `[` and `]` move the time of day by a 24th of a day, `\` stops and
     /// restarts the clock, `-` and `=` halve and double its rate; F5–F11 switch the
     /// terrain layers, shadows, water, sky, generated scenery, frills and per-class
-    /// distances. A key that the keymap binds to an action is left to the keymap.
+    /// distances. A key that the keymap binds to an action is left to the keymap. The
+    /// chat (M7) sees every event first; while its input is open the walker keys are off.
     pub fn input(&mut self, event: &RawEvent) {
         use tessera_input::KeyCode as K;
-        if let RawEvent::Key {
-            key,
-            pressed: true,
-            repeat: false,
-        } = event
+        // While the chat input is open, keys are typed text, not walker keys.
+        if !self.chat.is_open()
+            && let RawEvent::Key {
+                key,
+                pressed: true,
+                repeat: false,
+            } = event
             && !self.taken_keys.contains(key)
         {
             match key {
@@ -865,7 +937,7 @@ impl Walker {
                 _ => {}
             }
         }
-        self.controls.handle(event);
+        chat::route(&mut self.chat, &mut self.controls, event);
     }
 
     /// Switches system `s` on or off at run time.
@@ -963,9 +1035,12 @@ impl Walker {
         self.systems.on(System::Frills) && self.scene.outdoor_visible
     }
 
-    /// Whether the sky is drawn: switched on and sky-visible (§4.12).
+    /// Whether the sky is drawn: switched on, sky-visible (§4.12) and not hidden by fog
+    /// (`environment.md` §11.7 step 10).
     fn sky_drawn(&self) -> bool {
-        self.systems.on(System::Sky) && self.scene.sky_visible
+        self.systems.on(System::Sky)
+            && self.scene.sky_visible
+            && !self.frame_env.as_ref().is_some_and(|f| f.sky_fogged)
     }
 
     /// What keeps [`Walker::settled`] false (diagnostics), empty when settled.
@@ -1090,6 +1165,15 @@ impl Walker {
             self.player_region,
             now,
         );
+        if let Some(w) = world.as_deref() {
+            self.characters
+                .apply_samples(&|id| w.sample_entity(id, now), self.player_region, now);
+            // Remote sessions only: the sandbox's HUD (and its screenshots) stay as they were.
+            self.net_line = w
+                .net_status()
+                .filter(|s| s.link.is_some())
+                .map(|s| hud::net_line(&s));
+        }
         let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
         // Input and movement: walk mode on collision once the mover has loaded.
@@ -1109,7 +1193,10 @@ impl Walker {
         }
         let tiles = self.terrain.tiles().clone();
         let ground = |gx: f64, gy: f64| tiles.height_at(gx, gy);
-        let collision = movement::StreamedCollision(&self.streamer);
+        let collision = movement::PinnedCollision {
+            main: &self.streamer,
+            pins: &self.pins,
+        };
         let ce = self.controls.frame(dt, &ground, Some(&collision));
         events.quit = ce.quit;
         events.screenshot = ce.screenshot;
@@ -1139,6 +1226,14 @@ impl Walker {
         if let Some(focus) = focus {
             let t = Instant::now();
             self.last_report = self.streamer.update(focus);
+            // The pinned landblocks a step needs wherever they lie (`walker.md` §13.3).
+            let pins = self
+                .controls
+                .physics()
+                .filter(|_| self.controls.mode() == MoveMode::Walk)
+                .map(movement::PhysicsWalker::pins)
+                .unwrap_or_default();
+            self.pins.update(self.streamer.context(), &pins);
             self.stream_ms = t.elapsed().as_secs_f64() * 1e3;
         }
         // The frill ring follows the camera and the player (`scenery.md` §8.2).
@@ -1175,11 +1270,17 @@ impl Walker {
                 (eye_w, Vec3::X)
             };
             let cam = anchor.to_render(&eye_w).unwrap_or(Vec3::ZERO);
-            let sky_key = self.streamer.sky_key_at(&eye_w);
+            // Key A at the viewer's position (`environment.md` §7.1.1): the camera's cell
+            // with its owner landblock, else the eye's landblock.
+            let sky_key = Some(env::camera_sky_key(
+                &self.streamer,
+                self.camera_cell,
+                &eye_w,
+            ));
             let indoor = if self.scene.outdoor_visible {
                 None
             } else {
-                Some(self.indoor_inputs(now))
+                Some(self.indoor_inputs(now, &eye_w))
             };
             let time = self.material_time();
             let fe = self.env.update(
@@ -1193,7 +1294,7 @@ impl Walker {
                 time as f32,
             );
             if self.systems.on(System::Lights) {
-                let (lights, tl) = self.env.lights(
+                let (lights, reach) = self.env.lights(
                     &self.streamer,
                     &anchor,
                     &eye_w,
@@ -1206,10 +1307,10 @@ impl Walker {
                     },
                 );
                 self.lights = lights;
-                self.terrain_lights = tl;
+                self.light_reach = reach;
             } else {
                 self.lights.clear();
-                self.terrain_lights.clear();
+                self.light_reach.clear();
             }
             self.frame_env = Some(fe);
         }
@@ -1282,6 +1383,51 @@ impl Walker {
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
 
+        // World audio: listener at the camera, the avatar at the player (ROADMAP M6).
+        if self.audio.is_some() {
+            let placed = self.controls.placed();
+            let eye = placed.then(|| {
+                let (e, d) = self.view();
+                (e, [d.x, d.y, d.z])
+            });
+            let player = self
+                .controls
+                .avatar()
+                .or_else(|| placed.then(|| (self.controls.focus(), self.controls.heading())));
+            if let Some(audio) = self.audio.as_mut() {
+                audio.update(crate::audio::AudioInput {
+                    dt: f64::from(dt),
+                    streamer: &self.streamer,
+                    eye,
+                    player,
+                });
+            }
+        }
+
+        let mut chat_in = Vec::new();
+        let mut unsent = None;
+        if let Some(w) = world.as_deref_mut() {
+            w.drain_chat(&mut chat_in);
+            while let Some(text) = self.chat.take_outgoing() {
+                if !w.send_chat(now, &text) {
+                    unsent = Some("Not in the world: chat not sent");
+                }
+            }
+        } else if self.chat.take_outgoing().is_some() {
+            unsent = Some("Not connected: chat not sent");
+        }
+        let notice = self.notice.as_ref().map(|(t, _)| t.as_str());
+        if self
+            .chat
+            .receive(&chat_in, self.net_line.is_some(), notice, now)
+        {
+            self.notice = None;
+        }
+        if let Some(text) = unsent {
+            self.chat.push_local(text, now);
+        }
+        let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
+        self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {
             self.report_move(w, now);
         }
@@ -1442,28 +1588,35 @@ impl Walker {
 
     /// Finds the camera's interior cell (`landblock.md` §4.12 Tessera Decision): the cell
     /// lookup at the eye; when it finds none but the walking character's feet are in a
-    /// cell, the character's cell. Then the frame's scene flags: inside, those of the
-    /// cell's PVS; outdoors, both set unless a resident landblock has an outdoor-walk entry
-    /// cell.
+    /// cell, the character's cell. Then the frame's scene flags by the pass of
+    /// `landblock.md` §4.12: inside, the cell visited with its PVS; outdoors, both set and
+    /// the outdoor-walk entry cells of the resident landblocks visited with theirs.
     fn update_camera_cell(&mut self) {
         let (eye, _) = self.controls.eye();
-        let mut cell = self
-            .streamer
-            .cell_at(&eye)
-            .map(|(k, c)| (k, c.index))
-            .filter(|(_, c)| *c != OUTDOORS);
-        if cell.is_none() && self.controls.mode() == MoveMode::Walk {
-            cell = self
-                .controls
+        let mover = if self.controls.mode() == MoveMode::Walk {
+            self.controls
                 .physics()
-                .and_then(movement::PhysicsWalker::cell);
-        }
+                .and_then(movement::PhysicsWalker::cell)
+        } else {
+            None
+        };
+        let cell = camera_cell_at(&self.streamer, &eye, mover);
         self.camera_cell = cell;
         self.scene = match cell {
             Some((k, c)) => self
                 .visibility_of(k)
                 .map_or(SceneFlags::CLOSED, |v| v.scene_flags(c)),
-            None => interiors::outdoor_flags(!self.outdoor_entries.is_empty()),
+            None => {
+                // The outdoor branch visits the outdoor-walk entry cells of every loaded
+                // landblock (none in this install, LI8), in landblock order.
+                let mut keys: Vec<LandblockKey> = self.outdoor_entries.iter().copied().collect();
+                keys.sort_unstable();
+                let blocks: Vec<Arc<BlockVisibility>> = keys
+                    .into_iter()
+                    .filter_map(|k| self.visibility_of(k))
+                    .collect();
+                interiors::outdoor_flags(blocks.iter().map(|b| &**b))
+            }
         };
     }
 
@@ -1498,11 +1651,14 @@ impl Walker {
         Some(vis)
     }
 
-    /// The indoor record's inputs at the camera's cell (`landblock.md` §4.13): looked up
-    /// in the cell's property set, then its landblock info's, then its block map's; re-read
-    /// when the cell's landblock changes and otherwise at most every [`INDOOR_REREAD`].
-    fn indoor_inputs(&mut self, now: Instant) -> IndoorInputs {
-        let Some((key, index)) = self.camera_cell else {
+    /// The indoor record's inputs at the camera position (`landblock.md` §4.13): looked up
+    /// at [`env::lookup_target`] (in a cell: the cell's property set, then its owner's
+    /// landblock info and block map; otherwise the landblock info and block map under the
+    /// eye); re-read when that landblock changes and otherwise at most every
+    /// [`INDOOR_REREAD`].
+    fn indoor_inputs(&mut self, now: Instant, eye: &WorldPos) -> IndoorInputs {
+        let (key, cell) = env::lookup_target(self.camera_cell, eye);
+        let Some(key) = key else {
             return IndoorInputs::read(&self.indoor_pids, |_| None);
         };
         if let Some((k, at, inputs)) = &self.indoor
@@ -1511,16 +1667,11 @@ impl Walker {
         {
             return *inputs;
         }
-        let bundle = self.streamer.bundle(key);
-        let info = bundle.and_then(|b| b.info.as_ref());
-        let cell = info
-            .and_then(|i| i.cell(index))
-            .and_then(|c| c.properties.as_ref());
-        let inputs = IndoorInputs::read(&self.indoor_pids, |pid| {
-            cell.and_then(|p| p.get(pid))
-                .or_else(|| info.and_then(|i| i.properties.get(pid)))
-                .or_else(|| bundle.and_then(|b| b.block_props.value(pid)))
-        });
+        let inputs = env::indoor_inputs_at(
+            self.streamer.bundle(key).map(|b| &**b),
+            cell,
+            &self.indoor_pids,
+        );
         self.indoor = Some((key, now, inputs));
         inputs
     }
@@ -1668,6 +1819,7 @@ impl Walker {
     /// releases its references first, so it acquires them again on the next frame (the
     /// water surfaces and sky parts would otherwise stay pending for ever).
     fn clear_all(&mut self, renderer: &mut Renderer<'_>) {
+        self.pins.clear();
         self.terrain.clear(renderer, &mut self.objects);
         self.frills.clear(&mut self.objects);
         self.water.release(&mut self.objects);
@@ -1762,6 +1914,9 @@ impl Walker {
             ),
             WHITE,
         ));
+        if let Some(net) = &self.net_line {
+            out.push((net.clone(), GREY));
+        }
         let Some(pos) = self.focus() else {
             let s = lock(&self.shared);
             let what = match (&s.places, s.focus_request) {
@@ -1998,6 +2153,9 @@ impl Walker {
                 ),
                 GREY,
             ));
+            if let Some(a) = &self.audio {
+                out.push((a.hud_line(), GREY));
+            }
             if self.flight.is_none() {
                 out.push((
                     format!("{} (fly {:.0} m/s)", self.help, self.controls.fly_speed()),
@@ -2070,35 +2228,25 @@ impl Walker {
             let clear = fe.as_ref().map_or(SKY, |f| f.clear);
             let pass = frame.world_pass("walker-world", &camera);
             pass.clear(clear);
-            let sun = if lit {
+            if lit {
                 let mut fl = fe
                     .as_ref()
                     .map_or_else(tessera_render::FrameLighting::default, |f| {
                         f.lighting.clone()
                     });
                 fl.lights.clone_from(&self.lights);
-                let sun = fl.sun.is_some();
                 pass.frame_lighting(fl);
-                sun
+                pass.light_reach(self.light_reach.clone());
             } else {
                 pass.lighting(Lighting {
                     direction: Vec3::new(0.35, -0.45, 0.82),
                     color: [1.0, 0.97, 0.9],
                     ambient: [0.36, 0.38, 0.42],
                 });
-                false
-            };
+            }
             let t0 = Instant::now();
             if scene.outdoor_visible {
-                self.terrain.draw(
-                    renderer,
-                    pass,
-                    &anchor,
-                    &frustum,
-                    eye,
-                    &self.terrain_lights,
-                    sun,
-                );
+                self.terrain.draw(renderer, pass, &anchor, &frustum, eye);
             }
             let t1 = Instant::now();
             // Figures the character layer draws are left out of the static instances.
@@ -2124,9 +2272,20 @@ impl Walker {
                 pass.mesh(d);
             }
             self.char_draws = char_draws;
+            // The avatar placeholder is a moving entity in the visibility cell of the cell
+            // it stands in (`landblock.md` §4.11): the mover's cell, else outdoors.
+            let placeholder_cell = self
+                .controls
+                .physics()
+                .and_then(movement::PhysicsWalker::cell);
+            let placeholder_drawn = match placeholder_cell {
+                Some((k, c)) => drawn(k, c),
+                None => !inside,
+            };
             if let (Some(mesh), Some((feet, yaw))) = (self.avatar, self.controls.avatar())
                 && !self.characters.player_ready()
                 && self.controls.mode() == MoveMode::Walk
+                && placeholder_drawn
                 && let Some(p) = anchor.to_render(&feet)
             {
                 let tf = Mat4::from_translation(p + Vec3::Z * 0.9)
@@ -2188,6 +2347,10 @@ impl Walker {
         if self.config.hud {
             self.hud.draw(overlay, 10.0, 10.0);
         }
+        // The chat stays visible while its input is open, even without the HUD.
+        if self.config.hud || self.chat.is_open() {
+            self.chat.draw(overlay, 10.0, h as f32 - 10.0);
+        }
         if let (true, Some(pos), Some(anchor)) = (self.config.hud, self.focus(), self.anchor) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
@@ -2219,6 +2382,8 @@ impl Walker {
         let os = self.objects.stats();
         let cs = self.characters.stats();
         let r = &self.last_report;
+        let audio = self.audio.as_ref().map(|a| a.stats());
+        let engine = audio.and_then(|a| a.engine);
         let ws = self.water.stats();
         let fs = self.frills.stats();
         let fx_row = framelog::FxRow {
@@ -2268,6 +2433,10 @@ impl Walker {
             anim_submit_ms: cs.submit_ms,
             anim_upload_ms: cs.palette_ms,
             anim_worker_ms: cs.worker_ms,
+            audio_ms: audio.map_or(0.0, |a| a.update_ms),
+            audio_voices: engine.map_or(0, |e| e.active_voices),
+            audio_underruns: engine.map_or(0, |e| e.underruns),
+            mixer_load: engine.map_or(0.0, |e| f64::from(e.mixer_load)),
             x: p.x,
             y: p.y,
             z: p.z,
@@ -2275,32 +2444,17 @@ impl Walker {
         });
     }
 
-    /// The eye and view direction, with the eye kept above the terrain (a third-person
-    /// camera behind the avatar must not dip under a slope).
+    /// The eye and view direction. The walk-mode third-person camera is kept above the
+    /// terrain (`walker.md` §5; it must not dip under a slope), except inside a cell
+    /// (§14.12 (a): the terrain is not drawn there); free-fly and scripted cameras are not.
     fn view(&self) -> (WorldPos, Vec3) {
-        let (mut eye, mut dir) = self.controls.eye();
-        // Inside an interior the terrain is not drawn and lies far above or below.
-        if self.camera_cell.is_some() {
+        let (eye, dir) = self.controls.eye();
+        if self.camera_cell.is_some() || self.controls.mode() != MoveMode::Walk {
             return (eye, dir);
         }
-        if let Some(h) = self.terrain.tiles().height_at(eye.x, eye.y) {
-            let min = f64::from(h) + 0.8;
-            if eye.z < min {
-                eye.z = min;
-                // Keep looking at the avatar's head.
-                if let Some((feet, _)) = self.controls.avatar() {
-                    let head = Vec3::new(
-                        (feet.x - eye.x) as f32,
-                        (feet.y - eye.y) as f32,
-                        (feet.z + f64::from(controls::EYE_HEIGHT) - eye.z) as f32,
-                    );
-                    if let Some(d) = head.try_normalize() {
-                        dir = d;
-                    }
-                }
-            }
-        }
-        (eye, dir)
+        let ground = self.terrain.tiles().height_at(eye.x, eye.y);
+        let feet = self.controls.avatar().map(|(feet, _)| feet);
+        controls::keep_above_terrain(eye, dir, ground, feet)
     }
 
     /// Whether the scripted flight has finished (always false without one).
@@ -2322,8 +2476,17 @@ impl Walker {
         Some(describe(&lock(&self.shared), &pos, self.controls.heading()))
     }
 
+    /// World audio, when on.
+    #[must_use]
+    pub fn audio(&self) -> Option<&crate::audio::WorldAudio> {
+        self.audio.as_ref()
+    }
+
     /// Frees GPU resources and stops the workers.
     pub fn shutdown(&mut self, renderer: &mut Renderer<'_>) {
+        if let Some(a) = self.audio.as_mut() {
+            a.shutdown();
+        }
         self.characters.shutdown(renderer, &mut self.objects);
         self.water.release(&mut self.objects);
         self.env.release(&mut self.objects);
@@ -2331,6 +2494,7 @@ impl Walker {
         self.terrain.shutdown();
         self.clear_all(renderer);
         self.hud.release(renderer);
+        self.chat.release(renderer);
         if let Some(m) = self.avatar.take() {
             renderer.destroy_mesh(m);
         }

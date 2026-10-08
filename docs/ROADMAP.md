@@ -15,7 +15,14 @@
 > 2026-10-06 and re-verified on 2026-10-07 ([M4.5 status](#m4-5-status)): criteria 1, 2,
 > 3, 7 and 8 pass; 4 (generated-object and cave walks), 6 (visual rows) and 9 (spec
 > reviews) do not; 5 waits for a quiet-machine re-measure of flight M3-b (an indicative
-> run passed), so M4.5 stays open. Milestones are ordered by
+> run passed), so M4.5 stays open. M6 (audio and player music) was built in parallel on
+> branch `m6` and checked on 2026-10-07 ([M6 status](#m6-status)): criteria 1 and 3 pass,
+> 2 passes on Tessera's side (the owner's listening comparison is pending), and 4 passes as
+> an indicative run that is to be repeated on the idle reference machine. M7 (own test
+> server and protocol) was built in parallel
+> on branch `m7` and verified on 2026-10-07 ([M7 status](#m7-status)): criteria 2–4 pass
+> (4 waits for the owner's confirmation before any public test build), criterion 1 passes
+> on one machine and waits for a run between two machines on a LAN. Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
 
@@ -372,11 +379,27 @@ fails on such a question (criterion 2).
 | 3 | ✅ | `crates/render/tests/mesh_golden.rs` (opaque, alpha test, alpha blend + order independence, two-sided, dye, normal map, debug views): 8 / 8 pass on Mesa lavapipe (Vulkan, Mesa 25.2.6) with `TESSERA_REQUIRE_GPU=1`, and 8 / 8 on Mesa llvmpipe (GL, Mesa 26.1.8); at most 2 (lavapipe) and 7 (llvmpipe) outliers of 40,960 pixels against a budget of 102. `render_test_scene` passes on lavapipe too. |
 | 4 | ✅ | `tools/fuzz-smoke.sh -t 60`: `mesh_decode`, `material_records`, `material_resolve`, `formats_surface`, `formats_setup`, `formats_setup_chain`, `formats_appearance`, `render_mesh_data`, `explorer_mesh_scene` each ran 60 s with no finding (0.23 M–8.4 M executions per target). |
 
-Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
-clippy --workspace --all-targets -D warnings`, `cargo test --workspace` with
-`TESSERA_GAME_DIR` set (1,049 passed, 0 failed, 1 ignored), `cargo doc -D warnings`,
-`tools/check-content.sh` and its self-test, `tools/check-spdx.sh` (0 errors) and the
-relative links and anchors of the Markdown docs all pass.
+Repository checks (final verification, 2026-10-07): `cargo fmt --all --check` and the fuzz
+crate's `cargo fmt --check`; `cargo clippy --workspace --all-targets -- -D warnings` with
+default and with all features; the fuzz crate's `cargo clippy --bins --locked -- -D warnings`
+(four lints in the new M6 targets fixed); rustdoc with `-D warnings` on the M6 crates;
+`tools/check-content.sh` (758 files) and `tools/check-spdx.sh` (721 files) clean; a link and
+anchor check of every Markdown file (87 files, 0 broken). `cargo test --workspace
+--no-fail-fast` with `TESSERA_GAME_DIR` set (debug, load average about 50): 2,405 passed, 2
+failed, 2 ignored in 169 suites, plus 2 suites whose binaries another process removed during
+the run (`tessera-dattool` `cli` and `real_data`, 28 / 28 when re-run). The 2 failures are
+load-dependent timeouts outside M6's code and pass when re-run alone:
+`tessera-world` `integration_progresses_when_bookkeeping_exceeds_the_frame_budget` (a 60 s
+settle limit; 64 / 64 in release) and `tessera-client` `walker_real_data::screenshot_at_spawn`
+(the 90 s settle limit; 3 / 3 alone). The M6 real-data tests pass in debug and in release:
+`tessera-formats` `sound_real_data` 2 / 2, `tessera-scriptgraph` `real_data` 2 / 2,
+`tessera-audio` `decode_real_data` 1 / 1, `abc_conformance` 156 / 156, `abc_examples` 33 / 33,
+`instruments_real_data` 1 / 1, `tessera-client` `audio_real_data` 3 / 3 and
+`player_music_real_data` 2 / 2. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer) on the eight
+new targets, no crash: `formats_sound_info` 1.28 M executions, `audio_decode` 12,929 (and
+17,989 after the codebook change), `audio_engine` 23,156, `audio_abc` 244,182,
+`audio_instruments` 19,071, `scriptgraph_runtime` 3,609 (117 s), `client_audio` 894,479,
+`client_player_music` 3.96 M; rates are low because other builds loaded the laptop.
 
 ---
 
@@ -1044,6 +1067,54 @@ effects from animation and script events, and the player-music system playing AB
    files match the spec, note timing within tolerance.
 4. No audio underruns during a 10-minute world flight on the reference machine.
 
+<a id="m6-status"></a>
+**Status (checked 2026-10-07 against the owner's install, release builds, on the reference
+laptop while other milestone builds loaded it, [decision 0010](decisions/0010-reference-machine-laptop.md)):
+criteria 1 and 3 pass, criterion 2 passes on Tessera's side (owner observation pending),
+criterion 4 passes as an indicative measurement (idle re-measurement pending).** Every deliverable exists: `tessera-formats`
+sound payloads, sound infos and script-table sound nodes; `tessera-scriptgraph` (the script
+graph runtime, `script-runtime.md`); `tessera-audio` with cpal output behind the
+`audio-device` feature and a project-owned mixer ([decision 0019](decisions/0019-audio-backend.md),
+not kira), streaming music, positional emitters, channels and volumes, the ABC reader
+(`abc`) and the instruments with synchronised start (`instruments`); `tessera-client`
+world audio, `[audio]` settings, and the player-music commands `/play <name> [<part>]
+[sync]`, `/playstart`, `/playlist [<filter>]`, `/playstop` and the debug `/instrument`
+(`apps/client/src/audio/player_music.rs`). Specs used: `sound.md`, `script-table.md` (sound
+nodes), `script-runtime.md`, `abc-dialect.md`, `instruments.md`. Commands run with
+`TESSERA_GAME_DIR` set to the read-only install and `CARGO_BUILD_JOBS=6`.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-audio --test decode_real_data -- --nocapture` (final verification, 2026-10-07): 44,337 sound records (`client_local_English.dat` 29,193, `client_sound.dat` 12,621, `client_sound_aux_1.datx` 2,523); **44,329 of 44,329 audio payloads decode (100.00 %, full sweep)**: Ogg Vorbis 40,874, WAV 3,455; 0 failures, 0 invariant violations (SN1–SN4, SN3a), 8 DirectMusic and 0 unknown records counted apart, 155.6 h of audio; played ranges as the spec's census (3,811 streams with *A* > 0, 10,613 with *M* < *N*, 15 ending with an empty packet); 1,521 s wall time on 8 threads under a load average of about 45 (indicative). The 2 payloads an earlier hardening check refused (`0x0A016904`, `0x0A0011DC`) carry a placeholder codebook with no used entry as a residue stage book that their packets never read; the setup walk now accepts it and hands the decoder library a header in which that book has a 1-bit codeword, so a hostile packet that reads it cannot panic the library (`crates/audio/src/decode/setup.rs`, `patch_unused_books`; tests `unread_codebook_without_used_entries_is_accepted`, `codebook_without_used_entries_is_read_without_panic_or_rejected`, `patch_inserts_a_codeword_at_each_unused_book`). |
+| 2 | ✅ data-side, owner observation pending | Rows A1–A5 of [m6-audio.md](checklists/m6-audio.md) pass: headless walker, null backend, region-1 row 120 from landblock 122 to 132 crosses two area borders; `Area_Music` changes at both, the old tracks ramp out over their own `RampOutTime` (4.0 s and 2.0 s), the new tracks play 16–17 ms after each change, 0 underruns. Automated: `cargo test --release -p tessera-client --test audio_real_data` (3 / 3 pass). Final verification (release, under a load average of about 50): `Area_Music` changes at 4.55 s and 9.88 s, ramp-outs of 4.0 s and 2.0 s, new tracks playing 35 ms and 49 ms after each change. Row O1 (does the cross-fade sound like the original's) waits for the owner: [owner-observations.md](checklists/owner-observations.md#o28) O28.1. |
+| 3 | ✅ | `cargo test --release -p tessera-audio --test abc_conformance`: **156 / 156** rows of `abc-dialect.md` §12 pass (accepted, ignored, truncated and refused files as the spec says; note-on times within 1 µs); `--test abc_examples` 33 / 33 (§13 worked examples, §14 invariants). End to end in the client: `cargo test --release -p tessera-client --test player_music_real_data` (2 / 2): start-up builds the instrument table (24 instrument types, 4,760 sound nodes) and finds the message table through the named-string-table map in 0.1 s; an original test tune played with `/play` on the offline backend schedules 10 note-ons at 0, 0.6, 1.2, 1.8, 3.0, 3.6 (×3, a chord), 4.2 and 4.8 s from a start 0.7 s after the command was processed, and renders them with 0 late, 0 missing samples and audible output; `/play … 2 sync` waits until `/playstart` and then starts its 8 note-ons 0.7 s later; `/playstop` silences a running performance; a refused file shows the entry of the user's string table with line and column; the instrument comes from an `--avatar` instrument item (§4.5) or `/instrument`. `--test instruments_real_data`: the table agrees with a live tree walk for 61,440 combinations and a range tune plays through all 23 instruments plus the default set (960 note-ons, 745 distinct samples decoded). |
+| 4 | ✅ indicative | [m6-audio.md](perf/m6-audio.md): a 603 s, 36.8 km headless flight with the device backend (cpal on ALSA through PipeWire, 48 kHz) gave **0 device underruns**, 0 mixer overloads and 0 starved stream blocks over 56,586 mixer callbacks (mixer load mean 4.3 %, p99 14.7 %), 18 area-music changes, main-thread audio 0.035 ms per frame. Made while other builds loaded the laptop (load average 3.1–4.3): to be re-measured on an idle reference machine before the criterion is closed (decision 0010). |
+
+Repository checks at the same time: `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo test --workspace` (2,423 passed, 0 failed, 2
+ignored, debug build, without `TESSERA_GAME_DIR`) pass; the M6 real-data tests in release
+with `TESSERA_GAME_DIR` set pass except `decode_real_data` (criterion 1): `tessera-formats`
+`sound_real_data` 2 / 2 and `script_table_real_data` 4 / 4, `tessera-scriptgraph`
+`real_data` 2 / 2, `tessera-audio` `instruments_real_data` 1 / 1, `tessera-client`
+`audio_real_data` 3 / 3 and `player_music_real_data` 2 / 2. `tools/fuzz-smoke.sh -t 60
+client_player_music` (stable libFuzzer): 27.0 M executions, no finding.
+
+Remaining for M6 to close: the idle re-measurement of criterion 4 (decision 0010); the
+owner observations in [owner-observations.md](checklists/owner-observations.md#o28) O28
+(O28.1 is criterion 2's listening comparison, m6-audio.md row O1; the others check
+`sound.md` §16, `script-runtime.md` §26, the ABC checks OC1–OC10 of `abc-dialect.md` §17 and
+Q1, Q2, Q4–Q6 of `instruments.md` §16), and a listening check of `/play` with device output;
+`script-runtime.md` is still in Review status (its OPEN items carry Tessera Decisions). The client has no chat input yet, so the
+player-music commands reach it through `--music-command "<line>"` (repeatable, run in order
+once the archives are open; replies go to the chat log), for example `tessera-client
+--audio device --music-command "/play <name>"` (built with `--features audio-device`) with the song in the settings folder's
+`Music` or `<data dir>/Music`. Commands are processed strictly in order (a `/playstop` or
+`/playstart` given during a `/play`'s read acts after it; `abc-dialect.md` §11 OPEN
+(implementation) (g)); unit tests with a synthetic instrument table cover solo and synced
+starts, stop, ordering and the sample budget without game data. Implementation OPENs from this milestone
+(client commands, instrument choice, the player music's own engine instance) are in
+`abc-dialect.md` §11 and `instruments.md` §12.
+
 ---
 
 <a id="m7"></a>
@@ -1082,6 +1153,54 @@ speeds, interpolation feel), observed in the original client.
 3. Every protocol parser is fuzzed; malformed or hostile packets cannot crash client or
    server.
 4. `docs/LEGAL.md` confirms the server's content rules before any public test build.
+
+<a id="m7-status"></a>
+**Status (verified 2026-10-07 on the reference laptop of
+[decision 0010](decisions/0010-reference-machine-laptop.md), branch `m7`, uncommitted working
+tree, release builds, machine loaded by the parallel M4.5–M6 work, so every timing number is
+indicative): criteria 2, 3 and 4 pass (4: the rules are written; the owner's confirmation is
+still to be recorded before any public test build); criterion 1 passes on one machine
+(loopback and a container network), and a run between two machines on a real LAN is
+open.** Every deliverable exists: `docs/specs/tessera-protocol.md` (v1.0, Accepted after an
+independent review), [decision 0030](decisions/0030-tessera-protocol-transport.md) (QUIC with
+quinn and rustls on ring), `tessera-protocol` (`crates/protocol`), `tessera-server`
+(`apps/server`, built-in original default world), the `tessera-net` test-server backend
+(`remote`, with snapshot interpolation) wired into the client (`--server`), and
+`tessera-loadtest` (`apps/loadtest`). Specs: `tessera-protocol.md` (Accepted),
+`server-content.md` and `test-server.md` (Draft), LEGAL.md §11.1. No `> **OPEN:**` item blocks
+a criterion; the ones to settle before someone writes a second implementation from the spec
+are the four round-2 review notes at `tessera-protocol.md` §4.5, §8.3, §8.7 and §13.3.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ one machine; LAN between two machines pending | One-hour soaks with `tessera-loadtest` (16 clients, each a `tessera_net::Session` over the test-server backend, walking and running across landblocks, teleporting, changing appearance and stance, chatting and reconnecting; [m7-soak.md](perf/m7-soak.md), third series): **S60d** (in-process, loopback) and **L60d** (server on the host's Docker bridge address, clients in a container with their own network stack) both PASS: 0 desync episodes of every kind over 5,185,495 and 4,272,246 position comparisons (240 observer–entity pairs, 236–240 of them left interest range and came back), 13,649 / 13,649 and 13,434 / 13,434 chat deliveries, 0 unexpected disconnects, 22 reconnections each; no memory growth after warm-up (S60d max 68.6 MiB; L60d server process 47.6 MiB, client process 10.7 MiB), every count back to its baseline. This verification found and fixed the client-side growth that failed the earlier hours (a thread, runtime and 2.9 MiB quinn endpoint per session; now one network thread and one shared endpoint, `tessera-net`), the tool's provisioning against a LAN address, and a drift of the server's tick schedule. Two release clients against a test server on the install, screenshots viewed: each sees the other's character and the default world's wanderers drawn and animated, network HUD (`interp 167 ms`, `4 remote`), message of the day in the chat overlay; `apps/client/tests/net_server.rs` (5 tests): both clients see each other move with smooth interpolation and receive each other's chat. Animation is compared as heading, gait and stance (0 episodes); `test-server.md` §13.2 has no animation rule yet (§15.2 OPEN). |
+| 2 | ✅ | `tessera-protocol.md` reviewed in two rounds by a reviewer who did not write the code (its Review section, R.1–R.7): Status Accepted, no blocking finding. The reviewer wrote a second codec from the spec text alone (`crates/protocol/tests/spec_conformance.rs`, 15 tests): it and the crate agree byte for byte on all 42 message vectors of §16.2–§16.5, the 16 tagged values of §16.6 and the handshake vectors of §16.1, both reject the 124 malformed inputs (every §16.7 negative vector) and accept the 23 boundary inputs. Every message type round-trips over 2,048 property-test cases (`proptests.rs`). Non-blocking OPEN notes remain (70 in the spec, most implementer notes); the four round-2 notes named above should be settled before a third party implements it. |
+| 3 | ✅ | Ten fuzz targets cover every parser of the protocol, the client backend and the server: `protocol_frame`, `protocol_message`, `protocol_datagram`, `protocol_handshake`, `protocol_fingerprint`, `net_remote_inbound`, `net_remote_world`, `server_connection`, `server_world`, `server_files`. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer): no crash, 0.11 M (`server_world`) to 26.8 M (`protocol_message`) executions each; the two `net_remote` targets re-run after the endpoint change (0.47 M and 0.06 M, no crash). Hostile soaks: H5d (final build, 1,924 attacks of ten kinds, 12,480 raw datagrams) and the earlier H5-16, H15-16, H5b, HR15: 0 panics, honest clients unaffected (0 desync, 0 unexpected disconnects), every count back to baseline, server process memory flat (HR15). Plus `apps/server/tests/hostile.rs`, `crates/net/tests/remote_hostile.rs` and the protocol state-machine tests. |
+| 4 | ✅ rules written; owner confirmation pending | [LEGAL.md §11.1](LEGAL.md#111-servers) states the seven server rules (no game data on a server, opaque references relayed but never collected, at most 16 bare positions per content file, an original default world, no gameplay reproduction, private or LAN use only, licensed committed content), with `server-content.md` as the checkable version, and says that the owner's dated confirmation is needed before any public test build (none exists). `tessera-server` links no data-decoding crate (`cargo tree -p tessera-server`), its built-in world has no opaque references, `check-content` enforces the automatic rules, and registration refuses non-private listen addresses. Open for the owner: confirm §11.1, the coordinate rule and the reading of the LEGAL.md banner (`server-content.md` §12). |
+
+Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets [--all-features] --locked -D warnings` and on `fuzz/`,
+`cargo test --workspace` with `TESSERA_GAME_DIR` set (2,227 passed, 0 failed, 3 ignored: one machine-specific install
+test, one doc example, the server's release soak test, which was run separately), `cargo doc --workspace
+--no-deps --all-features -D warnings`, `cargo deny check bans licenses sources` (both
+manifests; no `aws-lc-sys` or `openssl-sys` in the tree), `tools/check-content.sh` and its
+self-test, `tools/check-spdx.sh` (0 errors) and the relative links and anchors of the
+Markdown docs all pass. The ignored release soak test of `tessera-server` passes (16 bots,
+20 s, 0 overruns).
+
+Fixed during this verification: `tessera-net` runs every session on one network thread per
+process with one shared quinn endpoint per address family (the in-process hour soaks failed
+the leak check before; regression test `sessions_share_one_network_thread`); the load tool
+provisions at most four accounts at once (a server on a LAN address refused its batches of
+eight); the server derives each tick deadline from `tick_start(k)` (`tessera-protocol.md`
+review R.7 finding 3); `fuzz/README.md` rows for the ten M7 targets; ARCH §19.4.
+
+Remaining for M7 to close: a soak between two machines on a real LAN (criterion 1), the
+owner's recorded confirmation of LEGAL.md §11.1 (criterion 4, before any public test build),
+re-running S60d and L60d from the merge commit, and the spec writer's decisions on the
+review notes (`tessera-protocol.md` §17, `test-server.md` §15). Owner observations O70–O73
+([owner-observations.md](checklists/owner-observations.md#m7-items): movement speeds,
+interpolation feel, interest distance, say range) tune defaults; no criterion waits on them.
 
 ---
 

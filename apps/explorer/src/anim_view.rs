@@ -1765,9 +1765,14 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
         st.sliders = Some(bytes);
     }
     ui.separator();
+    // The control's range per body (appearance.md §6.2 table).
+    let range = crate::character::bone_scale_range(
+        &p.request.figure,
+        p.held_clips.iter().map(|h| h.held.driver),
+    );
     let mut h = st.bone_scale.unwrap_or(0.5);
     if ui
-        .add(egui::Slider::new(&mut h, 0.0..=1.0).text("body shape (AC_BoneScale_Test)"))
+        .add(egui::Slider::new(&mut h, range).text("body shape (AC_BoneScale_Test)"))
         .on_hover_text("The body-shape deformer's fraction (appearance.md §6.2, §6.4)")
         .changed()
     {

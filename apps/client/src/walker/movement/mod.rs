@@ -45,14 +45,17 @@ pub mod soak;
 
 use std::sync::Arc;
 
+use tessera_assets::WorkerPool;
 use tessera_input::FixedTimestep;
 use tessera_physics::controller::{COS_PLAYER_WALKABLE, WaterQuery, WaterSample};
-use tessera_physics::geometry::{BodySource, CollisionQuery, CollisionView, Contact};
+use tessera_physics::geometry::{BodySource, CollisionQuery, CollisionSet, CollisionView, Contact};
 pub use tessera_physics::{
     Controller, ControllerConfig, MAX_STEPS_PER_FRAME, MoveInput, MovementState, MoverState,
     STEP_SECONDS, STEPS_PER_SECOND, StepEnv, StepOutcome, StepReport,
 };
-use tessera_world::{BlockState, LANDBLOCK_SIZE, LandblockKey, WorldPos, WorldStreamer};
+use tessera_world::{
+    BlockState, LANDBLOCK_SIZE, LandblockKey, WorldContext, WorldPos, WorldStreamer,
+};
 
 use self::setup::MoverSetup;
 
@@ -75,6 +78,17 @@ pub const PLACE_BELOW_TERRAIN: f64 = 0.05;
 pub const PLACE_SEARCH_HEIGHT: f32 = 3.0;
 /// The placement puts the feet this far above the terrain when no support is found, m.
 pub const PLACE_LIFT: f64 = 0.01;
+
+/// The height the placement check puts the feet at (`walker.md` §13.1, Placement): the
+/// highest walkable support the sweep found, wherever it lies (the sweep reaches 1 m below
+/// the terrain), else the terrain + [`PLACE_LIFT`]. A support that is not finite counts as
+/// none.
+#[must_use]
+pub fn placement_height(support: Option<f64>, terrain: f64) -> f64 {
+    support
+        .filter(|z| z.is_finite())
+        .unwrap_or(terrain + PLACE_LIFT)
+}
 
 /// Whether a landblock's collision set can be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,6 +117,37 @@ pub trait CollisionWorld {
         let _ = (owner, cell);
         Vec::new()
     }
+    /// The installed collision set of `key` wherever it lies (a pinned landblock far from
+    /// the view's centre); none by default.
+    fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
+        let _ = key;
+        None
+    }
+    /// The view a step uses (`walker.md` §13.3: "every view of a step holds them"):
+    /// [`Self::view`] around `centre` plus the installed sets of `pins`
+    /// ([`PhysicsWalker::pins`]: the required landblocks and the owner of the current cell)
+    /// of `centre`'s region that it does not hold yet.
+    fn step_view(&self, centre: &WorldPos, pins: &[LandblockKey]) -> CollisionView<'_> {
+        let mut view = self.view(centre);
+        for key in pins {
+            if key.region() != centre.region || holds(&view, *key) {
+                continue;
+            }
+            if let Some(set) = self.collision_set(*key) {
+                let _ = view.push_landblock(set);
+            }
+        }
+        view
+    }
+}
+
+/// Whether `view` holds the set of landblock `key`.
+#[must_use]
+pub fn holds(view: &CollisionView<'_>, key: LandblockKey) -> bool {
+    view.members().iter().any(|(set, _)| {
+        set.landblock()
+            .is_some_and(|id| (id.region, id.x, id.y) == (key.region(), key.x(), key.y()))
+    })
 }
 
 /// How far above the feet the cell lookup looks (`m4-5-visual.md` CELL rule), m.
@@ -160,6 +205,186 @@ impl CollisionWorld for StreamedCollision<'_> {
             .and_then(|c| c.cell(cell))
             .map(|c| c.portals.iter().map(|p| p.neighbour).collect())
             .unwrap_or_default()
+    }
+
+    fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
+        self.0.collision(key).map(|c| &*c.set)
+    }
+}
+
+/// Most landblocks [`PinStreamers`] pins at once.
+pub const MAX_PINS: usize = MAX_REQUIRED + 1;
+
+/// The rings of a pin streamer: the pinned landblock alone (its focus is the landblock's
+/// centre, 80 m from every neighbour).
+fn pin_rings() -> tessera_world::RingConfig {
+    tessera_world::RingConfig {
+        near: 1.0,
+        mid: 1.0,
+        far: 1.0,
+        hysteresis: 0.0,
+    }
+}
+
+/// One small streamer per pinned landblock (`walker.md` §13.3: the landblocks a step
+/// needs wherever they lie, the owner of the mover's cell and the required ones, are kept
+/// resident), so that a cell owner beyond the main streamer's rings is installed too.
+pub struct PinStreamers {
+    pins: Vec<(LandblockKey, WorldStreamer)>,
+    pool: Option<WorkerPool>,
+}
+
+impl std::fmt::Debug for PinStreamers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PinStreamers")
+            .field("pins", &self.pinned())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PinStreamers {
+    /// Pins streamed on `pool` (the workers of the main streamer); without one nothing is
+    /// pinned and only the main streamer's rings stream.
+    #[must_use]
+    pub fn new(pool: Option<WorkerPool>) -> Self {
+        Self {
+            pins: Vec::new(),
+            pool,
+        }
+    }
+
+    /// Keeps exactly `wanted` (at most [`MAX_PINS`]) pinned: drops the others, starts a
+    /// streamer for each new one over `context`, and updates them all.
+    pub fn update(&mut self, context: &Arc<WorldContext>, wanted: &[LandblockKey]) {
+        let wanted: Vec<LandblockKey> = wanted.iter().copied().take(MAX_PINS).collect();
+        self.pins.retain(|(k, _)| wanted.contains(k));
+        if let Some(pool) = &self.pool {
+            for k in wanted {
+                if self.pins.iter().any(|(p, _)| *p == k) {
+                    continue;
+                }
+                let config = tessera_world::StreamConfig {
+                    rings: pin_rings(),
+                    ..tessera_world::StreamConfig::default()
+                };
+                match WorldStreamer::new(Arc::clone(context), pool, config) {
+                    Ok(s) => self.pins.push((k, s)),
+                    Err(e) => tracing::warn!(landblock = %k, "pin streamer: {e}"),
+                }
+            }
+        }
+        for (k, s) in &mut self.pins {
+            let c = k.center();
+            let _ = s.update(WorldPos::new(k.region(), c[0], c[1], 0.0));
+        }
+    }
+
+    /// The landblocks pinned now.
+    #[must_use]
+    pub fn pinned(&self) -> Vec<LandblockKey> {
+        self.pins.iter().map(|(k, _)| *k).collect()
+    }
+
+    /// The streamer of pinned landblock `key`.
+    #[must_use]
+    pub fn streamer(&self, key: LandblockKey) -> Option<&WorldStreamer> {
+        self.pins.iter().find(|(k, _)| *k == key).map(|(_, s)| s)
+    }
+
+    /// Unpins everything.
+    pub fn clear(&mut self) {
+        self.pins.clear();
+    }
+}
+
+/// A main streamer with its [`PinStreamers`] as one collision world: a landblock's set
+/// comes from the main streamer, else from its pin; every view holds the pinned sets,
+/// whether or not their cells reach the centre, so what a step sees does not depend on
+/// the rings (`walker.md` §13.3).
+#[derive(Debug, Clone, Copy)]
+pub struct PinnedCollision<'a> {
+    /// The streamer around the feet.
+    pub main: &'a WorldStreamer,
+    /// The pinned landblocks.
+    pub pins: &'a PinStreamers,
+}
+
+impl<'a> PinnedCollision<'a> {
+    /// The installed collision of `key`: the main streamer's, else its pin's.
+    #[must_use]
+    pub fn collision_of(self, key: LandblockKey) -> Option<&'a Arc<tessera_world::BlockCollision>> {
+        self.main
+            .collision(key)
+            .or_else(|| self.pins.streamer(key).and_then(|s| s.collision(key)))
+    }
+
+    /// [`CollisionWorld::view`] with the main streamer's lifetime.
+    #[must_use]
+    pub fn view_at(self, centre: &WorldPos) -> CollisionView<'a> {
+        let mut view = self.main.collision_view(centre, VIEW_RADIUS);
+        for (key, _) in &self.pins.pins {
+            if key.region() != centre.region || holds(&view, *key) {
+                continue;
+            }
+            if let Some(col) = self.collision_of(*key) {
+                let _ = view.push_landblock(&col.set);
+            }
+        }
+        view
+    }
+
+    /// [`CollisionWorld::readiness`].
+    #[must_use]
+    pub fn readiness_of(self, key: LandblockKey) -> BlockReadiness {
+        let main = StreamedCollision(self.main).readiness(key);
+        if main != BlockReadiness::Pending {
+            return main;
+        }
+        self.pins
+            .streamer(key)
+            .map_or(BlockReadiness::Pending, |s| {
+                StreamedCollision(s).readiness(key)
+            })
+    }
+
+    /// [`CollisionWorld::terrain_height`].
+    #[must_use]
+    pub fn terrain_height_at(self, pos: &WorldPos) -> Option<f32> {
+        self.main.terrain_height_at(pos).or_else(|| {
+            let k = pos.landblock()?;
+            self.pins.streamer(k)?.terrain_height_at(pos)
+        })
+    }
+
+    /// [`CollisionWorld::portal_neighbours`].
+    #[must_use]
+    pub fn portal_neighbours_of(self, owner: LandblockKey, cell: u16) -> Vec<u16> {
+        self.collision_of(owner)
+            .and_then(|c| c.cell(cell))
+            .map(|c| c.portals.iter().map(|p| p.neighbour).collect())
+            .unwrap_or_default()
+    }
+}
+
+impl CollisionWorld for PinnedCollision<'_> {
+    fn readiness(&self, key: LandblockKey) -> BlockReadiness {
+        self.readiness_of(key)
+    }
+
+    fn view(&self, centre: &WorldPos) -> CollisionView<'_> {
+        self.view_at(centre)
+    }
+
+    fn terrain_height(&self, pos: &WorldPos) -> Option<f32> {
+        self.terrain_height_at(pos)
+    }
+
+    fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
+        self.portal_neighbours_of(owner, cell)
+    }
+
+    fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
+        self.collision_of(key).map(|c| &*c.set)
     }
 }
 
@@ -464,7 +689,7 @@ impl PhysicsWalker {
                 })
                 .map(|hit| top[2] - f64::from(hit.fraction * reach))
         };
-        let z = support.unwrap_or(terrain + PLACE_LIFT).max(terrain);
+        let z = placement_height(support, terrain);
         let placed = MoverState {
             steps: s.steps,
             ..MoverState::at([feet[0], feet[1], z], s.heading)
@@ -666,12 +891,13 @@ impl PhysicsWalker {
             self.controller.set_conditions(c);
         }
         self.walking = walking;
+        let pins = self.pins();
         if self.check_placement {
-            let view = world.view(&self.feet());
+            let view = world.step_view(&self.feet(), &pins);
             self.fix_placement(&view, world);
         }
         let before = *self.controller.state();
-        let view = world.view(&self.feet());
+        let view = world.step_view(&self.feet(), &pins);
         let env = StepEnv::from_view(&view).with_water(CellMaskedWater(&view));
         let report = self.controller.step(input, &env);
         let mut at_boundary = false;
@@ -799,5 +1025,59 @@ impl PhysicsWalker {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `walker.md` §13.1 Placement: the highest walkable support found, even below the
+    /// terrain (review finding: it was raised to the bare terrain height), else the terrain
+    /// + 0.01 m.
+    #[test]
+    fn placement_takes_the_support_wherever_it_is() {
+        assert_eq!(
+            placement_height(Some(99.4), 100.0),
+            99.4,
+            "below the terrain"
+        );
+        assert_eq!(placement_height(Some(101.5), 100.0), 101.5, "on an object");
+        assert_eq!(placement_height(None, 100.0), 100.0 + PLACE_LIFT);
+        assert_eq!(placement_height(Some(f64::NAN), 100.0), 100.0 + PLACE_LIFT);
+    }
+
+    fn flat_set(k: LandblockKey) -> Arc<CollisionSet> {
+        use tessera_formats::landblock::HeightGrid;
+        use tessera_formats::{LandblockData, LandblockId};
+        use tessera_physics::geometry::{CollisionLimits, CollisionSetBuilder, GridMesh};
+        let data = LandblockData::from_heights(k.data_did(), HeightGrid::flat(5_000));
+        let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+        b.set_landblock(LandblockId::from_did(k.data_did()).unwrap());
+        b.add_grid(Arc::new(GridMesh::terrain(&data))).unwrap();
+        Arc::new(b.build())
+    }
+
+    /// Review finding (`walker.md` §13.3, "every view of a step holds them"): a step's
+    /// view holds the pinned landblocks wherever they lie, once each, and only those of
+    /// the centre's region; a world without a set for a pin adds nothing.
+    #[test]
+    fn step_views_hold_the_pinned_landblocks() {
+        let centre = LandblockKey::new(1, 50, 50).unwrap();
+        let owner = LandblockKey::new(1, 56, 50).unwrap();
+        let other = LandblockKey::new(2, 56, 50).unwrap();
+        let mut world = run::StaticWorld::default();
+        for k in [centre, owner, other] {
+            world.sets.insert(k, flat_set(k));
+        }
+        let c = centre.center();
+        let feet = WorldPos::new(1, c[0], c[1], 0.0);
+        assert!(!holds(&world.view(&feet), owner), "beyond the 3 × 3 square");
+        let view = world.step_view(&feet, &[owner, owner, other]);
+        assert!(holds(&view, centre) && holds(&view, owner));
+        assert!(!holds(&view, other), "another region");
+        assert_eq!(view.members().len(), 2);
+        let none = LandblockKey::new(1, 60, 60).unwrap();
+        assert_eq!(world.step_view(&feet, &[none]).members().len(), 1);
     }
 }

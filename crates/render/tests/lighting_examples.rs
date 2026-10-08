@@ -13,7 +13,7 @@ mod gpu;
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::lighting::reference::{
     self, LightSample, Texel, alpha_test_keeps, ambient, attenuation, crossfade, frame_ambient,
-    light_record, shade,
+    light_record, output_alpha, shade,
 };
 use tessera_render::{
     AlphaMode, Camera, ColorSpace, Filter, Fog, FrameLighting, Light, LightFields, LitSurface,
@@ -119,6 +119,85 @@ fn example_light_record() {
     assert_rgb(key.specular, [0.5; 3], 6, "key light keeps its specular");
 }
 
+/// Hostile light fields: the light record and the selection radius sanitise them by one rule
+/// (non-finite: the field defaults of `lighting.md` §8.3; negative Falloff: 0), so a light
+/// that contributes nothing is never selected and ρ never exceeds the record's range.
+#[test]
+fn hostile_light_fields_agree() {
+    let rho = |f: &LightFields| {
+        tessera_render::LightReach::from_fields(f)
+            .radius
+            .unwrap_or(f32::NAN)
+    };
+    // NaN Range: the default 25 in both (ρ = 25 × 0.85 with the default Falloff 1).
+    let nan_range = LightFields {
+        range: f32::NAN,
+        ..LightFields::default()
+    };
+    let r = light_record(&nan_range);
+    assert!(close(r.range, 25.0, 6), "range {}", r.range);
+    assert!(close(rho(&nan_range), 21.25, 5));
+    // NaN Falloff: the default 1.0 in both.
+    let nan_falloff = LightFields {
+        range: 10.0,
+        falloff: f32::NAN,
+        ..LightFields::default()
+    };
+    assert!(close(light_record(&nan_falloff).attenuation, 0.1, 6));
+    assert!(close(rho(&nan_falloff), 8.5, 5));
+    // Negative Falloff: 0 in both (no attenuation, ρ = Range).
+    let negative = LightFields {
+        range: 10.0,
+        falloff: -2.0,
+        ..LightFields::default()
+    };
+    assert_eq!(light_record(&negative).attenuation, 0.0);
+    assert!(close(rho(&negative), 10.0, 5));
+    // NaN intensity and scale: 0.5 and 1; a colour with a NaN channel: white.
+    let colours = LightFields {
+        intensity: f32::NAN,
+        scale: f32::INFINITY,
+        diffuse: [f32::NAN, 0.0, 0.0],
+        ..LightFields::default()
+    };
+    assert_rgb(light_record(&colours).color, [0.5; 3], 6, "hostile colour");
+    // Whatever the input: ρ ≤ R, both finite and non-negative.
+    let values = [
+        f32::NAN,
+        f32::INFINITY,
+        -f32::INFINITY,
+        -5.0,
+        0.0,
+        1e-6,
+        0.5,
+        3.0,
+        1e30,
+    ];
+    for range in values {
+        for falloff in values {
+            for global in [false, true] {
+                let f = LightFields {
+                    range,
+                    falloff,
+                    global_light: global,
+                    ..LightFields::default()
+                };
+                let (rec, p) = (light_record(&f), rho(&f));
+                assert!(
+                    rec.range.is_finite() && rec.attenuation.is_finite(),
+                    "{f:?}"
+                );
+                assert!(rec.attenuation >= 0.0, "{f:?}");
+                assert!(
+                    (0.0..=rec.range).contains(&p),
+                    "{f:?}: ρ {p}, R {}",
+                    rec.range
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn example_ambient() {
     let (amb, hemi) = frame_ambient(0.2, [1.0, 0.9, 0.8], [0.4, 0.4, 0.5]);
@@ -143,7 +222,77 @@ fn example_alpha_test() {
         "0.8 at threshold 0.8 is discarded"
     );
     assert!(alpha_test_keeps(0.81, 0.8));
-    assert!(close(0.81 * 1.0, 0.81, 6), "output alpha 0.81 x M.alpha");
+    // Output alpha (§5.12) = α × M.alpha when the base role carries the opacity, else
+    // M.alpha; × the vertex alpha where read (§5.13).
+    for m in [1.0, 0.5, 0.0] {
+        assert!(
+            close(output_alpha(Some(0.81), m, 1.0), 0.81 * m, 6),
+            "M.alpha {m}"
+        );
+        assert!(
+            close(output_alpha(None, m, 1.0), m, 6),
+            "no base opacity, M.alpha {m}"
+        );
+    }
+    assert!(close(output_alpha(Some(0.81), 0.5, 0.5), 0.2025, 6));
+    // Hostile values stay in 0..=1.
+    assert_eq!(output_alpha(Some(f32::NAN), 2.0, 1.0), 0.0);
+    assert_eq!(output_alpha(Some(1.0), 2.0, 1.0), 1.0);
+}
+
+/// The §14 alpha-test example on the GPU: a texel alpha just above the threshold is kept and
+/// blended by 0.81 × M.alpha; one at the threshold is discarded.
+#[test]
+fn gpu_alpha_test_example() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    // Unlit white texels, so the blended colour over black is the output alpha itself.
+    let texel_alpha = |r: &mut Renderer<'static>, a: u8| {
+        r.upload_texture(&TextureUpload {
+            color_space: ColorSpace::Linear,
+            filter: Filter::Nearest,
+            wrap: Wrap::Repeat,
+            ..TextureUpload::rgba8(1, 1, &[255, 255, 255, a])
+        })
+    };
+    let kept = texel_alpha(&mut r, 207)?; // 0.8118 > 0.8
+    let at = texel_alpha(&mut r, 204)?; // 0.8 exactly: discarded
+    let lighting = FrameLighting {
+        sun: None,
+        ..sun_lighting()
+    };
+    for (tex, m_alpha, alpha) in [
+        (kept, 1.0, Some(207.0 / 255.0)),
+        (kept, 0.5, Some(207.0 / 255.0)),
+        (at, 1.0, None),
+    ] {
+        let material = Material {
+            unlit: true,
+            alpha: AlphaMode::TestBlend { cutoff: 0.8 },
+            ..Material {
+                base_color: [1.0, 1.0, 1.0, m_alpha],
+                ..Material::textured(tex)
+            }
+        };
+        let px = centre_pixel(
+            &mut r,
+            OffscreenFormat::Rgba8Unorm,
+            lighting.clone(),
+            40.0,
+            material,
+            LitSurface::default(),
+            &[],
+        )?;
+        assert!(alpha.is_none_or(|a| alpha_test_keeps(a, 0.8)));
+        let out = alpha.map_or(0.0, |a| output_alpha(Some(a), m_alpha, 1.0));
+        assert_pixel(
+            px,
+            [out; 3],
+            &format!("texel alpha {alpha:?}, M.alpha {m_alpha}"),
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -316,20 +465,47 @@ fn gpu_matches_the_reference() -> Result<(), RenderError> {
         ..sun_texel()
     });
     assert_pixel(px, expected, "sun with fog");
-    // Without LitSurface::fog the same draw is unfogged.
+    // The lit base pass always contains fog (§2.1, §5.11): `LitSurface::fog` does not turn
+    // it off for a lit surface.
+    let fogged = FrameLighting {
+        fog: Some(fog),
+        ..sun_lighting()
+    };
     let px = centre_pixel(
         &mut r,
         OffscreenFormat::Rgba8Unorm,
-        FrameLighting {
-            fog: Some(fog),
-            ..sun_lighting()
-        },
+        fogged.clone(),
         1.0,
         ground(linear),
         LitSurface { fog: false, ..lit },
         &[],
     )?;
-    assert_pixel(px, shade(&sun_texel()), "fog off for the draw");
+    assert_pixel(px, expected, "lit surface, fog switch off");
+    // An unlit surface (§7 code 0x00): texture × M, fogged only with the switch on.
+    let f = reference::fog_factor(d, fog.near, fog.far);
+    let unlit = Material {
+        unlit: true,
+        ..ground(linear)
+    };
+    let c = albedo();
+    for (switch, want) in [
+        (
+            true,
+            std::array::from_fn(|i| c[i] + f * (fog.color[i] - c[i])),
+        ),
+        (false, c),
+    ] {
+        let px = centre_pixel(
+            &mut r,
+            OffscreenFormat::Rgba8Unorm,
+            fogged.clone(),
+            1.0,
+            unlit,
+            LitSurface { fog: switch, ..lit },
+            &[],
+        )?;
+        assert_pixel(px, want, &format!("unlit surface, fog switch {switch}"));
+    }
 
     // A point light 2 above the centre with a specular highlight (eye, light and normal
     // aligned, so N . H = 1): a = 1 / (1 + 0.05 × 4), clamped list specular.

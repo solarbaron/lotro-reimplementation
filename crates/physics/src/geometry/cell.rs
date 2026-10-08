@@ -222,6 +222,10 @@ pub struct PlacedCell {
     /// §5.8.1). `None` when the geometry has no hull vertex: such a cell is never a
     /// candidate.
     pub phantom_bounds: Option<Aabb>,
+    /// Number of hull vertices the phantom bounds were built from (§5.6); a
+    /// [`super::CollisionSetBuilder`] charges it to the set's hull budget
+    /// ([`MAX_SET_CELL_HULL`]).
+    hull_count: usize,
 }
 
 impl PlacedCell {
@@ -278,7 +282,14 @@ impl PlacedCell {
             placement,
             volume,
             phantom_bounds: any.then_some(bounds),
+            hull_count: hull.len(),
         })
+    }
+
+    /// Number of hull vertices the cell was placed with (§5.6).
+    #[must_use]
+    pub fn hull_count(&self) -> usize {
+        self.hull_count
     }
 
     /// Whether landblock-frame `p` is in this cell by the volume test alone (§5.4).

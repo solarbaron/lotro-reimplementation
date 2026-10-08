@@ -180,7 +180,10 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         let c = layer.normal_cols;
         let r = frame_normalize(vec3<f32>(t.x * c.x + t.y * c.z, t.x * c.y + t.y * c.w, t.z),
             vec3<f32>(0.0, 0.0, 1.0));
-        n = frame_normalize(r.x * in.tangent - r.y * in.binormal + r.z * n0, n0);
+        // Unit T and B (§6.4; the model matrix may scale them), a zero frame kept zero.
+        let tt = frame_normalize(in.tangent, vec3<f32>(0.0));
+        let bb = frame_normalize(in.binormal, vec3<f32>(0.0));
+        n = frame_normalize(r.x * tt - r.y * bb + r.z * n0, n0);
         n_stored = n;
     }
 

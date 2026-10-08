@@ -25,11 +25,25 @@ use crate::slider::BoneSliders;
 pub struct DeformClip {
     /// The clip, bound to the figure's skeleton.
     pub clip: Arc<BoundClip>,
-    /// `…_AnimationTime`: a fraction of the clip, limited to `0 ..= 1` (no wrap); a
-    /// non-finite value reads 0.
+    /// `…_AnimationTime`: a fraction of the clip (no wrap). The sample time is duration ×
+    /// fraction limited to `0 ..= duration` ([`deformer_time`]), so +∞ gives the end and −∞
+    /// gives 0; NaN reads 0 (the Tessera Decision of `appearance.md` §6.4 step 1).
     pub fraction: f32,
     /// `…_UseBoneWeights`: the clip's weight array gives the track weights.
     pub use_bone_weights: bool,
+}
+
+/// The sample time of a deformer clip of `duration` seconds at `fraction`
+/// (`appearance.md` §6.4 step 1, `script-table.md` §6.9): duration × fraction, limited to
+/// [0, duration] after the multiplication, so +∞ gives the end of the clip and −∞ gives 0.
+/// A NaN fraction reads 0 (Tessera Decision); a duration that is not finite or not positive
+/// gives 0 (hostile input).
+#[must_use]
+pub fn deformer_time(fraction: f32, duration: f32) -> f32 {
+    if !(duration.is_finite() && duration > 0.0) || fraction.is_nan() {
+        return 0.0;
+    }
+    (fraction * duration).clamp(0.0, duration)
 }
 
 /// The bind-space deformation of one figure: a transform per bone (`appearance.md` §6.4
@@ -42,25 +56,28 @@ pub struct BindDeformation {
 }
 
 impl BindDeformation {
-    /// Most deformer clips combined (observed: one per figure).
+    /// Most deformer clips combined: a Tessera bound, not a client rule (`appearance.md`
+    /// §6.4: the client keeps any number; the install has one per figure). Clips beyond it
+    /// are dropped and logged.
     pub const MAX_CLIPS: usize = 16;
 
     /// Builds the deformation (`appearance.md` §6.4):
     ///
-    /// 1. **Deformation local pose.** With deformer clips: each is sampled at time =
-    ///    fraction (limited to `0 ..= 1`) × its duration, its track weights are
-    ///    ⌊255 × clip weight⌋ / 255 when `use_bone_weights` is set and the clip has a
-    ///    weight array, else 1; the clips are combined per bone as a normalised weighted
-    ///    average, the reference pose filling a total below 0.1 (`skeleton-anim.md` §6.6
-    ///    steps 4–5). Without clips: the reference pose.
+    /// 1. **Deformation local pose.** With deformer clips: each is sampled at
+    ///    [`deformer_time`], its track weights are ⌊255 × clip weight⌋ / 255 (truncation,
+    ///    no tolerance) when `use_bone_weights` is set and the clip has a weight array, else
+    ///    1; the clips are combined per bone as a normalised weighted average, the reference
+    ///    pose filling a total of at most 0.1 (`skeleton-anim.md` §6.6 steps 4–5). A clip
+    ///    whose track count differs from the bone count contributes nothing and is logged
+    ///    as an error; clips beyond [`BindDeformation::MAX_CLIPS`] are dropped and logged.
+    ///    With no contributing clip: the reference pose.
     /// 2. **Sliders**: every entry of `sliders` is applied to that pose.
     /// 3. **Transforms**: model triples composed by `skeleton-anim.md` §5.4 and each bone's
-    ///    skinning transform *D_b* against the ordinary reference pose.
+    ///    skinning transform *D_b* against the ordinary reference pose, by the inverse
+    ///    reference triple and skinning rule of §5.4 (K26, [`crate::skinning_matrices`]).
     ///
     /// # Errors
     ///
-    /// [`AnimError::TooManyEntries`] beyond [`BindDeformation::MAX_CLIPS`] clips,
-    /// [`AnimError::TrackCountMismatch`] for a clip bound to another bone count and
     /// [`AnimError::Mismatch`] for sliders built for another rig.
     pub fn new(
         skeleton: &Skeleton,
@@ -69,17 +86,19 @@ impl BindDeformation {
     ) -> Result<Self> {
         let n = skeleton.bone_count();
         if clips.len() > Self::MAX_CLIPS {
-            return Err(AnimError::TooManyEntries {
-                table: "deformer clips",
-                count: clips.len(),
-                max: Self::MAX_CLIPS,
-            });
+            tracing::warn!(
+                dropped = clips.len() - Self::MAX_CLIPS,
+                kept = Self::MAX_CLIPS,
+                "deformer clips beyond the Tessera bound dropped"
+            );
         }
-        if let Some(c) = clips.iter().find(|c| c.clip.track_count() != n) {
-            return Err(AnimError::TrackCountMismatch {
-                tracks: c.clip.track_count(),
-                bones: n,
-            });
+        let clips = clips.get(..Self::MAX_CLIPS).unwrap_or(clips);
+        for c in clips.iter().filter(|c| c.clip.track_count() != n) {
+            tracing::error!(
+                tracks = c.clip.track_count(),
+                bones = n,
+                "deformer clip does not fit the skeleton; it contributes nothing"
+            );
         }
         if let Some(s) = sliders
             && !s.fits(skeleton)
@@ -90,17 +109,15 @@ impl BindDeformation {
         }
         let reference = skeleton.reference_local();
         let mut local = skeleton.reference_pose();
-        if !clips.is_empty() {
+        let mut fitting = clips
+            .iter()
+            .filter(|c| c.clip.track_count() == n)
+            .peekable();
+        if fitting.peek().is_some() {
             let mut acc = vec![Accum::default(); n];
             let mut sample = skeleton.reference_pose();
-            for c in clips {
-                let f = if c.fraction.is_finite() {
-                    c.fraction.clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                let d = c.clip.duration();
-                let t = if d.is_finite() && d > 0.0 { f * d } else { 0.0 };
+            for c in fitting {
+                let t = deformer_time(c.fraction, c.clip.duration());
                 c.clip.sample(t, &mut sample)?;
                 let weighted = c.use_bone_weights && c.clip.track_weights().is_some();
                 for (j, (a, s)) in acc.iter_mut().zip(&sample).enumerate() {
@@ -120,8 +137,8 @@ impl BindDeformation {
         if let Some(s) = sliders {
             s.apply(&mut local)?;
         }
-        let mut model = vec![Mat4::IDENTITY; n];
-        skeleton.compose(&local, &mut model)?;
+        let mut model = vec![Transform::IDENTITY; n];
+        skeleton.compose_triples(&local, &mut model)?;
         let mut palette = vec![Mat4::IDENTITY; n];
         skinning_matrices(skeleton, &model, &mut palette)?;
         Ok(Self {
@@ -242,7 +259,7 @@ mod tests {
 
         // Animating the deformed mesh with the reference pose leaves it unchanged.
         let mut skin = vec![Mat4::IDENTITY; 3];
-        skinning_matrices(&s, s.reference_model(), &mut skin).unwrap();
+        skinning_matrices(&s, s.reference_triples(), &mut skin).unwrap();
         let p = crate::skin::skin_position(&skin, &[2], &[1.0], Vec3::from_array(pos[2]));
         assert!((p.z - 0.0112).abs() < 1e-5);
     }

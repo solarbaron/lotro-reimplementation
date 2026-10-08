@@ -13,7 +13,7 @@
 //!
 //! The frill pass (§8.2 item 5) tests its candidates against the footprint markers of the
 //! landblock's static pass ([`GeneratedScenery::markers`]) and appends none of its own, as
-//! the spec allows.
+//! the spec allows: no frill-pass node appends a marker, whatever its state.
 
 use tessera_formats::LandblockData;
 use tessera_formats::scenery::{PlacementNode, SCALE_MODE_UNIFORM, SceneChild};
@@ -165,6 +165,14 @@ impl std::fmt::Debug for SceneryInput<'_> {
 
 /// One generated object (`scenery.md` §7.6): a 0x47 entity descriptor and its frame in
 /// the landblock frame.
+///
+/// **Representation choice** (implementer note in `scenery.md` §7.6): the client's
+/// generated-list record also carries the object's `Entity_CreationType`, resolved along
+/// its 0x47 chain (§9.2 rule 2; 0 when no level has it). Placement never reads it, and it
+/// depends on [`SceneryObject::object`] alone, so generation does not read the object's
+/// 0x47 records to fill it in. A consumer that needs it (creation requests,
+/// `collision.md` §9.4) resolves it from the object along the same chain, for example
+/// through [`ObjectPropertyCache`](super::ObjectPropertyCache), and gets the same value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SceneryObject {
     /// The 0x47 object.
@@ -256,7 +264,10 @@ pub struct FrillRecord {
 pub enum Rejection {
     /// Step 1: the frequency draw (not an error).
     Frequency,
-    /// A `scale_mode` other than 4 (unobserved; unsupported).
+    /// Step 3, Tessera Decision: a `scale_mode` Tessera does not implement (0–3 and 5–8,
+    /// and 9 with scale limits that do not differ; all unobserved). Modes 9 and higher with
+    /// differing limits are failing children instead (step 15), and modes 10 and higher with
+    /// equal limits are placed with `scale_min`.
     ScaleMode,
     /// Step 6: outside the block.
     Outside,
@@ -324,9 +335,9 @@ pub struct SceneryStats {
     /// pass, a failure inside a frill layer abandons only the rest of that frill layer and
     /// is counted in [`SceneryStats::failed_frill_layers`] instead.
     pub failed_vertices: u32,
-    /// Frill layers whose subtree failed (frill pass only, §7.4 step 15 and the review
-    /// record of the 2026-10-07 revision): the rest of the layer is abandoned, the
-    /// enclosing scene carries on.
+    /// Frill layers whose subtree failed (frill pass only, `scenery.md` §7.4 step 15, S41:
+    /// a failure never climbs out of a frill layer): the rest of the layer is abandoned,
+    /// the enclosing scene carries on.
     pub failed_frill_layers: u32,
     /// Objects created (static pass) or frill records made (frill pass).
     pub objects: u32,
@@ -756,8 +767,8 @@ impl<'a, 'i> Gen<'a, 'i> {
             let layer_result = self.node(layer, frame, scale, s.wrapping_add(FRILL_LAYER_SALT), sw);
             self.frill_depth -= 1;
             // A failure inside the frill layer abandons only the rest of the layer: the
-            // scene ignores the layer's result and carries on (review record of the
-            // 2026-10-07 revision; `scenery.md` §7.4 step 15 OPEN).
+            // scene ignores the layer's result and carries on (`scenery.md` §7.4 step 15,
+            // S41: a failure never climbs out of a frill layer).
             if layer_result.is_err() {
                 self.stats.failed_frill_layers += 1;
             }
@@ -810,6 +821,17 @@ impl<'a, 'i> Gen<'a, 'i> {
         }
     }
 
+    /// Books a check's failure as a rejection for `why`, unless the check failed because
+    /// the work budget ran out inside it ([`Gen::charge`] set `cut`): that is not the
+    /// node's fault and is counted in [`SceneryStats::budget_cut`] instead. A node is
+    /// entered only with `cut` clear (its first charge succeeded), and nothing between that
+    /// charge and steps 7–14 sets it except a failing charge inside a check.
+    fn reject_unless_cut(&mut self, why: Rejection) {
+        if !self.cut {
+            self.reject(why);
+        }
+    }
+
     /// Processes a placement node (§7.4). A rejection returns `Ok`; only a failing child
     /// (step 15) returns `Err`.
     fn node(
@@ -859,12 +881,13 @@ impl<'a, 'i> Gen<'a, 'i> {
         let varies = (0..3).any(|k| (n.scale_max[k] - n.scale_min[k]).abs() > EPS);
         match n.scale_mode {
             SCALE_MODE_UNIFORM => {}
-            // Above 8 with differing limits: step 3 has no rule, the node fails (step 15).
+            // 9 or higher with differing limits: a failing child (§7.4 steps 3 and 15).
             m if m > 8 && varies => return Err(Failed),
-            // Above 9 with equal limits: `scale_min`, and step 11 adjusts nothing.
+            // 10 or higher with equal limits: `scale_min`, and step 11 adjusts nothing.
             m if m > 9 => {}
-            // 0–3, 5–9: per-axis salts (§6.2 OPEN) or the step-11 adjustment from water
-            // depth or slope are not specified; unobserved, rejected as unsupported.
+            // 0–3, 5–8, and 9 with equal limits: the client's rules for these modes (§6.2,
+            // §7.4 steps 3 and 11, S43) are not implemented; under the Tessera Decision of
+            // step 3 they are rejected (all unobserved: every node of the install uses 4).
             _ => {
                 self.reject(Rejection::ScaleMode);
                 return Ok(());
@@ -917,7 +940,7 @@ impl<'a, 'i> Gen<'a, 'i> {
         let rho = if sw.no_spacing { 0.0 } else { rho_node };
         // 6. Inside the block. The extra 0 ≤ p < 160 bound changes nothing for ρ ≥ 0; it
         //    keeps a hostile negative `spacing` from placing objects outside the block
-        //    (`scenery.md` §13.1 OPEN).
+        //    (Tessera Decision of `scenery.md` §13.1, "Negative `spacing`").
         let inside = |v: f32| rho <= v && v < BLOCK - rho && (0.0..BLOCK).contains(&v);
         if !(inside(p[0]) && inside(p[1])) {
             self.reject(Rejection::Outside);
@@ -925,7 +948,7 @@ impl<'a, 'i> Gen<'a, 'i> {
         }
         // 7. Terrain type.
         if !n.no_checks && !self.terrain_type_ok(p, rho) {
-            self.reject(Rejection::TerrainType);
+            self.reject_unless_cut(Rejection::TerrainType);
             return Ok(());
         }
         // 8. Terrain plane.
@@ -1011,24 +1034,26 @@ impl<'a, 'i> Gen<'a, 'i> {
                 n.clearance
             };
             if !self.clearance_ok(n, p, radius, rot) {
-                self.reject(Rejection::Clearance);
+                self.reject_unless_cut(Rejection::Clearance);
                 return Ok(());
             }
         }
         // 14. Spacing.
         if !n.no_checks {
             if self.static_overlaps(p, rho, n.spacing_3d) {
-                self.reject(Rejection::StaticSpacing);
+                self.reject_unless_cut(Rejection::StaticSpacing);
                 return Ok(());
             }
             if !sw.no_spacing && self.footprint_overlaps(p, rho, n.spacing_3d) {
-                self.reject(Rejection::Footprint);
+                self.reject_unless_cut(Rejection::Footprint);
                 return Ok(());
             }
         }
         // 15. Children.
         self.stats.nodes_placed += 1;
-        let marker = if self.pass == Pass::Frill && self.under_frill {
+        // The frill pass appends no markers (§8.2 item 5 shortcut): its candidates are
+        // tested against the static pass's markers only.
+        let marker = if self.pass == Pass::Frill {
             None
         } else if self.markers.len() < self.input.limits.max_markers as usize {
             self.markers.push(FootprintMarker {
@@ -1261,7 +1286,8 @@ impl<'a, 'i> Gen<'a, 'i> {
     }
 
     /// §7.4 step 14a. The scan is charged to the work budget; a scan the budget cannot pay
-    /// for counts as an overlap (as in [`Gen::footprint_overlaps`]).
+    /// for counts as an overlap (as in [`Gen::footprint_overlaps`]), and the caller books
+    /// no rejection for it ([`Gen::reject_unless_cut`]).
     fn static_overlaps(&mut self, p: [f32; 3], rho: f32, spacing_3d: bool) -> bool {
         if self.input.statics.is_empty() {
             return false;

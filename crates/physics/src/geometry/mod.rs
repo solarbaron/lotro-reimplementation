@@ -9,7 +9,7 @@
 //! | [`GridMesh`]: terrain and ceiling meshes, key numbering, [`GridMesh::client_keys_near`] (radius query), [`GridMesh::client_plane_at`] (plane query), [`GridMesh::keys_in_disc`] | §6.1–§6.6, `scenery.md` §7.4 steps 8, 13 |
 //! | [`CellVolume`], [`CellPlacement`], [`PlacedCell`], [`CellSet::cell_at`] | §5.4, §5.8, §5.8.1 |
 //! | [`ShapeTemplate`], [`BoxVolume`]: 0x66 meshes, setup volumes (solid boxes), cell physics meshes, mesh-level collision | §4, §5.3, §7, §8 |
-//! | [`CollisionFlags`], [`PhysicsPids`], [`static_blocks_walker`], [`generated_blocks_walker`], [`content_layers_pass`] | §9.1–§9.4 |
+//! | [`CollisionFlags`], [`EntityLookups`], [`PhysicsPids`], [`static_blocks_walker`], [`static_has_walker_collision`], [`generated_blocks_walker`], [`content_layers_pass`] | §9.1–§9.4 |
 //! | [`resolve_object_collision`], [`ObjectCollisionCache`] | §8, §9.1, §9.4 |
 //! | [`CollisionSetBuilder`], [`CollisionSet`], [`CollisionView`], [`CollisionQuery`] | §12.1; decision 0013 (positions) |
 //! | [`WaterPlane`], [`LiquidBox`], [`LiquidFlags`] | `water.md` §6.2–§7.4; decision 0013 (water) |
@@ -38,13 +38,15 @@ pub use cell::{
     PlacedCell,
 };
 pub use flags::{
+    CREATION_TYPE_INVALID, CREATION_TYPE_SHARED_STATIC_IMMOBILE,
     CREATION_TYPE_UNIQUE_DYNAMIC_IMMOBILE, CREATION_TYPE_UNIQUE_DYNAMIC_MOBILE, CollisionFlags,
-    ETHEREAL_CAMERA, ETHEREAL_DEFAULT, ETHEREAL_PLAYER, PhysicsPids, SetupCollision,
+    ETHEREAL_CAMERA, ETHEREAL_DEFAULT, ETHEREAL_PLAYER, EntityLookups, PhysicsPids, SetupCollision,
     content_layer_list, content_layers_pass, ethereality_bit, generated_blocks_walker,
-    static_blocks_walker,
+    static_blocks_walker, static_has_walker_collision,
 };
 pub use liquid::{
-    LiquidBox, LiquidFlags, LiquidPids, MAX_LIQUID_BOXES, UNDER_WATER_TOLERANCE, WaterPlane,
+    LiquidBox, LiquidFlags, LiquidPids, LiquidSpan, MAX_LIQUID_BOXES, UNDER_WATER_TOLERANCE,
+    WaterPlane,
 };
 pub use math::MAX_COORDINATE;
 pub use primitives::{Aabb, Capsule, Plane, Sphere, Transform};

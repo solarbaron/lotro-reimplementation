@@ -153,6 +153,9 @@ fn bone1_angle(anim: &Animator) -> f32 {
 }
 
 /// Findings 3 and 10: interrupting a fade popped the pose to the fade's incoming clip.
+/// With one overall weight per clip (`skeleton-anim.md` §6.5, K21) an interrupting fade
+/// stops both clips of the old fade at the weights they have and lets them fall linearly
+/// to 0, so the pose stays continuous.
 #[test]
 fn interrupted_fade_is_continuous() {
     let (s, [a, b, c]) = fade_clips();
@@ -168,7 +171,14 @@ fn interrupted_fade_is_continuous() {
         .unwrap();
     let after = bone1_angle(&anim);
     assert!((after - before).abs() < 1e-4, "{before} -> {after}");
-    // The old fade finishes underneath, the new one completes on time.
+    // The stopped clips fall from 0.5 each to 0; the new one rises to 1 on time.
+    match &anim.layers()[0].source {
+        Some(Source::CrossFade(f)) => {
+            let w: Vec<f32> = f.from.iter().map(|(_, w)| *w).collect();
+            assert_eq!(w, vec![0.5, 0.5]);
+        }
+        other => panic!("{other:?}"),
+    }
     anim.advance(0.5);
     let mid = bone1_angle(&anim);
     assert!(mid > before && mid < 2.0, "{mid}");
@@ -198,7 +208,8 @@ fn interrupted_fade_is_continuous() {
         let src = anim.layers()[0].source.as_ref().unwrap();
         assert!(src.clip_count() <= MAX_LAYER_CLIPS);
         let after = bone1_angle(&anim);
-        // Settling the oldest fade (beyond the clip limit) may move the pose a little.
+        // Dropping the weakest stopped clip (beyond the clip limit) may move the pose a
+        // little.
         assert!(after.is_finite());
         if i < 2 {
             assert!((after - before).abs() < 1e-4, "{i}: {before} -> {after}");
@@ -207,10 +218,11 @@ fn interrupted_fade_is_continuous() {
     }
 }
 
-/// A fade chain whose oldest source contributes nothing (a speed blend with a NaN
-/// parameter) scaled later fades by the first fade's weight, and the layer popped to full
-/// weight when the newest fade completed. Weights follow the layered-weight rule of
-/// `skeleton-anim.md` §6.6.
+/// `skeleton-anim.md` §6.6 step 2 and the §15 answer (3): each clip's weight is its own
+/// ramp, with no cross-fade chain product. Stopped clips at weights 0.1 (b) and nothing
+/// (an empty speed blend) fall linearly while c rises; with nothing below, the
+/// layered-weight rule quantises them and fills a total of at most 0.1 with the
+/// reference pose.
 #[test]
 fn fade_over_empty_source_keeps_later_weights() {
     let (s, [_, b, c]) = fade_clips();
@@ -218,25 +230,33 @@ fn fade_over_empty_source_keeps_later_weights() {
     let state = |w2: f32| {
         let mut sb = SpeedBlend::new(vec![(0.0, b.clone()), (1.0, c.clone())]).unwrap();
         sb.set_param(f32::NAN);
+        // A fade from an empty speed blend to b, 0.1 of the way in: b has weight 0.1.
         let inner = CrossFade {
-            from: Box::new(Source::Speed(sb)),
-            to: Playback::new(b.clone(), Wrap::Loop),
             elapsed: 0.1,
             duration: 1.0,
+            ..CrossFade::from_source(
+                Source::Speed(sb),
+                Playback::new(b.clone(), Wrap::Loop),
+                1.0,
+                false,
+            )
         };
+        assert!(inner.from.is_empty(), "nothing to stop");
         let outer = CrossFade {
-            from: Box::new(Source::CrossFade(inner)),
-            to: Playback::new(c.clone(), Wrap::Loop),
             elapsed: w2,
             duration: 1.0,
+            ..CrossFade::from_source(
+                Source::CrossFade(inner),
+                Playback::new(c.clone(), Wrap::Loop),
+                1.0,
+                false,
+            )
         };
         let mut anim = Animator::new(s.clone());
         anim.set_source(0, Source::CrossFade(outer)).unwrap();
         bone1_angle(&anim)
     };
-    // The chain gives b (1 rad) weight 0.1 (1 − w2) and c (2 rad) weight w2; with nothing
-    // below, the layered-weight rule (`skeleton-anim.md` §6.6) quantises them and fills a
-    // total below 0.1 with the reference pose. Up to nlerp error.
+    // b (1 rad) has weight 0.1 (1 − w2), c (2 rad) weight w2. Up to nlerp error.
     let expect = |w2: f32| {
         let wb = quantise_weight(0.1 * (1.0 - w2));
         let wc = quantise_weight(w2);
@@ -527,7 +547,7 @@ fn huge_clip_scales_never_reach_the_palette() {
     s.compose_triples(&local, &mut triples).unwrap();
     assert!(triples.iter().all(Transform::is_finite), "{triples:?}");
     let mut skin = vec![glam::Mat4::IDENTITY; 3];
-    tessera_anim::skinning_matrices(&s, &model, &mut skin).unwrap();
+    tessera_anim::skinning_matrices(&s, &triples, &mut skin).unwrap();
     assert!(skin.iter().all(glam::Mat4::is_finite), "{skin:?}");
 
     // Through the layered evaluator and the averaged result as well.

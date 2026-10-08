@@ -2,15 +2,16 @@
 //! The streamer alone on a fast diagonal flight against a user's own install (read-only):
 //! the near-ring holes of ROADMAP M4.5 criterion 5 (flight M3-b, `walker.md` §14.11)
 //! without the renderer, in alternating modes (so that all see a similar machine load):
-//! lookahead off, a fixed 1.5 s urgent path, a 1.5 s urgent path that follows slow bundle
-//! jobs, and the default lookahead, which adds an early part out to 4 s
-//! (`tessera_world::streamer` module docs, "Lookahead").
+//! lookahead off, a 1.5 s path that is all urgent, a 4 s path whose urgent part stays at
+//! 1.5 s, and the default lookahead, a 4 s path whose urgent part follows slow bundle jobs
+//! (`tessera_world::streamer` module docs, "Lookahead"; ARCHITECTURE §9.2: slow jobs
+//! lengthen the urgent part, never the path).
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install; ignored by default because it
 //! flies for about 20 s per run. Run it with
 //! `cargo test --release -p tessera-world --test flight_real_data -- --ignored --nocapture`.
 //! `TESSERA_FLIGHT_RUNS` (rounds of every mode, default 1), `TESSERA_FLIGHT_MODES` (a
-//! comma-separated subset of `off,fixed,adaptive,default`), `TESSERA_FLIGHT_SPEED` (units
+//! comma-separated subset of `off,fixed,early,default`), `TESSERA_FLIGHT_SPEED` (units
 //! per second, default 3,000) and `TESSERA_FLIGHT_REGION` (default 2) change the flight.
 //! Results depend on the machine and its load: the test prints counts and asserts only
 //! that the flight completes and that no bundle job failed (the synthetic regression test
@@ -88,20 +89,20 @@ fn fly(set: &Arc<ArchiveSet>, region: u8, speed: f64, mode: Mode) -> Flight {
         },
         lookahead: match mode {
             Mode::Off => Duration::ZERO,
-            Mode::Fixed | Mode::Adaptive | Mode::Default => StreamConfig::default().lookahead,
+            Mode::Fixed | Mode::Early | Mode::Default => StreamConfig::default().lookahead,
         },
         lookahead_job_margin: match mode {
-            Mode::Adaptive | Mode::Default => StreamConfig::default().lookahead_job_margin,
-            Mode::Off | Mode::Fixed => 0.0,
+            Mode::Default => StreamConfig::default().lookahead_job_margin,
+            Mode::Off | Mode::Fixed | Mode::Early => 0.0,
         },
-        // The modes before the early part: urgent path only, at most 6,400 units.
+        // Without the early part the path is the urgent 1.5 s, at most 6,400 units.
         lookahead_early: match mode {
-            Mode::Default => StreamConfig::default().lookahead_early,
-            Mode::Off | Mode::Fixed | Mode::Adaptive => Duration::ZERO,
+            Mode::Early | Mode::Default => StreamConfig::default().lookahead_early,
+            Mode::Off | Mode::Fixed => Duration::ZERO,
         },
         lookahead_max: match mode {
-            Mode::Default => StreamConfig::default().lookahead_max,
-            Mode::Off | Mode::Fixed | Mode::Adaptive => 6_400.0,
+            Mode::Early | Mode::Default => StreamConfig::default().lookahead_max,
+            Mode::Off | Mode::Fixed => 6_400.0,
         },
         ..StreamConfig::default()
     };
@@ -173,11 +174,12 @@ fn fly(set: &Arc<ArchiveSet>, region: u8, speed: f64, mode: Mode) -> Flight {
 enum Mode {
     /// None.
     Off,
-    /// A 1.5 s urgent path, not following job times, no early part.
+    /// A 1.5 s path, all of it urgent, not following job times (no early part).
     Fixed,
-    /// A 1.5 s urgent path or 1.5 times the recent slow-job time, no early part.
-    Adaptive,
-    /// The default: [`Mode::Adaptive`] plus the early part out to 4 s.
+    /// A 4 s path whose first 1.5 s are urgent, not following job times.
+    Early,
+    /// The default: a 4 s path whose urgent part is 1.5 s or 1.5 times the recent
+    /// slow-job time, whichever is longer (at most the whole path).
     Default,
 }
 
@@ -186,7 +188,7 @@ impl Mode {
         match s.trim() {
             "off" => Some(Self::Off),
             "fixed" => Some(Self::Fixed),
-            "adaptive" => Some(Self::Adaptive),
+            "early" => Some(Self::Early),
             "default" => Some(Self::Default),
             _ => None,
         }
@@ -208,7 +210,7 @@ fn fast_flight_near_ring_holes() {
     let speed: f64 = env_num("TESSERA_FLIGHT_SPEED").unwrap_or(3_000.0);
     let region: u8 = env_num("TESSERA_FLIGHT_REGION").unwrap_or(2);
     let modes: Vec<Mode> = std::env::var("TESSERA_FLIGHT_MODES").map_or_else(
-        |_| vec![Mode::Off, Mode::Fixed, Mode::Adaptive, Mode::Default],
+        |_| vec![Mode::Off, Mode::Fixed, Mode::Early, Mode::Default],
         |s| s.split(',').filter_map(Mode::parse).collect(),
     );
     for run in 0..runs {

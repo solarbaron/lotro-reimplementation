@@ -8,7 +8,7 @@
 //! | [`FrillPids`], [`FrillObjectValues`] | Per-object values resolved along the 0x47 chain | §8.3 rules 6–7, §9.2 |
 //! | [`FrillSectorKey`], [`sector_vertices`], [`generate_sector`], [`FrillSector`], [`FrillInstance`] | One sector's instances: the frill pass of its vertices, late records discarded, the landblock and density tests | §8.2, §8.6 |
 //! | [`DensityThinner`] | The unseeded density test (frills below density 1 are random by design) | §8.2 |
-//! | [`FrillRing`], [`ring_centre`] | The sectors held around the ring centre | §8.2 |
+//! | [`FrillRing`], [`ring_centre`], [`ring_centre_of`] | The ring centre and the square of sectors held around it | §8.2 |
 //!
 //! Frill sectors produce instance lists only: no entities, no collision, no selection, no
 //! LOD class (§8.1). Building the vertex buffers (§8.5) is the renderer's job.
@@ -17,7 +17,9 @@ mod ring;
 mod sector;
 mod settings;
 
-pub use ring::{FrillRing, FrillRingDiff, MAX_RING_RADIUS, ring_centre};
+pub use ring::{
+    FrillRing, FrillRingDiff, MAX_RING_RADIUS, far_reach_sectors, ring_centre, ring_centre_of,
+};
 pub use sector::{
     DensityThinner, FrillInstance, FrillSector, FrillSectorKey, generate_sector, sector_vertices,
 };

@@ -150,3 +150,138 @@ fn held_proportion_clip_example_13_2() {
     p.set_held_fraction(f32::NAN);
     assert_eq!(p.clip_time(), 0.0);
 }
+
+/// One bone, clips that set its z to `z`, without track weights.
+fn z_clip(s: &Arc<Skeleton>, z: f32) -> Arc<tessera_anim::BoundClip> {
+    bind(&interleaved_clip(2, 1, 1.0, |_, _| at_z(z)), s)
+}
+
+/// The clips of layer 0 with their own overall weights.
+fn clip_weights(anim: &Animator) -> Vec<f32> {
+    let mut snap = Vec::new();
+    anim.snapshot(&mut snap);
+    snap.first()
+        .map(|l| l.clips().map(|c| c.weight).collect())
+        .unwrap_or_default()
+}
+
+/// `skeleton-anim.md` §14.9: a Switch cross-fade with `RampOut` 0.2. At 0.05 s into it the
+/// outgoing clip has weight 0.75 and the incoming one 0.25; at 0.2 s the outgoing clip is
+/// removed. Both ramps are linear.
+#[test]
+fn switch_cross_fade_example_14_9() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut anim = Animator::new(Arc::clone(&s));
+    anim.play(0, Playback::new(z_clip(&s, 0.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    anim.play(0, Playback::new(z_clip(&s, 4.0), Wrap::Loop), 0.2, false)
+        .unwrap();
+    anim.advance(0.05);
+    let w = clip_weights(&anim);
+    assert!(
+        (w[0] - 0.75).abs() < 1e-6 && (w[1] - 0.25).abs() < 1e-6,
+        "{w:?}"
+    );
+    // Quantised 191/255 and 63/255 (§6.6 step 3).
+    let z = eval(&anim)[0].translation[2];
+    assert!((z - 4.0 * 63.0 / 254.0).abs() < 1e-5, "{z}");
+    anim.advance(0.15);
+    assert_eq!(clip_weights(&anim), vec![1.0]);
+}
+
+/// `skeleton-anim.md` §6.5, §6.6 step 2 and the §15 answer (3): every clip keeps one
+/// overall weight of its own. A fade interrupted half-way stops both of its clips at 0.5;
+/// they fall linearly to 0 together while the new clip rises (no chain product: the
+/// earlier incoming clip does not keep rising underneath).
+#[test]
+fn interrupted_fade_uses_each_clips_own_weight() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut anim = Animator::new(Arc::clone(&s));
+    anim.play(0, Playback::new(z_clip(&s, 0.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    anim.play(0, Playback::new(z_clip(&s, 1.0), Wrap::Loop), 1.0, false)
+        .unwrap();
+    anim.advance(0.5);
+    anim.play(0, Playback::new(z_clip(&s, 2.0), Wrap::Loop), 1.0, false)
+        .unwrap();
+    anim.advance(0.25);
+    let w = clip_weights(&anim);
+    assert_eq!(w.len(), 3);
+    assert!((w[0] - 0.375).abs() < 1e-6, "{w:?}");
+    assert!((w[1] - 0.375).abs() < 1e-6, "{w:?}");
+    assert!((w[2] - 0.25).abs() < 1e-6, "{w:?}");
+}
+
+/// `script-table.md` §6.2: starting a clip never stops another clip of the same layer;
+/// both play at full weight and share the layer's remaining budget, so a lower layer gets
+/// nothing (`skeleton-anim.md` §6.6 step 2).
+#[test]
+fn clips_added_to_a_layer_share_its_budget() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut anim = Animator::new(Arc::clone(&s));
+    anim.play(0, Playback::new(z_clip(&s, 9.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    anim.add(1, Playback::new(z_clip(&s, 1.0), Wrap::Loop))
+        .unwrap();
+    anim.add(1, Playback::new(z_clip(&s, 3.0), Wrap::Loop))
+        .unwrap();
+    // Each clip of layer 1 gets c × r = 1; the layer then leaves nothing for layer 0.
+    let z = eval(&anim)[0].translation[2];
+    assert!((z - 2.0).abs() < 1e-6, "{z}");
+    // A layer full of clips refuses one more and stays as it was.
+    anim.add(1, Playback::new(z_clip(&s, 5.0), Wrap::Loop))
+        .unwrap();
+    anim.add(1, Playback::new(z_clip(&s, 7.0), Wrap::Loop))
+        .unwrap();
+    assert!(
+        anim.add(1, Playback::new(z_clip(&s, 11.0), Wrap::Loop))
+            .is_err()
+    );
+    let z = eval(&anim)[0].translation[2];
+    assert!((z - 4.0).abs() < 1e-5, "{z}");
+}
+
+/// The opacity of a clip comes from its own node (`script-table.md` §6.5): two clips on
+/// one layer, only one using its track weights.
+#[test]
+fn track_opacity_is_per_clip() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut weighted = interleaved_clip(2, 1, 1.0, |_, _| at_z(10.0));
+    weighted.weights = vec![0.01];
+    let mut anim = Animator::new(Arc::clone(&s));
+    let mut p = Playback::new(bind(&weighted, &s), Wrap::Loop);
+    p.use_track_weights = true;
+    anim.add(0, p).unwrap();
+    anim.add(0, Playback::new(z_clip(&s, 0.0), Wrap::Loop))
+        .unwrap();
+    // Weights 0.01 → 2/255 and 1 → 255/255.
+    let z = eval(&anim)[0].translation[2];
+    assert!((z - 10.0 * 2.0 / 257.0).abs() < 1e-5, "{z}");
+}
+
+/// `appearance.md` §6.4 step 1 with `skeleton-anim.md` §6.6 step 3: a deformer clip's
+/// track weight becomes ⌊255 × weight⌋ / 255 with no tolerance. The single-precision value
+/// 1 − 0.6 = 0.39999998 keeps 101 steps (a tolerance would give 102).
+#[test]
+fn deformer_track_weights_are_truncated_without_tolerance() {
+    use tessera_anim::{BindDeformation, DeformClip};
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut weighted = interleaved_clip(2, 1, 1.0, |_, _| at_z(1.0));
+    weighted.weights = vec![1.0f32 - 0.6];
+    let clips = [
+        DeformClip {
+            clip: z_clip(&s, 0.0),
+            fraction: 0.0,
+            use_bone_weights: true,
+        },
+        DeformClip {
+            clip: bind(&weighted, &s),
+            fraction: 0.0,
+            use_bone_weights: true,
+        },
+    ];
+    let d = BindDeformation::new(&s, &clips, None).unwrap();
+    let z = d.local_pose()[0].translation[2];
+    let expect = (101.0 / 255.0) / (1.0 + 101.0 / 255.0);
+    assert!((z - expect).abs() < 1e-6, "{z} vs {expect}");
+}

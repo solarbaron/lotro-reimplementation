@@ -482,6 +482,110 @@ fn refraction_composite_follows_section_8_4() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// A negative Fresnel exponent or specular power from data is clamped to 0 (render.md §5.3
+/// implementer note): x⁰ = 1, no inf or NaN in the composite.
+#[test]
+fn negative_exponents_are_clamped() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor = [0.5, 0.3, 0.2];
+    // Seen straight down, 1 − |v · n| = 0: a negative exponent gave 0^e = inf and, times
+    // reflection − refraction = 0, NaN. Clamped, the Fresnel factor is 1: colour =
+    // reflection = F.
+    let params = WaterParams {
+        fog_amount: 0.0,
+        fresnel_exponent: -2.0,
+        ..WaterParams::default()
+    };
+    let px = water_over(&mut r, floor, params, 100.0)?;
+    assert!(close(px, floor), "{px:?}");
+    // A sun 45° from the zenith: N · H = cos 22.5° < 1. With the power clamped to 0 the
+    // highlight is 1 (x⁰), not 0.924^−5 = 1.48: colour = F + 1 × sun specular × specular
+    // colour.
+    let sun = SunLight {
+        direction: Vec3::new(1.0, 0.0, 1.0).normalize(),
+        color: [0.0; 3],
+        specular: [0.2; 3],
+    };
+    let params = WaterParams {
+        fog_amount: 0.0,
+        specular_power: -5.0,
+        specular_color: [1.0; 3],
+        fake_specular_threshold: 1.0,
+        ..WaterParams::default()
+    };
+    let lighting = FrameLighting {
+        sun: Some(sun),
+        ..FrameLighting::default()
+    };
+    let px = water_over_with(&mut r, floor, params, 100.0, None, lighting)?;
+    assert!(close(px, [0.7, 0.5, 0.4]), "{px:?}");
+    Ok(())
+}
+
+/// water.md §8.4 step 6 with render.md §5.3: clamp(n · h, 0, 1)^SpecularPower is 1 for a
+/// power of 0 also where n · h ≤ 0, and a missing normal map gives no sparkle whatever the
+/// threshold.
+#[test]
+fn zero_power_and_missing_map_sparkle() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let floor = [0.5, 0.3, 0.2];
+    let lighting = |direction: Vec3| FrameLighting {
+        sun: Some(SunLight {
+            direction: direction.normalize(),
+            color: [0.0; 3],
+            specular: [0.2; 3],
+        }),
+        ..FrameLighting::default()
+    };
+    // A normal map lying along +x and a hair below the horizon (blue 127): seen straight
+    // down with the sun overhead, n · h < 0. Fresnel ≈ 1 gives colour = F; the sparkle is
+    // 0 with threshold 1; the highlight x⁰ = 1 adds the sun's specular.
+    let sideways = r.upload_texture(&TextureUpload {
+        color_space: ColorSpace::Linear,
+        filter: Filter::Nearest,
+        wrap: Wrap::Repeat,
+        ..TextureUpload::rgba8(1, 1, &[255, 128, 127, 255])
+    })?;
+    let params = WaterParams {
+        fog_amount: 0.0,
+        specular_power: 0.0,
+        specular_color: [1.0; 3],
+        fake_specular_threshold: 1.0,
+        ..WaterParams::default()
+    };
+    let px = water_over_with(
+        &mut r,
+        floor,
+        params,
+        100.0,
+        Some(sideways),
+        lighting(Vec3::Z),
+    )?;
+    assert!(close(px, [0.7, 0.5, 0.4]), "power 0: {px:?}");
+    // No normal map and a negative threshold: no sparkle (it would add 4 × (0.5 + 0.5) ×
+    // 0.2 = 0.8). The sun 45° from the zenith keeps the highlight at 0.924^80 ≈ 0.
+    let params = WaterParams {
+        fog_amount: 0.0,
+        specular_color: [1.0; 3],
+        fake_specular_threshold: -0.5,
+        ..WaterParams::default()
+    };
+    let px = water_over_with(
+        &mut r,
+        floor,
+        params,
+        100.0,
+        None,
+        lighting(Vec3::new(1.0, 0.0, 1.0)),
+    )?;
+    assert!(close(px, floor), "no map, negative threshold: {px:?}");
+    Ok(())
+}
+
 #[test]
 fn distant_water_quads_draw_in_one_call_and_hostile_input_is_dropped() -> Result<(), RenderError> {
     let Some(mut r) = gpu::headless_renderer(CLEAR) else {

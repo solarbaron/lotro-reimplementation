@@ -26,6 +26,8 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0016](0016-plugin-class-helper.md) | Ship a clean-room plugin `class` helper (user's original package wins if installed); extended scripting API later, separate namespace, compatibility API unchanged | Accepted | 2026-10-06 |
 | [0017](0017-extended-scripting.md) | Extended scripting (M5.5): Lua 5.1 ext apartments under `Ext`, capability-granted modules, fail-closed gate (never official servers), patched Lua in an external fork | Accepted | 2026-10-07 |
 | [0018](0018-incident-review-notes-in-clean-prompts.md) | Incident: dirty-room reports reached clean-room implementer prompts in the M4.5 close-out; exposed work held; process rules; two owner decisions pending | Accepted (incident) | 2026-10-07 |
+| [0019](0019-audio-backend.md) | Audio backend: cpal output behind the `device` feature, a project-owned lock-free mixer implementing `sound.md` §6–§8; null and offline backends for headless runs and tests; kira not used | Accepted | 2026-10-07 |
+| [0030](0030-tessera-protocol-transport.md) | Tessera protocol transport: QUIC (quinn, rustls on ring), pinned Ed25519 server keys, control/world/chat streams plus RFC 9221 datagrams; TRD v1 frozen, unused by the protocol (ID out of sequence for parallel branches) | Accepted | 2026-10-06 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next
 number, add a row here.

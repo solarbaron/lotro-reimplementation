@@ -1127,17 +1127,69 @@ fn walks_off_ledges_and_down_small_steps() {
     let mut c = controller([0.0, 0.0, 2.0], 0.0);
     run(&set, &mut c, MoveInput::default(), 3);
     let env = StepEnv::new(&set, [0.0; 3]);
-    let mut states = Vec::new();
+    let mut steps = Vec::new();
     for _ in 0..120 {
         c.step(&forward(), &env);
         assert!(penetration(&set, &c) >= -0.01);
-        states.push(c.state().element);
+        steps.push((z(&c), c.state().element));
     }
-    // Down the 0.3 m step it stays grounded (snap), off the 1.7 m ledge it falls.
+    // Down the 0.3 m step it briefly falls and lands on the middle floor (§12.4 (j): the
+    // snap does not reach 0.3 m at run speed); off the 1.7 m ledge it falls to the ground.
     let at_x = x(&c);
     assert!(at_x > 8.0);
     assert!(z(&c) < 0.005);
-    assert!(states.contains(&MovementState::EarthNoSurface));
+    let falling_between = |lo: f64, hi: f64| {
+        steps
+            .iter()
+            .any(|&(z, e)| e == MovementState::EarthNoSurface && z > lo && z < hi)
+    };
+    assert!(falling_between(1.71, 1.99), "falls off the 0.3 m step");
+    assert!(
+        steps
+            .iter()
+            .any(|&(z, e)| e == MovementState::EarthControlledSurface && (z - 1.7).abs() < 0.005),
+        "lands on the middle floor"
+    );
+    assert!(falling_between(0.05, 1.65), "falls off the 1.7 m ledge");
+}
+
+/// `collision.md` §12.4 (v) names no mover state: a slide that meets only walkable planes
+/// keeps the heading also in the air. A mover falling diagonally onto a walkable side slope
+/// (30°, descending toward +y) while moving along +x keeps its heading instead of drifting
+/// downhill in the landing step.
+#[test]
+fn keeping_the_heading_also_applies_in_the_air() {
+    let t = 30.0_f32.to_radians().tan();
+    let mut s = Scene::new();
+    s.tris(
+        &[
+            [-50.0, -50.0, 50.0 * t],
+            [50.0, -50.0, 50.0 * t],
+            [50.0, 50.0, -50.0 * t],
+            [-50.0, 50.0, -50.0 * t],
+        ],
+        &[[0, 1, 2], [0, 2, 3]],
+    );
+    let set = s.build();
+    // The lower cap (radius 0.35, centre 0.45 m above the feet) clears the slope by 0.04 m.
+    let mut c = controller([0.0, 0.0, 0.1], 0.0);
+    let mut state = *c.state();
+    state.velocity = [5.0, 0.0, -5.0];
+    assert!(c.set_state(state));
+    assert_eq!(c.state().element, MovementState::EarthNoSurface);
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let r = c.step(&MoveInput::default(), &env);
+    assert_eq!(r.outcome, StepOutcome::Stepped);
+    assert!(r.planes >= 1, "the slope was met in this step");
+    let v = c.state().velocity;
+    let p = c.state().position;
+    assert!(
+        v[1].abs() < 1e-3,
+        "no downhill drift of the velocity: {v:?}"
+    );
+    assert!(p[1].abs() < 1e-3, "no downhill drift of the motion: {p:?}");
+    assert!(v[0] > 4.0, "{v:?}");
+    assert!(penetration(&set, &c) >= -0.01);
 }
 
 #[test]
@@ -2165,6 +2217,38 @@ fn column_water_queries_match_the_generic_one() {
         }
         assert!(wet > 100, "{wet}");
     }
+    // Finding: the column search kept at most 64 boxes. 80 thin boxes stacked over one
+    // column, the point inside the highest only: every box counts (`water.md` §7.4).
+    let mut s = Scene::new();
+    for k in 0..80 {
+        let z0 = k as f32;
+        s.builder
+            .add_liquid_box(
+                LiquidBox::new(
+                    [-1.0, -1.0, z0],
+                    [1.0, 1.0, z0 + 0.5],
+                    &Transform::IDENTITY,
+                    LiquidFlags {
+                        liquid: true,
+                        ..LiquidFlags::default()
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let stack = s.build();
+    let p = [0.0, 0.0, 79.25];
+    let generic = LiquidWater(&stack).water_at(p);
+    assert!(generic.is_some());
+    assert_eq!(stack.water_at(p), generic);
+    let mut view = CollisionView::new();
+    view.push(&stack, [0.0; 3]);
+    assert_eq!(view.water_at(p), LiquidWater(&view).water_at(p));
+    assert!(view.water_at(p).is_some());
+    // The lowest point of the column sees boxes above it but is in the lowest one.
+    let low = [0.0, 0.0, 0.25];
+    assert_eq!(stack.water_at(low), LiquidWater(&stack).water_at(low));
     // A view of two sets side by side, shifted.
     let mut view = CollisionView::with_origin([100.0, 0.0, 0.0]);
     view.push(&beach, [-100.0, 0.0, 0.0]);

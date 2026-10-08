@@ -115,15 +115,26 @@ struct SectorGroups {
     bounds: Option<(Vec3, Vec3)>,
     /// Build generation (cells rebuild when a member's changes).
     generation: u64,
-    /// Rebuilds made to find the terrain colour.
-    tries: u8,
     /// When the terrain colour may be looked for again.
     retry_at: Instant,
 }
 
-/// How often a sector is rebuilt to find its terrain colour (the top layer's texture may
-/// not have arrived when it was first built) before it keeps intensity 0.
-pub const COLOUR_TRIES: u8 = 10;
+/// How often a sector built without its terrain colour (the top layer's texture may not
+/// have arrived) looks for it again.
+pub const COLOUR_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Whether the terrain colour at the centre of frill sector `key` can be found now
+/// (`walker.md` §14.7 Decision: [`TerrainLayer::colour_at`] at the sector's centre).
+fn sector_colour_known(key: FrillSectorKey, terrain: &TerrainLayer, objects: &ObjectLayer) -> bool {
+    let Some(block) = key.landblock() else {
+        return false;
+    };
+    let (sx, sy) = key.local();
+    let cx = (f32::from(sx) + 0.5) * SECTOR_SIZE;
+    let cy = (f32::from(sy) + 0.5) * SECTOR_SIZE;
+    let store: &dyn TextureStore = objects;
+    terrain.colour_at(block, cx, cy, store).is_some()
+}
 
 /// Counters of the last frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -387,14 +398,20 @@ impl FrillLayer {
         }
         let mut builds = 0usize;
         let mut waiting = 0usize;
-        // New and regenerated sectors first; sectors still without their terrain colour
-        // are retried once a second while the budget allows (`COLOUR_TRIES` times).
+        // New and regenerated sectors first; a sector still without its terrain colour is
+        // rebuilt once the colour can be found (checked at most once a second), however
+        // long that takes: its intensity is 0 only while the colour is unknown
+        // (`walker.md` §14.7).
         let mut order: Vec<(bool, FrillSectorKey)> = Vec::new();
         for (key, sector) in &ready {
-            match self.sectors.get(key) {
+            match self.sectors.get_mut(key) {
                 Some(g) if Arc::ptr_eq(&g.sector, sector) => {
-                    if !g.coloured && g.tries < COLOUR_TRIES && now >= g.retry_at {
-                        order.push((true, *key));
+                    if !g.coloured && now >= g.retry_at {
+                        if sector_colour_known(*key, terrain, objects) {
+                            order.push((true, *key));
+                        } else {
+                            g.retry_at = now + COLOUR_RETRY;
+                        }
                     }
                 }
                 _ => order.push((false, *key)),
@@ -414,9 +431,7 @@ impl FrillLayer {
                 Some(mut g) => {
                     self.generation += 1;
                     g.generation = self.generation;
-                    let tries = self.sectors.get(&key).map_or(0, |o| o.tries);
-                    g.tries = if recolour { tries.saturating_add(1) } else { 0 };
-                    g.retry_at = now + std::time::Duration::from_secs(1);
+                    g.retry_at = now + COLOUR_RETRY;
                     if let Some(old) = self.sectors.insert(key, g) {
                         objects.release_model_parts(&old.parts);
                     }
@@ -564,14 +579,13 @@ fn build_groups(
             .iter()
             .filter_map(|&i| sector.instances.get(i))
             .map(|f| Instance {
-                transform: frill_transform(
+                terrain_color,
+                ..Instance::new(frill_transform(
                     Vec3::ZERO,
                     f.position,
                     [f.rotation.w, f.rotation.x, f.rotation.y, f.rotation.z],
                     f.scale,
-                ),
-                tint: [1.0; 4],
-                terrain_color,
+                ))
             })
             .collect();
         let params = FrillParams {
@@ -621,7 +635,6 @@ fn build_groups(
         coloured,
         bounds,
         generation: 0,
-        tries: 0,
         retry_at: born,
     })
 }
@@ -695,7 +708,6 @@ mod tests {
             coloured: intensity > 0.0,
             bounds: Some((lo - m, hi + m)),
             generation: 0,
-            tries: 0,
             retry_at: Instant::now(),
         }
     }

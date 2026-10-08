@@ -24,7 +24,9 @@ use glam::{Mat4, Vec3};
 pub const MAX_FRAME_LIGHTS: usize = 256;
 
 /// Lights a single draw receives **in all, the main light included** (`lighting.md` §8.5:
-/// at most 8). A draw in a pass with a sun therefore takes at most 7 table lights.
+/// at most 8). A draw takes at most 7 table lights: the eighth slot is light 0 of the sun or,
+/// in a pass without one, of the default directional light (Tessera Decision of §8.5), unless
+/// a key directional table light takes it.
 pub const MAX_DRAW_LIGHTS: usize = 8;
 
 /// Shared WGSL declarations of the frame uniform (`Frame`, `FrameLight`) and its binding
@@ -38,8 +40,14 @@ pub const FRAME_WGSL: &str = include_str!("shaders/frame.wgsl");
 /// `@binding(2)` comparison sampler). Append after [`FRAME_WGSL`].
 pub const FRAME_SHADING_WGSL: &str = include_str!("shaders/frame_shading.wgsl");
 
-/// Fog limits of the original (`lighting.md` §10, L26).
-const FOG_FAR_MAX: f32 = 10_000.0;
+/// Fog limits of the original (`lighting.md` §10, L26). The cap of the keyframe's fog end
+/// ([`FOG_FAR_CAP`]) comes before an interior override; the other limits after it.
+const FOG_FAR_MAX: f32 = FOG_FAR_CAP;
+/// The cap of a keyframe's fog end (`lighting.md` §10: applied **before** an interior
+/// override, so an override's end is not capped). Callers apply it with
+/// [`Fog::keyframe_capped`] (or [`Fog::limited`] when there is no override); the renderer
+/// does not apply it ([`Fog::lower_limits`]).
+pub const FOG_FAR_CAP: f32 = 10_000.0;
 const FOG_FAR_MIN: f32 = 20.0;
 const FOG_NEAR_MIN: f32 = -10_000.0;
 const FOG_NEAR_GAP: f32 = 20.0;
@@ -76,13 +84,37 @@ pub struct Fog {
 }
 
 impl Fog {
-    /// The distances after the original's limits (`lighting.md` §10, L26): far in
-    /// `20..=10,000`, near in `-10,000..=far - 20`. Non-finite values become the limits.
-    /// The renderer applies this to every fog it uploads.
+    /// The distances after all the original's limits (`lighting.md` §10, L26), for a fog
+    /// **without** an interior override: [`Self::keyframe_capped`] then
+    /// [`Self::lower_limits`] (far in `20..=10,000`, near in `-10,000..=far - 20`).
+    /// Non-finite values become the limits. With an override, cap the keyframe's fog first,
+    /// apply the override, and leave the rest to the renderer.
     #[must_use]
     pub fn limited(self) -> Self {
+        self.keyframe_capped().lower_limits()
+    }
+
+    /// A keyframe's fog with its end capped at [`FOG_FAR_CAP`] (`lighting.md` §10: the
+    /// first limit, applied before an interior override replaces the end). A non-finite
+    /// end becomes the cap; the start is unchanged.
+    #[must_use]
+    pub fn keyframe_capped(self) -> Self {
         let far = if self.far.is_finite() {
-            self.far.clamp(FOG_FAR_MIN, FOG_FAR_MAX)
+            self.far.min(FOG_FAR_CAP)
+        } else {
+            FOG_FAR_CAP
+        };
+        Self { far, ..self }
+    }
+
+    /// The limits the original applies after the interior override (`lighting.md` §10,
+    /// L26): far at least 20, near in `-10,000..=far - 20`; the end is **not** capped. A
+    /// non-finite far becomes [`FOG_FAR_CAP`] and a non-finite near −10,000. The renderer
+    /// applies this to every fog it uploads.
+    #[must_use]
+    pub fn lower_limits(self) -> Self {
+        let far = if self.far.is_finite() {
+            self.far.max(FOG_FAR_MIN)
         } else {
             FOG_FAR_MAX
         };
@@ -224,10 +256,12 @@ pub struct LightReach {
     /// §8.3, L30).
     pub baked_landscape: bool,
     /// The object the light is attached to (its parent), as the caller's object handle
-    /// ([`crate::MeshDraw::light_object`]). `None`: not attached; the two parent switches
-    /// below are then not applied (Tessera Decision, `render.md` §4.3).
+    /// ([`crate::MeshDraw::light_object`]). `None`: not attached, so no object is its
+    /// parent (`lighting.md` §8.5 step 3, row L34).
     pub parent: Option<u64>,
-    /// `Light_OnlyInfluenceParent`: reaches no object other than its parent.
+    /// `Light_OnlyInfluenceParent`: reaches no object other than its parent. Applied to
+    /// every other object whether or not the light has a parent, so an unattached light
+    /// with this switch reaches no object (`lighting.md` §8.5 step 3, row L34).
     pub only_influence_parent: bool,
     /// `Light_NeverInfluenceParent`: does not reach its parent.
     pub never_influence_parent: bool,
@@ -411,7 +445,9 @@ pub struct FrameLighting {
     pub hemispheric: [f32; 3],
     /// The main directional light (sun or moon), if any.
     pub sun: Option<SunLight>,
-    /// Distance fog, or `None` for no fog.
+    /// Distance fog, or `None` for no fog. The renderer applies [`Fog::lower_limits`]; the
+    /// cap of a keyframe's end ([`Fog::keyframe_capped`]) is the caller's, before any
+    /// interior override (`lighting.md` §10).
     pub fog: Option<Fog>,
     /// The sun's shadow, or `None` for no shadow. Ignored without a sun.
     pub shadow: Option<SunShadow>,
@@ -552,7 +588,8 @@ impl FrameUniform {
         u.ambient = rgb4(lighting.ambient, 0.0);
         u.hemispheric = rgb4(lighting.hemispheric, 0.0);
         if let Some(f) = lighting.fog {
-            let f = f.limited();
+            // The keyframe cap is the caller's (it precedes an interior override, §10).
+            let f = f.lower_limits();
             let range = f.far - f.near;
             u.fog_color = rgb4(f.color, 1.0);
             u.fog = [f.near, 1.0 / range, f.far, range];
@@ -707,40 +744,69 @@ pub mod reference {
         a
     }
 
+    /// A non-finite number takes its field default (`lighting.md` §8.3: the values a new
+    /// light starts with).
+    fn field(v: f32, default: f32) -> f32 {
+        if v.is_finite() { v } else { default }
+    }
+
+    /// A colour with a non-finite channel takes its field default as a whole.
+    fn field_rgb(c: [f32; 3], default: [f32; 3]) -> Vec3 {
+        Vec3::from(if c.iter().all(|v| v.is_finite()) {
+            c
+        } else {
+            default
+        })
+    }
+
+    /// The Range and Falloff a light record and its selection radius are built from:
+    /// non-finite values take the field defaults (25, 1.0) and a negative Falloff counts
+    /// as 0 (Tessera's choice for hostile input, `render.md` §4.3 implementer OPEN; the
+    /// install's Falloffs lie in [0, 1]). Both functions use this one rule, so a light
+    /// whose record contributes nothing is never selected and a selected light is the one
+    /// the record draws.
+    fn range_falloff(range: f32, falloff: f32) -> (f32, f32) {
+        let d = LightFields::default();
+        (field(range, d.range), field(falloff, d.falloff).max(0.0))
+    }
+
     /// The light record of a placed light (`lighting.md` §8.3, L19): colour = Diffuse ×
     /// clamp(intensity × *σ*, 0, 1); specular = Specular × clamp(2 × *σ* × intensity, 0, 1),
     /// with Diffuse in place of Specular when KeyLight is off and Specular is white
     /// (within 0.0002 per channel); *R* = max(Range, 0.0002); *k* = 10 × Falloff / *R²*.
+    /// Non-finite fields take the defaults of a new light (Range 25, Falloff 1.0,
+    /// intensity 0.5, *σ* 1, Diffuse and Specular white); a negative Falloff counts as 0
+    /// (as in [`selection_radius`]).
     #[must_use]
     pub fn light_record(f: &LightFields) -> LightRecord {
-        let finite = |v: f32, d: f32| if v.is_finite() { v } else { d };
-        let intensity = finite(f.intensity, 0.0);
-        let scale = finite(f.scale, 1.0);
-        let diffuse = Vec3::from(f.diffuse.map(|c| finite(c, 0.0)));
-        let specular = Vec3::from(f.specular.map(|c| finite(c, 0.0)));
+        let d = LightFields::default();
+        let intensity = field(f.intensity, d.intensity);
+        let scale = field(f.scale, d.scale);
+        let diffuse = field_rgb(f.diffuse, d.diffuse);
+        let specular = field_rgb(f.specular, d.specular);
         let white = (specular - Vec3::ONE).abs().max_element() <= 0.0002;
         let spec_base = if !f.key_light && white {
             diffuse
         } else {
             specular
         };
-        let range = finite(f.range, MIN_LIGHT_RANGE).max(MIN_LIGHT_RANGE);
+        let (range, falloff) = range_falloff(f.range, f.falloff);
+        let range = range.max(MIN_LIGHT_RANGE);
         LightRecord {
             color: (diffuse * sat(intensity * scale)).to_array(),
             specular: (spec_base * sat(2.0 * scale * intensity)).to_array(),
             range,
-            attenuation: 10.0 * finite(f.falloff, 0.0) / (range * range),
+            attenuation: 10.0 * falloff / (range * range),
         }
     }
 
     /// Selection radius ρ of a placed light (`lighting.md` §8.5 step 1, L31):
     /// Range × (1 − (1 − 0.85) × min(Falloff, 1)), or Range for a `Light_GlobalLight`
-    /// light. Non-finite Range or Falloff take the defaults of a new light (25, 1.0); the
-    /// result is at least 0.
+    /// light. Range and Falloff are sanitised as in [`light_record`] (non-finite: the
+    /// defaults 25 and 1.0; a negative Falloff counts as 0); the result is at least 0.
     #[must_use]
     pub fn selection_radius(range: f32, falloff: f32, global: bool) -> f32 {
-        let range = if range.is_finite() { range } else { 25.0 };
-        let falloff = if falloff.is_finite() { falloff } else { 1.0 };
+        let (range, falloff) = range_falloff(range, falloff);
         let rho = if global {
             range
         } else {
@@ -795,6 +861,16 @@ pub mod reference {
     #[must_use]
     pub fn alpha_test_keeps(opacity: f32, threshold: f32) -> bool {
         opacity > threshold
+    }
+
+    /// Output alpha of the lit base pass (`lighting.md` §5.12, §5.13): the opacity texel
+    /// `base_opacity` × *M*.alpha when the base role carries the opacity (`Some`), else
+    /// *M*.alpha; times the vertex alpha where the record reads vertex colours (1
+    /// otherwise). Clamped to 0–1 as written to the target; a NaN gives 0.
+    #[must_use]
+    pub fn output_alpha(base_opacity: Option<f32>, material_alpha: f32, vertex_alpha: f32) -> f32 {
+        let a = base_opacity.unwrap_or(1.0) * material_alpha * vertex_alpha;
+        if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) }
     }
 
     /// One light evaluated at a surface point, already multiplied by the material colour
@@ -941,6 +1017,46 @@ mod tests {
         }
         .limited();
         assert_eq!((f.near, f.far), (-10_000.0, 10_000.0));
+        // An interior override after the keyframe cap is not capped (§10, R-F1): the
+        // renderer keeps only the lower limits.
+        let f = Fog {
+            near: -50_000.0,
+            far: 90_000.0,
+            color: [0.0; 3],
+        };
+        let k = f.keyframe_capped();
+        assert_eq!((k.near, k.far), (-50_000.0, 10_000.0));
+        let l = f.lower_limits();
+        assert_eq!((l.near, l.far), (-10_000.0, 90_000.0));
+        let l = Fog {
+            near: 30.0,
+            far: 10.0,
+            color: [0.0; 3],
+        }
+        .lower_limits();
+        assert_eq!((l.near, l.far), (0.0, 20.0));
+        let l = Fog {
+            near: f32::NAN,
+            far: f32::NEG_INFINITY,
+            color: [0.0; 3],
+        }
+        .lower_limits();
+        assert_eq!((l.near, l.far), (-10_000.0, 10_000.0));
+        // The uploaded fog: an override end of 15,000 stays 15,000.
+        let u = FrameUniform::new(
+            &FrameLighting {
+                fog: Some(Fog {
+                    near: 100.0,
+                    far: 15_000.0,
+                    color: [0.5; 3],
+                }),
+                ..FrameLighting::default()
+            },
+            Mat4::IDENTITY,
+            Vec3::ZERO,
+            false,
+        );
+        assert_eq!(u.fog, [100.0, 1.0 / 14_900.0, 15_000.0, 14_900.0]);
     }
 
     #[test]

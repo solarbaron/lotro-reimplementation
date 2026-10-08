@@ -13,10 +13,10 @@ mod gpu;
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::lighting::reference::{LightSample, Texel, shade};
 use tessera_render::{
-    AlphaMode, Camera, ColorSpace, Dye, DyeMask, Filter, FrameLighting, Light, LightKind,
-    LightSelection, LitSurface, Material, MeshData, MeshDraw, MeshId, OffscreenFormat, Opacity,
-    Perspective, RenderError, Renderer, RgbaImage, SunLight, SunShadow, TextureId, TextureUpload,
-    Wrap,
+    AlphaMode, BlendFactor, BlendOp, Camera, ColorSpace, Dye, DyeMask, Filter, FixedBlend,
+    FrameLighting, Light, LightKind, LightSelection, LitSurface, Material, MeshData, MeshDraw,
+    MeshId, OffscreenFormat, Opacity, Perspective, RenderError, Renderer, RgbaImage, SunLight,
+    SunShadow, TextureId, TextureUpload, Wrap,
 };
 
 const SIZE: u32 = 64;
@@ -377,6 +377,49 @@ fn base_alpha_dye_casts_a_full_shadow() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// lighting.md §5.2.4: N = n.x T − n.y B + n.z N₀ with the stored tangent as given (only
+/// normalised), not made orthogonal to the normal first.
+#[test]
+fn tangents_are_used_as_given() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let mut mesh = MeshData::plane(40.0, 40.0, 1, 1);
+    let t = Vec3::new(1.0, 0.0, 1.0).normalize();
+    let Some(tangents) = mesh.tangents.as_mut() else {
+        panic!("the plane has tangents");
+    };
+    for tg in tangents.iter_mut() {
+        *tg = [t.x, t.y, t.z, tg[3]];
+    }
+    let plane = r.upload_mesh(&mesh)?;
+    let white = texel(&mut r, [255; 4])?;
+    let rgb = [204u8, 128, 230];
+    let normal = texel(&mut r, [rgb[0], rgb[1], rgb[2], 255])?;
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::X,
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..ambient_only(0.0)
+    };
+    let m = Material {
+        normal_texture: Some(normal),
+        ..Material::textured(white)
+    };
+    let px = centre(
+        &mut r,
+        &lighting,
+        vec![draw(plane, m, LitSurface::default())],
+    )?;
+    let n = Vec3::from(rgb.map(|c| f32::from(c) / 255.0 * 2.0 - 1.0)).normalize();
+    // B = −Y on the plane (w × cross(N₀, T) normalised); colour = 2 × 0.5 × N · L.
+    let shading = (n.x * t - n.y * Vec3::NEG_Y + n.z * Vec3::Z).normalize();
+    assert_pixel(px, [shading.x; 3], "non-orthogonal tangent");
+    Ok(())
+}
+
 #[test]
 fn directional_table_lights_and_explicit_selections() -> Result<(), RenderError> {
     let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
@@ -422,6 +465,24 @@ fn directional_table_lights_and_explicit_selections() -> Result<(), RenderError>
     assert_pixel(px, dir, "list: the directional light");
     let px = centre(&mut r, &l, vec![draw(plane, m, with(list(&[1, 9])))])?;
     assert_pixel(px, [0.5; 3], "list: the point light (9 is past the table)");
+    // One extra directional slot per draw (§5.6, §8.2): with two directional table lights,
+    // Auto takes the first only.
+    let mut two = l.clone();
+    two.lights.push(Light {
+        kind: LightKind::Directional { direction: toward },
+        color: [0.25; 3],
+        specular: [0.0; 3],
+    });
+    let px = centre(
+        &mut r,
+        &two,
+        vec![draw(plane, m, with(LightSelection::Auto))],
+    )?;
+    assert_pixel(px, both, "auto: one directional light");
+    // A list is the caller's: both directional lights.
+    let px = centre(&mut r, &two, vec![draw(plane, m, with(list(&[0, 2])))])?;
+    let sum = [dir[0] + 0.4, dir[1] + 0.4, dir[2] + 0.4];
+    assert_pixel(px, sum, "list: two directional lights");
     Ok(())
 }
 
@@ -450,12 +511,48 @@ fn eight_lights_in_all_with_the_sun() -> Result<(), RenderError> {
         vec![draw(plane, m, LitSurface::default())],
     )?;
     assert_pixel(px, [2.0 * 7.0 * 0.05; 3], "sun + 7");
-    let no_sun = FrameLighting {
+    // Without a main light the default directional light holds the light-0 slot and counts
+    // toward the 8 (lighting.md §8.5 Decision): still 7 table lights.
+    let mut no_sun = FrameLighting {
         sun: None,
         ..black_sun
     };
     let px = centre(&mut r, &no_sun, vec![draw(plane, m, LitSurface::default())])?;
-    assert_pixel(px, [2.0 * 8.0 * 0.05; 3], "8 without a sun");
+    assert_pixel(px, [2.0 * 7.0 * 0.05; 3], "default light + 7 without a sun");
+    // A key directional table light takes the light-0 slot instead: 7 point lights and it.
+    no_sun.lights.push(Light {
+        kind: LightKind::Directional { direction: Vec3::Z },
+        color: [0.1; 3],
+        specular: [0.0; 3],
+    });
+    let mut reach = vec![tessera_render::LightReach::default(); 9];
+    let target = r.create_offscreen_target(SIZE, SIZE, OffscreenFormat::Rgba8Unorm)?;
+    let shade_with = |r: &mut Renderer<'static>, reach: Vec<tessera_render::LightReach>| {
+        let mut frame = r.begin_offscreen_frame(&target)?;
+        frame
+            .world_pass("key", &camera())
+            .clear([0.0, 0.0, 0.0, 1.0])
+            .frame_lighting(no_sun.clone())
+            .light_reach(reach)
+            .mesh(draw(plane, m, LitSurface::default()));
+        r.end_frame(frame)?;
+        let img = r.read_pixels(&target)?;
+        Ok::<_, RenderError>(img.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]))
+    };
+    // Not a key light: the extra directional slot is not reached (7 point lights).
+    let px = shade_with(&mut r, reach.clone())?;
+    assert_pixel(
+        px,
+        [2.0 * 7.0 * 0.05; 3],
+        "non-key directional light left out",
+    );
+    reach[8].key_light = true;
+    let px = shade_with(&mut r, reach)?;
+    assert_pixel(
+        px,
+        [2.0 * (7.0 * 0.05 + 0.1); 3],
+        "key directional light as light 0",
+    );
     Ok(())
 }
 
@@ -505,6 +602,108 @@ fn blend_with_depth_write_occludes_later_passes() -> Result<(), RenderError> {
         ],
     )?;
     assert_pixel(at_centre(img), [1.0, 0.0, 0.0], "Blend writes no depth");
+    Ok(())
+}
+
+/// material.md §11.3 (unlit records): the most common (src, dst, op) of the render state as
+/// a fixed blend, depth write from the same block.
+#[test]
+fn fixed_blends_follow_the_render_state() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let plane = ground(&mut r)?;
+    let white = texel(&mut r, [255; 4])?;
+    let l = ambient_only(0.5);
+    let fixed = |src, dst, depth_write| {
+        AlphaMode::Fixed(FixedBlend {
+            src,
+            dst,
+            op: BlendOp::Add,
+            depth_write,
+        })
+    };
+    // An additive pane (SRCALPHA / ONE, alpha 0.5, lit colour 1) in front of the ground.
+    let pane = |alpha| {
+        MeshDraw::new(
+            plane,
+            Mat4::from_translation(Vec3::Z),
+            Material {
+                alpha,
+                base_color: [1.0, 1.0, 1.0, 0.5],
+                ..Material::textured(white)
+            },
+        )
+        .with_lit(LitSurface {
+            opacity: Opacity::One,
+            ..LitSurface::default()
+        })
+    };
+    let red = draw(
+        plane,
+        Material::color([1.0, 0.0, 0.0, 1.0]),
+        LitSurface::default(),
+    );
+    let at_centre = |img: RgbaImage| img.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
+    for (depth_write, want) in [(true, [0.5; 3]), (false, [1.0, 0.0, 0.0])] {
+        let img = render(
+            &mut r,
+            &[
+                (
+                    Some(l.clone()),
+                    vec![pane(fixed(
+                        BlendFactor::SrcAlpha,
+                        BlendFactor::One,
+                        depth_write,
+                    ))],
+                ),
+                (Some(l.clone()), vec![red]),
+            ],
+        )?;
+        assert_pixel(at_centre(img), want, &format!("depth write {depth_write}"));
+    }
+    // Additive keeps its meaning: SRCALPHA / ONE without depth write.
+    let img = render(
+        &mut r,
+        &[
+            (Some(l.clone()), vec![pane(AlphaMode::Additive)]),
+            (Some(l.clone()), vec![red]),
+        ],
+    )?;
+    assert_pixel(at_centre(img), [1.0, 0.0, 0.0], "Additive writes no depth");
+    // ZERO / SRCCOLOR multiplies the destination by the source colour (an unlit
+    // (0.5, 0.25, 1) over the white-lit ground).
+    let modulate = MeshDraw::new(
+        plane,
+        Mat4::from_translation(Vec3::Z),
+        Material {
+            alpha: fixed(BlendFactor::Zero, BlendFactor::SrcColor, false),
+            base_color: [0.5, 0.25, 1.0, 1.0],
+            unlit: true,
+            ..Material::textured(white)
+        },
+    );
+    let ground_draw = draw(plane, Material::textured(white), LitSurface::default());
+    let img = render(&mut r, &[(Some(l.clone()), vec![ground_draw, modulate])])?;
+    assert_pixel(at_centre(img), [0.5, 0.25, 1.0], "ZERO / SRCCOLOR");
+    // DESTCOLOR / ONE: dst × src + dst.
+    let dst_one = MeshDraw::new(
+        plane,
+        Mat4::from_translation(Vec3::Z),
+        Material {
+            alpha: fixed(BlendFactor::DstColor, BlendFactor::One, false),
+            base_color: [0.5, 0.25, 0.0, 1.0],
+            unlit: true,
+            ..Material::textured(white)
+        },
+    );
+    let half = draw(
+        plane,
+        Material::color([0.5, 0.5, 0.5, 1.0]),
+        LitSurface::default(),
+    );
+    let img = render(&mut r, &[(Some(l), vec![half, dst_one])])?;
+    assert_pixel(at_centre(img), [0.75, 0.625, 0.5], "DESTCOLOR / ONE");
     Ok(())
 }
 
@@ -565,6 +764,23 @@ fn lit_only_alpha_modes_fall_back_outside_lit_passes() -> Result<(), RenderError
         )],
     )?;
     assert_eq!(blend, additive, "Additive draws as Blend");
+    let fixed = render(
+        &mut r,
+        &[(
+            None,
+            vec![MeshDraw::new(
+                plane,
+                Mat4::IDENTITY,
+                m(AlphaMode::Fixed(FixedBlend {
+                    src: BlendFactor::Zero,
+                    dst: BlendFactor::SrcColor,
+                    op: BlendOp::Add,
+                    depth_write: true,
+                })),
+            )],
+        )],
+    )?;
+    assert_eq!(blend, fixed, "Fixed draws as Blend");
     let centre = blend.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
     assert!(centre[0] > 0, "the blended plane is visible: {centre:?}");
     Ok(())

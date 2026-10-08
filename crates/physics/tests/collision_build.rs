@@ -22,9 +22,10 @@ use tessera_formats::{
 use tessera_physics::PhysicsError;
 use tessera_physics::geometry::{
     BodySource, CollisionFlags, CollisionLimits, CollisionSetBuilder, ETHEREAL_PLAYER,
-    FetchedRecord, GeneratedObject, GridMesh, ObjectCollision, ObjectCollisionCache, PhysicsPids,
-    QueryFilter, SetupCollision, StaticOptions, Transform, content_layer_list, content_layers_pass,
-    resolve_object_collision, static_blocks_walker,
+    EntityLookups, FetchedRecord, GeneratedObject, GridMesh, MAX_CELL_HULL, MAX_SET_CELL_HULL,
+    MAX_TEMPLATE_TRIANGLES, ObjectCollision, ObjectCollisionCache, PhysicsPids, QueryFilter,
+    SetupCollision, StaticOptions, Transform, content_layer_list, content_layers_pass,
+    resolve_object_collision, static_blocks_walker, static_has_walker_collision,
 };
 
 // ------------------------------------------------------------------ synthetic encoding
@@ -247,6 +248,8 @@ fn chain() -> Records {
                 (NO_PHYSICS, V::Bool(true)),
                 (ETHEREAL_TO, V::Bits(1 << 29)),
                 (SURFACE, V::Did(0x7800_0CCC)),
+                // SharedStaticImmobile: the client creates statics of this chain (§9.3).
+                (CREATION, V::Bits(3)),
             ],
             &[],
         ),
@@ -437,7 +440,9 @@ fn statics_follow_the_walker_rule() {
     let r = *b.report();
     assert_eq!(r.statics_seen, 7);
     assert_eq!(r.statics_blocking, 3);
-    assert_eq!(r.statics_filtered, 1);
+    // SED 3 (inactive layer) and SED 7 (its object does not resolve, so no creation type
+    // is found: 0, refused by §9.3 item 3).
+    assert_eq!(r.statics_filtered, 2);
     assert_eq!(r.unresolved, 1);
     let set = b.build();
     let bodies: HashMap<u32, _> = set
@@ -469,14 +474,21 @@ fn statics_follow_the_walker_rule() {
             .as_ref()
             .map(|s| CollisionFlags::from_set(s, &pids()))
             .unwrap_or_default();
-        let layers = content_layers_pass(
-            e.properties
-                .as_ref()
-                .and_then(|s| content_layer_list(s, &pids()))
-                .as_deref(),
-            &[1],
-            0,
-        );
+        let own_lookups = e
+            .properties
+            .as_ref()
+            .map(|s| EntityLookups::from_set(s, &pids()))
+            .unwrap_or_default();
+        let lookups = own_lookups.or(resolved.lookups.clone());
+        let layers = content_layers_pass(lookups.layer_list(), &[1], 0);
+        // The SED's own list agrees with `content_layer_list` where it has one.
+        if let Some(own) = e
+            .properties
+            .as_ref()
+            .and_then(|s| content_layer_list(s, &pids()))
+        {
+            assert_eq!(lookups.layer_list(), Some(own.as_slice()));
+        }
         let physics = e.entity_type == Some(7) && e.placement.is_some();
         let rule = static_blocks_walker(
             physics,
@@ -493,34 +505,43 @@ fn statics_follow_the_walker_rule() {
     assert!(ray(&QueryFilter::camera()).is_some());
 }
 
-/// `collision.md` §9.3 (and §9.4, C25): statics whose object's `Entity_CreationType`
-/// (resolved along its 0x47 chain) is 7 or 8 get no body; a value in the SED's own set
-/// plays no part (the reading that reproduces CO12, `collision.md` §9.3 OPEN); generated
-/// objects pass no creation-type filter.
+/// `collision.md` §9.3 item 3 (C29, CO14): the effective `Entity_CreationType` is the
+/// SED's own value when its set has one, else the value found along its 0x47 chain; statics
+/// of creation type 0, 7 or 8 get no body, and a SED with no value anywhere counts as 0.
+/// Generated objects pass no creation-type filter (§9.4).
 #[test]
-fn server_created_statics_get_no_body() {
+fn statics_the_client_does_not_create_get_no_body() {
     const C: u32 = 0x4700_0003;
     const D: u32 = 0x4700_0004;
     const E: u32 = 0x4700_0005;
+    const F: u32 = 0x4700_0006;
     let mut records = chain();
     records
         .put(C, entity(C, T, &[(CREATION, V::Bits(8))], &[]))
         .put(D, entity(D, C, &[], &[]))
-        .put(E, entity(E, T, &[(CREATION, V::Bits(3))], &[]));
+        .put(E, entity(E, T, &[(CREATION, V::Bits(3))], &[]))
+        // No Entity_CreationType anywhere on F's chain.
+        .put(F, entity(F, T, &[], &[]));
     let cache = ObjectCollisionCache::default();
     let object = |o: Did| cache.get_or_resolve(o, |o| records.resolve(o.0));
     let at = |x: f32| Some([x, 10.0, 0.0]);
     let entities = vec![
         // 0: creation type 3 on the object: blocks.
         sed(7, E, at(10.0), &[]),
-        // 1, 2: 7 / 8 only on the SED: not the object's chain, so it blocks.
+        // 1, 2: the SED's own 7 / 8 wins over the object's 3: refused.
         sed(7, E, at(20.0), &[(CREATION, V::Bits(7))]),
         sed(7, E, at(30.0), &[(CREATION, V::Bits(8))]),
-        // 3: 8 on the object; 4: 8 on the object's parent.
+        // 3: 8 on the object; 4: 8 on the object's parent: refused.
         sed(7, C, at(40.0), &[]),
         sed(7, D, at(50.0), &[]),
-        // 5: the SED's own 3 does not hide the object's 8.
+        // 5: the SED's own 3 wins over the object's 8: blocks.
         sed(7, C, at(60.0), &[(CREATION, V::Bits(3))]),
+        // 6: the SED's own 0 (Invalid) over the object's 3: refused.
+        sed(7, E, at(70.0), &[(CREATION, V::Bits(0))]),
+        // 7: no value on the SED or its chain: 0, refused.
+        sed(7, F, at(80.0), &[]),
+        // 8: the SED's own 9 on that chain: blocks.
+        sed(7, F, at(90.0), &[(CREATION, V::Bits(9))]),
     ];
     let lb = info(entities, Vec::new());
     let mut b = CollisionSetBuilder::new(CollisionLimits::default());
@@ -528,7 +549,7 @@ fn server_created_statics_get_no_body() {
     let r = *b.report();
     assert_eq!(
         (r.statics_seen, r.statics_blocking, r.statics_filtered),
-        (6, 3, 3)
+        (9, 3, 6)
     );
     let set = b.build();
     let bodies: HashMap<u32, _> = set
@@ -541,7 +562,7 @@ fn server_created_statics_get_no_body() {
         .collect();
     let mut indices: Vec<u32> = bodies.keys().copied().collect();
     indices.sort_unstable();
-    assert_eq!(indices, vec![0, 1, 2]);
+    assert_eq!(indices, vec![0, 5, 8]);
     // The walker rule says the same, SED by SED.
     let player = QueryFilter::player();
     for (n, e) in lb.entities.iter().enumerate() {
@@ -556,30 +577,109 @@ fn server_created_statics_get_no_body() {
         let index = u32::try_from(n).expect("index");
         let blocks = bodies.get(&index).is_some_and(|b| player.accepts(b));
         assert_eq!(rule, blocks, "SED {n}");
-        assert_eq!(rule, n <= 2, "SED {n}");
+        assert_eq!(rule, [0, 5, 8].contains(&n), "SED {n}");
+        assert_eq!(
+            flags.refuses_static_creation(),
+            !rule,
+            "SED {n}: only the creation type refuses it"
+        );
         // The data census of §9.3 counts without the filter.
-        let census = CollisionFlags {
-            creation_type: None,
-            ..flags
-        };
-        assert!(static_blocks_walker(
-            true,
-            true,
-            &census,
-            resolved.collision
-        ));
+        assert!(static_has_walker_collision(&flags, resolved.collision));
     }
-    // A generated object of creation type 8 still gets a body.
+    // A generated object of creation type 8, or of none, still gets a body.
     let mut b = CollisionSetBuilder::new(CollisionLimits::default());
-    let out = b.add_generated(
-        &[GeneratedObject {
-            object: Did(C),
-            transform: Transform::new([10.0, 50.0, 0.0], Quaternion::IDENTITY, 1.0),
-        }],
-        |o: Did| Arc::new(records.resolve(o.0)),
+    let placed = |object: u32, x: f32| GeneratedObject {
+        object: Did(object),
+        transform: Transform::new([x, 50.0, 0.0], Quaternion::IDENTITY, 1.0),
+    };
+    let out = b.add_generated(&[placed(C, 10.0), placed(F, 20.0)], |o: Did| {
+        Arc::new(records.resolve(o.0))
+    });
+    assert!(out.iter().all(Option::is_some));
+    assert_eq!(b.report().generated_blocking, 2);
+}
+
+/// `collision.md` §9.3 (the paragraph after item 3): the content-layer list and the scale
+/// of a static are looked up like its creation type, the SED's own set first, then its
+/// 0x47 chain.
+#[test]
+fn statics_take_layers_and_scale_from_the_chain_when_the_sed_has_none() {
+    const G: u32 = 0x4700_0007;
+    let mut records = chain();
+    records.put(
+        G,
+        entity(
+            G,
+            T,
+            &[
+                (CREATION, V::Bits(3)),
+                (LAYERS, V::Layers(vec![0x1000_008D])),
+                (SCALE, V::Vec3([2.0; 3])),
+            ],
+            &[],
+        ),
     );
-    assert!(out[0].is_some());
-    assert_eq!(b.report().generated_blocking, 1);
+    let cache = ObjectCollisionCache::default();
+    let object = |o: Did| cache.get_or_resolve(o, |o| records.resolve(o.0));
+    assert_eq!(
+        records.resolve(G).lookups.layer_list(),
+        Some(&[0x1000_008D][..])
+    );
+    let at = |x: f32| Some([x, 10.0, 0.0]);
+    let entities = vec![
+        // 0: the object's inactive layer: filtered.
+        sed(7, G, at(10.0), &[]),
+        // 1: its own shared-world list wins; the object's scale (2) applies.
+        sed(7, G, at(20.0), &[(LAYERS, V::Layers(vec![1]))]),
+        // 2: its own list and its own scale (0.5).
+        sed(
+            7,
+            G,
+            at(30.0),
+            &[(LAYERS, V::Layers(vec![1])), (SCALE, V::Vec3([0.5; 3]))],
+        ),
+    ];
+    let lb = info(entities, Vec::new());
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_statics(&lb, &pids(), &StaticOptions::default(), object);
+    let r = *b.report();
+    assert_eq!((r.statics_blocking, r.statics_filtered), (2, 1));
+    let set = b.build();
+    let mut tops: Vec<(u32, f32)> = set
+        .bodies()
+        .iter()
+        .filter_map(|body| match body.source {
+            BodySource::Static { index, .. } => {
+                let top = (body.first_triangle..body.first_triangle + body.triangle_count)
+                    .filter_map(|k| set.triangle(k as usize))
+                    .flat_map(|(v, _, _)| v)
+                    .map(|v| v[2])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                Some((index, top))
+            }
+            _ => None,
+        })
+        .collect();
+    tops.sort_by_key(|t| t.0);
+    assert_eq!(tops.len(), 2);
+    assert_eq!(tops[0].0, 1);
+    assert!((tops[0].1 - 4.0).abs() < 1e-5, "object scale: {tops:?}");
+    assert_eq!(tops[1].0, 2);
+    assert!((tops[1].1 - 1.0).abs() < 1e-5, "own scale: {tops:?}");
+    // In an instanced copy under the object's layer, SED 0 passes.
+    let options = StaticOptions {
+        active_content_layers: vec![0x1000_008D],
+        instance: 3,
+    };
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_statics(&lb, &pids(), &options, |o: Did| {
+        cache.get_or_resolve(o, |o| records.resolve(o.0))
+    });
+    // SEDs 1 and 2 name only layer 1, which fails in an instanced copy under another layer.
+    assert_eq!(
+        (b.report().statics_blocking, b.report().statics_filtered),
+        (1, 2)
+    );
 }
 
 #[test]
@@ -709,4 +809,66 @@ fn cells_carry_their_geometry_flags() {
     assert!(set.cell_at([60.0, 60.0, 11.0]).is_none());
     let numbers: Vec<u16> = set.cells().cells().iter().map(|c| c.index).collect();
     assert_eq!(numbers, vec![1, 2, 5]);
+}
+
+/// Finding: a refused cell (no offset, too many hull vertices, limits) still used up the
+/// set's hull budget, so later valid cells were refused and `cell_at` reported outdoors
+/// inside them. Only placed cells count now.
+#[test]
+fn refused_cells_do_not_use_up_the_hull_budget() {
+    let mut big = room_geometry(0x0100_0003, None, false);
+    big.hull = vec![[0.0, 0.0, 1.0]; MAX_CELL_HULL + 1];
+    let geometries: HashMap<Did, Arc<CellGeometry>> = [big, room_geometry(0x0100_0001, None, true)]
+        .into_iter()
+        .map(|g| (g.did, Arc::new(g)))
+        .collect();
+    // Enough refused hull vertices to exceed the per-set budget several times over.
+    let refused = MAX_SET_CELL_HULL / MAX_CELL_HULL + 10;
+    let mut cells: Vec<Cell> = (0..refused)
+        .map(|k| {
+            let k = u16::try_from(k).expect("index");
+            cell(k + 10, 0x0100_0003, Some([80.0, 80.0, 10.0]))
+        })
+        .collect();
+    cells.push(cell(2, 0x0100_0001, Some([100.0, 100.0, 10.0])));
+    let lb = info(Vec::new(), cells);
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_cells(&lb, &pids(), |d| geometries.get(&d).cloned());
+    let r = *b.report();
+    assert_eq!(
+        (r.cells, r.cells_refused),
+        (1, u32::try_from(refused).expect("count"))
+    );
+    let set = b.build();
+    assert_eq!(set.cell_at([100.0, 100.0, 11.0]).map(|h| h.cell), Some(2));
+}
+
+/// Finding: a cell physics mesh beyond the template limits was dropped silently. It is now
+/// refused and counted as a body over a limit (§12.1); the cell itself is placed.
+#[test]
+fn a_cell_mesh_beyond_the_limits_is_refused_and_counted() {
+    let mut huge = room_geometry(0x0100_0004, None, true);
+    if let Some(m) = huge.physics_mesh.as_mut() {
+        m.triangles = vec![[0, 1, 2]; MAX_TEMPLATE_TRIANGLES + 1];
+    }
+    let geometries: HashMap<Did, Arc<CellGeometry>> =
+        [huge].into_iter().map(|g| (g.did, Arc::new(g))).collect();
+    let lb = info(
+        Vec::new(),
+        vec![
+            cell(1, 0x0100_0004, Some([20.0, 20.0, 10.0])),
+            cell(2, 0x0100_0004, Some([60.0, 20.0, 10.0])),
+        ],
+    );
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    b.add_cells(&lb, &pids(), |d| geometries.get(&d).cloned());
+    let r = *b.report();
+    assert_eq!((r.cells, r.cells_refused, r.over_limit), (2, 0, 2));
+    let set = b.build();
+    assert!(
+        !set.bodies()
+            .iter()
+            .any(|b| matches!(b.source, BodySource::Cell { .. }))
+    );
+    assert_eq!(set.cell_at([20.0, 20.0, 11.0]).map(|h| h.cell), Some(1));
 }

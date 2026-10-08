@@ -7,7 +7,7 @@
 //! draws it any number of times per frame from an [`InstanceBatch`]: one instanced draw
 //! per submesh and batch, with per-instance transforms, tints and terrain colours in a
 //! vertex buffer. Batches are lit like lit meshes (`lighting.md` §5: ambient and
-//! hemispheric terms, the sun with its shadow, up to eight table lights per batch, fog).
+//! hemispheric terms, the sun with its shadow, up to eight table lights per instance, fog).
 //!
 //! A batch with [`FrillParams`] follows the frill engine of `scenery.md` §8.3 and §8.5:
 //! it is skipped beyond the far distance *D*, thinned by distance reduction, sways by a
@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::arena::MeshConfig;
@@ -32,7 +32,7 @@ use crate::frame::{Pass, Rgba};
 use crate::lighting::{FRAME_SHADING_WGSL, FRAME_WGSL, MAX_DRAW_LIGHTS};
 use crate::lit_pipelines::LightTarget;
 use crate::lit_pipelines::SHADOW_FORMAT;
-use crate::material::{AlphaMode, LightSelection, Specular};
+use crate::material::{AlphaMode, FixedBlend, FogRule, LightSelection, Specular};
 use crate::mesh::{GpuVertex, MeshData, MeshInfo};
 use crate::pass_hook::{HookRecord, HookStage, PassHook};
 use crate::pipelines::{DEPTH_COMPARE, DEPTH_FORMAT};
@@ -43,7 +43,7 @@ const INSTANCED_WGSL: &str = include_str!("shaders/instanced.wgsl");
 const INSTANCED_COMMON_WGSL: &str = include_str!("shaders/instanced_common.wgsl");
 
 /// Largest number of instances one pass may draw per frame (all batches together), so the
-/// per-frame instance buffer stays bounded (80 bytes each: 80 MiB).
+/// per-frame instance buffer stays bounded (96 bytes each: 96 MiB).
 pub const MAX_INSTANCES_PER_PASS: usize = 1 << 20;
 
 /// Largest number of surfaces of one [`WorldModel`] (the mesh submesh limit).
@@ -54,6 +54,11 @@ pub const FRILL_SECTOR: f32 = 10.0;
 
 /// Duration of a frill group's fade-in in seconds (`scenery.md` §8.3 rule 5).
 pub const FRILL_FADE_IN_SECONDS: f32 = 1.5;
+
+/// Length bound of the sway direction (sin, ½ sin, 0) of the sway Decision
+/// (`docs/specs/render.md` §5.5): √(1 + ¼). The largest sway displacement in model space is
+/// intensity × *h* × this.
+const SWAY_REACH: f32 = 1.118_034;
 
 /// Animation intensities at or below this value do not sway (`scenery.md` §8.3 rule 6,
 /// decision 0012).
@@ -80,14 +85,17 @@ pub struct WorldSurface {
     /// render target, draws as if there were no normal map).
     pub normal_texture: Option<TextureId>,
     /// Alpha test and blend state, as for lit meshes (`docs/specs/render.md` §4.3); the
-    /// opacity is the base texture's alpha.
+    /// opacity is the base texture's alpha, or 1 when that alpha is the gloss
+    /// ([`WorldSurface::gloss_from_base_alpha`]; `material.md` §11.2–§11.3).
     pub alpha: AlphaMode,
     /// Draw back faces too (lit with the front normal, `material.md` §11.4).
     pub two_sided: bool,
     /// Specular colour *Ms* and power *p* (`lighting.md` §5.8; below 0.5: none). The
     /// mask texture is not used.
     pub specular: Option<Specular>,
-    /// Gloss *g* from the base texture's alpha (else 1).
+    /// Gloss *g* from the base texture's alpha (else 1). That alpha is then not an
+    /// opacity: the surface's alpha test keeps every texel and its output alpha is *M*.alpha
+    /// (`material.md` §11.3: a gloss alpha never reaches the output).
     pub gloss_from_base_alpha: bool,
     /// Gloss *g* from the normal texture's alpha (`lighting.md` §5.2 item 5, a
     /// normal-and-gloss texture); used when the normal texture resolves, whether or not the
@@ -176,12 +184,17 @@ pub struct Instance {
     /// Model → world transform (affine; the bottom row is ignored). For frills this is
     /// position · rotation · per-axis scale (`scenery.md` §8.5 step 5).
     pub transform: Mat4,
-    /// Multiplies the material colour *M* (RGB and alpha).
+    /// The per-object tint: multiplies the material colour *M* (RGB and alpha) and the
+    /// specular colour *Ms* (RGB), as the client does with its per-object tint
+    /// (`material.md` §8.3).
     pub tint: Rgba,
     /// Terrain colour beneath the instance, stored-value RGB (frills only, §8.3 rule 7).
     /// Frill groups blend their albedo toward it by the terrain-colour intensity (default
     /// 1), so a frill instance must carry the colour of the ground beneath it.
     pub terrain_color: [f32; 3],
+    /// The caller's object handle of this instance, for the parent switches of the light
+    /// selection (as [`crate::MeshDraw::light_object`]); `None`: none.
+    pub light_object: Option<u64>,
 }
 
 impl Instance {
@@ -195,6 +208,7 @@ impl Instance {
             transform,
             tint: [1.0; 4],
             terrain_color: [1.0; 3],
+            light_object: None,
         }
     }
 }
@@ -362,8 +376,9 @@ pub struct InstanceBatch {
     pub model: WorldModel,
     /// The instances (shared, so a batch can be queued on several passes for free).
     pub instances: Arc<[Instance]>,
-    /// Lights from the pass's table (selected once for the whole batch by the box around
-    /// its instances, `lighting.md` §8.5).
+    /// Lights from the pass's table: with [`LightSelection::Auto`] selected for each
+    /// instance against its own world box (`lighting.md` §8.5, one list per object); an
+    /// explicit list or `None` applies to every instance.
     pub lights: LightSelection,
     /// Opaque and alpha-tested surfaces cast the sun's shadow.
     pub cast_shadow: bool,
@@ -439,11 +454,13 @@ impl Renderer<'_> {
                 max: MAX_MODEL_SURFACES as u64,
             });
         }
+        let up = self.world_upload();
+        // Validated and packed as for `upload_mesh` (render.md §5.5): the renderer's own
+        // mesh limits, without wireframe edges.
         let prepared = data.prepare(&MeshConfig {
             wireframe_edges: false,
-            ..MeshConfig::default()
+            ..up.mesh_config
         })?;
-        let up = self.world_upload();
         let device = up.device;
         let max = device.limits().max_buffer_size;
         let vbytes: &[u8] = bytemuck::cast_slice(&prepared.vertices);
@@ -542,7 +559,8 @@ pub(crate) enum SurfaceKind {
     Mask,
     TestBlend,
     Blend,
-    Additive,
+    /// Additive and the other fixed blends ([`AlphaMode::Fixed`]).
+    Fixed(FixedBlend),
 }
 
 impl SurfaceKind {
@@ -552,13 +570,14 @@ impl SurfaceKind {
             AlphaMode::Mask { .. } => Self::Mask,
             AlphaMode::TestBlend { .. } => Self::TestBlend,
             AlphaMode::Blend => Self::Blend,
-            AlphaMode::Additive => Self::Additive,
+            AlphaMode::Additive => Self::Fixed(FixedBlend::ADDITIVE),
+            AlphaMode::Fixed(b) => Self::Fixed(b),
         }
     }
 
     /// Drawn in the translucent stage.
     pub(crate) fn translucent(self) -> bool {
-        matches!(self, Self::TestBlend | Self::Blend | Self::Additive)
+        matches!(self, Self::TestBlend | Self::Blend | Self::Fixed(_))
     }
 
     /// Casts the sun's shadow (opaque and cut-out surfaces, as lit meshes).
@@ -588,6 +607,8 @@ pub(crate) mod sf {
     /// Opaque surface: the base texture's alpha is not an opacity.
     pub const OPAQUE: u32 = 16;
     pub const GLOSS_NORMAL_ALPHA: u32 = 32;
+    /// The base texture's alpha is the gloss, not an opacity: opacity 1.
+    pub const OPACITY_ONE: u32 = 64;
     pub const SRGB_BASE: u32 = 1;
     pub const SRGB_NORMAL: u32 = 2;
 }
@@ -622,7 +643,9 @@ impl SurfaceUniform {
             flags |= sf::UNLIT;
         }
         if s.gloss_from_base_alpha {
-            flags |= sf::GLOSS_BASE_ALPHA;
+            // A gloss alpha never reaches the output alpha nor the alpha test (material.md
+            // §11.2, §11.3): the surface has no opacity source.
+            flags |= sf::GLOSS_BASE_ALPHA | sf::OPACITY_ONE;
         } else if s.gloss_from_normal_alpha && normal_resolved {
             flags |= sf::GLOSS_NORMAL_ALPHA;
         }
@@ -898,20 +921,6 @@ pub(crate) fn shadow_depth() -> wgpu::DepthStencilState {
     }
 }
 
-/// Additive blending (`src·a + dst`).
-pub(crate) const ADDITIVE: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::SrcAlpha,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::Zero,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
 /// Shader source with the frame declarations and shading functions prepended.
 pub(crate) fn lit_source(parts: &[&str]) -> String {
     let mut s = String::with_capacity(
@@ -954,7 +963,7 @@ pub(crate) fn mesh_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
 // Pipelines
 // ---------------------------------------------------------------------------------------
 
-/// Per-instance vertex data (must match `InstIn` in `instanced.wgsl`). 80 bytes.
+/// Per-instance vertex data (must match `InstIn` in `instanced.wgsl`). 96 bytes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct GpuInstance {
@@ -963,17 +972,21 @@ struct GpuInstance {
     tint: [f32; 4],
     /// rgb = terrain colour, w = sway phase.
     terrain: [f32; 4],
+    /// The instance's light list: x, y = light-table indices (four u8 each, low byte
+    /// first), z = count, w unused.
+    lights: [u32; 4],
 }
 
-const INSTANCE_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-    7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4
+const INSTANCE_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    7 => Float32x4, 8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4,
+    12 => Uint32x4
 ];
 
 /// Batch uniform (must match `Batch` in `instanced.wgsl`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct BatchUniform {
-    /// x, y = light indices, z = count, w = flags (`BF_*`).
+    /// x, y, z unused (the light lists are per instance), w = flags (`BF_*`).
     lights: [u32; 4],
     /// D, F, sway amplitude, terrain colour intensity.
     frill: [f32; 4],
@@ -1002,6 +1015,10 @@ struct PipeKey {
     format: wgpu::TextureFormat,
     kind: SurfaceKind,
     two_sided: bool,
+    /// Instances with a negative determinant: the front face is clockwise, so the other
+    /// face is culled (`docs/specs/render.md` §2.3 Mirrored transforms; unused when
+    /// two-sided).
+    mirrored: bool,
 }
 
 /// Pipelines and layouts of the instanced path, built lazily, kept for the renderer's
@@ -1104,7 +1121,15 @@ impl InstancedState {
                 true,
             ),
             SurfaceKind::Blend => ("fs_blend", Some(wgpu::BlendState::ALPHA_BLENDING), false),
-            SurfaceKind::Additive => ("fs_additive", Some(ADDITIVE), false),
+            SurfaceKind::Fixed(b) => (
+                match b.fog_rule() {
+                    FogRule::Lerp => "fs_blend",
+                    FogRule::FadeOut => "fs_additive",
+                    FogRule::TowardWhite => "fs_modulate",
+                },
+                Some(b.blend_state()),
+                b.depth_write,
+            ),
         };
         let buffers = [
             Some(mesh_vertex_layout()),
@@ -1124,7 +1149,11 @@ impl InstancedState {
                 buffers: &buffers,
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: (!key.two_sided).then_some(wgpu::Face::Back),
+                cull_mode: match (key.two_sided, key.mirrored) {
+                    (true, _) => None,
+                    (false, false) => Some(wgpu::Face::Back),
+                    (false, true) => Some(wgpu::Face::Front),
+                },
                 ..Default::default()
             },
             depth_stencil: Some(world_depth(write)),
@@ -1250,6 +1279,22 @@ fn sway_bounds(info: &MeshInfo, stored: Option<[f32; 2]>) -> (f32, f32) {
     }
 }
 
+/// The model sphere placed with an instance transform: centre and radius (scaled by the
+/// largest axis scale), or `None` when the transform or the result is not finite (such an
+/// instance is dropped; unlike [`crate::BoundingSphere::transformed`] there is no fallback
+/// to the model-space sphere).
+fn placed_sphere(sphere: crate::BoundingSphere, m: Mat4) -> Option<(Vec3, f32)> {
+    affine_rows(m)?;
+    let center = m.transform_point3(sphere.center);
+    let scale = [m.x_axis, m.y_axis, m.z_axis]
+        .iter()
+        .map(|a| a.truncate().length())
+        .fold(0.0f32, f32::max);
+    let radius = sphere.radius * scale;
+    let ok = (center - radius).is_finite() && (center + radius).is_finite();
+    ok.then_some((center, radius))
+}
+
 fn affine_rows(m: Mat4) -> Option<[[f32; 4]; 3]> {
     let r = m.transpose();
     let rows = [
@@ -1308,6 +1353,7 @@ pub(crate) fn build_hook(
     let mut uniforms: Vec<u8> = Vec::new();
     let mut gpu: Vec<GpuInstance> = Vec::new();
     let mut shadow_only: Vec<GpuInstance> = Vec::new();
+    let mut mirrored: Vec<GpuInstance> = Vec::new();
     let mut items = Vec::new();
     let mut culled = 0u32;
     let mut dropped = 0u32;
@@ -1329,16 +1375,21 @@ pub(crate) fn build_hook(
         let mut take = batch.instances.len();
         if let Some(fp) = frill {
             let far = finite_or(fp.far_distance, 0.0).max(0.0);
+            // The group's box encloses the instances that can be drawn: a non-finite
+            // transform is dropped below and must not stretch the box (its sphere would
+            // fall back to the model-space sphere at the origin).
             let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
             for inst in batch.instances.iter() {
-                let s = sphere.transformed(inst.transform);
-                lo = lo.min(s.center - s.radius);
-                hi = hi.max(s.center + s.radius);
+                if let Some((c, r)) = placed_sphere(sphere, inst.transform) {
+                    lo = lo.min(c - r);
+                    hi = hi.max(c + r);
+                }
             }
+            // No drawable instance: nothing to draw, the group is culled whole.
             let d2 = if lo.is_finite() && hi.is_finite() {
                 box_distance_sq(ctx.eye, lo, hi)
             } else {
-                0.0
+                f32::INFINITY
             };
             if d2 >= far * far {
                 culled = culled.saturating_add(u32::try_from(take).unwrap_or(u32::MAX));
@@ -1351,28 +1402,70 @@ pub(crate) fn build_hook(
         culled = culled.saturating_add(u32::try_from(batch.instances.len() - take).unwrap_or(0));
         let casting = batch.cast_shadow && casts && model.surfaces.iter().any(|s| s.kind.casts());
         let max_d = batch.max_distance.filter(|d| d.is_finite());
-        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        let (z_min, h) = sway_bounds(&model.info, frill.and_then(|f| f.sway_z_range));
+        let intensity = frill.map_or(0.0, |fp| {
+            finite_or(fp.animation_intensity, 0.0).clamp(0.0, 1.0)
+        });
+        let sways = frill.is_some() && intensity > FRILL_SWAY_MIN && h > 0.0;
+        // The culling sphere (render.md §5.5 Culling, with the implementer note there): the
+        // model sphere grown by the largest sway displacement and, for frills, enlarged to
+        // hold the model origin, toward which the distance scale shrinks the vertices.
+        let cull_sphere = if frill.is_some() {
+            let sway = if sways {
+                intensity * h * SWAY_REACH
+            } else {
+                0.0
+            };
+            let r = sphere.radius + sway;
+            crate::BoundingSphere {
+                center: sphere.center,
+                radius: if r.is_finite() {
+                    r.max(sphere.center.length())
+                } else {
+                    sphere.radius
+                },
+            }
+        } else {
+            sphere
+        };
+        // One light selection for the whole batch when it cannot depend on the instance.
+        let uniform_lights = ctx.lights.is_uniform(batch.lights);
+        if uniform_lights {
+            ctx.lights.select(
+                batch.lights,
+                &LightTarget::object(Vec3::ZERO, Vec3::ZERO, None),
+                &mut chosen,
+            );
+        }
+        let batch_lights = light_words(&chosen);
+        mirrored.clear();
         shadow_only.clear();
         for inst in batch.instances.iter().take(take) {
             let Some(rows) = affine_rows(inst.transform) else {
                 culled = culled.saturating_add(1);
                 continue;
             };
-            let s = sphere.transformed(inst.transform);
-            let radius = s.radius;
-            if max_d.is_some_and(|d| s.center.distance(ctx.eye) - radius > d) {
+            let Some((center, radius)) = placed_sphere(cull_sphere, inst.transform) else {
                 culled = culled.saturating_add(1);
                 continue;
-            }
-            let in_view = frustum.sphere_visible(s.center, radius);
-            if !in_view {
-                // Not drawn in colour; kept as a caster when its shadow may reach the map.
-                culled = culled.saturating_add(1);
-                if !(casting && shadow_frustum.sphere_visible(s.center, radius)) {
+            };
+            if let Some(d) = max_d {
+                let start_d = placed_sphere(sphere, inst.transform)
+                    .map_or(f32::INFINITY, |(c, r)| c.distance(ctx.eye) - r);
+                if start_d > d {
+                    culled = culled.saturating_add(1);
                     continue;
                 }
             }
-            if gpu.len() + shadow_only.len() >= max_instances {
+            let in_view = frustum.sphere_visible(center, radius);
+            if !in_view {
+                // Not drawn in colour; kept as a caster when its shadow may reach the map.
+                culled = culled.saturating_add(1);
+                if !(casting && shadow_frustum.sphere_visible(center, radius)) {
+                    continue;
+                }
+            }
+            if gpu.len() + mirrored.len() + shadow_only.len() >= max_instances {
                 // Over the per-pass limit: dropped (and counted as culled), not an error,
                 // so a dense view cannot fail the frame (render.md §5.5).
                 if in_view {
@@ -1383,47 +1476,51 @@ pub(crate) fn build_hook(
             }
             let origin = Vec3::new(rows[0][3], rows[1][3], rows[2][3]);
             let t = inst.terrain_color.map(|c| finite_or(c, 1.0));
+            // The instance's own light list (lighting.md §8.5, row L32: one list per
+            // object, against its own world box), unless every instance gets the same.
+            let lights = if !in_view {
+                [0; 3]
+            } else if uniform_lights {
+                batch_lights
+            } else {
+                ctx.lights.select(
+                    batch.lights,
+                    &LightTarget::placed(model.info.aabb, inst.transform, inst.light_object),
+                    &mut chosen,
+                );
+                light_words(&chosen)
+            };
             let g = GpuInstance {
                 rows,
                 tint: inst.tint.map(|c| finite_or(c, 1.0)),
                 terrain: [t[0], t[1], t[2], time_phase(origin)],
+                lights: [lights[0], lights[1], lights[2], 0],
             };
-            if in_view {
-                lo = lo.min(s.center - radius);
-                hi = hi.max(s.center + radius);
-                gpu.push(g);
-            } else {
+            if !in_view {
                 shadow_only.push(g);
+            } else if Mat3::from_mat4(inst.transform).determinant() < 0.0 {
+                // Mirrored: drawn with the culled face swapped (render.md §2.3).
+                mirrored.push(g);
+            } else {
+                gpu.push(g);
             }
         }
+        let split = gpu.len();
+        gpu.append(&mut mirrored);
         let mid = gpu.len();
         gpu.append(&mut shadow_only);
         if gpu.len() == start {
             continue;
         }
-        // Lights for the whole batch, by the box around its instances drawn in colour
-        // (`lighting.md` §8.5 step 2 with the batch as one object).
-        if mid > start {
-            ctx.lights.select(
-                batch.lights,
-                &LightTarget::object(lo, hi, None),
-                &mut chosen,
-            );
-        } else {
-            chosen.clear();
-        }
-        let lw = light_words(&chosen);
         let mut flags = 0;
-        let (z_min, h) = sway_bounds(&model.info, frill.and_then(|f| f.sway_z_range));
         let mut u = BatchUniform {
-            lights: [lw[0], lw[1], lw[2], 0],
+            lights: [0; 4],
             frill: [0.0; 4],
             sway: [z_min, 0.0, 1.0, 0.0],
         };
         if let Some(fp) = frill {
             flags |= bf::FRILL;
-            let intensity = finite_or(fp.animation_intensity, 0.0).clamp(0.0, 1.0);
-            if intensity > FRILL_SWAY_MIN && h > 0.0 {
+            if sways {
                 flags |= bf::SWAY;
             }
             if !fp.opaque {
@@ -1446,9 +1543,15 @@ pub(crate) fn build_hook(
         })?;
         uniforms.extend_from_slice(bytemuck::bytes_of(&u));
         uniforms.resize((offset + stride) as usize, 0);
-        let colour_range = start as u32..mid as u32;
-        let shadow_range = start as u32..gpu.len() as u32;
-        let mut first = true;
+        let as_u32 = |i: usize| u32::try_from(i).unwrap_or(u32::MAX);
+        let colour_range = as_u32(start)..as_u32(mid);
+        // Upright and mirrored instances (one-sided surfaces cull opposite faces).
+        let groups = [
+            (as_u32(start)..as_u32(split), false),
+            (as_u32(split)..as_u32(mid), true),
+        ];
+        let shadow_range = as_u32(start)..as_u32(gpu.len());
+        let mut counted_part = None;
         for (pi, part) in model.parts.iter().enumerate() {
             let Some(surface) = model.surfaces.get(part.surface) else {
                 continue;
@@ -1457,37 +1560,50 @@ pub(crate) fn build_hook(
             if frill.is_some_and(|f| !f.opaque) && !kind.translucent() {
                 kind = SurfaceKind::TestBlend;
             }
-            let Some(pipeline) = state.pipeline(
-                ctx.device,
-                PipeKey {
-                    format: ctx.format,
-                    kind,
-                    two_sided: surface.two_sided,
-                },
-            ) else {
-                continue;
-            };
             let shadow = if casting && surface.kind.casts() {
                 state.shadow_pipeline(ctx.device, surface.kind != SurfaceKind::Opaque)
             } else {
                 None
             };
-            if colour_range.is_empty() && shadow.is_none() {
-                continue;
+            // Two-sided surfaces cull nothing: one draw covers both groups.
+            let draws: &[(Range<u32>, bool)] = if surface.two_sided {
+                &[(colour_range.clone(), false)][..]
+            } else {
+                &groups[..]
+            };
+            let mut shadow = shadow;
+            for (range, mirrored) in draws {
+                let Some(pipeline) = state.pipeline(
+                    ctx.device,
+                    PipeKey {
+                        format: ctx.format,
+                        kind,
+                        two_sided: surface.two_sided,
+                        mirrored: *mirrored && !surface.two_sided,
+                    },
+                ) else {
+                    continue;
+                };
+                // The shadow pass (no culling) draws the part once, with the first item.
+                let item_shadow = shadow.take();
+                if range.is_empty() && item_shadow.is_none() {
+                    continue;
+                }
+                // The first drawn part counts the batch's instances (once per batch).
+                let counts = *counted_part.get_or_insert(pi) == pi;
+                items.push(Item {
+                    model: batch.model.clone(),
+                    part: pi,
+                    surface_bg: surface.bind_group(ctx.device, &layouts.surface, &ctx.textures),
+                    batch_offset: offset32,
+                    instances: range.clone(),
+                    shadow_instances: shadow_range.clone(),
+                    counts_instances: counts,
+                    pipeline,
+                    translucent: kind.translucent(),
+                    shadow: item_shadow,
+                });
             }
-            items.push(Item {
-                model: batch.model.clone(),
-                part: pi,
-                surface_bg: surface.bind_group(ctx.device, &layouts.surface, &ctx.textures),
-                batch_offset: offset32,
-                instances: colour_range.clone(),
-                shadow_instances: shadow_range.clone(),
-                counts_instances: first,
-                pipeline,
-                translucent: kind.translucent(),
-                shadow,
-            });
-            first = false;
         }
     }
     if dropped > 0 {
@@ -1628,7 +1744,7 @@ mod tests {
 
     #[test]
     fn layouts_match_the_wgsl() {
-        assert_eq!(size_of::<GpuInstance>(), 80);
+        assert_eq!(size_of::<GpuInstance>(), 96);
         assert_eq!(size_of::<BatchUniform>(), 48);
         assert_eq!(size_of::<SurfaceUniform>(), 64);
     }

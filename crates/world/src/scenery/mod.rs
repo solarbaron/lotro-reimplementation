@@ -5,7 +5,7 @@
 //!
 //! | Item | Purpose | Spec |
 //! |---|---|---|
-//! | [`SceneryTables`], [`VertexLookup`] | The region's terrain-scene (0x12), scene-choice (0x11) and terrain-type (0x19) tables, read from the region descriptor's slots 2, 1 and 8; word → scene | §4, §7.2 |
+//! | [`SceneryTables`], [`RegionSceneryTables`], [`VertexLookup`] | The region's terrain-scene (0x12), scene-choice (0x11) and terrain-type (0x19) tables, read from the region descriptor's slots 2, 1 and 8; word → scene | §4, §7.2 |
 //! | [`SceneSource`], [`SceneLibrary`] | Scene records (0x02), cached | §5 |
 //! | [`hash`] | The placement hashes, seeds and salts | §6 |
 //! | [`generate_landblock`], [`SceneryInput`], [`GeneratedScenery`], [`SceneryObject`] | The vertex pass: (DID, position, rotation, scale) of every generated object | §7.2–§7.6 |
@@ -54,8 +54,9 @@
 //! together nest at most [`MAX_RECURSION_DEPTH`] deep, which bounds the stack. Work
 //! (static-list scans included), objects and footprint markers are budgeted per vertex
 //! and per landblock ([`SceneryLimits`]); the static list holds at most
-//! [`MAX_STATIC_VOLUMES`] volumes. Unobserved scale modes are rejected as unsupported
-//! (§5.3), except that a mode above 8 with differing scale limits is a failing child
+//! [`MAX_STATIC_VOLUMES`] volumes. The scale modes Tessera does not implement (0–3, 5–8,
+//! and 9 with equal scale limits; all unobserved) are rejected under the Tessera Decision
+//! of §7.4 step 3; a mode of 9 or higher with differing scale limits is a failing child
 //! (§7.4 step 15) and abandons the rest of its vertex, as a scene reference that cannot be
 //! read does. A scene read that fails for a reason that is not the data's is not cached and
 //! marks the result incomplete ([`SceneryStats::is_complete`]), so the caller can build
@@ -83,10 +84,11 @@ pub use generate::{
 };
 pub use props::{
     ChainLevel, DEFAULT_PROPERTY_CACHE_ENTRIES, MAX_CHAIN_LEVELS, MAX_EXTRA_SETS, ObjectProperties,
-    ObjectPropertyCache, read_set, value_bool,
+    ObjectPropertyCache, read_set, value_bool, value_flag,
 };
 pub use tables::{
-    DEFAULT_SCENE_CACHE_ENTRIES, SceneLibrary, SceneSource, SceneryTables, VertexLookup,
+    DEFAULT_SCENE_CACHE_ENTRIES, RegionSceneryTables, SceneLibrary, SceneSource, SceneryTables,
+    VertexLookup,
 };
 
 #[cfg(test)]

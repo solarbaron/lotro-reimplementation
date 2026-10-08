@@ -93,6 +93,8 @@ impl HostApi for LogHost {
 pub struct Plugins {
     host: Arc<LogHost>,
     manager: PluginManager,
+    /// Player music: its commands (`/play`, ...) are host commands, tried before plugins.
+    music: Option<crate::audio::player_music::PlayerMusic>,
 }
 
 impl Plugins {
@@ -130,7 +132,22 @@ impl Plugins {
                 Err(e) => tracing::warn!(plugin = %name, "plugin not loaded: {e}"),
             }
         }
-        Self { host, manager }
+        Self {
+            host,
+            manager,
+            music: None,
+        }
+    }
+
+    /// Routes the player-music commands (`/play`, `/playstart`, `/playlist`, `/playstop`,
+    /// `/instrument`) to `music`; its chat lines go to the host's chat output.
+    pub fn set_music(&mut self, music: crate::audio::player_music::PlayerMusic) {
+        self.music = Some(music);
+    }
+
+    /// The player music, if set.
+    pub fn music_mut(&mut self) -> Option<&mut crate::audio::player_music::PlayerMusic> {
+        self.music.as_mut()
     }
 
     /// The host (for tests and the UI).
@@ -157,12 +174,30 @@ impl Plugins {
 
     /// Run a `/command` line; returns whether a plugin or the host handled it.
     pub fn command(&mut self, line: &str) -> bool {
+        if let Some(m) = &mut self.music
+            && m.command(line)
+        {
+            self.flush_music();
+            return true;
+        }
         self.manager.execute_command(line)
     }
 
     /// Per-frame work.
     pub fn pump(&mut self) {
+        if let Some(m) = &mut self.music {
+            m.update();
+            self.flush_music();
+        }
         self.manager.pump();
+    }
+
+    fn flush_music(&mut self) {
+        if let Some(m) = &mut self.music {
+            for line in m.take_lines() {
+                self.host.write_line(&line);
+            }
+        }
     }
 
     /// Unload every apartment.

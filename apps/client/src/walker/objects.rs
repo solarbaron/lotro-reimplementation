@@ -677,7 +677,7 @@ pub struct ObjectInfo {
     /// The interior cell it is drawn through (`landblock.md` §4.11): [`OUTDOORS`] (0) for
     /// the outdoor visibility cell, a cell number of the block's landblock info, or
     /// [`UNATTACHED`](super::interiors::UNATTACHED) for an interior entity no cell
-    /// contains (`walker.md` §14.11).
+    /// contains (`walker.md` §14.12 (h)).
     pub cell: u16,
 }
 
@@ -690,6 +690,19 @@ struct ObjState {
     smooth: DistanceSmoother,
     /// Block-local bounding sphere over its uploaded parts.
     sphere: Option<(Vec3, f32)>,
+    /// The draw frame ([`ObjectLayer::draw`] count, from 1) in which its fade was last
+    /// updated; 0: never.
+    faded_at: u64,
+}
+
+/// Whether an object's fade restarts in draw frame `frame` (`walker.md` §14.5: a block not
+/// drawn in the previous frame resets its objects' fades): its fade was not updated in the
+/// frame before, because its block was culled or not reached, or because the object itself
+/// was not drawn (an outdoor object while the camera is in a cell, a generated object with
+/// `scenery` off, an object out of reach).
+#[must_use]
+pub fn fade_resets(faded_at: u64, frame: u64) -> bool {
+    faded_at == 0 || faded_at.checked_add(1) != Some(frame)
 }
 
 struct BlockObjects {
@@ -705,8 +718,6 @@ struct BlockObjects {
     eval_at: Option<([f64; 3], ActivationKey)>,
     /// Active objects.
     active: usize,
-    /// The block was drawn (its objects' fades updated) in the previous frame.
-    seen: bool,
     /// Block-local rectangle around the outdoor objects' origins (x, y).
     rect: ([f32; 2], [f32; 2]),
     /// The largest `d0` of the block's outdoor objects.
@@ -718,6 +729,35 @@ struct BlockObjects {
 }
 
 impl BlockObjects {
+    /// Updates the smoothed distance of every object of the block that is in the scene
+    /// (active, not a generated object with `scenery` off, drawn through a cell the camera
+    /// sees) but not processed by the draw loop this frame because the block's box is out
+    /// of view. The smoothed distance follows every object of the scene each frame, drawn
+    /// or not (`mesh.md` §8.6 step 3), so an object culled while the camera travels comes
+    /// back with a current one (`walker.md` §14.5 OPEN (b); Tessera reading, the spec
+    /// writer to confirm). `local_cam` is the eye in the block's frame.
+    fn follow_distances(
+        &mut self,
+        key: LandblockKey,
+        local_cam: Vec3,
+        frame: &ObjectFrame,
+        drawn: &dyn Fn(LandblockKey, u16) -> bool,
+    ) {
+        for (obj, st) in self.objects.iter().zip(self.state.iter_mut()) {
+            if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
+                continue;
+            }
+            if let Some((c, r)) = st.sphere {
+                let d = aabb_distance(
+                    local_cam.to_array(),
+                    (c - Vec3::splat(r)).to_array(),
+                    (c + Vec3::splat(r)).to_array(),
+                );
+                st.smooth.update(d, frame.fps, false);
+            }
+        }
+    }
+
     /// A block's objects, none active.
     fn new(instances: Arc<[Instance]>, objects: Arc<[ObjectInfo]>) -> Self {
         let state = vec![ObjState::default(); objects.len()];
@@ -750,7 +790,6 @@ impl BlockObjects {
             dirty: true,
             eval_at: None,
             active: 0,
-            seen: false,
             rect: (lo, hi),
             max_d0,
             parts,
@@ -852,6 +891,10 @@ pub fn linear_to_stored(c: f32) -> f32 {
         1.055 * c.powf(1.0 / 2.4) - 0.055
     }
 }
+
+/// An object casts into the sun's map only while its opacity is above this (`mesh.md`
+/// §8.8; the walker's opacity is the fade's, without the render component's factors).
+pub const SHADOW_MIN_OPACITY: f32 = 0.8;
 
 /// The material and lit inputs of one submesh drawn with `plan` (`lighting.md` §4.1,
 /// `docs/specs/render.md` §4.3), or `None` while its base texture is still loading.
@@ -959,7 +1002,7 @@ pub fn surface_draw(
         },
         vertex_colors: false,
         fog: true,
-        cast_shadow: shadow && fade >= 1.0,
+        cast_shadow: shadow && fade > SHADOW_MIN_OPACITY,
         lights: tessera_render::LightSelection::Auto,
     };
     Some((m, surface))
@@ -1108,6 +1151,8 @@ pub struct ObjectLayer {
     batches: HashMap<(LandblockKey, u32, u8, bool), Vec<GpuInstance>>,
     /// The frame settings of the last update.
     frame: ObjectFrame,
+    /// Draw frames recorded so far ([`fade_resets`]).
+    draw_frame: u64,
 }
 
 /// Whether instance `inst` of block `key` is a placed figure the character layer draws
@@ -1197,6 +1242,7 @@ impl ObjectLayer {
             arena_full_at: None,
             batches: HashMap::new(),
             frame: ObjectFrame::default(),
+            draw_frame: 0,
         }
     }
 
@@ -2202,6 +2248,8 @@ impl ObjectLayer {
         drawn: &dyn Fn(LandblockKey, u16) -> bool,
     ) {
         let frame = self.frame;
+        self.draw_frame = self.draw_frame.saturating_add(1);
+        let draw_frame = self.draw_frame;
         let cap = self.distance as f32;
         let mut draws = 0usize;
         let mut objects_drawn = 0usize;
@@ -2225,7 +2273,6 @@ impl ObjectLayer {
             let Some(b) = self.blocks.get_mut(&key) else {
                 continue;
             };
-            let was_seen = std::mem::replace(&mut b.seen, false);
             if b.active == 0 {
                 continue;
             }
@@ -2236,13 +2283,13 @@ impl ObjectLayer {
             let Some((lo, hi)) = b.bounds else {
                 continue;
             };
+            let local_cam = camera - off;
             if !frustum.aabb_visible(off + lo, off + hi) {
                 culled += b.active;
+                b.follow_distances(key, local_cam, &frame, drawn);
                 continue;
             }
-            b.seen = true;
             let block_tf = Mat4::from_translation(off);
-            let local_cam = camera - off;
             for (oi, obj) in b.objects.iter().enumerate() {
                 let Some(st) = b.state.get_mut(oi) else { break };
                 if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
@@ -2255,14 +2302,13 @@ impl ObjectLayer {
                     (c + Vec3::splat(r)).to_array(),
                 );
                 let draw_d = object_draw_distance(&obj.lod, &frame, cap);
-                let opacity = st.fade.update(
-                    d,
-                    draw_d,
-                    frame.dt,
-                    frame.camera_moved,
-                    !was_seen,
-                    frame.lod,
-                );
+                let reset = fade_resets(st.faded_at, draw_frame);
+                st.faded_at = draw_frame;
+                let opacity =
+                    st.fade
+                        .update(d, draw_d, frame.dt, frame.camera_moved, reset, frame.lod);
+                // Before the culls: see the culled-block branch above.
+                let ds = st.smooth.update(d, frame.fps, false);
                 if opacity <= 0.0 {
                     continue;
                 }
@@ -2272,11 +2318,11 @@ impl ObjectLayer {
                     culled += 1;
                     continue;
                 }
-                let ds = st.smooth.update(d, frame.fps, false);
                 let detail = obj.lod.detail_range(&frame.settings);
                 // `mesh.md` §8.7 `d2`: objects cast shadows within their shadow distance.
+                // Strictly within the shadow distance (`mesh.md` §8.7).
                 let casts = frame.shadows
-                    && (!frame.lod || d <= obj.lod.shadow_distance(frame.g, &frame.settings));
+                    && (!frame.lod || d < obj.lod.shadow_distance(frame.g, &frame.settings));
                 objects_drawn += 1;
                 if opacity < 1.0 {
                     fading += 1;
@@ -2672,6 +2718,17 @@ mod tests {
     }
 
     #[test]
+    fn fades_restart_after_a_frame_without_an_update() {
+        assert!(fade_resets(0, 1), "never updated");
+        assert!(!fade_resets(4, 5), "updated in the frame before");
+        assert!(
+            fade_resets(4, 6),
+            "skipped a frame (culled, not reached, not drawn)"
+        );
+        assert!(fade_resets(u64::MAX, 1));
+    }
+
+    #[test]
     fn surface_draws_wait_for_their_base_texture() {
         let tex = TexRequest {
             did: 0x4000_0001,
@@ -2704,11 +2761,17 @@ mod tests {
         assert_eq!(m.alpha, AlphaMode::Mask { cutoff: 0.5 });
         assert_eq!(l.opacity, Opacity::BaseAlpha);
         assert!(l.cast_shadow);
-        // Fading: translucent, no shadow, alpha scaled.
+        // Fading: translucent, no shadow at or below opacity 0.8 (`mesh.md` §8.8), alpha
+        // scaled.
         let (m, l) = surface_draw(&plan, &ready, true, 0.25, true).unwrap();
         assert_eq!(m.alpha, AlphaMode::TestBlend { cutoff: 0.5 });
         assert!((m.base_color[3] - 0.25 * plan.lit.color[3]).abs() < 1e-6);
         assert!(!l.cast_shadow);
+        let (_, l) = surface_draw(&plan, &ready, true, SHADOW_MIN_OPACITY, true).unwrap();
+        assert!(!l.cast_shadow, "0.8 itself does not cast");
+        let (m, l) = surface_draw(&plan, &ready, true, 0.85, true).unwrap();
+        assert_eq!(m.alpha, AlphaMode::TestBlend { cutoff: 0.5 });
+        assert!(l.cast_shadow, "above 0.8 a fading object casts");
         // The M2 path keeps the linear plan colour.
         let (m, _) = surface_draw(&plan, &ready, false, 1.0, true).unwrap();
         assert_eq!(m.base_color, plan.base_color);
@@ -2861,6 +2924,44 @@ mod tests {
             &k0
         ));
         assert!(activation_stale(None, camera, &k0));
+    }
+
+    /// Review finding (objects.rs, `walker.md` §14.5 OPEN (b)): the smoothed distance of
+    /// an object in a culled block follows the camera, so it does not come back stale; an
+    /// object not in the scene (a generated one with `scenery` off) is left alone.
+    #[test]
+    fn culled_objects_keep_their_smoothed_distance_current() {
+        let mut blocks = one_block();
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let b = blocks.get_mut(&key).unwrap();
+        for st in &mut b.state {
+            st.active = true;
+            st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
+        }
+        let frame = ObjectFrame {
+            scenery: false,
+            fps: 60.0,
+            ..ObjectFrame::default()
+        };
+        let all = |_: LandblockKey, _: u16| true;
+        b.follow_distances(key, Vec3::new(1_101.0, 0.0, 0.0), &frame, &all);
+        assert_eq!(b.state[0].smooth.value(), Some(1_000.0), "first frame: d");
+        assert_eq!(b.state[1].smooth.value(), None, "not in the scene");
+        for _ in 0..600 {
+            b.follow_distances(key, Vec3::new(111.0, 0.0, 0.0), &frame, &all);
+        }
+        let ds = b.state[0].smooth.value().unwrap();
+        assert!(
+            (ds - 10.0).abs() < 0.01,
+            "followed the camera to 10 m: {ds}"
+        );
+        let none = |_: LandblockKey, _: u16| false;
+        b.follow_distances(key, Vec3::new(1_101.0, 0.0, 0.0), &frame, &none);
+        assert_eq!(
+            b.state[0].smooth.value(),
+            Some(ds),
+            "a cell the camera does not see"
+        );
     }
 
     #[test]

@@ -408,7 +408,11 @@ fn flags_layer_and_classify() {
     assert!(f.passes(ETHEREAL_PLAYER) && !f.passes(ETHEREAL_CAMERA));
     assert!(f.is_always_uncontrolled());
     assert!(!static_blocks_walker(true, true, &f, SetupCollision::Mesh));
-    let solid = CollisionFlags::default();
+    // A static the client creates (creation type 3, §9.3 item 3) with no other flags.
+    let solid = CollisionFlags {
+        creation_type: Some(CREATION_TYPE_SHARED_STATIC_IMMOBILE),
+        ..CollisionFlags::default()
+    };
     assert!(static_blocks_walker(
         true,
         true,
@@ -428,9 +432,299 @@ fn flags_layer_and_classify() {
         SetupCollision::None
     ));
     assert!(generated_blocks_walker(&solid, SetupCollision::Mesh));
+    // No creation type anywhere counts as 0 and is refused; generated objects pass.
+    let none = CollisionFlags::default();
+    assert!(none.refuses_static_creation());
+    assert!(!static_blocks_walker(
+        true,
+        true,
+        &none,
+        SetupCollision::Mesh
+    ));
+    assert!(static_has_walker_collision(&none, SetupCollision::Mesh));
+    assert!(generated_blocks_walker(&none, SetupCollision::Mesh));
     assert_eq!(ethereality_bit(0x1E), Some(ETHEREAL_PLAYER));
     assert_eq!(ethereality_bit(2), Some(ETHEREAL_CAMERA));
     assert_eq!(ethereality_bit(0), None);
+}
+
+fn property_set(entries: &[(u32, PropertyValue)]) -> PropertySet {
+    PropertySet {
+        entries: entries
+            .iter()
+            .map(|(pid, value)| PropertyEntry {
+                pid: *pid,
+                value: value.clone(),
+            })
+            .collect(),
+        ..PropertySet::default()
+    }
+}
+
+/// `collision.md` §9.3 item 3, C29: the SED's own `Entity_CreationType` first, then the
+/// chain; 0, 7 and 8 are refused; no value anywhere, or a found value that is not an
+/// integer or enum, counts as 0 (and a wrong-typed value ends the lookup).
+#[test]
+fn creation_type_is_the_seds_own_value_first() {
+    const CT: u32 = 20;
+    let pids = PhysicsPids {
+        creation_type: Some(CT),
+        ..PhysicsPids::default()
+    };
+    let flags = |v: Option<PropertyValue>| {
+        let entries: Vec<_> = v.into_iter().map(|v| (CT, v)).collect();
+        CollisionFlags::from_set(&property_set(&entries), &pids)
+    };
+    let effective = |own: Option<PropertyValue>, object: Option<PropertyValue>| {
+        CollisionFlags::of_static(flags(own), flags(object))
+    };
+    let e = |k: u32| Some(PropertyValue::Enum(k));
+    // The SED's own value wins over the object's.
+    assert!(!effective(e(3), e(8)).refuses_static_creation());
+    assert!(effective(e(7), e(3)).refuses_static_creation());
+    assert!(effective(e(8), e(3)).refuses_static_creation());
+    assert!(effective(e(0), e(3)).refuses_static_creation());
+    // The chain when the SED has none.
+    assert!(effective(None, e(8)).refuses_static_creation());
+    assert!(!effective(None, e(9)).refuses_static_creation());
+    // None anywhere: 0.
+    let none = effective(None, None);
+    assert_eq!(none.creation_type_value(), CREATION_TYPE_INVALID);
+    assert!(none.refuses_static_creation() && !none.is_server_created());
+    // Integers count; other types read as 0 and stop the lookup.
+    assert!(!effective(Some(PropertyValue::Int(5)), e(8)).refuses_static_creation());
+    assert!(!effective(Some(PropertyValue::Int(-1)), None).refuses_static_creation());
+    for wrong in [
+        PropertyValue::Bitfield32(3),
+        PropertyValue::Int64(3),
+        PropertyValue::Bool(true),
+        PropertyValue::Float(3.0),
+    ] {
+        let f = effective(Some(wrong.clone()), e(3));
+        assert_eq!(f.creation_type, Some(0), "{wrong:?}");
+        assert!(f.refuses_static_creation(), "{wrong:?}");
+    }
+    // A dictionary without the name: nothing is found, every static is refused.
+    let blind = CollisionFlags::from_set(
+        &property_set(&[(CT, PropertyValue::Enum(3))]),
+        &PhysicsPids::default(),
+    );
+    assert!(blind.refuses_static_creation());
+}
+
+/// Finding: the §9.1 booleans accepted integers and enum keys. Only boolean values count;
+/// another type is not present and the lookup goes on along the chain.
+#[test]
+fn physics_booleans_read_only_boolean_values() {
+    let pids = PhysicsPids {
+        no_physics: Some(10),
+        always_uncontrolled_surface: Some(12),
+        can_ledge_climb: Some(13),
+        ..PhysicsPids::default()
+    };
+    let wrong = property_set(&[
+        (10, PropertyValue::Int(1)),
+        (12, PropertyValue::Enum(1)),
+        (13, PropertyValue::Int(0)),
+    ]);
+    let f = CollisionFlags::from_set(&wrong, &pids);
+    assert_eq!(
+        (
+            f.no_physics,
+            f.always_uncontrolled_surface,
+            f.can_ledge_climb
+        ),
+        (None, None, None)
+    );
+    let object = property_set(&[
+        (10, PropertyValue::Bool(false)),
+        (13, PropertyValue::Bool(true)),
+    ]);
+    let f = CollisionFlags::of_static(f, CollisionFlags::from_set(&object, &pids));
+    assert_eq!((f.no_physics, f.can_ledge_climb), (Some(false), Some(true)));
+}
+
+/// Finding: the ethereality properties (§9.1: bitfields, mapper 0x230000BA) accepted
+/// integers, 64-bit integers and enum keys as bit sets. Only bitfield values count;
+/// another type is not present and the lookup goes on along the chain.
+#[test]
+fn ethereality_reads_only_bitfield_values() {
+    let pids = PhysicsPids {
+        ethereality_type: Some(11),
+        ethereal_to_type: Some(12),
+        placement_ethereal_to_type: Some(13),
+        ..PhysicsPids::default()
+    };
+    let player = i32::try_from(ETHEREAL_PLAYER).expect("bit 29");
+    for wrong in [
+        PropertyValue::Int(player),
+        PropertyValue::Int64(i64::from(player)),
+        PropertyValue::Enum(1 << 29),
+        PropertyValue::Bool(true),
+    ] {
+        let set = property_set(&[
+            (11, wrong.clone()),
+            (12, wrong.clone()),
+            (13, wrong.clone()),
+        ]);
+        let f = CollisionFlags::from_set(&set, &pids);
+        assert_eq!(
+            (f.ethereality, f.ethereal_to, f.placement_ethereal_to),
+            (None, None, None),
+            "{wrong:?}"
+        );
+        assert!(!f.passes(ETHEREAL_PLAYER), "{wrong:?}");
+        // The chain decides.
+        let object = property_set(&[(12, PropertyValue::Bitfield64(ETHEREAL_CAMERA))]);
+        let f = CollisionFlags::of_static(f, CollisionFlags::from_set(&object, &pids));
+        assert_eq!(f.ethereal_to, Some(ETHEREAL_CAMERA), "{wrong:?}");
+    }
+    let right = property_set(&[
+        (11, PropertyValue::Bitfield32(1)),
+        (12, PropertyValue::Bitfield64(ETHEREAL_PLAYER)),
+    ]);
+    let f = CollisionFlags::from_set(&right, &pids);
+    assert_eq!(
+        (f.ethereality, f.ethereal_to),
+        (Some(1), Some(ETHEREAL_PLAYER))
+    );
+    assert!(f.passes(ETHEREAL_PLAYER));
+}
+
+/// A liquid box's column span agrees with its containment test, for tilted and scaled
+/// boxes too (`water.md` §7.4 surface, exact instead of probed).
+#[test]
+fn liquid_column_span_matches_contains() {
+    let n = (0.3_f32 * 0.3 + 0.2 * 0.2 + 0.1 * 0.1 + 0.9 * 0.9).sqrt();
+    let tilted = Quaternion {
+        w: 0.9 / n,
+        x: 0.3 / n,
+        y: 0.2 / n,
+        z: 0.1 / n,
+    };
+    for rotation in [Quaternion::IDENTITY, Quaternion::from_yaw(0.7), tilted] {
+        let t = Transform {
+            position: [20.0, 30.0, 5.0],
+            rotation,
+            scale: [1.5, 1.5, 1.5],
+        };
+        let b = LiquidBox::new(
+            [-4.0, -3.0, -6.0],
+            [4.0, 3.0, 1.0],
+            &t,
+            LiquidFlags::default(),
+        )
+        .expect("box");
+        let mut hits = 0;
+        for i in 0..21 {
+            for j in 0..21 {
+                #[allow(clippy::cast_precision_loss)]
+                let (x, y) = (10.0 + i as f32, 20.0 + j as f32);
+                let span = b.column_span(x, y);
+                for k in 0..61 {
+                    #[allow(clippy::cast_precision_loss)]
+                    let z = -10.0 + 0.4 * k as f32;
+                    if b.contains([x, y, z]) {
+                        let (lo, hi) = span.expect("a span where the box contains a point");
+                        let z = f64::from(z);
+                        assert!(lo - 1e-9 <= z && z <= hi + 1e-9, "{x} {y} {z}: {lo} {hi}");
+                    }
+                }
+                if let Some((lo, hi)) = span {
+                    hits += 1;
+                    #[allow(clippy::cast_possible_truncation)]
+                    let mid = (0.5 * (lo + hi)) as f32;
+                    assert!(b.contains([x, y, mid]), "{x} {y}: {lo} {hi}");
+                }
+            }
+        }
+        assert!(hits > 50, "{rotation:?}: {hits}");
+    }
+    assert_eq!(
+        LiquidBox::new(
+            [0.0; 3],
+            [1.0; 3],
+            &Transform::IDENTITY,
+            LiquidFlags::default()
+        )
+        .expect("box")
+        .column_span(2.0, 0.5),
+        None
+    );
+}
+
+/// Finding: the liquid flags accepted integers and enum keys (`water.md` §7.2 types them
+/// boolean).
+#[test]
+fn liquid_flags_read_only_boolean_values() {
+    let pids = LiquidPids {
+        is_liquid: Some(1),
+        water_deep: Some(2),
+        ..LiquidPids::default()
+    };
+    let wrong = property_set(&[(1, PropertyValue::Int(1)), (2, PropertyValue::Enum(1))]);
+    assert_eq!(LiquidFlags::from_set(&wrong, &pids), LiquidFlags::default());
+    let right = property_set(&[
+        (1, PropertyValue::Bool(true)),
+        (2, PropertyValue::Bool(true)),
+    ]);
+    let f = LiquidFlags::from_set(&right, &pids);
+    assert!(f.liquid && f.deep);
+}
+
+/// `collision.md` §9.3 (the paragraph after item 3): `Entity_ContentLayers` and
+/// `Physics_AdjustableScale` use the SED-then-chain lookup; a found value ends it.
+#[test]
+fn layer_list_and_scale_use_the_sed_then_chain_lookup() {
+    const LAYERS: u32 = 30;
+    const SCALE: u32 = 31;
+    let pids = PhysicsPids {
+        content_layers: Some(LAYERS),
+        adjustable_scale: Some(SCALE),
+        ..PhysicsPids::default()
+    };
+    let list = |l: &[u32]| {
+        PropertyValue::Array(tessera_formats::PropertyArray {
+            elements: l
+                .iter()
+                .map(|&k| PropertyEntry {
+                    pid: 99,
+                    value: PropertyValue::Enum(k),
+                })
+                .collect(),
+            ..tessera_formats::PropertyArray::default()
+        })
+    };
+    let lookups = |e: &[(u32, PropertyValue)]| EntityLookups::from_set(&property_set(e), &pids);
+    let object = lookups(&[
+        (LAYERS, list(&[0x1000_008D])),
+        (SCALE, PropertyValue::Vector3([2.0; 3])),
+    ]);
+    // The SED has neither: the object's values.
+    let l = lookups(&[]).or(object.clone());
+    assert_eq!(l.layer_list(), Some(&[0x1000_008D][..]));
+    assert_eq!(l.scale(), [2.0; 3]);
+    assert!(!content_layers_pass(l.layer_list(), &[1], 0));
+    // The SED's own values win.
+    let l = lookups(&[
+        (LAYERS, list(&[1])),
+        (SCALE, PropertyValue::Vector3([0.5; 3])),
+    ])
+    .or(object.clone());
+    assert_eq!(l.layer_list(), Some(&[1][..]));
+    assert_eq!(l.scale(), [0.5; 3]);
+    // Found but wrong: no list (the SED exists) and scale 1, the object is not consulted.
+    let l = lookups(&[
+        (LAYERS, PropertyValue::Int(7)),
+        (SCALE, PropertyValue::Vector3([0.0; 3])),
+    ])
+    .or(object);
+    assert_eq!(l.layer_list(), None);
+    assert!(content_layers_pass(l.layer_list(), &[1], 0));
+    assert_eq!(l.scale(), [1.0; 3]);
+    // Nothing anywhere: no list, scale 1.
+    let l = EntityLookups::default();
+    assert_eq!((l.layer_list(), l.scale()), (None, [1.0; 3]));
 }
 
 #[test]
@@ -456,9 +750,10 @@ fn views_offset_sets_and_report_set_indices() {
 
 #[test]
 fn limits_are_enforced() {
+    // max_rounds is high, so only the body limit can refuse the third body.
     let mut b = CollisionSetBuilder::new(CollisionLimits {
         max_triangles: 3000,
-        max_rounds: 1,
+        max_rounds: 100,
         max_bodies: 2,
         max_cells: 0,
     });
@@ -473,7 +768,28 @@ fn limits_are_enforced() {
         &Transform::IDENTITY,
     );
     assert!(r.is_ok());
-    assert!(
+    assert!(matches!(
+        b.add_object(
+            BodySource::Other { tag: 0 },
+            CollisionFlags::default(),
+            BodyPurpose::Movement,
+            &wall,
+            &Transform::IDENTITY,
+        ),
+        Err(crate::PhysicsError::TooLarge {
+            what: "bodies",
+            count: 3,
+            limit: 2
+        })
+    ));
+    let set = b.build();
+    assert_eq!(set.bodies().len(), 2);
+    // The round limit on its own: one solid box fits, a second does not.
+    let mut b = CollisionSetBuilder::new(CollisionLimits {
+        max_rounds: 1,
+        ..CollisionLimits::default()
+    });
+    let add = |b: &mut CollisionSetBuilder| {
         b.add_object(
             BodySource::Other { tag: 0 },
             CollisionFlags::default(),
@@ -481,11 +797,15 @@ fn limits_are_enforced() {
             &wall,
             &Transform::IDENTITY,
         )
-        .is_err(),
-        "bodies"
-    );
-    let set = b.build();
-    assert_eq!(set.bodies().len(), 2);
+    };
+    assert!(add(&mut b).is_ok());
+    assert!(matches!(
+        add(&mut b),
+        Err(crate::PhysicsError::TooLarge {
+            what: "round primitives",
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -1111,6 +1431,114 @@ fn cell_plane_budgets_are_enforced() {
     );
 }
 
+/// Finding (§12.1): `add_cell` and `add_cell_with_flags` never checked or charged the
+/// per-set hull budget; only `add_cells` did.
+#[test]
+fn direct_cell_adds_charge_the_hull_budget() {
+    let (room, _) = room_volume();
+    let hull = vec![[0.5_f32, 0.5, 1.0]; MAX_CELL_HULL];
+    let p = CellPlacement::new([0.0; 3], Quaternion::IDENTITY).expect("placement");
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    let fit = MAX_SET_CELL_HULL / MAX_CELL_HULL;
+    for n in 0..fit {
+        let n = u16::try_from(n).expect("small");
+        let cell = PlacedCell::with_volume(n, Did(1), room.clone(), &hull, p).expect("cell");
+        assert_eq!(cell.hull_count(), MAX_CELL_HULL);
+        b.add_cell(cell, None).expect("within the budget");
+    }
+    let over = PlacedCell::with_volume(9999, Did(1), room.clone(), &hull, p).expect("cell");
+    assert!(matches!(
+        b.add_cell(over, None),
+        Err(crate::PhysicsError::TooLarge {
+            what: "cell hull vertices",
+            ..
+        })
+    ));
+    assert_eq!(b.report().cells as usize, fit);
+    // A cell without hull vertices still fits.
+    let empty = PlacedCell::with_volume(10_000, Did(1), room, &[], p).expect("cell");
+    b.add_cell(empty, None).expect("no hull vertices");
+}
+
+/// Finding (§5.3 "Flags of the cell body"): the cell body got every §9.1 field of the
+/// cell record's property set, so ethereality, `AlwaysUncontrolledSurface` or `NoPhysics`
+/// could make it pass-through, no support, or (not) solid. It carries only
+/// `Physics_SurfacePropertiesToApply` and `Physics_CanLedgeClimb`.
+#[test]
+fn cell_body_carries_only_the_two_cell_flags() {
+    let (room, hull) = room_volume();
+    let p = CellPlacement::new([0.0; 3], Quaternion::IDENTITY).expect("placement");
+    let flags = CollisionFlags {
+        no_physics: Some(true),
+        ethereality: Some(ETHEREAL_PLAYER),
+        ethereal_to: Some(ETHEREAL_PLAYER | ETHEREAL_CAMERA),
+        placement_ethereal_to: Some(ETHEREAL_PLAYER),
+        always_uncontrolled_surface: Some(true),
+        surface_properties: Some(Did(0x7800_0001)),
+        can_ledge_climb: Some(false),
+        creation_type: Some(7),
+    };
+    let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+    let cell = PlacedCell::with_volume(1, Did(0x0100_0001), room, &hull, p).expect("cell");
+    let id = b
+        .add_cell_with_flags(cell, Some(&wall_template()), flags)
+        .expect("fits")
+        .expect("a body");
+    let set = b.build();
+    let body = set.body(id).expect("body");
+    assert_eq!(
+        body.flags,
+        CollisionFlags {
+            surface_properties: Some(Did(0x7800_0001)),
+            can_ledge_climb: Some(false),
+            ..CollisionFlags::default()
+        }
+    );
+    assert!(QueryFilter::player().accepts(body));
+    assert!(QueryFilter::camera().accepts(body));
+    assert!(!body.flags.is_always_uncontrolled());
+}
+
+/// Finding (§5.3 implementer OPEN, §12.1): a cell whose physics mesh hit a set-level limit
+/// was dropped from the cell lookup too, unlike a mesh over the template bound. Both now
+/// refuse only the body and place the cell.
+#[test]
+fn cell_mesh_over_a_set_limit_still_places_the_cell() {
+    let (room, hull) = room_volume();
+    let p = CellPlacement::new([0.0; 3], Quaternion::IDENTITY).expect("placement");
+    for limits in [
+        CollisionLimits {
+            max_bodies: 0,
+            ..CollisionLimits::default()
+        },
+        CollisionLimits {
+            max_triangles: 1,
+            ..CollisionLimits::default()
+        },
+        CollisionLimits {
+            max_rounds: 0,
+            ..CollisionLimits::default()
+        },
+    ] {
+        let mut b = CollisionSetBuilder::new(limits);
+        let cell =
+            PlacedCell::with_volume(4, Did(0x0100_0004), room.clone(), &hull, p).expect("cell");
+        let body = b
+            .add_cell(cell, Some(&wall_template()))
+            .expect("the cell is placed");
+        assert_eq!(body, None, "{limits:?}");
+        let r = *b.report();
+        assert_eq!(
+            (r.cells, r.over_limit, r.cells_refused),
+            (1, 1, 0),
+            "{limits:?}"
+        );
+        let set = b.build();
+        assert_eq!(set.cell_at([0.0, 0.0, 1.0]).map(|h| h.cell), Some(4));
+        assert_eq!(set.bodies().len(), 0);
+    }
+}
+
 /// Finding: a full set still placed (allocated and transformed) every further object
 /// before refusing it. The limits are now checked first: even an invalid transform reports
 /// the limit, because nothing is placed.
@@ -1143,21 +1571,28 @@ fn full_sets_refuse_objects_before_placing_them() {
             ..
         })
     ));
-    // Solid boxes count as round primitives.
+    // Solid boxes count as round primitives: the wall has no sphere or capsule, so only
+    // its box can exceed a round limit of 0 (with a valid transform, nothing else fails).
+    assert!(wall.spheres.is_empty() && wall.capsules.is_empty() && wall.boxes.len() == 1);
     let mut b = CollisionSetBuilder::new(CollisionLimits {
         max_rounds: 0,
         ..CollisionLimits::default()
     });
-    assert!(
+    assert!(matches!(
         b.add_object(
             BodySource::Other { tag: 0 },
             CollisionFlags::default(),
             BodyPurpose::Movement,
             &wall,
-            &bad,
-        )
-        .is_err()
-    );
+            &Transform::IDENTITY,
+        ),
+        Err(crate::PhysicsError::TooLarge {
+            what: "round primitives",
+            count: 1,
+            limit: 0
+        })
+    ));
+    assert!(b.build().bodies().is_empty());
 }
 
 /// Finding: geometry stacked at one spot made one query visit (and report) millions of

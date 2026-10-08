@@ -63,6 +63,7 @@ fn play(skeleton: Skeleton, clip: Clip, src: &mut ByteSource<'_>) {
     let d = bound.duration();
     let mut local = vec![Transform::IDENTITY; n];
     let mut model = vec![Mat4::IDENTITY; n];
+    let mut triples = vec![Transform::IDENTITY; n];
     let mut skin = vec![Mat4::IDENTITY; n];
     for _ in 0..4 {
         let tau = src.time(d);
@@ -77,8 +78,10 @@ fn play(skeleton: Skeleton, clip: Clip, src: &mut ByteSource<'_>) {
         for t in &local {
             assert!(t.is_finite(), "sampled transforms are sanitised");
         }
-        skeleton.compose(&local, &mut model).expect("sized buffer");
-        skinning_matrices(&skeleton, &model, &mut skin).expect("sized buffer");
+        skeleton
+            .compose_with_triples(&local, &mut model, &mut triples)
+            .expect("sized buffer");
+        skinning_matrices(&skeleton, &triples, &mut skin).expect("sized buffer");
         assert!(
             model.iter().chain(&skin).all(Mat4::is_finite),
             "sampled poses give finite model and skinning matrices"
@@ -123,6 +126,8 @@ fn play(skeleton: Skeleton, clip: Clip, src: &mut ByteSource<'_>) {
                 assert!(s.clip_count() <= MAX_LAYER_CLIPS);
             }
         }
+        // Starting a clip beside the others of a layer (a group) stays bounded too.
+        let _ = anim.add(layer, Playback::held(bound.clone(), src.f32()));
         anim.snapshot(&mut snap);
         for l in &snap {
             assert!(l.clips().count() <= MAX_LAYER_CLIPS);
@@ -150,6 +155,8 @@ fn play(skeleton: Skeleton, clip: Clip, src: &mut ByteSource<'_>) {
         // Held playback and the bind-space deformation (appearance.md §6.4).
         let held = Playback::held(bound.clone(), src.f32());
         assert!(held.clip_time().is_finite());
+        let t = tessera_anim::deformer_time(src.f32(), bound.duration());
+        assert!(t.is_finite() && t >= 0.0);
         let deform = [DeformClip {
             clip: bound.clone(),
             fraction: src.f32(),

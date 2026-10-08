@@ -946,6 +946,7 @@ area-specific code. What it must provide are the player properties of §10.2.
 
 Properties are looked up by name in the dictionary at run time. A property that is absent
 on the player makes its Switch take the Default port (`script-table.md` §7.1).
+Precisely: it reads its dictionary default, else its type's zero value, and takes the Default port only when no case matches that value (`script-runtime.md` §6.2, R27).
 
 <a id="s10-3"></a>
 ### 10.3 Where the values come from

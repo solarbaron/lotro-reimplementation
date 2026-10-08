@@ -91,25 +91,31 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   L2, L7 not judgeable from their cameras), 9 (`walker.md` §13–§14 and `render.md` §4–§5
   reviewed twice, changes requested; ten specs of the M4.5 table are Revised, not
   Accepted). 5: one M3-b run under load passed (0 over 50 ms, 0 holes), indicative; the
-  owner re-measures on a quiet machine. `cargo clippy -D warnings` fails on one lint in
-  `crates/physics/src/controller/step.rs`; full release test run 2,613 passed, 1 failed
-  (load-sensitive `flight_across_a_region`, passes alone).
-- **Held diffs (2026-10-07):** the uncommitted `crates/render/**`, `apps/client/**`,
-  `crates/physics/**` and `crates/world/src/scenery/**`/`frills/**` diffs are held by
-  `docs/decisions/proposed-incident-2026-10-07-review-notes.md` (implementer task texts
-  carried dirty-room reviewer reports). A maintainer decides on them before any commit;
-  the M4.5 re-verification results were measured with them in the tree. Do not re-run the
-  milestone workflow for implementer tasks until its task text carries only the task, spec
-  paths and review status. M5 waits.
-- **M6 audio and player music (branch m6, verified 2026-10-07):** done on Tessera's side.
+  owner re-measures on a quiet machine. Frame-time assertions in real-data tests run only
+  with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`), so loaded machines no longer fail them.
+  Checks on main after the M6 merge (2026-10-08): fmt, clippy `-D warnings` (workspace,
+  `--all-features`, fuzz) clean; release tests with the install 3,715 passed, 0 failed.
+- **Incident 0018 (2026-10-07):** dirty-room reports reached clean implementer prompts in a
+  hand-written close-out workflow. The owner released the held work (A) and kept the
+  River-hobbit code after a clean audit (B); see `docs/decisions/0018-incident-review-notes-in-clean-prompts.md`. Rule: clean
+  prompts carry only the task, spec paths, review status and clean findings. Remediation
+  round 1 is on main (`5863586`); round 2 (open verifier items, `walker.md`/`render.md`
+  repair, implementer OPENs) runs on branch `remediation-2`.
+- **Data decoders beyond the milestones (2026-10-08):** census-2 specs (distant-landscape,
+  player-character, instances, wlib-bytecode with the new `tessera-wvm` crate,
+  game-controls) are implemented on main; the eight gameplay decoders (items, combat,
+  creatures, quests, economy, map, particles, misc records) and explorer gameplay cards
+  are on branch `gameplay-formats`, to be merged.
+- **M6 audio and player music (merged to main 2026-10-08, verified 2026-10-07):** done on Tessera's side.
   Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
   listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
   decision 0010). Owner items: `docs/checklists/owner-observations.md` O28. Player music
   (`/play`, `/playstart`, `/playlist`, `/playstop`, `/instrument`) is in
   `apps/client/src/audio/player_music.rs`, reached through `tessera-client --music-command
   "<line>"` (the M7 chat line does not route these commands yet). Merged with M4.5 and M7
-  on branch m6 (2026-10-08); M5 runs in a parallel worktree; M8 is gated.
-- **M7 (branch `m7`, built in parallel with M4.5–M6, verified 2026-10-07):** Tessera's own
+  on main (2026-10-08). M5 (UI and plugins) runs in the worktree branch `m5`; M5.5
+  (extended scripting) specs are Accepted (decision 0017) and wait for M5; M8 is gated.
+- **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
   decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
   `apps/loadtest`, the `tessera-net` `remote` backend and `tessera-client --server`.

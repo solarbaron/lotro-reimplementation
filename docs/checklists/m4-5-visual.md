@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Expected values complete (2026-10-06); scenery rows S1–S11 and walks GN1–GN4 re-derived 2026-10-07 ([§8](#s8)); walker side and owner observations pending |
-| **Last updated** | 2026-10-07 |
+| **Last updated** | 2026-10-08 (implementer: §2.2 pass conditions revised from `collision.md` §11.7; OPENs for GN2 and CV2 in §2.4) |
 | **Author role** | Spec writer (dirty room) |
 | **Review record** | Claude review session (spec-reviewer agent), 2026-10-07, of the re-derivation of 2026-10-07 (§1 GEN row, §2.3–§2.4 GN1–GN4, §4.2 rows S1–S11 and callout, §4.3 intro, §8): **passed.** The rule the rows now follow (`scenery.md` §7.4 step 14b, S36) was re-checked in a separate copy of the Ghidra project. The totals of all 11 landblocks and the list indices of GN1–GN4 (16, 33, 176, 138) agree with the clean-room implementation's generated lists in the writer's scratch output, as do GN1's new tree and position. No game text, keys or code. The companion `scenery.md` revision has changes requested on §7.4 step 15 only (failure causes and frill-layer containment), which no row of this checklist depends on. Second review, Claude review session (spec-reviewer agent, a different session), 2026-10-07: **passed again.** S36 re-checked in a fresh copy of the Ghidra project. Independently of the writer's output, a fresh read-only build of the repository's crates generated the 11 landblocks of §4.2 on the install: totals 25, 315, 165, 309, 151, 111, 445, 166, 221, 80 and 186 as listed; GN1–GN4 at 0-based list indices 16, 33, 176 and 138 with the listed DIDs, positions, headings and scales; the changed nearest objects of S1, S2, S5, S6, S8 and S10 at the listed positions (S8's second at x 126.421, within rounding). The in-view counts and the frill rows were not re-measured. The open issues of `scenery.md` §7.4 step 15 still do not affect any row. |
 | **Serves** | [ROADMAP M4.5](../ROADMAP.md#m4-5-exit) exit criterion 4 (scripted walks on collision and the 1,000-walk soak, [§2](#s2)), criterion 5 (five performance walk spots, [§3](#s3)) and criterion 6 (visual rows, [§4](#s4)); the M3 reference-location check asked for by criterion 1 ([§5](#s5)) |
@@ -162,13 +162,24 @@ by more than 0.01 m (criterion 4); position and velocity are finite.
 
 | Kind | Parameters | Passes when |
 |---|---|---|
-| `blocked` | `P` (stop point), `d` | At the end the feet are within `d` of P horizontally and within 0.05 m vertically, and at no step was the feet's distance along the start heading greater than that of P plus `d`. P is where the SWEEP capsule first touches the blocker above the step-up height. |
+| `blocked` | `P` (stop point), `d` | At the **first touch** (the first step with forward held after which the capsule lies within 0.01 m of a blocking object) the feet are within `d` of P horizontally and vertically within 0.05 m below to 0.05 m plus the slope allowance (below) above P, and at no step up to the first touch was the feet's distance along the start heading greater than that of P plus `d`. After the first touch the walker may slide along or round the blocker while forward stays held (`collision.md` §11.7 items 2–3); the end point is reported only. P is where the SWEEP capsule first touches the blocker above the step-up height. |
 | `reach` | `E`, `d`, `risers` | The feet end within `d` of E horizontally and within 0.05 m vertically; `risers` lists the vertical steps (m) of the support profile on the way, in order, each below the step-up height, which the walker climbs without a jump. |
 | `noclimb` | `B` (foot of the steep band on the path), `zmax`, `rmax` | The feet never rise above `zmax` (B.z + 0.60 m) and end no farther than `rmax` (distance of B + 0.60 m) from the start, measured horizontally along the path; the state is `Earth_UncontrolledSurface` (6) at least once. The band beyond B is steeper than 50° for at least 3 m (all its triangles between 50° and 85°). |
 | `cells` | `A>B`, `E`, `d` | The cell lookup (`collision.md` §5.8.1) reports A at the start and B at the end; the feet end within `d` of E (horizontal) and 0.05 m (vertical). In the doorway both cells contain the feet; a report of either is allowed there. |
-| `follow` | `E`, `d`, `dz`, `headroom` | At every step the feet are within `dz` of the terrain height under them (`landblock.md` §3.11) and the walker is never blocked; it ends within `d` of E. `headroom` is the smallest ceiling-minus-floor distance on the path (`landblock.md` §3.5, bit-0 diagonal), for information. |
+| `follow` | `E`, `d`, `dz`, `headroom` | At every step the feet are no more than `dz` below and no more than `dz` plus the slope allowance (below) above the terrain height under them (`landblock.md` §3.11), and the walker is never blocked; it ends within `d` of E. `headroom` is the smallest ceiling-minus-floor distance on the path (`landblock.md` §3.5, bit-0 diagonal), for information. |
 | `wade_swim` | `in`, `swim`, `h`, `fh`, `d` | The state first becomes a water state (1, 2 or 3) within `d` of `in` (where the terrain under the path first goes below h) and first becomes `Water_NoSurface` (2) within `d` of `swim` (where it first goes below h − `fh`). Once 3 s have passed after `swim`, the feet stay within 0.25 m of h − `fh`. |
-| `pass` | `E`, `d` | The walker ends within `d` of E; no object contact at any step; feet within 0.05 m of the terrain at every step. |
+| `pass` | `E`, `d` | The walker ends within `d` of E; no object contact at any step; at every step the feet are no more than 0.05 m below and no more than 0.05 m plus the slope allowance (below) above the terrain under them. |
+
+**Slope allowance** (`collision.md` §11.7, "Feet above the terrain on a slope"; added
+2026-10-08). A capsule of radius *r* resting on terrain that slopes at *θ* has its feet
+*r* · (sec *θ* − 1) above the terrain under its axis (Tessera's convex radius 0, `collision.md`
+§12.5): 0.050 m at 29°, 0.132 m at 43.4°, 0.145 m at 45°. The allowance uses for *θ* the
+steepest terrain triangle within *r* of the axis (sampled at the axis and on rings of radius
+*r* and *r*/2, 16 directions each). On any terrain whose slope within *r* is at most *θ* the
+capsule's rest offset is at most this value, because the surface there lies at most
+tan *θ* · *ρ* above the point under the axis at horizontal distance *ρ*, and the largest
+tan *θ* · *ρ* + √(*r*² − *ρ*²) is *r* · sec *θ*. Rows written for "feet on the terrain" (SWEEP,
+F1) thus hold for a capsule on slopes up to the 45° walkable limit.
 
 Tolerances cover the SWEEP's simplifications (a capsule kept upright, contacts below the
 step-up height ignored, 2 cm path sampling). Walks that fail by less than twice their
@@ -339,6 +350,33 @@ them; the row checks that none of them was turned into an entity.
 >   `tessera-physics` owner (a step-up landing on a riser/tread edge is classified by the
 >   riser's face normal), not checklist issues. **Fixed in the M4.5 exit verification
 >   (2026-10-06, `collision.md` §12.3 OPEN (n), (o)): both pass, so 21 of 32 walks pass.**
+>
+> **Answered 2026-10-08 (implementer, from `collision.md` §11.7 as Accepted on
+> 2026-10-08):** WL2, GN3 and GN4 pass with `blocked` measured at the first touch (§2.2 as
+> revised: the original also slides along a face held forward, at *s* · sin *φ*). GN1
+> passes the same way (first touch 0.127 m from P), with the slope allowance on P.z (the
+> walker touches the tree on a 30–34° cross slope). CV1 and FR1 pass with the slope
+> allowance of §2.2 (43° stretches). GN2 and CV2 stay open (OPENs below).
+
+> **OPEN (implementer, 2026-10-08, GN2):** the walker first touches its tree
+> (generated#33) at y ≈ 46.00, 0.195 m before P (d 0.15), on the trunk's steep foot below
+> the step-up height. `collision.md` §11.7 ("A steep contact below the step-up height")
+> says the original stops there too: the cast gets the face's vertical plane and the
+> step-up of §11.5 fails without walkable support. The SWEEP of §1 ignores contacts below
+> the step-up height by definition, so its P lies past where any capsule following
+> §11.4–§11.7 first stops. Please re-derive P for GN2 with that rule (first touch of a
+> steep or wall contact at any height, unless a step-up of 0.5502 m, `collision.md` §11.6
+> item 5, lands on walkable support), and check whether P of GN1, GN3 and GN4 changes under
+> it (they pass today, first touches 0.127, 0.003 and 0.015 m from P).
+
+> **OPEN (implementer, 2026-10-08, CV2):** the straight path from start to E runs along a
+> cave bank steeper than the 45° walkable limit for players (`collision.md` §11.3): a clean
+> session sampled the terrain triangulation (`landblock.md` §3.11) every 0.25 m and found
+> every sample between 48° and 61° (52.8° at the start). The walker's support is steep
+> from the first step, so it slides about 11 m down before the input begins and ends
+> 13.7 m from E; the original would slide too under §11.3. The row needs a new cave path on
+> walkable floor (at most 45°; the slope allowance of §2.2 then covers the capsule's rest
+> offset).
 
 <a id="s2-5"></a>
 ### 2.5 The 1,000-walk soak: how its landblocks are chosen
@@ -626,3 +664,4 @@ screenshots in the repository.
 |---|---|
 | 2026-10-06 | First version: walks, performance spots, visual rows, M3 reference locations. |
 | 2026-10-07 | **Generated objects re-derived** (spec writer; `scenery.md` footprint revision). The GEN generator of [§1](#s1) had the footprint test of `scenery.md` §7.4 step 14b inverted: it tested only open markers and skipped closed ones. A BIN re-check confirmed step 14b as written. With the corrected generator, the static-pass lists of the 11 landblocks of [§4.2](#s4-2) equal the clean-room implementation's object for object. **§4.2:** every row re-derived with the same eye, heading and cone. Totals: S1 36 → 25, S2 344 → 315, S3 173 → 165, S4 364 → 309, S5 252 → 151, S6 176 → 111, S7 471 → 445, S8 361 → 166, S9 362 → 221, S10 102 → 80, S11 201 → 186. In view: S1 11 → 6, S2 41 → 35, S4 19 → 16, S5 29 → 9, S6 17 → 6, S8 34 → 14, S9 35 → 18, S10 29 → 22 (S3, S7, S11 unchanged). New nearest objects: S1 (both; the second is GN1's tree), S5 (second), S6 (first becomes the former second), S8 (first becomes the former second), S10 (first becomes the former second); S2–S4, S7, S9 and S11 keep both. The OPEN under §4.2 is answered. **§2.3–§2.4:** GN1's former tree (0x470035F3, list index 27) is not placed by the client. GN1 now runs north into tree 0x470035F4 of the same landblock (list index 16), from (130.61, 77.52) to the stop point (130.61, 82.61, 559.19). The terrain on the way slopes 30–34° across the path, below the 45° walkable limit. No object with collision volumes lies within 3 m of the path, and the first contact is the tree. GN2–GN4 keep their object, start and stop point; their list indices change: 40 → 33, 283 → 176, 149 → 138. The GN1 item of the implementer's OPEN in §2.4 is answered. **Unchanged** (checked with the corrected generator): the first contact of every other outdoor walk (WL, UB, ST, SL, CV, WA, FR) and the count of generated objects within 3 m of their paths; the frill records of the six landblocks of [§4.3](#s4-3), identical record for record under the frill rule of `scenery.md` §8.2 item 5 as revised; hence rows F1–F6 and walks FR1–FR3. |
+| 2026-10-08 | **Pass conditions revised from `collision.md` §11.7** (implementer; for the spec writer to confirm). §2.2 `blocked` is measured at the first touch of a blocking object, and the "never past P + d" condition applies up to it; after it the walker may slide along or round the blocker, which the original does too while forward is held (`collision.md` §11.7 items 2–3, "Consequences for walk checks"). New slope allowance *r* · (sec *θ* − 1) for the feet above the terrain in `follow` and `pass` and above P in `blocked` ("Feet above the terrain on a slope"). WL2, GN1, GN3, GN4, CV1 and FR1 now pass (30 of 32). New implementer OPENs in §2.4: GN2's P past the first touch of the trunk's steep foot; CV2's path not walkable. |

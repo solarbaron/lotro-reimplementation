@@ -1927,6 +1927,14 @@ impl WorldStreamer {
         self.bundle(l.block)?.terrain_height(l.local[0], l.local[1])
     }
 
+    /// Unit upward normal of the terrain triangle at `pos` (`landblock.md` §3.11), if its
+    /// landblock is resident.
+    #[must_use]
+    pub fn terrain_normal_at(&self, pos: &WorldPos) -> Option<[f32; 3]> {
+        let l = pos.to_local()?;
+        self.bundle(l.block)?.terrain_normal(l.local[0], l.local[1])
+    }
+
     /// Map coordinates of `pos` with its region's constants (`coordinates.md` §8).
     #[must_use]
     pub fn map_coords(&self, pos: &WorldPos) -> Option<MapCoords> {

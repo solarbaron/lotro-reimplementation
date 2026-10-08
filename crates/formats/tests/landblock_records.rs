@@ -397,6 +397,49 @@ fn terrain_height_follows_the_split_diagonal() {
     assert!(f.split_sw_ne(0, 0) && !f.split_sw_ne(32, 0));
 }
 
+#[test]
+fn terrain_normal_is_the_plane_of_the_height_triangle() {
+    // Same raised corner as above: 1,000 units at (i 1, j 1), grid spacing 5 m.
+    let mut g = HeightGrid::flat(0);
+    g.raw_mut()[33 + 1] = 32_768;
+    let mut d = LandblockData::from_heights(Did(DATA), g);
+    let rise = height_from_raw(32_768);
+    // SE-NW split, lower triangle (0,0)-(1,0)-(0,1): flat.
+    let n = d.terrain_normal(1.0, 1.0).unwrap();
+    assert!((n[2] - 1.0).abs() < 1e-6, "{n:?}");
+    // Upper triangle (1,1)-(0,1)-(1,0): rises by `rise` per 5 m along x and y.
+    let n = d.terrain_normal(4.0, 4.0).unwrap();
+    let g = rise / 5.0;
+    let len = (2.0 * g * g + 1.0).sqrt();
+    assert!(
+        (n[0] + g / len).abs() < 1e-4 && (n[1] + g / len).abs() < 1e-4,
+        "{n:?}"
+    );
+    assert!((n[2] - 1.0 / len).abs() < 1e-4, "{n:?}");
+    // The normal agrees with finite differences of the height inside the triangle.
+    let (x, y, e) = (4.0f32, 3.5f32, 0.01f32);
+    let gx =
+        (d.terrain_height(x + e, y).unwrap() - d.terrain_height(x - e, y).unwrap()) / (2.0 * e);
+    let gy =
+        (d.terrain_height(x, y + e).unwrap() - d.terrain_height(x, y - e).unwrap()) / (2.0 * e);
+    let n = d.terrain_normal(x, y).unwrap();
+    assert!(
+        (n[0] / n[2] + gx).abs() < 0.05 * gx.abs().max(1.0),
+        "{n:?} {gx}"
+    );
+    assert!(
+        (n[1] / n[2] + gy).abs() < 0.05 * gy.abs().max(1.0),
+        "{n:?} {gy}"
+    );
+    // SW-NE split, triangle (0,0)-(1,0)-(1,1) (fx >= fy): rises along y only.
+    d.vertex_flags.raw_mut()[0] = 0x80;
+    let n = d.terrain_normal(4.0, 1.0).unwrap();
+    assert!(n[0].abs() < 1e-6 && n[1] < 0.0, "{n:?}");
+    assert_eq!(d.terrain_normal(f32::NAN, 1.0), None);
+    let flat = LandblockData::from_heights(Did(DATA), HeightGrid::flat(7));
+    assert_eq!(flat.terrain_normal(-5.0, 500.0), Some([0.0, 0.0, 1.0]));
+}
+
 /// landblock.md §3.11 evaluated with non-negative weights: a query at a grid sample returns
 /// that sample exactly and never leaves the range of the triangle's corners (0–2,000), so
 /// neighbouring blocks agree at shared corners.

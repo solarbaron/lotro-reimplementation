@@ -123,6 +123,10 @@ impl CollisionWorld for StreamingWorld {
         self.world().terrain_height_at(pos)
     }
 
+    fn terrain_normal(&self, pos: &WorldPos) -> Option<[f32; 3]> {
+        self.world().terrain_normal_at(pos)
+    }
+
     fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
         self.world().portal_neighbours_of(owner, cell)
     }
@@ -183,6 +187,12 @@ impl CollisionWorld for StaticWorld {
         grid_height(set.terrain()?, l.local[0], l.local[1])
     }
 
+    fn terrain_normal(&self, pos: &WorldPos) -> Option<[f32; 3]> {
+        let l = pos.to_local()?;
+        let set = self.sets.get(&l.block)?;
+        grid_normal(set.terrain()?, l.local[0], l.local[1])
+    }
+
     fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
         self.portals
             .get(&(owner, cell))
@@ -210,6 +220,40 @@ pub fn grid_height(mesh: &GridMesh, x: f32, y: f32) -> Option<f32> {
         let l3 = 1.0 - l1 - l2;
         if l1 >= -eps && l2 >= -eps && l3 >= -eps {
             return Some(l1 * a[2] + l2 * b[2] + l3 * c[2]);
+        }
+    }
+    None
+}
+
+/// The unit upward normal of the triangle of `mesh` whose projection contains (x, y)
+/// (the triangle [`grid_height`] uses; for synthetic worlds). `None` off the mesh or for a
+/// vertical triangle.
+#[must_use]
+pub fn grid_normal(mesh: &GridMesh, x: f32, y: f32) -> Option<[f32; 3]> {
+    let eps = 1e-4;
+    for (_, [a, b, c]) in mesh.triangles() {
+        let d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+        if d.abs() < 1e-12 {
+            continue;
+        }
+        let l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d;
+        let l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d;
+        let l3 = 1.0 - l1 - l2;
+        if l1 >= -eps && l2 >= -eps && l3 >= -eps {
+            let (u, v) = (
+                [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+                [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+            );
+            let mut n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            if n[2] < 0.0 {
+                n = n.map(|c| -c);
+            }
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            return (len > 0.0 && n[2] > 0.0).then(|| n.map(|c| c / len));
         }
     }
     None
@@ -254,6 +298,10 @@ pub struct WalkRow {
     pub local: [f64; 3],
     /// Terrain height under the feet (`landblock.md` §3.11), when resident.
     pub terrain: Option<f32>,
+    /// The smallest up component of the terrain normals within the capsule's radius of
+    /// the feet (the steepest terrain there, [`steepest_terrain_normal_z`]), when resident;
+    /// for the slope allowance of [`terrain_allowance`].
+    pub terrain_normal_z: Option<f32>,
     /// Forward speed of the layer in force (m/s).
     pub forward_speed: f32,
     /// The step.
@@ -377,6 +425,7 @@ pub fn run_walk<W: WalkWorld>(
             t,
             local: to_local(record.state.position),
             terrain: world.terrain_height(&feet),
+            terrain_normal_z: steepest_terrain_normal_z(world, &feet, setup.shape.radius()),
             forward_speed,
             record,
         });
@@ -391,7 +440,7 @@ pub fn run_walk<W: WalkWorld>(
                 r.local[2] - walk.start[2],
             ]
         });
-    let verdict = evaluate(walk, &rows, block);
+    let verdict = evaluate(walk, &rows, block, setup.shape.radius());
     Ok(WalkOutcome {
         walk: walk.clone(),
         rows,
@@ -478,10 +527,83 @@ fn hdist2(a: [f64; 3], b: [f64; 2]) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
-/// Checks `rows` against `walk`'s expectation (checklist §2.2; module docs). `block` is the
-/// walk's landblock (the owner of its cells).
+/// Directions sampled on each ring of [`steepest_terrain_normal_z`].
+const SLOPE_RING_SAMPLES: u32 = 16;
+
+/// The smallest up component of the terrain normals (`landblock.md` §3.11) at `feet` and
+/// at points on two rings around it (radius `radius` and `radius` / 2, 16 directions
+/// each): the steepest terrain triangle a capsule of that radius standing at `feet` can
+/// rest on. `None` when the terrain under `feet` is not resident.
+pub fn steepest_terrain_normal_z<W: CollisionWorld + ?Sized>(
+    world: &W,
+    feet: &WorldPos,
+    radius: f32,
+) -> Option<f32> {
+    let mut lowest = world.terrain_normal(feet)?[2];
+    let r = f64::from(radius);
+    if !(r.is_finite() && r > 0.0) {
+        return Some(lowest);
+    }
+    for ring in [r, 0.5 * r] {
+        for k in 0..SLOPE_RING_SAMPLES {
+            let a = std::f64::consts::TAU * f64::from(k) / f64::from(SLOPE_RING_SAMPLES);
+            let p = WorldPos::new(
+                feet.region,
+                feet.x + ring * a.cos(),
+                feet.y + ring * a.sin(),
+                feet.z,
+            );
+            if let Some(n) = world.terrain_normal(&p) {
+                lowest = lowest.min(n[2]);
+            }
+        }
+    }
+    Some(lowest)
+}
+
+/// How far above the terrain under its axis a capsule of radius `radius` may rest when the
+/// steepest terrain within `radius` of the axis has a unit normal with the up component
+/// `normal_z`, m: the geometric offset (`radius` + *c*) · sec *θ* − `radius` of
+/// `collision.md` §11.7 with Tessera's convex radius *c* = 0 (§12.5), so
+/// `radius` · (1 / `normal_z` − 1). On a plane it is the exact rest offset; on any terrain
+/// whose slope within the radius is at most *θ* it bounds it, because the surface there
+/// lies at most tan *θ* · *ρ* above the point under the axis at horizontal distance *ρ*, and
+/// max over *ρ* of tan *θ* · *ρ* + √(*r*² − *ρ*²) is *r* · sec *θ*. 0 for a missing,
+/// non-finite or non-positive `normal_z` (checklist §2.2, `follow` and `pass`).
 #[must_use]
-pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
+pub fn terrain_allowance(radius: f32, normal_z: Option<f32>) -> f64 {
+    match normal_z {
+        Some(nz) if nz.is_finite() && nz > 0.0 && radius.is_finite() && radius > 0.0 => {
+            let a = f64::from(radius) * (1.0 / f64::from(nz.min(1.0)) - 1.0);
+            if a.is_finite() { a.max(0.0) } else { 0.0 }
+        }
+        _ => 0.0,
+    }
+}
+
+/// The step at which the feet are worst outside the band [−`dz`, `dz` + the slope allowance
+/// of [`terrain_allowance`]] around the terrain height under them (checklist §2.2, `follow`
+/// and `pass`): the step, the offset feet − terrain and the excess over the band. `None`
+/// when every step with a terrain height lies within it.
+fn terrain_band_miss(rows: &[WalkRow], dz: f64, radius: f32) -> Option<(&WalkRow, f64, f64)> {
+    rows.iter()
+        .filter_map(|r| {
+            let off = r.local[2] - f64::from(r.terrain?);
+            let excess = if off < 0.0 {
+                -off - dz
+            } else {
+                off - dz - terrain_allowance(radius, r.terrain_normal_z)
+            };
+            (excess > 0.0).then_some((r, off, excess))
+        })
+        .max_by(|a, b| a.2.total_cmp(&b.2))
+}
+
+/// Checks `rows` against `walk`'s expectation (checklist §2.2; module docs). `block` is the
+/// walk's landblock (the owner of its cells); `radius` the mover's capsule radius (for the
+/// slope allowance of `follow` and `pass`).
+#[must_use]
+pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey, radius: f32) -> Verdict {
     let mut v = Verdict::default();
     // Failures within twice their tolerance; the walk is a near miss when every failure is.
     let mut near_count = 0usize;
@@ -549,9 +671,16 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
     let e = end.local;
     match &walk.expect {
         Expect::Blocked { p, d } => {
-            let (h, z) = (hdist(e, *p), (e[2] - p[2]).abs());
-            v.notes
-                .push(format!("end {:.3} m from P, dz {:.3}", h, e[2] - p[2]));
+            // §2.2 as revised from `collision.md` §11.7: the stop is where the walker first
+            // touches the blocker; with forward held it may then slide along or round it.
+            let touch = moving
+                .iter()
+                .position(|r| r.record.input.forward > 0.0 && r.record.obstacle.is_some());
+            v.notes.push(format!(
+                "end {:.3} m from P, dz {:.3}",
+                hdist(e, *p),
+                e[2] - p[2]
+            ));
             if let Some(f) = first_stop(&moving) {
                 v.notes.push(format!(
                     "first stop {:.3} m from P, dz {:.3}",
@@ -559,26 +688,59 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
                     f[2] - p[2]
                 ));
             }
-            if h > *d {
-                near(&mut v, format!("ends {h:.3} m from P (d {d})"), h - d, *d);
-            }
-            if z > END_DZ {
-                near(
-                    &mut v,
-                    format!("ends {z:.3} m above/below P"),
-                    z - END_DZ,
-                    END_DZ,
-                );
-            }
-            let limit = along(*p) + d;
-            if let Some(r) = moving.iter().find(|r| along(r.local) > limit) {
-                let over = along(r.local) - limit;
-                near(
-                    &mut v,
-                    format!("passed the stop point by {over:.3} m at t={:.3}", r.t),
-                    over,
-                    *d,
-                );
+            match touch.and_then(|i| moving.get(i).map(|r| (i, r))) {
+                None => v.failures.push("never touched a blocker".into()),
+                Some((i, r)) => {
+                    let f = r.local;
+                    let h = hdist(f, *p);
+                    // P.z is the support height under the axis (SWEEP); a capsule on a
+                    // slope rests above it (`collision.md` §11.7), so the band of
+                    // `follow` and `pass` applies.
+                    let rise = f[2] - p[2];
+                    let z = if rise < 0.0 {
+                        -rise
+                    } else {
+                        rise - terrain_allowance(radius, r.terrain_normal_z)
+                    };
+                    let kind = r
+                        .record
+                        .obstacle
+                        .map_or("?".to_owned(), |c| c.kind.to_string());
+                    v.notes.push(format!(
+                        "first touch of {kind} at t={:.3}, {h:.3} m from P, dz {:.3}",
+                        r.t,
+                        f[2] - p[2]
+                    ));
+                    if h > *d {
+                        near(
+                            &mut v,
+                            format!("first touch {h:.3} m from P (d {d})"),
+                            h - d,
+                            *d,
+                        );
+                    }
+                    if z > END_DZ {
+                        near(
+                            &mut v,
+                            format!(
+                                "first touch {rise:.3} m above/below P (slope allowance {:.3})",
+                                terrain_allowance(radius, r.terrain_normal_z)
+                            ),
+                            z - END_DZ,
+                            END_DZ,
+                        );
+                    }
+                    let limit = along(*p) + d;
+                    if let Some(q) = moving.iter().take(i + 1).find(|q| along(q.local) > limit) {
+                        let over = along(q.local) - limit;
+                        near(
+                            &mut v,
+                            format!("passed the stop point by {over:.3} m at t={:.3}", q.t),
+                            over,
+                            *d,
+                        );
+                    }
+                }
             }
         }
         Expect::Reach {
@@ -684,6 +846,7 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
                 .iter()
                 .filter_map(|r| r.terrain.map(|t| (r, (r.local[2] - f64::from(t)).abs())))
                 .max_by(|a, b| a.1.total_cmp(&b.1));
+            let miss = terrain_band_miss(rows, *dz, radius);
             let no_terrain = rows.iter().filter(|r| r.terrain.is_none()).count();
             let blocked = moving.iter().find(|r| {
                 r.record.input.forward > 0.0
@@ -697,13 +860,15 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
                 worst.map_or(0.0, |w| w.1),
                 e[2] - target[2]
             ));
-            if let Some((r, off)) = worst
-                && off > *dz
-            {
+            if let Some((r, off, excess)) = miss {
                 near(
                     &mut v,
-                    format!("{off:.3} m off the terrain at t={:.3}", r.t),
-                    off - dz,
+                    format!(
+                        "{off:.3} m off the terrain at t={:.3} ({excess:.3} m outside dz and the slope allowance {:.3})",
+                        r.t,
+                        terrain_allowance(radius, r.terrain_normal_z)
+                    ),
+                    excess,
                     *dz,
                 );
             }
@@ -798,9 +963,11 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
                 r.record
                     .contacts
                     .iter()
+                    .chain(r.record.obstacle.iter())
                     .find(|c| c.kind.is_object())
                     .map(|c| (r.t, c.kind))
             });
+            let miss = terrain_band_miss(rows, END_DZ, radius);
             let worst = rows
                 .iter()
                 .filter_map(|r| r.terrain.map(|t| (r, (r.local[2] - f64::from(t)).abs())))
@@ -824,13 +991,15 @@ pub fn evaluate(walk: &Walk, rows: &[WalkRow], block: LandblockKey) -> Verdict {
             if let Some((t, k)) = touched {
                 v.failures.push(format!("touched {k} at t={t:.3}"));
             }
-            if let Some((r, off)) = worst
-                && off > END_DZ
-            {
+            if let Some((r, off, excess)) = miss {
                 near(
                     &mut v,
-                    format!("{off:.3} m off the terrain at t={:.3}", r.t),
-                    off - END_DZ,
+                    format!(
+                        "{off:.3} m off the terrain at t={:.3} ({excess:.3} m outside 0.05 m and the slope allowance {:.3})",
+                        r.t,
+                        terrain_allowance(radius, r.terrain_normal_z)
+                    ),
+                    excess,
                     END_DZ,
                 );
             }

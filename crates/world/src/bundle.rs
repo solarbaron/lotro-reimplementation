@@ -585,6 +585,13 @@ impl LandblockBundle {
         self.data.terrain_height(x, y)
     }
 
+    /// Unit upward normal of the terrain triangle at block-local (x, y) (`landblock.md`
+    /// §3.11).
+    #[must_use]
+    pub fn terrain_normal(&self, x: f32, y: f32) -> Option<[f32; 3]> {
+        self.data.terrain_normal(x, y)
+    }
+
     /// Entities that pass the draw rule, then generated objects that do.
     pub fn drawable(&self) -> impl Iterator<Item = &PlacedEntity> {
         self.entities

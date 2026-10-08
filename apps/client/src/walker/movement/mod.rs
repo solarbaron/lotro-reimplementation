@@ -111,6 +111,12 @@ pub trait CollisionWorld {
     fn view(&self, centre: &WorldPos) -> CollisionView<'_>;
     /// The terrain height at `pos` (`landblock.md` §3.11), when its landblock is resident.
     fn terrain_height(&self, pos: &WorldPos) -> Option<f32>;
+    /// The unit upward normal of the terrain triangle at `pos` (`landblock.md` §3.11), when
+    /// its landblock is resident; none by default.
+    fn terrain_normal(&self, pos: &WorldPos) -> Option<[f32; 3]> {
+        let _ = pos;
+        None
+    }
     /// The cells that the portals of cell `cell` of landblock `owner` lead to
     /// (`collision.md` §5.5, §5.8); none by default.
     fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
@@ -197,6 +203,10 @@ impl CollisionWorld for StreamedCollision<'_> {
 
     fn terrain_height(&self, pos: &WorldPos) -> Option<f32> {
         self.0.terrain_height_at(pos)
+    }
+
+    fn terrain_normal(&self, pos: &WorldPos) -> Option<[f32; 3]> {
+        self.0.terrain_normal_at(pos)
     }
 
     fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
@@ -356,6 +366,15 @@ impl<'a> PinnedCollision<'a> {
         })
     }
 
+    /// [`CollisionWorld::terrain_normal`].
+    #[must_use]
+    pub fn terrain_normal_at(self, pos: &WorldPos) -> Option<[f32; 3]> {
+        self.main.terrain_normal_at(pos).or_else(|| {
+            let k = pos.landblock()?;
+            self.pins.streamer(k)?.terrain_normal_at(pos)
+        })
+    }
+
     /// [`CollisionWorld::portal_neighbours`].
     #[must_use]
     pub fn portal_neighbours_of(self, owner: LandblockKey, cell: u16) -> Vec<u16> {
@@ -377,6 +396,10 @@ impl CollisionWorld for PinnedCollision<'_> {
 
     fn terrain_height(&self, pos: &WorldPos) -> Option<f32> {
         self.terrain_height_at(pos)
+    }
+
+    fn terrain_normal(&self, pos: &WorldPos) -> Option<[f32; 3]> {
+        self.terrain_normal_at(pos)
     }
 
     fn portal_neighbours(&self, owner: LandblockKey, cell: u16) -> Vec<u16> {
@@ -422,6 +445,13 @@ impl ContactKind {
     pub fn is_object(self) -> bool {
         matches!(self, Self::Static(_) | Self::Generated(_))
     }
+
+    /// Whether it is an obstacle body: an object or something a caller added, not the
+    /// terrain, the ceiling or a cell.
+    #[must_use]
+    pub fn is_obstacle(self) -> bool {
+        matches!(self, Self::Static(_) | Self::Generated(_) | Self::Other)
+    }
 }
 
 impl std::fmt::Display for ContactKind {
@@ -464,6 +494,10 @@ pub struct StepRecord {
     /// Contacts within [`CONTACT_LOG_MARGIN`], deepest first (at most
     /// [`MAX_LOGGED_CONTACTS`]); empty unless details are on.
     pub contacts: Vec<ContactInfo>,
+    /// The nearest contact within [`CONTACT_LOG_MARGIN`] with an obstacle body
+    /// ([`ContactKind::is_obstacle`]), whether or not it is among `contacts`; `None` unless
+    /// details are on.
+    pub obstacle: Option<ContactInfo>,
     /// Deepest penetration of the capsule into collision geometry after the step, m
     /// (0 without details).
     pub penetration: f32,
@@ -917,10 +951,10 @@ impl PhysicsWalker {
         self.previous = before;
         let state = *self.controller.state();
         let cell = self.track_cell(&view, world, state.position);
-        let (contacts, penetration) = if self.details {
+        let (contacts, obstacle, penetration) = if self.details {
             self.contacts(&view, &state)
         } else {
-            (Vec::new(), 0.0)
+            (Vec::new(), None, 0.0)
         };
         self.last = Some(StepRecord {
             state,
@@ -928,6 +962,7 @@ impl PhysicsWalker {
             report,
             cell,
             contacts,
+            obstacle,
             penetration,
             at_boundary,
             input: *input,
@@ -937,12 +972,13 @@ impl PhysicsWalker {
     }
 
     /// Contacts of the capsule at `state` within [`CONTACT_LOG_MARGIN`] (deepest first, at
-    /// most [`MAX_LOGGED_CONTACTS`]) and the deepest penetration.
+    /// most [`MAX_LOGGED_CONTACTS`]), the nearest obstacle contact among all of them and
+    /// the deepest penetration.
     fn contacts(
         &mut self,
         view: &CollisionView<'_>,
         state: &MoverState,
-    ) -> (Vec<ContactInfo>, f32) {
+    ) -> (Vec<ContactInfo>, Option<ContactInfo>, f32) {
         let config = self.controller.config();
         let capsule = config.shape.capsule_at(view.to_view(state.position));
         self.scratch.clear();
@@ -958,30 +994,32 @@ impl PhysicsWalker {
             .scratch
             .first()
             .map_or(0.0, |c| (-c.separation).max(0.0));
+        let info = |c: &Contact| {
+            let set = view.members().get(c.set as usize).map(|(s, _)| *s);
+            let kind = set
+                .and_then(|s| s.body(c.body))
+                .map_or(ContactKind::Other, |b| ContactKind::of(b.source));
+            let landblock = set
+                .and_then(|s| s.landblock())
+                .and_then(|id| LandblockKey::new(id.region, id.x, id.y).ok());
+            ContactInfo {
+                kind,
+                landblock,
+                separation: c.separation,
+                normal_z: c.normal[2],
+            }
+        };
         let out = self
             .scratch
             .iter()
             .take(MAX_LOGGED_CONTACTS)
-            .map(|c| {
-                let set = view.members().get(c.set as usize).map(|(s, _)| *s);
-                let kind = set
-                    .and_then(|s| s.body(c.body))
-                    .map_or(ContactKind::Other, |b| ContactKind::of(b.source));
-                let landblock = set
-                    .and_then(|s| s.landblock())
-                    .and_then(|id| LandblockKey::new(id.region, id.x, id.y).ok());
-                ContactInfo {
-                    kind,
-                    landblock,
-                    separation: c.separation,
-                    normal_z: c.normal[2],
-                }
-            })
+            .map(info)
             .collect();
+        let obstacle = self.scratch.iter().map(info).find(|c| c.kind.is_obstacle());
         if self.scratch.capacity() > 4 * MAX_LOGGED_CONTACTS * 64 {
             self.scratch = Vec::new();
         }
-        (out, penetration)
+        (out, obstacle, penetration)
     }
 
     /// One frame of `dt` seconds (ARCHITECTURE §20.3 step 3): latches `input` (a jump press

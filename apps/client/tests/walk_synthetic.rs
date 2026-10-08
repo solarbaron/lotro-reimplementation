@@ -22,7 +22,8 @@ use tessera_world::{LandblockKey, WorldPos};
 
 use tessera_client::walk_path::{Expect, parse_walk_file};
 use tessera_client::walker::movement::run::{
-    LOG_HEADER, StaticWorld, compass_degrees, evaluate, run_walk, write_log, yaw_of,
+    LOG_HEADER, StaticWorld, compass_degrees, evaluate, run_walk, terrain_allowance, write_log,
+    yaw_of,
 };
 use tessera_client::walker::movement::setup::MoverSetup;
 use tessera_client::walker::movement::soak::{
@@ -186,7 +187,7 @@ fn blocked_by_a_wall_without_penetration() {
         p: [80.0, 95.0, z],
         d: 0.1,
     };
-    assert!(!evaluate(&far, &out.rows, key(0, 0)).passed);
+    assert!(!evaluate(&far, &out.rows, key(0, 0), setup().shape.radius()).passed);
 }
 
 #[test]
@@ -1223,4 +1224,119 @@ fn pass_and_follow_conditions() {
         "{:?}",
         out.verdict
     );
+}
+
+#[test]
+fn blocked_measures_the_first_touch_and_allows_the_slide_after_it() {
+    // checklist §2.2 `blocked` as revised from `collision.md` §11.7: a walker held forward
+    // against a wall 20° off its heading first stops at the wall, then slides along it.
+    let z = ground(100.0);
+    #[allow(clippy::cast_possible_truncation)]
+    let zf = z as f32;
+    let mut world = flat_world(100.0, |b| {
+        solid_box(b, 1, [40.0, 90.0, zf - 1.0], [140.0, 91.0, zf + 5.0], None);
+    });
+    let heading = 20f64;
+    let gap = 90.0 - 0.35 - 84.0;
+    let p = [80.0 + gap * heading.to_radians().tan(), 90.0 - 0.35, z];
+    let text = walk_text(
+        &format!("blocked P={},{},{} d=0.10", p[0], p[1], p[2]),
+        "0:fwd",
+        [80.0, 84.0, z],
+        heading,
+        "run",
+        3.0,
+    );
+    let walk = parse_walk_file(&text).unwrap();
+    let out = run_walk(
+        &walk,
+        &mut world,
+        &setup(),
+        std::time::Duration::from_secs(1),
+    )
+    .unwrap();
+    assert!(out.verdict.passed, "{:?}", out.verdict);
+    let end = out.rows.last().unwrap();
+    // It slid on along the wall, farther than d from the stop point.
+    assert!(
+        end.local[0] > p[0] + 0.1,
+        "{:?} {:?}",
+        end.local,
+        out.verdict
+    );
+    assert!(end.local[1] < 90.0 - 0.34, "{:?}", end.local);
+    // A walker that never touches a blocker fails.
+    let mut open = flat_world(100.0, |_| {});
+    let out = run_walk(
+        &walk,
+        &mut open,
+        &setup(),
+        std::time::Duration::from_secs(1),
+    )
+    .unwrap();
+    assert!(!out.verdict.passed);
+    assert!(
+        out.verdict
+            .failures
+            .iter()
+            .any(|f| f == "never touched a blocker"),
+        "{:?}",
+        out.verdict
+    );
+}
+
+#[test]
+fn terrain_allowance_is_the_capsule_rest_offset_on_a_slope() {
+    // collision.md §11.7 table, Tessera column (c = 0), r = 0.35.
+    let at = |deg: f32| terrain_allowance(0.35, Some(deg.to_radians().cos()));
+    assert!(at(0.0).abs() < 1e-9);
+    assert!((at(29.0) - 0.050).abs() < 0.001, "{}", at(29.0));
+    assert!((at(43.4) - 0.132).abs() < 0.001, "{}", at(43.4));
+    assert!((at(45.0) - 0.145).abs() < 0.001, "{}", at(45.0));
+    assert_eq!(terrain_allowance(0.35, None), 0.0);
+    assert_eq!(terrain_allowance(0.35, Some(f32::NAN)), 0.0);
+    assert_eq!(terrain_allowance(0.35, Some(0.0)), 0.0);
+    assert_eq!(terrain_allowance(0.35, Some(-0.5)), 0.0);
+    assert_eq!(terrain_allowance(f32::NAN, Some(0.5)), 0.0);
+}
+
+#[test]
+fn follow_across_a_walkable_slope_allows_the_rest_offset() {
+    // Terrain rising north at 40° (walkable, below 45°); the walker walks east along the
+    // contour. Its capsule rests 0.35 · (sec 40° − 1) ≈ 0.107 m above the terrain under its
+    // axis, more than dz = 0.05, which the slope allowance of §2.2 covers.
+    let slope = 40f64.to_radians().tan();
+    let o = key(0, 0).origin();
+    let h = move |_x: f64, y: f64| (300.0 + (y - o[1] - 80.0) * slope) as f32;
+    let mut world = StaticWorld::default();
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let k = key(dx, dy);
+            world.sets.insert(k, block(k, h, |_| {}));
+        }
+    }
+    let g = f64::from(h(0.0, o[1] + 80.0));
+    let text = walk_text(
+        &format!("follow E=90,80,{g} d=0.15 dz=0.05 headroom=10"),
+        "wp=90,80",
+        [70.0, 80.0, g + 0.11],
+        90.0,
+        "walk",
+        8.0,
+    );
+    let out = run_walk(
+        &parse_walk_file(&text).unwrap(),
+        &mut world,
+        &setup(),
+        std::time::Duration::from_secs(1),
+    )
+    .unwrap();
+    assert!(out.verdict.passed, "{:?}", out.verdict);
+    let highest = out
+        .rows
+        .iter()
+        .filter_map(|r| r.terrain.map(|t| r.local[2] - f64::from(t)))
+        .fold(f64::MIN, f64::max);
+    assert!(highest > 0.05, "{highest}");
+    assert!(highest < 0.05 + 0.108, "{highest}");
 }

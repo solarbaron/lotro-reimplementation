@@ -86,6 +86,14 @@ M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it sta
 after full parity with the original client and compatibility with the server (M8), or, if
 the M8 gate fails, after client parity with Tessera's own server.
 
+**Proposed, not yet accepted:** a gameplay-parity track, milestones P0–P9 between M7 and M9
+([decision 0024](decisions/0024-parity-track.md)): characters and inventory, combat, loot and
+vendors (the first playable loop), quests, social, map and travel, progression and crafting,
+client-side game code and a parity audit. Its client half reads the user's install for every
+backend; Tessera's server would run Tessera's own original rules and content, which needs a
+change to LEGAL.md §11.1 rule 5 decided in P0. Until the owner accepts it, the plan and
+the table above stay as they are; if accepted, M9 starts only after P9 and M8 (or its fallback).
+
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
 memory, upload bandwidth).

@@ -207,12 +207,39 @@ pub type CellSchema = Arc<dyn PropertySchema + Send + Sync>;
 ///
 /// A part DID with prefix 0x01 is an interior cell's geometry (`collision.md` §5): the
 /// record is decoded and its embedded render mesh (§5.7, `landblock.md` §4.14) is what the
-/// part draws, decoded with the record's directory stamp.
+/// part draws, decoded with the record's directory stamp. A key whose variant is not 0
+/// draws the cell with the look of that index ([`super::looks::CellLooks::asset_key`],
+/// `landblock.md` §4.14).
 pub struct PartDecoder {
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     mesh_config: MeshConfig,
     limits: GeometryLimits,
     cell_schema: Option<CellSchema>,
+    looks: Option<Arc<super::looks::CellLooks>>,
+}
+
+impl PartDecoder {
+    /// The plan of `surface`, with `look`'s matching groups layered on it.
+    fn plan(&self, surface: Did, look: Option<&super::looks::CellLook>) -> MaterialPlan {
+        let layering = look.and_then(|l| {
+            let key = self.materials.surface_record(surface).ok()?.binding_key;
+            l.layering(key, None)
+        });
+        let resolved = match &layering {
+            Some(layering) => self
+                .materials
+                .resolve_layered(surface, layering)
+                .map(Arc::new),
+            None => self.materials.resolve_surface(surface),
+        };
+        match resolved {
+            Ok(m) => plan_material(&m),
+            Err(e) => {
+                tracing::debug!(surface = %format_args!("{:#010x}", surface.0), "material unresolved: {e}");
+                MaterialPlan::FALLBACK
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for PartDecoder {
@@ -238,6 +265,10 @@ impl Decoder for PartDecoder {
         bytes.truncate(n);
         let did = Did(key.did);
         let stamp = u16::try_from(stamp).ok();
+        // A cell drawn with its appearance list (`landblock.md` §4.14).
+        let look = (key.variant != 0)
+            .then(|| self.looks.as_ref()?.look(key.variant))
+            .flatten();
         let mesh = if did.prefix() == CELL_GEOMETRY_PREFIX {
             let schema = self
                 .cell_schema
@@ -278,15 +309,8 @@ impl Decoder for PartDecoder {
                 .parts
                 .iter()
                 .map(|p| {
-                    p.surface.map_or(MaterialPlan::FALLBACK, |s| {
-                        match self.materials.resolve_surface(s) {
-                            Ok(m) => plan_material(&m),
-                            Err(e) => {
-                                tracing::debug!(surface = %format_args!("{:#010x}", s.0), "material unresolved: {e}");
-                                MaterialPlan::FALLBACK
-                            }
-                        }
-                    })
+                    p.surface
+                        .map_or(MaterialPlan::FALLBACK, |s| self.plan(s, look.as_deref()))
                 })
                 .collect();
             drop(geo);
@@ -729,6 +753,9 @@ struct BlockObjects {
     parts: Vec<u32>,
     /// Part instances of the active objects.
     active_instances: usize,
+    /// The cell each placed figure of the block is drawn through: the [`ObjectInfo::cell`]
+    /// of the object of its first instance, by figure index ([`Instance::figure`]).
+    figure_cells: HashMap<u32, u16>,
 }
 
 impl BlockObjects {
@@ -801,6 +828,14 @@ impl BlockObjects {
         let mut parts: Vec<u32> = instances.iter().map(|i| i.part).collect();
         parts.sort_unstable();
         parts.dedup();
+        let mut figure_cells: HashMap<u32, u16> = HashMap::new();
+        for inst in instances.iter() {
+            if let Some(f) = inst.figure
+                && let Some(o) = objects.get(inst.object as usize)
+            {
+                figure_cells.entry(f).or_insert(o.cell);
+            }
+        }
         BlockObjects {
             instances,
             objects,
@@ -813,8 +848,15 @@ impl BlockObjects {
             max_d0,
             parts,
             active_instances: 0,
+            figure_cells,
         }
     }
+}
+
+/// The asset key part id `part` is requested by: a cell look's ([`super::looks`]), else
+/// the DID itself.
+fn part_key(looks: Option<&super::looks::CellLooks>, part: u32) -> AssetKey {
+    looks.map_or_else(|| AssetKey::new(part, 0), |l| l.asset_key(part))
 }
 
 /// Slack (metres) for an object's extent around its origin when a whole landblock is
@@ -1148,6 +1190,9 @@ pub struct ObjectLayer {
     config: ObjectConfig,
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     parts: AssetStore<StampedSource, PartDecoder>,
+    /// The looks of interior cells: part ids of cells drawn with a look are requested
+    /// through [`ObjectLayer::part_key`].
+    looks: Option<Arc<super::looks::CellLooks>>,
     textures: AssetStore<NoRecord, TexDecoder>,
     blocks: HashMap<LandblockKey, BlockObjects>,
     gpu_parts: HashMap<u32, PartEntry>,
@@ -1201,6 +1246,7 @@ impl ObjectLayer {
         mesh_config: MeshConfig,
         arena_limit: u64,
         cell_schema: Option<CellSchema>,
+        looks: Option<Arc<super::looks::CellLooks>>,
     ) -> Self {
         let materials = Arc::new(MaterialLibrary::with_config(
             Arc::clone(&set),
@@ -1218,6 +1264,7 @@ impl ObjectLayer {
                 mesh_config,
                 limits: GeometryLimits::default(),
                 cell_schema,
+                looks: looks.clone(),
             },
             StoreConfig {
                 // The prepared streams are moved out on upload: never serve a product
@@ -1245,6 +1292,7 @@ impl ObjectLayer {
         Self {
             config,
             materials: library,
+            looks,
             parts,
             textures,
             blocks: HashMap::new(),
@@ -1365,7 +1413,8 @@ impl ObjectLayer {
                     .is_some_and(|l| l.needs_frill_model() && l.data.is_none() && l.instanceable)
                 && e.model_job.is_none()
             {
-                e.model_job = Some(self.parts.request(*p, Priority::Visible));
+                let key = part_key(self.looks.as_deref(), *p);
+                e.model_job = Some(self.parts.request(key, Priority::Visible));
             }
         }
     }
@@ -1400,6 +1449,18 @@ impl ObjectLayer {
                 .as_ref(),
             _ => None,
         }
+    }
+
+    /// The cell the placed figure `tag` ([`figure_tag`]) is drawn through as a static
+    /// instance (`landblock.md` §4.11: [`OUTDOORS`] for the outdoor visibility cell, a cell
+    /// number of its landblock, or [`UNATTACHED`](super::interiors::UNATTACHED)), with
+    /// its landblock; `None` when its landblock's objects are not in the layer or the
+    /// figure has no instance.
+    #[must_use]
+    pub fn figure_cell(&self, tag: u64) -> Option<(LandblockKey, u16)> {
+        let (key, index) = super::figures::tag_parts(tag)?;
+        let cell = *self.blocks.get(&key)?.figure_cells.get(&index)?;
+        Some((key, cell))
     }
 
     /// Whether `part` is on the GPU (or failed for good, so waiting for it is pointless).
@@ -1545,7 +1606,8 @@ impl ObjectLayer {
                 .all(|l| l.model.is_none() && l.data.is_none())
             && e.model_job.is_none()
         {
-            e.model_job = Some(self.parts.request(p, Priority::Visible));
+            let key = part_key(self.looks.as_deref(), p);
+            e.model_job = Some(self.parts.request(key, Priority::Visible));
         }
     }
 
@@ -1662,7 +1724,9 @@ impl ObjectLayer {
                 && e.refs > 0
                 && now >= at
             {
-                let h = self.parts.request(did, e.priority);
+                let h = self
+                    .parts
+                    .request(part_key(self.looks.as_deref(), did), e.priority);
                 e.state = match h.state() {
                     AssetState::Ready(a) => PartState::Waiting(a),
                     AssetState::Failed(err) if err.is_data_error() => {
@@ -1681,12 +1745,13 @@ impl ObjectLayer {
     fn poll_parts(&mut self) {
         let mut models: Vec<(u32, Arc<PartAsset>)> = Vec::new();
         for c in self.parts.poll_completions(4096) {
-            let Some(e) = self.gpu_parts.get_mut(&c.key.did) else {
+            let part = super::looks::part_of(c.key);
+            let Some(e) = self.gpu_parts.get_mut(&part) else {
                 continue;
             };
             if e.model_job.is_some() && matches!(e.state, PartState::Ready(_)) {
                 if let Outcome::Ready(a) = c.outcome {
-                    models.push((c.key.did, a));
+                    models.push((part, a));
                 }
                 e.model_job = None;
                 continue;
@@ -2646,6 +2711,51 @@ mod tests {
         shown.insert(figure_tag(other, 2));
         assert!(!drawn_as_character(other, &fig, &shown));
         assert!(!drawn_as_character(key, &plain, &shown));
+    }
+
+    #[test]
+    fn figures_take_the_cell_of_their_first_instance() {
+        // `landblock.md` §4.11 "Moving entities": a placed figure the character layer draws
+        // is culled by the cell its static instance is drawn through.
+        let key = LandblockKey::new(1, 10, 20).unwrap();
+        let o = |cell| ObjectInfo {
+            position: Vec3::ZERO,
+            lod: LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]),
+            generated: false,
+            first: 0,
+            count: 1,
+            cell,
+        };
+        let with = |figure, object| Instance {
+            figure: Some(figure),
+            object,
+            ..inst(1, Vec3::ZERO, 1.0)
+        };
+        let instances: Arc<[Instance]> = vec![
+            inst(1, Vec3::ZERO, 1.0),
+            with(4, 1),
+            with(4, 2),
+            with(6, 0),
+            with(8, 9),
+        ]
+        .into();
+        let objects: Arc<[ObjectInfo]> = vec![o(OUTDOORS), o(12), o(13)].into();
+        let b = BlockObjects::new(instances, objects);
+        assert_eq!(
+            b.figure_cells.get(&4),
+            Some(&12),
+            "the first instance's object"
+        );
+        assert_eq!(b.figure_cells.get(&6), Some(&OUTDOORS));
+        assert_eq!(b.figure_cells.get(&8), None, "an object index out of range");
+        let mut layer_blocks = HashMap::new();
+        layer_blocks.insert(key, b);
+        let lookup = |tag: u64| -> Option<(LandblockKey, u16)> {
+            let (k, i) = super::super::figures::tag_parts(tag)?;
+            Some((k, *layer_blocks.get(&k)?.figure_cells.get(&i)?))
+        };
+        assert_eq!(lookup(figure_tag(key, 4)), Some((key, 12)));
+        assert_eq!(lookup(figure_tag(key, 5)), None);
     }
 
     #[test]

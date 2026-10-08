@@ -8,16 +8,21 @@
 //! - **Frame.** The entity's position and rotation; an entity without a frame stands at the
 //!   landblock origin with the identity rotation (`entity-descriptor.md` §4.4) and is kept.
 //! - **Which value.** Each list is looked up separately with the client's lookup on a
-//!   static entity (`entity-descriptor.md` §4.9): the entity's own set; then for a 0x47
-//!   object the object and its parents; for a game object (0x70) its property set
-//!   (DID + 0x09000000), then the 0x47 object named by its `PhysObj` and that object's
-//!   parents. The first level that has the property supplies the whole list.
+//!   static entity (`entity-descriptor.md` §4.9), with the levels of the entity type (S45,
+//!   S50): the entity's own set; then, only for a Physics or PatrolPoint entity whose
+//!   object is a 0x47 record, the object and its parents; only for a Weenie whose object is
+//!   a game object (0x70…0x77), its property set (DID + 0x09000000), then the 0x47 object
+//!   named by its `PhysObj` and that object's parents. Every other combination searches the
+//!   own set only. The first level that has the property supplies the whole list.
 //! - **Reading a list.** Elements are read in order; the first element that is not a struct
 //!   with the required fields of the required types ends the list. Boxes are stored with
 //!   their corners sorted per axis.
 //! - **Filter** (Tessera Decision of step 14a): every entity of the three types is kept
-//!   unless it fails the validity check of `entity-descriptor.md` §4.9; Generator targets
-//!   are not dropped (the client's offline filter mode is OPEN, §15 item 6).
+//!   unless it fails the validity check (§7.4 step 14a "The validity check in detail",
+//!   S50: object DID absent or 0; creation type 0x47E, a fixed id, read through the same
+//!   levels and taken only as an enum or property-ID value, adjusted for a game object;
+//!   a Weenie whose class is Static); Generator targets are not dropped (the client's
+//!   offline filter mode is OPEN, §15 item 6).
 //!
 //! Hostile input (Tessera Decisions of `scenery.md` §13.1, "Static-entity frames" and
 //! "Size of the static list"): see [`static_clearances`] and [`volumes_from_values`].
@@ -45,6 +50,11 @@ pub const MAX_VOLUMES_PER_ENTITY: usize = 256;
 /// step-14a test; the install has at most 5,561 per landblock). Entities after the cap is
 /// reached are left out, with a warning.
 pub const MAX_STATIC_VOLUMES: usize = 16_384;
+/// The property id the validity check reads the creation type by (`scenery.md` §7.4 step
+/// 14a, S50: the client uses 0x47E as a fixed number, whatever the dictionary maps the
+/// name `Entity_CreationType` to; BIN provenance there, decision 0012).
+pub const CREATION_TYPE_PID: u32 = 0x47E;
+
 /// How far from unit length (|‖q‖ − 1|) a static entity's rotation may be and still be
 /// used as stored; a longer or shorter finite one is normalised first (see
 /// [`static_clearances`]).
@@ -68,8 +78,9 @@ pub fn property_dictionary(ctx: &WorldContext) -> Result<PropertyDictionary, Sce
         .map_err(|e| SceneryError::format(did.0, "property dictionary", e))
 }
 
-/// The property IDs the static list reads, looked up by name at run time.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The property IDs the static list reads, looked up by name at run time (the creation
+/// type excepted: [`CREATION_TYPE_PID`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearancePids {
     /// `Entity_Clearance_BoxList` (0x207 in the observed dictionary).
     pub box_list: Option<u32>,
@@ -87,12 +98,30 @@ pub struct ClearancePids {
     pub height: Option<u32>,
     /// `PhysObj`: the 0x47 object of a game object (`entity-descriptor.md` §4.9 step 3).
     pub phys_obj: Option<u32>,
-    /// `Entity_CreationType`: the validity check of `entity-descriptor.md` §4.9.
-    pub creation_type: Option<u32>,
+    /// The creation type the validity check reads: [`CREATION_TYPE_PID`], not looked up
+    /// by name (`scenery.md` §7.4 step 14a Tessera Decision). Only tests set another id.
+    pub creation_type: u32,
+}
+
+impl Default for ClearancePids {
+    fn default() -> Self {
+        Self {
+            box_list: None,
+            cylinder_list: None,
+            box_min: None,
+            box_max: None,
+            low_point: None,
+            radius: None,
+            height: None,
+            phys_obj: None,
+            creation_type: CREATION_TYPE_PID,
+        }
+    }
 }
 
 impl ClearancePids {
-    /// Looks every PID up with `pid_of(name)`.
+    /// Looks every PID up with `pid_of(name)`; the creation type is the fixed
+    /// [`CREATION_TYPE_PID`].
     #[must_use]
     pub fn from_names(pid_of: impl Fn(&str) -> Option<u32>) -> Self {
         Self {
@@ -104,7 +133,7 @@ impl ClearancePids {
             radius: pid_of("Entity_Clearance_Radius"),
             height: pid_of("Entity_Clearance_Height"),
             phys_obj: pid_of("PhysObj"),
-            creation_type: pid_of("Entity_CreationType"),
+            creation_type: CREATION_TYPE_PID,
         }
     }
 
@@ -192,13 +221,14 @@ impl StaticClearance {
     ///   0.0002; otherwise it overlaps when the squared distance from the mapped point to
     ///   it (z only with `spacing_3d`) is at most ρ²;
     /// - a cylinder is skipped unless its radius r is above 0. Without `spacing_3d` it
-    ///   overlaps when (x − cx)² + (y − cy)² ≤ (ρ + r)². With `spacing_3d`, z′ is the
-    ///   mapped z clamped to cz … cz + h, and it overlaps when
-    ///   (x − cx)² + (y − cy)² + (z − z′)² < (ρ + r)² (strictly less).
+    ///   overlaps when (x − cx)² + (y − cy)² ≤ (ρ + r)². With `spacing_3d`, z′ is chosen
+    ///   in the client's order (BIN (x), S51), with top = cz + h: top when z is above top;
+    ///   otherwise z when z is not below cz; otherwise cz (for h ≥ 0 this is z clamped to
+    ///   cz … top; for h < 0 every z above top gives top and every other z gives cz). It
+    ///   overlaps when (x − cx)² + (y − cy)² + (z − z′)² < (ρ + r)² (strictly less).
     ///
     /// Hostile input (Tessera Decision of §13.1): a mapped point that is not finite
-    /// overlaps nothing; [`static_clearances`] never builds such an entry. A cylinder with a
-    /// negative height clamps z to cz first (see `scenery.md` §7.4 step 14a OPEN).
+    /// overlaps nothing; [`static_clearances`] never builds such an entry.
     #[must_use]
     pub fn overlaps(&self, p: [f32; 3], rho: f32, spacing_3d: bool) -> bool {
         let d = [
@@ -250,15 +280,7 @@ impl StaticClearance {
             let (dx, dy) = (m[0] - c.low_point[0], m[1] - c.low_point[1]);
             let r = rho + c.radius;
             if spacing_3d {
-                let (bottom, top) = (c.low_point[2], c.low_point[2] + c.height);
-                let z_clamped = if m[2] < bottom {
-                    bottom
-                } else if m[2] > top {
-                    top
-                } else {
-                    m[2]
-                };
-                let dz = m[2] - z_clamped;
+                let dz = m[2] - axis_height(m[2], c.low_point[2], c.height);
                 if dx * dx + dy * dy + dz * dz < r * r {
                     return true;
                 }
@@ -267,6 +289,21 @@ impl StaticClearance {
             }
         }
         false
+    }
+}
+
+/// The height z′ on a cylinder's axis that the `spacing_3d` test measures from (§7.4 step
+/// 14a, BIN (x), S51): with top = `cz` + `h`, top when `z` is above top; otherwise `z` when
+/// `z` is not below `cz`; otherwise `cz`.
+#[must_use]
+pub fn axis_height(z: f32, cz: f32, h: f32) -> f32 {
+    let top = cz + h;
+    if z > top {
+        top
+    } else if z >= cz {
+        z
+    } else {
+        cz
     }
 }
 
@@ -409,7 +446,7 @@ pub fn static_clearances(
             );
             break;
         }
-        let mut lookup = EntityLookup::new(e.properties.as_ref(), e.object);
+        let mut lookup = EntityLookup::new(kind, e.properties.as_ref(), e.object);
         let own_has = |pid: Option<u32>| lookup.own_get(pid).is_some();
         if !(own_has(pids.box_list) && own_has(pids.cylinder_list)) {
             lookup.load(source, schema, pids, objects)?;
@@ -422,7 +459,7 @@ pub fn static_clearances(
         if boxes.is_empty() && cylinders.is_empty() {
             continue;
         }
-        if pids.creation_type.is_some() {
+        if lookup.own_get(Some(pids.creation_type)).is_none() {
             lookup.load(source, schema, pids, objects)?;
         }
         if !is_valid_entity(kind, e.object, &lookup, pids) {
@@ -471,16 +508,43 @@ fn creation_class(value: u32) -> (u8, bool) {
     }
 }
 
-/// The validity check of `entity-descriptor.md` §4.9 as the static list applies it
-/// (Tessera Decision of `scenery.md` §7.4 step 14a: keep every entity that is not
-/// invalid). An entity is invalid when its object DID is invalid, when its creation type
-/// (looked up as in §4.9, a value that is not an integer or enum counting as 0, then
-/// step 2 for a game object) is 0, or when it is a Weenie whose final class is Static.
-///
-/// Engineering choices recorded as an OPEN note in `scenery.md` §7.4 step 14a: "invalid
-/// object DID" is taken to be an absent object field (`entity-descriptor.md` §3.4) or the
-/// null DID 0; when the dictionary does not define `Entity_CreationType`
-/// (`pids.creation_type` is `None`) the creation-type part is not applied.
+/// Whether `did` names a game object (DB-object type 0x45, DIDs 0x70000000–0x77FFFFFF,
+/// `property-system.md` §9).
+fn is_game_object(did: Did) -> bool {
+    matches!(did.prefix(), 0x70..=0x77)
+}
+
+/// The creation type the validity check sees (§7.4 step 14a "Creation type", S50): 0 when
+/// no level has [`ClearancePids::creation_type`]; else the found value when it is stored as
+/// an enum (type 8) or a property ID (type 10), 0 for any other type; then, when a level
+/// has the property and `object` is a game object, the adjustment of
+/// `entity-descriptor.md` §4.9 step 2 (a value that is not "unique" becomes 6 for class
+/// ClientOnly and 8 otherwise, then a class-Static value becomes 8), so the result is
+/// never 0 there.
+fn creation_type(object: Did, found: Option<&PropertyValue>) -> u32 {
+    let Some(found) = found else {
+        return 0;
+    };
+    let mut value = match found {
+        PropertyValue::Enum(v) | PropertyValue::PropertyId(v) => *v,
+        _ => 0,
+    };
+    if is_game_object(object) {
+        let (class, unique) = creation_class(value);
+        if !unique {
+            value = if class == 3 { 6 } else { 8 };
+        }
+        if creation_class(value).0 == 2 {
+            value = 8;
+        }
+    }
+    value
+}
+
+/// The validity check of `scenery.md` §7.4 step 14a ("The validity check in detail", S50;
+/// it refines `entity-descriptor.md` §4.9 for the static list): an entity is invalid when
+/// its object DID is absent or 0, when its creation type ([`creation_type`]) is 0, or when
+/// it is a Weenie whose final class is Static.
 fn is_valid_entity(
     kind: Option<StaticEntityType>,
     object: Option<Did>,
@@ -490,49 +554,63 @@ fn is_valid_entity(
     let Some(object) = object.filter(|d| d.0 != 0) else {
         return false;
     };
-    if pids.creation_type.is_none() {
-        return true;
-    }
-    let mut value = match lookup.get(pids.creation_type) {
-        Some(PropertyValue::Enum(v)) => *v,
-        // A negative or out-of-range integer is "any other value" (class Static, not
-        // unique); u32::MAX stands for it.
-        Some(PropertyValue::Int(v)) => u32::try_from(*v).unwrap_or(u32::MAX),
-        Some(PropertyValue::Int64(v)) => u32::try_from(*v).unwrap_or(u32::MAX),
-        _ => 0,
-    };
-    if object_property_set_did(object).is_some() {
-        let (class, unique) = creation_class(value);
-        if !unique {
-            value = if class == 3 { 6 } else { 8 };
-        }
-        if creation_class(value).0 == 2 {
-            value = 8;
-        }
-    }
+    let value = creation_type(object, lookup.get(Some(pids.creation_type)));
     if value == 0 {
         return false;
     }
     !(kind == Some(StaticEntityType::Weenie) && creation_class(value).0 == 2)
 }
 
-/// The levels of the lookup of `entity-descriptor.md` §4.9 for one static entity: its own
-/// set; then either the 0x47 object's chain, or the game object's property set followed
-/// by the chain of the 0x47 object its `PhysObj` names. The levels behind the own set are
-/// read on first need ([`EntityLookup::load`]).
+/// Which levels behind the own set the lookup of a static entity searches (§7.4 step 14a
+/// "Which value", S45, S50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Levels {
+    /// The entity's own set only (every other combination of entity type and object).
+    Own,
+    /// A Physics or PatrolPoint entity naming a 0x47 object: the object's chain.
+    Chain(Did),
+    /// A Weenie naming a game object: its property set, then its `PhysObj` chain.
+    GameObject(Did),
+}
+
+impl Levels {
+    fn of(kind: Option<StaticEntityType>, object: Option<Did>) -> Self {
+        let Some(object) = object else {
+            return Self::Own;
+        };
+        match kind {
+            Some(StaticEntityType::Physics | StaticEntityType::PatrolPoint)
+                if object.prefix() == ENTITY_PREFIX =>
+            {
+                Self::Chain(object)
+            }
+            Some(StaticEntityType::Weenie) if is_game_object(object) => Self::GameObject(object),
+            _ => Self::Own,
+        }
+    }
+}
+
+/// The levels of the lookup of one static entity ([`Levels`]): its own set; then either a
+/// 0x47 object's chain, or a game object's property set followed by the chain of the 0x47
+/// object its `PhysObj` names. The levels behind the own set are read on first need
+/// ([`EntityLookup::load`]).
 struct EntityLookup<'a> {
     own: Option<&'a PropertySet>,
-    object: Option<Did>,
+    levels: Levels,
     loaded: bool,
     game_object: Option<PropertySet>,
     chain: Option<Arc<ObjectProperties>>,
 }
 
 impl<'a> EntityLookup<'a> {
-    fn new(own: Option<&'a PropertySet>, object: Option<Did>) -> Self {
+    fn new(
+        kind: Option<StaticEntityType>,
+        own: Option<&'a PropertySet>,
+        object: Option<Did>,
+    ) -> Self {
         Self {
             own,
-            object,
+            levels: Levels::of(kind, object),
             loaded: false,
             game_object: None,
             chain: None,
@@ -555,13 +633,14 @@ impl<'a> EntityLookup<'a> {
             return Ok(());
         }
         self.loaded = true;
-        let Some(object) = self.object else {
-            return Ok(());
+        let object = match self.levels {
+            Levels::Own => return Ok(()),
+            Levels::Chain(object) => {
+                self.chain = objects.get(source, schema, object)?;
+                return Ok(());
+            }
+            Levels::GameObject(object) => object,
         };
-        if object.prefix() == ENTITY_PREFIX {
-            self.chain = objects.get(source, schema, object)?;
-            return Ok(());
-        }
         let Some(set_did) = object_property_set_did(object) else {
             return Ok(());
         };

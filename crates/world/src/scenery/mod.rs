@@ -71,9 +71,9 @@ mod props;
 mod tables;
 
 pub use clearance::{
-    ClearanceBox, ClearanceCylinder, ClearancePids, MAX_STATIC_VOLUMES, MAX_VOLUMES_PER_ENTITY,
-    ROTATION_UNIT_TOLERANCE, StaticClearance, property_dictionary, static_clearances,
-    volumes_from_values,
+    CREATION_TYPE_PID, ClearanceBox, ClearanceCylinder, ClearancePids, MAX_STATIC_VOLUMES,
+    MAX_VOLUMES_PER_ENTITY, ROTATION_UNIT_TOLERANCE, StaticClearance, axis_height,
+    property_dictionary, static_clearances, volumes_from_values,
 };
 pub use error::SceneryError;
 pub use generate::{

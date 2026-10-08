@@ -1288,6 +1288,26 @@ Answerable from data with more probing:
 13. Which record types reference the 353 unreferenced surface records (§3.2).
 14. Effect-family parameters (wind, snow, …) (§8.7). Water: `water.md` §8.2–§8.4.
 
+> **OPEN (implementer, `tessera-material`, 2026-10-08, remediation pass):** fog switch of
+> unlit records. `lighting.md` §7 (code 0x00) and §12 say an unlit record is fogged only
+> when its program reads the fog inputs (E12), and `walker.md` §14.5 / `render.md` §4.1,
+> §5.5 ask `tessera-material` to expose that switch. Which unlit records' programs read
+> the fog inputs is not stated in this spec or in `lighting.md` (§20.1 and row MA36 list
+> the unlit records that read light inputs E1–E3, E5, E9–E11, E13, E18, not E12; the
+> feature-bit correlation of `lighting.md` §3.3, word 0 bit 7, is Inferred and not a rule),
+> and §1/§11.1 forbid inspecting programs. Question for the spec writers: is there a
+> structured-data rule (a binding semantic, a declared parameter, a render-state or
+> permutation-key field) that tells, per unlit shader record, whether its colour pass
+> reads the fog inputs, or a per-record census to carry? **Implemented meanwhile
+> (Decision, conservative):** `ResolvedMaterial::distance_fog()` (also
+> `SurfaceInputs::fog`) returns `DistanceFog::Lit` for lit records (§11.3; always fogged,
+> `lighting.md` §2.1) and `DistanceFog::Unlit { reads_fog: None }` for every unlit record;
+> `DistanceFog::fogged()` gives `true` for lit records, the known answer for unlit ones,
+> and `UNLIT_FOG_WHEN_UNKNOWN` = **true** (fogged) while it is unknown, which is the
+> renderer's default (`WorldSurfaceOptions::fog` on) and the walker's current behaviour,
+> so nothing changes on screen until the fact is supplied. Callers pass `fogged()` to
+> `LitSurface::fog` and `WorldSurfaceOptions::fog`.
+
 ---
 
 <a id="s18"></a>

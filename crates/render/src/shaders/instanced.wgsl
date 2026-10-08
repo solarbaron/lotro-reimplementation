@@ -47,6 +47,8 @@ struct InstOut {
     @location(7) tint: vec4<f32>,
     @location(8) terrain: vec3<f32>,
     @location(9) @interpolate(flat) lights: vec4<u32>,
+    // The stored binormal after the transform (zero when the model has none).
+    @location(10) binormal: vec3<f32>,
 };
 
 fn batch_flag(bit: u32) -> bool {
@@ -61,6 +63,7 @@ struct Placed {
     world: vec3<f32>,
     normal: vec3<f32>,
     tangent: vec4<f32>,
+    binormal: vec3<f32>,
     weight: f32,
 };
 
@@ -98,6 +101,9 @@ fn place(v: ModelIn, inst: InstIn) -> Placed {
         let s = select(1.0, -1.0, dot(c0, cross(c1, c2)) < 0.0);
         out.normal = r * v.normal.xyz;
         out.tangent = vec4<f32>(r * v.tangent.xyz, v.tangent.w * s);
+        // The stored binormal turns with the tangent; a mirroring r mirrors it with the
+        // texture, so it takes no sign.
+        out.binormal = r * v.binormal.xyz;
     } else {
         // Inverse transpose (times the determinant) for non-uniform scales.
         let cof = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1));
@@ -105,6 +111,7 @@ fn place(v: ModelIn, inst: InstIn) -> Placed {
         let s = select(1.0, -1.0, det < 0.0);
         out.normal = cof * v.normal.xyz * s;
         out.tangent = vec4<f32>(m3 * v.tangent.xyz, v.tangent.w * s);
+        out.binormal = m3 * v.binormal.xyz;
     }
     out.world = origin + scale * (m3 * p);
     return out;
@@ -118,6 +125,7 @@ fn vs_main(v: ModelIn, inst: InstIn) -> InstOut {
     out.world_pos = pl.world;
     out.normal = pl.normal;
     out.tangent = pl.tangent;
+    out.binormal = pl.binormal;
     out.uv = v.uv;
     out.color = v.color;
     out.shadow = frame_shadow_coords(pl.world);
@@ -168,13 +176,11 @@ fn shade(in: InstOut) -> Shaded {
     }
     var n = frame_normalize(in.normal, vec3<f32>(0.0, 0.0, 1.0));
     if (surface_flag(SF_NORMAL_MAP)) {
-        // The tangent as given (normalised, not made orthogonal to N0) and the binormal
-        // w x cross(N0, T) of the mesh convention (docs/specs/render.md §2.1).
-        let t_len2 = dot(in.tangent.xyz, in.tangent.xyz);
-        let b_raw = cross(n, in.tangent.xyz);
-        if (t_len2 > 1e-12 && dot(b_raw, b_raw) > 1e-12 * t_len2) {
-            let t = in.tangent.xyz * inverseSqrt(t_len2);
-            let b = normalize(b_raw) * select(-1.0, 1.0, in.tangent.w >= 0.0);
+        // The tangent as given (normalised, not made orthogonal to N0) and the stored
+        // binormal, or the derived one without it (frame_binormal, render.md §4.1, §4.8).
+        let b = frame_binormal(n, in.tangent, in.binormal);
+        if (dot(b, b) > 0.0) {
+            let t = normalize(in.tangent.xyz);
             let tn = ntex.xyz * 2.0 - 1.0;
             // lighting.md §5.2.4: N = n.x T - n.y B + n.z N0.
             n = frame_normalize(t * tn.x - b * tn.y + n * tn.z, n);

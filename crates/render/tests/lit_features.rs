@@ -420,6 +420,73 @@ fn tangents_are_used_as_given() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// render.md §4.8 (departure R-D10): with a stored binormal stream the lit pipeline uses
+/// the stored binormal as **B** as given (normalised only; here of the opposite handedness
+/// to w × cross(N₀, T) and not orthogonal to N₀), also under a mirrored transform; a zero
+/// binormal falls back to the derived one.
+#[test]
+fn stored_binormals_are_used_as_given() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let white = texel(&mut r, [255; 4])?;
+    let rgb = [128u8, 230, 160];
+    let normal = texel(&mut r, [rgb[0], rgb[1], rgb[2], 255])?;
+    let m = Material {
+        normal_texture: Some(normal),
+        ..Material::textured(white)
+    };
+    let n = Vec3::from(rgb.map(|c| f32::from(c) / 255.0 * 2.0 - 1.0)).normalize();
+    let toward = Vec3::new(0.0, -1.0, 0.4).normalize();
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: toward,
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..ambient_only(0.0)
+    };
+    let mirror = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let mirrored_lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::new(-toward.x, toward.y, toward.z),
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..ambient_only(0.0)
+    };
+    // (stored binormal, the B the shading must use).
+    let tilted = Vec3::new(0.0, 1.0, 1.0).normalize();
+    for (stored, b) in [
+        (Vec3::Y, Vec3::Y),
+        (tilted * 3.0, tilted),
+        // Zero: w × cross(N₀, T) = −Y on the plane.
+        (Vec3::ZERO, Vec3::NEG_Y),
+    ] {
+        let mut mesh = MeshData::plane(40.0, 40.0, 1, 1);
+        mesh.binormals = Some(vec![stored.to_array(); mesh.positions.len()]);
+        let plane = r.upload_mesh(&mesh)?;
+        assert!(r.mesh_info(plane).is_some_and(|i| i.has_binormals));
+        let shading = (n.x * Vec3::X - n.y * b + n.z * Vec3::Z).normalize();
+        let want = [2.0 * 0.5 * shading.dot(toward).max(0.0); 3];
+        let px = centre(
+            &mut r,
+            &lighting,
+            vec![draw(plane, m, LitSurface::default())],
+        )?;
+        assert_pixel(px, want, &format!("stored binormal {stored:?}"));
+        // Mirrored in x: T and the light mirror, the stored B (no x part) stays.
+        let px = centre(
+            &mut r,
+            &mirrored_lighting,
+            vec![MeshDraw::new(plane, mirror, m).with_lit(LitSurface::default())],
+        )?;
+        assert_pixel(px, want, &format!("mirrored, stored binormal {stored:?}"));
+        assert!(r.destroy_mesh(plane));
+    }
+    Ok(())
+}
+
 #[test]
 fn directional_table_lights_and_explicit_selections() -> Result<(), RenderError> {
     let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {

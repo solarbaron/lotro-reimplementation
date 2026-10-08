@@ -492,6 +492,30 @@ and on llvmpipe GL (Mesa 26.1.8), and the M2 and M4 golden images are unchanged.
 > (`lighting.md` §5.2.4), keeping *w* × cross(**N₀**, **T**) only for meshes without one
 > (§4.1 tangent-frame Decision, departure R-D10).
 
+> **OPEN (implementer, `tessera-render` / `tessera-mesh`, 2026-10-08, remediation pass):**
+> the binormal stream above is implemented; please fold it into §2.1, the §4.1
+> tangent-frame Decision, §5.5 "Lighting" and §7 row R-D10. `MeshData::binormals`
+> (`Option<Vec<[f32; 3]>>`, one per vertex, accepted only together with `tangents`:
+> binormals without tangents or of the wrong length are `InvalidMesh`; non-finite or zero
+> entries pack as zero; `compute_tangents` drops them; `MeshInfo::has_binormals`). The GPU
+> vertex grows from 40 to 48 bytes (binormal snorm16×4 at offset 40, w = 0, shader
+> location 13 in the lit and instanced pipelines). The lit and instanced pipelines use the
+> stored binormal, transformed like the tangent (model matrix, skinned like the tangent,
+> rotated for frills; a mirroring transform mirrors it, so no sign flip), normalised per
+> pixel, as **B**; where it is absent or its interpolated length is below 10⁻³ of the
+> tangent's they keep *w* × cross(**N₀**, **T**) (`frame_binormal` in
+> `frame_shading.wgsl`). The M2 pipelines keep the derived bitangent. `tessera-mesh`
+> `LevelGeometry::binormals` carries the stored stream as stored (zero for parts without
+> a frame); the explorer passes it (and deforms it like the tangents); the M2/M4 golden
+> images are unchanged. Engineering choices taken (Decisions, please confirm): the
+> rejection of binormals without tangents, the 10⁻³ fallback threshold, the per-pixel
+> fallback for degenerate stored binormals (`mesh.md` §5.6: 0.12 % are zero or short).
+> **Not done, outside this pass:** the walker's `level_mesh_data` passes no tangent frame
+> at all (`tangents: None`), so walker objects and characters are drawn without normal
+> maps (the §5.5 normal-map switch needs tangents); passing `LevelGeometry::tangents` and
+> `binormals` there is the walker implementer's change (`walker.md` §14.5 lists the normal
+> map 3011).
+
 > **OPEN (spec writer, 2026-10-08, for the `tessera-render` implementer):** apply the alpha
 > test of `material.md` §11.2 (threshold 1043 when 4004 is on and an opacity source exists)
 > to `Fixed` surfaces too (departure R-D11).

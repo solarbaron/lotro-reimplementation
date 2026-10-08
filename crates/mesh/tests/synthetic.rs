@@ -323,10 +323,14 @@ fn multi_level_mesh_flattens_in_draw_order() {
     let t = g.tangents.as_ref().unwrap();
     assert_eq!(t[0][3], -1.0);
     assert_eq!(t[1][3], 1.0);
+    let b = g.binormals.as_ref().unwrap();
+    assert_eq!(b.len(), g.positions.len());
+    assert_eq!(b[0], [0.0, -1.0, 0.0]);
 
     // The proxy level uses a format without tangents.
     let gp = back.level_geometry(2, &GeometryLimits::default()).unwrap();
     assert!(gp.tangents.is_none());
+    assert!(gp.binormals.is_none());
     let err = back
         .level_geometry(3, &GeometryLimits::default())
         .unwrap_err();
@@ -882,6 +886,16 @@ fn tangent_sign_uses_generated_normals_when_format_has_none() {
     // normal × tangent = Z × X = +Y: +1 where the binormal is +Y, −1 where it is −Y.
     let w: Vec<f32> = g.tangents.unwrap().iter().map(|t| t[3]).collect();
     assert_eq!(w, vec![1.0, 1.0, -1.0, -1.0]);
+    // The stored binormals are carried as stored (render.md §4.8, R-D10).
+    assert_eq!(
+        g.binormals,
+        Some(vec![
+            [0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ])
+    );
 
     // The same check against the synthetic generator's mirrored binormals (every third
     // vertex −Y): every sign agrees with the generated normals.
@@ -995,7 +1009,8 @@ fn amplification_bound_allows_every_block_drawn_once() {
     let g = m.level_geometry(0, &GeometryLimits::default()).unwrap();
     assert_eq!(g.uv_sets.len(), 15);
     assert_eq!(g.vertex_count(), 60_003);
-    let per_vertex = 12 + 12 + 16 + 15 * 8 + 4 + 20;
+    // Position, normal, tangent, binormal, 15 UV sets, colour, skin.
+    let per_vertex = 12 + 12 + 16 + 12 + 15 * 8 + 4 + 20;
     assert_eq!(
         g.stream_bytes(),
         per_vertex * 60_003 + 2 * g.indices.len() as u64

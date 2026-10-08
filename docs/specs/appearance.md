@@ -2134,6 +2134,14 @@ Review follow-up (clean room, 2026-10-05):
 > species table has two slider nodes, so no figure of this install changes; the same order
 > decides equal-priority ties between Appearance nodes of one run (§4.7 rule 2, §7.4).
 
+> **OPEN** (implementation, 2026-10-08, A33 implemented; confirmation only): the
+> resolver lists deformers in the client's start order (`script-table.md` §8.2 step 3,
+> §7.5, T41, T42; Sequence steps and Timer ports by step and time, §7.6), and the figure
+> uses the set of the **last** SliderMeshDeformer in that list. A resolution evaluates every
+> Random port and lists only started nodes, so a slider node under a Random port counts as
+> started (static analysis), and stops of a SliderMeshDeformer are not applied. No figure
+> of the install has two slider nodes (SI12), so nothing visible changes.
+
 ---
 
 <a id="s16"></a>

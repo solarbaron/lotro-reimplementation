@@ -17,6 +17,9 @@ use tessera_render::{
     TextureId, TextureUpload, Wrap,
 };
 
+/// Bytes of one packed vertex (`render.md` §2.1: 40 bytes plus the stored binormal).
+const VERTEX_BYTES: u64 = 48;
+
 const BG: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const SIZE: u32 = 96;
 
@@ -490,9 +493,9 @@ fn skin_uploads_use_the_arena() -> Result<(), RenderError> {
 fn skinned_meshes_respect_the_byte_cap() -> Result<(), RenderError> {
     // Pages of 256 vertices; the cap leaves room for one page but not its skin buffer.
     let config = MeshConfig {
-        page_vertex_bytes: 256 * 40,
+        page_vertex_bytes: 256 * VERTEX_BYTES,
         page_index_bytes: 1024 * 4,
-        max_total_bytes: 256 * 40 + 1024 * 4 + 100,
+        max_total_bytes: 256 * VERTEX_BYTES + 1024 * 4 + 100,
         wireframe_edges: false,
         ..MeshConfig::default()
     };
@@ -651,9 +654,9 @@ fn the_warm_page_keeps_its_skin_buffer() -> Result<(), RenderError> {
 fn idle_skin_buffers_yield_to_the_byte_cap() -> Result<(), RenderError> {
     // Pages of 256 vertices; the cap holds two pages, or one page plus its skin buffer
     // and not a second page.
-    let page = 256 * 40 + 1024 * 4;
+    let page = 256 * VERTEX_BYTES + 1024 * 4;
     let config = MeshConfig {
-        page_vertex_bytes: 256 * 40,
+        page_vertex_bytes: 256 * VERTEX_BYTES,
         page_index_bytes: 1024 * 4,
         max_total_bytes: 2 * page,
         wireframe_edges: false,

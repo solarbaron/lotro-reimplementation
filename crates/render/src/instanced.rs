@@ -1016,8 +1016,11 @@ pub(crate) fn common_source() -> &'static str {
     INSTANCED_COMMON_WGSL
 }
 
-pub(crate) const MESH_VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-    0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4
+/// The mesh vertex (`GpuVertex`) with the stored binormal at location 13 (locations 7–12
+/// are the instance's).
+pub(crate) const MESH_VERTEX_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4,
+    13 => Snorm16x4
 ];
 
 pub(crate) fn mesh_vertex_layout() -> wgpu::VertexBufferLayout<'static> {

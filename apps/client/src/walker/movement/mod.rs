@@ -19,9 +19,12 @@
 //!
 //! A step needs every landblock that the controller's query box
 //! ([`Controller::query_bounds`]) overlaps, the feet's landblock with its eight
-//! neighbours, the owner of the mover's current cell and the landblocks the caller
+//! neighbours, the owner of the mover's current cell, the landblocks the caller
 //! requires ([`PhysicsWalker::set_required`]; a scripted walk requires its own landblock,
-//! the owner of its cells) ([`PhysicsWalker::needed`]). While one of them is still loading, the walker
+//! the owner of its cells) ([`PhysicsWalker::needed`]) and the owners of the cells that
+//! reach the feet's square from further away ([`owners::CellOwnerIndex`],
+//! [`CollisionWorld::cell_owners`]; the step also waits while that index does not cover the
+//! feet). While one of them is still loading, the walker
 //! does not step: the frame's accumulated time is dropped, the latched input (a pending jump
 //! too) is kept and the mover's state does not change. A landblock the streamer resolved
 //! as absent (failed, or off the grid) counts as installed with an empty set and is a
@@ -39,9 +42,12 @@
 //! starts in an overlap). The controller cannot recover a capsule that starts a metre or
 //! more below the terrain.
 
+pub mod owners;
 pub mod run;
 pub mod setup;
 pub mod soak;
+
+pub use self::owners::CellOwnerIndex;
 
 use std::sync::Arc;
 
@@ -122,6 +128,13 @@ pub trait CollisionWorld {
     fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
         let _ = key;
         None
+    }
+    /// The owners of cells reaching the square around `feet` from further away that a step
+    /// there needs (`walker.md` §13.3; [`owners::CellOwnerIndex::owners`]); `None` while
+    /// they are not known yet (the step waits). A world without an index names none.
+    fn cell_owners(&self, feet: LandblockKey) -> Option<Vec<LandblockKey>> {
+        let _ = feet;
+        Some(Vec::new())
     }
     /// The view a step uses (`walker.md` §13.3: "every view of a step holds them"):
     /// [`Self::view`] around `centre` plus the installed sets of `pins`
@@ -212,8 +225,9 @@ impl CollisionWorld for StreamedCollision<'_> {
     }
 }
 
-/// Most landblocks [`PinStreamers`] pins at once.
-pub const MAX_PINS: usize = MAX_REQUIRED + 1;
+/// Most landblocks [`PinStreamers`] pins at once: the required ones, the owner of the
+/// current cell and the owners the cell-owner index names.
+pub const MAX_PINS: usize = MAX_REQUIRED + 1 + owners::MAX_OWNERS;
 
 /// The rings of a pin streamer: the pinned landblock alone (its focus is the landblock's
 /// centre, 80 m from every neighbour).
@@ -307,6 +321,9 @@ pub struct PinnedCollision<'a> {
     pub main: &'a WorldStreamer,
     /// The pinned landblocks.
     pub pins: &'a PinStreamers,
+    /// The cell-owner index ([`CollisionWorld::cell_owners`]); without one no owner
+    /// beyond the feet's square is named.
+    pub owners: Option<&'a CellOwnerIndex>,
 }
 
 impl<'a> PinnedCollision<'a> {
@@ -369,6 +386,11 @@ impl<'a> PinnedCollision<'a> {
 impl CollisionWorld for PinnedCollision<'_> {
     fn readiness(&self, key: LandblockKey) -> BlockReadiness {
         self.readiness_of(key)
+    }
+
+    fn cell_owners(&self, feet: LandblockKey) -> Option<Vec<LandblockKey>> {
+        self.owners
+            .map_or_else(|| Some(Vec::new()), |i| i.owners(feet))
     }
 
     fn view(&self, centre: &WorldPos) -> CollisionView<'_> {
@@ -829,8 +851,8 @@ impl PhysicsWalker {
     /// next to it could put geometry around the capsule (Tessera Decision, `walker.md`
     /// §13.3). A cell's physics mesh belongs to its owner, which may lie several landblocks
     /// away (`collision.md` §5.8.1): without it the mover falls through the cell's floor.
-    /// Owners of cells the mover has not entered yet are not known here (`walker.md` §13.3
-    /// OPEN).
+    /// Owners of cells the mover has not entered yet come from the world's cell-owner
+    /// index ([`PhysicsWalker::pending`], [`CollisionWorld::cell_owners`]).
     #[must_use]
     pub fn needed(&self) -> Vec<Option<LandblockKey>> {
         let (lo, hi) = self.controller.query_bounds();
@@ -853,14 +875,54 @@ impl PhysicsWalker {
         out
     }
 
-    /// The needed landblocks that are not installed yet (empty: the next step can run).
+    /// The needed landblocks that are not installed yet (empty: the next step can run):
+    /// [`PhysicsWalker::needed`] and the owners `world` names for the feet
+    /// ([`CollisionWorld::cell_owners`]). While the world does not know those owners yet,
+    /// the feet's landblock is reported pending.
     #[must_use]
     pub fn pending(&self, world: &dyn CollisionWorld) -> Vec<LandblockKey> {
-        self.needed()
+        let mut out: Vec<LandblockKey> = self
+            .needed()
             .into_iter()
             .flatten()
             .filter(|k| world.readiness(*k) == BlockReadiness::Pending)
-            .collect()
+            .collect();
+        if let Some(feet) = self.feet().landblock() {
+            match world.cell_owners(feet) {
+                Some(owners) => {
+                    for k in owners {
+                        if k.region() == self.region
+                            && !out.contains(&k)
+                            && world.readiness(k) == BlockReadiness::Pending
+                        {
+                            out.push(k);
+                        }
+                    }
+                }
+                None => {
+                    if !out.contains(&feet) {
+                        out.push(feet);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The landblocks whose sets every view of a step at the current feet holds besides
+    /// the square ([`CollisionWorld::step_view`]): [`PhysicsWalker::pins`] and the owners
+    /// `world` names ([`CollisionWorld::cell_owners`]).
+    #[must_use]
+    pub fn step_pins(&self, world: &dyn CollisionWorld) -> Vec<LandblockKey> {
+        let mut out = self.pins();
+        if let Some(owners) = self.feet().landblock().and_then(|k| world.cell_owners(k)) {
+            for k in owners {
+                if k.region() == self.region && !out.contains(&k) {
+                    out.push(k);
+                }
+            }
+        }
+        out
     }
 
     /// Whether the capsule's footprint at `feet` reaches a landblock that is absent or off
@@ -891,7 +953,7 @@ impl PhysicsWalker {
             self.controller.set_conditions(c);
         }
         self.walking = walking;
-        let pins = self.pins();
+        let pins = self.step_pins(world);
         if self.check_placement {
             let view = world.step_view(&self.feet(), &pins);
             self.fix_placement(&view, world);
@@ -1079,5 +1141,76 @@ mod tests {
         assert_eq!(view.members().len(), 2);
         let none = LandblockKey::new(1, 60, 60).unwrap();
         assert_eq!(world.step_view(&feet, &[none]).members().len(), 1);
+    }
+
+    /// A [`run::StaticWorld`] whose cell-owner answer is fixed.
+    struct OwnersWorld {
+        inner: run::StaticWorld,
+        owners: Option<Vec<LandblockKey>>,
+        pending: Vec<LandblockKey>,
+    }
+
+    impl CollisionWorld for OwnersWorld {
+        fn readiness(&self, key: LandblockKey) -> BlockReadiness {
+            if self.pending.contains(&key) {
+                BlockReadiness::Pending
+            } else {
+                self.inner.readiness(key)
+            }
+        }
+        fn view(&self, centre: &WorldPos) -> CollisionView<'_> {
+            self.inner.view(centre)
+        }
+        fn terrain_height(&self, pos: &WorldPos) -> Option<f32> {
+            self.inner.terrain_height(pos)
+        }
+        fn collision_set(&self, key: LandblockKey) -> Option<&CollisionSet> {
+            self.inner.collision_set(key)
+        }
+        fn cell_owners(&self, _feet: LandblockKey) -> Option<Vec<LandblockKey>> {
+            self.owners.clone()
+        }
+    }
+
+    /// `walker.md` §13.3 (cell-owner index): a step waits for the owners the world names
+    /// for the feet, and while it cannot name them yet; every view of the step holds them.
+    #[test]
+    fn steps_wait_for_and_hold_the_owners_of_far_cells() {
+        let centre = LandblockKey::new(1, 50, 50).unwrap();
+        let owner = LandblockKey::new(1, 56, 50).unwrap();
+        let mut inner = run::StaticWorld::default();
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let k = centre.offset(dx, dy).unwrap();
+                inner.sets.insert(k, flat_set(k));
+            }
+        }
+        inner.sets.insert(owner, flat_set(owner));
+        let c = centre.center();
+        let mut walker =
+            PhysicsWalker::new(&setup::MoverSetup::builtin(), 1, [c[0], c[1], 50.0], 0.0);
+        let mut world = OwnersWorld {
+            inner,
+            owners: None,
+            pending: Vec::new(),
+        };
+        // Unknown owners: the feet's landblock is pending, no step runs.
+        assert_eq!(walker.pending(&world), vec![centre]);
+        assert!(walker.step(&MoveInput::default(), true, &world).is_none());
+        // Known, but the owner still loading: pending.
+        world.owners = Some(vec![owner]);
+        world.pending = vec![owner];
+        assert_eq!(walker.pending(&world), vec![owner]);
+        // Installed: the step runs, and its pins hold the owner.
+        world.pending.clear();
+        assert!(walker.pending(&world).is_empty());
+        assert!(walker.step_pins(&world).contains(&owner));
+        assert!(
+            !walker.pins().contains(&owner),
+            "not one of the walker's own pins"
+        );
+        let view = world.step_view(&walker.feet(), &walker.step_pins(&world));
+        assert!(holds(&view, owner));
+        assert!(walker.step(&MoveInput::default(), true, &world).is_some());
     }
 }

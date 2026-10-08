@@ -156,6 +156,8 @@ const PID_DEFAULTED: u32 = 0x1000_0140;
 /// An Int-array property (SetProperty with a large value).
 const PID_BIG: u32 = 0x1000_0141;
 const PID_BIG_ELEMENT: u32 = 0x1000_0142;
+/// `Script_CombinationType` (an enum; `Overriding` = 1, `Additive` = 2; §8.2).
+const PID_COMBINATION: u32 = 0x1000_0143;
 const STARTUP: u32 = 5;
 const WALKING: u32 = 1;
 const RUNNING: u32 = 2;
@@ -171,6 +173,7 @@ fn schema(pid: u32) -> Option<PropertyType> {
         PID_CLASS_TABLE => PropertyType::Struct,
         PID_DB_TABLE => PropertyType::DidRef,
         PID_STARTUP_NAMES => PropertyType::Array,
+        PID_COMBINATION => PropertyType::Enum,
         _ => return None,
     })
 }
@@ -2317,4 +2320,404 @@ fn slider_strings_are_charged_to_the_budget() {
         assert_eq!(res.deformers.len(), 200);
         assert_eq!(held_bytes(&res), 200 * 20_000);
     }
+}
+
+// --- start order of one script run (§8.2 step 3, §7.5, §7.6; T41, T42) ---
+
+/// A table like [`table`] with per-script property sets (§2.4).
+fn table_with_properties(
+    kind: u32,
+    includes: &[u32],
+    scripts: &[(u32, Vec<Vec<u8>>)],
+    properties: &[(u32, B)],
+) -> Vec<u8> {
+    let mut b = B::new().u32(kind).vle(includes.len() as u32);
+    for i in includes {
+        b = b.u32(*i);
+    }
+    b = b.tsize(1, scripts.len() as u32);
+    for (key, roots) in scripts {
+        b = b.u32(*key).vle(roots.len() as u32);
+        for r in roots {
+            b = b.bytes(r);
+        }
+    }
+    b = b.tsize(1, properties.len() as u32);
+    for (key, set) in properties {
+        b = b.u32(*key).bytes(&set.0);
+    }
+    b.tsize(1, 0).build()
+}
+
+/// A per-script property set with `Script_CombinationType` = `value`.
+fn combination(value: u32) -> B {
+    pset(&[(PID_COMBINATION, B::new().u32(value))])
+}
+
+fn order_vocab() -> ScriptVocabulary {
+    ScriptVocabulary {
+        combination_type: Some(PID_COMBINATION),
+        ..vocab()
+    }
+}
+
+/// A Startup root that starts clip `0x0500_0000 + n` on layer 10.
+fn marker(n: u32) -> Vec<Vec<u8>> {
+    vec![anim(n, 0x0500_0000 + n, 10, 0.0, &[])]
+}
+
+fn clip_numbers(res: &tessera_formats::script_table::resolve::ClipResolution) -> Vec<u32> {
+    res.candidates
+        .iter()
+        .map(|c| c.clip.0 - 0x0500_0000)
+        .collect()
+}
+
+fn resolve_class(
+    m: &HashMap<Did, Vec<u8>>,
+    vocab: ScriptVocabulary,
+) -> tessera_formats::script_table::resolve::ClipResolution {
+    let mut r = ClipResolver::new(&schema, vocab, fetch(m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    r.resolve(&e, MotionState::Idle).unwrap()
+}
+
+/// T41: kind-1 definitions start first, then kind 2, then kind 4; within a list in
+/// gathering order (pre-order, includes in stored order). Kinds are bit masks: a kind-3
+/// table joins both lists, a kind-0 table neither, and a table that does not match is
+/// still descended into. Null and self-naming includes are skipped without a report.
+#[test]
+fn run_order_is_kind_1_then_kind_2_then_kind_4() {
+    const A: u32 = 0x0700_0011; // kind 1
+    const B2: u32 = 0x0700_0012; // kind 2
+    const C4: u32 = 0x0700_0013; // kind 4 (holds a script here, to show it runs last)
+    const D: u32 = 0x0700_0014; // kind 1, below the kind-4 table
+    const E3: u32 = 0x0700_0015; // kind 3: both lists
+    const F0: u32 = 0x0700_0016; // kind 0: no list, still descended into
+    const G: u32 = 0x0700_0017; // kind 1, below the kind-0 table
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(2, &[0, CLASS, A, B2, C4, F0], &[(STARTUP, marker(1))]),
+    );
+    m.insert(Did(A), table(1, &[], &[(STARTUP, marker(2))]));
+    m.insert(Did(B2), table(2, &[E3], &[(STARTUP, marker(3))]));
+    m.insert(Did(C4), table(4, &[D], &[(STARTUP, marker(4))]));
+    m.insert(Did(D), table(1, &[], &[(STARTUP, marker(5))]));
+    m.insert(Did(E3), table(3, &[], &[(STARTUP, marker(6))]));
+    m.insert(Did(F0), table(0, &[G], &[(STARTUP, marker(7))]));
+    m.insert(Did(G), table(1, &[], &[(STARTUP, marker(8))]));
+    let res = resolve_class(&m, order_vocab());
+    // List 1: A, E3, D, G; list 2: CLASS, B2, E3; list 4: C4. F0 never runs.
+    assert_eq!(clip_numbers(&res), vec![2, 6, 5, 8, 1, 3, 6, 4]);
+    assert!(res.closure.issues.is_empty(), "{:?}", res.closure.issues);
+    assert!(!res.has_issues(), "{:?}", res.issues);
+    // Each candidate is attributed to the table whose definition started it.
+    assert_eq!(res.candidates[0].table, Did(A));
+    assert_eq!(res.candidates[4].table, Did(CLASS));
+    // The every-branch mode starts in the same order.
+    let mut r = ClipResolver::new(&schema, order_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let all = r.reachable(&e).unwrap();
+    assert_eq!(clip_numbers(&all), vec![2, 6, 5, 8, 1, 3, 6, 4]);
+}
+
+/// §8.2 step 2: an overriding definition stops the descent into its table's includes, in
+/// the lists the table contributes to; a table reached twice contributes once; every
+/// definition of a key run by a Run node or a start-up name runs.
+#[test]
+fn overriding_definitions_and_runs_gather_every_definition() {
+    const X1: u32 = 0x0700_0021; // kind 1 below the overriding kind-2 class table
+    const X2: u32 = 0x0700_0022; // kind 2 below it: cut off
+    const Y: u32 = 0x0700_0023; // an additional table, also included by X1
+    const RUN_KEY: u32 = 0x1000_0500;
+    const NAMED: u32 = 0x1000_0501;
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table_with_properties(
+            2,
+            &[X1, X2],
+            &[
+                (STARTUP, vec![anim(1, 0x0500_0001, 10, 0.0, &[])]),
+                (RUN_KEY, marker(10)),
+            ],
+            &[(STARTUP, combination(1)), (RUN_KEY, combination(2))],
+        ),
+    );
+    m.insert(
+        Did(X1),
+        table(
+            1,
+            &[Y],
+            &[
+                (STARTUP, vec![run_node(2, RUN_KEY, false)]),
+                (RUN_KEY, marker(11)),
+            ],
+        ),
+    );
+    m.insert(
+        Did(X2),
+        table(2, &[], &[(STARTUP, marker(3)), (RUN_KEY, marker(12))]),
+    );
+    m.insert(
+        Did(Y),
+        table(1, &[], &[(RUN_KEY, marker(13)), (NAMED, marker(20))]),
+    );
+    let mut r = ClipResolver::new(&schema, order_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        additional_tables: vec![Did(Y)],
+        startup_scripts: vec![NAMED],
+        ..EntityScripts::default()
+    };
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    // Startup: list 1 = X1 (its Run of RUN_KEY: list 1 = X1, Y; list 2 = CLASS, X2,
+    // because CLASS's RUN_KEY definition is additive), list 2 = CLASS only (overriding:
+    // X2 is not reached). Then the start-up name NAMED (Y).
+    assert_eq!(clip_numbers(&res), vec![11, 13, 10, 12, 1, 20]);
+    let run = &res.candidates[0];
+    assert_eq!((run.table, run.scripts.clone()), (Did(X1), vec![RUN_KEY]));
+    assert!(!res.has_issues(), "{:?}", res.issues);
+
+    // Without the combination property in the vocabulary every definition is additive.
+    let mut r = ClipResolver::new(&schema, vocab(), fetch(&m));
+    let res = r.resolve(&e, MotionState::Idle).unwrap();
+    assert_eq!(clip_numbers(&res), vec![11, 13, 10, 12, 1, 3, 20]);
+}
+
+/// A Collection node with (ordinal, children) ports in stored order.
+fn ordered_collection(id: u32, ports: &[(u32, Vec<Vec<u8>>)]) -> Vec<u8> {
+    let ports: Vec<Vec<u8>> = ports
+        .iter()
+        .map(|(o, c)| port(6, Some(B::new().u32(*o)), c))
+        .collect();
+    node(2, B::new(), base(id), &ports)
+}
+
+/// T42: a Collection starts its ports by ascending ordinal (unsigned), equal ordinals in
+/// stored order, and each port's children in stored order.
+#[test]
+fn collection_ports_start_by_ascending_ordinal() {
+    let c = ordered_collection(
+        1,
+        &[
+            (3, marker(1)),
+            (1, marker(2)),
+            (0x8000_0000, marker(3)),
+            (
+                2,
+                vec![
+                    anim(4, 0x0500_0004, 10, 0.0, &[]),
+                    anim(5, 0x0500_0005, 10, 0.0, &[]),
+                ],
+            ),
+            (1, marker(6)),
+            (0, marker(7)),
+        ],
+    );
+    let mut m = HashMap::new();
+    m.insert(Did(CLASS), table(2, &[], &[(STARTUP, vec![c])]));
+    let res = resolve_class(&m, order_vocab());
+    assert_eq!(clip_numbers(&res), vec![7, 2, 6, 4, 5, 1, 3]);
+}
+
+/// §7.5 step 4: a Collection whose script run is stopped by one of its own children starts
+/// no further ports; a stop of another script does not cut it, and the every-branch mode
+/// ignores stops.
+#[test]
+fn a_collection_stopped_during_its_start_starts_no_further_ports() {
+    const KEY: u32 = 0x1000_0600;
+    const OTHER: u32 = 0x1000_0601;
+    let c = ordered_collection(
+        1,
+        &[
+            (3, marker(3)),
+            (1, vec![run_node(2, KEY, false)]),
+            (2, marker(2)),
+        ],
+    );
+    let stopping = ordered_collection(
+        10,
+        &[
+            (1, marker(11)),
+            (2, vec![run_node(12, OTHER, true)]),
+            (3, marker(13)),
+            (4, vec![run_node(14, KEY, true)]),
+            (5, marker(15)),
+        ],
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(2, &[], &[(STARTUP, vec![c]), (KEY, vec![stopping])]),
+    );
+    let res = resolve_class(&m, order_vocab());
+    // KEY's Collection stops after its fourth port; the Startup Collection goes on.
+    assert_eq!(clip_numbers(&res), vec![11, 13, 2, 3]);
+    let mut r = ClipResolver::new(&schema, order_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let all = r.reachable(&e).unwrap();
+    assert_eq!(clip_numbers(&all), vec![11, 13, 15, 2, 3]);
+}
+
+/// §7.5 step 4 only cuts a Collection stopped while it is still starting: a Collection that
+/// starts after its run was already stopped (a later child of the same port, a later root)
+/// starts its ports, and a second stop during its own start cuts it in turn.
+#[test]
+fn a_collection_starting_after_its_run_was_stopped_starts_its_ports() {
+    const KEY: u32 = 0x1000_0610;
+    // Starts after the first stop; the second stop (port 2) cuts it before port 3.
+    let later_child = ordered_collection(
+        20,
+        &[
+            (1, marker(4)),
+            (2, vec![run_node(21, KEY, true)]),
+            (3, marker(6)),
+        ],
+    );
+    let stopping = ordered_collection(
+        10,
+        &[
+            (1, vec![run_node(11, KEY, true), later_child]),
+            (2, marker(2)),
+        ],
+    );
+    let later_root = ordered_collection(30, &[(2, marker(5)), (1, marker(3))]);
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[
+                (STARTUP, vec![run_node(1, KEY, false)]),
+                (
+                    KEY,
+                    vec![stopping, later_root, anim(7, 0x0500_0007, 10, 0.0, &[])],
+                ),
+            ],
+        ),
+    );
+    let res = resolve_class(&m, order_vocab());
+    assert_eq!(clip_numbers(&res), vec![4, 3, 5, 7]);
+    let mut r = ClipResolver::new(&schema, order_vocab(), fetch(&m));
+    let e = EntityScripts {
+        class_table: Some(Did(CLASS)),
+        ..EntityScripts::default()
+    };
+    let all = r.reachable(&e).unwrap();
+    assert_eq!(clip_numbers(&all), vec![4, 6, 2, 3, 5, 7]);
+}
+
+/// §7.6, `appearance.md` §6.4: Sequence steps start by ascending step number and Timer
+/// ports by ascending time (a NaN time last, −0 with +0 in stored order).
+#[test]
+fn sequence_and_timer_ports_start_in_firing_order() {
+    let ports_u32 = |ports: &[(u32, u32)]| -> Vec<Vec<u8>> {
+        ports
+            .iter()
+            .map(|&(step, n)| port(6, Some(B::new().u32(step)), &marker(n)))
+            .collect()
+    };
+    let sequence = node(
+        6,
+        B::new().u8(0).u32(1),
+        base(1),
+        &ports_u32(&[(3, 1), (1, 2), (2, 3), (1, 4)]),
+    );
+    let timer_ports: Vec<Vec<u8>> = [
+        (f32::NAN, 10),
+        (2.5, 11),
+        (0.0, 12),
+        (-1.0, 13),
+        (-0.0, 14),
+        (f32::INFINITY, 15),
+    ]
+    .iter()
+    .map(|&(t, n)| port(6, Some(B::new().f32(t)), &marker(n)))
+    .collect();
+    let timer = node(
+        65,
+        B::new()
+            .u8(0)
+            .f32(3.0)
+            .u32(1)
+            .u8(0)
+            .f32(1.0)
+            .f32(1.0)
+            .u32(0),
+        base(2),
+        &timer_ports,
+    );
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(2, &[], &[(STARTUP, vec![sequence, timer])]),
+    );
+    let res = resolve_class(&m, order_vocab());
+    assert_eq!(clip_numbers(&res), vec![2, 4, 3, 1, 13, 12, 14, 11, 15, 10]);
+}
+
+/// `appearance.md` §6.4 (A33): of two SliderMeshDeformer nodes, the most recently started
+/// one is the last deformer of the resolution: kind-1 definitions start before kind-2
+/// ones, and a Collection's ports by ascending ordinal (usually the reverse of their
+/// stored order).
+#[test]
+fn the_most_recently_started_slider_node_is_the_last_deformer() {
+    use tessera_formats::script_table::resolve::DeformerCandidate;
+    const KIND1: u32 = 0x0700_0031;
+    let slider = |id: u32, record: u32| node(81, B::new().pascal("80").u32(record), base(id), &[]);
+    let definitions = |res: &tessera_formats::script_table::resolve::ClipResolution| {
+        res.deformers
+            .iter()
+            .filter_map(|d| match d {
+                DeformerCandidate::Slider { definitions, .. } => Some(definitions.0),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // A Collection stored with descending ordinals: the stored-first node starts last.
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(
+            2,
+            &[],
+            &[(
+                STARTUP,
+                vec![ordered_collection(
+                    1,
+                    &[
+                        (2, vec![slider(2, 0x7800_0002)]),
+                        (1, vec![slider(3, 0x7800_0001)]),
+                    ],
+                )],
+            )],
+        ),
+    );
+    let res = resolve_class(&m, order_vocab());
+    assert_eq!(definitions(&res), vec![0x7800_0001, 0x7800_0002]);
+    // The class table (kind 2) lists a kind-1 table first, yet the kind-1 definition
+    // starts first, so the class table's slider node is the most recent one.
+    let mut m = HashMap::new();
+    m.insert(
+        Did(CLASS),
+        table(2, &[KIND1], &[(STARTUP, vec![slider(1, 0x7800_0002)])]),
+    );
+    m.insert(
+        Did(KIND1),
+        table(1, &[], &[(STARTUP, vec![slider(2, 0x7800_0001)])]),
+    );
+    let res = resolve_class(&m, order_vocab());
+    assert_eq!(definitions(&res), vec![0x7800_0001, 0x7800_0002]);
 }

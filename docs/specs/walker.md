@@ -1336,6 +1336,21 @@ collision, the "controllers (30 Hz fixed step)" of §2 and the terrain-height wa
 > bounds reach each landblock, built from landblock info at boot (`tessera-world`), so
 > that `needed` can name them. (Still open on 2026-10-08: no such index exists.)
 
+> **OPEN (implementer, 2026-10-08, status; for the spec writer):** a cell-owner index now
+> exists, in the walker's movement module (`apps/client/src/walker/movement/owners.rs`),
+> not in `tessera-world`, and it is built around the mover rather than at boot: reading
+> every landblock-info record of the owner's install took about 20 s single-threaded (about
+> 1 GB of records, own measurement 2026-10-08). Engineering choices to confirm: the
+> landblock-info records within 8 landblocks (chessboard) of the feet's landblock are read
+> on a background thread and kept while within 16; a cell reaches the landblock holding its
+> origin and that landblock's eight neighbours (its hull is not read; the exact bounds of
+> the resident set then decide what the view holds); a step needs, and every view of it
+> holds (pinned), the owners of the cells reaching the feet's 3 × 3 square other than the
+> square's own landblocks, nearest first, at most 8 (the pin limit is now 17); the step
+> waits while the index does not cover the feet; an owner more than 6 landblocks from its
+> cell's origin is not found (none in this install, row W-C1). Scripted walks and the soak
+> use the same index. The OPEN above can be closed.
+
 - **Waiting.** While a needed set is missing the walker does not step: the frame's
   accumulated time is dropped, the latched input kept, the state unchanged.
 - **Absent landblocks.** A landblock the streamer resolved as failed (no data, or a data
@@ -1839,6 +1854,20 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
 > **OPEN (spec writer, 2026-10-08, from the implementer's note of 2026-10-07, for the walker
 > and `tessera-render` implementers):** the far band's light-map departure above; it needs a second baked image or an
 > unscaled-albedo input on the renderer's far layer.
+
+> **OPEN (implementer, 2026-10-08, status; for the spec writer):** the far band's light-map
+> term now follows `terrain-texturing.md` §9.1 without a renderer change. When a block has
+> a light map and one of its layers has a `diffuse_scale` other than white, the bake also
+> composites the stack **without** `diffuse_scale` and multiplies it texel by texel by the
+> light map (sampled as the layer pipeline samples it: clamp, bilinear, at x / 160, y /
+> 160), a second 256 × 256 image with its own mip chain; the far layer binds that image as
+> its emissive texture with *G* = 2 and binds no light map, so it draws 2 × *C′* × Σ
+> (without the light map) + 2 × Σ *w* *C* × *B*ₗ, which is the full stack's light-map
+> term (`render.md` §5.2: emissive is added as *Em* × *G* before fog). Without a light map,
+> or with every `diffuse_scale` white, no second image is made and the far layer binds the
+> light map as before (exact in those cases). The light map is sampled at the bake's
+> resolution, not at the light map's own per pixel, and both terms are stored in 8 bits.
+> The "Light map in the far band" departure above and the §14.13 row can be closed.
 
 <a id="s14-5"></a>
 ### 14.5 Objects (§11.4, `mesh.md` §8.4–§8.7)

@@ -86,6 +86,8 @@ struct VsIn {
     @location(2) tangent: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) color: vec4<f32>,
+    // The stored binormal (+V), zero when the mesh has none (GpuVertex::binormal).
+    @location(13) binormal: vec4<f32>,
 };
 
 struct SkinIn {

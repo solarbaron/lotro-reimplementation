@@ -2051,6 +2051,29 @@ table). Points for the spec owner:
 > client's rule, not only a guard). The other §6.7 items of this note are confirmed as
 > implemented.
 
+> **OPEN** (implementation, 2026-10-08, T41/T42 implemented; Tessera Decisions to
+> confirm): every script run (`Startup`, a start-up name, a Run node) now runs **all**
+> gathered definitions, kind-1 list, then kind 2, then kind 4, kinds compared as bit masks,
+> non-matching tables descended into, null and self-naming includes skipped (also in the
+> closure), and a Collection starts its Default ports by ascending ordinal (stable sort).
+> Choices the spec leaves open: (1) the three lists are gathered by three separate
+> pre-order visits, and an overriding definition (§8.2 step 2) stops the descent only in
+> the lists its table contributes to; a kind-2 table with an overriding definition does
+> not hide the kind-1 tables below it from the kind-1 list. Is that the client's rule, or
+> does an overriding definition cut the descent for every list? (2) "Stopped while it is
+> still starting" (§7.5 step 4) is modelled only as a Run node with `RunScript_Stop` = 1
+> for the script run the Collection belongs to; the stopped run's later roots and later
+> children of the same port still start. Does a stop also end those starts, and can a
+> Collection be stopped any other way during its start? (3) Label (25) inherits from
+> Collection (§5.1); Tessera starts its ports in stored order. Does it share the Collection
+> start routine (ascending ordinal)? (4) Sequence steps start by ascending step number and
+> Timer ports by ascending time (`appearance.md` §6.4: a later step counts as later); equal
+> keys keep their stored order, a NaN time sorts last, ports of other types follow in
+> stored order. (5) §8.2 step 1 (an instance-level definition taken first) is not
+> implemented: `Entity_InstanceScriptTable` is gathered as an ordinary table after the class
+> table. Is step 1's "instance-level definition" that table, or something else? (6) A
+> start-up name whose gathering yields no definition is reported as not found.
+
 ---
 
 <a id="s17"></a>

@@ -2323,11 +2323,136 @@ fn water_lookups_answer_from_the_collision_water_without_build_water() {
     assert!(b.collision.as_ref().unwrap().set.water_plane().is_none());
 }
 
+/// Waits until `pool` has run `jobs` jobs to the end and holds no other work, or panics
+/// after `timeout`. A worker counts a job as run only after the job returned, so its handle
+/// is final and its completion queued by then.
+///
+/// Memory ordering: `PoolStats::executed` is read with a relaxed load, and the worker
+/// increments it with a relaxed `fetch_add` (in `tessera-assets`, which this test does not
+/// change). That still makes the job's results visible to this thread, through the mutexes
+/// that hold them. A job publishes its result (the asset handle's state, the store's
+/// completion queue) under a mutex `M` and unlocks `M` before the job returns, so that unlock
+/// is sequenced before the worker's increment. The streamer reads the result by locking `M`,
+/// sequenced after this thread's load that saw the increment. Lock operations on one mutex
+/// are totally ordered, each unlock synchronising with the next lock. If this thread's lock
+/// of `M` came before the worker's lock, this thread's unlock would happen before the
+/// worker's lock, so this thread's load would happen before the worker's increment, and
+/// read-write coherence forbids that load from seeing it. So this thread's lock comes after
+/// the worker's unlock and synchronises with it: the result happens before the read.
+fn wait_for_jobs(pool: &WorkerPool, jobs: usize, timeout: Duration) {
+    let jobs = u64::try_from(jobs).expect("job count fits u64");
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let s = pool.stats();
+        if s.executed >= jobs && s.queued == 0 && s.busy == 0 {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "jobs not finished after {timeout:?}: {s:?} (want {jobs} executed)"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Every worker of a pool held by a blocking task, so that no other job can run until
+/// [`Gates::release`]. Dropping the value (also on a test panic) releases them as well.
+struct Gates {
+    release: Vec<std::sync::mpsc::Sender<()>>,
+    tasks: Vec<tessera_assets::TaskHandle>,
+}
+
+impl Gates {
+    /// Spawns one blocking task per worker of `pool` and returns once every worker has
+    /// taken one. Each task holds its worker until it is released, so the tasks cannot
+    /// share a worker and all workers are held.
+    fn occupy(pool: &WorkerPool) -> Self {
+        let workers = pool.stats().workers;
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let mut release = Vec::with_capacity(workers);
+        let mut tasks = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let started = started_tx.clone();
+            let task = pool
+                .spawn(
+                    tessera_assets::Priority::Immediate,
+                    tessera_assets::CancelToken::new(),
+                    move |_| {
+                        let _ = started.send(());
+                        // Returns when the sender is dropped (released).
+                        let _ = rx.recv();
+                    },
+                )
+                .expect("gate task queued");
+            release.push(tx);
+            tasks.push(task);
+        }
+        for i in 0..workers {
+            started_rx
+                .recv_timeout(Duration::from_secs(120))
+                .unwrap_or_else(|e| panic!("gate {i} of {workers} not started: {e}"));
+        }
+        let s = pool.stats();
+        assert_eq!(s.busy, workers, "every worker holds a gate: {s:?}");
+        Self { release, tasks }
+    }
+
+    /// The number of gate tasks, each counted by the pool as one job once it has run.
+    fn jobs(&self) -> usize {
+        self.tasks.len()
+    }
+
+    /// Lets the gate tasks return, freeing the workers.
+    fn release(&mut self) {
+        self.release.clear();
+    }
+
+    /// Asserts every gate task has finished (after [`wait_for_jobs`]).
+    fn assert_finished(&self) {
+        for (i, t) in self.tasks.iter().enumerate() {
+            assert!(t.is_finished(), "gate {i}: {:?}", t.status());
+        }
+    }
+}
+
+#[test]
+fn wait_for_jobs_returns_once_the_jobs_have_run() {
+    // The helper above, on a streamer's requests: once it returns, every request is final.
+    // While the gates hold every worker, no bundle job can finish, so the first update
+    // integrates nothing and the second must integrate every request.
+    let ctx = context(SyntheticWorld::rectangle(1, 0..=4, 0..=4).build());
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            max_integrations_per_frame: 10_000,
+            frame_budget: Duration::from_secs(60),
+            lookahead: Duration::ZERO,
+            ..small_rings()
+        },
+    )
+    .unwrap();
+    let mut gates = Gates::occupy(&pool);
+    let c = centre(2, 2);
+    let r = w.update_with_velocity(c, [0.0, 0.0]);
+    assert!(r.requested > 0, "{r:?}");
+    assert_eq!((r.integrated, r.failed), (0, 0), "{r:?}");
+    gates.release();
+    wait_for_jobs(&pool, r.requested + gates.jobs(), Duration::from_secs(120));
+    gates.assert_finished();
+    let r2 = w.update_with_velocity(c, [0.0, 0.0]);
+    assert_eq!(r2.integrated + r2.failed, r.requested, "{r2:?}");
+    assert_eq!(r2.loading, 0, "{r2:?}");
+}
+
 #[test]
 fn integration_overshoots_the_budget_until_the_next_update() {
-    // Integration does not check the budget (`landblock.md` §8.1, OPEN on the transient
-    // overshoot): bundles admitted on a too-small estimate all become resident, and the
-    // next update's admission, with real sizes, evicts back within the budget.
+    // Integration does not check the budget (`landblock.md` §8.1, rule R5, integration
+    // overshoot): bundles admitted on a too-small estimate (rule R2, never-loaded charge)
+    // all become resident, and the next update's admission, with real sizes, evicts back
+    // within the budget.
     let ctx = context(SyntheticWorld::rectangle(1, 0..=20, 0..=20).build());
     let h = bundle_of(&ctx, key(10, 10)).unwrap().heap_bytes;
     let budget = 3 * h;
@@ -2346,13 +2471,24 @@ fn integration_overshoots_the_budget_until_the_next_update() {
         },
     )
     .unwrap();
+    // The first update admits on the 1-byte estimate. It also integrates whatever has
+    // finished by then, which would switch later charges to real sizes; with every worker
+    // held, nothing has, so all admitted bundles are integrated by the second update.
+    let mut gates = Gates::occupy(&pool);
     let c = centre(10, 10);
     let r = w.update_with_velocity(c, [0.0, 0.0]);
     assert!(r.requested > 3, "{r:?}");
-    // Let the jobs finish before the next update integrates them.
-    // (Synthetic bundles build in well under a millisecond.)
-    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!((r.integrated, r.failed), (0, 0), "{r:?}");
+    // Every job finished (its handle final, its completion queued) before the next update
+    // integrates them, however slow the machine. The pool serves only this streamer and
+    // the gates.
+    let requested = r.requested;
+    gates.release();
+    wait_for_jobs(&pool, requested + gates.jobs(), Duration::from_secs(120));
+    gates.assert_finished();
     let r = w.update_with_velocity(c, [0.0, 0.0]);
+    assert_eq!(r.integrated + r.failed, requested, "{r:?}");
+    assert_eq!(r.failed, 0, "{r:?}");
     assert!(r.integrated > 3, "{r:?}");
     assert!(r.resident_bytes > budget, "{r:?}");
     let r = w.update_with_velocity(c, [0.0, 0.0]);

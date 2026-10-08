@@ -330,7 +330,7 @@ pub struct BuildReport {
     pub statics_blocking: u32,
     /// Static entities left out by the run-time filters of §9.3: the content-layer test
     /// (item 2) or an effective `Entity_CreationType` of 0, 7 or 8 (item 3; 0 also when
-    /// none is found or the value found is not an integer or enum).
+    /// none is found or the value found is not an enum or property-ID value).
     pub statics_filtered: u32,
     /// Generated objects examined.
     pub generated_seen: u32,
@@ -665,8 +665,8 @@ impl CollisionSetBuilder {
             }
             let flags = CollisionFlags::of_static(own, resolved.flags);
             self.note_resolution(&resolved);
-            // Creation type 0 (also: none found, or not an integer or enum) is rejected by
-            // the loader, 7 and 8 are not created by the client (§9.3 item 3, C29).
+            // Creation type 0 (also: none found, or not an enum or property-ID value) is
+            // rejected by the loader, 7 and 8 are not created by the client (§9.3 item 3, C29).
             if flags.refuses_static_creation() {
                 self.report.statics_filtered += 1;
                 continue;

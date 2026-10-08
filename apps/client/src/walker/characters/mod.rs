@@ -244,6 +244,20 @@ pub struct CharAnim {
     loco: Locomotion,
 }
 
+/// Where a character stands, for the visibility test of `landblock.md` §4.11 ("Moving
+/// entities"): the caller decides from it the cell the character belongs to and whether
+/// the camera's portal walk reaches that cell's visibility cell.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CharacterSite {
+    /// The placed figure's tag ([`super::figures::figure_tag`]), for a figure of the
+    /// landblock data.
+    pub tag: Option<u64>,
+    /// The user's own character.
+    pub player: bool,
+    /// Its position (feet).
+    pub position: WorldPos,
+}
+
 /// Caller-side per-entity data (a `Column`, decision 0008).
 #[derive(Debug, Clone)]
 struct Actor {
@@ -1420,7 +1434,10 @@ impl CharacterLayer {
     }
 
     /// Uploads the palettes of the visible characters into `frame` and returns their draws
-    /// (module docs, step 4). `camera` is the eye in `anchor`'s frame.
+    /// (module docs, step 4). `camera` is the eye in `anchor`'s frame; `visible` says
+    /// whether a character is in a visibility cell the camera sees (`landblock.md` §4.11
+    /// "Moving entities"; tested after its fade advanced).
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_draws(
         &mut self,
         frame: &mut Frame,
@@ -1428,6 +1445,7 @@ impl CharacterLayer {
         camera: Vec3,
         frustum: &Frustum,
         objects: &ObjectLayer,
+        visible: &dyn Fn(&CharacterSite) -> bool,
         out: &mut Vec<MeshDraw>,
     ) {
         let t = Instant::now();
@@ -1503,6 +1521,16 @@ impl CharacterLayer {
             );
             a.seen = true;
             if opacity <= 0.0 || !in_view {
+                continue;
+            }
+            // `landblock.md` §4.11 "Moving entities": culled by the visibility cell of its
+            // cell like any drawn object, after its fade advanced (W-O3).
+            let site = CharacterSite {
+                tag: a.tag,
+                player: is_player,
+                position: WorldPos::new(a.region, tf.position[0], tf.position[1], tf.position[2]),
+            };
+            if !visible(&site) {
                 continue;
             }
             // `mesh.md` §8.7–§8.8: opacity above 0.8, strictly within the class's shadow

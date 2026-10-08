@@ -19,6 +19,11 @@
 //!   uploaded with [`crate::TextureUpload`] (top row first).
 //! - Tangents are `[tx, ty, tz, w]` with `w` the bitangent sign
 //!   (`bitangent = w * cross(normal, tangent)`).
+//! - Binormals (optional, only with tangents) are the stored `+v` directions of
+//!   a source that has them (mesh records, `mesh.md` §5.6). The lit and
+//!   instanced pipelines use them as **B** as given (`render.md` §4.1, R-D10);
+//!   without them, or where one is zero, they derive `w * cross(normal,
+//!   tangent)`.
 
 use std::collections::HashSet;
 
@@ -93,7 +98,8 @@ pub struct Submesh {
 /// exactly one entry per position. Missing normals are generated
 /// (area-weighted face normals); missing UVs are `(0, 0)`; missing colours
 /// are opaque white; without tangents the mesh is drawn without normal
-/// mapping.
+/// mapping. Binormals require tangents; without them the lit pipelines derive
+/// the binormal from the normal, the tangent and its sign.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MeshData {
     /// Debug label for logs and GPU captures.
@@ -104,6 +110,13 @@ pub struct MeshData {
     pub normals: Option<Vec<[f32; 3]>>,
     /// Vertex tangents `[x, y, z, bitangent_sign]`.
     pub tangents: Option<Vec<[f32; 4]>>,
+    /// Stored vertex binormals (the `+v` direction, not made orthogonal to
+    /// the normal; `mesh.md` §5.6). Only together with `tangents`. The lit
+    /// and instanced pipelines use them as the normal map's **B** instead of
+    /// `w * cross(normal, tangent)` (`render.md` §4.1, departure R-D10 and
+    /// the §4.8 OPEN); a zero binormal falls back to the derived one. The M2
+    /// pipelines always derive it.
+    pub binormals: Option<Vec<[f32; 3]>>,
     /// Texture coordinates.
     pub uvs: Option<Vec<[f32; 2]>>,
     /// Linear RGBA vertex colours, multiplied into the base colour.
@@ -233,6 +246,8 @@ pub struct MeshInfo {
     pub has_normals: bool,
     /// Tangents were supplied (normal mapping possible).
     pub has_tangents: bool,
+    /// Stored binormals were supplied (the lit pipelines use them as **B**).
+    pub has_binormals: bool,
     /// UVs were supplied.
     pub has_uvs: bool,
     /// Vertex colours were supplied.
@@ -241,7 +256,8 @@ pub struct MeshInfo {
     pub skin: Option<SkinInfo>,
 }
 
-/// GPU vertex (must match `VsIn` in `mesh.wgsl`). 40 bytes.
+/// GPU vertex (must match `VsIn` in `mesh.wgsl`, `lit_common.wgsl` and
+/// `ModelIn` in `instanced_common.wgsl`). 48 bytes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub(crate) struct GpuVertex {
@@ -253,6 +269,9 @@ pub(crate) struct GpuVertex {
     pub uv: [f32; 2],
     /// unorm8 RGBA (linear).
     pub color: [u8; 4],
+    /// snorm16 xyz of the stored binormal, normalised, w = 0; all zero when
+    /// the mesh has none (the shaders then derive it). Shader location 13.
+    pub binormal: [i16; 4],
 }
 
 /// Per-submesh data kept with an uploaded mesh.
@@ -392,6 +411,8 @@ impl MeshData {
     /// normal, with `w` the handedness so that `w * cross(normal, tangent)`
     /// points along increasing `v`. Computes normals first when missing.
     /// Returns `false` (and leaves `tangents` unchanged) without UVs.
+    /// Replacing the tangents drops any stored `binormals` (they belonged to
+    /// the old frame), so the lit pipelines derive the binormal.
     pub fn compute_tangents(&mut self) -> bool {
         if self
             .uvs
@@ -454,6 +475,7 @@ impl MeshData {
             })
             .collect();
         self.tangents = Some(tangents);
+        self.binormals = None;
         true
     }
 
@@ -565,6 +587,10 @@ pub(crate) fn prepare_with(
     }
     check_len("normals", data.normals.as_ref(), n)?;
     check_len("tangents", data.tangents.as_ref(), n)?;
+    check_len("binormals", data.binormals.as_ref(), n)?;
+    if data.binormals.is_some() && data.tangents.is_none() {
+        return Err(invalid("binormals without tangents"));
+    }
     check_len("uvs", data.uvs.as_ref(), n)?;
     check_len("colors", data.colors.as_ref(), n)?;
 
@@ -676,6 +702,23 @@ pub(crate) fn prepare_with(
                 }
                 None => [0, 0, 0, 32767],
             };
+            let binormal = match data.binormals.as_ref().and_then(|b| b.get(i)) {
+                Some(b) => {
+                    let dir = normalize3(DVec3::new(
+                        f64::from(b[0]),
+                        f64::from(b[1]),
+                        f64::from(b[2]),
+                    ))
+                    .unwrap_or(DVec3::ZERO);
+                    [
+                        snorm16(dir.x as f32),
+                        snorm16(dir.y as f32),
+                        snorm16(dir.z as f32),
+                        0,
+                    ]
+                }
+                None => [0; 4],
+            };
             let uv = match data.uvs.as_ref().and_then(|u| u.get(i)) {
                 Some(&[u, v]) => [
                     if u.is_finite() { u } else { 0.0 },
@@ -693,6 +736,7 @@ pub(crate) fn prepare_with(
                 tangent,
                 uv,
                 color,
+                binormal,
             }
         })
         .collect();
@@ -751,6 +795,7 @@ pub(crate) fn prepare_with(
             submeshes: infos,
             has_normals: data.normals.is_some(),
             has_tangents: data.tangents.is_some(),
+            has_binormals: data.binormals.is_some(),
             has_uvs: data.uvs.is_some(),
             has_colors: data.colors.is_some(),
             skin: None,
@@ -846,8 +891,8 @@ mod tests {
     }
 
     #[test]
-    fn vertex_layout_is_40_bytes() {
-        assert_eq!(size_of::<GpuVertex>(), 40);
+    fn vertex_layout_is_48_bytes() {
+        assert_eq!(size_of::<GpuVertex>(), 48);
     }
 
     #[test]
@@ -943,6 +988,55 @@ mod tests {
         assert_eq!(p.vertices[0].color, [255, 0, 0, 128]);
         assert_eq!(p.vertices[0].tangent, [32767, 0, 0, -32767]);
         assert!(p.info.has_tangents);
+        assert!(!p.info.has_binormals);
+        assert!(p.vertices.iter().all(|v| v.binormal == [0; 4]));
+    }
+
+    /// render.md §4.8 (R-D10): stored binormals are packed as given (normalised, not made
+    /// orthogonal to the normal, either handedness); zero or non-finite ones pack as zero,
+    /// which makes the lit shaders derive B for that vertex.
+    #[test]
+    fn packs_stored_binormals() {
+        let mut m = tri();
+        m.tangents = Some(vec![[1.0, 0.0, 0.0, 1.0]; 3]);
+        m.binormals = Some(vec![[0.0, -2.0, 2.0], [0.0; 3], [f32::NAN, 1.0, 0.0]]);
+        let p = prepare_with(&m, &MeshLimits::default(), false).expect("valid");
+        assert!(p.info.has_binormals);
+        assert_eq!(p.vertices[0].binormal, [0, -23170, 23170, 0]);
+        assert_eq!(p.vertices[1].binormal, [0; 4]);
+        assert_eq!(p.vertices[2].binormal, [0; 4]);
+        // The tangent's sign is kept for the derived fallback.
+        assert_eq!(p.vertices[0].tangent, [32767, 0, 0, 32767]);
+    }
+
+    #[test]
+    fn rejects_binormals_without_tangents_or_of_the_wrong_length() {
+        let lim = MeshLimits::default();
+        let mut m = tri();
+        m.binormals = Some(vec![[0.0, 1.0, 0.0]; 3]);
+        assert!(matches!(
+            prepare_with(&m, &lim, false),
+            Err(RenderError::InvalidMesh(_))
+        ));
+        m.tangents = Some(vec![[1.0, 0.0, 0.0, 1.0]; 3]);
+        assert!(prepare_with(&m, &lim, false).is_ok());
+        m.binormals = Some(vec![[0.0, 1.0, 0.0]; 2]);
+        assert!(matches!(
+            prepare_with(&m, &lim, false),
+            Err(RenderError::InvalidMesh(_))
+        ));
+    }
+
+    #[test]
+    fn computed_tangents_drop_stored_binormals() {
+        let mut m = MeshData {
+            uvs: Some(vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+            tangents: Some(vec![[0.0, 1.0, 0.0, 1.0]; 3]),
+            binormals: Some(vec![[1.0, 0.0, 0.0]; 3]),
+            ..tri()
+        };
+        assert!(m.compute_tangents());
+        assert!(m.binormals.is_none());
     }
 
     #[test]
@@ -1169,7 +1263,7 @@ mod tests {
         assert_eq!(cube.validate(&with).expect("valid").edge_index_count, 60);
         assert_eq!(cube.validate(&without).expect("valid").edge_index_count, 0);
         let mut p = cube.prepare(&with).expect("valid");
-        assert_eq!(p.gpu_bytes(), 24 * 40 + (36 + 60) * 4);
+        assert_eq!(p.gpu_bytes(), 24 * 48 + (36 + 60) * 4);
         p.strip_edges();
         let q = cube.prepare(&without).expect("valid");
         assert_eq!(p.info(), q.info());

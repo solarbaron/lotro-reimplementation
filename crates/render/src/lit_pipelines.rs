@@ -574,8 +574,11 @@ pub(crate) struct LitLayouts {
     shadow_shader: wgpu::ShaderModule,
 }
 
-const VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
-    0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4
+/// The mesh vertex with the stored binormal at location 13 (`GpuVertex`; the same
+/// locations as the instanced pipeline's model vertex).
+const VERTEX_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    0 => Float32x3, 1 => Snorm16x4, 2 => Snorm16x4, 3 => Float32x2, 4 => Unorm8x4,
+    13 => Snorm16x4
 ];
 const SKIN_ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
     5 => Uint8x4, 6 => Unorm16x4

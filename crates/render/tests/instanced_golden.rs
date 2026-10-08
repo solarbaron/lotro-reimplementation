@@ -1573,6 +1573,64 @@ fn mirrored_frills_flip_the_bitangent() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// render.md §4.8 (departure R-D10) through §5.5: a world model with a stored binormal
+/// stream uses the stored binormal as **B** (here −y, the opposite of w × cross(N₀, T) =
+/// +y), for scenery and frills alike, upright and mirrored.
+#[test]
+fn world_models_use_the_stored_binormal() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let tilt = upload(&mut r, 1, 1, &[128, 204, 230, 255], Wrap::Repeat)?;
+    let surfaces = [WorldSurface {
+        normal_texture: Some(tilt),
+        two_sided: true,
+        ..WorldSurface::default()
+    }];
+    let mut stored = tile();
+    stored.binormals = Some(vec![[0.0, -1.0, 0.0]; 4]);
+    let derived = r.upload_world_model(&tile(), &surfaces)?;
+    let stored = r.upload_world_model(&stored, &surfaces)?;
+    let lighting = FrameLighting {
+        sun: Some(SunLight {
+            direction: Vec3::new(0.0, -1.0, 1.0).normalize(),
+            color: [0.5; 3],
+            specular: [0.0; 3],
+        }),
+        ..dark()
+    };
+    let mirror_x = Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let (a, b) = (Vec3::new(-1.5, 0.0, 0.0), Vec3::new(1.5, 0.0, 0.0));
+    let instances = vec![small_tile(a, Mat4::IDENTITY), small_tile(b, mirror_x)];
+    let params = FrillParams {
+        animation_intensity: 0.0,
+        terrain_color_intensity: 0.0,
+        ..FrillParams::default()
+    };
+    // N = n.x T − n.y B + n.z N₀ with n ≈ (0, 0.6, 0.8): toward −y with the derived B
+    // (2 × 0.5 × N · L ≈ 0.99), toward +y with the stored one (≈ 0.14).
+    let (img, _) = draw_overhead(
+        &mut r,
+        vec![InstanceBatch::new(derived, instances.clone())],
+        lighting.clone(),
+        vec![],
+    )?;
+    assert!(at(&img, a)[0] > 230, "derived {:?}", at(&img, a));
+    for batch in [
+        InstanceBatch::new(stored.clone(), instances.clone()),
+        InstanceBatch::frills(stored.clone(), instances.clone(), params),
+    ] {
+        let (img, _) = draw_overhead(&mut r, vec![batch], lighting.clone(), vec![])?;
+        let (up, mirrored) = (at(&img, a), at(&img, b));
+        assert!((20..60).contains(&up[0]), "stored {up:?}");
+        assert!(
+            up[0].abs_diff(mirrored[0]) <= 2,
+            "upright {up:?}, mirrored {mirrored:?}"
+        );
+    }
+    Ok(())
+}
+
 /// material.md §8.3: the specular colour is multiplied by the same per-object tint as *M*.
 #[test]
 fn instance_tint_tints_the_highlight() -> Result<(), RenderError> {

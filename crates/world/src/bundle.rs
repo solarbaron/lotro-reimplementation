@@ -1261,6 +1261,28 @@ fn build_world_parts(
         .generate_scenery
         .then(|| ctx.region(key.region()).and_then(|r| r.scenery.clone()))
         .flatten();
+    // `scenery.md` §4.1, Tessera Decision on pipeline failures of the region tables: a
+    // landblock built while its region's tables are unavailable for a reason that is not the
+    // data's gets no scenery and is incomplete, so it is built again on its next load. The
+    // region is still waiting for its retry only when `region` above failed that way (a
+    // data fault or a success settles it).
+    if opts.generate_scenery
+        && tables.is_none()
+        && ctx.scenery_retry_pending().any(|r| r == key.region())
+    {
+        system_problem(
+            problems,
+            key.data_did(),
+            "scenery",
+            false,
+            true,
+            format!(
+                "scenery tables of region {} unavailable for a reason that is not the data's; \
+                 scenery left out, landblock incomplete",
+                key.region()
+            ),
+        );
+    }
     let scenes = systems.scenes.as_ref().filter(|_| tables.is_some());
     let collision = systems.collision.as_ref().filter(|_| opts.build_collision);
     // The water tables serve scenery's water plane whatever `build_water` says. The

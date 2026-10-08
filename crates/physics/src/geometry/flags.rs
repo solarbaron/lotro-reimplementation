@@ -87,7 +87,7 @@ pub const ETHEREAL_PLAYER: u64 = 1 << 29;
 
 /// `Entity_CreationType` 0, `Invalid`: the loader rejects the SED (`collision.md` §9.3
 /// item 3, `entity-descriptor.md` §4.9). Also the value of a SED whose lookup finds no
-/// value, or a value that is not an integer or enum.
+/// value, or a value that is not an enum (type 8) or property-ID (type 10) value.
 pub const CREATION_TYPE_INVALID: u32 = 0;
 /// `Entity_CreationType` 3, SharedStaticImmobile (`entity-descriptor.md` §4.9, class
 /// Static).

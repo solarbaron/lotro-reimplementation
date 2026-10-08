@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision of 2026-10-08 and its repair, accepted on re-review 2026-10-08). Implementers re-check code against the sections changed on 2026-10-08 (§19, last two rows). |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (OPEN sweep of 2026-10-09, §19 last row; waiting for review). Previously Accepted (revision of 2026-10-08 and its repair, accepted on re-review 2026-10-08). Implementers re-check code against the sections changed on 2026-10-08 (§19, last two rows). |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room sessions, AI-assisted), not the author: first review, re-review and acceptance review, all 2026-10-07; review and re-review of the 2026-10-08 revision, 2026-10-08 |
-| **Review record** | Acceptance review 2026-10-07 (third review session, not the author): **passed**, Accepted. Revision of 2026-10-08 (OPEN closure, §19): reviewed 2026-10-08 (separate review session, not the author): **changes requested** (§6.2 steps 3–4, §5.3 64-bit types, §10.2 weapon duration; 5 spot checks reproduce). Fixes by the author 2026-10-08 (§19). Re-review 2026-10-08 (separate review session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). |
+| **Review record** | Acceptance review 2026-10-07 (third review session, not the author): **passed**, Accepted. Revision of 2026-10-08 (OPEN closure, §19): reviewed 2026-10-08 (separate review session, not the author): **changes requested** (§6.2 steps 3–4, §5.3 64-bit types, §10.2 weapon duration; 5 spot checks reproduce). Fixes by the author 2026-10-08 (§19). Re-review 2026-10-08 (separate review session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §4.1, §4.6, §5.2, §6.4, §6.5, §8.1, §9.1, §9.2 changed (rows C53–C58, D6); status Revised until a separate session reviews it. |
 | **Implements into** | `crates/props` (progression evaluation and modifier-entry reading, §4, §5); a future gameplay-data crate (skills, effects, traits, class tables); `apps/explorer` (skill, effect and trait cards, §15); `apps/dattool` |
 | **Companion specs** | `property-system.md` (property sets, value types, DID maps, enum mappers), `wstate.md` (object records 0x70, their bundles), `wlib.md` (class library, parent map, method tables), `records.md` §7 and §8 (enum mapper and DID map layouts), `coordinates.md` (world units) |
 
@@ -49,6 +49,7 @@ inputs into hit chances, damage and healing (§13). The spec says where that bou
 | DS | `research/notes/data-semantics.md` §5.1 and §12 (class-index list and property naming conventions). |
 | BC | The client library's bytecode (record 0x56000000, chunk type 1), read on 2026-10-08 in the dirty room with a throwaway disassembler that follows `wlib-bytecode.md` (Accepted), by class and body offset. This is data in the user's install (method M1). Bodies read: the progression classes 1386, 1385, 1389, 2402, 2519, 3810, 3918, 3920 and the segment and point classes 3916, 3917; the index helper class 1388; the modifier classes 1338–1342; the effect base class 698 (duration, interval, pulse-count and spellcraft functions); the property-modification effect family (class 734 and the classes that share its bodies), the applied-effect record class 700 and the override holder class 732; the instant-vital effect class 725; the point-based trait functions of class 3438 and the ranked-trait functions they call; the combat control class 1659; the DPS and value table classes 1660 and 1688; the weapon-data functions of class 256; class 3800. Read on the same day for the fixes of the 2026-10-08 review: the vital-over-time amount functions of class 755; the represented-property functions of classes 2402, 2519 and 3810; the weapon-data function of class 256 in full, with the weapon timing classes 1692 and 1691, the weapon variance class 2618, the damage function of class 1659 and the modified-value function of class 1046 it calls; the duration, interval, pulse-count and permanence functions of class 698 again. Plus byte and immediate searches of the whole block for the property IDs named in §4.6, §9.1 and §10.1. Facts from this source describe what the **client's** library computes; the server-side library is not in the archives (§13.1). |
 | DEC | Tessera's own choices where the data, the client and published sources say nothing. Each is marked **Decision** below and is not a claim about the original game. |
+| OBS3 | Observed in the user's install on 2026-10-09 (OPEN sweep, spec writer). The archives are unchanged since 2026-10-04 (file times), so a dump of **every** 0x70 record with its 0x79 property set and of all 0x78 sets, made on 2026-10-07 with the repository's own decoders, stands for the install; it was walked at every nesting depth, the property dictionary (0x34000000) was read for types and defaults, and DID targets were classified by the root class of every 0x70 record. Counts cover all records of the kind named. |
 | BIN | **M4 under decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, `lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-07 with a headless disassembler/decompiler in the dirty room, by address range only. **Questions:** (b1) does native client code read the progression, modifier-entry, skill or effect properties by property ID; (b2) does native code call the script functions of the progression, effect, skill or trait classes by a constant function ID (`wlib.md` §6.4); (b3) where is the script machine's bytecode dispatch, so that the client-side progression and modifier functions could be read. **Why M1–M3 were not enough:** the out-of-range behaviour of progressions and the order in which modifiers combine are not stored in any record; no published source states them with authority; no running client is available to this session (M3). **Results:** (b1) no: 10 property IDs of §4 and §5 and the 7 attribute hashes of §4.7 were searched as instruction immediates; the attribute hashes have no hit, and every property-ID hit is an argument of a child-element lookup in user-interface code, a separate identifier space that shares the numeric range; no defined string in the executable contains `Progression`, `Mod_` or `Combat_Control`; (b2) no: none of the 986 function IDs of classes 484, 486, 698, 827, 1385, 1386, 1389, 1479, 2402, 2519, 3810, 3916–3918 and 3920 occurs as an immediate; (b3) not located in this pass (the library loader and its chunk dispatcher were found; the interpreter loop was not). Nothing from network, login, launcher or anti-tamper code was read. **Second pass, 2026-10-08** (same build and executable, a disassembler on the read-only executable only, no analysis database), by address range only, to establish what the native functions called by the BC bodies do. **Questions:** (b4) what the native functions used by the progression, modifier, duration and combat-table bodies return (integer and float minimum and maximum, clamp, array element access and count, the property arithmetic used by the modifier operators, the float-to-property conversion, the map insertion used by modifier lists, the two level readers); (b5) whether array access checks the index. **Why M1–M3 were not enough:** the bytecode passes values to these natives by function ID only (`wlib-bytecode.md` §7); what they compute is in the executable alone, no published source describes them, and no running client is available to this session. **Results** (registered entry points located with the native-registration pairing of `wlib-bytecode.md`'s BIN row): package 122 functions 24 and 25 are signed 32-bit minimum and maximum, functions 22 and 23 are single-precision minimum and maximum (SSE `minss`/`maxss`); package 2574 function 4 clamps a float to [low, high]; package 17 function 4 and package 176 function 3 read an array element **without** a bounds check, functions 12 and 11 return the element count, package 176 function 10 tests for an empty array; package 3176 function 32 stores a float into a property object, as f32 for float properties, truncated toward zero for int and int64 properties, and not at all for other types; package 39 functions 65, 66, 67, 68, 69 and 78 implement add, subtract, multiply, divide, set and or on property objects (§5.3); package 35 function 1 inserts into a reference map and does **not** replace an existing key (returns 0); package 3703 functions 1 and 2 read the actor's `Advancement_Level` and `Apparent_Level` (1 when absent or not an int). Nothing from network, login, launcher or anti-tamper code was read. **Third pass, 2026-10-08** (same build and executable, a command-line disassembler on the read-only executable, no analysis database, by address range only). **Question:** (b6) what the set and or natives of package 39 (functions 69 and 78) and the add, subtract, multiply and divide natives (functions 65–68) do for the value types whose values are held in a separate value object (int64, 64-bit bitfield, any-width bitfield), which the second pass had not followed. **Why M1–M3 were not enough:** as for b4; the data holds `Or` entries on 64-bit and any-width bitfields, and the per-type code is in the executable alone. **Results** (the value-object kind of each property type taken from the client's value factory, a switch on the type code): set copies the source value into the property for every type, without a type-specific step; or works on bool and 32-bit bitfield values directly and, for the 64-bit and any-width bitfields, through the value object's own or operation (64-bit or; any-width or after widening the shorter operand with zero bits); the int64 value object implements add, subtract, multiply and divide in 64 bits (wrapping, low 64 bits, signed division truncated toward zero) and does nothing for or; every other type is left unchanged by or (§5.3). Nothing from network, login, launcher or anti-tamper code was read. |
 
 Marks: **Confirmed** = observed in the user's install over every record of the kind named (not a
@@ -118,6 +119,13 @@ the original.
 | C51 | The property-half source of the pulse-count modifier list is `Effect_PulseCount_AdditiveModifiers`: in all 32,971 effects the compiled list is present exactly when the property is (277 effects: classes 755, 708, 734, 2282 with 251, 13, 12, 1) and holds the same non-zero PIDs in the same order; no other record holds the property; the values are summed as integers (§6.2) | OBS (all 32,971 effects, both halves; every 0x78 and 0x79 set); BC (class 698 pulse-count functions) | Confirmed 2026-10-08 |
 | C52 | Weapon data procedure of the client library: the checks, the action duration and animation modifier from the weapon timing tables (classes 1692, 1691) by equipment category and `Combat_WeaponSpeed`, the variance from the weapon variance table (class 2618) by category mask, the `Combat_Damage_Mod` addition for objects whose `WeenieType` has bits 0x01 and 0x80, and the maximum-damage formula; census: every weapon's category is a single bit and a key of the timing map, its speed a key of that table, and its category lies in exactly one variance mask, whose value equals the stored variance; every weapon's `WeenieType` has both bits; no 0x79 set holds `Combat_Damage_Mod` or names it in `Mod_Modified` (§10.2) | BC (class 256 weapon function and the bodies it calls in classes 256, 1659, 1691, 1692, 2618, 1046, 492); OBS (all 23,204 weapons, the class-1692, 24 class-1691 and one class-2618 records, every 0x79 set) | Confirmed (bytecode) 2026-10-08 |
 | D5 | A weapon category that lies in several variance masks takes the first matching entry in stored order (§10.2.1) | DEC | Decision (no weapon in this install has more than one match) |
+| C53 | Float-array lengths: length 8 occurs in 1 record (the row of §4.1 said 5); the row sums to the 1,338 float arrays | OBS3 (all 1,338 class-1385 records) | Confirmed 2026-10-09 |
+| C54 | The 270 `SparseDIDProgressionEntry_DID` values name traits of classes 1477 (191) and 1483 (79), none of class 3438 (corrects §4.6) | OBS3 (all 39 class-3800 records) | Confirmed 2026-10-09 |
+| C55 | `Mod_Array` occurs at top level in 112,502 sets and nested in 3,933 arrays: 3,929 inside `Set_ActiveCountData` (item-set tiers), 2 inside `SPM_PropertyMod` and 2 inside `Usage_ModPropertyUsageData_ModProperties` (the two property-modifying tokens of `items.md` §2.1) | OBS3 | Confirmed 2026-10-09 |
+| C56 | `Effect_WSLEffect` = 0 occurs 2,649 times: 2,648 in `Effect_Combo_EffectPresentList`, 1 in `Effect_Dispel_ByEffectList`; none in `Effect_Protection_ByEffectList` | OBS3 | Confirmed 2026-10-09 |
+| C57 | Vital-amount co-occurrence counted with the variance properties left out (both classes), the variance counts separately, and the full labels of the modifier-list and critical-multiplier properties per stem (§6.4) | OBS3 (all 1,103 class-725 and 2,438 class-755 records) | Confirmed 2026-10-09 |
+| C58 | Field labels of `Effect_Aura_Applied_Effect_Data`, `Effect_Area_Applied_Effect_Data`, `Effect_ApplyOverTime_Applied_Effect_Data` (§6.5); of `AdvTable_AvailableSkillEntry` (§9.1), of the three monster-play entry structs (§9.2) and of `Trait_Skill_Array` (§8.1) | OBS3 (dictionary; every occurrence) | Confirmed 2026-10-09 |
+| D6 | Implementer choices of the implementer-notes section confirmed as Tessera decisions: null or mistyped progression elements reject the progression; a `Mod_Entry` with both an inline value and a progression uses the progression, one with neither is skipped; effect references recognised by their ID field under any holder, zero references kept as placeholders; typed views require the family's signature properties | DEC | Decision 2026-10-09 (none of these shapes occurs in this install) |
 
 ---
 
@@ -314,16 +322,18 @@ Observed lengths (records):
 | Kind | Lengths |
 |---|---|
 | Property array | 200 (3,174), 160 (585), 80 (289), 25 (106), 6 (69), 301 (27), 159 (18), 16 (13), 599 (11), 258 (9), 20 (1), 45 (1) |
-| Float array | 200 (392), 500 (282), 80 (249), 150 (193), 160 (125), 100 (42), 120 (8), 15 (7), 2 (6), 19 (6), 5 (5), 8 (5), 10 (5), 101 (4), 16 (2), 301 (2), 401 (2), 700 (2), and 7, 20, 36, 45, 250 once each |
+| Float array | 200 (392), 500 (282), 80 (249), 150 (193), 160 (125), 100 (42), 120 (8), 15 (7), 2 (6), 19 (6), 5 (5), 10 (5), 101 (4), 16 (2), 301 (2), 401 (2), 700 (2), and 7, 8, 20, 36, 45, 250 once each (C53) |
 | Linear interpolating (points) | 19 (913), 20 (453), 22 (211), 2 (112), 4 (59), 5 (46), 3 (13), 21 (5), 14 (1), 17 (1) |
 | Text array | 150 (40), 11 (4), 7 (1), 12 (1) |
 | DID array (2519) | 200 (12) |
 | Progression of progressions | 5 (19), 7 (15), 10 (9), 6 (2) |
 
-> **OPEN:** (implementation census, 2026-10-07) The float-array row sums to 1,342 records, not
+> **Answered (2026-10-09; was OPEN, implementation census 2026-10-07):** The float-array row sums to 1,342 records, not
 > the 1,338 float arrays of this section. The implementation's census
 > (`crates/formats/tests/gameplay_combat_real_data.rs`) reproduces every other count of the row
 > and observes length 8 in 1 record, not 5, which gives 1,338. Is "8 (5)" a typo for "8 (1)"?
+>
+> *Answer:* yes. Length 8 occurs in one record (C53); the row is corrected and sums to 1,338.
 
 <a id="s4-2"></a>
 ### 4.2 Common fields
@@ -440,15 +450,19 @@ from its rank is part of the §1 callout (Q9).
 ### 4.6 Sparse DID progressions (class 3800, outside subtree 1386)
 
 39 records. `SparseDIDProgression_Array` holds structs of `SparseDIDProgressionEntry_Key`
-(f32, 5–120) and `SparseDIDProgressionEntry_DID` (all 270 DIDs are traits of class 3438). Used
+(f32, 5–120) and `SparseDIDProgressionEntry_DID` (all 270 DIDs are traits: 191 of class 1477 and
+79 of class 1483, none of class 3438; C54, correcting the earlier text). Used
 only by trait-tree specialisations (§8.5). Reported (LC): at a given value, the entry with the
 largest key not above it applies.
 
-> **OPEN:** (implementation census, 2026-10-07) "All 270 DIDs are traits of class 3438" is not
+> **Answered (2026-10-09; was OPEN, implementation census 2026-10-07):** "All 270 DIDs are traits of class 3438" is not
 > reproduced. Reading `SparseDIDProgressionEntry_DID` of every `SparseDIDProgression_Array` struct
 > of the 39 records, the implementation finds 270 values, all naming traits, but of classes 1477
 > (191) and 1483 (79), none of class 3438. Which field or which records does the statement
 > describe? The implementation checks only "names a trait" until this is settled.
+>
+> *Answer:* the statement was wrong; the implementation's count is right (C54). §4.6 now gives
+> classes 1477 and 1483. "Names a trait" is the invariant to check.
 
 > **OPEN:** (§18 Q4) The lookup rule of sparse DID progressions: whether the entry with the
 > largest key not above the value applies (LC's reading, Reported), what is returned below the
@@ -618,8 +632,14 @@ with steps 1–6 only, so an inner progression of progressions yields a DID and 
 <a id="s5-2"></a>
 ### 5.2 Kinds of entry (Confirmed, all entries)
 
-Census over every `Mod_Array` in every 0x78 and 0x79 set: 116,435 arrays (16,947 in effects,
-2,262 in traits, 97,226 in other objects, mostly items), 372,834 entries.
+Census over every `Mod_Array` in every 0x78 and 0x79 set, **at any nesting depth**: 116,435
+arrays (16,947 in effects, 2,262 in traits, 97,226 in other objects, mostly items), 372,834
+entries. Of the arrays, 112,502 are top-level properties and 3,933 are nested (C55): 3,929 in
+the `Set_ActiveCountData` of item-set tiers (`items.md` §7.1), 2 in `SPM_PropertyMod` and 2 in
+`Usage_ModPropertyUsageData_ModProperties` (the property-modifying tokens, `items.md` §2.1). No
+nested array occurs in an effect or a trait. A nested array has the layout and evaluation of this
+section; when it is applied is the holder's rule (for set tiers, while the tier is active,
+`items.md` §7.1; for the tokens, not specified).
 
 | Kind | Rule | Count |
 |---|---|---|
@@ -634,11 +654,15 @@ ignore them). The value field's type always matches the modified property's decl
 
 Readers skip empty and field-less entries.
 
-> **OPEN:** (implementation census, 2026-10-07) The 116,435 arrays and 372,834 entries of this
+> **Answered (2026-10-09; was OPEN, implementation census 2026-10-07):** The 116,435 arrays and 372,834 entries of this
 > section are reproduced only when `Mod_Array` values nested inside other values are counted too
 > (3,933 arrays below top level, none in effects or traits); top-level arrays alone give 112,502.
 > Please state that the census covers `Mod_Array` at any depth, and whether a reader should apply
 > nested arrays (they sit inside item structs whose meaning is `items.md`'s, not this spec's).
+>
+> *Answer:* §5.2 now states that the census covers every depth and where the 3,933 nested
+> arrays sit (C55). A reader evaluates a nested array like any other; whether and when it
+> applies belongs to the holder (`items.md` §7.1 for set tiers).
 
 <a id="s5-3"></a>
 ### 5.3 Operators (keys Confirmed, arithmetic Confirmed for the client library)
@@ -1042,9 +1066,14 @@ effect classes, the same 66 whether only the struct or all 55,825 occurrences ar
 names a record of classes 706, 716, 748, 752, 761, 762, 779, 1787, 2027, 2231, 2259, 2441, 2477, 2544, 2676, 3099, 3690, 3833, 3839, 3912
 or 3943).
 
-> **OPEN:** (implementation census, 2026-10-07) The 4,954 bare `Effect_WSLEffect` values in
+> **Answered (2026-10-09; was OPEN, implementation census 2026-10-07):** The 4,954 bare `Effect_WSLEffect` values in
 > effects include 2,649 zero values (2,305 non-zero). Are the zeros placeholders in the sense of
 > §3.4 (skipped by readers), as the implementation assumes?
+>
+> *Answer:* yes. A DID value 0 means "none" in every reference property (§3.4,
+> `property-system.md` §4.9), and `Effect_WSLEffect` is a DID reference (dictionary type DID,
+> default 0). The zeros sit in `Effect_Combo_EffectPresentList` (2,648) and
+> `Effect_Dispel_ByEffectList` (1); a reader skips them (C56).
 
 <a id="s6-4"></a>
 ### 6.4 Vital-change amounts (layout Confirmed, meaning Reported)
@@ -1072,6 +1101,45 @@ variable 5, progression and variable 4, constant and variance 3, random 1, progr
 1, none 4. In vital-over-time effects (class 755, 2,438): initial and per-interval progressions
 1,651, per-interval progression only 716, initial and per-interval constants 32, initial
 progression with per-interval constant and progression 29, and 10 others.
+
+**Grouping rule of these counts (C57).** The class-725 counts above treat *S*`Variance` as a
+member of the group; the class-755 counts leave it out. Counted the same way for both classes,
+with the variance **left out** (the variance is a spread, not a source):
+
+| Class | Sources stored (variance left out) | Records |
+|---|---|---|
+| 725 | progression only | 788 |
+| 725 | constant only | 229 |
+| 725 | variable only | 52 |
+| 725 | constant and progression | 19 |
+| 725 | constant and variable | 5 |
+| 725 | progression and variable | 4 |
+| 725 | none | 4 |
+| 725 | random only; progression and random | 1 each |
+| 755 | initial and per-interval progressions | 1,651 |
+| 755 | per-interval progression only | 716 |
+| 755 | initial and per-interval constants | 32 |
+| 755 | initial progression, per-interval constant and progression | 29 |
+| 755 | per-interval progression and variable | 5 |
+| 755 | per-interval constant and progression | 2 |
+| 755 | per-interval constant only | 2 |
+| 755 | per-interval random only | 1 |
+
+Variance present: class 725 `Effect_InstantVital_InitialChangeVariance` in 262 records (259 with a
+progression, 3 with a constant); class 755 `Effect_VitalOverTime_InitialChangeVariance` in 143 and
+`Effect_VitalOverTime_ChangePerIntervalVariance` in 281.
+
+**Full labels per stem (C57)** (all arrays hold `Effect_ModifierPropertyList_Entry` PIDs; all
+multipliers are f32 with dictionary default 1.0):
+
+| Stem | Modifier list | Additive modifier list | Critical multiplier | Its modifier list |
+|---|---|---|---|---|
+| `Effect_InstantVital_InitialChange` (725) | `Effect_InstantVital_InitialChange_ModifierList` (526) | `Effect_InstantVital_Additive_InitialChange_ModifierList` (22) | `Effect_InstantVital_Critical_Multiplier` (1,103) | `Effect_InstantVital_CriticalMultiplierModList` (304) |
+| `Effect_VitalOverTime_InitialChange` (755) | `Effect_VitalOverTime_InitialChange_ModifierList` (1,117) | `Effect_VitalOverTime_AdditiveInitialChange_ModifierList` (1) | `Effect_VitalOverTime_InitialChange_Critical_Multiplier` (2,438) | `Effect_VitalOverTime_InitialChange_Critical_Multiplier_ModList` (185) |
+| `Effect_VitalOverTime_ChangePerInterval` (755) | `Effect_VitalOverTime_ChangePerInterval_ModifierList` (2,140) | `Effect_VitalOverTime_AdditiveChangePerInterval_ModifierList` (12) | `Effect_VitalOverTime_ChangePerInterval_Critical_Multiplier` (2,438) | `Effect_VitalOverTime_ChangePerInterval_Critical_Multiplier_ModList` (357) |
+
+The labels do not follow one pattern (note the placement of `Additive` and the two critical
+forms of class 725), so a reader looks each one up by its full label.
 
 **Which source is used** (Confirmed, C46). The client uses exactly **one** source per amount. The
 choice is not made from the property half at run time: it is stored in the compiled half, as flag
@@ -1110,12 +1178,15 @@ per-interval progression and a per-interval variable amount have only 0x800 (the
 lower bits 0x1, 0x2 and 0x4 of the same attribute are set in records too; the amount functions do
 not test them.
 
-> **OPEN:** (implementation census, 2026-10-07) The class-755 co-occurrence counts (1,651, 716,
+> **Answered (2026-10-09; was OPEN, implementation census 2026-10-07):** The class-755 co-occurrence counts (1,651, 716,
 > 32, 29, 10) are reproduced only when *S*`Variance` is left out of the grouping (for class 725
 > it is counted). Please state the grouping rule. Also, the labels behind
 > "*S*`_ModifierList`, `…Additive…_ModifierList`" and "`…_Critical_Multiplier`,
 > `…_Critical_Multiplier_ModList`" are not spelled out, so the implementation does not read
 > them; please list the full labels per stem.
+>
+> *Answer:* the two paragraphs after the co-occurrence counts state the grouping rule, give both
+> classes counted without the variance, and list the full labels per stem (C57).
 
 <a id="s6-5"></a>
 ### 6.5 Class-specific data that carries values
@@ -1125,9 +1196,9 @@ Counts are records of the class that carry the property, out of the class's reco
 | Class (records) | Values | Properties |
 |---|---|---|
 | Any of 14 classes | stat changes | `Mod_Array` (§5), 16,947 records: 734 (14,475 of 14,475), 708 (1,245 of 1,245), 2459 (719 of 722), 713 (190 of 666), 736 (125 of 356), 3686 (62), 3222 (49), 3218 (40), 780 (29), 3842 (5), 752 (4), 748 (2), 764 (1), 3690 (1). All holder classes except 708 are 734 or descend from it; not every record of a descendant has one. |
-| 709 (617) | aura | `Effect_Aura_Type` (617; mapper 0x23000128, 3 keys; value 1 in 596, 2 in 21), `Effect_Aura_Radius` (602; 1.3–120), `Effect_Aura_Applied_Effect_Array` (617; 734 `Effect_Aura_Applied_Effect_Data` structs with an effect DID and a spellcraft −1–130), `Effect_Aura_Spellcraft_Override` (596; −1–60), `Aura_ShouldAffectCaster` (617), `Effect_Aura_AffectsPlayers` (405), `Effect_Aura_AffectsMonsters` (304) and four more `Effect_Aura_Affects*` flags (5–42) |
-| 2762 (453) | area | `Effect_Area_MaxRange` (453; 1–120), `Effect_Area_MaxTargets` (452; 1–50), `Effect_Area_Applied_Effect_Array` (453; 578 `Effect_Area_Applied_Effect_Data` structs), seven `Effect_Area_Affects*` flags (9–294), `Effect_Area_ShouldAffectCaster` (279), `Effect_Area_MaxTargets_AdditiveModifiers` (110) |
-| 708 (1,245) | periodic application | `Effect_ApplyOverTime_Applied_Effect_Array` (1,245; 1,365 `Effect_ApplyOverTime_Applied_Effect_Data` structs), `Effect_ApplyOverTime_Initial_Applied_Effect_Array` (819; 1,070 structs of the same kind) |
+| 709 (617) | aura | `Effect_Aura_Type` (617; mapper 0x23000128, 3 keys; value 1 in 596, 2 in 21), `Effect_Aura_Radius` (602; 1.3–120), `Effect_Aura_Applied_Effect_Array` (617; 734 `Effect_Aura_Applied_Effect_Data` structs, each `Effect_Aura_Applied_Effect` (DID → effect) and `Effect_Aura_Applied_Effect_Spellcraft` (f32, −1 = not given; −1–130)), `Effect_Aura_Spellcraft_Override` (596; −1–60), `Aura_ShouldAffectCaster` (617), `Effect_Aura_AffectsPlayers` (405), `Effect_Aura_AffectsMonsters` (304) and four more `Effect_Aura_Affects*` flags (5–42) |
+| 2762 (453) | area | `Effect_Area_MaxRange` (453; 1–120), `Effect_Area_MaxTargets` (452; 1–50), `Effect_Area_Applied_Effect_Array` (453; 578 `Effect_Area_Applied_Effect_Data` structs, each `Effect_Area_Applied_Effect` (DID) and `Effect_Area_Applied_Effect_Spellcraft` (f32, default −1)), seven `Effect_Area_Affects*` flags (9–294), `Effect_Area_ShouldAffectCaster` (279), `Effect_Area_MaxTargets_AdditiveModifiers` (110) |
+| 708 (1,245) | periodic application | `Effect_ApplyOverTime_Applied_Effect_Array` (1,245; 1,365 `Effect_ApplyOverTime_Applied_Effect_Data` structs, each `Effect_ApplyOverTime_Applied_Effect` (DID) and `Effect_ApplyOverTime_Applied_Effect_Spellcraft` (f32, default −1)), `Effect_ApplyOverTime_Initial_Applied_Effect_Array` (819; 1,070 structs of the same kind). The same struct also fills the two `Effect_PersistentCombo_EffectsToAdd*_Array` properties of class 3124 (20 structs) |
 | 3686 (461) | skill proc | `Effect_SkillProc_SkillTypes` (434; 64-bit bitfield, mapper 0x230003A4), `Effect_SkillProc_RequiredCombatResult` (317; 32-bit bitfield, mapper 0x230003A8), `Effect_SkillProc_ProcProbability` (259; 0–0.8), `Effect_MinTimeBetweenProcs` (269; 0.25–180 s), `EffectGenerator_SkillProc_UserEffectList` (380), `EffectGenerator_SkillProc_TargetEffectList` (92) |
 | 3222 (88) | absorb | `Effect_Bubble_VitalType` (88; mapper 0x23000003), `Effect_Bubble_Value` (42; 200–20,000,000), `Effect_Bubble_Value_Progression` (8), `Effect_Bubble_Percentage` (38; 0.05–0.55), `Effect_BubbleValue_ModifierList` (88) |
 | 731 (86) | pips | `Effect_Pip_Type` (86; mapper 0x23000071), `Effect_Pip_AdjustmentAmount` (84; −20–1,000), `Effect_Pip_AdjustmentType` (84), `Effect_Pip_Reset` (2) |
@@ -1135,10 +1206,16 @@ Counts are records of the class that carry the property, out of the class's reco
 | 3124 (14) | persistent combinations | `Effect_Combo_EffectPresentList`, `_EffectClassPresentList`, `_CasterOnly` (all 14); `Effect_PersistentCombo_EffectsToAddIfAbsent_Array` (10), `Effect_PersistentCombo_EffectsToAddIfPresent_Array` (9) |
 | 3866 (526) | tiers | `Effect_TierUp_EffectList` (526; 3,141 `EffectGenerator_EffectStruct`), `Effect_TierUp_FinalEffect` (462; an array of one `EffectGenerator_EffectStruct` each), `Effect_TierUp_ShowInExamination` (416) |
 
-> **OPEN:** (implementation) The fields of `Effect_Aura_Applied_Effect_Data`,
+> **Answered (2026-10-09; was OPEN, implementation):** The fields of `Effect_Aura_Applied_Effect_Data`,
 > `Effect_Area_Applied_Effect_Data` and `Effect_ApplyOverTime_Applied_Effect_Data` ("an effect DID
 > and a spellcraft") are not named, so the implementation's effect-reference reader (§6.3) does
 > not recognise these structs. Which labels hold the effect DID and the spellcraft?
+>
+> *Answer:* the struct name without `_Data` holds the effect DID, and that name with
+> `_Spellcraft` the spellcraft (f32, dictionary default −1, "not given"); every struct holds
+> both (C58). The table above names them. A reader adds `Effect_Aura_Applied_Effect`,
+> `Effect_Area_Applied_Effect` and `Effect_ApplyOverTime_Applied_Effect` to the ID fields of
+> §6.3.
 
 <a id="s6-6"></a>
 ### 6.6 Equivalence classes and stacking
@@ -1371,7 +1448,7 @@ icon codes four bits at a time (Reported, LC). Details are left to a later class
 | 3438 | 946 | Point-based trait (trait-tree cell) | `Trait_PointBasedTrait_PointCostProgression` (float progression), `Trait_Prerequisite_CharacterLevel`, `_MountLevel`, `Trait_PointBasedTrait_Only_One_Tree_Active`, rank properties |
 | 3509 | 767 | Appearance trait | `Trait_Appearance_*` |
 | 2525 | 244 | Skirmish trait | `Skirmish_TraitCostProgression`, `Skirmish_TraitEffect_PetMods` |
-| 1483 | 125 | Trait granting skills | `Trait_Skill_Array` |
+| 1483 | 125 | Trait granting skills | `Trait_Skill_Array` (an array of bare `Trait_Skill` DIDs, 135 in all; C58) |
 | 3564 | 45 | Ranked trait | rank properties only |
 | 1494 | 37 | Virtue | `Trait_Virtue_*`, `SpellcraftCalculator` |
 | 1478 | 25 | Granted trait | `Trait_Granted_Category` |
@@ -1469,7 +1546,7 @@ Values relevant to combat:
 | `AdvTable_ClassInfo` | struct of names, description, icons | Display |
 | `AdvTable_LevelEntryList` | 160 `AdvTable_LevelEntry` per record (levels 1–160) | Per level: `AdvTable_BaseVitalEntryList` (4 entries, `AdvTable_VitalType` keys 1–4 with `AdvTable_BaseVitalValue`) and `AdvTable_MaxStatEntryList` (7 entries, `AdvTable_StatType` keys 1–7 of mapper 0x2300003E with `AdvTable_StatValue`) |
 | `AdvTable_DerivedStat_Configuration` | 37 `AdvTable_DerivedStat_Formula` per record | For each derived stat (`AdvTable_DerivedStat`, keys 1–37 of mapper 0x23000332), a list of 7 pairs (`AdvTable_DerivedStat_Formula_Stat`, keys 1–7 of 0x2300003E; `AdvTable_DerivedStat_Formula_Value`, f32 0–4.5) |
-| `AdvTable_AvailableSkillEntryList`, `AdvTable_AvailableMountSkillEntryList` | 551 and 36 entries over the 12 records | Skill DID, level, prerequisite skill, rank, training cost, shortcut index |
+| `AdvTable_AvailableSkillEntryList`, `AdvTable_AvailableMountSkillEntryList` | 551 and 36 entries over the 12 records | Both hold `AdvTable_AvailableSkillEntry` structs with six fields, all present in all 587: `AdvTable_Skill` (DID), `AdvTable_Level` (int), `AdvTable_PrerequisiteSkill` (DID), `AdvTable_Rank` (int), `AdvTable_TrainingCost` (int), `AdvTable_AdvancedCharacterShortcutIndex` (int) (C58) |
 | `AdvTable_ClassCharacteristic_List` | 297 entries over the 12 records | Trait DID (`AdvTable_Trait_WC`) and level |
 | `Trait_SlotSchedule_Nature_Array` | 132 entries over the 12 records | Trait nature and a slot-schedule DID |
 | `PipConfig_Pip_List` | 1 or 2 `Pip_Type` | The class's pip resources |
@@ -1488,18 +1565,25 @@ equals the sum over the 7 pairs of coefficient × the actor's primary stat of th
 > checked. This is server logic; M3 observation of the character panel (a primary stat changed by a
 > known amount) could test the reading above.
 
-> **OPEN:** (implementation) The field labels of `AdvTable_AvailableSkillEntryList` and
+> **Answered (2026-10-09; was OPEN, implementation):** The field labels of `AdvTable_AvailableSkillEntryList` and
 > `AdvTable_AvailableMountSkillEntryList` entries ("skill DID, level, prerequisite skill, rank,
 > training cost, shortcut index"), of `MonsterPlay_SkillList` and `MonsterPlay_TraitList` entries
 > (§9.2) and of `Trait_Skill_Array` elements (§8.1) are not given. The implementation offers every
 > DID inside these lists and nothing else; the labels would let it type the entries.
+>
+> *Answer:* §9.1, §9.2 and §8.1 now give every field label and type (C58).
 
 <a id="s9-2"></a>
 ### 9.2 Monster-play tables (class 1932)
 
 67 records: `MonsterPlay_MonsterInfo` (names, class, subspecies, icons),
-`MonsterPlay_MonsterLevel` (1–160), `MonsterPlay_SkillList` (525 entries: skill, cost, minimum
-level, minimum rank), `MonsterPlay_TraitList` (687), `MonsterPlay_VirtueList` (84), default
+`MonsterPlay_MonsterLevel` (1–160), `MonsterPlay_SkillList` (66 records, 525 `MonsterPlay_SkillEntry`
+structs: `MonsterPlay_Skill` DID, `MonsterPlay_SkillCost`, `MonsterPlay_SkillMinLevel`,
+`MonsterPlay_SkillMinRank` ints), `MonsterPlay_TraitList` (7 records, 687 `MonsterPlay_TraitEntry`
+structs: `MonsterPlay_Trait` DID, `MonsterPlay_TraitMinLevel` and `MonsterPlay_TraitMinRank` ints,
+`MonsterPlay_TraitTrainable` bool), `MonsterPlay_VirtueList` (7 records, 84
+`MonsterPlay_VirtueEntry` structs: `MonsterPlay_Trait` DID, `MonsterPlay_VirtueStartRank` and
+`MonsterPlay_VirtueMaxRank` ints); every field is present in every entry (C58); default
 melee and ranged skills, partial-mitigation bases and armour calc types as in §9.1.
 
 <a id="s9-3"></a>
@@ -1928,14 +2012,18 @@ as data.
 Engineering choices of the implementation (`crates/formats/src/gameplay/combat.rs`) where this
 spec is silent. They are not facts about the original; a spec writer may confirm or replace them.
 
-> **OPEN:** (implementation choice) A progression value array whose stored count includes null
+> **Answered (2026-10-09; was OPEN, implementation choice):** A progression value array whose stored count includes null
 > elements is rejected as malformed, because element positions are indices (§4.3) and a null
 > element's position is not kept by the decoder. None occurs in the observed install. Elements of
 > the wrong type (a float array holding a non-float, a control point without
 > `LinearInterpolatingProgression_Key` or `_Value`) are rejected the same way, rather than
 > replaced by the dictionary default.
+>
+> *Answer:* confirmed as Decision D6. No progression array of this install holds a null element
+> (§4.1), every control point holds both fields, and every element has the array's type, so the
+> choice changes no result here.
 
-> **OPEN:** (implementation choice) Whether a DID array is a progression of progressions is
+> **Answered (2026-10-09; was OPEN, implementation choice):** Whether a DID array is a progression of progressions is
 > decided by the record's class (§4.1), not by `ProgressionProgression_InnerRepresentedPropertyName`.
 > Index arithmetic is done in 64 bits (128 for *x* − *m*), so no index overflows. The D1 clamp is
 > logged at debug level.
@@ -1944,8 +2032,12 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 > for out-of-range indices: array kinds clamp (as D1 chose), linear progressions extrapolate
 > along the first or last segment; D1 is superseded. The class test of a progression of
 > progressions is in §5.6 step 1 (the client tests for class 3810 first).
+>
+> *Answer (remainder):* nothing is left open. The class test agrees with the client (§5.6 step
+> 1); 64-bit index arithmetic and debug logging are implementation details the spec does not
+> constrain; D1 is superseded by §4.8.
 
-> **OPEN:** (implementation choice) A `Mod_Entry` without `Mod_Modified` is treated like
+> **Answered (2026-10-09; was OPEN, implementation choice):** A `Mod_Entry` without `Mod_Modified` is treated like
 > `Mod_Modified` = 0 (empty). An entry with both an inline value and a progression, or with
 > neither, is kept and marked (M1 says neither occurs) rather than rejected.
 >
@@ -1953,8 +2045,13 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 > with `Mod_Modified` = 0 or an empty struct is skipped; the reject conditions are listed
 > there. An entry with both an inline value and a progression, or with neither, is not
 > addressed and stays open.
+>
+> *Answer (remainder, Decision D6):* an entry with both a non-zero `Mod_Progression` and an
+> inline value is evaluated from the progression (it is progression-driven by the rule of §5.2);
+> an entry with neither produces no pair and is skipped, with a log line. Neither shape occurs
+> in this install (§5.2), so the client's handling of them was not traced; D6 is Tessera's.
 
-> **OPEN:** (implementation choice) The D2 sandbox combines only values of the base value's own
+> **Answered (2026-10-09; was OPEN, implementation choice):** The D2 sandbox combines only values of the base value's own
 > type (M2); a value of another type is skipped and logged. Integer arithmetic saturates. Bitwise
 > operators on any-width bitfields work byte by byte at the base's width. `ArrayAdd` appends the
 > elements and adds the counts. Operators with no Reported meaning (`Invalid`, `Difference`,
@@ -1967,14 +2064,22 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 > no type by the load check (§5.3 valid-operator table), `Difference`, `Random`, `And` and `Xor`
 > are not handled; an operator applied to a type the table does not list leaves the property
 > unchanged. The combination order across entries and sources (D2) stays OPEN (§18 Q6).
+>
+> *Answer (remainder):* nothing is left in this note: the per-operator arithmetic is §5.3, which
+> the implementation follows instead of these choices, and the combination order is tracked as
+> Q6 alone (§5.3 callout).
 
-> **OPEN:** (implementation choice) Effect references (§6.3) are recognised by their ID field
+> **Answered (2026-10-09; was OPEN, implementation choice):** Effect references (§6.3) are recognised by their ID field
 > wherever a struct carries one (`EffectGenerator_EffectID`, `Skill_Effect`,
 > `Skill_Toggle_Effect`, `Effect_StartupEffectID`, tried in this order), so the same struct kinds
 > are found under any holder; a DID entry with one of these labels or `Effect_WSLEffect` outside
 > such a struct is a bare reference. Zero values are kept and marked as placeholders.
+>
+> *Answer:* confirmed as Decision D6, with the three applied-effect ID fields of §6.5
+> (`Effect_Aura_Applied_Effect`, `Effect_Area_Applied_Effect`, `Effect_ApplyOverTime_Applied_Effect`)
+> added to the list. Zero values mean "none" (§3.4, C56).
 
-> **OPEN:** (implementation choice) The typed views require the signature properties of their
+> **Answered (2026-10-09; was OPEN, implementation choice):** The typed views require the signature properties of their
 > family (§2.1) and report a missing one as an error; every other property is optional. The DPS
 > and value tables (§10.2) offer base values by position only, because the index base is OPEN
 > (Q12), and quality factors by key.
@@ -1982,6 +2087,10 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 > **Answered in part (2026-10-08, merge):** the index base is closed (§18 Q12): §10.2
 > "Lookups" (C48) states that element 0 of both base arrays belongs to level 1, with the
 > out-of-range behaviour of each table. The signature-property choice stays open.
+>
+> *Answer (remainder, Decision D6):* confirmed. The signatures of §2.1 are present in every
+> record of their family in this install (§2.1), so a missing one marks a malformed or foreign
+> record.
 
 ---
 
@@ -1997,3 +2106,4 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 | 2026-10-08 | Fixes for the review of 2026-10-08 (status stays Revised; no section renumbered; new subsection §10.2.1). (1) §6.2 step 3: without an interval source the interval is 0.0 at once, with no modifier list and no 0.5 s minimum; step 5 states that it raises any duration, 0 included, to 0.5 s when an equivalence class and a property source are present. (2) §6.2 step 4: the pulse-count modifier list's property-half source identified as `Effect_PulseCount_AdditiveModifiers` (C51, all 32,971 effects; property row added; Q14 recorded and closed). (3) §5.3: a third BIN pass (b6) read set, or and the int64 arithmetic in the value objects of int64, 64-bit and any-width bitfields; the table and the paragraph after it now give those cases; C41 states its scope. (4) §10.2: weapon damage moved to §10.2.1 and specified step by step from the class-256 function: the timing and variance tables (property and compiled halves), the action duration from category and `Combat_WeaponSpeed`, the DPS level, the `Combat_Damage_Mod` rule (`WeenieType` bits 0x01 and 0x80), the formula and its inputs (C52, census over all 23,204 weapons); C48 narrowed; open question Q15 and Decision D5 for several matching variance masks. (5) §4.2: `FloatProgression_ValueProperty` is used by the load check. (6) §5.6 step 1: represented property of text and DID arrays; no modifier entry names them (C40). (7) §6.4: class-755 bit table read from the code, with the bits never set (C46, V2). (8) §6.2: the override remark replaced by the separate "is permanent" query (C45). (9) Change log in date order. Invariants V2, E3, W1 added; BC and BIN rows extended. |
 | 2026-10-08 | Re-review of the fixes (separate review session, not the author): passed; status moved to Accepted. No text change besides the header. |
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: Implementer notes: out-of-range indices (§4.8), skipped entries (§5.6), operator arithmetic (§5.3) and the table index base (§10.2, Q12), each answered in part. No fact changed; status unchanged. |
+| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 (every set walked at every depth) and rows C53–C58, D6. Corrections: §4.1 float-array length 8 occurs once (C53); §4.6 sparse DID targets are traits of classes 1477 and 1483, not 3438 (C54). Added: §5.2 census depth and where nested `Mod_Array`s sit (C55); §6.3 `Effect_WSLEffect` zeros (C56); §6.4 grouping rule, counts without variance for both classes, full labels per stem (C57); §6.5, §8.1, §9.1, §9.2 field labels (C58). Implementer notes: all six closed (D6 confirms the choices, or a pointer to §4.8, §5.3, §5.6). Still OPEN: Q4, Q6, Q9, Q10, Q11, Q12 (hook damage), Q13, Q15 (server logic, native code or owner observation). |

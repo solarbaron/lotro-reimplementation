@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08, re-review of the revision that added §10.8 and corrected §8, §10.1, §10.2, §10.3.2, §10.3.4, §10.3.5, §10.7, §12.4). First accepted 2026-10-05. |
+| **Status** | Accepted (2026-10-08, re-review of the revision that added §3.3.4, row A10, tag OBS3 and invariant SN3b). Previously accepted 2026-10-08 (re-review of the revision that added §10.8 and corrected §8, §10.1, §10.2, §10.3.2, §10.3.4, §10.3.5, §10.7, §12.4). First accepted 2026-10-05. |
 | **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Re-review 2026-10-05: **accepted**. Re-review 2026-10-08 of the §10.8 revision (Claude review session, spec-reviewer role): **accepted**; all CLEAN_ROOM.md §5.3 items hold, BIN3 spot checks matched. Full records in the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-05: **accepted**. Re-review 2026-10-08 of the §10.8 revision (Claude review session, spec-reviewer role): **accepted**; all CLEAN_ROOM.md §5.3 items hold, BIN3 spot checks matched. Full records in the review log (decision 0018). Re-review 2026-10-08 of the §3.3.4 revision (Claude review session, spec-reviewer role, fresh session): **accepted**; all CLEAN_ROOM.md §5.3 items hold. Spot check: the setup headers of 0x0A0011DC and 0x0A016904 re-parsed by an independent throwaway probe match A10 and the §3.3.4 table (35 books, book 22 sparse with 625 entries all unused, 4 dimensions, lookup type 1; two type-2 residues, partition size 32, 10 classifications, classification 2 cascade 4 with stage book 22 in both; classification books 2 × 100 all used; no floor names book 22; 4,396 and 687 audio packets). The per-packet classification census (OBS3) was not repeated. |
 | **Implements into** | `crates/formats` (sound-info record 0x2A, sound payload record 0x0A, Ogg and WAV container checks; the existing `sound` module), `crates/audio` (`tessera-audio`: decoding, voices, buses, distance law, pitch, fades, voice limit, reverb environments, the player-property feed of §10.3 and §10.8), the script evaluator that runs script tables (Sound and SoundEnvironment nodes, §9), `apps/client` (audio settings named after the channel enum, §7; the walker's location properties of the avatar, §10.8), `apps/dattool` / `apps/explorer` (sound browser), `fuzz/` (one target per record type, §13) |
 | **Companion specs** | [`records.md`](records.md) §9 (0x0A envelope and container sniffing; this spec extends and corrects it, §15). [`property-system.md`](property-system.md) §2–§5 (dictionary, value encodings, property sets), §8 (DID maps), §9 (DB-object-type codes: 0x12 sound info, 0x2A script table). [`script-table.md`](script-table.md) §2–§7 (framing, node layouts incl. kinds 48 and 62, control-flow nodes; §9 here adds the sound-node semantics that file does not yet hold). [`landblock.md`](landblock.md) §4 (cells and their properties; §4.12 the camera's cell, which audio does not use, §10.8), §5 (block maps and descriptors). [`collision.md`](collision.md) §5.8.1 (which cell a point is in). [`script-runtime.md`](script-runtime.md) §6 and §12.4 (Switch re-evaluation, stopping a Run). [`environment.md`](environment.md) §3 (region descriptor), §6 and §11 (game clock). [`entity-descriptor.md`](entity-descriptor.md) (SED placement of 0x47 objects). [`setup.md`](setup.md) §3.1 (0x47 header). [`wstate.md`](wstate.md) (area, dungeon and landmark objects). [`install-layout.md`](install-layout.md) (the `[Sound]` section of the user preferences). Player-music instruments and the ABC dialect are out of scope (`instruments.md`, `abc-dialect.md`). |
 
@@ -69,6 +69,7 @@ property names) at run time, never by hard-coding.
 | BIN2 | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), repair session 2026-10-05.** Same build 4906.0071.1794.4035, address ranges only: the Sound node's start routine (its result codes, the internal-mute walk, the viewport redirect, the no-effects test, the volume floor), the sound manager's request function and the gate function it calls, the generic script-node runner (the routine that starts the children of a port, the routine that starts one node, the probability gate), the Random node's start routine, the client's WAV reader (which chunk tags it recognises), and the two routines that open Ogg payloads (decode at load, streaming) with the streaming refill and its loop rewind (which Vorbis-file library functions they call, in which order, with which arguments). **Questions:** what the original does with a node whose start fails (review item 6); the exact order and outcome of the request gates (§6.8); the source of §9.2 steps 2–4; whether `smpl` loop points are honoured (§3.4); which samples of an Ogg payload the original plays (§3.3.2, review item 2). **Why M1–M3 were not enough:** the data only show that 92 placeholder nodes exist and where they sit; how the runtime reacts to a failed start, and in which order requests are filtered, exist only as code; no running client is available (M3). Network, login, launcher, anti-tamper and voice-chat code were not examined. |
 | BIN3 | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), indoor-state session 2026-10-08.** Same build 4906.0071.1794.4035, address ranges only: the entity's property-source container (its five sources, their order and how a property is resolved across them), the cell property source (the routine that computes `Volume_IsOutside` and adds the cell's properties), the landblock property source and the landblock's two property holders (block map, landblock info), the physics component's position update and the listener dispatch it calls (which events fire on a landblock change, a cell change and every update), the static values for "no cell" and "outside", and the OpenAL device routine that uploads a reverb environment. **Questions:** how the original decides that the listener is indoors for ambient beds, reverb and music; where that state comes from; how changes are timed; how a reverb environment's intensity is applied. **Why M1–M3 were not enough:** no stored property set holds `Volume_IsOutside` (OBS2), so its rule exists only as code; the precedence between cell, landblock and monitor values and the moment of the change cannot be seen in the data; no running client is available (M3). Network, login, launcher, anti-tamper and voice-chat code were not examined. |
 | OBS2 | Observed in the user's install on 2026-10-08 (data unchanged since 2026-10-05) with throwaway probes in the dirty scratch directory: every node of the 7,524 decodable script tables (of 7,526) and all 28,992 scriptlets searched for Switches on `Volume_IsOutside` and related properties; the `Startup` scripts of 0x0700042E and 0x070017F8 and script 0x10000039 walked node by node; the include closures of all 14 avatar class tables; the property sets of all 104,271 cells and all 49,636 landblock-info records; all 1,618 0x78 and 383,332 0x79 property sets searched for `Volume_IsOutside`, `ForceOutside` and `Area_Music`; the 175 dungeon objects that cells name, read for `Dungeon_Music`. |
+| OBS3 | Observed in the user's install on 2026-10-08 (data unchanged since 2026-10-05) with throwaway probes in the dirty scratch directory: the Vorbis setup header of **all 40,874** Ogg payloads of the three archives parsed field by field (every codebook's used-entry count; every floor and residue book reference); the two streams that hold a codebook without a used entry decoded packet by packet (all 4,396 and 687 audio packets) with the released libvorbis 1.3.7 source built in the dirty scratch directory and instrumented to count, per audio packet, the residue classification chosen for every partition and every codebook read; all 45,544 sound infos searched for the payloads they name. |
 | REFDEC | The Xiph reference Vorbis libraries (general-purpose BSD-licensed software, not part of the game), driven by throwaway probes on 2026-10-05 over **all 40,874** Ogg payloads: libvorbis 1.3.7 of the dirty-room machine for the block size of every audio packet; and libogg 1.1 with libvorbis/libvorbisfile 1.0.1, built in the dirty scratch directory from Xiph's released source (the release whose version strings the install's library files carry), (a) decoding from the first page and (b) opened as a seekable source, seeked to sample 0, read up to the library's total length, the way BIN2 shows the client using it. The library source was read for its length computation (general engineering knowledge; nothing copied). |
 | VORBIS | The public Xiph Vorbis I specification (general knowledge): §4.3.1 (decoding an audio packet: packet type, mode, window; packet sizes and the overlap of consecutive blocks, so that a packet after the first yields one quarter of the previous plus one quarter of the current block size per channel) and Appendix A (Ogg encapsulation; a page's granule position is the sample position at the end of the last packet completed on it; the final granule position marks the last sample and may cut the last block short). |
 | RIFF | The public RIFF/WAVE and `fmt ` chunk description (general knowledge). |
@@ -87,6 +88,7 @@ always paired with an OPEN.
 | A4 | 15 Ogg streams end with a page that holds one zero-length packet, and their granules run 63–84 samples ahead of the decoded position; the empty packet yields no samples and must not fail the decode (§3.3.3) | OBS; REFDEC (all 15 decode without error to the length of A7); review probe (an independent general-purpose decoder returned the same counts) | Confirmed 2026-10-05. Replaces the earlier "truncated last audio packet" reading. |
 | A7 | Vorbis I stream length *N* = min(*G*, *T*), nothing cut at the start; granule census (§3.3.2) | OBS (40,874 of 40,874, packet by packet); REFDEC (a); VORBIS | Confirmed 2026-10-05 |
 | A9 | The original plays decoded samples *A* … *A* + min(*L*, *T* − *A*) − 1 (skipped lead *A* and length *L* from the setup page and the page after it), and loops over that range (§3.3.2) | BIN2 (the executable imports the file library's open, sample-seek, time-seek, raw-seek, info, length, read and clear functions; both storage-format paths open seekable, seek to sample 0, cap the read at the total length; loops seek to time 0); OBS (version strings of the three library files in the install); REFDEC (b) over all 40,874 streams | BIN; Inferred that the shipped files behave like the released 1.0.1 source (OPEN in §3.3.2) |
+| A10 | 2 of the 40,874 Ogg streams (0x0A0011DC, 0x0A016904) carry one sparse codebook each with no used entry (2 of 1,634,669 codebooks); it is a residue stage book (classification 2, pass 2, of both residues), and no audio packet of either stream chooses classification 2, so the book is never read; setup readers must accept it (§3.3.4) | OBS3 | Confirmed 2026-10-08 |
 | A5 | WAV payloads: PCM only (format tag 1), 16-bit (one 24-bit), 1–2 channels; chunk order varies (§3.4) | OBS (3,455 of 3,455; full decode) | Confirmed |
 | A6 | 8 RIFF/DMAP records are DirectMusic audio-path data, the targets of the MUSIC DID map (§3.5) | OBS; `records.md` §9.2 | Confirmed |
 | A8 | WAV loop points are not used: the client's WAV reader recognises only the `RIFF`, `WAVE`, `fmt ` and `data` tags; 5 files carry `smpl`, 2 of them with one forward loop, one of those behind a looping sound info (§3.4) | BIN2; OBS (all 3,455 WAV payloads, all 45,544 sound infos) | BIN / Confirmed census |
@@ -322,6 +324,49 @@ empty packet for a truncated audio packet.
 > in particular whether in (5) they play from sample 0 (*A* = 0, *M* = *N*) instead.
 > Synthetic tests pin (1)–(5) (`crates/audio/tests/decode_synthetic.rs`, `open_case_*`).
 
+<a id="s3-3-4"></a>
+#### 3.3.4 Codebook with no used entry (Confirmed, 2 streams; A10)
+
+Terms (VORBIS §3.2.1, §8.6.2): a codebook is **sparse** when its header marks each entry as
+used or unused; an unused entry has no codeword. A residue (VORBIS §8) assigns each
+partition a **classification**, chosen by the codewords of its classification book in pass
+0; for every pass whose bit is set in that classification's cascade bitmap, the partition's
+values are read with the stage book the header names for that classification and pass.
+
+Census over the setup headers of all 40,874 Ogg payloads (OBS3):
+
+| Property | Observed |
+|---|---|
+| Codebooks in all setup headers | 1,634,669 |
+| Streams with at least one sparse codebook | 40,874 (every stream) |
+| Codebooks with no used entry | 2: one in each of 2 streams |
+| Streams | 0x0A0011DC and 0x0A016904, both in `client_sound.dat`, storage format 2, stereo, 16,000 Hz, block sizes 9/10 (log2), about 134 s and 21 s |
+| The book | number 22 of the stream's 35; sparse, 625 entries, all unused; 4 dimensions; lookup type 1 |
+| Where it is named | as the stage book of classification 2, pass 2, in both residues of the stream (both type 2, partition size 32, 10 classifications; classification 2 has the cascade bitmap 4, so pass 2 is its only stage). It is not named by any floor, by any classification book, or by any other stage |
+| Can the classification book select classification 2? | yes: both classification books of each stream (2 dimensions, 100 entries, all used) have entries whose code includes classification 2 |
+| Partitions that choose classification 2 | 0 in all 4,396 audio packets of 0x0A0011DC and all 687 of 0x0A016904 (both residues); classifications 1 and 3–8 occur in both streams, 0 and 9 only in 0x0A0011DC |
+| Reads from the book | 0 (also no read from any other codebook without a used entry) |
+| Sound infos behind the streams | 0x0A0011DC: one, flags 0; 0x0A016904: two, flags 0 and 0x05 (looping, positional) |
+
+So the stream's audio never reads the book. (Inferred: the setup header carries a
+placeholder stage that the encoder never selected.) Both streams decode without error with the reference
+library (REFDEC: release 1.0.1 and 1.3.7) to the lengths of §3.3.2.
+
+Rules:
+
+- A setup reader must accept a sparse codebook with no used entry (and build no codeword
+  tree for it) instead of failing the stream; both streams are named by sound infos like any
+  other payload.
+- No audio packet in this install reads such a book. What the shipped 1.0.1 libraries do
+  when a packet does is not known (OPEN below). **Tessera (Decision):** a decoder may handle
+  such a read in any way that cannot panic, read past the packet or affect other packets
+  (for example, treat it as the end of that packet's residue data, or give the book a
+  placeholder codeword); the choice cannot change the output for the data of this install.
+
+> **OPEN:** What the client's Vorbis 1.0.1 libraries do when an audio packet reads a stage
+> book that has no used entry (the 1.3.7 source, read as general knowledge, adds nothing
+> and reads no bits for such a residue read). Moot in this install: no packet does it.
+
 <a id="s3-4"></a>
 ### 3.4 RIFF WAVE payloads (Confirmed, 3,455 of 3,455)
 
@@ -372,7 +417,8 @@ does not use them (BIN). A reader classifies these records as "not audio" and sk
 | RIFF DMAP | 8 | not audio | §3.5 |
 
 All 44,329 audio payloads decode (ROADMAP M6 exit criterion 1), provided the rules of
-§3.3.2–§3.3.3 (length, empty packet) and §3.4 (chunk walk) are followed.
+§3.3.2–§3.3.4 (length, empty packet, codebook with no used entry) and §3.4 (chunk walk) are
+followed.
 
 ---
 
@@ -1605,6 +1651,7 @@ absent); the `Startup` Switch changes branch on steps 1 and 3 only.
 | SN2 | 0x0A: the data starts with `OggS`, `RIFF…WAVE` or `RIFF…DMAP`; storage format ∈ {2, 3, 7}; 7 exactly for DMAP. |
 | SN3 | Ogg: one logical stream; first page is beginning-of-stream, last page is end-of-stream; every CRC is valid; granules non-decreasing and never −1; no trailing bytes; Vorbis I version 0; 1 or 2 channels. |
 | SN3a | Ogg: a Vorbis I decoder started at the first page yields exactly *N* = min(*G*, *T*) samples per channel; *A* + *M* ≤ *T* in every stream (§3.3.2); no first audio page that is not also the last has a granule below *D*(page); zero-length packets occur only as the sole packet of a stream's last page. |
+| SN3b | Ogg: every codebook with no used entry is sparse and is named only as a residue stage book, and no audio packet chooses a classification whose stage reads it (§3.3.4). |
 | SN4 | WAV: RIFF size = *S* − 8; PCM; block align = channels × bits/8; the chunk walk ends exactly at *S*. |
 | SI1 | 0x2A: 32 fixed bytes + Pascal string, nothing after; the payload DID exists and is audio (never DMAP). |
 | SI2 | 0x2A: `unused_a` = `unused_b` = −1.0; 0 ≤ `priority` ≤ 1; `max_distance` > 0. |
@@ -1798,6 +1845,8 @@ edited here):
 22. Whether the sound manager ramps a reverb intensity change (§10.8.5).
 23. Whether location properties are computed before or after an entity's start-up scripts
     (§10.8.6 step 8).
+24. What the shipped Vorbis 1.0.1 libraries do when a packet reads a stage book with no used
+    entry (§3.3.4; moot in this install).
 
 Resolved in the revision of 2026-10-08: the player's indoor state and its timing (§10.8);
 reverb intensity (§10.8.5); precedence of cell over block-map values and the per-property rule
@@ -1818,3 +1867,4 @@ truncated (§3.3.2–§3.3.3).
 | 2026-10-05 | Revision after review (changes requested), status stays Review. Header: the client-internal class name quoted in the review record redacted. §1: new tags BIN2 and REFDEC, new rows A7, A8, A9, I4, P7, N3, N4, M5, M6, M7; A4 rewritten. §3.1, §3.5, §4.3, §5, §6.3, §6.6, §6.8, §9.2, §10.3.2, §10.3.5, §10.6: every inline unknown turned into a `> **OPEN:**` callout with a Decision. §3.3.2–§3.3.3 rewritten: the Vorbis I length *N* = min(*G*, *T*) with a granule census over all 40,874 streams ("every stream starts at granule 0" replaced by the checked properties), and one normative played range, the original's (skipped lead *A*, length *L*, *M* = min(*L*, *T* − *A*)), derived from how the client drives its shipped Vorbis 1.0.1 libraries (BIN2) and confirmed over all streams with the released 1.0.1 source; the 15 "truncated" streams in fact end with a zero-length packet and run 63–84 samples ahead in their granules, so nothing is zero-filled and no packet is dropped. §3.4: chunk counts corrected (`ovwf`, `elmo` in 3 files each; first-chunk split), `smpl` facts corrected (5 files, 2 with a loop, one of them behind a looping sound info) and the OPEN resolved (loop points not used, BIN2). §4.3: loop-flag median length corrected to 62.6 s (64.2 s over distinct payloads). §6.8: renumbered in check order and completed from BIN2 (filter, 250-request bound, suppression table, DID range, voice limit, gate codes, exclusive-channel queueing). §9.2 steps 1–4 made precise (BIN2); new §9.6 (outcome of a node start) and correction X8 for `script-table.md`. §10.3.2: per-region census with palettes and out-of-range indices. §10.3.3 rewritten (race-labelled scripts, no race logic needed). §10.3.4: client-internal class name removed. §10.7: Run-node census completed. §12.2, §13 (SN3a), new §14.5–§14.6, §17 updated. |
 | 2026-10-06 | §9.3: one-line cross-reference to `script-runtime.md` §4 added; no fact changed here (the correction is recorded there as X1). |
 | 2026-10-08 | Revision (status Revised): new §10.8 "Indoors and outdoors: the player's location properties" from BIN3 (build 4906.0071.1794.4035: location property sources and their priority, the cell source computing `Volume_IsOutside` and adding the cell's properties, the position-update events, the landblock property holders, the reverb upload) and OBS2 (all script records, all cells and landblock-info sets, 0x78/0x79 sets, avatar closures). New provenance tags BIN3 and OBS2 and rows V1–V8. Corrections: §10.3.2 (cells carry `Ambient_MusicType`, not `Ambient_SoundEnum_BlockMapOverride`; 36 of the 37 "game-logic" case values are held by cells; the cell/monitor Decision replaced by the per-property rule; implementer OPEN answered); §8 (intensity OPEN answered: reverb gain); §10.1 and §10.7 (the `Startup` script of 0x0700042E); §10.2 rows; §10.3.4 and §10.3.5 OPENs answered in part; §12.4 step 2 (avatar's cell, not the camera's); §13 (IO1–IO5); §16 (S-6 proposed); §17 items 11, 14, 16, 17, 20–23. |
+| 2026-10-08 | Revision (status Revised): new §3.3.4 (sparse codebook with no used entry in 2 of 40,874 streams, a residue stage book that no audio packet reads; setup readers must accept it; Tessera Decision and OPEN for a packet that would read it), new tag OBS3 (setup-header census over all Ogg payloads, instrumented reference decode of the two streams), row A10, invariant SN3b; §3.6 cites §3.3.4; §17 item 24. No layout changed. |

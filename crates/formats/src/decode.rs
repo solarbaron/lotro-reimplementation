@@ -188,3 +188,17 @@ pub fn decode_landblock_group(data: &[u8]) -> Result<LandblockGroupRecord> {
 pub fn decode_region_descriptor(data: &[u8]) -> Result<RegionDescriptor> {
     RegionDescriptor::parse(data)
 }
+
+/// Decodes a font record (prefix 0x42; `fonts.md` §3).
+pub fn decode_font(data: &[u8]) -> Result<crate::font::Font> {
+    crate::font::Font::parse(data)
+}
+
+/// Decodes a UI layout record (prefix 0x22; `ui-layout.md` §4) with `schema` typing the
+/// embedded property sets.
+pub fn decode_ui_layout<S: PropertySchema + ?Sized>(
+    data: &[u8],
+    schema: &S,
+) -> Result<crate::ui_layout::UiLayout> {
+    crate::ui_layout::UiLayout::parse(data, schema)
+}

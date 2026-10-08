@@ -372,6 +372,8 @@ pub struct WalkerEvents {
     pub screenshot: bool,
     /// The scripted flight reached its end.
     pub flight_done: bool,
+    /// A `menu` press the game UI declined (only while a UI is attached).
+    pub menu: bool,
 }
 
 /// The walker (module docs).
@@ -415,6 +417,10 @@ pub struct Walker {
     player_region: u8,
     /// Main-thread time of the character layer this frame (events, figures, animation).
     chars_ms: f64,
+    /// Draw the HUD text (`walker_hud`, `walker.md` §6).
+    show_hud: bool,
+    /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
+    show_minimap: bool,
 }
 
 impl std::fmt::Debug for Walker {
@@ -584,6 +590,54 @@ impl Walker {
             char_draws: Vec::new(),
             player_region: config_region,
             chars_ms: 0.0,
+            show_hud: true,
+            show_minimap: true,
+        })
+    }
+
+    /// The input mapper and its clock (the game UI's step 1, `crate::ui_host`).
+    pub fn mapper_mut(&mut self) -> (&mut tessera_input::InputMapper, std::time::Duration) {
+        self.controls.mapper_mut()
+    }
+
+    /// Attaches or detaches a game UI: Escape then gives `menu` to the UI and game code
+    /// instead of quitting, and the overlays follow `hud` and `minimap` (`walker.md`
+    /// §5–§6; they draw under the UI pass, which is recorded after [`Walker::draw`]).
+    pub fn set_ui_attached(&mut self, on: bool, hud: bool, minimap: bool) {
+        self.controls.set_ui_attached(on);
+        // The help line names `menu` "menu" while a UI is attached (`walker.md` §5).
+        self.help = if on {
+            match self.help.strip_suffix(" quit") {
+                Some(rest) => format!("{rest} menu"),
+                None => self.help.clone(),
+            }
+        } else {
+            match self.help.strip_suffix(" menu") {
+                Some(rest) => format!("{rest} quit"),
+                None => self.help.clone(),
+            }
+        };
+        self.show_hud = hud;
+        self.show_minimap = minimap;
+    }
+
+    /// The viewer's minimap input for the game UI (`game-panels.md` §8.3): region,
+    /// landblock, global coordinates and compass heading; area and coordinate labels are
+    /// not filled yet. `None` before the viewer is placed.
+    #[must_use]
+    pub fn radar_input(&self) -> Option<tessera_ui::game::radar::RadarInput> {
+        let pos = self.focus()?;
+        let key = pos.landblock()?;
+        let compass = (90.0 - self.controls.heading().to_degrees()).rem_euclid(360.0);
+        Some(tessera_ui::game::radar::RadarInput {
+            region: pos.region,
+            x: key.x(),
+            y: key.y(),
+            cell: 0,
+            global: (pos.x as f32, pos.y as f32),
+            heading: compass,
+            has_player: true,
+            ..tessera_ui::game::radar::RadarInput::default()
         })
     }
 
@@ -720,6 +774,7 @@ impl Walker {
         let ground = |gx: f64, gy: f64| tiles.height_at(gx, gy);
         let ce = self.controls.frame(dt, &ground);
         events.quit = ce.quit;
+        events.menu = ce.menu;
         events.screenshot = ce.screenshot;
         if ce.toggle_debug {
             self.detail = !self.detail;
@@ -1312,8 +1367,10 @@ impl Walker {
                 .clear(SKY);
         }
         let overlay = frame.pass("walker-hud", PassSpace::Screen);
-        self.hud.draw(overlay, 10.0, 10.0);
-        if let (Some(pos), Some(anchor)) = (self.focus(), self.anchor) {
+        if self.show_hud {
+            self.hud.draw(overlay, 10.0, 10.0);
+        }
+        if let (true, Some(pos), Some(anchor)) = (self.show_minimap, self.focus(), self.anchor) {
             let size = (h as f32 * 0.3).clamp(120.0, 320.0);
             let view = MinimapView {
                 x: w as f32 - size - 14.0,

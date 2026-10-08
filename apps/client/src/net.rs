@@ -42,6 +42,32 @@ pub struct ChatLine {
     pub sender: String,
     /// Text.
     pub text: String,
+    /// The line's chat type for the game UI's chat window (`chat-window.md` §2): 5 `Say`,
+    /// 6 `Tell`, 8 `Log` for the session's system lines (`chat-window.md` §10 item 2), 4
+    /// `Standard` for the other channels.
+    pub chat_type: u32,
+}
+
+impl ChatLine {
+    /// A line from the session's `channel`.
+    #[must_use]
+    pub fn from_channel(channel: &ChatChannel, sender: Option<&str>, text: &str) -> Self {
+        let chat_type = match channel {
+            ChatChannel::Say => 5,
+            ChatChannel::Tell { .. } => 6,
+            ChatChannel::System => 8,
+            _ => 4,
+        };
+        Self {
+            sender: sender.unwrap_or_default().to_owned(),
+            text: text.to_owned(),
+            chat_type: if sender.is_none_or(str::is_empty) && chat_type != 6 {
+                8
+            } else {
+                chat_type
+            },
+        }
+    }
 }
 
 /// The player's precise position, from the latest location report.
@@ -402,10 +428,8 @@ impl World {
                     sender = sender.as_deref().unwrap_or("-"),
                     "net chat: {text}"
                 );
-                self.chat.push(ChatLine {
-                    sender: sender.clone().unwrap_or_default(),
-                    text: text.clone(),
-                });
+                self.chat
+                    .push(ChatLine::from_channel(channel, sender.as_deref(), text));
             }
             Event::LocationReport {
                 id,

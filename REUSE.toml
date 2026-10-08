@@ -4,7 +4,8 @@
 # `SPDX-License-Identifier` header (tools/check-spdx.sh); this annotation adds the copyright
 # notice and covers files that cannot hold a comment (Cargo.lock, golden PNGs, JSON).
 # Third-party material must never be committed (docs/CLEAN_ROOM.md, CLAUDE.md "Content
-# rules"); if an original CC0 asset is ever added, give it its own annotation here.
+# rules"); if an original CC0 asset is ever added, give it its own annotation here. The one
+# recorded exception is the UI fallback font below (decision 0022, docs/LEGAL.md §11).
 version = 1
 
 [[annotations]]
@@ -12,3 +13,12 @@ path = "**"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "The Tessera contributors"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Noto Sans Regular, bundled unmodified as the UI fallback font (decision 0022). It stays
+# under the SIL Open Font License 1.1 (LICENSES/OFL-1.1.txt). OFL.txt beside it is the copy
+# of the licence and copyright notice that came with the font (OFL condition 2).
+[[annotations]]
+path = ["crates/ui/assets/fonts/NotoSans-Regular.ttf", "crates/ui/assets/fonts/OFL.txt"]
+precedence = "override"
+SPDX-FileCopyrightText = "The Noto Project Authors"
+SPDX-License-Identifier = "OFL-1.1"

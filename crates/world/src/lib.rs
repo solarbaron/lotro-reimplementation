@@ -59,6 +59,7 @@ pub mod ring;
 pub mod source;
 pub mod streamer;
 pub mod testkit;
+pub mod ui_maps;
 
 pub use areas::{AreaName, AreaNameSource, FixedAreaNames, WStateAreaNames};
 pub use bundle::{

@@ -320,6 +320,8 @@ pub struct Frame {
     pub(crate) serial: u64,
     /// Skinning palettes of this frame, uploaded by `end_frame`.
     pub(crate) palettes: PaletteData,
+    /// UI passes, software cursor and non-sRGB view (`crate::ui`).
+    pub(crate) ui: crate::ui::FrameUi,
 }
 
 impl Frame {

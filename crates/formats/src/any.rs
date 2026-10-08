@@ -6,6 +6,7 @@ use crate::did::{Did, DidKind};
 use crate::did_map::DataIdMap;
 use crate::enum_mapper::EnumMapper;
 use crate::error::Result;
+use crate::font::Font;
 use crate::property::{PropertyDictionary, PropertySchema};
 use crate::record::Record;
 use crate::script_table::{ScriptTable, Scriptlet};
@@ -14,6 +15,7 @@ use crate::sound::SoundRecord;
 use crate::string_table::StringTable;
 use crate::surface::Surface;
 use crate::texture_list::TextureList;
+use crate::ui_layout::UiLayout;
 
 /// Any record this crate can decode, selected by the DID's type prefix (spec §2.1).
 ///
@@ -48,6 +50,10 @@ pub enum AnyRecord<'a> {
     ScriptTable(ScriptTable),
     /// 0x0C: scriptlet (only from [`AnyRecord::decode_with_schema`]).
     Scriptlet(Scriptlet),
+    /// 0x42: font.
+    Font(Font),
+    /// 0x22: UI layout (only from [`AnyRecord::decode_with_schema`]).
+    UiLayout(UiLayout),
 }
 
 impl<'a> AnyRecord<'a> {
@@ -74,6 +80,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::Appearance => {
                 Self::Appearance(AppearanceRecord::parse_expecting(payload, did)?)
             }
+            DidKind::Font => Self::Font(Font::parse_expecting(payload, did)?),
             _ => return Ok(None),
         }))
     }
@@ -96,6 +103,7 @@ impl<'a> AnyRecord<'a> {
             DidKind::Scriptlet => {
                 Self::Scriptlet(Scriptlet::parse_expecting(payload, did, schema)?)
             }
+            DidKind::UiLayout => Self::UiLayout(UiLayout::parse_expecting(payload, did, schema)?),
             _ => return Self::decode(did, payload),
         }))
     }
@@ -104,7 +112,11 @@ impl<'a> AnyRecord<'a> {
     #[must_use]
     pub fn is_decodable_with_schema(did: impl Into<Did>) -> bool {
         let did = did.into();
-        Self::is_decodable(did) || matches!(did.kind(), DidKind::ScriptTable | DidKind::Scriptlet)
+        Self::is_decodable(did)
+            || matches!(
+                did.kind(),
+                DidKind::ScriptTable | DidKind::Scriptlet | DidKind::UiLayout
+            )
     }
 
     /// Whether [`AnyRecord::decode`] has a decoder for this DID's prefix.
@@ -122,6 +134,7 @@ impl<'a> AnyRecord<'a> {
                 | DidKind::VisualTemplate
                 | DidKind::Setup
                 | DidKind::Appearance
+                | DidKind::Font
         )
     }
 
@@ -141,6 +154,8 @@ impl<'a> AnyRecord<'a> {
             Self::Appearance(r) => r.did(),
             Self::ScriptTable(r) => r.did,
             Self::Scriptlet(r) => r.did,
+            Self::Font(r) => r.did(),
+            Self::UiLayout(r) => r.did(),
         }
     }
 
@@ -160,6 +175,8 @@ impl<'a> AnyRecord<'a> {
             Self::Appearance(_) => AppearanceRecord::NAME,
             Self::ScriptTable(_) => ScriptTable::NAME,
             Self::Scriptlet(_) => Scriptlet::NAME,
+            Self::Font(_) => Font::NAME,
+            Self::UiLayout(_) => crate::ui_layout::NAME,
         }
     }
 }

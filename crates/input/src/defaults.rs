@@ -13,54 +13,131 @@ use crate::device::AnalogAxis;
 use crate::keymap::{BindingSpec, Keymap};
 use crate::mapper::InputMapper;
 
-/// Context names and priorities.
+/// Context names and priorities (`keymap.md` §8).
 pub mod contexts {
-    /// Always-on commands (menu, screenshot, mode toggles). Priority 0.
+    /// Always-on commands (menu, screenshot, mode toggles). Game band, 0.
     pub const GLOBAL: &str = "global";
-    /// Camera look and zoom. Priority 10.
+    /// Camera look and zoom. Game band, 10.
     pub const CAMERA: &str = "camera";
-    /// Walking. Priority 20.
+    /// Walking. Game band, 20.
     pub const MOVEMENT: &str = "movement";
-    /// Free flight; active instead of or above movement. Priority 30.
+    /// Free flight; active instead of or above movement. Game band, 30.
     pub const FLY: &str = "fly";
-    /// Text entry (chat line); opaque, receives text. Priority 100.
+    /// The pointer actions (clicks, taps, double clicks). Game band, 40,
+    /// pass-through; activated by the client when it attaches a UI.
+    pub const POINTER: &str = "pointer";
+    /// Text entry (`EditControls`). UI band, priority 100 for `activate`;
+    /// `opaque_keys`, receives text.
     pub const TEXT_ENTRY: &str = "text_entry";
+    /// Dialog navigation (`DialogBoxes`). UI band.
+    pub const UI_DIALOG: &str = "ui.dialog";
+    /// Clipboard keys in text fields (`CopyAndPasteControls`). UI band.
+    pub const UI_CLIPBOARD: &str = "ui.clipboard";
+    /// Wheel over scrollables (`ScrollableControls_Mouse`). UI band.
+    pub const UI_SCROLL_MOUSE: &str = "ui.scroll_mouse";
+    /// Scrollable widgets (`ScrollableControls`). UI band; binds nothing.
+    pub const UI_SCROLL: &str = "ui.scroll";
+    /// Keyboard eater (`EatKeyboardInput`). UI band, `opaque_keys`; binds
+    /// nothing.
+    pub const UI_EAT_KEYBOARD: &str = "ui.eat_keyboard";
+    /// The chat log's paging keys (Tessera context). UI band.
+    pub const UI_CHAT_LOG: &str = "ui.chat_log";
 }
 
-/// The built-in actions and their kinds, `(name, def)`.
+/// The built-in actions, in registration order (§7.2.1 orders events of one
+/// context by it).
 fn action_defs() -> Vec<ActionDef> {
     let sub = ModifierPolicy::Subset;
+    let b = ActionDef::button;
     vec![
         // global
-        ActionDef::button("menu"),
-        ActionDef::button("screenshot"),
-        ActionDef::button("toggle_fly"),
-        ActionDef::button("toggle_debug"),
-        ActionDef::button("open_chat"),
+        b("menu"),
+        b("screenshot"),
+        b("toggle_fly"),
+        b("toggle_debug"),
+        b("open_chat"),
         // camera
-        ActionDef::button("mouselook").with_modifiers(sub),
+        b("mouselook").with_modifiers(sub),
         ActionDef::axis("look_x"),
         ActionDef::axis("look_y"),
         ActionDef::axis("zoom"),
-        ActionDef::button("reset_camera"),
+        b("reset_camera"),
         // movement
         ActionDef::axis("move_forward"),
         ActionDef::axis("strafe"),
         ActionDef::axis("turn"),
-        ActionDef::button("jump").with_modifiers(sub),
-        ActionDef::button("walk").with_modifiers(sub),
-        ActionDef::button("autorun").with_modifiers(sub),
+        b("jump").with_modifiers(sub),
+        b("walk").with_modifiers(sub),
+        b("autorun").with_modifiers(sub),
         // fly
         ActionDef::axis("fly_vertical"),
-        ActionDef::button("fly_boost").with_modifiers(sub),
-        ActionDef::button("fly_slow").with_modifiers(sub),
+        b("fly_boost").with_modifiers(sub),
+        b("fly_slow").with_modifiers(sub),
         ActionDef::axis("fly_speed"),
-        // text entry
-        ActionDef::button("text_submit"),
-        ActionDef::button("text_cancel"),
-        ActionDef::button("text_backspace"),
-        ActionDef::button("text_history_prev"),
-        ActionDef::button("text_history_next"),
+        // pointer (decision 0014 D2)
+        b("select_left").with_modifiers(sub),
+        b("select_double_left").with_modifiers(sub),
+        b("tap_left").with_modifiers(sub),
+        b("select_right").with_modifiers(sub),
+        b("select_double_right").with_modifiers(sub),
+        b("select_middle").with_modifiers(sub),
+        b("select_double_middle").with_modifiers(sub),
+        b("tap_right").with_modifiers(sub),
+        b("tap_middle").with_modifiers(sub),
+        // ui.scroll_mouse
+        b("scroll_up").with_modifiers(sub),
+        b("scroll_down").with_modifiers(sub),
+        // ui.dialog
+        b("focus_next").with_repeat(true),
+        b("focus_prev").with_repeat(true),
+        b("focus_left").with_repeat(true),
+        b("focus_right").with_repeat(true),
+        b("focus_up").with_repeat(true),
+        b("focus_down").with_repeat(true),
+        // text_entry and ui.chat_log
+        b("text_char_left").with_modifiers(sub).with_repeat(true),
+        b("text_char_right").with_modifiers(sub).with_repeat(true),
+        b("text_word_left").with_modifiers(sub).with_repeat(true),
+        b("text_word_right").with_modifiers(sub).with_repeat(true),
+        b("text_line_up").with_modifiers(sub).with_repeat(true),
+        b("text_line_down").with_modifiers(sub).with_repeat(true),
+        b("text_page_up").with_modifiers(sub).with_repeat(true),
+        b("text_page_down").with_modifiers(sub).with_repeat(true),
+        b("text_line_start").with_modifiers(sub),
+        b("text_line_end").with_modifiers(sub),
+        b("text_doc_start").with_modifiers(sub),
+        b("text_doc_end").with_modifiers(sub),
+        b("text_backspace").with_modifiers(sub).with_repeat(true),
+        b("text_delete").with_modifiers(sub).with_repeat(true),
+        // ui.clipboard
+        b("text_copy"),
+        b("text_cut"),
+        b("text_paste"),
+    ]
+}
+
+/// The built-in contexts (§8).
+fn context_defs() -> Vec<ContextDef> {
+    use contexts::{
+        CAMERA, FLY, GLOBAL, MOVEMENT, POINTER, TEXT_ENTRY, UI_CHAT_LOG, UI_CLIPBOARD, UI_DIALOG,
+        UI_EAT_KEYBOARD, UI_SCROLL, UI_SCROLL_MOUSE,
+    };
+    vec![
+        ContextDef::new(GLOBAL, 0),
+        ContextDef::new(CAMERA, 10),
+        ContextDef::new(MOVEMENT, 20),
+        ContextDef::new(FLY, 30),
+        ContextDef::new(POINTER, 40).pass_through(),
+        ContextDef::new(TEXT_ENTRY, 100)
+            .ui()
+            .with_opaque_keys()
+            .with_text(),
+        ContextDef::new(UI_DIALOG, 0).ui(),
+        ContextDef::new(UI_CLIPBOARD, 0).ui(),
+        ContextDef::new(UI_SCROLL_MOUSE, 0).ui(),
+        ContextDef::new(UI_SCROLL, 0).ui(),
+        ContextDef::new(UI_EAT_KEYBOARD, 0).ui().with_opaque_keys(),
+        ContextDef::new(UI_CHAT_LOG, 0).ui(),
     ]
 }
 
@@ -68,16 +145,7 @@ fn action_defs() -> Vec<ActionDef> {
 #[must_use]
 pub fn default_registry() -> Registry {
     let mut r = Registry::new();
-    let contexts = [
-        ContextDef::new(contexts::GLOBAL, 0),
-        ContextDef::new(contexts::CAMERA, 10),
-        ContextDef::new(contexts::MOVEMENT, 20),
-        ContextDef::new(contexts::FLY, 30),
-        ContextDef::new(contexts::TEXT_ENTRY, 100)
-            .opaque()
-            .with_text(),
-    ];
-    for c in contexts {
+    for c in context_defs() {
         // Built-in names are valid and unique; a failure would be a bug
         // caught by the tests, never by users.
         if let Err(e) = r.add_context(c) {
@@ -95,9 +163,13 @@ pub fn default_registry() -> Registry {
 /// Built-in default bindings, as `(context, action, bindings)`.
 #[allow(clippy::type_complexity)]
 fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
-    use Entry::{A, D, V};
-    use contexts::{CAMERA, FLY, GLOBAL, MOVEMENT, TEXT_ENTRY};
-    vec![
+    use crate::chord::Activation::{DoubleNearby, Tap};
+    use Entry::{A, D, O, V};
+    use contexts::{
+        CAMERA, FLY, GLOBAL, MOVEMENT, POINTER, TEXT_ENTRY, UI_CHAT_LOG, UI_CLIPBOARD, UI_DIALOG,
+        UI_SCROLL_MOUSE,
+    };
+    let mut t = vec![
         (GLOBAL, "menu", vec![D("Escape")]),
         (GLOBAL, "screenshot", vec![D("PrintScreen"), D("F12")]),
         (GLOBAL, "toggle_fly", vec![D("Ctrl+F")]),
@@ -165,16 +237,85 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (FLY, "fly_boost", vec![D("Shift")]),
         (FLY, "fly_slow", vec![D("Alt")]),
         (FLY, "fly_speed", vec![A("WheelY", 1.0, 0.0)]),
+        // Pointer and UI actions (§8, decision 0014 D2).
+        (POINTER, "select_left", vec![D("MouseLeft")]),
         (
-            TEXT_ENTRY,
-            "text_submit",
-            vec![D("Enter"), D("NumpadEnter")],
+            POINTER,
+            "select_double_left",
+            vec![O("MouseLeft", DoubleNearby)],
         ),
-        (TEXT_ENTRY, "text_cancel", vec![D("Escape")]),
+        (POINTER, "tap_left", vec![O("MouseLeft", Tap)]),
+        (POINTER, "select_right", vec![O("MouseRight", Tap)]),
+        (
+            POINTER,
+            "select_double_right",
+            vec![O("MouseRight", DoubleNearby)],
+        ),
+        (POINTER, "select_middle", vec![]),
+        (POINTER, "select_double_middle", vec![]),
+        (POINTER, "tap_right", vec![]),
+        (POINTER, "tap_middle", vec![]),
+        (UI_SCROLL_MOUSE, "scroll_up", vec![D("WheelUp")]),
+        (UI_SCROLL_MOUSE, "scroll_down", vec![D("WheelDown")]),
+        (UI_DIALOG, "focus_next", vec![D("Tab")]),
+        (UI_DIALOG, "focus_prev", vec![D("Shift+Tab")]),
+        (UI_DIALOG, "focus_left", vec![D("Left")]),
+        (UI_DIALOG, "focus_right", vec![D("Right")]),
+        (UI_DIALOG, "focus_up", vec![D("Up")]),
+        (UI_DIALOG, "focus_down", vec![D("Down")]),
+        (UI_DIALOG, "menu", vec![D("Escape")]),
+        (TEXT_ENTRY, "menu", vec![D("Escape")]),
+        (TEXT_ENTRY, "open_chat", vec![D("Enter"), D("NumpadEnter")]),
+        (TEXT_ENTRY, "text_char_left", vec![D("Left")]),
+        (TEXT_ENTRY, "text_char_right", vec![D("Right")]),
+        (TEXT_ENTRY, "text_line_up", vec![D("Up")]),
+        (TEXT_ENTRY, "text_line_down", vec![D("Down")]),
+        (TEXT_ENTRY, "text_line_start", vec![D("Home")]),
+        (TEXT_ENTRY, "text_line_end", vec![D("End")]),
         (TEXT_ENTRY, "text_backspace", vec![D("Backspace")]),
-        (TEXT_ENTRY, "text_history_prev", vec![D("Up")]),
-        (TEXT_ENTRY, "text_history_next", vec![D("Down")]),
-    ]
+        (TEXT_ENTRY, "text_delete", vec![D("Delete")]),
+        (
+            UI_CLIPBOARD,
+            "text_copy",
+            vec![D("Ctrl+C"), D("Ctrl+Insert")],
+        ),
+        (
+            UI_CLIPBOARD,
+            "text_cut",
+            vec![D("Ctrl+X"), D("Shift+Delete")],
+        ),
+        (
+            UI_CLIPBOARD,
+            "text_paste",
+            vec![D("Ctrl+V"), D("Shift+Insert")],
+        ),
+    ];
+    // Shared by text_entry and ui.chat_log.
+    for ctx in [TEXT_ENTRY, UI_CHAT_LOG] {
+        t.push((ctx, "text_page_up", vec![D("PageUp")]));
+        t.push((ctx, "text_page_down", vec![D("PageDown")]));
+        t.push((
+            ctx,
+            "text_doc_start",
+            vec![D("Ctrl+Home"), D("Ctrl+Shift+Home")],
+        ));
+        t.push((
+            ctx,
+            "text_doc_end",
+            vec![D("Ctrl+End"), D("Ctrl+Shift+End")],
+        ));
+    }
+    t.push((
+        TEXT_ENTRY,
+        "text_word_left",
+        vec![D("Ctrl+Left"), D("Ctrl+Shift+Left")],
+    ));
+    t.push((
+        TEXT_ENTRY,
+        "text_word_right",
+        vec![D("Ctrl+Right"), D("Ctrl+Shift+Right")],
+    ));
+    t
 }
 
 enum Entry {
@@ -182,11 +323,14 @@ enum Entry {
     D(&'static str),
     /// Digital with a value.
     V(&'static str, f32),
+    /// Digital with an activation filter (`on`).
+    O(&'static str, crate::chord::Activation),
     /// Analog `(axis, scale, deadzone)`.
     A(&'static str, f32, f32),
 }
 
-/// The built-in default keymap (every built-in action bound).
+/// The built-in default keymap (every built-in action listed; the unbound
+/// pointer actions of §8 with empty lists).
 #[must_use]
 pub fn default_keymap() -> Keymap {
     let mut k = Keymap::new();
@@ -198,6 +342,10 @@ pub fn default_keymap() -> Keymap {
                 Entry::V(t, v) => crate::Chord::parse(t)
                     .ok()
                     .map(|c| BindingSpec::digital(c, v)),
+                Entry::O(t, on) => crate::Chord::parse(t)
+                    .and_then(|c| c.with_activation(on))
+                    .ok()
+                    .map(BindingSpec::chord),
                 Entry::A(a, s, d) => {
                     AnalogAxis::from_name(a).map(|axis| BindingSpec::analog(axis, s, d))
                 }
@@ -239,11 +387,111 @@ pub struct StandardActions {
     pub fly_boost: ActionId,
     pub fly_slow: ActionId,
     pub fly_speed: ActionId,
-    pub text_submit: ActionId,
-    pub text_cancel: ActionId,
+    /// The pointer context (§8); not touched by the mode helpers.
+    pub pointer: ContextId,
     pub text_backspace: ActionId,
-    pub text_history_prev: ActionId,
-    pub text_history_next: ActionId,
+}
+
+/// Ids of the built-in UI contexts and pointer and UI actions (§8), looked
+/// up once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub struct UiActions {
+    pub pointer: ContextId,
+    pub text_entry: ContextId,
+    pub ui_dialog: ContextId,
+    pub ui_clipboard: ContextId,
+    pub ui_scroll_mouse: ContextId,
+    pub ui_scroll: ContextId,
+    pub ui_eat_keyboard: ContextId,
+    pub ui_chat_log: ContextId,
+    pub select_left: ActionId,
+    pub select_double_left: ActionId,
+    pub tap_left: ActionId,
+    pub select_right: ActionId,
+    pub select_double_right: ActionId,
+    pub select_middle: ActionId,
+    pub select_double_middle: ActionId,
+    pub tap_right: ActionId,
+    pub tap_middle: ActionId,
+    pub scroll_up: ActionId,
+    pub scroll_down: ActionId,
+    pub focus_next: ActionId,
+    pub focus_prev: ActionId,
+    pub focus_left: ActionId,
+    pub focus_right: ActionId,
+    pub focus_up: ActionId,
+    pub focus_down: ActionId,
+    pub text_char_left: ActionId,
+    pub text_char_right: ActionId,
+    pub text_word_left: ActionId,
+    pub text_word_right: ActionId,
+    pub text_line_up: ActionId,
+    pub text_line_down: ActionId,
+    pub text_page_up: ActionId,
+    pub text_page_down: ActionId,
+    pub text_line_start: ActionId,
+    pub text_line_end: ActionId,
+    pub text_doc_start: ActionId,
+    pub text_doc_end: ActionId,
+    pub text_backspace: ActionId,
+    pub text_delete: ActionId,
+    pub text_copy: ActionId,
+    pub text_cut: ActionId,
+    pub text_paste: ActionId,
+}
+
+impl UiActions {
+    /// Look up every built-in UI id in `registry`; `None` if one is missing.
+    #[must_use]
+    pub fn new(registry: &Registry) -> Option<Self> {
+        let c = |n| registry.context(n);
+        let a = |n| registry.action(n);
+        Some(Self {
+            pointer: c(contexts::POINTER)?,
+            text_entry: c(contexts::TEXT_ENTRY)?,
+            ui_dialog: c(contexts::UI_DIALOG)?,
+            ui_clipboard: c(contexts::UI_CLIPBOARD)?,
+            ui_scroll_mouse: c(contexts::UI_SCROLL_MOUSE)?,
+            ui_scroll: c(contexts::UI_SCROLL)?,
+            ui_eat_keyboard: c(contexts::UI_EAT_KEYBOARD)?,
+            ui_chat_log: c(contexts::UI_CHAT_LOG)?,
+            select_left: a("select_left")?,
+            select_double_left: a("select_double_left")?,
+            tap_left: a("tap_left")?,
+            select_right: a("select_right")?,
+            select_double_right: a("select_double_right")?,
+            select_middle: a("select_middle")?,
+            select_double_middle: a("select_double_middle")?,
+            tap_right: a("tap_right")?,
+            tap_middle: a("tap_middle")?,
+            scroll_up: a("scroll_up")?,
+            scroll_down: a("scroll_down")?,
+            focus_next: a("focus_next")?,
+            focus_prev: a("focus_prev")?,
+            focus_left: a("focus_left")?,
+            focus_right: a("focus_right")?,
+            focus_up: a("focus_up")?,
+            focus_down: a("focus_down")?,
+            text_char_left: a("text_char_left")?,
+            text_char_right: a("text_char_right")?,
+            text_word_left: a("text_word_left")?,
+            text_word_right: a("text_word_right")?,
+            text_line_up: a("text_line_up")?,
+            text_line_down: a("text_line_down")?,
+            text_page_up: a("text_page_up")?,
+            text_page_down: a("text_page_down")?,
+            text_line_start: a("text_line_start")?,
+            text_line_end: a("text_line_end")?,
+            text_doc_start: a("text_doc_start")?,
+            text_doc_end: a("text_doc_end")?,
+            text_backspace: a("text_backspace")?,
+            text_delete: a("text_delete")?,
+            text_copy: a("text_copy")?,
+            text_cut: a("text_cut")?,
+            text_paste: a("text_paste")?,
+        })
+    }
 }
 
 /// Look-input tuning for [`StandardActions::look`].
@@ -301,11 +549,8 @@ impl StandardActions {
             fly_boost: a("fly_boost")?,
             fly_slow: a("fly_slow")?,
             fly_speed: a("fly_speed")?,
-            text_submit: a("text_submit")?,
-            text_cancel: a("text_cancel")?,
+            pointer: c(contexts::POINTER)?,
             text_backspace: a("text_backspace")?,
-            text_history_prev: a("text_history_prev")?,
-            text_history_next: a("text_history_next")?,
         })
     }
 
@@ -406,21 +651,30 @@ mod tests {
         let reg = default_registry();
         assert_eq!(reg.action_count(), action_defs().len());
         let km = default_keymap();
-        // Every built-in action is bound and every entry parsed.
+        // Every built-in action is listed and every entry parsed.
         for (c, a, entries) in default_table() {
             assert_eq!(km.get(c, a).unwrap().len(), entries.len(), "{c}.{a}");
         }
         for (_, def) in reg.actions() {
             assert!(
                 km.iter().any(|(_, a, _)| a == def.name),
-                "{} unbound",
+                "{} not listed",
                 def.name
             );
         }
         let (_, w) = InputMapper::new(reg.clone(), &km);
         assert!(w.is_empty(), "{w:?}");
         assert!(StandardActions::new(&reg).is_some());
+        assert!(UiActions::new(&reg).is_some());
         assert!(StandardActions::new(&Registry::new()).is_none());
+        for retired in [
+            "text_submit",
+            "text_cancel",
+            "text_history_prev",
+            "text_history_next",
+        ] {
+            assert!(reg.action(retired).is_none(), "{retired}");
+        }
     }
 
     fn walk_mapper() -> (StandardActions, InputMapper) {

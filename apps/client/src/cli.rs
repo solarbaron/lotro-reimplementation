@@ -20,7 +20,7 @@ const _: () = assert!(MAX_FLY_SPEED * 5.0 <= tessera_net::sandbox::MAX_SPEED);
 #[command(name = "tessera-client", version, about)]
 #[command(group(
     clap::ArgGroup::new("headless_task")
-        .args(["screenshot", "fly_path", "duration"])
+        .args(["screenshot", "fly_path", "duration", "ui_script"])
         .multiple(true)
 ))]
 pub struct Args {
@@ -235,6 +235,64 @@ pub struct Args {
     /// Headless runs: render as fast as possible instead of pacing at 60 frames per second.
     #[arg(long)]
     pub unpaced: bool,
+
+    /// Attach the game UI (M5): native panels, chat, plugin windows, input bridge.
+    #[arg(long)]
+    pub ui: bool,
+
+    /// Open a panel at start, by number (`P1`–`P15`) or layout label (repeatable; implies
+    /// `--ui`).
+    #[arg(long = "open-panel", value_name = "NAME")]
+    pub open_panel: Vec<String>,
+
+    /// Do not open the HUD panels (P1–P5, P11, P14) at start.
+    #[arg(long)]
+    pub no_ui_hud: bool,
+
+    /// User skin to activate by name (overrides `[UI] UserSkin`; implies `--ui`).
+    #[arg(long, value_name = "NAME")]
+    pub skin: Option<String>,
+
+    /// Skins root folder to read instead of `<settings folder>/ui/skins` (read-only).
+    #[arg(long, value_name = "DIR")]
+    pub skins_root: Option<PathBuf>,
+
+    /// Walker HUD text with the game UI (`on` or `off`; checklist runs use `off`).
+    #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
+    pub walker_hud: Option<bool>,
+
+    /// Walker minimap with the game UI (`auto`, `on` or `off`).
+    #[arg(long, value_name = "MODE", value_parser = parse_minimap)]
+    pub walker_minimap: Option<tessera_settings::MinimapMode>,
+
+    /// Cursor kind (`os` or `software`, decision 0015 §2.5).
+    #[arg(long, value_name = "KIND", value_parser = parse_cursor)]
+    pub ui_cursor: Option<tessera_settings::CursorMode>,
+
+    /// Run the scripted UI measurement of decision 0015 §6 (with `--headless`, offscreen;
+    /// implies `--ui`).
+    #[arg(long)]
+    pub ui_script: bool,
+
+    /// Write the U1–U5 report of the run as Markdown to this file (implies `--ui`).
+    #[arg(long, value_name = "FILE")]
+    pub ui_report: Option<PathBuf>,
+}
+
+fn parse_on_off(s: &str) -> Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" => Ok(true),
+        "off" | "false" | "no" => Ok(false),
+        _ => Err("expected on or off".into()),
+    }
+}
+
+fn parse_minimap(s: &str) -> Result<tessera_settings::MinimapMode, String> {
+    tessera_settings::MinimapMode::parse(s).ok_or_else(|| "expected auto, on or off".into())
+}
+
+fn parse_cursor(s: &str) -> Result<tessera_settings::CursorMode, String> {
+    tessera_settings::CursorMode::parse(s).ok_or_else(|| "expected os or software".into())
 }
 
 fn parse_spacing(s: &str) -> Result<f32, String> {
@@ -283,6 +341,17 @@ impl Args {
     #[must_use]
     pub fn walker(&self) -> bool {
         !self.showcase && !self.no_data && !self.smoke
+    }
+
+    /// Whether the game UI is attached to the walker (M5).
+    #[must_use]
+    pub fn ui_enabled(&self) -> bool {
+        self.walker()
+            && (self.ui
+                || !self.open_panel.is_empty()
+                || self.skin.is_some()
+                || self.ui_script
+                || self.ui_report.is_some())
     }
 
     /// Whether the walker renders offscreen.

@@ -878,19 +878,24 @@ existing third-party UI plugins that the user has installed.
 **Deliverables**
 
 - `tessera-formats`: UI layout records (elements, states, per-element data variants).
-- `tessera-ui`: retained widget tree, absolute layout with anchors and margins, nine-slice
-  art, text rendering, focus and input routing, skin application.
+- `tessera-ui`: retained widget tree, absolute layout with anchors and margins, art tiled at
+  native size and text drawn into per-surface CPU canvases (composed by `render` in a UI
+  pass, decision 0015), focus and input routing, skin application.
 - `tessera-plugins`: `.plugin` discovery, apartments, import resolution, event dispatch,
   plugin data persistence in Tessera's directories, a first API surface (engine, shell
   commands, chat output, plugin data, UI controls and windows, read-only views of the local
-  player that the sandbox backend can provide).
+  player that the sandbox backend can provide), the clean-room class helper (decision
+  0016). The split of `crates/script` leaves `tessera-script` a plugin-free Lua core, with
+  no plugin API namespace, `import` or chat state (decision 0023).
 - `tessera-client`: native panels for the walker (minimap frame, chat window, a few
   windows), plugin manager window, `/plugins` commands.
 - Optional: importer for the original keymap file if its spec exists (read-only).
 
 **Specs needed:** `ui-layout.md`, `skin-definition.md`, `plugin-descriptor.md`,
-`plugin-api.md` (names, signatures, enums, events, behaviour), `fonts.md` (if font records
-are decodable), `keymap.md` (import section).
+`lua-plugin-api.md` (names, signatures, enums, events, behaviour), `plugin-runtime.md`,
+`plugin-api-usage.md`, `plugin-class-helper.md`, `ui-behaviour.md`, `ui-widgets.md`,
+`game-panels.md`, `chat-window.md`, `fonts.md` (if font records are decodable),
+`keymap.md` (import section), the `render.md` UI pass; decisions 0014–0016 and 0023.
 
 **RE tasks**
 
@@ -913,7 +918,84 @@ are decodable), `keymap.md` (import section).
    create their windows and respond to input. Their incompatibilities are recorded.
 5. Sandbox escape tests: plugins cannot read or write outside their tree or data
    directory, cannot load C modules, and cannot exceed memory and instruction limits.
-6. `docs/LEGAL.md` records the plugin-namespace interoperability rationale (ARCH §18 OPEN).
+6. `docs/LEGAL.md` records the plugin-namespace interoperability rationale (LEGAL §17,
+   which replaces the former ARCH §18.2 OPEN).
+7. **UI budgets.** U1–U5 of decision 0015 §6 hold, measured with its scripted run under
+   `docs/perf/reference-machine.md`, at 3840 × 2160 fullscreen and at the window size the
+   compositor gives. Frames with a scroll step or a new chat line (content-event frames) are
+   judged by U4 (b) and (f), not by U1. U2 is a gate only where the adapter has timestamp
+   queries. U1's walking-phase mean is accepted only after the painter probe has measured
+   Mix colour and the erase (0015 §6, "Probe gap").
+
+<a id="m5-status"></a>
+**Status (exit verification 2026-10-08 against the owner's install, release builds, on the
+reference laptop of [decision 0010](decisions/0010-reference-machine-laptop.md) while it was
+loaded by other agents; branch `m5` at `a292f17` plus the uncommitted M5 changes): criteria
+1, 3, 5 and 6 pass; criterion 2 is done on Tessera's side and waits for the owner's
+screenshots; criterion 4 waits for the owner's plugin install; criterion 7 is not met
+(indicative measurements).** Every deliverable exists: the UI layout (0x22) and font (0x42)
+decoders in `tessera-formats`, the UI image decoders in `tessera-material::ui_image`,
+`tessera-ui` (element tree, layout, widgets, behaviour, the input bridge's UI side, CPU
+canvases and the paint scheduler, text and the bundled fallback font, user skins, game and
+chat widgets), the UI pass in `tessera-render` (`render.md` §6), the 0014 input bridge and the
+read-only importer of the original keymap file in `tessera-input`, the 0023 split
+(`tessera-script` a plugin-free core with no dependency on another Tessera crate;
+`tessera-plugins` with the host, the plugin API's UI classes and the clean-room class helper
+of decision 0016), and in `tessera-client` the native panels P1–P15, the chat window, the
+plugin manager window, `/plugins` commands, the UI host and the U1–U5 scripted run.
+Specs used: those listed above, plus decisions 0014–0016 and 0023. **Two specs the
+implementation follows are not Accepted:** `plugin-class-helper.md` (status Review; its third
+review is outstanding) and `render.md` §6 (status Review; no review recorded). Both need their
+review before the code that rests on them is committed.
+
+| # | | Evidence |
+|---|---|---|
+| 1 | ✅ | `cargo test --release -p tessera-formats --test ui_layout_real_data`: 302 / 302 UI layout records decode (2,610,590 bytes, all in the English local archive). `ui-layout.md` §13 categories: 0 records fail to decode, 0 unknown media kinds, 0 base layouts missing, 3 base elements missing from their base layout's top level (in 2 records), 0 base-chain cycles, 0 missing referenced records, 2 missing string-table tokens; widget types are left to `tessera-ui` (35 fallback game types, `ui_real_data`). The §11 census matches the spec (3,144 top-level elements, 16,421 elements, 12,977 states, 35,615 element and 2,083 state property entries; 27,512 non-zero references, all present); 59,067 ID fields all carry an enum label. `font_real_data`: 48 / 48 font records decode, 28,315 glyphs, no §3.3 or atlas issue. |
+| 2 | ✅ data-side, owner observation pending | `cargo test --release -p tessera-client --test panels_real_data --test ui_panels_real_data` (and `tessera-ui` `ui_real_data`): all 15 panels of `ui-layout.md` §17 open from the install by label, every root rectangle equals its §17.3 value at 1024 × 768, 1920 × 1080 and 2560 × 1440 (15 / 15; P15 against the spec, the checklist's P15 rows are stale), 2,904 elements created with 0 resolve failures and 0 refused creations, the per-panel census (elements, text elements, states, art surfaces, fonts, string references) matches §17.2, the object-mode census matches UL22 (92 = 86 Stretch + 6 CanvasResize), Escape opens the main menu, `/plugins manager` opens P12. Tessera's own screenshots (`--ui` HUD set; `--open-panel` P6, P7, P10, P12, P15 at 1920 × 1080; private scratch, deleted) were viewed in this verification and agree with the "Tessera-side self-check" of [m5-visual.md](checklists/m5-visual.md): art at native size, frames closed, labels the game code would fill are empty. The comparison with the original client is owner observation O39. |
+| 3 | ✅ (Tessera side) | `cargo test --release -p tessera-client --test ui_skin_real_data`: a generated skin (CC0 one-colour TGA files in a temporary skins root) changes the checked art of 13 / 13 panels that have skinnable art in their default view (P11 and P14 have none); the panel override moves P6 to (40, 30, 240, 290); a missing skin file shows the placeholder; turning the skin off restores the art. `tessera-ui` `skin_real_data`: the skin tables of the install load (5,625 art-asset labels, 4,742 base-table entries, SI1–SI9 hold). Optional cross-check with a published skin: O41. |
+| 4 | ⏳ owner install pending | No `Plugins` folder exists on the owner's machine (`compat_real_plugins` reports it and passes as a skip). Tessera's synthetic plugin suite passes: `tessera-plugins` `compat_plugins` 12 / 12 (plugins load, create windows, respond to clicks, hover, typing, keys, timers and shell commands), `ui_classes`, `ui_controls`, `ui_input`, `ui_lifetime`, `class_helper` 37 / 37, and `tessera-client` `plugins_suite` 3 / 3. The current incompatibility table (18 rows) is in the module docs of `crates/plugins/tests/compat_plugins.rs`; the visible ones: game-styled windows use a neutral frame (no call yet to build a plugin control from a based layout element), check boxes draw no mark, quickslots draw no icon, `ControlList:Insert`/`Set` append. The 14 plugins of `plugin-api-usage.md` §9: owner observation O40. |
+| 5 | ✅ | `cargo test --release -p tessera-plugins --test escape`: 6 / 6 (path traversal, absolute paths, symlinks, `import` tricks, image paths and plugin-data keys refused; C modules and bytecode refused; memory limits against string, table, `gsub` and format growth; instruction limits against loops, `pcall`/`xpcall` handlers, coroutines, patterns, metamethods and finalizers, per tick and at close); `ui_escape` 7 / 7 (UI-layer paths, refused image formats, hostile numbers, object caps); `sandbox` 6 / 6. |
+| 6 | ✅ | [LEGAL.md §17](LEGAL.md#17-plugin-api-names-interoperability-record) records the plugin-namespace interoperability rationale and its binding rules. This verification enforced §17.2 rule 1 in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
+| 7 | ❌ not met (indicative) | [docs/perf/m5-ui-budgets.md](perf/m5-ui-budgets.md), three runs of the scripted run at 3840 × 2160 and 1920 × 1080 offscreen on the loaded reference laptop. Third run (this verification, 3840 × 2160, load 8–13): U1 walking mean 0.89 ms, p99 8.4 ms (budget 0.3 / 1.0 ms) **fails**; U4 (b) 12.8 ms and U4 (f) 6.1 ms (4 ms) **fail**; U4 (a) 33.5 ms passes here but was 54.0 ms on the second run; U3 (steady mean 72 KiB) and U5 (canvases 45 MiB, textures 90 MiB, images 11 MiB) **pass**; U2 is a proxy only (no timestamp queries in `tessera-render`, `render.md` §6.16 OPEN); U4 (c)–(e) are not measured. The time is in `tessera-ui`'s step 8 (`Ui::paint`). The painter probe (`crates/ui/benches/paint_probe.rs`) has measured Mix colour (1.4 ns/pixel) and the erase. Idle re-measurement and the compositor-window run: O49. |
+
+Repository checks in this verification: `cargo fmt --check` (workspace and `fuzz/`), `cargo
+clippy --workspace --all-targets --all-features --locked -D warnings` and `cargo clippy
+--bins --locked -D warnings` in `fuzz/`, `cargo doc --workspace --no-deps` with `-D
+warnings`, `cargo deny check bans licenses sources` (both manifests), `tools/check-spdx.sh`
+(914 files, 0 errors) and the relative links and anchors of the Markdown docs pass. `cargo
+test --workspace`: debug without `TESSERA_GAME_DIR` 2,777 passed, 1 failed (a regression of
+this verification's rename, fixed and re-run: `class_helper` 37 / 37), 6 ignored; release
+with `TESSERA_GAME_DIR` 2,777 passed, 0 failed, 6 ignored (210 test binaries).
+`tools/fuzz-smoke.sh -t 60` (stable libFuzzer) on the 22 new or changed M5 targets: no
+crash, from 15,772 (`ui_paint`) to 11.4 M (`render_ui_entries`) executions; the seven
+targets later touched by lint fixes re-ran 15 s each without a crash. **`tools/check-content.sh`
+fails** on one file: `crates/ui/assets/fonts/NotoSans-Regular.ttf` (`[ext]`, `[magic]`), the
+bundled fallback font of `fonts.md` §11 (SIL OFL 1.1). Shipping it needs an owner decision
+first: an allowlist entry for the font check of `tools/check-content.sh`, a REUSE annotation
+with `LICENSES/OFL-1.1.txt`, and an exception to the "third-party material must never be
+committed" note of `REUSE.toml` (recorded in `docs/LEGAL.md`); otherwise the font must be
+loaded from the system instead. **Settled 2026-10-08** by decision 0022 (owner): the font is
+bundled unmodified under OFL-1.1, with `LICENSES/OFL-1.1.txt`, a `REUSE.toml` annotation, an
+allowlist entry for exactly that path and the exception in `docs/LEGAL.md` §11;
+`tools/check-content.sh` now passes.
+
+Fixed during this verification (mechanical changes only, no behaviour change): neutral
+module and binding names in `tessera-plugins` and its client call site (LEGAL §17.2 rule 1),
+the content allowlist, two rustdoc links, `is_multiple_of` and two other clippy lints in nine
+fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, the
+`plugins_commands` leak-check exemption in `tools/fuzz-smoke.sh`, owner observations
+O39–O49.
+
+Remaining for M5 to close: owner observations O39 (criterion 2) and O40 (criterion 4); the
+U1/U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, timestamp queries for U2 and the idle
+re-measurement O49 (criterion 7); the reviews of `plugin-class-helper.md` and `render.md` §6;
+the P15 rows of `m5-visual.md`. Open review items the implementers
+could not fix in their own files: the class helper's `Turbine.Log` clock defaults to UTC
+(`crates/plugins/src/host.rs`, client `LogHost`); plugin TextBox read-only flag, caret and
+selection API, child insert position and title bars above a window's top edge need
+`tessera-ui` calls; `ImageRef::File` needs an origin; a `UIScale_Global` setter; the
+`PluginData.Load` main-thread read waits on the `lua-plugin-api.md` §10.1 OPEN (ARCHITECTURE
+§21).
 
 ---
 

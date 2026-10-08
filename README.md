@@ -39,8 +39,13 @@ owner's in-game readings. **M4 (characters and animation) is done on Tessera's s
 ([M4 status](docs/ROADMAP.md#m4-status)): every skeleton and clip decodes,
 characters of all 14 playable bodies assemble with worn and held items and play idle, walk
 and run with GPU skinning, and 50 of them animate at over 250 fps on the reference machine.
-Still open are the owner's comparisons with the original client. Nothing here is playable
-yet: the walker flies and walks over the world offline, with an animated avatar and the NPCs the data places.
+Still open are the owner's comparisons with the original client. **M5 (UI layouts, skins and
+Lua plugins) is in its exit phase** ([M5 status](docs/ROADMAP.md#m5-status)): every UI layout
+and font record decodes, the game's own panels open in the walker with the expected geometry,
+user skins change their art, and plugins run in a sandbox that passes its escape tests; the
+owner's screenshots and plugin install are still to come, and the UI time budgets are not met
+yet. Nothing here is playable yet: the walker flies and walks over the world offline, with an
+animated avatar and the NPCs the data places.
 
 | Area | State |
 |---|---|
@@ -59,7 +64,9 @@ yet: the walker flies and walks over the world offline, with an animated avatar 
 | Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
 | Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run (42 / 42 checklist rows, River-hobbit height and body-shape controls included); a 48-item worn/held checklist matches |
 | `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 257 fps headless (p99 6.6 ms) on the reference machine |
-| UI and plugins, audio, own test server | planned (M5–M7) |
+| UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
+| Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
+| Audio, own test server | planned (M6–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

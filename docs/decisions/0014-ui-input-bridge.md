@@ -4,7 +4,9 @@
 
 **Status:** Accepted by the owner, 2026-10-06 (approved with its companion record and the
 questions in the owner summary answered "yes"). The open review items below are left to the
-M5 implementation.
+M5 implementation. **Amended 2026-10-06 (Amendment 1, after the open review items):** the M5
+spec phase settles those items before the implementation starts; the chosen option is
+unchanged and no decided rule is withdrawn.
 
 ## Owner summary
 
@@ -26,7 +28,10 @@ M5 implementation.
    host's deferred work (sliced by whole items; it also delivers the plugin events raised by
    game and session state, such as `Turbine.Chat.Received`) and the collector step run in
    step 7, and paint runs in step 8. The only plugin code outside steps 1 and 7 is the
-   unload at client exit, after the last frame (D8).
+   unload at client exit, after the last frame (D8). UI changes that game or session code
+   makes outside steps 1 and 7 (show and hide, activation, focus, screen resize,
+   `HideWhenField`) are queued and applied at the start of step 7, so the plugin
+   notifications they cause run there too *(Amendment 1, item 2)*.
 
 **Questions the owner must answer.**
 1. Do you accept option C (extend `tessera-input`) and the substantial `keymap.md` revision
@@ -56,6 +61,11 @@ After five revise-and-review rounds an independent clean-room review still lists
 below. They are recorded here for the owner and for the M5 implementer; none changes the
 chosen option.
 
+*Settled by Amendment 1 (2026-10-06), below: must-fix 1 by its item 1, must-fix 2 by item 2,
+must-fix 3 by item 3; the other improvements by items 4–12 (importer gap 8, frame clock 4,
+ARCHITECTURE §21 9, `opaque_keys` 7, `StandardActions` 10, Ctrl+Home 11, drag and running 12,
+window APIs 5, scale change during the lock 6). The items keep their original wording.*
+
 **Must fix before acceptance:**
 
 1. D8 'Game-raised plugin events' (lines 812-826) contradicts LPA §9.6 (BIN). LPA §9.6 says a chat line produced while a `Turbine.Chat.Received` dispatch is running (for example by `Shell.WriteLine` in a handler) is not delivered to that apartment's `Received` handlers. LPA §11.1's Tessera rule ('never re-entrantly (§9.6)') and Appendix B keep that rule. D8 queues every such line, including lines raised 'while plugin code runs (in step 1 or 7)', and later delivers it 'to the handlers set at delivery'. The writing apartment therefore does get its own line, one item later. Failure case: a plugin that echoes or logs each received line with `WriteLine` produces a new queued `Received` event per delivery. Since queued items run in the same frame until the 2 ms slice is used, that apartment loops forever: it burns the deferred-work slice every frame, floods the chat and starves real deferred work (`LoadPlugin`, `PluginData` callbacks, the logout unload). Fix: record with each queued chat event the apartment(s) whose `Received` dispatch was running when it was raised, and skip those apartments at delivery. Add this to Known difference 21, the LPA §11.3 owners entry and invariant (y).
@@ -73,6 +83,208 @@ chosen option.
 - D7 'During an item drag': when the client consumes `mouselook` (right becomes UI-owned), the chord-exclusion rule also keeps the run chord from completing with that right button after the drag, until right is pressed again. Known difference 20 mentions only the camera; add running.
 - Once the UI is attached, D7/D8 tie the pointer lock to winit grab and hide calls made from inside the sink callback. Say explicitly that the sink may call window APIs during `handle_with`. The main thread owns the window, so this is fine, but an implementer should know the sink is not pure.
 - Scale-factor change during the pointer lock: D3 resets recorded press positions to unknown, but *F* and the mapper's frozen position stay in the old physical pixels until the lock ends. State whether *F* is rescaled or the lock is ended.
+
+## Amendment 1 (2026-10-06): the open review items, settled before the M5 implementation
+
+**Why this amendment.** The record was accepted with the open review items above left to the
+M5 implementation. The M5 spec phase settles them now, so that `keymap.md`,
+`plugin-runtime.md`, `lua-plugin-api.md`, ARCHITECTURE §18.1, §20.3 and §21, `walker.md` and
+the code follow one text. The chosen option is unchanged and no decided rule is withdrawn:
+each item adds a rule where the record was silent or contradicted itself, or corrects a count
+or a wording. Every place in this record that changes carries the mark *(Amendment 1, item
+N)*; the open review items keep their wording and point here. Written by the M5 spec phase
+(spec-writer role) from this record, the specs it cites and the revised texts of
+`keymap.md`, `plugin-runtime.md`, `lua-plugin-api.md` and ARCHITECTURE; it states no new
+fact about the original. Every rule below is a Tessera rule.
+
+1. **Queued `Received` events skip the apartments that produced them** (must-fix 1).
+   *Reason:* D8 delivered every queued event "to the handlers set at delivery", so a line
+   that a `Received` handler writes (for example with `Turbine.Shell.WriteLine`) reached its
+   own apartment one item later. That contradicts LPA §9.6 (BIN: such a line is not
+   delivered to that apartment's `Received` handlers), and an apartment that echoes every
+   line would feed itself and use the deferred-work slice in every frame. *Rule:*
+   - every queued `Turbine.Chat.Received` event carries a **skip set** of apartments, and its
+     delivery calls no `Received` handler of an apartment in that set;
+   - a line raised while a queued `Received` event is being delivered to an apartment gets
+     that event's skip set **plus** that apartment. In Tessera a `Received` handler runs only
+     inside such a delivery, so these are exactly the apartments whose `Received` dispatch
+     produced the line, directly or through a chain of lines;
+   - a line raised at any other time (a session line, a system notice, a line written by an
+     input handler, an `Update` handler or another deferred item) gets an empty skip set;
+   - so a chain of lines that apartments write in answer to each other visits each apartment
+     at most once and ends after at most as many lines as there are apartments with
+     `Received` handlers. This is what LPA §9.6's nested synchronous delivery gives, where
+     every dispatch of the chain is still running when the next line is written.
+
+   The skip set concerns `Received` only, the event LPA §9.6 is about. `plugin-runtime.md`
+   §8.4 and LPA §11.3 state this rule as an interim Tessera rule pending this record; their
+   OPENs on it close. Applied in D8 ("Game-raised plugin events"), Known difference 21, the
+   owners entry for LPA §11.3 and invariant (y).
+2. **UI changes made outside steps 1 and 7 are applied in step 7** (must-fix 2). *Reason:*
+   D8 keeps LPA §9.7's synchronous delivery of UI notifications, so any UI change that game or
+   session code made outside steps 1 and 7 would run plugin handlers there. Examples: a
+   session event in step 2 makes game code show a native panel with `activate_on_show`
+   (UB §5.1, §11.2), which deactivates the active plugin window and takes focus from its
+   `TextBox` (LPA §13.13, §13.14); a `HideWhenField` hides the active panel on a player-state
+   change; a window resize or scale change re-lays out the root panels (UB §9.4) and raises
+   `SizeChanged` and `PositionChanged`, which are not input handlers. The record and
+   invariant (y) claimed that no plugin code runs in steps 2–6 or 8–10 without a rule that
+   ensures it. Of the review's two fixes, the first is taken; the rule is not widened.
+   *Rule:*
+   - Code that runs outside steps 1 and 7 (session code in step 2, simulation and game code
+     in steps 3–6, the window system's callbacks for size and scale-factor changes) never
+     makes a UI change that can raise a plugin notification (LPA §9.7) directly. It appends a
+     **UI change request** to a queue that `tessera-ui` keeps. This covers showing and hiding
+     elements (game panels, the re-evaluation of `HideWhenField`), activation, focus,
+     z-order, moves and resizes, and a new screen size or scale factor (the re-layout of
+     root panels, UB §9.4).
+   - The queue is applied at the **start of step 7**, before item 1 of D8's step 7 (the
+     hover refresh), in request order, all of it in that frame. It is not sliced: it is
+     Tessera's own UI work, and the plugin notifications it raises (`Activated`,
+     `Deactivated`, `FocusGained`, `FocusLost`, `VisibleChanged`, `SizeChanged`,
+     `PositionChanged` and the like, LPA §9.7) are plugin time, like input handlers, each
+     one host call with its own instruction budget. Screen-size and scale-factor requests
+     queued before one step 7 are applied as one change to the last values (one re-layout).
+     So the `Update` broadcast of that step sees the changed tree, and so does the hover
+     refresh whenever `tessera-ui` marks the pointer for re-evaluation for such a change
+     (a `tessera-ui` implementation choice, as for changes made by an `Update` handler, D8
+     "What the order means"; LPA §3.3 says only "if the pointer needs re-evaluating").
+   - A change that cannot raise a plugin notification (a game widget's value, text or state
+     art: damage only) may be applied when it is made; it reaches the screen in step 8
+     either way.
+   - Changes made in step 1 (by the input routing, by plugin input handlers, or by game code
+     that the client runs inside step 1) and in step 7 (plugin code, the UI tick, the
+     deferred work) apply at once, as before (LPA §9.7, D8 "Geometry used for hit tests").
+   - Step 8 raises no plugin notification: its layout changes no box that a hit test reads,
+     and paint and composition do not change the tree.
+   - Effect on hit tests: a change requested in steps 2–6 is in the tree from step 7 of the
+     same frame, so the next frame's step-1 hit tests read it. A screen-size or scale-factor
+     change that arrives in a callback between redraws reaches the tree in the next step 7,
+     so that frame's step-1 hit tests still read the root boxes from before the re-layout.
+     Nothing is drawn at the new size before step 8, so this lasts at most one frame (Known
+     difference 22).
+
+   So all plugin code runs in steps 1 and 7, with the one exception of the client-exit
+   unload, as the owner summary (item 5), D8 ("Between frames"), invariant (y) and the
+   owners list for ARCHITECTURE §18.1 and §20.3 say. ARCHITECTURE §18.1 and §20.3 make the
+   same choice. The OPENs of `plugin-runtime.md` §8.4 ("UI notifications outside steps 1 and
+   7") and LPA §3.3 close; `plugin-runtime.md` §10.3 needs no exception for them.
+3. **Chord exclusion is a mark on a held button** (must-fix 3). *Reason:* D7 said that a
+   button whose press produced only UI-owned holds "is left out of the held set used to
+   complete chords", while D4 and list item 8 run release-class resolution only for a button
+   in the held set. Read together, the release of a left press consumed by a panel would be
+   the release of a button that is not held, and `tap_left` would never fire, against D4,
+   invariant (o) and the worked example. *Rule:* such a button **stays in §7.2's held set**
+   and is **marked** until it leaves the held set (its physical release, focus loss,
+   `release_all`). The mark is set after all offers of the press when the press produced at
+   least one hold and every hold it produced is UI-owned (holds dropped before their Start
+   was offered do not count); it is never re-evaluated in between, so neither the end of a
+   hold nor the end of a drag removes it. The mark changes one thing: **chord completion
+   ignores a marked button**. For press suppression, the 64-button cap, the modifier state
+   and release-class resolution (D4, "Release after a UI-owned press") the button is held
+   as usual. `handle` never marks. Invariant (o) re-checked: the consumed left press marks
+   left, left stays held, so its release resolves release-class bindings, restricted to
+   UI-band and pass-through contexts: `tap_left` in `pointer` fires and the `movement`
+   binding does not. This is `keymap.md` §7.2.2. Applied in D4, D7 and list item 8.
+4. **The frame clock steps right after present** (open review). *Reason:* D8 places input
+   handled in winit callbacks in step 1 of the following frame, but did not say when
+   `Turbine.Engine.GetGameTime()` ("constant within one frame", LPA §12) and the UI's hover
+   clock (LPA §13.12.5) advance; a step-1 handler run in a callback could see one value and
+   that frame's `Update` another. *Rule:* one frame clock serves `GetGameTime()` and the UI.
+   It advances **once per frame, right after present** (the end of step 10), before any
+   step-1 work of the next frame, including work done in winit callbacks between redraws.
+   Before the first frame it is set once when the event loop starts. So every plugin call
+   that belongs to one frame (its step-1 handlers wherever they run, and all of its step 7,
+   the queued UI changes of item 2 included) sees the same value; the time of a pointer
+   movement for the 0.25 s hover rule is the clock value of the frame whose step 1 delivers
+   it (Known difference 15). The client-exit unload sees the clock's last value, the one
+   it took after the last present. LPA
+   §3.3 states this as an interim rule pending this record; its OPEN closes. ARCHITECTURE
+   §20.3 states it. Applied in D8.
+5. **The sink may call window APIs** (open review). *Reason:* with a UI attached, D7 turns the
+   pointer lock on and off inside offers, so the client hides and grabs the cursor, warps it
+   back and releases the grab from inside the sink; the record did not say so. *Rule:* the
+   sink is not pure. During `handle_with` and `offer_pending` it may call the window
+   system's cursor APIs (grab, visibility, position); the main thread owns the window, so
+   this is allowed. It still never calls the mapper (D5: borrowing forbids it). Applied in
+   D7 ("Pointer lock").
+6. **Scale-factor change during the pointer lock** (open review). *Reason:* D3 resets the
+   recorded press positions on a scale change, but *F* and the mapper's frozen position would
+   stay in the old physical pixels until the lock ends, so the `select_right` pulse at the end
+   of the lock and the warp back would land in the wrong place. *Rule* (as `keymap.md`
+   §7.8.9 states it): the lock does **not** end, and *F* is **rescaled**: the client computes
+   *F*′ = *F* × *s*new ÷ *s*old (real-valued, no rounding), clamps it into the new client
+   area, and hands it to the mapper as its cursor position together with the new *W* and
+   *H*. Setting the position this way marks no move pending and offers nothing. The client
+   tells `tessera-ui` the new *F*′ and uses it for the warp back. Recorded press positions
+   still become unknown (D3), so *F*′ does not make the next press nearby. The lock is not
+   ended because it belongs to the `mouselook` holds, and ending it while right is held would
+   show the cursor in the middle of a camera turn. Applied in D3 and D7.
+7. **Typed characters keyed on `opaque_keys` too** (open review). *Reason:* D6 sent typed
+   characters to the UI when a `text` context sits "at or above its first `opaque` entry"
+   and ignored `opaque_keys`, so `ui.eat_keyboard` pushed above a focused field would not
+   stop characters reaching the field. *Rule* (as `keymap.md` §7.6 states it): walk the UI
+   band in band order; the first context that has `text`, `opaque` or `opaque_keys` decides.
+   If it has `text`, the characters go to the UI; otherwise they are dropped. Only when no
+   UI-band context has any of the three flags does the game-band rule of §7.6 apply. Under
+   `handle` the characters this rule sends to the UI go to the snapshot's `text`, as before.
+   Applied in D6 and list item 11.
+8. **Imported wheel bindings of button actions** (open review, "importer gap"). *Reason:*
+   list item 17 adds the `ScrollableControls_Mouse` rows, but §12.14.5 translated wheel
+   bindings only for zoom commands, so every such import was dropped with a warning.
+   *Rule* (as `keymap.md` §12.14.5 states it): a wheel sub-control bound to a **button**
+   action becomes a click entry, `AxisPositive` → `WheelUp`, `AxisNegative` → `WheelDown`,
+   with the binding's meta keys as modifiers. Only a `press` translation is kept, because
+   `on` is not allowed on wheel clicks (D3); a non-`press` activation on a wheel click is
+   dropped with the reason "activation on a wheel click". So the original's
+   `ScrollableControls_Mouse` defaults import as `scroll_up = ["WheelUp"]` and
+   `scroll_down = ["WheelDown"]`. Applied in list item 18.
+9. **ARCHITECTURE §21 exception for writes at unload** (open review). *Reason:* D8 runs the
+   logout unload and unloads asked for by a user or a plugin inside frames, and each closes
+   Lua states, which LPA §6.3 step 5 and §10.6 require to write `PluginData.Save`
+   synchronously or flush before closing. ARCHITECTURE §21 forbids blocking I/O on the main
+   thread after start-up and listed no exception. *Rule:* the owners list gains
+   ARCHITECTURE §21: a stated exception for the synchronous `PluginData.Save` writes and the
+   flush when a Lua state closes (an unload asked for by the user or a plugin in step 1 or 7,
+   the logout unload in step 7, the client-exit unload after the last frame). The writes stay
+   synchronous because the plugin API requires them to be complete before the state is gone.
+   ARCHITECTURE §21 now lists it as exception (b). The OPEN of `plugin-runtime.md` §8.4
+   ("blocking writes at unload") closes. Applied in the owners list.
+10. **`StandardActions` loses four fields, not three** (open review): `text_submit`,
+    `text_cancel`, `text_history_prev` and `text_history_next` (`crates/input/src/
+    defaults.rs`). Applied in Consequences ("Effects on other code").
+11. **Ctrl+Home and Ctrl+End** (open review). *Reason:* today PageUp and PageDown are `zoom`
+    bindings, but Ctrl+Home does not reset the camera (`reset_camera` is an exact `Home`
+    binding) and End is unbound, so only the zoom part of the sentence was a change. Applied
+    in Consequences ("What the owner will notice").
+12. **Known difference 20 also blocks running** (open review). When the client consumes the
+    `mouselook` Start during an item drag, the right button is marked (item 3), so the run
+    chord does not complete with it after the drop either, until right is pressed again.
+    Applied in Known difference 20.
+13. **Fallback `repeat` flags** (for information; from `keymap.md`, Accepted). List item 13
+    gave the caret, delete, backspace and focus-move actions the fallback `repeat` flag.
+    `keymap.md` §8 sets the fallback flags exactly for the actions whose command has toggle
+    type 3 in the action map (its K43, Confirmed from the data: 16 commands): `focus_next`
+    and `focus_prev` repeat too, and `text_line_start/end` and `text_doc_start/end` do not.
+    The fallback is used only without action-map data (D7, D9); `keymap.md` governs the
+    list. Applied as a note in list item 13.
+
+**Coordination.** The companion record's amendment 1 (2026-10-06) applies this record's
+"Coordination" items 10 and 11 and marks its own follow-ups 6 and 7 settled. No further
+change of the companion is needed for this amendment: items 2 and 4 add to steps 7 and 10
+but do not change what step 8 does or which geometry a hit test reads (item 12 of
+"Coordination").
+
+**New known difference.** 22. **Screen-size changes reach hit tests at the next step 7**
+(item 2). A resize or scale-factor change handled in a callback between redraws is applied
+to the UI tree in the next step 7, so the step-1 hit tests of that frame read the root
+boxes from before the re-layout, for at most one frame; this includes the end-of-lock
+`select_right` pulse at the rescaled *F*′ (item 6) when the lock ends in that frame. Whether
+the original re-lays out at once is not stated in the cited specs; no surveyed behaviour is
+known to depend on it.
+
+**Invariants** (list item 21). Invariant (y) is extended for items 1 and 2, (o) is
+re-checked against item 3 and unchanged, and (z) is added for item 4.
 
 ## Context
 The native UI and the plugin API take input as **commands**, not keys (`ui-behaviour.md` §3.1,
@@ -308,7 +520,8 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
   recomputes *W* and *H* (scaling, rounding, clamping as above) and hands them to the
   mapper, which also sets every recorded press position to "unknown": positions recorded
   in the old physical pixels are not compared with new ones. So the first press after a
-  scale change is never nearby. *T* is unaffected.
+  scale change is never nearby. *T* is unaffected. During the pointer lock the lock goes on
+  and the frozen position *F* is rescaled to the new pixels (D7) *(Amendment 1, item 6)*.
 - Tracking is per button, for keys, mouse buttons and pad buttons alike. It uses the last
   press time and position (bounded to the 64 most recent buttons). The press position is the
   last cursor position, or "unknown", which never counts as nearby.
@@ -343,6 +556,8 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
 - **Which releases resolve.** Release-class resolution runs only for the release of a
   button that the mapper holds as down (§7.2's held set). The release of a button that is
   not held changes nothing, as today: no hold ends and no `release` or `tap` binding fires.
+  A button that D7's chord rule marks is still in the held set, so its release resolves
+  *(Amendment 1, item 3)*.
   The winit adapter relies on this for the synthetic releases it forwards (§10). Holds that
   end without a physical release fire no release-class binding: focus loss and
   `release_all` clear the held set and end every hold, but resolve no `release` or `tap`
@@ -534,6 +749,11 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
   above its first `opaque` entry. Otherwise the game-band rule of §7.6 applies. Under
   `handle`, which has no sink, the characters this rule would send to the UI go to the
   snapshot's `text`, as they do today while `text_entry` is first.
+  *(Amendment 1, item 7)*: the rule keys on `opaque_keys` too. The first UI-band context in band
+  order that has `text`, `opaque` or `opaque_keys` decides: with `text` the characters go to
+  the UI, otherwise they are dropped (so `ui.eat_keyboard` above a focused field stops
+  them); only when no UI-band context has any of the three flags does the game-band rule
+  apply.
 - Pushing the first `opaque_keys` entry (the band goes from none to one) releases the
   `pointer` and game-band holds whose last stroke has a key or a pad button. Further
   `opaque_keys` entries release nothing more. That includes the same context under another
@@ -577,6 +797,13 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
   out of the held set used to complete chords until it is released, so pressing both
   buttons over a panel does not run. A press that produced no hold stays in that set, as
   today.
+  *(Amendment 1, item 3)*: "left out of the held set used to complete chords" means a **mark** on a
+  button that **stays in §7.2's held set**. The mark is set after all offers of the press
+  and cleared when the button leaves the held set (its release, focus loss, `release_all`);
+  it is not re-evaluated in between. Chord completion ignores marked buttons. Press
+  suppression, the 64-button cap, the modifier state and release-class resolution (D4)
+  treat a marked button as held, so `tap_left` still fires at the end of a click on a panel
+  element.
 - A Start that is not consumed makes a normal hold for game code. This is the same action,
   with no re-resolution (except the pass-through continuation of D4).
 - **Every offered Start gets exactly one offered End.** Holds can end outside `handle_with`:
@@ -683,7 +910,9 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
   - The sink's verdict is the UI's, with one exception made by the client: the `mouselook`
     Start during an item drag (below).
 - **Pointer lock** (UB §4.9) is the client's state. The client, as the sink, sees the
-  `mouselook` Starts and Ends in order.
+  `mouselook` Starts and Ends in order. The sink is therefore not pure: during `handle_with`
+  and `offer_pending` it may call the window system's cursor APIs (grab, visibility,
+  position), which the main thread owns; it never calls the mapper (D5) *(Amendment 1, item 5)*.
   - **On, after the verdict.** `mouselook` (`CameraInstantMouseSteer`) is a key command, so
     the UI routes it to the keyboard target, which needs no hit test (UB §5.3). The client
     routes a `mouselook` Start first. If the UI consumed it, nothing turns on. If the UI did
@@ -763,7 +992,11 @@ sibling allowance is needed (ARCH §3). Everything runs on the main thread (ARCH
      position inside the window arrives (UB §4.9 step 2). Every offered event
      also carries the sequence number of the raw event that produced it (the number of the
      offering call for Ends from the end queue), so the client can tell which raw event an
-     offered event belongs to.
+     offered event belongs to. A scale-factor change during the lock does not end it: the
+     client rescales *F* to *F*′ = *F* × *s*new ÷ *s*old (real-valued), clamps it into the
+     new client area, sets it as the mapper's cursor position with the new *W* and *H*
+     (no move pending, nothing offered), tells `tessera-ui`, and uses *F*′ for the warp back
+     *(Amendment 1, item 6)*.
   2. **OS lock (where available).** When it turns the lock on, the client hides the cursor
      and asks winit for `CursorGrabMode::Locked` (available on Wayland, including Hyprland,
      and on macOS). Where winit refuses it (X11, Windows), the client asks for `Confined`.
@@ -805,7 +1038,10 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     `RedrawRequested` draws, and counts toward that frame's U1 and plugin time. That
     frame's redraw begins with `offer_pending` (and the deferred cursor-left, if any) and
   `update`.
-- **Step 7, the UI tick and the plugin host**, in the order of LPA §3.3 (P48, P51):
+- **Step 7, the UI tick and the plugin host**, in the order of LPA §3.3 (P48, P51). *(Amendment
+  1, item 2: before item 1, `tessera-ui` applies the queued UI change requests of steps 2–6
+  and of the window system's size and scale-factor callbacks, in request order and
+  unsliced.)* The items:
   1. if the pointer needs re-evaluating, the hit test and the hover refresh (LPA §13.11),
      with their `MouseLeave`/`MouseEnter` and the hover pushes and pops of
      `ui.scroll_mouse` (D5);
@@ -846,6 +1082,25 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
   this kind raised while plugin code runs (in step 1 or 7) is queued the same way, so it
   never re-enters Lua from inside a handler; events that are UI notifications keep the
   delivery of LPA §9.7.
+  *(Amendment 1, item 1)*: a queued `Received` event carries a **skip set** of apartments, and its
+  delivery calls no `Received` handler of an apartment in it. A line raised while a queued
+  `Received` event is being delivered to an apartment gets that event's skip set plus that
+  apartment (the apartments whose dispatch produced it); a line raised at any other time gets
+  an empty set. So an apartment never receives a line its own `Received` dispatch produced
+  (LPA §9.6), and a chain of echoed lines ends after at most one line per apartment.
+- **UI changes made outside steps 1 and 7** *(Amendment 1, item 2)*. Session code, simulation and game
+  code in steps 2–6 and the window system's size and scale-factor callbacks never make a
+  UI change that can raise a plugin notification directly; they queue a UI change request
+  (show and hide, `HideWhenField`, activation, focus, z-order, moves and resizes, the screen
+  size and scale factor), which is applied at the start of step 7 (above). Changes that only
+  damage pixels may be applied at once. Changes made in steps 1 and 7 apply at once, as
+  before. Step 8 raises no plugin notification.
+- **Frame clock** *(Amendment 1, item 4)*. One clock serves `Turbine.Engine.GetGameTime()` (LPA §12)
+  and the UI's hover clock (LPA §13.12.5). It advances once per frame, right after present,
+  before any step-1 work of the next frame, including work done in winit callbacks between
+  redraws, so all plugin calls of one frame see the same value. It is set once when the
+  event loop starts. The client-exit unload sees the clock's last value, the one it took
+  after the last present.
 - **Unload at logout and at client exit** (LPA §6.3, `plugin-runtime.md` §8.3). An unload
   that a plugin or the user asks for (`PluginManager.UnloadScriptState`, `/plugins unload`,
   the manager's unload action) runs where the request is made: in a plugin call, or in the
@@ -864,7 +1119,8 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
   deferred work including game-raised events and the logout unload, collector step), with
   one exception, the unload at client exit after the last frame; never during steps 2–6 or
   8 onward (session, simulation, layout, paint and rendering), and never on another
-  thread. The owners list asks for that wording.
+  thread. The owners list asks for that wording. The queued UI changes (the bullet "UI changes
+  made outside steps 1 and 7" above) make this hold for UI notifications too *(Amendment 1, item 2)*.
 - **Step 8, layout and paint.** Layout, painting and the composition list, as
   `0015-ui-rendering.md` describes them. Its layout changes no box that a hit test
   reads (below).
@@ -940,7 +1196,8 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
   - Enter and NumpadEnter give `open_chat`, Escape gives `menu`, and Up/Down give
     `text_line_up/down`, in place of the retired `text_submit`, `text_cancel` and
     `text_history_prev/next` (D2). `StandardActions` loses those three fields and gains
-    the new ones.
+    the new ones. *(Amendment 1, item 10)*: it loses four fields, `text_submit`, `text_cancel`,
+    `text_history_prev` and `text_history_next`.
 
   Invariant (e2) pins this. `tessera-ui` gets an ordered, positioned
   command stream with names and IDs and decides consumption as UB and LPA describe. Plugins
@@ -972,6 +1229,9 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     "Captures"). This follows from UB §4.4 and UW §6.9.
   - While the chat window is the active panel, PageUp, PageDown, Ctrl+Home and Ctrl+End
     page its log (`ui.chat_log`, D5) instead of zooming or resetting the camera.
+    *(Amendment 1, item 11)*: only the PageUp and PageDown part is a change (today they zoom). Ctrl+Home
+    does not reset the camera today (`reset_camera` is an exact `Home` binding) and End is
+    unbound.
 - **Escape with a UI attached.** Today the walker turns `menu` into quit
   (`ControlEvents::quit` in `apps/client/src/walker/controls.rs`). Under Option 4 every
   declined Escape reaches `menu`: a focused native editable field without
@@ -1084,8 +1344,9 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
       (UB §4.9, §7.3, §7.4 step 1). Whether a right click cancels a drag in the original is
       UB §7.4 OPEN. A consumed Start is not re-examined when the drag ends, so a right
       button held across the drop does not start turning the camera until it is pressed
-      again. **Owner observation:** in the original, drag an item from a bag and from a
-      quick slot, press right during the drag and release left over another slot: does the
+      again. Nor does it complete the run chord: the right button stays marked (D7) until it
+      is released *(Amendment 1, item 12)*. **Owner observation:** in the original, drag an
+      item from a bag and from a quick slot, press right during the drag and release left over another slot: does the
       camera turn, is the drag cancelled, and does the item land?
   21. **Game-raised plugin events are queued to step 7** (Tessera rule, D8).
       `Turbine.Chat.Received` and the gameplay views' `…Changed` events reach plugins in
@@ -1095,6 +1356,16 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
       changes of one value in one frame give two events in order, but a getter called in
       the first handler already returns the second value. When the original delivers these
       events is not stated in the cited specs (LPA §3.3 OPEN covers only the deferred work);
+      no surveyed behaviour is known to depend on it. A queued `Received` event skips the
+      apartments whose `Received` dispatch produced it, as LPA §9.6 (BIN) has it for the
+      original's synchronous delivery *(Amendment 1, item 1)*.
+  22. **Screen-size changes reach hit tests at the next step 7** *(Amendment 1, item 2)*. A resize or
+      scale-factor change handled in a callback between redraws is applied to the UI tree
+      in the next step 7, so the step-1 hit tests of that frame read the root boxes from
+      before the re-layout, for at most one frame. This includes a scale-factor change
+      during the pointer lock when the lock ends in that frame: the `select_right` pulse is
+      hit-tested at the rescaled *F*′ (item 6) against the root boxes from before the
+      re-layout. Whether the original re-lays out at once is not stated in the cited specs;
       no surveyed behaviour is known to depend on it.
 - **Still OPEN, carried over:** which panels push `DialogBoxes`/`EditControls`/
   `CopyAndPasteControls` (UB §5.2, §5.6; D5 gives Tessera rules); which plugin controls push
@@ -1140,13 +1411,20 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     itself changes at once" implies.
   - LPA §11.3 and §15: game-raised events reach plugins in step 7 (D8, Known difference
     21). A question for its spec writer: is anything known about when the original
-    delivers them?
+    delivers them? LPA §11.3: a queued `Received` event skips the apartments whose dispatch
+    produced it (D8, skip set), which keeps §9.6; its interim rule becomes this record's
+    rule and its OPEN closes *(Amendment 1, item 1)*.
+  - LPA §3.3: its OPENs on UI notifications outside steps 1 and 7 and on when the frame
+    clock steps close: queued UI changes applied at the start of step 7, and the clock
+    stepped right after present (D8) *(Amendment 1, item 2)*, *(Amendment 1, item 4)*.
   - `plugin-runtime.md` §10.3 ("All plugin code runs on the client's main thread, between
     frames"): the same reading of "between frames" (D8), with the same client-exit
     exception. §9.2: D8 places the per-tick
     collector step in step 7, after the deferred work and before the outbox drain, which is
     its Tessera choice ("after the tick's event dispatch and deferred plugin-host work,
-    before rendering"); agreement.
+    before rendering"); agreement. §8.4: its three OPENs that wait for this record close:
+    the `Received` skip set *(Amendment 1, item 1)*, UI notifications outside steps 1 and 7 *(Amendment 1, item 2)*,
+    and blocking writes at unload, now ARCHITECTURE §21 exception (b) *(Amendment 1, item 9)*.
   - UB §3.3: the platform values reach the mapper through the client (D3).
   - UB §4.6: Tessera's consumption rule for mouse-button commands (D7).
   - UB §4.9: the lock state reaches the UI through the client, and only for a `mouselook`
@@ -1194,6 +1472,12 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     - A sentence after the list: "At client exit, after the last frame, the plugin host
       unloads every apartment (LPA §6.3); this is the only plugin code outside steps 1
       and 7".
+    - *(Amendment 1, item 2)* Step 7 also says that UI changes driven by game or session code (show and
+      hide, activation, focus, screen resize, `HideWhenField`) are applied **at the start
+      of** that step, before the hover refresh, so the plugin notifications they cause run
+      there. *(Amendment 1, item 4)* After the list: the frame
+      clock behind the game-time query and the UI's hover clock advance once per frame,
+      right after present.
   - ARCHITECTURE §18.1: "all plugin code runs on the main thread in a per-frame time slice"
     needs the exceptions of D8. All plugin code runs on the main thread in frame-loop steps
     1 and 7, except the unload of every apartment at client exit, which runs after the last
@@ -1203,6 +1487,12 @@ The steps are those of ARCHITECTURE §20.3, reworded as the owners list says.
     bounded by the per-call instruction budget, are not cut by a slice, and are measured as
     plugin time. The deferred work of step 7, which includes the game-raised events and the
     logout unload, is sliced by whole items (2 ms per frame, at least one item).
+    *(Amendment 1, item 2)*: UI changes driven by game or session code are applied at the start of
+    step 7, so the plugin notifications they cause run there.
+  - ARCHITECTURE §21 *(Amendment 1, item 9)*: a stated exception to "no blocking I/O on the main
+    thread" for the synchronous `PluginData.Save` writes and the flush when a Lua state
+    closes (LPA §6.3 step 5, §10.6): an unload asked for by the user or a plugin in step 1
+    or 7, the logout unload in step 7, and the client-exit unload after the last frame.
   - `0015-ui-rendering.md`: the required follow-ups are under "Coordination" below.
 - **Cost.** The `keymap.md` revision below, then mapper work: entries, the band, the code
   access rules of D5 (`activate` on UI-band contexts, owner 0, refused pushes of game-band
@@ -1278,7 +1568,8 @@ handler time excluded (IB D8)") already agrees. In short, the six items were:
 position is frozen" item 2. The companion can mark both settled.
 
 **Items 10–12 (new with revision 5).** Revision 5 changes two things that the companion
-restates: which geometry the hit tests use, and what step 7 contains.
+restates: which geometry the hit tests use, and what step 7 contains. *Items 10 and 11:
+applied by the companion's Amendment 1 (2026-10-06); item 12 stands.*
 
 10. **Hit tests use the current geometry** (D8, "Geometry used for hit tests"). Every place
     where the companion says that the step-1 hit tests and the step-7 hover refresh use
@@ -1415,7 +1706,8 @@ the wheel rule for captures.
    third-press rule, unknown pointer never nearby; only presses that §7.2 resolves are
    recorded (not OS repeats, presses of held buttons or presses beyond 64 held buttons);
    new *W*, *H* on a scale-factor change, with every recorded press position reset to
-   unknown (D3).
+   unknown (D3). *(Amendment 1, item 6)*: a scale-factor change during the pointer lock rescales *F*
+   and does not end the lock.
 8. **§7.2/§7.3**: press-class versus release-class resolution (both with the two passes),
    pulses, event order within one raw event, pass-through (D4): a pass-through context
    consumes only on a UI verdict, whatever its `on` values; each (context, binding entry)
@@ -1424,7 +1716,8 @@ the wheel rule for captures.
    in pass 1 is skipped in pass 2 (it counts as not matching there), so the exact pass
    prefers exact bindings inside it too; event order keyed by pass, then context, then
    activation class, then registration order; held-set exclusion of UI-consumed buttons
-   (D7), and its release-side counterpart: at the release of a button whose press produced
+   (D7; *(Amendment 1, item 3)*: a mark on a button that stays in the held set, ignored
+   only by chord completion), and its release-side counterpart: at the release of a button whose press produced
    at least one hold, all of them UI-owned, release-class resolution considers only
    UI-band and pass-through contexts (D4); a press with no hold qualifies for neither.
    Release-class resolution runs only at the release of a button in the held set; the
@@ -1443,7 +1736,7 @@ the wheel rule for captures.
     the motion and puts its `scroll_up`/`scroll_down` clicks in the snapshot. With no
     UI-band entry nothing is withheld, so today's snapshot is unchanged (invariant (e)).
 11. **§7.6**: typed characters go to the sink by the D6 rule and are then not in the
-    snapshot's `text`.
+    snapshot's `text`. *(Amendment 1, item 7)*: the rule keys on `opaque_keys` as well as `opaque`.
 12. **New §7.y UI offers**: what is and is not offered, verdicts, hold ownership, the end
     queue, Repeat, the raw-event sequence number on offered events, move coalescing with the
     flush before every key, button, wheel, typed-character, cursor-left and focus-lost
@@ -1496,7 +1789,9 @@ the wheel rule for captures.
     (D2, difference 19). The focus and clipboard actions are Exact. The caret, delete,
     backspace and focus-move actions have `repeat` set as the fallback without data; with
     data the action map decides, per hold by the hold's command (D7, D9). This answers the auto-repeat part of the §11
-    OPEN.
+    OPEN. *(Amendment 1, item 13)*: `keymap.md` §8 sets the fallback flags from the data (its K43):
+    exactly the actions whose command has toggle type 3, so `focus_next`/`focus_prev`
+    repeat and the line and document start/end moves do not; `keymap.md` governs.
 14. **New §8.x**: the InputMap → context table of D5, with the push rules, including the
     Tessera row for `ui.chat_log`.
 15. **§10 winit adapter**: OS repeat presses are passed through with the repeat flag; cursor
@@ -1554,7 +1849,10 @@ the wheel rule for captures.
     This is a change for existing **button** actions: their release and tap bindings (for
     example the 0x06 bindings) used to be dropped and are now imported with `on`, so the
     import report lists fewer drops and the imported key map can fire those actions at a
-    release.
+    release. *(Amendment 1, item 8)*: a wheel sub-control bound to a button action becomes a click
+    entry (`AxisPositive` → `WheelUp`, `AxisNegative` → `WheelDown`, meta keys as modifiers,
+    `press` only); a non-`press` activation on it is dropped with the reason "activation on
+    a wheel click".
 19. **§12.14.6**: the new known differences 8, 9, 14 and 19 of this record.
 20. **§12.15**: the reporting table gains the rows of item 13, including (`ui.chat_log`,
     `text_page_up/down`, `text_doc_start/end`) → `CursorPreviousPage`/`NextPage`,
@@ -1685,6 +1983,17 @@ the wheel rule for captures.
       later one, when the slice is used up), after the `Update` broadcast; no plugin code
       runs in steps 2–6 or 8–10. At client exit, `Unload` handlers run after the last frame
       and a `PluginData.Save` they make is written before the process ends.
+      *(Amendment 1, item 1)*: a `Received` handler that writes a line with `WriteLine` does not get it
+      back. With two echoing apartments A and B, a session line reaches both; A's echo
+      reaches B only, B's echo reaches A only, and an echo of an echo reaches neither.
+      *(Amendment 1, item 2)*: a session event in step 2 that shows a native panel with
+      `activate_on_show` while a plugin window is active and its `TextBox` has focus gives
+      `Deactivated` and `FocusLost` at the start of that frame's step 7, before the hover
+      refresh; a window resize between redraws gives the root panels' `SizeChanged` and
+      `PositionChanged` in the next step 7.
+    - (z) Frame clock *(Amendment 1, item 4)*: a step-1 handler run in a winit callback
+      between two redraws and the `Update` broadcast of the frame that step 1 belongs to
+      read the same `GetGameTime()` value; the value changes only after present.
 
 ## Worked example (synthetic)
 *T* = 500 ms, *W* = *H* = 4 (`double_click_px` 4 at scale factor 1), defaults above, `pointer`

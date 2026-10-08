@@ -60,6 +60,8 @@
 //! | [`avatar`] | race table, avatar bodies, bone-slider definitions | `appearance.md` §2–§3, §6 |
 //! | [`item`] | worn and held items: wardrobe structs, dyes, holding locations | `appearance.md` §4–§5, `setup.md` §13 |
 //! | [`script_table`] | script tables (0x07), scriptlets (0x0C), clip selection | `script-table.md` |
+//! | [`font`] | fonts (0x42): metrics, glyph table, atlas DIDs | `fonts.md` §3 |
+//! | [`ui_layout`] | UI layouts (0x22): elements, states, media items, labels, base chains | `ui-layout.md` §3–§6, §10–§13 |
 //! | [`landblock`] | landblock data, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties, region descriptors (0x0F) | `landblock.md`, `entity-descriptor.md`, `coordinates.md` |
 
 mod any;
@@ -71,6 +73,7 @@ pub mod did;
 pub mod did_map;
 pub mod enum_mapper;
 mod error;
+pub mod font;
 pub mod item;
 pub mod landblock;
 pub mod property;
@@ -84,6 +87,7 @@ pub mod string_info;
 pub mod string_table;
 pub mod surface;
 pub mod texture_list;
+pub mod ui_layout;
 
 pub use any::AnyRecord;
 pub use appearance::{
@@ -100,6 +104,7 @@ pub use decode::{
     decode_setup, decode_sound, decode_string_info, decode_string_table, decode_surface,
     decode_texture_list, decode_visual_template,
 };
+pub use decode::{decode_font, decode_ui_layout};
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
     name_hash_utf16,
@@ -107,6 +112,7 @@ pub use did::{
 pub use did_map::{DataIdEntry, DataIdGroup, DataIdMap};
 pub use enum_mapper::EnumMapper;
 pub use error::{FormatError, Result};
+pub use font::{Font, Glyph};
 pub use landblock::{
     BlockMap, BlockMapDescriptor, LandblockData, LandblockGroupRecord, LandblockInfo,
     LandblockProperties, RegionDescriptor, StaticEntity,
@@ -123,6 +129,7 @@ pub use property_set::{
 pub use reader::{Reader, TSize, Utf16String};
 pub use record::Record;
 pub use script_table::{Node, NodeData, NodeKind, Script, ScriptTable, Scriptlet};
+pub use ui_layout::{ElementDesc, MediaItem, StateBlock, UiLayout};
 // Record types and resolvers only; the setup family's field types (frames, collision
 // volumes, `Aabb`, ...) stay under `setup::`.
 pub use setup::{

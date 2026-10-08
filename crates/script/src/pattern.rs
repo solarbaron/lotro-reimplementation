@@ -13,17 +13,25 @@
 //! - a step counter charged to the apartment's instruction budget, so backtracking counts
 //!   like VM instructions and is stopped by the same per-call limit (§3.3);
 //! - an output cap for `gsub` so its Rust-side buffer cannot outgrow the apartment's memory
-//!   budget.
+//!   budget;
+//! - sets (`[...]`) compiled once into a 256-bit membership table per matcher (a small
+//!   direct-mapped cache keyed by the set's position in the pattern), with the compile work
+//!   charged to the budget, so a long set costs its length once instead of once per subject
+//!   byte.
+//!
+//! `string.gfind` raises an error naming its replacement, as in the original's build
+//! (`plugin-runtime.md` §4.1).
 //!
 //! Spec: `docs/specs/lua-plugin-api.md` §3.1 (Lua 5.1 semantics), §3.3 (limits), §18
-//! invariant 15.
+//! invariant 15; `plugin-runtime.md` §4.2 (32 captures).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mlua::{Lua, LuaString, MultiValue, Table, Value};
 
-use crate::runtime::{ApartmentCtx, Budget, host_error, native_fn};
+use crate::budget::Budget;
+use crate::native::{host_error, native_fn};
 
 /// Most captures in one pattern (Lua 5.1 value).
 pub(crate) const MAX_CAPTURES: usize = 32;
@@ -39,6 +47,36 @@ const CHARGE_EVERY: u64 = 256;
 
 /// Largest `gsub` result when the apartment has no memory cap.
 const DEFAULT_MAX_OUTPUT: usize = 1 << 30;
+
+/// Compiled sets kept per matcher (direct-mapped by the set's pattern position).
+const SET_SLOTS: usize = 64;
+
+/// Work units of compiling a set that count as one budget unit.
+const SET_WORK_PER_UNIT: u64 = 8;
+
+/// A set `[...]` compiled to a membership table.
+#[derive(Debug, Clone, Copy)]
+struct SetEntry {
+    /// Pattern index of the `[` (`usize::MAX`: empty slot).
+    start: usize,
+    /// Pattern index just past the closing `]`.
+    end: usize,
+    bits: [u64; 4],
+}
+
+const EMPTY_SET: SetEntry = SetEntry {
+    start: usize::MAX,
+    end: 0,
+    bits: [0; 4],
+};
+
+fn set_has(bits: &[u64; 4], c: u8) -> bool {
+    (bits[usize::from(c >> 6)] >> (c & 63)) & 1 == 1
+}
+
+fn set_add(bits: &mut [u64; 4], c: u8) {
+    bits[usize::from(c >> 6)] |= 1 << (c & 63);
+}
 
 fn perr(msg: &str) -> mlua::Error {
     host_error(msg.to_owned())
@@ -87,6 +125,7 @@ struct Matcher<'a> {
     depth: usize,
     pending: u64,
     budget: &'a Budget,
+    sets: [SetEntry; SET_SLOTS],
 }
 
 impl<'a> Matcher<'a> {
@@ -102,6 +141,7 @@ impl<'a> Matcher<'a> {
             depth: 0,
             pending: 0,
             budget,
+            sets: [EMPTY_SET; SET_SLOTS],
         }
     }
 
@@ -129,80 +169,112 @@ impl<'a> Matcher<'a> {
         r
     }
 
-    /// Index just past the single-character class starting at `p`.
-    fn class_end(&self, p: usize) -> mlua::Result<usize> {
+    /// Index just past the single-character class starting at `p`, and the compiled set
+    /// when the class is a set `[...]`.
+    fn class_info(&mut self, p: usize) -> mlua::Result<(usize, Option<[u64; 4]>)> {
         let pat = self.pat;
-        let c = pat[p];
-        let mut p = p + 1;
-        match c {
+        match pat[p] {
             b'%' => {
-                if p >= pat.len() {
+                if p + 1 >= pat.len() {
                     Err(perr("malformed pattern (ends with '%')"))
                 } else {
-                    Ok(p + 1)
+                    Ok((p + 2, None))
                 }
             }
             b'[' => {
-                if pat.get(p) == Some(&b'^') {
-                    p += 1;
-                }
-                // The first set character is taken literally (so `[]]` is a set of `]`).
-                loop {
-                    if p >= pat.len() {
-                        return Err(perr("malformed pattern (missing ']')"));
-                    }
-                    let c = pat[p];
-                    p += 1;
-                    if c == b'%' && p < pat.len() {
-                        p += 1;
-                    }
-                    if pat.get(p) == Some(&b']') {
-                        break;
-                    }
-                }
-                Ok(p + 1)
+                let set = self.set_at(p)?;
+                Ok((set.end, Some(set.bits)))
             }
-            _ => Ok(p),
+            _ => Ok((p + 1, None)),
         }
     }
 
-    /// Does `c` match the set `[...]` between `p` (the `[`) and `ec` (the `]`)?
-    fn match_set(&self, c: u8, p: usize, ec: usize) -> bool {
+    /// The set starting at `p` (a `[`), compiled on first use in this matcher.
+    fn set_at(&mut self, p: usize) -> mlua::Result<SetEntry> {
+        let slot = p % SET_SLOTS;
+        if self.sets[slot].start == p {
+            return Ok(self.sets[slot]);
+        }
         let pat = self.pat;
-        let mut p = p + 1;
-        let mut sig = true;
-        if pat.get(p) == Some(&b'^') {
-            sig = false;
-            p += 1;
+        // The end: the first set character is taken literally (so `[]]` is a set of `]`).
+        let mut q = p + 1;
+        if pat.get(q) == Some(&b'^') {
+            q += 1;
         }
-        while p < ec {
-            if pat[p] == b'%' {
-                p += 1;
-                if p < ec && match_class(c, pat[p]) {
-                    return sig;
-                }
-                p += 1;
-            } else if pat.get(p + 1) == Some(&b'-') && p + 2 < ec {
-                if pat[p] <= c && c <= pat[p + 2] {
-                    return sig;
-                }
-                p += 3;
-            } else {
-                if pat[p] == c {
-                    return sig;
-                }
-                p += 1;
+        loop {
+            if q >= pat.len() {
+                return Err(perr("malformed pattern (missing ']')"));
+            }
+            let c = pat[q];
+            q += 1;
+            if c == b'%' && q < pat.len() {
+                q += 1;
+            }
+            if pat.get(q) == Some(&b']') {
+                break;
             }
         }
-        !sig
+        let ec = q;
+        let end = q + 1;
+        // The members, with the matching rules of Lua 5.1 sets: `%x` classes, `a-z` ranges
+        // and single characters; `^` negates.
+        let mut work = (end - p) as u64;
+        let mut bits = [0u64; 4];
+        let mut q = p + 1;
+        let mut negate = false;
+        if pat.get(q) == Some(&b'^') {
+            negate = true;
+            q += 1;
+        }
+        while q < ec {
+            if pat[q] == b'%' {
+                q += 1;
+                if q < ec {
+                    let cl = pat[q];
+                    for c in 0..=u8::MAX {
+                        if match_class(c, cl) {
+                            set_add(&mut bits, c);
+                        }
+                    }
+                    work += 256;
+                }
+                q += 1;
+            } else if pat.get(q + 1) == Some(&b'-') && q + 2 < ec {
+                let (lo, hi) = (pat[q], pat[q + 2]);
+                if lo <= hi {
+                    for c in lo..=hi {
+                        set_add(&mut bits, c);
+                    }
+                    work += u64::from(hi - lo) + 1;
+                }
+                q += 3;
+            } else {
+                set_add(&mut bits, pat[q]);
+                work += 1;
+                q += 1;
+            }
+        }
+        if negate {
+            for w in &mut bits {
+                *w = !*w;
+            }
+        }
+        self.tick(work / SET_WORK_PER_UNIT + 1)?;
+        let entry = SetEntry {
+            start: p,
+            end,
+            bits,
+        };
+        self.sets[slot] = entry;
+        Ok(entry)
     }
 
-    fn single_match(&self, c: u8, p: usize, ep: usize) -> bool {
-        match self.pat[p] {
-            b'.' => true,
-            b'%' => match_class(c, self.pat[p + 1]),
-            b'[' => self.match_set(c, p, ep - 1),
-            lit => lit == c,
+    fn single_match(&self, c: u8, p: usize, set: Option<&[u64; 4]>) -> bool {
+        match (self.pat[p], set) {
+            (_, Some(bits)) => set_has(bits, c),
+            (b'.', None) => true,
+            (b'%', None) => match_class(c, self.pat[p + 1]),
+            (lit, None) => lit == c,
         }
     }
 
@@ -238,11 +310,11 @@ impl<'a> Matcher<'a> {
                         if pat.get(p) != Some(&b'[') {
                             return Err(perr("missing '[' after '%f' in pattern"));
                         }
-                        let ep = self.class_end(p)?;
+                        let set = self.set_at(p)?;
                         let prev = if s == 0 { 0 } else { src[s - 1] };
                         let cur = src.get(s).copied().unwrap_or(0);
-                        if !self.match_set(prev, p, ep - 1) && self.match_set(cur, p, ep - 1) {
-                            p = ep;
+                        if !set_has(&set.bits, prev) && set_has(&set.bits, cur) {
+                            p = set.end;
                             continue;
                         }
                         return Ok(None);
@@ -259,8 +331,8 @@ impl<'a> Matcher<'a> {
                 },
                 _ => {}
             }
-            let ep = self.class_end(p)?;
-            let m = s < src.len() && self.single_match(src[s], p, ep);
+            let (ep, set) = self.class_info(p)?;
+            let m = s < src.len() && self.single_match(src[s], p, set.as_ref());
             match pat.get(ep) {
                 Some(b'?') => {
                     if m && let Some(r) = self.do_match(s + 1, ep + 1)? {
@@ -268,15 +340,15 @@ impl<'a> Matcher<'a> {
                     }
                     p = ep + 1;
                 }
-                Some(b'*') => return self.max_expand(s, p, ep),
+                Some(b'*') => return self.max_expand(s, p, ep, set),
                 Some(b'+') => {
                     return if m {
-                        self.max_expand(s + 1, p, ep)
+                        self.max_expand(s + 1, p, ep, set)
                     } else {
                         Ok(None)
                     };
                 }
-                Some(b'-') => return self.min_expand(s, p, ep),
+                Some(b'-') => return self.min_expand(s, p, ep, set),
                 _ => {
                     if !m {
                         return Ok(None);
@@ -288,9 +360,15 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    fn max_expand(&mut self, s: usize, p: usize, ep: usize) -> mlua::Result<Option<usize>> {
+    fn max_expand(
+        &mut self,
+        s: usize,
+        p: usize,
+        ep: usize,
+        set: Option<[u64; 4]>,
+    ) -> mlua::Result<Option<usize>> {
         let mut i = 0usize;
-        while s + i < self.src.len() && self.single_match(self.src[s + i], p, ep) {
+        while s + i < self.src.len() && self.single_match(self.src[s + i], p, set.as_ref()) {
             i += 1;
         }
         self.tick(i as u64 / 16)?;
@@ -305,12 +383,18 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    fn min_expand(&mut self, mut s: usize, p: usize, ep: usize) -> mlua::Result<Option<usize>> {
+    fn min_expand(
+        &mut self,
+        mut s: usize,
+        p: usize,
+        ep: usize,
+        set: Option<[u64; 4]>,
+    ) -> mlua::Result<Option<usize>> {
         loop {
             if let Some(r) = self.do_match(s, ep + 1)? {
                 return Ok(Some(r));
             }
-            if s < self.src.len() && self.single_match(self.src[s], p, ep) {
+            if s < self.src.len() && self.single_match(self.src[s], p, set.as_ref()) {
                 s += 1;
             } else {
                 return Ok(None);
@@ -381,7 +465,9 @@ impl<'a> Matcher<'a> {
         let cap = self.caps[l - 1];
         let len = match cap.len {
             CapLen::Unclosed => return Err(perr("invalid capture index")),
-            CapLen::Position => 0,
+            // Lua 5.1 compares with the position capture's negative length taken as an
+            // unsigned size, so a back-reference to a position capture never matches.
+            CapLen::Position => return Ok(None),
             CapLen::Len(n) => n,
         };
         self.tick(len as u64 / 16)?;
@@ -712,11 +798,17 @@ fn gsub(
 }
 
 /// Replace the pattern functions of the `string` table (also reached through the string
-/// metatable's `__index`) with the bounded implementations.
-pub(crate) fn install(lua: &Lua, string: &Table, ctx: &Arc<ApartmentCtx>) -> mlua::Result<()> {
-    let budget = Arc::clone(&ctx.budget);
-    let max_output = if ctx.limits.memory_bytes > 0 {
-        ctx.limits.memory_bytes
+/// metatable's `__index`) with the bounded implementations. `max_output` caps the result
+/// of one `gsub` call (normally the state's memory cap).
+pub(crate) fn install(
+    lua: &Lua,
+    string: &Table,
+    budget: &Arc<Budget>,
+    max_output: usize,
+) -> mlua::Result<()> {
+    let budget = Arc::clone(budget);
+    let max_output = if max_output > 0 {
+        max_output
     } else {
         DEFAULT_MAX_OUTPUT
     };
@@ -739,10 +831,14 @@ pub(crate) fn install(lua: &Lua, string: &Table, ctx: &Arc<ApartmentCtx>) -> mlu
     let gm = native_fn(lua, "gmatch", move |lua, args: MultiValue| {
         gmatch(lua, Arc::clone(&b), args)
     })?;
-    string.raw_set("gmatch", gm.clone())?;
-    if !string.raw_get::<Value>("gfind")?.is_nil() {
-        string.raw_set("gfind", gm)?;
-    }
+    string.raw_set("gmatch", gm)?;
+    // The original's build has no `gfind` alias: the name raises (plugin-runtime.md §4.1).
+    string.raw_set(
+        "gfind",
+        native_fn(lua, "gfind", |_, _: MultiValue| -> mlua::Result<()> {
+            Err(host_error("'string.gfind' was renamed to 'string.gmatch'"))
+        })?,
+    )?;
     let b = Arc::clone(&budget);
     string.raw_set(
         "gsub",

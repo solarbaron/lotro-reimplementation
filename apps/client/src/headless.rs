@@ -138,13 +138,21 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             now,
             dt,
         );
-        let mut frame = renderer.begin_offscreen_frame(&target)?;
-        walker.draw(&renderer, &mut frame);
-        renderer.end_frame(frame)?;
-        renderer
-            .context()
-            .wait_idle()
-            .context("waiting for the GPU")?;
+        // A renderer error ends the loop through `finish`, which still shuts the walker
+        // down and writes what it can.
+        let drawn = (|| -> anyhow::Result<()> {
+            let mut frame = renderer.begin_offscreen_frame(&target)?;
+            walker.draw(&renderer, &mut frame);
+            renderer.end_frame(frame)?;
+            renderer
+                .context()
+                .wait_idle()
+                .context("waiting for the GPU")?;
+            Ok(())
+        })();
+        if let Err(e) = drawn {
+            break Err(e);
+        }
         report.frames += 1;
 
         if args.fly_path.is_some() {

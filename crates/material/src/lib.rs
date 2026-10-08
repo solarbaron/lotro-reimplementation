@@ -66,6 +66,7 @@ pub mod records;
 pub mod resolve;
 mod source;
 pub mod texture;
+pub mod ui_image;
 pub mod vocab;
 
 pub use dye::{DyeColors, DyeLayer, apply_dye, select_dye_block};

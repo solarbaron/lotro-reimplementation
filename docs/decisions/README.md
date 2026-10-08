@@ -23,6 +23,8 @@ once accepted; a later record supersedes it instead of rewriting it. Sessions on
 | [0014](0014-ui-input-bridge.md) | UI input bridge: UI commands as tessera-input actions with activation filters, a UI band above game contexts, pass-through pointer context, plugin code in frame steps 1 and 7 | Accepted | 2026-10-06 |
 | [0015](0015-ui-rendering.md) | UI rendering: exact CPU compositing per surface, GPU composition of finished surfaces, own-opacity nested surfaces, frame budgets U1-U5 for M5 | Accepted | 2026-10-06 |
 | [0016](0016-plugin-class-helper.md) | Ship a clean-room plugin `class` helper (user's original package wins if installed); extended scripting API later, separate namespace, compatibility API unchanged | Accepted | 2026-10-06 |
+| [0022](0022-bundled-ui-font.md) | Bundle Noto Sans (OFL-1.1) as the UI fallback font; the only third-party binary asset | Accepted | 2026-10-08 |
+| [0023](0023-plugin-host-split.md) | Plugin host split: plugin-free `tessera-script` core (no Turbine, import or chat state), `tessera-plugins` for the compatible surface; one-way `plugins` → `ui` allowance | Accepted | 2026-10-06 |
 
 New records: copy the shape of an existing one (Context, Decision, Consequences), take the next
 number, add a row here.

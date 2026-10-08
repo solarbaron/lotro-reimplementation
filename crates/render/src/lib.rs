@@ -80,6 +80,11 @@
 //! # Ok(()) }
 //! ```
 //!
+//! Game UI (M5): [`Renderer::create_ui_texture`] and
+//! [`Renderer::update_texture_rect`] hold panel canvases, and
+//! [`Frame::ui_pass`] composes them with transform and clip chains; see the
+//! `ui` types ([`UiEntry`], [`UiPass`]) and `docs/specs/render.md` §6.
+//!
 //! Adapter selection honours `WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and
 //! `WGPU_POWER_PREF` (see [`ContextOptions`]); asynchronous GPU errors are
 //! captured and returned as [`RenderError::Gpu`] instead of panicking.
@@ -97,6 +102,7 @@ mod renderer;
 mod shapes;
 mod skin;
 mod texture;
+mod ui;
 
 pub use arena::{ArenaStats, MeshConfig, MeshId, RangeAllocator};
 pub use camera::{Camera, OrbitCamera, OrbitConfig, Perspective, UpAxis};
@@ -121,6 +127,12 @@ pub use renderer::{
 pub use shapes::MAX_SEGMENTS as MAX_SHAPE_SEGMENTS;
 pub use skin::{MAX_PALETTE_BONES, MeshSkin, SkinInfo, SkinPalette, WEIGHT_SUM_TOLERANCE};
 pub use texture::{ColorSpace, Filter, TextureId, TextureUpload, Wrap};
+pub use ui::{
+    MAX_UI_CLIPS, MAX_UI_COORD, MAX_UI_ENTRIES, MAX_UI_ROTATIONS, MAX_UI_TEXTURE_DIM,
+    UI_ANGLE_EPSILON, UI_BLEND_ALPHA, UI_BLEND_COLOR, UI_NODE_SCALE_RANGE, UiAddressing,
+    UiCapCounters, UiClip, UiClipMap, UiEntry, UiFilter, UiGeometry, UiPass, UiRect, UiRefusal,
+    UiRotation, UiSource, UiStats, UiViewMode,
+};
 
 /// Re-export of the math library used in the public API.
 pub use glam;

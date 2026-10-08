@@ -80,14 +80,23 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
-- **Next:** M4.5, world fidelity (owner decision 2026-10-06: it runs before M5; M5–M8 keep
-  their numbers): terrain texturing, scenery and grass, collision and the walk controller
-  (new crate `tessera-physics`), water, materials and the lit pipeline, sky, time of day
-  and fog. Plan and exit criteria: `docs/ROADMAP.md` M4.5. Run it with
-  `.claude/workflows/tessera-milestone.js` (milestone "M4.5").
+- **M4.5** (world fidelity) runs in the main checkout at the same time; this branch (`m5`)
+  merges after it.
+- **M5 (branch `m5`, uncommitted), exit verification 2026-10-08** (`docs/ROADMAP.md` M5
+  status): criteria 1, 3, 5, 6 pass; 2 done on Tessera's side (owner screenshots O39);
+  4 waits for the owner's plugin install (O40; synthetic plugins pass); 7 not met
+  (indicative, loaded machine: U1 walk mean 0.89 ms vs 0.3, U4 (b)/(f) over the 4 ms slice,
+  all in `tessera-ui` step 8; U4 (c)–(e) not measured; idle re-run O49). Before any commit:
+  `plugin-class-helper.md` and `render.md` §6 are still in Review (need their reviews);
+  the bundled Noto Sans font is covered by decision 0022 (OFL-1.1 in `LICENSES/`, a
+  `REUSE.toml` annotation, an allowlist entry, `docs/LEGAL.md` §11). fmt, clippy
+  (workspace and fuzz), rustdoc, deny, SPDX, links and `cargo test --workspace` (2,777 passed with real data) pass; 22 M5 fuzz targets ran 60 s
+  each without a crash. The verifier's task text carried dirty-room spec-writer reports
+  (the incident-0018 pattern); it made only mechanical code changes. A maintainer should
+  check whether the M5 implementer task texts did too before committing.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
-  M3 reference locations, frame-capture questions from M2, M4 items O8–O17). These do not
-  block M5.
+  M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M5 items
+  O39–O49). They do not block the Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
@@ -126,7 +135,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
 - `crates/net` — transport-agnostic session layer and a local sandbox backend
 - `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests)
-- `crates/script` — Lua 5.1 plugin host
+- `crates/script` — plugin-free sandboxed Lua 5.1 core: apartment profiles, limits and budget, protected calls, pattern matcher, neutral Lua-table data reader (no plugin API namespace, `import` or chat state; decision 0023)
+- `crates/plugins` — plugin host on the script core: `.plugin` discovery, apartments, `import`, the compatible plugin API (its UI classes bind `crates/ui` elements), plugin data, the clean-room class helper
+- `crates/ui` — game UI: retained element tree, layout, sparse CPU canvases and painter, damage and paint jobs, composition list; no wgpu, no Lua
 - `apps/dattool` — CLI for inspecting archives (`info`, `ls`, `cat`, `extract`, `validate`, `snapshot`, `diff`, ...)
 - `apps/explorer` — egui asset browser (textures, strings, properties, icons, meshes, character viewer and animation browser, headless `--sheet`)
 - `apps/client` — the game client binary (world walker with an animated avatar, placed NPCs and a `--crowd` load test)

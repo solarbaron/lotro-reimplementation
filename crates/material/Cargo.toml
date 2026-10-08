@@ -13,6 +13,8 @@ tessera-dat.workspace = true
 tessera-formats.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# Skin and plugin JPEG files (ui_image). Pure Rust; MIT OR Apache-2.0 OR Zlib.
+zune-jpeg = "0.5.15"
 
 [dev-dependencies]
 proptest.workspace = true
@@ -20,6 +22,9 @@ proptest.workspace = true
 tessera-props.workspace = true
 # PNG output of sample composites in the real-data test (zlib stream).
 flate2.workspace = true
+# Synthetic JPEG files for the ui_image tests (encoder only; same crate and version as
+# tessera-formats' optional JPEG support).
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [lints]
 workspace = true

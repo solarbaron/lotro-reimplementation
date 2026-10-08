@@ -339,6 +339,8 @@ impl DidKind {
             | Self::BlockMapProperties
             | Self::ScriptTable
             | Self::Scriptlet
+            | Self::UiLayout
+            | Self::Font
             | Self::Landblock(
                 LandblockKind::Heightmap
                 | LandblockKind::BlockMap
@@ -349,7 +351,6 @@ impl DidKind {
             | Self::KeyMap
             | Self::ShaderProgram
             | Self::Compositor
-            | Self::Font
             | Self::ActionMap
             | Self::ScriptLibrary
             | Self::ScriptStateObject => Evidence::Labelled,

@@ -60,6 +60,9 @@ pub struct ControlEvents {
     pub mode_changed: bool,
     /// Reset the camera.
     pub reset_camera: bool,
+    /// A `menu` press that reached game code while a game UI is attached (the UI declined
+    /// it): the host runs the Escape rule instead of quitting (`walker.md` §5).
+    pub menu: bool,
 }
 
 /// Loads the keymap: `path` if given, else the default keymap file when it exists, laid
@@ -161,6 +164,8 @@ pub struct Controls {
     /// Third-person camera distance.
     zoom: f32,
     placed: bool,
+    /// A game UI is attached: `menu` opens the game menu instead of quitting.
+    ui_attached: bool,
 }
 
 impl Controls {
@@ -204,7 +209,20 @@ impl Controls {
             cam_pitch: -0.25,
             zoom: DEFAULT_ZOOM,
             placed: false,
+            ui_attached: false,
         }
+    }
+
+    /// The input mapper (the game UI's step 1 feeds it with the UI as its sink) and the
+    /// mapper's clock.
+    pub fn mapper_mut(&mut self) -> (&mut InputMapper, Duration) {
+        let now = self.start.elapsed();
+        (&mut self.mapper, now)
+    }
+
+    /// Whether a game UI is attached (`walker.md` §5: Escape then gives the game menu).
+    pub fn set_ui_attached(&mut self, on: bool) {
+        self.ui_attached = on;
     }
 
     /// Starts (or stops) moving forward on its own, walking or running (`--autorun`).
@@ -307,7 +325,8 @@ impl Controls {
         self.mapper.update(now);
         let a = self.actions;
         let mut ev = ControlEvents {
-            quit: self.mapper.just_pressed(a.menu),
+            quit: !self.ui_attached && self.mapper.just_pressed(a.menu),
+            menu: self.ui_attached && self.mapper.just_pressed(a.menu),
             screenshot: self.mapper.just_pressed(a.screenshot),
             toggle_debug: self.mapper.just_pressed(a.toggle_debug),
             reset_camera: self.mapper.just_pressed(a.reset_camera),

@@ -211,6 +211,24 @@ Over all 383,332 property sets:
 > record whose root class descends from *I* but whose property set lacks `Item_Class` would be
 > reported as malformed; none exists.
 
+> **OPEN (implementer, 2026-10-07):** Step 1 does not say what happens when two children of
+> *P* hold the same number of references. `crates/formats/src/gameplay/items.rs`
+> (`ItemClasses::discover`) picks the lower class index and counts references whose class is
+> *P* itself for no child. Please confirm or state a rule.
+
+> **OPEN (implementer, 2026-10-07):** Rule 4 cannot separate two kinds of §2.1. The in-world
+> interactive objects (2097) carry `WeenieType` `Door` like the doors (1722), and their
+> signature ("13 exclusive labels (`BigBattle_Interactive_*` extras, activity collections)")
+> names no label present in every record; the property-modifying tokens (3924) carry `Item`
+> like the general items, and their "11 exclusive `SPM_*` / `Usage_ModPropertyUsageData_*`
+> labels" are not listed. Please name, for each of the two, labels present in every record
+> of the class and absent from the others. Until then `ItemView::kind` reads them as Door
+> and General. Engineering choice recorded here: the kind is decided by, in order, the
+> signatures that §2.1 marks "all" or "exclusive" (weapon, recipe scroll, multi-recipe
+> scroll, package, text item, door, key), then the `WeenieType` label (`Weapon`, `Clothing`,
+> `Jewelry`, `Shield`, `PackageItem`, `Letter`, `Door`, `Key`, `Waypoint`, `Milestone`; the
+> other labels give no kind), then `Item_WornAppearanceMapList`, else General.
+
 ---
 
 <a id="s3"></a>
@@ -264,6 +282,16 @@ wardrobe record DID (0x20…). For every one of the 41,881 records this map equa
 `Item_WornAppearanceMapList` of the property set (same keys, same pairs). The 205 other items
 with that list (200 weapons, 5 general items) have no such map. `appearance.md` §4 reads the
 property list; readers need not read the mirror.
+
+> **OPEN (implementer, 2026-10-07):** The sentence "The 205 other items with that list (200
+> weapons, 5 general items) have no such map" is not reproduced. Running
+> `crates/formats/tests/gameplay_items_real_data.rs` (it decodes the object-state record of
+> every item that has `Item_WornAppearanceMapList`) finds root attribute 0x0905B9D8 resolving
+> to a non-empty `refmap_u32` in all 200 weapons with the list as well, and in each of them
+> the map equals the list (keys and the two integers); only the 5 general items have none.
+> Is the sentence wrong, or does it describe something other than a non-null reference to a
+> non-empty map? Should IT12 cover the weapons too? The test asserts IT12 for every record
+> that has a mirror and reports the classes; it does not assert which classes those are.
 
 ---
 
@@ -655,6 +683,14 @@ identified by DID or class. The same 91,154 items (the equippable ones) use 0x70
 | `Usage_TargetType`, `Usage_ValidTargetTypes` | bitfield 32 | 71,389 / 15,569 | |
 | `ItemDecay_Duration` | enum (0x2300030C) | 249 | Lifetime; seconds from the decay control (§9.8) |
 
+> **OPEN (implementer, 2026-10-07):** Field labels and types missing from the requirement
+> table: the fields of a `Usage_RequiredRaceEntry` (the implementation returns the raw
+> elements); the type of `Usage_RequiredVirtueRank` (read as an int or an enum key); the
+> types of `Usage_RequiredCraftTier` and `Usage_RequiredCraftMastery` (the row says
+> "DID / enum" for three labels; both are read as enum keys); the types of `Usage_Operator`
+> and `Usage_QuestStatus` (read as enum keys, as `map-data.md` §8.4.1 gives them); the
+> `_Array` forms of the barring labels (not read). Please state them.
+
 Where a label's value is the same in every item that has it but differs from the dictionary
 default (the last three booleans), the **presence** of the label is the information; an
 absent label stands for the dictionary default (`property-system.md` §2.2) only if the game
@@ -778,6 +814,14 @@ widgets (`ItemAdvancement_AdvanceableWidget_DPSLUT`, class 4024).
 > **OPEN:** The roles of the repair-cost, wear-state and skill-gate tables. Only their keys are
 > known (quality, wear state, an unnamed key); no stored item value depends on them.
 
+> **OPEN (implementer, 2026-10-07):** The entry field labels are abbreviated ("`…_MaxStructurePointsEnum`")
+> or not given. The implementation reads `ItemWearControl_MaxStructurePointsEnum`,
+> `ItemWearControl_MaxStructurePointsValue`, `ItemWearControl_DurabilityEnum` and
+> `ItemWearControl_DurabilityValue` (all four are defined in the dictionary and reproduce
+> §9.6 on every item). The entries of the repair-cost, wear-state and skill-gate arrays are
+> read by field type (first enum field = key, first float or int field = value), because
+> their labels are not given. Please spell out every entry label and value type.
+
 <a id="s6-4"></a>
 ### 6.4 Other control records
 
@@ -797,6 +841,12 @@ widgets (`ItemAdvancement_AdvanceableWidget_DPSLUT`, class 4024).
 
 > **OPEN:** What `InventoryControl_ExamProperty_Array` and `…_MergeProperty_Array` are used for
 > (no behaviour that uses them was observed).
+
+> **OPEN (implementer, 2026-10-07):** The entry layout of `CooldownControl_DurationMapList` and
+> `ItemDecayControl_DurationMapList` is not given (labels of the key and seconds fields, and
+> the type of the decay seconds). The implementation reads each entry struct by field type:
+> first enum field = key, first float (or int) field = seconds. This reproduces §9.8 coverage
+> on every item. Please state the labels and types.
 
 ---
 
@@ -863,6 +913,10 @@ Nine sets have two members but tiers up to 5 (`Set_ActiveCount` 2–5).
   2239 }. Named by runic level loot tables (class 2227, 1,050), by items (136) and by the runic
   combination control. Their use in loot is specified in `economy.md` §4.9.
 
+> **OPEN (implementer, 2026-10-07):** The value types of `Runic_Tier` (§7.2) and
+> `ItemAdvancement_Mod_Weight` (§7.3) are not given. The implementation accepts an int or an
+> enum key for the tier and any numeric value for the weight. Please state them.
+
 <a id="s7-3"></a>
 ### 7.3 Legacies and advancement tables
 
@@ -877,6 +931,16 @@ Nine sets have two members but tiers up to 5 (`Set_ActiveCount` 2–5).
 > **OPEN:** The legendary rules (legacy rolls by weight, pull counts, imbuement, reforging).
 > The tables are fully decodable with `property-system.md`; their use is server behaviour and
 > is not specified here.
+
+> **OPEN (implementer, 2026-10-07):** The records of classes 2139, 2338, 4015 (§7.3) and 3138
+> (§7.2) are not given typed readers because their labels are abbreviated or missing:
+> the field labels and types of the `ItemAdvancement_ProgressionListArray` entries
+> ("{ → 2134, weight }") and of the `ItemAdvancement_ProgressionPullCountList` entries
+> ("{ amount, weight }"); the full labels written "`…_Tier`" and "`…_DamageType`" (2338),
+> "initial and absolute max levels", "icon", "tooltip layout" and "`…_ClassicLegacyTransform`"
+> (4015), "`…_TransmutationCategory`", "`…_Output_List`" and the output entry fields (3138).
+> They stay reachable through the generic property access. Please spell out every label and
+> its type.
 
 <a id="s7-4"></a>
 ### 7.4 Cosmetic companions (class 3698, 563 records)
@@ -1142,6 +1206,11 @@ definition uses it**; it plays no part in items on this install.
 | IT11 | `Set_ActiveCount` values within a set are strictly ascending; no item appears in two `Set_MemberList`s; every member of a class-1824 set is an item. |
 | IT12 | For class-795 records, the object-state worn map equals `Item_WornAppearanceMapList` (§3.3). |
 | IT13 | The targets of `Usage_Permission`, `Usage_TakePermission` and `CSM_ActionHandler` are each the only record of their root class, and their property sets hold at most six properties. |
+
+> **OPEN (implementer, 2026-10-07):** IT13 holds only when "record" means a 0x70 record. Counted
+> over all object DIDs (0x70–0x77), the classes of 2 of the 24 targets also hold a 0x76
+> singleton record. The real-data test counts 0x70 records. Please say which count IT13 and
+> §5.10 mean.
 
 A real-data test asserts IT1–IT13 and reports counts; it never asserts the counts themselves,
 which change with client updates.

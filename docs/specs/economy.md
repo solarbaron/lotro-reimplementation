@@ -374,6 +374,12 @@ Filter kinds (elements of `EntityFilter_Array`):
 The definition of `EntityFilter_Array` allows more element kinds (weenie type, player-pet
 flag, alignment, class); none occurs in these records.
 
+> **OPEN:** (implementer, 2026-10-07) The type codes of the `WorldEvent_Condition` fields are
+> not given here or in §4.8: `WorldEvent_Operator` is described as a key (read as an enum,
+> type 8), but the type of `WorldEvent_ConditionValue` (values 0–3) is not stated. Which type
+> code does it have? Until answered, `crates/formats` reads it from an int, an enum or a
+> boolean.
+
 Meaning (Reported, LC): an entry applies to a looter for whom every filter of the entry
 holds; a property-set filter holds when the looter's value of the tested property equals
 one of the listed values; a range filter holds when the value lies between the bounds; a
@@ -447,6 +453,12 @@ The directory is the WEENIECONTENT label `WorldEventLootTableDirectory` (§4.12)
 
 Meaning (Reported, LC): a runic list is a trophy list for relics; a runic treasure group
 first picks a pull count by weight, then picks that many relics by weight.
+
+> **OPEN:** (implementer, 2026-10-07) The table above names no level field for the entries of
+> `RunicLevelLootTable_LootTable`, unlike §4.6 (`LevelBasedLootTable_Level`) and §4.8
+> (`WorldEventLevelLootTable_Level`). Is a level stored in each entry, and under which label?
+> Until answered, `crates/formats` derives the level from the position (entry *i* has level
+> *i* + 1) and checks E-I5 for this table by entry count only.
 
 <a id="s4-10"></a>
 ### 4.10 Skirmish lookups (classes 2728, 2729)
@@ -770,6 +782,18 @@ such costs the stored quantity equals the following:
 Counts: rule 2 with the minimum-usage level: 2,446 costs; with `Item_Level`: 3,119.
 The progression format itself belongs to the progression spec.
 
+> **OPEN:** (implementer, 2026-10-07) Step 3 gives no type codes, and no progression spec
+> exists yet: what are the types of `Progression_MinimumIndexValue` and of the elements of
+> `FloatProgression_Array` (bare `FloatProgression_FloatValue` floats, or structs holding
+> that field)? Until answered, `crates/formats` reads the minimum index from a 32- or 64-bit
+> int and each element from a float or an int, bare or inside a struct.
+
+> **OPEN:** (implementer, 2026-10-07) Step 2 names two places for `Usage_MinLevel` (top
+> level, or inside `DefaultPermissionBlobStruct`) but no precedence when a reward item has
+> both with different values. `crates/formats` takes the top-level property first; with that
+> order all 5,565 look-up costs of the install match the object form, so the data does not
+> contradict it. A value that is not a whole number gives no quantity (no rounding rule).
+
 > **OPEN:** Whether `Barter_ItemMungeLevelOverride` (202 profiles) changes the level of
 > step 2. None of the 5,565 look-up costs needed it to match (70 of them lie in profiles that
 > have the override), so the data cannot show its role; it may scale the reward item instead.
@@ -999,6 +1023,13 @@ descending DID order, and 25 match none of these four orders.
 | PVP table (3671) | `Agent_Species` × 2¹⁶ | 15 of 15; `Agent_Class` is 0 in all, so its position is unknown (OPEN in §14) |
 
 Bits 0–3 of the species key are 0 in all observed keys.
+
+> **OPEN:** (implementer, 2026-10-07) The widths of the packed fields are not stated. With
+> the multipliers above, a species key of 2¹² or more spills into the examination-type field
+> (bit 32 and up), and a subspecies key of 2¹⁶ or more collides with the species field (bit 20
+> and up). What are the field widths (and is the examination type limited to 32 bits)? Until
+> answered, `crates/formats` reports no key for an entry outside those ranges (all observed
+> keys are inside them), and the PVP key only while `Agent_Class` is 0.
 
 ---
 

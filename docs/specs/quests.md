@@ -157,6 +157,16 @@ In the class library, classes 1815 and 1887 derive from 1816, 2161 from 2147 and
 > **OPEN:** Whether further kinds of the family exist that carry none of the identifying
 > properties listed here.
 
+> **OPEN:** (implementation census, 2026-10-07) The identifying properties of the emote kind
+> are not unique to it in this install: `Emote_CommandString` with `Emote_ScriptID` is
+> carried by 275 property sets, the 273 emotes (root class 1049) and 2 records of root class
+> 3982. §12.2 offers a data-driven separation (the emote directory lists exactly the 273
+> emotes; the 2 others are not listed), but it needs the directory, not the set alone. Is
+> "listed in `Emote_AvailableList`" the intended rule, or does a property of the set itself
+> separate emotes from these records? The quest-item directory whose set is empty is not
+> identified by any property (20 of 21 are); it is only reached through the region
+> directory (§15).
+
 <a id="s2-2"></a>
 ### 2.2 Discovery at run time
 
@@ -912,6 +922,14 @@ level of one record.
   13, 14 almost all.
 - 6,163 quest roles name no NPC (they are bound by role key or by script).
 
+> **OPEN:** (implementation census, 2026-10-07) The counts above are those of the four
+> holder kinds named (by root class here: NPCs 1724 40,461 entries, monsters 1723 2,232,
+> items 796 633, class 5785 80; together 43,406, of which 43,401 match). Reading every
+> property set finds one more `QuestDispenser_QuestRole` entry, in the
+> `QuestDispenser_ActiveQuests` array of one record of root class 763, and it matches (role
+> name and holder as `QuestDispenser_NPC`), giving 43,407 and 43,402. What kind of record is
+> that holder, and should §7.4 (and §3.2, which lists the same four sources) include it?
+
 A client uses these lists to know which quests an NPC takes part in (for example to show
 an offer marker); a server uses the quest side.
 
@@ -1573,6 +1591,11 @@ Note:
 
 The role names in a note are role names of the quest's `Quest_RoleArray` (§7.3).
 
+> **OPEN:** (implementation census, 2026-10-07) 3 of the 16,124 `QuestDispenser_QuestRole`
+> structs in note infos have no `QuestDispenser_RoleName` (a quest DID only); the other
+> 16,121 name a role of a present quest's `Quest_RoleArray`. What does a note role without a
+> role name stand for (every role of the quest, or none)?
+
 <a id="s17-2"></a>
 ### 17.2 Use
 
@@ -1640,6 +1663,23 @@ Checked on this install (all records). A reader may warn on a violation but must
 | V12 | Every arc's quests are distinct across all arcs. |
 | V13 | NPC comment records have the fixed requirement shape of §7.7. |
 | V14 | Every scene's class-427 native has one entry per keyframe and repeats subtitle and flag (§7.9). |
+
+> **OPEN:** (implementer choices where the spec is silent, `crates/formats/src/gameplay/quests.rs`;
+> to be confirmed or replaced) (1) An objective without `Quest_ObjectiveIndex` makes the
+> strict §5.7 numbering of its quest fail (`MissingProperty`) rather than guessing an
+> ObjectiveID; a lenient variant leaves such an objective out of the walk (its entries take
+> no EventID, so later EventIDs shift) and reports its stored position, so that the rest of
+> the quest is still numbered. Which ObjectiveID, if any, the compiled form would give such
+> entries is not stated. (2)
+> Enum-typed fields (tiers, actions, operators, statuses) are also accepted when the
+> dictionary types them as a non-negative Int. (3) §9.2 step 2 gives no table for a level
+> below 0 or above the length of `QuestControl_RewardLevelDIDArray`, and for a null element.
+> (4) The listen list of types 19 and 29 (§6.2) is not derived (the choice of 1 or 11 is
+> OPEN). (5) The map-note decoder allocates for at most one note per 19 bytes of payload
+> (position flag byte, three DIDs, a null layers PID, an empty info set). (6) In
+> `Quest_FailureConditionArray` and `Quest_TrackedConditionsArray` only elements with the
+> PID of `Quest_FailureCondition` or `Quest_TrackedCondition` (§5.1) are conditions; any other
+> element is skipped and takes no ConditionID, as in an objective's condition array.
 
 ---
 

@@ -292,6 +292,11 @@ Observed lengths (records):
 | DID array (2519) | 200 (12) |
 | Progression of progressions | 5 (19), 7 (15), 10 (9), 6 (2) |
 
+> **OPEN:** (implementation census, 2026-10-07) The float-array row sums to 1,342 records, not
+> the 1,338 float arrays of this section. The implementation's census
+> (`crates/formats/tests/gameplay_combat_real_data.rs`) reproduces every other count of the row
+> and observes length 8 in 1 record, not 5, which gives 1,338. Is "8 (5)" a typo for "8 (1)"?
+
 <a id="s4-2"></a>
 ### 4.2 Common fields
 
@@ -382,6 +387,12 @@ a progression of progressions in this install.
 (f32, 5–120) and `SparseDIDProgressionEntry_DID` (all 270 DIDs are traits of class 3438). Used
 only by trait-tree specialisations (§8.5). Reported (LC): at a given value, the entry with the
 largest key not above it applies.
+
+> **OPEN:** (implementation census, 2026-10-07) "All 270 DIDs are traits of class 3438" is not
+> reproduced. Reading `SparseDIDProgressionEntry_DID` of every `SparseDIDProgression_Array` struct
+> of the 39 records, the implementation finds 270 values, all naming traits, but of classes 1477
+> (191) and 1483 (79), none of class 3438. Which field or which records does the statement
+> describe? The implementation checks only "names a trait" until this is settled.
 
 > **OPEN:** (§18 Q4) The lookup rule of sparse DID progressions: whether the entry with the
 > largest key not above the value applies (LC's reading, Reported), what is returned below the
@@ -550,6 +561,12 @@ one of them. In 12 entries a struct carries one more field with an unrelated PID
 ignore them). The value field's type always matches the modified property's declared type.
 
 Readers skip empty and field-less entries.
+
+> **OPEN:** (implementation census, 2026-10-07) The 116,435 arrays and 372,834 entries of this
+> section are reproduced only when `Mod_Array` values nested inside other values are counted too
+> (3,933 arrays below top level, none in effects or traits); top-level arrays alone give 112,502.
+> Please state that the census covers `Mod_Array` at any depth, and whether a reader should apply
+> nested arrays (they sit inside item structs whose meaning is `items.md`'s, not this spec's).
 
 <a id="s5-3"></a>
 ### 5.3 Operators (keys Confirmed, arithmetic Reported)
@@ -822,6 +839,10 @@ effect classes, the same 66 whether only the struct or all 55,825 occurrences ar
 names a record of classes 706, 716, 748, 752, 761, 762, 779, 1787, 2027, 2231, 2259, 2441, 2477, 2544, 2676, 3099, 3690, 3833, 3839, 3912
 or 3943).
 
+> **OPEN:** (implementation census, 2026-10-07) The 4,954 bare `Effect_WSLEffect` values in
+> effects include 2,649 zero values (2,305 non-zero). Are the zeros placeholders in the sense of
+> §3.4 (skipped by readers), as the implementation assumes?
+
 <a id="s6-4"></a>
 ### 6.4 Vital-change amounts (layout Confirmed, meaning Reported)
 
@@ -852,6 +873,13 @@ progression with per-interval constant and progression 29, and 10 others.
 > **OPEN:** Which source wins when both a constant and a progression are present (19 + 29 + 2
 > records). LC prefers the constant (Reported).
 
+> **OPEN:** (implementation census, 2026-10-07) The class-755 co-occurrence counts (1,651, 716,
+> 32, 29, 10) are reproduced only when *S*`Variance` is left out of the grouping (for class 725
+> it is counted). Please state the grouping rule. Also, the labels behind
+> "*S*`_ModifierList`, `…Additive…_ModifierList`" and "`…_Critical_Multiplier`,
+> `…_Critical_Multiplier_ModList`" are not spelled out, so the implementation does not read
+> them; please list the full labels per stem.
+
 <a id="s6-5"></a>
 ### 6.5 Class-specific data that carries values
 
@@ -869,6 +897,11 @@ Counts are records of the class that carry the property, out of the class's reco
 | 767 (1,189) | combinations | `Effect_Combo_EffectPresentList`, `_EffectClassPresentList`, `_RemoveOldEffectIfPresent`, `_RemoveAllOldEffectsIfPresent`, `_CasterOnly` (all 1,189); `_EffectToAddIfPresent` (979), `_EffectToAddIfNotPresent` (747), `_EffectToExamine` (189), `_EffectToGiveBackIfPresent` (173), `_EffectToGiveBackIfNotPresent` (76) |
 | 3124 (14) | persistent combinations | `Effect_Combo_EffectPresentList`, `_EffectClassPresentList`, `_CasterOnly` (all 14); `Effect_PersistentCombo_EffectsToAddIfAbsent_Array` (10), `Effect_PersistentCombo_EffectsToAddIfPresent_Array` (9) |
 | 3866 (526) | tiers | `Effect_TierUp_EffectList` (526; 3,141 `EffectGenerator_EffectStruct`), `Effect_TierUp_FinalEffect` (462; an array of one `EffectGenerator_EffectStruct` each), `Effect_TierUp_ShowInExamination` (416) |
+
+> **OPEN:** (implementation) The fields of `Effect_Aura_Applied_Effect_Data`,
+> `Effect_Area_Applied_Effect_Data` and `Effect_ApplyOverTime_Applied_Effect_Data` ("an effect DID
+> and a spellcraft") are not named, so the implementation's effect-reference reader (§6.3) does
+> not recognise these structs. Which labels hold the effect DID and the spellcraft?
 
 <a id="s6-6"></a>
 ### 6.6 Equivalence classes and stacking
@@ -1205,6 +1238,12 @@ equals the sum over the 7 pairs of coefficient × the actor's primary stat of th
 > order. This is server logic; M3 observation of the character panel could test the reading
 > above.
 
+> **OPEN:** (implementation) The field labels of `AdvTable_AvailableSkillEntryList` and
+> `AdvTable_AvailableMountSkillEntryList` entries ("skill DID, level, prerequisite skill, rank,
+> training cost, shortcut index"), of `MonsterPlay_SkillList` and `MonsterPlay_TraitList` entries
+> (§9.2) and of `Trait_Skill_Array` elements (§8.1) are not given. The implementation offers every
+> DID inside these lists and nothing else; the labels would let it type the entries.
+
 <a id="s9-2"></a>
 ### 9.2 Monster-play tables (class 1932)
 
@@ -1517,6 +1556,47 @@ D1 clamp, so that the viewer never shows a Tessera choice as data.
 | Q11 | Row/column of trait-cell keys; the 0x10000000 group | §8.5 | M3 (trait panel) or UI layout data |
 | Q12 | Rating-curve and damage formulas; index base of DPS and value arrays | §10.1, §13.3 | as Q1 for tooltip values; server logic otherwise |
 | Q13 | Derived-stat formula completeness | §9.1 | server logic; M3 character panel |
+
+---
+
+<a id="implementer-notes"></a>
+## Implementer notes
+
+Engineering choices of the implementation (`crates/formats/src/gameplay/combat.rs`) where this
+spec is silent. They are not facts about the original; a spec writer may confirm or replace them.
+
+> **OPEN:** (implementation choice) A progression value array whose stored count includes null
+> elements is rejected as malformed, because element positions are indices (§4.3) and a null
+> element's position is not kept by the decoder. None occurs in the observed install. Elements of
+> the wrong type (a float array holding a non-float, a control point without
+> `LinearInterpolatingProgression_Key` or `_Value`) are rejected the same way, rather than
+> replaced by the dictionary default.
+
+> **OPEN:** (implementation choice) Whether a DID array is a progression of progressions is
+> decided by the record's class (§4.1), not by `ProgressionProgression_InnerRepresentedPropertyName`.
+> Index arithmetic is done in 64 bits (128 for *x* − *m*), so no index overflows. The D1 clamp is
+> logged at debug level.
+
+> **OPEN:** (implementation choice) A `Mod_Entry` without `Mod_Modified` is treated like
+> `Mod_Modified` = 0 (empty). An entry with both an inline value and a progression, or with
+> neither, is kept and marked (M1 says neither occurs) rather than rejected.
+
+> **OPEN:** (implementation choice) The D2 sandbox combines only values of the base value's own
+> type (M2); a value of another type is skipped and logged. Integer arithmetic saturates. Bitwise
+> operators on any-width bitfields work byte by byte at the base's width. `ArrayAdd` appends the
+> elements and adds the counts. Operators with no Reported meaning (`Invalid`, `Difference`,
+> `Divide`, `Random`) are skipped and logged.
+
+> **OPEN:** (implementation choice) Effect references (§6.3) are recognised by their ID field
+> wherever a struct carries one (`EffectGenerator_EffectID`, `Skill_Effect`,
+> `Skill_Toggle_Effect`, `Effect_StartupEffectID`, tried in this order), so the same struct kinds
+> are found under any holder; a DID entry with one of these labels or `Effect_WSLEffect` outside
+> such a struct is a bare reference. Zero values are kept and marked as placeholders.
+
+> **OPEN:** (implementation choice) The typed views require the signature properties of their
+> family (§2.1) and report a missing one as an error; every other property is optional. The DPS
+> and value tables (§10.2) offer base values by position only, because the index base is OPEN
+> (Q12), and quality factors by key.
 
 ---
 

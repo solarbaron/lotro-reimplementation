@@ -1015,6 +1015,18 @@ are records of root class 1398 (quests or deeds, Reported LC). Not needed for M3
 - **Small-set bounds.** The count of a small set is 24 bits wide (§5.3); check it against
   the bytes left (4 bytes per element for 18, 8 for 105, 9 for 134) before allocating.
 
+> **OPEN:** (implementer note, engineering choice, `crates/formats/src/gameplay/common.rs`)
+> The gameplay specs (items, combat-data, creatures, quests, economy, map-data,
+> misc-records) say to find properties by dictionary label at run time but do not say what
+> a reader does when a label is not defined in the install's dictionary. Tessera's shared
+> helpers treat such a property as absent everywhere (never matching a signature's
+> "present" test), and a kind's required property that is absent or undefined is reported as
+> a distinct error (`MissingProperty`), as is a value of another type than the spec gives
+> (`PropertyTypeMismatch`). Ancestry walks over the parent map (§3.1 root class, `wlib.md`
+> §9) stop after the class count. A singleton (0x76) has no property set; the +0x09000000
+> rule names a 0x7F DID that a lookup does not find. Confirm or replace if a spec settles
+> any of these.
+
 ---
 
 <a id="s13"></a>

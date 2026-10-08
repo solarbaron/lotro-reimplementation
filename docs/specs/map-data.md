@@ -1108,6 +1108,38 @@ two short paths S1 and S2.
 - Housing: one neighbourhood per `Neighborhood` record, created on first entry, holding the
   template's houses; entrance and exit by the template's place keys. Prices per §9.7 (Reported).
 
+<a id="s14-4"></a>
+### 14.4 Implementer notes
+
+> **OPEN:** (implementer, 2026-10-07; engineering choices where the spec is silent, recorded
+> for review) (a) The places-table entry count is bounded by remaining bytes / 10 (smallest
+> entry: a 1-byte name count, a 1-byte position, two u32 slots). (b) The dungeon quest-note row
+> count is bounded by remaining bytes / 19 (a 1-byte position, three DIDs, a null `layers`
+> property, an empty set). (c) The ripcord fields whose value type §11 does not give
+> (`RipCord_WorldPropertyTableProperty`, `RipCord_WorldPropertyArrayElement`,
+> `RipCord_UIElement_ID`, `RipCord_UIElement_Layout`) are read as integer bit patterns. Which
+> dictionary types do they have? (d) No typed view of `HousingControl` (§9.7) is implemented:
+> the value-tier modifier labels are elided (`…_PriceModifier` and the others) and the value
+> types of prices, upkeep and modifiers are not given. What are the full labels and types?
+
+> **OPEN:** (implementer, 2026-10-07; real-data census differs from the spec) (a) §2.3
+> landmarks: recognising them by `MapNote_Type` and `Landmark_Music` finds 2,731 sets, while
+> §2.3 counts 2,733 landmark records. Measured: 2,731 sets carry `Landmark_Music`, all of them
+> with `MapNote_Type`; the 2,731 recognised records share one root class (taken from the
+> records, not from §2.3), and of the 16,720 sets that carry `MapNote_Type` without
+> `Landmark_Music`, 2 belong to that class. Records of the class that carry neither property
+> were not searched (the test reads root classes only of records it already selected), so
+> the 2 + 2,731 = 2,733 match is consistent with §2.3 but not a full class census. Which
+> property rule recognises every landmark without the class index (`MapNote_Type` alone also
+> occurs on other entity classes)? (b) §7: the install has 1,618 stand-alone (0x78) sets,
+> not 1,616; the 1,300 sets holding `UI_Map_GameMap` match. Which count is meant? (c) §2.4
+> `QuestEvent_LandmarkDID`: all values in quest records (any depth) number 3,434; 3,419 name
+> landmarks, and 15 (8 distinct DIDs) name no record in the install. Does the 3,419 leave out
+> references to missing records, and should a reader treat such a value as "no landmark"?
+> **Tessera choice** until answered: the census reports them; they are not an MI14 failure.
+> Every other census count of §2.4, §3.5, §4.5, §5.3, §7, §8 (including the SegmentNode counts
+> of §8.5.1), §9 and §11 that the test checks reproduces.
+
 ---
 
 <a id="s15"></a>

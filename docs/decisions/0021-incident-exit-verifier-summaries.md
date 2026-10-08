@@ -46,3 +46,41 @@ on 2026-10-08, limited itself to mechanical changes and reported it.
 - The verifier sessions are tainted for the subsystems their prompts described. They were
   transient and are not reused.
 - The audit results are appended to this record.
+
+## Audit results (2026-10-08)
+Clean-room auditors who were not exposed checked each verifier's changes in default mode.
+- **M4 — one blocking finding.**
+  - `crates/mesh/tests/assembly.rs`, test `equipment_categories_are_bit_masks`, hard-codes
+    real enum keys that no spec states: equipment categories, default slots and holding
+    locations. They can only have come from dirty material.
+  - Remedy: replace them with synthetic keys (branch `fix-0021`). The test logic does not
+    depend on the real values.
+  - Everything else is supported by the specs of the time or by general engineering:
+    - the u64 equipment-category read (`property-system.md` §4.1, §7.3);
+    - present-mode selection;
+    - CLI flags;
+    - the NPC-spot test.
+  - The stow placements follow the `appearance.md` §5.4 Decision of 2026-10-05. They have
+    since drifted from the revised §5.6 and are re-implemented once `appearance.md` is
+    Accepted.
+  - Correction to the table above: `tools/check-content.sh` and `tools/check-spdx.sh` were not
+    changed in `3eb16f5`.
+- **M4.5 — no contamination found.**
+  - The table row above is incomplete. The verifier also changed parts of the controller
+    (`crates/physics/src/controller/step.rs`: crease slide, raised retry). It also wrote
+    notes in `walker.md` §13.8 and §14.11 and an OPEN in `water.md`.
+  - The controller behaviour is now stated in `collision.md` §12.4 (n)–(p). The citations are
+    updated, and the `water.md` OPEN is closed by a spec writer (`fix-0021`).
+  - `07ec7b2` is a single commit, so git cannot separate the verifier's walker hunks from the
+    implementer's. Remediation rounds 1–3 have since had unexposed clean sessions review
+    and change those files against the specs.
+- **M6 — clean.**
+  - The Vorbis placeholder-codebook handling is general format knowledge. An OBS fact is
+    added to `sound.md` §3.3.
+  - The test retry, fuzz targets, CI and setup wording are kept.
+- **M7 — clean.**
+  - The shared network thread, the handshake batches of 4 and the spec's tick schedule are
+    kept.
+  - Stale memory notes in `test-server.md` §15.2 and the handshake cap are folded into the
+    spec (`fix-0021`).
+- **M5 — clean.** The changes are mechanical renames and lint, format and harness fixes.

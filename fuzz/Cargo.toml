@@ -37,6 +37,7 @@ tessera-anim = { path = "../crates/anim" }
 tessera-physics = { path = "../crates/physics" }
 tessera-protocol = { path = "../crates/protocol" }
 tessera-server = { path = "../apps/server" }
+tessera-wvm = { path = "../crates/wvm" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -351,6 +352,29 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wstate_character"
+path = "fuzz_targets/wstate_character.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_game_controls"
+path = "fuzz_targets/wstate_game_controls.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-wvm (docs/specs/wlib-bytecode.md) ---
+
+[[bin]]
+name = "wvm_code"
+path = "fuzz_targets/wvm_code.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-formats landblock family (docs/specs/landblock.md, entity-descriptor.md) ---
 
 [[bin]]
@@ -377,6 +401,22 @@ bench = false
 [[bin]]
 name = "formats_landblock_properties"
 path = "fuzz_targets/formats_landblock_properties.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_distant_sector"
+path = "fuzz_targets/formats_distant_sector.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-formats instanced content (docs/specs/instances.md) ---
+
+[[bin]]
+name = "formats_instances"
+path = "fuzz_targets/formats_instances.rs"
 test = false
 doc = false
 bench = false

@@ -961,6 +961,16 @@ Locals are filled at frame entry exactly as in §4.3 step 3: every local cell be
 body reads a local before any store on some path and behaves differently with zero (§4.3,
 B17, §13 V16).
 
+> **OPEN:** (implementer note, `crates/wvm`, 2026-10-08; engineering choices the spec leaves
+> open, for review) (1) The decoder rejects the code block on V1–V7 and on a byte 1 that V4
+> does not allow; for 0x01–0x04 it accepts any type code of the pushed width (1–3 for 0x01
+> and 0x03, 130/131/195 for 0x02 and 0x04), not only the codes V4 observed. (2) V8–V13 and
+> the sharing rule of §2 (B18) are reported as findings, not load failures, because the
+> run-time checks of this section cover what an interpreter needs; V14's upper bounds
+> (416, 144) are census values, not enforced. (3) The V16 analysis skips bodies with more
+> than 64 local cells (the data have at most 52) and reports them as skipped. (4) V15 (the
+> stack-depth search) is not implemented. Is any of these meant to be stricter?
+
 ---
 
 <a id="s13"></a>

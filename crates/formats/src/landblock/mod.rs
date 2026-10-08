@@ -7,7 +7,8 @@
 //! | 1 | block map: (key, palette index) pairs | `client_map_R` | [`BlockMap`] | §5.3 |
 //! | 2 | landblock info: cells, static entities, links, weenies | `client_cell_R` | [`LandblockInfo`] | §4, `entity-descriptor.md` |
 //! | 4 | landblock properties: minimap tile, light maps | `client_cell_R` | [`LandblockProperties`] | §6 |
-//! | 5 | distant-landscape sector, one per 3 × 3 group (framing; water pairs searchable) | `client_cell_R` | [`LandblockGroupRecord`] ([`DistantLandscapeSector`]) | §7, `water.md` §9 |
+//! | 5 | distant-landscape sector, one per 3 × 3 group: full decode | `client_cell_R` | [`SectorRecord`] | `distant-landscape.md` §3 |
+//! | 5 | the same, framing only (samples and a raw tail) | `client_cell_R` | [`LandblockGroupRecord`] ([`DistantLandscapeSector`]) | §7, `water.md` §9 |
 //!
 //! Related per-region records: the block-map descriptor (prefix 0x18,
 //! [`BlockMapDescriptor`], §5.2) and the region descriptor (prefix 0x0F,
@@ -62,6 +63,7 @@ mod entity;
 mod info;
 mod properties;
 mod region;
+mod sector;
 
 pub use block_map::{
     BLOCK_MAP_DESCRIPTOR_PREFIX, BlockMap, BlockMapDescriptor, BlockMapEntry, BlockMapProperty,
@@ -87,6 +89,15 @@ pub use properties::{
 pub use region::{
     REGION_DESCRIPTOR_LEN, REGION_DESCRIPTOR_PREFIX, REGION_DID_MAP_CAPACITY, REGION_DID_MAPS,
     RegionDescriptor, RegionDidMap, RegionDidMapEntry, RegionTable,
+};
+pub use sector::{
+    ALL_LANDBLOCKS_MASK, CHUNK_INDEX_SHARE, IMPOSTER_SQUARE, IMPOSTER_TABLE_PREFIX,
+    LOD_INDEX_OFFSETS, LOD_TRIANGLES, LodRange, MIN_FAR_VIEW_DISTANCE_SQ, NORMAL_BYTE_SCALE,
+    SECTOR_BLOCK_SAMPLES, SECTOR_CHUNK_SIZE, SECTOR_CHUNKS, SECTOR_EXTENT, SECTOR_LODS,
+    SECTOR_MIN_ENTITY_SIZE, SECTOR_SAMPLE_SIZE, SECTOR_SPRITE_SIZE, SECTOR_TERRAIN_SAMPLES,
+    SECTOR_WATER_PAIR_SIZE, SectorChunk, SectorEntity, SectorMesh, SectorRecord, SectorSample,
+    SectorSprite, block_sample_offset, chunk_index, chunk_landblock, decode_distant_sector,
+    imposter_table_did, vertex_block,
 };
 
 use crate::did::{Did, LandblockId, LandblockKind};

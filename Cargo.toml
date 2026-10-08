@@ -23,6 +23,7 @@ members = [
     "crates/entity",
     "crates/physics",
     "crates/protocol",
+    "crates/wvm",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -61,6 +62,7 @@ tessera-entity = { path = "crates/entity" }
 tessera-physics = { path = "crates/physics" }
 tessera-protocol = { path = "crates/protocol" }
 tessera-server = { path = "apps/server" }
+tessera-wvm = { path = "crates/wvm" }
 
 anyhow = "1"
 bitflags = "2"

@@ -3819,6 +3819,7 @@ dependencies = [
  "tessera-install",
  "tessera-material",
  "tessera-mesh",
+ "tessera-wvm",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
@@ -4124,6 +4125,18 @@ dependencies = [
  "tessera-formats",
  "tessera-props",
  "tessera-text",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "tessera-wvm"
+version = "0.1.0"
+dependencies = [
+ "tessera-dat",
+ "tessera-formats",
+ "tessera-props",
+ "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",
 ]

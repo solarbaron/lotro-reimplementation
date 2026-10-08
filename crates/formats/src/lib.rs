@@ -63,6 +63,7 @@
 //! | [`setup`] | entity descriptors (0x47), visual templates (0x1F), setups (0x04), chain resolution | `setup.md` §2–§7 |
 //! | [`appearance`] | appearance records (0x20), block choice, part priorities, slot table, appearance lists | `setup.md` §8, `appearance.md` §3–§4 |
 //! | [`avatar`] | race table, avatar bodies, bone-slider definitions | `appearance.md` §2–§3, §6 |
+//! | [`instance`] | instanced and group content read from 0x79 property sets: templates, controls, skirmish, world join, big and distant battles, session play, fellowship maker, phasing ([`instance::InstanceRecord`]) | `instances.md` |
 //! | [`item`] | worn and held items: wardrobe structs, dyes, holding locations | `appearance.md` §4–§5, `setup.md` §13 |
 //! | [`script_table`] | script tables (0x07), scriptlets (0x0C), clip selection | `script-table.md` |
 //! | [`terrain_type`] | terrain type tables (0x19): [`TerrainTypeTable`] | `terrain-texturing.md` §3 |
@@ -70,7 +71,7 @@
 //! | [`water`] | water (0x16) and fog-zone (0x17) tables: [`WaterTable`], [`FogZoneTable`] | `water.md` §4–§5 |
 //! | [`collision`] | quantised collision trees ([`TreeCode`]), collision meshes (0x66, [`CollisionMesh`]), cell geometry (0x01, [`CellGeometry`]) | `collision.md` §3–§5 |
 //! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
-//! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, region descriptors (0x0F) and their eight table slots | `landblock.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
+//! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, distant-landscape sectors (kind 5, [`SectorRecord`]), region descriptors (0x0F) and their eight table slots | `landblock.md`, `distant-landscape.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
 
 mod any;
 pub mod appearance;
@@ -83,6 +84,7 @@ pub mod did_map;
 pub mod enum_mapper;
 pub mod environment;
 mod error;
+pub mod instance;
 pub mod item;
 pub mod landblock;
 pub mod property;
@@ -110,14 +112,15 @@ pub use collision::{CellGeometry, CollisionMesh, TreeCode, TreeWalk};
 pub use decode::{
     decode_appearance, decode_block_map, decode_block_map_descriptor, decode_camera_state,
     decode_cell_geometry, decode_collision_mesh, decode_day_description, decode_did_map,
-    decode_embedded_property_set, decode_entity_descriptor, decode_entity_header,
-    decode_enum_mapper, decode_fog_zone_table, decode_game_time, decode_landblock_data,
-    decode_landblock_group, decode_landblock_info, decode_landblock_properties,
-    decode_lod_class_table, decode_property_dictionary, decode_property_set, decode_property_value,
-    decode_region_descriptor, decode_scene, decode_scene_choice_table, decode_script_table,
-    decode_scriptlet, decode_setup, decode_sky_description, decode_sound, decode_string_info,
-    decode_string_table, decode_surface, decode_terrain_scene_table, decode_terrain_type_table,
-    decode_texture_list, decode_visual_template, decode_water_table,
+    decode_distant_sector, decode_embedded_property_set, decode_entity_descriptor,
+    decode_entity_header, decode_enum_mapper, decode_fog_zone_table, decode_game_time,
+    decode_landblock_data, decode_landblock_group, decode_landblock_info,
+    decode_landblock_properties, decode_lod_class_table, decode_property_dictionary,
+    decode_property_set, decode_property_value, decode_region_descriptor, decode_scene,
+    decode_scene_choice_table, decode_script_table, decode_scriptlet, decode_setup,
+    decode_sky_description, decode_sound, decode_string_info, decode_string_table, decode_surface,
+    decode_terrain_scene_table, decode_terrain_type_table, decode_texture_list,
+    decode_visual_template, decode_water_table,
 };
 pub use did::{
     Did, DidKind, Evidence, LandblockId, LandblockKind, is_catalogued_prefix, name_hash,
@@ -129,7 +132,8 @@ pub use environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyD
 pub use error::{FormatError, Result};
 pub use landblock::{
     BlockMap, BlockMapDescriptor, CollisionTree, LandblockData, LandblockGroupRecord,
-    LandblockInfo, LandblockProperties, LightMaps, RegionDescriptor, RegionTable, StaticEntity,
+    LandblockInfo, LandblockProperties, LightMaps, RegionDescriptor, RegionTable, SectorRecord,
+    StaticEntity,
 };
 pub use property::{
     BitfieldAny, NoSchema, Position, PropertyArray, PropertyDefinition, PropertyDictionary,

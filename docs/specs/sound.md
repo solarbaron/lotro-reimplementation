@@ -948,6 +948,12 @@ Properties are looked up by name in the dictionary at run time. A property that 
 on the player makes its Switch take the Default port (`script-table.md` §7.1).
 Precisely: it reads its dictionary default, else its type's zero value, and takes the Default port only when no case matches that value (`script-runtime.md` §6.2, R27).
 
+> **OPEN:** (clean-room implementation, 2026-10-08) The table row for
+> `HousingPropertyHook_IntMusic`, `Music_Monitor` … says "(the Switches take their default
+> ports)", but `script-runtime.md` §6.2 (OBS-R) counts 13 of the 66 Switches on the first two
+> without a Default port: on an avatar that has neither property those select nothing. The
+> implementation follows `script-runtime.md` §6.2; please align the row.
+
 <a id="s10-3"></a>
 ### 10.3 Where the values come from
 

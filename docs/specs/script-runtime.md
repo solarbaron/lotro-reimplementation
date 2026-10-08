@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
-| **Review record** | Review 2026-10-08: **passed**, Accepted. 8 BIN facts spot-checked in the client (R1, R5, §4.3, R8, R13, R21, R22, R24) and 3 data facts over every record (§12.3 limits, RI9, the music Switches of §6.2). OPEN-5 settled from the binary (§6.2, row R27); the order of the §3.1 steps corrected (R1). Full record in the review log (decision 0018). |
+| **Review record** | Review 2026-10-08: **passed**, Accepted. 8 BIN facts spot-checked in the client (R1, R5, §4.3, R8, R13, R21, R22, R24) and 3 data facts over every record (§12.3 limits, RI9, the music Switches of §6.2). OPEN-5 settled from the binary (§6.2, row R27); the order of the §3.1 steps corrected (R1). Full record in the review log (decision 0018). Narrow re-review 2026-10-08 (another session) of the R1 order note and the OPEN-5 lines (R27, BIN-R, OBS-R, §6.2, §6.3, §27 item 5, §29 item 1): **passed**; facts re-checked in the client and over every record; the "no value" clause of R27 and §6.2 narrowed to the Switch (wording). |
 | **Implements into** | `crates/scriptgraph` (`tessera-scriptgraph`, new in M6: the live, incremental evaluator of script tables and scriptlets: node instances, contexts, the scheduler clock, Switch/When/Random/Collection/Sequence/Timer/Run/WhenRunning/SetProperty/Goto/Label/OnStop/Scriptlet/ScriptletParameter semantics, the intensity chain and driven properties), `crates/audio` (Sound and SoundEnvironment node instances call into `tessera-audio` per `sound.md` §9), `apps/client` (one scheduler advance and one script update per frame, entity creation and removal, the player properties of `sound.md` §10.2) |
 | **Companion specs** | [`script-table.md`](script-table.md) §2–§5 (record framing, node frame, base block, port payloads, node-kind layouts), §7 (the earlier, Reported, name-inferred behaviour that this spec replaces for the kinds it covers), §8.1–§8.2 (an entity's tables and their closure). [`sound.md`](sound.md) §6 (voices, ramp-out), §9 (Sound and SoundEnvironment nodes; §9.6 outcome of a start), §10 (music and ambience graphs), §11 (positional emitters). [`instruments.md`](instruments.md) §10.1 (node intensity; its Q8 is settled here, §4.2). [`property-system.md`](property-system.md) §2 (definitions; the `field_b` value 6 that marks script-parameter properties, §5.1 here), §8 (enum mappers). |
 
@@ -96,7 +96,7 @@ the original is unknown, always paired with an OPEN.
 | R24 | ScriptletParameter binds to the nearest enclosing Scriptlet instance that invoked the record holding the parameter; names compare **ignoring case**; an unbound parameter runs nothing (§17) | BIN3 | BIN. Settles ST §7.8 OPEN (case); corrects ST §7.8 ("its own Default port runs instead"). |
 | R25 | One scheduler, advanced once per frame to the frame time; due events fire in time order with the clock set to each event's time; ties in insertion order; per-entity frame updates follow (§20) | BIN3 | BIN |
 | R26 | No guard against synchronous Goto recursion; looping Timers are paced to ≥ 0.1 s per cycle and Sequences to ≥ 0.1 s per pass; nested changes of one property are cut off at the second re-entry (§21) | BIN3; OBS (one table script with self-reaching labels, 0x07000031/0x10000AAC, gated by two When nodes) | BIN |
-| R27 | A Switch (and a When) reads an unset property as its dictionary default when the definition carries one (flag 0x800), else as the zero value of its type; it has **no value** only when the property ID has no dictionary definition. The value then goes through the normal case match, with the first Default port when no case matches (§6.2) | BIN-R (the Switch's property read, the value it starts from, the port choice); OBS-R (the 65 `Music_Monitor` and 1 `HousingPropertyHook_IntMusic` Switches of script 0x10000039) | BIN; agrees with `script-table.md` T28. Settles OPEN-5. |
+| R27 | A Switch (and a When) reads an unset property as its dictionary default when the definition carries one (flag 0x800), else as the zero value of its type; a Switch has **no value** only when the property ID has no dictionary definition. The value then goes through the normal case match, with the first Default port when no case matches (§6.2) | BIN-R (the Switch's property read, the value it starts from, the port choice); OBS-R (the 65 `Music_Monitor` and 1 `HousingPropertyHook_IntMusic` Switches of script 0x10000039) | BIN; agrees with `script-table.md` T28. Settles OPEN-5. |
 | C1 | Census of the scope (§0): kinds and field values of Switch, When, Random, Sequence, Timer, Run, WhenRunning, SetProperty, Goto/Label, OnStop, driven pairs (tables in §6–§16) | OBS | Confirmed |
 
 ---
@@ -392,7 +392,8 @@ false, enum 0, DID 0, property ID 0; a tri-state is 255, "undefined"; other type
 value). The value read from the entity (or the run-parameter set) replaces it only when there
 is one. The Switch then matches that value like any other (§6.3): a case whose value equals it
 is taken, else the first Default port. The Switch has **no value**, and so selects no port, only
-when the property ID has no dictionary definition. The same holds for a When (§7). The int-list
+when the property ID has no dictionary definition. A When prepares its value the same way (§7);
+the "no value" rule is stated for the Switch only. The int-list
 properties of a case (§6.3 step 1) are different: those without a value are skipped, with no
 default.
 
@@ -1236,6 +1237,7 @@ otherwise unchanged.
 | 2026-10-07 | §6.2, §29 | OPEN notes from the clean-room implementation of `tessera-scriptgraph` (unset properties, GameCallback data, driven field names, notification on an unchanged value, guards); no fact changed. | Implementer (clean room) |
 | 2026-10-07 | §29 items 11, 13–17 | OPEN notes and Decisions after a code review: deferred Runs inside an advance, nested Switch re-evaluation, int-list changes without a transition, revised guards, teardown and reused entity IDs; no fact changed. | Implementer (clean room) |
 | 2026-10-08 | header, §1 (R1, new R27, sources BIN-R and OBS-R), §3.1, §6.2, §6.3, §27 item 5, §29 item 1 | Review: status Accepted. OPEN-5 settled from the binary: an unset property reads its dictionary default, else its type's zero value, and is then matched like any value (Default port when no case matches); "no value" only for a property ID without a definition. The order in which the §3.1 steps are applied corrected (3, 4, 1, 2, 5, 6, 7); step numbers unchanged. **Behaviour change for implementers:** an unset property no longer means "no port"; implementations that select nothing for it must change (§6.2). | Spec reviewer (dirty room) |
+| 2026-10-08 | header, §1 (R27), §6.2 | Narrow re-review of the R1 order note and the OPEN-5 lines: passed. Wording only: the "no value" clause of R27 and §6.2 now names the Switch; a When prepares its value the same way. No fact changed. | Spec reviewer (dirty room, another session) |
 
 ---
 
@@ -1346,3 +1348,25 @@ sample of 400 emitter descriptors requests sounds. Points for the spec owner:
     > complete at once. Listeners and run watches that nodes of other entities register on
     > an entity outlive it: after a despawn they read no entity value (the default), and when
     > the same entity ID is spawned again (the player after a zone load) they hear it again.
+18. Implementation after R27 and the corrected §3.1 order (clean room, 2026-10-08):
+    `tessera-scriptgraph` drops its `UnsetPolicy` switch; a Switch or When starts from the
+    dictionary default, else the type's zero value (§6.2), and the start steps run in the
+    order 3, 4, 1, 2, 5, 6, 7 (a start skipped by the same-node rule makes no probability
+    draw; the persistent-node gate reads a driven `TimerScript_LoopForever` from the copy).
+    > **OPEN:** (§6.2, §7) "the 'no value' rule is stated for the Switch only": what a When
+    > selects when its property ID has no dictionary definition. **Decision (Tessera):** as
+    > for a Switch, no port (not even Default).
+    >
+    > **OPEN:** (§6.2) The zero value of a type code the dictionary may carry but the format
+    > does not define (`property-system.md` §2.2 types other than 1–22). **Decision
+    > (Tessera):** no zero value; a Switch on such a property, unset, has no value. Empty
+    > values used for the other non-scalar types: empty string, struct, array, bitfield and
+    > waveform (subtype 0), zero vector, colour and position, a StringInfo with an empty
+    > literal.
+    >
+    > **OPEN:** (§6.2, §6.3 step 1) "those without a value are skipped, with no default":
+    > read as "only a value actually set counts" (a run-time write or a stored property set
+    > of the entity; for script-parameter properties the run-parameter set), so an int-list
+    > property whose only value is its dictionary default is skipped. Please confirm.
+    > Related to item 5: setting such a property to its default value is no change of the
+    > value the entity reads, so the Switch is not told and does not re-evaluate.

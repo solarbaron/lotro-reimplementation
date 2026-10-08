@@ -35,6 +35,7 @@ tessera-terrain = { path = "../crates/terrain" }
 tessera-havok = { path = "../crates/havok" }
 tessera-anim = { path = "../crates/anim" }
 tessera-physics = { path = "../crates/physics" }
+tessera-assets = { path = "../crates/assets" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -725,6 +726,45 @@ bench = false
 [[bin]]
 name = "client_interiors"
 path = "fuzz_targets/client_interiors.rs"
+test = false
+doc = false
+bench = false
+
+# --- Fuzz hardening: entry points without a target before (archive names, GameData, object store and
+# geography, world-context loading, explorer search box and hex view). The world-level targets
+# damage a valid synthetic install through fuzz_targets/common/mutate.rs. ---
+
+[[bin]]
+name = "dat_archive_names"
+path = "fuzz_targets/dat_archive_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "props_game_data"
+path = "fuzz_targets/props_game_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wstate_store_geo"
+path = "fuzz_targets/wstate_store_geo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world_context"
+path = "fuzz_targets/world_context.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "explorer_query_hex"
+path = "fuzz_targets/explorer_query_hex.rs"
 test = false
 doc = false
 bench = false

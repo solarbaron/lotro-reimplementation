@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `tessera-text` on hostile input (`docs/specs/string-table.md`): message grammar
-//! (selectors, tag groups, slots), markup, `${NAME}` format strings and templates, and a
+//! (selectors, tag groups, slots), markup and escapes, `${NAME}` format strings and templates, and a
 //! string-table record rendered through `Strings`. Nothing may panic and output stays
 //! within the configured bound.
 //!
@@ -12,9 +12,9 @@
 
 use libfuzzer_sys::fuzz_target;
 use tessera_text::{
-    MemorySource, Message, RenderMode, RenderOptions, Strings, TagSet, Value, Values, display_text,
-    parse_format_string, parse_markup, parse_options, parse_tag_list, render, render_template,
-    select_option, split_tag_group,
+    MemorySource, Message, RenderMode, RenderOptions, Strings, TagSet, Value, Values,
+    decode_escapes, display_text, parse_format_string, parse_markup, parse_options, parse_tag_list,
+    render, render_template, select_option, split_tag_group,
 };
 
 const MAX_OUTPUT: usize = 1 << 16;
@@ -63,6 +63,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = Message::from_format_string(&fs);
 
     let _ = parse_markup(&text);
+    // Escapes only ever shorten the text (`\n` to a newline, `\q` to a quote, ...).
+    assert!(decode_escapes(&text).len() <= text.len());
     let _ = display_text(&text);
     let (_, group) = split_tag_group(&text);
     let set = TagSet::new(group.unwrap_or(""), head & 2 != 0, Some(f64::from(head)));

@@ -1442,6 +1442,7 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "tessera-anim",
+ "tessera-assets",
  "tessera-dat",
  "tessera-dattool",
  "tessera-formats",

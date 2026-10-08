@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (2026-10-07: the OPEN-closing revision of §15 passed review; previously Accepted 2026-10-05). Implementers re-check code built on §5.4 and T19 against §5.4.1. |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested. Spot checks against the install agree on T1–T5, T10, TL1–TL10, the level-count histogram, the `flags` × placement table of §4.5, the 10 cubes and the sky-box face content, the §4.2 exception, the 77,981 highres surfaces and the format totals of §7.1. Issues (all count or scope errors in Confirmed statements; no rule is affected): (1) §5.1 archive spread does not reproduce: 54,398 / 26,234 / 493 lists with levels in one / two / three surface archives, not 54,208 / 26,480 / 437 (the writer's own 2026-10-05 dump gives the same as the review). (2) §6 and §7.1 count only the 81,135 general lists: over all 81,136 lists 596,245 surfaces are list levels and 811,807 are not, and the DXT3 "Level of a list" / "Not in any list" cells are 165,580 / 41,330; either say "general lists" or update. (3) §4.6 says "over all lists (both flag values)", but the format table sums to 81,125 (all lists: DXT1 48,139, DXT3 20,329, DXT5 7,643, R8G8B8 1,888, A8R8G8B8 3,137) and the level-0 size counts are those of `flags` = 0 chains only (all chains: 256×256 46,978, 1024×1024 12,046, 512×512 11,993, 512×1024 1,748). (4) §7.1 "Stored compressed": A8 654,130 and DXT5 32,384 observed, not 654,127 and 32,383. (5) §4.4: the 55 single-level lists whose one level is already at the floor fit both "Full" and "Single"; state that Single takes precedence. (6) §3.1: 50,719 "consecutive" chains is 48,307 multi-level chains plus single-level ones; state the definition. Writer response 2026-10-05: all six items and the non-blocking T19 note addressed (OBS3, §15); awaiting re-review. Re-review 2026-10-05, Claude review session (spec-writer agent): **accepted**. All six items are fixed and reproduce on the install (fresh whole-install probe): 48,307 consecutive chains of 78,713 multi-level chains; the §4.4 table with Single first, 55 lists in both classes (51 / 4), and 77,976 / 92 and 2,355 / 3 with Full first; §4.6 level-0 formats and sizes over all chains, largest 4096; §5.1 spread 54,399 / 26,234 / 493 (54,398 general), cubes in one archive, 77,980 + 1 highres surfaces and 77,996 lists; §6 and §7.1 596,245 / 811,807 and DXT3 165,580 / 41,330, A8 654,130, DXT5 32,384; §6.1 384,950 sets, the 2 local 0x78 sets hold no image property; 54 category-15 lists. The §5.4 OPEN is precise and does not block. All §5.3 checklist items pass. |
+| **Review record** | Review of the 2026-10-07 revision, 2026-10-07 (a separate dirty-room review session, not the author): **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` (texture-list decoder), `crates/assets` and `crates/material` (texture-detail level selection, highres fallback, GPU upload plan), explorer texture viewer |
 | **Companion specs** | `records.md` §5 (one render surface, prefix 0x41: header, format codes, pixel data). `dat-container.md` (archive set, DID routing, optional highres archives). `install-layout.md` §3.3 and §10 (optional highres tier, the `--HighResOutOfDate` option). `material.md` §12.3 and MA33 (no sRGB anywhere). `icon-layers.md` (icons, which reference surfaces directly). `terrain-texturing.md` §5 and §10 (terrain masks and light maps, two families of §6.3). `fonts.md` (font records and their atlases, §6.2). |
 
@@ -58,6 +58,8 @@ Legend:
 | OBS3 | Observed in user install 2026-10-05 (repair pass after review). The 24-byte headers of all 1,408,052 surfaces and the bodies of all 81,136 lists dumped again by a fresh probe; the counts of §3.1, §4.4, §4.6, §5.1, §6 and §7.1 recomputed over **all** lists (general and local) and labelled with their scope. The property sets of general, gamelogic and local counted again by prefix (§6.1). |
 | BIN | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`, SHA-256 prefix d22363eb9aff0fb5), read with objdump and capstone on address ranges in the dirty room on 2026-10-05. **Questions:** (a) how the client reads a 0x40 record: field order, what `tail_a`, `tail_b` and `flags` mean, which kinds it accepts, and the order of the DID array for cubes with several levels (§2.2, §3.2, §4.5); (b) which cube face a stored face index becomes (§3.2); (c) which levels the client uploads for each texture-detail setting, and what the `--HighResOutOfDate` option and missing highres data change (§5.4); (d) whether the client generates, fills or clamps the levels a stored chain lacks, and how it uploads a chain that breaks the halving rule (§5.5). **Why M1–M3 were not enough:** the data shows only constant `tail` values (0 and 15) and a flag whose effect is behaviour, not layout; no list with several cube levels exists to observe; level choice, upload and the option's effect are code paths; no published source describes them (M2); no running client or frame capture was available to this session (M3). Only offline texture-loading and preference code was read; nothing about network, login, launcher, patcher, keys or anti-tamper (decision 0004). Listings stay in the dirty scratch area. |
 | DU | Middle-earth-Revenge DATUnpacker, `FORMATS/40XXXXXX_format.txt`. Facts only. |
+| OBS4 | Observed in user install 2026-10-07 by throwaway probes in the dirty-room scratchpad. The 24-byte headers of every 0x41 record in the three surface-family archives read again, and the 41,325 DXT3 96 × 96 surfaces collected. Every record of all seven `client_cell_*.dat` archives searched for those DIDs as 32-bit values; the 33,159 distant-landscape sector records (`landblock.md` §7) checked at fixed distances from their end (§6.3). |
+| BIN2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), second pass.** Same client build 4906.0071.1794.4035, analysed headless in Ghidra (read-only copy of the shared project) on 2026-10-07. **Question:** (e) how the client decides that high-resolution data is usable when the highres archives are simply absent, what `--HighResOutOfDate` changes in that decision, and which code uses which test (§5.4). **Why M1–M3 were not enough:** the install has the highres archives, so their absence cannot be observed in data; the effect is a code path; no published source describes it; no running client was available to this session. **Method:** the option's string led to the option parser, which stores a 64-bit resource-set key; every function that uses that key was decompiled, together with the archive table, the archive-opening loops and the archive object's open and close routines. Only start-up archive handling and graphics-option code was read: nothing about network, login, launcher, patcher, keys or anti-tamper (decision 0004). Listings stay in the dirty scratch area. |
 | MV | Mirarkitty `lotro_mesh_viewer` docs (MIT): material → texture-list → surface chain, "first texture-list slot is the diffuse". Facts only. |
 | DS | `research/notes/data-semantics.md` §7.4. |
 | DC | `dat-container.md` §2 (highres archives are optional). |
@@ -71,7 +73,7 @@ Legend:
 | T4 | Every level of a list has the same format and the same category (§4.3) | OBS (all 81,126 chains) | Confirmed |
 | T5 | At most one level is in a highres archive, and it is always level 0 (§5.1) | OBS (all 81,136 lists) | Confirmed |
 | T6 | Every highres surface is level 0 of at least one texture list and is never reached directly (§5.1) | OBS (77,981 of 77,981) | Confirmed |
-| T7 | Highres archives are optional; without them the client never asks for level 0 of a reducible chain (§5.2, §5.4) | DC; `install-layout.md` §3.3; BIN (c) | BIN (rule); that absent archives count as "not usable" is Inferred; structure Confirmed |
+| T7 | Highres archives are optional; without them the client never asks for level 0 of a reducible chain (§5.2, §5.4) | DC; `install-layout.md` §3.3; BIN (c); BIN2 (e) (the client's archive table marks the highres archive optional; when it does not open, highres counts as not usable) | BIN (rule); structure Confirmed |
 | T8 | Icons and UI images are referenced directly by surface DID, never through a texture list (§6.1) | OBS, OBS3 (all icon references in all 384,950 property sets; see `icon-layers.md`) | Confirmed |
 | T9 | Font records end with two A8 surface DIDs (glyph atlases) (§6.2) | OBS (47 of 48 font records); SPEC (`fonts.md`: the 48th has no outline atlas) | Confirmed |
 | T10 | Only the seven format codes of `records.md` §5.2 occur (§7) | OBS (1,408,052 of 1,408,052) | Confirmed |
@@ -83,7 +85,10 @@ Legend:
 | T16 | Stored face index *k* is passed unchanged to the graphics back end as cube face *k*: +X, −X, +Y, −Y, +Z, −Z (§3.2) | BIN (b) (index passed through); OBS2 (the one cube with six distinct faces shows the zenith at index 2 and the nadir at index 3); Direct3D/OpenGL face numbering (general knowledge) | Confirmed (up/down); side order Inferred |
 | T17 | `flags` bit 0 exempts a list from texture-detail reduction and marks that its level 0 is not a high-resolution-only level (§4.5) | BIN (a), (c); OBS2 (level 0 is in highres for 77,996 of 77,999 multi-level chains with bit 0 clear, and for none of the 714 with bit 0 set) | Confirmed |
 | T18 | Texture-detail rule: the client drops the first *k* levels of a reducible chain, *k* = 4, 3, 2, 1 for detail 0–3 and 0 for detail 4 when highres data is usable (§5.4) | BIN (c) | BIN |
-| T19 | Without usable highres data (archives absent, or `--HighResOutOfDate` given) detail 4 is not offered and behaves as detail 3 (§5.4) | BIN (c) (the option and the texture-detail code test the same high-resolution resource key); `install-layout.md` §10 (help text) | BIN (option); absent archives OPEN (§5.4), with no effect on Tessera's output |
+| T19 | Without usable highres data detail 4 behaves as detail 3. Highres is usable only while a highres archive is open: absent archives and `--HighResOutOfDate` both make it unusable. Detail 4 stays **offered** in one case, the option given with the archives present (§5.4, table of §5.4.1) | BIN (c); BIN2 (e) (two tests on the same resource-set key; the option opens and then closes the archive); `install-layout.md` §10 (help text) | BIN. Revised 2026-10-07: the first version said that the option also hides detail 4 |
+| T23 | The client's two graphics presets numbered 5 and 6 set texture detail 4 when highres is usable and 3 otherwise (§5.4.1) | BIN2 (e) | BIN |
+| T24 | Every distant-landscape sector record (prefix 0x80, kind 5) names one DXT3 96 × 96 surface in the u32 that starts 16 bytes before the record's end; each such surface is named by exactly one sector (§6.3) | OBS4 (33,159 of 33,159 records; 33,159 distinct surfaces) | Confirmed |
+| T25 | In 941 sector records the u32 that starts 12 bytes before the end names a further DXT3 96 × 96 surface, never one of the T24 set (§6.3) | OBS4 (941 records, 941 distinct surfaces) | Confirmed (position); role OPEN |
 | T20 | The GPU texture gets exactly the levels of the active chain: no generated levels; level *i* of the active chain is mip *i* (§5.5) | BIN (d) | BIN |
 | T21 | The A8 128×128 family is terrain layer masks; most 128×128 DXT1 surfaces outside lists are landblock light maps (§6.3) | SPEC (`terrain-texturing.md` T14, §10; `landblock.md` §6.2) | Confirmed (by those specs) |
 | T22 | Texture-detail preference values are stored as `VeryLow`, `Low`, `Medium`, `High`, `VeryHigh` = 0–4; default 3 (§5.4) | BIN (c) (default 3, range 0–4, label strings in this order); OBS2 (`High` and `VeryHigh` seen in the owner's files) | Inferred (label ↔ number); default and range BIN |
@@ -404,24 +409,16 @@ The client uploads only a suffix of each list, the **active chain**. Inputs:
 - the **texture-detail setting** *t*, an integer 0–4 (T22: stored in the original's
   preferences as `[Render] TextureDetail` with the labels `VeryLow`, `Low`, `Medium`, `High`,
   `VeryHigh`; the client's default is 3);
-- **highres usable** *h*: false when the client was started with `--HighResOutOfDate`
-  (`install-layout.md` §10; BIN) or when the highres archives are absent (see the OPEN
-  below); true otherwise.
-
-> **OPEN:** Whether the client also treats *h* as false when the four highres archives are
-> simply absent (no option given). BIN (c) shows only that the option and the texture-detail
-> code test the same "high-resolution set available" key of the client's resource system;
-> how that key is set when the archives are missing was not traced. Tessera's output does not
-> depend on the answer: with the archives absent and *h* taken as true, step 2 at *t* = 4 gives
-> *k* = 0, level 0 cannot be loaded, and the §5.2 extension starts the chain at level 1, which
-> is the same active chain as *h* = false. Tessera therefore sets *h* = false when no highres
-> archive is present, and the only visible difference is whether its options UI offers
-> detail 4.
+- **highres usable** *h*: true exactly when a highres archive is **open** after start-up
+  (§5.4.1). It is false when the highres archives are absent, and false when the client was
+  started with `--HighResOutOfDate` (`install-layout.md` §10), because that option makes the
+  client close the archive again right after opening it (BIN2 (e)).
 
 Preparation (at start-up, BIN): the setting is registered with the range 0–4 and its stored
-value. When *h* is false and that value is 4, the client registers it again with the range
-0–3 and sets it to 3. (Step 2 gives the same drop count for 4 and 3 when *h* is false, so the
-re-registration changes only what the options UI offers.)
+value. When detail 4 is **not offered** (the second test of §5.4.1) and that value is 4, the
+client registers it again with the range 0–3 and sets it to 3. (Step 2 gives the same drop
+count for 4 and 3 when *h* is false, so the re-registration changes only what the options UI
+offers and what is stored.)
 
 Steps, for one list:
 
@@ -458,6 +455,43 @@ at *t* = 0 gets *k* = min(4, 2) = 2: only level 2.
 Tessera maps its own texture-quality setting onto *t* (0–4) and must not write the original's
 preference file. When it chooses to mirror the original, it reads *t* from that file
 (`install-layout.md`), with `High` (3) when absent or unreadable.
+
+<a id="s5-4-1"></a>
+#### 5.4.1 How the client decides that highres data is usable (BIN2 (e); normative)
+
+The client describes each archive family in a built-in table. The entry for the highres family
+is marked **optional**: when its file cannot be opened at start-up, the client continues
+without an error, and no highres archive is open. The highres family
+is one resource set, identified by one key.
+
+`--HighResOutOfDate` adds that key to a list of resource sets "to check". For a listed set the
+start-up code opens the archive as usual, records whether the open succeeded, and then
+**closes** the archive at once. No highres record can be read afterwards.
+
+Two different tests use the key:
+
+- **Test A, "highres open":** true when a highres archive is currently open. This is *h* of
+  §5.4 step 2 (the texture-list level choice), and it also decides the texture detail that
+  the graphics presets set (T23).
+- **Test B, "detail 4 offered":** true when test A is true, **or** when the set is on the
+  option's list and its open at start-up succeeded. It decides whether the options UI lists
+  the fifth label (`VeryHigh`) and whether a stored 4 is kept (§5.4 Preparation).
+
+| Highres archives | `--HighResOutOfDate` | *h* (test A) | Detail 4 offered (test B) | Detail 4 behaves as |
+|---|---|---|---|---|
+| present | not given | true | yes | 4 (no level dropped) |
+| present | given | false | **yes** | 3 (level 0 dropped) |
+| absent | not given | false | no (a stored 4 becomes 3) | — |
+| absent | given | false | no (a stored 4 becomes 3) | — |
+
+So with the option and the archives present the original still shows and stores detail 4,
+but draws exactly what detail 3 draws. Tessera's renderer needs only *h*; its options UI may
+follow test B to look like the original.
+
+Tessera evaluates *h* as "the highres archives of the install were found and opened, and the
+user has not asked to ignore them" (`--HighResOutOfDate`, or a setting of Tessera's own with
+the same meaning). It need not open and close the archives to imitate the option: setting *h*
+false gives the same active chains.
 
 <a id="s5-5"></a>
 ### 5.5 GPU upload (BIN)
@@ -524,16 +558,41 @@ These large families appear in no texture list:
 |---|---|---|---|
 | A8, 128×128, category 0 | 633,470 | surface, surface_aux_1, surface_aux_2 | Terrain layer alpha masks of landblock surface chunks (`terrain-texturing.md` §5, T14: every one of the 646,073 masks named by a drawn layer is A8 and square 128, 256 or 512) |
 | A8, other sizes (256², 512², odd sizes) | 25,738 | same | The larger terrain masks, the 95 font atlases (category 13, §6.2), and a remainder not named by a drawn terrain layer |
-| DXT3, 96×96, category 0 | 41,325 | surface family | Unknown. RGB content with the alpha channel **0 everywhere** in every sample |
+| DXT3, 96×96, category 0 | 41,325 | surface family | Distant-landscape sector records (prefix 0x80, kind 5, `landblock.md` §7): 33,159 are named one per sector at a fixed place near the record's end, and 941 more at a second place (T24, T25; §6.3.1). 7,225 are named by neither. RGB content with the alpha channel **0 everywhere** in every sample |
 | DXT1, 128×128, category 0 | 5,502 | surface family | Mostly landblock light maps: `Landblock_LightMap` and `Landblock_CeilingLightMap` name 5,441 DXT1 128×128 surfaces (`landblock.md` §6.2, `terrain-texturing.md` §10). The remaining 61 are unattributed |
 | JPEG (code 500), category 15 | 65,706 | surface family, local (221) | Maps and large UI images; minimap tiles (`landblock.md` §6.3) and map-image properties |
 
 A raw scan for u32 values equal to these DIDs cannot tell which record type references them:
 landblock and mesh records produce too many chance matches.
 
-> **OPEN:** Which record type references the 41,325 DXT3 96×96 tiles (and the 61 remaining
-> DXT1 128×128 tiles), and how a renderer interprets their all-zero DXT3 alpha. Decoding them
-> needs nothing beyond `records.md` §5.
+<a id="s6-3-1"></a>
+#### 6.3.1 The DXT3 96 × 96 tiles and the distant-landscape sectors (Confirmed, OBS4)
+
+A distant-landscape sector record covers 3 × 3 landblocks (`landblock.md` §7). Read from the
+**end** of each record (the trailing section has a variable length, so offsets from the start
+do not work):
+
+| Distance from the record's end | Size | Content | Observed |
+|---|---|---|---|
+| 16 bytes | 4 | DID of a DXT3 96 × 96 surface, category 0 | All 33,159 records; 33,159 distinct surfaces, each named by exactly one record (T24) |
+| 12 bytes | 4 | 0, or the DID of another DXT3 96 × 96 surface | 0 in 32,218 records; a surface in 941, 941 distinct, none of them in the 16-byte set (T25) |
+| 2 bytes | 1 | The region number *R* of the `client_cell_R` archive that holds the record (1–5, 14) | All records |
+| 1 byte | 1 | 39 | All records |
+
+The bytes between are not described here (`landblock.md` §7 owns the record's layout).
+
+Interpretation (Inferred, not observed in the client): the 16-byte surface is the sector's
+low-detail ground texture, 96 = 3 landblocks × 32 texels, one texel per 5 units. Of the 41,325
+tiles, 7,225 are named by neither position; a further 207 occur as 32-bit values elsewhere in
+sector trailing sections, which may be chance matches.
+
+> **OPEN:** (1) How the distant-landscape renderer samples the 96 × 96 tile (orientation, and
+> whether the all-zero DXT3 alpha is ignored or means something), and what the second tile of
+> T25 is for. This belongs with the far terrain band (`terrain-texturing.md` §12) and the
+> sector layout (`landblock.md` §7); a BIN pass on the sector reader and the far-band shader
+> can settle it. (2) Which record references the 61 DXT1 128 × 128 surfaces that are neither
+> light maps nor list levels. Decoding all of these surfaces needs nothing beyond
+> `records.md` §5.
 
 ---
 
@@ -635,6 +694,7 @@ Real-data tests assert these. Failures are reported per record and do not abort 
 | TL9 | a DXT level is never smaller than 4 in either dimension | Confirmed, all (follows from `records.md` §5.2) |
 | TL10 | a list with a level in a highres archive has `flags` bit 0 clear and *n* > 1 | Confirmed, all 77,996 |
 | TL11 | the §5.4 active chain is never empty, ends at the last stored level, and at *t* < 4 or with *h* false contains no highres surface | Follows from §5.4 and TL8/TL10; Confirmed on all lists |
+| TL12 | every distant-landscape sector record (`landblock.md` §7) has, in the u32 that starts 16 bytes before its end, the DID of an existing DXT3 96 × 96 surface, and no two sectors share one | Confirmed, all 33,159 (§6.3.1) |
 
 ---
 
@@ -654,6 +714,8 @@ Real-data tests assert these. Failures are reported per record and do not abort 
   starts at level 1 anyway; with *h* true the §5.2 extension starts it at level 1).
 - A chain whose levels do not halve (accept, use the per-level sizes).
 - A chain with a zero DID in the middle (the §5.2 extension ends the chain before it).
+- The four rows of the §5.4.1 table: for each, *h* and "detail 4 offered", and the active
+  chain of a nine-level `flags` = 0 list at *t* = 4 (rows 2–4 give levels 1–8).
 
 ---
 
@@ -666,13 +728,15 @@ Real-data tests assert these. Failures are reported per record and do not abort 
 3. ~~Meaning of `flags` = 1~~: answered 2026-10-05 (§4.5).
 4. ~~Client behaviour with an out-of-date highres archive~~: answered 2026-10-05 (§5.4).
 5. ~~Font record layout~~: specified in `fonts.md`.
-6. Referencing record type of the DXT3 96×96 tiles and the last 61 DXT1 128×128 tiles, and
-   the meaning of the all-zero DXT3 alpha (§6.3). The A8 masks and the light maps are
-   attributed.
+6. ~~Referencing record type of the DXT3 96×96 tiles~~: answered 2026-10-07, the
+   distant-landscape sector records (§6.3.1). Still open: how the far-band renderer samples
+   them and their all-zero alpha, the role of the second tile of T25, and the referencing
+   record of the last 61 DXT1 128×128 tiles (§6.3.1 OPEN).
 7. Surface category meanings (`records.md` §5.4). This spec adds that category 15 is the UI
    category, and that a list never mixes categories.
-8. Whether absent highres archives (without `--HighResOutOfDate`) make the client treat
-   highres as unusable (§5.4). No effect on Tessera's output.
+8. ~~Whether absent highres archives (without `--HighResOutOfDate`) make the client treat
+   highres as unusable~~: answered 2026-10-07, yes (§5.4.1). The same pass corrected T19:
+   with the option and the archives present, detail 4 stays offered.
 
 ---
 
@@ -716,12 +780,16 @@ module). The real-data test resolves 500 random lists with no TL6, TL7 or TL9 fi
 > the exactly halving run from level 1) gives the same pixels as the original at the default
 > setting and is accepted as a Tessera simplification.
 
-> **OPEN (Decision, 2026-10-06):** `MaterialLibrary::texture_chain` ends the effective chain
+> **Decision (2026-10-06), confirmed 2026-10-07 as a Tessera choice:** `MaterialLibrary::texture_chain` ends the effective chain
 > before the first later level that is larger than the level before it in width or height
 > (TL7 broken, hostile data only) or whose larger side is above the resolution cap (the
 > caller's cap and the configured texture limit), so every returned level is within the
 > limit and the chain is largest first. On a complete install (TL7 holds for all chains)
-> this changes nothing. The two equal levels of the §4.2 exception are kept.
+> this changes nothing. The two equal levels of the §4.2 exception are kept. (Spec writer,
+> 2026-10-07: the original has no resolution cap of its own; its only reduction is the §5.4
+> drop count, and it uploads a non-halving level clipped (§5.5). Ending the chain early on
+> hostile data and applying a cap are Tessera extensions, compatible with §5.2; nothing
+> further is needed from the client.)
 
 ---
 
@@ -732,6 +800,8 @@ module). The real-data test resolves 500 random lists with no TL6, TL7 or TL9 fi
 |---|---|---|
 | `material.md` §18 OPEN (`MaterialLibrary::cube_faces`) | Face order is OPEN in this spec | Answered here (§3.2): stored index *f* is cube face *f* in the order +X, −X, +Y, −Y, +Z, −Z; several levels are level-major. |
 | `material.md` §18 OPEN (Decision) on texture level selection | The configured largest side caps the top level | Compatible, but the client's own rule is §5.4 (drop count from the texture-detail setting, `flags` bit 0, highres usability). The cap is a Tessera extension on top of it (§5.2). |
+| `install-layout.md` §3.3 (optional members table) | Without the highres archives, high-resolution lookups fall back "as if `--HighResOutOfDate` were given" | True for the textures drawn (both give *h* = false). They differ in the options UI: with the option and the archives present detail 4 stays offered; with the archives absent it is not (§5.4.1). |
+| `landblock.md` §7 (distant-landscape sector) | Trailing section mostly OPEN | Facts for that spec: the u32 that starts 16 bytes before the record's end is the sector's DXT3 96 × 96 surface (all 33,159), the one 12 bytes before the end is 0 or a second such surface (941), and the last two bytes are the archive's region number and 39 (§6.3.1). |
 | `render.md` §3 OPEN (mip chains) | Is level 0 always the largest; how are levels chosen | Level 0 is the largest (§4.2); the uploaded levels are the §5.4 active chain with exactly its own mip count (§5.5). |
 
 ---
@@ -744,3 +814,4 @@ module). The real-data test resolves 500 random lists with no TL6, TL7 or TL9 fi
 | 2026-10-04 | all | First version (Review). |
 | 2026-10-05 | §1, §2.2, §2.3, §3.2, §4.3–§4.5, §5.1–§5.5, §6.2, §6.3, §7.3, §8–§15 | M4 pass (BIN row, T13–T22) and new census (OBS2). §2.2: field roles from the client's reader; `tail_a`/`tail_b` meaning; kinds other than 2 and 4 are rejected. §2.3: multi-level cube example. §3.2: level-major array order and face order (OPENs closed). §4.5: `flags` bit 0 meaning with the placement census, bit 1. §5.2 rewritten (client rule first, Tessera robustness extension second). New §5.4 (texture detail, `--HighResOutOfDate`, worked example) and §5.5 (GPU upload: mip count, no generated levels, clipped copies). §6.2 points to `fonts.md`. §6.3: terrain masks and light maps attributed. §9: TL2 revised, TL10–TL11 added. §10: fixtures for §5.4. §11–§13: OPENs answered. New §14 (corrections to other specs) and §15. |
 | 2026-10-05 | §1, §3.1, §4.4, §4.6, §5.1, §5.4, §6, §6.1, §7.1, §11 | Repair after review (changes requested). New provenance tag OBS3 (fresh whole-install dump). §3.1: "consecutive" defined (multi-level chains only: 48,307 of 78,713). §4.4: class order stated (Single before Full; 55 lists fit both). §4.6: level-0 formats and sizes recomputed over all lists. §5.1: archive spread recomputed (54,399 / 26,234 / 493 over all chains) and its scope stated; the highres reference sentence corrected (the local list's level 0 is one of the 77,980). §5.4 and T19: absent highres archives become an OPEN callout. §6 and §7.1: list-level counts over all lists (596,245 / 811,807; DXT3 165,580 / 41,330); compressed A8 654,130, DXT5 32,384. §6.1 and T8: 384,950 property sets. No rule changed. |
+| 2026-10-07 | header, §1, §5.4, new §5.4.1, §6.3, new §6.3.1, §9, §10, §11, §13, §14 | OPEN-closing revision (status Revised, waiting for review). New provenance rows OBS4 (sector tiles) and BIN2 (highres usability); T7 and T19 revised, T23–T25 added. §5.4: *h* is "a highres archive is open"; the OPEN on absent archives is closed; the Preparation paragraph now names test B. New §5.4.1: the archive is optional, `--HighResOutOfDate` opens and then closes it, tests A and B and their four-row table, the graphics presets. **Correction:** the earlier T19 said the option also stops detail 4 from being offered; with the archives present it is still offered, and it draws as detail 3. §6.3 and new §6.3.1: the DXT3 96 × 96 tiles are named by the distant-landscape sector records (16 bytes before the end, 33,159; 12 bytes before the end, 941); remaining OPEN narrowed to their sampling, the second tile and the 61 DXT1 tiles. §9: TL12. §10: §5.4.1 fixtures. §11: items 6 and 8 updated. §13: the 2026-10-06 implementer note is recorded as a decision and answered. §14: notes for `install-layout.md` §3.3 and `landblock.md` §7. No section number changed. |

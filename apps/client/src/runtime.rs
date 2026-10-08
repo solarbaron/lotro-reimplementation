@@ -50,6 +50,8 @@ pub struct Runtime {
     /// The walker's sandbox settings, until [`Runtime::start_walker_session`] starts the
     /// session (once the character catalog can give the avatar and crowd their bodies).
     walker_session: Option<tessera_net::sandbox::SandboxConfig>,
+    /// `--server`: play on a Tessera test server instead of the sandbox (M7).
+    remote: Option<crate::net::RemoteSettings>,
     /// System chat lines (sender empty) since the last [`Runtime::take_notices`].
     notices: Vec<String>,
     /// Session chat lines held for the game UI's chat window ([`Runtime::hold_chat_for_ui`]);
@@ -165,6 +167,7 @@ pub fn refuse_install_path(
 impl Runtime {
     /// Start the loader thread, the world session and the plugin host.
     pub fn start(args: &Args, now: Instant) -> anyhow::Result<Self> {
+        let remote = crate::cli::remote_settings_from_env(args)?;
         // The walker shows no showcase texture and needs the disk for streaming: no
         // texture search and no directory walk then.
         let walker = args.walker();
@@ -192,7 +195,9 @@ impl Runtime {
                 }
                 Err(e) => Err(e),
             },
-            None => World::sandbox(now).map(Some).map_err(anyhow::Error::from),
+            None => World::plain(now, remote.as_ref())
+                .map(Some)
+                .map_err(anyhow::Error::from),
         };
         let world = match session {
             Ok(w) => w,
@@ -210,7 +215,11 @@ impl Runtime {
                 tracing::info!(dir = %plugins_dir.display(), "no plugins folder (use --plugins)");
             }
         }
-        let plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        let mut plugins = Plugins::start(&plugins_dir, root.join("plugindata"), &args.load_plugins);
+        plugins.set_music(crate::audio::player_music::PlayerMusic::new(
+            crate::audio::player_music::MusicConfig::from_args(args, &root),
+        ));
+        plugins.set_startup_commands(args.commands.clone());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -219,6 +228,7 @@ impl Runtime {
             plugins,
             walker_shared,
             walker_session,
+            remote,
             notices: Vec::new(),
             ui_chat: None,
             ui_chat_dropped: 0,
@@ -267,11 +277,12 @@ impl Runtime {
             c.crowd.appearances.clear();
             c
         });
-        let world = match World::sandbox_with_world(now, config, WalkerSource::new(shared.clone()))
+        let remote = self.remote.as_ref();
+        let world = match World::for_walker(now, remote, config, WalkerSource::new(shared.clone()))
         {
             Err(e) if retry.is_some() => {
                 tracing::warn!("world session refused the crowd ({e}); starting without it");
-                retry.map(|c| World::sandbox_with_world(now, c, WalkerSource::new(shared)))
+                retry.map(|c| World::for_walker(now, remote, c, WalkerSource::new(shared)))
             }
             other => Some(other),
         };
@@ -306,10 +317,15 @@ impl Runtime {
     fn on_loader_event(&mut self, ev: LoaderEvent) -> Option<DecodedTexture> {
         match ev {
             LoaderEvent::NoData { reason } => {
+                self.plugins.data_unavailable();
                 self.status = DataStatus::NoData(reason);
                 self.texture_settled = true;
             }
             LoaderEvent::Opened { root, set, stats } => {
+                if let Some(m) = self.plugins.music_mut() {
+                    m.attach_data(Arc::clone(&set), &root);
+                }
+                self.plugins.attach_data(Arc::clone(&set));
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
             }
@@ -516,11 +532,7 @@ mod tests {
         assert!(!rt.holds_chat_for_ui());
         rt.hold_chat_for_ui(true);
         for i in 0..(MAX_HELD_CHAT + 3) {
-            rt.inject_chat(crate::net::ChatLine {
-                sender: String::new(),
-                text: format!("line {i}"),
-                chat_type: 8,
-            });
+            rt.inject_chat(crate::net::ChatLine::system(format!("line {i}")));
         }
         let lines = rt.take_ui_chat();
         assert_eq!(lines.len(), MAX_HELD_CHAT, "bounded");

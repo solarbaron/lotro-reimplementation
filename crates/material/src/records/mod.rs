@@ -24,7 +24,8 @@ use std::mem::size_of;
 
 use tessera_formats::{Did, FormatError, Reader, Record};
 
-pub use curve::CurveState;
+pub(crate) use curve::finite as curve_finite;
+pub use curve::{CurveState, CurveStates, program_time};
 pub use params::{
     BINDING_SIZE, Binding, FloatCurve, GROUP_COLOR, GROUP_FLAG, GROUP_FLOAT, GROUP_TEXTURE,
     MAX_CURVE_MODE, ParamEntry, ParamValue, VALUE_TYPE_COLOR, VALUE_TYPE_CURVE, VALUE_TYPE_WORD,

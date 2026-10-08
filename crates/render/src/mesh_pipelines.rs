@@ -44,6 +44,10 @@ pub(crate) struct DrawUniform {
     /// Vertex-normal line colour ([`crate::NormalLines::color`]).
     pub normal_color: [f32; 4],
     pub flags: [u32; 4],
+    /// Lit pipeline only: rgb = glow colour, w = specular power.
+    pub lit: [f32; 4],
+    /// Lit pipeline only: packed light indices (x, y), light count, lit flags.
+    pub lit_lights: [u32; 4],
 }
 
 /// Default alpha-test threshold for a non-finite cutoff.
@@ -149,7 +153,9 @@ impl DrawUniform {
             flags |= feature::MIRRORED;
         }
         let cutoff = match m.alpha {
-            AlphaMode::Mask { cutoff } => finite_or(cutoff, DEFAULT_CUTOFF),
+            AlphaMode::Mask { cutoff } | AlphaMode::TestBlend { cutoff } => {
+                finite_or(cutoff, DEFAULT_CUTOFF)
+            }
             _ => 0.0,
         };
         Self {
@@ -171,6 +177,8 @@ impl DrawUniform {
             overlay_color: ctx.overlay_color.map(|c| finite_or(c, 1.0)),
             normal_color: ctx.normal_color.map(|c| finite_or(c, 1.0)),
             flags: [flags, mode_index(ctx.shading), dye_source, 0],
+            lit: [0.0; 4],
+            lit_lights: [0; 4],
         }
     }
 }
@@ -469,7 +477,8 @@ mod tests {
 
     #[test]
     fn uniform_layout() {
-        assert_eq!(size_of::<DrawUniform>(), 224);
+        // 224 bytes of M2 fields plus the two lit vectors; one 256-byte stride.
+        assert_eq!(size_of::<DrawUniform>(), 256);
     }
 
     fn ctx() -> DrawContext {

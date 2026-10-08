@@ -1,7 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Per-install world data loaded once at start-up: the property schema, the property IDs
-//! the world needs, and per region its descriptor, map-coordinate constants and block-map
-//! descriptor (`landblock.md` §5.1, `environment.md` §3, `coordinates.md` §8.1).
+//! the world needs, per region its descriptor, map-coordinate constants, block-map
+//! descriptor and the tables its eight slots name (`landblock.md` §5.1, `environment.md`
+//! §3, `coordinates.md` §8.1), and the shared state of the M4.5 world systems
+//! ([`WorldSystems`]: scene records, object properties, water, collision, sky, LOD classes).
+//!
+//! The eight slots of a region descriptor (`environment.md` §3.1–§3.2) are read at run
+//! time, never hard-coded:
+//!
+//! | Slot | Table | Loaded into |
+//! |---|---|---|
+//! | 1, 2, 8 | scene-choice 0x11, terrain-scene 0x12, terrain type 0x19 | [`RegionInfo::scenery`] |
+//! | 3 | encounter 0x14 | not loaded (the encounter pass is out of scope, `scenery.md` §7.7) |
+//! | 4 | sky description 0x15 | [`WorldSystems::sky`] (one record shared by every region in this install) |
+//! | 5, 6 | water 0x16, fog zones 0x17 | [`WorldSystems::water`] |
+//! | 7 | block-map descriptor 0x18 | [`RegionInfo::block_map_descriptor`] |
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -11,14 +24,24 @@ use tessera_formats::{
     BlockMapDescriptor, DataIdMap, Did, PropertyDictionary, PropertySchema, Record,
     RegionDescriptor,
 };
+use tessera_physics::geometry::{PhysicsPids, StaticOptions};
 
 use crate::areas::AreaNameSource;
 use crate::bundle::BundleOptions;
+use crate::collision::CollisionSystem;
 use crate::coords::{LandblockKey, MAX_REGION};
+use crate::draw_distance::LodClasses;
+use crate::environment::{EnvironmentPids, SkyLibrary};
 use crate::error::{Result, WorldError};
+use crate::frills::FrillPids;
+use crate::lighting::LightPids;
 use crate::mapcoords::MapConstants;
 use crate::objects::{ObjectResolver, WorldPids};
+use crate::scenery::{ClearancePids, ObjectPropertyCache, SceneLibrary, SceneryTables};
 use crate::source::WorldSource;
+use crate::water::{
+    DEFAULT_VOLUME_CACHE_ENTRIES, VolumeLibrary, WaterPids, WaterSystem, WaterTables,
+};
 
 /// DID of the master property dictionary (`property-system.md` §2).
 pub const PROPERTY_DICTIONARY_DID: u32 = 0x3400_0000;
@@ -38,6 +61,69 @@ pub struct RegionInfo {
     pub map: Option<MapConstants>,
     /// The block-map descriptor (0x18) named by the region descriptor.
     pub block_map_descriptor: Option<Arc<BlockMapDescriptor>>,
+    /// The scenery tables named by slots 1, 2 and 8 (`scenery.md` §4.1), when
+    /// [`BundleOptions::generate_scenery`] is set and they load.
+    pub scenery: Option<Arc<SceneryTables>>,
+}
+
+/// Property IDs of the M4.5 world systems, looked up by name in the property dictionary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemPids {
+    /// Collision flags (`collision.md` §9.1).
+    pub physics: PhysicsPids,
+    /// Clearance volumes of the static list (`scenery.md` §7.4 step 14a).
+    pub clearance: ClearancePids,
+    /// Sky keys and interior fog (`environment.md` §7).
+    pub environment: EnvironmentPids,
+    /// Light entities (`lighting.md` §8.3).
+    pub lights: LightPids,
+    /// Frill object values (`scenery.md` §8.3).
+    pub frills: FrillPids,
+    /// Monitors and liquid flags (`water.md` §7).
+    pub water: WaterPids,
+    /// `Render_LODClass` (`walker.md` §11.4.3).
+    pub lod_class: Option<u32>,
+}
+
+impl SystemPids {
+    /// Looks every property up with `pid_of` (name → PID).
+    #[must_use]
+    pub fn from_names(pid_of: impl Fn(&str) -> Option<u32> + Copy) -> Self {
+        Self {
+            physics: PhysicsPids::from_names(pid_of),
+            clearance: ClearancePids::from_names(pid_of),
+            environment: EnvironmentPids::from_names(pid_of),
+            lights: LightPids::from_names(pid_of),
+            frills: FrillPids::from_names(pid_of),
+            water: WaterPids::from_names(pid_of),
+            lod_class: pid_of("Render_LODClass"),
+        }
+    }
+}
+
+/// The shared state of the M4.5 world systems: read once, used by the bundle decoder on
+/// every worker and by the streamer's lookups. Each part is `None` when its option is off
+/// or its records could not be loaded (logged); the bundle then goes without it.
+#[derive(Debug, Default)]
+pub struct WorldSystems {
+    /// Property IDs.
+    pub pids: SystemPids,
+    /// Scene records (0x02, `scenery.md` §5), cached; present when any region has scenery
+    /// tables.
+    pub scenes: Option<Arc<SceneLibrary>>,
+    /// 0x47 properties resolved along their chains (`scenery.md` §9.2), shared by the
+    /// clearance list, LOD classes and frills.
+    pub object_properties: Arc<ObjectPropertyCache>,
+    /// Water tables (slots 5 and 6) and liquid volumes (`water.md` §4–§7); loaded when
+    /// water is built or scenery generated (which reads the water plane).
+    pub water: Option<Arc<WaterSystem>>,
+    /// Collision caches and limits (`collision.md` §12.1).
+    pub collision: Option<Arc<CollisionSystem>>,
+    /// The sky description (slot 4), its game time and day descriptions
+    /// (`environment.md` §5, §6, §11).
+    pub sky: Option<Arc<SkyLibrary>>,
+    /// The LOD-class table (0x32, `walker.md` §11.4).
+    pub lod_classes: Option<Arc<LodClasses>>,
 }
 
 /// Shared, immutable world context used by the bundle decoder on every worker.
@@ -49,6 +135,7 @@ pub struct WorldContext {
     objects: ObjectResolver,
     areas: Option<Arc<dyn AreaNameSource>>,
     options: BundleOptions,
+    systems: WorldSystems,
 }
 
 impl std::fmt::Debug for WorldContext {
@@ -59,12 +146,14 @@ impl std::fmt::Debug for WorldContext {
             .field("objects", &self.objects)
             .field("area_names", &self.areas.is_some())
             .field("options", &self.options)
+            .field("systems", &self.systems)
             .finish_non_exhaustive()
     }
 }
 
 impl WorldContext {
-    /// A context from parts (synthetic worlds and tests).
+    /// A context from parts (synthetic worlds and tests), without world systems (see
+    /// [`WorldContext::load_systems`]).
     #[must_use]
     pub fn new(
         source: Arc<dyn WorldSource>,
@@ -87,13 +176,15 @@ impl WorldContext {
             objects,
             areas: None,
             options,
+            systems: WorldSystems::default(),
         }
     }
 
     /// Loads the context from an install's records: the property dictionary
     /// (0x34000000), the REGION DID map named by the root map, every region descriptor it
     /// lists, and their block-map descriptors. Regions whose descriptors fail to decode are
-    /// logged and left without map constants or block-map descriptor.
+    /// logged and left without map constants or block-map descriptor. Then the world
+    /// systems are loaded as [`WorldContext::load_systems`] describes.
     ///
     /// # Errors
     ///
@@ -109,10 +200,101 @@ impl WorldContext {
         let dict = PropertyDictionary::parse_expecting(&dict_bytes, PROPERTY_DICTIONARY_DID)
             .map_err(|e| WorldError::format(PROPERTY_DICTIONARY_DID, "property dictionary", e))?;
         let pids = WorldPids::from_names(|n| dict.pid(n));
+        let system_pids = SystemPids::from_names(|n| dict.pid(n));
         let schema: Arc<dyn PropertySchema + Send + Sync> = Arc::new(dict);
         let regions = load_regions(&*source, &*schema);
         tracing::info!(regions = regions.len(), "world context loaded");
-        Ok(Self::new(source, schema, pids, regions, options))
+        let mut ctx = Self::new(source, schema, pids, regions, options);
+        ctx.load_systems(system_pids);
+        Ok(ctx)
+    }
+
+    /// Loads the world systems with property IDs `pids`, as the options say:
+    ///
+    /// - [`BundleOptions::generate_scenery`]: every region's scenery tables (slots 1, 2, 8)
+    ///   and the scene library;
+    /// - [`BundleOptions::build_water`] or [`BundleOptions::generate_scenery`]: the water
+    ///   and fog-zone tables (slots 5, 6) and the volume library (scenery generation reads
+    ///   the landblock's water plane, `scenery.md` §11, whether or not water is built);
+    /// - [`BundleOptions::build_collision`]: the collision caches with
+    ///   [`BundleOptions::collision_limits`] and the active content layers;
+    /// - [`BundleOptions::load_environment`]: the sky description (slot 4) with its game
+    ///   time and day descriptions, and the LOD-class table.
+    ///
+    /// A part whose records are missing or broken is logged and left `None`; the rest
+    /// still loads. Replaces any systems loaded before.
+    pub fn load_systems(&mut self, pids: SystemPids) {
+        let mut systems = WorldSystems {
+            pids,
+            ..WorldSystems::default()
+        };
+        if self.options.generate_scenery {
+            let tables = SceneryTables::for_all_regions(self);
+            for (region, info) in &mut self.regions {
+                info.scenery = tables.get(region).cloned();
+            }
+            if !tables.is_empty() {
+                systems.scenes = Some(Arc::new(SceneLibrary::new(Arc::clone(&self.source))));
+            }
+        }
+        if self.options.build_water || self.options.generate_scenery {
+            systems.water = Some(Arc::new(WaterSystem::new(
+                WaterTables::load(self),
+                VolumeLibrary::new(pids.water, DEFAULT_VOLUME_CACHE_ENTRIES),
+            )));
+        }
+        if self.options.build_collision {
+            systems.collision = Some(Arc::new(CollisionSystem::new(
+                pids.physics,
+                self.options.collision_limits,
+                StaticOptions {
+                    active_content_layers: self.options.active_content_layers.clone(),
+                    instance: 0,
+                },
+            )));
+        }
+        if self.options.load_environment {
+            systems.sky = match SkyLibrary::load(self) {
+                Ok(s) => Some(Arc::new(s)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "no sky: environment lookups unavailable");
+                    None
+                }
+            };
+            systems.lod_classes = match LodClasses::load(self) {
+                Ok(t) => Some(Arc::new(t)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "no LOD-class table: component defaults apply");
+                    None
+                }
+            };
+        }
+        tracing::debug!(
+            scenery_regions = self
+                .regions
+                .values()
+                .filter(|r| r.scenery.is_some())
+                .count(),
+            water = systems.water.is_some(),
+            collision = systems.collision.is_some(),
+            sky = systems.sky.is_some(),
+            lod_classes = systems.lod_classes.is_some(),
+            "world systems loaded"
+        );
+        self.systems = systems;
+    }
+
+    /// Replaces the world systems (synthetic worlds and tests).
+    #[must_use]
+    pub fn with_systems(mut self, systems: WorldSystems) -> Self {
+        self.systems = systems;
+        self
+    }
+
+    /// The world systems.
+    #[must_use]
+    pub fn systems(&self) -> &WorldSystems {
+        &self.systems
     }
 
     /// [`WorldContext::load`] over an opened install.
@@ -269,6 +451,7 @@ fn load_regions(source: &dyn WorldSource, schema: &dyn PropertySchema) -> Vec<Re
                 descriptor: Some(desc),
                 map,
                 block_map_descriptor,
+                scenery: None,
             },
         );
     }

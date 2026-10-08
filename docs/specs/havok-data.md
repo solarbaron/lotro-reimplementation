@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (revision of 2026-10-07 reviewed and passed, 2026-10-07) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (§12.2 row 2 *i*, encoding tie-break, undefined tag ARCH, crop-amount OPEN). Re-review 2026-10-05: **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise and non-blocking). Re-review spot checks: all four §12.2 rows and the alternative `FF F7 7F FE 3F` re-encoded and decoded with an independent encoder following the stated tie-break; DS §8 supports the §2.4 remark; independent re-run over all 25,395 clip records: envelope flag 25,285 / 110, VLE forms 25,355 / 40, weights 18,460 empty / 6,935 full, 21 duration mismatches, 24,800 spline / 595 interleaved, `maxFramesPerBlock` 256, 31,294 blocks ending at `floatBlockOffsets`, quantisation byte 0x45 on 1,645,618 masks, degree counts as in §8. Non-blocking note: in §2.3 the sentences after the crop-amount OPEN ("Sampling also uses the tagfile values ...") continue inside the callout; they are normative and could move out of it. |
+| **Reviewer** | Claude review session (spec-reviewer, a different session from the writer) |
+| **Review record** | Re-review 2026-10-07: **passed**, Accepted kept. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/havok` (container reader, skeleton and clip models, spline decoder), `crates/anim` (sampling, §7.4–§7.8), `fuzz/` (one target per structure kind, §11), `apps/dattool` / `apps/explorer` (clip and skeleton inspection) |
 | **Companion specs** | `setup.md` §6.1 (the 0x04 record that carries the skeleton tagfile; this spec starts at its field 3). `records.md` §1.2 (VLE, used once in the 0x05 envelope). `mesh.md` §5.7 (mesh bone indices address the skeleton bone array of this spec). `skeleton-anim.md` (M4: track-to-bone mapping, attach points, root motion; it consumes §4 and §7 of this spec). |
 
@@ -68,7 +68,7 @@ Legend:
 | NB | Public B-spline mathematics (Piegl and Tiller, *The NURBS Book*, knot-span search and Cox–de Boor basis recurrence). General reference. |
 | SET | `setup.md` §6.1 (0x04 outer layout). |
 | SA | `skeleton-anim.md` (§3 binding, §6.6 track weights, §7.3 extracted motion; its BIN session and census of 2026-10-05). |
-| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05: the clip record reader, the clip player's use of a clip's length, and the animation middleware's own routines inside the client for sampling interleaved clips and reference frames. **Questions:** which duration governs playback when the envelope and the tagfile disagree (§2.3); how frames of interleaved clips are interpolated (§7.8); how reference-frame samples map to time (§4.5, §7.8). **Why M1–M3 were not enough:** the data hold two durations and no rule; interpolation and sample timing are code, not data; no published source states them for this client; observing the running client (M3) cannot tell a 1-frame shift from a stretched sample array. Only offline animation code was read. |
+| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05: the clip record reader, the clip player's use of a clip's length, and the animation middleware's own routines inside the client for sampling interleaved clips and reference frames. **Questions:** which duration governs playback when the envelope and the tagfile disagree (§2.3); how frames of interleaved clips are interpolated (§7.8); how reference-frame samples map to time (§4.5, §7.8). **Why M1–M3 were not enough:** the data hold two durations and no rule; interpolation and sample timing are code, not data; no published source states them for this client; observing the running client (M3) cannot tell a 1-frame shift from a stretched sample array. Only offline animation code was read. **Second session, same build, 2026-10-07** (Ghidra, read-only copy of the project, by address): **questions** (4) where the clip player's start and end crop amounts come from (§2.3); (5) whether the spline sampler aligns quaternion signs (§7.6). **Why M1–M3 were not enough:** no record field holds a crop amount, so the data cannot show whether one is ever set; the sign question concerns 0.007 % of control-point pairs, which no running client or capture would isolate. Code read: the game's routine that creates the middleware's animation control for a clip, both places that call it, the control's constructor, and every instruction of the client that stores a float at the control's two crop fields; for (5) the spline block decompressor again. Nothing of the network, login, launcher or anti-tamper code. |
 | CNS2 | Recount of 2026-10-05 with the repository's `tessera-havok` as a tool: roots per skeleton and non-unit reference scales over all 28,555 skeletons. |
 
 | # | Fact | Sources | Mark |
@@ -94,6 +94,7 @@ Legend:
 | H19 | Interleaved clips interpolate translation and scale linearly and rotation by sign-aligned normalised linear interpolation; the frame index is *t* × (*N* − 1) / `duration` (§7.8) | BIN | BIN |
 | H20 | Reference-frame samples are spread over the duration by their own count and interpolated linearly in all four components; the rotation is the angle *w* about `up` (§4.5, §7.8) | BIN; SA §7.3 (meaning of *w*) | BIN |
 | H21 | Roots per skeleton 1, 2, 3, 4 (§4.2) | CNS2 | Confirmed (recount) |
+| H22 | The start crop is always 0; the end crop is 1/30 s when the clip is started for exactly one cycle, else 0 (§2.3) | BIN (question 4) | BIN |
 
 ---
 
@@ -154,16 +155,30 @@ means 1 on every track. The dominant pattern on player skeletons is "upper body 
 **Which duration (BIN, 2026-10-05):** the client's record reader stores the envelope `duration`
 next to the decoded animation, but its clip player computes a clip's playable length from the
 **tagfile** `duration`, minus a start and an end crop amount that the player keeps for the
-playing clip (0 unless set). No use of the envelope value was found.
+playing clip. No use of the envelope value was found. Sampling also uses the tagfile values,
+because the spline block layout is tied to them (§7.4). Decoders keep exposing the envelope
+value separately.
 
-> **OPEN:** where the clip player's start and end crop amounts come from (no record field of
-> §2.3 or §4.3 feeds them; they may be set by the animation graph or by scripts,
-> `skeleton-anim.md`). **Tessera default:** both 0, so a clip plays for its full tagfile
-> `duration`. Sampling also uses the tagfile values, because the spline block layout is tied to them
-(§7.4). Decoders keep exposing the envelope value separately.
+**Crop amounts (BIN, 2026-10-07, row H22; answers the OPEN of 2026-10-05):** the client
+creates one animation control per playing clip, with a **cycle count** (how many times the
+clip repeats; −1 means without end; the count comes from the animation node or script that
+starts the clip, `skeleton-anim.md`). The control starts with both crop amounts 0. Then:
+
+1. If the cycle count is exactly 1 (the clip plays once), the end crop becomes **1/30 s**
+   (the float 0.033333335), and if the control's starting local time is greater than
+   `duration` − 1/30 s it is lowered to that value.
+2. Otherwise both crop amounts stay 0.
+3. The start crop is never set: no code of the client stores a value into it after the
+   control is created.
+
+So a clip that plays once ends 1/30 s before its tagfile `duration` (its playable length is
+`duration` − 1/30 s); a looping clip plays its full `duration`. Worked example (synthetic):
+`duration` 1.5 s played once ends at local time 1.4666667 s; the same clip looping wraps at
+1.5 s.
 
 > **OPEN:** whether anything outside the clip player reads the envelope `duration` (21 records
-> differ, §8.4). Tessera uses the tagfile value everywhere.
+> differ, §8.4). Not traced in the 2026-10-07 session either. Tessera uses the tagfile value
+> everywhere.
 
 <a id="s2-4"></a>
 ### 2.4 Container kind and version (Confirmed)
@@ -847,7 +862,8 @@ For block *b*: start at `blockOffsets[b]`; the block may extend to the next bloc
 channel, the rotation channel and the scale channel as §5.4 describes, applying §5.7 padding.
 Every read is bounds-checked against the block end. When all tracks are parsed, the position
 must equal `blockOffsets[b]` + `floatBlockOffsets[b]`. Reject unsupported quantisation codes
-and degrees outside 1 … *n* before reading control points. Store each channel as either a
+and degrees outside 1 … *n* or above 7 (a Tessera bound; only 1 and 3 occur) before reading
+control points. Store each channel as either a
 constant 3- or 4-vector or a curve (degree, knots as numbers, dequantised control points).
 Decoding a block once and caching it is cheaper than re-parsing per sample.
 
@@ -906,8 +922,10 @@ stored with opposite sign. Step 1 makes such a pair a constant rotation, as inte
 them unaligned would pass through a near-zero quaternion.
 
 > **OPEN:** Whether the original aligns signs before blending (step 1) or plays a visible
-> glitch on those 3,743 pairs (0.007 %). The recommendation stands unless the visual
-> checklist shows otherwise.
+> glitch on those 3,743 pairs (0.007 %). Read again on 2026-10-07 (BIN question 5): the
+> decompressor's quaternion path rebuilds the dropped component and normalises, but the
+> routine that blends a window of control points was not identified, so the question stays
+> open. The recommendation stands unless the visual checklist shows otherwise.
 
 <a id="s7-7"></a>
 ### 7.7 Sampling a spline clip
@@ -930,7 +948,8 @@ The animation middleware inside the client samples an interleaved clip as follow
 1. *t* ≥ *D*: every track takes its last frame exactly.
 2. Otherwise *x* = *t* × (*N* − 1) / *D*; *f* = the integer part of *x*. When *f* > *N* − 2,
    use *f* = *N* − 2 and α = 1; else α = *x* − *f*, limited to 0 … 1.
-3. Per track: translation and scale are *a* + α × (*b* − *a*) of frames *f* and *f* + 1;
+3. Per track: translation and scale are (1 − α) × *a* + α × *b* of frames *f* and *f* + 1
+   (Tessera's normative arithmetic, §14; equal to *a* + α × (*b* − *a*) in exact arithmetic);
    rotation is the **normalised linear interpolation** (1 − α) × *q_a* + α′ × *q_b*, where α′ =
    α when the dot product of *q_a* and *q_b* is ≥ 0 and −α when it is negative, followed by
    normalisation (the client uses one Newton step of a reciprocal square root; an exact
@@ -1081,7 +1100,7 @@ A decoder reports exactly one category per failed record. Counts are for this in
 | `spline.unsupported_quantisation` | a quantisation code other than those implemented | 0 |
 | `spline.float_tracks` | `numberOfFloatTracks` > 0 | 0 |
 | `spline.bad_mask` | a component both static and dynamic, or bits 3/7 set | 0 |
-| `spline.bad_curve` | degree outside 1 … *n*, knots decreasing, not clamped, knot beyond the block's last frame | 0 |
+| `spline.bad_curve` | degree outside 1 … *n* or above 7 (Tessera bound), knots decreasing, not clamped, knot beyond the block's last frame, an interior knot repeated more than *p* times | 0 |
 | `spline.block_overrun` | a channel reads past the block end | 0 |
 | `spline.block_length` | parsing ends elsewhere than `floatBlockOffsets[b]` | 0 |
 | `interleaved.bad_shape` | transform count not a positive multiple of the track count | 0 |
@@ -1093,7 +1112,9 @@ Assignments settled with the implementation (2026-10-05, §14): a negative count
 arrays and object columns are `tagfile.unsupported_form`; a struct-array element class with no
 declared name is `tagfile.bad_class_index`; the pose checks of §9.1, an `extractedMotion` of
 another class, a spline clip with 0 tracks, negative track counts, `maxFramesPerBlock` < 2,
-`numFrames` < 1 and a non-zero `endian` are `object.inconsistent`.
+`numFrames` < 1 and a non-zero `endian` are `object.inconsistent`. Settled on 2026-10-07: more
+than 1,048,576 decoded values in one tagfile (present object members plus stored struct-array
+column values; fewer than 100 occur) is `tagfile.unsupported_form` (a Tessera bound).
 
 ---
 
@@ -1319,8 +1340,8 @@ a u32 length plus the reference-frame tagfile precede the clip tagfile's length.
 
 > **Resolved in part (2026-10-05, BIN):** the clip player uses the tagfile `duration` (§2.3).
 > **OPEN:** whether anything else reads the envelope value (21 records differ, §8.4).
-> **OPEN:** where the player's start and end crop amounts come from (§2.3; Tessera default
-> 0).
+> **Resolved (2026-10-07, BIN, H22):** the start crop is always 0; the end crop is 1/30 s when
+> the clip is started for exactly one cycle, else 0 (§2.3).
 
 > **Resolved (2026-10-05, `skeleton-anim.md` §3):** binding is positional by track count for
 > every clip, named or not (§4.4, H16).
@@ -1391,30 +1412,65 @@ writer, 2026-10-05 (the implementation's choices are confirmed unless stated oth
 Raised by the clean-room implementation after an audit (`tessera-havok`, 2026-10-06). These
 are hostile-input choices of the implementation; none changes a result on real data.
 
-> **OPEN:** Tessera now caps the decoded values of one tagfile (present object members plus
+> **Answered (2026-10-07, spec writer):** confirmed. The limit is Tessera's own hostile-input
+> bound, like the other resource limits; it is now part of the §9.3 assignments. Reading and
+> checking the columns of a struct array with count 0 without keeping them is correct.
+> Original note: Tessera now caps the decoded values of one tagfile (present object members plus
 > stored struct-array columns) at 1,048,576 (fewer than 100 occur) and reports more as
 > `tagfile.unsupported_form`, like its other resource limits. A present member can cost one
 > bit of input, so without a cap a small record decoded to a model hundreds of times its size.
 > The columns of a struct array with count 0 are still read and checked (prefixes included)
 > but not kept, since each equals the §3.10 default. Please confirm or state other limits.
 
-> **OPEN:** Tessera rejects a curve degree above 7 as `spline.bad_curve` (§5.4 and HV11 observe
+> **Answered (2026-10-07, spec writer):** yes. The data have degrees 1 and 3 only, and no
+> larger degree was traced in the client. §7.3 and the §9.3 `bad_curve` row now state the
+> Tessera bound: a degree above 7 is `spline.bad_curve`, checked before any control point is
+> read.
+> Original note: Tessera rejects a curve degree above 7 as `spline.bad_curve` (§5.4 and HV11 observe
 > only 1 and 3). §7.3 and the §9.3 `bad_curve` row reject only degrees outside 1 … *n*, which
 > allows up to 255; evaluation costs O(*p*²) per channel, so a degree-255 clip made one sample
 > thousands of times slower. Should §5.4, §7.3 and §9.3 state a degree limit, and which?
 
-> **OPEN:** the §9.3 `bad_curve` row does not list "an interior knot repeated more than *p*
+> **Answered (2026-10-07, spec writer):** an interior knot repeated more than *p* times is
+> `spline.bad_curve` (HV11 structure); the row now lists it. Rejecting it is right.
+> Original note: the §9.3 `bad_curve` row does not list "an interior knot repeated more than *p*
 > times", though §5.4 and HV11 require multiplicity ≤ *p* and §10 enforces "HV11 structure".
 > The implementation now rejects it as `spline.bad_curve` (previously it was accepted and the
 > curve jumped at that knot). Please add it to the row, or say if it should be accepted.
 
-> **OPEN:** §7.8 words the interleaved and reference-frame blend as *a* + α × (*b* − *a*).
+> **Answered (2026-10-07, spec writer):** acceptable. (1 − α) × *a* + α × *b* is the normative
+> form for Tessera from now on (§7.8); it equals *a* + α × (*b* − *a*) in exact arithmetic and
+> on every real clip within float rounding. Sampling each interleaved frame through the
+> playback sampler in the §9.2 check is also right.
+> Original note: §7.8 words the interleaved and reference-frame blend as *a* + α × (*b* − *a*).
 > For finite frames of opposite sign near the `f32` limit, *b* − *a* overflows and the sample
 > becomes NaN or infinite although both frames are finite. Tessera evaluates the same blend as
 > (1 − α) × *a* + α × *b* (equal in exact arithmetic, exact at α = 0 and 1, never overflows
 > for finite frames). The §9.2 finiteness check also samples each interleaved frame at its
 > own time through the playback sampler, not only as stored. Please confirm that this form is
 > acceptable, or state the required arithmetic.
+
+> **Answered (2026-10-07, spec writer):** confirmed. Keep the `f32` sum, and only when a
+> component is not finite recompute it in `f64` and limit it to the range of the window's
+> control points. §9.2 keeps checking whole frames only; it does not sample between frames
+> and does not reject such ranges (none occur, §7.7).
+> Original note: §7.5 step 3 sums *N* × *P* in floating point. The `f32` basis functions can sum
+> a hair above 1 between knots, so control points that are all finite but near the `f32`
+> limit sum to infinity between frames, while the §9.2 check (whole frames only) passes.
+> Tessera keeps the `f32` sum and, only when it is not finite, recomputes that component in
+> `f64` and limits it to the range of the window's control points (the blend is a convex
+> combination), so finite control points always give a finite value. Please confirm, or state
+> whether §9.2 should also sample between frames or reject such ranges.
+
+> **Answered (2026-10-07, spec writer):** confirmed, including the case of a `duration` that
+> is 0, negative or not finite (every *t* gives the last frame) and the rotation at *t* ≥ *D*
+> (the last frame's own quaternion, normalised; this is what the client's step 1 returns).
+> Original note: §7.8 step 1 and §4.5 step 1 (*t* ≥ *D*: the last frame exactly). Tessera tests
+> *t* ≥ *D* after the §7.4 clamp, so a `duration` that is 0, negative or not finite (never
+> observed) clamps every *t* to 0 and gives the **last** frame; a non-finite *t* still reads
+> as 0 (§7.4) and gives the first frame when *D* > 0. At *t* ≥ *D* the rotation is the last
+> frame's own quaternion, normalised, not the sign-aligned blend (which can be its negation).
+> Please confirm.
 
 ---
 
@@ -1439,3 +1495,4 @@ Recorded here instead of editing specs owned by other writers.
 | 2026-10-04 | all | First complete version (Review). | Spec writer (dirty room) |
 | 2026-10-05 | §1 (SA, BIN, CNS2; legend; H16 Confirmed, H17–H21), §2.3, §4.2, §4.4, §4.5, §7.8 rewritten, §8.2, §9.3, §14, new §15, §16 | Answers from `skeleton-anim.md` folded in (binding, track weights, meaning of *w*); M4 (decision 0011): the clip player's duration, interleaved interpolation and reference-frame sampling; roots and scale tolerance recounted; every implementation OPEN of §14 answered. | Spec writer (dirty room) |
 | 2026-10-05 | header, §2.3, §2.4, §12.2, §14, §16 | Review changes: §12.2 row 2 *i* corrected from 3 to 2 (its bytes `…2F` were right); tie-break for the test encoding (on equal magnitudes drop the lowest index); the Havok-version remark cites DS (`research/notes/data-semantics.md` §8) instead of the undefined tag ARCH; OPEN callout with Tessera default 0 for the clip player's crop amounts. | Spec writer (dirty room) |
+| 2026-10-07 | header, §1 (BIN second session, H22), §2.3, §7.3, §7.6, §7.8, §9.3, §14, §16 | M4 (decision 0011), questions 4–5: the crop amounts are answered (start crop always 0; end crop 1/30 s for clips started for exactly one cycle; OPEN closed); spline sign alignment re-read, still OPEN. Answers to the six implementer notes of 2026-10-06: the 1,048,576-value cap and a degree bound of 7 are Tessera bounds; interior knot multiplicity above *p* is `bad_curve`; (1 − α) × *a* + α × *b* is the normative blend form; the `f64` fallback and the *t* ≥ *D* rule are confirmed. Status Accepted → Revised. | Spec writer (dirty room) |

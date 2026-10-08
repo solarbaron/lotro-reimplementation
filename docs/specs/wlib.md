@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (re-review 2026-10-07 of the OPEN-closing revision and its repair, see §16; previously Accepted 2026-10-05, Revised 2026-10-07). |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (five findings: §14 trailing-byte test contradicted §3.2/§10; network-form remarks at the end of §5 and §8.4 fell under the `docs/LEGAL.md` §9.3 gate; §9 count scope; speculation in §2; no reader rule for chunks 32 and 256). Claude review session (spec-writer agent), re-review 2026-10-05 after the repair round: **passed, Accepted**. All five findings resolved (network-form content withdrawn; §14 consistent with §3.2 and §10; W25 scoped; §2 reduced to the "Client" label; §10 reader rules for chunks 32 and 256 backed by BIN row W24). Re-review spot checks on the install with an independent decoder: header 0x1A015342 / 38 / 0x1E4A5AA4; chunk set 1, 2, 16, 64, 512, 1024 and trailing byte 1; parent index > child index in 296 of 5,822 entries and 282 defined classes (W25); 1,381,857 per-record class-table entries equal the library lists in all 383,343 object records (W11). Earlier first-round checks (L2–L6, attribute-list census, flattening, parent map, singletons, method tables, root classes) still stand. Remaining OPENs (§3.1 extra word, §3.2 boolean byte, chunks 32/256/128) are precise and non-blocking. |
+| **Reviewer** | Claude review sessions (spec-writer agent, 2026-10-05; spec-reviewer, a different session from the writer, 2026-10-07) |
+| **Review record** | Re-review 2026-10-07 after the repair round (a session different from the writer): **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/wstate` (`ClassLibrary`); `apps/dattool` / `apps/explorer` class views |
 | **Companion specs** | `docs/specs/records.md` [§1](records.md#s1) (fixed-width values, VLE, TSize and bucket order, strings, name hash §1.5), [§2](records.md#s2) (DID high-byte table); `docs/specs/property-system.md` [§8](property-system.md#s8) (DID maps; the WLIB map); `docs/specs/wstate.md` (object-state records, which are decoded with this library); `docs/specs/dat-container.md` (routing: prefix 0x56 lives in gamelogic). This spec starts with the fully reassembled payload of record 0x56000000. |
 
@@ -60,6 +60,9 @@ How sources are marked:
 | OBS2 | Observed in the same install on 2026-10-05: the library re-decoded to the last byte with a new throwaway probe (same counts as OBS), plus the method-table cross-checks of §6.4. |
 | LC2 | The class-index constants of three released builds of the LC library (versions 11.0, 11.4 and 11.6, dated 2023-11, 2024-08 and 2025-05), read for facts only. |
 | BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, compiled 2026-09-27), disassembled on 2026-10-05 in the dirty room, address ranges only: the library record's load routine, its chunk dispatcher and the per-chunk readers, the class-table entry reader, and the script machine's function-call and value-type checks. **Questions:** what the header words and the trailing byte are and which values the client accepts; which chunk types the client knows; what the method tables mean; how value codes 131 and 195 differ. **Why M1–M3 were not enough:** the data contain one library at one version with one value of each header word, so they cannot show what is checked or meant; the method tables are offsets into bytecode whose meaning only the code that uses them shows; no published source describes them (M2); the running client (M3) does not expose them. Nothing from network, login, launcher or anti-tamper code was read. **Repair pass (same build, 2026-10-05):** the chunk dispatcher's jump table and the library object's set-up and tear-down routines were re-read. **Question:** where the client keeps chunks 32 and 256 relative to chunks 64 and 512 (merged, replaced or separate). **Why M1–M3 were not enough:** neither chunk occurs in the data, and no published source describes them. |
+| BIN2 | **M4 (decision 0011), second pass.** Same build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, compiled 2026-09-27; file version checked again on 2026-10-07), read on 2026-10-07 in the dirty room with a headless decompiler and a disassembler, by address range only: the library's per-chunk readers for types 32, 64, 128 and 256; every read of the loaded library's fields through the client's pointer to it; the routine that asks the DID-map layer for the library; the object-creation and object-graph reading routines that consult the library's chunks; the post-load check. **Questions:** what the extra header word and the trailing byte do; what chunks 32, 64, 128 and 256 hold and who reads them; which WLIB map entry the client asks for and whether anything asks for the second one. **Why M1–M3 were not enough:** the library exists in one version; chunks 32, 128 and 256 do not occur, and the extra word and the trailing byte have one value each, so the data cannot show how they are used; no published source covers them (M2); the running client does not expose them (M3). Two searches were stopped where they reached code that may serve network traffic (decision 0004): the users of chunk 32 and of the reader mode that selects chunk 256 (§3.3). Nothing from network, login, launcher or anti-tamper code was read. |
+| OBS4 | Observed in the same install on 2026-10-07 with throwaway probes in the dirty-room scratchpad: the WLIB DID map (0x2800000D) decoded in full; chunk 64's header bytes and element order; a search for the extra header word in the library's bytes and checksum trials (CRC-32 and Adler-32 of each chunk and of the whole record). |
+| BIN3 | **M4 (decision 0011), repair pass after the 2026-10-07 review.** Same build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), read on 2026-10-07 in the dirty room with a headless decompiler, by address range only: the chunk-128 reader's TSize check; the routine that reads an archive record into its object (the stream it sets up and the flags it gives that stream); the routine that reads an object record's bundle (its own stream and flags); the reading stream's mode-setting routines; and a search of the whole executable for code that sets the reading stream's strict-check flag. **Question:** when the TSize hint check fails, and whether the archive-record path enables the strict-check condition. **Why M1–M3 were not enough:** the data contain only hints the client accepted and say nothing about the reading context; no published source covers it (M2); the running client does not expose it (M3). Nothing from network, login, launcher or anti-tamper code was read; the routines found to set the flag lie outside archive loading and were not followed further. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -88,6 +91,14 @@ How sources are marked:
 | W23 | Class indices of the well-known object kinds were the same in LC builds from 2023-11 to 2025-05; all 36 distinct indices named there are root classes of records in this install (§13) | LC2; OBS2 (root-class census) | Reported (stability across builds); Confirmed that the indices are in use here |
 | W24 | The client keeps chunk 32 and chunk 256 in their own places, apart from chunk 64 and chunk 512: neither is merged into nor replaces the other (§3.3, §10) | BIN (repair pass) | BIN only (neither chunk occurs in the data) |
 | W25 | A parent index is larger than its child's index in 282 defined classes and in 296 of all 5,822 entries (§9) | OBS2 (re-counted 2026-10-05) | Confirmed |
+| W26 | The client finds the library by asking the DID-map layer for map 0xE (WLIB) and key **2** (label "Client"); no code asks for key 3 (DID 0x56000011, absent from every archive); no lookup uses either entry's label: the client asks by key (§2) | BIN2; OBS4 (map entries) | Confirmed (BIN + OBS) |
+| W27 | Chunks 32 and 64 are **small sets** of class indices: one u32 header (low 24 bits count, high 8 bits bucket hint), then the elements in bucket order by value mod *B* (§7) | BIN2 (reader); OBS4 (chunk 64: header 0x0000000B, hint 0, 11 of 11 elements in bucket order mod 11) | Confirmed (BIN + OBS) for chunk 64; BIN only for chunk 32 |
+| W28 | Element layout of chunk 128 and the conditions under which its check runs (§4.3) | BIN2 | BIN only |
+| W29 | A class in chunk 64 has its new objects made from its 0x76 record, both when a script creates an object of that class and when the object table resolves a 0x76 DID (§7) | BIN2 | BIN only (no script runs in Tessera's offline client; the 0x76 records are Confirmed, OBS) |
+| W30 | The trailing boolean byte, together with a boolean of each object record, decides whether script objects read from archives are created without running their class's slot-0 function (§3.2; `wstate.md` §3.1) | BIN2; OBS (the byte is 1 here, and the record boolean is 1 in all 383,343 records) | Confirmed (BIN + OBS) for the values; the effect is BIN only |
+| W31 | Chunk 256 replaces chunk 512's lists only in a second reader mode that the client does not use for archive records; the archive-record reader uses chunk 512 (§3.3, §8.4) | BIN2 | BIN only |
+| W32 | The extra header word is stored and never read by this build; it is not a CRC-32 or Adler-32 of a chunk or of the record and does not occur elsewhere in the library (§3.1) | BIN2; OBS4 | Confirmed (negative result) |
+| W33 | The TSize hint check of chunk 128 (and of the other hashed collections that use the same check, `wstate.md` §3.2 and §5.4) has two failure conditions: a hint of 23 or more always; a hint whose bucket count exceeds 50,000 (hint 13 or more) only when the reading stream's strict-check flag is set. The archive-record path never sets that flag (§4.3) | BIN3 | BIN only (no chunk 128 occurs; the strictness of a reading context is not visible in data) |
 
 ---
 
@@ -102,7 +113,7 @@ How sources are marked:
 | **Slot** | A 32-bit cell of a script-class instance. A class with *S* slots has an in-memory instance of 8·*S* bytes (a value plus a type tag per slot, Confirmed BIN). 64-bit values take two slots. |
 | **Attribute** | A named, typed member of a script class: (name hash, first slot index, type code). |
 | **Name hash** | The 28-bit hash of an identifier (`records.md` §1.5). Attribute names themselves are **not** in the data; only their hashes are. |
-| **Singleton class** | A class listed in chunk 64 (§7). It has one object-state record of its own at 0x76000000 + class index; it may also root ordinary 0x70 records (W22). |
+| **Singleton class** | A class listed in chunk 64 (§7). It has one object-state record of its own at 0x76000000 + class index, which the client uses as the starting state of new objects of that class (W29); it may also root ordinary 0x70 records (W22). The name "singleton" is kept because existing code uses it; "prototype class" describes the client's use better. |
 | **Function ID** | How native code names a script function: the declaring class index (15 bits) times 65,536, plus the function's number within that class (16 bits) (§6.4). Interop identifier; not needed to decode state. |
 
 ---
@@ -113,11 +124,24 @@ How sources are marked:
 - DID **0x56000000**, archive `client_gamelogic.dat` (routing as for every 0x56 DID,
   `dat-container.md`). It is the only 0x56 record in this install (census of all
   gamelogic entries, OBS).
-- The DID map labelled **WLIB** (0x2800000D, `property-system.md` §8.1) names it: label
-  "Client" → 0x56000000. This label is the only one a reader needs (interoperability
-  identifier). The map's other entry points at a DID that no archive of this install
-  contains; readers ignore it. A reader should look the library up through the WLIB map's
-  "Client" label and fall back to 0x56000000.
+- The DID map labelled **WLIB** (0x2800000D, `property-system.md` §8.1) names it. The map
+  has three entries (OBS4):
+
+  | Group | Key | Label | DID | In the archives |
+  |---|---|---|---|---|
+  | first | 0 | (the "undefined" sentinel every DID map has) | 0 | — |
+  | first | **2** | "Client" | 0x56000000 | yes |
+  | second | 3 | (not needed; see below) | 0x56000011 | **no** (dangling) |
+
+- The client looks the library up **by key, not by label** (W26, BIN2): it asks the DID-map
+  layer for map 0xE (the WLIB map's code, `property-system.md` §8.1) and key 2. If the map
+  has no such key, it gets the null DID and no library is loaded. No code in this build asks
+  for key 3, and no lookup uses either entry's label: the client asks by key. The "Client"
+  label is given only so that a reader can recognise the entry in a map listing; nothing
+  needs key 3's label, so this spec refers to that entry by its key only.
+- A reader looks the library up as the client does (WLIB map, key 2) and may fall back to
+  0x56000000. It ignores key 3: its record is not shipped, nothing in the client reads it,
+  and the data do not say what it would hold.
 - There is no property set for the library (0x5F000000 does not exist).
 
 ---
@@ -146,8 +170,16 @@ instead of 4; versions 16 and 30 have no extra field. The current client rejects
 accepts 38; it may keep reading 30 and 36 as LC describes (they cannot be tested against any
 data), and rejects every other version with a clear error.
 
-> **OPEN:** What the extra word means. The client stores it and does not use it while
-> loading; no reader of it was found. It is not needed to decode.
+What is known about the extra word (W32): the client keeps it as the first field of the
+loaded library and writes it back unchanged when it saves one. No code in this build reads it
+afterwards: every access to the loaded library through the client's pointer to it touches
+other fields, and the value does not occur as a constant in the code. In the data it is not a
+CRC-32 or Adler-32 of any chunk payload, of any whole chunk, or of the record after the
+header, and its bytes occur nowhere else in the library. A reader keeps it for byte-exact
+rewriting and gives it no meaning.
+
+> **OPEN:** What the extra word identifies (for example a build or source stamp of the
+> library). No reader exists in this client, so nothing depends on it.
 
 <a id="s3-2"></a>
 ### 3.2 Chunk stream (Confirmed)
@@ -184,7 +216,21 @@ each).
 The client reads the size field of every chunk before it looks at the type, at version 38
 (BIN). Chunks may come in any order; the client dispatches each by type.
 
-> **OPEN:** What the boolean byte after the signature controls. It is not needed to decode.
+What the boolean byte controls (W30, BIN2). The client keeps it with the library record and
+uses it as a global switch for one decision made when it builds objects from object-state
+records (`wstate.md` §3.1, field 6, and §10):
+
+- Normally the client creates a script object by running the function in **slot 0** of its
+  class's virtual-function table (§6.4) and then fills in the stored attribute values. If
+  that slot has no body (0xFFFFFFFF, 468 classes here) the creation fails with a "missing
+  function" error.
+- When **both** this byte and the object record's own boolean are 1, the client creates the
+  record's script objects without running slot 0; the stored values are the whole state.
+- Both are 1 in this install (the byte here; the record boolean in all 383,343 records,
+  `wstate.md` §3.1), so archive objects are created without running any script.
+
+A Tessera reader that does not execute scripts needs nothing from the byte except the range
+check (0 or 1).
 
 <a id="s3-3"></a>
 ### 3.3 Chunk types
@@ -199,10 +245,10 @@ client does with the chunk (W17, BIN), and whether it is present.
 | 4 | (LC: export table of class and function names) | **skipped** by size | no |
 | 8 | (LC: reference variables) | **skipped** by size | no |
 | 16 | class table | parsed (§6) | yes |
-| 32 | second class-index list | parsed with the same reader as type 64 (u32 count, then that many u32) and kept in a list of its own, apart from chunk 64's (W24) | no |
-| 64 | singleton classes | parsed (§7) | yes |
-| 128 | reference-type constraints | parsed: a TSize-prefixed hashed collection keyed by class index; its content is, per class, a list of (slot, type code, required class) triples (W18); the serialized element layout is OPEN | no |
-| 256 | second attribute-list chunk | parsed with the same reader as type 512 (§8.1 layout) into a table of its own, apart from chunk 512's (W24) | no |
+| 32 | accepted-class set | parsed with the same reader as type 64 (a small set of class indices, §7.1) and kept in a set of its own, apart from chunk 64's (W24, W27). Used only by one serializer outside object-state loading (below) | no |
+| 64 | singleton (prototype) classes | parsed (§7) | yes |
+| 128 | reference-type constraints | parsed: a TSize-prefixed hashed collection keyed by class index holding, per class, a list of (slot, type code, required class) triples (§4.3, W18, W28) | no |
+| 256 | alternative attribute lists | parsed with the same reader as type 512 (§8.1 layout) into a table of its own, apart from chunk 512's (W24). Used instead of chunk 512 only by a second reader mode that archive loading does not use (below, W31) | no |
 | 512 | attribute lists | parsed (§8) | yes |
 | 1024 | parent map | parsed (§9) | yes |
 | 2048, 4096, 8192, 16384 | (unknown) | **skipped** by size | no |
@@ -218,10 +264,23 @@ types the client accepts and report other types as malformed (a warning is enoug
 can still skip them by size). The shipped library carries no names, so class and attribute
 names are not recoverable from this install (§8.2).
 
-> **OPEN:** The meaning of chunk 32 (a list of class indices like chunk 64), the meaning of
-> chunk 256 (attribute lists like chunk 512) and which client code uses either, and the
-> exact element layout of chunk 128. None of them occurs in this install. §10 gives the
-> reader rule for chunks 32 and 256 until this is answered.
+Who reads chunks 32 and 256 (BIN2):
+
+- **Chunk 256.** The client's object-graph reader has two attribute-wise modes, chosen by
+  the stream it reads from. The mode used for archive object records (`wstate.md` §10) takes
+  each script class's attribute list, and so the serialization order, from **chunk 512**.
+  The other mode takes them from chunk 256 instead and, in addition, makes the objects of
+  classes listed in chunk 64 from their 0x76 records (§7). The archive-record path never
+  selects that mode.
+- **Chunk 32.** One serializer outside object-state loading, which holds a script object
+  together with its class index, accepts that class only if it is in chunk 32's set, and
+  only when its stream is in a strict-check mode; it reports an error otherwise. No
+  object-state reader consults chunk 32.
+
+> **OPEN:** Which data the second reader mode and the chunk-32 serializer serve. Both
+> searches stopped at code that may serve network traffic (decision 0004), and neither chunk
+> occurs in this install. Archive readers are not affected: §10 gives the reader rule for
+> chunks 32 and 256.
 
 ---
 
@@ -250,17 +309,61 @@ The message texts are not interpreted by this spec and are not shown to players 
 <a id="s4-3"></a>
 ### 4.3 Reference-type constraints (type 128, BIN only)
 
-When this chunk is present, the client checks every script object after an object-state
-bundle is loaded:
+Layout (W28, BIN2):
 
-- each listed attribute's slot type must match the declared type. An untyped number matches
-  a declared integer or float of the same width: 4 matches 2 or 3, 132 matches 130 or 131,
-  but nothing matches 195 except 195;
-- each non-null reference must point at an object whose class is the required class or one
-  of its descendants (parent map, §9).
+| Field | Type | Meaning |
+|---|---|---|
+| class_count *n* | TSize (`records.md` §1.3) | Number of constrained classes. Hint check below the tables (W33). The client also fails the load when *n* exceeds the bytes left. |
+| classes | class entry × *n* | Bucket order by class index |
 
-The load fails if a check fails. The chunk is absent from this install, so the client
-performs no such check here and a Tessera reader needs none.
+Class entry:
+
+| Field | Type | Meaning |
+|---|---|---|
+| class_index | u32 | The constrained class (key) |
+| triple_count *t* | u32 | Checked against the bytes left before allocating |
+| triples | triple × *t* | 5 bytes each |
+
+Triple:
+
+| Field | Type | Meaning |
+|---|---|---|
+| slot | u16 | Slot index in the class's instance (§6.1) |
+| type | u8 | Declared value type code (§5) |
+| required_class | i16 | Class index that a reference in this slot must point at (itself or a descendant) |
+
+The minimum size of a class entry is 8 bytes plus 5 per triple.
+
+Hint check of `class_count` (W33, BIN3). The client fails the load when either condition
+holds:
+
+1. the hint is 23 or more (beyond its 23-entry bucket-count table, §7.1);
+2. the reading stream's **strict-check flag** is set, and the bucket count for the hint is
+   more than 50,000, which is the case for every hint from 13 to 22 (the bucket count for
+   hint 13 is 98,299, §7.1).
+
+The second condition does not apply on the archive-record path: the routine that reads an
+archive record into its object sets up its own stream with other flags, and so does the
+routine that reads an object record's bundle (`wstate.md` §10); no code on either path, and
+none of the stream's own mode-setting routines, sets the strict-check flag (BIN3).
+The code found to set it builds streams outside archive loading. So a reader of archive data
+rejects only hints of 23 or more and accepts hints 13 to 22. The same two-condition check is
+used by the hashed collections of `wstate.md` §3.2 and §5.4 (class 1980).
+
+What the check does (W18). For each script object of a loaded bundle whose class has an
+entry, and for each triple:
+
+- the slot's type must equal the declared type. An untyped number matches a declared integer
+  or float of the same width: 4 matches 2 or 3, 132 matches 130 or 131, but nothing matches
+  195 except 195;
+- when the type is 1 (reference) and the value is not null, the referenced object's class
+  must be `required_class` or one of its descendants (parent map, §9).
+
+The load fails if a check fails. The check runs only when the reading context enables it;
+the path that builds objects from archive records (`wstate.md` §10) does not (BIN2). The
+chunk is absent from this install in any case, so a Tessera reader needs no check. A reader
+that meets the chunk parses it with this layout (a payload that does not parse exactly is
+malformed) and may ignore its content.
 
 ---
 
@@ -382,6 +485,10 @@ Needed only by a bytecode interpreter; a state decoder skips them.
 - **Virtual call** of (*P*, *f*) on an object of class *C*: *v* is taken from class *P* as
   above, and the body is at `method_offsets[v]` of class *C*. A slot index outside *C*'s table,
   a −1 index or a 0xFFFFFFFF offset is a "missing function" error.
+- **Slot 0** is the class's initializer: the client runs `method_offsets[0]` of class *C*
+  when it creates a new object of *C* from scratch, and the creation fails when that slot is
+  0xFFFFFFFF. Objects built from archive records skip it when the switch of §3.2 is on, and
+  objects of classes in chunk 64 start from their 0x76 record instead (§7.2) (BIN2).
 
 Cross-checks over all 2,129 classes (OBS2):
 
@@ -399,19 +506,56 @@ Cross-checks over all 2,129 classes (OBS2):
 <a id="s7"></a>
 ## 7. Singleton classes (chunk type 64, Confirmed)
 
-| Field | Type | Observed |
-|---|---|---|
-| count *n* | u32 | 11 |
-| class indices | u32 × *n* | 387, 497, 1053, 1547, 1556, 1603, 1629, 1630, 1783, 3431, 3432 (stored in that order: 3432, 1783, 1629, 497, 387, 1630, 1556, 1547, 1603, 1053, 3431) |
+<a id="s7-1"></a>
+### 7.1 Layout: a small set (W27, Confirmed BIN + OBS; revised 2026-10-07)
+
+| Field | Type | Meaning | Observed |
+|---|---|---|---|
+| header | u32 | Low 24 bits: element count *n*. High 8 bits: bucket hint *h*. | 0x0000000B: *n* = 11, *h* = 0 |
+| class indices | u32 × *n* | In bucket order: value mod *B* is non-decreasing, where *B* is the bucket count for *h* | 3432, 1783, 1629, 497, 387, 1630, 1556, 1547, 1603, 1053, 3431 |
+
+This is the same "small set" header as object-state classes 18, 105 and 134
+(`wstate.md` §5.3). Observed order: the values modulo 11 are 0, 1, 1, 2, 2, 2, 5, 7, 8, 8, 10
+(11 of 11 in bucket order); within a bucket the stored order is kept. The first version of
+this spec read the header as a plain u32 count, which gives the same result whenever the hint
+is 0, as here.
+
+Reader rules (BIN2):
+
+- the count is the low 24 bits; check it against the bytes left (4 per element) before
+  allocating;
+- a hint beyond the client's bucket-count table is clamped to its last entry (index 22);
+  the table continues `records.md` §1.3 after index 12 with 98299, 196597, 393209, 786431,
+  1572853, 3145721, 6291449, 12582893, 25165813 and 50331599 (indices 13–22, BIN2). A
+  reader needs only *n*;
+- the client inserts each element in the bucket (value mod *B*) and keeps the stored order
+  within a bucket. A byte-exact writer keeps the header and the order; a writer producing
+  new data writes the elements in bucket order for the hint it chooses.
+
+Chunk 32 has the same layout (§3.3).
+
+<a id="s7-2"></a>
+### 7.2 Meaning
 
 Each listed class *c* is defined and has exactly one object-state record at DID
 **0x76000000 + *c***, whose class index (offset 4) is *c*. Conversely, every 0x76 record in
 the install (11) is such a singleton. All 11 classes descend from class 486 in the parent
-map. The list order has no evident meaning.
+map.
+
+How the client uses the list (W29, BIN2): the 0x76 record is the **starting state of new
+objects** of a listed class.
+
+- When a script creates an object of class *c*, the client checks the list. For a listed
+  class it builds the new object graph from record 0x76000000 + *c* (decoded anew each time,
+  as for any archive record, `wstate.md` §10). For other classes it makes a blank instance
+  from the class table's slot defaults (§6.1) and runs the class's slot-0 function (§6.4).
+- When the client's object table resolves a game-object DID in the 0x76 range, it loads the
+  record only if its class is listed.
+- The second object-graph reader mode of §3.3 also makes the objects of listed classes from
+  their 0x76 records. The archive-record mode does not.
 
 "Singleton" describes the 0x76 record, not the class: classes 1547, 1556 and 1603 also root
-ordinary 0x70 records (1, 2 and 1 records; W22). The client reads this chunk with the same
-reader as chunk 32 (§3.3).
+ordinary 0x70 records (1, 2 and 1 records; W22).
 
 ---
 
@@ -478,7 +622,8 @@ An instance of class *c* in an object-state record stores its attribute values *
 order of *c*'s list as stored in this chunk** (bucket order by name hash), not in slot
 order. The two orders differ in 668 of the 1,108 classes. Evidence: every object-state
 record repeats the list for each class it uses (`wstate.md` §4.2), and all 1,381,857 such
-repetitions (in all 383,343 records) equal this chunk's list exactly, in order.
+repetitions (in all 383,343 records) equal this chunk's list exactly, in order. The client's
+archive-record reader takes the lists from this chunk, never from chunk 256 (W31, §3.3).
 
 This spec describes the stored form in the archives only.
 
@@ -525,7 +670,7 @@ In words:
    each attribute: its type equals the slot table's type at `slot` (and at `slot` + 1 for
    64-bit types).
 4. Decode the parent map (§9) into the same index space.
-5. Decode the singleton list (§7).
+5. Decode the singleton list (§7.1: small-set header, 24-bit count).
 6. Derived views (computed once): ancestor chain of each class; "is-a" queries; for each
    class, the attribute list (no flattening needed, §8.3); the set of reference attributes.
 
@@ -543,9 +688,11 @@ Cases the data never contain, decided here (answers the implementation OPEN of 2
 | A chunk type outside §3.3's accepted set | Malformed; a reader may instead warn and skip it by size. |
 | Version ≠ 38 | Unsupported. Reading 30 and 36 per LC (W15) is optional; the version-36 header is then the version followed by four u32 words whose meaning is unknown (LC's "16 bytes"). |
 | Trailing boolean byte ≥ 2 | Malformed. 0 is valid. |
-| Chunk 256 present (second attribute-list chunk) | Decode it with the §8.1 layout (a payload that does not parse, or leaves bytes over, is malformed) and keep it as a separate table. Do **not** merge it into chunk 512's lists and do not let it replace them: the serialization order of §8.4 comes from chunk 512 only, as in the client, which stores the two apart (W24). Report a warning that the chunk's meaning is unknown (§13). |
-| Chunk 32 present (second class-index list) | Decode it with the §7 layout (u32 count, then that many u32; same parse rule) and keep it as a separate list. Do not add its classes to the singleton list, which comes from chunk 64 only (W24). Report a warning that the chunk's meaning is unknown (§13). |
-| Chunk 256 or 32 present twice | Malformed (reject), as for the four chunks above. |
+| Chunk 256 present (alternative attribute lists) | Decode it with the §8.1 layout (a payload that does not parse, or leaves bytes over, is malformed) and keep it as a separate table. Do **not** merge it into chunk 512's lists and do not let it replace them: the serialization order of archive records (§8.4) comes from chunk 512 only, as in the client's archive-record reader (W24, W31). A warning is optional. |
+| Chunk 32 present (accepted-class set) | Decode it with the §7.1 layout (small-set header with a 24-bit count, then that many u32; same parse rule) and keep it as a separate set. Do not add its classes to the singleton list, which comes from chunk 64 only (W24). No object-state reader uses it (§3.3); a warning is optional. |
+| Chunk 128 present | Decode it with the §4.3 layout (a payload that does not parse exactly is malformed). Running its check is optional; the client's archive-record path does not (§4.3). |
+| Chunk 256, 32 or 128 present twice | Malformed (reject), as for the four chunks above. |
+| Small-set hint of chunk 32 or 64 beyond the bucket-count table | Clamp it, as the client does (§7.1); not malformed. |
 
 <a id="s11"></a>
 ## 11. Invariants (all Confirmed on this install)
@@ -561,8 +708,9 @@ Cases the data never contain, decided here (answers the implementation OPEN of 2
 | L7 | Parent-map length = class-table length. |
 | L8 | A class's attribute list contains the list of its nearest listed ancestor (§8.3). |
 | L9 | Every singleton class index is defined and has a record at 0x76000000 + index. |
+| L10 | The elements of chunk 64 are in bucket order for its header's hint (§7.1). |
 
-A reader reports a violation of L1–L7 as malformed data. L8 and L9 are cross-checks: a
+A reader reports a violation of L1–L7 as malformed data. L8, L9 and L10 are cross-checks: a
 violation is a warning, since only the stored list matters for decoding.
 
 ---
@@ -579,6 +727,8 @@ violation is a warning, since only the stored list matters for decoding.
 | LC | Chunk types 3, 5, 6, 7, 257, 258, 259 exist. | The current client rejects them; it knows 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 and 2048–16384 (§3.3). |
 | LC | The byte after the stop code must be 1. | It is a boolean; 0 is valid too (§3.2). |
 | LC | Code 131 is a "signed" double. | 131 is a plain double; 195 is a time stamp (§5). |
+| LC; first version of this spec | Chunk 64 is a u32 count followed by the class indices. | The first u32 is a small-set header: a 24-bit count and a bucket hint in the high byte (§7.1). The readings agree whenever the hint is 0, as in this install. |
+| `combat-data.md` §13.1 | The WLIB map's second entry is, by its position, the server-side class library. | Nothing supports that reading: the entry (key 3, DID 0x56000011) is never requested by the client, its record is in no archive, and nothing in the data or the client says what it holds (§2). |
 
 ---
 
@@ -605,14 +755,33 @@ Closed on 2026-10-05 (kept here so earlier references still resolve):
   rejections are the rule; the version-36 reading is acceptable as optional, unverifiable
   support.
 
+Closed on 2026-10-07 (BIN2, OBS4):
+
+- *Boolean byte after the signature* — the global switch that lets archive objects be built
+  without running their slot-0 initializer (§3.2, W30).
+- *Element layout of chunk 128* — §4.3 (W28); the check also needs the reading context to
+  enable it, which archive loading does not.
+- *Which code reads chunks 32 and 256* — chunk 256 only a second reader mode that archive
+  loading does not use; chunk 32 one serializer outside object-state loading (§3.3, W31).
+  What those serve stays OPEN below.
+- *Chunk 64 order* — bucket order of a small set (§7.1, W27); the "no evident meaning" of
+  the first version is withdrawn.
+- *Dangling second WLIB entry* — key 3, 0x56000011, never requested (§2, W26).
+
+Closed on 2026-10-07 in the repair pass (BIN3):
+
+- *Strict TSize hint check on the archive path* — the archive-record path never sets the
+  strict-check flag, so only hints of 23 or more fail there (§4.3, W33).
+
 Still open:
 
-> **OPEN:** Meaning of the version-38 extra header word (§3.1) and of the boolean byte after
-> the signature (§3.2). Neither is needed to decode.
+> **OPEN:** What the version-38 extra header word identifies (§3.1). No code in this build
+> reads it; it is not needed to decode.
 
-> **OPEN:** Meaning of chunks 32 and 256 (and which client code reads them), and the element
-> layout of chunk 128 (§3.3, §4.3). None occurs in this install; §10 gives the interim reader
-> rule for 32 and 256.
+> **OPEN:** Which data the second object-graph reader mode (the user of chunk 256) and the
+> chunk-32 serializer serve (§3.3). Both searches stopped at code that may serve network
+> traffic (decision 0004). Neither chunk occurs in this install, and archive readers do not
+> depend on the answer.
 
 ---
 
@@ -638,10 +807,19 @@ Synthetic fixtures (generated by our own code, never copied from the install):
 - a chunk of type 4 or 2048 must be skipped by size; a chunk of type 3 must be reported
   (error or warning, §10);
 - a library with an extra chunk 256 whose list for the root class differs from chunk 512's:
-  it must load with a warning, and the attribute list (and so the serialization order) must
-  still be chunk 512's; a chunk 256 whose payload is truncated must fail; a library with a
-  chunk 32 listing a class must load with a warning, and the singleton list must still be
+  it must load (a warning is allowed), and the attribute list (and so the serialization
+  order) must still be chunk 512's; a chunk 256 whose payload is truncated must fail; a
+  library with a chunk 32 listing a class must load, and the singleton list must still be
   chunk 64's alone;
+- small-set headers (§7.1): a singleton chunk with header `03 00 00 01` (count 3, hint 1,
+  *B* = 23) and the values 47, 5, 30 in that order (buckets 1, 5, 7) must give three
+  classes; a header whose hint byte is 0xFF must be clamped, not rejected; a header claiming
+  70,000 elements with too few bytes left must fail as "count larger than the remaining
+  bytes" (not be read as 4,464 with the third byte ignored);
+- a chunk 128 payload of 20 bytes (TSize with hint 0 and count 1; class index; triple count
+  2; two 5-byte triples) must parse exactly; the same payload cut by one byte must fail;
+  the same payload with hint 13 or hint 22 must parse (archive data are read without the
+  strict check, §4.3); with hint 23 or 0xFF it must fail;
 - method-table checks (§6.4) on the synthetic classes: a child class whose table extends its
   parent's and whose `method_indices` name the new slots.
 
@@ -654,10 +832,17 @@ assert the exact counts, which change with client updates.
 <a id="s15"></a>
 ## 15. Corrections to other specs
 
-None of the facts above contradicts a locked spec. Two notes for other spec owners:
+None of the facts above contradicts a locked spec. Notes for other spec owners:
 
 - `records.md` §1.3.1 OPEN (order within a bucket): see `wstate.md` §16 for the rule
   observed in object-state class tables.
+- `records.md` §1.3 OPEN (bucket counts for hints ≥ 13): the client's table has 23 entries;
+  indices 13–22 are listed in §7.1 (BIN2). In the TSize readers seen (§4.3; `wstate.md`
+  §3.2 and §5.4) a hint of 23 or more fails the load, and a hint of 13 or more also fails
+  when the reading stream is in strict-check mode, which archive loading never uses (W33).
+  The small-set reader clamps the hint to 22 instead (§7.1).
+- `combat-data.md` §13.1 describes the dangling second WLIB entry (key 3) as the server-side
+  class library; nothing in the client or the data supports that reading (§2, §12).
 - ARCHITECTURE §7.4 should say "the attribute list is complete; do not merge parents"
   (§12; unchanged from the first version of this spec).
 
@@ -671,3 +856,5 @@ None of the facts above contradicts a locked spec. Two notes for other spec owne
 | 2026-10-04 | First version (Review). |
 | 2026-10-05 | M4 pass (BIN row). §3.1: `stop_code` is the signature; the client accepts only version 38. §3.2: the trailing byte is a boolean (0 valid). §3.3: chunk table rewritten with the client's parse/skip/reject behaviour; chunks 32, 128, 256 described. New §4.3 (reference-type constraints). §5: codes 4 and 132 added; 131 = plain double, 195 = time stamp. §6.1: signed fields, slot-block length, method-table meaning; new §6.4. §7: singleton classes may root 0x70 records. §10: rules for the malformed cases of the implementation OPEN. §13 reorganised: five OPENs closed, two narrow ones left. New §15, §16. Section numbers 1–14 unchanged. |
 | 2026-10-05 | Repair after review (changes requested). **Withdrawn** (out of scope until the `docs/LEGAL.md` §9.3 gate, as in `property-system.md` §10): the LC remark on the network form at the end of §5 and the slot-order remark at the end of §8.4; the spec now states that it covers the stored form only. §14: the malformed trailing byte is "2 or more", matching §3.2 and §10; tests for chunks 256 and 32 added. §9: the 282 parent-after-child cases are scoped to defined classes, with 296 over all entries (new row W25). §2: the speculative remark and the second WLIB label removed; only the "Client" label is needed. §3.3, §10, §13: chunks 32 and 256 are stored apart from 64 and 512 (new row W24, BIN repair pass); §10 gives a reader rule for each, and the OPEN on their meaning is widened. W11 and §8.4 counts now cover all 383,343 records (1,381,857 class-table entries). No section renumbered. |
+| 2026-10-07 | OPEN-closing revision (second M4 pass, new provenance keys BIN2 and OBS4; rows W26–W32). Status moved to Revised, waiting for review. §1: "singleton class" also explained as prototype. §2: the WLIB map's three entries tabulated; the client asks for map 0xE, **key 2**; the dangling key 3 (0x56000011) is never requested. §3.1: what is known about the extra word (stored, never read, not a checksum); OPEN narrowed. §3.2: the trailing boolean's effect (with the record boolean of `wstate.md` §3.1, objects built from archives skip the slot-0 initializer); OPEN closed. §3.3: rows 32, 64, 128 and 256 rewritten; who reads chunks 32 and 256; OPEN narrowed to what that code serves (search stopped under decision 0004). §4.3: chunk 128 element layout and the condition under which its check runs. §6.4: slot 0 is the initializer. **§7 split into §7.1 and §7.2 (new anchors `s7-1`, `s7-2`; the `s7` anchor is unchanged): chunk 64 (and 32) is a small set whose u32 header holds a 24-bit count and a bucket hint; the stored order is bucket order; bucket counts for hints 13–22; the 0x76 records are the starting state of new objects of the listed classes.** Implementers re-check the chunk-64 reader: the earlier "u32 count" reading is only right when the hint byte is 0. §8.4: archive reader uses chunk 512 only. §10: rows for chunks 32, 128 and 256 and for the small-set hint. §11: new cross-check L10. §12: two rows. §13: five items closed, two narrow OPENs left. §14: tests for the small-set header and chunk 128. §15: notes for `records.md` §1.3 and `combat-data.md` §13.1. No section renumbered. |
+| 2026-10-07 | Repair after the 2026-10-07 review (changes requested), with a third M4 pass (new provenance key BIN3, new row W33). **§4.3:** the TSize hint check of chunk 128 has a second failure condition (strict-check flag set and bucket count above 50,000, i.e. hint 13 or more); the archive-record path never sets that flag, so archive readers reject only hint 23 or more; settled, not left OPEN. §15 and §14 follow (new test for hints 13, 22, 23). **§2, W26:** the claim that neither label string occurs in the executable is withdrawn (it held for one label only); the spec now says that no lookup uses either label and the client asks by key. Key 3's label is no longer reproduced (§2, §12, §13, §15, and the previous change-log row): nothing needs it, as the 2026-10-05 repair found, and the correction to `combat-data.md` §13.1 rests on the client never requesting key 3, not on the label. No section renumbered. |

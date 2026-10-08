@@ -150,9 +150,16 @@ impl BoneSliders {
     }
 
     /// Builds the entries of `sliders` in definition order: each item is (channel bits as
-    /// [`SliderChannels::from_bits`] takes them, `min`, `max`, position *t*, bones). A
-    /// slider that fails ([`BoneSliders::add_slider`]) is skipped; its error is returned
-    /// with the others.
+    /// [`SliderChannels::from_bits`] takes them, `min`, `max`, position *t*, bones). A slider
+    /// with no channel bit writes nothing and is skipped (`appearance.md` §6.3). The problems
+    /// are returned for the log (at most 64):
+    ///
+    /// - a bone index outside the skeleton loses only that bone's entry, the slider's other
+    ///   bones keep theirs (`appearance.md` §6.3, BIN4, A30): one
+    ///   [`AnimError::BoneIndexOutOfRange`] per such bone;
+    /// - a slider whose limits, position or channel values are not finite contributes no
+    ///   entry (the §6.3 Tessera Decision) and one [`AnimError::BadSlider`] is returned;
+    /// - beyond [`BoneSliders::MAX_OPS`] bones the slider is skipped.
     pub fn build<'a>(
         skeleton: &Skeleton,
         sliders: impl IntoIterator<Item = (u16, [f32; 3], [f32; 3], f32, &'a [(i64, bool)])>,
@@ -164,10 +171,23 @@ impl BoneSliders {
             if channels == SliderChannels::NONE {
                 continue;
             }
-            if let Err(e) = out.add_slider(channels, min, max, t, bones)
-                && errors.len() < 64
-            {
-                errors.push(e);
+            match out.add_slider(channels, min, max, t, bones) {
+                Ok(skipped) => {
+                    for &(bone, _) in skipped_bones(bones, out.bones).take(skipped) {
+                        if errors.len() < 64 {
+                            errors.push(AnimError::BoneIndexOutOfRange {
+                                what: "bone slider",
+                                bone: usize::try_from(bone).unwrap_or(usize::MAX),
+                                bones: out.bones,
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    if errors.len() < 64 {
+                        errors.push(e);
+                    }
+                }
             }
         }
         (out, errors)
@@ -204,19 +224,25 @@ impl BoneSliders {
         self.entries.is_empty()
     }
 
-    /// Adds one slider at position `t` (`0 ..= 1`, clamped) for its bones (`appearance.md`
-    /// §6.3, BIN): channel vector *c* = `min` + *t* × (`max` − `min`) per component; for
-    /// every `(bone, reverse)`, with sign *σ* = −1 for a reversed bone, every channel of
+    /// Adds one slider at position `t` for its bones (`appearance.md` §6.3, BIN): channel
+    /// vector *c* = `min` + *t* × (`max` − `min`) per component, with *t* used as given (the
+    /// client does not limit it; a value piece with a minus sign gives a *t* far above 1);
+    /// for every `(bone, reverse)`, with sign *σ* = −1 for a reversed bone, every channel of
     /// `channels` **writes** *σ* × the matching component of *c* into the bone's entry
     /// (`TranslateX/Y/Z` → translation, `RotateX/Y/Z` → angles, `ScaleX/Y/Z` → scale) and
     /// joins the entry's mask. Unwritten components keep 0 (scale 1).
+    ///
+    /// A bone index outside the skeleton (negative ones included) is passed over: the client
+    /// walks the skeleton's bones and never uses such an entry, and the slider's other
+    /// bones still get theirs (`appearance.md` §6.3, BIN4, A30). Returns how many bones were
+    /// passed over.
     ///
     /// Nothing is changed when an error is returned.
     ///
     /// # Errors
     ///
-    /// [`AnimError::BadSlider`] for a non-finite `t`, limit or channel value;
-    /// [`AnimError::BoneIndexOutOfRange`] for a bone index outside the skeleton;
+    /// [`AnimError::BadSlider`] for a non-finite `t`, limit or channel value (the §6.3
+    /// Tessera Decision: such a slider contributes no entry);
     /// [`AnimError::TooManyEntries`] for more than [`BoneSliders::MAX_OPS`] bones.
     pub fn add_slider(
         &mut self,
@@ -225,7 +251,7 @@ impl BoneSliders {
         max: [f32; 3],
         t: f32,
         bones: &[(i64, bool)],
-    ) -> Result<()> {
+    ) -> Result<usize> {
         if !t.is_finite() {
             return Err(AnimError::BadSlider {
                 what: "slider position",
@@ -234,7 +260,6 @@ impl BoneSliders {
         if !min.iter().chain(&max).all(|v| v.is_finite()) {
             return Err(AnimError::BadSlider { what: "limit" });
         }
-        let t = t.clamp(0.0, 1.0);
         let value: [f32; 3] = std::array::from_fn(|k| min[k] + t * (max[k] - min[k]));
         if !value.iter().all(|v| v.is_finite()) {
             return Err(AnimError::BadSlider {
@@ -248,20 +273,13 @@ impl BoneSliders {
                 max: Self::MAX_OPS,
             });
         }
-        let mut resolved = Vec::with_capacity(bones.len());
+        let mut skipped = 0;
         for &(bone, reverse) in bones {
-            let b = usize::try_from(bone)
-                .ok()
-                .filter(|&b| b < self.bones)
-                .and_then(|b| u16::try_from(b).ok())
-                .ok_or(AnimError::BoneIndexOutOfRange {
-                    what: "bone slider",
-                    bone: usize::try_from(bone).unwrap_or(usize::MAX),
-                    bones: self.bones,
-                })?;
-            resolved.push((b, if reverse { -1.0f32 } else { 1.0 }));
-        }
-        for (b, sign) in resolved {
+            let Some(b) = bone_in(bone, self.bones) else {
+                skipped += 1;
+                continue;
+            };
+            let sign = if reverse { -1.0f32 } else { 1.0 };
             let i = match self.entries.iter().position(|e| e.bone == b) {
                 Some(i) => i,
                 None => {
@@ -283,7 +301,7 @@ impl BoneSliders {
             }
             e.mask = e.mask | channels;
         }
-        Ok(())
+        Ok(skipped)
     }
 
     /// Applies every entry to `local` (a local pose of the skeleton, at least
@@ -324,6 +342,21 @@ impl BoneSliders {
         }
         Ok(())
     }
+}
+
+/// `bone` as an index of a skeleton of `count` bones, if it is one.
+fn bone_in(bone: i64, count: usize) -> Option<u16> {
+    usize::try_from(bone)
+        .ok()
+        .filter(|&b| b < count)
+        .and_then(|b| u16::try_from(b).ok())
+}
+
+/// The bones of `bones` outside a skeleton of `count` bones.
+fn skipped_bones(bones: &[(i64, bool)], count: usize) -> impl Iterator<Item = &(i64, bool)> {
+    bones
+        .iter()
+        .filter(move |(b, _)| bone_in(*b, count).is_none())
 }
 
 #[cfg(test)]
@@ -452,14 +485,28 @@ mod tests {
         let s = skel(3);
         let mut sl = BoneSliders::new(&s);
         let ch = SliderChannels::TRANSLATE_Z;
-        assert!(matches!(
-            sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &[(3, false)]),
-            Err(AnimError::BoneIndexOutOfRange { bone: 3, .. })
-        ));
-        assert!(
-            sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &[(-1, false)])
-                .is_err()
+        // `appearance.md` §6.3 (BIN4, A30): a bone outside the skeleton loses only its own
+        // entry; the slider's other bones keep theirs.
+        assert_eq!(
+            sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &[(3, false)])
+                .unwrap(),
+            1
         );
+        assert_eq!(
+            sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &[(-1, false)])
+                .unwrap(),
+            1
+        );
+        assert!(sl.is_empty());
+        assert_eq!(
+            sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &[(0, false), (9, false)])
+                .unwrap(),
+            1
+        );
+        assert_eq!(sl.entries().len(), 1);
+        assert_eq!(sl.entry(0).unwrap().translate, Vec3::new(0.0, 0.0, 1.0));
+        // Values that are not finite: the slider contributes no entry (§6.3 Decision).
+        let mut sl = BoneSliders::new(&s);
         assert!(
             sl.add_slider(ch, [f32::NAN; 3], [1.0; 3], 1.0, &[(0, false)])
                 .is_err()
@@ -472,28 +519,53 @@ mod tests {
             sl.add_slider(ch, [-f32::MAX; 3], [f32::MAX; 3], 0.5, &[(0, false)])
                 .is_err()
         );
-        // A failed slider changes nothing, even when its first bones were valid.
-        assert!(
-            sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &[(0, false), (9, false)])
-                .is_err()
-        );
         assert!(sl.is_empty());
         let too_many = vec![(0i64, false); BoneSliders::MAX_OPS + 1];
         assert!(matches!(
             sl.add_slider(ch, [0.0; 3], [1.0; 3], 1.0, &too_many),
             Err(AnimError::TooManyEntries { .. })
         ));
-        // Positions are clamped.
+        // Positions are used as given (§6.3: the client does not limit t).
         sl.add_slider(ch, [0.0; 3], [1.0; 3], 7.0, &[(0, false)])
             .unwrap();
         let mut short = vec![Transform::IDENTITY; 2];
         assert!(sl.apply(&mut short).is_err());
         let mut local = s.reference_pose();
         sl.apply(&mut local).unwrap();
-        assert_eq!(local[0].translation, [0.0, 0.0, 1.0]);
+        assert_eq!(local[0].translation, [0.0, 0.0, 7.0]);
         assert!(sl.fits(&s));
         assert!(!sl.fits(&skel(4)));
         assert_eq!(SliderChannels::from_bits(0xffff).bits(), 0x1ff);
         assert!(SliderChannels::from_bits(0x1ff).contains(SliderChannels::SCALE_Z));
+    }
+
+    /// `BoneSliders::build` keeps the in-range bones of a slider that names a bone outside
+    /// the skeleton and reports each such bone; a slider without channels is skipped.
+    #[test]
+    fn build_keeps_the_other_bones() {
+        let s = skel(4);
+        let bones: [(i64, bool); 3] = [(1, false), (7, false), (2, true)];
+        let none: [(i64, bool); 1] = [(9, false)];
+        let (sl, errors) = BoneSliders::build(
+            &s,
+            [
+                (
+                    SliderChannels::SCALE_Z.bits(),
+                    [1.0, 1.0, 0.8],
+                    [1.0, 1.0, 0.8],
+                    0.5,
+                    &bones[..],
+                ),
+                (0, [0.0; 3], [0.0; 3], 0.5, &none[..]),
+            ],
+        );
+        assert_eq!(sl.entries().len(), 2);
+        assert_eq!(sl.entry(1).unwrap().scale, Vec3::new(1.0, 1.0, 0.8));
+        assert_eq!(sl.entry(2).unwrap().scale, Vec3::new(1.0, 1.0, -0.8));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(matches!(
+            errors[0],
+            AnimError::BoneIndexOutOfRange { bone: 7, .. }
+        ));
     }
 }

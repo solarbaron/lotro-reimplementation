@@ -449,10 +449,12 @@ pub struct SliderInputs {
     /// The bone-slider definition record (0x78) the avatar's UI names (the figure uses the
     /// record its SliderMeshDeformer node names, `appearance.md` §6.3; the contents agree).
     pub definitions: Option<Did>,
-    /// The value string's bytes (`appearance.md` §6.3, A16): the *k*-th byte belongs to the
-    /// *k*-th slider of the definition array; sliders without a byte sit at 0.5. Empty when
-    /// the avatar carries no value string.
-    pub values: Vec<u8>,
+    /// The value string's pieces, read by the client's rule
+    /// ([`tessera_formats::avatar::slider_value_pieces`], `appearance.md` §6.3, A16, A29):
+    /// the *k*-th piece belongs to the *k*-th slider of the definition array; sliders without
+    /// a piece sit at 0.5. Empty when the avatar carries no value string (a string, even an
+    /// empty one, has at least one piece).
+    pub values: Vec<u32>,
     /// `AC_BoneScale_Test`.
     pub bone_scale: Option<f32>,
     /// `AC_Avatar_Height`.

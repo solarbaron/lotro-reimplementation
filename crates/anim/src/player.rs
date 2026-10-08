@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Playback state on the main thread: single clips, cross-fades, speed blends and layers,
-//! and the plain-data snapshot that sampling jobs evaluate (`skeleton-anim.md` §6, §10).
+//! Playback state on the main thread: single clips, cross-fades, speed blends, groups of
+//! clips and layers, and the plain-data snapshot that sampling jobs evaluate
+//! (`skeleton-anim.md` §6, §10).
 //!
 //! The data decides *what* plays through script tables (`script-table.md`); this module
-//! offers the mechanisms those tables need:
+//! offers the mechanisms those tables need. Every playing clip carries **one overall
+//! weight** of its own (`skeleton-anim.md` §6.5, K21): it rises linearly from 0 when the
+//! clip starts, falls linearly to 0 from its current value when the clip stops, and jumps
+//! when the node's intensity changes. Clips of one layer share the layer's remaining
+//! budget (§6.6 step 2); nothing multiplies the weights of clips that fade in after each
+//! other.
 //!
 //! - [`Playback`]: one clip with play time, rate, wrap and root-motion mode (§6.3, §6.4, §7);
-//! - [`CrossFade`]: a clip replacing whatever played before (a clip, a speed blend or
-//!   another fade still in progress) over a fade time, optionally phase-matched
-//!   (`script-table.md` §8.5: walk ↔ run are separate branches with a 0.2 s cross-fade and
-//!   phase matching);
+//! - [`CrossFade`]: the clips of a layer stopped together while a new clip starts: each
+//!   stopped clip falls linearly from the weight it had to 0 and the new clip rises
+//!   linearly from 0 to 1, over one fade time (a Switch cross-fade, `script-table.md`
+//!   §7.1; a clip's own `RampIn` and `RampOut` when they are equal);
 //! - [`SpeedBlend`]: clips at parameter anchors weighted like a scalar blend
-//!   (`script-table.md` §7.3), phase-synchronised, e.g. idle at 0, walk at 2 m/s and run at
-//!   6 m/s driven by the ground speed;
+//!   (`script-table.md` §7.3: the weights jump with the parameter), phase-synchronised;
+//! - [`Source::Group`]: several clips playing together on one layer, each with its own
+//!   weight (`script-table.md` §6.2: starting a clip never stops another clip of the same
+//!   layer);
 //! - [`Layer`] and [`Animator`]: layers from low to high priority, combined bone by bone by
 //!   the layered-weight rule of §6.6 (K18): higher layers take their weight first, lower
 //!   layers get what remains (`script-table.md` §6.2 and §6.5);
@@ -25,7 +33,7 @@ use glam::{Vec3, Vec4};
 use tessera_havok::Transform;
 
 use crate::blend::scalar_blend_weights;
-use crate::clip::{BoundClip, SampleReport, Wrap, clip_time};
+use crate::clip::{BoundClip, SampleReport, Wrap, clip_time, scale_usable, translation_usable};
 use crate::error::{AnimError, Result};
 use crate::motion::{MotionDelta, RootMotionMode, motion_between};
 use crate::skeleton::{Skeleton, check_len};
@@ -47,10 +55,14 @@ pub struct Playback {
     pub wrap: Wrap,
     /// Whether extracted motion moves the entity (§7).
     pub root_motion: RootMotionMode,
+    /// Whether the clip's track weights are its track opacities (its node's
+    /// `UseBoneOpacity`, §6.6, `script-table.md` §6.5). [`Layer::use_track_weights`] sets
+    /// the same for every clip of a layer.
+    pub use_track_weights: bool,
 }
 
 impl Playback {
-    /// Starts `clip` at time 0, rate 1, in place.
+    /// Starts `clip` at time 0, rate 1, in place, without track opacities.
     #[must_use]
     pub fn new(clip: Arc<BoundClip>, wrap: Wrap) -> Self {
         Self {
@@ -59,13 +71,15 @@ impl Playback {
             rate: 1.0,
             wrap,
             root_motion: RootMotionMode::InPlace,
+            use_track_weights: false,
         }
     }
 
     /// A **held** clip (`script-table.md` §6.7): playback rate 0, one-shot wrap, play time
     /// `fraction` × duration, so the pose never changes with elapsed time. `fraction` is the
-    /// held fraction the script node's rule gives (already wrapped or limited to `0 ..= 1`;
-    /// it is clamped here, and a non-finite one reads 0).
+    /// fraction of the whole duration (§6.7 step 2: the held fraction × the played length,
+    /// over the duration; [`crate::held_clip_fraction`]); it is limited to `0 ..= 1`
+    /// here, and NaN reads 0 (the §6.7 step 1 Decision).
     #[must_use]
     pub fn held(clip: Arc<BoundClip>, fraction: f32) -> Self {
         let mut p = Self::new(clip, Wrap::Once);
@@ -76,7 +90,9 @@ impl Playback {
 
     /// Moves a held clip to `fraction` of its duration at once (a changed driving
     /// property, `script-table.md` §6.7 step 3). Unlike [`Playback::set_phase`] the
-    /// fraction 1 is kept as the clip's last pose.
+    /// fraction 1 is kept as the clip's last pose. A non-finite fraction reads 0: the only
+    /// one the §6.7 rules can produce is NaN on a looping node, whose Tessera Decision is 0
+    /// (§6.7 step 1 and its answer).
     pub fn set_held_fraction(&mut self, fraction: f32) {
         let d = self.clip.duration();
         self.time = if d > 0.0 && d.is_finite() {
@@ -161,20 +177,28 @@ impl Playback {
     }
 }
 
-/// Most clips one layer blends at once (a speed blend counts two, every cross-fade in
-/// progress one more). [`Animator::play`] and [`Animator::set_source`] keep sources within
-/// it by settling the oldest fade still in progress (to whichever side dominates it).
+/// Most clips one layer plays at once (a speed blend counts its clips with weight, a
+/// cross-fade its stopped clips and the new one, a group its clips). A fade that would
+/// exceed it drops its weakest stopped clips ([`CrossFade::from_source`]); a group refuses
+/// further clips ([`Animator::add`]); both are logged. Tessera bound, not a client rule
+/// (`skeleton-anim.md` §6.5: a layer has no limit, K29): the data starts at most two clips
+/// on one layer of an avatar at a time.
 pub const MAX_LAYER_CLIPS: usize = 4;
 
-/// A clip replacing what played before over `duration` seconds with a linear weight ramp.
-///
-/// The outgoing side is a whole [`Source`] that keeps playing during the fade, so a fade
-/// that interrupts another fade starts from the blend the layer showed at that instant
-/// (the pose stays continuous) and the older fade finishes underneath.
+/// A weight limited to `0 ..= 1` (NaN reads 0).
+fn unit(x: f32) -> f32 {
+    if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) }
+}
+
+/// The clips of a layer stopped together while a new clip starts, over one fade time
+/// (`skeleton-anim.md` §6.5, K21): each stopped clip's overall weight falls linearly from
+/// the value it had when the fade started to 0, and the new clip's rises linearly from 0
+/// to 1. The stopped clips keep playing (their times advance) until the fade ends; their
+/// own earlier ramps are abandoned.
 #[derive(Debug, Clone)]
 pub struct CrossFade {
-    /// What plays out: a clip, a speed blend or an earlier fade still in progress.
-    pub from: Box<Source>,
+    /// The stopped clips, each with its overall weight when the fade started (`0 ..= 1`).
+    pub from: Vec<(Playback, f32)>,
     /// The incoming clip.
     pub to: Playback,
     /// Seconds since the fade started.
@@ -184,38 +208,49 @@ pub struct CrossFade {
 }
 
 impl CrossFade {
-    /// Starts fading from the clip `from` to `to` over `duration` seconds. With
-    /// `sync_phase` the incoming clip starts at the outgoing clip's phase (phase matching,
-    /// as `SynchronizeTiming` asks for between locomotion branches, `script-table.md`
-    /// §8.5).
+    /// Starts fading from the clip `from` (at weight 1) to `to` over `duration` seconds.
+    /// With `sync_phase` the incoming clip starts at the outgoing clip's phase.
     #[must_use]
     pub fn new(from: Playback, to: Playback, duration: f32, sync_phase: bool) -> Self {
         Self::from_source(Source::Clip(from), to, duration, sync_phase)
     }
 
-    /// Starts fading from any source to `to` over `duration` seconds; with `sync_phase`
-    /// the incoming clip starts at the phase of the source's newest clip.
+    /// Stops every clip of `from` at the weight it has now and starts `to`, over
+    /// `duration` seconds; with `sync_phase` the incoming clip starts at the phase of the
+    /// source's newest clip. Stopped clips without weight are dropped, and beyond
+    /// [`MAX_LAYER_CLIPS`] − 1 stopped clips the weakest are dropped.
     #[must_use]
     pub fn from_source(from: Source, mut to: Playback, duration: f32, sync_phase: bool) -> Self {
         if sync_phase {
             to.set_phase(from.phase());
         }
-        Self {
-            from: Box::new(from),
+        let mut stopped = Vec::with_capacity(MAX_LAYER_CLIPS);
+        from.into_weighted(&mut stopped);
+        let mut f = Self {
+            from: stopped,
             to,
             elapsed: 0.0,
             duration: finite_or_zero(duration).max(0.0),
-        }
+        };
+        f.limit_clips();
+        f
     }
 
-    /// Weight of the incoming clip, `0 ..= 1`.
+    /// Overall weight of the incoming clip, `0 ..= 1`: elapsed / duration.
     #[must_use]
     pub fn weight(&self) -> f32 {
         if self.duration <= 0.0 {
             1.0
         } else {
-            (self.elapsed / self.duration).clamp(0.0, 1.0)
+            unit(self.elapsed / self.duration)
         }
+    }
+
+    /// Overall weight now of a stopped clip whose weight was `start` when the fade began:
+    /// `start` × (1 − [`CrossFade::weight`]), linear from `start` to 0.
+    #[must_use]
+    pub fn stopped_weight(&self, start: f32) -> f32 {
+        unit(start) * (1.0 - self.weight())
     }
 
     /// Whether the fade has completed.
@@ -224,20 +259,50 @@ impl CrossFade {
         self.weight() >= 1.0
     }
 
-    /// Advances both sides and the fade; returns their motions blended by the weight.
+    /// Advances every clip and the fade; returns their motions weighted by their weights.
     pub fn advance(&mut self, dt: f32) -> MotionDelta {
-        let a = self.from.advance(dt);
-        let b = self.to.advance(dt);
         self.elapsed += finite_or_zero(dt).max(0.0);
-        let w = self.weight();
-        a.scaled(1.0 - w).then(b.scaled(w))
+        let incoming = self.weight();
+        let mut m = MotionDelta::IDENTITY;
+        for (p, w) in &mut self.from {
+            m = m.then(p.advance(dt).scaled(unit(*w) * (1.0 - incoming)));
+        }
+        m.then(self.to.advance(dt).scaled(incoming))
+    }
+
+    /// Drops the weakest stopped clips until at most [`MAX_LAYER_CLIPS`] clips play (logged:
+    /// a deviation from the client, which has no limit).
+    fn limit_clips(&mut self) {
+        self.from.retain(|(_, w)| unit(*w) > 0.0);
+        if self.from.len() + 1 > MAX_LAYER_CLIPS {
+            tracing::warn!(
+                clips = self.from.len() + 1,
+                max = MAX_LAYER_CLIPS,
+                "cross-fade drops its weakest stopped clips (Tessera bound)"
+            );
+        }
+        while self.from.len() + 1 > MAX_LAYER_CLIPS {
+            let weakest = self
+                .from
+                .iter()
+                .enumerate()
+                .min_by(|a, b| unit(a.1.1).total_cmp(&unit(b.1.1)))
+                .map(|(i, _)| i);
+            match weakest {
+                Some(i) => {
+                    self.from.remove(i);
+                }
+                None => break,
+            }
+        }
     }
 }
 
 /// Clips at parameter anchors, weighted by the parameter like a scalar blend
-/// (`script-table.md` §7.3) and played phase-synchronised: every clip samples the same
-/// fraction of its own duration, and the shared phase advances at the weighted average of
-/// the clips' cycle rates, so feet stay in step while the weights change.
+/// (`script-table.md` §7.3: each clip's weight follows the parameter at once) and played
+/// phase-synchronised: every clip samples the same fraction of its own duration, and the
+/// shared phase advances at the weighted average of the clips' cycle rates, so feet stay in
+/// step while the weights change.
 ///
 /// Typical use: anchors (0, idle), (2, walk), (6, run) and the ground speed in m/s as the
 /// parameter. The data itself switches walk and run as separate branches with a cross-fade
@@ -338,33 +403,35 @@ impl SpeedBlend {
         }
     }
 
-    /// The (up to two) clips with non-zero weight: the first one and, if any, the second
-    /// with its share of the pair (the blend factor from the first to the second).
-    fn active(&self) -> Option<(ClipSample, Option<(ClipSample, f32)>)> {
-        let mut it = self
-            .clips
+    /// The clips with a weight, each with its weight (at most two: scalar-blend weights
+    /// fall on the two anchors around the parameter).
+    fn active(&self) -> impl Iterator<Item = (&Arc<BoundClip>, f32)> {
+        self.clips
             .iter()
             .zip(&self.weights)
-            .filter(|(_, w)| **w > 0.0);
-        let sample = |c: &Arc<BoundClip>| ClipSample {
-            clip: Arc::clone(c),
-            time: clip_time(self.phase * c.duration(), c.duration(), Wrap::Loop),
-        };
-        let (ca, wa) = it.next()?;
-        let second = it.next().map(|(cb, wb)| (sample(cb), wb / (wa + wb)));
-        Some((sample(ca), second))
+            .filter(|(_, w)| unit(**w) > 0.0)
+            .map(|(c, w)| (c, unit(*w)))
+            .take(2)
+    }
+
+    /// Clip time of `c` at the shared phase.
+    fn time_of(&self, c: &BoundClip) -> f32 {
+        clip_time(self.phase * c.duration(), c.duration(), Wrap::Loop)
     }
 }
 
 /// What a layer plays.
 #[derive(Debug, Clone)]
 pub enum Source {
-    /// One clip.
+    /// One clip at weight 1.
     Clip(Playback),
-    /// One clip replacing another.
+    /// Clips stopped while a new clip starts.
     CrossFade(CrossFade),
     /// Phase-synchronised clips weighted by a parameter.
     Speed(SpeedBlend),
+    /// Several clips playing together, each with its own overall weight (`0 ..= 1`;
+    /// `script-table.md` §6.2: they share the layer's budget).
+    Group(Vec<(Playback, f32)>),
 }
 
 impl Source {
@@ -382,6 +449,13 @@ impl Source {
                 s.advance(dt);
                 MotionDelta::IDENTITY
             }
+            Source::Group(clips) => {
+                let mut m = MotionDelta::IDENTITY;
+                for (p, w) in clips.iter_mut() {
+                    m = m.then(p.advance(dt).scaled(unit(*w)));
+                }
+                m
+            }
         }
     }
 
@@ -391,35 +465,84 @@ impl Source {
             Source::Clip(p) => p.phase(),
             Source::CrossFade(f) => f.to.phase(),
             Source::Speed(s) => s.phase(),
+            Source::Group(clips) => clips.last().map_or(0.0, |(p, _)| p.phase()),
         }
     }
 
-    /// Fades nested inside this source (0 for a clip or speed blend).
-    fn fade_depth(&self) -> usize {
-        let mut n = 0;
-        let mut s = self;
-        while let Source::CrossFade(f) = s {
-            n += 1;
-            s = &f.from;
-        }
-        n
-    }
-
-    /// Most clips the source blends at once (see [`MAX_LAYER_CLIPS`]).
-    #[must_use]
-    pub fn clip_count(&self) -> usize {
-        let mut s = self;
-        let mut n = 0;
-        loop {
-            match s {
-                Source::Clip(_) => return n + 1,
-                Source::Speed(b) => return n + b.clips.len().min(2),
-                Source::CrossFade(f) => {
-                    n += 1;
-                    s = &f.from;
+    /// Visits every clip with a weight: its sample, its overall weight and whether its
+    /// own track opacities apply.
+    fn visit(&self, f: &mut impl FnMut(ClipSample, f32, bool)) {
+        match self {
+            Source::Clip(p) => f(p.sample(), 1.0, p.use_track_weights),
+            Source::CrossFade(x) => {
+                for (p, w) in &x.from {
+                    let w = x.stopped_weight(*w);
+                    if w > 0.0 {
+                        f(p.sample(), w, p.use_track_weights);
+                    }
+                }
+                let w = x.weight();
+                if w > 0.0 {
+                    f(x.to.sample(), w, x.to.use_track_weights);
+                }
+            }
+            Source::Speed(s) => {
+                for (c, w) in s.active() {
+                    let sample = ClipSample {
+                        clip: Arc::clone(c),
+                        time: s.time_of(c),
+                    };
+                    f(sample, w, false);
+                }
+            }
+            Source::Group(clips) => {
+                for (p, w) in clips {
+                    let w = unit(*w);
+                    if w > 0.0 {
+                        f(p.sample(), w, p.use_track_weights);
+                    }
                 }
             }
         }
+    }
+
+    /// Moves every clip with a weight into `out` with its current overall weight (a speed
+    /// blend's clips become plain looping playbacks at the shared phase and rate).
+    fn into_weighted(self, out: &mut Vec<(Playback, f32)>) {
+        match self {
+            Source::Clip(p) => out.push((p, 1.0)),
+            Source::CrossFade(x) => {
+                let incoming = x.weight();
+                for (p, w) in x.from {
+                    let w = unit(w) * (1.0 - incoming);
+                    if w > 0.0 {
+                        out.push((p, w));
+                    }
+                }
+                if incoming > 0.0 {
+                    out.push((x.to, incoming));
+                }
+            }
+            Source::Speed(s) => {
+                for (c, w) in s.active() {
+                    let mut p = Playback::new(Arc::clone(c), Wrap::Loop);
+                    p.time = s.time_of(c);
+                    p.rate = s.rate;
+                    out.push((p, w));
+                }
+            }
+            Source::Group(clips) => {
+                out.extend(clips.into_iter().filter(|(_, w)| unit(*w) > 0.0));
+            }
+        }
+    }
+
+    /// Clips the source plays with a weight (see [`MAX_LAYER_CLIPS`]).
+    #[must_use]
+    pub fn clip_count(&self) -> usize {
+        let mut n = 0;
+        self.visit(&mut |_, _, _| n += 1);
+        n
     }
 
     /// Checks that every clip of the source has `bones` tracks.
@@ -434,60 +557,62 @@ impl Source {
                 })
             }
         };
-        let mut s = self;
-        loop {
-            match s {
-                Source::Clip(p) => return fits(&p.clip),
-                Source::Speed(b) => return b.clips.iter().try_for_each(|c| fits(c)),
-                Source::CrossFade(f) => {
-                    fits(&f.to.clip)?;
-                    s = &f.from;
+        match self {
+            Source::Clip(p) => fits(&p.clip),
+            Source::Speed(b) => b.clips.iter().try_for_each(|c| fits(c)),
+            Source::CrossFade(f) => {
+                fits(&f.to.clip)?;
+                f.from.iter().try_for_each(|(p, _)| fits(&p.clip))
+            }
+            Source::Group(clips) => clips.iter().try_for_each(|(p, _)| fits(&p.clip)),
+        }
+    }
+
+    /// Keeps at most [`MAX_LAYER_CLIPS`] clips (sources set through public fields may hold
+    /// more): a fade drops its weakest stopped clips, a group its weakest clips.
+    fn limit_clips(&mut self) {
+        match self {
+            Source::CrossFade(f) => f.limit_clips(),
+            Source::Group(clips) => {
+                if clips.len() > MAX_LAYER_CLIPS {
+                    tracing::warn!(
+                        clips = clips.len(),
+                        max = MAX_LAYER_CLIPS,
+                        "layer drops its weakest clips (Tessera bound)"
+                    );
+                }
+                while clips.len() > MAX_LAYER_CLIPS {
+                    let weakest = clips
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| unit(a.1.1).total_cmp(&unit(b.1.1)))
+                        .map(|(i, _)| i);
+                    match weakest {
+                        Some(i) => {
+                            clips.remove(i);
+                        }
+                        None => break,
+                    }
                 }
             }
-        }
-    }
-
-    /// Settles the oldest fade in progress to the side that dominates it (the incoming
-    /// clip from weight ½ on), removing at least one clip from the blend.
-    fn settle_oldest_fade(&mut self) {
-        let Some(depth) = self.fade_depth().checked_sub(1) else {
-            return;
-        };
-        let mut s = self;
-        for _ in 0..depth {
-            match s {
-                Source::CrossFade(f) => s = &mut f.from,
-                _ => return,
-            }
-        }
-        if let Source::CrossFade(f) = s {
-            let settled = if f.weight() >= 0.5 {
-                Source::Clip(f.to.clone())
-            } else {
-                std::mem::replace(&mut *f.from, Source::Clip(f.to.clone()))
-            };
-            *s = settled;
-        }
-    }
-
-    /// Settles old fades until at most [`MAX_LAYER_CLIPS`] clips blend.
-    fn limit_clips(&mut self) {
-        while self.clip_count() > MAX_LAYER_CLIPS && self.fade_depth() > 0 {
-            self.settle_oldest_fade();
+            Source::Clip(_) | Source::Speed(_) => {}
         }
     }
 }
 
-/// One animation layer: a source, a weight that can ramp, and whether the clip's track
+/// One animation layer: a source, a weight that can ramp, and whether the clips' track
 /// weights apply (`UseBoneOpacity`, `script-table.md` §6.5).
 #[derive(Debug, Clone)]
 pub struct Layer {
     /// What plays (`None` = nothing; the layer contributes nothing).
     pub source: Option<Source>,
-    /// Current weight, `0 ..= 1`.
+    /// Current weight, `0 ..= 1`: a factor on the overall weight of every clip of the layer
+    /// (the node intensity of its clips, ramped linearly by [`Layer::fade_to`]).
     pub weight: f32,
     /// Whether the clips' per-track weights are their track opacities (§6.6,
-    /// `UseBoneOpacity`, `script-table.md` §6.5): on every layer, the lowest included.
+    /// `UseBoneOpacity`, `script-table.md` §6.5) for every clip of the layer, on every
+    /// layer, the lowest included. A clip's own [`Playback::use_track_weights`] sets it for
+    /// that clip alone.
     pub use_track_weights: bool,
     target: f32,
     ramp_rate: f32,
@@ -506,14 +631,10 @@ impl Layer {
         }
     }
 
-    /// Ramps the weight to `target` over `seconds` (ramp-in / ramp-out times,
-    /// `script-table.md` §6.1); 0 seconds sets it at once.
+    /// Ramps the weight linearly to `target` over `seconds` (ramp-in / ramp-out times,
+    /// `script-table.md` §6.1, `skeleton-anim.md` §6.5); 0 seconds sets it at once.
     pub fn fade_to(&mut self, target: f32, seconds: f32) {
-        let target = if target.is_nan() {
-            0.0
-        } else {
-            target.clamp(0.0, 1.0)
-        };
+        let target = unit(target);
         self.target = target;
         let s = finite_or_zero(seconds);
         if s <= 0.0 {
@@ -536,7 +657,7 @@ impl Layer {
         }
         match &mut self.source {
             Some(s) => {
-                // Sources set through the public field may nest deeper than the API allows.
+                // Sources set through the public field may hold more clips than the API.
                 s.limit_clips();
                 s.advance(dt).scaled(self.weight)
             }
@@ -554,117 +675,31 @@ pub struct ClipSample {
     pub time: f32,
 }
 
-/// One layer flattened to plain data: a clip, then up to [`MAX_LAYER_CLIPS`] − 1 further
-/// clips each blended over the result so far by its factor (a speed blend's pair, then one
-/// per cross-fade in progress, oldest first).
+/// One clip of a [`LayerSnapshot`].
+#[derive(Debug, Clone)]
+pub struct LayerClip {
+    /// The clip and its time.
+    pub sample: ClipSample,
+    /// The clip's own overall weight, `0 ..= 1` (its ramp; the layer weight multiplies it).
+    pub weight: f32,
+    /// Whether its track weights are its track opacities.
+    pub use_track_weights: bool,
+}
+
+/// One layer flattened to plain data: up to [`MAX_LAYER_CLIPS`] clips, each with its own
+/// overall weight.
 #[derive(Debug, Clone)]
 pub struct LayerSnapshot {
     /// Layer weight, `0 ..= 1`.
     pub weight: f32,
-    /// Whether track weights apply (see [`Layer::use_track_weights`]).
-    pub use_track_weights: bool,
-    /// The first clip.
-    pub a: ClipSample,
-    /// Further clips in blend order with the blend factor towards each; the used entries
-    /// come first.
-    pub blends: [Option<(ClipSample, f32)>; MAX_LAYER_CLIPS - 1],
+    /// The clips; the used entries come first.
+    pub clips: [Option<LayerClip>; MAX_LAYER_CLIPS],
 }
 
 impl LayerSnapshot {
-    /// The clips with their blend factors: `a` (factor 1), then the used `blends`.
-    pub fn clips(&self) -> impl Iterator<Item = (&ClipSample, f32)> {
-        std::iter::once((&self.a, 1.0)).chain(
-            self.blends
-                .iter()
-                .map_while(|b| b.as_ref().map(|(c, x)| (c, *x))),
-        )
-    }
-}
-
-/// Builds the clip chain of one layer.
-#[derive(Default)]
-struct Chain {
-    base: Option<ClipSample>,
-    /// Share of the layer weight the chain gets: below 1 only when a fade starts from a
-    /// source that contributed nothing (a speed blend with no weight). The rest of the
-    /// layer weight shows the pose below the layer, which every later fade also fades out.
-    base_weight: f32,
-    blends: [Option<(ClipSample, f32)>; MAX_LAYER_CLIPS - 1],
-    len: usize,
-}
-
-impl Chain {
-    fn push(&mut self, c: ClipSample, alpha: f32) {
-        let alpha = if alpha.is_nan() {
-            0.0
-        } else {
-            alpha.clamp(0.0, 1.0)
-        };
-        if alpha <= 0.0 {
-            return;
-        }
-        if self.base.is_none() {
-            self.base_weight = 0.0;
-        }
-        // The chain so far shows at `base_weight` of the layer (the pose below the layer
-        // fills the rest). Fading `c` in by `alpha` fades out both, so the chain's share
-        // grows to `base_weight + (1 - base_weight) * alpha` and `c` is blended over the
-        // chain by `alpha / share`, which keeps `c` at exactly `alpha` of the layer.
-        let base_weight = if self.base_weight.is_nan() {
-            0.0
-        } else {
-            self.base_weight.clamp(0.0, 1.0)
-        };
-        let share = (base_weight + (1.0 - base_weight) * alpha).clamp(0.0, 1.0);
-        self.base_weight = share;
-        let alpha = if share > 0.0 {
-            (alpha / share).min(1.0)
-        } else {
-            1.0
-        };
-        if self.base.is_none() || alpha >= 1.0 {
-            // A clip at full weight hides everything below it.
-            self.base = Some(c);
-            self.blends = Default::default();
-            self.len = 0;
-            return;
-        }
-        if self.len == self.blends.len() {
-            // Full (only for sources nested past the limit): settle the oldest blend.
-            if let Some((oldest, x)) = self.blends[0].take()
-                && x >= 0.5
-            {
-                self.base = Some(oldest);
-            }
-            self.blends.rotate_left(1);
-            self.len -= 1;
-        }
-        self.blends[self.len] = Some((c, alpha));
-        self.len += 1;
-    }
-
-    /// Adds `src`; fades deeper than [`MAX_LAYER_CLIPS`] are read as their incoming clip.
-    fn add(&mut self, src: &Source, depth: usize) {
-        match src {
-            Source::Clip(p) => self.push(p.sample(), 1.0),
-            Source::Speed(s) => {
-                if let Some((a, b)) = s.active() {
-                    self.push(a, 1.0);
-                    if let Some((b, x)) = b {
-                        self.push(b, x);
-                    }
-                }
-            }
-            Source::CrossFade(f) => {
-                let w = f.weight();
-                if w >= 1.0 || depth >= MAX_LAYER_CLIPS {
-                    self.push(f.to.sample(), 1.0);
-                } else {
-                    self.add(&f.from, depth + 1);
-                    self.push(f.to.sample(), w);
-                }
-            }
-        }
+    /// The used clips.
+    pub fn clips(&self) -> impl Iterator<Item = &LayerClip> {
+        self.clips.iter().map_while(Option::as_ref)
     }
 }
 
@@ -740,14 +775,14 @@ impl Animator {
         }
     }
 
-    /// Sets the source of layer `layer` (created if needed). A source blending more than
-    /// [`MAX_LAYER_CLIPS`] clips has its oldest fades settled first.
+    /// Sets the source of layer `layer` (created if needed). A source holding more than
+    /// [`MAX_LAYER_CLIPS`] clips drops its weakest ones first.
     ///
     /// # Errors
     ///
-    /// [`AnimError::TrackCountMismatch`] when any clip of the source (both sides of every
-    /// fade, every clip of a speed blend) does not fit the skeleton,
-    /// [`AnimError::TooManyEntries`] for a layer index out of range.
+    /// [`AnimError::TrackCountMismatch`] when any clip of the source (every stopped clip
+    /// and the new clip of a fade, every clip of a speed blend or group) does not fit the
+    /// skeleton, [`AnimError::TooManyEntries`] for a layer index out of range.
     pub fn set_source(&mut self, layer: usize, mut source: Source) -> Result<()> {
         self.check_source(&source)?;
         source.limit_clips();
@@ -755,11 +790,10 @@ impl Animator {
         Ok(())
     }
 
-    /// Plays `next` on layer `layer`, cross-fading over `fade` seconds from whatever the
-    /// layer shows: a clip, a speed blend, or a fade still in progress, which keeps
-    /// running underneath so the pose stays continuous (at most [`MAX_LAYER_CLIPS`] clips
-    /// blend; beyond that the oldest fade settles to its dominant side). An immediate
-    /// switch when the layer is empty or `fade` ≤ 0.
+    /// Stops every clip of layer `layer` and starts `next` there, over `fade` seconds
+    /// (`skeleton-anim.md` §6.5): each stopped clip's weight falls linearly from its
+    /// current value to 0 and `next` rises linearly from 0 to 1 ([`CrossFade`]). An
+    /// immediate switch when the layer is empty or `fade` ≤ 0.
     ///
     /// # Errors
     ///
@@ -775,13 +809,49 @@ impl Animator {
         let l = self.ensure_layer(layer)?;
         let source = match l.source.take() {
             Some(cur) if fade > 0.0 => {
-                let mut s = Source::CrossFade(CrossFade::from_source(cur, next, fade, sync_phase));
-                s.limit_clips();
-                s
+                Source::CrossFade(CrossFade::from_source(cur, next, fade, sync_phase))
             }
             _ => Source::Clip(next),
         };
         l.source = Some(source);
+        Ok(())
+    }
+
+    /// Starts `next` on layer `layer` at full weight **without stopping** the clips already
+    /// there (`script-table.md` §6.2: several clips share a layer). The clips playing keep
+    /// their current weights (a fade in progress or a speed blend is frozen at its weights)
+    /// and all share the layer's budget (`skeleton-anim.md` §6.6 step 2).
+    ///
+    /// # Errors
+    ///
+    /// As [`Animator::set_source`], and [`AnimError::TooManyEntries`] when the layer
+    /// already plays [`MAX_LAYER_CLIPS`] clips (the layer is then unchanged).
+    pub fn add(&mut self, layer: usize, next: Playback) -> Result<()> {
+        self.check(next.clip.track_count())?;
+        let l = self.ensure_layer(layer)?;
+        let Some(cur) = l.source.take() else {
+            l.source = Some(Source::Clip(next));
+            return Ok(());
+        };
+        let count = cur.clip_count();
+        if count >= MAX_LAYER_CLIPS {
+            tracing::warn!(
+                layer,
+                clips = count,
+                max = MAX_LAYER_CLIPS,
+                "clip refused: the layer is full (Tessera bound)"
+            );
+            l.source = Some(cur);
+            return Err(AnimError::TooManyEntries {
+                table: "layer clips",
+                count: count + 1,
+                max: MAX_LAYER_CLIPS,
+            });
+        }
+        let mut clips = Vec::with_capacity(MAX_LAYER_CLIPS);
+        cur.into_weighted(&mut clips);
+        clips.push((next, 1.0));
+        l.source = Some(Source::Group(clips));
         Ok(())
     }
 
@@ -805,16 +875,24 @@ impl Animator {
             let Some(src) = &l.source else {
                 continue;
             };
-            let mut chain = Chain::default();
-            chain.add(src, 0);
-            let Some(a) = chain.base else {
+            let mut clips: [Option<LayerClip>; MAX_LAYER_CLIPS] = Default::default();
+            let mut n = 0;
+            src.visit(&mut |sample, weight, own| {
+                if let Some(slot) = clips.get_mut(n) {
+                    *slot = Some(LayerClip {
+                        sample,
+                        weight,
+                        use_track_weights: own || l.use_track_weights,
+                    });
+                    n += 1;
+                }
+            });
+            if n == 0 {
                 continue;
-            };
+            }
             out.push(LayerSnapshot {
-                weight: l.weight * chain.base_weight,
-                use_track_weights: l.use_track_weights,
-                a,
-                blends: chain.blends,
+                weight: l.weight,
+                clips,
             });
         }
     }
@@ -847,10 +925,10 @@ pub(crate) struct Accum {
 }
 
 impl Accum {
-    /// Adds a contribution of weight `w`. The quaternion is negated first when it points
-    /// away from the sum so far (shortest path, §6.5). Tessera Decision: the reference for
-    /// that test is the running weighted sum (`skeleton-anim.md` §6.5 reports the exact
-    /// reference as not traced); the first contribution is taken as it is.
+    /// Adds a contribution of weight `w`. The quaternion is negated first when its dot
+    /// product with the weighted quaternion sum accumulated so far is negative (shortest
+    /// path, `skeleton-anim.md` §6.5: the client's test for the reference fill, K23, and
+    /// Reported for clip contributions); the first contribution is taken as it is.
     pub(crate) fn add(&mut self, t: &Transform, w: f32) {
         if w <= 0.0 || !w.is_finite() {
             return;
@@ -863,7 +941,8 @@ impl Accum {
         self.w += w;
     }
 
-    /// Step 4 of §6.6: a total below [`MIN_BONE_WEIGHT`] is filled with `reference`.
+    /// Step 4 of §6.6: a total of at most [`MIN_BONE_WEIGHT`] is filled with `reference` at
+    /// weight 0.1 − total (0 at exactly 0.1).
     pub(crate) fn fill(&mut self, reference: &Transform) {
         if self.w < MIN_BONE_WEIGHT {
             let fill = MIN_BONE_WEIGHT - self.w;
@@ -871,7 +950,8 @@ impl Accum {
         }
     }
 
-    /// The weighted average; `fallback` where it cannot be formed.
+    /// The weighted average; `fallback` where it cannot be formed or is not finite or
+    /// beyond the broken-sample bounds ([`crate::BROKEN_TRANSLATION`], [`crate::BROKEN_SCALE`]).
     pub(crate) fn result(&self, fallback: &Transform) -> Transform {
         if !(self.w > 0.0 && self.w.is_finite()) {
             return *fallback;
@@ -885,54 +965,46 @@ impl Accum {
         } else {
             fallback.rotation
         };
+        let (t, s) = (t.to_array(), s.to_array());
         Transform {
-            translation: if t.is_finite() {
-                t.to_array()
+            translation: if translation_usable(&t) {
+                t
             } else {
                 fallback.translation
             },
             rotation,
-            scale: if s.is_finite() {
-                s.to_array()
-            } else {
-                fallback.scale
-            },
+            scale: if scale_usable(&s) { s } else { fallback.scale },
         }
     }
 }
 
-/// Minimum total weight of a bone; below it the reference pose fills the rest (§6.6 step 4).
+/// Total weight of a bone up to which the reference pose fills the rest (§6.6 step 4).
 pub const MIN_BONE_WEIGHT: f32 = 0.1;
 
-/// A weight truncated to whole 1/255 steps (§6.6 step 3). Tessera Decision: 10⁻⁴ of a
-/// step is added before truncating, so that weights such as 1 − 0.5 that floating point
-/// computes a hair below a whole step keep that step.
+/// A weight truncated to whole 1/255 steps (§6.6 step 3, BIN3): the single-precision
+/// weight times 255, converted to an integer toward zero, over 255. No tolerance is added,
+/// so a weight that single precision computes a hair below a whole step loses that step,
+/// as in the client. A weight that is not finite or not positive gives 0 (hostile input).
 #[must_use]
 pub fn quantise_weight(w: f32) -> f32 {
     if !w.is_finite() || w <= 0.0 {
         return 0.0;
     }
-    (255.0 * w.min(1.0) + 1e-4).floor() / 255.0
-}
-
-/// The blend factor of a chain entry, limited to `0 ..= 1` (NaN reads 0).
-fn factor(x: f32) -> f32 {
-    if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) }
+    (255.0 * w).trunc() / 255.0
 }
 
 /// Evaluates layer snapshots into a local pose (`skeleton-anim.md` §10 steps 2–3) by the
 /// layered-weight rule of §6.6 (K18):
 ///
-/// 1. every clip *i* gets an overall weight *c_i*: its layer's weight times its share of the
-///    layer's chain (a cross-fade's incoming clip its fade factor, the clips it fades out
-///    the rest);
+/// 1. every clip *i* has an overall weight *c_i*: its layer's weight times the clip's own
+///    weight ([`LayerClip::weight`], its linear ramp, §6.5);
 /// 2. per bone *j*, layers are visited from the **last snapshot to the first** (highest
 ///    priority first) with a remaining weight *r* = 1; each clip gets *w_ij* = *c_i* × *r* ×
-///    *o_ij*, where the opacity *o_ij* is the clip's track weight *j* when the layer uses
-///    track weights and the clip has them, else 1; clips of one layer share *r*, and after
-///    the layer *r* drops by the layer's total (never below 0);
+///    *o_ij* in single precision, where the opacity *o_ij* is the clip's track weight *j*
+///    when its track weights apply and the clip has them, else 1; clips of one layer share
+///    *r*, and after the layer *r* drops by the layer's total (never below 0);
 /// 3. every weight is truncated to whole 1/255 steps ([`quantise_weight`]);
-/// 4. a bone whose total weight is below [`MIN_BONE_WEIGHT`] gets the reference transform
+/// 4. a bone whose total weight is at most [`MIN_BONE_WEIGHT`] gets the reference transform
 ///    with weight 0.1 − total;
 /// 5. the bone's local transform is the normalised weighted average of the contributions.
 ///
@@ -949,10 +1021,10 @@ pub fn evaluate(
     let n = skeleton.bone_count();
     check_len("local pose", n, out.len())?;
     for l in layers {
-        for (c, _) in l.clips() {
-            if c.clip.track_count() != n {
+        for c in l.clips() {
+            if c.sample.clip.track_count() != n {
                 return Err(AnimError::TrackCountMismatch {
-                    tracks: c.clip.track_count(),
+                    tracks: c.sample.clip.track_count(),
                     bones: n,
                 });
             }
@@ -968,33 +1040,22 @@ pub fn evaluate(
     scratch.layer_sum.resize(n, 0.0);
     let mut report = SampleReport::default();
     for l in layers.iter().rev() {
-        let lw = factor(l.weight);
+        let lw = unit(l.weight);
         if lw == 0.0 {
             continue;
         }
-        // Shares of the chain: clip k keeps its factor times (1 − factor) of every later
-        // entry ([`LayerSnapshot::clips`] gives the first entry factor 1).
-        let mut clips: [Option<(&ClipSample, f32)>; MAX_LAYER_CLIPS] = Default::default();
-        for (slot, (c, x)) in clips.iter_mut().zip(l.clips()) {
-            *slot = Some((c, factor(x)));
-        }
-        let mut later = 1.0f32;
-        for slot in clips.iter_mut().rev().flatten() {
-            let x = slot.1;
-            slot.1 = x * later;
-            later *= 1.0 - x;
-        }
         scratch.layer_sum.iter_mut().for_each(|x| *x = 0.0);
-        for (c, share) in clips.iter().flatten() {
-            let ci = lw * share;
-            if ci.is_nan() || ci <= 0.0 {
+        for c in l.clips() {
+            let ci = lw * unit(c.weight);
+            if ci <= 0.0 {
                 continue;
             }
-            report.replaced += c.clip.sample(c.time, &mut scratch.a)?.replaced;
-            let opacity = l.use_track_weights && c.clip.track_weights().is_some();
+            let clip = &c.sample.clip;
+            report.replaced += clip.sample(c.sample.time, &mut scratch.a)?.replaced;
+            let opacity = c.use_track_weights && clip.track_weights().is_some();
             for j in 0..n {
                 let o = if opacity {
-                    factor(c.clip.track_weight(j))
+                    unit(clip.track_weight(j))
                 } else {
                     1.0
                 };
@@ -1027,7 +1088,18 @@ mod tests {
         assert_eq!(quantise_weight(1.0 - 0.5), 127.0 / 255.0);
         assert_eq!(quantise_weight(-1.0), 0.0);
         assert_eq!(quantise_weight(f32::NAN), 0.0);
-        assert_eq!(quantise_weight(7.0), 1.0);
+        assert_eq!(quantise_weight(f32::INFINITY), 0.0);
+    }
+
+    /// `skeleton-anim.md` §6.6 step 3 (BIN3): no tolerance is added before truncating. In
+    /// single precision 1 − 0.6 is 0.39999998, and 255 times that is 101.99999, so the
+    /// weight keeps 101 steps, not 102.
+    #[test]
+    fn quantisation_adds_no_tolerance() {
+        let r = 1.0f32 - 0.6;
+        assert!(255.0 * r < 102.0);
+        assert_eq!(quantise_weight(r), 101.0 / 255.0);
+        assert_eq!(quantise_weight(1.0 - 0.99), 2.0 / 255.0);
     }
 
     #[test]

@@ -33,12 +33,17 @@
 //!
 //! [`AnyRecord::decode`] picks the decoder for a DID's type prefix. Property sets and entity
 //! descriptors need the property dictionary as a schema, so they are decoded with
-//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. Script tables and
-//! scriptlets need it too; [`AnyRecord::decode_with_schema`] routes them. Landblock records
-//! (prefix 0x80) depend on their directory stamp, and some on the dictionary, so they are
-//! decoded through the [`landblock`] module, not [`AnyRecord`]. The [`decode`] module has one `decode_*(&[u8])` function per decoder, for fuzz
-//! targets and tools. The [`prelude`] brings the [`Record`] trait and the common types
-//! into scope.
+//! [`PropertySetRecord::parse`] and [`EntityDescriptor::parse`] instead. Script tables,
+//! scriptlets and cell geometry (0x01) need it too; [`AnyRecord::decode_with_schema`]
+//! routes them. Collision meshes (0x66) and cell geometry depend on the record's directory
+//! stamp; [`AnyRecord::decode_with_stamp`] takes it (the other dispatchers use the spec's
+//! fallback). Landblock records (prefix 0x80) depend on their directory stamp, and some on
+//! the dictionary, so they are decoded through the [`landblock`] module, not
+//! [`AnyRecord`]; so are block-map descriptors (0x18), whose entries need the dictionary.
+//! Region descriptors (0x0F) need neither and are decoded by both. The [`decode`] module
+//! has one `decode_*(payload[, stamp][, schema])` function per decoder, for fuzz targets
+//! and tools. The [`prelude`]
+//! brings the [`Record`] trait and the common types into scope.
 //!
 //! Spec: `docs/specs/records.md`.
 //!
@@ -54,40 +59,54 @@
 //! | [`texture_list`] | texture lists / mip chains (0x40), level selection | `texture-list.md` |
 //! | [`enum_mapper`] | enum mappers (0x23) | §7 |
 //! | [`did_map`] | DID maps (0x28) | §8 |
-//! | [`sound`] | sound records (0x0A) and container sniffing | §9 |
+//! | [`sound`] | sound payload records (0x0A): container sniffing, storage format, SN1/SN2 check, WAV chunks | §9, `sound.md` §3, §12.2 |
+//! | [`sound_info`] | sound infos (0x2A): flags, priority, distances, payload, SI1–SI3 check | `sound.md` §4 |
 //! | [`setup`] | entity descriptors (0x47), visual templates (0x1F), setups (0x04), chain resolution | `setup.md` §2–§7 |
 //! | [`appearance`] | appearance records (0x20), block choice, part priorities, slot table, appearance lists | `setup.md` §8, `appearance.md` §3–§4 |
 //! | [`avatar`] | race table, avatar bodies, bone-slider definitions | `appearance.md` §2–§3, §6 |
+//! | [`instance`] | instanced and group content read from 0x79 property sets: templates, controls, skirmish, world join, big and distant battles, session play, fellowship maker, phasing ([`instance::InstanceRecord`]) | `instances.md` |
 //! | [`item`] | worn and held items: wardrobe structs, dyes, holding locations | `appearance.md` §4–§5, `setup.md` §13 |
 //! | [`script_table`] | script tables (0x07), scriptlets (0x0C), clip selection | `script-table.md` |
+//! | [`terrain_type`] | terrain type tables (0x19): [`TerrainTypeTable`] | `terrain-texturing.md` §3 |
+//! | [`scenery`] | terrain-scene (0x12) and scene-choice (0x11) tables, scene records (0x02): [`TerrainSceneTable`], [`SceneChoiceTable`], [`Scene`] | `scenery.md` §4–§5 |
+//! | [`water`] | water (0x16) and fog-zone (0x17) tables: [`WaterTable`], [`FogZoneTable`] | `water.md` §4–§5 |
+//! | [`collision`] | quantised collision trees ([`TreeCode`]), collision meshes (0x66, [`CollisionMesh`]), cell geometry (0x01, [`CellGeometry`]) | `collision.md` §3–§5 |
+//! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
 //! | [`font`] | fonts (0x42): metrics, glyph table, atlas DIDs | `fonts.md` §3 |
 //! | [`ui_layout`] | UI layouts (0x22): elements, states, media items, labels, base chains | `ui-layout.md` §3–§6, §10–§13 |
-//! | [`landblock`] | landblock data, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties, region descriptors (0x0F) | `landblock.md`, `entity-descriptor.md`, `coordinates.md` |
+//! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, distant-landscape sectors (kind 5, [`SectorRecord`]), region descriptors (0x0F) and their eight table slots | `landblock.md`, `distant-landscape.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
 
 mod any;
 pub mod appearance;
 pub mod avatar;
 pub mod bcn;
+pub mod collision;
 pub mod decode;
 pub mod did;
 pub mod did_map;
 pub mod enum_mapper;
+pub mod environment;
 mod error;
 pub mod font;
+pub mod instance;
 pub mod item;
 pub mod landblock;
 pub mod property;
 pub mod property_set;
 pub mod reader;
 mod record;
+pub mod scenery;
 pub mod script_table;
 pub mod setup;
 pub mod sound;
+pub mod sound_info;
 pub mod string_info;
 pub mod string_table;
 pub mod surface;
+pub mod terrain_type;
 pub mod texture_list;
 pub mod ui_layout;
+pub mod water;
 
 pub use any::AnyRecord;
 pub use appearance::{
@@ -95,14 +114,19 @@ pub use appearance::{
     AppearancePart, AppearanceRecord, MaterialGroup, SlotTable,
 };
 pub use bcn::{BcFormat, decode_bcn};
+pub use collision::{CellGeometry, CollisionMesh, TreeCode, TreeWalk};
 pub use decode::{
-    decode_appearance, decode_block_map, decode_block_map_descriptor, decode_did_map,
-    decode_embedded_property_set, decode_entity_descriptor, decode_entity_header,
-    decode_enum_mapper, decode_landblock_data, decode_landblock_group, decode_landblock_info,
-    decode_landblock_properties, decode_property_dictionary, decode_property_set,
-    decode_property_value, decode_region_descriptor, decode_script_table, decode_scriptlet,
-    decode_setup, decode_sound, decode_string_info, decode_string_table, decode_surface,
-    decode_texture_list, decode_visual_template,
+    decode_appearance, decode_block_map, decode_block_map_descriptor, decode_camera_state,
+    decode_cell_geometry, decode_collision_mesh, decode_day_description, decode_did_map,
+    decode_distant_sector, decode_embedded_property_set, decode_entity_descriptor,
+    decode_entity_header, decode_enum_mapper, decode_fog_zone_table, decode_game_time,
+    decode_landblock_data, decode_landblock_group, decode_landblock_info,
+    decode_landblock_properties, decode_lod_class_table, decode_property_dictionary,
+    decode_property_set, decode_property_value, decode_region_descriptor, decode_scene,
+    decode_scene_choice_table, decode_script_table, decode_scriptlet, decode_setup,
+    decode_sky_description, decode_sound, decode_sound_info, decode_string_info,
+    decode_string_table, decode_surface, decode_terrain_scene_table, decode_terrain_type_table,
+    decode_texture_list, decode_visual_template, decode_water_table,
 };
 pub use decode::{decode_font, decode_ui_layout};
 pub use did::{
@@ -111,11 +135,13 @@ pub use did::{
 };
 pub use did_map::{DataIdEntry, DataIdGroup, DataIdMap};
 pub use enum_mapper::EnumMapper;
+pub use environment::{CameraState, DayDescription, GameTime, LodClassTable, SkyDescription};
 pub use error::{FormatError, Result};
 pub use font::{Font, Glyph};
 pub use landblock::{
-    BlockMap, BlockMapDescriptor, LandblockData, LandblockGroupRecord, LandblockInfo,
-    LandblockProperties, RegionDescriptor, StaticEntity,
+    BlockMap, BlockMapDescriptor, CollisionTree, LandblockData, LandblockGroupRecord,
+    LandblockInfo, LandblockProperties, LightMaps, RegionDescriptor, RegionTable, SectorRecord,
+    StaticEntity,
 };
 pub use property::{
     BitfieldAny, NoSchema, Position, PropertyArray, PropertyDefinition, PropertyDictionary,
@@ -128,6 +154,7 @@ pub use property_set::{
 };
 pub use reader::{Reader, TSize, Utf16String};
 pub use record::Record;
+pub use scenery::{Scene, SceneChoiceTable, TerrainSceneTable};
 pub use script_table::{Node, NodeData, NodeKind, Script, ScriptTable, Scriptlet};
 pub use ui_layout::{ElementDesc, MediaItem, StateBlock, UiLayout};
 // Record types and resolvers only; the setup family's field types (frames, collision
@@ -136,21 +163,27 @@ pub use setup::{
     EntityDescriptor, EntityHeader, ResolveError, Setup, SetupChain, VisualTemplate, resolve_setup,
     resolve_setup_did,
 };
-pub use sound::{AudioContainer, SoundRecord, WaveInfo};
+pub use sound::{AudioContainer, SoundIssue, SoundRecord, StorageFormat, WaveInfo};
+pub use sound_info::{SoundInfo, SoundInfoFlags, SoundInfoIssue};
 pub use string_info::{StringArg, StringArgValue, StringArgs, StringInfo, StringSource};
 pub use string_table::{
     MessagePart, MessageParts, StringTable, StringTableEntry, StringTableIssue,
 };
 pub use surface::{RgbaImage, Surface, SurfaceFormat};
+pub use terrain_type::{TerrainType, TerrainTypeTable};
 pub use texture_list::{ChainLevel, TextureList, TextureListKind, cap_chain_resolution};
+pub use water::{FogZoneTable, WaterTable};
 
 /// The [`Record`] trait plus the record types, for `use tessera_formats::prelude::*`.
 pub mod prelude {
     pub use crate::{
-        AnyRecord, AppearanceRecord, BlockMap, BlockMapDescriptor, DataIdMap, Did, DidKind,
-        EntityDescriptor, EntityHeader, EnumMapper, FormatError, LandblockData, LandblockInfo,
-        LandblockProperties, PropertyDictionary, PropertySchema, PropertySet, PropertySetRecord,
-        PropertyValue, Record, RegionDescriptor, ScriptTable, Scriptlet, Setup, SoundRecord,
-        StringInfo, StringTable, Surface, SurfaceFormat, TextureList, VisualTemplate, WaveInfo,
+        AnyRecord, AppearanceRecord, BlockMap, BlockMapDescriptor, CameraState, CellGeometry,
+        CollisionMesh, DataIdMap, DayDescription, Did, DidKind, EntityDescriptor, EntityHeader,
+        EnumMapper, FogZoneTable, FormatError, GameTime, LandblockData, LandblockInfo,
+        LandblockProperties, LodClassTable, PropertyDictionary, PropertySchema, PropertySet,
+        PropertySetRecord, PropertyValue, Record, RegionDescriptor, Scene, SceneChoiceTable,
+        ScriptTable, Scriptlet, Setup, SkyDescription, SoundRecord, StringInfo, StringTable,
+        Surface, SurfaceFormat, TerrainSceneTable, TerrainTypeTable, TextureList, VisualTemplate,
+        WaterTable, WaveInfo,
     };
 }

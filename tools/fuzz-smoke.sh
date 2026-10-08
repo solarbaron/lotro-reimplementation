@@ -8,6 +8,10 @@
 # coverage instrumentation passed as plain codegen flags (no sanitizer), which is enough to
 # find panics, assertion failures, overflows (overflow checks are on) and memory blow-ups.
 # The nightly toolchain is only detected (`rustup toolchain list`), never installed.
+# cargo-fuzz is always given `--target <host>` (the host of the toolchain that builds):
+# without it cargo-fuzz targets the triple it was itself compiled for, and the prebuilt
+# release binaries (as installed by CI) are musl builds, which AddressSanitizer rejects
+# ("incompatible with statically linked libc") and whose standard library is not installed.
 #
 # Memory limits: every run gets -rss_limit_mb=2048 (resident memory, polled by libFuzzer).
 # libFuzzer enforces -malloc_limit_mb=1024 (one allocation too large) only through the
@@ -93,14 +97,19 @@ have_nightly() {
 
 if [ "$force_stable" = 0 ] && command -v cargo-fuzz >/dev/null 2>&1 && have_nightly; then
     mode="cargo-fuzz"
+    host="$(cd "$fuzz" && rustc +nightly -vV | sed -n 's/^host: //p')" || host=""
+    [ -n "$host" ] || { echo "fuzz-smoke: cannot read the nightly host triple" >&2; exit 2; }
     if [ "$named" -gt 0 ]; then
-        for t in "${targets[@]}"; do (cd "$fuzz" && cargo +nightly fuzz build "$t") || exit 2; done
+        for t in "${targets[@]}"; do
+            (cd "$fuzz" && cargo +nightly fuzz build --target "$host" "$t") || exit 2
+        done
     else
-        (cd "$fuzz" && cargo +nightly fuzz build) || exit 2
+        (cd "$fuzz" && cargo +nightly fuzz build --target "$host") || exit 2
     fi
 else
     mode="stable libFuzzer"
-    host="$(rustc -vV | sed -n 's/^host: //p')"
+    host="$(cd "$fuzz" && rustc -vV | sed -n 's/^host: //p')" || host=""
+    [ -n "$host" ] || { echo "fuzz-smoke: cannot read the host triple" >&2; exit 2; }
     export CARGO_TARGET_DIR="$base/fuzz-stable-smoke"
     export RUSTFLAGS="-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
 -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table \
@@ -130,8 +139,8 @@ run_one() {
     start=$(date +%s)
     if [ "$mode" = "cargo-fuzz" ]; then
         (cd "$fuzz" && { [ -z "$asan" ] || export ASAN_OPTIONS="$asan"; } \
-            && cargo +nightly fuzz run "$t" -- -max_total_time="$secs" "${limits[@]}" \
-            -print_final_stats=1 "${extra[@]}") >"$log" 2>&1 || rc=$?
+            && cargo +nightly fuzz run --target "$host" "$t" -- -max_total_time="$secs" \
+            "${limits[@]}" -print_final_stats=1 "${extra[@]}") >"$log" 2>&1 || rc=$?
     else
         # No malloc hooks here (see the header): cap the address space instead, in a
         # subshell so the cap stays with this run.

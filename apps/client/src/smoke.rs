@@ -35,6 +35,8 @@ pub struct SmokeReport {
     pub plugins_loaded: usize,
     /// Data status at the end.
     pub data: DataStatus,
+    /// The audio backend that started (`--audio`, default null; ROADMAP M6).
+    pub audio: tessera_audio::engine::BackendKind,
 }
 
 /// Run the smoke test.
@@ -108,6 +110,10 @@ pub fn run(args: &Args) -> anyhow::Result<SmokeReport> {
         net_events: rt.world.as_ref().map_or(0, crate::net::World::events_seen),
         plugins_loaded: rt.plugins.manager().loaded_plugins().len(),
         data: rt.status.clone(),
+        audio: crate::audio::smoke_check(
+            args.audio
+                .unwrap_or(crate::audio::backend::BackendChoice::Null),
+        ),
     };
     rt.shutdown();
     tracing::info!(
@@ -119,6 +125,7 @@ pub fn run(args: &Args) -> anyhow::Result<SmokeReport> {
         net_events = report.net_events,
         plugins = report.plugins_loaded,
         data = ?report.data,
+        audio = ?report.audio,
         elapsed_ms = started.elapsed().as_millis(),
         "smoke run complete"
     );

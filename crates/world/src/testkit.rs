@@ -11,9 +11,16 @@ use std::collections::BTreeMap;
 use tessera_formats::landblock::BlockMapEntry;
 use tessera_formats::landblock::{GRID_SAMPLES, HeightGrid};
 use tessera_formats::reader::{TSIZE_BUCKET_COUNTS, write_vle};
-use tessera_formats::setup::{
-    ENTITY_FLAGS_REQUIRED, EntityHeader, SETUP_SECTION_DID_LIST, SetupSection, SetupSectionEntry,
+use tessera_formats::scenery::{
+    FloatRange, PlacementNode, Scene, SceneChild, SceneChoice, SceneChoiceEntry, SceneChoiceTable,
+    SceneGroup, ScenePair, TerrainSceneEntry, TerrainSceneTable,
 };
+use tessera_formats::setup::{
+    CollisionBox, ENTITY_FLAGS_REQUIRED, EntityHeader, Frame, SETUP_SECTION_DID_LIST, SetupSection,
+    SetupSectionEntry,
+};
+use tessera_formats::terrain_type::{TerrainType, TerrainTypeTable};
+use tessera_formats::water::{WaterTable, WaterType, WetWater};
 use tessera_formats::{
     BlockMap, Did, EntityDescriptor, LandblockData, PropertySet, PropertyType, Setup, TSize,
     VisualTemplate,
@@ -555,6 +562,8 @@ pub mod pid {
     pub const RANDOM_APPEARANCE: u32 = 0x1000_0119;
     /// `NPC_Cosmetic_Inventory_Item1` (DID).
     pub const NPC_COSMETIC_ITEM1: u32 = 0x1000_011A;
+    /// `Render_LODClass` (enum).
+    pub const RENDER_LOD_CLASS: u32 = 0x1000_011B;
 }
 
 /// The synthetic dictionary's definitions: (pid, name, type code).
@@ -592,6 +601,7 @@ pub fn definitions() -> Vec<(u32, &'static str, u32)> {
         (NPC_STARTING_IDLE, "NPC_StartingIdleAnimation", 8),
         (RANDOM_APPEARANCE, "Appearance_RandomAppearanceType", 8),
         (NPC_COSMETIC_ITEM1, "NPC_Cosmetic_Inventory_Item1", 20),
+        (RENDER_LOD_CLASS, "Render_LODClass", 8),
     ]
 }
 
@@ -616,6 +626,10 @@ pub mod key {
     pub const LOCAL_SKY: u32 = 0x1000_000F;
     /// A key without a descriptor entry (§5.6).
     pub const UNDESCRIBED: u32 = 0x0000_0004;
+    /// The water table's type key (`water.md` §6.1; raw value, no descriptor entry).
+    pub const WATER_TYPE: u32 = 0x0000_0021;
+    /// The water table's level key.
+    pub const WATER_LEVEL: u32 = 0x0000_0022;
 }
 
 /// Object DIDs of the synthetic world.
@@ -639,6 +653,255 @@ pub mod obj {
     pub const AREA_A: u32 = 0x7000_0100;
     /// Another area object.
     pub const AREA_B: u32 = 0x7000_0101;
+    /// A generated scenery object with a solid collision box (`Render_LODClass` 5).
+    pub const SCENERY: u32 = 0x4700_0300;
+    /// Its template.
+    pub const SCENERY_TEMPLATE: u32 = 0x1F00_0300;
+    /// Its setup: the tree's parts and one 2 × 2 × 2 collision box.
+    pub const SCENERY_SETUP: u32 = 0x0400_0300;
+    /// A generated object placed by a node with `height_mode` 1 (on the water surface);
+    /// shares the tree's template, no collision.
+    pub const ON_WATER: u32 = 0x4700_0301;
+    /// A frill object (shares the tree's template).
+    pub const FRILL: u32 = 0x4700_0302;
+    /// The vertex scene: a node placing [`SCENERY`], a node placing [`ON_WATER`] and a
+    /// frill layer referencing [`FRILL_SCENE`].
+    pub const VERTEX_SCENE: u32 = 0x0200_1000;
+    /// The frill scene: a node placing [`FRILL`].
+    pub const FRILL_SCENE: u32 = 0x0200_2000;
+    /// An empty scene.
+    pub const EMPTY_SCENE: u32 = 0x0200_0000;
+    /// The water-volume entity of the water table (absent: no liquid boxes).
+    pub const WATER_VOLUME: u32 = 0x4700_0400;
+}
+
+/// The coarse vertex that carries the synthetic scenery word ([`SyntheticWorld::scenery`]).
+pub const SCENERY_VERTEX: (usize, usize) = (8, 8);
+/// Terrain id of the synthetic scenery word.
+pub const SCENERY_TERRAIN: u32 = 5;
+/// Slot of the synthetic scenery word.
+pub const SCENERY_SLOT: u32 = 1;
+
+/// A placement node with the install's common values (`scenery.md` §5.3): always placed,
+/// no displacement, scale 1, any slope, any height above ground or water, no clearance
+/// test, spacing 0.1.
+#[must_use]
+pub fn scenery_node(children: Vec<SceneChild>) -> PlacementNode {
+    let any = FloatRange {
+        min: -0.0002,
+        max: 0.0002,
+    };
+    PlacementNode {
+        frequency: 1.0,
+        scale_min: [1.0; 3],
+        scale_max: [1.0; 3],
+        stretch_ref: 1.0,
+        slope_max_cos: 1.0,
+        slope_min_cos: 0.0,
+        above_ground: any,
+        above_water: any,
+        below_water: any,
+        water_depth: any,
+        below_ground_min: -0.0002,
+        below_ground_max: 0.0002,
+        z_range: FloatRange {
+            min: -f32::MAX,
+            max: f32::MAX,
+        },
+        spacing: 0.1,
+        clearance_scaled: true,
+        clear_max_cos: 1.0,
+        clear_min_cos: 6.1e-17,
+        clear_min_dot: -1.0,
+        clear_aspect_tol: 360.0,
+        unknown_163: 1.0,
+        disp_scaled: true,
+        inherit_scale: true,
+        disp_relative: true,
+        orient_relative: true,
+        spacing_scaled: true,
+        scale_mode: 4,
+        above_ground_mode: 1,
+        above_water_mode: 1,
+        below_water_mode: 1,
+        water_depth_mode: 1,
+        below_ground_mode: 2,
+        children,
+        ..PlacementNode::default()
+    }
+}
+
+/// A scene record (0x02) with one group of `children` and an optional frill layer.
+#[must_use]
+pub fn scene(did: u32, children: Vec<SceneChild>, frill: Option<PlacementNode>) -> Scene {
+    Scene {
+        reserved: 0,
+        did: Did(did),
+        flag_a: true,
+        frill_layer: frill,
+        groups: vec![SceneGroup {
+            group_id: 1,
+            children,
+        }],
+    }
+}
+
+/// The scenery records of [`SyntheticWorld::scenery`]: the region's 0x11, 0x12 and 0x19
+/// tables (DIDs of [`region_descriptor`]'s slots 1, 2 and 8), the scenes and the scenery
+/// objects. Terrain id [`SCENERY_TERRAIN`] slot [`SCENERY_SLOT`] picks
+/// [`obj::VERTEX_SCENE`]; everything else picks [`obj::EMPTY_SCENE`].
+///
+/// # Panics
+///
+/// If an encoder refuses a value (test helper).
+pub fn insert_scenery(m: &mut MemoryWorldSource) {
+    let pair = |scene_key, slot| ScenePair { scene_key, slot };
+    let default = TerrainSceneEntry {
+        name: "default".into(),
+        kind: 1,
+        id: 0,
+        unknown_f: std::f32::consts::FRAC_1_SQRT_2,
+        default_pair: Some(pair(1, 0)),
+        pairs: vec![pair(1, 0)],
+    };
+    let listed = TerrainSceneEntry {
+        name: "zone".into(),
+        kind: 2,
+        id: SCENERY_TERRAIN,
+        unknown_f: std::f32::consts::FRAC_1_SQRT_2,
+        default_pair: None,
+        pairs: vec![pair(1, 0), pair(10, SCENERY_SLOT)],
+    };
+    let ts = TerrainSceneTable::new(Did(0x1200_0000), 0, Some(default), vec![listed])
+        .expect("terrain-scene table");
+    let choice = |scene: u32| SceneChoice {
+        scene: Did(scene),
+        weight: 1.0,
+        flag: 1,
+    };
+    let sc = SceneChoiceTable::new(
+        0,
+        Did(0x1100_0000),
+        vec![
+            SceneChoiceEntry {
+                key: 1,
+                choices: vec![choice(obj::EMPTY_SCENE)],
+            },
+            SceneChoiceEntry {
+                key: 10,
+                choices: vec![choice(obj::VERTEX_SCENE)],
+            },
+        ],
+    )
+    .expect("scene-choice table");
+    let tt = TerrainTypeTable::new(
+        Did(0x1900_0000),
+        vec![TerrainType {
+            key: 0,
+            procedural: true,
+            ..TerrainType::default()
+        }],
+    )
+    .expect("terrain-type table");
+    m.insert(0x1200_0000u32, ts.to_bytes(), None);
+    m.insert(0x1100_0000u32, sc.to_bytes(), None);
+    m.insert(0x1900_0000u32, tt.to_bytes(), None);
+    let on_water = PlacementNode {
+        height_mode: 1,
+        no_spacing: true,
+        ..scenery_node(vec![SceneChild::Object(Did(obj::ON_WATER))])
+    };
+    let frill_layer = PlacementNode {
+        no_spacing: true,
+        ..scenery_node(vec![SceneChild::Scene(Did(obj::FRILL_SCENE))])
+    };
+    let scenes = [
+        scene(obj::EMPTY_SCENE, Vec::new(), None),
+        scene(
+            obj::VERTEX_SCENE,
+            vec![
+                SceneChild::Node(Box::new(scenery_node(vec![SceneChild::Object(Did(
+                    obj::SCENERY,
+                ))]))),
+                SceneChild::Node(Box::new(on_water)),
+            ],
+            Some(frill_layer),
+        ),
+        scene(
+            obj::FRILL_SCENE,
+            vec![SceneChild::Node(Box::new(PlacementNode {
+                no_spacing: true,
+                ..scenery_node(vec![SceneChild::Object(Did(obj::FRILL))])
+            }))],
+            None,
+        ),
+    ];
+    for sc in scenes {
+        m.insert(sc.did, sc.to_bytes(), None);
+    }
+    let schema = schema();
+    m.insert(
+        obj::SCENERY,
+        entity_descriptor(
+            obj::SCENERY,
+            obj::SCENERY_TEMPLATE,
+            &[(pid::RENDER_LOD_CLASS, TestValue::Enum(5))],
+            &schema,
+        ),
+        None,
+    );
+    m.insert(
+        obj::SCENERY_TEMPLATE,
+        visual_template(obj::SCENERY_TEMPLATE, obj::SCENERY_SETUP),
+        None,
+    );
+    m.insert(
+        obj::SCENERY_SETUP,
+        Setup {
+            did: Did(obj::SCENERY_SETUP),
+            parts: obj::TREE_PARTS.iter().map(|&p| Did(p)).collect(),
+            boxes: vec![CollisionBox {
+                min: [-1.0, -1.0, 0.0],
+                max: [1.0, 1.0, 2.0],
+                frame: Frame::IDENTITY,
+            }],
+            ..Setup::default()
+        }
+        .to_bytes()
+        .expect("scenery setup"),
+        None,
+    );
+    for o in [obj::ON_WATER, obj::FRILL] {
+        m.insert(
+            o,
+            entity_descriptor(o, obj::TREE_TEMPLATE, &[], &schema),
+            None,
+        );
+    }
+}
+
+/// The water table of [`SyntheticWorld::water_level`] (DID of [`region_descriptor`]'s slot
+/// 5): type 1 is wet with volume entity [`obj::WATER_VOLUME`]; level and type are read
+/// from [`key::WATER_LEVEL`] and [`key::WATER_TYPE`].
+#[must_use]
+pub fn water_table() -> Vec<u8> {
+    WaterTable::new(
+        Did(0x1600_0000),
+        0,
+        key::WATER_LEVEL,
+        key::WATER_TYPE,
+        None,
+        vec![WaterType {
+            key: 1,
+            wet: Some(WetWater {
+                surface: Did(0x3100_0001),
+                extra: [Did(0); 4],
+                volume_entity: Did(obj::WATER_VOLUME),
+                value: 24.0,
+            }),
+        }],
+    )
+    .to_bytes()
 }
 
 /// Builder of a synthetic install: dictionary, DID maps, one region descriptor and
@@ -656,6 +919,14 @@ pub struct SyntheticWorld {
     /// `NPC_StartingIdleAnimation`), serial 2 an instance set without NPC properties, and
     /// the weenie placement one with a random-appearance type. Default false.
     pub figures: bool,
+    /// Add the scenery records of [`insert_scenery`] and give every block the scenery word
+    /// (terrain [`SCENERY_TERRAIN`], slot [`SCENERY_SLOT`]) at coarse vertex
+    /// [`SCENERY_VERTEX`]. Default false.
+    pub scenery: bool,
+    /// Add the water table of [`water_table`]; blocks with even X get water type 1 at this
+    /// stored level, blocks with odd X type 1 at level 0 (below their terrain: dry).
+    /// Default `None`.
+    pub water_level: Option<u16>,
 }
 
 impl SyntheticWorld {
@@ -677,6 +948,8 @@ impl SyntheticWorld {
             blocks,
             entities_per_block: 4,
             figures: false,
+            scenery: false,
+            water_level: None,
         }
     }
 
@@ -815,30 +1088,42 @@ impl SyntheticWorld {
             None,
         );
 
+        if self.scenery {
+            insert_scenery(&mut m);
+        }
+        if self.water_level.is_some() {
+            m.insert(0x1600_0000u32, water_table(), None);
+        }
         for (&(x, y), &has_info) in &self.blocks {
             let Ok(key) = LandblockKey::new(self.region, x, y) else {
                 continue;
             };
-            m.insert(
-                key.data_did(),
-                landblock_data(key, has_info, |i, j| Self::height(x, i, y, j)),
-                Some(39),
-            );
+            let data = if self.scenery {
+                let grid = HeightGrid::from_fn(|i, j| Self::height(x, i, y, j));
+                let mut d = LandblockData::from_heights(key.data_did(), grid);
+                if has_info {
+                    d.info = Some(key.info_did());
+                }
+                let (i, j) = SCENERY_VERTEX;
+                d.coarse[17 * i + j] = SCENERY_TERRAIN | (SCENERY_SLOT << 8);
+                d.to_bytes()
+            } else {
+                landblock_data(key, has_info, |i, j| Self::height(x, i, y, j))
+            };
+            m.insert(key.data_did(), data, Some(39));
             let area_index = u16::from(Self::area_of(x) == obj::AREA_B);
-            m.insert(
-                key.block_map_did(),
-                block_map(
-                    key,
-                    &[
-                        (key::AREA, area_index),
-                        (key::MUSIC_TYPE, u16::from(y % 2 == 1)),
-                        (key::LOCAL_SKY, 0),
-                        (key::USE_CEILING, 0),
-                        (key::UNDESCRIBED, 7),
-                    ],
-                ),
-                Some(39),
-            );
+            let mut pairs = vec![
+                (key::AREA, area_index),
+                (key::MUSIC_TYPE, u16::from(y % 2 == 1)),
+                (key::LOCAL_SKY, 0),
+                (key::USE_CEILING, 0),
+                (key::UNDESCRIBED, 7),
+            ];
+            if let Some(level) = self.water_level {
+                pairs.push((key::WATER_TYPE, 1));
+                pairs.push((key::WATER_LEVEL, if x % 2 == 0 { level } else { 0 }));
+            }
+            m.insert(key.block_map_did(), block_map(key, &pairs), Some(39));
             m.insert(
                 key.properties_did(),
                 landblock_properties(

@@ -49,4 +49,32 @@ pub enum TerrainError {
     /// A surface chunk holds more layers than [`crate::splat::MAX_SPLAT_LAYERS`].
     #[error("surface chunk has {0} layers (limit {limit})", limit = crate::splat::MAX_SPLAT_LAYERS)]
     TooManyLayers(usize),
+
+    /// A layer mask surface is not format 28 (A8). The layer is then drawn as if it had no
+    /// mask (`terrain-texturing.md` §5.1, Tessera Decision).
+    #[error("layer mask {did}: format {format} is not A8 (28)")]
+    MaskFormat {
+        /// The mask surface.
+        did: tessera_formats::Did,
+        /// The surface's format name.
+        format: &'static str,
+    },
+
+    /// A layer mask surface whose size is 0 or above [`crate::mask::MAX_MASK_SIDE`], or
+    /// whose data does not hold width × height bytes.
+    #[error("layer mask {did}: unusable size {width} × {height} ({len} bytes)")]
+    MaskSize {
+        /// The mask surface.
+        did: tessera_formats::Did,
+        /// Width in texels.
+        width: u32,
+        /// Height in texels.
+        height: u32,
+        /// Stored data length.
+        len: usize,
+    },
+
+    /// The ceiling chunk was asked for on a landblock without a ceiling.
+    #[error("the landblock has no ceiling")]
+    NoCeiling,
 }

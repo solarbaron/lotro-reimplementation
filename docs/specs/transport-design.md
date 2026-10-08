@@ -5,9 +5,16 @@
 | Field | Value |
 |---|---|
 | Status | **Review**. Implemented in `crates/net` (`tessera_net::transport`); waiting for a reviewer |
-| Last updated | 2026-10-04 (review fixes: PAUSED flag, retransmission budget counts only stalled retransmissions, reorder and inbox byte budgets, sequence-span window wording, invalid-ack counting) |
+| Last updated | 2026-10-04 |
 | Author role | Implementer (original design, no dirty-room input) |
 | Reviewer | none yet |
+
+> **Status note (2026-10-06):** [Decision 0030](../decisions/0030-tessera-protocol-transport.md)
+> picks QUIC (quinn, rustls on ring) as the transport of Tessera protocol v1
+> (`tessera-protocol.md`). TRD v1 is not used by that protocol. It stays in
+> `tessera_net::transport`, frozen at v1, as a tested in-memory and loopback reliability layer.
+> For Tessera's network use, its open items (§10) are answered by QUIC, and no TRD v2 is
+> planned. The facts below are unchanged.
 
 ## 1. Purpose
 

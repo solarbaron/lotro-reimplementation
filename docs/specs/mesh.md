@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (fifth revision of 2026-10-07/08, §20 last row, reviewed and passed 2026-10-08) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested (§8.7 provenance, OPEN callouts in §8.6–§8.8, §8.4 step 1 wording). Re-review 2026-10-05: **passed** (CLEAN_ROOM.md §5.3, every item; remaining OPENs precise, each with a Tessera default, non-blocking). Re-review spot checks: PDEF census re-derived with an independent probe over all 40,643 entity descriptors (dictionary defaults false / 0 / true / false / 2; `Render_UseMeshCombining` true in 54; `Render_ImposterName` in 1,072, 1,050 non-zero; `Render_LODCrossFade` 1,365, 1,350 false; `Render_CastFakeShadows` 1,906, 1,786 true; `Render_LODClass` in 33,018); BIN constants re-read on the same build: smoothing factor min(1, 3 / (F + 0.0002)), the 25 m camera-jump test, G starting unbounded with a 60 m floor, `ObjectDrawDistance` multipliers 0.6 / 0.8 / 1.0 / 1.4 / 2.0 with the `DialBackGraphics` shift, shadow distance `d2` × M_d × M_s limited by G, render-state factors 1 by default; §8.7 worked example recomputed. Earlier data spot checks (all 47,563 records) stand. Non-blocking notes for a later revision: §8.4 step 1 still calls the disabling setting "true by default" (read: an enabling setting); §8.7 could say that M_d and M_s, like M and M_c, carry a render-state factor (1 by default). |
+| **Reviewer** | Claude review session (spec-reviewer, a different session from the writer) |
+| **Review record** | Fifth revision, 2026-10-08: Claude review session (spec-reviewer, a different session from the writer): **passed** (CLEAN_ROOM.md §5.3, every item; 5 new facts spot-checked against the install and the binary), Accepted. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/mesh` (decoder, engine vertex streams), `crates/render` (pipelines, detail-level choice §8.4–§8.8), `crates/world` (draw distances, occluders §8.9), `apps/explorer` (mesh viewer), `fuzz/` (mesh target) |
 | **Companion specs** | `dat-container.md` (archive set, routing, the directory entry `stamp` field this spec needs in §10.4). `records.md` §1 (primitive encodings). `material.md` (surface 0x31 → material 0x30 → texture list; not repeated here). `texture-list.md` (0x40 → 0x41). `setup.md` (which records reference meshes, and how parts are assembled; §8.5 one-triangle parts). `environment.md` §9.1 (layout of the LOD-class record 0x32 that §8.5 uses). `collision.md` §3, §5, §7 (the tree code of §10, cell geometry). `skeleton-anim.md` §4.2, §9.2 (influence list, part slots). `lighting.md` §4.3, §5.12–§5.13 (vertex inputs the programs read). `property-system.md` §8 (DID maps). |
 
@@ -61,7 +61,8 @@ Legend:
 | D3D | Public Direct3D 9 documentation: flexible-vertex-format (FVF) bit layout, `D3DPRIMITIVETYPE`, `D3DCOLOR`. General references, used as analogies. |
 | AN | Analogy only, not verified: the client licenses Havok Physics (research notes §8); the collision tree in §10 has the shape of a Havok "MOPP" code block. |
 | DC | `dat-container.md` §5.2 (directory entry `stamp`). |
-| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05. **Questions:** (1) how the client reads the `flags` word and the vertex format word; (2) how it chooses among kind-1 levels, from which distances, and what kind-2 levels are for; (3) whether it draws one-triangle meshes (with `setup.md` §8.5, owner item O4). **Why M1–M3 were not enough:** the records hold no switch distances, no marker of what a level is for and no meaning for `flags`; no published source describes them; observing the running client (M3) can show that a model changes with distance, but not the rule, the distances or where they come from. Only offline rendering code was read: the mesh reader, the scene graph's per-frame distance, visibility and level update, the occlusion-culling setup and the part list of drawn objects. Nothing of the network, login, launcher or anti-tamper code. **Second session, same build, 2026-10-05 (address ranges only):** **questions** (4) where the global limit *G* of §8.7 comes from; (5) which models use a combined mesh (`d3`) and which skip distance smoothing; (6) what turns on the last-level shadow caster of §8.8; (7) the constants of §8.6–§8.8 (smoothing factor, jump threshold, fade time, cross-fade band, preference multipliers, component defaults). **Why M1–M3 were not enough:** none of these values or conditions is stored in any record; the preference multipliers and the per-frame render state exist only in code; no frame capture or running client was available (M3), and a running client could show only that something fades or switches, not the condition or the constant. Code read: the per-frame render-state setup, the entity scene node's distance, visibility, fade and level routines, the model component's part scan, the mesh preparation step that derives runtime flags, the render component's constructor and property handler. |
+| BIN | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)).** The client executable of the user's install (`x64/lotroclient64.exe`, file version 4906.0071.1794.4035), disassembled in the dirty room for facts only on 2026-10-05. **Questions:** (1) how the client reads the `flags` word and the vertex format word; (2) how it chooses among kind-1 levels, from which distances, and what kind-2 levels are for; (3) whether it draws one-triangle meshes (with `setup.md` §8.5, owner item O4). **Why M1–M3 were not enough:** the records hold no switch distances, no marker of what a level is for and no meaning for `flags`; no published source describes them; observing the running client (M3) can show that a model changes with distance, but not the rule, the distances or where they come from. Only offline rendering code was read: the mesh reader, the scene graph's per-frame distance, visibility and level update, the occlusion-culling setup and the part list of drawn objects. Nothing of the network, login, launcher or anti-tamper code. **Second session, same build, 2026-10-05 (address ranges only):** **questions** (4) where the global limit *G* of §8.7 comes from; (5) which models use a combined mesh (`d3`) and which skip distance smoothing; (6) what turns on the last-level shadow caster of §8.8; (7) the constants of §8.6–§8.8 (smoothing factor, jump threshold, fade time, cross-fade band, preference multipliers, component defaults). **Why M1–M3 were not enough:** none of these values or conditions is stored in any record; the preference multipliers and the per-frame render state exist only in code; no frame capture or running client was available (M3), and a running client could show only that something fades or switches, not the condition or the constant. Code read: the per-frame render-state setup, the entity scene node's distance, visibility, fade and level routines, the model component's part scan, the mesh preparation step that derives runtime flags, the render component's constructor and property handler. **Third session, same build, 2026-10-07** (Ghidra, read-only copy of the project, by address): **questions** (8) which LOD class an entity without `Render_LODClass` gets, and the render component's initial values of the other properties §8.5–§8.8 use; (9) what resets the smoothed distance; (10) the use of `d4` … `d7` and of the `d5`/`d6` state, and which initial value belongs to `d6` and `d7`; (11) the imposter variant of the `d0` test; (12) what gates the combined mesh, including the `MeshCombining` preference; (13) how a cross-fade is composited; (14) where a forced level comes from; (15) the use of a kind-4 level; (16) the `build_byte` threshold for directory stamps 34–37 (§10.4); (17) how the client stores collision indices (§9.2); (18) whether the per-vertex scalar reaches the GPU (§5.3). **Why M1–M3 were not enough:** these are code paths and constants with no trace in the records (no LOD class is stored for 7,625 descriptors, no record has a kind-4 level, no mesh has a stamp from 34 to 37); no published source states them; no running client or frame capture was available, and a capture could show a fade or a pop but not its condition. Code read: the render component (constructor, property handler, property-change wrappers, LOD-class setter), the scene node's constructor, distance pass, visibility and fade, per-part level and shadow routines, the part draw routine, the model's combined-mesh and attachment routines, the mesh level classification, the collision-mesh and tree readers, the client's table of data-version steps, the GPU vertex-format builder, and the registration of the `MeshCombining` preference. Nothing of the network, login, launcher or anti-tamper code. **Fourth session, same build, 2026-10-07** (review changes; Ghidra, read-only copy of the project, by address): **questions** (19) into which slot of the render component the LOD-class table reader puts each float of a record entry, and which slots the attachment hysteresis reads; (20) what the player's ×3 does when the class has no table entry; (21) every factor of the opacity that the shadow test of §8.8 reads. **Why M1–M3 were not enough:** the record gives the eight floats but not which code slot each one fills; the ×3 path and the opacity product exist only in code; no running client or capture was available, and neither would show a slot assignment. Code read: the LOD-class table reader, the render component's constructor and LOD-class setter, the scene node's per-frame model update (attachment hysteresis, opacity product) and the per-object tint refresh. Nothing of the network, login, launcher or anti-tamper code. **Fifth session, same build, 2026-10-07** (Ghidra, read-only copy of the project, by address, deleted afterwards): **questions** (22) what turns on the render-state switch of the last-level shadow rule (§8.8); (23) what the switch *S* of the *G* rule is (§8.7); (24) the second composite mode of a cross-fade (§8.8); (25) the renderer capability switches and the other conditions of the combined mesh (§8.7); (26) whether a debug variable sets the forced level (§8.8). **Why M1–M3 were not enough:** these are per-call render-state values and code conditions that no record holds; no published source describes them; no running client or frame capture was available, and a capture shows a shadow, a fade or a pop but not the condition behind it. Code read: the render-state constructor and the two render calls that fill it (the world and the user-interface 3D views), the frame set-up that copies it, the camera-cell scene-flag pass and the per-frame world update, the per-object model update and draw, the render-bucket query, the post-processing manager's constructor and set-up, the combined-mesh request and its pre-check, and the registration of the render preferences and of the scene-render, world-render and video-post debug variables. Nothing of the network, login, launcher or anti-tamper code. **Sixth session, same build, 2026-10-08** (Ghidra, read-only copy of the project, by address, deleted afterwards): **question** (27) whether any code outside the mesh module reads the remembered kind-4 position (§8.3). **Why M1–M3 were not enough:** no record of the install has a kind-4 level, so neither the data nor a running client can show a use; no published source mentions it. Code read: the level classification and the mesh preparation that calls it, and a search of the whole executable for 32-bit reads of the field's offset, for accessor routines that return it and for tests of it against its "none" value. Nothing of the network, login, launcher or anti-tamper code. |
+| OBS2 | Observed in user install 2026-10-07 by throwaway probes (repository decoders used as tools): the format word, vertex count and surface of all 112,910 submeshes; the 7 submeshes with the scalar decoded vertex by vertex; the input signatures of all 16,985 Direct3D 11 vertex programs in the 510 shader records (0x2B) and which of them a submesh's surface uses; the 36 OpenGL vertex programs of shader record 0x2B0007A9 read as text; the names of all properties of the property dictionary. Re-run on 2026-10-08 for rows M47–M49 (same results), with in addition the reflection data of 0x2B0007A9 (its 90 Direct3D 11 vertex programs' input signatures; the constant layout of its OpenGL vertex programs, which places the two engine directions of row M48 in the rows of the model-to-view transform) and the install's database-type name table read with `tessera-props` as a tool. |
 | WLK | `walker.md` §11.3 (BIN-W question (c), same build): the landscape extent *E* and the global limit *G*. Re-read independently in the second BIN session above; the two readings agree. |
 | PDEF | Property dictionary of the same install, read 2026-10-05 with the repository's `tessera-props` as a tool: dictionary defaults of `Render_UseMeshCombining` (false), `Render_ImposterName` (0, `None`), `Render_LODCrossFade` (true), `Render_CastFakeShadows` (false), `Render_LODClass` (2). Census of these properties over the own property sets of **all 40,643** entity descriptors (0x47) from a dirty-room dump of 2026-10-05 whose `Render_LODClass` count (33,018) matches §8.5. |
 | CNS | Census of 2026-10-05 by throwaway probes (repository decoders used as tools): all 47,563 mesh records (levels per kind, triangle counts per level, draw entries per kind-2 level, the one-triangle census), all 28,555 setups (stub parts), the surfaces and materials of every stub mesh, the LOD-class record 0x32000000, and the DID maps and enum mappers named in §8.5. |
@@ -79,7 +80,7 @@ Legend:
 | M8 | The per-submesh u32 list after the AABB is redundant: for each vertex from the last to the first, the vertex's slot-0 bone index once per non-zero weight (§6.2) | OBS (43,059 of 43,059 skinned submeshes, exact; 0 entries on all 69,851 others); SA §4.2 | Confirmed (length and content, 2026-10-05) |
 | M9 | Index buffers come after all vertex blocks, one per submesh; u16 submesh-local triangle lists (§7) | MV, KC; OBS (all) | Confirmed |
 | M10 | Detail levels with draw lists, and per-level collision meshes, follow the index buffers (§8–§9) | OBS (47,563 of 47,563, zero trailing bytes) | Confirmed. No published source describes this part. |
-| M11 | The collision tree block ends with one extra byte only in records whose directory `stamp` ≥ 38 (§10.4) | DC; OBS (71,167 blocks, perfect split by stamp) | Confirmed |
+| M11 | The collision tree block ends with one extra byte only in records whose directory `stamp` ≥ 38 among the observed stamps; the client's threshold is 35 (§10.4, row M41) | DC; OBS (71,167 blocks, perfect split by stamp) | Confirmed (observed split) |
 | M12 | Z-up, right-handed, metres; characters face +Y; front faces counter-clockwise (§11) | MV, DS (Z-up); OBS (bone names, winding census, renders) | Confirmed |
 | M13 | UV (0,0) is the first stored texel row/column; no V flip (§11.4) | MV; OBS (renders) | Confirmed |
 | M14 | Surface list entries are 0x31 surface DIDs; draw entries select them by index (§12) | MV; OBS (112,910 references, all resolve) | Confirmed |
@@ -96,11 +97,36 @@ Legend:
 | M25 | Draw distance min(*G*, `d0` × *M_d*), tested against the unsmoothed distance; *M_d* = 0.6, 0.8, 1.0, 1.4, 2.0 for `ObjectDrawDistance` 0 … 4; fade in or out over 1.5 s; immediate after a camera jump of more than 25 m or a view reset; no distance culling while distance-based levels are off (§8.7) | BIN (questions 4, 7) | BIN |
 | M26 | *G*: unbounded, else the landscape extent when the view has a landscape, clipped to the fog far distance under a condition, at least 60 m (§8.7) | BIN (question 4); WLK | BIN |
 | M27 | Shadow distance min(*G*, `d2` × *M_d* × *M_s*), *M_s* = 0.6, 0.8, 1.0, 1.4, 2.0 for `StencilShadows` 1 … 5, tested against the unsmoothed distance; no limit while distance-based levels are off (§8.7) | BIN (question 7) | BIN |
-| M28 | Combined mesh: only models with a skinned part and entities whose `Render_UseMeshCombining` is true (54 descriptors); used beyond `d3` × min(1, *M_c*); `d5`/`d6` are a hysteresis pair for the same models (§8.7) | BIN (question 5); PDEF (default, census) | BIN (rule); Confirmed (default and census, 2026-10-05) |
+| M28 | Combined mesh: only models with a skinned part and entities whose `Render_UseMeshCombining` is true (54 descriptors); used beyond `d3` × min(1, *M_c*); `d5`/`d7` are a hysteresis pair for the same models (§8.7; corrected 2026-10-07, row M35) | BIN (question 5); PDEF (default, census) | BIN (rule); Confirmed (default and census, 2026-10-05) |
 | M29 | Last-level shadow caster: a switch of the frame's render state (off in the render state's defaults) and the entity's shadow flag (§8.8) | BIN (question 6); PDEF (`Render_CastFakeShadows` default false; set by 1,906 descriptors, true in 1,786) | BIN (rule); Confirmed (census) |
 | M30 | Cross-fade: band 0.2 × the factor gap; requires `Render_LODCrossFade`, the main view, multi-pass lighting and a model **without** a skinned part (§8.8) | BIN (question 7); PDEF (default true; set by 1,365 descriptors, false in 1,350) | BIN. Corrects the previous §8.8 (§16). |
 | M31 | Forced level: a per-entity index in the render component, default "none", clamped to *n* − 1 (§8.8) | BIN (question 7) | BIN; source OPEN |
 | M32 | Vertex colour is read by 116 shader records only and multiplies the material colour; UV set 0 is the common texture coordinate, sets 1 and 2 serve baked lighting and effects (§5.4, §5.5) | LGT (`lighting.md` §4.3, §5.13, its BIN of the shader programs) | BIN (in `lighting.md`); not re-checked here |
+| M33 | An entity none of whose property layers holds `Render_LODClass` keeps the render component's initial values (`d0` … `d7` = 200, 60, 16, 80, 1000, 1000, −1, 1100; order corrected 2026-10-07, row M35); the dictionary default (class 2) reaches the component only when a held value is removed at run time (§8.5) | BIN (question 8); WLK (`walker.md` W20, an independent reading of the same build) | BIN. Closes the §8.5 OPEN. |
+| M34 | The render component's own initial values of `Render_LODCrossFade` (true), `Render_CastFakeShadows` (false) and the imposter flag (off) equal the dictionary defaults' effect (§8.5, §8.7, §8.8) | BIN (question 8); PDEF | BIN |
+| M35 | In record terms (`d0` … `d7` = the entry's floats in stream order): `d6` starts at −1 and `d7` at 1,100. The client's table reader stores the 7th float (`d6`) in the slot the component initialises to −1 and the 8th float (`d7`) in the slot initialised to 1,100; the copy into the component is slot for slot. The `d5`/`d7` state switches a model's per-model attachments (records of DB type 0x48) on and off; no reader of `d4` or `d6` was found (§8.7). **Corrected 2026-10-07:** the revision of the same day named `d6` and `d7` the wrong way round. The data agree with the corrected naming: class 0x10000014 has `d5` 12, `d6` −1, `d7` 20 (on below 12 m, off above 20 m) | BIN (question 10; re-read for question 19); OBS (0x32000000: all 32 entries, 1,160 bytes; `d6` −1 in 31 entries and 50 in one, `d7` 1,100 in 31 and 20 in one, 2026-10-07) | BIN (slots); Confirmed (values) |
+| M36 | The smoothed distance restarts only when the object's scene node is created (the object is added to the scene); the scene's distance pass reruns when the camera has moved 1.5 m, after 1 s, or when the view missed a frame (§8.6) | BIN (question 9) | BIN |
+| M37 | Entities with an imposter name fade out over the 15 m before *D*, measured at the box centre, and their draw test limit becomes *D* + (*d_c* − *d*) (§8.7) | BIN (question 11); PDEF (1,072 descriptors set `Render_ImposterName`) | BIN |
+| M38 | The combined mesh is built only while the `MeshCombining` preference is on, the entity's `Render_UseMeshCombining` is true, the model has a skinned part and its distance asked for it; otherwise it is released (§8.7) | BIN (question 12) | BIN |
+| M39 | A cross-fading object is drawn through the translucent path; each part draws its level and then the neighbouring level again with alpha = object opacity × the part's weight (§8.8) | BIN (question 13) | BIN (the second of two composite modes: row M53) |
+| M40 | An object casts shadows only while its opacity is above 0.8 and its distance is strictly below the shadow distance (§8.7, §8.8) | BIN (question 13) | BIN |
+| M41 | `build_byte` is present exactly when the record's data version gives the Havok-data tag a version of at least 1, which is directory `stamp` ≥ 35 (§10.4) | BIN (question 16; the stamp-to-step link inferred, §10.4); OBS (all 71,167 tree blocks agree) | BIN (threshold, partly inferred); Confirmed (observed stamps) |
+| M42 | The client reads collision-mesh triangle and edge indices as 16-bit values with no high part (§9.2) | BIN (question 17) | BIN |
+| M43 | The client keeps the per-vertex scalar in the vertex stream it uploads to the GPU (§5.3) | BIN (question 18) | BIN |
+| M44 | No store into the forced-level field after construction was found in the code of the render component, the model and the scene, and no read of the kind-4 position besides the level classification in the mesh code (searched by field offset) (§8.3, §8.8) | BIN (questions 14, 15; negative searches) | BIN (negative result) |
+| M45 | The ×3 for the player's own character (§8.5 step 4) runs whenever a class value is applied and the LOD-class record exists, also when the class has no entry; then it multiplies the values the component already holds, so each further application (a new value or a forced re-application of the same one) multiplies them again. Every `Render_LODClass` value held by an entity descriptor's own property set in this install has an entry (25 distinct values, 33,018 descriptors) | BIN (question 20); OBS (census of all 40,643 descriptors, 2026-10-07) | BIN (rule); Confirmed (census) |
+| M46 | The opacity that the shadow test reads (§8.8) has a fourth factor: the alpha of a per-object tint that the scene node refreshes at most every 20 s; it starts at 1 and every path traced sets it to 1 | BIN (question 21) | BIN |
+| M47 | The per-vertex scalar is the height (*z*) of the centre of a card; UV set 2 holds the centre's *x*, *y* and UV set 1 the corner offset; the vertices of one card share one centre (4 or 6 vertices per card); every stored position lies 1.3 × \|offset\| from the centre (§5.3) | OBS2 (7 of 7 submeshes, 10,942 of 10,942 vertices, 2,616 cards; re-checked 2026-10-08) | Confirmed |
+| M48 | Shader record 0x2B0007A9 is the only one whose vertex programs read the scalar (as the Direct3D point-size input, 90 Direct3D 11 vertex programs); its three surface records are exactly the surfaces of the 7 scalar submeshes; all 36 of its OpenGL vertex programs build the drawn position from the card centre (scalar, UV set 2) and the UV-set-1 offset along two directions supplied by the engine, and none reads the stored position's coordinates; the two directions are the normalised first and second rows of the model-to-view transform, so the card faces the camera (§5.3) | OBS2 | Confirmed |
+| M49 | UV sets 3 … 6 occur only in the 2 submeshes with seven sets, and the shader records of their surfaces read set 0 only; sets 1 and 2 are read only by the records of `lighting.md` §4.3 and by 0x2B0007A9 (§5.5) | OBS2; LGT | Confirmed |
+| M50 | Vertex colour bytes are used as stored: no back end converts colours or textures from sRGB (§5.4) | LGT (`lighting.md` §4.4, §5.1, its BIN-L (h)) | BIN (in `lighting.md`) |
+| M51 | The render-state switch of the last-level shadow rule is on in a render call exactly when that call draws stencil shadows: `StencilShadows` not 0, `DialBackGraphics` off, a stencil flag of the graphics device set, shadow maps not in use, and (world view) not a secondary call or (user-interface 3D view) a shadow flag of the call set (§8.8) | BIN (question 22) | BIN |
+| M52 | The switch *S* of the *G* rule: on when the view is not a full-detail view, the world renderer's sky debug switch is on (its default) and the camera's sky-visible flag (`landblock.md` §4.12) is set or the call is a secondary call; the sky-visible flag is also cleared in any frame whose fog is fully opaque (§8.7) | BIN (question 23) | BIN |
+| M53 | The second composite mode of a cross-fade is chosen when the frame renders with video post effects; it changes the object's render bucket and delays the drawing of the second level by one draw call per frame (§8.8) | BIN (question 24) | BIN (partly traced) |
+| M54 | The combined mesh is requested only when two capability flags of the graphics device are set; its pre-check takes one detail level of every part, needs bone weights in every draw of every detail level, one common value of a per-draw field, one vertex format up to the influence count and the colour bit, and fewer than 65,536 vertices and 65,536 indices in total (§8.7) | BIN (question 25) | BIN |
+| M55 | No registered render, scene-render, world-render or video-post debug variable and no property of the dictionary sets the forced level (§8.8) | BIN (question 26, registration routines); OBS2 (property names) | BIN (negative result) |
+| M56 | No code outside the level classification reads the remembered kind-4 position: no 32-bit read of the field's offset in a routine that also uses the mesh's level lists, no accessor routine returning it and no test of it against "none" anywhere in the executable (§8.3) | BIN (question 27; negative search) | BIN (negative result) |
+| M57 | The install's database-type name table has no name for type 0x48 (the attachments of §8.7) | OBS2 (`tessera-props`, types 0x40–0x4F, 2026-10-07) | Confirmed |
 
 ---
 
@@ -340,15 +366,44 @@ implementation that wants to accept COLOUR2 alone, or a lone tangent (bit 28) or
 including the tiny 3-vertex stub meshes. A reader may still renormalise.
 
 <a id="s5-3"></a>
-### 5.3 Scalar (Confirmed presence, meaning OPEN)
+### 5.3 Scalar: height of a card centre (Confirmed)
 
-One f32. Present in 7 submeshes of 7 records (all trees, `vfmt` 0x30000372). Values range
-from 3.77 to 25.75 and vary per vertex.
+One f32. Present in 7 submeshes of 7 records (all trees, `vfmt` 0x30000372: SCALAR, COLOUR,
+three UV sets, tangent frame). Values range from 3.77 to 25.75 and vary per vertex.
 
-> **OPEN:** Meaning of the scalar (a wind-sway weight or height above ground would fit).
-> The client's layout routine places it after the normal (§4.5) but says nothing about its
-> use; the shader programs read two vertex inputs labelled as texture coordinates 3 and 4
-> whose meaning is also open (`lighting.md` §4.3). Renderers ignore it until resolved.
+These submeshes are made of **cards**: groups of vertices that share one centre point (2,616
+cards; 2,377 of 4 vertices and 239 of 6). For every vertex of every one of the 7 submeshes
+(row M47, 10,942 of 10,942 vertices):
+
+| Attribute | Content |
+|---|---|
+| scalar | *z* of the card centre (object space, metres) |
+| UV set 2 | *x*, *y* of the card centre |
+| UV set 1 | the vertex's offset (*o_x*, *o_y*) from the centre within the card, in metres |
+| UV set 0 | the texture coordinate, as for any mesh |
+| position | a point at distance exactly 1.3 × √(*o_x*² + *o_y*²) from the centre |
+
+**How the client draws them** (rows M43, M48). The client uploads the scalar with the other
+vertex data (BIN, row M43): the GPU vertex format it derives from `vfmt` keeps the POSITION,
+NORMAL, SCALAR, COLOUR and COLOUR2 bits and the UV count unchanged (the tangent frame and the
+skin data only on capable renderer paths). The only shader record whose programs read the
+scalar is 0x2B0007A9, and its three surface records are exactly the surfaces of these 7
+submeshes. Its vertex programs do not use the stored position's coordinates. They place each
+vertex at
+
+  drawn position = centre + *o_x* × *r* − *o_y* × *u*,
+
+where *r* and *u* are the unit vectors of the view's right and up directions expressed in
+object space (the first two rows of the model-to-view transform, normalised). Each card
+therefore always faces the camera: *o_x* runs toward the right of the screen and *o_y* toward
+the bottom, and a drawn corner lies \|offset\| from the centre (the stored position lies 1.3
+times as far). Normal, tangent frame and colour are lit as for other
+geometry (`lighting.md`).
+
+The client never draws the stored positions of these vertices. **Tessera choice:** a renderer
+that does not build camera-facing cards may draw the stored positions as static geometry
+(the cards then do not turn with the camera, and their corners lie 1.3 times as far from the
+centres as in the client).
 
 <a id="s5-4"></a>
 ### 5.4 Colour (Confirmed layout, channel order Reported)
@@ -363,7 +418,12 @@ records (2,624 surface records) read vertex colour. There it multiplies the mate
 RGB scales the lit colour and alpha scales the output alpha, after the alpha test. Every other
 surface ignores the vertex colour, even when the mesh stores one.
 
-> **OPEN** (`lighting.md` §15): whether the colour bytes are sRGB-encoded or linear.
+**Encoding** (row M50; `lighting.md` §4.4 and §5.1, BIN there): the bytes are used as stored,
+each channel / 255. No back end of the client converts colours or textures from sRGB, and the
+frame buffer is not sRGB either, so all shading arithmetic runs on the stored values. A
+renderer reproduces the original by passing the bytes to the shader as unsigned normalised
+values without an sRGB conversion, consistently with how it treats textures (`lighting.md`
+§5.1).
 
 <a id="s5-5"></a>
 ### 5.5 UV sets (Confirmed)
@@ -374,15 +434,25 @@ Each set is 2 × f32 (u, v). Set 0 is the texture coordinate for the diffuse map
   submeshes keep set 0 within [−16, 16], but 338 submeshes exceed ±100 (up to ±8 × 10⁷).
   Readers must not reject or clamp them.
 - Origin and direction: §11.4.
-- Sets 1 … 6 exist in 444 submeshes. In the samples inspected, set 1 was constant (0, 1).
+- Sets 1 … 6 exist in 444 submeshes. In the samples inspected for the first version, set 1
+  was constant (0, 1); in the card submeshes of §5.3 it holds the corner offsets.
 
-Use (provenance row M32: `lighting.md` §4.3, BIN there): the common shader programs read UV
-set 0 only; sets 1 and 2 are
-read by records with baked-lighting roles (`BakedShadow`, `BakedLight`,
-`DirLightMaskAndAmbOcc`) and by some effect records.
+Use (rows M32, M49; `lighting.md` §4.3, L27 there, and OBS2): which set each texture of a
+shader record reads is fixed by the record's programs, not by the mesh.
 
-> **OPEN** (`lighting.md` §4.3): which set a baked-lighting record reads for which slot, and
-> sets 3 … 6.
+| UV set | Read by | Meshes of this install that need it |
+|---|---|---|
+| 0 | every program that samples a texture: base colour, normal map, and the second colour layer in most records | all |
+| 1 | the second colour layer of three shader records, unchanged; the baked light mask and ambient occlusion texture (`DirLightMaskAndAmbOcc`) of two records; the card offset of 0x2B0007A9 (§5.3) | 8 submeshes with two sets whose surfaces use one of the first five records, and the 7 card submeshes |
+| 2 | only 0x2B0007A9 (card centre, §5.3) | the 7 card submeshes |
+| 3 … 6 | no program used by any surface record | none |
+
+The baked-lighting textures `BakedLight` and `BakedShadow` are read only by the terrain layer
+records, through coordinate inputs 3 and 4 that terrain supplies (`terrain-texturing.md`
+§6.1); no mesh feeds them. UV sets 3 … 6 occur only in the 2 submeshes with seven sets, whose
+surfaces' shader records read set 0 only, so those sets have no use in drawing; decoders keep
+them, renderers may drop them. Of the 444 submeshes with two or more sets, all others draw
+with set 0 alone.
 
 <a id="s5-6"></a>
 ### 5.6 Tangent frame (Confirmed)
@@ -548,7 +618,13 @@ order (BIN):
   wins). No record of this install has one, and its use was not traced. All other `kind`
   values are ignored by the client.
 
-> **OPEN:** the use of a kind-4 level. **Tessera default:** decode it, never draw it.
+> **OPEN:** the use of a kind-4 level. Narrowed on 2026-10-07 (row M44) and 2026-10-08 (row
+> M56): no code of the mesh module reads the remembered kind-4 position, and a search of the
+> whole executable found no routine that reads it together with the mesh's level lists, no
+> accessor that returns it and no test of it against "none". A reader that reaches the field
+> by another route (a copied structure, a computed offset) cannot be excluded by such a
+> search. No record has a kind-4 level, so the question matters only for future data.
+> **Tessera default:** decode it, never draw it.
 
 Census of the detail levels per record (CNS): 1 (34,776 records), 2 (3,849), 3 (6,463),
 4 (2,474), 6 (1). Triangle counts never increase from one detail level to the next in 10,750
@@ -573,9 +649,9 @@ Inputs: *n*, the number of detail levels of the mesh (≥ 1); *R*, the object's 
 metres (§8.5); *d*, the object's distance from the camera in metres (§8.6).
 
 1. If distance-based levels are disabled, use *f* = 1. Distance-based levels are **enabled by
-   default**: the client disables them only through an internal setting that is true by
-   default and is not a key of the preference file (`install-layout.md` §8.3), or for
-   special views that ask for full detail. While they are disabled, objects keep full
+   default**: the client disables them only when an internal setting that allows them (true
+   by default; not a key of the preference file, `install-layout.md` §8.3) is turned off, or
+   for special views that ask for full detail. While they are disabled, objects keep full
    detail, are never culled or faded by distance (§8.7) and cast shadows at any distance.
 2. Otherwise *f* = 1 − *d* / *R*; when *f* < 0, use *f* = 0.
 3. *x* = 1 − *f*².
@@ -622,10 +698,25 @@ of the object uses the object's range.
 3. Of the entry's eight floats `d0` … `d7`, `d1` is the **detail range**. The other fields of
    known use are in §8.7. The client copies the entry when the property value reaches the
    object's render component; until then, and when the class has no entry, the component
-   keeps its own defaults: `d0` 200, `d1` 60, `d2` 16, `d3` 80 metres (all eight in §8.7).
+   keeps its own values: `d0` 200, `d1` 60, `d2` 16, `d3` 80 metres (all eight in §8.7).
+   **A value reaches the component only from a property layer that holds it** (row M33): an
+   entity none of whose property layers holds `Render_LODClass` (its own descriptor, its
+   parent descriptors, its placement's property sets; order in `walker.md` §11.4.3) keeps
+   the component's initial values for its whole life. The property dictionary's default
+   (class 2) is handed to the component only when a value that a layer held is removed at run
+   time. A class value without an entry in the table leaves the values unchanged, except for
+   the multiplication of step 4.
 4. For one entity, the one the client holds as its current player object (the player's own
    character, by inference from how the reference is used), the client multiplies `d0` …
-   `d5` by 3.
+   `d5` by 3 each time a class value is applied and the LOD-class record of step 2 exists
+   (row M45). When the class has an entry, the entry is copied first and then multiplied, so
+   the result is always 3 × the entry. When the class has **no** entry, the multiplication is
+   still applied, to the values the component already holds; each further application (a
+   different value without an entry, or the client re-applying the current value, which it
+   can force; the same value arriving again without that force changes nothing) multiplies
+   them by 3 again. Every class value that the entity descriptors of
+   this install hold has an entry (row M45), so the second case arises only for a value from
+   elsewhere.
 5. *R* = `d1` × *M*, where *M* is the multiplier of the user's `ModelDetail` preference
    (`install-layout.md` §8.3) times a factor of the frame's render state that is 1 in the
    render state's defaults (Tessera: 1 for the main view):
@@ -642,15 +733,16 @@ may ignore that switch.
 The table of this install has 32 classes (keys 1, 2, 3 from the base mapper and 0x10000001 …
 0x1000001D); `d1` ranges from 2 to 200 m (CNS). Like every data value it is read at run time.
 
-> **OPEN:** which class an entity **without** `Render_LODClass` gets. The property's
-> dictionary default is 2 (class 2 of this table: `d0` 50, `d1` 10, `d2` 16), and `scenery.md`
-> §9 assumes it. Whether the client delivers dictionary defaults of absent properties to the
-> render component, or the component's own defaults of step 3 stay in force, was not traced.
-> The same question decides `Render_LODCrossFade` (dictionary default true) in §8.8.
-> Decision for Tessera until settled: use the dictionary default (class 2). `walker.md`
-> §11.4 item 4 assumes the opposite (the component's own 200 m and 60 m); the two specs must
-> converge when this is settled (§19). The 7,625 descriptors concerned are mostly static
-> placed objects (`Entity_CreationType` shared or unique static immobile in 4,108 of them).
+> **Resolved (2026-10-07, BIN, row M33; closes the OPEN of 2026-10-05 and converges with
+> `walker.md` §11.4 step 4 and W20):** an entity without `Render_LODClass` in any of its
+> property layers is drawn with the component's initial values (`d0` 200 m, `d1` 60 m, `d2`
+> 16 m, `d3` 80 m, …), not with class 2. Step 4's ×3 for the player's own character runs only
+> when a class value arrives, so it is not applied to these initial values. The same
+> mechanism decides the other properties of §8.7–§8.8, and for them the component's own
+> initial values agree with the dictionary defaults (row M34): `Render_LODCrossFade` starts
+> true, `Render_CastFakeShadows` false, and the imposter flag of §8.7 off. The earlier
+> Tessera decision (class 2) is withdrawn; `tessera-world` already follows the rule above
+> (implementer note of 2026-10-06).
 
 **Interior cell geometry** (the render meshes inside the cell records 0x01, `collision.md`
 §5.7, drawn by the client's environment-cell objects; the identification rests on the code's
@@ -661,8 +753,16 @@ context): *R* = 200 m × *M*, with *d* unsmoothed (§8.6). These meshes have no 
 
 *d* is the distance from the camera position to the **nearest point of the object's
 world-space axis-aligned bounding box** (0 when the camera is inside the box). The client
-computes it per view and frame; it also keeps further distances per view, which the level
-choice does not use.
+computes it per view; it also keeps, per view, the distance *d_c* from the camera to the
+**centre** of that box (used only by the imposter variant of §8.7) and a third distance that
+none of these rules uses.
+
+**When the distances are recomputed (BIN, row M36).** The scene computes them for its objects
+in one pass per view. A view's pass runs only when, since its previous pass, the camera has
+moved 1.5 m or more, or more than 1 s has passed, or the view was not processed in the
+previous frame; otherwise every object keeps the distances of the previous pass. Whether other
+paths refresh the distances of moving objects between passes was not traced. A renderer may
+recompute every frame; the difference is at most 1.5 m of camera movement.
 
 **Smoothing (provenance row M24).** For objects drawn through an entity, the distance that
 enters the detail factor of §8.4 is a smoothed copy *d_s*, kept per object and view:
@@ -687,10 +787,13 @@ practice these are the figures that carry a skeleton (characters, creatures; §5
 made only of rigid meshes has no skinned part. The same property gates the combined mesh (§8.7)
 and the cross-fade (§8.8).
 
-> **OPEN:** whether anything other than the creation of an object's per-view state resets
-> *d_s* (for example an object that leaves the scene and comes back, or a teleport that
-> rebuilds the scene). **Tessera default:** set *d_s* = *d* when an object becomes resident
-> or its per-view state is created, and never at camera jumps.
+> **Resolved (2026-10-07, BIN, row M36):** the per-view state is part of the object's scene
+> node. The node is created when the object is added to the scene and destroyed when it is
+> removed; an object that leaves the scene and comes back (out of residency, a rebuilt scene
+> after a teleport) gets a new node, so its *d_s* starts again at *d*. Nothing else resets
+> *d_s*: the camera-jump and view-reset handling of §8.7 sets the reset marker and clears it
+> again within the fade step, after the smoothing of that frame has run. This is the earlier
+> Tessera default.
 
 <a id="s8-7"></a>
 ### 8.7 The other LOD-class distances (BIN)
@@ -712,26 +815,53 @@ objects are tested:
 2. When the view has a landscape, *G* is the landscape extent *E* of `walker.md` §11.3
    (160 m × (3 *g* + *n*); 2,080 m at the built-in `LandscapeDrawDistance`).
 3. When distance fog is active and *G* is greater than the frame's fog far distance, *G*
-   becomes the fog far distance under the condition stated in `walker.md` §11.3 step 3 (its
-   switch *S* is OPEN there).
+   becomes the fog far distance under the condition stated in `walker.md` §11.3 step 3:
+   either the switch *S* is off, or the frame's fog is fully opaque (the flag *F* and the
+   value *V* > 0.99 of `walker.md`).
 4. If *G* < 60 m, *G* = 60 m.
 
-> **OPEN** (owned by `walker.md` §11.3): the switch *S* of step 3 and which fog value the
-> 0.99 test reads. **Tessera default** (the same as `walker.md`): clip *G* to the fog far
-> distance whenever fog is active; with no landscape and no fog, *G* is unbounded.
+**The switch *S*** (row M52). It is a value of the render call's state, on exactly when all
+of these hold:
+
+- the view is not a full-detail view (the special views of §8.4 step 1);
+- a sky switch of the world renderer is on; it is a debugging switch and on by default;
+- the camera's **sky-visible** scene flag (`landblock.md` §4.12) is set, or the render call
+  is a secondary call (not the main world view).
+
+The client also clears the sky-visible flag in every frame whose fog is fully opaque. In
+practice: outdoors, and in interior cells whose flags make the sky visible, *S* is on and *G*
+is clipped to the fog far distance only in fully fogged frames; in other interior cells *S*
+is off and *G* is clipped whenever fog is active and its far distance is below *G*.
+
+> **OPEN** (owned by `walker.md` §11.3): which keyframe or record field the value *V* of the
+> 0.99 test is. **Tessera default:** treat *V* as never above 0.99 (the candidate field of
+> `environment.md` §5.3 is observed between 0 and 0.8), so *G* is clipped to the fog far
+> distance exactly when fog is active and *S* is off, and the sky-visible flag is never
+> cleared by fog; with no landscape and no fog, *G* is unbounded. This replaces the earlier
+> default "clip whenever fog is active", which assumed *S* off everywhere.
 
 | Field | Use |
 |---|---|
 | `d0` | **Draw distance** *D* = min(*G*, `d0` × *M_d*) (row M25). The object is drawn while *d* ≤ *D*. Crossing *D* starts a fade in or out that changes the object's opacity linearly over 1.5 s. In the first frame of the object's per-view state, and in a frame in which the camera has moved more than 25 m since the previous frame (or the render state asks for a reset), the object appears or disappears at once. While distance-based levels are disabled (§8.4 step 1) no object is hidden or faded by distance. |
 | `d1` | Detail range *R* (§8.5). |
-| `d2` | **Shadow distance** (row M27): the object casts shadows while *d* ≤ min(*G*, `d2` × *M_d* × *M_s*); at any distance while distance-based levels are disabled. |
-| `d3` | **Combined-mesh distance** (row M28): for a model with a skinned part (§8.6), the client switches to one combined mesh instead of the separate parts while *d* > `d3` × min(1, *M_c*) (*d* counts as 0 while distance-based levels are disabled; an internal per-object flag can also force the combined form). The combined mesh is drawn only if the entity's `Render_UseMeshCombining` is true (dictionary default false; 54 descriptors set it to true) and the client has built it; otherwise the separate parts are drawn. Its detail level follows §8.4 with the object's factor. |
-| `d4` | Not traced. |
-| `d5`, `d6` | For a model with a skinned part, a hysteresis pair: a per-model state switches on when *d* < `d5` × *M_c* and off when *d* > `d6` × *M_c*. What the state controls was not traced. |
-| `d7` | Not traced. |
+| `d2` | **Shadow distance** (rows M27, M40): the object casts shadows while *d* < min(*G*, `d2` × *M_d* × *M_s*) (strictly below), at any distance while distance-based levels are disabled, and in both cases only while its opacity (§8.8) is above 0.8. |
+| `d3` | **Combined-mesh distance** (rows M28, M38): for a model with a skinned part (§8.6), the client switches to one combined mesh instead of the separate parts while *d* > `d3` × min(1, *M_c*) (*d* counts as 0 while distance-based levels are disabled; an internal per-object flag can also force the combined form). The switch asks for the combined mesh; the client builds it only while **all** of these hold: the user's `MeshCombining` preference (`install-layout.md` §8.3) is on, the entity's `Render_UseMeshCombining` is true (dictionary default false; 54 descriptors set it to true), the model has a skinned part, the switch has asked for it, two capability flags of the graphics device are set, and the parts pass the pre-check given after the worked example (row M54). When any of them fails, a combined mesh that exists is released. The combined mesh is drawn only once it has been built; otherwise the separate parts are drawn. Its detail level follows §8.4 with the object's factor. |
+| `d4` | No use found (row M35: no reader in the render component, model or scene code). |
+| `d5`, `d7` | For a model with a skinned part, a hysteresis pair (row M35): a per-model state switches on when *d* < `d5` × *M_c* and off when *d* > `d7` × *M_c*. The state governs the model's **attachments**: per-model objects that the client loads as records of DB type 0x48 and keeps by DID. While the state is on they are updated each frame; while it is off, each attachment's run-time resource is released; every switch marks the set for an update. What the 0x48 records are was not identified. Models without attachments are not affected. |
+| `d6` | No use found (row M35). |
 
 The render component's own values, kept when no LOD-class entry reaches it (§8.5 step 3),
-are `d0` … `d7` = 200, 60, 16, 80, 1000, 1000, 1100, −1.
+are `d0` … `d7` = 200, 60, 16, 80, 1000, 1000, −1, 1100, in record order: `d6` starts at −1
+and `d7` at 1,100, the same as the table's common values (row M35). The client's table reader
+does not keep the record's order for the last two floats: it stores the 7th float (`d6`) in
+the slot the component initialises to −1 and the 8th float (`d7`) in the slot initialised to
+1,100, and the copy into the component is then slot for slot. An implementation that keeps
+the record's order throughout gets the same result. **Corrected 2026-10-07:** the revision of
+the same day named `d6` and `d7` the wrong way round (initial values, the hysteresis row and
+the field without a reader); code built on that naming must be re-checked. Check with the
+data: class 0x10000014 has `d5` 12, `d6` −1, `d7` 20, so its attachments switch on below
+12 m × *M_c* and off above 20 m × *M_c*. The component's ninth value, the
+forced level of §8.8, starts at "none".
 
 Worked example (synthetic). An entry with `d0` 80, `d2` 16, `d3` 80; `ObjectDrawDistance` 3
 (*M_d* 1.4), `StencilShadows` 3 (*M_s* 1.0), `ModelDetail` 3 (*M_c* 1.4); landscape extent
@@ -743,18 +873,54 @@ Smoothing at *F* = 60 with *d_s* = 100 m and *d* = 40 m: *k* = 3 / 60.0002 = 0.0
 the next *d_s* = 100 − 0.0499998 × 60 = 97.0 m (rigid model; a skinned model uses 40 m at
 once).
 
-> **OPEN:** how the client builds a combined mesh from the parts, and whether the
-> `MeshCombining` preference (`install-layout.md` §8.3) gates it. **Tessera default:** never
-> combine; draw the separate parts at every distance (the result differs only in cost).
+**Pre-check of the combined mesh** (row M54). The client considers one detail level of every
+part (the last one unless a particular level is asked for) and builds the combined mesh only
+when all of these hold:
 
-> **OPEN:** what the state switched by `d5` and `d6` controls, and the use of `d4` and `d7`.
-> **Tessera default:** ignore these fields.
+1. every part's mesh is marked as having bone weights, and every draw entry of every detail
+   level of every part uses a vertex block with *K* ≥ 1;
+2. all draws considered share one value of a per-draw field (not identified);
+3. all vertex blocks considered have the same `vfmt`, ignoring the influence count (bits
+   16–23) and the COLOUR bit;
+4. the parts considered hold fewer than 65,536 vertices and fewer than 65,536 indices in
+   total.
 
-> **OPEN:** entities whose `Render_ImposterName` differs from its dictionary default
-> (`None`; 1,072 descriptors set the property, 1,050 of them to another value) are tested
-> differently against `d0`: the client uses a second per-view distance and a 15 m blend band
-> below *D*, apparently to swap the model for a distant imposter (`DistantImposters`
-> preference). Not specified. **Tessera default:** test these entities like all others.
+> **OPEN** (narrowed 2026-10-08): how the client builds the combined mesh from the parts
+> (merged geometry, textures, skinning), which device capabilities the two flags stand for,
+> and the per-draw field of pre-check item 2. **Tessera default:** never combine; draw the
+> separate parts at every distance (the result differs only in cost).
+
+> **OPEN** (narrowed 2026-10-07): what the DB type 0x48 attachments of the `d5`/`d7` row are
+> (the record kind and prefix were not identified; no DID range is registered for that type
+> in the client's range table, and the install's database-type name table has no name for it,
+> row M57); whether any code outside the render component, the model and
+> the scene reads `d4` or `d6`. **Tessera default:** ignore these fields.
+
+**Imposter variant (BIN, row M37; answers the OPEN of 2026-10-05 for the model side).** The
+render component sets an **imposter flag** when an `Render_ImposterName` value other than
+`None` reaches it (dictionary default `None`; 1,072 descriptors set the property, 1,050 of
+them to another value); nothing clears it. For an entity with the flag, while distance-based
+levels are enabled, each frame and view:
+
+1. *D* = min(*G*, `d0` × *M_d*) as above; *d* and *d_c* as in §8.6.
+2. *w* = 1 − min(1, max(0, (*d_c* − (*D* − 15)) / 15)): 1 while the box centre is nearer than
+   *D* − 15 m, falling linearly to 0 at *d_c* = *D*.
+3. *w* becomes the target opacity of the model in that view. The 1.5 s fade of the `d0` row
+   scales towards it (a fade in runs from 0 to *w*, a fade out from the current opacity to 0)
+   instead of towards 1. If the object is not visible and 0 < *w* < 0.1, it is marked visible
+   (so it fades in at the edge of the band).
+4. The draw test of the `d0` row uses the limit *D* + (*d_c* − *d*) instead of *D*.
+
+Worked example (synthetic): *D* = 80 m, box with *d* = 70 m and *d_c* = 72 m: *w* = 1 − (72
+− 65) / 15 = 0.5333; the draw limit is 82 m, so the model is drawn at about half opacity.
+
+> **OPEN:** what the client draws in place of the faded model (the dynamic-imposter system
+> named by the `DistantImposters` preference: capture, texture and placement of the imposter
+> sprite). The property dictionary also defines `Render_ImposterPoseAnim`,
+> `Render_ImposterSourceColorImage` and `Render_ImposterSourceNormalImage` (DID references,
+> OBS2); whether and how the imposter system reads them was not traced. **Tessera default:**
+> apply steps 1–4 only if an imposter is drawn in its place; otherwise test these entities like
+> all others.
 
 <a id="s8-8"></a>
 ### 8.8 Shadow passes, cross-fades and forced levels (BIN)
@@ -762,9 +928,13 @@ once).
 - **Shadow passes (row M29).** The client keeps a second level per part for its
   shadow-casting draws (the draws limited by `d2`, §8.7). It is the level of §8.4, except
   when **both** of these hold; then it is the **last** detail level, at every distance:
-  1. a switch of the frame's render state is on. It is off in the render state's defaults;
-     the client's render paths set the render state per render call, and which of them turn
-     it on was not identified;
+  1. a switch of the render call's state is on (row M51). It is off in the render state's
+     defaults, and a render call turns it on exactly when that call draws **stencil
+     shadows**: the `StencilShadows` preference is not 0 (`Disabled`), `DialBackGraphics` is
+     off, the graphics device reports a stencil capability, the shadow-map path (`lighting.md`
+     §9) is not in use, and, for the world view, the call is not a secondary call, or, for a
+     user-interface 3D view, that call's own shadow flag is set. With shadow maps the switch
+     is off and shadow casters use the level of §8.4;
   2. the entity casts "fake" shadows: its boolean property `Render_CastFakeShadows` is true
      (dictionary default false; 1,906 descriptors set it, 1,786 to true). The client also
      accepts the flag of a second scene object the entity's node refers to (by inference the
@@ -772,26 +942,61 @@ once).
 
   The 1,976 meshes whose last level repeats detail level 1 (§8.3) fit this use: a
   medium-detail shadow caster that the main pass draws only beyond *R*.
+
+  An object casts shadows only while its **opacity** is above 0.8 (row M40), so an object
+  fading in or out (§8.7) stops casting shadows before it disappears. Opacity here is the
+  product of the view's fade opacity (§8.7) and two factors of the object's render
+  component, one of which follows `Render_Opacity` (dictionary default 1; both start at 1);
+  when the entity's `Render_InheritOpacity` is true, it is also multiplied by the opacity of
+  the object it is attached to, if that object was processed in the same frame. The result is
+  then multiplied by a fourth factor (row M46): the alpha of a tint colour that the object's
+  scene node keeps and refreshes at most every 20 s (the refresh also derives the colour's
+  other three components from a lookup at the object's position, which this spec does not
+  use). The alpha starts at 1, and every path traced sets it to 1, so Tessera uses 1.
 - **Cross-fade (row M30).** A part close to a level threshold is drawn with both
   neighbouring levels when **all** of these hold: the entity's boolean property
-  `Render_LODCrossFade` is true (its dictionary default is true, §8.5 OPEN; 1,365 entity
-  descriptors set it, 1,350 to false); the view is the main one; the renderer's multi-pass
-  lighting is active (`MultiPassLighting` preference on capable hardware); the object's model
-  has **no skinned part** (§8.6); and an internal per-object flag is clear. Within a band of
-  0.2 × the factor gap between the two levels' thresholds (§8.4), each level gets a weight
-  that changes linearly across the band.
+  `Render_LODCrossFade` is true (its dictionary default is true, §8.5; 1,365 entity
+  descriptors set it, 1,350 to false; the component also starts with true, row M34, so an
+  entity that never names the property cross-fades); the view is the main one; the renderer's
+  multi-pass lighting is active (`MultiPassLighting` preference on capable hardware); the
+  object's model has **no skinned part** (§8.6); no forced level is set; the mesh has at least
+  two detail levels; and an internal per-object flag is clear (it is set while one of the
+  objects attached to this one, such as a held item, has a particular render state; not
+  traced further). The weight of the part, from the factor *f* of §8.4 and the begin factors
+  *t_k* of its detail level *k* and its neighbours:
+  1. If a finer level *k* − 1 exists: *g* = 0.2 × (*t_k*₋₁ − *t_k*). If the level chosen at
+     min(1, *f* + *g*) is not *k*, the second level is that finer level and its weight is
+     1 − (*t_k* − *f*) / *g*.
+  2. Otherwise, if a coarser level *k* + 1 exists: *g′* = 0.2 × (*t_k* − *t_k*₊₁). If the
+     level chosen at max(0, *f* − *g′*) is not *k*, the second level is that coarser level and
+     its weight is (*t_k*₊₁ − (*f* − *g′*)) / *g′*.
+  3. The weight is limited to 0 … 1; with weight 0 nothing extra is drawn.
+
+  **Composition (row M39).** When any part of the object has a weight above 0, the object's
+  opacity is lowered to 253/255 if it is 254/255 or more, which sends the object through the
+  translucent (alpha-blended) path, and the object is drawn in one of two composite
+  modes. In the mode traced, each part first draws its own level as usual and then draws the
+  second level again with alpha = the object's opacity × the part's weight, under a separate
+  blend state for "finer" and for "coarser" second levels. The other mode (row M53) is chosen
+  when the frame renders with video post effects: the object is then put into a different render bucket, and the drawing of the second
+  level is delayed by one draw call in each frame.
 - **Forced level (row M31).** The render component holds a level index that is "none" by
   default. When it is set, the main level of every part (and of a combined mesh) is that
-  index, limited to *n* − 1. The shadow level (first item above) is not affected.
+  index, limited to *n* − 1, and no cross-fade happens. The shadow level (first item above)
+  is not affected.
 
-> **OPEN:** what turns on the render-state switch of the shadow rule. **Tessera default:**
-> off; shadow casters use the level of §8.4.
+> **OPEN** (narrowed 2026-10-08): in the post-effects mode, which render bucket the object
+> moves to and how its second level is finally composited; the two blend states of the traced
+> mode. **Tessera default:** switch levels without a fade, or, if a fade is wanted, draw the
+> second level alpha-blended with alpha = opacity × weight as in the traced mode, with or
+> without post effects.
 
-> **OPEN:** how the two levels of a cross-fade are combined on screen (alpha, dither or
-> stipple). **Tessera default:** switch levels without a fade.
-
-> **OPEN:** where a forced level comes from (no property handler of the render component
-> was found to set it). **Tessera default:** never force a level.
+> **OPEN:** where a forced level comes from. Narrowed on 2026-10-07 (rows M44, M55): no
+> property handler sets it, no property of the dictionary and no registered render,
+> scene-render, world-render or video-post debugging variable names it, and no store into the
+> field after construction was found in the render component, model or scene code; a tool
+> path elsewhere in the executable remains possible. **Tessera default:** never force a
+> level.
 
 <a id="s8-9"></a>
 ### 8.9 Kind-2 levels: occluders (BIN)
@@ -870,6 +1075,13 @@ counts).
 > resolves elements beyond index 65,535 (wrap-around, an implicit high part, or not at all)
 > is unknown. `tessera-mesh` reports such levels as `CollisionIndexOverflow` and skips the
 > fA < fB check there; physics must not trust their edge and face indices.
+>
+> **Answered in part (2026-10-07, BIN, row M42):** the client's reader stores every
+> triangle-edge index and edge-face index as the 16-bit value read, with no high part taken
+> from anywhere else; in those 117 levels the client therefore holds the same truncated
+> values. Whether any client code uses the edge and face indices of a collision mesh (the
+> collision queries of `collision.md` use the tree code and the render triangles) was not
+> traced; that part stays OPEN.
 
 ---
 
@@ -888,7 +1100,7 @@ Present when `has_tree` = 1 (71,167 levels; 598 kind-1 levels and all proxy leve
 | 3 | `scale` | f32 | Present if `has_code` = 1 |
 | 4 | `code_length` *n* | u32 | Present if `has_code` = 1 |
 | 5 | `code` | *n* bytes | Opaque |
-| 6 | `build_byte` | u8 | Present if `has_code` = 1 **and** the record's directory `stamp` ≥ 38 (§10.4). Always 1. |
+| 6 | `build_byte` | u8 | Present if `has_code` = 1 **and** the record's directory `stamp` ≥ 35 (§10.4; no observed stamp lies between 34 and 37). Always 1. |
 
 <a id="s10-2"></a>
 ### 10.2 What the block is (Reported analogy, partly Confirmed)
@@ -927,7 +1139,21 @@ directory entry's `stamp` (`dat-container.md` §5.2), a per-record data-generati
 The split is perfect: no stamp value has both forms. A mesh decoder therefore takes the
 record's `stamp` as an input next to the payload bytes.
 
-**Normative rule:** `build_byte` is present if and only if `stamp` ≥ 38.
+**Normative rule:** `build_byte` is present if and only if `stamp` ≥ 35 (revised 2026-10-07;
+the former "≥ 38" gives the same result on every record of the install, because no mesh has
+a stamp from 34 to 37).
+
+**Why (BIN, row M41).** The client's tree reader asks the record's input stream for the
+version of its Havok-data tag and reads `build_byte` when that version is 1 or more. The
+client holds a fixed history of 39 data-version steps, each raising the version of one or
+more tags; the Havok-data tag is 0 before step 35, becomes 1 at step 35 and 2 at step 37. A
+record's tag versions are those of the first *s* steps, where *s* is its `stamp`
+(`dat-container.md` §5.2, the record's data version). That last link was not read in the
+stream code; it is inferred from three agreements: the history has exactly 39 steps and 39 is
+the largest stamp in the install; the archive's version-stamp record requires `stamp` 1 and
+step 1 sets the core tag to 1; 0xFFFF0001 carries its trailing list only at `stamp` 2
+(`dat-container.md` P57), the step that raises the core tag to 2. All 71,167 tree blocks
+agree with the resulting threshold.
 
 **Fallback when no stamp is available** (fuzzing, payloads from other sources). This rule
 agrees with the normative one on all 47,563 records:
@@ -941,8 +1167,9 @@ agrees with the normative one on all 47,563 records:
 (With the byte present, the next u32 would start with byte 0x01 followed by the 0x01 of
 `kind`, giving 0x101 or larger, which is never a valid `kind`.)
 
-> **OPEN:** Stamps 34–37 were not observed on meshes; the threshold between 33 and 38 is
-> assumed. A reader meeting such a stamp should use the fallback.
+> **Resolved (2026-10-07, BIN, row M41):** the threshold is 35 (stamps 34 and below: absent;
+> 35 and above: present). Stamps 34–37 still do not occur on meshes; the fallback stays for
+> payloads without a stamp.
 
 ---
 
@@ -1129,6 +1356,8 @@ multi-part objects (§8.10, `setup.md` §8.5).
 | "A reset [of the smoothed distance] happens when the camera has moved more than 25 m since the previous frame (or the view was reset), and the smoothing is skipped for models that switch it off" | this spec §8.6 (first 2026-10-05 version) | The 25 m jump resets only the fade of §8.7. *d_s* starts at *d* when the object's per-view state is created; models with a skinned part are never smoothed (§8.6, row M24). |
 | Cross-fade requires that "the parts are not drawn as a combined mesh" | this spec §8.8 (first 2026-10-05 version) | It requires that the model has **no skinned part** (§8.6); combined meshes exist only for models with a skinned part, so the old wording was too weak (§8.8, row M30). |
 | `d0` and `d2` are tested against "its distance (§8.6)" | this spec §8.7 (first 2026-10-05 version) | Against the **unsmoothed** distance *d* (§8.7). |
+| The scalar might be "a wind-sway weight or height above ground" | this spec §5.3 (before 2026-10-08) | It is the *z* of a camera-facing card's centre (§5.3, row M47). |
+| UV sets 1 and 2 "are read by records with baked-lighting roles (`BakedShadow`, `BakedLight`, `DirLightMaskAndAmbOcc`)" | this spec §5.5 (before 2026-10-08) | Only `DirLightMaskAndAmbOcc` reads a mesh UV set (set 1); `BakedLight` and `BakedShadow` are terrain-only and read coordinate inputs 3 and 4 (§5.5, `lighting.md` §4.3). |
 
 ---
 
@@ -1137,11 +1366,17 @@ multi-part objects (§8.10, `setup.md` §8.5).
 
 > **Resolved (2026-10-05, BIN):** `flags` is the part's `MeshTypeID` slot; 2 is `All` (§3.3).
 
-> **OPEN:** Meaning of the per-vertex scalar (§5.3).
+> **Resolved (2026-10-07/08, OBS2, rows M47, M48):** the per-vertex scalar is the height of a
+> camera-facing card's centre; UV sets 1 and 2 carry the corner offset and the centre's *x*,
+> *y* (§5.3).
 
-> **Resolved in part (2026-10-05, `lighting.md`):** vertex colour is read by 116 shader
-> records only (§5.4); UV sets 1 and 2 serve baked lighting and effects (§5.5). **OPEN:** which
-> set each baked-lighting slot reads, sets 3 … 6.
+> **Resolved (2026-10-05 and 2026-10-08, `lighting.md` L27, row M49):** vertex colour is read
+> by 116 shader records only (§5.4); which UV set each texture reads, including the baked
+> light mask (set 1) and the terrain-only baked textures; UV sets 3 … 6 are read by no program
+> (§5.5).
+
+> **Resolved (2026-10-08, row M50):** vertex colour bytes are used as stored, with no sRGB
+> conversion (§5.4).
 
 > **Resolved (2026-10-05):** the influence list is redundant: per vertex in reverse order, its
 > slot-0 bone index once per non-zero weight (§6.2).
@@ -1152,45 +1387,53 @@ multi-part objects (§8.10, `setup.md` §8.5).
 
 > **Resolved (2026-10-05, second BIN session):** the source of *G* (§8.7, with `walker.md`
 > §11.3); which models use the combined mesh of `d3` and which are not smoothed (models with
-> a skinned part, §8.6–§8.7); the shadow rule's two conditions (§8.8); `d5`/`d6` are a
-> hysteresis pair (§8.7).
+> a skinned part, §8.6–§8.7); the shadow rule's two conditions (§8.8); `d5` and a later
+> field are a hysteresis pair (§8.7; the second field is `d7`, corrected 2026-10-07).
+
+> **Resolved (2026-10-07, third BIN session):** the class of an entity without
+> `Render_LODClass` (component initial values, as `walker.md` §11.4; §8.5); what resets the
+> smoothed distance (a new scene node only; §8.6); the imposter variant on the model side
+> (§8.7); the combined-mesh gate including `MeshCombining` (§8.7); the `d5`/`d7` state
+> (per-model attachments) and the initial `d6` −1 and `d7` 1,100 (§8.7; both corrected
+> 2026-10-07, row M35); the traced cross-fade
+> composite mode and the shadow opacity limit (§8.8); the `build_byte` threshold (§10.4).
+
+> **Resolved (2026-10-07, fifth BIN session):** the switch *S* of the *G* rule (§8.7, row
+> M52); the render-state switch of the last-level shadow caster: on exactly when the render
+> call draws stencil shadows (§8.8, row M51); when the second cross-fade composite mode is
+> chosen (§8.8, row M53); the conditions of the combined-mesh pre-check (§8.7, row M54).
+
+> **Resolved (2026-10-07, BIN, row M41):** the `build_byte` threshold is `stamp` ≥ 35 (§10.4).
 
 > **OPEN** (each with a Tessera default in its section):
-> - the class of an entity without `Render_LODClass` (§8.5; default class 2; conflicts with
->   `walker.md` §11.4, §19);
-> - what else resets the smoothed distance (§8.6; default: only a new per-view state);
-> - the switch *S* and the fog value of the *G* rule (§8.7, owned by `walker.md` §11.3;
->   default: clip to fog far whenever fog is on);
-> - how the combined mesh is built and whether `MeshCombining` gates it (§8.7; default: never
->   combine);
-> - what the `d5`/`d6` state controls; `d4`, `d7` (§8.7; default: ignore);
-> - the imposter variant of the `d0` test (§8.7; default: none);
-> - what turns on the render-state switch of the last-level shadow caster (§8.8; default:
->   off);
-> - how cross-fades are composited (§8.8; default: no fade) and where a forced level comes
->   from (§8.8; default: none);
-> - the use of kind 4 (§8.3).
-
-> **OPEN:** The `build_byte` threshold for stamps 34–37 (§10.4). (BIN, partly inferred: the
-> client's tree reader does not look at the bytes; it asks its input stream for a version
-> number of the Havok data and hands a "version below 1" switch to the code reader, which
-> fits a byte that newer data carry. How that number relates to the directory `stamp` was not
-> traced.)
+> - which keyframe or record field the value *V* of the *G* rule's 0.99 test is (§8.7, owned
+>   by `walker.md` §11.3; default: *V* never above 0.99);
+> - how the combined mesh is built, which device capabilities its two flags stand for, and
+>   the per-draw field of its pre-check (§8.7; default: never combine);
+> - what the DB type 0x48 attachments are; any use of `d4`, `d6` outside the code searched
+>   (§8.7; default: ignore);
+> - what is drawn in place of an imposter entity's faded model (§8.7);
+> - the render bucket and final composite of the post-effects cross-fade mode, and the two
+>   blend states (§8.8; default: no fade, or the traced mode);
+> - where a forced level comes from (§8.8; default: none; negative searches only);
+> - the use of kind 4 (§8.3; default: decode, never draw; negative searches only).
 
 > **Answered in part (2026-10-05, BIN):** the client's sizes for COLOUR2 (4 bytes), a lone
 > tangent (bit 28, 12 bytes) and a lone binormal (bit 29, 12 bytes) are in §4.5. None occur;
 > decoders may keep rejecting them (§4.2).
 
-> **OPEN:** Collision meshes with more than 65,536 triangles or edges: how u16 indices
-> address elements beyond 65,535 (§9.2).
+> **OPEN** (answered in part 2026-10-07, row M42): collision meshes with more than 65,536
+> triangles or edges. The client keeps the 16-bit values as read, with no high part; whether
+> any client code uses the edge and face indices of a collision mesh is open (§9.2).
 
-> **OPEN:** Influence counts *K* > 4 and formats with NORMAL clear were never observed. The
-> stride rule defines their layout, so `tessera-mesh` accepts them (up to *K* = 255, 15 UV
-> sets): a GPU path keeps the four largest weights renormalised to their sum, and missing
-> normals are generated from faces. Whether the original accepts them is unknown.
-
-> **OPEN:** Whether vertex colour bytes are sRGB-encoded or linear (§5.4; `material.md`).
-> `tessera-mesh` hands out the raw bytes in R, G, B, A order.
+> **OPEN** (narrowed 2026-10-08): influence counts *K* > 4 and formats with NORMAL clear never
+> occur. The client's layout routine reads both (§4.5: no upper limit on *K*; the normal is
+> present only with bit 4), so the original's reader accepts them. Not traced: which four
+> influences, with which byte weights, its packed GPU skin form (§4.5, bit 15: four indices
+> and four one-byte weights whatever *K* is) keeps when *K* > 4, and how it lights a vertex
+> without a normal. `tessera-mesh` accepts both (up to *K* = 255, 15 UV sets): a GPU path
+> keeps the four largest weights renormalised to their sum, and missing normals are generated
+> from faces.
 
 ---
 
@@ -1237,6 +1480,7 @@ Decisions the spec left to the implementation:
   disagree); quality violations, including the MI10 overflow above, still decode.
 - When a format has tangents but no normals, the bitangent sign is taken against the
   generated face normals.
+- Vertex colours are handed out as the raw bytes, reordered to R, G, B, A (§5.4).
 - M4 (2026-10-05): `MeshSummary` reads regions A–C without decoding vertices (slot and stub
   detection for assembly, `appearance.md` §4.4; a stub is a mesh with at most three vertices
   in all). `Mesh::skinned_level` flattens a level with four influences per vertex and the
@@ -1262,8 +1506,12 @@ Recorded here instead of editing specs owned by other writers.
 | `environment.md` §9.1 | Meaning of the LOD-class fields `d0` … `d7` and how the client applies them OPEN ("BIN not traced") | Traced for `d0` … `d3` (BIN): `d0` draw distance × `ObjectDrawDistance` multiplier, `d1` detail range × `ModelDetail` multiplier, `d2` shadow distance, `d3` mesh-combining distance; class from `Render_LODClass`; record found through `UNIQUEDB` key 0x3F; defaults 200, 60, 16, 80; × 3 for the player's own character (§8.5–§8.7). `d4` … `d7` stay OPEN. |
 | `scenery.md` §9 | The per-class distance table that controls drawing is OPEN | It is the LOD-class record; the rules are §8.5–§8.7 here. |
 | `walker.md` §11.4 item 1 | "The object is drawn while its smoothed distance (`mesh.md` §8.6 …) is at most *D*" | The draw test uses the **unsmoothed** distance *d*; the smoothed copy feeds only the detail factor (§8.6, §8.7). Models with a skinned part (characters, creatures) are never smoothed. |
-| `walker.md` §11.4 item 4 and §11.4.1 row "(no class)" | Entities without `Render_LODClass` use 200 m and 60 m | Unsettled (§8.5 OPEN): 200/60 are the render component's own values, used only if the dictionary default (class 2: `d0` 50, `d1` 10) is not delivered. This spec's Tessera decision is class 2; the two specs need one decision. |
-| `environment.md` §9.1 (addition to the row above) | `d4` … `d7` OPEN | `d5` and `d6` are a hysteresis pair for models with a skinned part (§8.7); `d4`, `d7` stay OPEN. Component values when no entry applies: 1000, 1000, 1100, −1 for `d4` … `d7`. |
+| `walker.md` §11.4 item 4 and §11.4.1 row "(no class)" | Entities without `Render_LODClass` use 200 m and 60 m | **Agreed (2026-10-07, row M33):** `walker.md` is right; this spec's former decision (class 2) is withdrawn (§8.5). |
+| `walker.md` §11.4 step 4 and W20 | "the last two fields are 1,100 and −1, and which of them corresponds to the record's `d6` and which to `d7` was not traced" | In record order (`d0` … `d7` = the entry's floats in stream order, as in `environment.md` §9.1): `d6` = −1 and `d7` = 1,100 (row M35, §8.7; corrected 2026-10-07, the revision of the same day had them the wrong way round). |
+| `environment.md` §9.1 (addition to the row above) | `d4` … `d7` OPEN | `d5` and `d7` are a hysteresis pair for models with a skinned part that switches the model's per-model attachments: on below `d5` × *M_c*, off above `d7` × *M_c* (§8.7); no reader of `d4` or `d6` was found. Component values when no entry applies: 1000, 1000, −1, 1100 for `d4` … `d7` (the table's common values). Corrected 2026-10-07: the revision of the same day named `d6` and `d7` the wrong way round. |
+| `collision.md` §3 (field table, §3 note), §5 (row 6), invariant list | `build_byte` present iff `stamp` ≥ 38; "an unobserved stamp 34–37" | The client's threshold is `stamp` ≥ 35 (§10.4, row M41). Same result on every record of the install. |
+| `walker.md` §11.3 (OPEN on *S*) and its Tessera Decision | The meaning of the switch *S* is OPEN; Decision: apply step 3 as if *S* were off | *S* is on exactly when the view is not a full-detail view, the world renderer's sky debugging switch is on (default) and the camera's sky-visible flag (`landblock.md` §4.12) is set or the call is a secondary call; the client also clears the sky-visible flag in fully fogged frames (§8.7, row M52, BIN fifth session). Only *V* stays OPEN. This spec's default is now *V* never above 0.99, which clips *G* to fog far only where *S* is off (indoors without a visible sky). |
+| `lighting.md` §4.3 and §15 (OPEN on 0x2B0007A9 and on mesh UV sets 3 … 6) | What 0x2B0007A9 does with UV sets 1 and 2; the meaning of mesh UV sets 3 … 6 | 0x2B0007A9 draws camera-facing cards: UV set 2 is the card centre's *x*, *y* (the scalar its *z*), UV set 1 the corner offset along the view's right and down directions (§5.3, rows M47, M48). Mesh UV sets 3 … 6 occur only in 2 submeshes whose shader records read set 0 only; they have no use in drawing (§5.5, row M49). Whether 0x2B0007A9's projector and shadow lookups use sets 1 and 2 beyond building the position was not re-checked here. |
 
 ---
 
@@ -1276,3 +1524,6 @@ Recorded here instead of editing specs owned by other writers.
 | 2026-10-05 | §6.2, §14 MI6, §18 | Influence list found redundant and its rule stated. | Spec writer (dirty room) |
 | 2026-10-05 | header, §1 (legend, BIN, CNS, ENV/COL/SA/LGT; M8 updated; M15–M23), §3.3, §4.1, new §4.5, §5.3–§5.5, §6.1, §8.1, §8.3 rewritten, new §8.4–§8.10, §10.2, §13, §14 (MI6 restated, MI13, MI14), §15, §16, §17, §18 (note), new §19, §20 | M4 (decision 0011): `flags` is the part's `MeshTypeID` slot (OPEN closed); the client's vertex-layout routine; the detail-level choice by distance with LOD-class ranges, `ModelDetail` multipliers and bounding-box distance; shadow, cross-fade and forced levels; kind-2 levels are occluders; one-triangle meshes are left out of multi-part objects (owner item O4); the 2,037-record census refined; collision-tree corrections of `collision.md` folded in; vertex-colour and UV-set use from `lighting.md`. | Spec writer (dirty room) |
 | 2026-10-05 | header, §1 (BIN questions 4–7, WLK, PDEF; M20; new M24–M32), §5.4, §5.5, §8.4 step 1, §8.5 (defaults, OPEN), §8.6–§8.8 rewritten, §11.2, §16, §17, §19 | Review changes: provenance rows for §8.6–§8.8 and for the `lighting.md` facts of §5.4–§5.5; every unknown of §8.6–§8.8 as an OPEN callout with a Tessera default; §8.4 step 1 reworded (distance-based levels enabled by default); bone names in §11.2 described, not quoted. Second M4 session (decision 0011): *G* traced (agrees with `walker.md` §11.3); "skinned part" defined and found to gate distance smoothing, the combined mesh and the cross-fade; `Render_UseMeshCombining` gates the combined mesh; `d5`/`d6` hysteresis; shadow-rule switch is off in the render state's defaults; draw and shadow tests use the unsmoothed distance; corrected the smoothing reset and the cross-fade condition (§16). | Spec writer (dirty room) |
+| 2026-10-07 | header, §1 (BIN third session, questions 8–18; M11; new M33–M44), §5.3, §8.3, §8.4 step 1 (wording, review note), §8.5 (step 3, OPEN resolved), §8.6 (distances, distance pass, OPEN resolved), §8.7 (`d2`–`d7` rows, component values, imposter variant, OPENs narrowed), §8.8 (shadow opacity, cross-fade conditions, weights and composition, forced level), §9.2, §10.1 row 6, §10.4 (rule ≥ 35, OPEN resolved), §17, §19, §20 | M4 (decision 0011), third session: an entity without `Render_LODClass` keeps the component's initial values (converges with `walker.md` W20; former class-2 decision withdrawn); component initial values of the other render properties; smoothing restarts only with a new scene node; the distance pass reruns after 1.5 m, 1 s or a missed frame; `d6` 1,100 and `d7` −1; the `d5`/`d6` state switches per-model attachments; the imposter variant (15 m centre-distance band, shifted draw limit); the combined mesh needs the `MeshCombining` preference; cross-fade weights and the traced composite mode; shadows only above opacity 0.8, strictly inside the shadow distance; `build_byte` threshold `stamp` ≥ 35 from the client's data-version history; collision indices stay 16-bit in the client; the scalar is uploaded to the GPU; negative searches for the forced level and kind 4. Status Accepted → Revised. | Spec writer (dirty room) |
+| 2026-10-07 | header, §1 (BIN fourth session, questions 19–21; M28, M33, M35 corrected; new M45, M46), §8.5 steps 3–4, §8.7 (`d5`–`d7` rows, component values, OPEN), §8.8 (opacity), §17, §19, §20 | Review changes of 2026-10-07. **Blocking:** `d6` and `d7` were named the wrong way round. In record order (`d0` … `d7` = the entry's floats in stream order) the component starts with `d6` −1 and `d7` 1,100; the attachment hysteresis switches off above `d7` × *M_c* (not `d6`); the field with no reader is `d6` (not `d7`). Re-read on the same build (table reader, LOD-class setter, per-frame model update) and checked on all 32 entries of 0x32000000 (class 0x10000014: `d5` 12, `d6` −1, `d7` 20). **Implementers who built on the earlier naming must re-check** (initial values, hysteresis, ignored field). Non-blocking: the player's ×3 is applied even when the class has no entry, and compounds on each further application (§8.5 step 4, row M45; every class value held by a descriptor in this install has an entry); the opacity of §8.8 has a fourth factor, the alpha of a per-object tint, 1 in every path traced (row M46). Status stays Revised, awaiting re-review. | Spec writer (dirty room) |
+| 2026-10-08 | header, §1 (BIN fifth and sixth sessions, questions 22–27; OBS2; M39 updated; new M47–M57), §5.3 rewritten, §5.4, §5.5, §8.3, §8.7 (*G* step 3 and the switch *S*, `d3` row, combined-mesh pre-check, OPENs), §8.8 (shadow switch, second composite mode, OPENs), §17 rewritten, §18 (colour note kept from §17), §19 (rows for `walker.md` §11.3 and `lighting.md` §4.3), §20 | Fifth revision (started 2026-10-07, completed 2026-10-08). Closed from data (OBS2, re-run 2026-10-08): the per-vertex scalar is the *z* of a camera-facing card's centre, UV set 2 its *x*, *y*, UV set 1 the corner offset along the view's right and down directions (§5.3); which UV set each texture reads, and UV sets 3 … 6 unused (§5.5). Closed from `lighting.md` (BIN there): vertex colours are used as stored, no sRGB conversion (§5.4). Closed from the fifth BIN session: the switch *S* of the *G* rule (§8.7) and the shadow-rule switch (on exactly when a render call draws stencil shadows, §8.8). Narrowed: the combined mesh (pre-check conditions, §8.7), the second cross-fade composite mode (chosen with video post effects, §8.8), the forced level (no debugging variable or property, §8.8), kind 4 (whole-executable negative search, sixth BIN session, §8.3), the 0x48 attachments (no type name), the imposter OPEN (related properties), *K* > 4 and NORMAL clear (the client's reader accepts them). **Tessera default changed** for *G*: *V* is taken as never above 0.99, so *G* is clipped to fog far only where *S* is off. Status stays Revised, awaiting review. | Spec writer (dirty room) |

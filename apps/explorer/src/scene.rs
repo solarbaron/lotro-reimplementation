@@ -50,6 +50,9 @@ use tessera_mesh::{DecodeOptions, GeometryLimits, LevelKind, Mesh, MeshError};
 use tessera_props::Value;
 use tessera_render::{MeshConfig, MeshData, PreparedMesh};
 
+use crate::collision_overlay::{
+    CollisionOverlay, cell_overlays, landblock_overlays, template_overlays,
+};
 use crate::data::DataContext;
 use crate::decoders::{label_text, load_property_set};
 use crate::error::ExplorerError;
@@ -134,6 +137,13 @@ pub enum SceneSource {
     /// An assembled character (the character view, [`crate::character`]); never the
     /// type of a selected DID.
     Figure,
+    /// A 0x66 stand-alone collision mesh (drawn as a collision overlay).
+    CollisionMesh,
+    /// A 0x01 cell geometry: its embedded render mesh with collision overlays.
+    Cell,
+    /// A landblock-family record: the terrain with the landblock's collision set, portals
+    /// and water as overlays.
+    Landblock,
 }
 
 impl SceneSource {
@@ -149,6 +159,9 @@ impl SceneSource {
             0x70..=0x7F => Self::Object,
             0x31 => Self::Surface,
             0x30 => Self::Material,
+            0x66 => Self::CollisionMesh,
+            0x01 => Self::Cell,
+            0x80 if crate::world::landblock_of(did).is_some() => Self::Landblock,
             _ => return None,
         })
     }
@@ -166,6 +179,9 @@ impl SceneSource {
             Self::Surface => "surface record",
             Self::Material => "material",
             Self::Figure => "character",
+            Self::CollisionMesh => "collision mesh",
+            Self::Cell => "cell geometry",
+            Self::Landblock => "landblock",
         }
     }
 }
@@ -498,13 +514,19 @@ pub struct SceneProduct {
     pub dyes: Vec<DyeBlock>,
     /// Time the worker spent, in milliseconds.
     pub build_ms: u64,
+    /// Collision overlays (M4.5, [`crate::collision_overlay`]).
+    pub collision: Vec<CollisionOverlay>,
 }
 
 impl SceneProduct {
-    /// Whether any part can be drawn.
+    /// Whether any part or collision overlay can be drawn.
     #[must_use]
     pub fn drawable(&self) -> bool {
         self.parts.iter().any(|p| p.prepared.is_some())
+            || self
+                .collision
+                .iter()
+                .any(|o| o.prepared.is_some() || !o.lines.is_empty())
     }
 
     /// Approximate heap bytes (for the asset cache budget).
@@ -531,7 +553,12 @@ impl SceneProduct {
             .iter()
             .map(|m| 512 + m.view.params.len() * 96 + m.view.slots.len() * 160)
             .sum();
-        parts + tex + thumbs + mats + 1024
+        let overlays: usize = self
+            .collision
+            .iter()
+            .map(CollisionOverlay::heap_bytes)
+            .sum();
+        parts + tex + thumbs + mats + overlays + 1024
     }
 }
 
@@ -662,16 +689,21 @@ impl Chain {
 }
 
 /// Follows `start` (0x47, 0x1F or 0x04) to its setup; returns the chain links and the
-/// part specs.
+/// part specs. With `collision`, the setup's collision overlays are built into it;
+/// without, they are not built at all (appearance extras, whose collision is not shown).
 fn setup_parts(
     ctx: &DataContext,
     start: Did,
     chain: &mut Chain,
+    collision: Option<&mut Vec<CollisionOverlay>>,
 ) -> Result<Vec<PartSpec>, ExplorerError> {
     let resolved =
         tessera_formats::resolve_setup(start, |d| fetch(ctx, d)).map_err(resolve_error)?;
     for d in &resolved.path {
         chain.push(d.kind().name(), d.0);
+    }
+    if let Some(collision) = collision {
+        collision.extend(setup_collision(ctx, &resolved.setup));
     }
     Ok(resolved
         .parts()
@@ -683,6 +715,142 @@ fn setup_parts(
             groups: None,
         })
         .collect())
+}
+
+/// The collision overlays of a setup (`collision.md` §4.3, §8): its 0x66 mesh, read with
+/// its directory stamp, and its boxes, spheres and capsules. Problems become an empty
+/// overlay whose caption says what went wrong.
+fn setup_collision(ctx: &DataContext, setup: &tessera_formats::Setup) -> Vec<CollisionOverlay> {
+    use crate::collision_overlay::{OverlayKind, line_overlay};
+    let problem = |what: String| line_overlay(OverlayKind::Mesh, what, std::iter::empty());
+    let mut out = Vec::new();
+    let mesh = if setup.collision_mesh.is_null() {
+        None
+    } else {
+        let d = setup.collision_mesh;
+        match ctx
+            .set
+            .read_with_entry(d.0)
+            .map_err(ExplorerError::from)
+            .and_then(|(l, bytes)| {
+                tessera_formats::CollisionMesh::parse(&bytes, Some(l.entry.stamp))
+                    .map_err(ExplorerError::from)
+            }) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                out.push(problem(format!("collision mesh {d}: {e}")));
+                None
+            }
+        }
+    };
+    match tessera_physics::geometry::ShapeTemplate::from_setup(setup, mesh.as_ref()) {
+        Ok(t) => out.extend(template_overlays(
+            &t,
+            &format!("collision mesh {}", setup.collision_mesh),
+        )),
+        Err(e) => out.push(problem(format!("collision shape refused: {e}"))),
+    }
+    out
+}
+
+/// The landblock's terrain as a drawn part (the render triangulation, which is also the
+/// terrain collision mesh, `collision.md` §6.1), smooth-shaded, without a material.
+fn terrain_part(bundle: &tessera_world::LandblockBundle) -> ScenePart {
+    let grid = tessera_physics::geometry::GridMesh::terrain(&bundle.data);
+    let mut positions = Vec::with_capacity(33 * 33);
+    for j in 0..33 {
+        for i in 0..33 {
+            positions.push(
+                grid.vertex(i, j)
+                    .unwrap_or([5.0 * i as f32, 5.0 * j as f32, 0.0]),
+            );
+        }
+    }
+    let mut normals = vec![[0.0f32; 3]; positions.len()];
+    let mut indices = Vec::with_capacity(tessera_physics::geometry::GRID_TRIANGLES * 3);
+    for key in 0..tessera_physics::geometry::GRID_TRIANGLES {
+        let Some(t) = u16::try_from(key)
+            .ok()
+            .and_then(|k| grid.triangle_vertices(k))
+        else {
+            continue;
+        };
+        let [a, b, c] = t.map(usize::from);
+        let (Some(pa), Some(pb), Some(pc)) = (positions.get(a), positions.get(b), positions.get(c))
+        else {
+            continue;
+        };
+        let e1 = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+        let e2 = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+        let n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        for v in [a, b, c] {
+            for k in 0..3 {
+                normals[v][k] += n[k];
+            }
+        }
+        indices.extend([a as u32, b as u32, c as u32]);
+    }
+    let mut part = ScenePart {
+        mesh: bundle.key.data_did().0,
+        caption: "terrain".into(),
+        level: 0,
+        levels: Vec::new(),
+        flags: 0,
+        transform: IDENTITY,
+        prepared: None,
+        error: None,
+        submeshes: Vec::new(),
+        issues: Vec::new(),
+        vertices: positions.len(),
+        triangles: indices.len() / 3,
+        sphere: None,
+        skinned: false,
+        attach: None,
+    };
+    let (lo, hi) = positions.iter().fold(
+        ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]),
+        |(mut lo, mut hi), p| {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+            (lo, hi)
+        },
+    );
+    let data = MeshData {
+        label: Some("terrain".into()),
+        positions,
+        normals: Some(normals),
+        tangents: None,
+        uvs: None,
+        colors: None,
+        indices: tessera_render::Indices::U32(indices),
+        submeshes: Vec::new(),
+    };
+    match data.prepare(&MeshConfig::default()) {
+        Ok(p) => {
+            let sphere = p.info().sphere;
+            part.sphere = Some((sphere.center.to_array(), sphere.radius));
+            part.prepared = Some(Arc::new(p));
+            part.submeshes.push(SceneSubmesh {
+                draw: 0,
+                submesh: 0,
+                surface: None,
+                format: 0,
+                vertices: part.vertices as u32,
+                triangles: part.triangles as u32,
+                skinned: false,
+                aabb: (lo[0] <= hi[0]).then_some((lo, hi)),
+                material: None,
+            });
+        }
+        Err(e) => part.error = Some(e.to_string()),
+    }
+    part
 }
 
 /// One geometry link of an object's property set.
@@ -856,7 +1024,8 @@ fn appearance_parts(
             not_resolved += 1;
             continue;
         }
-        match setup_parts(ctx, extra.did, chain) {
+        // Appearance extras are worn geometry: their collision is not shown.
+        match setup_parts(ctx, extra.did, chain, None) {
             Ok(more) => parts.extend(more.into_iter().map(|p| PartSpec {
                 caption: format!("extra {} {}", extra.did, p.caption),
                 groups: Some(Arc::clone(&groups)),
@@ -1975,6 +2144,20 @@ pub(crate) fn build_part(
     skin_bones: Option<usize>,
     deform: Option<&tessera_anim::BindDeformation>,
 ) -> ScenePart {
+    build_part_from(ctx, did, None, req, budget, skin_bones, deform)
+}
+
+/// [`build_part`] of a mesh record already read: `record` holds its bytes and directory
+/// stamp (the embedded render mesh of a cell, `collision.md` §5.7); `None` reads `did`.
+pub(crate) fn build_part_from(
+    ctx: &DataContext,
+    did: Did,
+    record: Option<(Vec<u8>, u16)>,
+    req: SceneRequest,
+    budget: &mut GeometryBudget,
+    skin_bones: Option<usize>,
+    deform: Option<&tessera_anim::BindDeformation>,
+) -> ScenePart {
     let mut part = ScenePart {
         mesh: did.0,
         caption: String::new(),
@@ -1997,19 +2180,18 @@ pub(crate) fn build_part(
         part.error = Some("left out: the scene's geometry budget is used up".into());
         return part;
     }
-    let mesh = match ctx
-        .set
-        .read_with_entry(did.0)
-        .map_err(ExplorerError::from)
-        .and_then(|(located, bytes)| {
-            Mesh::decode_expecting(
-                &bytes,
-                did,
-                Some(located.entry.stamp),
-                &DecodeOptions::render_only(),
-            )
+    let read = match record {
+        Some(r) => Ok(r),
+        None => ctx
+            .set
+            .read_with_entry(did.0)
+            .map(|(located, bytes)| (bytes, located.entry.stamp))
+            .map_err(ExplorerError::from),
+    };
+    let mesh = match read.and_then(|(bytes, stamp)| {
+        Mesh::decode_expecting(&bytes, did, Some(stamp), &DecodeOptions::render_only())
             .map_err(ExplorerError::from)
-        }) {
+    }) {
         Ok(m) => m,
         Err(e) => {
             part.error = Some(e.to_string());
@@ -2285,6 +2467,8 @@ pub fn build_scene_limited(
     let mut choice = 0usize;
     let mut mats = Collector::new(ctx);
     let mut extra_parts: Vec<ScenePart> = Vec::new();
+    let mut collision: Vec<CollisionOverlay> = Vec::new();
+    let mut cell_record: Option<(Vec<u8>, u16)> = None;
     let specs: Vec<PartSpec> = match source {
         SceneSource::Mesh => vec![PartSpec {
             mesh: Did(did),
@@ -2292,7 +2476,7 @@ pub fn build_scene_limited(
             groups: None,
         }],
         SceneSource::Setup | SceneSource::Template | SceneSource::Entity => {
-            setup_parts(ctx, Did(did), &mut gathered.chain)?
+            setup_parts(ctx, Did(did), &mut gathered.chain, Some(&mut collision))?
         }
         SceneSource::Appearance => {
             let bytes = fetch(ctx, Did(did))?.ok_or(ExplorerError::NotFound(did))?;
@@ -2340,7 +2524,7 @@ pub fn build_scene_limited(
             gathered.chain.push("property set", set_did);
             match &links[choice] {
                 ObjectLink::Entity { did: start, .. } => {
-                    setup_parts(ctx, *start, &mut gathered.chain)?
+                    setup_parts(ctx, *start, &mut gathered.chain, Some(&mut collision))?
                 }
                 ObjectLink::Worn {
                     appearance, key, ..
@@ -2367,6 +2551,55 @@ pub fn build_scene_limited(
             return Err(ExplorerError::NotApplicable(
                 "characters are built by the character view".into(),
             ));
+        }
+        SceneSource::CollisionMesh => {
+            let (located, bytes) = ctx.set.read_with_entry(did)?;
+            let mesh = tessera_formats::CollisionMesh::parse(&bytes, Some(located.entry.stamp))?;
+            let t = tessera_physics::geometry::ShapeTemplate::from_collision_mesh(&mesh)?;
+            collision.extend(template_overlays(
+                &t,
+                &format!("collision mesh {}", Did(did)),
+            ));
+            gathered.notes.push(
+                "a stand-alone collision mesh in its setup's frame (collision.md §4), drawn \
+                 as a collision overlay; collision tests treat its triangles as two-sided"
+                    .into(),
+            );
+            Vec::new()
+        }
+        SceneSource::Cell => {
+            let (located, bytes) = ctx.set.read_with_entry(did)?;
+            let registry = ctx.game.registry()?;
+            let cell = tessera_formats::CellGeometry::parse_expecting(
+                &bytes,
+                Did(did),
+                Some(located.entry.stamp),
+                &**registry,
+            )?;
+            collision.extend(cell_overlays(&cell));
+            gathered.notes.push(
+                "a cell in its own frame: the embedded render mesh with the physics mesh, \
+                 portals, wall polygons and hull vertices as overlays (collision.md §5)"
+                    .into(),
+            );
+            cell_record = Some((cell.render_mesh_record(), located.entry.stamp));
+            Vec::new()
+        }
+        SceneSource::Landblock => {
+            let key = crate::world::landblock_of(did).ok_or_else(|| {
+                ExplorerError::NotApplicable(format!("{did:#010x} is not a landblock record"))
+            })?;
+            let bundle = ctx.world.bundle(key, &|| job.is_cancelled())?;
+            gathered.chain.push("landblock data", key.data_did().0);
+            collision.extend(landblock_overlays(&bundle));
+            extra_parts.push(terrain_part(&bundle));
+            gathered.notes.push(
+                "the landblock frame (x, y from the south-west corner, z absolute): terrain, \
+                 and the collision set the walker uses as overlays (collision.md §12.1); \
+                 placed objects are drawn only as their collision"
+                    .into(),
+            );
+            Vec::new()
         }
         SceneSource::Material => {
             let rec = ctx
@@ -2460,6 +2693,15 @@ pub fn build_scene_limited(
             limits.max_stream_bytes >> 20
         ));
     }
+    if let Some(record) = cell_record {
+        let spec = PartSpec {
+            mesh: Did(did),
+            caption: "render mesh".into(),
+            groups: None,
+        };
+        let part = build_part_from(ctx, Did(did), Some(record), req, &mut budget, None, None);
+        parts.push(place_part(part, &spec, &mut mats));
+    }
     parts.extend(extra_parts);
     finish_product(
         ProductParts {
@@ -2473,6 +2715,7 @@ pub fn build_scene_limited(
             notes,
             dyes,
             started,
+            collision,
         },
         mats,
         job,
@@ -2491,6 +2734,7 @@ pub(crate) struct ProductParts {
     pub(crate) notes: Vec<String>,
     pub(crate) dyes: Vec<DyeBlock>,
     pub(crate) started: Instant,
+    pub(crate) collision: Vec<CollisionOverlay>,
 }
 
 /// Finishes a scene: decodes the materials' textures and thumbnails, computes bounds,
@@ -2515,6 +2759,7 @@ pub(crate) fn finish_product(
         mut notes,
         dyes,
         started,
+        collision,
     } = p;
     let Finished {
         materials,
@@ -2544,6 +2789,10 @@ pub(crate) fn finish_product(
             }
         }
     }
+    // Collision overlays count too (a 0x66 record has nothing else), except those that
+    // would not frame the scene ([`OverlayKind::frames`]: liquid boxes and ceilings), unless
+    // nothing else has bounds.
+    aabb = frame_overlays(aabb, &collision);
     let sphere = aabb.map_or(([0.0; 3], 1.0), |(lo, hi)| {
         let c = [0, 1, 2].map(|i| (lo[i] + hi[i]) * 0.5);
         let r = (0..3)
@@ -2609,7 +2858,35 @@ pub(crate) fn finish_product(
         triangles,
         dyes,
         build_ms: started.elapsed().as_millis() as u64,
+        collision,
     })
+}
+
+/// `aabb` grown by the bounds of the overlays that frame a scene
+/// ([`crate::collision_overlay::OverlayKind::frames`]); when that leaves no bounds, by
+/// every overlay's.
+fn frame_overlays(
+    mut aabb: Option<([f32; 3], [f32; 3])>,
+    collision: &[CollisionOverlay],
+) -> Option<([f32; 3], [f32; 3])> {
+    let grow = |aabb: &mut Option<([f32; 3], [f32; 3])>, o: &CollisionOverlay| {
+        if let Some((lo, hi)) = o.aabb {
+            let b = aabb.get_or_insert((lo, hi));
+            for i in 0..3 {
+                b.0[i] = b.0[i].min(lo[i]);
+                b.1[i] = b.1[i].max(hi[i]);
+            }
+        }
+    };
+    for o in collision.iter().filter(|o| o.kind.frames()) {
+        grow(&mut aabb, o);
+    }
+    if aabb.is_none() {
+        for o in collision {
+            grow(&mut aabb, o);
+        }
+    }
+    aabb
 }
 
 /// Synthetic scenes for unit tests of the viewport (no archive involved).
@@ -2726,6 +3003,7 @@ pub(crate) mod tests_support {
             triangles: 16,
             dyes: Vec::new(),
             build_ms: 0,
+            collision: Vec::new(),
         }
     }
 }
@@ -2762,7 +3040,13 @@ mod tests {
         assert_eq!(SceneSource::of(0x3100_0001), Some(SceneSource::Surface));
         assert_eq!(SceneSource::of(0x3000_0001), Some(SceneSource::Material));
         assert_eq!(SceneSource::of(0x4100_0001), None);
-        assert_eq!(SceneSource::of(0x0100_0001), None);
+        assert_eq!(SceneSource::of(0x0100_0001), Some(SceneSource::Cell));
+        assert_eq!(
+            SceneSource::of(0x6600_0001),
+            Some(SceneSource::CollisionMesh)
+        );
+        assert_eq!(SceneSource::of(0x8001_3040), Some(SceneSource::Landblock));
+        assert_eq!(SceneSource::of(0x0200_0001), None);
     }
 
     #[test]
@@ -3257,5 +3541,37 @@ mod tests {
             thumb_image(&src, true).pixels,
             vec![40, 40, 40, 255, 80, 80, 80, 255]
         );
+    }
+
+    #[test]
+    fn landblock_scenes_are_framed_without_liquid_boxes_and_ceilings() {
+        // Regression: the deep monitor box of a wet landblock (1,600 units below the
+        // water) and the ceiling triangles at height 0 framed the 3D view, so the terrain
+        // filled a small part of it.
+        use crate::collision_overlay::{OverlayKind, line_overlay, triangle_overlay};
+        let terrain = triangle_overlay(
+            OverlayKind::Terrain,
+            "t",
+            [[[0.0, 0.0, 10.0], [160.0, 0.0, 12.0], [160.0, 160.0, 20.0]]],
+        );
+        let deep = line_overlay(
+            OverlayKind::Liquids,
+            "l",
+            [([0.0, 0.0, -1_600.0], [160.0, 160.0, 15.0])],
+        );
+        let ceiling = triangle_overlay(
+            OverlayKind::Ceiling,
+            "c",
+            [[[-500.0, 0.0, 0.0], [160.0, 0.0, 0.0], [160.0, 900.0, 0.0]]],
+        );
+        let all = [terrain, deep, ceiling];
+        let b = frame_overlays(None, &all).expect("bounds");
+        assert_eq!(b, ([0.0, 0.0, 10.0], [160.0, 160.0, 20.0]));
+        // Parts count as before.
+        let b = frame_overlays(Some(([5.0, 5.0, 30.0], [6.0, 6.0, 31.0])), &all).expect("b");
+        assert_eq!(b, ([0.0, 0.0, 10.0], [160.0, 160.0, 31.0]));
+        // Liquid boxes alone still frame (nothing else has bounds).
+        let b = frame_overlays(None, &all[1..2]).expect("liquids");
+        assert_eq!(b.0[2], -1_600.0);
     }
 }

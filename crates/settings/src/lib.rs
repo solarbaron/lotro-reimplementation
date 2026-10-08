@@ -55,6 +55,9 @@
 //!   and each `[windows.<key>]` table), so files written by a newer Tessera
 //!   survive a round trip through an older one.
 //!
+//! * [`AudioSettings`] reads and writes the additive `[audio]` section (kept in
+//!   [`Settings::extra`]) and imports the original client's `[Sound]` volumes read-only.
+//!
 //! All reads are bounded by [`MAX_FILE_SIZE`], the structural depth of a
 //! document by [`MAX_NESTING_DEPTH`], every list by its `MAX_*`
 //! constant, and the reported warnings by [`MAX_WARNINGS_PER_SECTION`] per
@@ -65,6 +68,7 @@
 /// Re-export of the `toml` crate, for working with [`Settings::extra`] tables.
 pub use toml;
 
+mod audio;
 mod error;
 mod input;
 mod migrate;
@@ -73,6 +77,10 @@ mod nesting;
 mod store;
 mod ui;
 
+pub use audio::{
+    AudioSettings, MAX_CHANNEL_LABEL_LEN, MAX_CHANNEL_VOLUMES, MAX_PLAYING_SOUNDS_LIMIT,
+    SECTION_AUDIO, SoundImport, audio_keys,
+};
 pub use error::{LoadWarning, Result, SettingsError};
 pub use input::{
     DEFAULT_DOUBLE_CLICK_MS, DEFAULT_DOUBLE_CLICK_PX, DOUBLE_CLICK_MS_RANGE, DOUBLE_CLICK_PX_RANGE,

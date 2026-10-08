@@ -9,16 +9,16 @@
 //!
 //! | Item | Purpose | Spec |
 //! |---|---|---|
-//! | [`Skeleton`] | Validated hierarchy (parents precede children), reference pose, model-space reference transforms, inverse-bind matrices | §2, §4.4, §5 |
+//! | [`Skeleton`] | Validated hierarchy (parents precede children), reference pose, model-space reference transforms, inverse reference triples | §2, §4.4, §5 |
 //! | [`Skeleton::compose`] | Local → model transforms by the triple rule (a parent's scale never moves a child joint) | §5.3, §5.4 |
 //! | [`BoundClip`] | Positional clip-to-skeleton binding (track *j* → bone *j*, track count = bone count) and sampling | §3.2, §3.4 |
 //! | [`clip_time`], [`Wrap`] | Looping (τ mod duration) and one-shot clamping | §6.3 |
 //! | [`evaluate`] | Layered-weight combination of every playing clip (remaining weight per layer, 1/255 steps, reference fill) | §6.6 |
 //! | [`blend_poses`], [`layer_over`], [`scalar_blend_weights`] | Two-pose blends, two-pose partial blends, scalar-blend weights | §6.5 |
-//! | [`Playback`], [`CrossFade`], [`SpeedBlend`], [`Animator`] | Playback state: rate, cross-fades, speed-parameter blends (idle ↔ walk ↔ run), held clips, layers | §6, `script-table.md` §6–§8 |
+//! | [`Playback`], [`CrossFade`], [`SpeedBlend`], [`Animator`] | Playback state: rate, one overall weight per clip with linear ramps, cross-fades, speed-parameter blends (idle ↔ walk ↔ run), several clips per layer, held clips, layers | §6, `script-table.md` §6–§8 |
 //! | [`motion_between`], [`RootMotionMode`], [`MotionDelta`] | Root motion: in place, or translate by the extracted-motion reference frame | §7 |
 //! | [`AttachTable`], [`BoneMap`] | Holding locations (list A) and the `BoneType` bone map from plain data | §8 |
-//! | [`skinning_matrices`], [`write_palette_mat4`], [`write_palette_rows3x4`], [`CompactPalette`] | Palettes indexed by bone index; optional per-submesh compact palettes | §4 |
+//! | [`skinning_matrices`], [`write_palette_mat4`], [`write_palette_rows3x4`], [`CompactPalette`] | Skinning transforms from model triples (§5.4, K26); palettes indexed by bone index; optional per-submesh compact palettes | §4, §5.4 |
 //! | [`skin_position`], [`influence_list`] | CPU reference skinning; influence-list recomputation | §4.2, §4.7 |
 //! | [`BoneSliders`] | Per-bone slider entries (written in definition order, later ones replace earlier ones) | `appearance.md` §6.3 |
 //! | [`BindDeformation`] | Body-shape deformer clips and sliders as a bind-space deformation of skinned vertices | `appearance.md` §6.4 |
@@ -62,9 +62,10 @@
 //! let mut local = skeleton.reference_pose();
 //! tessera_anim::evaluate(&skeleton, &layers, &mut Default::default(), &mut local).unwrap();
 //! let mut model = vec![Mat4::IDENTITY; 3];
-//! skeleton.compose(&local, &mut model).unwrap();
+//! let mut triples = vec![Transform::IDENTITY; 3];
+//! skeleton.compose_with_triples(&local, &mut model, &mut triples).unwrap();
 //! let mut skin = vec![Mat4::IDENTITY; 3];
-//! skinning_matrices(&skeleton, &model, &mut skin).unwrap();
+//! skinning_matrices(&skeleton, &triples, &mut skin).unwrap();
 //! assert!((model[0].w_axis.z - 0.5).abs() < 1e-3);
 //! ```
 //!
@@ -73,7 +74,9 @@
 //! Nothing here panics on malformed data. Skeletons are validated once (parents precede
 //! children, at most [`MAX_BONES`] bones, finite invertible reference transforms), clips
 //! bind only when their track count equals the bone count, sampled values that are not
-//! finite or beyond [`BROKEN_TRANSLATION`] fall back to the reference transform, attach
+//! finite or beyond [`BROKEN_TRANSLATION`] / [`BROKEN_SCALE`] fall back to the reference
+//! transform, model transforms that still overflow fall back to their parent's (see
+//! [`Skeleton::compose_counted`]), non-finite skinning matrices become the identity, attach
 //! tables and bone maps are validated against the bone count, and every caller buffer is
 //! length-checked. Allocation is bounded by the bone count, the number of layers
 //! ([`Animator::MAX_LAYERS`]) and the cache budgets.
@@ -101,14 +104,15 @@ pub use attach::{
 pub use blend::{blend_poses, blend_transform, layer_over, scalar_blend_weights};
 pub use cache::{BakeCache, BakeStats, ClipDecoder, SkeletonDecoder};
 pub use clip::{
-    BROKEN_TRANSLATION, BakedClip, BoundClip, SampleReport, Wrap, clip_heap_size, clip_time,
+    BROKEN_SCALE, BROKEN_TRANSLATION, BakedClip, BoundClip, SampleReport, Wrap, clip_heap_size,
+    clip_time,
 };
-pub use deform::{BindDeformation, DeformClip};
+pub use deform::{BindDeformation, DeformClip, deformer_time};
 pub use error::{AnimError, Result};
-pub use figure::{BoundHeldClip, BoundShape, MAX_HELD_CLIPS, bind_shape};
+pub use figure::{BoundHeldClip, BoundShape, MAX_HELD_CLIPS, bind_shape, held_clip_fraction};
 pub use motion::{MotionDelta, RootMotionMode, motion_at, motion_between};
 pub use player::{
-    Animator, ClipSample, CrossFade, EvalScratch, Layer, LayerSnapshot, MAX_LAYER_CLIPS,
+    Animator, ClipSample, CrossFade, EvalScratch, Layer, LayerClip, LayerSnapshot, MAX_LAYER_CLIPS,
     MIN_BONE_WEIGHT, Playback, Source, SpeedBlend, evaluate, quantise_weight,
 };
 pub use scheduler::{

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (review of the 7th revision, 2026-10-07, passed; the 7th revision is the Accepted text; see §12) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested. Re-review 2026-10-05 (after the second revision): changes requested (a few count and stale-observation fixes; parser, census and fingerprint facts verified). Third revision 2026-10-06 addresses every re-review item. Re-review 2026-10-06 (after the third revision): **changes requested**. All four re-review fixes and the notes were verified. Spot checks on the install (2026-10-06): headers of all 29 archives (§3.2, §9.1); the housekeeping census, record sizes and presence (§9.2, P46); a directory walk of all 29 archives (P35, invariants 9–10); P47 (24 manifests, second library empty); P17; the `lotro-launcher` host-user symlink (§5.6.5); P12; P16. Issues: (1) **P35 and invariant 9:** the sentence "equals `HI` − 1 in only 10 of the 24 archives" counts each archive against its **own** list's highest value, but in both places `HI` is defined as the **base** archive's highest value. With that definition the census gives 13 of 29 archives: the 10 named, plus `highres_aux_3`, `mesh_aux_1` and `sound_aux_1`, each of which equals its base's `HI` − 1. Per split set it is 13 of the 22 sets (adding highres, mesh and sound). Say which `HI` is meant and fix the count. (2) **§1.3:** a blank line separates the BIN-3 row from the BIN table, so it renders as a stray paragraph and not as a logged BIN use. Remove the blank line. Non-blocking: (3) the §12 change-log rows are out of date order (2026-10-06 sits above the second 2026-10-05 revision). Fourth revision 2026-10-06 addresses all three items (§12). Re-review 2026-10-06 (after the fourth revision): **passed, Accepted.** All three items verified: P35 and invariant 9 now define `HI` as the base archive's value and give 13 of 29 archives and 13 of 22 sets; BIN-3 sits inside the §1.3 table; §12 rows are in date order with a 4th-revision row. Spot checks on the install, read-only, 2026-10-06: an independent directory walk of all 29 archives (P35: 13 of 29 archives and 13 of 22 sets as listed; invariant 9 held in all 29; the five empty aux lists; non-empty aux lists are subsets of the base list and do not cover their own entries); P3 (29 archives, largest 4,287,627,264 bytes); P5 (0x174 = 112 everywhere, 0x178 = 0 in every cell and map archive and 3 elsewhere); P12 (3 bytes, no terminator); P16 (identical `libraryfolders.vdf` copies, `~/.steam/steam` resolves to the Steam root). Clean-room checklist (§5.3): no code, pseudo-code, copied prose, game text, keys or hostnames; BIN uses logged; nothing under a closed gate. |
+| **Review record** | Claude review session (spec-reviewer), 2026-10-07, 7th revision: **passed**, Accepted (two non-blocking notes in the review log). Earlier: re-review 2026-10-07 of the 6th revision passed. Full records in the review log (decision 0018). |
 | **Consumers** | `crates/install`; also `crates/dat` (archive-set opening), `apps/client` (command line), `crates/script` (plugin folders) |
 | **Companion specs** | [`dat-container.md`](dat-container.md) (header fields, archive table, set opening, iteration semantics), [`keymap.md`](keymap.md) (`lotro.keymap` format, `--keymap`), [`lua-plugin-api.md`](lua-plugin-api.md) §10 (plugin-data folders) |
 
@@ -61,6 +61,13 @@ All values in this spec belong to snapshot **B2** unless a row says otherwise. V
 - **LOG**: the official client's own log files, written under the install's prefix (`AppData/Local/The Lord of the Rings Online/`), read read-only (method M3). No account names, tickets or network content are taken from them.
 - **DC**, **KM**: the companion specs [`dat-container.md`](dat-container.md) and [`keymap.md`](keymap.md), whose own provenance (Confirmed or BIN) is given there. Their recorded corrections to this spec are applied here (§12).
 - **BIN**: the offline client executable `x64/lotroclient64.exe`, build 4906.0071.1794.4035, by disassembly (method M4, decision 0011).
+- **DEP**: Steam's cached depot manifests for app 212500 under `<Steam root>/depotcache/` on the user machine, read read-only on 2026-10-07 for the file names they list (no content copied).
+- **LL**: the `lotro-launcher` program on the user machine: its installed package metadata (Gentoo package database, 2026-10-07) and its published GPL-3 source (https://github.com/solarbaron/lotro-launcher, commit f880b07 of 2026-07-22), read for configuration key names only.
+- **LUT**: Lutris, published source (https://github.com/lutris/lutris, `lutris/settings.py`, `lutris/util/steam/config.py`, `lutris/runners/wine.py`, read 2026-10-07), for its configuration locations and keys and its Steam library parsing.
+- **INNO**: Inno Setup conventions (general knowledge of the published installer), for uninstall registry key names.
+- **DDOML**: DDO-ML, a published command-line launcher for the sibling game DDO, which uses the same launcher family and preferences file (read 2026-10-07 for how it maps `[Launcher] GameClientType` to a client executable; facts only).
+- **SN**: Steam's public news feed for app 212500 (the `ISteamNews/GetNewsForApp` endpoint, read 2026-10-07): the titles and dates of the publisher's "Update … Release Notes" posts.
+- **KD-KB**: KD's published knowledge-base note on game-version sources (dated 2026-08-25), which records one Windows install's client file version and `ProjectVersion` (facts only).
 
 <a id="s1-3"></a>
 ### 1.3 BIN (M4) uses
@@ -70,6 +77,8 @@ All values in this spec belong to snapshot **B2** unless a row says otherwise. V
 | BIN-1 | 2026-10-05 | 4906.0071.1794.4035 | Does the client's command-line parser ignore case in option names, and does it accept `name=value`? (owner item O7) | M1: the behaviour is in code, not data. M2: OL records only the option names and help text. M3: launching the client with trial arguments was not available in this session, and a launch shows only accept or reject, not the rule. | The client's own argument-registration and argument-parsing routines only. |
 | BIN-2 | 2026-10-05 | 4906.0071.1794.4035 | (a) Which leading characters make an argv element an option? (b) When is the one-letter form looked up? (c) When does `?` show the usage text? (d) Per option: does it take no value, a required value or an optional value, and is the `name=value` form honoured? (e) What happens to unknown options and to elements that are not options? | M1 and M2 as for BIN-1. M3 cannot tell "accepted" from "silently ignored": the original ignores unknown and malformed options without any message (§10.1), so a launch test shows nothing for most cases. | The same parsing routine; the option-registration routines, read only for each option's value mode and one-letter form. The code that **uses** option values (network, login, launcher, patcher) was **not** examined (decision 0004). |
 | BIN-3 | 2026-10-05 | 4906.0071.1794.4035 | Review re-check of BIN-1/BIN-2 (all 34 options, modes, one-letter forms, every §10.1 rule), which also found how wide the option-token character test is | As for BIN-2 | The same parsing and option-registration routines, by the review session; nothing from network, login or launcher code; no listing kept |
+| BIN-4 | 2026-10-07 | 4906.0071.1794.4035 | (a) Where the client puts its preferences file, plugins, music files and screenshots, and under which names; (b) whether the client itself reads `ProjectVersion`, `Product.DocumentFolder`, `Launcher.DocumentFolder`, `[Launcher] GameClientType` or any built-in `raw/` path; (c) how `[Display] WindowedResolution` is packed; (d) how the 0xFFFF0003 label length is encoded and what the client does with the label; (e) how the 0xFFFF0001 trailing list depends on the record's `stamp`, and whether the client interprets its u64 values or 0xFFFF0004 / 0xFFFF0008; (f) the value forms of `--debug`, `--wfilelog` and `--wprintlog`; (g) repeated options and the doubled-introducer test (open items of §10.1) | M1: these are run-time behaviours of the code, not data (the one data part, the log-type names, was then read with M1, P62). M2: no published source covers them. M3: the folder and screenshot behaviour would need the client to run and write files, which a dirty-room session on this machine cannot do; window packing would need several resized runs, and the parser rules cannot be told apart by launch tests (§10.1). | The client's application start-up (preferences-file and folder setup), its screenshot, music-file and plugin-folder routines, the window-size preference code, the log-type parser, the option dispatch and parsing routines, and the archive library's metadata-record loaders. Nothing from network, login, launcher, patcher or anti-tamper code (option handlers for network and login options were skipped); no listing kept |
+| BIN-5 | 2026-10-07 | 4906.0071.1794.4035 | (a) The chat-log file: folder, name, numbering, encoding (§8.2); (b) whether the `--wfilelog`/`--wprintlog` bit-string attempt can succeed (§10.1); (c) which `--debug` bits the client tests and what they switch (§10.1) | M1 gave the name templates (string table, P67) but not the folder, the numbering, the character replacement or the encoding. M2: no published source covers them. M3: chat logging needs the running client in a world, which a dirty-room session on this machine cannot do; (b) and (c) are code behaviour that a launch shows nothing of. | The chat tab's log-file name routine, its two callers (start logging, capture) and the file-append and path helpers they use; the start-up routine that applies `--wfilelog`/`--wprintlog`, the log-type parser and its bit-string helper; the `--debug` branch of the option dispatch, the debug-flag setter and every function that reads the flag word (the diagnostics set-up, assertion and crash reports, the crash handler). Nothing from network, login, launcher, patcher or anti-tamper code; the other branches of the same dispatch (server and ticket options) were skipped; no listing kept |
 
 No disassembly listing, pseudo-code, symbol or client string leaves the dirty scratch area; the facts below are stated as behaviour.
 
@@ -100,7 +109,7 @@ No disassembly listing, pseudo-code, symbol or client string leaves the dirty sc
 | P20 | `UserPreferences.ini` is UTF-8, INI sections, `Key=Value`. Key names are in §8.3. Line ends are CRLF in the file the official client and launcher write, LF in a file under a third-party launcher's prefix (P45) | Observed on user machine 2026-10-03 and 2026-10-05 (both files on the machine); OL; NOTES engine-client-re §2 | Confirmed |
 | P21 | Keys may appear lower-cased (e.g. `graphicscore`), because third-party launchers rewrite them | Reported by the first draft for a copy seen on 2026-10-03 that no longer exists; neither preferences file on the machine has a lower-cased key on 2026-10-05. OL writes through a case-folding INI writer | Reported |
 | P22 | `PluginData/<account>/<world>/PluginOptions.xml` exists | Observed on user machine 2026-10-03 and 2026-10-05 | Confirmed |
-| P23 | `Plugins/`, `Music/` (`.abc`), `ui/skins/<Skin>/SkinDefinition.xml`, screenshots, chat logs in the settings folder | NOTES engine-client-re §2, §6, §7; wiki pages via Wayback. On 2026-10-05 neither settings folder on the machine has a `Plugins/` folder | Reported (`PluginData/` and `lotro.keymap` are Confirmed, P22, P38) |
+| P23 | `Plugins/`, `Music/` (`.abc`), `ui/skins/<Skin>/SkinDefinition.xml`, screenshots, chat logs in the settings folder | NOTES engine-client-re §2, §6, §7; wiki pages via Wayback; BIN-4 for `Plugins`, `Music` and screenshots (P58). On 2026-10-05 neither settings folder on the machine has a `Plugins/` folder | BIN (`Plugins`, `Music`, screenshots; chat logs, P67); Reported (skins); Confirmed (`PluginData/` and `lotro.keymap`, P22, P38) |
 | P24 | Windows registry: `…\Uninstall\Steam App 212500` → `InstallLocation` | EL | Reported |
 | P25 | Windows registry: `SOFTWARE\[WOW6432Node\]StandingStoneGames\The Lord of the Rings Online` and `SOFTWARE\WOW6432Node\Turbine\The Lord of the Rings Online` | KD | Reported |
 | P26 | The install carries an Inno Setup uninstall log (`unins000.dat`) whose AppId is `12bbe590-c890-11d9-9669-0800200c9a66`. Inno Setup registers uninstall keys as `<AppId>_is1` | Observed in user install 2026-10-03 (AppId); Inno Setup convention (from memory) | Confirmed (AppId), Reported (key name) |
@@ -109,7 +118,7 @@ No disassembly listing, pseudo-code, symbol or client string leaves the dirty sc
 | P29 | OneLauncher search roots, prefix layouts, its built-in prefix path and its per-game config file (§5.6) | OL | Reported |
 | P30 | The set of 34 client command-line options and their meanings (§10) | OL (help text the client prints, captured 2024-07-10); NOTES network §1.7; the option names, one-letter forms and value modes read from the client (BIN-1, BIN-2) | Reported (meanings), BIN (names, one-letter forms, value modes) |
 | P31 | Launch-argument templates put option names in argv that the help text does not list, and one launcher appends an element with a leading space | NOTES network §1.4; OL | Reported |
-| P32 | `--prefs <file>` also moves the settings folder to the parent of `<file>`. `--cwd` does not work in practice | OL | Reported |
+| P32 | `--prefs <file>` also moves the settings folder to the parent of `<file>`. `--cwd` does not work in practice | OL; BIN-4 (the settings folder is the directory of the preferences file, P57); BIN-5 (the start-up pre-scan changes directory only for `-cwd` or `/cwd`, P74) | BIN (first sentence); Reported (`--cwd`), consistent with P74 |
 | P33 | Language archive names are the labels of the client's language enumeration: `English`, `EN_GB`, `DE`, `FR` | DC §2.1 (labels from the data there); `English` observed in user install 2026-10-03 and 2026-10-05; OL (`DE`, `FR`) | Confirmed (`English` file), DC (labels) |
 | P34 | Iteration record decoding (§9.3): runs and singles; the run and single counts sum to the record's count; the trailing list consumes the rest exactly | Observed in user install 2026-10-03 (A, B1) and 2026-10-05 (B2): all 29 archives parse with zero bytes left over; AC-DRW (base layout) | Confirmed |
 | P35 | Iteration census (§9.3, invariants 9–10): every non-zero directory-entry iteration of **every member** of a split set (or of an unsplit archive) is an iteration listed in the **base** archive's 0xFFFF0001 record, and is at most that record's `HI` − 1. Here `HI` is always the **base** archive's highest listed value, also for aux members. An archive's highest entry iteration **equals** that `HI` − 1 in only 13 of the 29 archives: anim, cell_1–5, general, local_English, map_1, map_5, highres_aux_3, mesh_aux_1 and sound_aux_1 (sound_aux_1's own list is empty). Counted per split set (highest entry iteration over all members), equality holds in 13 of the 22 sets: the ten unsplit archives above plus highres, mesh and sound, whose highest entry sits in an aux member. An aux member's own list, when not empty, is a subset of the base's list and does not cover the member's own entries | Census of every directory entry of all 29 archives, user install 2026-10-05 (B2), equality count re-run against the base `HI` 2026-10-06 (B2); agrees with DC §5.2 and §7.3 | Confirmed 2026-10-06 (corrects the first draft, which generalised "= `HI` − 1" from two archives, and the third revision, which compared each archive with its own list) |
@@ -126,6 +135,33 @@ No disassembly listing, pseudo-code, symbol or client string leaves the dirty sc
 | P46 | Housekeeping record sizes: 0xFFFF0005 is exactly 24 bytes, 0xFFFF0003 exactly 37 bytes, 0xFFFF0004 12 bytes, 0xFFFF0008 16 bytes in every archive that has them; 0xFFFF0001 sizes in §9.2.1 | Census, user install 2026-10-05 (all 29) | Confirmed |
 | P47 | Every VDF and ACF file under the Steam root uses only two backslash sequences, `\\` and `\"`; none contains `\n` or `\t` | Census of `libraryfolders.vdf` (both copies), all 24 `appmanifest_*.acf` and `config/config.vdf` on the user machine 2026-10-05. All 24 manifests are in the default root's `steamapps/`; the second library named in `libraryfolders.vdf` has an empty `steamapps/` and lists no apps | Confirmed |
 | P48 | Imported corrections: each 0xFFFF0001 trailing entry is a u32 iteration and a u64 value; the client's archive library never reads 0xFFFF0004; any archive (not only shared-data ones) may have aux members; regions are the keys of the RegionID DID map; the key-map companion files named in the help text are not read by this build | DC §2.3, §2.4, §7.3, §15 items 2–6; KM §13 item 1 | as marked in DC and KM (BIN, Confirmed) |
+| P49 | The client contains no `raw/` path of its own. Every path under `raw/` that the data names is in the language archive: UTF-16 strings in string tables (0x25…, 86 occurrences) and in the language archive's 0x0E… record (2), and ASCII strings in 0x22… records (13). Each is relative to the install directory and starts `raw/<lang>/`. In this install they name 96 distinct files: 85 `.bik` videos (under `chargen/class_videos`, `chargen/race_videos`, `introcinematic`, `logo`, `vignette_videos`) and 11 `.jpg` images (under `logo`). All 96 exist under `raw/en/`; the one file there that no string names is a `.bik` under `vignette_videos` (§3.6) | BIN-4 (no such path in the client, ASCII or UTF-16); census of `client_local_English.dat`, `client_general.dat` and `client_gamelogic.dat` (2026-10-07); file listing of `raw/` (2026-10-07) | Confirmed 2026-10-07 (data and files), BIN (client) |
+| P50 | Lutris keeps one YAML file per game in `<XDG config>/lutris/games/` (falling back to `<XDG data>/lutris/games/` when `<XDG config>/lutris` does not exist); for Wine games the `game` section has `exe`, `args`, `working_dir`, `prefix` and `arch`; a relative `exe` is relative to the game directory | LUT | Reported |
+| P51 | Steam roots that Lutris searches on Linux include `~/.local/share/Steam`, `~/.steam/steam`, `~/.steam`, `~/.steam/debian-installation`, `~/snap/steam/common/.local/share/Steam`, `~/.var/app/com.valvesoftware.Steam/.local/share/Steam` and the older Flatpak location `~/.var/app/com.valvesoftware.Steam/data/Steam` | LUT. On the user machine only `~/.local/share/Steam` and `~/.steam/steam` exist (2026-10-07) | Reported (Flatpak, Snap, Debian forms); Confirmed (the two present) |
+| P52 | `libraryfolders.vdf` may use a top-level key in any letter case (older files: `LibraryFolders`) and numbered entries whose value is a plain path string instead of a block; current files may also carry a `contentstatsid` entry that is not a library | LUT (its parser accepts both forms and ignores `contentstatsid`) | Reported |
+| P53 | Depot 212501 lists the shared archives (`general`, `gamelogic`, `anim`, `mesh`, `sound`, `surface`, `highres`, `cell_*`, `map_*` and the aux parts `sound_aux_1`, `surface_aux_1`, `surface_aux_2`, `highres_aux_1`, `highres_aux_2`); depot 212502 lists `client_local_English.dat`, the `raw/en/` media and the launcher's `en/` resources, i.e. the English language content. `client_mesh_aux_1.datx` and `client_highres_aux_3.datx` are in neither depot: they were created on the machine by the patcher (they are also the two archives with an all-zero 0x17C, DC §3.3) | DEP (both cached manifests, 2026-10-07); header bytes (P6) | Confirmed 2026-10-07 |
+| P54 | The Inno Setup uninstall log stores the AppId **without** braces (`12bbe590-c890-11d9-9669-0800200c9a66`); Inno Setup names the uninstall key `<AppId>_is1` | `unins000.dat` header, user install 2026-10-07; INNO | Confirmed (AppId form), Reported (key rule) |
+| P55 | `lotro-launcher` is the project owner's own GPL-3 launcher (https://github.com/solarbaron/lotro-launcher), installed as version 0.1.7. Its per-game `config.json` keys are `id`, `gameType` (`LOTRO`, `LOTRO_Preview`, `DDO`, `DDO_Preview`), `gameDirectory`, `settingsDirectory`, `clientType` (`Win64`, `Win32`, …), `highResEnabled`, `locale`, `newsfeedUrl`. Its Wine settings (JSON names `prefixMode` = `Builtin` or `User`, `userPrefixPath`, `userWineExecutable`, `debugLevel`, `dxvkEnabled`, `dxvkVersion`, `esyncEnabled`, `fsyncEnabled`) exist in the program but are not written to any file by the published source | LL; the installed config files (key names only, P44) | Confirmed (package, installed keys), Reported (source) |
+| P56 | The game client never reads `ProjectVersion`, `Product.DocumentFolder`, `Launcher.DocumentFolder` or `[Launcher] GameClientType`: none of these names occurs in the client, in ASCII or UTF-16 | BIN-4 | BIN |
+| P57 | The client's preferences file is the `--prefs` value if given; otherwise `UserPreferences.ini` in the process's **current directory** if that file exists; otherwise `<Documents>\The Lord of the Rings Online\UserPreferences.ini`, where `<Documents>` is the shell's personal-documents folder and the folder name is fixed in the client. The settings folder is the directory that holds the preferences file. The run-time log folder is `<local application data>\The Lord of the Rings Online\` | BIN-4; LOG (log folder, P38) | BIN; Confirmed (log folder) |
+| P58 | Relative to the settings folder: plugins in `Plugins`, player music in `Music` (a name is tried as `<name>.abc`, then `<name>.txt`), screenshots directly in the folder as `ScreenShot_<YYYY-MM-DD_HHMMSS>_<n>.jpg` with the first free `n` from 0 to 99 | BIN-4 | BIN |
+| P59 | `[Display] WindowedResolution` = (client-area width in pixels × 65536) + client-area height in pixels | BIN-4; the two observed values (P45, §8.3) decode to 2560 × 1418 and 1278 × 1418 | BIN |
+| P60 | 0xFFFF0003's label length is a variable-length count of 1, 2 or 4 bytes; the client marks the version stamp as invalid when the label contains the ASCII text `INVALID_VERSION` | BIN-4 | BIN; Confirmed (every observed label is 4 bytes with a 1-byte count, P46) |
+| P61 | 0xFFFF0001: the trailing list exists only when the record's `stamp` is 2; `stamp` 1 ends after the run list; `stamp` ≥ 3 is refused; the client copies each u64 verbatim; no game-client code reads 0xFFFF0004; 0xFFFF0008 is the archive's product identifier | DC §7.3, §7.5 (BIN there); BIN-4 | BIN; Confirmed (every 0xFFFF0001 has `stamp` 2, 2026-10-05) |
+| P62 | `--wfilelog` and `--wprintlog` are first tried as a string of `0`/`1` digits (one per bit; how that attempt ends is P68, §10.1) and then read as a comma-separated list of names; a name is a label of the game data's "LogType" enumeration (EMAPPER DID map label "LogType", 0x230000B5 in this install) and its value *v* sets bit *v* − 1 | BIN-4; EMAPPER DID map 0x28000001 decoded 2026-10-07 (key 0x29 → "LogType" → 0x230000B5; key 0x4A → "Languages" → 0x230000B1, matching DC P38) | BIN; Confirmed (label and DID) |
+| P63 | `--debug` is read as an unsigned 32-bit number in C notation (decimal, `0x` hexadecimal, or leading-`0` octal); it sets every one of the 32 debug flags to the matching bit | BIN-4 | BIN |
+| P64 | Each option occurrence is handed to the option's handler at once, in command-line order. The handlers read for `--prefs`, `--language` and `--debug` replace the earlier value, so the last occurrence wins | BIN-4 | BIN |
+| P65 | The doubled-introducer test compares the second UTF-16 code unit with the first as whole 16-bit units | BIN-4 | BIN |
+| P66 | Every `installdir` value in the 24 app manifests on the user machine is one path component made of ASCII letters, digits, space, `-` and `_` | Census of all 24 `appmanifest_*.acf`, 2026-10-07 | Confirmed |
+| P67 | Chat-log files (§8.2): written directly into the settings folder (the directory of the preferences file); the name comes from two templates of the `Chat` string table (STRINGTABLE key 0x1000004D, 0x250001A7 in this install), tokens 0x03C4EF75 (file name) and 0x059365D4 (date), filled with the sanitised tab name, the local date and the first free number from 1 to 99,998; in this install the result has the shape `<tab>_<YYYYMMDD>_<n>.txt`; each line is appended as UTF-8 followed by a line feed | BIN-5 (folder, numbering, sanitising, encoding, template tokens and argument variables); string table 0x250001A7 of `client_local_English.dat` and DID map 0x28000004 (key 0x1000004D → 0x250001A7) decoded 2026-10-07 | BIN; Confirmed (templates and key, 2026-10-07) |
+| P68 | The `--wfilelog`/`--wprintlog` bit-string attempt never succeeds for a non-empty value, because its character test also covers the string's terminating NUL; but the bits it sets before it stops are kept, and the label reading then runs on the whole value and adds its bits | BIN-5 | BIN |
+| P69 | The `--debug` value is one 32-bit flag word. The bits the client tests switch debugging aids (crash handler, assertion and crash reports, assertion dialog, floating-point trapping, debug-symbol helper); none selects a category of the ordinary log | BIN-5 (every reader of the flag word) | BIN |
+| P70 | `[Launcher] GameClientType`: 1 = WIN32, 2 = WIN32Legacy, 3 = WIN64 (the executable under `x64/`); DDOML reads a missing key as 1 | DDOML; observed `3` on this 64-bit install (P39) | Reported (mapping); Confirmed (3 on a 64-bit install, 2026-10-05) |
+| P71 | The first group of the client file version is the publisher's update number without the dot: major × 100 + minor (`4601` = Update 46.1, `4704` = Update 47.4, `4906` = Update 49.6) | SN (Update 46.1 dated 2026-02-04, 47.4 dated 2026-04-08, 48 dated 2026-04-22, 49.6 dated 2026-09-30, 49.7 dated 2026-10-07); A's newest subfile timestamp 2026-02-04 (§1.1); B1 observed 2026-10-03; KD-KB (`4704.0070.4459.4020` on an install last patched 2026-04-18) | Reported (three of three versions agree; not checked against a third-level update such as 46.2.1) |
+| P72 | The installer's uninstall log in the Steam install names the registry key `SOFTWARE\Turbine\LOTRO` (beside the value names `GameName` and `ForwardVersion`; no value name for an install path appears with it) and the Inno uninstall key's value `Inno Setup: App Path`; it contains none of the KD value names (`InstallLocation`, `GameFolder`, `Install Location`) and no `StandingStoneGames` key | `unins000.dat`, user install, read 2026-10-07 (strings only); INNO (`Inno Setup: App Path` holds the install directory) | Confirmed (names present or absent in the log); Reported (meaning of the Inno value) |
+| P73 | `ProjectVersion` is `120` on another Windows install too, with the install day as its modification time while the archives were patched later; the patcher does not rewrite it | KD-KB | Reported |
+| P74 | Start-up pre-scan of the raw command line, before the option parser: an element containing `-debug` or `/debug` takes the next element as the debug word if it is a whole unsigned number; an element exactly `-cwd` or `/cwd` changes directory to the next element; the default debug word is 0xFFFDE7F7; the diagnostics set-up runs with that word | BIN-5 | BIN |
+| P75 | 0xFFFF0003 labels: `5758` (shared-data, language, region 1), `6121` (2), `7857` (3), `7963` (4), `9004` (5 and 15), `8615` (14); the same in B1 (recorded 2026-10-04 before the data patch) and B2; no label equals its archive's `N` or `HI` | Census of all 27 records, user install 2026-10-07; first draft (B1) | Confirmed |
 
 ---
 
@@ -249,7 +285,7 @@ All Confirmed (file listing of user install 2026-10-03, re-checked 2026-10-05) u
 | `ProjectVersion` | 3-byte ASCII number (§7) |
 | `patchcache.bin` | Patcher state. Contains the absolute install path as UTF-16. Never parse or write it |
 | `unins000.dat`, `unins000.exe`, `uninstall_manifest.txt` | Inno Setup uninstaller files and a list of the folder/file patterns the uninstaller removes |
-| `raw/<lang>/…` | Loose media outside the archives: `chargen/{class_videos,race_videos}`, `introcinematic/*.bik`, `logo/*.jpg`. `<lang>` is lower-case `en`, `de`, `fr` |
+| `raw/<lang>/…` | Loose media outside the archives: `chargen/{class_videos,race_videos}/*.bik`, `introcinematic/*.bik`, `logo/*.bik` and `logo/*.jpg`, `vignette_videos/*.bik`. `<lang>` is lower-case `en`, `de`, `fr`; in this install `de` and `fr` hold only `logo/*.jpg` (Confirmed 2026-10-07). The client finds these files only through paths named in the language archive (§3.6.1, P49) |
 | `en/`, `de/`, `fr/`, `themes/`, `locales/`, `browser/`, `*.png`, Qt and CEF files | Launcher UI and embedded browser resources |
 | `backup/` | Previous copies of binaries saved by the patcher. **Never** treat it as an install. Skip it while searching (§5.8) |
 | `bindat/`, `forward/`, `tmp/`, `temp/`, `downloading/`, `patches/` | Patcher working directories, empty or near-empty when idle (P42). `forward/` receives forward-patch iteration data during a patch; `downloading/` holds working files during the initial dat download (per its own `downloading.txt`) |
@@ -258,7 +294,22 @@ All Confirmed (file listing of user install 2026-10-03, re-checked 2026-10-05) u
 
 The `uninstall_manifest.txt` file lists the folders and glob patterns the uninstaller removes; on this install they are `en fr de backup bindat browser forward locales patches raw themes tmp troubleshooting downloading x64` plus `*.bin *.dat *.datx *.dll *.log *.pak *.xml Awesomium*.exe lotro*.exe ProjectVersion TurbineServices.config` (Confirmed 2026-10-05). It is a convenient allow-list of what the publisher considers part of the install.
 
-> **OPEN:** Whether the client reads anything from `raw/` beyond videos and splash images.
+<a id="s3-6-1"></a>
+#### 3.6.1 How the client uses `raw/`
+
+The client has no built-in path into `raw/` (BIN-4, P49). Every file it opens there is named by
+a string in the **language archive** of the selected language: string tables (0x25…), 0x22…
+records and the language archive's 0x0E… record hold paths relative to the install directory,
+of the form `raw/<lang>/<folder>/<file>`, with `/` as the separator. In this install the
+English archive names 96 files, all present: 85 Bink videos (`.bik`) and 11 JPEG images
+(`.jpg`) (Confirmed 2026-10-07). No other kind of file under `raw/` is named. So the answer
+to the former OPEN is: the client reads from `raw/` only what the language data names, and in
+this install that is videos and images only.
+
+Rules for our client: never scan `raw/` to decide what exists; resolve a `raw/…` path only
+when a decoded record names it, relative to `GAME_DIR` and case-insensitively (§2). A named file
+that is missing is a warning for that one asset. The `de` and `fr` folders (logo images only) are
+named by no installed archive (Confirmed 2026-10-07).
 
 <a id="s3-7"></a>
 ### 3.7 Game-type identification
@@ -336,11 +387,13 @@ The client logs its own install path through such a mapping (for example under `
 | `~/.local/share/Steam` | Confirmed (user machine) |
 | `~/.steam/steam` (normally a symlink to the above) | Confirmed (symlink observed) |
 | `~/.steam/root`, `~/.steam` | Reported (OL searches `~/.steam/steamapps`) |
-| `~/.var/app/com.valvesoftware.Steam/.local/share/Steam` (Flatpak) | Reported (packaging convention, from memory) |
-| `~/snap/steam/common/.local/share/Steam` (Snap) | Reported (from memory) |
+| `~/.var/app/com.valvesoftware.Steam/.local/share/Steam` (Flatpak) | Reported (LUT, P51) |
+| `~/.var/app/com.valvesoftware.Steam/data/Steam` (older Flatpak layout) | Reported (LUT, P51) |
+| `~/snap/steam/common/.local/share/Steam` (Snap) | Reported (LUT, P51) |
+| `~/.steam/debian-installation` (Debian's packaged Steam) | Reported (LUT, P51) |
 | `~/Library/Application Support/Steam` (macOS) | Reported (OS) |
 
-> **OPEN:** Confirm the Flatpak and Snap roots on a machine that uses them.
+> **OPEN:** Confirm the Flatpak, Snap and Debian roots on a machine that uses them. They are now sourced from a published launcher's search list (LUT, P51) but not observed: neither exists on the user machine (2026-10-07). Needs the owner or another machine.
 
 **Library list.** For each root, read `<root>/steamapps/libraryfolders.vdf`. If that file is absent, read `<root>/config/libraryfolders.vdf`. On the user machine both exist and are byte-identical (Confirmed 2026-10-05). The root itself is always a library, even if the file is missing.
 
@@ -353,14 +406,14 @@ The client logs its own install path through such a mapping (for example under `
   - `apps`: a block mapping an app-id string to a size string.
 - Presence of `"212500"` in `apps` means the library *should* hold the game. The size may be `"0"` even when the game is installed (observed 2026-10-03 only; on 2026-10-05 the 212500 entry has a non-zero size, so the zero case is not reproducible now). **Use presence only, never the size.** Even when 212500 is not listed, still probe each library for the manifest (step below). The list can be stale.
 
-> **OPEN:** The pre-2021 format (top-level key `LibraryFolders`, with numbered keys whose values are plain path strings; Reported, from memory). Parse it too: when a numbered value is a string, not a block, treat the string as `path`.
+**Older and transitional forms** (Reported, LUT, P52). Older files spell the top-level key `LibraryFolders`; the key comparison is case-insensitive anyway. In older files a numbered entry's value is a plain path string, not a block: treat that string as `path`. Some files carry a non-numbered entry `contentstatsid` beside the numbered ones: ignore every entry whose key is not a decimal number. None of these forms is present on the user machine (Confirmed 2026-10-05: one current-format file).
 
 **App manifest.** In each library, look for `<library>/steamapps/appmanifest_212500.acf` (Confirmed). Its top-level key is `AppState`. Keys used:
 
 | Key | Use | Observed value (2026-10-05) |
 |---|---|---|
 | `appid` | must equal `212500` | `212500` |
-| `installdir` | folder name under `steamapps/common/` | `Lord of the Rings Online` (**no leading "The"**) |
+| `installdir` | folder name under `steamapps/common/`. Accept it only when it is one plain path component (no `/`, `\`, `:` or control character; not empty, `.` or `..`; not ending in `.` or a space; not a Windows device name); otherwise ignore it with a warning (§13, P66) | `Lord of the Rings Online` (**no leading "The"**) |
 | `StateFlags` | bitmask; value 4 = fully installed (Steam convention; Reported) | `4` |
 | `buildid` | Steam build number, a coarse version label (§9.5) | `12250101` |
 | `InstalledDepots` | block of depot-id → {`manifest`, `size`} | **212501 and 212502 only** (P41). Redistributables are a separate Steam app, id 228980, which also appears in `libraryfolders.vdf`'s `apps` list |
@@ -368,7 +421,7 @@ The client logs its own install path through such a mapping (for example under `
 
 The game directory is `<library>/steamapps/common/<installdir>`. If the manifest is missing but `apps` lists 212500, also try `<library>/steamapps/common/Lord of the Rings Online`.
 
-> **OPEN:** Which content depot 212502 holds (possibly the high-resolution textures). Do not rely on depot ids.
+**Depot contents** (Confirmed 2026-10-07 from Steam's cached depot manifests, DEP, P53). Depot 212501 holds the shared archives, including the high-resolution set as far as Steam ships it; depot 212502 holds the English language content (`client_local_English.dat`, `raw/en/…`, the launcher's `en/` resources). Two aux parts of this install (`client_mesh_aux_1.datx`, `client_highres_aux_3.datx`) are in neither depot: the launcher's patcher created them on the machine. Which depots carry the other languages was not observed. Still do not rely on depot ids: the install is identified by its files (§4), and the patcher adds files that no depot lists.
 
 **Proton prefix of a Steam install** (Confirmed 2026-10-05): the compatdata directory of the game is `<library>/steamapps/compatdata/212500/`, in the library that holds the game. Inside it:
 
@@ -405,11 +458,15 @@ The parser must reject unbalanced braces and unterminated strings with an error,
 | Default path | `C:\Program Files (x86)\StandingStoneGames\The Lord of the Rings Online` | Reported (KD) |
 | Older default path | `C:\Program Files (x86)\Turbine\The Lord of the Rings Online` | Reported (inferred from the KD registry key name) |
 | Registry | `HKLM\SOFTWARE\StandingStoneGames\The Lord of the Rings Online`, `HKLM\SOFTWARE\WOW6432Node\StandingStoneGames\The Lord of the Rings Online`, `HKLM\SOFTWARE\WOW6432Node\Turbine\The Lord of the Rings Online`; try value names `InstallLocation`, `GameFolder`, `Install Location` | Reported (KD) |
-| Inno Setup uninstall key | `HKLM\SOFTWARE\[WOW6432Node\]Microsoft\Windows\CurrentVersion\Uninstall\<AppId>_is1`, with value `InstallLocation`. The AppId in the uninstall log is `12bbe590-c890-11d9-9669-0800200c9a66` | Confirmed (AppId), Reported (key form) |
+| Inno Setup uninstall key | `HKLM\SOFTWARE\[WOW6432Node\]Microsoft\Windows\CurrentVersion\Uninstall\<AppId>_is1`, with value `InstallLocation`, else value `Inno Setup: App Path` (the name occurs in the install's uninstall log, P72; Inno stores the install directory under both names, INNO). The uninstall log stores the AppId without braces, `12bbe590-c890-11d9-9669-0800200c9a66`, so the key is `12bbe590-c890-11d9-9669-0800200c9a66_is1` (P54). Also try `HKCU\…` with the same path (Inno writes there for per-user installs; INNO) | Confirmed (AppId form, 2026-10-07), Reported (key rule) |
 | Program Files scan | Walk `C:\Program Files` and `C:\Program Files (x86)` under the §5.8 limits | Reported (OL, PL) |
 
-> **OPEN:** Whether the Inno key name includes braces around the AppId, and which of the KD value names really exist. Look these up with a case-insensitive match over the key's values, and accept any of them.
-> **OPEN:** The historical Codemasters (EU) default install path.
+Whether the Inno key name has braces is answered (no braces, P54). Look the key up case-insensitively anyway, and also accept a braced form `{12bbe590-…}_is1`; it costs nothing (a braced form was not observed).
+
+The installer image that ships inside the Steam install is the older Turbine-era one: its uninstall log names the key `SOFTWARE\Turbine\LOTRO` with the value names `GameName` and `ForwardVersion` beside it, and no value that holds an install path; it has no `StandingStoneGames` key and none of the KD value names (P72). So that key is not a source of install paths, and the `StandingStoneGames` keys of this table come from the current standalone installer, which is not on the machine.
+
+> **OPEN:** Which of the KD value names (`InstallLocation`, `GameFolder`, `Install Location`) exist under the `StandingStoneGames` publisher keys. Neither the Steam install's uninstall log (P72) nor the Proton prefix registry (no publisher key, Confirmed 2026-10-07) has them; only a Windows registry with a current standalone install can show them. Until then, look them up with a case-insensitive match over the key's values and accept any of them. Needs the owner or another machine.
+> **OPEN:** The historical Codemasters (EU) default install path. No published source found on 2026-10-07; the client and data carry no trace of it. Needs a historical install or a reliable published source. Until then, the Program Files scan of this table finds such an install.
 
 <a id="s5-6"></a>
 ### 5.6 Wine, Proton, OneLauncher, Lutris, CrossOver
@@ -451,9 +508,14 @@ Use `game_directory` as a candidate, and `game_settings_directory` as the settin
 <a id="s5-6-3"></a>
 #### 5.6.3 Lutris
 
-Lutris game entries name a prefix and an executable path.
+Lutris keeps one YAML file per game (Reported, LUT, P50):
 
-> **OPEN:** Location and keys of Lutris game YAML files. Until this is answered, Lutris installs are found through the `~/Games/*/` prefix scan.
+- **Location:** `<XDG config>/lutris/games/*.yml` (normally `~/.config/lutris/games/`). When `<XDG config>/lutris` does not exist, Lutris uses `<XDG data>/lutris/games/` instead (normally `~/.local/share/lutris/games/`). Search both.
+- **Keys used** (all in the top-level `game` mapping, for games run with Wine): `exe` (the program to start, absolute or relative to the game directory), `working_dir` (directory the program starts in), `prefix` (the Wine prefix), `args`. Ignore every other key.
+
+Rules: read each file (cap 64 KiB; a YAML parser limited to plain mappings and scalars; reject anything else without panicking). Add `prefix` as a prefix (§5.6.1). Take the directory of `exe` as a candidate, and its parent when that directory is named `x64`; take `working_dir` as a candidate too. Translate Windows-style paths through the prefix (§5.2). Validate every candidate (§4). Never write these files.
+
+> **OPEN:** Confirm the Lutris location and keys on a machine with a Lutris-managed install (none on the user machine, 2026-10-07). Needs the owner or another machine. The `~/Games/*/` prefix scan remains as a fallback.
 
 <a id="s5-6-4"></a>
 #### 5.6.4 Bounded home scan
@@ -489,7 +551,9 @@ Rules: read each `games/*/config.json` (cap 64 KiB, reject anything that is not 
 
 So the same install can have **two** settings folders on one machine, one per launcher prefix (Confirmed: the Steam prefix and this launcher's prefix each hold a `UserPreferences.ini`). §8.1 decides which one our client uses.
 
-> **OPEN:** The name and origin of this launcher, and whether its config can name a custom prefix path (no such key was observed).
+**Origin** (Confirmed 2026-10-07, LL, P55): `lotro-launcher` is the project owner's own GPL-3 launcher (https://github.com/solarbaron/lotro-launcher), installed as version 0.1.7. Its per-game `gameType` values are `LOTRO`, `LOTRO_Preview`, `DDO` and `DDO_Preview` (project decision: treat a `*_Preview` value as its base game for §3.7).
+
+**Custom prefix** (Reported, LL source at commit f880b07): the program has Wine settings, among them a prefix mode (`Builtin` or `User`) and a user prefix path (JSON names `prefixMode`, `userPrefixPath`), but that version writes them to no file. So no persisted custom-prefix key exists today, and the built-in prefix of §5.6.1 is the only one to search. If a per-game `config.json` ever carries `userPrefixPath` as a string, add it as a prefix (§5.6.1); this costs nothing and needs no other change.
 
 <a id="s5-7"></a>
 ### 5.7 Security and privacy of discovery
@@ -542,7 +606,9 @@ Rules for our parser:
 
 Lookup order and legacy names are in P14. `Launcher.DataCenterService.GLS`, `DataCenter.GameName` and `Product.DocumentFolder` are required by OL. If `Product.DocumentFolder` is missing, our client uses `The Lord of the Rings Online` as the default (the Confirmed value).
 
-> **OPEN:** Where `Launcher.DocumentFolder` (value `Launcher`) is resolved relative to. No `Launcher/` subfolder was present in either settings folder on the user machine, and the launcher's run-time logs go to `%LOCALAPPDATA%\The Lord of the Rings Online\` instead (§8.2). Our client does not use this value.
+The game client reads neither `Product.DocumentFolder` nor `Launcher.DocumentFolder`: neither name occurs in it (BIN-4, P56). It uses the fixed folder name `The Lord of the Rings Online` (§8.1, P57). Both keys belong to the official launcher.
+
+> **OPEN:** Where the official launcher resolves `Launcher.DocumentFolder` (value `Launcher`). No `Launcher/` subfolder was present in either settings folder on the user machine, and the launcher's run-time logs go to `%LOCALAPPDATA%\The Lord of the Rings Online\` (§8.2). Only the launcher uses it, and the launcher is excluded from M4 (decision 0011), so this stays open; our client does not need it.
 
 ---
 
@@ -553,7 +619,11 @@ Confirmed: a file of exactly 3 bytes, ASCII digits `120`, with no line terminato
 
 Our parser reads at most 64 bytes, trims ASCII whitespace, and accepts 1–10 ASCII digits as an unsigned integer. Anything else is reported as *malformed*, which is not an error. The value is recorded in the fingerprint report (§9.4) as metadata only.
 
-> **OPEN:** What `ProjectVersion` counts. It is `120`, which is **not** either datpack version (the archives are eng 112 / game 3, §9.1, P36), so it is a separate schema or product-format number.
+The game client never reads `ProjectVersion`: the name occurs nowhere in it (BIN-4, P56). The file is listed in the uninstaller's manifest (§3.6), so it belongs to the launcher and patcher side.
+
+A published observation of another Windows install agrees: `120` there too, with the install day as the file's modification time although the archives were patched later, so the patcher does not rewrite it (P73, Reported).
+
+> **OPEN:** What `ProjectVersion` counts. It is `120`, which is **not** either datpack version (the archives are eng 112 / game 3, §9.1, P36), and it does not change with content updates (P12, P73). Only the launcher or installer can use it, and both are excluded from M4 (decision 0011). Settling it needs a published statement or an installer of another generation to compare. Our client records it as metadata only (above), so nothing depends on the answer.
 
 ---
 
@@ -563,18 +633,27 @@ Our parser reads at most 64 bytes, trims ASCII whitespace, and accepts 1–10 AS
 <a id="s8-1"></a>
 ### 8.1 Location
 
-Let `NAME` be the launcher config's `Product.DocumentFolder` (default `The Lord of the Rings Online`). Resolve the settings folder in this order:
+**What the official client does** (BIN-4, P57, P58). It decides on a preferences **file** first, and the settings folder is the directory that holds that file:
 
-1. If our client is started with `--prefs <file>`, the folder is the parent directory of `<file>` (P32; Reported). The preferences file is `<file>` itself, which need not be called `UserPreferences.ini`.
-2. A per-install override from the source that found the install: OneLauncher `game_settings_directory` (§5.6.2) or `lotro-launcher` `settingsDirectory` (§5.6.5).
-3. Native Windows: `<Documents>/NAME`, where `<Documents>` is the user's known Documents folder. It may be redirected (OneDrive, roaming profiles), so use the shell's known-folder lookup, not `%USERPROFILE%\Documents`.
-4. Install inside a prefix (Steam Proton, Wine, Lutris, a launcher's own prefix): `<prefix>/drive_c/users/<user>/Documents/NAME`. For a Steam compatdata prefix `<user>` is `steamuser` (Confirmed). For other prefixes try the host user name first, then every other entry under `drive_c/users/` except `Public`, in lexicographic order. In the `lotro-launcher` prefix the host-user entry is a symlink to `steamuser`, so both names lead to the same folder (Confirmed 2026-10-05, §5.6.5). If `Documents` is a symlink into the host home, follow it (P19; Reported).
-5. Native Linux run of our client against a Steam/Proton install: use the prefix folder from step 4, so that plugins and preferences are shared with the official client.
-6. Otherwise: `$XDG_DOCUMENTS_DIR/NAME` if set, else `~/Documents/NAME`, else `~/NAME` (P19).
+- the `--prefs` value, if given (§10);
+- otherwise `UserPreferences.ini` in the process's current directory, if that file exists there;
+- otherwise `<Documents>\The Lord of the Rings Online\UserPreferences.ini`, where `<Documents>` is the shell's personal-documents folder. The folder name is fixed in the client; it does not read the launcher config (§6).
+
+Plugins (`Plugins`), player music (`Music`) and screenshots (§8.2) are then placed relative to that folder. The run-time logs go elsewhere, to `<local application data>\The Lord of the Rings Online\` (§8.2).
+
+**Our client.** Let `NAME` be `The Lord of the Rings Online`, the name the official client uses. If the launcher config's `Product.DocumentFolder` (§6) holds a different value, log it at info level; it does not change `NAME`. Resolve the settings folder in the order of the steps below. The step labels are stable identifiers that code and other specs cite; step 1a sits between steps 1 and 2.
+
+- **Step 1.** If our client is started with `--prefs <file>`, the folder is the parent directory of `<file>` (P32; BIN). The preferences file is `<file>` itself, which need not be called `UserPreferences.ini`.
+- **Step 1a.** If our client's current working directory holds a file named `UserPreferences.ini` (case-insensitive, §2), the folder is that directory, as in the official client (P57). Project decision: this step is skipped when the working directory is the filesystem root or the user's home directory, where such a file would more likely be an accident than a portable setup.
+- **Step 2.** A per-install override from the source that found the install: OneLauncher `game_settings_directory` (§5.6.2) or `lotro-launcher` `settingsDirectory` (§5.6.5).
+- **Step 3.** Native Windows: `<Documents>/NAME`, where `<Documents>` is the user's known Documents folder. It may be redirected (OneDrive, roaming profiles), so use the shell's known-folder lookup, not `%USERPROFILE%\Documents`.
+- **Step 4.** Install inside a prefix (Steam Proton, Wine, Lutris, a launcher's own prefix): `<prefix>/drive_c/users/<user>/Documents/NAME`. For a Steam compatdata prefix `<user>` is `steamuser` (Confirmed). For other prefixes try the host user name first, then every other entry under `drive_c/users/` except `Public`, in lexicographic order. In the `lotro-launcher` prefix the host-user entry is a symlink to `steamuser`, so both names lead to the same folder (Confirmed 2026-10-05, §5.6.5). If `Documents` is a symlink into the host home, follow it (P19; Reported).
+- **Step 5.** Native Linux run of our client against a Steam/Proton install: use the prefix folder from step 4, so that plugins and preferences are shared with the official client.
+- **Step 6.** Otherwise: `$XDG_DOCUMENTS_DIR/NAME` if set, else `~/Documents/NAME`, else `~/NAME` (P19).
 
 **De-duplication.** Settings-folder candidates are de-duplicated by canonical (symlink-resolved) path, exactly as installs are in §5.8: when two candidates resolve to the same folder, keep the first one in the order above and drop the later one. A path that does not exist is compared by the canonical path of its nearest existing ancestor followed by the remaining components. This applies within step 4 (the host-user symlink case) and across steps (for example a step-2 override that names the same folder that step 4 finds).
 
-When several distinct candidates exist, prefer the one that already contains a `UserPreferences.ini`. When steps 1–5 yield no existing folder, the folder our client **proposes** (for creating its own files) is the first step-6 path (`$XDG_DOCUMENTS_DIR/NAME`, else `~/Documents/NAME`), never a path inside the install or a prefix.
+When several distinct candidates exist, prefer the one that already contains a `UserPreferences.ini`. When steps 1–5 (including 1a) yield no existing folder, the folder our client **proposes** (for creating its own files) is the first step-6 path (`$XDG_DOCUMENTS_DIR/NAME`, else `~/Documents/NAME`), never a path inside the install or a prefix.
 
 <a id="s8-2"></a>
 ### 8.2 Contents
@@ -585,17 +664,32 @@ Observed contents (Confirmed 2026-10-05): the Steam-prefix settings folder holds
 |---|---|---|
 | `UserPreferences.ini` | Client and launcher preferences (§8.3). The file name is fixed when `--prefs` is not given (OL) | Confirmed |
 | `lotro.keymap` | Key bindings, written by the client; format in `keymap.md` §12. `--keymap` names an alternative file to load (§10). The meta-key companion files that the help text mentions are not read by build 4906.0071.1794.4035 (KM K31) | Confirmed (presence) |
-| `Plugins/` | Lua plugins: `Plugins/<Author>/<Name>.plugin` descriptor files plus package folders; also `.plugincompendium`, `.skincompendium`, `.musiccompendium` manager files. Absent in both settings folders on the machine (2026-10-05) | Reported |
+| `Plugins/` | Lua plugins: `Plugins/<Author>/<Name>.plugin` descriptor files plus package folders; also `.plugincompendium`, `.skincompendium`, `.musiccompendium` manager files. Absent in both settings folders on the machine (2026-10-05). The client builds the folder path as the settings folder plus `Plugins` (P58) | BIN (folder name); Reported (contents) |
 | `PluginData/<account>/<world>/…` | Saved plugin data. Observed: `PluginOptions.xml` at the world level, under several worlds (P22) | Confirmed |
 | `PluginData/…/*.plugindata` | Data saved by plugins per scope (account, server, character); scope folder names are owned by `lua-plugin-api.md` §10.3 | Reported |
 | `CEF/` | In-game store browser (CEF) cache and user data: `CachePath/`, `UserData/`. Not read by our client | Confirmed |
-| `Music/*.abc` | Player-music files for `/play` | Reported |
+| `Music/*.abc`, `Music/*.txt` | Player-music files for `/play`. A requested name is looked up as `Music/<name>.abc` first, then `Music/<name>.txt` (P58) | BIN |
 | `ui/skins/<Skin>/SkinDefinition.xml` + TGA images | Custom UI skins, read at client start | Reported |
-| screenshots, chat logs | Written by the client | Reported |
+| `ScreenShot_<YYYY-MM-DD_HHMMSS>_<n>.jpg` | Screenshots, written directly into the settings folder (no sub-folder). The time stamp is the local time of the shot; `n` is the smallest of 0 … 99 for which no such file exists yet (P58). Not read by our client | BIN |
+| `<tab>_<YYYYMMDD>_<n>.txt` (shape in this install) | Chat-log files, written directly into the settings folder when the player logs or captures a chat tab (§8.2.1). Not read by our client | BIN; Confirmed (templates) |
 
 **Run-time logs are not in this folder.** The client, launcher and patcher write their own logs to `<prefix>/drive_c/users/<user>/AppData/Local/The Lord of the Rings Online/` (i.e. `%LOCALAPPDATA%\The Lord of the Rings Online\`): `lotroclient64.log`, `LotroLauncher*.log`, `PatchClient.log`, `TTEPatchClient.log` (Confirmed 2026-10-05, P38). Our client never reads these; they are listed so diagnostics can point a user at them. Do not parse or copy them (the launcher log contains account and login detail).
 
-> **OPEN:** The screenshot and chat-log folder names. A `Pictures/Screenshots/` folder exists in the prefix but was empty, so it could not be confirmed as the client's screenshot target.
+Screenshots are answered above (BIN-4): the client writes them as JPEG files directly into the settings folder, not into the prefix's `Pictures/Screenshots/` folder, which is therefore not the client's target.
+
+<a id="s8-2-1"></a>
+#### 8.2.1 Chat-log files
+
+The client has two actions on a chat tab that write a file: **logging** (from then on every line the tab receives is appended) and **capture** (the tab's current lines are written once). Both choose the file the same way (BIN-5, P67). The name is not in the client binary (BIN-4); it comes from the language data, so read it at run time.
+
+- **Folder.** The settings folder (§8.1): the directory part of the preferences file's full path, cut at its last `\`, `/` or `:`. No sub-folder.
+- **Tab name.** The tab's title, with each of the ten characters `*` `.` `"` `/` `\` `:` `<` `>` `|` `?` replaced by `_`. If the title is empty, token 0x0E2AEE95 of the `Chat` table (below) is used instead.
+- **Date.** Token 0x059365D4 of the `Chat` table, a template with three arguments: variable 0x0005D962 = the local year as a decimal number, variable 0x00524388 = the local month, two digits with a leading zero, variable 0x00004869 = the local day of the month, two digits with a leading zero. In this install the template puts them in the order year, month, day with nothing between them (`YYYYMMDD`).
+- **Name.** Token 0x03C4EF75 of the `Chat` table, a template with three arguments: variable 0x08572645 = the tab name, variable 0x00048685 = the date, variable 0x000057A1 = a number `n`. In this install the template gives `<tab>_<date>_<n>.txt`.
+- **Number.** `n` is the smallest of 1, 2, … 99,998 for which no file of that name exists in the folder. So every start of logging, and every capture, gets a new file. If all 99,998 names exist, no file is written and the tab shows an error line (token 0x04383525).
+- **Content.** The first line is a header from the same table (token 0x00682C22 for logging, 0x0859A842 for capture) with the tab name and a time stamp. Each line is converted to UTF-8 and written followed by a line feed (0x0A). The file is opened in the C runtime's append mode for each write and closed again; no byte-order mark is written. The append mode is the runtime's text mode, which turns each line feed into CR LF on Windows (Reported, general knowledge of that runtime); a reader accepts LF or CR LF.
+
+The `Chat` table is the string table that the STRINGTABLE DID map (`string-table.md`) names under key 0x1000004D: 0x250001A7 in this install (Confirmed 2026-10-07). Token and variable numbers are interoperability constants (decision 0012); the template and header texts are game text and are not reproduced here beyond the file-name shape they give in this install. Our client does not write chat logs yet (`chat-window.md` §5.7); this section lets it find and name them.
 
 <a id="s8-3"></a>
 ### 8.3 `UserPreferences.ini`
@@ -643,12 +737,11 @@ Known values (Reported unless marked):
 - `[Render] GraphicsCore` is one of `D3D9`, `D3D10`, `D3D11`, `OpenGL` (`D3D11` Confirmed in both files).
 - `[Display] ScreenMode` includes `FullScreen` and `FullScreenWindowed` (both Confirmed).
 - `[Display] Resolution` is a `WxH` string (`2880x1620` and `1920x1080` Confirmed), but `[Display] WindowedResolution` is a single unsigned integer, not a `WxH` string. Observed (Confirmed): `167773578` (0x0A00058A) with `Resolution=2880x1620`, and `83756426` (0x04FE058A) with `Resolution=1920x1080`.
+- **`WindowedResolution` packing** (BIN-4, P59): the value is the window's client-area **width** in pixels times 65536 plus its client-area **height** in pixels (width in the high 16 bits, height in the low 16 bits). The client stores a new value when the windowed client area changes size. The observed values decode to 2560 × 1418 (with `Resolution=2880x1620`) and 1278 × 1418 (with `Resolution=1920x1080`). The second is narrower than its `Resolution` but **taller** (1418 > 1080), so the stored value is **not bounded by `Resolution`** in either dimension. A reader accepts any width and height from 0 to 65535 as stored and does not reject or clamp the value because it exceeds `Resolution`. Worked example (synthetic): width 1600 and height 900 give 1600 × 65536 + 900 = 104,858,500 (0x06400384).
 - `[Render] D3DVersionPromptedForAtStartup` = `11` is present in both preferences files on the machine (Confirmed 2026-10-05). OL writes this value when it creates a file (Reported).
-- The launcher records the client type in `[Launcher] GameClientType`, observed `3` on this 64-bit install (P39). It selects among the WIN64 / WIN32 / WIN32Legacy client executables.
+- The launcher records the client type in `[Launcher] GameClientType`, observed `3` on this 64-bit install (P39). It selects among the client executables: **1** = WIN32, **2** = WIN32Legacy, **3** = WIN64, the executable under `x64/` (P70; Reported from a published launcher of the same family, the value 3 Confirmed). A reader treats any other value, or a missing key, as unknown and does not infer an executable from it.
 
-> **OPEN:** The full key list (keys appear only after the client has saved them), value ranges and defaults.
-> **OPEN:** The `GameClientType` enumeration (which integer is WIN64, WIN32 and WIN32Legacy). Only `3` on a 64-bit install was observed; the launcher is out of M4 scope ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), so it was not disassembled. Treat `GameClientType` as opaque: read it, do not depend on the specific value.
-> **OPEN:** The packing of `WindowedResolution`. Both observations have 1418 in the low 16 bits; the high 16 bits are 2560 and 1278. A "width in the high half, height in the low half" reading fits the first value but not the second, so the packing is unknown. Treat the value as opaque.
+> **OPEN:** The full key list, value ranges and defaults. The client registers each preference in the code of the subsystem that owns it, as `Section.Key` with a type and a default (BIN-4); there is no single table, and transcribing the registrations would copy a bulk table out of the client (decision 0012). Keys appear in the file only after the client has saved them. A writer must therefore preserve every key it does not own (above). Needs a decision on whether a key list is wanted at all; until then this stays open.
 
 ---
 
@@ -709,7 +802,9 @@ These are ordinary subfiles found by DID lookup in the archive's directory (DC).
 
 Observed sizes (Confirmed, B2, all 29): 148 bytes (one run; cell_3–5, cell_14, cell_15, map_3–5, map_14, map_15), 152 bytes (a single then a run; cell_2, map_2), 156 bytes (two runs; the eight shared-data and language bases, cell_1, map_1), 284 bytes (`highres_aux_3`: 29 runs, of which 22 are singles), 3,192 bytes (`mesh_aux_1`: 652 runs, of which 541 are singles), and 8 bytes (`N` = 0, `K` = 0: `highres_aux_1`, `highres_aux_2`, `sound_aux_1`, `surface_aux_1`, `surface_aux_2`). In B1, `highres_aux_3` was 288 bytes with 30 runs and `mesh_aux_1` 3,196 bytes (P43). Record sizes are a snapshot; never hard-code them.
 
-> **OPEN:** What the u64 in each trailing entry means. It is not a Windows FILETIME; it looks like a hash or a random stamp.
+**`stamp` rule** (BIN, P61, from DC §7.3): `K` and the trailing entries are present only when the directory entry's `stamp` (DC §5.2) is 2. With `stamp` 1 the record ends right after the run list; the client refuses `stamp` 3 or more. Every 0xFFFF0001 in the install has `stamp` 2 (Confirmed 2026-10-05). A reader that sees `stamp` 1 decodes the runs only and treats `K` as 0; for `stamp` ≥ 3 it reports the record as malformed (§9.3).
+
+> **OPEN:** What the u64 in each trailing entry means. It is not a Windows FILETIME. The client copies it verbatim and no game-client code interprets it (BIN-4, P61); its 64 bits look uniformly random (66 entries of six archives, 2026-10-07). It is written by the patcher, which decision 0011 excludes from M4, so the client cannot answer this. Not used in the fingerprint; nothing depends on it.
 
 <a id="s9-2-2"></a>
 #### 9.2.2 0xFFFF0003: install version stamp
@@ -718,14 +813,28 @@ Observed sizes (Confirmed, B2, all 29): 148 bytes (one run; cell_3–5, cell_14,
 |---|---|---|---|
 | 0 | 16 | stamp | stamp S1 |
 | 16 | 16 | stamp | stamp S2 |
-| 32 | 1 | u8 | label length `L` (observed 4) |
-| 33 | L | ASCII | a short decimal label: `5758` in shared-data/language archives and in `cell_1`/`map_1`; another value shared by each other `cell_<r>`/`map_<r>` pair |
+| 32 | 1, 2 or 4 | count | label length `L`, a variable-length count (below); observed always 1 byte, value 4 |
+| 32 + size of the count | L | ASCII | a short decimal label: `5758` in shared-data/language archives and in `cell_1`/`map_1`; another value shared by each other `cell_<r>`/`map_<r>` pair |
+
+**Label length** (BIN-4, P60). The count is read like this (first byte `a`):
+
+| First byte `a` | Count size | Value |
+|---|---|---|
+| 0x00–0x7F | 1 | `a` |
+| 0x80–0xBF | 2 | (`a` − 0x80) × 256 + the second byte |
+| 0xC0–0xFF | 4 | (`a` − 0xC0) × 2²⁴ + the second byte × 2¹⁶ + bytes 3 and 4 read as a little-endian u16 |
+
+This is the VLE of [`records.md`](records.md) §1.2 without its 5-byte `0xE0` form: here `0xE0` starts a 4-byte count like any other byte from 0xC0. Worked example (synthetic): bytes `80 85` give 133; bytes `C0 01 34 12` give 0x00011234 = 70,196.
+
+**What the client does with the label** (BIN-4, P60): it stores it with the two stamps and marks the archive's version stamp **invalid** when the label contains the ASCII text `INVALID_VERSION` anywhere (a case-sensitive substring test; the text is an interoperability marker, quoted for that reason). No observed label contains it.
 
 Size observed: exactly 37 bytes in all 27 archives that carry it (P46). The S1/S2 pair is **the same in every archive that has the record**, and it changed between A and B1 (P8).
 
-Reader rule: the record is well-formed when `L` < 0x80, `33 + L` equals the record size, and every label byte is in 0x21–0x7E. Otherwise it is malformed, which is reported and treated as if the record were absent.
+Reader rule: decode `L` as above. The record is well-formed when 32 + the count size + `L` equals the record size and every label byte is in 0x21–0x7E. Otherwise it is malformed, which is reported and treated as if the record were absent. For every record in the install (count size 1, `L` = 4, size 37) this gives the same result as the earlier rule "`L` < 0x80 and 33 + `L` = size", so fingerprints (§9.4) do not change. A label containing `INVALID_VERSION` is well-formed but is reported as an invalid version stamp (warning).
 
-> **OPEN:** Whether the length byte is a general variable-length count (values ≥ 0x80 were never observed), and what the decimal label means.
+Observed labels (Confirmed 2026-10-07, B2, all 27 records): `5758` in every shared-data, language and region-1 archive, including the empty aux members; `6121` for region 2, `7857` for region 3, `7963` for region 4, `9004` for regions 5 and 15, `8615` for region 14. The label was the same before and after the 2026-10-04 data patch (B1 and B2), although that patch rewrote every archive. No label equals its archive's `N` or `HI` (§9.3), and none occurs in the client's log.
+
+> **OPEN:** What the decimal label counts. It is not the iteration count or the highest iteration, and it did not change in the B1 → B2 data patch. Settling it needs a content update that changes it (record the labels before and after the next update of this install) or a published source. Nothing depends on it.
 
 <a id="s9-2-3"></a>
 #### 9.2.3 0xFFFF0004
@@ -736,9 +845,9 @@ Reader rule: the record is well-formed when `L` < 0x80, `33 + L` equals the reco
 | 4 | 4 | i32 | −`M` |
 | 8 | 4 | i32 | 1 |
 
-Exactly 12 bytes wherever present (P46). Unchanged between A and B1. The client's archive library never reads it (DC §15 item 5). Not used in the fingerprint.
+Exactly 12 bytes wherever present (P46). Unchanged between A and B1. No code of the game client loads it (DC §7.5, BIN there; P61). Not used in the fingerprint.
 
-> **OPEN:** Meaning.
+> **OPEN:** Meaning. No code of the game client uses it; the archives are written by the patcher, which is excluded from M4 (decision 0011), so the client cannot answer this (DC §7.5). Nothing depends on it.
 
 <a id="s9-2-4"></a>
 #### 9.2.4 0xFFFF0005: split-set membership
@@ -756,7 +865,7 @@ Size: exactly 24 bytes in all 29 archives (Confirmed 2026-10-05, P46). Reader ru
 
 16 bytes: one stamp, identical in every archive that has it, in A, B1 and B2. Not used in the fingerprint.
 
-> **OPEN:** Meaning.
+Meaning (BIN, DC §7.5, P61): the archive's **product identifier**, a GUID that the archive library stores and returns on request. Opening an archive does not compare it with anything. A reader treats it as opaque.
 
 <a id="s9-3"></a>
 ### 9.3 Decoding the iteration run list
@@ -777,7 +886,8 @@ The record is **malformed** (report it, do not panic) when any of these happen:
 - `remaining` would go below 0;
 - the record ends early;
 - `K` > 64;
-- bytes remain after the trailing entries.
+- bytes remain after the trailing entries;
+- the directory entry's `stamp` is 3 or more (§9.2.1). With `stamp` 1 there is no `K` and no trailing list; the record ends after the runs.
 
 Bound the number of tokens by the record size (at most (size − 8) / 4).
 
@@ -895,7 +1005,7 @@ SHA-256 `97e17f1a64385463806e064b46ff24a7ec954b3ffff812c56d3c43c8051fc888`, shor
 - **Steam `buildid`** from the app manifest (§5.3). Steam-only; coarse.
 - **`ProjectVersion`** (§7). Unchanged across the observed versions.
 
-> **OPEN:** Whether the first group of the file version (`4906`) encodes the content update number (it rose from 4601 to 4906 between A and B).
+**Meaning of the first group** (P71, Reported). The first group is the publisher's update number written without its dot, major × 100 + minor: `4601` is Update 46.1, `4704` is Update 47.4, `4906` is Update 49.6. Each of the three client versions known to the project matches the newest update released before it was observed (A: newest subfile timestamp 2026-02-04, the day Update 46.1 was released; KD-KB: an install last patched 2026-04-18, after 47.4 and before 48; B1: observed 2026-10-03, after 49.6 and before 49.7). How a third-level update (for example 46.2.1) appears was not observed. The client's own log only repeats the four groups with a build-type word (`4906.0071.1794.4035.RELEASE`, LOG). The label may be shown to users as an update number; it still does not identify the content (B1 and B2 share it), so nothing else depends on it.
 
 <a id="s9-6"></a>
 ### 9.6 Invariants
@@ -928,7 +1038,7 @@ Our client accepts the option set of the original 64-bit client, so third-party 
 | | `--chatserver` | R | host:port | Chat server to use | use (net) |
 | | `--connspeed` | R | 0.0–640.0 | Connection speed in kbit/s; 0 = probe | accept |
 | `-r` | `--create` | R | name | Character name to create or play | use |
-| | `--cwd` | R | dir | Change directory at start-up (reported not to work in the original; launchers change directory themselves) | use (works in ours) |
+| | `--cwd` | R | dir | Change directory at start-up. Reported not to work in the original; its start-up pre-scan changes directory only for the exact elements `-cwd` and `/cwd`, not for `--cwd` (§10.1, P74); launchers change directory themselves | use (works in ours, in every form) |
 | | `--debug` | R | 32-bit bit field | Which debug outputs are on | map to log filters |
 | `-f` | `--franchise` | R | string | Franchise name | accept |
 | | `--gametype` | R | string | Game type, used for support URLs | accept; also a game-type hint (§3.7) |
@@ -955,8 +1065,8 @@ Our client accepts the option set of the original 64-bit client, so third-party 
 | `-u` | `--user` | R | name | Character name to play | use |
 | | `--voicenetdelay` | R | int (ms) | Voice network delay threshold | accept |
 | | `--voiceoff` | S | none | Disable voice chat | accept |
-| | `--wfilelog` | R | 64-bit mask or names | File logging for event types; names are comma-separated and OR'd | map to log filters |
-| | `--wprintlog` | R | 64-bit mask or names | Print logging, same argument form | map to log filters |
+| | `--wfilelog` | R | bit string or names | File logging for event types; names are comma-separated labels of the data's "LogType" enumeration and OR'd (§10.1) | map to log filters |
+| | `--wprintlog` | R | bit string or names | Print logging, same argument form | map to log filters |
 
 Older or template-only option names (Reported: NOTES network §1.4, §1.7), all to be **accepted and ignored**: `--dbwlib`, `--nodbwlib`, `--usetdm`, `--webjournalurl`, `--bugurl`, `--supporturl`, `--supportserviceurl`, `--crashreceiver`, `--DefaultUploadThrottleMbps`. Tessera's own options must not reuse any name in the table or in this list (compared ignoring case); new ones should use the `--tessera-` prefix. `--game-dir` is also ours.
 
@@ -1000,9 +1110,44 @@ Facts about how build 4906.0071.1794.4035 reads its own command line (BIN-1, BIN
 
 This answers owner item O7: long option names are matched ignoring case, and the `name=value` form is honoured only by `--account` (and its one-letter form `-a=…`); for switches it is an error, and for every other option the element is silently ignored.
 
-> **OPEN:** The meaning of the `--debug` bits and the names accepted by `--wfilelog` / `--wprintlog`. The help text says these masks take either a 64-bit number or a comma-separated list of names from an event-type enumeration, OR'd together; the enumeration was not extracted.
-> **OPEN:** Whether the original keeps the first or the last value when an option is repeated (not examined; Tessera keeps the last).
-> **OPEN:** For an element whose first character is a non-ASCII option-token look-alike (BIN-3), whether the original's doubled-introducer check also compares only the low byte of the second code unit, and which name text results. Not examined; it does not affect Tessera, which does not treat such elements as option tokens (§10 rule 2).
+Further behaviour of the original (BIN-4, 2026-10-07):
+
+- **Repeated options** (P64). The parser hands each option occurrence to that option's handler at once, in command-line order; nothing is collected first. The handlers of `--prefs`, `--language` and `--debug` (the ones read) replace the earlier value, so the **last** occurrence wins, as in Tessera (§10 rule 10). Handlers of network and login options were not read (decision 0004).
+- **Doubled introducer** (P65). The check for a doubled introducer compares the second UTF-16 code unit with the first as whole 16-bit units. So for an element whose first unit is a non-ASCII look-alike (BIN-3), only an identical second unit counts as doubled; the name text is the rest after removing one unit (single form) or two (doubled form). Tessera does not treat such elements as option tokens at all (§10 rule 2), so this has no effect on it.
+- **`--debug`** (P63). The value is read as an unsigned 32-bit number in C notation: decimal, hexadecimal with a `0x` prefix, or octal with a leading `0`. Reading stops at the first character that does not fit, and text that does not start with a number gives 0. The client then sets each of its 32 debug flags to the matching bit of the number: set bits switch flags on, clear bits switch them off. Tessera maps the bits to its own log filters (§10 table); which original output each bit controls was not traced.
+- **`--wfilelog` and `--wprintlog`** (P62, P68). The mask starts empty. Each value is first read as a string of `0` and `1` characters: character *i* (counting from 0 at the start) sets bit *i* of the mask when it is `1` and leaves it clear when it is `0`, and the reading stops at the first character that is neither. The client's test also covers the string's terminating NUL, so this attempt **always stops** before the end and never counts as a success for a non-empty value, but the bits it has set are **kept**. A decimal or hexadecimal number, as the help text suggests, is not read as a number. The whole value is then split at commas, and each part is looked up as a **label of the game data's "LogType" enumeration**: the enum mapper that the EMAPPER DID map (`records.md` §8.2) names `LogType` (0x230000B5 in this install, Confirmed 2026-10-07). A label with value *v* > 0 sets bit *v* − 1 of the mask; value 0 sets nothing; an unknown label is logged as an error and skipped. The names are therefore data, read at run time, and are not listed here. The client applies these options after its data is loaded, because it needs the enumeration.
+
+  The resulting mask is therefore the union of two parts: the bits of the value's leading run of `0`/`1` characters, and the bits of every comma-separated part that is a label. Examples (labels made up): `0101` gives bits 1 and 3, and the client also logs `0101` as an unknown label; `1,Alpha` gives bit 0 plus the bit of `Alpha` (and logs `1` as unknown); `Alpha,1` gives only the bit of `Alpha` (the leading run is empty because `A` stops it). An empty value gives an empty mask.
+
+**Reader rule for Tessera** (replaces the rule of the 6th revision): compute the same mask as the original, the union of the leading-run bits and the label bits. A part that is not a label is reported at warning level, except that a value made only of `0` and `1` characters is reported at debug level, because it is the bit-string form the help text describes.
+
+**What the `--debug` bits switch** (BIN-5, P69). The 32 debug flags are one 32-bit word; every reader of that word was found. None of the bits selects a category of the ordinary log; they switch the client's debugging aids. Bit *n* has the value 2 to the power *n*.
+
+**Start-up pre-scan** (BIN-5, P74). Before the option parser described above runs, the client scans its raw command line once, element by element from the first argument:
+
+- An element that **contains** `-debug` or `/debug` anywhere (a case-sensitive substring test, so `--debug` matches) makes the next element, if there is one, the debug word, but only when that whole element is an unsigned 32-bit number in C notation (decimal, `0x` hexadecimal or leading-`0` octal) without overflow. A later match replaces an earlier one.
+- An element that is **exactly** `-cwd` or `/cwd` (case-sensitive) changes the current directory to the next element, if there is one. The doubled form `--cwd` does not match here.
+- Without a usable `-debug` value the word is all ones except bits 3, 11, 12 and 17 (0xFFFDE7F7).
+
+The diagnostics set-up (rows marked "set-up" below) then runs with that word, before any data is loaded. The regular `--debug` option (above) sets the word again later, so it affects only the rows that are tested after start-up (bits 1, 3, 6, 11 after script calls, 15).
+
+| Bit | Value | Effect where it is tested |
+|---|---|---|
+| 1 | 0x2 | Assertion reports and crash reports are also written to the client's log output |
+| 3 and 6 together | 0x48 | A failed assertion shows a message box (or breaks into an attached debugger) |
+| 5, 6 or 10 | 0x460 (any) | Set-up: loads the debug-symbol helper library (for stack traces in reports) |
+| 10 | 0x400 | Set-up: installs the client's crash handler and reserves memory for it: 10 MiB, or 100 MiB when bit 3 or bit 17 is also set |
+| 16 with 10 | 0x10400 | Set-up: the crash handler also handles pure-virtual-call errors |
+| 18 with 10 | 0x40400 | Set-up: the crash handler also handles invalid-parameter errors of the C runtime |
+| 11 | 0x800 | Floating-point division by zero raises an exception instead of being masked; applied by the set-up and re-applied after script calls and in one other routine |
+| 14 | 0x4000 | Set-up: runs at all only when this bit is set (it is in the default word), and clears it afterwards |
+| 15 | 0x8000 | Read by the crash handler for out-of-memory exceptions (with the bit clear, the handler lets such an exception continue instead of reporting a crash) |
+| 12 | 0x1000 | Set-up: passed, inverted, to the creation of the client's log file, where it chooses between two forms of the file's path; which forms was not traced |
+| 13 | 0x2000 | Returned, inverted, by one query whose caller was not identified |
+
+Bits not in the table are not tested by any reader of the word, except two routines that copy the whole word into other structures (not traced). Tessera's own mapping of `--debug` to its log filters (§10 table) is a project choice; no original bit corresponds to a log category.
+
+> **OPEN:** (narrowed) The observable effect of bits 12 and 13 (rows above) and the use of the whole word by the two routines that copy it into other structures. Needs a further BIN read of the log-file creation and of those two routines; nothing in Tessera depends on it.
 
 <a id="s10-2"></a>
 ### 10.2 Worked examples (synthetic)
@@ -1035,20 +1180,20 @@ Each row is a complete command line (argv elements separated by spaces; the acco
 <a id="s11"></a>
 ## 11. Summary of open questions
 
-All the `> **OPEN:**` callouts above, collected:
+All the `> **OPEN:**` callouts above, collected (7th revision of 2026-10-07):
 
-- §3.6 whether the client reads anything from `raw/` beyond videos and splash images.
-- §5.3 the Flatpak and Snap roots; the legacy VDF format; depot 212502.
-- §5.5 the Inno key brace form; the KD value names; the Codemasters path.
-- §5.6.3 the Lutris config format.
-- §5.6.5 the name and origin of the `lotro-launcher` program; a custom-prefix key.
-- §6 the base of `Launcher.DocumentFolder`.
-- §7 the meaning of `ProjectVersion`.
-- §8.2 the screenshot and chat-log folder names.
-- §8.3 the full preference key list; the `GameClientType` enumeration; the `WindowedResolution` packing; whether our client shares the file with the official client.
-- §9.2 the trailing iteration u64; the 0xFFFF0003 length byte and label; 0xFFFF0004; 0xFFFF0008.
-- §9.5 the file-version semantics.
-- §10 the `--debug` bits and the `--wfilelog`/`--wprintlog` names; the original's handling of repeated options; the original's doubled-introducer check for non-ASCII look-alike first characters.
+- §5.3 confirm the Flatpak, Snap and Debian Steam roots (sourced, not observed; needs another machine).
+- §5.5 the KD registry value names under the `StandingStoneGames` keys (needs a Windows registry with a current standalone install); the Codemasters path (needs a historical source).
+- §5.6.3 confirm the Lutris location and keys (sourced, not observed; needs another machine).
+- §6 where the official launcher resolves `Launcher.DocumentFolder` (launcher only; excluded from M4; not needed).
+- §7 what `ProjectVersion` counts (launcher/installer only; excluded from M4; not needed).
+- §8.3 whether our client shares `UserPreferences.ini` (project decision); the full preference key list (bulk table, decision needed).
+- §9.2 the trailing iteration u64 and 0xFFFF0004 (patcher only; excluded from M4); what the 0xFFFF0003 decimal label counts (needs a content update that changes it, or a published source).
+- §10.1 the effect of `--debug` bits 12 and 13 and of the two routines that copy the whole word (narrowed; further BIN read).
+
+Answered in the 7th revision (2026-10-07): the chat-log folder, name, numbering and encoding (§8.2.1); the `GameClientType` integers (§8.3, Reported); the meaning of the file version's first group (§9.5, Reported); how the `--wfilelog`/`--wprintlog` bit-string attempt ends and the resulting mask (§10.1); which `--debug` bits are tested, what they switch, the start-up pre-scan and the default word (§10.1); the §13 `installdir` question, answered in the 5th revision, no longer carries an OPEN marker. Narrowed: the KD value names (the Steam install's uninstall log has none of them, P72), `ProjectVersion` (unchanged by patching on another install too, P73), the 0xFFFF0003 label (observed values, unchanged by a data patch, P75).
+
+Answered in the revision of 2026-10-07: the use of `raw/` (§3.6.1); the legacy `libraryfolders.vdf` forms (§5.3, Reported); depot 212502 (§5.3); the Inno key brace form (§5.5); the origin and prefix keys of `lotro-launcher` (§5.6.5); the client's preferences file and settings folder (§8.1); the screenshot names (§8.2); the `WindowedResolution` packing (§8.3); the 0xFFFF0003 length encoding and the `INVALID_VERSION` marker (§9.2.2); the 0xFFFF0001 `stamp` rule and 0xFFFF0008 (§9.2.1, §9.2.5); the `--wfilelog`/`--wprintlog` names and the `--debug` value form, repeated options, the doubled-introducer test (§10.1); the implementation question on `installdir` (§13).
 
 Answered in the 2026-10-05 revisions (no longer open): aux members for region and language archives (§3.1); the 0x14C kind byte, DE/FR language codes and regions (§3.2, from DC); the roles of the patcher directories (§3.6); the run-time log folder (§8.2); the meaning of 0x170, 0x174, 0x178, 0x17C, 0x18C and 0x190–0x19F (§9.1, from DC and LOG); the option introducers, one-letter dispatch, `?`, `name=value` and case handling (§10.1, O7); every implementation question of §13.
 
@@ -1064,6 +1209,9 @@ Answered in the 2026-10-05 revisions (no longer open): aux members for region an
 | 2026-10-05 (2nd revision, after review) | **§10, §10.1 rewritten as behaviour (BIN-2):** introducers are `-` and `/`; the one-letter form is used only for a single introducer and a one-character name, falling back to the long names; `?` applies only after the name matched nothing; per-option value modes added (column "Mode"); **corrected** the O7 answer: `name=value` is honoured only by `--account`, is an error for switches and makes the element an ignored unknown option otherwise; **corrected** the missing-value rule: a required value is taken from the next element whatever it starts with; unknown options and stray elements are ignored silently by the original. Tessera's rules restated (§10 rules 1–12) with the differences marked; removed library-routine names and internal data-structure descriptions; paraphrased log and help text. **Implementers re-check** `apps/client` argument parsing (rules 2, 5, 6, 8, 9). **§9:** P35 and invariant 9 restated from a census of every directory entry of all 29 archives; invariants 10–11 added; level 2 gets a concrete criterion; level-0/level-1 serialisation pinned (§9.4.1) exactly as `crates/install` implements it, plus the new rule that a malformed 0xFFFF0003 (label bytes outside 0x21–0x7E) counts as absent; added §9.3 overflow checks for runs; synthetic examples §9.3.1 and §9.4.2 with hashes. **Stale observations:** versions redefined as A, B1, B2 (§1.1) after the 2026-10-04 data patch; §3.2 sizes and §9.2.1 record sizes are B2 snapshots (P43). **Provenance:** P19, P21, P23 (`Plugins/`) downgraded to Reported (not present 2026-10-05); P40's cause clause Reported; P44–P48 added; BIN uses logged in §1.3. **Coverage:** the `lotro-launcher` configs and prefix (§5.6.5, P44), a second preferences file with LF line ends and a `[General]` section (P45), LF accepted by the reader. **Imported** the corrections recorded in `dat-container.md` §15 items 1–6 (§3.1, §3.2, §3.5, §9.1, §9.2.1, §9.2.3) and `keymap.md` §13 item 1 (§8.2, `--keymap` row). **Minor:** duplicate `FrillTerrainColor` removed; the two Proton paragraphs of §5.3 merged; second `WindowedResolution` observation added; anchors added to every section; §13 answered. |
 | 2026-10-06 (3rd revision, after re-review) | **Counts:** P35 and invariant 9 now say 10 of the **24** archives with `N` > 0 (29 minus the five empty aux members); P47 now says **24** `appmanifest_*.acf`, all in the default root, the second library's `steamapps/` being empty. **Stale observations:** P17 re-marked (default-root case Confirmed 2026-10-05, non-default library Reported); §5.6.1 no longer claims OL's default-root-only compatdata scan misses a prefix on the user machine (not observed; every-library search kept as a project decision); §5.3 dates the zero-size `apps` entry to 2026-10-03 only. **§8.1 step 4 and §5.6.5:** the host-user entry under the `lotro-launcher` prefix's `drive_c/users/` is a symlink to `steamuser` (Confirmed 2026-10-05); settings-folder candidates are now de-duplicated by canonical path, as installs are in §5.8. **Non-blocking notes:** §10 rule 2 and §10.1 record that the original's option-token test uses only the low byte of the first UTF-16 code unit (BIN-3, the review's re-check, logged in §1.3), with a new OPEN on the doubled-introducer case; the `--safe`, `--remotemouse` and `--mps` meanings reworded; §8.3 notes `D3DVersionPromptedForAtStartup` = 11 in both preferences files. **Implementers re-check** `crates/install` settings-folder resolution (§8.1 de-duplication). |
 | 2026-10-06 (4th revision, after re-review) | **P35 and invariant 9:** `HI` is stated to be the base archive's value for every member; the equality count corrected to 13 of 29 archives (adding highres_aux_3, mesh_aux_1, sound_aux_1) and 13 of 22 split sets, from a fresh read-only walk of all 29 archives (2026-10-06). The invariant itself is unchanged and held in all 29. **§1.3:** BIN-3 now sits inside the BIN table. **§12:** rows put in date order. No implementer action (the equality count is an observation, not a rule). |
+| 2026-10-07 (5th revision) | Status Revised (awaits review). Works through every OPEN with M1, M2 and M4 (new BIN use **BIN-4**, §1.3) and new sources DEP, LL, LUT, INNO; provenance rows P49–P66; P23 and P32 re-marked. **Closed:** the use of `raw/` (new §3.6.1: the client has no built-in path; the language archive names 96 files, all `.bik` or `.jpg`; `vignette_videos` added to §3.6); the legacy and transitional `libraryfolders.vdf` forms (Reported); depot 212502 = English language content, and the two locally created aux parts (§5.3); the Inno key has no braces (§5.5); `lotro-launcher` origin, game types and the absence of a persisted prefix key (§5.6.5); the official client's preferences-file rule (`--prefs`, then the current directory, then Documents with a fixed folder name) and the folders derived from it (§8.1, P57, P58); screenshot names (§8.2); `WindowedResolution` = width × 65536 + height (§8.3); the 0xFFFF0003 label count encoding and the `INVALID_VERSION` marker (§9.2.2); the 0xFFFF0001 `stamp` rule (§9.2.1, §9.3) and the meaning of 0xFFFF0008 (§9.2.5); `--wfilelog`/`--wprintlog` names come from the data's "LogType" enumeration, the `--debug` value form, repeated options (last wins) and the doubled-introducer test (§10.1); the implementer question on `installdir` (§13, §5.3). **Narrowed** (still OPEN, each now says what would settle it): Steam roots and Lutris (another machine), KD value names and the Codemasters path, `Launcher.DocumentFolder`, `ProjectVersion`, `GameClientType` (launcher-only, never read by the client), chat-log names (owner observation), the preference key list (decision needed), the iteration u64 and 0xFFFF0004 (patcher-only), the 0xFFFF0003 label and file-version semantics, `--debug` bit meanings. **Implementers re-check** `crates/install`: §8.1 (`NAME` is fixed; new step 1a for a `UserPreferences.ini` in the working directory), §9.2.2 (the label length is a 1-, 2- or 4-byte count; same results on all observed data, fingerprints unchanged), §9.2.1 and §9.3 (`stamp` 1 has no trailing list, `stamp` ≥ 3 is malformed), §5.3 (`installdir` rule as implemented, plus `contentstatsid` and plain-string entries in `libraryfolders.vdf`), §5.6.3 (new Lutris source), and `apps/client` for the `--wfilelog`/`--wprintlog` value form. |
+| 2026-10-07 (6th revision, after review) | Answers the review of 2026-10-07 (status still Revised, awaits re-review). **Blocking issue, §10.1:** the parenthesis on the `--wfilelog`/`--wprintlog` bit-string attempt is removed from the bullet; the unknown is now a `> **OPEN:**` callout worded as behaviour (whether a value made only of `0` and `1` characters is ever taken as a bit string), with a reader rule (Tessera accepts the bit-string form as specified) and an entry in §11; P62 points to it. **Note a, §8.1:** the steps are now a bulleted list with bold labels (Step 1, Step 1a, Step 2 … Step 6), so that step 1a renders. The labels are kept rather than renumbered because code and this spec cite them (for example "§8.1 steps 4–5", "step 2", "the first step-6 path" in §13); the order and content of the steps are unchanged. **Note b, §8.3:** the `WindowedResolution` observations now state that the stored value is not bounded by `Resolution` (1278 × 1418 is taller than 1920 × 1080), with a reader rule: accept any 16-bit width and height as stored. No new BIN use, no new data read. **Implementer action:** none required; `apps/client` may check its `--wfilelog`/`--wprintlog` handling against the §10.1 reader rule (unchanged behaviour). |
+| 2026-10-07 (7th revision) | Status Accepted → Revised (awaits review). New BIN use **BIN-5** (§1.3), new sources DDOML, SN, KD-KB; provenance rows P67–P75; P23, P32 and P62 re-marked. **Closed:** chat-log files (new §8.2.1: settings folder, name from the `Chat` table templates, first free number 1–99,998, character replacement, UTF-8 lines appended); `GameClientType` 1 = WIN32, 2 = WIN32Legacy, 3 = WIN64 (§8.3, Reported); the file version's first group is the update number (§9.5, Reported); the `--wfilelog`/`--wprintlog` bit-string attempt always stops at the string's terminator but keeps its bits, so the mask is the union of the leading `0`/`1` run and the label bits (§10.1, **Tessera reader rule changed**); the `--debug` bits are debugging aids, not log categories, with a table, the start-up pre-scan (also for `-cwd`/`/cwd`) and the default word (§10.1; §10 `--cwd` row); the §13 `installdir` question loses its stale OPEN marker. **Narrowed:** KD value names (§5.5, uninstall-log evidence; `Inno Setup: App Path` added as a fallback value of the Inno key), `ProjectVersion` (§7), 0xFFFF0003 labels (§9.2.2, observed values), `--debug` bits 12 and 13. **§14:** new item 3 for `chat-window.md` Q9. **Implementers re-check** `apps/client` `--wfilelog`/`--wprintlog` handling against the new reader rule (§10.1), and `crates/install` §5.5 (one more Inno value name). |
 
 ---
 
@@ -1080,7 +1228,9 @@ The implementer chose the behaviour below where the spec was silent. All seven a
 6. **§8.1 folder to propose when no candidate exists.** Answered: the first step-6 path, never a path in the install or a prefix, as implemented (§8.1).
 7. **§2 "exact case" for archive names.** Answered: the canonical spelling of §3.1, as implemented (§2).
 
-> **OPEN:** (implementation, 2026-10-06, engineering choice, §5.3) The spec says `installdir` is a folder name under `steamapps/common/` but not which values count as one. The implementation accepts a value only when it is exactly one plain path component on every platform: it refuses `/`, `\`, `:` (so `C:` and `C:x`, which Windows reads as drive-relative paths, cannot escape the library), control characters, names ending in `.` or a space (Windows strips those, so `.. ` would become `..`), and Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`–`COM9`, `LPT0`–`LPT9`, the superscript-digit forms, with or without an extension). A refused value is ignored with a warning, as before. Please confirm, or name valid Steam folder names this would refuse.
+> **Question** (implementation, 2026-10-06, engineering choice, §5.3; answered, no longer open) The spec says `installdir` is a folder name under `steamapps/common/` but not which values count as one. The implementation accepts a value only when it is exactly one plain path component on every platform: it refuses `/`, `\`, `:` (so `C:` and `C:x`, which Windows reads as drive-relative paths, cannot escape the library), control characters, names ending in `.` or a space (Windows strips those, so `.. ` would become `..`), and Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`–`COM9`, `LPT0`–`LPT9`, the superscript-digit forms, with or without an extension). A refused value is ignored with a warning, as before. Please confirm, or name valid Steam folder names this would refuse.
+>
+> **Answered (2026-10-07):** Confirmed as written. All 24 `installdir` values on the user machine are single components built from ASCII letters, digits, space, `-` and `_` (P66), and none is refused by the rule. A folder name that Windows cannot hold (one containing `\`, `/` or `:`, ending in `.` or a space, or naming a device) cannot be a Steam install folder that also works on Windows, so the rule refuses nothing valid. Also refuse the empty value, `.` and `..` (the rule above already does if it treats them as non-plain components). §5.3 now says so.
 
 ---
 
@@ -1091,3 +1241,4 @@ These specs are owned elsewhere; the corrections are recorded here, not made the
 
 1. **`walker.md` §1** (`--keymap` for Tessera's own TOML keymap): this clashes with the original's `--keymap` option (§10), which `keymap.md` §12.14 now gives its original meaning. Rename Tessera's option to `--tessera-keymap`, as proposed in `keymap.md` §13 item 2. The other walker options (`--residency-mib`, `--view-blocks`, `--object-distance`, `--gpu-mib`, `--texture-cap`, `--interiors`) do not clash with any original name.
 2. **`dat-container.md` §15 item 1 and §7.3** describe this spec's former P35 ("highest entry iteration = highest listed iteration − 1"). That statement is withdrawn here (P35, invariant 9); no change is needed there.
+3. **`chat-window.md` §5.7 and Q9** (chat log file name, folder, encoding): answered here in §8.2.1 (P67, BIN-5); Q9 can point to it. The file goes into the settings folder, its name comes from the `Chat` table templates, and lines are appended as UTF-8.

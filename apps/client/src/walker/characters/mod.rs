@@ -39,6 +39,9 @@
 //! Positions are region-frame `f64` in the store; simulated characters, whose moves arrive
 //! at the sandbox's tick rate, are extrapolated along their last velocity (for at most
 //! [`EXTRAPOLATE`]) and put on the terrain; placed figures keep the data's height.
+//! Characters of a remote session (a Tessera test server) are instead placed every frame
+//! at their interpolated state ([`CharacterLayer::apply_samples`],
+//! `tessera-protocol.md` §8.6), still on the terrain and still animated by ground speed.
 
 pub mod catalog;
 pub mod figure;
@@ -56,17 +59,15 @@ use tessera_assets::{CancelToken, Priority, WorkerPool};
 use tessera_entity::{Changes, Column, Entity, EntityStore, NetId, StoreConfig, Transform};
 use tessera_net::{Appearance, Body, EntityId, Event};
 use tessera_render::glam::{Mat4, Quat, Vec3};
-use tessera_render::{
-    AlphaMode, Dye, DyeMask, Frame, Material, MeshDraw, MeshId, Renderer, SkinPalette,
-};
+use tessera_render::{Frame, MeshDraw, MeshId, Renderer, SkinPalette};
 use tessera_world::WorldPos;
 
 use self::catalog::WeenieRole;
 use self::figure::{FigureAsset, FigureContext, FigureKey, FigureRequest, build_figure};
 use self::motion::{Locomotion, drive, make_animator};
 use super::UploadBudget;
-use super::geometry::{AlphaKind, MaterialPlan, TexRequest};
-use super::objects::{ObjectLayer, TexLookup};
+use super::geometry::{MaterialPlan, TexRequest};
+use super::objects::{ObjectLayer, surface_draw};
 use super::source::SourceShared;
 use super::view::{Anchor, Frustum};
 
@@ -85,7 +86,8 @@ pub const FIGURE_KEEP: Duration = Duration::from_secs(30);
 pub struct CharacterConfig {
     /// Draw weenie markers (housing hooks, distant-battle units) as static figures.
     pub markers: bool,
-    /// Characters further than this (m) are not drawn.
+    /// Cap on the characters' draw distance (m): below it the class distance of
+    /// [`character_draw_distance`] applies (`walker.md` §11.4.2).
     pub draw_distance: f32,
     /// Characters further than this (m) keep their last pose (no sampling job; a character
     /// gets one job for its first pose wherever it is).
@@ -103,6 +105,61 @@ impl Default for CharacterConfig {
             max_entities: 1 << 16,
         }
     }
+}
+
+/// Characters cast the sun's shadow within this distance (metres): the render
+/// component's initial `d2` (`walker.md` §11.4 step 4, `mesh.md` §8.7 shadow distance at
+/// the built-in settings). Tessera Decision: the class of each character's own entity is
+/// not resolved for this (`walker.md` §14.11 OPEN).
+pub const CHARACTER_SHADOW_DISTANCE: f32 = tessera_world::draw_distance::COMPONENT_DEFAULTS[2];
+
+/// `d0` of the character classes (`walker.md` §11.4.2: `PlayerAvatar`, `Creature` and
+/// `Creature2Deg` all have 80 m). Tessera Decision: used for every character until each
+/// entity's own class is resolved (`walker.md` §14.11 OPEN).
+pub const CHARACTER_D0: f32 = 80.0;
+
+/// What the character layer's distance rules need of a frame (`walker.md` §11.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CharacterFrame {
+    /// The global limit *G* (`walker.md` §11.3).
+    pub g: f32,
+    /// The object draw-distance multiplier *M_d* (§11.2).
+    pub multiplier: f32,
+    /// Frame time, seconds.
+    pub dt: f32,
+    /// Camera travel since the previous frame, metres (fade reset beyond 25 m).
+    pub camera_moved: f32,
+    /// Per-class distances and fades on; off draws every character to the cap.
+    pub lod: bool,
+}
+
+impl Default for CharacterFrame {
+    fn default() -> Self {
+        Self {
+            g: 2_080.0,
+            multiplier: 1.0,
+            dt: 1.0 / 60.0,
+            camera_moved: 0.0,
+            lod: true,
+        }
+    }
+}
+
+/// A character's draw distance *D* = min(*G*, `d0` × *M_d*) (`walker.md` §11.4 step 1;
+/// `d0` × 3 for the player's own character, step 3), capped at `cap`; the cap alone when
+/// per-class distances are off. Non-finite inputs fall back to the cap.
+#[must_use]
+pub fn character_draw_distance(frame: &CharacterFrame, cap: f32, player: bool) -> f32 {
+    if !frame.lod {
+        return cap;
+    }
+    let scale = if player {
+        tessera_world::draw_distance::PLAYER_SCALE
+    } else {
+        1.0
+    };
+    let d = (CHARACTER_D0 * scale * frame.multiplier).min(frame.g);
+    if d.is_finite() { d.min(cap) } else { cap }
 }
 
 /// Counters and timings for the HUD and the frame log.
@@ -168,6 +225,10 @@ struct Actor {
     heading: f32,
     speed: f32,
     seed: u32,
+    /// The 1.5 s fade across the draw distance (`mesh.md` §8.7).
+    fade: tessera_world::draw_distance::DrawFade,
+    /// In view in the previous frame (a character coming into view appears at once).
+    seen: bool,
 }
 
 struct GpuPart {
@@ -191,7 +252,7 @@ impl RestPose {
         let skel = asset.skeleton.as_ref()?;
         let model = skel.reference_model();
         let mut skin = vec![Mat4::IDENTITY; skel.bone_count()];
-        if skinning_matrices(skel, model, &mut skin).is_err() {
+        if skinning_matrices(skel, skel.reference_triples(), &mut skin).is_err() {
             skin.clear();
         }
         let mut attach = Vec::new();
@@ -284,6 +345,14 @@ pub struct CharacterLayer {
     mesh_bytes: u64,
     /// Tags of the placed figures this layer shows (module docs, "Placed figures").
     shown: HashSet<u64>,
+    /// Draw through the lit pipeline (`walker.md` §14.5).
+    lit: bool,
+    /// Characters cast the sun's shadow.
+    shadows: bool,
+    /// Leave the player's own character out (the free-fly camera, `walker.md` §14.5).
+    hide_player: bool,
+    /// The distance rules of the frame.
+    distances: CharacterFrame,
 }
 
 impl std::fmt::Debug for CharacterLayer {
@@ -336,6 +405,10 @@ impl CharacterLayer {
             stats: CharacterStats::default(),
             mesh_bytes: 0,
             shown: HashSet::new(),
+            lit: false,
+            shadows: false,
+            hide_player: false,
+            distances: CharacterFrame::default(),
         }
     }
 
@@ -419,9 +492,14 @@ impl CharacterLayer {
         &self.shown
     }
 
-    /// Recomputes [`CharacterLayer::shown_figures`] for a viewer at `eye`.
+    /// Recomputes [`CharacterLayer::shown_figures`] for a viewer at `eye`: the placed
+    /// figures within the character draw distance (beyond it the object layer draws them).
     fn collect_shown(&mut self, eye: Option<WorldPos>) {
-        let max_d = f64::from(self.config.draw_distance);
+        let max_d = f64::from(character_draw_distance(
+            &self.distances,
+            self.config.draw_distance,
+            false,
+        ));
         let mut shown = std::mem::take(&mut self.shown);
         shown.clear();
         for (e, a) in self.actors.iter() {
@@ -652,11 +730,7 @@ impl CharacterLayer {
             }
             let mut textures: Vec<TexRequest> = parts
                 .iter()
-                .flat_map(|p| {
-                    p.plans
-                        .iter()
-                        .flat_map(|pl| pl.texture.into_iter().chain(pl.dye.map(|d| d.0)))
-                })
+                .flat_map(|p| p.plans.iter().flat_map(MaterialPlan::textures))
                 .collect();
             textures.sort_unstable();
             textures.dedup();
@@ -824,6 +898,8 @@ impl CharacterLayer {
             heading,
             speed: 0.0,
             seed: seed_of(id),
+            fade: tessera_world::draw_distance::DrawFade::new(),
+            seen: false,
         };
         if self.actors.insert(e, actor).is_err() {
             self.store.despawn(e);
@@ -998,6 +1074,49 @@ impl CharacterLayer {
                     self.player = None;
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Puts every networked character (not the player, not placed figures) that `sample`
+    /// knows at its interpolated state (`tessera-protocol.md` §8.6): position, heading and
+    /// the velocity that drives its locomotion (zero ground speed and velocity when the
+    /// motion byte says Standing, or when the sample is `SampleKind::Held`: updates late
+    /// past the extrapolation limit stand the character still). Characters `sample` does not know keep the extrapolation of their
+    /// last move. Positions are in `region`, the player's current region (as for moves).
+    pub fn apply_samples(
+        &mut self,
+        sample: &dyn Fn(EntityId) -> Option<tessera_net::interp::Sample>,
+        region: u8,
+        now: Instant,
+    ) {
+        let player = self.player;
+        for a in self.actors.values_mut() {
+            if a.tag.is_some() || Some(a.net) == player {
+                continue;
+            }
+            let Some(s) = sample(a.net) else { continue };
+            if !(s.position.is_finite() && s.heading.is_finite() && s.velocity.is_finite()) {
+                continue;
+            }
+            a.base = [
+                f64::from(s.position.x),
+                f64::from(s.position.y),
+                f64::from(s.position.z),
+            ];
+            a.region = region;
+            a.at = now;
+            a.heading = s.heading;
+            // Held: the entity's updates are late (past the extrapolation limit, §8.6), so
+            // it stands where the sampler holds it instead of walking on the spot.
+            let still = s.motion.gait == tessera_net::interp::Gait::Standing
+                || s.kind == tessera_net::interp::SampleKind::Held;
+            if still {
+                a.velocity = [0.0; 3];
+                a.speed = 0.0;
+            } else {
+                a.velocity = [s.velocity.x, s.velocity.y, s.velocity.z];
+                a.speed = s.velocity.x.hypot(s.velocity.y);
             }
         }
     }
@@ -1218,6 +1337,23 @@ impl CharacterLayer {
         self.stats = s;
     }
 
+    /// Sets how characters are shaded: through the lit pipeline (stored-value colours and
+    /// the lit inputs of `lighting.md` §4.1) and whether they cast the sun's shadow.
+    pub fn set_shading(&mut self, lit: bool, shadows: bool) {
+        self.lit = lit;
+        self.shadows = shadows;
+    }
+
+    /// Leaves the player's own character out of the draws (free-fly mode) or not.
+    pub fn set_hide_player(&mut self, hide: bool) {
+        self.hide_player = hide;
+    }
+
+    /// Sets the distance rules of the frame ([`character_draw_distance`], the fade).
+    pub fn set_distances(&mut self, frame: CharacterFrame) {
+        self.distances = frame;
+    }
+
     /// Uploads the palettes of the visible characters into `frame` and returns their draws
     /// (module docs, step 4). `camera` is the eye in `anchor`'s frame.
     pub fn prepare_draws(
@@ -1230,12 +1366,14 @@ impl CharacterLayer {
         out: &mut Vec<MeshDraw>,
     ) {
         let t = Instant::now();
-        let max_d = self.config.draw_distance;
+        let cap = self.config.draw_distance;
+        let df = self.distances;
         let mut drawn = 0usize;
         for (e, render, tf) in self.store.renderables() {
             let Some(a) = self.actors.get(e) else {
                 continue;
             };
+            let is_player = Some(a.net) == self.player;
             if a.hidden {
                 continue;
             }
@@ -1245,6 +1383,9 @@ impl CharacterLayer {
                 Some(tag) if !self.shown.contains(&tag) => continue,
                 None if !self.drawable(e) => continue,
                 _ => {}
+            }
+            if self.hide_player && Some(a.net) == self.player {
+                continue;
             }
             let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
             else {
@@ -1273,11 +1414,22 @@ impl CharacterLayer {
             let world = Mat4::from_scale_rotation_translation(Vec3::splat(scale), rot, pos);
             let center = world.transform_point3(g.center);
             let radius = g.radius * scale;
-            if (center - camera).length() - radius > max_d
-                || !frustum.sphere_visible(center, radius)
-            {
+            let distance = ((center - camera).length() - radius).max(0.0);
+            let max_d = character_draw_distance(&df, cap, is_player);
+            let in_view = frustum.sphere_visible(center, radius);
+            let Some(a) = self.actors.get_mut(e) else {
+                continue;
+            };
+            // `walker.md` §11.4 step 1: the 1.5 s fade across D (`mesh.md` §8.7).
+            let opacity = a
+                .fade
+                .update(distance, max_d, df.dt, df.camera_moved, !a.seen, df.lod);
+            a.seen = in_view;
+            if opacity <= 0.0 || !in_view {
                 continue;
             }
+            // A fading character casts no shadow (as fading objects, `walker.md` §14.5).
+            let casts = self.shadows && opacity >= 1.0 && distance <= CHARACTER_SHADOW_DISTANCE;
             // The sampled pose, or the reference pose of a figure without an animator.
             let pose: Option<PoseView<'_>> = match self.store.anim(e) {
                 Some(anim) => self
@@ -1306,38 +1458,14 @@ impl CharacterLayer {
                     }
                 };
                 for (i, plan) in part.plans.iter().enumerate() {
-                    let texture = match plan.texture {
-                        None => None,
-                        Some(t) => match objects.texture(t) {
-                            TexLookup::Ready(id) => Some(id),
-                            TexLookup::Failed if plan.alpha == AlphaKind::Opaque => None,
-                            _ => continue,
-                        },
-                    };
-                    let dye = plan
-                        .dye
-                        .and_then(|(mask, color)| match objects.texture(mask) {
-                            TexLookup::Ready(id) => Some(Dye {
-                                color,
-                                mask: DyeMask::Texture(id),
-                            }),
-                            _ => None,
-                        });
-                    let material = Material {
-                        base_color: plan.base_color,
-                        base_texture: texture,
-                        dye,
-                        alpha: match plan.alpha {
-                            AlphaKind::Opaque => AlphaMode::Opaque,
-                            AlphaKind::Mask(c) => AlphaMode::Mask { cutoff: c },
-                            AlphaKind::Blend => AlphaMode::Blend,
-                        },
-                        two_sided: plan.two_sided,
-                        unlit: plan.unlit,
-                        ..Material::color(plan.base_color)
+                    let Some((material, lit)) =
+                        surface_draw(plan, &|t| objects.texture(t), self.lit, opacity, casts)
+                    else {
+                        continue;
                     };
                     let mut d = MeshDraw::new(part.mesh, transform, material)
-                        .with_submesh(u32::try_from(i).unwrap_or(u32::MAX));
+                        .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
+                        .with_lit(lit);
                     if part.skinned
                         && let Some(p) = palette
                     {
@@ -1413,6 +1541,32 @@ mod tests {
             .filter(|s| !matches!(s.state, SlotState::Free))
             .map(|s| s.refs)
             .collect()
+    }
+
+    #[test]
+    fn character_distances_follow_the_class_g_and_the_multiplier() {
+        let f = CharacterFrame::default();
+        assert_eq!(character_draw_distance(&f, 400.0, false), 80.0);
+        assert_eq!(character_draw_distance(&f, 400.0, true), 240.0);
+        // `--object-draw-distance UltraHigh` (M_d 2): 160 m, not the old fixed 80 m.
+        let ultra = CharacterFrame {
+            multiplier: 2.0,
+            ..f
+        };
+        assert_eq!(character_draw_distance(&ultra, 400.0, false), 160.0);
+        // Fog pulls G in: G wins.
+        let fog = CharacterFrame { g: 60.0, ..f };
+        assert_eq!(character_draw_distance(&fog, 400.0, false), 60.0);
+        // The option is a cap.
+        assert_eq!(character_draw_distance(&ultra, 50.0, false), 50.0);
+        // Per-class distances off: the cap alone; hostile values: the cap.
+        let off = CharacterFrame { lod: false, ..f };
+        assert_eq!(character_draw_distance(&off, 400.0, false), 400.0);
+        let nan = CharacterFrame {
+            multiplier: f32::NAN,
+            ..f
+        };
+        assert_eq!(character_draw_distance(&nan, 400.0, false), 400.0);
     }
 
     #[test]
@@ -1524,6 +1678,94 @@ mod tests {
         let a2 = l.actors.get(e2).unwrap();
         assert_eq!(a2.base, [50.0, 60.0, 7.0]);
         assert_eq!((a2.heading, a2.speed), (1.0, 5.0));
+    }
+
+    #[test]
+    fn samples_place_networked_characters_only() {
+        use tessera_net::interp::{Gait, Motion, Sample, SampleKind};
+        let mut l = layer();
+        apply(
+            &mut l,
+            vec![
+                created(1, 0x7900_0001, None),
+                created(2, 0x7900_0002, Some(9)),
+            ],
+            Some(EntityId(3)),
+        );
+        let now = Instant::now();
+        let sample = |id: EntityId| {
+            (id.0 != 3).then_some(Sample {
+                position: tessera_net::Vec3::new(10.0 + id.0 as f32, 20.0, 3.0),
+                heading: 0.5,
+                velocity: tessera_net::Vec3::new(3.0, 4.0, 0.0),
+                motion: Motion::new(Gait::Walking, false),
+                kind: SampleKind::Interpolated,
+            })
+        };
+        l.apply_samples(&sample, 1, now);
+        let actor = |l: &CharacterLayer, id: u64| {
+            let e = l.store.entity_for(NetId(id)).expect("entity");
+            l.actors.get(e).cloned().expect("actor")
+        };
+        let a = actor(&l, 1);
+        assert_eq!(a.base, [11.0, 20.0, 3.0]);
+        assert_eq!((a.heading, a.speed, a.at), (0.5, 5.0, now));
+        let placed = actor(&l, 2);
+        assert_ne!(
+            placed.base[0], 12.0,
+            "placed figures keep the data's position"
+        );
+        // Standing means no locomotion, whatever the interpolated velocity.
+        let standing = |_: EntityId| {
+            Some(Sample {
+                position: tessera_net::Vec3::new(1.0, 2.0, 3.0),
+                heading: 0.0,
+                velocity: tessera_net::Vec3::new(0.1, 0.0, 0.0),
+                motion: Motion::STANDING,
+                kind: SampleKind::Held,
+            })
+        };
+        l.apply_samples(&standing, 1, now);
+        assert_eq!(actor(&l, 1).speed, 0.0);
+        // Held with a walking gait (updates late, §8.6): no walk cycle on the spot and no
+        // frame-to-frame extrapolation either.
+        let held = |_: EntityId| {
+            Some(Sample {
+                position: tessera_net::Vec3::new(5.0, 6.0, 7.0),
+                heading: 0.25,
+                velocity: tessera_net::Vec3::new(3.0, 0.0, 0.0),
+                motion: Motion::new(Gait::Walking, false),
+                kind: SampleKind::Held,
+            })
+        };
+        l.apply_samples(&sample, 1, now);
+        assert_eq!(actor(&l, 1).speed, 5.0);
+        l.apply_samples(&held, 1, now);
+        let a = actor(&l, 1);
+        assert_eq!((a.base, a.heading), ([5.0, 6.0, 7.0], 0.25));
+        assert_eq!((a.speed, a.velocity), (0.0, [0.0; 3]));
+        // Extrapolated keeps the locomotion.
+        let extrapolated = |id: EntityId| {
+            sample(id).map(|s| Sample {
+                kind: SampleKind::Extrapolated,
+                ..s
+            })
+        };
+        l.apply_samples(&extrapolated, 1, now);
+        assert_eq!(actor(&l, 1).speed, 5.0);
+        l.apply_samples(&standing, 1, now);
+        // Non-finite samples are ignored.
+        let bad = |_: EntityId| {
+            Some(Sample {
+                position: tessera_net::Vec3::new(f32::NAN, 0.0, 0.0),
+                heading: 0.0,
+                velocity: tessera_net::Vec3::ZERO,
+                motion: Motion::STANDING,
+                kind: SampleKind::Held,
+            })
+        };
+        l.apply_samples(&bad, 1, now);
+        assert_eq!(actor(&l, 1).base, [1.0, 2.0, 3.0]);
     }
 
     #[test]

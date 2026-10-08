@@ -46,7 +46,7 @@ pub(crate) fn ensure<D: Decoder>(
 }
 
 /// Shows a loading spinner or the failure of a handle; returns the product when ready.
-fn ready<T>(ui: &mut Ui, h: Option<&Handle<T>>) -> Option<Arc<T>> {
+pub(crate) fn ready<T>(ui: &mut Ui, h: Option<&Handle<T>>) -> Option<Arc<T>> {
     let h = h?;
     match h.state() {
         AssetState::Ready(p) => Some(p),
@@ -133,6 +133,8 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
                     ui.label("the render thread is not running");
                 }
             },
+            ViewKind::Landblock => crate::world_view::landblock_view(ui, l, cur, &mut actions),
+            ViewKind::Sky => crate::world_view::sky_view(ui, l, cur, &mut actions),
             ViewKind::Character => match viewport.as_mut() {
                 Some(vp) => crate::anim_view::character_view(
                     ui,
@@ -1206,9 +1208,13 @@ fn record_view(ui: &mut Ui, l: &Loaded, cur: &mut Current, actions: &mut Vec<Act
                 ui.horizontal(|ui| {
                     for (c, cell) in row.cells.iter().enumerate() {
                         let is_link = row.link.is_some()
-                            && p.columns
-                                .get(c)
-                                .is_some_and(|n| matches!(*n, "value" | "data" | "surface"));
+                            && match p.link_column {
+                                Some(lc) => lc == c,
+                                None => p
+                                    .columns
+                                    .get(c)
+                                    .is_some_and(|n| matches!(*n, "value" | "data" | "surface")),
+                            };
                         if is_link {
                             let r = ui.add_sized(
                                 [col_w, row_h],

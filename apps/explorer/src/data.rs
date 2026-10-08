@@ -84,6 +84,8 @@ pub struct DataContext {
     pub materials: MaterialLibrary<Arc<ArchiveSet>>,
     /// Largest texture side the GPU accepts (set by the UI after start-up).
     pub max_texture_side: AtomicUsize,
+    /// The world model of the M4.5 views (loaded on first use, on a worker).
+    pub world: crate::world::WorldState,
 }
 
 impl std::fmt::Debug for DataContext {
@@ -152,6 +154,7 @@ impl DataContext {
             Some(l) => Ok(Some(reader_set.read_located(&l)?)),
             None => Ok(None),
         });
+        let world = crate::world::WorldState::new(Arc::clone(&set));
         Self {
             dir,
             set,
@@ -161,6 +164,7 @@ impl DataContext {
             composer: IconComposer::new(reader),
             materials,
             max_texture_side: AtomicUsize::new(DEFAULT_MAX_TEXTURE_SIDE),
+            world,
         }
     }
 

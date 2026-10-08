@@ -4,14 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-05 |
+| **Status** | Accepted (2026-10-08, re-review of the revision that added §10.8 and corrected §8, §10.1, §10.2, §10.3.2, §10.3.4, §10.3.5, §10.7, §12.4). First accepted 2026-10-05. |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), review 2026-10-05: changes requested. (1) §10.3.4 names a client-internal class (name redacted from this record by the repair, 2026-10-05), which occurs only in the executable and is not an interoperability identifier; remove it. (2) §3.3.2 says playback must end exactly at the last granule and treats missing samples as a decoder fault, but §3.3.3 allows dropping the truncated packet. Dropping leaves 63–83 samples per channel short of the last granule in all 15 streams, and two of those streams are behind looping sound infos (flags 0x05). Pick one rule (zero-fill to the granule, or a stated exception), and say what "the same sample counts" refers to. (3) Confirmed figures that do not hold: the loop-flag median length is 62.6 s, not 72 s (§4.3; 64.2 s over distinct payloads), and `ovwf` and `elmo` occur in 3 WAV files each, not 1–2 (§3.4). (4) Unknowns written inline instead of as `> **OPEN:**` callouts: §3.1 reserved word, §3.5 provider, §4.3 flags 0x02 and 0x10, §5 unreached sound infos, §6.6 (two), §6.8 sound filter, §9.2 step 4 and fire-and-forget loops, §10.3.2, §10.3.5, §10.6. (5) Provenance rows are missing for §5 (reference census), §6.8 (gates, 250-request bound, queueing), §9.2 steps 2–4 (mute-when-internal, viewport redirect, no-effects bit), §10.3.2–§10.3.3 and §10.7. (6) §9.2 step 1 says the node "fails", a node outcome that neither this spec nor `script-table.md` defines. Say how Sequence and Random parents treat it (as completion?), or add an OPEN. Minor: §6.8 lists its first check as item 5 ("checked first"), so renumber it. §3.3.2 "every stream here starts at granule 0" needs a precise wording. Spot checks that matched, over all records: 0x0A envelope, trailer and storage-format census (44,337; 2/3/7 = 37,644/6,685/8; reserved 0; none compressed); Ogg census (40,874: one stream, BOS/EOS, all page CRCs valid, monotonic granules, no trailing bytes, channels, rates, block sizes, durations and per-archive hours); every Ogg stream decoded without error by an independent decoder (ffmpeg); WAV census (3,455: fmt sizes, PCM tag, bits, rates, chunk walk ends at *S*, first-chunk counts, `smpl` loops in 2); 0x2A layout and census (45,544: sizes 36–117, −1/−1, priorities, distances, 17 min > max, flag combinations and bit counts, payload targets 44,329 and 43,266 single); SoundChannel mapper 0x2300034D, base 0x2300034E, 9 labels; SoundEnv 0x23000080, 27 labels; MUSIC map gives exactly the 8 DMAP records; UNIQUEDB 11 and UILAYOUT 1 sound-info targets; script keys 0x10000039 and the fade, combat and race keys; Sound node 43 bytes and SoundEnvironment node 8 bytes with no ports or targets (126,562 and 21; channel, fire-and-forget, move-with-entity, camera, random-distance, offset, ramp-out, pitch, variance, probability and driven counts; 28,710 distinct sound infos, all existing; 59 fire-and-forget loops; environment value and priority census); `Area_Music` stored in no 0x78, 0x79 or 0x47 property set. Addressed 2026-10-05 by a repair session (spec writer): all six items and both minor points, see the change log (§18). |
-| **Re-review record** | Claude review session (spec-writer agent), re-review 2026-10-05: **accepted**. All nine items of CLEAN_ROOM.md §5.3 hold. All six earlier items and both minor points are resolved: the class name is gone; one normative Ogg rule; corrected figures; OPEN callouts; provenance rows A7–A9, I4, P7, N3, N4, M5–M7; failed start defined in §9.6. Independent re-checks over all records: 1. Own build of libogg 1.1 and libvorbis/vorbisfile 1.0.1 from Xiph's release tarballs. The install's DLLs carry the 1.0.1 and libogg-1.1 build strings. 2. Own driver run over all 40,874 Ogg payloads. Opened seekable and seeked to sample 0, the library total equals *L* of §3.3.2 steps 1–5 in every stream. The samples read equal decoded samples *A* … *A* + *M* − 1 exactly. Decoding from the first page gives *N*. 3. Granule census reproduced: 40,642 / 217 / 15 / 0; *T* − *G* 0–1,023; *G* − *T* 63/64/83; 9 streams vary by one. 10,610 streams have audio on the setup page, split 6,401/4,185/24; 3,811 of them have *A* > 0, largest 155,648 at 0x0A00918C. The other 30,264 split into 30,247 + 15 + 2 (two short by 128). There are 253 looping infos over 162 payloads, 61 with *A* > 0. 4. Zero-length packets occur only as the sole packet of the last page, in exactly 15 stereo streams (14 sound, 1 local). Their infos are 4 with flags 0x04, 2 with 0x05 and 9 with 0x00. 5. `smpl` loops: 0x0A014396 has frames 1,688–61,472 of 62,874 and is named by 0x2A006371, flags 0x05. 0x0A00218C sits behind a flags-0x04 info. 6. The 92 placeholder nodes are all fire-and-forget with probability 1, each the sole child of a weight-1 Default port of a Random: 80 roots, 12 under Collections. 7. Script 0x10000039 has 858 Run nodes, 77 of which stop, over 74 keys. Table 0x0700042F has 292 scripts. Non-blocking errata for the next revision: (a) In the last row of the §3.3.2 census table, "(the yield of the first packet on page *a*)" holds in 10,003 of the 10,610 streams. In 606 others the first packet on page *a* began on the setup page, and the shortfall is the yield of the first two packets. One stream (0x0A015B4D) is neither. Steps 1–5 are exact in all streams. (b) Steps 3–4 do not say what happens when page *a* completes no packet or holds a zero-length packet; neither occurs here. (c) §9.2 step 3 identifies the viewport entity as Inferred, without an OPEN callout. |
-| **Implements into** | `crates/formats` (sound-info record 0x2A, sound payload record 0x0A, Ogg and WAV container checks; the existing `sound` module), `crates/audio` (`tessera-audio`: decoding, voices, buses, distance law, pitch, fades, voice limit, reverb environments, the player-property feed of §10.3), the script evaluator that runs script tables (Sound and SoundEnvironment nodes, §9), `apps/client` (audio settings named after the channel enum, §7), `apps/dattool` / `apps/explorer` (sound browser), `fuzz/` (one target per record type, §13) |
-| **Companion specs** | [`records.md`](records.md) §9 (0x0A envelope and container sniffing; this spec extends and corrects it, §15). [`property-system.md`](property-system.md) §2–§5 (dictionary, value encodings, property sets), §8 (DID maps), §9 (DB-object-type codes: 0x12 sound info, 0x2A script table). [`script-table.md`](script-table.md) §2–§7 (framing, node layouts incl. kinds 48 and 62, control-flow nodes; §9 here adds the sound-node semantics that file does not yet hold). [`landblock.md`](landblock.md) §4 (cell properties), §5 (block maps and descriptors). [`environment.md`](environment.md) §3 (region descriptor), §6 and §11 (game clock). [`entity-descriptor.md`](entity-descriptor.md) (SED placement of 0x47 objects). [`setup.md`](setup.md) §3.1 (0x47 header). [`wstate.md`](wstate.md) (area, dungeon and landmark objects). [`install-layout.md`](install-layout.md) (the `[Sound]` section of the user preferences). Player-music instruments and the ABC dialect are out of scope (`instruments.md`, `abc-dialect.md`). |
+| **Review record** | Re-review 2026-10-05: **accepted**. Re-review 2026-10-08 of the §10.8 revision (Claude review session, spec-reviewer role): **accepted**; all CLEAN_ROOM.md §5.3 items hold, BIN3 spot checks matched. Full records in the review log (decision 0018). |
+| **Implements into** | `crates/formats` (sound-info record 0x2A, sound payload record 0x0A, Ogg and WAV container checks; the existing `sound` module), `crates/audio` (`tessera-audio`: decoding, voices, buses, distance law, pitch, fades, voice limit, reverb environments, the player-property feed of §10.3 and §10.8), the script evaluator that runs script tables (Sound and SoundEnvironment nodes, §9), `apps/client` (audio settings named after the channel enum, §7; the walker's location properties of the avatar, §10.8), `apps/dattool` / `apps/explorer` (sound browser), `fuzz/` (one target per record type, §13) |
+| **Companion specs** | [`records.md`](records.md) §9 (0x0A envelope and container sniffing; this spec extends and corrects it, §15). [`property-system.md`](property-system.md) §2–§5 (dictionary, value encodings, property sets), §8 (DID maps), §9 (DB-object-type codes: 0x12 sound info, 0x2A script table). [`script-table.md`](script-table.md) §2–§7 (framing, node layouts incl. kinds 48 and 62, control-flow nodes; §9 here adds the sound-node semantics that file does not yet hold). [`landblock.md`](landblock.md) §4 (cells and their properties; §4.12 the camera's cell, which audio does not use, §10.8), §5 (block maps and descriptors). [`collision.md`](collision.md) §5.8.1 (which cell a point is in). [`script-runtime.md`](script-runtime.md) §6 and §12.4 (Switch re-evaluation, stopping a Run). [`environment.md`](environment.md) §3 (region descriptor), §6 and §11 (game clock). [`entity-descriptor.md`](entity-descriptor.md) (SED placement of 0x47 objects). [`setup.md`](setup.md) §3.1 (0x47 header). [`wstate.md`](wstate.md) (area, dungeon and landmark objects). [`install-layout.md`](install-layout.md) (the `[Sound]` section of the user preferences). Player-music instruments and the ABC dialect are out of scope (`instruments.md`, `abc-dialect.md`). |
 
 ---
 
@@ -68,6 +67,8 @@ property names) at run time, never by hard-coding.
 | DS | `research/notes/data-semantics.md` §9 (0x0A/sound-info outline from LotroCompanion), §6.5 (block maps). |
 | LC | LotroCompanion `delta-lotro-dat-utils` (Apache-2.0 distribution), reported layout of the sound-info record and of the 0x0A envelope (via DS and `records.md`). |
 | BIN2 | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), repair session 2026-10-05.** Same build 4906.0071.1794.4035, address ranges only: the Sound node's start routine (its result codes, the internal-mute walk, the viewport redirect, the no-effects test, the volume floor), the sound manager's request function and the gate function it calls, the generic script-node runner (the routine that starts the children of a port, the routine that starts one node, the probability gate), the Random node's start routine, the client's WAV reader (which chunk tags it recognises), and the two routines that open Ogg payloads (decode at load, streaming) with the streaming refill and its loop rewind (which Vorbis-file library functions they call, in which order, with which arguments). **Questions:** what the original does with a node whose start fails (review item 6); the exact order and outcome of the request gates (§6.8); the source of §9.2 steps 2–4; whether `smpl` loop points are honoured (§3.4); which samples of an Ogg payload the original plays (§3.3.2, review item 2). **Why M1–M3 were not enough:** the data only show that 92 placeholder nodes exist and where they sit; how the runtime reacts to a failed start, and in which order requests are filtered, exist only as code; no running client is available (M3). Network, login, launcher, anti-tamper and voice-chat code were not examined. |
+| BIN3 | **M4 ([decision 0011](../decisions/0011-standing-m4-authorisation.md)), indoor-state session 2026-10-08.** Same build 4906.0071.1794.4035, address ranges only: the entity's property-source container (its five sources, their order and how a property is resolved across them), the cell property source (the routine that computes `Volume_IsOutside` and adds the cell's properties), the landblock property source and the landblock's two property holders (block map, landblock info), the physics component's position update and the listener dispatch it calls (which events fire on a landblock change, a cell change and every update), the static values for "no cell" and "outside", and the OpenAL device routine that uploads a reverb environment. **Questions:** how the original decides that the listener is indoors for ambient beds, reverb and music; where that state comes from; how changes are timed; how a reverb environment's intensity is applied. **Why M1–M3 were not enough:** no stored property set holds `Volume_IsOutside` (OBS2), so its rule exists only as code; the precedence between cell, landblock and monitor values and the moment of the change cannot be seen in the data; no running client is available (M3). Network, login, launcher, anti-tamper and voice-chat code were not examined. |
+| OBS2 | Observed in the user's install on 2026-10-08 (data unchanged since 2026-10-05) with throwaway probes in the dirty scratch directory: every node of the 7,524 decodable script tables (of 7,526) and all 28,992 scriptlets searched for Switches on `Volume_IsOutside` and related properties; the `Startup` scripts of 0x0700042E and 0x070017F8 and script 0x10000039 walked node by node; the include closures of all 14 avatar class tables; the property sets of all 104,271 cells and all 49,636 landblock-info records; all 1,618 0x78 and 383,332 0x79 property sets searched for `Volume_IsOutside`, `ForceOutside` and `Area_Music`; the 175 dungeon objects that cells name, read for `Dungeon_Music`. |
 | REFDEC | The Xiph reference Vorbis libraries (general-purpose BSD-licensed software, not part of the game), driven by throwaway probes on 2026-10-05 over **all 40,874** Ogg payloads: libvorbis 1.3.7 of the dirty-room machine for the block size of every audio packet; and libogg 1.1 with libvorbis/libvorbisfile 1.0.1, built in the dirty scratch directory from Xiph's released source (the release whose version strings the install's library files carry), (a) decoding from the first page and (b) opened as a seekable source, seeked to sample 0, read up to the library's total length, the way BIN2 shows the client using it. The library source was read for its length computation (general engineering knowledge; nothing copied). |
 | VORBIS | The public Xiph Vorbis I specification (general knowledge): §4.3.1 (decoding an audio packet: packet type, mode, window; packet sizes and the overlap of consecutive blocks, so that a packet after the first yields one quarter of the previous plus one quarter of the current block size per channel) and Appendix A (Ogg encapsulation; a page's granule position is the sample position at the end of the last packet completed on it; the final granule position marks the last sample and may cut the last block short). |
 | RIFF | The public RIFF/WAVE and `fmt ` chunk description (general knowledge). |
@@ -115,6 +116,14 @@ always paired with an OPEN.
 | M6 | Four race-labelled music scripts in table 0x0700042E; Run nodes start three of them inside `Area_Music` cases, with no race Switch on the way; four race probability properties that no node of the music tables reads (§10.3.3) | OBS (tables 0x0700042E, 0x0700042F, 0x070017F8, 0x070017F9, scriptlets 0x0C009B74 and 0x0C000153; enum 0x23000097 labels; property dictionary) | Confirmed for the tables named |
 | M7 | Script 0x10000039 holds 858 Run nodes (77 of them stop a script) over 74 distinct script keys; the reverb-script counts; table 0x0700042F holds 292 scripts (§10.7) | OBS (full walk of 0x0700042E and 0x0700042F; recounted 2026-10-05) | Confirmed |
 | E1 | 240 placed object kinds play sounds from their start-up scripts; 43,274 SEDs place them (§11) | OBS | Confirmed |
+| V1 | The player's indoor state for audio is the avatar's own property `Volume_IsOutside`, computed from the avatar's position: 1 in cell 0 of a valid landblock, 0 in an interior cell, 255 for an invalid position; no stored set holds it; no camera test (§10.8.2) | BIN3; OBS2 (no stored set holds the property; 32 Switch nodes read it) | BIN / Confirmed census |
+| V2 | In an interior cell the cell's own property set is added to the same source; cell number 1 is excluded; a cell that is not loaded adds nothing (§10.8.2) | BIN3; OBS2 (cell census) | BIN; that the set is the landblock-info cell set of `landblock.md` §4.4 part 8 is Inferred |
+| V3 | Five property sources in priority order (monitor volumes, landblock load properties, cell, landblock, world); a property takes the value of the highest source that has it; a dropped property falls through to the next source (§10.8.1) | BIN3 | BIN (source 5 and the content of source 2 not traced) |
+| V4 | The landblock source holds the landblock's block-map properties overlaid by its landblock-info property set (§10.8.1) | BIN3 | BIN; identity of the two records Inferred |
+| V5 | The position update fires a landblock event (region, landblock X, Y or instance changed), then a cell event (the same or the cell changed), then an every-update event; the cell source answers the cell event, the landblock source the landblock event; everything runs in the same call (§10.8.3) | BIN3 | BIN |
+| V6 | The `Startup` script (key 5) of 0x0700042E runs on every avatar and switches ambient beds and reverb scripts on `Volume_IsOutside` (case 1 outdoors, Default otherwise), each branch keyed by `Area_Music`; 32 Switches on the property in all records, case values 0 and 1 only, no delays (§10.8.4) | OBS2 | Confirmed |
+| V7 | Cells hold `Ambient_MusicType` in 6,132 cells, 36 of the 41 case values of the graph's `Ambient_MusicType` Switches; no cell holds `Ambient_SoundEnum_BlockMapOverride` (§10.8.2, correcting §10.3.2) | OBS2 | Confirmed |
+| V8 | A reverb environment is uploaded at once as a whole parameter set; the environment's intensity is written as the reverb's gain parameter (§10.8.5) | BIN3 | BIN; that the third word handed to the routine is the registered intensity is Inferred from the registration triple of §8 (whether the manager ramps the intensity: OPEN) |
 
 ---
 
@@ -298,6 +307,20 @@ Rules:
 This replaces the earlier reading of this section ("the last audio packet ends before its
 residue data", with permission to drop that packet): the earlier census probe took the
 empty packet for a truncated audio packet.
+
+> **OPEN:** (clean-room implementation, `tessera_audio::decode`, 2026-10-07) Cases §3.3.2
+> steps 1–5 do not cover; none occurs in this install, so `tessera-audio` handles them
+> conservatively until the spec says otherwise: (1) page *a* has granule −1 (it completes
+> no packet): *P* = 0, as if page *a* did not exist; (2) the last page has granule −1:
+> *L* = *T* and *N* = *T*; (3) a zero-length packet on page *a* is skipped and is not "the
+> packet before" the next one in step 3; (4) a packet with the header bit set after the
+> three headers fails the decode; (5) page *a* does not exist (the setup header and every
+> audio packet complete on the last page): steps 2 and 5 are applied as written, so
+> *A* = *D*(*h*) = *T* and *M* = 0, the played range is empty and a looping voice has
+> nothing to loop over (its source refuses to rewind); `tessera-audio` reports the stream
+> (`OggIssue::NoPageAfterSetup`). Please confirm what the 1.0.1 libraries do in (1)–(5),
+> in particular whether in (5) they play from sample 0 (*A* = 0, *M* = *N*) instead.
+> Synthetic tests pin (1)–(5) (`crates/audio/tests/decode_synthetic.rs`, `open_case_*`).
 
 <a id="s3-4"></a>
 ### 3.4 RIFF WAVE payloads (Confirmed, 3,455 of 3,455)
@@ -556,6 +579,13 @@ treated as 0. There is no fade-in for sounds: a new sound starts at its full gai
   distance law but stay centred.
 - Source positions come from the request's positioner (§9.2 step 6).
 
+> **OPEN:** (clean-room implementation, 2026-10-07) The panning law is not stated: how the
+> audio library turns a camera-relative position into per-speaker gains (pan curve, centre
+> level, front/back handling, elevation), and whether gain changes are stepped or smoothed.
+> `tessera_audio::engine` uses a constant-power pan on the lateral component of the source
+> direction (centre 0.7071 per side), ignores front/back and elevation, and spreads each gain
+> change over 64 samples. Please state the original's law if it can be observed.
+
 <a id="s6-8"></a>
 ### 6.8 Requests that are not played (BIN, BIN2; P7)
 
@@ -673,8 +703,17 @@ master volume ("Sound.MasterVolume") multiplies all channels (§6.1).
   of table 0x0700042F (and their copies in 0x070017F9) that the music graph starts per
   location (§10.7).
 
-> **OPEN:** How the environment's intensity is applied (presumably as the reverb send or
-> effect gain). Tessera: scale the reverb send by it (Decision).
+> **Answered (2026-10-08, BIN3, §10.8.5):** the environment's intensity is written as the
+> reverb effect's gain parameter (EFX `AL_EAXREVERB_GAIN`), replacing the gain the preset
+> conversion produces, and the preset is applied at once without interpolation. This replaces
+> the former Decision (scale the reverb send by the intensity).
+
+> **OPEN:** (clean-room implementation, 2026-10-07) The parameters of the 26 presets
+> (decay time, damping, reflection and reverb levels and delays, diffusion, density) are
+> not in this spec; "the standard EAX environment preset of the same name" names them but
+> does not give the values. `tessera_audio::engine` uses its own placeholder values with a
+> generic comb/all-pass reverb (decision 0019) until the values are specified. Also open:
+> the send level of a flag-0x04 voice into the reverb (Tessera: the voice's own gain).
 
 ---
 
@@ -773,8 +812,17 @@ re-read in BIN2):
 > the voice limit, a distance cull or the entity's removal ends it was not traced. Tessera
 > stops it when its entity is removed (Decision).
 
+> **OPEN:** (clean-room implementation, 2026-10-06) Step 5 clamps the random distances to
+> ≥ 0 but does not say what happens to a stored value that is not finite (NaN or
+> ±infinity; none in this install, only hostile data). A uniform draw in [*x*, +∞] is
+> undefined and would give an infinite or NaN source position. `tessera-formats`
+> (`SoundNode::random_distance_range`) treats every non-finite bound as 0, as it does NaN.
+> Please confirm or state the original's behaviour.
+
 <a id="s9-3"></a>
 ### 9.3 Intensity of a node instance (BIN; applies to every node kind)
+
+See [`script-runtime.md`](script-runtime.md) §4 for the settled rule (clamp only when the variance is not 0; `instruments.md` Q8) and for driven multiplier changes.
 
 When any node starts, its instance intensity is:
 
@@ -886,6 +934,9 @@ played by one **script graph** that every player avatar runs:
   `Ambient_MusicType`, `Ambient_SoundEnum_BlockMapOverride`, `Volume_IsOutside`,
   `Combat_Violent` and instance-stage booleans select the music program (§10.4) and start
   ambient and reverb scripts by **Run** nodes (§10.7).
+- The same table's `Startup` script (key 5), which every avatar also runs, plays the ambient
+  beds and starts reverb scripts in two branches selected by `Volume_IsOutside`, the player's
+  indoor state (§10.8; added 2026-10-08).
 
 An implementation runs this graph with its generic script evaluator; it needs no
 area-specific code. What it must provide are the player properties of §10.2.
@@ -897,12 +948,12 @@ area-specific code. What it must provide are the player properties of §10.2.
 |---|---|---|---|
 | `Entity_IsThePlayer` (0x5B0) | bool | 1 | true on the local player's avatar |
 | `Area_Music` (0x10001493) | enum 0x23000140 ("AmbientMusicType") | 3 (699 cases); 967 distinct case values over 0x0700042E, 0x070017F8 and 0x0C009B74 | §10.3.1 |
-| `Ambient_MusicType` (0x3F8) | enum 0x23000140 | 20 | block map (§10.3.2), monitor volumes (§10.3.4) |
-| `Ambient_SoundEnum_BlockMapOverride` (0x46) | enum 0x2300016B | 4 | block map, cell properties, monitor volumes |
-| `Environment_LocalSky` (0x1D8) | enum 0x230000E9 | 4 | block map / monitor volumes (`environment.md` §7.1) |
+| `Ambient_MusicType` (0x3F8) | enum 0x23000140 | 20 | cells (§10.8.2), landblock-info sets and block maps (§10.3.2), monitor volumes (§10.3.4); precedence §10.8.1 |
+| `Ambient_SoundEnum_BlockMapOverride` (0x46) | enum 0x2300016B | 4 | landblock-info sets, block maps, monitor volumes (no cell carries it, §10.8.2) |
+| `Environment_LocalSky` (0x1D8) | enum 0x230000E9 | 4 | cells, landblock-info sets, block maps, monitor volumes (§10.8.1; `environment.md` §7.1) |
 | `World_IsNight` (0x1F0) | bool | 150 | game clock (§10.3.5) |
-| `Volume_IsOutside` (0x53B) | tri-state, default 255 | 1 | indoors/outdoors (§10.3.5) |
-| `Volume_ContentLayer` (0x621) | enum via DID map 0x28000012 | 138 | current content layer (§10.3.5) |
+| `Volume_IsOutside` (0x53B) | tri-state, default 255 | 1 (one more in the `Startup` script of the same table, §10.8.4) | computed from the player's position: 1 outside, 0 in a cell, 255 unknown (§10.8.2) |
+| `Volume_ContentLayer` (0x621) | enum via DID map 0x28000012 | 138 | landblock load properties (§10.8.1); absent for the stored world (§10.3.5) |
 | `Combat_Violent` (0x10000C6E) | bool | 7 | combat state; false in the offline walker |
 | `HousingPropertyHook_IntMusic` (1), `Music_Monitor` (73), `Music_inMonitor`, `PrivateEncounter_Template_DataID`, `Dungeon_CurrentDungeon`, instance-stage booleans | various | | housing, player music, instances: absent in the walker (the Switches take their default ports) |
 | `Snd_Music_Advance` (0x10000CDE), `Snd_IsOn` (0x10000DCE) | int, bool | 1,277 and 36 | **set by the graph itself** (SetProperty nodes) |
@@ -910,6 +961,13 @@ area-specific code. What it must provide are the player properties of §10.2.
 
 Properties are looked up by name in the dictionary at run time. A property that is absent
 on the player makes its Switch take the Default port (`script-table.md` §7.1).
+Precisely: it reads its dictionary default, else its type's zero value, and takes the Default port only when no case matches that value (`script-runtime.md` §6.2, R27).
+
+> **OPEN:** (clean-room implementation, 2026-10-08) The table row for
+> `HousingPropertyHook_IntMusic`, `Music_Monitor` … says "(the Switches take their default
+> ports)", but `script-runtime.md` §6.2 (OBS-R) counts 13 of the 66 Switches on the first two
+> without a Default port: on an avatar that has neither property those select nothing. The
+> implementation follows `script-runtime.md` §6.2; please align the row.
 
 <a id="s10-3"></a>
 ### 10.3 Where the values come from
@@ -956,22 +1014,44 @@ descriptors (`landblock.md` §5.4).
   equals the landblock's area music type, and only 2 of its 20 values are case values of
   the graph's `Ambient_MusicType` Switches (41 case values over the three records of
   §10.2). The monitor volumes' 9 values add 2 more case values.
-- Cells (interiors) carry `Ambient_SoundEnum_BlockMapOverride` and `Ambient_SoundEnum` in
-  their property sets (`landblock.md` §4; `collision.md` §5.7 counts 521 cells with
-  `Ambient_SoundEnum`). No Switch in the music tables watches `Ambient_SoundEnum`.
+- Cells (interiors) carry `Ambient_MusicType` (6,132 cells), `Ambient_MusicRegion` (359) and
+  `Ambient_SoundEnum` (98) in their embedded property sets (`landblock.md` §4.4 part 8), but
+  **not** `Ambient_SoundEnum_BlockMapOverride`, which 116 landblock-info sets carry (§10.8.2;
+  corrected 2026-10-08, the earlier text listed it for cells). `collision.md` §5.7 counts
+  `Ambient_SoundEnum` in 521 cell geometry records (0x01), which are a different set. No Switch
+  in the music tables watches `Ambient_SoundEnum`.
 
-> **OPEN:** Where the other 37 case values of the `Ambient_MusicType` Switches come from.
-> No stored block map, cell or monitor volume holds them; presumably game logic sets them.
-> Tessera leaves those cases unreached (Decision).
+> **Answered in part (2026-10-08, OBS2):** cells hold 36 of the 41 case values (§10.8.2);
+> they reach the player through the cell source (§10.8.1). The earlier statement that no cell
+> holds them was wrong. **OPEN:** where the remaining 5 come from (the census above finds 4
+> case values in block maps and monitor volumes; their overlap with these 5 was not rechecked).
+> Tessera leaves cases that no stored value reaches unreached (Decision).
 
 > **OPEN:** Who reads `Ambient_MusicRegion` (set in 13,379 landblocks) and the cells'
-> `Ambient_SoundEnum`. No Switch in the music tables watches either. Tessera does not feed
-> them to the player (Decision).
+> `Ambient_SoundEnum`. No Switch in the music tables watches either. By §10.8.1 the original
+> puts them on the player like any other location property; since nothing in the music
+> tables reads them, feeding them or not makes no audible difference (Decision: feed them, as
+> §10.8.6 does).
 
-> **Decision (Tessera):** the player's `Ambient_MusicType`, `Ambient_SoundEnum_BlockMapOverride`
-> and `Environment_LocalSky` take the current landblock's block-map values (out-of-range
-> indices give no value, `landblock.md` §5.4); inside a cell, the cell's own values replace
-> them; a monitor volume containing the player replaces both (§10.3.4).
+> **Rule (BIN3, 2026-10-08; replaces the 2026-10-05 Decision):** the player's
+> `Ambient_MusicType`, `Ambient_SoundEnum_BlockMapOverride`, `Environment_LocalSky` and every
+> other location property are resolved **per property** over the sources of §10.8.1: monitor
+> volumes first, then the landblock load properties, then the cell (its embedded set), then
+> the landblock (its landblock-info set over its block-map values; out-of-range block-map
+> indices give no value, `landblock.md` §5.4).
+
+> **OPEN:** (clean-room implementation, 2026-10-07) The Decision does not say whether
+> "the cell's own values replace them" replaces the three block-map values as a whole or
+> only those the cell sets, nor the same for a monitor. `tessera-client`
+> (`apps/client/src/audio/props.rs`) replaces them as a whole inside a cell (a property the
+> cell lacks has no value) and per property for a monitor (only the properties its set
+> carries). The offline walker has no cell test yet, so the cell rule is exercised by unit
+> tests only. Please state the intended rule.
+>
+> **Answered (spec writer, 2026-10-08, BIN3):** per property, for cells and monitors alike
+> (§10.8.1 rule 1): a property the cell lacks keeps the value of the next lower source (the
+> landblock-info set, then the block map), and a monitor overrides only the properties its set
+> carries. The released code's whole-set replacement inside a cell differs from this.
 
 <a id="s10-3-3"></a>
 #### 10.3.3 Race-labelled music scripts (Confirmed for the tables walked, M6)
@@ -1017,6 +1097,15 @@ monitors) with `Monitor_BoxMin` and `Monitor_BoxMax` (vec3, entity frame, metres
 
 > **OPEN:** The exact inside test, and the precedence between overlapping monitors and
 > against block-map and cell values. That part of the client was not decoded.
+> *(Answered in part 2026-10-08, BIN3: monitor values take precedence over cell, landblock-info
+> and block-map values, §10.8.1. The inside test and overlapping monitors remain OPEN.)*
+
+> **OPEN:** (clean-room implementation, 2026-10-07) Pending the rule above,
+> `tessera-client` transforms the player position into the entity frame (inverse rotation,
+> then divided by the entity scale when `Monitor_ScaleWithEntity`), tests it against
+> `Monitor_BoxMin` + `Monitor_Offset` … `Monitor_BoxMax` + `Monitor_Offset` with the bounds
+> included, takes the monitor list of the first descriptor in the parent chain that has
+> one, and among overlapping monitors applies the one with the smallest box.
 
 <a id="s10-3-5"></a>
 #### 10.3.5 World state
@@ -1024,13 +1113,21 @@ monitors) with `Monitor_BoxMin` and `Monitor_BoxMax` (vec3, entity frame, metres
 > **Decision (Tessera, offline walker):** `World_IsNight` = true while the game clock's day
 > fraction is ≥ `value_54` or < `value_58` of the game-time record (0.8 and 0.25 in this
 > install; the candidate night boundary of `environment.md` §6);
-> `Volume_IsOutside` = 0 inside a cell, 1 outdoors; `Volume_ContentLayer` = the default
+> `Volume_IsOutside` by §10.8.2 (BIN3 since 2026-10-08; the former Decision "0 inside a cell, 1
+> outdoors" agrees with it for valid positions); `Volume_ContentLayer` = the default
 > content layer (no value: Default ports); `Combat_Violent` = false;
 > `Entity_IsThePlayer` = true on the walker's avatar.
 
 > **OPEN:** The original's rule for `World_IsNight` (which clock values and boundaries),
 > and the sources of `Volume_IsOutside` and `Volume_ContentLayer`. None of the three is
-> stored in data.
+> stored in data. *(Answered in part 2026-10-08, BIN3: `Volume_IsOutside` is computed by the
+> cell source, §10.8.2; `Volume_ContentLayer` comes from the landblock load properties,
+> §10.8.1, whose content for the stored world is OPEN there. `World_IsNight` remains OPEN.)*
+
+> **OPEN:** (clean-room implementation, 2026-10-07) The Decision compares the day fraction
+> with the stored f32 `value_54` and `value_58`; `tessera-client` compares at f32
+> precision (the f64 time of day rounded to f32), so a stored 0.8 starts the night at 0.8
+> exactly. The clock's epoch is the local system clock (`environment.md` §11.1 Decision).
 
 <a id="s10-4"></a>
 ### 10.4 Music programs (Confirmed census)
@@ -1108,6 +1205,305 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 0x0700042F (292 scripts), plus the master-fade and combat scripts. A Run with
 `RunScript_Stop` = 1 stops a script (its sounds ramp out).
 
+The `Startup` script (key 5) of the same table starts these reverb and bed scripts too, in
+two branches selected by `Volume_IsOutside` (§10.8.4).
+
+<a id="s10-8"></a>
+### 10.8 Indoors and outdoors: the player's location properties (BIN3; data Confirmed 2026-10-08)
+
+The original has **no audio-specific indoor test and no camera-based one**. What decides
+"indoors" for sound is a property of the player's avatar entity, `Volume_IsOutside`, together
+with the property set of the cell the avatar stands in. Both reach the avatar through the
+entity's location property sources (§10.8.1), which follow the avatar's **own position** and
+its cell, not the camera. The script graph does the rest:
+
+| What changes | Driven by | Section |
+|---|---|---|
+| Ambient beds (channel 7) | the `Volume_IsOutside` Switch of the `Startup` script of table 0x0700042E, then a Switch on `Area_Music` in each branch | §10.8.4 |
+| Reverb (SoundEnvironment) | `SND_EAX_*` scripts started by both branches of that Switch and by the music script; the active environment follows §8 | §10.8.4, §10.8.5 |
+| Music (channel 2) | not by `Volume_IsOutside` (one instance branch excepted); by `Area_Music` and by the cell's own properties, chiefly `Ambient_MusicType` | §10.8.4 |
+
+The same mechanism serves every entity: 32 Switch nodes read `Volume_IsOutside` (§10.8.7), most
+of them in object tables whose sounds differ indoors. An entity's value comes from that
+entity's own position.
+
+<a id="s10-8-1"></a>
+#### 10.8.1 Location property sources and their priority (BIN3)
+
+Every world entity has a set of five **location property sources**. Each source publishes a
+small property set; the entity sees, for each property, the value of the **highest-priority
+source that has it**:
+
+| Priority | Source | Recomputed when | Publishes |
+|---|---|---|---|
+| 1 (highest) | Monitor volumes | the entity enters or leaves the box of a monitor of its landblock (test and moment: §10.3.4) | the 0x78 sets of the monitors containing the entity (§10.3.4) |
+| 2 | Landblock load properties | the entity's landblock changes (this source also moves the entity's monitor registration to the monitors of the new landblock) | properties attached to the loaded landblock by the request that loaded it: `Volume_ContentLayer` (plus the properties of a 0x78 set looked up from the content layer; the lookup was not traced), `Volume_InstanceResidesOnSingleServer`, `Volume_DynamicBlockIdentifier`, and a property set carried by the request. For the stored world loaded without instance data none of these is known to be present (Inferred; see the OPEN below). |
+| 3 | Cell | the entity's landblock **or** cell changes | `Volume_IsOutside` and, inside a cell, the cell's own property set (§10.8.2) |
+| 4 | Landblock | the entity's landblock changes | the block-map properties of the position's landblock (`landblock.md` §5.4) overlaid by that landblock's landblock-info property set (`landblock.md` §4.7): a property present in both takes the landblock-info value |
+| 5 (lowest) | World | not traced | world-wide properties (not traced) |
+
+Rules (BIN3):
+
+1. **Per property.** Precedence is decided property by property, not set by set: a cell that
+   carries `Ambient_MusicType` but not `Environment_LocalSky` overrides only the first; the
+   second still comes from the landblock source (or a monitor).
+2. **Change from a source.** When a source's value of a property changes, the entity is
+   notified only if no higher-priority source has that property, and only when the value
+   actually differs.
+3. **Removal.** When a source drops a property (for example the player leaves a cell that had
+   it), the next lower source that has the property supplies its value, and the entity is
+   notified if that value differs from the old one; if no source has it, the property becomes
+   absent on the entity. An absent property reads as its dictionary default, else its type's
+   zero value (`script-runtime.md` §6.2).
+4. The landblock in sources 2 and 4 is the landblock **named by the position** (BIN3). A
+   position in a cell names the cell's owner landblock (Inferred, as in `landblock.md` §4.13,
+   L38), so inside a cell placed away from its owner the landblock source switches to the
+   owner's block map and landblock-info set.
+
+> **OPEN:** What source 2 carries for the stored world (the landblock load request and its
+> property set were not traced past the copy) and what source 5 publishes. **Decision
+> (Tessera, offline):** both publish nothing, so `Volume_ContentLayer` is absent (the
+> Default-port reading of §10.3.5 stands).
+
+> **OPEN:** Which monitor wins when several monitors containing the entity carry the same
+> property (inside source 1). The precedence of monitors over cell and landblock values is
+> settled above. **Decision (Tessera):** as in the implementer note of §10.3.4 (smallest box).
+
+<a id="s10-8-2"></a>
+#### 10.8.2 The cell source: `Volume_IsOutside` and the cell's properties (BIN3; census OBS2)
+
+On each of its events (§10.8.3) the cell source rebuilds its whole set from the entity's new
+position (region, landblock X, landblock Y, cell number, instance; `property-system.md` §4.6):
+
+| Position | `Volume_IsOutside` | Cell properties added |
+|---|---|---|
+| region 0, or landblock X = 0xFF | 255 (unknown) | none |
+| landblock Y = 0xFF, or cell 0xFFFF | 255 | none |
+| valid landblock, cell 0 | **1** (outside) | none |
+| valid landblock, any other cell | **0** (inside) | the cell's whole property set, if the cell is loaded and its number is not 1 |
+
+- "Valid landblock" means region ≠ 0, landblock X ≠ 0xFF and landblock Y ≠ 0xFF. The cell
+  values 0 (outside) and 0xFFFF (no cell) are those of `landblock.md` §4.11–§4.12.
+- The cell is looked up among the loaded cells by region, landblock, cell number and instance.
+  A cell that is not loaded adds nothing; `Volume_IsOutside` is still 0.
+- Cell number 1 never contributes properties. No stored cell has number 1 (cell numbers run
+  2–1,569, `landblock.md` LI8), so the exclusion has no effect on this install.
+- The added set is the cell object's property set: Inferred to be the cell's embedded set of
+  `landblock.md` §4.4 part 8 (that set holds 36 of the graph's 41 `Ambient_MusicType` case
+  values, V7). The properties of the cell's 0x01
+  geometry record (`collision.md` §5.7) were not shown to be merged: see the OPEN below.
+- The new set replaces the old one as a whole inside this source; the rules of §10.8.1 then
+  decide what the entity sees.
+- **No stored property set holds `Volume_IsOutside`** (none of the 104,271 cells, 49,636
+  landblock-info sets, 1,618 0x78 sets or 383,332 0x79 sets; OBS2), and none holds
+  `ForceOutside` or `Area_Music`. This routine is the only place where the client code uses
+  the ID of `Volume_IsOutside` as an immediate operand; the ID of `ForceOutside` occurs in no
+  code. An implementation therefore computes the value; it never reads it from data.
+
+Audio-relevant content of the cell property sets (OBS2, all 104,271 cells; every cell has a set):
+
+| Property | Cells | Notes |
+|---|---|---|
+| `Dungeon_DID` | 15,603 | names 175 dungeon objects; 13,828 of these cells name a dungeon whose property set (DID + 0x09000000) has a non-zero `Dungeon_Music` |
+| `Ambient_MusicType` | 6,132 | 53 distinct values; **36 of the 41 case values** of the graph's `Ambient_MusicType` Switches (§10.3.2) occur here, in 4,142 cells |
+| `Environment_IndoorAmbiance` | 777 | indoor sky key B (`landblock.md` §4.13) |
+| `Ambient_MusicRegion` | 359 | no music Switch reads it (§10.3.2) |
+| `Environment_LocalSky` | 299 | 7 values, none a case value of the music graph |
+| `Ambient_SoundEnum` | 98 | no Switch in the music tables reads it |
+| `Ambient_SoundEnum_BlockMapOverride` | 0 | carried by 116 landblock-info sets instead (5 of their 8 values are case values of the graph) |
+
+> **OPEN:** Whether the cell object's property set also holds the properties of the cell's
+> 0x01 geometry record (`collision.md` §5.7: `Physics_SurfacePropertiesToApply`,
+> `Ambient_SoundEnum`, …). No audio Switch reads those properties, so audio is not affected.
+> **Decision (Tessera):** use the landblock-info cell set only.
+
+<a id="s10-8-3"></a>
+#### 10.8.3 When the state changes (BIN3)
+
+The sources are driven by the entity's physics position, not by a timer:
+
+1. Whenever the physics component stores a new position for the entity (each movement step
+   that moves it, a teleport, the first placement), it compares the new position with the
+   last one it reported to the sources.
+2. **Landblock event:** fired when the landblock X, landblock Y or instance differ, or the
+   region differs while at least one of the two positions is valid (region ≠ 0, landblock X
+   and Y ≠ 0xFF, cell ≠ 0xFFFF).
+3. **Cell event:** fired when the landblock event's condition holds **or** the cell number
+   differs.
+4. An every-update event follows; the location sources ignore it.
+5. The events go to all sources in that order (landblock, then cell, then every-update); then
+   the new position becomes the last reported one.
+6. Sources 1, 2 and 4 answer the landblock event; source 3 (the cell source) answers the cell
+   event, which includes every landblock change.
+
+Everything happens **synchronously** inside the position update: the property change reaches
+the entity's listeners at once, and a persistent Switch re-evaluates in the same call
+(`script-runtime.md` §6.5–§6.6). There is no delay, hysteresis or minimum time inside or
+outside: all 32 Switches on `Volume_IsOutside` have Delay 0 and RampOut 0 on every port and no
+transition ports (OBS2). The only softening is the ramp-out of the sounds that stop (§10.8.4).
+
+Which cell the avatar's position carries is decided by physics (`collision.md` §5.8.1); how
+often a moving character's cell is re-evaluated is OPEN in `landblock.md` §4.4. The camera's
+cell (`landblock.md` §4.12) plays no part: a third-person camera that swings through a wall or
+doorway changes nothing in the sound until the **character's** cell changes.
+
+<a id="s10-8-4"></a>
+#### 10.8.4 What the graph does with it (Confirmed, OBS2)
+
+**Ambient beds and reverb: the `Startup` script of 0x0700042E.** Besides the music start-up
+script of §10.1, table 0x0700042E defines key 5 (`Startup`). Start-up runs every `Startup`
+definition of the closure (`script-table.md` §8.2), and all 14 avatar closures reach
+0x0700042E without an overriding `Startup` above it (OBS2), so every avatar runs it. Its
+structure:
+
+- root: a persistent Switch on `Entity_IsThePlayer`; its true case holds
+- a persistent Switch on **`Volume_IsOutside`** with one value port, value **1**, and a
+  Default port. Both ports have Delay 0 and RampOut 0. Value 0 (inside) and 255 (unknown)
+  both take the **Default** port.
+
+| Branch | Holds | Run nodes | Reverb scripts started (Run nodes) | Sound nodes |
+|---|---|---|---|---|
+| value 1 (outside) | a Switch on `Area_Music` with 227 value ports covering 553 values, no Default port; below its cases Switches on `World_IsNight` (161), `Volume_ContentLayer` (24), `PrivateEncounter_Template_DataID` (10) and a few others | 703 | GEN_OUTSIDE 74, FOREST_OUTSIDE 17, BOG_OUTSIDE 10, COLD_OUTSIDE 9, CAVE_INT 5, LARGE_INT 3 | 452 (450 on channel 7) |
+| Default (inside or unknown) | a Switch on `Area_Music` with 105 value ports covering 153 values, no Default port | 110 | CAVE_INT 4, SMALL_INT 1, FOREST_OUTSIDE 1, GEN_OUTSIDE 1 | 46 (all channel 7) |
+
+The Run nodes start ambient-bed scripts of table 0x0700042F ("SND_Env_*" exterior and interior
+beds, wind, towns, caves) and the reverb scripts of §10.7; all are persistent Runs
+(`script-runtime.md` §12.4), so they live exactly as long as their branch.
+
+**A change of `Volume_IsOutside` between 1 and 0 (or 255), in order, in the same call:**
+
+1. The `Volume_IsOutside` Switch stops its current branch (`script-runtime.md` §6.6).
+2. The persistent Runs of that branch stop the bed and reverb scripts they started: tracked bed
+   sounds fade out linearly over their own `RampOutTime` (3–4 s, §6.5, §10.4); fire-and-forget
+   frills already playing finish on their own; each stopped SoundEnvironment node unregisters
+   its environment (§8, §9.4).
+3. The other branch starts: its `Area_Music` Switch selects the case for the player's current
+   `Area_Music`; that case's beds start at once at full gain and its reverb script registers
+   its environment.
+4. The active reverb is re-chosen by §8: the newly registered environment is the newest, so it
+   wins over environments of equal priority that are still registered (for example one
+   started by the music script). If the new branch has no case for the current `Area_Music`,
+   nothing starts there; the active reverb then falls back to the newest environment still
+   registered, or GENERIC at intensity 0 when none is.
+
+A value change from 0 to 255 or back selects the same (Default) port and changes nothing
+(`script-runtime.md` §6.6).
+
+**Music.** Script 0x10000039 reads `Volume_IsOutside` in one Switch only, inside one instance
+case (`PrivateEncounter_Template_DataID`), where value 1 and the Default port pick two different
+music programs. Elsewhere music does not react to the indoor state as such. It changes on
+entering a cell because the cell source brings the cell's properties to the player:
+
+- `Ambient_MusicType`: the music cases' `Ambient_MusicType` Switches (§10.2) now receive the
+  cell values (36 of their 41 case values are held by cells, §10.8.2);
+- `Dungeon_DID`: the dungeon the player is in, from which `Area_Music` is set (§10.3.1;
+  the setting rule remains OPEN there);
+- the reverb scripts started under music cases (§10.7) follow those cases.
+
+Music changes keep the timing of §10.5 (old track fades over its ramp-out, new one starts at
+once).
+
+<a id="s10-8-5"></a>
+#### 10.8.5 How a reverb change is applied (BIN3)
+
+- When the active environment changes (§8), the client hands its OpenAL device the
+  environment's preset number and intensity. The device routine fills the complete parameter
+  set of that preset (values ≥ 26 select GENERIC, §8), converts it to the EFX EAX-reverb
+  parameters, writes all of them to the reverb effect in one pass and attaches the effect to
+  the auxiliary slot. There is **no interpolation** between the old and the new preset in that
+  routine: the reverb changes at once.
+- The environment's **intensity is written as the reverb's gain** parameter (EFX
+  `AL_EAXREVERB_GAIN`, a linear factor; interoperability name from the public EFX API),
+  replacing the gain the preset conversion produces. An environment at intensity 0.4
+  therefore runs its preset's reverb at gain 0.4. (Answers the §8 OPEN on intensity.)
+- Nothing is uploaded when effects are unavailable or "Sound.EAXEnabled" is off (§8).
+
+> **OPEN:** Whether the sound manager ramps the intensity (and so the reverb gain) when the
+> active environment changes, before it calls the device routine; that part of the manager
+> was not found. **Decision (Tessera):** switch at once.
+
+<a id="s10-8-6"></a>
+#### 10.8.6 What an implementation does (Tessera rules)
+
+These steps reproduce §10.8.1–§10.8.5 with the cell information `landblock.md` already gives.
+Each step is the original's rule unless marked Decision.
+
+1. **Whose position.** Use the player avatar's own position and the cell physics gives it
+   (`collision.md` §5.8.1; the walker's character cell), **not** the camera's cell of
+   `landblock.md` §4.12. **Decision:** in a free-fly mode without a walking character, use the
+   camera eye's cell lookup (`landblock.md` §4.12 Tessera rule) as the avatar's position.
+2. **Events.** Keep the last reported position (region, landblock X, Y, instance, cell). After
+   every position change of the avatar, fire the landblock event and the cell event under the
+   conditions of §10.8.3, in that order, before the script graph advances.
+3. **Cell source.** On the cell event, build its set by the table of §10.8.2: `Volume_IsOutside`
+   1, 0 or 255; inside a loaded cell (number ≠ 1) add every property of the cell's embedded
+   set.
+4. **Landblock source.** On the landblock event, build its set from the position's landblock:
+   block-map properties first (`landblock.md` §5.4, out-of-range palette indices give nothing),
+   then every property of the landblock-info set (§4.7) on top. An unloaded or invalid
+   landblock gives an empty set.
+5. **Monitor source.** Recompute the monitor set when the inside test of §10.3.4 changes (its
+   moment and test are OPEN there; Tessera Decision there).
+6. **Resolve and apply.** For each property, take the highest source of §10.8.1 that has it;
+   set changed values on the avatar entity and remove properties that no source has. Notify
+   only on a real change. The persistent Switches react in the same step (§10.8.4).
+7. **Other entities.** Placed emitters and other script-running entities get the same sources
+   from their own position (an interior entity's cell: `landblock.md` §4.11 Tessera rule).
+   Fourteen of the 32 `Volume_IsOutside` Switches are not persistent: they read the value once
+   when the entity's script starts, so the value must be set before the entity's start-up
+   scripts run.
+8. **Order at creation. Decision:** compute the location sources from the spawn position
+   **before** running the avatar's start-up scripts, so the `Startup` Switch starts in the
+   right branch. (If the property were still absent, it would read 255 and start the inside
+   branch, then flip on the first update.)
+
+> **OPEN:** Whether the original computes the location sources before or after an entity's
+> start-up scripts run (step 8). Not traced.
+
+> **OPEN:** (clean-room implementation, 2026-10-08; `apps/client/src/audio/location.rs`,
+> `mod.rs`) Choices where this section is silent; please confirm or correct:
+> (a) *Order of writes in one update.* The spec says each changed property notifies at once
+> but not in which order several properties that change in the same position update reach
+> the graph. Tessera writes the location properties in PID order, then
+> `Entity_IsThePlayer`, `Combat_Violent`, `World_IsNight`, and `Area_Music` last (it
+> depends on the cell's `Dungeon_DID`, §10.3.1). The order decides which sounds start for a
+> moment and then ramp out. (b) *Data still loading.* Tessera reads cells and landblock
+> sets on worker threads. While the new landblock's data is not there yet, the landblock
+> source keeps its old set. The cell source publishes `Volume_IsOutside` at once and adds
+> the cell's set when the data arrives. (c) *Cap.* Each source publishes at most 512
+> properties; any beyond that are dropped in PID order. (d) *Dungeon for `Area_Music`.*
+> Inside a cell, the §10.3.1 Decision uses the player's resolved `Dungeon_DID` (cell, else
+> landblock-info set, else monitor). Is a `Dungeon_DID` that comes only from the
+> landblock-info set meant to count as "a dungeon cell"? (e) *Which monitors.* Source 1
+> says "a monitor of its landblock". Tessera tests the monitors of the location's landblock
+> and its eight neighbours (a cell's owner per rule 4). When several of them carry the same
+> property, the smallest box wins for that property; ties go to the lower (landblock, index).
+> (f) *Emitters (step 7).* An interior entity's cell is the collision cell that contains its
+> origin, probed at 0 and ±0.05 m (`landblock.md` §4.11 Tessera rule). Its sources are
+> computed once when it spawns: monitor, cell and landblock, with no later events. The
+> start-up scripts run after those properties are set. (g) The per-property rule of
+> §10.8.1 replaces the whole-set replacement described in the §10.3.2 implementer OPEN of
+> 2026-10-07; that note is now out of date.
+
+<a id="s10-8-7"></a>
+#### 10.8.7 Census and invariants (OBS2, 2026-10-08)
+
+| # | Invariant |
+|---|---|
+| IO1 | No property set of a cell, a landblock info, a 0x78 or a 0x79 record holds `Volume_IsOutside`, `ForceOutside` or `Area_Music`. |
+| IO2 | 32 Switch nodes read `Volume_IsOutside`: 19 in 13 tables, 13 in 10 scriptlets; 18 persistent. Their value ports use only the values 0 and 1 (6 Switches {1}, 22 {0}, 4 {0, 1}); 27 have a Default port; none has a port for 255, a transition port, or a non-zero Delay or RampOut. |
+| IO3 | Every one of the 14 avatar closures includes 0x0700042E, and no table on the way defines an overriding `Startup` (`Script_CombinationType` 1). Of the 13 tables with such a Switch, only 0x0700042E and 0x07001D76 lie in avatar closures. |
+| IO4 | No cell has number 1 or carries `Ambient_SoundEnum_BlockMapOverride`. |
+| IO5 | Of the 41 case values of the music graph's `Ambient_MusicType` Switches (§10.3.2), exactly 36 occur in cell property sets and 5 in none. |
+
+Synthetic test (for the event and source rules): an avatar walks from cell 0 of landblock
+(R 1, X 0x10, Y 0x20) into cell 5 of the same landblock, then into cell 6, then out to cell 0
+of (1, 0x11, 0x20). Expected: one cell event per step and a landblock event only on the last
+step; `Volume_IsOutside` 1 → 0 → 0 → 1; with cell 5 carrying `Ambient_MusicType` = *a*, cell 6
+carrying nothing and the landblock-info set of (1, 0x10, 0x20) carrying `Ambient_MusicType` = *b*,
+the avatar's `Ambient_MusicType` goes *b* → *a* → *b* → (landblock (1, 0x11, 0x20)'s value or
+absent); the `Startup` Switch changes branch on steps 1 and 3 only.
+
 ---
 
 <a id="s11"></a>
@@ -1133,6 +1529,15 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 > other static entities; positional one-shots beyond `max_distance` are refused anyway
 > (§6.8 item 11).
 
+> **OPEN:** (clean-room implementation, 2026-10-07) The Decision above conflicts with the
+> 250-request bound (§6.8 item 3): a looping emitter sound out of range goes to the pending
+> list and counts as waiting, so with every emitter of the resident landblocks alive the
+> pending list fills and later requests, music included, are refused. `tessera-client`
+> therefore scans the landblocks within two landblocks of the viewer and spawns an emitter
+> only while the listener is within its *reach* + 30 m (reach: the largest `max_distance`
+> of the sound infos its start-up scripts reach, plus the node's random distance and
+> offset), despawning it beyond reach + 90 m. Please confirm or state the original's rule.
+
 ---
 
 <a id="s12"></a>
@@ -1145,6 +1550,12 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 2. Read the Pascal string (`records.md` §1.4); reject a length that runs past the end.
 3. Require that no bytes remain.
 4. Report flags bits other than 0x01, 0x02, 0x04, 0x10, 0x40 as unknown (keep them).
+
+> **OPEN:** (clean-room implementation, 2026-10-06) Step 1 asks for at least 36 bytes, but
+> 32 fixed bytes plus a Pascal string need only 33 (an empty name), and the synthetic
+> record of `instruments.md` §14.1 is 34 bytes and must decode. The observed minimum of 36
+> bytes (§4.1) is a census, not a rule. `tessera-formats` requires only the 32 fixed bytes,
+> a complete name and nothing after it. Please confirm or state a minimum.
 
 <a id="s12-2"></a>
 ### 12.2 Decoding a 0x0A record
@@ -1177,9 +1588,10 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 
 1. Create the player avatar entity and run its start-up scripts (`script-table.md` §8.1),
    which include `SND_music_system_startup`.
-2. On every landblock or cell change, recompute the player properties of §10.2 by the
-   Decisions of §10.3 and set them on the avatar; the persistent Switches react and the
-   music and ambience change with the fades of §10.5.
+2. On every landblock or cell change of the **avatar's** position (not the camera's),
+   recompute the location properties by §10.8.6 and the other player properties of §10.2 by
+   §10.3, and set them on the avatar; the persistent Switches react and the music, ambience
+   and reverb change with the fades of §10.5 and §10.8.4.
 3. Advance Timers, Sequences and Randoms with the game time; Sound nodes behave per §9.2.
 
 ---
@@ -1201,6 +1613,7 @@ SoundEnvironment node (§8), and ambient-bed scripts "SND_Env_*" and dungeon bed
 | ND2 | `SoundScript_Channel` ∈ 0–8; `RampOutTime` ≥ 0; random distances ≥ 0. (The dictionary limits of `Pitch`, `PitchVariance`, `RampOutTime` and the distances are exceeded by some nodes, §9.1; do not reject them.) |
 | ND3 | Every non-zero `SoundScript_SoundID` is an existing 0x2A record. |
 | MU1 | `Area_Music` is not stored in any property set; every area named by a block map has `Ambient_MusicType`. |
+| IO1–IO5 | Indoor-state invariants: §10.8.7. |
 
 For real-data tests assert invariants, not the counts (counts change with patches).
 
@@ -1346,6 +1759,7 @@ edited here):
 | S-3 | Positional falloff | Walk away from a waterfall or fire; note the distance where it becomes silent (its sound info's maximum distance, §6.2). |
 | S-4 | Night and indoor variants | Compare the ambient bed at day and night, and inside a building (§10.3.5). |
 | S-5 | Ogg played range | Record the client's output while a short one-shot sound whose payload has audio on its setup page plays (the maintainer can name a sound info from §3.3.2's census); compare its length with *M* and with *N* (§3.3.2). |
+| S-6 | Character versus camera indoors | Stand just inside a doorway and swing the camera outside, then the reverse; the ambient bed and reverb should follow the character's side, and change only when the character crosses (§10.8.3). |
 
 ---
 
@@ -1365,16 +1779,29 @@ edited here):
 9. What fills the sound-info filter, the suppression table and the optional check hook of
    the request gates (§6.8).
 10. Channel flags 0x4 and 0x8; "MusicDisabled", "PersistentSound", "FocusBehavior" (§7.2).
-11. How a reverb environment's intensity is applied (§8).
+11. ~~How a reverb environment's intensity is applied (§8).~~ Resolved 2026-10-08 (§10.8.5).
 12. Which state sets the "no effects" bit; fire-and-forget loops (§9.2).
 13. How the original sets `Area_Music` (precedence, granularity) (§10.3.1).
-14. Sources of the `Ambient_MusicType` case values not found in stored data; who reads
-    `Ambient_MusicRegion` and `Ambient_SoundEnum` (§10.3.2).
+14. Sources of the 5 `Ambient_MusicType` case values no cell holds (narrowed 2026-10-08 from
+    37); who reads `Ambient_MusicRegion` and `Ambient_SoundEnum` (§10.3.2).
 15. The race probability properties and script 0x10000B1E (§10.3.3).
-16. Monitor-volume inside test and precedence (§10.3.4).
-17. `World_IsNight` rule; `Volume_IsOutside` and `Volume_ContentLayer` sources (§10.3.5).
+16. Monitor-volume inside test and precedence between overlapping monitors (§10.3.4; the
+    precedence over cell and landblock values is settled, §10.8.1).
+17. `World_IsNight` rule (§10.3.5); `Volume_IsOutside` resolved 2026-10-08 (§10.8.2);
+    `Volume_ContentLayer` narrowed to the landblock load properties (item 20).
 18. `Snd_SubMix_Music_AmbVolume` and `Snd_SubMix_Music_MVVolume` (§10.6).
 19. Emitter creation range (§11).
+20. What the landblock load properties (source 2) and the world source (source 5) carry for
+    the stored world (§10.8.1).
+21. Whether the cell object's property set includes the cell geometry record's properties
+    (§10.8.2).
+22. Whether the sound manager ramps a reverb intensity change (§10.8.5).
+23. Whether location properties are computed before or after an entity's start-up scripts
+    (§10.8.6 step 8).
+
+Resolved in the revision of 2026-10-08: the player's indoor state and its timing (§10.8);
+reverb intensity (§10.8.5); precedence of cell over block-map values and the per-property rule
+(§10.3.2 implementer OPEN); 36 of the 37 open `Ambient_MusicType` case values (cells).
 
 Resolved in the revision of 2026-10-05: `smpl` loop points (§3.4: not used, BIN2); the
 outcome of a failed node start (§9.6, BIN2); the length of the 15 streams formerly read as
@@ -1389,3 +1816,5 @@ truncated (§3.3.2–§3.3.3).
 |---|---|
 | 2026-10-05 | First version (Review): 0x0A and 0x2A layouts with censuses over all records; 100% decode validation; playback, channel, reverb and sound-node rules from BIN (build 4906.0071.1794.4035); music and ambience as data-driven graphs with property sources; positional emitters; corrections X1–X7. |
 | 2026-10-05 | Revision after review (changes requested), status stays Review. Header: the client-internal class name quoted in the review record redacted. §1: new tags BIN2 and REFDEC, new rows A7, A8, A9, I4, P7, N3, N4, M5, M6, M7; A4 rewritten. §3.1, §3.5, §4.3, §5, §6.3, §6.6, §6.8, §9.2, §10.3.2, §10.3.5, §10.6: every inline unknown turned into a `> **OPEN:**` callout with a Decision. §3.3.2–§3.3.3 rewritten: the Vorbis I length *N* = min(*G*, *T*) with a granule census over all 40,874 streams ("every stream starts at granule 0" replaced by the checked properties), and one normative played range, the original's (skipped lead *A*, length *L*, *M* = min(*L*, *T* − *A*)), derived from how the client drives its shipped Vorbis 1.0.1 libraries (BIN2) and confirmed over all streams with the released 1.0.1 source; the 15 "truncated" streams in fact end with a zero-length packet and run 63–84 samples ahead in their granules, so nothing is zero-filled and no packet is dropped. §3.4: chunk counts corrected (`ovwf`, `elmo` in 3 files each; first-chunk split), `smpl` facts corrected (5 files, 2 with a loop, one of them behind a looping sound info) and the OPEN resolved (loop points not used, BIN2). §4.3: loop-flag median length corrected to 62.6 s (64.2 s over distinct payloads). §6.8: renumbered in check order and completed from BIN2 (filter, 250-request bound, suppression table, DID range, voice limit, gate codes, exclusive-channel queueing). §9.2 steps 1–4 made precise (BIN2); new §9.6 (outcome of a node start) and correction X8 for `script-table.md`. §10.3.2: per-region census with palettes and out-of-range indices. §10.3.3 rewritten (race-labelled scripts, no race logic needed). §10.3.4: client-internal class name removed. §10.7: Run-node census completed. §12.2, §13 (SN3a), new §14.5–§14.6, §17 updated. |
+| 2026-10-06 | §9.3: one-line cross-reference to `script-runtime.md` §4 added; no fact changed here (the correction is recorded there as X1). |
+| 2026-10-08 | Revision (status Revised): new §10.8 "Indoors and outdoors: the player's location properties" from BIN3 (build 4906.0071.1794.4035: location property sources and their priority, the cell source computing `Volume_IsOutside` and adding the cell's properties, the position-update events, the landblock property holders, the reverb upload) and OBS2 (all script records, all cells and landblock-info sets, 0x78/0x79 sets, avatar closures). New provenance tags BIN3 and OBS2 and rows V1–V8. Corrections: §10.3.2 (cells carry `Ambient_MusicType`, not `Ambient_SoundEnum_BlockMapOverride`; 36 of the 37 "game-logic" case values are held by cells; the cell/monitor Decision replaced by the per-property rule; implementer OPEN answered); §8 (intensity OPEN answered: reverb gain); §10.1 and §10.7 (the `Startup` script of 0x0700042E); §10.2 rows; §10.3.4 and §10.3.5 OPENs answered in part; §12.4 step 2 (avatar's cell, not the camera's); §13 (IO1–IO5); §16 (S-6 proposed); §17 items 11, 14, 16, 17, 20–23. |

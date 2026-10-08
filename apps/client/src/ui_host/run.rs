@@ -76,11 +76,18 @@ fn render_frame(
     if let Some(ui) = ui {
         ui.draw(&mut frame, false);
     }
-    renderer.end_frame(frame)?;
+    let t_end = std::time::Instant::now();
+    let stats = renderer.end_frame(frame)?;
+    walker.record_render_stats(&stats);
+    let t_wait = std::time::Instant::now();
     renderer
         .context()
         .wait_idle()
         .context("waiting for the GPU")?;
+    walker.record_frame_timing(
+        t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
+        t_wait.elapsed().as_secs_f64() * 1e3,
+    );
     Ok(())
 }
 
@@ -230,6 +237,7 @@ pub fn run(args: &Args) -> anyhow::Result<UiRunReport> {
             rt.world
                 .as_mut()
                 .map(|w| w as &mut dyn crate::walker::WalkerSession),
+            &mut rt.plugins,
             now,
             dt,
         );

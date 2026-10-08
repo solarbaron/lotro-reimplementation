@@ -8,7 +8,9 @@
 //! - the looping idle clips the script tables chose, one per data layer;
 //! - the held proportion clips (`script-table.md` §6.7, §6.8: the River-hobbit and
 //!   DwarfStoutAxe layer-110 `scale_blend` clips), shown at their held fraction with rate 0
-//!   and never faded: they shape the figure in every motion state;
+//!   and never faded: they shape the figure in every motion state. Held clips of one data
+//!   layer play together on one animator layer and share its budget (§6.2), each with its
+//!   own track opacity;
 //! - the locomotion layer (at the walk clip's data layer): the walk and run clips as a
 //!   phase-synchronised speed blend with the clips' natural ground speeds as anchors (one
 //!   clip when only one is known). Its weight fades to 1 over [`FADE`] seconds when the
@@ -142,6 +144,23 @@ pub fn make_animator(
         order.push((k, Entry::Move));
     }
     order.sort_by_key(|(k, e)| (*k, *e == Entry::Move));
+    // Animator layer of each entry: held clips of one data layer (adjacent after the sort,
+    // idle entries of the same key come first) share one animator layer.
+    let mut slots: Vec<(usize, bool)> = Vec::with_capacity(order.len());
+    let mut next = 0;
+    let mut last_held: Option<(u32, usize)> = None;
+    for (key, entry) in &order {
+        if matches!(entry, Entry::Held(_))
+            && let Some((k, i)) = last_held
+            && k == *key
+        {
+            slots.push((i, true));
+            continue;
+        }
+        last_held = matches!(entry, Entry::Held(_)).then_some((*key, next));
+        slots.push((next, false));
+        next += 1;
+    }
     let mut loco = Locomotion {
         walk_speed: 0.0,
         run_speed: 0.0,
@@ -150,31 +169,40 @@ pub fn make_animator(
         has_move: false,
         move_index: order
             .iter()
-            .position(|(_, e)| *e == Entry::Move)
-            .unwrap_or(0),
+            .zip(&slots)
+            .find(|((_, e), _)| *e == Entry::Move)
+            .map_or(0, |(_, (i, _))| *i),
         above: Vec::new(),
     };
-    for (index, (key, entry)) in order.iter().enumerate() {
-        let (play, p) = match *entry {
+    for ((key, entry), &(index, shared)) in order.iter().zip(&slots) {
+        let started = match *entry {
             Entry::Idle(i) => {
                 let idle = &clips.idle[i];
                 let mut p = Playback::new(Arc::clone(&idle.clip), Wrap::Loop);
                 p.rate = idle.rate;
-                (idle, p)
+                let ok = a.play(index, p, 0.0, false).is_ok();
+                if ok && let Some(l) = a.layer_mut(index) {
+                    l.use_track_weights = idle.track_weights;
+                }
+                ok
             }
-            // Held (script-table.md §6.7): rate 0 at the held fraction, whatever the time.
+            // Held (script-table.md §6.7): rate 0 at the held fraction, whatever the time,
+            // with its own node's track opacity; a further held clip of the same data layer
+            // starts beside the first without stopping it (§6.2).
             Entry::Held(i) => {
                 let held = &clips.held[i];
-                let p = Playback::held(Arc::clone(&held.clip), held.held.unwrap_or(0.0));
-                (held, p)
+                let mut p = Playback::held(Arc::clone(&held.clip), held.held.unwrap_or(0.0));
+                p.use_track_weights = held.track_weights;
+                if shared {
+                    a.add(index, p).is_ok()
+                } else {
+                    a.play(index, p, 0.0, false).is_ok()
+                }
             }
             Entry::Move => continue,
         };
-        if a.play(index, p, 0.0, false).is_ok() {
+        if started {
             any = true;
-            if let Some(l) = a.layer_mut(index) {
-                l.use_track_weights = play.track_weights;
-            }
             if matches!(entry, Entry::Idle(_)) && move_key.is_some_and(|m| *key > m) {
                 loco.above.push(index);
             }
@@ -388,12 +416,44 @@ mod tests {
             _ => panic!("held layer"),
         };
         assert_eq!(time(&a), (0.0, 0.25));
-        assert!(a.layers()[2].use_track_weights);
+        assert!(matches!(&a.layers()[2].source, Some(Source::Clip(p)) if p.use_track_weights));
         for speed in [0.0, 5.0, 5.0, 0.0] {
             drive(&mut a, &mut loco, speed, 0.4);
             assert_eq!(time(&a), (0.0, 0.25));
             assert_eq!(a.layers()[2].weight, 1.0);
         }
+    }
+
+    /// `script-table.md` §6.2: two held clips of one data layer share one animator layer
+    /// (and its budget), each with its own track opacity; the next layer follows.
+    #[test]
+    fn held_clips_of_one_layer_share_an_animator_layer() {
+        let skel = skeleton();
+        let mut first = play(&skel, 110, 0.0);
+        first.held = Some(0.25);
+        first.track_weights = true;
+        let mut second = play(&skel, 110, 0.0);
+        second.held = Some(0.5);
+        let clips = FigureClips {
+            idle: vec![play(&skel, 10, 0.0)],
+            walk: Some(play(&skel, 20, 2.0)),
+            run: None,
+            held: vec![first, second],
+        };
+        let (a, loco) = make_animator(&skel, &clips, 0.0).expect("animator");
+        assert_eq!(loco.move_index, 1);
+        assert_eq!(a.layers().len(), 3);
+        match &a.layers()[2].source {
+            Some(Source::Group(g)) => {
+                let v: Vec<(f32, bool, f32)> = g
+                    .iter()
+                    .map(|(p, w)| (p.clip_time(), p.use_track_weights, *w))
+                    .collect();
+                assert_eq!(v, vec![(0.25, true, 1.0), (0.5, false, 1.0)]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!a.layers()[2].use_track_weights);
     }
 
     fn loco() -> Locomotion {

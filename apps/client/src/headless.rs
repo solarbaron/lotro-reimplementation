@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The world walker without a window: `--screenshot <png>` (render the spawn point once
 //! everything around it has loaded), `--fly-path ... --headless` (a scripted flight with a
-//! frame log) and `--duration SECS --headless` (a timing run once the spawn has settled).
+//! frame log), `--duration SECS --headless` (a timing run once the spawn has settled) and
+//! `--walk-path FILE` (scripted walks on collision, without a GPU: `walker::movement::run`).
 //! Frames are rendered offscreen at `--size`, paced at 60 per second (unless
 //! `--unpaced`), and each frame waits for the GPU so frame times include GPU work.
 
@@ -38,6 +39,8 @@ pub struct HeadlessReport {
     pub placed: Vec<PlacedReport>,
     /// Character counters at the end.
     pub characters: crate::walker::characters::CharacterStats,
+    /// World audio at the end: counters and the music events (ROADMAP M6 criterion 2).
+    pub audio: Option<crate::audio::AudioReport>,
 }
 
 /// One placed figure of a [`HeadlessReport`].
@@ -63,6 +66,18 @@ pub struct PlacedReport {
 ///
 /// No install, no GPU, the walker could not start, or the output could not be written.
 pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
+    if args.walk_path.is_some() {
+        // Scripted walks need no GPU (`walker::movement::run`).
+        let report = crate::walker::movement::run::run_cli(args)?;
+        if report.failed > 0 {
+            bail!(
+                "{} of {} scripted walks failed",
+                report.failed,
+                report.failed + report.passed
+            );
+        }
+        return Ok(HeadlessReport::default());
+    }
     if args.screenshot.is_none() && args.fly_path.is_none() && args.duration.is_none() {
         bail!("a headless walker run needs --screenshot, --fly-path or --duration to end");
     }
@@ -135,6 +150,7 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             rt.world
                 .as_mut()
                 .map(|w| w as &mut dyn crate::walker::WalkerSession),
+            &mut rt.plugins,
             now,
             dt,
         );
@@ -143,11 +159,18 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
         let drawn = (|| -> anyhow::Result<()> {
             let mut frame = renderer.begin_offscreen_frame(&target)?;
             walker.draw(&renderer, &mut frame);
-            renderer.end_frame(frame)?;
+            let t_end = Instant::now();
+            let stats = renderer.end_frame(frame)?;
+            walker.record_render_stats(&stats);
+            let t_wait = Instant::now();
             renderer
                 .context()
                 .wait_idle()
                 .context("waiting for the GPU")?;
+            walker.record_frame_timing(
+                t_wait.saturating_duration_since(t_end).as_secs_f64() * 1e3,
+                t_wait.elapsed().as_secs_f64() * 1e3,
+            );
             Ok(())
         })();
         if let Err(e) = drawn {
@@ -178,7 +201,10 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
             if settled_frames >= SETTLED_FRAMES || timed_out {
                 report.settled = settled_frames >= SETTLED_FRAMES;
                 if !report.settled {
-                    tracing::warn!("area not fully loaded; taking the screenshot anyway");
+                    tracing::warn!(
+                        waiting = ?walker.unsettled(),
+                        "area not fully loaded; taking the screenshot anyway"
+                    );
                 }
                 break Ok(());
             }
@@ -231,6 +257,10 @@ fn finish(
         .collect();
     if let Some(d) = &report.description {
         tracing::info!("viewer at: {d}");
+    }
+    report.audio = walker.audio().map(crate::audio::WorldAudio::report);
+    if let Some(a) = &report.audio {
+        crate::audio::log_report(a);
     }
     if first_error.is_none()
         && let Some(path) = &args.screenshot

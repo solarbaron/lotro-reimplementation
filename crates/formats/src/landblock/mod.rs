@@ -7,11 +7,24 @@
 //! | 1 | block map: (key, palette index) pairs | `client_map_R` | [`BlockMap`] | §5.3 |
 //! | 2 | landblock info: cells, static entities, links, weenies | `client_cell_R` | [`LandblockInfo`] | §4, `entity-descriptor.md` |
 //! | 4 | landblock properties: minimap tile, light maps | `client_cell_R` | [`LandblockProperties`] | §6 |
-//! | 5 | unidentified 3 × 3-group record (framing only) | `client_cell_R` | [`LandblockGroupRecord`] | §7 |
+//! | 5 | distant-landscape sector, one per 3 × 3 group: full decode | `client_cell_R` | [`SectorRecord`] | `distant-landscape.md` §3 |
+//! | 5 | the same, framing only (samples and a raw tail) | `client_cell_R` | [`LandblockGroupRecord`] ([`DistantLandscapeSector`]) | §7, `water.md` §9 |
 //!
 //! Related per-region records: the block-map descriptor (prefix 0x18,
 //! [`BlockMapDescriptor`], §5.2) and the region descriptor (prefix 0x0F,
-//! [`RegionDescriptor`], `environment.md` §3.1) that names it.
+//! [`RegionDescriptor`], `environment.md` §3.1–§3.2) that names it and the region's other
+//! seven tables ([`RegionTable`]).
+//!
+//! # Terrain and ceiling grids
+//!
+//! A landblock's terrain and (in cave blocks) ceiling are 33 × 33 grids meshed as two
+//! triangles per 5 × 5 quad. The terrain quad's diagonal is bit 7 of the vertex-flag byte at
+//! its south-west corner and its triangles are counter-clockwise from above; the ceiling
+//! quad's diagonal is **bit 0** and its triangles are clockwise from above (§3.5, §3.6).
+//! [`GridSurface`] selects the surface in the per-quad queries
+//! ([`LandblockData::surface_quad_triangles`], [`LandblockData::grid_triangle_positions`],
+//! [`LandblockData::terrain_height`], [`LandblockData::ceiling_height`]), and
+//! [`grid_triangle_key`] gives the collision-tree triangle numbering (`collision.md` §6.2).
 //!
 //! # Directory stamps
 //!
@@ -49,15 +62,17 @@ mod data;
 mod entity;
 mod info;
 mod properties;
+mod region;
+mod sector;
 
 pub use block_map::{
     BLOCK_MAP_DESCRIPTOR_PREFIX, BlockMap, BlockMapDescriptor, BlockMapEntry, BlockMapProperty,
-    PaletteValue, REGION_DESCRIPTOR_LEN, REGION_DESCRIPTOR_PREFIX, RegionDescriptor,
-    RegionTableSlot, ResolvedBlockMapValue,
+    PaletteValue, ResolvedBlockMapValue,
 };
 pub use data::{
-    Ceiling, CollisionTree, HeightGrid, LandblockBox, LandblockData, LayerKind, SurfaceChunk,
-    SurfaceLayer, VertexFlags, quad_triangles,
+    Ceiling, CollisionTree, GridSurface, HeightGrid, LandblockBox, LandblockData, LayerKind,
+    SurfaceChunk, SurfaceLayer, VertexFlags, ceiling_quad_triangles, grid_triangle_key,
+    grid_triangle_quad, quad_triangles, surface_quad_triangles,
 };
 pub use entity::{
     InstanceId, MAX_PLACEMENT_COORD, MAX_SCALE, MAX_STATIC_ENTITIES, MIN_SCALE, Placement,
@@ -67,8 +82,22 @@ pub use info::{
     Cell, CellNeighbour, CrossLink, HeaderIndex, LandblockInfo, Link, LinkCoda, TSizeList, Weenie,
 };
 pub use properties::{
-    GROUP_SAMPLE_COUNT, GroupSample, LandblockGroupRecord, LandblockPids, LandblockProperties,
-    MinimapTile, MinimapVariant,
+    DistantLandscapeSector, GROUP_SAMPLE_COUNT, GroupSample, LandblockGroupRecord, LandblockPids,
+    LandblockProperties, LightMaps, MinimapTile, MinimapVariant, SECTOR_SIDE, SectorWaterPair,
+    light_map_uv,
+};
+pub use region::{
+    REGION_DESCRIPTOR_LEN, REGION_DESCRIPTOR_PREFIX, REGION_DID_MAP_CAPACITY, REGION_DID_MAPS,
+    RegionDescriptor, RegionDidMap, RegionDidMapEntry, RegionTable,
+};
+pub use sector::{
+    ALL_LANDBLOCKS_MASK, CHUNK_INDEX_SHARE, IMPOSTER_SQUARE, IMPOSTER_TABLE_PREFIX,
+    LOD_INDEX_OFFSETS, LOD_TRIANGLES, LodRange, MIN_FAR_VIEW_DISTANCE_SQ, NORMAL_BYTE_SCALE,
+    SECTOR_BLOCK_SAMPLES, SECTOR_CHUNK_SIZE, SECTOR_CHUNKS, SECTOR_EXTENT, SECTOR_LODS,
+    SECTOR_MIN_ENTITY_SIZE, SECTOR_SAMPLE_SIZE, SECTOR_SPRITE_SIZE, SECTOR_TERRAIN_SAMPLES,
+    SECTOR_WATER_PAIR_SIZE, SectorChunk, SectorEntity, SectorMesh, SectorRecord, SectorSample,
+    SectorSprite, block_sample_offset, chunk_index, chunk_landblock, decode_distant_sector,
+    imposter_table_did, vertex_block,
 };
 
 use crate::did::{Did, LandblockId, LandblockKind};
@@ -86,6 +115,9 @@ pub const GRID_SPACING: f32 = 5.0;
 pub const QUAD_SIDE: usize = GRID_SIDE - 1;
 /// Quads in the height grid (1,024), and the length of a surface chunk's quad grid.
 pub const QUAD_COUNT: usize = QUAD_SIDE * QUAD_SIDE;
+/// Triangles of a terrain or ceiling grid (2 per quad, 2,048), the key range of their
+/// collision trees (`collision.md` §6.2).
+pub const GRID_TRIANGLE_COUNT: usize = 2 * QUAD_COUNT;
 /// Entries per side of the coarse grid (17).
 pub const COARSE_SIDE: usize = 17;
 /// Entries in the coarse grid (17 × 17 = 289).

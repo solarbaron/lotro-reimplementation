@@ -17,12 +17,25 @@
 //! thumbnails, effective parameters, feature flags, blend state) and a dye preview. Back/forward history, bookmarks,
 //! recent DIDs and the game directory persist in Tessera's settings file.
 //!
+//! The M4.5 world views: the record view tables terrain type tables, terrain-scene and
+//! scene-choice tables, scene records, water and fog-zone tables, sky and day
+//! descriptions, game time, LOD classes, camera states, collision meshes, cell geometry
+//! and region descriptors (`world_records`). The "Landblock" view ([`world_view`]) maps a
+//! landblock's terrain, generated scenery, statics, cells, landblock water and liquid
+//! boxes, built on a worker by `tessera-world` as the walker builds them ([`world`]). The
+//! "Sky" view draws the blended keyframes of a day description over the game day, and for
+//! the sky description the day chosen per sky key, day type and game day. The 3D view
+//! draws collision meshes (0x66), cells (0x01) with their render mesh, setups and whole
+//! landblocks with `tessera-physics` collision geometry as overlays
+//! ([`collision_overlay`]).
+//!
 //! # Threads
 //!
 //! The UI thread never reads or decodes a record. Opening the install, indexing the
 //! archives and searching run on background threads ([`data::spawn_open`],
 //! [`index::Indexer`], [`search::Search`]); every decode runs on `tessera-assets`
-//! workers through the decoders in [`decoders`] and [`scene`]. 3D rendering runs on its
+//! workers through the decoders in [`decoders`], [`scene`] and [`world`] (sky timelines
+//! included). 3D rendering runs on its
 //! own thread ([`viewport`]); the UI only shows the finished frames. A frame-time overlay shows the cost of
 //! each frame, and frames over 50 ms are logged ([`frame_stats`]).
 //!
@@ -70,6 +83,11 @@
 //! | [`anim_view`] | The character view's UI: body, equipment, sliders, clip browser, playback |
 //! | [`sheet`] | `--sheet`: the character view rendered headless into a contact sheet |
 //! | [`charspec`] | Text forms of `--character`, `--wear`, `--clip`, `--time`, `--sliders` |
+//! | [`world`] | M4.5 world data on workers: world context, landblock products, sky products with their timelines |
+//! | [`timeline`] | Sky timelines from decoded records (pure, bounded) |
+//! | [`world_view`] | The landblock and sky views |
+//! | `world_records` | Record-view tables of the M4.5 world records |
+//! | [`collision_overlay`] | Collision overlays of the 3D view from `tessera-physics` geometry |
 
 #![warn(missing_docs)]
 
@@ -78,6 +96,7 @@ pub mod app;
 pub mod character;
 pub mod charspec;
 pub mod cli;
+pub mod collision_overlay;
 pub mod data;
 pub mod decoders;
 mod error;
@@ -96,8 +115,12 @@ pub mod scene;
 pub mod screenshot;
 pub mod search;
 pub mod sheet;
+pub mod timeline;
 pub mod viewport;
 mod views;
+pub mod world;
+pub(crate) mod world_records;
+pub mod world_view;
 
 pub use app::{AppConfig, ExplorerApp, ScreenshotPlan, run};
 pub use error::ExplorerError;

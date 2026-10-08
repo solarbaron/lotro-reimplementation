@@ -847,6 +847,13 @@ impl UiHost {
 
     // ----- step 1 --------------------------------------------------------------------
 
+    /// Whether a UI element has the keyboard focus (then keys are the UI's, not the
+    /// walker's own keys).
+    #[must_use]
+    pub fn keyboard_focused(&self) -> bool {
+        self.ui.borrow().focus_element().is_some()
+    }
+
     /// Step 1: feeds one raw event to `mapper` with this host as its UI sink. While the
     /// pointer lock is on, cursor-position and cursor-left reports are withheld (0015
     /// §2.5); a cursor-left withheld during the lock is fed right after the call that ends

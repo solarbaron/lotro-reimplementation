@@ -79,6 +79,7 @@ struct Probe {
     scratch: EvalScratch,
     local: Vec<tessera_havok::Transform>,
     model: Vec<Mat4>,
+    triples: Vec<tessera_havok::Transform>,
 }
 
 impl Probe {
@@ -88,6 +89,7 @@ impl Probe {
         Self {
             local: skeleton.reference_pose(),
             model: vec![Mat4::IDENTITY; n],
+            triples: skeleton.reference_triples().to_vec(),
             skeleton,
             scale: asset.model_scale,
             snaps: Vec::new(),
@@ -105,7 +107,7 @@ impl Probe {
         )
         .expect("pose evaluates");
         self.skeleton
-            .compose(&self.local, &mut self.model)
+            .compose_with_triples(&self.local, &mut self.model, &mut self.triples)
             .expect("pose composes");
     }
 
@@ -304,7 +306,7 @@ fn mesh_heights(env: &Env, spec: &str, height: Option<f32>) -> (f32, f32, f32) {
     let mut probe = Probe::new(&asset);
     let (_, _, lowest_bone) = probe.heights(&a);
     let mut skin = vec![Mat4::IDENTITY; sk.bone_count()];
-    skinning_matrices(&sk, &probe.model, &mut skin).expect("palette");
+    skinning_matrices(&sk, &probe.triples, &mut skin).expect("palette");
     let Body::Character { species, sex } = body(env, spec) else {
         panic!("playable body")
     };
@@ -422,27 +424,36 @@ fn other_bodies_are_unchanged() {
     assert!((bone - 0.037).abs() < 0.002, "stout-axe lowest bone {bone}");
 }
 
-/// The slider bytes of the figure (`appearance.md` §6.3, `script-table.md` §16 Decision):
-/// the Elf and HighElf avatars carry no `AC_BoneSlider_Value_Array`, so their driven node
-/// gets 35 × `80` ([`ABSENT_SLIDER_BYTES`]); the River-hobbit gets its entity's 35 bytes
-/// and the two hidden `Femur_Scale` sliders sit at 0.5.
+/// The slider values of the figure (`appearance.md` §6.3, `script-table.md` §6.9): the Elf
+/// and HighElf avatars carry no `AC_BoneSlider_Value_Array`, so their driven node gets the
+/// 35 × `80` Decision ([`ABSENT_SLIDER_STRING`]); the River-hobbit and Human figures get
+/// their entity's 70-character string. A 70-character string has 35 pieces and then the
+/// empty piece, so the River-hobbit's first hidden `Femur_Scale` slider gets 0 and the
+/// second 0.5 (neither changes anything: minimum equals maximum).
 #[test]
-fn slider_bytes_follow_the_decisions() {
-    use tessera_formats::avatar::ABSENT_SLIDER_BYTES;
+fn slider_values_follow_the_decisions() {
+    use tessera_formats::avatar::{ABSENT_SLIDER_STRING, slider_value_pieces};
     let Some(env) = env() else { return };
     for spec in ["elf,m", "elf,f", "highelf,m", "highelf,f"] {
         let asset = figure(&env, spec, None);
         let s = asset.shape.sliders.as_ref().expect("a slider deformer");
-        assert_eq!(s.bytes, ABSENT_SLIDER_BYTES.to_vec(), "{spec}");
+        assert_eq!(
+            s.values,
+            slider_value_pieces(ABSENT_SLIDER_STRING),
+            "{spec}"
+        );
         assert_eq!(s.positions.len(), s.table.sliders.len(), "{spec}");
     }
     for spec in ["riverhobbit,m", "riverhobbit,f", "human,m"] {
         let asset = figure(&env, spec, None);
         let s = asset.shape.sliders.as_ref().expect("a slider deformer");
-        assert_eq!(s.bytes.len(), 35, "{spec}");
-        let hidden = s.table.sliders.len() - s.bytes.len();
-        assert_eq!(hidden, if spec.starts_with("river") { 2 } else { 0 });
-        assert!(s.positions[s.bytes.len()..].iter().all(|&t| t == 0.5));
+        assert_eq!(s.values.len(), 36, "{spec}: 35 pairs and the empty piece");
+        assert_eq!(s.values.last(), Some(&0), "{spec}");
+        let river = spec.starts_with("river");
+        assert_eq!(s.table.sliders.len(), if river { 37 } else { 35 }, "{spec}");
+        if river {
+            assert_eq!((s.positions[35], s.positions[36]), (0.0, 0.5), "{spec}");
+        }
     }
     for spec in ["hobbit,m", "dwarf,m", "beorning,m", "dwarfstoutaxe,m"] {
         assert!(figure(&env, spec, None).shape.sliders.is_none(), "{spec}");
@@ -517,7 +528,7 @@ fn moving_mesh_stays_near_the_ground() {
             let mut lowest = f32::INFINITY;
             for _ in 0..(seconds / 0.05).ceil() as usize {
                 probe.pose(&a);
-                skinning_matrices(&sk, &probe.model, &mut skin).expect("palette");
+                skinning_matrices(&sk, &probe.triples, &mut skin).expect("palette");
                 for ((p, j), w) in pos.iter().zip(&joints).zip(&weights) {
                     let z = skin_position(&skin, j, w, Vec3::from_array(*p)).z;
                     lowest = lowest.min(z * asset.model_scale);

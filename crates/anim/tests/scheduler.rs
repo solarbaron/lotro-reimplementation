@@ -154,9 +154,11 @@ fn worker_pose_equals_synchronous_evaluation() {
     let mut local = vec![Transform::IDENTITY; 16];
     evaluate(&s, &snap, &mut EvalScratch::new(), &mut local).unwrap();
     let mut model = vec![Mat4::IDENTITY; 16];
-    s.compose(&local, &mut model).unwrap();
+    let mut triples = vec![Transform::IDENTITY; 16];
+    s.compose_with_triples(&local, &mut model, &mut triples)
+        .unwrap();
     let mut skin = vec![Mat4::IDENTITY; 16];
-    skinning_matrices(&s, &model, &mut skin).unwrap();
+    skinning_matrices(&s, &triples, &mut skin).unwrap();
     assert_eq!(out.local, local);
     assert_eq!(out.model, model);
     assert_eq!(out.skin, skin);

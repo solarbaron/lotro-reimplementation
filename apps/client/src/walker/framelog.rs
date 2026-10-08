@@ -56,12 +56,80 @@ pub struct FrameRow {
     pub anim_upload_ms: f64,
     /// Worker time of the sampling jobs collected this frame, ms.
     pub anim_worker_ms: f64,
+    /// Main thread: world audio update (graph, engine, properties), ms.
+    pub audio_ms: f64,
+    /// Audible voices (playing or fading).
+    pub audio_voices: usize,
+    /// Device underruns so far (cumulative).
+    pub audio_underruns: u64,
+    /// Mixer load of the last mixer call (render time over audio time).
+    pub mixer_load: f64,
     /// Viewer position (region-global).
     pub x: f64,
     /// Viewer position.
     pub y: f64,
     /// Viewer position.
     pub z: f64,
+    /// The M4.5 systems (`walker.md` §14.10).
+    pub fx: FxRow,
+}
+
+/// The frame-log columns of the M4.5 systems (`walker.md` §14.10). The renderer's counters
+/// (`gpu_*`) are those of the frame's `end_frame`, filled in afterwards
+/// ([`FrameLog::set_render_stats`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FxRow {
+    /// Main thread: environment and light table, ms.
+    pub env_ms: f64,
+    /// Main thread: the frill ring update, ms.
+    pub frills_ms: f64,
+    /// Time of day *t* (`environment.md` §11.1).
+    pub time_of_day: f64,
+    /// The global limit *G* (`walker.md` §11.3), m.
+    pub g: f32,
+    /// Fog far distance in force, m (0 without fog).
+    pub fog_far: f32,
+    /// Terrain blocks drawn with texture layers.
+    pub terrain_layered: usize,
+    /// Ceiling chunks drawn.
+    pub ceilings: usize,
+    /// Objects drawn (all forms).
+    pub objects_drawn: usize,
+    /// Objects drawn while fading.
+    pub fading: usize,
+    /// Part instances drawn instanced (generated scenery).
+    pub instanced: usize,
+    /// Instanced scenery batches.
+    pub batches: usize,
+    /// Water quads queued.
+    pub water_quads: usize,
+    /// Frill groups queued.
+    pub frill_groups: usize,
+    /// Frill instances queued.
+    pub frill_instances: usize,
+    /// Lights in the frame's table.
+    pub lights: usize,
+    /// Renderer: draw calls.
+    pub gpu_draw_calls: u32,
+    /// Renderer: terrain layer draws.
+    pub gpu_terrain_layers: u32,
+    /// Renderer: instances drawn (scenery and frills).
+    pub gpu_instances: u32,
+    /// Renderer: water quads drawn.
+    pub gpu_water_quads: u32,
+    /// Renderer: sky objects drawn.
+    pub gpu_sky_objects: u32,
+    /// Renderer: shadow-map draws.
+    pub gpu_shadow_draws: u32,
+    /// Renderer: lit mesh draws.
+    pub gpu_lit_draws: u32,
+    /// Main thread: the renderer's `end_frame` (frame building and submission), ms.
+    pub end_frame_ms: f64,
+    /// Main thread: waiting for the GPU after submission (headless runs), ms.
+    pub gpu_wait_ms: f64,
+    /// Main-thread phases, ms: terrain update, object update, minimap update, terrain
+    /// recording, object recording, water recording, sky recording, frill recording.
+    pub phase_ms: [f64; 8],
 }
 
 /// Summary of a log.
@@ -109,6 +177,16 @@ pub struct Summary {
     pub anim_worker_ms: f64,
     /// Longest main-thread time of the whole character layer in one frame, ms.
     pub max_characters_ms: f64,
+    /// Mean main-thread audio update per frame, ms.
+    pub audio_ms: f64,
+    /// Longest main-thread audio update, ms.
+    pub max_audio_ms: f64,
+    /// Device underruns during the log (last row's count minus the first's).
+    pub audio_underruns: u64,
+    /// Highest mixer load seen in a row.
+    pub max_mixer_load: f64,
+    /// Most audible voices in one frame.
+    pub max_audio_voices: usize,
 }
 
 impl Summary {
@@ -166,6 +244,17 @@ impl std::fmt::Display for Summary {
                 self.max_characters_ms,
             )?;
         }
+        if self.max_audio_ms > 0.0 {
+            write!(
+                f,
+                "; audio {:.3} ms/frame (max {:.2} ms), up to {} voices, {} underruns, mixer load max {:.1} %",
+                self.audio_ms,
+                self.max_audio_ms,
+                self.max_audio_voices,
+                self.audio_underruns,
+                100.0 * self.max_mixer_load,
+            )?;
+        }
         Ok(())
     }
 }
@@ -193,6 +282,27 @@ impl FrameLog {
         &self.rows
     }
 
+    /// Fills the submission and GPU-wait times of the last row.
+    pub fn set_frame_timing(&mut self, end_frame_ms: f64, gpu_wait_ms: f64) {
+        if let Some(r) = self.rows.last_mut() {
+            r.fx.end_frame_ms = end_frame_ms;
+            r.fx.gpu_wait_ms = gpu_wait_ms;
+        }
+    }
+
+    /// Fills the renderer's counters of the last row (its frame has just ended).
+    pub fn set_render_stats(&mut self, stats: &tessera_render::FrameStats) {
+        if let Some(r) = self.rows.last_mut() {
+            r.fx.gpu_draw_calls = stats.draw_calls;
+            r.fx.gpu_terrain_layers = stats.terrain_layers;
+            r.fx.gpu_instances = stats.instances;
+            r.fx.gpu_water_quads = stats.water_quads;
+            r.fx.gpu_sky_objects = stats.sky_objects;
+            r.fx.gpu_shadow_draws = stats.shadow_draws;
+            r.fx.gpu_lit_draws = stats.lit_draws;
+        }
+    }
+
     /// The summary of every row.
     #[must_use]
     pub fn summary(&self) -> Summary {
@@ -206,17 +316,27 @@ impl FrameLog {
     /// I/O errors.
     pub fn write_csv(&self, path: &Path) -> std::io::Result<()> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
+        // The audio columns (M6) are appended last, after the M4.5 columns, so that readers
+        // of the earlier columns keep working (walker.md §7, OPEN on documenting them).
         writeln!(
             w,
             "frame,t_s,frame_ms,cpu_ms,stream_ms,uploaded_bytes,resident_blocks,resident_bytes,\
              loading,near_missing,gpu_bytes,rss_bytes,object_draws,terrain_draws,characters,\
-             character_draws,characters_ms,anim_collect_ms,anim_submit_ms,anim_upload_ms,anim_worker_ms,x,y,z"
+             character_draws,characters_ms,anim_collect_ms,anim_submit_ms,anim_upload_ms,anim_worker_ms,x,y,z,\
+             env_ms,frills_ms,time_of_day,g,fog_far,terrain_layered,ceilings,objects_drawn,fading,\
+             instanced,batches,water_quads,frill_groups,frill_instances,lights,gpu_draw_calls,\
+             gpu_terrain_layers,gpu_instances,gpu_water_quads,gpu_sky_objects,gpu_shadow_draws,\
+             gpu_lit_draws,end_frame_ms,gpu_wait_ms,terrain_update_ms,objects_update_ms,\
+             minimap_update_ms,terrain_draw_ms,objects_draw_ms,water_draw_ms,sky_draw_ms,\
+             frills_draw_ms,\
+             audio_ms,audio_voices,audio_underruns,mixer_load"
         )?;
         for (i, r) in self.rows.iter().enumerate() {
             writeln!(
                 w,
                 "{i},{:.4},{:.3},{:.3},{:.3},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{:.4},{:.4},{:.4},\
-                 {:.2},{:.2},{:.2}",
+                 {:.2},{:.2},{:.2},{:.4},{:.4},{:.5},{:.1},{:.1},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},\
+                 {:.4},{},{},{:.4}",
                 r.t,
                 r.frame_ms,
                 r.cpu_ms,
@@ -239,7 +359,43 @@ impl FrameLog {
                 r.anim_worker_ms,
                 r.x,
                 r.y,
-                r.z
+                r.z,
+                r.fx.env_ms,
+                r.fx.frills_ms,
+                r.fx.time_of_day,
+                r.fx.g,
+                r.fx.fog_far,
+                r.fx.terrain_layered,
+                r.fx.ceilings,
+                r.fx.objects_drawn,
+                r.fx.fading,
+                r.fx.instanced,
+                r.fx.batches,
+                r.fx.water_quads,
+                r.fx.frill_groups,
+                r.fx.frill_instances,
+                r.fx.lights,
+                r.fx.gpu_draw_calls,
+                r.fx.gpu_terrain_layers,
+                r.fx.gpu_instances,
+                r.fx.gpu_water_quads,
+                r.fx.gpu_sky_objects,
+                r.fx.gpu_shadow_draws,
+                r.fx.gpu_lit_draws,
+                r.fx.end_frame_ms,
+                r.fx.gpu_wait_ms,
+                r.fx.phase_ms[0],
+                r.fx.phase_ms[1],
+                r.fx.phase_ms[2],
+                r.fx.phase_ms[3],
+                r.fx.phase_ms[4],
+                r.fx.phase_ms[5],
+                r.fx.phase_ms[6],
+                r.fx.phase_ms[7],
+                r.audio_ms,
+                r.audio_voices,
+                r.audio_underruns,
+                r.mixer_load
             )?;
         }
         if self.dropped > 0 {
@@ -281,6 +437,10 @@ pub fn summarize(rows: &[FrameRow]) -> Summary {
         s.max_anim_main_ms = s.max_anim_main_ms.max(main);
         s.max_characters_ms = s.max_characters_ms.max(r.characters_ms);
         s.max_characters = s.max_characters.max(r.characters);
+        s.audio_ms += r.audio_ms / n;
+        s.max_audio_ms = s.max_audio_ms.max(r.audio_ms);
+        s.max_mixer_load = s.max_mixer_load.max(r.mixer_load);
+        s.max_audio_voices = s.max_audio_voices.max(r.audio_voices);
         if r.characters > 0 {
             s.min_character_draws = s.min_character_draws.min(r.character_draws);
         }
@@ -294,6 +454,10 @@ pub fn summarize(rows: &[FrameRow]) -> Summary {
         s.peak_rss = s.peak_rss.max(r.rss);
         s.near_missing_frames += usize::from(r.near_missing > 0);
     }
+    s.audio_underruns = rows
+        .last()
+        .map_or(0, |r| r.audio_underruns)
+        .saturating_sub(rows.first().map_or(0, |r| r.audio_underruns));
     if s.min_character_draws == usize::MAX {
         s.min_character_draws = 0;
     }
@@ -412,6 +576,26 @@ mod tests {
             s.to_string()
                 .contains("80.0 % of the animation work on workers")
         );
+    }
+
+    #[test]
+    fn audio_summary() {
+        let rows: Vec<FrameRow> = (0..4)
+            .map(|i| FrameRow {
+                t: f64::from(i),
+                frame_ms: 16.0,
+                audio_ms: 0.5,
+                audio_voices: i as usize,
+                audio_underruns: if i == 3 { 7 } else { 2 },
+                mixer_load: 0.1 * f64::from(i),
+                ..FrameRow::default()
+            })
+            .collect();
+        let s = summarize(&rows);
+        assert_eq!((s.audio_underruns, s.max_audio_voices), (5, 3));
+        assert!((s.audio_ms - 0.5).abs() < 1e-12 && (s.max_mixer_load - 0.3).abs() < 1e-12);
+        assert!(s.to_string().contains("5 underruns"));
+        assert!(!summarize(&rows[..0]).to_string().contains("audio"));
     }
 
     #[test]

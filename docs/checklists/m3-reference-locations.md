@@ -252,3 +252,5 @@ Two rows were also viewed in the walker with `--place "<expected /loc>"` (M3-01,
 avatar stands at the anchor's listed corner and the HUD shows the expected map coordinates
 and `/loc` tokens. The owner columns of §2.2 stay empty until [O1](owner-observations.md#o1)
 is done.
+
+**Check, 2026-10-06 (M4.5 height rule):** all 20 rows recomputed with `landblock.md` §3.4 (stored × 2,000 / 65,535) and §3.11 stay within the 0.05 m tolerance (largest change +0.030 m, M3-13 stand point); no erratum is needed ([`m4-5-visual.md`](m4-5-visual.md#s5)).

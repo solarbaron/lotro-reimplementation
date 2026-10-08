@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-06 |
+| **Status** | Accepted (2026-10-07; was Revised, footprint revision and its two repair revisions of 2026-10-07; see change log) |
+| **Last updated** | 2026-10-07 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Claude review session (spec-writer agent), 2026-10-05: changes requested (CLEAN_ROOM.md §5.3; issues listed in the review reply). Re-review 2026-10-05: changes requested (repairs of the first round verified; new issues on §8.1–§8.3 frill records of non-frill objects and inline OPENs in §4.2, §5.1, §8.3 listed in the review reply). Third review 2026-10-06: changes requested. The repairs of the re-review are verified, and S4, S7, S26, S30 (the 452 column) and §5.4 reproduce exactly on the install. Open issue: the property counts of §8.3 (1,515 frill-layer objects) and §9 (2,746 objects) cover only each 0x47 record's own property set. Resolved along the 0x47 parent chain (`entity-descriptor.md` E22 order), they become `Entity_CreationType` 1,515 and 2,746, `Render_Frill_AnimationIntensity` 974, and `Render_LODClass` 1,042 and 2,441. The spec should label which counts it gives, and state (BIN, or OPEN with a Tessera Decision) whether the per-object reads of §8.3 rules 6–7 and the class-2 default of §9 follow that chain. Minor: cite `mesh.md` §6.1 for the bounding box in §8.5 step 5, say which UV sets are copied, and replace a quoted client phrase in §8.5 step 1 with plain words. Repaired 2026-10-06 (change log). Fourth review 2026-10-06: changes requested. The repairs of the third review are verified. §9.2 rules 1–6, its Tessera Decision, S31–S35, SC14, SC15, §8.5 steps 1 and 5 and the own-set/resolved labelling are complete and implementable. An independent probe using the repository's crates read all 4,261 objects, their parents and every 0x78 extra set. It reproduces every own and resolved count of §8.3, §9, §9.2 and §10 (1,515: 82 with a parent, 45/6, 68/0, 54/2, 881 animated; 2,746: 115 with a parent, 65/12, 61/13, `Render_CastLandscapeShadows` 2,147/2,241, clearance lists 1,257/1,325 and 296/354, `Render_ImposterName` 840/844; the 452 have no parent; 1,043 records name one or two extra sets, none with a `Render_*` or `Entity_*` property). Open issues: (1) §9.2 intro and the S1 OBS row say the 197 objects with a parent have "28 distinct parents". They have **156** distinct parents. 128 of them are scene objects themselves and 28 are not, so the 28 is the count of extra records (4,289 = 4,261 + 28). None of the 156 has a parent of its own, so the chain-depth conclusion holds. Correct both sentences. (2) Minor: the §9 `Render_LODClass` value list reads as descending but skips two classes of 121 / 121 each (0x10000010 and `SmallDecor`) before `Bush` 107. List them, or say that the list is a selection. Repaired 2026-10-06 (change log). Fifth review, Claude review session (spec-writer agent), 2026-10-06: **passed; status Review → Accepted.** Both issues of the fourth review are repaired and verified by an independent read-only probe (the repository's crates, all records): the 197 objects with a parent have 156 distinct parents, 128 of them scene objects and 28 not, 4,289 records in all, none of the 156 with a parent, 1,043 records naming extra sets; the eleven `Render_LODClass` values of §9 and their own/resolved counts match exactly (sums 2,376 and 2,441) and the labels match enum mapper 0x2300008D. Further spot checks reproduced exactly: (1) S7/§5.1: 3,402 scene records, zero leftover bytes, `group_count` 1/0/2 in 3,398/3/1, frill layer in 2,334, 180 empty, all with frequency 1.0, 2,320 with zero displacement, 8,031 frill-layer children all scene references; (2) §5.2: 62,922 object children, 11,033 scene references, 66,191 nodes (63,846 in groups); (3) §5.3 and SC10: `frequency` ≥ 1 in 25,582 (1.0 in 25,450), `clearance` 0 in 49,405 (all with the SC10 tuple), 0.5 in 15,798, `clear_aspect_tol` 360 in all, `height_mode` 0/1 in 64,789/1,402, `align_to_slope` in 38,992; (4) S5/SC2: 5 records 0x11 with zero leftover bytes, 91 – 1,054 entries, 3,320 choices all with flag 1, 2,472 named scenes; (5) §5.4/S24: 4,261 objects, 2,981 through groups, 1,515 through frill layers (1,512 from named scenes only), 235 in both; and every own/resolved count of §8.3, §9 and §9.2 (82 and 115 with a parent; 45/6, 68/0, 54/2, 65/12, 61/13; `SmallDecor` 746/786; `SharedClientOnlyImmobile` 1,176/1,230; `Render_LODCrossFade` true in 14; `Render_FarViewDistance` 1,000 – 2,000). §5.3 checklist satisfied: functional facts in prose and tables only, no code or pseudo-code, no game text, keys or hostnames, names only for interoperability, provenance marks on every fact, BIN rows (a)–(n) with questions and the M1–M3 justification, unknowns as OPEN callouts with Tessera Decisions, no closed gate. |
+| **Reviewer** | Claude review session (spec-reviewer agent), a different session from the writer |
+| **Review record** | Claude review sessions (spec-writer and spec-reviewer agents), each a different session from the writer: 2026-10-05 changes requested; 2026-10-05 changes requested; 2026-10-06 changes requested; 2026-10-06 changes requested; 2026-10-06 **passed** (Review → Accepted); 2026-10-07 (footprint revision) changes requested; 2026-10-07 (footprint revision, second review) changes requested; 2026-10-07 (repair revision, spec-reviewer agent) changes requested; 2026-10-07 (second repair revision, spec-reviewer agent) **passed** (Revised → Accepted). Each round was answered by a revision (change log). Detailed findings are kept in the dirty-room area, not in this file (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for the region scene tables 0x11, 0x12 and scene records 0x02; the terrain-type table 0x19 decoder of `terrain-texturing.md` §3 and the LOD-class record 0x32 decoder of `environment.md` §9.1, which own those layouts; fuzz targets for each), `crates/world` (per-landblock scenery generation, §7), a frill (grass) layer with its own ring (§8, `crates/world` + `crates/render`), `crates/render` (instanced drawing of scenery and frill objects), `apps/explorer` (scene and scenery views), `apps/client` |
 | **Companion specs** | [`landblock.md`](landblock.md) §3.3–§3.8 (height grid, coarse 17 × 17 grid, surface layers and quad grid), §4.5 (static entities), §5 (block maps). [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19, full entry layout), §13 (height constant). [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh and triangle keys), §6.6 (terrain triangles near a point), §9.4 (collision of generated scenery). [`water.md`](water.md) §6.2–§6.4 (per-landblock water surface). [`environment.md`](environment.md) §3 (region descriptor slots), §7.4 (`WindSpeed`), §9.1 (LOD-class record 0x32, owner of its layout). [`entity-descriptor.md`](entity-descriptor.md) (hand-placed static entities). [`setup.md`](setup.md) (0x47 → 0x1F → 0x04 → 0x06 chain; §3.1 parent 0x47 records, §4.4 extra sets, used by §9.2). [`mesh.md`](mesh.md) §6.1 (stored vertex-block bounding box, §8.5). [`coordinates.md`](coordinates.md) §11 (axes, quaternion convention, compass heading). [`property-system.md`](property-system.md) (property sets in 0x47 records). [`records.md`](records.md) §1 (VLE, TSize). |
 
@@ -51,8 +51,8 @@ counts.
 
 | Tag | Source |
 |---|---|
-| OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratchpad: **all** 5 records of each of the prefixes 0x11, 0x12, 0x17 and 0x19, **all** 3,402 records 0x02, the coarse grid, heights and surface quad grid of **all** 390,150 landblock-data records, and **all** 4,261 distinct 0x47 records referenced by scenes (properties read with the repository's own property-set decoder; meshes resolved with its setup resolver and mesh summary). Second pass, same date: the record 0x32000000 (§9.1) and the clearance fields of all 66,191 placement nodes (§5.3, SC10). Third pass, same date (answering the review): the default entry of all 5 records 0x12 (§4.2), the empty scenes and frill-layer children of all 3,402 records 0x02 (§5.4), the `frequency` census (§5.3), the objects reachable through frill layers (§5.4, §8.2). Fourth pass, 2026-10-06 (answering the re-review): the group objects that the frill pass meets after a frill layer (§8.1), the part, detail-level and draw-entry census of all 1,967 objects that can become frill records (meshes read with the repository's mesh decoder; §8.3), and the properties of the 452 objects among them that no frill layer reaches (§8.3). Fifth pass, 2026-10-06 (answering the third review): the properties of all 4,261 objects resolved along their 0x47 parent chains (197 objects have a parent; 156 distinct parents, 128 of them scene objects themselves and 28 not, none of which has a parent of its own), and the 0x78 extra sets named by all 4,289 records involved, the 4,261 objects and the 28 parents that are not scene objects (1,043 of these records name one or two; every set exists and none holds a `Render_*` or `Entity_*` property) (§9.2). |
-| BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, compiled 2026-09-27), disassembled in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: (a) which record kinds and fields the per-vertex grid indexes and how a scene is chosen; (b) the scene-record grammar and the meaning of each placement-node field; (c) the placement algorithm (seeds, hash, displacement, rotation, scale, height, slope, terrain-type, spacing and bounds checks); (d) how frills are produced and the frill-engine defaults. Second pass, same build, 2026-10-05: (e) the orientation conventions (sign of the heading, axes of the second and third angles, the frame built by `align_to_slope`); (f) which terrain triangle supplies the plane, what the "physics clearance" step queries and tests, and which already-placed objects the spacing step compares against; (g) the frill draw distance per level, fades, reduction and fade-in; (h) which client record type the DID range 0x32… belongs to. Third pass, same build, 2026-10-05: (i) the comparison that picks the terrain triangle when a point lies on a quad's diagonal, and whether the client's general terrain height and terrain plane queries at a point use the same rule; (j) which frill layers the frill pass processes and how the "under a frill layer" state is kept. Fourth pass, same build, 2026-10-06: (k) what the frill engine does with a frill record: whether it filters records by object property, creation type or part count, which geometry of the object it draws, and how it stores the vertices of a sector; (l) which graphics back ends force the frill terrain-colour intensity to 0. Fifth pass, same build, 2026-10-06: (m) how the client resolves a property of an object along its 0x47 chain, which reads of `Entity_CreationType`, `Render_LODClass` and the frill per-object properties go through that resolution, and what an object without `Render_LODClass` gets; (n) which texture-coordinate set the frill bake copies. Why M1–M3 were not enough: procedural placements are **not stored** anywhere in the data (only the parameters are), so neither file observation nor published sources can give the generation rule; no public decoder of these records exists; frame captures (M3) would show results but not the seeds or rules, and none is available to this session. No network, login, launcher or anti-tamper code was examined. |
+| OBS | Observed in the user's install on 2026-10-05 by throwaway probes in the dirty-room scratchpad: **all** 5 records of each of the prefixes 0x11, 0x12, 0x17 and 0x19, **all** 3,402 records 0x02, the coarse grid, heights and surface quad grid of **all** 390,150 landblock-data records, and **all** 4,261 distinct 0x47 records referenced by scenes (properties read with the repository's own property-set decoder; meshes resolved with its setup resolver and mesh summary). Second pass, same date: the record 0x32000000 (§9.1) and the clearance fields of all 66,191 placement nodes (§5.3, SC10). Third pass, same date (answering the review): the default entry of all 5 records 0x12 (§4.2), the empty scenes and frill-layer children of all 3,402 records 0x02 (§5.4), the `frequency` census (§5.3), the objects reachable through frill layers (§5.4, §8.2). Fourth pass, 2026-10-06 (answering the re-review): the group objects that the frill pass meets after a frill layer (§8.1), the part, detail-level and draw-entry census of all 1,967 objects that can become frill records (meshes read with the repository's mesh decoder; §8.3), and the properties of the 452 objects among them that no frill layer reaches (§8.3). Fifth pass, 2026-10-06 (answering the third review): the properties of all 4,261 objects resolved along their 0x47 parent chains (197 objects have a parent; 156 distinct parents, 128 of them scene objects themselves and 28 not, none of which has a parent of its own), and the 0x78 extra sets named by all 4,289 records involved, the 4,261 objects and the 28 parents that are not scene objects (1,043 of these records name one or two; every set exists and none holds a `Render_*` or `Entity_*` property) (§9.2). Seventh pass, 2026-10-07 (footprint revision): the generated lists of the 11 landblocks of `m4-5-visual.md` §4.2 and of walks GN1–GN4 re-derived with the dirty-room generator corrected to §7.4 step 14b; they equal the lists of the clean-room implementation (`tessera_world::scenery`, built from this spec) object for object (DID, position, heading, scale) in all 11 landblocks. Frill records of the six landblocks of `m4-5-visual.md` §4.3, and of a random sample of 72 landblocks (12 per region), generated under the rule of §8.2 item 5 and under the Tessera Decision it replaces. Eighth pass, 2026-10-07 (repair revision): **all** 49,636 landblock-info records and **all** 2,683,271 static entities of types Weenie, Physics and PatrolPoint in them, with their two clearance lists found by the lookup of `entity-descriptor.md` §4.9 (every element of every list parsed; boxes, cylinders, frames and rotations counted, §7.4 step 14a, S46); then **all** 78,114 landblocks with a non-zero coarse grid generated twice with the repository's generator, once with the static list as the released `world` implementation builds it and once with a static list built by the rules of §7.4 step 14a, both without water (S46, §13.2). |
+| BIN | The client executable of the user's install, `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035 (`lotro_live`, compiled 2026-09-27), disassembled in the dirty room under the standing authorisation of [decision 0011](../decisions/0011-standing-m4-authorisation.md). Questions: (a) which record kinds and fields the per-vertex grid indexes and how a scene is chosen; (b) the scene-record grammar and the meaning of each placement-node field; (c) the placement algorithm (seeds, hash, displacement, rotation, scale, height, slope, terrain-type, spacing and bounds checks); (d) how frills are produced and the frill-engine defaults. Second pass, same build, 2026-10-05: (e) the orientation conventions (sign of the heading, axes of the second and third angles, the frame built by `align_to_slope`); (f) which terrain triangle supplies the plane, what the "physics clearance" step queries and tests, and which already-placed objects the spacing step compares against; (g) the frill draw distance per level, fades, reduction and fade-in; (h) which client record type the DID range 0x32… belongs to. Third pass, same build, 2026-10-05: (i) the comparison that picks the terrain triangle when a point lies on a quad's diagonal, and whether the client's general terrain height and terrain plane queries at a point use the same rule; (j) which frill layers the frill pass processes and how the "under a frill layer" state is kept. Fourth pass, same build, 2026-10-06: (k) what the frill engine does with a frill record: whether it filters records by object property, creation type or part count, which geometry of the object it draws, and how it stores the vertices of a sector; (l) which graphics back ends force the frill terrain-colour intensity to 0. Fifth pass, same build, 2026-10-06: (m) how the client resolves a property of an object along its 0x47 chain, which reads of `Entity_CreationType`, `Render_LODClass` and the frill per-object properties go through that resolution, and what an object without `Render_LODClass` gets; (n) which texture-coordinate set the frill bake copies. Sixth pass, same build (PE file version re-read 2026-10-07), 2026-10-07, answering the M4.5 exit verification: (o) which entries of the landblock's generated list the spacing test of §7.4 step 14b visits, how a footprint marker is created, closed and told apart from an object, whether the `no_spacing*` and `no_checks*` switches pass through scene references, and what happens to a node's marker when one of its children fails; (p) whether the frill pass works on the same generated list as the static pass, and whether anything empties or shortens that list between the two passes; (q) in which order generated objects become creation requests and which filters apply at that point. For (o) and (p), M1 and M2 could not decide: the clean-room implementation and the checklist's dirty-room generator disagreed on which markers count, and both outcomes are self-consistent placements that the data does not store. Why M1–M3 were not enough: procedural placements are **not stored** anywhere in the data (only the parameters are), so neither file observation nor published sources can give the generation rule; no public decoder of these records exists; frame captures (M3) would show results but not the seeds or rules, and none is available to this session. Seventh pass, same build, 2026-10-07 (repair revision under decision 0018, so that the spec body states every client rule the released `world` implementation relies on): (r) which child failures exist, how far a failure climbs (in particular out of a frill layer), and what the frill engine does with a sector whose vertex fails; (s) every scale mode of §7.4 steps 3 and 11 with its salts; (t) how the static list of §7.4 step 14a gets its clearance lists (which property lookup, how list elements are read, how boxes are stored, the frame of a static entity without one, which entities are skipped) and the form of the cylinder test with `spacing_3d`; (u) which frill sectors the frill engine generates and keeps, in which order, when it drops them, and how the ring centre is blended from camera and player (including the case without a player and blends of 0 or less and above 1); (v) the bound of step 6 against the landblock normalisation of a frame, the landblock test of frill records, the edge cases of the weighted pick of §7.2, a region without a terrain-type table (step 7), a region whose slot-1 or slot-2 table is empty or cannot be read (§4.1), and what `max_objects` counts. Why M1–M3 were not enough for (r)–(v): these are rules of the generator and of the frill engine that leave no trace in data (failures, unused scale modes and the 3D cylinder test do not occur in this install; the static list and the frill sector set exist only in memory), no published source describes them, and no frame capture is available. The slot-1 and slot-2 cases of (v) and the ring-centre cases of (u) were re-checked in a separate read-only copy of the project, same build, on 2026-10-07 (second repair revision); every region of this install has both tables and the blend is a client option at its default, so M1 cannot show either. No network, login, launcher or anti-tamper code was examined. |
 | LB | [`landblock.md`](landblock.md) (height grid, coarse grid layout, surface chunks, block maps). |
 | TT | [`terrain-texturing.md`](terrain-texturing.md) §3 (terrain-type table 0x19 decoded to the last byte), §13 (height constant). |
 | COL | [`collision.md`](collision.md) §6.1–§6.2 (terrain collision mesh, triangle keys), §6.6 (terrain triangles near a point), §9.4. |
@@ -70,7 +70,7 @@ data together but not proven for every case; **Reported** = third-party only.
 | # | Fact | Sources | Mark |
 |---|---|---|---|
 | S1 | Coarse-grid word: bits 0–7 terrain-type id, bits 8–14 scene slot, bits 15–19 encounter slot (§3) | BIN (bit extraction); OBS (bits 15–31 are 0 in all 390,150 records) | Confirmed (layout); encounter use BIN |
-| S2 | Coarse grid is X-major (index 17·i + j, i along X) with shared edges (§3.2) | BIN (loop and position); OBS (east-west seam equality 31,500 of 31,500 pairs in regions 1–2; Y-major reading 16 %) | Confirmed |
+| S2 | Coarse grid is X-major (index 17·i + j, i along X) with shared edges (§3.2) | BIN (loop and position); OBS (east-west seam equality 31,500 of 31,500 pairs in regions 1–2; Y-major reading 16 %; eighth pass: 73,456 of 73,456 east-west and 73,319 of 73,319 south-north pairs, all regions) | Confirmed |
 | S3 | Region slot 1 = scene-choice table 0x11, slot 2 = terrain-scene table 0x12, slot 8 = terrain-type table 0x19 (§4.1) | ENV (slot table); BIN (record kinds); OBS (all keys resolve, §13) | Confirmed |
 | S4 | Terrain-scene table 0x12 layout; the default entry has the same layout as every other entry (§4.2) | OBS (5 of 5, zero leftover bytes, default entry included; corrected 2026-10-05: an earlier draft gave the default entry one extra byte); BIN (entry field order, lookup rules) | Confirmed |
 | S5 | Scene-choice table 0x11 layout and weighted pick (§4.3, §7.2) | OBS (5 of 5, zero leftover); BIN (pick rule) | Confirmed (layout); pick rule BIN |
@@ -104,6 +104,20 @@ data together but not proven for every case; **Reported** = third-party only.
 | S33 | Property counts of §8.3, §9 and §10, over each record's own set and resolved along the chain (§9.2) | OBS fifth pass | Confirmed |
 | S34 | In the one traced reader of `Render_LODClass`, an object with no class anywhere on its chain gets no class value; the registry default (2) is not applied there (§9.2) | BIN (m) | BIN |
 | S35 | The frill bake copies only texture-coordinate set 0 of each vertex (§8.5 step 5) | BIN (n) | BIN |
+| S36 | Footprint markers and generated objects are entries of one per-landblock generated list. The spacing test visits every entry, skips a marker that is still open, and tests every other entry; an object entry has radius 0 and never overlaps. A marker closes when its node has processed its last child (§7.4 steps 14b, 15) | BIN (o), re-checked 2026-10-07; OBS seventh pass (the clean-room lists built from this rule equal the re-derived lists in 11 of 11 landblocks) | BIN |
+| S37 | `no_spacing*` and `no_checks*` pass unchanged through scene references, into the group and into the frill layer of the referenced scene (§7.4 step 2) | BIN (o) | BIN |
+| S38 | A node whose child fails returns failure without closing its marker; the failure climbs to the vertex, except that it never climbs out of a frill layer (S41) (§7.4 step 15) | BIN (o), (r) | BIN (no record of this install triggers it) |
+| S39 | The frill pass works on the generated list that the static pass filled; nothing empties or shortens it before the landblock's generator is destroyed (§8.2 item 5) | BIN (p); OBS seventh pass (effect on frill counts) | BIN |
+| S40 | Creation requests: landblock-info statics from the last static-list entry to the first, then generated objects from the last generated-list entry to the first, markers skipped; no creation-type filter for generated objects (§7.6) | BIN (q) | BIN |
+| S41 | Exactly two things make a child fail: a scene reference that names no scene or one that cannot be read, and a `scale_mode` of 9 or higher with differing scale limits. Creating an object or a frill record never fails. A scene evaluates its frill layer after its group and ignores the layer's result, so a failure inside a frill layer's subtree ends only the rest of that frill layer; the "under a frill layer" state stays set (§7.4 step 15) | BIN (r) | BIN (no record of this install triggers it) |
+| S42 | In the frill pass a failed vertex keeps the frill records it made before the failure; the sector's other vertices still run, the sector counts as generated and is not generated again (§8.2) | BIN (r) | BIN |
+| S43 | Scale modes 0–9: the per-axis draws of step 3 with the salts 0x00515E71, 0x0DE876C7, 0x17E0784F; `scale_min` for equal limits and for modes 7 and 8; the water-depth and slope adjustments of modes 5–9 in step 11 and their rejections; which radius uses the scale before and which after step 11 (§6.2, §7.4 steps 3, 5, 11, 13, 15) | BIN (s) | BIN (every node of this install has mode 4, SC4) |
+| S44 | `max_objects` counts the objects a node creates itself, frill records counted when they are made (before the landblock and density tests), and the objects created directly in the group of a scene the node references; objects of nested nodes and objects the frill pass skips are not counted; the limit is checked after each child (§7.4 step 15) | BIN (v) | BIN (`max_objects` is 0 everywhere) |
+| S45 | Static list: the entity types and the validity check of `entity-descriptor.md` §4.9; both clearance lists found by the lookup of `entity-descriptor.md` §4.9 (for a weenie the 0x70 property set, then its `PhysObj` chain), each list taken whole from the nearest level; element rules (struct with every field, first bad element ends the list); boxes stored with their corners sorted per axis; a static entity without a frame at the landblock origin with the identity rotation; the sphere-against-cylinder form with `spacing_3d` (§7.4 step 14a) | BIN (t) | BIN |
+| S46 | Census of the static list under S45 (2,683,271 static entities of the three types, 25 of them without a frame): 1,780,859 entities with at least one list element; the box list comes from the entity's own set for 516,433 entities, from its 0x47 chain for 1,216,325 and from a weenie's `PhysObj` chain for 26,459; the cylinder list from the own set for 140,914 and from the 0x47 chain for 56,073; 1,742,051 boxes (378,327 with every extent at most 0.0002; 7,471 with a corner pair out of order, all of them non-degenerate), 196,837 cylinders (144,767 with radius at most 0); every element a struct with every field, of the right type, finite; 18 usable volumes on Physics entities without a frame; no entity with a volume fails the validity check; at most 5,561 volumes per landblock, 8 per entity; rotations unit within 1.4 × 10⁻⁷. Generating all 78,114 landblocks with the static list of the released implementation and with the static list of S45 gives different lists in 246 landblocks (§13.2) | OBS eighth pass | Confirmed |
+| S47 | The frill sector set: every sector within *n* + `FrillEngine.ExtraPreCacheRadiusLevels` sectors of the centre sector on each axis (a square), visited ring by ring in a fixed order; the set is dropped when the centre moves two or more landblocks or changes region; a sector outside the square for more than 120 s is dropped; the ring centre is the camera moved toward the player by `FrillEngine.PlayerPositionBlend`; with no player, or a blend of 0 or less, it is the camera position; the move is not clamped, so a blend above 1 puts the centre beyond the player (§8.2) | BIN (u); that the frame the engine starts from is the camera's: Probable | BIN |
+| S48 | Step 6 tests the block-local position before the frame is moved into the landblock that contains it; the frill landblock test compares that landblock with the generated one, so with ρ ≥ 0 it drops nothing (§7.4 step 6, §8.2) | BIN (v) | BIN |
+| S49 | Weighted pick: an entry with no choices gives no scene; when no running sum exceeds T (including a NaN weight) the last choice is taken (§7.2). A region whose terrain-type table is missing or unreadable passes the terrain-type test (§7.4 step 7). A region whose slot-2 table is empty or cannot be read: the client never fills the landblock's per-vertex scene choices (it tries again on each later use and logs nothing), so what a vertex then reads is not given by the data (Tessera Decision of §4.1: no scene). A region whose slot-1 table is empty or cannot be read: no vertex gets a scene, and the client logs a diagnostic for each vertex (§4.1) | BIN (v) | BIN (every region of this install has all three tables, §4.1) |
 
 ---
 
@@ -152,8 +166,11 @@ The coarse grid of `landblock.md` §3.7 holds 289 u32 words. Each word:
 Word (i, j), 0 ≤ i, j ≤ 16, is at index **17 · i + j**, where **i runs along X** (east) and
 **j along Y** (north), the same order as the height grid. Vertex (i, j) sits at block-local
 (10 · i, 10 · j) and coincides with height sample (2i, 2j). Edge words are shared with the
-neighbour: word (16, j) of block (X, Y) equals word (0, j) of block (X + 1, Y) in every
-adjacent pair tested (regions 1 and 2, 31,500 pairs).
+neighbour: word (16, j) of block (X, Y) equals word (0, j) of block (X + 1, Y), and word
+(i, 16) equals word (i, 0) of block (X, Y + 1). Checked on every pair of neighbouring
+blocks that both have a non-zero coarse grid: 73,456 east-west and 73,319 south-north
+pairs in all six regions, none differing (OBS eighth pass, 2026-10-07; the first pass
+checked 31,500 east-west pairs of regions 1 and 2).
 
 A block whose 289 words are all 0 has no procedural scenery and no frills (312,036 of
 390,150 records).
@@ -179,6 +196,32 @@ A client reads the slots at run time; it never hard-codes the DIDs. Slots 1 and 
 region always have the same serial, and the scene keys of a slot-2 table index the slot-1
 table with that serial.
 
+When slot 1 or slot 2 is empty, or its table cannot be read (BIN (v), S49):
+
+- **Slot 2** (terrain-scene table): the client does not fill the landblock's per-vertex
+  scene choices at all. It tries again each time a vertex of that landblock is used and logs
+  nothing. What a vertex then reads was never written, so the client's result is not given
+  by the data.
+- **Slot 1** (scene-choice table): every vertex of the region gets no scene, and the client
+  logs a diagnostic for each such vertex.
+
+> **Tessera Decision:** in both cases no vertex of the region gets a scene, so the region
+> has no procedural scenery and no frills. An implementation may log one diagnostic per
+> region (or per landblock) instead of one per vertex.
+
+> **OPEN (raised by the `world` implementation, 2026-10-07):** this section and the
+> Tessera Decisions of §7.4 step 15 do not say what a read of a slot-1, slot-2 or slot-8
+> table that fails for a reason outside the data and outside the archive (Tessera's work
+> queue is full, the asset pipeline is shutting down, a worker panicked) does. Conservative
+> engineering choice until answered, following the step-15 decision for scene reads: such
+> a failure is not a property of the data, so the region is left out of that load only,
+> nothing about it is remembered, and the loader reports the region as retryable so that
+> the caller can load its tables again later (`SceneryTables::load_all_regions`). Archive
+> errors and decode failures stay data faults (the Tessera Decision above).
+
+A missing slot-8 table only disables the terrain-type test (§7.4 step 7). Every region of
+this install has all three (§4.1 table).
+
 <a id="s4-2"></a>
 ### 4.2 Terrain-scene table, prefix 0x12 (Confirmed, 5 of 5, zero leftover bytes)
 
@@ -201,6 +244,12 @@ Record:
 | 4 | default entry | terrain entry (below) | Present when `has_default` = 1 |
 | 5 | `count` | u32 | 3 – 99 terrain entries |
 | 6 | entries | `count` × terrain entry | |
+
+> **OPEN:** whether the presence bytes `has_default` (record) and `has_default_pair`
+> (terrain entry) are bool8 (`records.md` §1.1), so that a reader rejects 2 or more, or a u8
+> where any non-zero value means present. Every observed value is 0 or 1. Tessera's decoder
+> currently reads both as bool8 and rejects other values (implementer's choice, not a
+> Confirmed fact; `crates/formats/src/scenery.rs`).
 
 Terrain entry (the default entry and every entry of the list have this one layout):
 
@@ -455,11 +504,14 @@ A and B are fixed for one vertex (§6.3); *s* is the node seed C plus a salt per
 | Heading | 0x03D60BCB |
 | Second angle | 0x02986B4B |
 | Third angle | 0x0090B46B |
-| Uniform scale (`scale_mode` 4) | 0x00515E71 |
+| Uniform scale (`scale_mode` 4); first scale draw t₁ of the other modes | 0x00515E71 |
+| Second scale draw t₂ (`scale_mode` 0, 1, 2, 3, 5) | 0x0DE876C7 |
+| Third scale draw t₃ (`scale_mode` 0 only) | 0x17E0784F |
 
-> **OPEN (not needed by this install):** the salts of the per-axis scale modes 0–3, 5, 6
-> (0x00515E71, 0x0DE876C7 and 0x17E0784F appear, with sign variants of the A and B terms) are
-> not specified; no node uses them.
+Every scale draw uses this same function R; which axis takes which draw is given in §7.4
+step 3 (BIN (s), S43). The "sign variants" of the A and B terms named by an earlier draft
+were a reordering of the same sum, not a different function. No node of this install uses a
+mode other than 4 (SC4).
 
 <a id="s6-3"></a>
 ### 6.3 Seeds
@@ -514,7 +566,10 @@ For every coarse vertex (i, j), i = 0 … 16 outer, j = 0 … 16 inner:
 3. Compute u (§6.1) and the threshold T = u × (total weight of the entry).
 4. Walk the choices in stored order, adding each weight to a running sum; pick the first
    choice whose running sum is **strictly greater** than T. If none of the first *n* − 1
-   qualifies, pick the last. (A single choice is always picked.)
+   qualifies, pick the last. (A single choice is always picked.) An entry with no choices
+   gives no scene. The comparison is the only test: a weight that is zero, negative or NaN
+   is added like any other, and when no running sum compares greater than T (for example
+   because a NaN made every comparison false) the last choice is taken (BIN (v), S49).
 
 <a id="s7-3"></a>
 ### 7.3 Instantiating the vertex scene
@@ -553,10 +608,37 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
    `no_checks*` or N.`no_checks`; both are handed to all descendants. The checks below
    consult only the node's **own** `no_checks` and the combined `no_spacing*`: the client
    passes `no_checks*` down the tree but never reads it.
+
+   "All descendants" includes the nodes of scenes reached through scene references (BIN
+   (o), S37; answers the OPEN raised by the `world` implementation on 2026-10-06). A scene
+   reference that is a child of node N is instantiated with N's combined switches, and that
+   scene hands them unchanged to every node of its group and to its frill layer (§8.2).
+   The vertex scene starts with both switches false. This is what the earlier Tessera
+   Decision already did.
 3. **Scale.** Start from σ if `inherit_scale`, else (1, 1, 1). If `scale_min` and
    `scale_max` differ by more than 0.0002 on some axis, draw t = R(A, B, C + 0x00515E71)
    and multiply each axis *a* by `scale_min`[a] + t · (`scale_max`[a] − `scale_min`[a])
    (one t for all three axes); otherwise multiply by `scale_min`. Call the result σ′.
+   That is `scale_mode` 4, the only mode in this install. The client's rule for every mode
+   (BIN (s), S43), with t₁, t₂, t₃ the scale draws of §6.2 and "axis *a* takes draw t"
+   meaning that axis *a* is multiplied by `scale_min`[a] + t · (`scale_max`[a] −
+   `scale_min`[a]):
+   - when the limits are within 0.0002 of each other on **every** axis, or the mode is 7
+     or 8: every axis is multiplied by `scale_min`[a], whatever the mode (no draw);
+   - otherwise, by mode: 0: x takes t₁, y takes t₂, z takes t₃; 1: x and y take t₁, z
+     takes t₂; 2: x and z take t₁, y takes t₂; 3: x takes t₁, y and z take t₂; 4: all three
+     take t₁; 5: x takes t₁, y takes t₂, z is left at its start value; 6: x and y take t₁,
+     z is left at its start value;
+   - otherwise (mode 9 or higher, limits differing on some axis): the node **fails**
+     (step 15). This is a failure, not a rejection.
+
+   Modes 5–9 then adjust σ′ in step 11. **Tessera Decision:** Tessera implements mode 4 and
+   the modes of 9 or higher (failure when the limits differ; `scale_min` when they do not,
+   which step 11 leaves unchanged for modes 10 or higher). A node that passes its
+   frequency test with any other mode (0–3, 5–8, or 9 with equal limits) is **rejected as
+   unsupported**: a rejection, not a failure, so its siblings continue. The client would
+   place such a node. No record of this install uses these modes (SC4); a reader that
+   supports them follows this step and step 11.
 4. **Position.** For x and y draw r = R with the salts of §6.2 and take
    d = `disp_min` + r · (`disp_max` − `disp_min`), multiplied per axis by σ if
    `disp_scaled`. (dz is computed only for `height_mode` 9; otherwise 0.) If
@@ -565,9 +647,16 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
 5. **Spacing radius.** ρ = `spacing` × (largest of σ′x, σ′y, or of all three if
    `spacing_3d`) when `spacing_scaled`, else `spacing`. If `no_spacing*`, ρ = 0. The
    node's own footprint radius ρ_N (step 15) is the same value **without** the
-   `no_spacing*` zeroing.
+   `no_spacing*` zeroing. ρ is computed here from the σ′ of step 3; ρ_N, when the marker
+   is appended in step 15, from σ′ as step 11 left it. The two differ only for the scale
+   modes 5–9 (BIN (s)).
 6. **Inside the block.** Reject unless ρ ≤ p.x < 160 − ρ and ρ ≤ p.y < 160 − ρ
-   (block-local units).
+   (block-local units). This test is made whatever `no_checks` says. It reads the
+   block-local position as step 4 left it; only afterwards does the client move the frame
+   into the landblock that contains it (a position outside 0 … 160 on an axis would pass
+   to the neighbouring landblock, with its coordinate wrapped into 0 … 160). For ρ ≥ 0 a
+   position that passes this test is already inside the block, so the move changes nothing
+   (BIN (v), S48). For a negative ρ, see the Tessera Decision of §13.1.
 7. **Terrain type.** Unless N.`no_checks`: convert p and ρ to quad units (q = coordinate ×
    32 / 160, radius ρq = ρ × 32 / 160). Visit every surface quad (qx, qy) with qx from
    q.x − ρq − 1 to q.x + ρq + 1 and qy likewise (each bound truncated toward zero, then
@@ -578,7 +667,8 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
    0, reject. The test passes at once when the block has no quad grid, or when the visited
    range lies wholly outside 0 … 32 (q.x − ρq − 1 > 32, q.y − ρq − 1 > 32,
    q.x + ρq + 1 < 0 or q.y + ρq + 1 < 0). A quad value that is not a key of the table is
-   ignored.
+   ignored. When the region has no terrain-type table (slot 8 empty) or the table cannot be
+   read, the test passes for every quad (BIN (v), S49).
 8. **Terrain plane.** The plane is that of one triangle of the landblock's terrain
    collision mesh (`collision.md` §6.1; key = 2 · (32 · j + i) + side, numbering of
    `collision.md` §6.2). With i = ⌊p.x / 5⌋ and j = ⌊p.y / 5⌋ (32 becomes 31; an i or j
@@ -651,11 +741,26 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
     Except for mode 9, then add the height offset `disp_min`.z + r · (`disp_max`.z −
     `disp_min`.z), r = R(A, B, C + 0x28D0642D), multiplied by the **parent** scale σ.z if
     `disp_scaled` (this is how objects are sunk into the ground; the range is (0, 0) for
-    most nodes and as deep as (−5, −5) for some). The scale modes 5 – 9 (unused here)
-    would now adjust σ′ from the water depth or the slope.
+    most nodes and as deep as (−5, −5) for some).
+
+    Then the scale modes 5–9 (unused here) adjust σ′ (BIN (s), S43). Each adjustment
+    **replaces** the named components; it does not multiply them:
+    - modes 5, 6 and 7: reject the candidate when the landblock has no water surface.
+      Otherwise let g be the height of the step-8 terrain plane at (p.x, p.y) and w that of
+      the water plane (each p.z itself when its plane's |n.z| ≤ 0.0002). Reject when
+      w − g ≤ 0.0002. Otherwise f = (w − g) / `stretch_ref`; modes 5 and 6 set σ′.z = f,
+      mode 7 sets σ′.x = σ′.y = σ′.z = f;
+    - modes 8 and 9: with n the step-8 normal, reject when |n.x| ≥ 0.9998 or
+      |n.y| ≥ 0.9998. Otherwise σ′.x = 1 / √(1 − n.x²) and σ′.y = 1 / √(1 − n.y²); mode 9
+      also sets σ′.z = (σ′.x + σ′.y) / 2.
+
+    Modes 0–4 and 10 or higher are not adjusted. The adjusted σ′ is the scale of the node's
+    children and objects, of the clearance radius (step 13) and of the marker radius
+    (step 15); the spacing radius ρ of step 5 keeps the σ′ of step 3. Under the Tessera
+    Decision of step 3 no supported mode reaches this paragraph.
 12. **Height ranges** (§7.5). Unless N.`no_checks`.
 13. **Terrain clearance.** Only when `clearance` > 0. r = `clearance` × max(σ′x, σ′y)
-    when `clearance_scaled`, else `clearance`. Collect the terrain triangles of the
+    when `clearance_scaled`, else `clearance` (σ′ as step 11 left it). Collect the terrain triangles of the
     landblock near p with the radius query of `collision.md` §6.6 (horizontal circle of
     radius r; terrain triangles only, never objects, cells or other scenery). Reject the
     candidate when any of these fails:
@@ -668,8 +773,9 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
        (450° − atan2(n.y, n.x) in degrees) mod 360 (the compass bearing of the normal's
        horizontal part) and the difference is wrapped to 0 … 180°; never exercised here
        (the tolerance is 360 in every node);
-    c. when `clear_min_dot` > −0.9998: every pair of collected triangles has
-       n₁ · n₂ ≥ `clear_min_dot`.
+    c. when `clear_min_dot` > −0.9998: every pair of two different collected triangles
+       has n₁ · n₂ ≥ `clear_min_dot` (a triangle is not paired with itself, so a single
+       triangle always passes; BIN (v)).
 
     In this install every node with `clearance` 0 carries (`clear_max_cos`,
     `clear_min_cos`, `clear_min_dot`, `clear_aspect_tol`) = (1, ≈ 0, −1, 360) (SC10), and
@@ -681,36 +787,75 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
        (`landblock.md` §4.5, `entity-descriptor.md` §4.1) of type Weenie (6), Physics (7)
        or PatrolPoint (23), in record order, that the client keeps after its static-entity
        filter (see below). Each carries the volumes of its `Entity_Clearance_BoxList` and
-       `Entity_Clearance_CylinderList` properties (property ids 0x207 and 0x4CF; the SED's
-       own value, else its object's). The test maps p into the entity's frame (subtract the
-       SED position, rotate by the inverse SED rotation; **no** scale) and checks each
-       volume:
-       - box (min, max): skipped when all three extents max − min are at most 0.0002;
-         otherwise the squared distance from the mapped point to the box (per axis 0 inside
-         the range, else the distance to the nearer face; z only when `spacing_3d`) is
-         compared: overlap when it is at most ρ²;
-       - cylinder (built from `Entity_Clearance_LowPoint`, `Entity_Clearance_Radius` and
-         `Entity_Clearance_Height`): skipped when its radius is at most 0; otherwise,
-         unless `spacing_3d`, overlap when (x − cx)² + (y − cy)² ≤ (ρ + radius)², with
-         (cx, cy) the x and y of the low point; with `spacing_3d` a sphere-against-cylinder
-         test whose exact form was not traced (unused here).
+       `Entity_Clearance_CylinderList` properties (property ids 0x207 and 0x4CF in this
+       install's dictionary; names are interoperability identifiers, ids are read from the
+       dictionary at run time). How the client builds an entry (BIN (t), S45):
+       - **Frame.** The static entity's position and rotation (`entity-descriptor.md` §4.4).
+         A static entity without a frame is at the landblock origin (0, 0, 0) with the
+         identity rotation, as everywhere else in the client (`entity-descriptor.md` §4.4);
+         it is **not** left out. The rotation is used as stored. The entity's scale plays no
+         part.
+       - **Which value.** Each of the two properties is looked up separately with the
+         client's lookup on a static entity, `entity-descriptor.md` §4.9: the entity's own
+         property set; then, for a 0x47 object, the object and its parents (§9.2 rule 2);
+         for a 0x70 game object (weenies), the game object's property set (DID +
+         0x09000000) and then the 0x47 object named by its `PhysObj` and that object's
+         parents. The first level that has the property supplies the **whole** list; lists
+         of different levels are never combined.
+       - **Reading a list.** The value must be an array; anything else gives no volumes.
+         Its elements are read in order. A box element must be a struct holding both
+         `Entity_Clearance_Box_Min` and `Entity_Clearance_Box_Max` as vectors (property
+         ids 0x42D and 0x5B2 in this install). A cylinder element must be a struct holding
+         `Entity_Clearance_LowPoint` as a vector and `Entity_Clearance_Radius` and
+         `Entity_Clearance_Height` as floats (0x5B1, 0x42C, 0x6EE). The first element that
+         does not meet this ends the reading of that list: it and every later element are
+         ignored, the elements before it are kept. Values are not checked for being finite.
+       - **Box corners.** A box is stored with its corners sorted per axis: min = the
+         smaller and max = the larger of the two stored values on each axis. A box whose
+         `Box_Min` exceeds its `Box_Max` on an axis is therefore the same box as with the
+         two swapped (7,471 boxes of this install, S46).
 
-       > **OPEN:** the sphere-against-cylinder form of the cylinder test when `spacing_3d`
-       > is set (§15 item 5). No node sets `spacing_3d`; readers may treat it as
-       > unsupported.
+       The test maps p into the entity's frame (subtract the entity position, rotate by the
+       inverse entity rotation; **no** scale) and checks each volume:
+       - box (min, max) with sorted corners: skipped when on all three axes |max − min| is
+         at most 0.0002; otherwise the squared distance from the mapped point to the box
+         (per axis 0 inside [min, max], else the distance to the nearer face; z only when
+         the candidate's `spacing_3d` is set) is compared: overlap when it is at most ρ²;
+       - cylinder (low point (cx, cy, cz), radius r, height h): skipped when r is not
+         above 0 (NaN included). Unless the candidate's `spacing_3d` is set: overlap when
+         (x − cx)² + (y − cy)² ≤ (ρ + r)². With `spacing_3d` (BIN (t), S45): let z′ be the
+         mapped z clamped to cz … cz + h (z itself when inside, cz + h when above, cz when
+         below); overlap when (x − cx)² + (y − cy)² + (z − z′)² **<** (ρ + r)² (strictly
+         less). No node of this install sets `spacing_3d`.
 
        The client has a second list tested the same way, meant for other objects already
        registered in the landblock; in this build nothing ever fills the registry that
        feeds it, so the list is always empty (BIN).
 
-       The static-entity filter: the client drops entities that fail its validity check
-       and, in one of its run modes, entities that are the target of a Generator link
-       (`landblock.md` §4.6, type 8) and one object named by a DID map. Tessera Decision:
-       keep every entity of the three types; Generator targets are spawn points and rarely
-       carry clearance volumes.
+       The static-entity filter: the client drops entities that fail the validity check
+       of `entity-descriptor.md` §4.9 (invalid object DID, creation type 0, a weenie whose
+       final class is Static; BIN (t)) and, in one of its run modes, entities that are the
+       target of a Generator link (`landblock.md` §4.6, type 8) and one object named by a
+       DID map. No entity of this install that carries a volume fails the validity check
+       (OBS eighth pass), so implementations may apply it or not. Tessera Decision: keep
+       every entity of the three types that is not invalid in that sense; do not drop
+       Generator targets (spawn points, which rarely carry clearance volumes).
 
        > **OPEN:** which run mode of the static-entity filter an offline client is in, and so
        > whether Generator targets are dropped from the static list (§15 item 6).
+
+       > **OPEN (raised by the `world` implementation, 2026-10-07):** (a) what makes an
+       > object DID "invalid" for the validity check. `entity-descriptor.md` §3.4 says an
+       > absent `object` field is the invalid DID; whether a stored value can also be invalid
+       > (for example 0, or a DID whose prefix is neither 0x47 nor a game object) is not
+       > stated. (b) What the check does when the property dictionary does not define
+       > `Entity_CreationType` (the lookup can then find nothing, which would make every
+       > Physics and PatrolPoint entity invalid). (c) Which z′ the `spacing_3d` cylinder
+       > test uses when `Entity_Clearance_Height` is negative, where "above" and "below"
+       > overlap (no element of this install has one). Conservative engineering choices until
+       > answered: (a) only an absent object or the DID 0 is invalid; (b) the creation-type
+       > part of the check is not applied; (c) a mapped z below cz takes cz, else one above
+       > cz + h takes cz + h, else z itself.
 
     b. **Footprints of placed nodes**, unless `no_spacing*`: every *closed* footprint
        marker in the landblock's generated list (step 15; markers of the current node and
@@ -719,6 +864,44 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
        horizontally unless both the candidate's and the marker's `spacing_3d` are set.
        Markers with ρ_m ≤ 0 never overlap. Generated **objects** carry no volume and never
        cause a rejection.
+
+       The exact rule (BIN (o), S36, re-checked 2026-10-07 against the code that builds,
+       closes and tests the list):
+       - The landblock has **one** generated list. Footprint markers (step 15), the
+         radius-0 markers of scene instances (§7.3) and generated objects (§7.6) are
+         appended to it in the order they are made, across all vertices of the landblock.
+         Each entry says whether it is a marker.
+       - The test visits **every** entry of the list. It skips an entry only when the entry
+         is a marker and that marker is still open. Every other entry is tested with the
+         overlap rule above: closed markers of earlier vertices, of earlier siblings, of
+         earlier nodes of an enclosing scene and of nodes of earlier scene instances;
+         object entries take part too, but their radius is 0, so they never overlap. The
+         order of the visit does not matter.
+       - A marker is open from the moment its node appends it until the node has processed
+         its last child (step 15). So the only markers skipped are those of the candidate's
+         own ancestors: its parent nodes and, through scene references, the nodes whose
+         children instantiated the scene it belongs to. The candidate's own marker does not
+         exist yet. A marker that stays open because a child failed (step 15) is never tested
+         again.
+       - Nothing removes entries from the list during generation.
+
+       **Re-check of the M4.5 checklist (2026-10-07).** The verification of M4.5 found that
+       `m4-5-visual.md` §4.2 (rows S1–S11) and walk GN1 disagreed with this rule. The
+       client's rule is the one stated here, unchanged; the checklist was wrong. Its
+       dirty-room generator had the test of this step inverted: it tested only the **open**
+       markers (those of the candidate's ancestors) and skipped every closed one. In a
+       landblock without nested scene references that is the same as no footprint test at
+       all, which is why a probe ignoring the markers of nodes placed directly in a vertex
+       scene matched rows S1–S8, S10 and S11. In S9's landblock, scenes are referenced
+       from placement nodes. Under the inverted test, a node of such a scene was rejected
+       whenever it lay within the summed radius of an ancestor node (the node that
+       referenced its scene, or a node above that), and was never tested against its
+       siblings. That gave 362 objects, where the client's rule gives 221 and no footprint
+       test gives 1,532. Under this step as written, a dirty-room generator and the
+       clean-room implementation give the same list in all 11 landblocks (OBS seventh
+       pass), and the rows have been re-derived from it
+       (`m4-5-visual.md` change log). The answer to the OPEN raised by the verification is
+       therefore: keep the rule as written; the code needs no change for it.
 15. **Children.** The node is placed at frame (p, Q) with scale σ′. Unless the node is
     processed while the frill pass's "under a frill layer" state is set (§8.2) or by the
     encounter pass (§7.7), the client first appends
@@ -728,9 +911,71 @@ below is the original client's rule (BIN) unless it says Tessera Decision.
     frame as parent and the switches of step 2; scene reference → instantiate the scene
     (§7.3) with this frame, scale σ′ and incoming *c* = C_k; object → create it (§7.6) with
     this frame and σ′. If `max_objects` > 0, the remaining children are skipped once the
-    number of objects created directly by the node, or directly in the group of a scene it
-    references, reaches `max_objects` (unused here). After the last child the marker
-    becomes *closed*.
+    node's count reaches `max_objects` (unused here: it is 0 everywhere). The count is
+    checked after each child and holds (BIN (v), S44): the objects the node creates itself,
+    including, in the frill pass, every frill record it makes, counted when it is made
+    (before the landblock and density tests of §8.2); and the objects created directly in
+    the group of a scene the node references. Objects of nested nodes do not count, nor do
+    objects the frill pass skips because no frill layer has been met. After the last child
+    the marker becomes *closed* (it also records the index of the last list entry at that
+    moment; nothing in placement reads that index).
+
+    **A failing child** (BIN (o), (r); S38, S41). Exactly two things make a child fail:
+    - a scene reference that names no scene (a null DID) or a scene the client cannot load
+      or decode;
+    - a node that passes its frequency test (step 1) but whose `scale_mode` is **9 or
+      higher** while its `scale_min` and `scale_max` differ by more than 0.0002 on some
+      axis (step 3). Modes 7 and 8, and any mode with limits that do not differ, use
+      `scale_min` and do not fail.
+
+    Nothing else fails. Creating an object (§7.6) and making a frill record (§8.2) always
+    succeed: a record that the landblock or density test of §8.2 drops, or that cannot be
+    stored, is dropped silently and its node carries on. A rejected node (steps 1, 6–14) is
+    **not** a failure; its siblings continue. A scene without a group whose id is 1 is not a
+    failure either (§7.3).
+
+    When a child fails, its parent node stops at once: its remaining children are not
+    processed, its marker is **not** closed, and it reports the failure to its own parent,
+    which does the same. A scene whose group meets a failure stops too, skips its frill
+    layer, leaves its own marker open and reports the failure. The failure climbs this way
+    to the vertex, and the rest of that vertex's scene is abandoned, **with one exception:
+    it never climbs out of a frill layer.** A scene evaluates its frill layer after its
+    group (§8.2) and ignores the frill layer's result: whether the layer's subtree failed or
+    not, the scene then reports success. So a failure anywhere below a frill layer ends only
+    the rest of that frill layer (of the innermost frill layer, when frill layers nest
+    through scene references); the enclosing nodes and scenes continue as after a
+    successful frill layer, and the "under a frill layer" state stays set. In the static
+    pass no frill layer is evaluated, so every failure there ends its vertex. Markers left
+    open stay in the list and are skipped by every later test (step 14b). Other vertices are
+    generated normally, in both passes; what the frill pass does with a vertex that failed
+    is in §8.2. No record of this install triggers a failure: every scene reference exists
+    (SC2) and every `scale_mode` is 4 (SC4). Implementations reproduce this rule.
+
+    **Tessera Decisions** for what the client's rule does not cover (they answer the OPEN
+    raised by the `world` implementation on 2026-10-07):
+    - **Archive errors are data faults.** Every error the archive layer reports while
+      reading a scene record counts as a property of the data: the record is missing, its
+      bytes cannot be read (an I/O error of a positional read, a broken block chain, a bad
+      compressed stream), or they do not decode. The child fails as above, the scene may be
+      remembered as unreadable (a later reference to it fails at once), and the landblock's
+      result is **not** marked incomplete. Reason: the install is opened read-only and does
+      not change while Tessera runs, so a read error on a record (in practice a damaged or
+      truncated file) gives the same result on every retry; rebuilding the landblock would
+      repeat the same failure. A passing operating-system error is the one case this treats
+      too harshly; it costs that scene until the remembered failure is forgotten (for
+      example when the implementation empties its scene cache), and it is logged.
+    - **Pipeline failures are not.** A scene read that fails for a reason outside the data
+      and outside the archive (Tessera's work queue is full, the asset pipeline is shutting
+      down, a worker panicked) counts as "cannot read" for that generation: the child fails
+      as above, the scene is **not** remembered as unreadable, and the landblock's result
+      is marked incomplete so that the caller builds it again later. Of all scene-read
+      failures, only these three mark a result incomplete.
+    - Tessera's own resource limits of §13.1 are not failures. A scene reference refused
+      for a cycle or at the depth cap places nothing and its siblings continue. A spent work
+      or object budget places nothing more in that vertex (or landblock). In every case the
+      nodes on the path return normally and close their markers as after their last child.
+      Real data never reaches these limits (§13.1).
+    - The scale modes Tessera does not implement are rejected, not failed (step 3).
 
 A rejected node places nothing and its children are not visited; the remaining siblings
 continue. Instantiating a scene (§7.3) also appends a marker, with radius 0; it never
@@ -774,6 +1019,48 @@ request of the same form as those for landblock-info statics (request kind 4 ins
 with an instance ID synthesized from the landblock and the record's position in the list;
 rendering, collision (`collision.md` §9.4) and LOD then follow the object's properties,
 resolved along its 0x47 chain (§9, §9.2, `setup.md`). Footprint markers (§7.4 step 15) create nothing.
+
+Order of the requests (BIN (q), S40): the client builds a landblock's requests in one
+list. First come the landblock-info statics, from the **last** entry of its static list to
+the first, each after that path's own filters (`collision.md` §9.4). Then come the
+generated objects, from the **last** entry of the generated list to the first. Marker
+entries are skipped. Generated objects pass no creation-type filter at this point: an
+object whose `Entity_CreationType` is 7 or 8 still becomes a request. Its creation type
+travels with the request.
+
+> **OPEN (implementer note, `world`, 2026-10-07):** representation choice for the record of
+> the first paragraph. Tessera's generator output carries the object DID, frame, scale and
+> generating vertex, but not the `Entity_CreationType`: placement never reads it, and it
+> depends on the object alone, so generation does not read 0x47 records to fill it in. A
+> consumer that needs it (creation requests, `collision.md` §9.4) resolves it from the
+> object along the 0x47 chain as §9.2 rule 2 states (0 when no level has it), which gives
+> the client's value. A spec revision may confirm this or require the field.
+
+> **For `collision.md` (§9.3–§9.4), from the footprint revision (BIN (o), (q); no change
+> to the scenery rules):**
+> - Generated objects never block one another during placement. Their entries have
+>   radius 0 (§7.4 step 14b), and generation reads no collision shape of objects, cells or
+>   other scenery (§7.1). Whether a tree or rock blocks a walker is therefore decided only
+>   after generation, by the collision rule of `collision.md` §9.4. Placement keeps
+>   generated objects apart only through the footprint radii (§7.4 step 14b), and away
+>   from statics only through the statics' clearance volumes (§7.4 step 14a). It never
+>   consults collision shapes, so two blocking generated objects, or a generated object
+>   and a static, may overlap.
+> - The client creates a landblock's generated objects in the reverse of the generated
+>   list order, after all its statics (above). The Tessera Decision of `collision.md`
+>   §9.4 OPEN (b) orders a landblock's liquid boxes as statics first, then generated
+>   objects "in generated-list order". If that order is ever significant, the client's
+>   order is statics last to first, then generated objects last to first.
+> - The conversion step gives generated objects no creation-type filter (above). This
+>   agrees with `collision.md` §9.4, which also records that they get no content-layer
+>   filter.
+> - Not traced in this pass: whether client-only creation types get a physics body
+>   (`collision.md` §9.4 OPEN) and the formula of the synthesized instance ID
+>   (`collision.md` §9.4 OPEN (a); nothing offline reads it).
+> - The generated-object walks of `m4-5-visual.md` §2.3 changed with the corrected
+>   generated lists. GN2–GN4 keep their object, start and stop point, and only the
+>   objects' list indices change. GN1's former tree is not generated under the client's
+>   rule, so the walk now uses another tree of the same landblock.
 
 <a id="s7-7"></a>
 ### 7.7 Encounter pass (out of scope)
@@ -843,30 +1130,128 @@ Tessera does not draw the records of source (b) (§8.6).
      pass, at the same frame when the same nodes are placed. These are source (b) of §8.1.
      The client draws their frill records like any other (§8.5); Tessera discards them
      (§8.6).
-  5. Footprint markers (§7.4 step 15): nodes processed while the state is clear append
-     markers, nodes processed while it is set do not. The frill pass runs on the same
-     per-landblock generator, and appends to the same generated list, as the static pass
-     of §7.1–§7.6 (BIN).
+  5. Footprint markers and the spacing test (BIN (p), S39). The frill pass runs on the
+     per-landblock generator that ran the static pass of §7.1–§7.6 and appends to the same
+     generated list. The client creates the generator and runs the static pass before the
+     frill engine can reach the landblock. Nothing empties or shortens the list between
+     the static pass and any frill pass, or between frill passes; it is emptied only when
+     the generator is destroyed. In the frill pass, therefore:
+     a. the list already holds every footprint marker of the static pass, for every vertex
+        of the landblock, all closed. The spacing test of §7.4 step 14b tests a frill-pass
+        candidate against all of them. That includes the static-pass markers of the
+        candidate's own ancestors and of its own static-pass twin (the same node at the same
+        vertex: same seeds, same frame, same radius), which are closed although their
+        frill-pass counterparts are open;
+     b. nodes processed while the state is clear append markers as in §7.4 step 15; nodes
+        processed while it is set do not. The test treats those markers like any other.
+     Consequences, which follow from a, b and the determinism of §7.4 (an implementation
+     may rely on them):
+     - A **group node**, that is, any node the static pass also processes at that vertex
+       (a node of a scene's group, reached without passing through a frill layer), is
+       **always rejected** in the frill pass when it undergoes the marker test (neither
+       its own `no_checks` nor `no_spacing*`) and its radius ρ_N is above 0. Either the
+       static pass placed its twin, whose marker lies at distance 0, or the static pass
+       rejected the twin, and the frill pass rejects the node by the same tests on a
+       superset of markers. Its subtree, including the frill layers of scenes it
+       references, produces nothing. Group nodes processed after a frill layer (state set)
+       are group nodes too.
+     - A group node with ρ = 0, every frill-layer node and every node **inside** a frill
+       layer's subtree (these have no twin in the static pass) is tested against every
+       static-pass marker of the landblock, including those of later nodes and later
+       vertices, not only those made before it. Frill-layer nodes and the nodes inside
+       their subtrees can pass with any radius (OBS seventh pass: thousands per landblock
+       do).
+     - Nodes with `no_checks` or `no_spacing*` skip the marker test as in the static pass.
+       This includes every node under a frill layer that has `no_spacing` set.
+     - Every marker a frill pass appends with a radius above 0 coincides with a
+       static-pass marker (same position, same radius): only group nodes processed while
+       the state is clear append markers, and such a node passes only when its twin did.
+       So how many frill passes have run on the landblock, and in which sector order,
+       changes no result. An implementation may test every frill-pass candidate against
+       the complete marker list of the landblock's static pass and append no markers of
+       its own.
+     This replaces the Tessera Decision of the earlier revision, which tested each vertex
+     only against the markers that the frill pass of that vertex had made. On the six
+     landblocks of `m4-5-visual.md` §4.3 both rules give the same frill records, record for
+     record. On a random sample of 72 other landblocks (12 per region, each with at least
+     100 non-zero coarse words), they differ in 12 (OBS seventh pass). Over the sample the
+     client's rule gives 417,948 records against 428,377 (−2.4 %); per landblock the change
+     runs from −42 % to +1.6 %. The differences have three sources:
+     - group nodes with a spacing radius that reference scenes with frill layers: the
+       client rejects them in the frill pass, so those frill layers yield nothing (the
+       largest drops);
+     - nodes under frill layers, which the client tests against the static-pass markers of
+       nearby group nodes;
+     - in some landblocks, frill-layer nodes themselves.
+     Where the old rule let a group node through, its frill-pass marker could reject
+     neighbours that the client accepts, so a few landblocks gain records.
 - A frill record is kept only if its position lies in the same landblock as the vertex, and
   then only if a uniform random number in [0, 1) drawn from a **global, unseeded** generator
   is at most the frill **density** option (§8.4). With the default density 1.0 every frill
-  is kept; lower densities thin frills randomly, differently each session.
-- Sectors are processed in a spiral around the centre sector, which lies between the camera
-  and the player by the player-position-blend option (Probable).
+  is kept; lower densities thin frills randomly, differently each session. The landblock
+  test compares the landblock of the record's frame, after the frame was moved into the
+  landblock that contains it (§7.4 step 6), with the landblock being generated (BIN (v),
+  S48). Every node passed step 6, so for ρ ≥ 0 every record lies in 0 ≤ x, y < 160 of its
+  own landblock and the test drops nothing; testing 0 ≤ x, y < 160 on the block-local
+  position is equivalent. Tessera's density generator is its own (any uniform generator
+  with an unpredictable seed is faithful); a density at or above 1 keeps every record.
+- **A vertex that fails** (§7.4 step 15; BIN (r), S42). A failure that ends a vertex in the
+  frill pass does not undo the frill records that vertex made before it; they stay in the
+  sector. The sector's other vertices are still generated, and the sector counts as
+  generated: the frill engine does not generate it again (it only pauses its walk over
+  sectors for one update, which changes no result).
+- **The sector set** (BIN (u), S47). With *n* the radius of §8.3 rule 1 and
+  *e* = `FrillEngine.ExtraPreCacheRadiusLevels`, the frill engine generates every sector
+  whose column and row each differ from the centre sector's by at most *n* + *e*: a
+  **square** of (2(*n* + *e*) + 1)² sectors (Chebyshev distance), inside the region's grid.
+  It visits them ring by ring outward (ring *r* = the sectors at Chebyshev distance *r*):
+  ring 0 is the centre sector; each further ring starts at its south-west corner, runs north
+  along its west column, east along its north row, south along its east column and west
+  along its south row, each sector once. The order affects only when a sector appears, not
+  what it holds (§8.2 item 5). When the centre sector changes, the walk restarts at ring 0
+  (sectors already generated are kept). When the centre moves to another region, or by two
+  or more landblocks along X or Y, every sector is dropped and the walk restarts.
+  Every 5 s the engine checks each held sector: a sector outside the square is dropped once
+  it has been outside for more than 120 s, and its geometry is released after 30 s outside;
+  a sector inside the square is kept. Drawing stops at the far distance D of §8.3 rule 2
+  whatever the set holds.
+- **The ring centre** (BIN (u), S47). The engine starts from the camera's frame (Probable:
+  the frame it is handed is the viewpoint the scene is drawn from). When there is no player
+  or `FrillEngine.PlayerPositionBlend` (*t*) is 0 or less, the centre is the camera position
+  C, whatever the player's position. Otherwise it is C + *t* · (P − C), with P the player
+  position, on each of the three axes (1.0, the default, puts it on the player). The blend
+  is **not clamped**: a blend above 1 puts the centre beyond the player, on the far side
+  from the camera (2.0 puts it as far beyond the player as the camera is behind it). A
+  negative blend never puts the centre behind the camera, because it gives C. The centre
+  sector is the sector containing the centre.
 
-> **OPEN:** whether the static pass's closed footprint markers are still in the generated
-> list when the frill pass runs, and whether the frill pass's own markers are removed after
-> a vertex or a sector. The list is emptied when the landblock's generator is rebuilt (BIN);
-> no emptying between the static pass and a frill pass was found. If the static markers
-> remain, every group node that the static pass placed, with a spacing radius above 0 and
-> neither `no_checks` nor `no_spacing*`, overlaps its own static-pass marker (same position)
-> and is rejected in the frill pass, so only the
-> frill layers of the vertex scene and of scenes referenced directly in its group (not
-> inside placement nodes) produce frills. Most frill layers skip the marker test themselves
-> (`no_spacing` or `no_checks` set in 2,224 of the 2,334 layers).
-> **Tessera Decision** until this is traced: the frill pass of a vertex tests spacing only
-> against the markers appended during the frill pass of that same vertex, discards them when
-> the vertex ends, and applies items 1–5 above as stated.
+> **Tessera Decision** (answers the OPEN raised by the `world` implementation on
+> 2026-10-06, now traced; see also §13.2): an implementation may keep its own sector set and
+> drop policy (memory is Tessera's to manage) as long as it holds, while the centre is
+> still, every sector of the client's square above, or at least every sector of which some
+> point lies within D (§8.3 rule 2) of some point of the centre sector. That distance is
+> the shortest horizontal distance between the two 10 × 10 squares; it is **not** measured
+> from the centre sector's middle (measured from there, a set can miss sectors that this
+> rule requires, §13.2). Order and eviction delay are free.
+>
+> **Tessera Decision** (ring centre, where the client's rule above gives no usable
+> answer): with no player (no avatar is loaded, for example the free-fly camera of the
+> world walker), the centre is the camera position, as in the client, whatever the blend.
+> A blend that is NaN or +∞ counts as 1 (the client would compute a centre that is not
+> finite); −∞ is 0 or less and gives the camera position, as in the client. When the blend
+> is above 0 and the camera and the player lie in different regions, the centre is the
+> player's position (the two positions share no coordinate system); with a blend of 0 or
+> less the camera position applies, as above.
+>
+> **OPEN (implementer note, `world`, 2026-10-07):** an engineering cap on the sector set,
+> which the spec does not state. `FrillEngine.ExtraPreCacheRadiusLevels` is user input, so
+> the client's square of *n* + *e* sectors is unbounded. Conservative choice until a
+> revision states a cap: the square is kept up to 64 sectors; above that it is cut to
+> max(64, ⌊D / S⌋ + 1) sectors, the smallest square that holds every sector with some point
+> within D (boundary included) of the centre sector. So the set always holds either the
+> client's square or every sector the first Tessera Decision above requires; with
+> `FrillEngine.UseDepthTransitions` off (D = 1,000 units) a large *e* gives 101 sectors,
+> with it on (D below *n* sectors) at most 64. Only non-default settings reach the cap.
 
 <a id="s8-3"></a>
 ### 8.3 Drawing (BIN; shader formulas OPEN)
@@ -957,6 +1342,21 @@ The frill engine's rules (BIN), with S = 10 units the frill sector size (160 / 1
    OpenGL back end (BIN (l)); on the Direct3D 10 and Direct3D 11 back ends the property
    applies. The blend formula is in the frill shaders (OPEN, callout below).
    **Tessera Decision:** Tessera's renderer behaves like the Direct3D 10/11 back ends.
+8. **Tessera Decisions for values the client's rules leave open** (hostile or user input;
+   none occurs in the data): a per-object value of the wrong property type counts as
+   absent, so the default of rules 6–7 applies; a boolean property is true when it is a
+   stored boolean true or an integer-like value other than 0; a float that is NaN counts as
+   0 before the clamp. A radius of 0 (level 0, an unknown level, or `WorldRender.DrawFrills`
+   off) means no frill sector is generated or drawn. `Render.FrillDensity` is clamped to
+   0 … 1 (NaN counts as 0); a `FrillEngine.DepthFadeDistance` that is negative or NaN gives
+   a fade length of 0. A group with no instances draws none (rule 4).
+
+   > **OPEN (raised by the `world` implementation, 2026-10-07):** which property types are
+   > "integer-like" for the boolean rule above. Not stated: whether DID references, string
+   > tokens, property IDs, instance IDs, the tri-state byte and bitfields wider than 64 bits
+   > count. Conservative engineering choice until answered: the signed integers (32 and 64
+   > bits), enum keys and bitfields of every width count (a bitfield is true when any bit
+   > is set); every other type counts as absent, so the default of rules 6–7 applies.
 
 > **OPEN:** the shader-side fade or scale formula, the terrain-colour blend and the sway
 > formula (frill shader programs, prefix 0x2B); the third variant flag; the renderer
@@ -1199,7 +1599,15 @@ records. None of the 156 has a parent of its own (OBS). A 0x47 record can also n
 §8.5, §9, §10) resolves the value by rules 1–2: the own set, then the parent, recursively.
 A default (the registry default, or the default stated in the rule that reads the
 property) applies only when no level has the property. An object with no `Render_LODClass`
-on its chain uses class 2 (§9).
+on its chain uses class 2 (§9). The clearance lists of the static list (§7.4 step 14a) use
+the client's own lookup on a static entity, `entity-descriptor.md` §4.9, of which these
+rules are the 0x47 part. Hostile chains (none occurs here: every chain has at most two
+levels and every record names at most two extra sets, all readable): the chain ends at the
+first parent that is missing, unreadable or not a 0x47 record, at a record already on the
+chain (a loop) and after 8 levels, keeping the levels read so far; an extra set that is
+missing or unreadable is left out of its level; at most 16 extra sets per record are read.
+The client's lookup also stops at a missing parent (it finds nothing there); the limits
+on loops, levels and extra sets are Tessera's.
 
 Effect of the chain on this install (OBS, fifth pass; full counts in §8.3 and §9):
 
@@ -1304,7 +1712,8 @@ record, shared edges counted twice):
 - **SC5**: within every 0x12 entry, slots are distinct; the first pair of every entry of the
   list is (2, 0) and the default entry is the 41-byte entry of §4.2; within a record,
   terrain ids are distinct.
-- **SC6**: coarse-grid bits 15–31 are 0; edge words equal the neighbour's (§3.2).
+- **SC6**: coarse-grid bits 15–31 are 0; edge words equal the neighbour's in both
+  directions (§3.2).
 - **SC7**: every surface-layer `material` and quad-grid value of a landblock is a key of
   its region's 0x19 table.
 - **SC8** (determinism, BIN): generating the same landblock twice yields identical
@@ -1340,6 +1749,80 @@ record, shared edges counted twice):
 - **SC15** (OBS): resolved along the 0x47 chain, every one of the 4,261 scene objects has
   `Entity_CreationType` (1,515 + 2,746); every parent named by a scene object exists and
   is a 0x47 record.
+- **SC16** (§7.4 step 14b, BIN; synthetic fixture). An interior vertex; every node has
+  `frequency` 1, zero displacement, scale 1 and `spacing` 1 (so ρ = 1), and every other
+  check passes. (a) The vertex scene's group holds N1 (child: an object) and then N2
+  (children: an object, then a nested node N3). N1 places its object. N2 is rejected,
+  because N1's marker is closed and lies at distance 0 with ρ + ρ_m = 2, so neither N2's
+  object nor N3 appears. (b) Without N1, N2 and N3 are both placed. N3 lies at distance 0
+  from N2's marker, but that marker is still open while N3 is tested. (c) With N1 and with
+  `no_spacing` = 1 on N2, N2 and N3 are both placed: N2 skips the marker test, and N3
+  inherits `no_spacing*`.
+- **SC17** (§7.4 step 14b; synthetic fixture). Two adjacent vertices each place one node
+  with `spacing` 0.1, scale 1 and a fixed displacement (`disp_min` = `disp_max`) chosen so
+  that the two positions lie 0.15 apart. The node of the later vertex is rejected, because
+  markers of earlier vertices are closed and take part. With `spacing` 0.05 both are
+  placed.
+- **SC18** (§8.2 item 5, BIN; synthetic fixture). Every node and frill layer has zero
+  displacement and scale 1, has `frequency` 1, and passes every other check of §7.4 steps
+  1–14 except the spacing tests this fixture describes. The vertex scene V has a frill layer (`no_spacing` 1) that
+  references scene Y, whose group node places one grass object. V's
+  group holds node G (`spacing` 0.1, `no_spacing` 0, `no_checks` 0, zero displacement),
+  whose child is a scene reference to X. X has an empty group and a frill layer
+  (`no_spacing` 1) that references Y as well. The static pass places G. In the frill pass
+  G is rejected by its own static-pass marker, so X is never instantiated: the vertex
+  yields exactly one frill record, from V's own frill layer. With `no_spacing` = 1 on G,
+  it yields two.
+- **SC19** (§7.4 step 15, BIN; synthetic fixture). A vertex scene whose group holds node N1,
+  then a node whose child is a scene reference to a DID that does not exist, then node N3
+  (every node otherwise placeable). Only N1's subtree is generated at that vertex. The next
+  vertex is generated normally, and a node there that overlaps the failed node's
+  footprint is **not** rejected by it, because that marker stayed open.
+- **SC20** (§7.4 step 15, §8.2; BIN, S41, S42; synthetic fixture). Every node has zero
+  displacement and scale 1; every frill layer has `no_spacing` 1. Every node and frill
+  layer has `frequency` 1 and passes every other check of §7.4 steps 1–14. Scene Y's group holds
+  object O. Scene P has an empty group and a frill layer whose children are a scene
+  reference to a DID that does not exist, then a reference to Y. Scene Q has an empty group
+  and a frill layer referencing Y. (a) The vertex scene's group holds references to P and
+  then Q. The static pass places nothing and reports no failure. The frill pass yields
+  exactly **one** frill record (O, from Q's layer): P's layer stops at its failing first
+  child, so its reference to Y is never followed, and the failure does not climb out of
+  P's layer. (b) The vertex scene's group holds references to Q, then to the missing DID,
+  then to Q again. The frill pass yields exactly one frill record (from the first Q): the
+  failure in the group ends the vertex, and the record made before it is kept.
+- **SC21** (§7.4 step 3; BIN, S43; synthetic fixture). A vertex scene whose group holds a
+  node N with one object child and `scale_min` 0.5, then an object X. With `scale_max` 0.8
+  and `scale_mode` 9, 12 or 255, the vertex fails: neither N's object nor X is created.
+  With `scale_max` 0.5 and mode 12, both are created and N's object has scale 0.5. With a
+  frequency that skips N (step 1), no mode fails. Under the Tessera Decision of step 3, mode
+  9 with `scale_max` 0.5 rejects N (X is still created).
+- **SC22** (§7.4 step 14a; BIN, S45; synthetic fixture). A node with ρ = 0.1, no other
+  test failing. (a) A Physics static entity at block-local (40, 40, 0), identity rotation,
+  whose own set holds one box with `Box_Min` (1, −1, 0) and `Box_Max` (−1, 1, 2): a
+  candidate at (40.5, 40, z) is rejected, exactly as for the box (−1, −1, 0) … (1, 1, 2).
+  (b) A Weenie static entity whose 0x70 game object's property set has no clearance list
+  and whose `PhysObj` 0x47 object holds that box: the same candidate is rejected. (c) A
+  Physics static entity without a frame whose object holds that box: a candidate at
+  (0.5, 0.5, z) is rejected. (d) A box list whose second element lacks `Box_Max`: only the
+  first box exists; a candidate overlapping only the third box is placed.
+- **SC23** (§7.4 step 14a; BIN, S45; synthetic fixture). A cylinder with low point
+  (0, 0, 0), radius 1 and height 2 in an entity with identity frame at the origin of the
+  mapped space, candidate ρ = 0.5. With `spacing_3d`: overlap at mapped (1.4, 0, 1) and at
+  (0, 0, 3.4); no overlap at (1.5, 0, 1) (2.25 is not less than 2.25) or at (0, 0, −1.6).
+  Without `spacing_3d`: overlap at (1.5, 0, 9) (2.25 ≤ 2.25).
+- **SC24** (§7.2; BIN, S49; synthetic fixture). For any u: weights (1, NaN, 1) pick the
+  third choice; weights (0, 0) pick the second; an entry with no choices gives no scene.
+- **SC25** (§8.2 ring centre; BIN, S47, and its Tessera Decision; synthetic). Camera
+  C = (0, 0, 0) and player P = (10, 0, 4) in one region. Blend 1 gives (10, 0, 4); 0.5
+  gives (5, 0, 2); 2 gives (20, 0, 8); 0, −0.5 and −∞ give C; NaN and +∞ give P. With no
+  player, blend 1 gives C. With C and P in different regions, blend 0.5 gives P and blend
+  −1 gives C.
+- **SC26** (§8.2 sector set Tessera Decision; synthetic). *n* = 6, *e* = 1, so D = 57
+  units. Exactly four sectors outside a disc of radius *n* + *e* = 7 sectors (measured
+  between sector centres) have a point within D of the centre sector: the sectors at
+  offsets (±5, ±5), whose nearest corner lies 40·√2 ≈ 56.6 units from the centre sector
+  while their centres lie √50 ≈ 7.07 sectors away. A conforming set holds all four while
+  the centre is still; the client's square (offsets up to 7 on each axis) holds them.
 
 <a id="s13-1"></a>
 ### 13.1 Hostile-input notes
@@ -1350,6 +1833,94 @@ record, shared edges counted twice):
   instantiation path and refuse a repeat; cap the depth (5 is the observed maximum; Tessera
   Decision: a cap of 16) and the total objects per vertex.
 - Treat NaN or infinite floats in node fields as malformed except the ±FLT_MAX `z_range`.
+
+- **Tessera Decisions for the decoder** (answering the OPEN raised by the `formats`
+  implementation on 2026-10-06). A `z_range` bound may be ±infinity, which reads as "no
+  bound" under §7.5 step 1; NaN in `z_range`, and NaN or ±infinity in every other node
+  float (`below_ground_max` included), make the record malformed. The client checks none
+  of these; no record has one. The floats of the 0x11 choices (`weight`) and of 0x12
+  entries (`unknown_f`) are not checked: the pick of §7.2 is the client's for any weight
+  (S49), and `unknown_f` is not read.
+- **Negative `spacing`** (answering item 1 of the OPEN raised by the `world` implementation
+  on 2026-10-06; every record has `spacing` ≥ 0). The client (BIN (v), S48) applies the
+  bound of §7.4 step 6 with the negative ρ as it is, so a position up to |ρ| outside the
+  block passes; its frame then moves into the neighbouring landblock with the coordinate
+  wrapped, the later steps read this landblock's terrain at the wrapped coordinates, and in
+  the frill pass the landblock test of §8.2 drops the record. **Tessera Decision:** step 6
+  also requires 0 ≤ p.x < 160 and 0 ≤ p.y < 160, which changes nothing for ρ ≥ 0; a
+  negative ρ is otherwise used as the steps state (ρ² in step 14a, ρ + ρ_m in step 14b).
+- **Static-entity frames** (item 2 of that OPEN). The client uses the stored rotation as it
+  is; in this install every rotation of a static entity with a volume is within
+  1.4 × 10⁻⁷ of unit length (S46). **Tessera Decision:** an entity whose position or
+  rotation is not finite, or whose rotation has zero length, is left out of the static
+  list; a finite rotation further than 0.001 from unit length is normalised first; a
+  mapped point that is not finite overlaps nothing; a volume element holding a value that
+  is not finite is skipped (the client does not check; none occurs).
+- **Size of the static list** (item 3 of that OPEN). This install has at most 5,561 volumes
+  per landblock and 8 per static entity (at most 4 boxes and 7 cylinders in one list, S46).
+  **Tessera Decision:** the static list keeps at most 16,384 volumes per landblock and at
+  most 256 of each kind per entity, and each step-14a scan is charged to the generation
+  work budget.
+- **Generation limits** (Tessera Decisions; none is reached by the data). Scene-reference
+  depth 16 (observed maximum 5), scenes and nodes together at most 17 × 32 levels deep, a
+  work budget per vertex and per landblock, at most 16,384 objects per vertex and 262,144
+  per landblock (observed maxima 139 and 2,828, all 78,114 landblocks generated without
+  water, OBS eighth pass), 262,144 footprint markers per landblock. What a reached limit
+  does is in §7.4 step 15 (Tessera Decisions there).
+
+<a id="s13-2"></a>
+### 13.2 Where the released `world` implementation departs from this revision
+
+Facts added by the repair revisions of 2026-10-07 (S45, S47) that the `world` code released
+on 2026-10-07 (decision 0018) does not yet follow. Each is a client rule or a Tessera
+Decision stated in the body; an implementer aligns the code from the body text
+(CLEAN_ROOM.md §5.4). (The Tessera Decision on scene-read failures in §7.4 step 15 was
+restated by the second repair revision to match the released code; it is not a departure.)
+
+> **OPEN (for the `world` implementation): the static list of §7.4 step 14a.** The code
+> reads a weenie's clearance lists from its 0x70 property set only, not from the `PhysObj`
+> chain behind it (26,459 static entities of this install take a box from there); stores a
+> box with its corners as written instead of sorted per axis (7,471 boxes, of which 7,260
+> are then skipped and 211 tested with crossed bounds); leaves out static entities without
+> a frame (18 volumes); keeps cylinder elements without `Entity_Clearance_Height` and
+> elements after an invalid one, where the client ends the list (no such element here);
+> does not apply the validity check (no effect here); and uses the 2D cylinder test with
+> `spacing_3d` (no node sets it). Measured effect (OBS eighth pass, S46): generating all
+> 78,114 landblocks without water, the lists differ in 246 landblocks; 1,001 objects occur
+> only in the code's lists and 283 only under §7.4 step 14a. The 11 landblocks of
+> `m4-5-visual.md` §4.2 give identical lists either way, so the checklist's rows and walks
+> are unaffected. SC22 and SC23 test the rules.
+
+> **OPEN (for the `world` implementation): the frill sector set of §8.2.** The code keeps the
+> sectors whose centres lie within *n* + *e* sectors of the centre sector's (a disc). With
+> the default *e* = 1 that disc misses sectors of which some point lies within the far
+> distance D of some point of the centre sector (the distance between the two squares):
+> 4 corner sectors at *n* = 6 and 8 at *n* = 12 and at *n* = 16, none at *n* = 4, 5, 7, 8,
+> 10 or 14; with *e* = 0 it misses sectors at every radius. The client generates the square
+> of §8.2, which contains them all. The Tessera Decision of §8.2 requires every such sector.
+> SC26 tests the rule.
+
+> **OPEN (for the `world` implementation): the ring centre of §8.2.** The code blends camera
+> and player for every finite `FrillEngine.PlayerPositionBlend`. The client uses the camera
+> position when the blend is 0 or less, so with a negative blend the code puts the centre
+> on the far side of the camera from the player, where the client keeps it on the camera.
+> The code also treats a blend of −∞ as 1 (the body gives the camera position), and when
+> camera and player lie in different regions it returns the player's position even for a
+> blend of 0 or less (the body gives the camera position). It takes no "no player" input;
+> under the body's Tessera Decision the centre is then the camera position, so a caller
+> without a player must obtain that result (for example by passing the camera position as
+> the player's). With the default blend 1.0 and with blend 0 in one region the code and the
+> body agree, so no default setting is affected. Blends above 1 are not clamped in either.
+> SC25 tests the rule.
+
+> **OPEN (raised by the `world` implementation, 2026-10-07):** the three callouts above,
+> and §15 item 18, look stale. A clean conformance review of the current `world` code
+> against this revision's body found that it follows §7.4 step 14a (the `PhysObj` chain of
+> a weenie, sorted box corners, statics without a frame at the origin, the first bad
+> element ending a list (a cylinder without `Entity_Clearance_Height` counts as bad), the
+> validity check, the `spacing_3d` cylinder test), the client's square of §8.2 and the
+> ring centre of §8.2 with its Tessera Decision (SC22, SC23, SC25 and SC26 have synthetic
+> tests). No code change is pending for them; a spec revision may close this section.
 
 ---
 
@@ -1410,8 +1981,8 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 3. (Closed: the 0x19 entry is decoded in `terrain-texturing.md` §3.3.)
 4. `flag_a` of the scene record (§5.1 callout). (Offsets 143–155 are now named; 163 and 174 are not
    read by the placement code.)
-5. (Closed: rotation conventions, §7.4 step 10.) Remaining: the sphere-against-cylinder
-   variant of the spacing test with `spacing_3d` (§7.4 step 14a; unused here).
+5. (Closed: rotation conventions, §7.4 step 10; and, 2026-10-07, the sphere-against-cylinder
+   form of the spacing test with `spacing_3d`, §7.4 step 14a, S45.)
 6. (Closed: the clearance step and the spacing lists, §7.4 steps 13–14.) Remaining: which
    run mode of the client's static-entity filter applies offline (§7.4 step 14a).
 7. Seed A: what fills the landblock-info list that switches A to 1 (§6.3).
@@ -1425,8 +1996,10 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 12. Whether the 3 × 3-landblock frill "source groups" reported by ER, and the kind-5 records
     `0x805RXXYY` that exist once per 3 × 3 group (`landblock.md` §7), feed the frill engine
     (for example as terrain colour for frill blending). Not needed to place frills (§8.2).
-13. Frill pass: whether the static pass's footprint markers are still in the generated list
-    when the frill pass runs, and when the frill pass's own markers are removed (§8.2).
+13. (Closed 2026-10-07, BIN (p): the static pass's markers stay in the generated list and
+    the frill pass tests against them; nothing removes markers before the generator is
+    destroyed, §8.2 item 5. Also closed: the footprint test of §7.4 step 14b, BIN (o),
+    re-checked and unchanged; and the switches through scene references, §7.4 step 2.)
 14. Frill engine: whether the part-list order it reads always equals the setup's stored order
     (§8.5 callout; Probable, matters for 12 objects).
 15. How the original's frames look where a late group object is drawn both as an entity and
@@ -1436,6 +2009,14 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
     comparisons of the traced `Render_LODClass` reader control, and whether any other
     reader applies the registry default class 2. Until then, Tessera resolves every
     per-object property along the chain and uses class 2 when no level has a class.
+17. (Closed 2026-10-07, BIN (r)–(v): the failure rule including frill layers, §7.4 step 15;
+    the scale modes and their salts, §6.2 and §7.4 steps 3 and 11; the static list's
+    clearance lists, §7.4 step 14a; the frill sector set, its order, eviction and ring
+    centre, §8.2; the step-6 bound, the pick's edge cases and a missing terrain-type table,
+    §7.2 and §7.4 steps 6–7.)
+18. Alignment of the released `world` implementation with §7.4 step 14a and §8.2 (§13.2:
+    three OPEN callouts addressed to the implementer, on the static list, the frill sector
+    set and the ring centre; no fact is unknown).
 
 ---
 
@@ -1449,3 +2030,6 @@ query collects key 2 · (32 · 2 + 2) + 1 = 133 alone.
 | 2026-10-06 | Revision answering the re-review (fourth pass, OBS and BIN (k), (l)). §8.1 rewritten: a frill record is made of every object that the frill pass meets with its state set. There are two sources: frill-layer objects (1,515) and late group objects met after a frill layer (474 in 84 named scenes, 452 not among the 1,515), 1,967 objects in all (S26). §8.2 item 4 points to §8.1 (b), §8.5 and §8.6. §8.3: mesh census of both sources (parts, placeholders, detail levels, draw entries, drawn triangles and vertices) and properties of the 452 (S30), replacing the statement that all frill objects are single-part. Rule 7: the "two render modes" are the Direct3D 9 back end built into the executable and the OpenGL back end (S29), with a Tessera Decision. New §8.5: what the frill engine draws (one source entity per object, no filter, first draw entry of detail level 0 of the first part, baking with sway weight, 16-bit sector indices with a Tessera Decision against the wrap; S27, S28; OPEN on part-list order). New §8.6: the client draws late group objects a second time as frill geometry; Tessera Decision to discard frill records created after a frill layer; OPEN on the original's visual result. §4.2: OPEN callout for `kind` and `unknown_f`, and the quoted client log text replaced by plain words. §5.1: OPEN callout for `flag_a`. §5.4, §9 mention the 452. New invariants SC12, SC13; §15 items 2, 4, 8 updated, new 14, 15. |
 | 2026-10-06 | Revision answering the third review (fifth pass, OBS and BIN (m), (n)). New §9.2: how the client resolves an object's properties along its 0x47 chain. The own set is the extra sets with the embedded set on top. The lookup tries the own set, then the parent, recursively, and the nearest level wins. Building an entity merges the chain with the same precedence. Generated objects' `Entity_CreationType` and the traced `Render_LODClass` reader use this lookup. For the frill source entity it is Probable. In the traced reader, a missing class gives −1, not class 2. A Tessera Decision resolves every per-object read along the chain and keeps class 2 as Tessera's default; OPEN callout and §15 item 16 (S31–S34). The counts in §8.3 (1,515 frill-layer objects), §9 (2,746) and §10 are now labelled as own-set counts, and the counts resolved along the chain are added: `Entity_CreationType` 1,515 and 2,746, `Render_Frill_AnimationIntensity` 974, `Render_LODClass` 1,042 and 2,441, and others (S33). §8.3 rules 6–7 state where the per-object values come from. §7.6 and §8.5 step 1 no longer say "own properties". §8.5 step 1 says in plain words that an incomplete sector is not built. §8.5 step 5 cites `mesh.md` §6.1 for the stored bounding box and says that only texture-coordinate set 0 is copied (S35). §9 and §9.1: the class-2 default is a Tessera Decision. New invariants SC14 and SC15; SC13 extended. Companion specs updated. |
 | 2026-10-06 | Revision answering the fourth review (sixth pass, OBS; every count re-measured over all 4,261 objects, their parents and the 2,746 non-frill objects). §9.2 intro and the OBS provenance row: the 197 objects with a parent have **156** distinct parents (128 are scene objects themselves, 28 are not), not 28; 28 is the number of parent records outside the 4,261, which makes 4,289 records in all. None of the 156 has a parent of its own, so the chain depth of one is unchanged. §9: the `Render_LODClass` value list now names all eleven classes present, adding `Landmark` and `SmallDecor` (121 / 121 each), `Creature` 19 / 19, `FarView500` 8 / 8 and `Equipment` 4 / 4; the own and resolved values sum to 2,376 and 2,441. The other counts of §9 (creation-type values, `Render_CastLandscapeShadows`, clearance lists, `Render_ImposterName`, `Render_LODCrossFade` true in 14, `Render_FarViewDistance` 1,000 – 2,000, 2,715 single-part, triangle median and percentiles, 305 / 370 without a class, 65 / 12 and 61 / 13) were re-measured and are unchanged. |
+| 2026-10-07 | Footprint revision (sixth BIN pass (o)–(q), seventh OBS pass), answering the OPEN of the M4.5 exit verification under §7.4 step 14b. Status Accepted → Revised. **§7.4 step 14b:** the rule is unchanged and now confirmed. The client tests every entry of the landblock's single generated list except markers that are still open (those of the candidate's ancestors), and object entries have radius 0 (S36). The OPEN is replaced by the exact rule and an explanation: the checklist's expected lists (`m4-5-visual.md` §4.2, walk GN1) came from a dirty-room generator with the test inverted. The S9 discrepancy came from nested scene references (362 under the inverted test, 221 under the client's rule, 1,532 with no test). The rows are re-derived in `m4-5-visual.md` §8, and the code needs no change. **§7.4 step 2:** the switches pass through scene references unchanged (S37); the OPEN is closed and the earlier Tessera Decision is now the client's rule. **§7.4 step 15:** a failing child (unreadable scene reference, `scale_mode` above 8 with differing scale limits, refused frill record) ends the vertex and leaves the markers of the failing branch open (S38). **§7.6:** the order of creation requests, and no creation-type filter for generated objects (S40); new note "For `collision.md`". **§8.2 item 5:** the frill pass tests against all of the static pass's markers, which stay in the list (S39). The OPEN and its Tessera Decision are replaced, with the consequences: in the frill pass, group nodes (those the static pass also processes) with a spacing radius above 0 that undergo the marker test are always rejected, and the result does not depend on how often or in which order frill passes run; nodes inside a frill layer's subtree are tested against every static-pass marker. Frill records are unchanged in the six landblocks of `m4-5-visual.md` §4.3 and change in 12 of a sample of 72 landblocks (−2.4 % over the sample). Provenance: BIN row (sixth pass), OBS row (seventh pass), S36–S40. New invariants SC16–SC19. §15 item 13 closed. |
+| 2026-10-07 | Repair revision answering both reviews of the footprint revision and incident 0018 (decision 0018: the spec body must state every client fact the released `world` code relies on). Seventh BIN pass (r)–(v), eighth OBS pass; new provenance rows S41–S49, S38 corrected. Header: the long review record is moved to the dirty-room area; the header keeps reviewer, date and result per round. **§7.4 step 15:** exactly two failure causes (the third, "a frill record the frill engine refuses", is withdrawn: making a frill record and creating an object always succeed); the mode boundary is "9 or higher"; a failure never climbs out of a frill layer (the scene ignores its frill layer's result; the state stays set); what `max_objects` counts (S44); Tessera Decisions for non-data read failures and for Tessera's own limits, answering the `world` OPEN of 2026-10-07, which is removed. **§6.2, §7.4 steps 3, 5, 11, 13:** every scale mode with its three salts (the §6.2 OPEN is closed) and the step-11 adjustments of modes 5–9; Tessera Decision to reject the modes Tessera does not implement. **§7.4 step 6:** the bound is unconditional and reads the position before the landblock normalisation (S48). **Step 7:** a missing terrain-type table passes (S49). **§7.4 step 14a:** how the client builds the static list: lookup of `entity-descriptor.md` §4.9 including a weenie's `PhysObj` chain, whole list from the nearest level, element rules, boxes stored with sorted corners, static entities without a frame at the origin, the validity check, and the sphere-against-cylinder test with `spacing_3d` (§15 item 5 closed) (S45, S46). **§7.2:** the pick's edge cases (S49). **§8.2:** a failed vertex in the frill pass keeps its records and its sector is not regenerated (S42); the frill sector set is a square of radius *n* + *e*, its visiting order, reset and eviction, and the ring centre blend (S47); the landblock test of frill records; the OPEN of 2026-10-06 is replaced by the client rule and a Tessera Decision. **§8.3 rule 8, §9.2:** Tessera Decisions for hostile values and chains. **§13:** new SC20 (failure inside a frill layer; records kept after a frill-pass failure), SC21 (scale modes), SC22–SC23 (static list, 3D cylinder), SC24 (pick). **§13.1:** the `formats` and `world` OPENs of 2026-10-06 become Tessera Decisions with the client's behaviour stated; observed maxima of the generation limits. **New §13.2:** two OPEN callouts for the `world` implementation where the released code departs from this revision (static list: 246 of 78,114 landblocks differ; frill sector disc misses corner sectors at some radii). §15 items 5, 17, 18. |
+| 2026-10-07 | Second repair revision answering the review of the repair revision (2026-10-07, spec-reviewer agent). Re-checked in a separate read-only copy of the Ghidra project (same build; BIN (u), (v) extended). **§4.1:** what an empty or unreadable slot-1 or slot-2 table does, stated per slot (slot 2: the per-vertex choices are never filled, the client retries and logs nothing, its result is not given by the data; slot 1: no scene, one diagnostic per vertex), with a Tessera Decision (no scene for the region); provenance S49 and question (v) extended. **§7.4 step 15:** the Tessera Decision on scene reads restated to match the released code: every archive error, I/O included, is a data fault (child fails, scene may be remembered as unreadable, result not incomplete), with the reason; only a full queue, a shutdown or a worker panic mark a result incomplete. **§8.2:** the ring-centre blend is not clamped (a blend above 1 moves the centre beyond the player), S47 extended; new Tessera Decision for no player (camera position), NaN/+∞ (1), −∞ (camera) and different regions; the sector-set Tessera Decision now states its distance (between the two squares, not from the centre sector's middle). **§13.2:** new OPEN for the ring centre (negative blends, −∞, different regions with blend ≤ 0, no player input); the sector-set OPEN states the distance and the radii without misses; intro notes the step-15 restatement. **§13:** SC18 and SC20 now fix `frequency` 1 and every other check; new SC25 (ring centre) and SC26 (sector-set distance). §15 item 18 updated. |

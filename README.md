@@ -39,13 +39,32 @@ owner's in-game readings. **M4 (characters and animation) is done on Tessera's s
 ([M4 status](docs/ROADMAP.md#m4-status)): every skeleton and clip decodes,
 characters of all 14 playable bodies assemble with worn and held items and play idle, walk
 and run with GPU skinning, and 50 of them animate at over 250 fps on the reference machine.
-Still open are the owner's comparisons with the original client. **M5 (UI layouts, skins and
-Lua plugins) is in its exit phase** ([M5 status](docs/ROADMAP.md#m5-status)): every UI layout
-and font record decodes, the game's own panels open in the walker with the expected geometry,
-user skins change their art, and plugins run in a sandbox that passes its escape tests; the
-owner's screenshots and plugin install are still to come, and the UI time budgets are not met
-yet. Nothing here is playable yet: the walker flies and walks over the world offline, with an
-animated avatar and the NPCs the data places.
+Still open are the owner's comparisons with the original client. **M4.5 (world fidelity)
+is in progress** ([M4.5 status](docs/ROADMAP.md#m4-5-status)): terrain is drawn with its
+own texture layers, scenery and grass are generated from the data, the avatar walks on
+collision geometry (walls, objects, caves, interiors, wading and swimming), and water, sky,
+the game clock, lights, shadows and fog are drawn; decoding, invariants, determinism, golden
+images and fuzzing pass. The re-verification of 2026-10-07 still finds failing
+generated-object and cave walks (25 of 32 walks pass; the 1,000-walk soak has no
+fall-through), visual rows that fail or cannot be judged (45 of 54 pass on the image), a
+clippy lint, and design specs with changes requested; the M3-b flight passed an indicative
+run and awaits a quiet-machine re-measure. Nothing here is playable yet: the walker flies and walks over the world
+offline, with an animated avatar and the NPCs the data places.
+**M5 (UI layouts, skins and Lua plugins) is in its exit phase** ([M5 status](docs/ROADMAP.md#m5-status)):
+every UI layout and font record decodes, the game's own panels open in the walker with the
+expected geometry, user skins change their art, and plugins run in a sandbox that passes its
+escape tests; the owner's screenshots and plugin install are still to come, and the UI time
+budgets are not met yet.
+**M6 (audio and player music) passes on Tessera's side** ([M6 status](docs/ROADMAP.md#m6-status)):
+all 44,329 sound payloads decode, area music cross-fades at area borders in the walker, an
+ABC conformance suite of original tunes passes (156 / 156 rows), and a 10-minute flight had
+no audio underruns (indicative, to be repeated on the idle reference machine); the owner's
+listening comparisons are pending.
+**M7 (Tessera's own protocol and test server) is done on one machine** ([M7 status](docs/ROADMAP.md#m7-status)):
+several clients share a world through `tessera-server` over Tessera's own QUIC protocol,
+seeing each other move, animate and chat, with one-hour soaks free of desync and leaks; a
+run between two machines on a LAN and the owner's confirmation of the server content rules
+are still open.
 
 | Area | State |
 |---|---|
@@ -64,9 +83,11 @@ animated avatar and the NPCs the data places.
 | Havok-format skeletons and clips (`tessera-havok`), sampling, blending, root motion, attach points and skinning palettes on workers (`tessera-anim`) | done (M4): 28,555 / 28,555 skeletons and 25,395 / 25,395 clips decode |
 | Character assembly (species, sex, worn and held items, dyes), script-table clip selection, GPU skinning, entity store | done (M4): 14 playable bodies play idle, walk and run (42 / 42 checklist rows, River-hobbit height and body-shape controls included); a 48-item worn/held checklist matches |
 | `tessera-explorer` character viewer and animation browser; walker avatar, placed NPCs and `--crowd` | done (M4): 51 animated characters at 257 fps headless (p99 6.6 ms) on the reference machine |
+| Terrain texture layers, generated scenery and grass, collision and the walk controller (`tessera-physics`), water, sky and game clock, lit pipeline with shadows and lights, draw distances | in progress (M4.5): every new record kind decodes (3,402 scenes, 16,819 collision meshes, 1,057 cells, …); scenery of 78,114 landblocks deterministic; 25 / 32 scripted walks and a 1,000-walk soak with no fall-through; 45 / 54 visual rows pass on the image (re-verified 2026-10-07) |
+| Sound payloads (Ogg Vorbis, WAV), sound infos, script-table sound nodes; script-graph runtime (`tessera-scriptgraph`); audio engine on cpal with our own mixer (decision 0019); world audio in the walker (area music, ambience, emitters); ABC player music (`/play`, `/playstart`, `/playlist`, `/playstop`) with instruments and synchronised start | done on Tessera's side (M6): 44,329 / 44,329 payloads decode; area-music cross-fade at borders; ABC conformance 156 / 156; 0 underruns in a 603 s flight (indicative); owner's listening checks pending |
+| Tessera's own protocol (`tessera-protocol`, QUIC, decision 0030), `tessera-server` with an original default world, the client's test-server backend (`tessera-client --server`), `tessera-loadtest` | done on one machine (M7): one-hour soaks with 16 clients, 0 desync, no leak; protocol spec Accepted after an independent review; 10 fuzz targets; LAN run between two machines pending |
 | UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
-| Audio, own test server | planned (M6–M7) |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -205,7 +226,8 @@ from game data is ever written into the repository.
 | `crates/install` | Install detection and version identification |
 | `crates/render` | wgpu renderer (mesh, material, terrain and skinned pipelines) |
 | `crates/script` | Sandboxed Lua 5.1 host |
-| `crates/net` | Transport-agnostic session layer with a local sandbox backend |
+| `crates/net` | Transport-agnostic session layer with a local sandbox backend and the test-server backend (QUIC, snapshot interpolation) |
+| `crates/protocol` | Tessera's own network protocol (`docs/specs/tessera-protocol.md`): messages, framing, encode/decode, session state machines, key pinning, QUIC setup |
 | `crates/props` | Property registry, property sets, enum labels, DID maps |
 | `crates/text` | String tables, variable substitution, grammar tags, locale selection |
 | `crates/assets` | Asset worker pool with priorities, cancellation and a decoded cache |
@@ -222,6 +244,8 @@ from game data is ever written into the repository.
 | `apps/dattool` | `tessera-dattool` inspection CLI |
 | `apps/client` | `tessera-client`, the game client (currently the offline world walker with an animated avatar and placed NPCs) |
 | `apps/explorer` | `tessera-explorer`, the GUI asset browser |
+| `apps/server` | `tessera-server`, the headless test server for Tessera's own protocol, with an original default world (private and LAN testing only) |
+| `apps/loadtest` | `tessera-loadtest`, load, soak and hostile-input tests against a test server |
 | `fuzz/` | Fuzz targets, one per parser |
 | `tools/` | Machine setup (`dev-setup.sh`), checks run by CI (`check-content.sh`, `check-spdx.sh`, `check-dco.sh`, `fuzz-smoke.sh`), research-clone fetcher, ImHex patterns and Kaitai schemas written from our specs ([tools/README.md](tools/README.md)) |
 | `docs/` | Architecture, roadmap, legal, clean-room process, tooling, specs |
@@ -244,6 +268,7 @@ plugin host on top of `crates/script`); see
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Testing Tessera on your own install: the walker, explorer and dattool, their options and controls, the keymap file, where files go, reporting problems |
 | [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server gate, Bevy, multi-device workflow) |
 | [docs/checklists/](docs/checklists/) | Visual checklists and items only the owner can observe in the original client |
 | [DISCLAIMER.md](DISCLAIMER.md) | Non-affiliation statement and warranty disclaimer |

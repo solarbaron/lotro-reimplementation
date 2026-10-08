@@ -263,10 +263,28 @@ fn lerp(a: f32, b: f32, alpha: f32) -> f32 {
     a * (1.0 - alpha) + b * alpha
 }
 
+/// The rotation blend of §7.8 step 3; at α = 1 (the last frame, step 1) the second
+/// rotation itself, normalised, rather than the sign-aligned blend, which can differ from it
+/// by rounding or by sign.
+fn blend_rotation(a: [f32; 4], b: [f32; 4], alpha: f32) -> [f32; 4] {
+    if alpha >= 1.0 {
+        quat_nlerp(b, b, 0.0)
+    } else {
+        quat_nlerp(a, b, alpha)
+    }
+}
+
 /// Frame index `f ≤ n − 2` and blend factor for time `t` on an `n`-frame grid over
 /// `duration` (§7.8). `n` must be at least 2.
+///
+/// Step 1 of §7.8 (and of §4.5): *t* ≥ *D* gives the last frame exactly, as (`n` − 2, 1);
+/// dividing *t* by *D* / (*N* − 1) can round to just below *N* − 1. A duration that is not
+/// finite and positive clamps every *t* to 0 = *D* (§7.4), so it gives the last frame too.
 fn frame_and_alpha(t: f32, duration: f32, n: usize) -> (usize, f32) {
     let t = clamp_time(t, duration);
+    if !(duration.is_finite() && t < duration) {
+        return (n - 2, 1.0);
+    }
     let delta = duration / (n - 1) as f32;
     let x = t / delta;
     let x = if x.is_nan() { 0.0 } else { x.max(0.0) };
@@ -316,7 +334,7 @@ impl InterleavedAnimation {
                 translation: std::array::from_fn(|i| {
                     lerp(x.translation[i], y.translation[i], alpha)
                 }),
-                rotation: quat_nlerp(x.rotation, y.rotation, alpha),
+                rotation: blend_rotation(x.rotation, y.rotation, alpha),
                 scale: std::array::from_fn(|i| lerp(x.scale[i], y.scale[i], alpha)),
             };
         }
@@ -530,7 +548,7 @@ impl Animation {
                     translation: std::array::from_fn(|k| {
                         lerp(x.translation[k], y.translation[k], alpha)
                     }),
-                    rotation: quat_nlerp(x.rotation, y.rotation, alpha),
+                    rotation: blend_rotation(x.rotation, y.rotation, alpha),
                     scale: std::array::from_fn(|k| lerp(x.scale[k], y.scale[k], alpha)),
                 })
             }

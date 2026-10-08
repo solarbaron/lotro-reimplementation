@@ -329,6 +329,11 @@ impl ClientUi {
         };
         let (mapper, now) = walker.mapper_mut();
         host.handle_raw(mapper, event, now, &mut rt.plugins, window);
+        // The walker's own keys (time of day, system switches) when no UI element has the
+        // keyboard focus.
+        if !host.keyboard_focused() {
+            walker.world_key(event);
+        }
         true
     }
 

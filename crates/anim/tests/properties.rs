@@ -61,9 +61,14 @@ proptest! {
                                                pose_seed in prop::collection::vec(arb_transform(), 40)) {
         let s = Skeleton::from_parts(&parents, &reference).unwrap();
         let n = s.bone_count();
-        // B_b · B_b⁻¹ = I.
-        for (m, inv) in s.reference_model().iter().zip(s.inverse_bind()) {
-            prop_assert!((*m * *inv).abs_diff_eq(Mat4::IDENTITY, 1e-2));
+        // The inverse reference triple of §5.4 (K26): −(q_r⁻¹ t_r), q_r⁻¹, 1/s_r, with the
+        // translation not divided by the reference scale.
+        for (r, x) in s.reference_triples().iter().zip(s.inverse_reference()) {
+            let qr = Quat::from_array(r.rotation);
+            let xt = -(qr.inverse() * Vec3::from_array(r.translation));
+            prop_assert!(Vec3::from_array(x.translation).abs_diff_eq(xt, 1e-4 * (1.0 + xt.length())));
+            prop_assert!(Quat::from_array(x.rotation).abs_diff_eq(qr.inverse(), 1e-5));
+            prop_assert!(Vec3::from_array(x.scale).abs_diff_eq(Vec3::from_array(r.scale).recip(), 1e-4));
         }
         let local: Vec<Transform> = pose_seed[..n].to_vec();
         let mut model = vec![Mat4::IDENTITY; n];
@@ -91,13 +96,49 @@ proptest! {
             prop_assert!(model[b].abs_diff_eq(expect, 1e-3));
         }
         let mut skin = vec![Mat4::IDENTITY; n];
-        skinning_matrices(&s, &model, &mut skin).unwrap();
-        // A vertex rigidly bound to bone b follows bone b exactly: W_b · B_b⁻¹ · v.
+        skinning_matrices(&s, &triples, &mut skin).unwrap();
+        // A vertex rigidly bound to bone b lands where §5.4 (K26) puts it:
+        // t − q (s ⊙ (q_r⁻¹ t_r)) + (q · q_r⁻¹) ((s ⊙ 1/s_r) ⊙ v).
         let v = Vec3::new(0.3, -0.2, 0.7);
-        for (b, (m, inv)) in model.iter().zip(s.inverse_bind()).enumerate() {
+        for (b, (pose, r)) in triples.iter().zip(s.reference_triples()).enumerate() {
             let p = skin_position(&skin, &[b as u8], &[1.0], v);
-            let expect = m.transform_point3(inv.transform_point3(v));
+            let (t, q, sc) = (
+                Vec3::from_array(pose.translation),
+                Quat::from_array(pose.rotation),
+                Vec3::from_array(pose.scale),
+            );
+            let (tr, qr, sr) = (
+                Vec3::from_array(r.translation),
+                Quat::from_array(r.rotation),
+                Vec3::from_array(r.scale),
+            );
+            let expect = t - q * (sc * (qr.inverse() * tr)) + (q * qr.inverse()) * (sc / sr * v);
             prop_assert!(p.abs_diff_eq(expect, 1e-2 * (1.0 + expect.length())));
+        }
+    }
+
+    /// §4.4, §5.4: with unit reference scales and a uniform pose scale the skinning
+    /// transform equals the matrix product **P**_b · **B**_b⁻¹ (reference-pose skinning is
+    /// the identity).
+    #[test]
+    fn unit_reference_scales_skin_as_the_matrix_product((parents, reference) in arb_skeleton(),
+                                                         pose_seed in prop::collection::vec(arb_transform(), 40)) {
+        let reference: Vec<Transform> = reference.iter().map(|t| Transform { scale: [1.0; 3], ..*t }).collect();
+        let s = Skeleton::from_parts(&parents, &reference).unwrap();
+        let n = s.bone_count();
+        let local: Vec<Transform> = pose_seed[..n].iter().map(|t| Transform { scale: [t.scale[0]; 3], ..*t }).collect();
+        let mut model = vec![Mat4::IDENTITY; n];
+        let mut triples = vec![Transform::IDENTITY; n];
+        s.compose_with_triples(&local, &mut model, &mut triples).unwrap();
+        let mut skin = vec![Mat4::IDENTITY; n];
+        skinning_matrices(&s, &triples, &mut skin).unwrap();
+        for (b, (m, inv)) in model.iter().zip(s.inverse_bind()).enumerate() {
+            prop_assert!((*m * *inv).abs_diff_eq(skin[b], 1e-3 * (1.0 + m.w_axis.length())));
+        }
+        let mut rest = vec![Mat4::IDENTITY; n];
+        skinning_matrices(&s, s.reference_triples(), &mut rest).unwrap();
+        for m in &rest {
+            prop_assert!(m.abs_diff_eq(Mat4::IDENTITY, 1e-4));
         }
     }
 

@@ -41,6 +41,7 @@ fn landblock_decoders(data: &[u8]) {
         if let Ok(d) = LandblockData::parse(data, stamp) {
             let _ = d.first_unusual_field();
             let _ = d.terrain_height(80.0, 80.0);
+            let _ = d.terrain_normal(80.0, 80.0);
         }
         if let Ok(i) = LandblockInfo::parse(data, stamp, &total) {
             let _ = i.first_unusual_field();

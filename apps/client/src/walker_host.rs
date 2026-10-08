@@ -13,7 +13,8 @@ use tessera_net::sandbox::{CrowdConfig, MAX_RESOLVE_TIMEOUT, MAX_SPEED, SandboxC
 use tessera_net::{RegionId, Transform, Vec3};
 use tessera_render::{OffscreenFormat, Renderer, RgbaImage};
 use tessera_world::coords::MAX_BLOCK;
-use tessera_world::{BundleOptions, LANDBLOCK_SIZE, RingConfig, StreamConfig};
+use tessera_world::frills::FrillSettings;
+use tessera_world::{BundleOptions, DistanceSettings, LANDBLOCK_SIZE, RingConfig, StreamConfig};
 
 use crate::avatar::AvatarSpec;
 use crate::cli::Args;
@@ -22,9 +23,11 @@ use crate::walker::boot::WorldBoot;
 use crate::walker::characters::CharacterConfig;
 use crate::walker::characters::catalog::CharacterCatalog;
 use crate::walker::controls::MoveMode;
+use crate::walker::env::ClockConfig;
+use crate::walker::fxparse::{System, Systems};
 use crate::walker::objects::ObjectConfig;
 use crate::walker::source::SourceShared;
-use crate::walker::{FlightPlan, Walker, WalkerConfig};
+use crate::walker::{CameraPlan, FlightPlan, Walker, WalkerConfig};
 
 /// Where the walker starts without `--spawn` or `--place`: region 1, the centre of
 /// landblock (126, 140), the block of `coordinates.md` §8.4 B. The centre is at map
@@ -59,6 +62,16 @@ pub fn spawn_point(args: &Args) -> anyhow::Result<SpawnPoint> {
     }
     if let Some(place) = &args.place {
         return SpawnPoint::named(place.clone()).context("--place");
+    }
+    if let (Some(l), None) = (&args.camera_loop, &args.spawn) {
+        let p = l.points.first().copied().unwrap_or([80.0, 80.0]);
+        return SpawnPoint::landblock(
+            RegionId(u16::from(l.region)),
+            l.x,
+            l.y,
+            [p[0].clamp(0.0, 160.0), p[1].clamp(0.0, 160.0), 0.0],
+        )
+        .context("camera loop start");
     }
     let text = args.spawn.as_deref().unwrap_or(DEFAULT_SPAWN);
     SpawnPoint::parse(text).with_context(|| format!("--spawn {text}"))
@@ -116,10 +129,39 @@ pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
     })
 }
 
+/// The distance preferences of the command line over the built-in defaults
+/// (`walker.md` §11.2, §11.8).
+#[must_use]
+pub fn distance_settings(args: &Args) -> DistanceSettings {
+    let d = DistanceSettings::default();
+    DistanceSettings {
+        landscape: args.landscape_distance.unwrap_or(d.landscape),
+        object_draw_distance: args.object_draw_distance.unwrap_or(d.object_draw_distance),
+        model_detail: args.model_detail.unwrap_or(d.model_detail),
+        ..d
+    }
+}
+
+/// The M4.5 systems the command line leaves on (`--disable`).
+#[must_use]
+pub fn systems(args: &Args) -> Systems {
+    let mut s = Systems::all();
+    for x in args.disable.iter().flat_map(|d| d.0.iter()) {
+        s.set(*x, false);
+    }
+    s
+}
+
 /// Walker settings from the command line.
 #[must_use]
 pub fn walker_config(args: &Args) -> WalkerConfig {
-    let far = f64::from(args.view_blocks) * LANDBLOCK_SIZE;
+    let distances = distance_settings(args);
+    // The far ring is the landscape extent E (`walker.md` §11.3, §11.8) unless
+    // `--view-blocks` sets it.
+    let far = args.view_blocks.map_or_else(
+        || f64::from(distances.landscape_extent()),
+        |b| f64::from(b) * LANDBLOCK_SIZE,
+    );
     let rings = RingConfig {
         near: (3.0 * LANDBLOCK_SIZE).min(far),
         mid: (6.0 * LANDBLOCK_SIZE).min(far),
@@ -134,7 +176,11 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         settle_timeout: Duration::from_secs(args.settle_timeout),
     });
     WalkerConfig {
-        mode: if args.fly || flight.is_some() {
+        mode: if args.fly
+            || flight.is_some()
+            || args.camera_loop.is_some()
+            || args.turn_rate.is_some()
+        {
             MoveMode::Fly
         } else {
             MoveMode::Walk
@@ -144,10 +190,15 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         stream: StreamConfig {
             rings,
             residency_budget: usize::try_from(args.residency_mib << 20).unwrap_or(usize::MAX),
+            frills: FrillSettings {
+                distance_level: args.frill_distance.map_or(2, i32::from),
+                draw_frills: systems(args).on(System::Frills),
+                ..FrillSettings::default()
+            },
             ..StreamConfig::default()
         },
         objects: ObjectConfig {
-            distance: args.object_distance,
+            distance: args.object_distance.unwrap_or(far),
             gpu_budget: args.gpu_mib << 20,
             texture_cap: args.texture_cap,
             ..ObjectConfig::default()
@@ -164,7 +215,9 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         characters: CharacterConfig {
             markers: args.markers,
             anim_distance: args.anim_distance,
-            draw_distance: args.character_distance,
+            draw_distance: args
+                .character_distance
+                .unwrap_or(CharacterConfig::default().draw_distance),
             ..CharacterConfig::default()
         },
         autorun: args.autorun.as_deref().map(|g| g == "walk"),
@@ -172,6 +225,35 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             duration: Duration::from_secs(secs),
             settle_timeout: Duration::from_secs(args.settle_timeout),
         }),
+        audio: crate::audio::config_from_args(args),
+        systems: systems(args),
+        clock: ClockConfig {
+            day: args.day.unwrap_or(crate::walker::env::DEFAULT_DAY),
+            time_of_day: args
+                .time_of_day
+                .unwrap_or(crate::walker::env::DEFAULT_TIME_OF_DAY),
+            rate: args.time_rate.unwrap_or(1.0),
+            day_type: args
+                .day_type
+                .unwrap_or(tessera_world::environment::INITIAL_DAY_TYPE),
+        },
+        distances,
+        // The collision mover takes the avatar's float height (`walker.md` §13.2).
+        avatar: args.avatar.clone().unwrap_or_default(),
+        far_band: args.far_band,
+        hud: !args.no_hud,
+        camera: match (&args.camera_loop, args.turn_rate) {
+            (Some(path), _) => Some(CameraPlan::Loop {
+                path: path.clone(),
+                speed: args.loop_speed,
+                height: args.loop_height,
+                pitch: args.loop_pitch.to_radians(),
+            }),
+            (None, Some(rate)) => Some(CameraPlan::Turn {
+                rate: rate.to_radians(),
+            }),
+            (None, None) => None,
+        },
         ..WalkerConfig::default()
     }
 }
@@ -287,8 +369,12 @@ impl WalkerHost {
             self.failed = Some("archive set closed".into());
             return;
         };
+        let mut config = self.config.clone();
+        if let DataStatus::Ready { root, .. } = &rt.status {
+            config.audio.game_dir = Some(root.clone());
+        }
         match Walker::new(
-            self.config.clone(),
+            config,
             set,
             ctx,
             Arc::clone(&self.shared),
@@ -375,5 +461,28 @@ mod tests {
         let a = Args::try_parse_from(["t"]).unwrap();
         assert!(sandbox_config(&a).is_ok());
         assert!(!walker_config(&a).frame_log);
+        assert_eq!(
+            walker_config(&a).avatar,
+            crate::avatar::AvatarSpec::default()
+        );
+    }
+
+    #[test]
+    fn the_mover_uses_the_avatar_of_the_command_line() {
+        let a = Args::try_parse_from(["t", "--avatar", "elf,f"]).unwrap();
+        let w = walker_config(&a);
+        assert_eq!(Some(&w.avatar), a.avatar.as_ref());
+        assert_ne!(w.avatar, crate::avatar::AvatarSpec::default());
+    }
+
+    #[test]
+    fn the_character_distance_is_a_cap() {
+        let a = Args::try_parse_from(["t"]).unwrap();
+        assert_eq!(
+            walker_config(&a).characters.draw_distance,
+            CharacterConfig::default().draw_distance
+        );
+        let a = Args::try_parse_from(["t", "--character-distance", "50"]).unwrap();
+        assert_eq!(walker_config(&a).characters.draw_distance, 50.0);
     }
 }

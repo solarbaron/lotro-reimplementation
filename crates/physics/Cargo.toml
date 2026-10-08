@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-physics"
+description = "Collision and movement: terrain, ceiling and cell collision, per-landblock collision sets with a bounding-volume hierarchy, capsule sweeps and the character controller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# L3 crate (ARCHITECTURE §3.1, ROADMAP M4.5 "Crate placement"): depends only on L1-L2
+# crates. No GPU, asset-server or streaming dependency, so the controller can be unit-tested
+# and fuzzed alone and reused by the M7 test server.
+[dependencies]
+tessera-formats.workspace = true
+tessera-props.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+# Real-data tests only (gated on TESSERA_GAME_DIR): archive access and the mesh decoder for
+# the per-level trees of render meshes (collision.md CO4). tessera-world must never be a
+# dev-dependency: it depends on this crate.
+tessera-dat.workspace = true
+tessera-mesh.workspace = true
+
+[lints]
+workspace = true

@@ -153,6 +153,9 @@ fn bone1_angle(anim: &Animator) -> f32 {
 }
 
 /// Findings 3 and 10: interrupting a fade popped the pose to the fade's incoming clip.
+/// With one overall weight per clip (`skeleton-anim.md` §6.5, K21) an interrupting fade
+/// stops both clips of the old fade at the weights they have and lets them fall linearly
+/// to 0, so the pose stays continuous.
 #[test]
 fn interrupted_fade_is_continuous() {
     let (s, [a, b, c]) = fade_clips();
@@ -168,7 +171,14 @@ fn interrupted_fade_is_continuous() {
         .unwrap();
     let after = bone1_angle(&anim);
     assert!((after - before).abs() < 1e-4, "{before} -> {after}");
-    // The old fade finishes underneath, the new one completes on time.
+    // The stopped clips fall from 0.5 each to 0; the new one rises to 1 on time.
+    match &anim.layers()[0].source {
+        Some(Source::CrossFade(f)) => {
+            let w: Vec<f32> = f.from.iter().map(|(_, w)| *w).collect();
+            assert_eq!(w, vec![0.5, 0.5]);
+        }
+        other => panic!("{other:?}"),
+    }
     anim.advance(0.5);
     let mid = bone1_angle(&anim);
     assert!(mid > before && mid < 2.0, "{mid}");
@@ -198,7 +208,8 @@ fn interrupted_fade_is_continuous() {
         let src = anim.layers()[0].source.as_ref().unwrap();
         assert!(src.clip_count() <= MAX_LAYER_CLIPS);
         let after = bone1_angle(&anim);
-        // Settling the oldest fade (beyond the clip limit) may move the pose a little.
+        // Dropping the weakest stopped clip (beyond the clip limit) may move the pose a
+        // little.
         assert!(after.is_finite());
         if i < 2 {
             assert!((after - before).abs() < 1e-4, "{i}: {before} -> {after}");
@@ -207,10 +218,11 @@ fn interrupted_fade_is_continuous() {
     }
 }
 
-/// A fade chain whose oldest source contributes nothing (a speed blend with a NaN
-/// parameter) scaled later fades by the first fade's weight, and the layer popped to full
-/// weight when the newest fade completed. Weights follow the layered-weight rule of
-/// `skeleton-anim.md` §6.6.
+/// `skeleton-anim.md` §6.6 step 2 and the §15 answer (3): each clip's weight is its own
+/// ramp, with no cross-fade chain product. Stopped clips at weights 0.1 (b) and nothing
+/// (an empty speed blend) fall linearly while c rises; with nothing below, the
+/// layered-weight rule quantises them and fills a total of at most 0.1 with the
+/// reference pose.
 #[test]
 fn fade_over_empty_source_keeps_later_weights() {
     let (s, [_, b, c]) = fade_clips();
@@ -218,25 +230,33 @@ fn fade_over_empty_source_keeps_later_weights() {
     let state = |w2: f32| {
         let mut sb = SpeedBlend::new(vec![(0.0, b.clone()), (1.0, c.clone())]).unwrap();
         sb.set_param(f32::NAN);
+        // A fade from an empty speed blend to b, 0.1 of the way in: b has weight 0.1.
         let inner = CrossFade {
-            from: Box::new(Source::Speed(sb)),
-            to: Playback::new(b.clone(), Wrap::Loop),
             elapsed: 0.1,
             duration: 1.0,
+            ..CrossFade::from_source(
+                Source::Speed(sb),
+                Playback::new(b.clone(), Wrap::Loop),
+                1.0,
+                false,
+            )
         };
+        assert!(inner.from.is_empty(), "nothing to stop");
         let outer = CrossFade {
-            from: Box::new(Source::CrossFade(inner)),
-            to: Playback::new(c.clone(), Wrap::Loop),
             elapsed: w2,
             duration: 1.0,
+            ..CrossFade::from_source(
+                Source::CrossFade(inner),
+                Playback::new(c.clone(), Wrap::Loop),
+                1.0,
+                false,
+            )
         };
         let mut anim = Animator::new(s.clone());
         anim.set_source(0, Source::CrossFade(outer)).unwrap();
         bone1_angle(&anim)
     };
-    // The chain gives b (1 rad) weight 0.1 (1 − w2) and c (2 rad) weight w2; with nothing
-    // below, the layered-weight rule (`skeleton-anim.md` §6.6) quantises them and fills a
-    // total below 0.1 with the reference pose. Up to nlerp error.
+    // b (1 rad) has weight 0.1 (1 − w2), c (2 rad) weight w2. Up to nlerp error.
     let expect = |w2: f32| {
         let wb = quantise_weight(0.1 * (1.0 - w2));
         let wc = quantise_weight(w2);
@@ -494,4 +514,89 @@ fn content_key_ignores_names() {
     assert_ne!(*named, *numbered, "PartialEq compares names");
     assert_eq!(named.find_bone(b"rig_bone2"), Some(2));
     assert_eq!(numbered.find_bone(b"rig_bone2"), None);
+}
+
+/// Audit finding (fix2 0): finite but huge clip scales passed the broken-sample check, and
+/// the scales multiplied down the chain to inf, giving a non-finite skinning palette.
+#[test]
+fn huge_clip_scales_never_reach_the_palette() {
+    let s = skeleton(&SkeletonSpec::chain(3));
+    let rec = spline_clip(5, 3, 30.0, |_, j| Transform {
+        scale: if j < 2 { [1e20; 3] } else { [1.0; 3] },
+        ..s.reference_local()[j]
+    });
+    let c = bind(&rec, &s);
+    let mut local = vec![Transform::IDENTITY; 3];
+    let report = c.sample(0.05, &mut local).unwrap();
+    assert_eq!(report.replaced, 2, "huge scales are broken samples");
+    assert_eq!(&local[..2], &s.reference_local()[..2]);
+
+    // A hand-built pose with the same values (compose is public): model and skinning
+    // matrices stay finite.
+    let local: Vec<Transform> = (0..3)
+        .map(|j| Transform {
+            scale: [1e20; 3],
+            ..s.reference_local()[j]
+        })
+        .collect();
+    let mut model = vec![glam::Mat4::IDENTITY; 3];
+    let fallbacks = s.compose_counted(&local, &mut model).unwrap();
+    assert!(fallbacks > 0);
+    assert!(model.iter().all(glam::Mat4::is_finite), "{model:?}");
+    let mut triples = vec![Transform::IDENTITY; 3];
+    s.compose_triples(&local, &mut triples).unwrap();
+    assert!(triples.iter().all(Transform::is_finite), "{triples:?}");
+    let mut skin = vec![glam::Mat4::IDENTITY; 3];
+    tessera_anim::skinning_matrices(&s, &triples, &mut skin).unwrap();
+    assert!(skin.iter().all(glam::Mat4::is_finite), "{skin:?}");
+
+    // Through the layered evaluator and the averaged result as well.
+    let mut out = vec![Transform::IDENTITY; 3];
+    let mut anim = Animator::new(s.clone());
+    anim.play(0, Playback::new(c, Wrap::Loop), 0.0, false)
+        .unwrap();
+    let mut snap = Vec::new();
+    anim.snapshot(&mut snap);
+    let r = evaluate(&s, &snap, &mut EvalScratch::new(), &mut out).unwrap();
+    assert_eq!(r.replaced, 2);
+    let mut model = vec![glam::Mat4::IDENTITY; 3];
+    s.compose(&out, &mut model).unwrap();
+    assert!(model.iter().all(glam::Mat4::is_finite));
+}
+
+/// Audit finding (fix2 1): the skeleton decoder's cache size missed the reference triples,
+/// counted `Option<u16>` parents as 2 bytes and ignored the name bytes.
+#[test]
+fn skeleton_cache_size_counts_every_vector() {
+    use tessera_assets::Decoder;
+    let s = skeleton(&tree_spec(248));
+    let names: usize = (0..248).map(|i| s.name(i).map_or(0, <[u8]>::len)).sum();
+    assert!(names > 0);
+    // parents, reference, reference triples, two matrices, name handles, name bytes.
+    let floor = 248 * (4 + 40 + 40 + 64 + 64 + 16) + names;
+    let charged = tessera_anim::SkeletonDecoder.size_of(&s);
+    assert!(charged >= floor, "{charged} < {floor}");
+    assert_eq!(charged, s.heap_size());
+}
+
+/// Audit finding (fix2 3), the baked path: t = duration gives the last frame exactly
+/// (`havok-data.md` §7.8 step 1), not a blend a hair short of it.
+#[test]
+fn baked_clip_at_the_duration_is_the_last_frame() {
+    let s = skeleton(&SkeletonSpec::chain(3));
+    let rec = interleaved_clip(8, 3, 1.0, |f, j| Transform {
+        translation: [0.3 + 1.1 * f as f32, -0.7 * f as f32, 0.1 * j as f32],
+        ..s.reference_local()[j]
+    });
+    let c = bind(&rec, &s);
+    let baked = BakedClip::bake(c.clip(), usize::MAX).unwrap();
+    let mut last = vec![Transform::IDENTITY; 3];
+    c.clip().animation.sample_frame(7, &mut last);
+    let mut out = vec![Transform::IDENTITY; 3];
+    for t in [1.0, 1.5] {
+        assert_eq!(baked.sample(t, &mut out), 3);
+        assert_eq!(out, last, "t = {t}");
+        assert_eq!(c.clip().sample(t, &mut out), 3);
+        assert_eq!(out, last, "t = {t}");
+    }
 }

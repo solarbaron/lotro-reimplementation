@@ -15,7 +15,7 @@ use tessera_formats::RgbaImage;
 use tessera_material::vocab::ids;
 use tessera_material::{BlendMode, ResolvedMaterial};
 use tessera_mesh::{Indices as MeshIndices, LevelGeometry, LevelKind, Mesh};
-use tessera_render::{Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh};
+use tessera_render::{AlphaMode, Indices, MAX_PALETTE_BONES, MeshData, MeshSkin, Submesh};
 
 /// Texture variant: RGB of the texture, alpha forced to 1.
 pub const VARIANT_OPAQUE: u32 = 0;
@@ -51,6 +51,58 @@ pub struct TexRequest {
     pub variant: u32,
 }
 
+/// Where the gloss *g* of a lit surface comes from (`lighting.md` §5.2 item 5,
+/// `material.md` §10.2: the role of the slot whose alpha carries it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlossFrom {
+    /// *g* = 1.
+    #[default]
+    One,
+    /// The alpha of the base texture (`ColorAndGloss`).
+    BaseAlpha,
+    /// The alpha of the normal map (`TSNormalAndGloss`).
+    NormalAlpha,
+}
+
+/// The inputs only the lit pipeline uses (`lighting.md` §4.1, `material.md` §10–§11), in
+/// the original's stored-value colour space (`lighting.md` §5.1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LitInputs {
+    /// Material colour *M* (2000) as stored, RGBA (alpha: the material alpha).
+    pub color: [f32; 4],
+    /// Alpha test and blend state of the lit pipeline (`docs/specs/render.md` §4.3).
+    pub alpha: AlphaMode,
+    /// The base texture's alpha is the opacity (else the opacity is 1).
+    pub opacity_from_base: bool,
+    /// Tangent-space normal map (slot 3011), with its own alpha.
+    pub normal: Option<TexRequest>,
+    /// Emissive texture (slot 3018).
+    pub emissive: Option<TexRequest>,
+    /// Glow mask (slot 3013).
+    pub glow_mask: Option<TexRequest>,
+    /// Glow colour *G* (2014) RGB; black without one.
+    pub glow: [f32; 3],
+    /// Specular colour *Ms* (2001) and power *p* (1000); `None` below power 0.5.
+    pub specular: Option<([f32; 3], f32)>,
+    /// Gloss source.
+    pub gloss: GlossFrom,
+}
+
+impl LitInputs {
+    /// The lit inputs of a submesh whose material could not be resolved.
+    pub const FALLBACK: Self = Self {
+        color: [0.8, 0.8, 0.8, 1.0],
+        alpha: AlphaMode::Opaque,
+        opacity_from_base: false,
+        normal: None,
+        emissive: None,
+        glow_mask: None,
+        glow: [0.0; 3],
+        specular: None,
+        gloss: GlossFrom::One,
+    };
+}
+
 /// What one submesh needs to be drawn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MaterialPlan {
@@ -67,6 +119,8 @@ pub struct MaterialPlan {
     /// Dye: the mask texture ([`VARIANT_DYE_MASK`]) and the linear dye colour. Only
     /// figures use dye ([`plan_material_dyed`]); static objects never do (`walker.md` §4).
     pub dye: Option<(TexRequest, [f32; 3])>,
+    /// The inputs of the lit pipeline (M4.5).
+    pub lit: LitInputs,
 }
 
 impl MaterialPlan {
@@ -78,7 +132,26 @@ impl MaterialPlan {
         base_color: [0.6, 0.6, 0.6, 1.0],
         unlit: false,
         dye: None,
+        lit: LitInputs::FALLBACK,
     };
+
+    /// Every texture the plan samples: the base texture, the dye mask and the lit
+    /// pipeline's normal, emissive and glow textures.
+    pub fn textures(&self) -> impl Iterator<Item = TexRequest> + '_ {
+        self.texture
+            .into_iter()
+            .chain(self.dye.map(|d| d.0))
+            .chain(self.lit.normal)
+            .chain(self.lit.emissive)
+            .chain(self.lit.glow_mask)
+    }
+
+    /// Whether the instanced scenery pipeline can draw the plan (`docs/specs/render.md`
+    /// §5.5): it has no emissive, glow or dye input.
+    #[must_use]
+    pub fn instanceable(&self) -> bool {
+        self.dye.is_none() && self.lit.emissive.is_none() && self.lit.glow_mask.is_none()
+    }
 }
 
 /// 8-bit sRGB-encoded unit value to linear light (clamped; non-finite → 0).
@@ -169,6 +242,16 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
         (a, _) => a,
     };
     let tint = m.params.color(ids::DIFFUSE_COLOR).unwrap_or([1.0; 4]);
+    let lit = lit_inputs(m, texture, alpha, tint);
+    // Gloss in the base alpha of an opaque surface needs that alpha (`material.md`
+    // §10.2): the texture keeps its own alpha; the opacity stays 1.
+    let texture = match (texture, lit.gloss) {
+        (Some(t), GlossFrom::BaseAlpha) if t.variant == VARIANT_OPAQUE => Some(TexRequest {
+            did: t.did,
+            variant: VARIANT_OWN_ALPHA,
+        }),
+        (t, _) => t,
+    };
     MaterialPlan {
         texture,
         alpha,
@@ -181,6 +264,118 @@ pub fn plan_material(m: &ResolvedMaterial) -> MaterialPlan {
         ],
         unlit: !f.lit,
         dye: None,
+        lit,
+    }
+}
+
+/// A finite unit value (0–1), `fallback` when not finite.
+fn unit(v: f32, fallback: f32) -> f32 {
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        fallback
+    }
+}
+
+/// The lit-pipeline inputs of a resolved material (`lighting.md` §4.1; `material.md`
+/// §10.2 gloss roles, §11.2–§11.5 alpha, blend and feature flags). `texture` and `alpha`
+/// are the M2 plan's base texture and alpha use; `tint` the material colour 2000.
+fn lit_inputs(
+    m: &ResolvedMaterial,
+    texture: Option<TexRequest>,
+    alpha: AlphaKind,
+    tint: [f32; 4],
+) -> LitInputs {
+    let f = &m.features;
+    let slot_tex = |id: u32| m.slot(id).and_then(|s| s.texture).map(|d| d.0);
+    let role = |id: u32| m.slot(id).and_then(|s| s.role.as_deref());
+    let own = |did: u32| TexRequest {
+        did,
+        variant: VARIANT_OWN_ALPHA,
+    };
+    let opacity_from_base =
+        texture.is_some_and(|t| t.variant != VARIANT_OPAQUE) && !matches!(alpha, AlphaKind::Opaque);
+    let normal = if f.normal_mapped {
+        slot_tex(ids::NORMAL)
+            .filter(|&d| d > VARIANT_DYE_MASK)
+            .map(own)
+    } else {
+        None
+    };
+    let specular = if f.specular {
+        m.specular().and_then(|(c, p)| {
+            (p.is_finite() && p >= 0.5)
+                .then(|| ([unit(c[0], 1.0), unit(c[1], 1.0), unit(c[2], 1.0)], p))
+        })
+    } else {
+        None
+    };
+    let gloss = if specular.is_none() {
+        GlossFrom::One
+    } else if role(ids::DIFFUSE).is_some_and(|r| r.contains("Gloss")) && texture.is_some() {
+        GlossFrom::BaseAlpha
+    } else if normal.is_some() && role(ids::NORMAL).is_some_and(|r| r.contains("Gloss")) {
+        GlossFrom::NormalAlpha
+    } else {
+        GlossFrom::One
+    };
+    let glow = if f.glow {
+        m.params.color(ids::GLOW_COLOR).map_or([0.0; 3], |c| {
+            [unit(c[0], 0.0), unit(c[1], 0.0), unit(c[2], 0.0)]
+        })
+    } else {
+        [0.0; 3]
+    };
+    let lit_glow = glow != [0.0; 3];
+    let emissive = (f.emissive && lit_glow)
+        .then(|| slot_tex(ids::EMISSIVE))
+        .flatten()
+        .filter(|&d| d > VARIANT_DYE_MASK)
+        .map(own);
+    let glow_mask = lit_glow
+        .then(|| slot_tex(ids::GLOW))
+        .flatten()
+        .filter(|&d| d > VARIANT_DYE_MASK)
+        .map(own);
+    let color = [
+        unit(tint[0], 1.0),
+        unit(tint[1], 1.0),
+        unit(tint[2], 1.0),
+        unit(tint[3], 1.0),
+    ];
+    let threshold = f.alpha_test.map(|a| unit(a.threshold, 0.5));
+    let translucent = opacity_from_base || color[3] < 1.0;
+    let lit_alpha = match f.blend.mode {
+        BlendMode::Opaque => AlphaMode::Opaque,
+        BlendMode::Cutout => match (threshold, opacity_from_base) {
+            (Some(c), true) => AlphaMode::Mask { cutoff: c },
+            _ => AlphaMode::Opaque,
+        },
+        BlendMode::Additive => AlphaMode::Additive,
+        BlendMode::AlphaBlend | BlendMode::Custom if !translucent => AlphaMode::Opaque,
+        BlendMode::AlphaBlend | BlendMode::Custom => {
+            let cutoff = if opacity_from_base {
+                threshold.unwrap_or(-1.0)
+            } else {
+                -1.0
+            };
+            if f.blend.depth_write {
+                AlphaMode::TestBlend { cutoff }
+            } else {
+                AlphaMode::Blend
+            }
+        }
+    };
+    LitInputs {
+        color,
+        alpha: lit_alpha,
+        opacity_from_base,
+        normal,
+        emissive,
+        glow_mask,
+        glow,
+        specular,
+        gloss,
     }
 }
 

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04 |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-07 (items answered or narrowed from the client; M7 items O70–O73 added) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -35,23 +35,25 @@ marks the item **done** here.
 
 | ID | Question | Spec | Needs | Status |
 |---|---|---|---|---|
-| [O1](#o1) | `/loc`, map coordinates and area at 20 reference locations | `docs/checklists/m3-reference-locations.md` | In-game `/loc` | answered from the client (`coordinates.md` §8–§9, §14); optional confirmation: avatar origin height, area names, block edges |
+| [O1](#o1) | `/loc`, map coordinates and area at 20 reference locations | `docs/checklists/m3-reference-locations.md` | In-game `/loc` | partly answered (`coordinates.md` §4, §8–§9, §14: formula, rounding, landcells and block edges from the client); left for the owner: the avatar's height above the terrain (`oz`), the area-name column, and whether map coordinates show indoors |
 | [O2](#o2) | Compass bearing of a placed object versus `/loc` heading | `entity-descriptor.md` §4.4 | In-game `/loc` | answered from the client (`coordinates.md` §11.3–§11.4: h = (360° − yaw) mod 360, bearing of model +Y); optional confirmation |
-| [O3](#o3) | Which content layer the world shows by default | `entity-descriptor.md` §4.5.1 | In-game look | answered from the client (`entity-descriptor.md` §4.5.1: layers 1 and 2 are both shown; only named layers depend on story progress); optional confirmation spot: region 1, block 0xA15B |
+| [O3](#o3) | Which content layer the world shows by default | `entity-descriptor.md` §4.5.1 | In-game look | answered from the client (`entity-descriptor.md` §4.5.1, §9.3: layers 1 and 2 are both shown, for every kind of placed object including drawn Physics objects; only named layers depend on story progress); optional confirmation spot: region 1, block 0xA15B |
 | [O4](#o4) | Are one-triangle placeholder parts drawn? | `setup.md` §8.5 | Look, or frame capture | answered from the client (`setup.md`: never drawn in objects with more than one part); no observation needed |
 | [O5](#o5) | Exact dye blend | `material.md` §12.3 | Look, or frame capture | open |
 | [O6](#o6) | Other material and render-state questions | `material.md` §17 and §19 | Frame capture | open |
 | [O7](#o7) | Command-line option leniency | `install-layout.md` §10 | Launch test | answered from the client (`install-layout.md` §10.1); no observation needed |
-| [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | open (M4; informal look at Tessera fine, 2026-10-05) |
-| [O9](#o9) | Height slider and facial bone sliders in character creation | `appearance.md` §6.2, §6.3 | Character-creation screen | open (M4) |
-| [O10](#o10) | Worn-item layering and equal-priority ties | `appearance.md` §4.6, §4.7 | Look (wardrobe preview) | open (M4) |
-| [O11](#o11) | Updated-avatar option and default style files | `appearance.md` §3.3 | Options screen, look | open (M4) |
-| [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | open (M4) |
-| [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | open (M4) |
-| [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | Look, `/loc`, short videos | open (M4) |
-| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3 | Frame capture | open (M4, low priority); colour byte order settled (`property-system.md`: B, G, R, A) |
-| [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §16 | Look, explorer side by side | open (M4) |
-| [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7 | In-game `/loc`, look | open (M4; informal look at Tessera fine, 2026-10-05) |
+| [O8](#o8) | Standing heights per species and sex (whole-body scale) | `appearance.md` §6.1, §17, `skeleton-anim.md` §2.2 | Look, side-by-side screenshots | partly answered (`appearance.md` §6.1, §17); left for the owner: one screenshot of a High-elf female beside a Human female |
+| [O9](#o9) | Height slider and facial bone sliders in character creation | `appearance.md` §6.2, §6.3 | Character-creation screen | partly answered (`appearance.md` §6.2–§6.5, §17: slider rules); left for the owner, as confirmation only: heights at the ends of the height controls, River-hobbit feet on the ground |
+| [O10](#o10) | Worn-item layering and equal-priority ties | `appearance.md` §4.6, §4.7 | Look (wardrobe preview) | partly answered (`appearance.md` §4.7, §17: the client's tie rule); left for the owner: items 1–8, mainly item 5 and whether the order of equipping matters |
+| [O11](#o11) | Updated-avatar option and default style files | `appearance.md` §3.3 | Options screen, look | answered from the client (`appearance.md` §3.3, §3.5, §17); optional glance at the options screen to confirm the default |
+| [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | partly answered (`appearance.md` §7.4, §17: where outfits come from); left for the owner: two visits to one figure (same look or not) |
+| [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | partly answered (`appearance.md` §5.6, §17: weapons, shields, ranged items); left for the owner: in-hand direction of long weapons (two side screenshots) and whether class items are ever visible |
+| [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | Look, `/loc`, short videos | partly answered (`skeleton-anim.md` §15.1: O14.1–O14.3, O14.5–O14.7 answered); left for the owner: O14.4 walking speeds by `/loc` timing; visual checks of O14.1, O14.2, O14.7 optional |
+| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority) |
+| [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still |
+| [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look |
+| [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O21, O22, O26 partly answered (2026-10-07); the others open (M4.5) |
+| [O28](#o28) | Audio and player music: area-music cross-fade, gaps, falloff, day/night and indoor beds, combat fade, ABC checks, live play, instance limit | `sound.md` §16, `script-runtime.md` §26, `abc-dialect.md` §11 and §17, `instruments.md` §16 | Listening, `/loc`, a recording of the client's output, small original ABC files | open (M6) |
 | [O39](#o39) | Screenshots of at least 10 native panels in the original client | `ui-layout.md` §17, `m5-visual.md` | Screenshots (private) | open (M5 criterion 2) |
 | [O40](#o40) | The 14 plugins of the usage census installed and run in Tessera | `plugin-api-usage.md` §9, `lua-plugin-api.md` | Plugin install, look | open (M5 criterion 4) |
 | [O41](#o41) | A published user skin in the original client versus Tessera | `skin-definition.md` | Look (optional) | open (M5 criterion 3, optional) |
@@ -63,18 +65,37 @@ marks the item **done** here.
 | [O47](#o47) | Owner-written nested-surface test plugin | decision 0015 (observation 4) | Test plugin, screenshot | open (M5) |
 | [O48](#o48) | Cursor during and after mouse-look; OS cursor size at scale 1.333; minimap marker edges | decision 0015 (observations 5–7) | Look | open (M5) |
 | [O49](#o49) | U1–U5 scripted UI measurement on the idle reference laptop | decision 0015 §6, decision 0010 | Measurement run | open (M5 criterion 7) |
+| [O70](#o70) | Player movement speeds and turn rate (test-server movement limits) | `test-server.md` §4.5, §8.3; `tessera-protocol.md` §8.3 | In-game `/loc`, stopwatch | open (M7) |
+| [O71](#o71) | How other players' characters move when watched (interpolation feel) | `tessera-protocol.md` §8.6 | Look, optional private video | open (M7) |
+| [O72](#o72) | Distance at which other player characters appear and disappear | `tessera-protocol.md` §9, `test-server.md` §8.2 | Second account or a friend, `/loc` | open (M7) |
+| [O73](#o73) | Range of local "say" chat (optional) | `test-server.md` §4.6, §9 | Two characters, `/loc` | open (M7, optional) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O14, O16; criterion 3 (worn and held
 items): O10, O13; the sandbox's static NPCs: O12, O17. Criterion 4 (performance) passed
 on the reference machine and needs no observation.
 
+M4.5 exit criteria that wait on these items ([ROADMAP M4.5 status](../ROADMAP.md#m4-5-status)):
+criterion 4 (walking on collision): O18, O19; criterion 6 (visual checklist): O20 (terrain,
+scenery and frill rows), O23 (lighting rows), O24 (water rows), O25 (frills), O26 (sky and
+fog rows), O27; the default-settings profile behind criteria 5 and 6: O21, O22.
 
 M5 exit criteria that wait on these items ([ROADMAP M5 status](../ROADMAP.md#m5-status)):
 criterion 2 (native panels): O39; criterion 3 (user skin, optional cross-check): O41;
 criterion 4 (third-party plugins): O40; criterion 7 (UI budgets): O49. O42–O48 settle OPEN
-behaviour of decisions 0014 and 0015 and do not block the criteria. (O18–O27 are the M4.5
-items, recorded on that milestone's branch.)
+behaviour of decisions 0014 and 0015 and do not block the criteria.
+
+M6 exit criteria that wait on these items ([ROADMAP M6 status](../ROADMAP.md#m6-status)):
+criterion 2 (area music cross-fades at area borders): O28.1 (row O1 of
+[`m6-audio.md`](m6-audio.md)). The other O28 rows check facts the M6 specs leave OPEN or
+mark as owner observations; criteria 1, 3 and 4 need no observation in the original client
+(criterion 4 still needs an idle re-measurement on the reference machine, decision 0010).
+
+M7 items O70–O73 tune defaults of Tessera's own protocol and test server so that movement
+feels like the original; no M7 exit criterion waits on them ([ROADMAP M7
+status](../ROADMAP.md#m7-status)). They are numbered from O70 because other milestone
+branches added items at the same time (M4.5 uses O18–O27, M6 uses O28); they keep their
+numbers.
 
 ---
 
@@ -92,6 +113,21 @@ the numeric `/loc` fields and the map-coordinate string under the minimap; `= wa
 **Why:** these readings check the height scale against `oz`, the `/loc` landcell and
 offset convention, the map-coordinate formula and its rounding, the formula's use outside
 region 1, and the block-map area assignment (that checklist's §3).
+
+**2026-10-07 (from the client):** `coordinates.md` §4, §8–§9 and §14 now take from the
+client the map-coordinate formula and its per-region constants, the rounding (exact ties
+round to even), the letters, the `/loc` landcell and offset rules, the meaning of `r`, and
+which block a point exactly on a block edge belongs to. Those columns are now only a
+confirmation. Still for the owner:
+
+- **Avatar height above the ground:** the `oz` column of the rows you can reach, on flat open
+  ground. The client code that keeps the avatar on the terrain was not traced, so only these
+  readings show whether `oz` sits exactly on the terrain or at a fixed distance above it.
+- **Area names:** the area-name column (`= walker` / `≠ walker` / `seen`) for every row you
+  can reach.
+- **Indoors (new):** stand inside one building or dungeon and note whether any panel shows
+  your map coordinates there, where it shows them, and what `/loc` prints (numbers and
+  layout only, no names). `coordinates.md` §8.3 OPEN.
 
 <a id="o2"></a>
 ## O2. Bearing of placed objects versus the `/loc` heading
@@ -127,6 +163,12 @@ shows both sets), and whether it differs between characters at different stages 
 story.
 
 **Record:** "layer 1 set present" / "layer 2 set present", and the character's level band.
+
+**2026-10-07 (from the client):** answered for every kind of placed object, now including
+the drawn Physics objects (`entity-descriptor.md` §4.5.1, §9.3): objects whose lists name
+layer 1 or layer 2 are both shown in the shared world, and objects whose lists name only
+named layers are hidden until the server makes such a layer active. No observation is
+needed; the spot (region 1, block 0xA15B) stays available as an optional confirmation.
 
 <a id="o4"></a>
 ## O4. One-triangle placeholder parts
@@ -207,6 +249,10 @@ case. Never touch or record login tickets or account options.
 
 **Record:** accepted / ignored / error, for each form.
 
+**2026-10-07 (from the client):** still answered by `install-layout.md` §10.1, which now also
+settles which of repeated options wins (the last) and how `--debug` reads its number. No
+launch test is needed for O7.
+
 <a id="o8"></a>
 ## O8. Standing heights per species and sex (M4)
 
@@ -230,6 +276,22 @@ female stands about 3 % or about 5 % taller than a Human female.
 
 **2026-10-05 (informal):** the owner looked at characters in Tessera on the laptop and found
 their heights fine by eye. No ratios were measured, so the record above is still wanted.
+
+**2026-10-07 (from the client, partly):** `appearance.md` §6.1 and §17 now state that template
+`vec3` values multiply along the template chain and that the render scale is a per-axis
+product of the entity's `Render_AdjustableScale` and other object factors. Whether the
+template `vec3` is one of those factors was not traced. Only that one question is left, and
+one screenshot pair settles it:
+
+- **What to do (reduced):** a High-elf female beside a Human female, default height slider,
+  side by side on flat ground, facing the camera. Measure the head tops in pixels.
+- **Expected:** Human female about 1.77 m. High-elf female about **1.84 m** (ratio about
+  1.04) if the scales multiply, about **1.82 m** (ratio about 1.03) if the template value
+  does not enter. If a High-elf male and a Human male are at hand, that pair shows the same
+  thing more clearly: about 1.90 m against 1.81 m (ratio about 1.05) if they multiply, about
+  the same height (ratio about 1.00) if not.
+- **Record:** the ratio (to two decimals) for the pair or pairs taken. The other pairs above
+  are welcome as a confirmation but no longer needed.
 
 <a id="o9"></a>
 ## O9. Height slider and facial bone sliders (M4)
@@ -261,6 +323,22 @@ the default height slider, in idle, walk and run. Tessera's figures float about 
 the two hidden leg-scale sliders are applied as `appearance.md` §6.3 decides (rows B37–B42
 of [`m4-visual.md`](m4-visual.md), note 1); this observation and the slider frame settle it.
 
+**2026-10-07 (from the client, partly):** the rules are answered (`appearance.md` §6.2–§6.5,
+§17). The left end of a slider gives the stored minimum (the smaller value, for example the
+narrower nose bridge); eye separation moves both eyes symmetrically; the default value
+(0x80) lies a hair off the slider's centre value (0.502 of the range instead of 0.5);
+sliders deform the mesh once about each bone's own joint, not the animated pose. The slider
+frame question above is settled, and steps 2 and 3 need no observation (they remain
+welcome as a confirmation). Still for the owner, as confirmation only:
+
+- **Step 1:** the head-top heights at the left end, centre and right end of the height
+  control for a Human male and a River-hobbit (both controls if shown), compared with
+  `appearance.md` §6.5.
+- **River-hobbit feet:** whether they rest on the ground at the default height slider in
+  idle, walk and run (Tessera computes them within 1 cm of the ground in idle; walking is
+  the open part).
+- Step 4 stays optional.
+
 <a id="o10"></a>
 ## O10. Worn-item layering and ties (M4)
 
@@ -290,6 +368,16 @@ wardrobe preview or the dressing-room view is enough).
 equipped, and whether the order of equipping matters. For 7, own style / generic / bald. For
 8, `same` / `different` per row (what differs, in your own words).
 
+**2026-10-07 (from the client, partly):** `appearance.md` §4.7 and §17 settle the client's
+rule: on equal priority the part applied later wins, in a fixed order of records and keys,
+and the cases of §4.6 follow from the priorities. The order between **worn items** comes to
+the original client from its server and is not in the client, so the owner is still
+needed:
+
+- **Item 5** (battle gauntlets or gloves with a chest piece that hides gloves) matters most:
+  which hands show, and whether the order of equipping changes it.
+- Items 1–4 and 6–8 remain useful as a confirmation of the priority rule.
+
 <a id="o11"></a>
 ## O11. Updated-avatar option (M4)
 
@@ -303,6 +391,12 @@ record it). Note its default state. If convenient, toggle it and see whether exi
 characters' heads or hair change.
 
 **Record:** setting present yes/no; default on/off; whether toggling changes faces or hair.
+
+**2026-10-07 (from the client):** answered (`appearance.md` §3.3, §3.5, §17). The setting is a
+graphics option, on by default. With it on, the client uses the toggle (newer) style
+records and the newer face compositor; turning it off rebuilds the figures with the older
+records. Character creation offers the check box only for Hobbit and Dwarf. Nothing is
+required; a glance at the options screen to confirm the default (on) is welcome.
 
 <a id="o12"></a>
 ## O12. Random-appearance NPC figures (M4)
@@ -323,6 +417,18 @@ look again. Do the same at one more figure of the same kind nearby.
 **Record:** "same look both visits" or "different look"; whether the two nearby figures of
 the same kind look alike; whether the figure wears more than a plain default outfit (for
 example a hat, a cloak, a distinct shirt and trousers).
+
+**2026-10-07 (from the data and the client, partly):** where the outfits come from is answered
+(`appearance.md` §7.4, §17): the figures' start-up scripts pick one random piece per group,
+and 316 of the 318 placed random-appearance types have outfits. So these figures wear more
+than a default outfit. Whether the original picks per object (same look on every visit) or
+anew each time was not traced; Tessera keeps one look per figure (seeded from the instance).
+Still for the owner:
+
+- **What to do (reduced):** visit one such figure (the N5 figure is fine) twice, logging out
+  and back in or on another day.
+- **Record:** "same look both visits" or "different look". The second nearby figure and the
+  outfit description are now optional.
 
 <a id="o13"></a>
 ## O13. Where held items rest (M4)
@@ -347,6 +453,18 @@ asks which is meant, [`m4-visual.md`](m4-visual.md) note 3). Rows H1–H25 of
 back straight, in hand, hidden) and combat place (right hand, left hand, forearm, both
 hands); and per H row `same` / `different` from Tessera, wielded and stowed.
 
+**2026-10-07 (from the data and the client, partly):** answered for weapons, shields and
+ranged items (`appearance.md` §5.6, §17): stowed and wielded locations, offsets, rotations
+and per-species scales come from placement scripts by equipment category. Class items and
+instruments have no placement script (§5.3); instruments appear while they are played.
+Still for the owner:
+
+- **In-hand direction:** one side-view screenshot of a stowed staff and one of a drawn sword
+  (does the long weapon point along the line of sight or along the forearm, and does the
+  stowed staff lie as Tessera shows it).
+- **Class items:** whether a class item is ever visible on the figure (yes/no, and when).
+- The per-item table and the H rows above remain useful as a confirmation.
+
 <a id="o14"></a>
 ## O14. Animation playback (M4)
 
@@ -362,6 +480,25 @@ hands); and per H row `same` / `different` from Tessera, wielded and stowed.
 | O14.6 | Runtime cloth on capes and skirts | §13 | Stand still in wind, then turn quickly on the spot | Does the cape swing on its own, or only follow the animation? |
 | O14.7 | Turning in place | `script-table.md` §8 (turn branches) | Turn a standing character slowly with the keyboard, then quickly | Does a turn animation play (feet step), or does the body rotate rigidly? |
 
+**2026-10-07 (from the client, partly):** `skeleton-anim.md` §15.1 gives the status per row.
+
+- **Answered, no observation needed:** O14.3 (the turn comes from the movement system, not
+  from the clips), O14.5 (children grow too, but their joints stay where the unscaled parent
+  puts them), O14.6 (there is no cloth: capes and skirts move only with their clips). The
+  clip crop is answered too (`havok-data.md` §2.3).
+- **Answered, a visual check is welcome:** O14.1 (linear blending; walk ↔ run is a 0.2 s
+  cross-fade; idle ↔ walk and idle ↔ run follow the player's movement ramp, about 0.13 s
+  running and 0.25 s walking, so about 8 or 15 frames at 60 fps; no pop), O14.2 (legs keep
+  running during an attack while moving; a standing attack moves the whole body), O14.7 (a
+  standing turn plays stepping turn clips while the body rotates).
+- **Still for the owner, O14.4:** the running speeds are now known from the data (forward
+  6.5 m/s, backward 3.25 m/s, strafe 5.0 m/s), but the walking speed depends on an input
+  value that was not traced. Do the 10 s `/loc` timing for **walk forward** (walk toggle on),
+  **walk backward** and **walk strafe**; run forward, backward and strafe only as a
+  confirmation. Note whether the feet slide (the client does not match the clip rate to the
+  speed, so some sliding is expected). This is the same measurement as O18 step 1; do it once
+  for both.
+
 <a id="o15"></a>
 ## O15. Skin, hair and eye colours; face layers (M4, frame capture, low priority)
 
@@ -376,6 +513,17 @@ find the shader constants that hold colours, and the textures bound.
 generated texture; whether the face texture is one composited image (generated at run time)
 or several layered textures; the same for hair (constant tint on a grey texture, or baked).
 
+**2026-10-07 (from the data and the client, partly):** the mechanism is answered
+(`appearance.md` §3.5, §17). The face is one texture composited at run time from the face
+layers and the character's colours; hair, beard and the skin surfaces are tinted through
+their dye colour, set from the hair and skin colours; a second graphics option, on by
+default, turns face compositing off. Colours are stored B, G, R, A (`property-system.md`
+§4.7). Still for the owner (low priority):
+
+- **What to do (reduced):** the same one frame capture of a face close up.
+- **Record:** which texture slot of the face-skin draw holds the composed face image. The
+  other questions above are now only a confirmation.
+
 <a id="o16"></a>
 ## O16. Which idle, walk and run clips play (M4)
 
@@ -387,12 +535,26 @@ says avatars do not have). [ROADMAP](../ROADMAP.md#m4) M4 criterion 2.
 `walk`, `run`); the inspector lists the chosen clip and the other candidates.
 
 **What to do:** for one character of each playable species and sex you can reach (new
-characters at the starting area are fine), stand still for about a minute, then walk and
-run in a straight line, and compare with the explorer's figure of the same species and sex.
+characters at the starting area are fine), stand still for about 5 minutes (was "about a
+minute"; see the note of 2026-10-07 below), then walk and run in a straight line, and
+compare with the explorer's figure of the same species and sex.
 
 **Record:** per species and sex: whether idle shows variants or fidgets (and roughly how
 often, for example "every 10–20 s"); for idle, walk and run, `same` / `different` from
 Tessera's clip (describe a difference in your own words, never by a name from the game).
+
+**2026-10-07 (from the data and the client, partly):** `script-table.md` §15.1.
+
+- **Fidgets:** avatars do fidget (§8.6). The predicted timing: the first pick comes after
+  about 3.6 minutes of standing still (idle, on the ground, out of combat, not emoting); it
+  is a fidget or a short pause; further picks follow about every 10 s while the character
+  stays idle. One minute is too short to see any, so **stand still for about 5 minutes** and
+  note when the first fidget comes and how often they follow. Still open in the spec:
+  whether something restarts the long first wait.
+- **Mood idles:** answered from the data; no observation needed.
+- **Which idle, walk and run clips play:** still for the owner. The data path is complete;
+  only the side-by-side look can say `same` or `different`. One character per species and
+  sex you can reach, as above.
 
 <a id="o17"></a>
 ## O17. Static NPCs at the N spots (M4)
@@ -417,6 +579,350 @@ metre, facing, pose such as sitting or standing, held item).
 their positions fine by eye. No `/loc` readings or facings were taken, so the record above
 is still wanted.
 
+**2026-10-07 (from the client, partly):** presence, position and facing are answered
+(`entity-descriptor.md` §9.4). The client places these figures like any other object, at
+their stored position and facing, without ground snapping; the expected facings of N1–N7
+are in that section's table. N1, N2, N3 and N5 are present in the shared world; N7 is
+present but is a hidden marker, so no figure is expected there; N4 and N6 sit on named
+content layers and appear only while the server makes their layer active. Still for the
+owner:
+
+- **N4 and N6:** whether each figure is there for your character (yes/no, and the
+  character's level band). This is server state, not client code.
+- **Look:** at each spot you reach, `same` / `different` from the walker's figure for pose,
+  dress and held item (governed by `appearance.md` and the animation specs).
+- The `/loc` numbers and the facing are now only a confirmation.
+
+---
+
+<a id="m4-5-summary"></a>
+<a id="m4-5-items"></a>
+## M4.5 items (world fidelity, added 2026-10-06)
+
+The spots, walks and rows these items refer to are in
+[`m4-5-visual.md`](m4-5-visual.md). Every item compares the original client at its default
+graphics settings (record any setting you changed) with the expected facts listed there.
+
+| ID | Question | Spec | Needs | Status |
+|---|---|---|---|---|
+| [O18](#o18) | Movement: jump, speeds, highest step, steepest slope, wading and swimming depth | `collision.md` §10–§12 (Q9, Q11), `water.md` §7.4 | In-game `/loc`, stopwatch, short video | open |
+| [O19](#o19) | Outcome of the 32 scripted walks in the original | `m4-5-visual.md` §2 | In-game `/loc`, look | open |
+| [O20](#o20) | Side-by-side look at the terrain, scenery and frill rows | `m4-5-visual.md` §4.1–§4.3 | Look, private screenshots | open |
+| [O21](#o21) | Game clock: time of day, day length, epoch | `environment.md` §6, §10.1, §11.1 | Clock in the UI or `/loc`, stopwatch | partly answered (`environment.md` §10.1, §11.1, §11.5: rate, date, night flag, day-type rule); left for the owner: two (in-game time, UTC) readings for the epoch, and the weather on several days |
+| [O22](#o22) | Default draw distances: landscape extent, object pop-in, fog clipping | `walker.md` §11.3–§11.4, `mesh.md` §8, `environment.md` §11.7 | Look, `/loc` | partly answered (`environment.md` §10.1, §11.7: fog-distance limits; the distance rules were already from the client); left for the owner: steps 1–6 as a visual check |
+| [O23](#o23) | Sun shadows and point lights | `lighting.md` §8–§9, `m4-5-visual.md` §4.6 | Look at a set time, frame capture optional | open |
+| [O24](#o24) | Water look: surface, lava, placed water, distant water | `water.md` §8–§9, `m4-5-visual.md` §4.4 | Look, frame capture optional | open |
+| [O25](#o25) | Frills: radius, fade, density, sway, terrain tint | `scenery.md` §8.3–§8.4 | Look, short video | open |
+| [O26](#o26) | Sky and fog at four times of day; the day type; interior fog | `environment.md` §10.1, §11.2–§12, `lighting.md` §10 | Look at set times | partly answered (`environment.md` §10.1: day-type rule, interior fog rules, sun and moon path); left for the owner: the Y1–Y4 look at set times (after O21), sun and moon size, fog on the sky |
+| [O27](#o27) | Terrain near and far bands, and the seam between them | `terrain-texturing.md` §12 | Look, short video | open |
+
+<a id="o18"></a>
+## O18. Movement measurements (M4.5)
+
+**Spec:** `collision.md` §10.3 (movement records), §11 (layering, walkable 45°), §12.3
+(Tessera's controller, built where the original's integration is OPEN, Q9 and Q11);
+`water.md` §7.4 (Tessera's wade/swim rule, OPEN in the original). Tessera's values for a
+Human male: run 6.5 m/s, walk 5 m/s, backward 3.25 m/s, strafe 5 m/s, swim 3.2 m/s; step-up
+0.5 m; jump about 0.9 m high and 0.7 s in the air (a Tessera Decision); wading until the
+water surface is 1.42 m above the feet, swimming beyond.
+
+**First, see ours:** `tessera-client --walk-path` with walks ST1, SL1 and WA1 of
+`m4-5-visual.md` §2.3, and `--spawn 1,161,151,127.81,89.59` (walk WL1's start) for open
+ground.
+
+**What to do** (a Human male character, no mount, no speed buffs; flat open ground such as
+the start of walk WL1):
+
+1. **Speeds.** Type `/loc`, hold one movement key for a timed 10 s, type `/loc` again; once
+   each for run forward, walk forward (walk toggle on), backward, strafe left, and swimming
+   forward in deep water (WA1, after the swim point). If a character of another species is
+   at hand, repeat run and walk with it and note whether the speeds differ.
+2. **Jump.** Jump on flat ground next to a wall with known height (any SED of the walk
+   table) and film it from the side at 60 fps; or jump onto ever higher steps until it
+   fails. Count the frames from take-off to landing for the airtime.
+3. **Highest step.** At ST1–ST3 walk up the platform steps; then find a ledge you cannot
+   walk onto without jumping and one you can, and type `/loc` on the ground before each and
+   on top (the difference in `oz` is the step height).
+4. **Steepest slope.** At SL1–SL3 run straight uphill: note whether the character climbs,
+   stops or slides back, and type `/loc` at the highest point reached.
+5. **Wading and swimming.** At WA1–WA4 walk slowly into the water and type `/loc` at the
+   moment the swimming animation starts.
+
+**Record:** metres per second per gait (one decimal); jump height (to 0.1 m) and airtime
+(to 0.1 s); the `oz` values of step 3; for each SL walk the highest `oz` and whether the
+character slid; for each WA walk the `/loc` where swimming started (compare with the
+`swim=` point of the row; the depth there is the original's swim depth).
+
+**2026-10-07 (note):** step 1 overlaps O14.4. `skeleton-anim.md` §7.4 now takes the running
+speeds from the data (they match Tessera's values above); the walking speed depends on an
+input value that was not traced, so the walking timings are the ones that matter. Steps
+2–5 are unchanged and still open.
+
+<a id="o19"></a>
+## O19. Scripted walks in the original (M4.5)
+
+**Spec:** `m4-5-visual.md` §2.3 (32 walks with expected outcomes) and §2.2 (pass
+conditions).
+
+**First, see ours:** `tessera-client --walk-path <id>` for any row (the table form of the
+checklist is accepted directly).
+
+**What to do:** for every walk you can reach (`n/a` otherwise; interiors IN1–IN4 lie in
+instanced spaces), go to the start (`loc` column), face the heading, and do what the
+`inputs` column says by hand (hold forward, or walk to the listed end point). Type `/loc`
+at the end.
+
+**Record:** per walk: the final `/loc` numbers (no server name, no time stamp); `blocked`
+/ `reached` / `slid back` / `wading then swimming` in your own words; for WL, UB and GN
+whether the character stopped at the object (and roughly how far from it, that is how
+deep the body seems to sink into the wall or how wide a gap it keeps); for UB whether
+anything is visible there; for GN whether the tree or rock is there at all (it is
+generated from the data, so its absence would mean a generation difference).
+
+<a id="o20"></a>
+## O20. Terrain, scenery and frill rows side by side (M4.5)
+
+**Spec:** `m4-5-visual.md` §4.1 (terrain layers, T1–T16), §4.2 (generated scenery,
+S1–S11), §4.3 (frills, F1–F6).
+
+**First, see ours:** `tessera-client --screenshot ours.png --spawn R,X,Y,x,y --heading H
+--pitch P --fly` with each row's eye; the explorer's terrain and scenery views list the
+layer stack and the generated objects.
+
+**What to do:** stand at each row's eye position in the original (time of day around
+noon), look in the row's direction, and compare with Tessera's screenshot of the same
+row. For S rows count the trees and rocks in view; for T rows look at the ground texture
+under the target (roads, snow, paving, normal-mapped relief, highlights); for F rows look
+at the grass and ground cover near the target.
+
+**Record:** per row `same` / `different` (pass / fail); a difference in your own words (for
+example "road edge softer", "extra rock at the left", "grass sparser"). Screenshots stay
+private. The other rows of `m4-5-visual.md` are compared the same way under O24 (water,
+W1–W9), O26 (sky and fog, Y1–Y5) and O23 (lighting, L1–L7), so that together these items
+give a pass or fail for every row of criterion 6.
+
+<a id="o21"></a>
+## O21. Game clock and epoch (M4.5)
+
+**Spec:** `environment.md` §6 (day length 11,160 s, 360 days per year, zero offset
+3,600 s, zero year 34) and §11.1 (the clock); the epoch of the clock is OPEN, so Tessera's
+clock has a settable start. The `/loc` reply names the game time (game text; record only
+numbers).
+
+**What to do:**
+
+1. Note the in-game time the client shows (clock or the `/loc` sentence, or the sun's
+   position if nothing else shows it) and the real date and time (UTC), twice, at least an
+   hour apart.
+2. Note the in-game date if the client shows one (day of the month, month number, year
+   number, as numbers only).
+3. If possible, note the real time at which dusk visibly starts (the light turns orange)
+   and at which night starts.
+4. Day type: at one fixed spot (row Y1), note the weather (clear, overcast, rain, fog) on
+   several in-game days, together with the in-game date of each (see also O26).
+
+**Record:** the pairs (in-game time, UTC) with the date; the in-game date numbers. From
+two pairs the spec writer derives the rate (expected: one game day per 11,160 s, 3.1 h) and
+the epoch.
+
+**2026-10-07 (from the client, partly):** `environment.md` §10.1, §11.1 and §11.5.
+
+- **Answered:** the rate (one game day per 11,160 real seconds at the default rate), the
+  360-day year of 12 thirty-day months and the date formulas. There is no single dusk event:
+  light and fog follow the time-of-day keyframes, and the night flag switches on at time of
+  day 0.8 and off at 0.25. The day type is computed by the client at each game-day change
+  by a fixed rule (§11.5).
+- **Not in the client:** the epoch. The client's clock has no wall-clock start of its own;
+  it is set from outside the game-time code (probably the connection layer, which this
+  project does not analyse). So the owner is still needed.
+- **What to do (reduced):** step 1, two (in-game time, UTC) readings at least an hour apart,
+  with the real date. Step 2 (the in-game date numbers) helps check the year and month.
+  Step 3 is now optional: once the epoch is known, the night times follow from it. Step 4
+  (the weather at row Y1 on several in-game days, with each in-game date) checks the
+  day-type rule against the live game, which also depends on the server; do it if
+  convenient, together with O26.
+
+<a id="o22"></a>
+## O22. Default draw distances (M4.5)
+
+**Spec:** `walker.md` §11.3 (landscape extent 2,080 m at the built-in High setting; the
+global limit *G* is the fog far distance when that is shorter), §11.4 (object distances by
+LOD class, 1.5 s fades), §11.8 (default profile).
+
+**What to do** (default graphics settings; record them):
+
+1. At perf spot P5 (`m4-5-visual.md` §3), look along heading 190: is the sea visible out to
+   the horizon, and where does the landscape end?
+2. Walk slowly toward a lone building from 400 m away (any WL row's building) and note the
+   distance (from `/loc`) at which it appears, and whether it fades in or pops.
+3. Do the same with a small object (a barrel or crate) and with a tree.
+4. At night in the town of row L2 (fog far 300 m in the data), look along a long street:
+   do buildings beyond about 300 m disappear?
+5. Do the same as in 2 with another character (an NPC or another player): the distance at
+   which it appears and finishes fading in.
+6. How far grass and other frills reach and how dense they look (details under O25).
+
+**Record:** the graphics preset in use; distances in metres (to 10 m); fade or pop; for 4,
+yes/no and the distance; the farthest visible landscape (from 1).
+
+**2026-10-07 (from the client, partly):** the distance rules were already from the client
+(`walker.md` §11.3–§11.4, `mesh.md` §8.5–§8.7); `environment.md` §10.1 and §11.7 now add
+that the outdoor fog far distance, which can shorten every draw distance, never exceeds
+10,000 and never falls below 20 (in the same distance units as the 300 m of step 4). So steps 1–6 now check Tessera's picture against
+predicted values rather than discover them: do them as described, as a visual check.
+Step 4 (buildings vanishing at the fog distance at night) is the one this revision
+touches.
+
+<a id="o23"></a>
+## O23. Sun shadows and point lights (M4.5)
+
+**Spec:** `lighting.md` §8.1 (sun from the day description), §8.3 (point lights and their
+attenuation), §9 (sun shadows; colour, cascades and fade OPEN); `m4-5-visual.md` §4.6.
+
+**What to do:**
+
+1. Row L1 around noon: note the direction the barn's shadow points (compass) and roughly
+   how far it reaches from the wall; the shadow's colour (black, blue-grey, tinted);
+   whether the shadow edge is sharp or soft; at what distance from the camera shadows stop
+   being drawn, and whether they fade out or end at a line.
+2. Row L2 at night: are the lamps lit; do they light the walls and the ground around them;
+   roughly how far does the light reach (the data says range 10 m); is the colour orange?
+3. Rows L3 and L4: do the fire and the crystals glow (bright regardless of the darkness,
+   with a halo or bloom)?
+4. Optional frame capture at L1: the shadow-map size and cascade count, and the shadow
+   colour constants (`lighting.md` §9 OPEN).
+
+**Record:** compass bearing (±10°) and length (±5 m) of the shadow; sharp/soft; shadow
+distance; per lamp question yes/no and the reach; glow yes/no and halo yes/no; capture
+values if taken.
+
+<a id="o24"></a>
+## O24. Water look (M4.5)
+
+**Spec:** `water.md` §8 (drawing water; reflection, flow, foam and depth OPEN), §9
+(distant water), §7.3 (placed water); `m4-5-visual.md` §4.4 rows W1–W9.
+
+**What to do:** at each W row (daytime), look at the water and note: colour and
+transparency (can you see the bed?), reflections (sky, shore), waves or flow direction,
+foam at the shore, and any edge where two water heights meet (W6). At W7 note whether lava
+glows and moves. At W8 note whether the pool surface is see-through. At W9 note whether
+distant water looks like the near water. Optionally dive under at W4 and note the
+under-water look (fog colour, distance).
+
+**Record:** per row a few words per aspect; `n/a` where not reachable.
+
+<a id="o25"></a>
+## O25. Frills (M4.5)
+
+**Spec:** `scenery.md` §8.3–§8.4 (frill radius 97 m at the default level 2, fade from
+67 m, reduction from 40 m, fade-in 1.5 s, terrain tint; shader formulas OPEN);
+`m4-5-visual.md` §4.3 and walks FR1–FR3.
+
+**What to do:** at rows F2 and F4 (dense grass), stand still and look along the ground:
+estimate where grass ends and whether it fades out or shrinks; walk forward and watch new
+grass appear (fade or pop); watch it in wind (does it sway, how much). Compare the colour
+of grass with the ground under it (tinted toward the ground?). At walk FR1 note whether
+the character walks through the ground cover without stopping.
+
+**Record:** end distance (to 10 m), fade/shrink/pop, sway yes/no and strength in your own
+words, tint yes/no; FR walks pass/fail.
+
+<a id="o26"></a>
+## O26. Sky and fog; day type; interior fog (M4.5)
+
+**Spec:** `environment.md` §11.2 (the day type *D* is OPEN; Tessera starts with 2, which
+selects only the local default table, `m4-5-visual.md` §1.1 item 3), §11.3 (blending),
+§12 (sky); `lighting.md` §10 (fog); rows Y1–Y5.
+
+**What to do:** at rows Y1–Y4 (or any spot with the same sky key) at the four times of day
+of the rows (night 0.0, dawn 0.25, noon 0.5, dusk 0.78; use O21 to know when), look at the
+sky, the sun or moon (its path and apparent size), clouds and stars, the fog colour and the
+fog distance (where distant hills fade out). Do this under at least three sky keys
+(regions). On two different real days note whether the weather at Y1 differs (rain,
+overcast). At Y5 (IN1's dungeon) and in one cave, note the fog colour, its density and
+the distance at which walls fade.
+
+**Record:** per row: sky colour and fog colour in your own words, fog distance (to 50 m),
+sun/moon position (compass and height above the horizon); weather per day; interior fog
+distance and colour.
+
+**2026-10-07 (from the client, partly):** `environment.md` §10.1.
+
+- **Day type:** answered as a rule (§11.5): the client computes it at each game-day change.
+  The "Tessera starts with 2" above was the default sky key, not a day type (§11.2). The
+  weather on a given real day still depends on the epoch and on the server, so the weather
+  at Y1 on several days (shared with O21 step 4) remains a useful check.
+- **Interior fog (Y5 and a cave):** answered as rules (§7.2, §11.7); the colours and
+  distances are data. Optional confirmation only.
+- **Sun and moon path:** the rotation is answered (§11.4); their **apparent size** is still
+  open, so note it (for example compared with a nearby object or the screen width).
+- **Fog on the sky:** in dense fog the sky objects are not drawn at all; how lighter fog
+  tints the sky is open. Note whether the sky shows through heavy fog and whether it looks
+  tinted in light fog.
+- **Still for the owner:** the Y1–Y4 look at the four times of day, as described above.
+  Do O21 step 1 first: the real time at which to stand there follows from the epoch.
+
+<a id="o27"></a>
+## O27. Terrain near and far bands (M4.5)
+
+**Spec:** `terrain-texturing.md` §12 (distance bands and the near/far seam OPEN; Reported:
+full detail to about 14 blocks, medium to about 24, then distant imposters).
+
+**What to do:** at perf spot P5 and at row T3 (a high cliff top), look over a wide
+landscape: note the distance at which ground textures lose detail or change colour, whether
+a line or band is visible where they change, and whether it moves with the camera. A short
+video while walking forward helps. At rows T1–T16 also note how sharp road edges are,
+whether wet or rocky ground shows a specular sheen, and whether the landscape itself casts
+shadows onto the terrain (hills shading valleys).
+
+**Record:** distances (to 100 m) of each visible change; visible seam yes/no; moves with the
+camera yes/no; road edge sharp/soft; sheen yes/no per row; landscape shadow yes/no.
+
+---
+
+<a id="m6-items"></a>
+<a id="o28"></a>
+## O28. Audio and player music (M6)
+
+**Specs:** `sound.md` §16 (S-1 to S-5), `script-runtime.md` §26 (RT-1 to RT-5),
+`abc-dialect.md` §11 (OPEN on the commands) and §17 (OC1 to OC10), `instruments.md` §16
+(Q1, Q2, Q4, Q5, Q6). [ROADMAP](../ROADMAP.md#m6) M6 criterion 2 waits on O28.1.
+
+**First, hear ours:** device output is opt-in (decision 0019):
+`cargo run --release -p tessera-client --features audio-device -- --audio device --spawn
+<region>,<block x>,<block y>,<x>,<y>` (the walker's HUD shows the audio line). Player music:
+put the test file in the settings folder's `Music` folder and add
+`--music-command "/play <name>"` (repeatable; `/playstart`, `/playstop`, `/playlist`).
+
+**What to do:** in the original client, at places you choose (record them by `/loc` only,
+never by name), make the observations below. For ABC checks write each small test file
+yourself (original tunes only, as in the table of `abc-dialect.md` §17) and put it in the
+original client's `Music` folder. **Do not try digit runs of 128 characters or more** in an
+ABC file (`abc-dialect.md` §4.1: undefined behaviour in the original).
+
+| # | Question | Spec | What to do | Record |
+|---|---|---|---|---|
+| O28.1 | Area-border music change (S-1, RT-1; M6 criterion 2) | `sound.md` §10.5, `script-runtime.md` §6.6, §24.1 | Walk across an area border with music playing | Does the old track fade out over roughly 1–4 s while the new area's music starts at once (or a silence begins)? Are both audible for a moment? The border by `/loc` and the approximate fade length |
+| O28.2 | Crossing back and forth (RT-2) | `script-runtime.md` §6.6 | Cross a border and walk straight back within one track | Does the music restart (the track beginning again) each time? |
+| O28.3 | Silence between tracks (S-2) | `sound.md` §10.4 | Stand in one area for several tracks with a stopwatch | Gap lengths in seconds (expected 5–30 s) |
+| O28.4 | Positional falloff (S-3) | `sound.md` §6.2, §11 | Walk away from a positional emitter (waterfall, fire, torch), typing `/loc` at the emitter and where it falls silent | The distance in metres; whether loudness falls smoothly or steps |
+| O28.5 | Day/night and indoor variants (S-4) | `sound.md` §10.3.5, §10.7 | At one place compare the ambient bed and the reverb at day and at night, and outdoors versus inside a building or cave | Does each change? When: on entering, or at a time of day? |
+| O28.6 | Ogg played range (S-5) | `sound.md` §3.3.2 | Record the client's output while a short one-shot plays (ask the maintainer to name the sound info) | Its length in seconds, to compare with the spec's *M* and *N* |
+| O28.7 | Combat music fade (RT-3) | `sound.md` §10.6, `script-runtime.md` §4.4 | Enter and leave combat in an area with music; a recording of the client's output helps | Does area music fade out over about 3 s while combat music plays, and fade back in over about 8 s afterwards? Loudness at the end of the fade (about −52 dB below the track expected) |
+| O28.8 | Quest-dependent music (RT-4) | `script-runtime.md` §18 (OPEN-11) | In an area whose music depends on a quest, compare with the quest done and not done (the spec writer can name a place by `/loc`) | Same or different music |
+| O28.9 | Pacing of rapid ambient loops (RT-5) | `script-runtime.md` §10.4, §11.2 | Listen close to a dense emitter such as a fire | Any burst faster than about ten per second? |
+| O28.10 | ABC dialect checks OC1–OC10 | `abc-dialect.md` §17 | Put each OC file in `Music` and `/play` it | Per row: plays / refused (with the message, in your own words) / truncated, and the approximate timing |
+| O28.11 | ABC commands | `abc-dialect.md` §11 (OPEN) | `/play` a file with several parts and no part number; try `/playlist` with a filter and with songs in a sub-folder; time `/playstart` after a synced `/play` and a solo `/play` | Which part plays; the filter syntax and whether sub-folders are listed; the delay to the first note in both cases (about 0.7 s expected) |
+| O28.12 | Re-attack with a different volume | `abc-dialect.md` §9.3, `instruments.md` §15 (OC6) | Play a file that strikes the same pitch again with a changed `+dynamic+` mark | Does the re-struck note play or go silent? |
+| O28.13 | Live play and release (Q1) | `instruments.md` §5.1, §9.2 | Hold a sustained instrument's note key for 2 s and for 10 s, then release; compare live loudness with `+mf+` and `+ffff+` song notes; play live with the quantize option on and off against a metronome | A short (about 0.2 s) release fade yes/no; live loudness relative to the two song marks; whether quantize moves notes onto a grid, and its step |
+| O28.14 | Fast passages and the instance limit (Q2) | `instruments.md` §8.6 | Play a lute run of more than 10 notes within one second | Any dropped notes? |
+| O28.15 | Quantize and from-song flags (Q4) | `instruments.md` §5.8 | `/play` a horn part that uses the top C with the quantize option on | Is the top C missing? Do loudness marks have no effect? |
+| O28.16 | Several performers (Q6) | `instruments.md` §9.3, `sound.md` §6.6 | With several characters playing at once (a group, or several of your own clients) | Dropped notes once many voices sound? |
+| O28.17 | Handknells octave (Q5, optional) | `instruments.md` §7.4 | Compare one Handknells note against a reference tone (a tuner app) | The octave heard |
+
+---
+
+<a id="m5-items"></a>
 <a id="o39"></a>
 ## O39. Native panels in the original client (M5 criterion 2)
 
@@ -535,3 +1041,64 @@ The values recorded during M5 are indicative only (the machine was loaded).
 `m5-ui-budgets.md` at 3840 × 2160 and at the window size the compositor gives.
 
 **Record:** the two reports, added to `m5-ui-budgets.md`.
+
+---
+
+<a id="m7-items"></a>
+<a id="o70"></a>
+## O70. Player movement speeds and turn rate (M7)
+
+**Spec:** `test-server.md` §4.5 and §8.3 (movement validation and its tolerances),
+`tessera-protocol.md` §8.3, and the load tool's bot speeds (`test-server.md` §13.1). The specs
+currently use the walker's 2 m/s walk and 6 m/s run (`walker.md`). Overlaps with
+[O14](#o14) item O14.4 and [O18](#o18) step 1 (M4.5); one set of readings answers all three.
+
+**What to do:** on flat open ground, type `/loc`, move straight for a timed 10 s, type `/loc`
+again. Do this for walking forward, running forward, walking backward, and strafing if the
+client has a strafe move. Then turn in place with the keyboard for one full turn (360°) and
+time it.
+
+**Record:** metres per second per gait (forward walk, forward run, backward, strafe or "no
+strafe"); degrees per second for the keyboard turn; whether the speeds seem to differ by
+species (if so, per species).
+
+<a id="o71"></a>
+## O71. How other players' characters move when watched (M7)
+
+**Spec:** `tessera-protocol.md` §8.6 (snapshot interpolation and its recommended delay, now
+about 167 ms at the default rates) and the client's remote-character placement
+(`walker.md` §10.8).
+
+**What to do:** watch another player's character for a few minutes in a busy place: while it
+walks, runs, stops, turns sharply and turns on the spot. An informal look is enough; a short
+video may be kept privately, never in the repository.
+
+**Record:** yes/no answers: does it trail its true position smoothly, or snap after stopping
+or turning; does it turn on the spot with a stepping animation or rotate rigidly; does it
+slide or stutter at a normal latency. Rough delays in milliseconds where you can judge them.
+
+<a id="o72"></a>
+## O72. Distance at which other player characters appear and disappear (M7)
+
+**Spec:** `tessera-protocol.md` §9 (interest management by landblock: radius 2 blocks with a
+one-block margin before an entity leaves) and `test-server.md` §8.2.
+
+**What to do:** in open terrain, with a second account or a friend, stand still and let the
+other character walk straight away from you until it vanishes, then walk back until it
+appears again. Take `/loc` readings of both characters at the moment it vanishes and at the
+moment it appears.
+
+**Record:** the distance in metres (or landblocks, from the two `/loc` readings) for
+disappearing and for appearing again; whether the two differ (hysteresis).
+
+<a id="o73"></a>
+## O73. Range of local "say" chat (M7, optional)
+
+**Spec:** `test-server.md` §4.6 (`[chat] say_range_m`) and §9 (chat relay).
+
+**What to do:** with two characters, one speaks on the local "say" channel while the other
+moves away in steps; note where the lines stop arriving. Repeat for an emote if emote text
+seems to have its own range.
+
+**Record:** metres only (from `/loc`), for say and, if different, for emote text. **Do not
+record any chat text.**

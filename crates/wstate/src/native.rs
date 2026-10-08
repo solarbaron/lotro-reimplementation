@@ -266,6 +266,49 @@ pub struct QuestTargetSizes {
     pub objectives: Vec<TSize>,
 }
 
+/// One inner element of a [`NestedStringTable`]: a key and its string triples.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NestedInner {
+    /// Key (`player-character.md` §8.4: the right length, |*S*| + 1).
+    pub key: u32,
+    /// Triples (*S*, *L′*, *R′* in `player-character.md` §8.4).
+    pub triples: Vec<[Utf16String; 3]>,
+}
+
+/// One string group of an outer element of a [`NestedStringTable`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NestedGroup {
+    /// The group's text (*E*, trimmed, in `player-character.md` §8.4).
+    pub text: Utf16String,
+    /// Header of the inner table.
+    pub size: TSize,
+    /// Inner table, stored order.
+    pub inner: Vec<NestedInner>,
+}
+
+/// One outer element of a [`NestedStringTable`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NestedOuter {
+    /// Key (`player-character.md` §8.4: the left length, |*E*| + 1).
+    pub key: u32,
+    /// String groups, stored order.
+    pub groups: Vec<NestedGroup>,
+}
+
+/// `nested_string_table` (class 3053, `wstate.md` §5.4). Field meanings: the compiled
+/// phonetic-shift table of `player-character.md` §8.4.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NestedStringTable {
+    /// Header of the outer table.
+    pub size: TSize,
+    /// Outer table, stored order.
+    pub outer: Vec<NestedOuter>,
+    /// `list_a` (the distinct left lengths, descending, §8.4).
+    pub list_a: Vec<u32>,
+    /// `list_b` (the distinct right lengths, descending, §8.4).
+    pub list_b: Vec<u32>,
+}
+
 /// A decoded native object body.
 ///
 /// Container variants keep their TSize/small-set header so a writer could reproduce the
@@ -365,6 +408,8 @@ pub enum Native {
     TripleU32([u32; 3]),
     /// 3740 `u32` (Reported).
     U32(u32),
+    /// 3053 `nested_string_table`.
+    NestedStringTable(Box<NestedStringTable>),
 }
 
 /// Codec name of a native class index, or `None` if the class has no codec here.
@@ -406,6 +451,7 @@ pub fn codec_name(class: u32) -> Option<&'static str> {
         3103 => "vault",
         3461 => "triple_u32",
         3740 => "u32",
+        3053 => "nested_string_table",
         _ => return None,
     })
 }
@@ -481,6 +527,24 @@ impl Native {
     pub fn as_ref_map(&self) -> Option<&[(u32, Ref)]> {
         match self {
             Self::RefMapU32(_, v) | Self::RefMultiMapU32(_, v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The table, for `nested_string_table` bodies.
+    #[must_use]
+    pub fn as_nested_string_table(&self) -> Option<&NestedStringTable> {
+        match self {
+            Self::NestedStringTable(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The elements, for `array_u64` bodies.
+    #[must_use]
+    pub fn as_array_u64(&self) -> Option<&[u64]> {
+        match self {
+            Self::ArrayU64(v) => Some(v),
             _ => None,
         }
     }
@@ -770,6 +834,7 @@ pub(crate) fn read_native<S: PropertySchema + ?Sized>(
         }
         3461 => Native::TripleU32([u32_(r)?, u32_(r)?, u32_(r)?]),
         3740 => Native::U32(u32_(r)?),
+        3053 => Native::NestedStringTable(nested_string_table(r)?),
         _ => return Ok(NativeRead::Unknown),
     };
     Ok(NativeRead::Body(body))
@@ -919,6 +984,42 @@ fn filter(r: &mut Reader<'_>) -> Result<(u8, Vec<u32>)> {
         words.push(u32_(r)?);
     }
     Ok((flags, words))
+}
+
+/// Class 3053 (`wstate.md` §5.4): outer hashed table of (u32 key, u32 count, count ×
+/// (UTF-16 string, inner hashed table of (u32 key, u32 count, count × three UTF-16
+/// strings))), then two counted u32 lists.
+fn nested_string_table(r: &mut Reader<'_>) -> Result<Box<NestedStringTable>> {
+    charge(r, std::mem::size_of::<NestedStringTable>(), WHAT)?;
+    // Smallest outer element: key + count; group: empty string (1) + TSize (2); inner
+    // element: key + count; triple: three empty strings.
+    let (size, outer) = hashed(r, 8, |r| {
+        let key = u32_(r)?;
+        let groups = counted(r, 3, WHAT, |r| {
+            let text = r.utf16_string().ctx(WHAT)?;
+            let (size, inner) = hashed(r, 8, |r| {
+                let key = u32_(r)?;
+                let triples = counted(r, 3, WHAT, |r| {
+                    Ok([
+                        r.utf16_string().ctx(WHAT)?,
+                        r.utf16_string().ctx(WHAT)?,
+                        r.utf16_string().ctx(WHAT)?,
+                    ])
+                })?;
+                Ok(NestedInner { key, triples })
+            })?;
+            Ok(NestedGroup { text, size, inner })
+        })?;
+        Ok(NestedOuter { key, groups })
+    })?;
+    let list_a = counted(r, 4, WHAT, u32_)?;
+    let list_b = counted(r, 4, WHAT, u32_)?;
+    Ok(Box::new(NestedStringTable {
+        size,
+        outer,
+        list_a,
+        list_b,
+    }))
 }
 
 fn quest_targets(r: &mut Reader<'_>) -> Result<Box<QuestTargets>> {

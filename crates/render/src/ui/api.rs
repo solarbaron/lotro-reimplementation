@@ -157,6 +157,8 @@ impl Renderer<'_> {
             sampler,
             width,
             height,
+            mip_levels: 1,
+            srgb: UI_TEXTURE_FORMAT.is_srgb(),
             target_view: None,
         })?;
         let bytes = u64::from(width) * u64::from(height) * 4;
@@ -448,10 +450,12 @@ impl Pass {
     /// and compose it with [`super::UiSource::Premultiplied`].
     ///
     /// Every built-in pipeline blends alpha that way (or not at all, writing
-    /// alpha 1), so the option only sets the clear. A unit test of this
-    /// module fails when a pipeline with another blend state is added, so
-    /// that this option is extended before such a pipeline can draw a
-    /// portrait.
+    /// alpha 1), except the fixed blend states of the lit, instanced and sky
+    /// pipelines (`FixedBlend`: additive, modulate, min, max), which keep the
+    /// destination alpha (render.md §6.10 OPEN); the option only sets the
+    /// clear. A unit test of this module fails when a pipeline with another
+    /// blend state is added, so that this option is extended before such a
+    /// pipeline can draw a portrait.
     pub fn premultiplied_alpha(&mut self) -> &mut Self {
         self.clear([0.0; 4])
     }
@@ -508,7 +512,22 @@ mod tests {
         let mut bad = Vec::new();
         for path in files.iter().filter(|p| !p.starts_with(&ui)) {
             let text = std::fs::read_to_string(path).unwrap_or_default();
+            // The one known exception (render.md §6.10 OPEN): `FixedBlend::blend_state`
+            // in material.rs, which keeps the destination alpha.
+            let fixed_blend = path.ends_with("material.rs");
+            let mut in_fixed = false;
             for (n, line) in text.lines().enumerate() {
+                if fixed_blend
+                    && line.contains("pub(crate) fn blend_state(self) -> wgpu::BlendState")
+                {
+                    in_fixed = true;
+                }
+                if in_fixed {
+                    if line == "    }" {
+                        in_fixed = false;
+                    }
+                    continue;
+                }
                 let code = line.split("//").next().unwrap_or("");
                 let mut rest = code;
                 while let Some(at) = rest.find("BlendState") {

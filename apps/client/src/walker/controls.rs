@@ -4,6 +4,14 @@
 //! `keymap.md`), become a move intent and look changes, and drive the free-fly or the
 //! walk controller at a fixed step (`keymap.md` §9).
 //!
+//! Walk mode has two controllers. With the world's collision sets (ROADMAP M4.5, decision
+//! 0013) and once the mover is loaded ([`Controls::enable_physics`]), the avatar moves with
+//! the `tessera-physics` character controller on its own 1/60 s accumulator
+//! ([`PhysicsWalker`]): walls, objects and ceilings block it, it climbs steps, slides,
+//! jumps, wades and swims, and enters interior cells. Without them (the collision system
+//! switched off, or before the mover is loaded) the `tessera-input` walk controller follows
+//! terrain heights on the 30 Hz step, as in M3–M4.
+//!
 //! Controller positions are f32 relative to a **controller origin** (f64 region-global)
 //! that is moved only when the viewer gets more than [`REBASE_DISTANCE`] away from it,
 //! so f32 precision stays sub-millimetre without disturbing motion every landblock.
@@ -20,12 +28,49 @@ use tessera_input::{
 use tessera_render::glam::Vec3;
 use tessera_world::WorldPos;
 
+use super::movement::setup::MoverSetup;
+use super::movement::{CollisionWorld, MoveInput, PhysicsWalker};
+
 /// Distance from the controller origin that triggers a rebase.
 pub const REBASE_DISTANCE: f32 = 8_000.0;
 /// Eye height above the feet in walk mode.
 pub const EYE_HEIGHT: f32 = 1.7;
 /// Default third-person camera distance.
 pub const DEFAULT_ZOOM: f32 = 7.0;
+/// How far the walk-mode third-person camera is kept above the terrain (`walker.md` §5).
+pub const EYE_ABOVE_TERRAIN: f64 = 0.8;
+
+/// The walk-mode third-person camera kept above the terrain (`walker.md` §5: "kept 0.8 m
+/// above the terrain and then aimed at the head"): an `eye` less than
+/// [`EYE_ABOVE_TERRAIN`] above `ground` (the terrain height under it) is raised to it and
+/// turned towards the head of the avatar standing at `feet`. Only the walk-mode camera
+/// is kept: callers pass `feet` only in walk mode with the camera outside every cell
+/// (`walker.md` §14.12 (a)); without `feet` (free-fly, scripted cameras) the eye and
+/// direction are returned unchanged.
+#[must_use]
+pub fn keep_above_terrain(
+    eye: WorldPos,
+    dir: Vec3,
+    ground: Option<f32>,
+    feet: Option<WorldPos>,
+) -> (WorldPos, Vec3) {
+    let (Some(h), Some(feet)) = (ground, feet) else {
+        return (eye, dir);
+    };
+    let min = f64::from(h) + EYE_ABOVE_TERRAIN;
+    let below = eye.z < min;
+    if !below {
+        return (eye, dir);
+    }
+    let mut eye = eye;
+    eye.z = min;
+    let head = Vec3::new(
+        (feet.x - eye.x) as f32,
+        (feet.y - eye.y) as f32,
+        (feet.z + f64::from(EYE_HEIGHT) - eye.z) as f32,
+    );
+    (eye, head.try_normalize().unwrap_or(dir))
+}
 
 /// How the viewer moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +211,10 @@ pub struct Controls {
     placed: bool,
     /// A game UI is attached: `menu` opens the game menu instead of quitting.
     ui_attached: bool,
+    /// The mover of the collision walk mode, once loaded.
+    mover: Option<MoverSetup>,
+    /// The collision walk mode's controller (walk mode on `tessera-physics`).
+    physics: Option<PhysicsWalker>,
 }
 
 impl Controls {
@@ -209,6 +258,8 @@ impl Controls {
             cam_pitch: -0.25,
             zoom: DEFAULT_ZOOM,
             placed: false,
+            mover: None,
+            physics: None,
             ui_attached: false,
         }
     }
@@ -223,6 +274,51 @@ impl Controls {
     /// Whether a game UI is attached (`walker.md` §5: Escape then gives the game menu).
     pub fn set_ui_attached(&mut self, on: bool) {
         self.ui_attached = on;
+    }
+
+    /// Whether a game UI is attached.
+    #[must_use]
+    pub fn ui_attached(&self) -> bool {
+        self.ui_attached
+    }
+
+    /// Switches walk mode to the collision controller with `mover` (the avatar's capsule,
+    /// the player movement record and conditions). A placed avatar keeps its position and
+    /// facing. Whenever the collision controller is placed (here, [`Controls::place`],
+    /// [`Controls::correct`], entering walk mode from fly mode), its first step lifts feet
+    /// found below the terrain onto the support (`walker.md` §13.1).
+    pub fn enable_physics(&mut self, mover: MoverSetup) {
+        if self.placed {
+            let feet = self.to_world(self.walk.position());
+            let mut w = PhysicsWalker::new(
+                &mover,
+                feet.region,
+                [feet.x, feet.y, feet.z],
+                self.walk.yaw(),
+            );
+            w.check_placement();
+            self.physics = Some(w);
+        }
+        self.mover = Some(mover);
+    }
+
+    /// The collision walk mode's controller, when active.
+    #[must_use]
+    pub fn physics(&self) -> Option<&PhysicsWalker> {
+        self.physics.as_ref()
+    }
+
+    /// Whether walk mode runs on the collision controller.
+    fn on_physics(&self) -> bool {
+        self.mode == MoveMode::Walk && self.physics.is_some()
+    }
+
+    /// The collision controller's feet (controller frame) and heading, interpolated.
+    fn physics_pose(&self) -> Option<(Vec3, f32)> {
+        let p = self.physics.as_ref()?;
+        let (feet, yaw) = p.interpolated();
+        let w = WorldPos::new(p.region(), feet[0], feet[1], feet[2]);
+        Some((self.to_local(&w), yaw))
     }
 
     /// Starts (or stops) moving forward on its own, walking or running (`--autorun`).
@@ -264,6 +360,18 @@ impl Controls {
         self.cam_pitch = pitch.clamp(-1.4, 0.6);
         self.timestep.reset();
         self.placed = true;
+        if let Some(m) = &self.mover {
+            match &mut self.physics {
+                Some(w) => {
+                    w.teleport(pos.region, [pos.x, pos.y, pos.z], yaw);
+                }
+                None => {
+                    let mut w = PhysicsWalker::new(m, pos.region, [pos.x, pos.y, pos.z], yaw);
+                    w.check_placement();
+                    self.physics = Some(w);
+                }
+            }
+        }
     }
 
     /// Moves the viewer to `pos` keeping the facing, the camera pitch and the zoom (an
@@ -284,6 +392,12 @@ impl Controls {
         match self.mode {
             MoveMode::Fly => self.fly.teleport(p),
             MoveMode::Walk => self.walk.teleport(p),
+        }
+        if self.mode == MoveMode::Walk
+            && let Some(w) = &mut self.physics
+        {
+            let yaw = w.state().heading;
+            w.teleport(pos.region, [pos.x, pos.y, pos.z], yaw);
         }
         self.timestep.reset();
     }
@@ -318,9 +432,15 @@ impl Controls {
     }
 
     /// Per frame: publishes the input snapshot, applies look changes, runs the fixed
-    /// ticks of the active controller against `ground` (region-global heights), and
-    /// handles mode toggles.
-    pub fn frame(&mut self, dt: f32, ground: &dyn Fn(f64, f64) -> Option<f32>) -> ControlEvents {
+    /// ticks of the active controller and handles mode toggles. Walk mode steps the
+    /// collision controller over `world` when both are there, else the terrain-height
+    /// walk controller against `ground` (region-global heights).
+    pub fn frame(
+        &mut self,
+        dt: f32,
+        ground: &dyn Fn(f64, f64) -> Option<f32>,
+        world: Option<&dyn CollisionWorld>,
+    ) -> ControlEvents {
         let now: Duration = self.start.elapsed();
         self.mapper.update(now);
         let a = self.actions;
@@ -358,6 +478,9 @@ impl Controls {
             }
             MoveMode::Walk => {
                 self.walk.turn(dyaw);
+                if let Some(w) = &mut self.physics {
+                    w.turn(dyaw);
+                }
                 self.cam_pitch = (self.cam_pitch + dpitch).clamp(-1.4, 0.6);
                 if zoom.is_finite() && zoom != 0.0 {
                     self.zoom = (self.zoom * 0.85f32.powf(zoom)).clamp(1.5, 60.0);
@@ -367,6 +490,33 @@ impl Controls {
         let mut intent = a.intent(&self.mapper, self.autorun);
         if self.autorun && self.autowalk {
             intent.walk = true;
+        }
+        if self.on_physics()
+            && let (Some(world), Some(w)) = (world, self.physics.as_mut())
+        {
+            // The collision controller owns its 1/60 s accumulator and latches the jump.
+            let i = intent.sanitized();
+            let input = MoveInput {
+                forward: i.forward,
+                strafe: i.strafe,
+                heading: None,
+                jump: i.jump,
+            };
+            let turn = i.turn * self.walk.config.turn_rate;
+            let _ = w.frame(f64::from(dt.max(0.0)), &input, turn, i.walk, world);
+            // Keep the terrain walk controller with the avatar (mode toggles, rebase).
+            let (feet, yaw) = {
+                let s = w.state();
+                (
+                    WorldPos::new(w.region(), s.position[0], s.position[1], s.position[2]),
+                    s.heading,
+                )
+            };
+            let local = self.to_local(&feet);
+            self.walk.teleport(local);
+            self.walk.set_yaw(yaw);
+            self.maybe_rebase();
+            return ev;
         }
         self.latch.frame(intent);
         let ticks = self.timestep.advance(f64::from(dt.max(0.0)));
@@ -393,6 +543,11 @@ impl Controls {
                 let p = self.fly.position();
                 self.walk.teleport(p);
                 self.walk.set_yaw(self.fly.yaw());
+                let w = self.to_world(p);
+                let yaw = self.fly.yaw();
+                if let Some(phys) = &mut self.physics {
+                    phys.teleport(w.region, [w.x, w.y, w.z], yaw);
+                }
                 self.mode = MoveMode::Walk;
                 self.actions.enter_walk_mode(&mut self.mapper);
             }
@@ -436,8 +591,12 @@ impl Controls {
                 view_direction(self.fly.interpolated_yaw(alpha), self.fly.pitch()),
             ),
             MoveMode::Walk => {
-                let feet = self.walk.interpolated(alpha);
-                let yaw = self.walk.interpolated_yaw(alpha);
+                let (feet, yaw) = self.physics_pose().unwrap_or_else(|| {
+                    (
+                        self.walk.interpolated(alpha),
+                        self.walk.interpolated_yaw(alpha),
+                    )
+                });
                 let head = feet + Vec3::Z * EYE_HEIGHT;
                 let dir = view_direction(yaw, self.cam_pitch);
                 (head - dir * self.zoom + Vec3::Z * 0.6, dir)
@@ -456,6 +615,11 @@ impl Controls {
     #[must_use]
     pub fn focus(&self) -> WorldPos {
         let alpha = self.timestep.alpha();
+        if self.on_physics()
+            && let Some((p, _)) = self.physics_pose()
+        {
+            return self.to_world(p);
+        }
         let p = match self.mode {
             MoveMode::Fly => self.fly.interpolated(alpha),
             MoveMode::Walk => self.walk.interpolated(alpha),
@@ -467,6 +631,11 @@ impl Controls {
     #[must_use]
     pub fn heading(&self) -> f32 {
         let alpha = self.timestep.alpha();
+        if self.on_physics()
+            && let Some((_, yaw)) = self.physics_pose()
+        {
+            return yaw;
+        }
         match self.mode {
             MoveMode::Fly => self.fly.interpolated_yaw(alpha),
             MoveMode::Walk => self.walk.interpolated_yaw(alpha),
@@ -476,6 +645,11 @@ impl Controls {
     /// Current velocity (world units per second).
     #[must_use]
     pub fn velocity(&self) -> Vec3 {
+        if self.on_physics()
+            && let Some(w) = &self.physics
+        {
+            return Vec3::from_array(w.state().velocity);
+        }
         match self.mode {
             MoveMode::Fly => self.fly.velocity(),
             MoveMode::Walk => self.walk.velocity(),
@@ -487,10 +661,13 @@ impl Controls {
     pub fn avatar(&self) -> Option<(WorldPos, f32)> {
         (self.mode == MoveMode::Walk).then(|| {
             let alpha = self.timestep.alpha();
-            (
-                self.to_world(self.walk.interpolated(alpha)),
-                self.walk.interpolated_yaw(alpha),
-            )
+            let (feet, yaw) = self.physics_pose().unwrap_or_else(|| {
+                (
+                    self.walk.interpolated(alpha),
+                    self.walk.interpolated_yaw(alpha),
+                )
+            });
+            (self.to_world(feet), yaw)
         })
     }
 
@@ -505,6 +682,29 @@ impl Controls {
 mod tests {
     use super::*;
     use tessera_input::KeyCode;
+
+    /// Review finding (`walker.md` §5): only the walk-mode camera is kept 0.8 m above the
+    /// terrain; a free-fly or scripted camera (no avatar) may go below it.
+    #[test]
+    fn only_the_walk_camera_is_kept_above_the_terrain() {
+        let eye = WorldPos::new(1, 100.0, 100.0, 49.5);
+        let dir = Vec3::X;
+        assert_eq!(
+            keep_above_terrain(eye, dir, Some(50.0), None),
+            (eye, dir),
+            "free-fly"
+        );
+        assert_eq!(keep_above_terrain(eye, dir, None, Some(eye)), (eye, dir));
+        let feet = WorldPos::new(1, 107.0, 100.0, 50.0);
+        let (e, d) = keep_above_terrain(eye, dir, Some(50.0), Some(feet));
+        assert!((e.z - 50.8).abs() < 1e-9);
+        assert!(d.x > 0.0 && d.z > 0.0, "aimed up at the head: {d:?}");
+        let high = WorldPos::new(1, 100.0, 100.0, 60.0);
+        assert_eq!(
+            keep_above_terrain(high, dir, Some(50.0), Some(feet)),
+            (high, dir)
+        );
+    }
 
     fn flat(_: f64, _: f64) -> Option<f32> {
         Some(100.0)
@@ -521,7 +721,7 @@ mod tests {
             repeat: false,
         });
         for _ in 0..60 {
-            let _ = c.frame(1.0 / 60.0, &flat);
+            let _ = c.frame(1.0 / 60.0, &flat, None);
         }
         let f = c.focus();
         assert!(f.x > start.x + 3.0, "moved east: {f:?}");
@@ -578,6 +778,91 @@ mod tests {
         }
     }
 
+    /// Flat collision ground at 100 m on the 3 × 3 landblocks around r1 (100, 100).
+    fn flat_collision() -> (super::super::movement::run::StaticWorld, f64) {
+        use std::sync::Arc;
+        use tessera_formats::landblock::{HeightGrid, height_from_raw};
+        use tessera_formats::{LandblockData, LandblockId};
+        use tessera_physics::geometry::{CollisionLimits, CollisionSetBuilder, GridMesh};
+        let raw = (100.0f32 * 65_535.0 / 2_000.0).round() as u16;
+        let mut world = super::super::movement::run::StaticWorld::default();
+        let centre = tessera_world::LandblockKey::new(1, 100, 100).unwrap();
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let k = centre.offset(dx, dy).unwrap();
+                let data =
+                    LandblockData::from_heights(k.data_did(), HeightGrid::from_fn(|_, _| raw));
+                let mut b = CollisionSetBuilder::new(CollisionLimits::default());
+                b.set_landblock(LandblockId::from_did(k.data_did()).unwrap());
+                b.add_grid(Arc::new(GridMesh::terrain(&data))).unwrap();
+                world.sets.insert(k, Arc::new(b.build()));
+            }
+        }
+        (world, f64::from(height_from_raw(raw)))
+    }
+
+    #[test]
+    fn physics_walk_mode_moves_toggles_and_lands_on_the_ground() {
+        let (world, g) = flat_collision();
+        let ground = |_: f64, _: f64| Some(g as f32);
+        let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);
+        let start = WorldPos::new(1, 16_080.0, 16_080.0, g);
+        c.place(&start, 0.0, 30.0, -0.25);
+        assert!(
+            c.physics().is_none(),
+            "no mover yet: the terrain walk controller"
+        );
+        c.enable_physics(MoverSetup::builtin());
+        assert!(c.physics().is_some());
+        c.handle(&RawEvent::Key {
+            key: KeyCode::W,
+            pressed: true,
+            repeat: false,
+        });
+        for _ in 0..60 {
+            let _ = c.frame(1.0 / 60.0, &ground, Some(&world));
+        }
+        let f = c.focus();
+        assert!(
+            f.x > start.x + 3.0,
+            "moved east on the collision controller: {f:?}"
+        );
+        assert!((f.z - g).abs() < 0.02, "on the ground: {f:?}");
+        let steps = c.physics().unwrap().state().steps;
+        assert!(steps >= 55, "{steps}");
+        c.handle(&RawEvent::Key {
+            key: KeyCode::W,
+            pressed: false,
+            repeat: false,
+        });
+        // Fly mode, the camera below the terrain, back to walk mode: lands on the ground.
+        c.toggle_mode();
+        assert_eq!(c.mode(), MoveMode::Fly);
+        let low = WorldPos::new(1, 16_090.0, 16_080.0, g - 4.0);
+        c.set_fly_pose(&low, 0.0, -0.2);
+        c.toggle_mode();
+        assert_eq!(c.mode(), MoveMode::Walk);
+        assert!(c.physics().unwrap().placement_pending());
+        for _ in 0..120 {
+            let _ = c.frame(1.0 / 60.0, &ground, Some(&world));
+        }
+        let f = c.focus();
+        assert!((f.z - g).abs() < 0.02, "lifted onto the ground: {f:?}");
+        assert!((f.x - low.x).abs() < 0.5, "{f:?}");
+        // A correction below the terrain lands too.
+        c.correct(&WorldPos::new(1, 16_070.0, 16_080.0, g - 2.0));
+        for _ in 0..60 {
+            let _ = c.frame(1.0 / 60.0, &ground, Some(&world));
+        }
+        assert!((c.focus().z - g).abs() < 0.02, "{:?}", c.focus());
+        // Without the world the terrain walk controller runs instead.
+        let before = c.physics().unwrap().state().steps;
+        for _ in 0..10 {
+            let _ = c.frame(1.0 / 60.0, &ground, None);
+        }
+        assert_eq!(c.physics().unwrap().state().steps, before);
+    }
+
     #[test]
     fn toggle_and_rebase_keep_position() {
         let mut c = Controls::new(&default_keymap(), MoveMode::Fly, 1_000.0);
@@ -593,7 +878,7 @@ mod tests {
             repeat: false,
         });
         for _ in 0..900 {
-            let _ = c.frame(1.0 / 60.0, &flat);
+            let _ = c.frame(1.0 / 60.0, &flat, None);
         }
         let f = c.focus();
         assert!(f.x > 17_000.0, "flew far: {f:?}");

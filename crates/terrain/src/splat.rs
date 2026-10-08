@@ -7,9 +7,10 @@
 //! the level-0 [`crate::TerrainMesh`] directly (and other meshes through
 //! [`crate::TerrainMesh::remap_grid_indices`]).
 //!
-//! What the material id indexes, the blend order between layers, the mask orientation and
-//! the meaning of `whole` are still open (§3.8.2 OPEN), so this module only validates and
-//! exposes the layers; the terrain is shaded by height and slope until those are known.
+//! This module only validates and exposes the stored layers. Their meaning (the material id
+//! is a key of the region's terrain type table, stored order is the draw order, masks have
+//! row 0 on the south edge, `whole` covers all 2,048 grid triangles) is applied by
+//! [`crate::layers::resolve_chunk`], which builds on this check (`terrain-texturing.md` §4).
 //!
 //! The chunk is treated as hostile: windows and vertex numbers are checked, and a layer
 //! list larger than [`MAX_SPLAT_LAYERS`] is rejected before anything is copied.
@@ -25,9 +26,10 @@ pub const MAX_SPLAT_LAYERS: usize = 256;
 /// One drawable surface layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplatLayer {
-    /// Position of the layer in the chunk (stored order, the presumed draw order).
+    /// Position of the layer in the chunk (stored order = draw order,
+    /// `terrain-texturing.md` §4.2).
     pub ordinal: usize,
-    /// Material/layer id (what it indexes is OPEN, `landblock.md` §3.8.2).
+    /// Terrain type key of the region's 0x19 table (`terrain-texturing.md` §4.1).
     pub material: u32,
     /// The 0x41 alpha-mask surface DID; `None` when the stored DID is 0 (draw opaque).
     pub mask: Option<Did>,
@@ -36,7 +38,8 @@ pub struct SplatLayer {
     pub kind: LayerKind,
     /// Triangles as grid vertex numbers (33·y + x), three per triangle, in stored order
     /// and winding (counter-clockwise from above for terrain chunks). Empty for
-    /// [`LayerKind::Whole`] layers, which cover the whole block (presumed).
+    /// [`LayerKind::Whole`] layers, which cover all 2,048 grid triangles
+    /// (`terrain-texturing.md` §4.3; [`crate::layers::DrawLayer::triangles`] lists them).
     pub indices: Vec<u16>,
 }
 
@@ -54,7 +57,7 @@ pub struct SplatLayer {
 /// checks (the decoder enforces both), but a corrupt or hostile record that still decodes
 /// can fail the other two: the decoder bounds the layer count only by the record size and
 /// does not check that windows are disjoint. Callers must handle the error, for example by
-/// skipping splatting for that block and keeping the height/slope shading.
+/// skipping the layers of that block and using the height/slope fallback shading.
 pub fn splat_layers(chunk: &SurfaceChunk) -> Result<Vec<SplatLayer>> {
     if chunk.layers.len() > MAX_SPLAT_LAYERS {
         return Err(TerrainError::TooManyLayers(chunk.layers.len()));

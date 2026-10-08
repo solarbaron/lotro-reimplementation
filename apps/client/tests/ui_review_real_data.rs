@@ -70,11 +70,13 @@ fn review_findings_on_the_install() {
         ChatLine {
             sender: String::new(),
             text: "review-welcome".into(),
+            channel: tessera_net::ChatChannel::System,
             chat_type: 8,
         },
         ChatLine {
             sender: "Npc".into(),
             text: "review-say".into(),
+            channel: tessera_net::ChatChannel::Say,
             chat_type: 5,
         },
     ]);

@@ -10,6 +10,7 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use tessera_formats::Did;
+use tessera_formats::script_table::resolve::held_clip_time;
 use tessera_mesh::assembly::shape::{FigureShape, HeldClip};
 
 use crate::clip::BoundClip;
@@ -17,7 +18,9 @@ use crate::deform::{BindDeformation, DeformClip};
 use crate::skeleton::Skeleton;
 use crate::slider::BoneSliders;
 
-/// Most held clips bound per figure (observed: one, on layer 110).
+/// Most held clips bound per figure: a Tessera bound, not a client rule (`script-table.md`
+/// §6.7: the client has no limit; §16 answer T40). The install has at most one per avatar,
+/// on layer 110; a held clip beyond the bound is dropped and logged.
 pub const MAX_HELD_CLIPS: usize = 4;
 
 /// Most notes [`bind_shape`] reports.
@@ -30,6 +33,22 @@ pub struct BoundHeldClip {
     pub held: HeldClip,
     /// The clip, bound.
     pub clip: Arc<BoundClip>,
+    /// The fraction of the clip's whole duration it is shown at: the clip time of
+    /// `script-table.md` §6.7 step 2 (the held fraction × the played length, duration −
+    /// end crop, limited to that length) divided by the duration; 0 for a clip without a
+    /// usable duration. [`crate::Playback::held`] takes it.
+    pub clip_fraction: f32,
+}
+
+/// The fraction of `clip`'s duration at which held clip `h` is shown (`script-table.md`
+/// §6.7 step 2; see [`BoundHeldClip::clip_fraction`]).
+#[must_use]
+pub fn held_clip_fraction(h: &HeldClip, clip: &BoundClip) -> f32 {
+    let d = clip.duration();
+    if !(d.is_finite() && d > 0.0) {
+        return 0.0;
+    }
+    (held_clip_time(h.fraction, d, h.end_crop) / d).clamp(0.0, 1.0)
 }
 
 /// [`bind_shape`]'s result.
@@ -49,12 +68,14 @@ pub struct BoundShape {
 /// Binds the shape inputs of a figure to `skeleton` (`appearance.md` §6.4,
 /// `script-table.md` §6.7–§6.9):
 ///
-/// - **Held clips**: each of [`FigureShape::held`] bound with `bind`, keeping its fraction.
+/// - **Held clips**: each of [`FigureShape::held`] (at most [`MAX_HELD_CLIPS`]; the others
+///   are dropped and logged) bound with `bind`, shown at [`held_clip_fraction`].
 /// - **Body shape**: each of [`FigureShape::body_shape`] bound with `bind` as a
 ///   [`DeformClip`] at its fraction (the deformation limits it to [0, 1]).
 /// - **Sliders**: every definition of [`FigureShape::sliders`] at its position
 ///   ([`tessera_mesh::assembly::shape::FigureSliders::positions`], the A16 rule), built into
-///   [`BoneSliders`]; sliders that do not fit the skeleton are skipped and noted.
+///   [`BoneSliders`] ([`BoneSliders::build`]: a bone outside the skeleton loses only its
+///   own entry, a slider with values that are not finite none; both are noted).
 ///
 /// The deformation is built from the body-shape clips that bound and the sliders.
 pub fn bind_shape<E: Display>(
@@ -63,14 +84,42 @@ pub fn bind_shape<E: Display>(
     mut bind: impl FnMut(Did) -> Result<Arc<BoundClip>, E>,
 ) -> BoundShape {
     let mut out = BoundShape::default();
+    if shape.held.len() > MAX_HELD_CLIPS {
+        let dropped = shape.held.len() - MAX_HELD_CLIPS;
+        tracing::warn!(
+            dropped,
+            kept = MAX_HELD_CLIPS,
+            "held clips beyond the Tessera bound dropped"
+        );
+        note(
+            &mut out.notes,
+            format!("{dropped} held clips beyond {MAX_HELD_CLIPS} dropped"),
+        );
+    }
     for h in shape.held.iter().take(MAX_HELD_CLIPS) {
         match bind(h.clip) {
             Ok(clip) => out.held.push(BoundHeldClip {
                 held: h.clone(),
+                clip_fraction: held_clip_fraction(h, &clip),
                 clip,
             }),
             Err(e) => note(&mut out.notes, format!("held clip {}: {e}", h.clip)),
         }
+    }
+    if shape.body_shape.len() > BindDeformation::MAX_CLIPS {
+        let dropped = shape.body_shape.len() - BindDeformation::MAX_CLIPS;
+        tracing::warn!(
+            dropped,
+            kept = BindDeformation::MAX_CLIPS,
+            "body-shape clips beyond the Tessera bound dropped"
+        );
+        note(
+            &mut out.notes,
+            format!(
+                "{dropped} body-shape clips beyond {} dropped",
+                BindDeformation::MAX_CLIPS
+            ),
+        );
     }
     let mut clips = Vec::new();
     for b in shape.body_shape.iter().take(BindDeformation::MAX_CLIPS) {
@@ -95,7 +144,7 @@ pub fn bind_shape<E: Display>(
         if let Some(e) = errors.first() {
             note(
                 &mut out.notes,
-                format!("{} sliders skipped (first: {e})", errors.len()),
+                format!("{} slider problems (first: {e})", errors.len()),
             );
         }
         sliders
@@ -158,6 +207,7 @@ mod tests {
                 clip: Did(0x0500_0001),
                 layer: 110,
                 fraction: 0.0,
+                end_crop: 0.0,
                 use_bone_opacity: true,
                 driver: Some(ShapeDriver::AvatarHeight),
             }],
@@ -167,7 +217,7 @@ mod tests {
                     sliders: vec![fixed_scale(0.8, 0), fixed_scale(1.15, 1)],
                     unknown_channel_bits: 0,
                 },
-                bytes: Vec::new(),
+                values: Vec::new(),
                 positions: vec![0.5, 0.5],
             }),
             ..FigureShape::default()
@@ -202,13 +252,13 @@ mod tests {
                     sliders: vec![fixed_scale(1.0, 0), fixed_scale(1.2, 9)],
                     unknown_channel_bits: 0,
                 },
-                bytes: Vec::new(),
+                values: Vec::new(),
                 positions: vec![0.5, 0.5],
             }),
             ..FigureShape::default()
         };
         let b = bind_shape(&shape, &s, |_| Err::<Arc<BoundClip>, _>("unused"));
         assert!(b.deformation.is_none());
-        assert_eq!(b.notes.len(), 1, "the slider on bone 9 does not fit");
+        assert_eq!(b.notes.len(), 1, "bone 9 is outside the skeleton");
     }
 }

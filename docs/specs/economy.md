@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review sessions (spec-reviewer, not the author session): first review, second review (re-review) and third review (acceptance), all 2026-10-07 |
-| **Review record** | Third review 2026-10-07 (a session different from the author and both earlier reviewers): **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review sessions (spec-reviewer, not the author session): first review, second review (re-review) and third review (acceptance), all 2026-10-07; fourth review (2026-10-08 revision) 2026-10-08 |
+| **Review record** | Third review 2026-10-07 (a session different from the author and both earlier reviewers): **passed**, Accepted. Full record moved to the review log (decision 0018). Fourth review 2026-10-08 of the 2026-10-08 revision (Claude review session, separate from the writer's): **passed**, Accepted. Details in the review log (decision 0018). |
 | **Implements into** | `crates/formats` / `crates/props` (typed views of the records below, read from their property sets), `crates/wstate` (the object-state mirror of §9, optional), `apps/explorer` and `apps/dattool` (the cross-links of §10: "drops from", "sold by", "bartered for", "crafted by", "used in"); a later server or sandbox backend (`crates/net`) consumes §11 |
 | **Companion specs** | [`property-system.md`](property-system.md) §3–§5 (type codes, value encodings, property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels), §8 (DID maps); [`wstate.md`](wstate.md) §3–§5 (object-state records, the root class at offset 4, native codecs, in particular classes 11, 17, 25, 35, 39, 117, 166, 175, 176, 182, 199 and 1942 of §5.3–§5.4); [`wlib.md`](wlib.md) (class indices, ancestry, attribute lists); [`records.md`](records.md) §7–§8 (enum mappers, DID maps). This spec starts with decoded property sets and decoded object-state records. |
 
@@ -40,8 +40,10 @@ This spec gives an implementer:
    left partly open (the weighted table, class 175, and the barter entry, class 1942);
 3. the DID graph between these records, items, creatures, NPCs and containers, and the
    algorithms that build the explorer's cross-links from it (§10);
-4. what the client itself does with these records (§11.1, BIN), and a precise list of what
-   only a server decides (§11.2–§11.6, `> **OPEN:**`).
+4. what the client itself does with these records (§11.1, BIN), what the class library's
+   code computes from them (vendor purchase price, recipe experience, cooldowns, the
+   critical chance shown while crafting; §11.5–§11.7, WL), and a precise list of what only a
+   server decides (§11.2–§11.6, `> **OPEN:**`).
 
 Records are identified by DID and by **root class** (the class index at offset 4 of the
 0x70 record, `wstate.md` §3.1). Fields are identified by their **property label** from the
@@ -70,6 +72,9 @@ How sources are marked:
 | LC | LotroCompanion `lotro-tools` (no licence file; all rights reserved) and `lotro-core`: the loot, generic-mob-loot, custom-instance-loot, recipe, crafting, trade, hobby and perk loaders. Read for facts (which property means what) only. |
 | DS | `research/notes/data-semantics.md` §4.7 and §5.2 (DID-map examples, root-class list). |
 | BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, build 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of `wstate.md`), read in the dirty room on 2026-10-07 with a headless Ghidra copy of the shared project. **Questions:** (1) does the client itself read the loot, recipe, barter and vendor tables, and if so which properties; (2) what the item-examination code does with a recipe. **Method:** a search of the whole program for the PIDs of all 520 properties of this family as immediate operands, then reading the functions that held hits. **Why M1–M3 were not enough:** the data cannot show which properties the client consumes or how; no published source covers it; a running client (M3) shows only the result on screen, not which fields drive it. Only examination-tooltip and user-interface construction code was read; nothing from network, login, launcher or anti-tamper code. |
+| OBS2 | Observed in the user's install on 2026-10-08 with fresh throwaway probes, each over **every** record concerned: all 1,007 class-3307 records (both forms); all 1,439 NPCs with `Vendor_InventoryList` and all 400 inventories; all 202 barter profiles with `Barter_ItemMungeLevelOverride`, their 2,336 reward structs and the reward structs of all other profiles; the CooldownControl record (both forms); all six class-3399 records; the keys of every `set_u64` (105) and `refmap_u64` (117) object of all 383,343 object records. |
+| WL | The code of the class library (record 0x56000000, chunk 1), which is **data** in the user's install (method M1), disassembled in the dirty room on 2026-10-08 with the rules of [`wlib-bytecode.md`](wlib-bytecode.md) §2–§6: the method tables of every class of §2 and the bodies named in the fact rows below, located through the method tables (`wlib.md` §6.4) and through the property-ID immediates of `wlib-bytecode.md` §11.2 (each such immediate was checked by reading the call that consumes it; immediates that only coincide with a PID were discarded). "Class *c* function *s*" below means the body in slot *s* of class *c*'s method table. |
+| BIN2 | **M4 (decision 0011).** Same build as BIN (SHA-256 prefix d22363eb9aff0fb5), read on 2026-10-08 with a headless Ghidra copy of the shared project. **Question (3):** how the crafting panel turns the critical-chance values that the class library hands to it (WL, §11.5) into the chance it shows. **Method:** the native functions 289/31, 289/33 and 289/45 that the class library calls were resolved through the client's native-function registration; the fields they store were followed to the one panel function that reads them, and its two floating-point constants were read. **Why M1–M3 were not enough:** the data holds the inputs but not the rule that combines them; M3 shows only a rounded percentage for the few recipes and ingredients one character can use, which cannot separate addition from other rules or show a cap. Only crafting-panel user-interface code was read; nothing from network, login, launcher or anti-tamper code. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -94,6 +99,16 @@ How sources are marked:
 | G1 | DID graph and acyclicity of the loot graph (§10) | OBS | Confirmed |
 | B1 | Examination tooltip, compare type 4: the client reads the recipe's result item and result quantity (§11.1) | BIN | BIN only |
 | B2 | No client code was found that reads the loot, barter or vendor tables as data (§11.1) | BIN (negative search) | BIN only; see the caveat in §11.1 |
+| W5 | The order of the class-3308 array of a weighted treasure table is the removal order of a binary min-heap filled in property order (§9.4) | OBS2 | Confirmed (1,007 of 1,007). Derived by this spec writer. |
+| V5 | The order of `Vendor_ItemList` is the iteration order of a growing hash set filled in first-occurrence order (§6.3) | OBS2 | Confirmed (1,439 of 1,439). Derived by this spec writer. |
+| V6 | Purchase price computed by the class library's vendor code (§11.6) | WL | Confirmed in the class library (all its code paths read); not compared with prices in the running client |
+| R3 | Recipe cooldown keys resolve through the CooldownControl duration map (§11.5) | OBS2; WL | Confirmed (one record; its 63 object-form entries equal its 63 property entries; the 3 keys used by recipes are present). Unit: derived (see §11.5) |
+| R4 | The experience value of a recipe as the class library computes it (§11.5) | WL; OBS (keys covered, §5.4) | Confirmed in the class library |
+| R5 | The critical-success chance the crafting panel shows (§11.5) | WL (inputs); BIN2 (combination, clamp, rounding) | Inputs Confirmed in the class library; combination BIN only |
+| L7 | The class library declares the economy classes' own functions but ships no body for the loot-table, barter-cost and money functions (§11.7) | WL | Confirmed (every class of §2) |
+| L8 | Class 3399 is a set of DIDs; the record named by `LootGenControl_RewardOnceTGPs` is empty in both forms (§14) | OBS2; WL | Confirmed (6 of 6 records) |
+| W6 | The class library's four-field 64-bit key packing (field widths and the bits 0–3 field) (§9.5) | WL; OBS2 (low-nibble census) | Confirmed in the class library; its use for the loot maps is not shown (§14) |
+| V7 | Barter profiles with `Barter_ItemMungeLevelOverride` mostly reward scaling items (§6.2) | OBS2 | Confirmed as a count; meaning OPEN |
 
 ---
 
@@ -492,7 +507,7 @@ weight.
 Both are reached through WEENIECONTENT labels (DID map 0x2800000E,
 `property-system.md` §8.1): **LootGenControl** (class 1673) and **LootGenDirectoryControl**
 (class 1674). The label **LootGenControl_RewardOnceTGPs** names a record of class 3399 with
-an empty property set in this install.
+an empty property set in this install; its object form holds one empty `set_u32` (§14).
 
 | Path (class 1673) | Type | Observed |
 |---|---|---|
@@ -613,7 +628,7 @@ result item on a critical success. Optional ingredients raise the critical chanc
 `CritBonus`. A multi-output entry replaces the result and critical result when its
 `Ingredient` is the ingredient the player supplied (a recipe with several possible inputs).
 `XPReward` is a key into the craft control's experience table (§5.4). What the client
-computes from these is limited to §11.1; the rest is §11.5.
+computes from these is §11.1 and §11.5.1–§11.5.3; the server rules still open are in §11.5.
 
 <a id="s5-2"></a>
 ### 5.2 Profession (class 1023)
@@ -770,9 +785,19 @@ such costs the stored quantity equals the following:
 Counts: rule 2 with the minimum-usage level: 2,446 costs; with `Item_Level`: 3,119.
 The progression format itself belongs to the progression spec.
 
-> **OPEN:** Whether `Barter_ItemMungeLevelOverride` (202 profiles) changes the level of
-> step 2. None of the 5,565 look-up costs needed it to match (70 of them lie in profiles that
-> have the override), so the data cannot show its role; it may scale the reward item instead.
+Profiles with the override (V7, OBS2): its value is one of 22 levels from 18 to 160 (160 in
+35 profiles, 100 in 33, 95 in 24). Of the 2,336 reward structs in the 202 profiles, 2,065
+name an item that has `ItemMunging_MinMungeLevel` and 2,192 an item that has
+`ItemMunging_ItemLevelOverrideProgression`; in all other profiles 12,050 of 39,871 rewards
+have `ItemMunging_MinMungeLevel`. The barter class (1943) has no code that resolves costs or
+rewards (§11.7).
+
+> **OPEN:** What `Barter_ItemMungeLevelOverride` does. It does not change the level of step 2:
+> none of the 5,565 look-up costs needs it to match, and 70 of them lie in profiles that have
+> it. The counts above point to the level at which a scaling reward item is generated, but
+> neither the data nor the class library states this. Only the server applies it; an owner
+> observation can settle it: in the original client, buy the reward of a profile that has the
+> override and compare the received item's level with the override value.
 
 <a id="s6-3"></a>
 ### 6.3 Vendor inventory (class 1619) and the vendor properties of NPCs
@@ -800,12 +825,35 @@ Vendor properties of NPC records (root class 1724; mobs have none except barter)
 
 **Vendor_ItemList is derived** (Confirmed, 1,439 of 1,439 NPCs): its elements are exactly
 the distinct items of all inventories named by the NPC's `Vendor_InventoryList`, each once.
-Its length equals the number of distinct items. In 148 NPCs the list is in ascending DID
-order; in the others the order is neither ascending nor the concatenation order.
+Its length equals the number of distinct items.
 
-> **OPEN:** The order of `Vendor_ItemList` when it is not ascending. A reader that needs a
-> display order should use the inventories in `Vendor_InventoryList` order, which are
-> authoritative.
+<a id="s6-3-1"></a>
+**Order of `Vendor_ItemList`** (V5; Confirmed, 1,439 of 1,439 NPCs). The list is in the
+iteration order of a hash set of DIDs that grows while it is filled. The bucket counts are
+those of `records.md` §1.3 (23, 47, 89, 191, 383, … for hints 1, 2, 3, 4, 5, …). To
+reproduce it:
+
+1. Make the **insertion sequence**: walk the inventories in `Vendor_InventoryList` order and
+   each inventory's `VendorInventory_Items` in stored order; keep each item DID at its first
+   occurrence and drop later repeats.
+2. Start with *B* = 23 buckets, all empty, and a count of 0. Each bucket holds an ordered
+   chain.
+3. For each DID of the insertion sequence:
+   1. If count + 1 is greater than 2 × *B*, grow first: take the next bucket count *B*′ of the
+      table, make *B*′ empty buckets, then visit the old buckets from 0 to *B* − 1 and each
+      chain from front to back, and append every DID to the **back** of chain (DID mod *B*′).
+      Then set *B* = *B*′.
+   2. Put the DID at the **front** of chain (DID mod *B*), with the DID taken as an unsigned
+      32-bit number. Add 1 to the count.
+4. The list is the buckets from 0 to *B* − 1, each chain from front to back.
+
+Consequences: the final *B* is the smallest table value of at least 23 with 2 × *B* ≥ the
+list length (lengths 0–46 give 23, 47–94 give 47, 95–178 give 89, and so on); the DIDs taken
+modulo the final *B* are non-decreasing along the list. 538 of the 1,439 lists are longer
+than 46 and exercise step 3.1; 148 lists happen to be in ascending DID order as well. The
+class library reads `Vendor_ItemList` into an array in stored order (class 462 function 24, WL);
+which order the vendor window shows is not established here, so a display may equally use
+the inventories, which are authoritative.
 
 Barter profiles are also named by `MithrilCoinsControl_DefaultBarterProfileArray` (class
 3648, label MithrilCoinsControl: 5 references).
@@ -982,13 +1030,28 @@ A barter list never has more than three costs, which the fixed layout requires.
 | 1898, 4141, 199 | world-event filter objects | `EntityFilter_WorldEvent` (326) |
 | 2154 (hobby entry) | min proficiency, weight, time-available key, meta score, max proficiency, item DID | the six `HobbyRewardProfile_*` fields; absent meta score and time key appear as 0 |
 
-**Order of 3307 entries.** The `refarray` holds the same (trophy list, weight) pairs as the
-property array, sorted by ascending weight (ascending in all 1,007 records; same multiset in
-all). The order among equal weights is not settled (OPEN in §14). Measured over all 1,007
-records: 448 have no equal weights; of the 559 with at least one run of equal weights, 518
-keep the property-array order within each run (stable sort), 12 keep the reversed
-property-array order (stable sort of the reversed array), and 29 match neither. Of those 29, 2 hold each run in ascending trophy-list DID order, 2 in
-descending DID order, and 25 match none of these four orders.
+<a id="s9-4-1"></a>
+**Order of 3307 entries** (W5; Confirmed, 1,007 of 1,007). The `refarray` holds the same
+(trophy list, weight) pairs as the property array, by ascending weight, in the order in which
+a binary min-heap on the weight gives them up:
+
+1. Start with an empty array *H* (positions from 0; the parent of position *p* > 0 is
+   ⌊(*p* − 1) / 2⌋, the children of *i* are 2*i* + 1 and 2*i* + 2).
+2. For each pair in property-array order: put it at the end of *H*; then, while it is not at
+   position 0 and its parent's weight is **strictly greater** than its weight, move the
+   parent down into its position and continue from the parent's position; place the pair
+   where this stops.
+3. Until *H* is empty: output *H*[0]; remove the last element of *H*; if *H* is not empty,
+   put that element at position 0 and sift it down: at position *i*, pick *i*; if the left
+   child exists and the picked element's weight is strictly greater than the left child's,
+   pick the left child; then, if the right child exists and the picked element's weight is
+   strictly greater than the right child's, pick the right child; if the pick is *i*, stop,
+   otherwise swap the two and continue at the picked position.
+
+The output order is the `refarray` order, and the class-175 table of the same record holds
+the weights in that order (§9.2). For reference: 448 records have no equal weights, and among
+the others a stable sort by weight happens to give the same order in 518 and a stable sort of
+the reversed array in 12; only the rule above matches all 1,007. Worked example: §13.6.
 
 <a id="s9-5"></a>
 ### 9.5 Keys of the species and PVP maps (class 117)
@@ -999,6 +1062,25 @@ descending DID order, and 25 match none of these four orders.
 | PVP table (3671) | `Agent_Species` × 2¹⁶ | 15 of 15; `Agent_Class` is 0 in all, so its position is unknown (OPEN in §14) |
 
 Bits 0–3 of the species key are 0 in all observed keys.
+
+<a id="s9-5-1"></a>
+**The class library's four-field key** (W6). The class library has one function that packs
+four numbers into a 64-bit key with the same bit positions as the species key (class 976
+function 10, WL): field 1 × 2³² + field 2 × 2²⁰ + field 3 × 2⁴ + field 4, each field taken as
+an unsigned 32-bit number. It refuses (logs an error and returns the key 0) when field 4 is
+greater than 15, field 3 greater than 65,535 or field 2 greater than 4,095, so the layout is:
+bits 32–63 field 1, bits 20–31 field 2 (12 bits), bits 4–19 field 3 (16 bits), bits 0–3
+field 4 (4 bits). Its one caller is the membership test of class 975 (function 2), which
+looks keys up in a `set_u64` (class 105). When field 2 is non-zero, that test replaces
+field 1 by the value that the `map_u32` of the class-1658 record (35 entries, every value a
+single bit from 1 to 8,192) gives for field 2. It then tries, in this order and stopping at
+the first key in the set: (field 1, 2, 3, 4) as given; field 4 set to 0; field 3 set to 0;
+fields 3 and 4 set to 0; fields 2 and 3 set to 0; fields 2, 3 and 4 set to 0; fields 1, 2 and 3
+set to 0. OBS2: among all `set_u64` keys of the install (549 keys, all in records of root class 884),
+bits 0–3 take the values 0–3, 6 and 7. The loot species tables (2001, the union in 1674) use
+the same bit positions with `MonsterLevel_ExaminationModStatType` as field 1, `Agent_Species`
+as field 2 and `Agent_Subspecies` as field 3 (264 of 264 and 135 of 135, field 4 = 0 in all);
+the code that builds their lookup keys is not in the client (§11.7).
 
 ---
 
@@ -1127,6 +1209,11 @@ B1. Caveat: code that reaches a property through a computed or data-driven PID w
 show up in such a search. With that caveat, drop rolls, barter cost evaluation and vendor
 stock are server behaviour: the client receives their results.
 
+The search covered the executable only. The class library, which the client also runs, is
+data and reads some properties of this family through PID constants in its code: recipe and
+profession fields, `Vendor_SellModifier`, `Vendor_DiscountList` and `Vendor_ItemList`
+(§6.3.1, §11.5, §11.6.1). It holds no loot-table, barter-cost or money code (§11.7).
+
 <a id="s11-2"></a>
 ### 11.2 Trophy-list roll (server; Reported model)
 
@@ -1140,12 +1227,18 @@ The model of LC, which an offline sandbox may use:
    pick from it (§11.3); a treasure list (1236) first picks a profile by weight, then an
    item from it.
 
+What the class library does with a trophy list (WL): it can present one as an examined
+object. Class 1237 function 91 returns the list's `Description` and function 92 its
+`Icon_Layer_ImageOverrideDID` (0 when absent), and the examination function of class 1073
+(function 4) uses the description as the examination text when the examined object is a
+trophy list. So the description that 26 trophy lists carry is examination text; where the
+icon is used is not shown. The class library has no code that rolls a list (§11.7).
+
 > **OPEN:** Whether the server rolls each entry independently (the LC model), how
 > `GroupDrop` entries are distributed in a fellowship (one roll for the group, one item for
-> one member, or one per member), what `Inventory_MaxQuantity` and the description and icon
-> of 26 trophy lists do (they look like lists presented as a "loot box" item), and how
-> often a creature rolls its trophy list. Only the server decides; the client neither holds
-> nor shows this logic (B2).
+> one member, or one per member), what `Inventory_MaxQuantity` on trophy lists does, and how
+> often a creature rolls its trophy list. Only the server decides: neither the executable
+> (B2) nor the class library (L7) holds this logic.
 
 <a id="s11-3"></a>
 ### 11.3 Weighted pick (server; data-backed structure)
@@ -1160,11 +1253,13 @@ probabilities.
 > real), and the descent order in the subtree-sum tree (node first, then left subtree, then
 > right, or another order). These decide which entry a given random number selects, not the
 > probabilities. Without server code, an offline backend should treat any correct weighted
-> pick as equivalent.
+> pick as equivalent. The classes that hold these tables (1235, 2372, 1236, 3307) have no
+> pick code in the class library (L7), so the client cannot show the descent order.
 
 > **OPEN:** How many picks a runic treasure group makes: the LC model picks a pull count by
 > the weights of `RunicTreasureGroup_PullCount_Array`, then that many relics, but whether
-> the relic picks are with or without replacement is not known.
+> the relic picks are with or without replacement is not known. Classes 2227, 2229 and 2239
+> have no functions of their own in the class library (L7).
 
 <a id="s11-4"></a>
 ### 11.4 Level and filter selection (server)
@@ -1183,44 +1278,146 @@ probabilities.
 > **OPEN:** How a creature's species table is chosen when several attach (the four tables of
 > the directory control, private-encounter overrides) and which wins on a key conflict. The
 > union in the 1674 object form has no conflicts in this install, so the data cannot say.
+> The lookup functions of 2001, 3671, 3669, 3666 and 1674 are declared without bodies in the
+> class library (L7). Whether a species-table lookup retries with fields set to 0 the way
+> the classification filter of §9.5.1 does is not known; the 264 keys use no subspecies
+> except in 3 entries.
 
 <a id="s11-5"></a>
 ### 11.5 Crafting (server)
 
-> **OPEN:** The critical-success chance of a craft. Reported model (LC): the recipe's
-> `CraftRecipe_CriticalSuccessChance` plus the `CraftRecipe_IngredientCritBonus` of each
-> optional ingredient supplied; whether bonuses add or combine otherwise, whether the sum is
-> capped at 1, and how the profession's per-character `CriticalChanceAddModifier` property
-> (§5.2) enters are server rules. A crit bonus of 1.0 (4,079 optional entries) suggests a
-> guaranteed critical success.
+<a id="s11-5-1"></a>
+**Critical-success chance shown while crafting** (R5). The class library's
+recipe-description function (class 263 function 104, WL) hands the crafting panel three
+kinds of input: the recipe's `CraftRecipe_CriticalSuccessChance` (0.0 when absent); the
+character's value of the float property whose PID is the recipe profession's
+`CraftProfession_CriticalChanceAddModifier_PropertyName` (0.0 when the character has none;
+class 263 function 6); and, for each optional ingredient in list order, its crit bonus (the
+class-1022 attribute that mirrors `CraftRecipe_IngredientCritBonus`, §9.1). The panel
+(BIN2) then computes, in single precision:
 
-> **OPEN:** Experience: the reward per craft is presumably `CraftControl_XPRewardValue` of
-> the recipe's `XPReward` key (Reported, LC); how it is split between proficiency and
-> mastery, how `CraftRecipe_XPAward_Progression` and its driving property scale it, and
-> what the 109 tier-array recipes (`XPAward_Driver` 10, `LevelMungeOutput`) change.
+1. *c* = recipe chance + profession modifier;
+2. for each optional-ingredient slot that is in its selected state in the panel, add that
+   ingredient's crit bonus to *c* (slots that are not selected add nothing);
+3. clamp *c* to the range 0.0 … 1.0;
+4. show round(100 × *c*) as a whole percentage, rounding halves away from zero (add 0.5,
+   or subtract it for a negative value, then truncate).
 
-> **OPEN:** Units and effect of `CraftRecipe_ExecutionTime` (presumably seconds of craft
-> animation) and the meaning of the `CraftRecipe_CooldownDuration` keys.
+So bonuses **add**, the sum is **capped at 1** (a crit bonus of 1.0, 4,079 optional
+entries, therefore shows 100 %), and the profession modifier is a further addend. These
+constants are BIN facts (decision 0012): cap 1.0, scale 100.0, rounding offset 0.5.
+
+> **OPEN:** Whether the server rolls a craft's critical success against the same value the
+> panel shows (step 3, before the rounding of step 4). The client only displays it. An owner
+> observation can test it: in the original client, craft a recipe whose shown chance is 100 %
+> and check that every craft is critical, and craft one with a low shown chance often enough
+> to compare the rate.
+
+<a id="s11-5-2"></a>
+**Experience value of a recipe** (R4). The same recipe-description function looks up the
+recipe's `CraftRecipe_XPReward` key in the experience map of the CraftControl record
+(class 1665 function 85, WL; attribute 2 of §9.1, equal to `CraftControl_XPRewardArray`) and
+passes the value on as the recipe's experience; a key without an entry gives 0. Every key used
+by a recipe has an entry (§5.4).
+
+> **OPEN:** How the server credits that value: how it is split between proficiency and
+> mastery, how `CraftRecipe_XPAward_Progression` and its driving property scale it, and what
+> the 109 tier-array recipes (`XPAward_Driver` 10, `LevelMungeOutput`) change. No class-library
+> code reads `CraftRecipe_XPAward_Progression`, `…_DrivingProperty` or `…_Driver`.
+
+<a id="s11-5-3"></a>
+**Cooldown durations** (R3). WEENIECONTENT label **CooldownControl** → the record of class
+1664. Its property `CooldownControl_DurationMapList` holds entries
+`CooldownControl_DurationMapListEntry` with `CooldownControl_DurationType` (an enum key of
+the same mapper as `CraftRecipe_CooldownDuration`) and `CooldownControl_DurationValue`
+(float); its object form holds the same pairs as a `map_u32` from key to the float's bits
+(63 entries in both forms, equal). The class library resolves a recipe's cooldown by looking
+its `CraftRecipe_CooldownDuration` key up in that map, giving −1.0 when the key has no entry
+(class 1664 function 85 via class 1024 function 111), and passes the result to the crafting
+panel. The three keys used by recipes have entries: 35 → 64,800, 36 → 237,600,
+38 → 583,200 (values of this install; read them at run time). Unit: **seconds** (derived:
+the map's values include 60, 3,600, 86,400, 604,800 and 2,592,000, a minute, an hour, a day,
+a week and 30 days in seconds, and every value is a whole number).
+
+> **OPEN:** Units and effect of `CraftRecipe_ExecutionTime` (1–30, 7.0 in 6,732 recipes;
+> presumably seconds of craft animation). No class-library code reads it or
+> `Craft_ExecutionTime_Override`, and the recipe description handed to the panel does not
+> carry it. An owner observation can settle the unit: time the progress bar of a craft in the
+> original client for recipes with different values.
 
 <a id="s11-6"></a>
 ### 11.6 Vendors, barter and money (server)
 
-> **OPEN:** Vendor prices: how `Vendor_SellModifier` (4.0 for most vendors), the PIDs of
-> `Vendor_DiscountList` and the item's value properties combine into buy and sell prices.
-> The item value properties belong to the item spec.
+<a id="s11-6-1"></a>
+**Purchase price** (V6). The class library's vendor code computes the price a character pays
+a vendor for *q* units of an item (class 462 function 19, with the discount of function 33
+and the discount list of function 13; WL). All arithmetic is single-precision floating
+point.
+
+1. *s* = the vendor's `Vendor_SellModifier` (−1.0 when absent). If *s* ≤ 1.0 the code logs an
+   error and goes on.
+2. Discount factor *d*: start at 1.0. Read the vendor's `Vendor_DiscountList`; if it is
+   absent, *d* = 1.0. Otherwise, for each element in order, subtract from *d* the buyer's
+   value of the float property whose PID the element holds (0.0 when the buyer has none).
+   If *d* < 0.0, set *d* = 0.0. If any element cannot be read or holds PID 0, the code logs an
+   error and the whole list is ignored (*d* = 1.0).
+3. *m* = *s* × *d*; if *m* < 1.0, set *m* = 1.0.
+4. If the item is not an item object, the purchase fails (price 0, result "no").
+5. *v* = the item's `Item_Value` (an integer, 0 when absent), taken as unsigned.
+6. price = truncate(*v* × *q* × *m* + 0.5), the products formed left to right; the purchase
+   is allowed when the price is greater than 0.
+
+So a vendor never sells below the item's value (*m* ≥ 1), and discounts lower the multiplier
+`Vendor_SellModifier` but not below 1. With the data of this install every `Vendor_SellModifier`
+is greater than 1.0 (§6.3). Worked example: §13.7.
+
+> **OPEN:** The price a vendor pays when it buys an item from a character (selling to a
+> vendor). No class-library code computes it: the class library hands the sale to code
+> outside this spec. An owner observation can settle it: sell items of known `Item_Value`
+> to a vendor in the original client and compare the money received with `Item_Value` ×
+> quantity. The item value properties belong to the item spec.
 
 > **OPEN:** Money drops: how the server indexes `LootGenControl_MoneyDropTable` (160 entries;
 > whether by level is not shown by the data), how the variance applies (± around the maximum,
 > or below it), and how the money-drop-modifier labels are attached to creatures. No property
 > set of this install (none of the 383,332 object property sets and none of the 1,616 0x78
 > sets) carries a property whose label starts with `LootGen_Money`, so the attachment is not
-> in the shipped data.
+> in the shipped data. The loot control class (1673) declares 12 functions of its own and
+> ships a body for none of them (L7), so the client holds no money-drop code either.
 
 > **OPEN:** The unit of the `LootGenControl_MoneyDropTable` amounts
 > (`…_DropAmountMaximum`, `…_DropAmountVariance`). Neither the data nor any source consulted
 > states it: no property links the table to a currency record of §7, and the amounts are bare
 > integers. Whether they count the smallest denomination (the `Currency_Value` 1 record) or
 > another unit is unknown. An implementation must not assume a unit until this is answered.
+> An owner observation can settle it: note the money dropped by creatures of one level in the
+> original client and compare it with the table's entry for that level.
+
+<a id="s11-7"></a>
+### 11.7 What the class library contains for these classes (WL)
+
+The class library (`wlib.md`, `wlib-bytecode.md`) declares, for each class of §2, the
+functions it adds to its parent's method table. For the loot, barter-cost and money logic
+the client's library ships the declarations but **no bodies** (method-table entries
+0xFFFFFFFF, `wlib.md` §6.4). Census of the functions each class adds beyond its parent
+(Confirmed, every class of §2):
+
+| Classes | Added functions | With a body |
+|---|---|---|
+| 1235, 1236, 3666, 3669, 2001, 3671, 2127, 2128, 2227, 1673, 1674, 3399, 1917, 1918, 1619 | 10, 3, 7, 3, 4, 3, 1, 4, 3, 12, 1, 4, 1, 1, 4 | none |
+| 2372, 2229, 2239, 2728, 2729 | none | — |
+| 1237 | 9 | 3: a class check (function 87), the description and the icon of §11.2 (91, 92) |
+| 3307 | 9 | 1: a class check (function 85) |
+| 2153 | 6 | 2: a class check (86) and a filter (89) that collects, in entry order, the item DIDs of the entries whose `MinProficiency` ≤ a given proficiency ≤ `MaxProficiency` and whose meta score ≤ a given value |
+| 1943 | 13 | 6: accessors and checks; none resolves costs, look-up tables or rewards |
+| 1024, 1023, 1026, 2278, 1665, 1021, 1664 | 42, 41, 16, 7, 6, 18, 2 | 26, 23, 7, 5, 3, 3, 2: accessors and the look-ups of §11.5 |
+| 1796, 1028, 1029, 1996 | 3, 6, 4, 3 | 2, 4, 3, 2: accessors |
+
+Every class of §2 also has its own initializer (function 0) that creates the empty
+containers of §9.1. The vendor code of §11.6.1 belongs to class 462, not to a class of §2.
+Consequences: drop rolls, weighted picks, level and filter selection, species-table
+precedence, runic pulls, barter-cost evaluation and money drops cannot be read from the
+client; they stay OPEN in §11.2–§11.6.
 
 ---
 
@@ -1247,6 +1444,9 @@ on synthetic fixtures and may warn (not fail) when real data breaks one.
 | E-I13 | Barter entries (1942): one per barter list, in order, with the field correspondence of §9.3. |
 | E-I14 | The graph of the loot-table classes (§10.1, items excluded) is acyclic; a breadth-first walk from any loot table reaches items within 6 edges. |
 | E-I15 | VOCATIONS and PROFESSIONS map keys 1 … *n* to the vocation and profession records one-to-one, with the sentinel key 0 → DID 0. |
+| E-I16 | For every weighted treasure table (3307), the class-3308 `refarray` equals the property array reordered by the heap rule of §9.4.1. |
+| E-I17 | For every NPC, `Vendor_ItemList` equals the list that the hash-set rule of §6.3.1 builds from its inventories. |
+| E-I18 | Every `CraftRecipe_CooldownDuration` key used by a recipe has an entry in the CooldownControl duration map (§11.5.3), and the map's object form equals its property list. |
 
 ---
 
@@ -1323,39 +1523,86 @@ the end and clamps to the last element, quantity 6.
 Species key 35, subspecies key 5, examination type key 7: 7 × 2³² + 35 × 2²⁰ + 5 × 2⁴ =
 0x0000000702300050.
 
+<a id="s13-6"></a>
+### 13.6 Order of a weighted treasure table's object form
+
+Property array (trophy list, weight): (A, 5), (B, 3), (C, 5), (D, 3), (E, 3). Filling the
+heap of §9.4.1 gives, after each step: [A]; [B, A]; [B, A, C]; [B, D, C, A] (D rises above
+A, then stops below B because 3 is not greater than 3); [B, D, C, A, E]. Removing: B, leaving
+[E, D, C, A] (E stays at the top: D's weight is not smaller than E's); E, leaving [D, A, C];
+D, leaving [C, A]; C; A. The `refarray` order is B, E, D, C, A, and the class-175 table holds
+the weights 3, 3, 3, 5, 5. A table whose four weights are all equal, (A, 100), (B, 100),
+(C, 100), (D, 100), gives A, D, C, B.
+
+<a id="s13-7"></a>
+### 13.7 Purchase price
+
+`Item_Value` 250, quantity 3, `Vendor_SellModifier` 4.0, a discount list of two PIDs for
+which the buyer has the values 0.125 and 0.25. *d* = 1.0 − 0.125 − 0.25 = 0.625;
+*m* = 4.0 × 0.625 = 2.5; price = truncate(250 × 3 × 2.5 + 0.5) = truncate(1,875.5) = 1,875.
+With buyer values 0.5 and 0.5, *d* = 0.0, *m* = 0.0 is raised to 1.0 and the price is 750.
+
+<a id="s13-8"></a>
+### 13.8 Order of a vendor item list
+
+Two inventories, [0x70F00010, 0x70F00011, 0x70F00027] and [0x70F00011, 0x70F00028,
+0x70F00012]. Insertion sequence: 0x70F00010, 0x70F00011, 0x70F00027, 0x70F00028,
+0x70F00012 (the second 0x70F00011 is dropped). Five DIDs stay below 2 × 23, so *B* = 23
+throughout. Buckets (DID mod 23): 0x70F00010 → 2, 0x70F00011 → 3, 0x70F00027 → 2,
+0x70F00028 → 3, 0x70F00012 → 4. Each new DID goes to the front of its chain: bucket 2 holds
+0x70F00027, 0x70F00010; bucket 3 holds 0x70F00028, 0x70F00011; bucket 4 holds 0x70F00012.
+`Vendor_ItemList` = 0x70F00027, 0x70F00010, 0x70F00028, 0x70F00011, 0x70F00012.
+
 ---
 
 <a id="s14"></a>
 ## 14. Open questions (summary)
 
-Behaviour that only the server decides (§11): the trophy roll and group drops (§11.2); the
-random-number generator and the descent order of weighted picks, runic pull counts
-(§11.3); level and filter selection and species-table precedence (§11.4); critical chance,
-experience, execution time and cooldowns (§11.5); vendor prices, money drops and the unit
-of the money-drop amounts (§11.6);
-the role of `Barter_ItemMungeLevelOverride` (§6.2).
+Behaviour that only the server decides (§11; none of it is in the client, §11.7): the
+trophy roll, group drops and `Inventory_MaxQuantity` on trophy lists (§11.2); the
+random-number generator and the descent order of weighted picks, runic pull counts (§11.3);
+level and filter selection and species-table precedence (§11.4); whether the critical roll
+uses the chance the panel shows, how experience is credited, and the unit of the execution
+time (§11.5); the price a vendor pays for an item, money drops and the unit of the money-drop
+amounts (§11.6); the role of `Barter_ItemMungeLevelOverride` (§6.2). Each of these OPENs
+names the owner observation that can settle it where one exists.
 
 Data questions:
 
 > **OPEN:** The fifth attribute of class 1233 (0 in all 77,745 trophy entries) and
 > attribute 5 of the profession object (a tier map whose values are all 0); probably mirrors
 > of properties that no record sets (for example `CraftProfession_TierOpeningQuestDID`).
+> What the class library shows (WL): class 1233 only sets the fifth attribute to 0 in its
+> initializer and never reads it. Profession attribute 5 has an accessor (class 1023
+> function 117), and its one caller (class 263 function 66) reads the entry for tier *t* + 2,
+> where *t* is the character's value of the property named by
+> `CraftProfession_ProficiencyLevel_PropertyName`, and only when the character's value of the
+> property named by `CraftProfession_ProficiencyXP_PropertyName` has reached the
+> `ProficiencyXPCap` of tier *t* + 1 (otherwise it gives 0). Which property the attribute
+> mirrors is not shown.
 
 > **OPEN:** Which of profession attributes 6 and 8 mirrors `AutoCompleteProficiency` and
-> which `AutoCompleteMastery` (both are 1 everywhere).
+> which `AutoCompleteMastery` (both are 1 everywhere). No class-library code reads either
+> attribute, and neither name hash occurs as a constant in the executable.
 
-> **OPEN:** The order among equal weights in the sorted class-3308 array of weighted
-> treasure tables (29 of 1,007 records match neither a stable sort nor a reverse-stable sort
-> by weight; 2 of them match ascending trophy-list DID among equal weights and 2 descending
-> DID, which leaves 25 that match none of these four orders; counts in §9.4);
-> and the order of `Vendor_ItemList` (§6.3).
+> **OPEN:** The position of `Agent_Class` in the PVP map key (§9.5; 0 in all 15 entries) and
+> whether the loot species maps ever use bits 0–3. The class library's own four-field key
+> reserves bits 0–3 for a fourth field of at most 15 (§9.5.1), but the code that builds the
+> loot maps' lookup keys is not in the client (§11.7), and the PVP key (`Agent_Species` ×
+> 2¹⁶) does not follow that layout.
 
-> **OPEN:** The position of `Agent_Class` in the PVP map key (§9.5; 0 in all) and the use
-> of bits 0–3 of the species key.
-
-> **OPEN:** What the record named by `LootGenControl_RewardOnceTGPs` (class 3399, empty
-> property set) and the dictionary property `TreasureGroupProfile_RewardOnce` (set on no
-> record) are for.
+> **OPEN:** What the server does with the members of the set named by
+> `LootGenControl_RewardOnceTGPs`, and what the dictionary property
+> `TreasureGroupProfile_RewardOnce` (set on no record, read by no class-library code) is
+> for. Facts (L8): class 3399 has one attribute, a `set_u32` (class 18) of DIDs, and no
+> functions with a body other than its initializer. The install has six class-3399 records;
+> five hold sets of 1,767, 767, 14, 2 and 2 DIDs (records of root classes 2532, 2541, 2651,
+> 2776, 3052, 3054, 3109, 3509, 3731 and 3924; the store classes of §8 among them), and the
+> one named by
+> the WEENIECONTENT label `LootGenControl_RewardOnceTGPs` holds an **empty** set and an
+> empty property set. With this install an implementation may treat the reward-once set as
+> empty; the label suggests treasure group profiles that a character receives only once,
+> which only matters if a later install fills the set.
 
 ---
 
@@ -1369,6 +1616,8 @@ Data questions:
 - The item spec owns the item root classes listed in §1 and the item value, level and
   usage properties used in §6.2 and §11.6.
 - The progression spec owns the layout of class 1385 used in §6.2 and §4.11.
+- The item spec owns `Item_Value`, which the purchase price of §11.6.1 reads, and the
+  `ItemMunging_*` properties counted in §6.2.
 
 ---
 
@@ -1380,3 +1629,4 @@ Data questions:
 | 2026-10-07 | First version (Review). Census of all 33,380 loot, 7,817 crafting, 3,851 vendor and 5 currency records; property-form layouts; object-state mirror with the class-175 subtree-sum and class-1942 field meanings; look-up-table quantity rule; DID graph and cross-link algorithms; BIN rows B1 (recipe preview) and B2 (negative PID search). |
 | 2026-10-07 | Review revision (status stays Review). Every disputed count re-measured over all records with a fresh probe. (a) OBS row, §1 and §3.4: the 383,343 object records are 383,332 with prefix 0x70 and 11 singletons with prefix 0x76; property sets exist only for the 0x70 records (383,332 at 0x79) plus 1,616 stand-alone 0x78 sets, and the characteristic-property and inbound counts cover all of them; no 0x76 singleton has a class of this spec. §3.4 counts unchanged (all matched). (b) §7: the "Reported by analogy" unit of the money-drop amounts removed; it is now an OPEN in §11.6 (and listed in §14). §11.6: the absence of `LootGen_Money*` properties now covers every property set, not only creatures and containers. (c) §9.2: Type column added (all three words u32). Also corrected in §9.2 and row W2: the index rule's 7,625 tables are not all of this spec's classes; they are 7,441 (1235: 6,418; 2372: 16; 3307: 1,007) plus 184 of classes 2063 (163) and 3044 (21); per-class table counts added. Cosmetic: §4.13 References column now holds each row's total, and the "plus the loot tables of §4.4–§4.10" clause of the 1237 row lists its six counts; every figure in §4.13 re-measured and unchanged. |
 | 2026-10-07 | Second review revision (status stays Review). (d) §14, third data OPEN: the count was wrong as worded. Re-measured over all 1,007 class-3307 records with a fresh probe: 29 (not 27) match neither a stable nor a reverse-stable sort by weight; 2 of the 29 keep equal weights in ascending trophy-list DID order and 2 in descending DID order, leaving 25 that match none of the four orders (the earlier 27 excluded only the ascending-DID order). The breakdown (448 without ties; 518 stable, 12 reverse-stable, 29 neither) is now stated in §9.4. No other change. |
+| 2026-10-08 | Revision (status Accepted → Revised): OPEN closure with fresh probes over all records (OBS2), the class library's code (WL, data) and one M4 question (BIN2). Closed: the order of the class-3308 array (§9.4.1, binary-heap rule, 1,007 of 1,007) and the order of `Vendor_ItemList` (§6.3.1, growing hash set, 1,439 of 1,439), removing the §6.3 OPEN and the third data OPEN of §14. Answered and narrowed: critical-success chance shown while crafting (§11.5.1; remaining OPEN: the server's roll); recipe experience value (§11.5.2; remaining: how it is credited); cooldown keys → CooldownControl durations in seconds (§11.5.3; remaining OPEN: execution time only); purchase price from a vendor (§11.6.1; remaining OPEN: the price a vendor pays). Added facts to the remaining OPENs: munge-override counts (§6.2), trophy-list description and icon in examination (§11.2), the class library's four-field key and classification filter (§9.5.1), profession attribute 5 accessor, class 3399 as a DID set with the reward-once set empty (§14). New §11.7 (functions declared without bodies), invariants E-I16–E-I18, examples §13.6–§13.8, provenance OBS2, WL, BIN2 and rows W5, V5, V6, R3, R4, R5, L7, L8, W6, V7. Owner observations that can settle the remaining behavioural OPENs are named in each. |

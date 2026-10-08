@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review sessions (spec-writer agent): first review and a separate second review session; neither is an author session |
-| **Review record** | Second review 2026-10-07 (not an author session and not the first reviewer): **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review sessions (spec-writer agent), none of them an author session: first and second review (2026-10-07), review of the 2026-10-08 revision |
+| **Review record** | Second review 2026-10-07: **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08, **passed**, Accepted. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/formats` (decoders for prefixes 0x33, 0x21, 0x27, 0x2D, 0x43, 0x0E200000, 0x0EBADA55, and the stored envelope of 0x0E010000–0x0E010002; one fuzz target each), `crates/material` (the compositor image composition of §3.6), `crates/props` (typed views of §12 and §13), `apps/explorer` (compositor and imposter previews, typed metadata views, the PID → metadata index of §13.1), `apps/dattool` (`info` and `validate` for these prefixes) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize and bucket order, strings), §1.6 (prologues), §2.1 (DID → DB type table, whose BIN rows this spec closes); [`property-system.md`](property-system.md) §4 (value encodings), §5 (property sets), §8 (DID maps), §9 (DB-object-type codes); [`entity-descriptor.md`](entity-descriptor.md) §3 (the static entity descriptor reused by UI scenes); [`wstate.md`](wstate.md) §2, §3 (object records and the WEENIECONTENT map); [`script-table.md`](script-table.md) (script nodes 27 GameCallback, 33 ModifyCompositorColor, 44 ModifyCompositorLayer, 53 TextureCompositor); [`appearance.md`](appearance.md) §3.3–§3.4 (face compositing OPEN, character-creation controls); [`ui-layout.md`](ui-layout.md) §9.6.2 (the 2D compositor's per-pixel arithmetic, reused here); [`texture-list.md`](texture-list.md) §2.2; [`string-table.md`](string-table.md) §10.3 (prefix 0x58). |
 
@@ -61,8 +61,8 @@ How sources are marked:
 
 | Key | Source |
 |---|---|
-| OBS | Observed in the user's install on 2026-10-06/07 (Steam install, client data current on that date). Every record of prefixes 0x21 (20), 0x27 (507), 0x2D (3), 0x33 (24), 0x43 (1), 0x0E (8: 7 in `client_general.dat`, 1 in `client_local_English.dat`), 0x58 (1) and 0x78 (1,618: 1,616 in gamelogic, 2 in the English archive) was read; the property sets of all 383,343 object records (0x70 and 0x76, set at DID + 0x09000000) and of all 40,643 entity descriptors (0x47) were scanned for the references of §15; all 24 DID maps and all 735 enum mappers were decoded for labels; the 5,954 distinct non-zero DIDs named by compositors were looked up (the 2,977 distinct `image_did` and `mask_did` values all exist and their surface headers were read; none of the 2,977 distinct non-zero `legacy_did` values exists; the two sets do not overlap), and the 600 texture lists named by imposter tables were looked up and their surface headers read. Re-measured on 2026-10-07 after the first review: all 24 compositors (payloads read again through `tessera-dattool cat`, byte-identical to the first read) and the surface headers of the 0x33000017 overlay options; all 7,526 script tables (0x07) and 28,992 scriptlets (0x0C) byte-scanned for script nodes 33 and 44 (218 and 199 found, the counts of `script-table.md`). The probes used the project's own decoders read-only plus independent Python parsers written from the hypotheses of this spec. Re-measured a second time on 2026-10-07 in a separate session, from scratch: all 24 compositors (payloads read through `tessera-dattool cat`), the surface headers of all 2,977 distinct `image_did` and `mask_did` values, the directory entries of all 30 client archives (3,838,957 entries, 1,408,052 of them 0x41) for the 2,977 distinct non-zero `legacy_did` values, all 7,526 script tables for nodes 33 and 44, and all 40,643 entity descriptors for `AppearanceUI_CompositorFile`; every count of §1–§3 and C1–C9 reproduced. |
-| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-07), read in the dirty room on 2026-10-06/07 with Ghidra (headless, read-only copy of the shared project). **Code read:** the type-code getters and virtual tables of the DB objects for codes 0x26, 0x43, 0x30, 0x62, 0x14 and 0x22; for each, the record serialiser and the dependency collector; for 0x26 also the post-load image step, the composition routine, the entity-side compositor instance (creation, layer and colour changes) and the three CPU pixel routines it uses (copy, colour multiply through an 8-bit mask, opacity mix); second use, 2026-10-07 (revision after review, same build): the job set-up that turns opacity and colour floats into bytes (the float-to-integer conversions and how their results are stored), the sub-rectangle set-up of the image class that places an option on the canvas, the replace routine's size handling, the reflection registration of script node 33 and the stored-form colour reader it uses; third use, 2026-10-07 (verification of the second use, same build): the opacity conversion and its byte store in the job set-up, the colour packing in the composition routine and the source of its three components, the opacity skip test, the sub-rectangle set-up, and the stored-form colour reader and its scale constant; all matched the second use; for 0x43 the serialiser of its element class; for SCRIPTCHANNELS (0x50) the reflection registration of its four classes (field names, field kinds, field offsets). **Questions:** what each stored field is and in which order the client reads it; which DIDs the client loads as dependencies; why the first DID of each compositor image pair never exists in the archives; how layers, selections and colours combine into the composed image; what the trailing boolean of a compositor means; the element layout of imposter tables, name-filter and taboo tables; the field roles of script channels; (second use) what the client does with an opacity or colour component outside 0–1 and with an option placed past the canvas edge. **Why M1–M3 were not enough:** the data shows field sizes but not roles; one DID of every compositor pair is absent from every archive and the data cannot say whether it is read, used or ignored; the composition arithmetic is not in the data and a frame capture (M3) cannot separate layers, masks and colours or show rounding; no published source covers these formats (M2). For the second use: no opacity outside 0–1 occurs in the data (all 199 node-44 opacities are 1.0), so neither data nor a capture of the shipped content can show the out-of-range behaviour a hostile-input reader needs, and the only off-canvas placements are 8 options of one face compositor, where a capture would have to isolate one layer of one character's face texture. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper; in particular the compression dictionaries' reader and users were **not** examined (§11). |
+| OBS | Observed in the user's install on 2026-10-06/07 (Steam install, client data current on that date). Every record of prefixes 0x21 (20), 0x27 (507), 0x2D (3), 0x33 (24), 0x43 (1), 0x0E (8: 7 in `client_general.dat`, 1 in `client_local_English.dat`), 0x58 (1) and 0x78 (1,618: 1,616 in gamelogic, 2 in the English archive) was read; the property sets of all 383,343 object records (0x70 and 0x76, set at DID + 0x09000000) and of all 40,643 entity descriptors (0x47) were scanned for the references of §15; all 24 DID maps and all 735 enum mappers were decoded for labels; the 5,954 distinct non-zero DIDs named by compositors were looked up (the 2,977 distinct `image_did` and `mask_did` values all exist and their surface headers were read; none of the 2,977 distinct non-zero `legacy_did` values exists; the two sets do not overlap), and the 600 texture lists named by imposter tables were looked up and their surface headers read. Re-measured on 2026-10-07 after the first review: all 24 compositors (payloads read again through `tessera-dattool cat`, byte-identical to the first read) and the surface headers of the 0x33000017 overlay options; all 7,526 script tables (0x07) and 28,992 scriptlets (0x0C) byte-scanned for script nodes 33 and 44 (218 and 199 found, the counts of `script-table.md`). The probes used the project's own decoders read-only plus independent Python parsers written from the hypotheses of this spec. Re-measured a second time on 2026-10-07 in a separate session, from scratch: all 24 compositors (payloads read through `tessera-dattool cat`), the surface headers of all 2,977 distinct `image_did` and `mask_did` values, the directory entries of all 30 client archives (3,838,957 entries, 1,408,052 of them 0x41) for the 2,977 distinct non-zero `legacy_did` values, all 7,526 script tables for nodes 33 and 44, and all 40,643 entity descriptors for `AppearanceUI_CompositorFile`; every count of §1–§3 and C1–C9 reproduced. **Added 2026-10-08:** the top-level surfaces of both atlases of all 300 non-empty imposter tables decoded (DXT5 alpha and DXT1 colour) for the cell-margin and atlas-content checks (I7); the name-filter and taboo records re-read and parsed with independent parsers (NF2, TB2, TB3); a property-set walk that descends into structs and arrays over all 40,643 entity descriptors (0x47), all 0x79 sets and all 1,618 0x78 sets, plus a raw 4-byte scan of every record of the general, gamelogic, English, cell and map archives for the 1,618 0x78 DIDs (PS2). |
+| BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-07), read in the dirty room on 2026-10-06/07 with Ghidra (headless, read-only copy of the shared project). **Code read:** the type-code getters and virtual tables of the DB objects for codes 0x26, 0x43, 0x30, 0x62, 0x14 and 0x22; for each, the record serialiser and the dependency collector; for 0x26 also the post-load image step, the composition routine, the entity-side compositor instance (creation, layer and colour changes) and the three CPU pixel routines it uses (copy, colour multiply through an 8-bit mask, opacity mix); second use, 2026-10-07 (revision after review, same build): the job set-up that turns opacity and colour floats into bytes (the float-to-integer conversions and how their results are stored), the sub-rectangle set-up of the image class that places an option on the canvas, the replace routine's size handling, the reflection registration of script node 33 and the stored-form colour reader it uses; third use, 2026-10-07 (verification of the second use, same build): the opacity conversion and its byte store in the job set-up, the colour packing in the composition routine and the source of its three components, the opacity skip test, the sub-rectangle set-up, and the stored-form colour reader and its scale constant; all matched the second use; for 0x43 the serialiser of its element class; for SCRIPTCHANNELS (0x50) the reflection registration of its four classes (field names, field kinds, field offsets). **Questions:** what each stored field is and in which order the client reads it; which DIDs the client loads as dependencies; why the first DID of each compositor image pair never exists in the archives; how layers, selections and colours combine into the composed image; what the trailing boolean of a compositor means; the element layout of imposter tables, name-filter and taboo tables; the field roles of script channels; (second use) what the client does with an opacity or colour component outside 0–1 and with an option placed past the canvas edge. **Why M1–M3 were not enough:** the data shows field sizes but not roles; one DID of every compositor pair is absent from every archive and the data cannot say whether it is read, used or ignored; the composition arithmetic is not in the data and a frame capture (M3) cannot separate layers, masks and colours or show rounding; no published source covers these formats (M2). For the second use: no opacity outside 0–1 occurs in the data (all 199 node-44 opacities are 1.0), so neither data nor a capture of the shipped content can show the out-of-range behaviour a hostile-input reader needs, and the only off-canvas placements are 8 options of one face compositor, where a capture would have to isolate one layer of one character's face texture. **Not read:** anything that handles network traffic, login, keys, the launcher or anti-tamper; in particular the compression dictionaries' reader and users were **not** examined (§11). **Fourth use, 2026-10-08** (same build, SHA-256 prefix as above; headless Ghidra on an own copy of the shared project, deleted afterwards; plus a byte search of the executable for type-code getters). **Code read:** the imposter-table serialiser and its element serialiser (field → member mapping), the distant-sprite vertex builder of the sector manager, the sprite material builder (which atlas goes to which texture parameter), the sprite painter's draw and set-up; the UI-scene record serialiser and constructor, the UI-scene element creation and its name lookup, the camera element's set-up, the UI 3D-view render call (camera selection, fog override) and the copy of the render state into the fog shader constants; the script-channel lookup, transition lookup, play request, queueing, replacement and stop handling; the name-filter table serialiser, its rule-set serialiser, every name-filter check (per character, per name), the vowel test and the multi-letter collapse; the taboo-table serialiser, its list matcher and the pattern-match wrapper (library identified by its error strings). **Questions:** what the imposter entry floats are; which atlas is a normal map and how its channels are read; where the 1/32 cell margin lies; what the UI-scene trailer does and how a viewport picks its camera; how priority, interruptible, exclusive and transitions decide what plays on a channel; what every name-filter field does; what the taboo header numbers mean, how lists are hashed and which pattern dialect applies. **Why M1–M3 were not enough:** the data gives only the numbers (all UI-scene trailers are identical defaults, imposter floats are unlabeled, rule-set numbers and taboo header numbers have no names); the rules are code; no published source describes them; a frame capture (M3) cannot separate quad size from anchor offset, nor show a channel's queue or a filter's rule. The DXBC programs of shader records 0x2B00000E, 0x2B0003B9 and 0x2B0006E5 (the three records whose programs declare the distant-sprite constants) were disassembled with a public shader disassembler to read the sprite quad and normal decoding. |
 | SPEC | Facts already stated, with their own provenance, in the companion specs named in the header; used here only as cross-references. |
 | GEN | General references, not project-specific: the public DXBC shader-container format of Direct3D 10/11 (container magic, chunk table, program-version token); Direct3D surface-format names. |
 
@@ -77,19 +77,33 @@ How sources are marked:
 | C7 | Trailing boolean: selects DXT3 (1) or DXT1 (0) when the composed image is block-compressed; the composition path of this build never requests compression (§3.5) | BIN; OBS (1 in the 3 non-avatar compositors, 0 in the 21 face compositors) | BIN (use); Confirmed (values) |
 | C8 | Character-creation controls tie an integer property (option index) and a layer key to a compositor record (§3.7) | OBS (218 `AppearanceUI_CompositorControl` structs in 0x47 entity descriptors) | Confirmed |
 | C9 | Out-of-range inputs and off-canvas placements: opacity and colour bytes come from 32-bit truncating conversions whose results are not clamped (opacity keeps the low 8 bits; colour components are shifted and OR-ed into one word); node-33 colours are stored as 4 bytes and are always 0–1; placements are clipped to the canvas by a sub-rectangle rule (§3.6.1, §3.6.2, §3.6.3) | BIN (job set-up, sub-rectangle set-up, replace routine, node-33 registration, stored-form colour reader); OBS (199 of 199 node-44 opacities 1.0; 218 of 218 node-33 colours have alpha 255, two distinct values; 8 off-canvas options, all in 0x33000017) | BIN (behaviour); Confirmed (values) |
+| C10 | Pairing of `AC_Color_*` properties with compositor colour keys (§3.7) | SPEC (`appearance.md` §3.5, row A21: all 218 node-33 instances of the species script tables) | Confirmed (by reference) |
 | U1 | UI scene layout: a count, that many static entity descriptors, then a colour, a boolean and two 32-bit fields (§4.1) | OBS (20 of 20 records, 3,051 descriptors, zero bytes left); BIN (scene serialiser; element serialiser with its flag bits) | Confirmed (BIN + OBS) |
 | U2 | UI scene descriptor flag census and type census (§4.2) | OBS (3,051 of 3,051) | Confirmed |
+| U3 | UI scene trailer = fog override of the 3D view: flag, fog colour, fog start and end distances (§4.1) | BIN (fourth use: serialiser, constructor defaults, the 3D-view render call, the copy into the fog constants); OBS (flag 0 in 20 of 20) | BIN (meaning); Confirmed (values) |
+| U4 | A viewport's camera is the scene element whose UISceneEntity key equals the viewport's camera value (§4.2) | BIN (element creation and name lookup, 3D-view render call) | BIN |
 | I1 | Imposter table layout: hashed table of (imposter-name key → atlas cell, two floats), two texture-list DIDs, two floats (§5.2) | OBS (507 of 507, zero bytes left); BIN (serialiser, element reader with defaults, dependency collector) | Confirmed (BIN + OBS) |
 | I2 | Table DIDs: 0x27, region, then the 27-landblock super-block coordinates (§5.1) | OBS (507 of 507) | Confirmed |
-| I3 | Atlas geometry: column/row counts from the entry count, cell size 128 texels at the top level, stored cell size = 31/32 of the cell step (§5.4) | OBS (300 of 300 non-empty tables: texture sizes and stored floats agree) | Confirmed (OBS); meaning of the 1/32 margin OPEN |
+| I3 | Atlas geometry: column/row counts from the entry count, cell size 128 texels at the top level, stored cell size = 31/32 of the cell step (§5.4) | OBS (300 of 300 non-empty tables: texture sizes and stored floats agree) | Confirmed (OBS) |
 | I4 | Entry keys are keys of the RenderImposterNames enum mapper (§5.3) | OBS (816 distinct keys, all resolve) | Confirmed |
+| I5 | `value_a` × sprite scale is the width and height of the sprite quad, `value_b` × sprite scale the height of its lower edge above the anchor (§5.2) | BIN (element serialiser: stored order = member order; sprite builder; sprite vertex program); OBS (`value_a` > 0 in 12,406 of 12,406) | BIN |
+| I6 | The first atlas is the colour atlas (alpha = coverage), the second a tangent-space normal atlas; channel mapping (§5.3) | BIN (material builder binds them to parameters 3000 and 3011; sprite pixel program) | BIN |
+| I7 | The 1/32 margin is at the right and bottom of each cell; texture coordinates of a cell (§5.4) | BIN (sprite builder); OBS (the last 4 texel columns and rows of all 12,406 used cells have alpha 0 in the top-level colour atlas) | Confirmed (BIN + OBS) |
 | CS1 | Compute shader: u32 byte count + a DXBC compute-shader blob of exactly that size (§6) | OBS (3 of 3); BIN (serialiser: count then raw bytes, count checked against the bytes left); GEN | Confirmed (BIN + OBS) |
 | SC1 | Script-channel record layout (§7) | OBS (1 of 1, zero bytes left); BIN (reflection registration: classes, fields, kinds, order) | Confirmed (BIN + OBS) |
 | SC2 | Script keys are keys of the FX enum mapper; channel keys of ScriptChannels (§7.3) | OBS (346 distinct script keys all resolve in FX; channel keys 0x10000001, 0x10000003, 0x10000005 resolve in ScriptChannels) | Confirmed |
-| NF1 | Name-filter table layout (§9) | OBS (1 of 1, zero bytes left); BIN (serialiser and element reader) | Confirmed (BIN + OBS); field meanings mostly OPEN |
-| TB1 | Taboo table layout (§10) | OBS (1 of 1, zero bytes left); BIN (serialiser: list headers, then a string-keyed hashed table of string lists) | Confirmed (BIN + OBS); meaning of the two header numbers OPEN |
+| SC3 | Channel arbitration: exclusive channels hold one current script per entity; priority and interruptible decide replacement; refused requests are dropped or queued by priority; the queue head starts when the current script ends (§7.4) | BIN (fourth use) | BIN |
+| SC4 | Transition choice: exact (from, to), then (any, to), then (from, any), then (any, any), within the channel's own list (§7.4) | BIN (fourth use) | BIN |
+| NF1 | Name-filter table layout (§9) | OBS (1 of 1, zero bytes left); BIN (serialiser and element reader) | Confirmed (BIN + OBS) |
+| NF2 | Meaning of every rule-set field: character-type masks, run and vowel limits, multi-letter groups, extra vowel characters, forbidden first characters, character classes, taboo mode, languages (§9) | BIN (fourth use: rule-set serialiser and all checks); OBS (class lists and language keys, 3 of 3 rule sets) | BIN (meaning); Confirmed (values) |
+| NF3 | Per-character and per-name checks, vowel set (§9.1, §9.2) | BIN (fourth use) | BIN |
+| TB1 | Taboo table layout (§10) | OBS (1 of 1, zero bytes left); BIN (serialiser: list headers, then a string-keyed hashed table of string lists) | Confirmed (BIN + OBS) |
+| TB2 | Header `category` [`a`] = result category (1–5), `contexts` [`b`] = bit mask of contexts (§10) | BIN (fourth use: list matcher) | BIN |
+| TB3 | String hash of the list table (§10) | BIN (matcher's lookup); OBS (the 8 keys lie in non-decreasing bucket order for hint 1, bucket count 23) | Confirmed (BIN + OBS) |
+| TB4 | Pattern dialect and matching procedure (§10.1) | BIN (fourth use: match wrapper; library identified by its error strings) | BIN |
 | CD1 | Compression-dictionary stored envelope (§11) | OBS (3 of 3) | Confirmed (envelope only; body and use gated) |
 | PS1 | 0x78 census by family and by DID-map label (§12) | OBS (1,618 of 1,618 decode with the generic reader) | Confirmed |
+| PS2 | Typed referrers of the 0x78 families, including struct members (§12.2) | OBS (2026-10-08: all 0x47, 0x78 and 0x79 property sets walked into structs and arrays; raw scan of the non-asset archives) | Confirmed |
 | M1 | PropertyMetaData family: properties, census, uniqueness by PID, control list (§13.1) | OBS (5,211 of 5,211 objects; control list 5,211 of 5,211) | Confirmed |
 | M2 | ErrorCategory family and the error control (§13.2) | OBS (675 of 675) | Confirmed |
 | M3 | TutorialHint family and control (§13.3) | OBS (337 of 337) | Confirmed |
@@ -436,10 +450,13 @@ For an explorer preview: select option `index` 1 in every layer (or the avatar e
 `AC_Texture_*` values through its controls), opacity 1.0, and either white or the avatar's
 `AC_Color_*` colours.
 
-> **OPEN:** which `AC_Color_*` property feeds which colour key. No control or property in
-> the data pairs them (DyeMap controls name the property but no colour key); the pairing is
-> presumably in client code or server-side scripts. Until settled, the explorer offers a
-> colour picker per colour key. (Linked to `appearance.md` §3.3 OPEN O15.)
+**Colour pairing (C10).** The pairing of `AC_Color_*` properties with colour keys is not
+stored in the compositor or in the character-creation controls; it is made by the node-33
+instances of each species' script table, whose stored `Color` is replaced at run time by
+the property that drives it. The resulting table (which property feeds which colour key of
+which compositor name) is in `appearance.md` §3.5, Confirmed there over all 218 node-33
+instances. A viewer that has the avatar's script table follows those nodes; one that has
+not uses that table, and otherwise offers a colour picker per colour key.
 
 ---
 
@@ -454,15 +471,22 @@ For an explorer preview: select option `index` 1 in every layer (or the avatar e
 | 1 | `did` | DID | Own DID |
 | 2 | `entity_count` *n* | u32 | 2–732; 3,051 in all |
 | 3 | entities | *n* × static entity descriptor | Exactly the layout of `entity-descriptor.md` §3.1 (flags word, then optional fields in that spec's stream order). The client's element reader has the same fields, flag bits and order (BIN). |
-| 4 | `colour` | u32 | A colour, 0xAARRGGBB (the client converts it to four floats). 0 in all 20. |
-| 5 | `flag` | bool8 (BIN) | 0 in all 20 |
-| 6 | `value_a` | u32 | 0xBF800000 (the bit pattern of −1.0) in all 20 |
-| 7 | `value_b` | u32 | 0xBF800000 in all 20 |
+| 4 | `fog_colour` | u32 | Fog colour, 0xAARRGGBB; the client converts each byte to a float by × 1/255 (the stored-form colour reader of C9). 0 in all 20. |
+| 5 | `fog_override` | bool8 (BIN) | 0 in all 20 |
+| 6 | `fog_start` | f32 | Fog start distance, world units. −1.0 (0xBF800000) in all 20, which is also the client's constructor default. |
+| 7 | `fog_end` | f32 | Fog end distance, world units. −1.0 in all 20 (constructor default −1.0). |
 | — | *(end)* | | Zero bytes left in all 20 |
 
-> **OPEN:** the meaning of `colour`, `flag`, `value_a` and `value_b` (perhaps a background
-> colour and two distances where −1 means "default"). Constant in all records, so a viewer
-> may ignore them.
+**Use (U3, BIN).** The four trailer fields override the distance fog of the 3D view that
+shows the scene. When a viewport draws its scene, it passes its own fog settings (the
+viewport properties `UICore_Viewport_UseFog`, `…_FogColor`, `…_FogNearDistance` and
+`…_FogFarDistance`, `ui-widgets.md` §12). When the scene's `fog_override` is 1, the client
+replaces all four by the scene's values: fog on, `fog_colour`, `fog_start`, `fog_end`. When it
+is 0 the viewport's settings stand. The pair then feeds the linear distance fog of
+`lighting.md` §10 (start = near, end − start = range). The client's constructor defaults are
+`fog_override` 0, colour 0 (all four components 0.0) and both distances −1.0. Since every
+record of this install stores `fog_override` = 0, the trailer has no visible effect here;
+a viewer may ignore it, a renderer that supports viewport fog applies the rule.
 
 <a id="s4-2"></a>
 ### 4.2 Descriptor census (Confirmed, U2; 3,051 descriptors)
@@ -490,10 +514,27 @@ Properties found in UI scene descriptors include `CameraFOV` (47), `CameraFarDis
 `KeyLight` on lights, and `Render_AdjustableScale`/`Physics_AdjustableScale` (1,537 each)
 on objects. Names (bit 0x100) are the scene's own element names; some match keys of the
 UISceneEntity enum mapper (EMAPPER key 0x78), for example camera names. How UI code picks
-a camera or light by name is UI behaviour and not specified here.
+a camera or light by name is UI behaviour; the camera rule is given below.
 
-> **OPEN:** whether the client selects the active camera of a viewport by a name from
-> UISceneEntity or by descriptor type; a viewer uses the first descriptor of type 27.
+**Scene elements and camera selection (U4, BIN).**
+
+1. When a scene is loaded for a viewport, the client creates one scene element per
+   descriptor of type 2 (Decal), 7 (Physics), 9 (Light) or 27 (Camera), in stored order.
+   Descriptors of other types create nothing (none occur in this install).
+2. Each element gets an identifier: its descriptor name (bit 0x100) looked up as a label of
+   the enum mapper with EMAPPER key 0x78 (UISceneEntity; 0x230000B9 here). A name that is
+   not a label of that mapper gives no usable identifier.
+3. The viewport's `UICore_Viewport_camera` value (an enum of the same mapper,
+   `ui-widgets.md` §12) selects the camera: the 3D view uses the **first** element, in
+   creation order, whose identifier equals that value, and takes the view from it.
+4. Nothing is drawn when the viewport's camera value is 0, when no element matches, or when
+   the matched element provides no camera.
+5. A camera element reads `CameraFOV` from its descriptor's properties; a float value in
+   1–100 is used, other values are ignored.
+
+So the camera is chosen by name, not by type. A viewer without a viewport (the explorer)
+uses the first type-27 descriptor whose name is a UISceneEntity label, or else the first
+type-27 descriptor.
 
 ---
 
@@ -540,10 +581,32 @@ dependencies (BIN).
 Empty tables: 207 have no entries; 204 of them have both DIDs and both floats 0, 3 have
 two texture-list DIDs and both floats 0.
 
-> **OPEN:** the meaning of `value_a` and `value_b` (plausibly the imposter quad's world size
-> and the vertical offset of its anchor, in metres). The registry's
-> `Render_ImposterName` (an enum on entities, mapper as above) is how a placed object names
-> its imposter; the drawing rule of distant imposters is not specified here.
+**Entry floats (I5, BIN).** The client keeps the entry members in stored order and the
+distant-sprite builder (`distant-landscape.md` §4.8, §5.6) multiplies both floats by the
+sprite's `scale`:
+
+- *S* = `value_a` × `scale` is the **size** of the sprite quad: its width and its height,
+  in world units (`coordinates.md` §3);
+- *B* = `value_b` × `scale` is the **height of the quad's lower edge above the sprite
+  position** (negative: the quad reaches below the position; observed `value_b` from −29.3
+  to 0.144, so most quads start slightly below the anchor).
+
+The quad is a camera-facing billboard centred horizontally on the sprite position. With
+*d* the unit vector from the sprite position to the eye, *R* = the horizontal unit vector
+(−*d*.y, *d*.x, 0) / |(−*d*.y, *d*.x)| in the world frame of `coordinates.md` §3 (the viewer's
+right on screen) and *U* = *d* × *R* (unit, pointing upward), its corners are
+
+| Corner | Position | Texture coordinates (§5.4) |
+|---|---|---|
+| top left | P − (*S*/2)·*R* + (*B* + *S*)·*U* | (*u*₀, *v*₀) |
+| bottom left | P − (*S*/2)·*R* + *B*·*U* | (*u*₀, *v*₁) |
+| top right | P + (*S*/2)·*R* + (*B* + *S*)·*U* | (*u*₁, *v*₀) |
+| bottom right | P + (*S*/2)·*R* + *B*·*U* | (*u*₁, *v*₁) |
+
+where P is the sprite position. The quad turns with the view in both yaw and pitch (*U* is
+perpendicular to *d*, not world-vertical). The registry's `Render_ImposterName` (an enum on
+entities, mapper as above) names the same imposter keys on placed objects; how those are
+drawn is `mesh.md` §8.7.
 
 <a id="s5-3"></a>
 ### 5.3 The two atlases (Confirmed, I3; 300 non-empty tables)
@@ -551,10 +614,23 @@ two texture-list DIDs and both floats 0.
 Both texture lists are mip chains of 4 levels (`texture-list.md` §2.2, kind 2). The first
 list's surfaces are DXT5 and the second's DXT1 in all 300 tables; both have the same size.
 The registry defines `Render_ImposterSourceColorImage` and
-`Render_ImposterSourceNormalImage`, which suggests colour (with alpha) and normal atlases;
-the data does not show it.
+`Render_ImposterSourceNormalImage`, matching the roles below.
 
-> **OPEN:** confirm that the DXT1 atlas holds normals (and its channel mapping).
+**Roles (I6, BIN).** The client binds `colour_atlas` to texture parameter 3000 (the colour
+texture) and `second_atlas` to parameter 3011 (the normal texture) of the sprite material
+(`material.md` §8); when `second_atlas` is 0 it uses a sprite program without a normal
+texture. The sprite pixel program reads them as follows:
+
+- colour atlas: RGB is the albedo; A is the coverage, multiplied by the sprite's fade
+  factor; the texel is discarded when that product is below the alpha-test threshold plus
+  0.001;
+- normal atlas: a tangent-space normal *n* = 2·(R, G, B) − 1 (each channel 0–1), in the
+  quad's frame: R along *R* (§5.2; along −*R* for a mirrored sprite, §5.4), G along *U*, B
+  along −*d* (away from the viewer). The A channel is not read.
+
+The program lights the texel with the fake directional light, the ambient and the
+hemispheric ambient (using *n*·*U* for the hemisphere) and applies distance fog; those
+inputs are `lighting.md` §4.2 and §10.
 
 <a id="s5-4"></a>
 ### 5.4 Atlas geometry (Confirmed (OBS), I3)
@@ -567,11 +643,28 @@ For a table with *n* ≥ 1 entries:
 - `cell_u` = (31/32) / *C* and `cell_v` = (31/32) / *R* (300 of 300; e.g. *n* = 19 gives
   *C* = 16, *R* = 2, `cell_u` = 0.060546875, `cell_v` = 0.484375).
 
-For a preview, cell (*c*, *r*) covers texture coordinates *u* from *c* / *C* to
-*c* / *C* + `cell_u` and *v* from *r* / *R* to *r* / *R* + `cell_v`.
+**Cell texture coordinates (I7, Confirmed (BIN + OBS)).** The client derives the cell step
+from the stored size: step_u = `cell_u` + `cell_u` / 31 (= 1 / *C*), step_v = `cell_v` + `cell_v` / 31 (= 1 / *R*). Cell
+(`column`, `row`) covers
 
-> **OPEN:** whether the 1/32 margin sits at the right/bottom of each cell (as the preview
-> rule assumes) or is split on both sides.
+- *u*₀ = `column` × step_u, *u*₁ = *u*₀ + `cell_u`;
+- *v*₀ = `row` × step_v, *v*₁ = *v*₀ + `cell_v`;
+
+so the unused 1/32 of each cell step is at the **right and bottom** of the cell. In the data,
+the last 4 texel columns and the last 4 texel rows of every used cell (12,406 of 12,406) have
+alpha 0 in the top-level colour atlas, while the first columns and rows are partly covered.
+The atlases' samplers use wrap addressing (`material.md` §7.5, address code 1, in all
+permutations of the three sprite shader records).
+
+**Mirrored sprites (BIN).** A sector sprite can be flagged as mirrored
+(`distant-landscape.md` §5.6). For a mirrored sprite the client swaps the two *u* values
+between the left and right corners and subtracts 1 from both: left corners get
+*u*₁ − 1, right corners *u*₀ − 1. With wrap addressing this samples the same cell flipped
+horizontally, and the negative *u* tells the program to negate the normal's R axis (§5.3).
+The client also has a vertical flip of the same kind (*v* values swapped and reduced by 1),
+applied when the colour atlas's texture object carries a renderer-internal flag and the
+graphics device reports a capability; neither comes from the data. Tessera rule: never apply
+the vertical flip.
 
 ---
 
@@ -639,8 +732,63 @@ script.
 - The record is named by the `ScriptChannels` label of UNIQUEDB and by the type-20
   property `ScriptTable_ScriptChannels` (one 0x47 entity descriptor names it).
 
-> **OPEN:** the playback rules (how priority, interruptible, exclusive and transitions
-> decide which script plays). Not needed to decode; needed by the effect system.
+The playback rules are §7.4.
+
+<a id="s7-4"></a>
+### 7.4 Playback rules (BIN, SC3, SC4)
+
+The client arbitrates per entity and per channel. Each entity keeps, for every channel it
+has used, a **current** script (with the priority and interruptible flag it was admitted
+with) and a **queue** of waiting requests ordered by priority.
+
+**Finding the channel.** A script started by code may carry its own channel and script
+info; otherwise the client looks the script key up in the record: the channel whose
+`scripts` table holds the key, and that entry's script info. A script found in no channel
+is not managed: it plays at once.
+
+**A play request** (script *N* with priority *p*ₙ and interruptible *i*ₙ, on channel *K*):
+
+1. If channel *K* has `exclusive` = 0, *N* plays at once; nothing is recorded.
+2. If the entity has no current script on *K*, *N* becomes current and plays.
+3. Otherwise, with *C* the current script (priority *p*꜀, interruptible *i*꜀), *N* is
+   **refused** when *p*ₙ < *p*꜀, or *p*ₙ = *p*꜀ and *i*꜀ = 0. (The client also has a hold
+   state set by code and a forced request; a held channel refuses, a forced request is never
+   refused. Neither is in the record.)
+4. A refused request is either dropped or queued, by a **queue mode** that comes with the
+   request (not from this record): mode 3 never queues; mode 1 queues only when *p*ₙ is
+   greater than the priority of the first queued entry (or the queue is empty); every other
+   mode always queues. A queued request is inserted in front of the first entry *E* with a
+   strictly lower priority (so equal priorities keep arrival order), or appended when
+   there is none. After an insertion in front of *E*, every entry behind *E* (not *E*
+   itself) that was queued with mode 1 is stopped and removed. The requester is told
+   "queued" only for an insertion in front of an existing entry; a dropped or appended
+   request is reported as refused (an appended entry nevertheless stays in the queue).
+5. A request that is not refused **replaces** *C*: *C* is stopped and the client looks for a
+   transition from *C* to *N* (below). Without a transition *N* becomes current and plays.
+   With one, the channel has no current script and *N* is reported as waiting; the
+   transition's `run_script` is expected to play next, and when it starts the channel
+   records it as the running transition. In both cases every queued entry with mode 1 is
+   then stopped and removed.
+
+**Transition choice (SC4).** Only when *C* and *N* are on the same channel and both keys are
+non-zero. In the channel's own `transitions` list, in stored order, the client takes the
+first entry with (`from_script`, `to_script`) = (*C*, *N*); failing that the first with
+(0, *N*); then (*C*, 0); then (0, 0). So 0 means "any" in either position. The record's
+`global_transitions` list is not consulted by this lookup.
+
+**When a script stops** (a script of an exclusive channel): a pending or running
+transition on that channel is cancelled first (its script is stopped). Then, if the
+stopped script is the current one and the queue is not empty, the first queued entry is
+removed and goes through step 5 against the stopped script, and is started when it becomes
+current; with an empty queue the channel is left without a current script. A stopped script
+that was only queued is removed from the queue.
+
+> **OPEN:** (1) which queue mode each caller passes (the value travels with the request
+> from the code that starts the script; script-table nodes were not traced for it); (2)
+> what admits *N* after a transition's `run_script` ends (the hand-over after a transition
+> was not traced past the point where *N* is reported as waiting); (3) whether anything
+> reads `global_transitions` (empty in this install). Tessera rule until settled: treat every
+> request as mode 0, and start *N* when the transition script ends.
 
 ---
 
@@ -663,24 +811,98 @@ The table holds per-"rule set" parameters for validating character and other nam
 | 1 | `did` | DID | 0x0E200000 |
 | 2 | rule sets | hashed table (TSize) of (u32 `rule_key`, rule set) | Hint 1, 3 rule sets. Keys 1, 2 and 0x10000003: keys of the enum mapper labelled NameRules (EMAPPER key 0x02). |
 
-Rule set (field order BIN; meanings OPEN unless stated):
+Rule set (field order and meanings BIN, NF2; values OBS, 3 of 3 rule sets). The former
+neutral names are kept in brackets for implementers who used them.
 
-| Order | Field | Type | Observed |
-|---|---|---|---|
-| 1–7 | `n1` … `n7` | 7 × u32 | e.g. (6935, 0, 5368, 2, 4, 6, 7) and (2833, 2817, 5374, 2, 4, 6, 7) |
-| 8 | `string_list_a` | u32 count + UTF-16 string × count | 4 short strings |
-| 9 | `string_a` | UTF-16 string | 3 units |
-| 10 | `string_b` | UTF-16 string | empty in all 3 |
-| 11 | character classes | hashed table (TSize) of (u32 key, UTF-16 string, u32 count + UTF-16 string × count) | Hint 1, 13 entries in each rule set; keys are the single bits 1, 2, 4, …, 4096; the first string is a character set (0–62 units), the list holds one 2-unit string per entry |
-| 12 | `flag_a` | bool8 (BIN) | 1, 0, 1 |
-| 13 | `u32_list` | u32 count + u32 × count | 4, 0 and 3 values (observed values 2 and 0x10000001–0x10000004) |
-| 14 | `flag_b` | bool8 (BIN) | 0 in all |
+| Order | Field | Type | Meaning | Observed |
+|---|---|---|---|---|
+| 1 | `letter_classes` [`n1`] | u32 | Bit mask of character classes (row 11) in which letters are allowed (§9.1) | 6935, 2833, 6935 |
+| 2 | `digit_classes` [`n2`] | u32 | Bit mask of classes in which decimal digits are allowed | 0, 2817, 0 |
+| 3 | `printable_classes` [`n3`] | u32 | Bit mask of classes in which any printable character is allowed | 5368, 5374, 5368 |
+| 4 | `max_repeat` [`n4`] | u32 | Most identical characters allowed in a row; 0 = no limit (§9.2) | 2 in all |
+| 5 | `max_vowel_run` [`n5`] | u32 | Most vowels (other than `extra_vowels`) allowed in a row; 0 = no limit (§9.2) | 4 in all |
+| 6 | `vowel_within` [`n6`] | u32 | A vowel must occur among the first `vowel_within` letters; 0 = no check (§9.2) | 6 in all |
+| 7 | `max_consonant_run` [`n7`] | u32 | Every `max_consonant_run` letters in a row must contain a vowel, i.e. at most `max_consonant_run` − 1 non-vowels in a row; 0 = no check (§9.2) | 7 in all |
+| 8 | `letter_groups` [`string_list_a`] | u32 count + UTF-16 string × count | Letter sequences that count as one letter for `vowel_within` and `max_consonant_run` (§9.2) | 4 strings of 2, 2, 2 and 3 units in each rule set |
+| 9 | `extra_vowels` [`string_a`] | UTF-16 string | Characters that count as vowels for `vowel_within` and `max_consonant_run` and break a vowel run for `max_vowel_run` (§9.2) | 3 units in each rule set |
+| 10 | `forbidden_first` [`string_b`] | UTF-16 string | Characters a name may not start with (§9.2) | empty in all 3 |
+| 11 | character classes | hashed table (TSize) of (u32 `class_key`, UTF-16 string `allowed`, u32 count + UTF-16 string × count `excluded_ranges`) | One entry per context class; `allowed` lists characters always allowed in that class; each `excluded_ranges` string gives an inclusive range by its first two units (first, last) (§9.1) | Hint 1, 13 entries in each rule set; keys are the single bits 1, 2, 4, …, 4096; `allowed` 0–62 units; 12 classes have one 2-unit range (first ≤ last in all 36), class 16 has none, in each rule set |
+| 12 | `taboo_with_rules` [`flag_a`] | bool8 (BIN) | Selects how the taboo check is run for this rule set (§10.1) | 1, 0, 1 |
+| 13 | `languages` [`u32_list`] | u32 count + u32 × count | Keys of the enum mapper labelled Languages (EMAPPER key 0x4A; 0x230000B1 here). The client's UI tests whether a language value held by its data layer (by the mapper, the client language) is in this list | rule 1: 2, 0x10000004, 0x10000003, 0x10000001; rule 2: none; rule 0x10000003: 0x10000004, 0x10000001, 0x10000003 (all resolve) |
+| 14 | `flag_b` | bool8 (BIN) | A per-rule-set switch that the client hands to its UI; meaning OPEN (§9.3) | 0 in all |
 
 The strings are data and are not reproduced here.
 
-> **OPEN:** the meaning of the seven numbers, the string lists and the two flags, and how
-> the client applies a rule set to a name. Name validation is mostly server-side in the
-> original; Tessera needs it only for its own server (M7), which can define its own rules.
+**Context classes.** The single-bit class keys are **contexts**: the code that checks a
+string passes one context bit *m*. The same bit selects the character class of §9.1 and the
+taboo lists of §10.1 that apply.
+
+<a id="s9-1"></a>
+### 9.1 Character check (BIN, NF3)
+
+Character *c* is allowed in context *m* under rule set *r* when all of these hold:
+
+1. *c* is not `[` (U+005B) or `]` (U+005D);
+2. and either
+   - *c* passes the **type test**: (`letter_classes` AND *m*) ≠ 0 and *c* is a letter, or
+     (`digit_classes` AND *m*) ≠ 0 and *c* is a decimal digit, or
+     (`printable_classes` AND *m*) ≠ 0 and *c* is printable; **and** *c* lies in none of
+     the `excluded_ranges` of the class whose key equals *m*;
+   - or *c* occurs in the `allowed` string of the class whose key equals *m*.
+
+The class is looked up by the exact key *m*; for a value of *m* that is not a key, there
+are no ranges and no `allowed` characters. An unknown rule-set key allows no character.
+Letter, digit and printable are the C runtime's wide-character classifications on the
+client's platform (Tessera: Unicode letter categories L*, decimal digits Nd, and "not a
+control, format, surrogate or unassigned code point" for printable).
+
+A **string check** in context *m* rejects an empty string and any string with a
+character that fails the character check.
+
+<a id="s9-2"></a>
+### 9.2 Name check (BIN, NF3)
+
+The client checks a name against rule set *r* on a lower-cased copy of the name (C runtime
+lower-casing; Tessera: Unicode simple lower-case mapping). An unknown rule-set key passes
+every step. Steps, in this order; the first failing step rejects the name:
+
+1. **Repeats.** If `max_repeat` ≠ 0: no character may occur more than `max_repeat` times
+   in a row.
+2. **Collapsed form.** For steps 3 and 5 the client builds a collapsed copy: walking the name
+   from the start, at each position it keeps the character there and advances by the length
+   of the first `letter_groups` string (in stored order) that matches the name at that
+   position, compared case-insensitively over that length (cut at the name's end); with no
+   match it advances by one. So each letter group shrinks to its first character.
+3. **Early vowel.** If `vowel_within` ≠ 0: among the first min(`vowel_within`, length)
+   characters of the collapsed copy at least one must be a vowel or occur in
+   `extra_vowels`.
+4. **Vowel run.** If `max_vowel_run` ≠ 0: on the lower-cased name (not collapsed), no more
+   than `max_vowel_run` characters in a row may be vowels that are not in `extra_vowels`
+   (a character in `extra_vowels`, or any non-vowel, ends the run).
+5. **Consonant run.** If `max_consonant_run` = *k* ≠ 0: on the collapsed copy of length
+   *n*, if *n* < *k* it must contain at least one vowel-or-`extra_vowels` character;
+   otherwise no *k* characters in a row may all be neither vowels nor in `extra_vowels`.
+6. **First character.** If the name is not empty, its first character must not occur in
+   `forbidden_first`.
+
+**Vowels** are exactly these code points (a fixed set of the client's vowel test, decision
+0012): U+0041, U+0045, U+0049, U+004F, U+0055, U+0061, U+0065, U+0069, U+006F, U+0075,
+U+00C0, U+00C1, U+00C4, U+00C8, U+00C9, U+00D6, U+00DA, U+00DC, U+00E0, U+00E1, U+00E4,
+U+00E8, U+00E9, U+00F6, U+00F9, U+00FC. The set is not symmetric between upper and lower
+case (for example U+00F9 is a vowel but U+00FA is not); since the checks run on the
+lower-cased name, a character counts as a vowel when its lower-cased form is in the set.
+
+Tessera rule: an empty `letter_groups` string is skipped (the client would not advance).
+
+<a id="s9-3"></a>
+### 9.3 Open points
+
+> **OPEN:** (1) which context bit and which rule-set key the client's name-entry code
+> passes for character names and for other names, and in which order it runs the string
+> check (§9.1), the name check (§9.2) and the taboo check (§10.1) (the callers were not
+> traced); (2) what `flag_b` switches in the client's UI. Name validation in the original
+> is repeated server-side; Tessera needs these rules only for its own server (M7), which may
+> pick the context and order itself.
 
 ---
 
@@ -693,16 +915,58 @@ A localized word filter. Layout (1 of 1 record, English archive, 385,598 bytes, 
 |---|---|---|---|
 | 1 | `did` | DID | 0x0EBADA55 |
 | 2 | `list_count` *k* | u32 | 8 |
-| 3 | list headers | *k* × (Pascal string `list_name`, u32 `a`, u32 `b`) | Names are source-file names; (`a`, `b`) observed (4, 0x7FFFFFFF), (4, 4,999), (3, 4,999), (3, 4,999), (3, 4,100), (2, 771), (1, 4,999), (5, 0x7FFFFFFF) |
+| 3 | list headers | *k* × (Pascal string `list_name`, u32 `category` [`a`], u32 `contexts` [`b`]) | Names are source-file names; (`category`, `contexts`) observed (4, 0x7FFFFFFF), (4, 0x1387), (3, 0x1387), (3, 0x1387), (3, 0x1004), (2, 0x303), (1, 0x1387), (5, 0x7FFFFFFF) |
 | 4 | lists | hashed table (TSize) keyed by Pascal string, value u32 count + UTF-16 string × count | Hint 1, 8 entries; each key equals one header's `list_name`; 39 to 6,708 strings per list, 17,612 in all |
 
-The strings are filter patterns; they use regular-expression syntax (`.*`, `\b` occur).
-None is reproduced here. The hashed table's order is by a string hash that this spec does
-not give; a reader does not need it.
+The strings are filter patterns (regular expressions, §10.1). None is reproduced here.
 
-> **OPEN:** the meaning of `a` (perhaps a severity, 1–5) and `b` (a bit mask, perhaps of
-> the contexts a list applies to: chat, names, …), and the exact pattern dialect. Needed
-> only for a chat or name filter (M7 and later).
+**Header fields (TB2, BIN).**
+
+- `contexts`: bit mask of the contexts (§9) in which the list applies; a list is used for a
+  check in context *m* when (`contexts` AND *m*) ≠ 0. 0x7FFFFFFF applies everywhere.
+- `category`: what a match in this list means; the check returns one of five distinct
+  result categories for `category` 1, 2, 3, 4 and 5. A match in a list with `category` 0 is
+  ignored (the scan goes on); a match in a list with any other value stops the scan and
+  counts as no match.
+
+**String hash (TB3).** The table is bucketed (`records.md` §1.3) by this hash of the key's
+bytes: start with *h* = 0; for each byte *b*, taken as a **signed** 8-bit value, set
+*h* = (16·*h* + *b*) mod 2³²; then, if any of the top four bits of *h* is set, set
+*h* = (*h* XOR (top four bits shifted right by 24)) AND 0x0FFFFFFF. A final 0xFFFFFFFF
+becomes 0xFFFFFFFE. The bucket is *h* mod the bucket count. The 8 stored keys are in
+non-decreasing bucket order for hint 1 (bucket count 23). A reader does not need the hash;
+a byte-exact writer does.
+
+<a id="s10-1"></a>
+### 10.1 Matching (BIN, TB4)
+
+**Pattern dialect.** The client compiles each pattern with the PCRE2 library (identified by
+its error texts), passing pattern and subject as 16-bit code-unit strings, with the caseless
+option (option value 0x8) and no other option; UTF mode is not requested. A pattern matches
+when a search anywhere in the subject succeeds (not anchored). Without UTF mode, caseless
+matching folds only code points below 256 (the library's character tables). A pattern that
+fails to compile never matches; an empty pattern or an empty subject never matches.
+
+**Checking one string *t* in context *m* with rule set *r*** (the matcher of the rule-set
+variant below):
+
+1. An empty *t* matches nothing.
+2. For each list header whose `contexts` shares a bit with *m*, the client takes that list
+   and builds the subject: *t* lower-cased, keeping only the characters that pass the
+   character check of §9.1 for (*r*, *m*).
+3. The patterns of the list are tried in stored order; the first match decides for that
+   list: with `category` 0 the scan continues with the next header, otherwise it stops and
+   the result is the list's category (1–5) or no match (other values).
+
+**Variants.** When the name-filter rule set *r* in use has `taboo_with_rules` = 1, the client
+runs the rule-set variant: it cuts the input into pieces with a tokenizer that was not
+traced and checks each piece as above. Otherwise it runs a variant without the
+character filter, which was not traced in detail.
+
+> **OPEN:** (1) the order in which the client walks the list headers (stored order is
+> likely, the reader's list insertion was not checked); (2) the tokenizer of the rule-set
+> variant and the details of the other variant; (3) which context bits the client passes
+> for chat and for names. Needed only for a chat or name filter (M7 and later).
 
 ---
 
@@ -754,21 +1018,30 @@ Families by the properties they carry (each set counted once, first matching row
 | Family | Sets | Characteristic properties | Named by | Spec |
 |---|---|---|---|---|
 | Game maps | 1,300 | `UI_Map_GameMap` (struct: `UI_Map_MapImage` (0x41), `UI_Map_Scale`, `UI_Map_PixelOffsetX/Y`, `UI_Map_BlockOffsetX/Y`, `UI_Map_FogOfWar`, `UI_Map_FogOfWar_Color`); 21 of them also `Landblock_LightMap` | `Dungeon_MapData` and `Dungeon_MiniMapData` (1,303 references each, 0x79 sets of dungeon objects), `Area_MapData` (1) | map spec (not yet written); `wstate.md` §11.4 |
-| Local sky | 147 | `Environment_LocalSky`; 7 also `InteriorFogNear/Far/Color` (two further sets carry only `Environment_PlayerIndoorAmbianceOverride` and are counted under Other) | landblock and content-layer data | `environment.md` §7 |
-| Footstep / surface sounds | 38 | `SND_Footstep_Surfaces`; 19 also `Physics_SurfacePropertiesToApply`, `Content_IAmMadeOf`; 18 `Base_Surface_Type` | `Physics_SurfacePropertiesToApply` (19, 0x79) | `sound.md` |
-| Ambient music | 25 | `Ambient_MusicRegion`, `Ambient_MusicType` | (not found in property sets; OPEN) | `sound.md` |
+| Local sky | 147 | `Environment_LocalSky`; 7 also `InteriorFogNear/Far/Color` (two further sets carry only `Environment_PlayerIndoorAmbianceOverride` and are counted under Other) | `Monitor_VolumePropertiesToApply` in `Entity_Monitors` structs of 0x47 descriptors (156 references; all 147 sets) | `environment.md` §7, `sound.md` §10.3.4 |
+| Footstep / surface sounds | 38 | `SND_Footstep_Surfaces`; 19 also `Physics_SurfacePropertiesToApply`, `Content_IAmMadeOf`; 18 `Base_Surface_Type` | `Physics_SurfacePropertiesToApply` (52 in 0x47, 19 in 0x78; 20 of the 38 sets) | `sound.md` |
+| Ambient music | 25 | `Ambient_MusicRegion`, `Ambient_MusicType` | `Monitor_VolumePropertiesToApply` (25 references; all 25 sets) | `sound.md` §10.3.4 |
 | Content-layer defaults | 13 | `World_PresentTimeOfDay`, `World_IsNight` | CONTENT_LAYER DID map 0x28000012 (1,660 entries, 1,626 of them to 0x7800001C) | `entity-descriptor.md` §4.5.1 |
-| Volumes | 9 | `Volume_IsLiquid`, `PathMap_*` | | `collision.md`, `water.md` |
-| Other | 76 | singletons: UI tables, option lists, script-callback parameter sets, physics-controller tuning, character-creation presets (`Chargen_AvatarPresetsArray`, 8), bone sliders (5), stat trees (5) … | UNIQUEDB (36 labels to 0x78), DBPC (9), SCRIPTCALLBACK (12), PHYSICSCONTROLLER (6) | per subject |
+| Volumes | 9 | `Volume_IsLiquid`, `PathMap_*` | `Monitor_VolumePropertiesToApply` (145 references; all 9 sets) | `collision.md`, `water.md` §8 |
+| Other | 76 | singletons: UI tables, option lists, script-callback parameter sets, physics-controller tuning, character-creation presets (`Chargen_AvatarPresetsArray`, 8), bone sliders (5), stat trees (5) … | UNIQUEDB (36 labels to 0x78), DBPC (9), SCRIPTCALLBACK (12), PHYSICSCONTROLLER (6); typed: `Monitor_VolumePropertiesToApply` (56), `UIViewport_LightingScene` (19), `AppearanceUI_PresetsFile` (12), `AppearanceUI_BoneSliderDefinitionsFile` (12) | per subject |
 
 For the explorer: show a 0x78 set with the generic property view, title it with the DID-map
 label(s) that point at it (a set may have several, e.g. 0x78000007 is both
 `GameplayOptionList` and `Preferences_Gameplay_Option_List`), and offer a typed view for the
 game-map family (image with the offsets and scale).
 
-> **OPEN:** an exhaustive referrer census for the families whose sets are named from
-> records outside property sets (local sky, ambient music, volumes). The scan of §15 covers
-> typed properties of 0x47, 0x70/0x76 and 0x78 records only.
+**Referrers (PS2, Confirmed 2026-10-08).** The "Named by" column counts typed references in
+all property sets of 0x47 descriptors, 0x79 sets and 0x78 sets, **including struct members
+and array elements** (the first census did not count 0x78 targets inside 0x47 descriptors,
+which is why the monitor references were missing). Every set of the local-sky, ambient-music and
+volume families is named by at least one `Monitor_VolumePropertiesToApply`. A raw 4-byte
+scan of every record of the general, gamelogic, English, cell and map archives finds the
+same 0x47 counts exactly.
+
+> **OPEN:** the raw scan also finds 4-byte values equal to these sets' DIDs inside object
+> records (0x70), script tables (0x07), cells (0x01) and landblock records (0x80). Those
+> records were not decoded for this question, so whether the matches are references or
+> chance byte patterns is not known. A viewer lists only the typed referrers.
 
 ---
 
@@ -812,8 +1085,14 @@ Explorer use: in any property view, if the PID has a metadata object, show its d
 name next to the internal name, group by auction category, and mark percentage values.
 
 > **OPEN:** the scale of percentage values (whether a stored 0.05 displays as "5%") and
-> the operator semantics of `AllowedOperator` and `ExaminationMod`. A viewer shows the raw
-> value with a "%" hint until settled.
+> the operator semantics of `AllowedOperator` and `ExaminationMod`. Not in the data. A scan
+> of the client's native code (2026-10-08, BIN fourth use) finds no immediate use of the
+> property ids of `PropertyMetaData_DisplayAsPercentage`, `…_AllowedOperatorList` or
+> `…_Property`; the id of `…_ExaminationMod` occurs only in the examination window's code. The display rule therefore lives in data-driven or WLib code
+> (`wlib-bytecode.md`) or on the server; it was not found. Settling it needs either that
+> code or an owner observation of the original client: one item tooltip of a property
+> whose metadata has `DisplayAsPercentage` true, with the stored value. A viewer shows
+> the raw value with a "%" hint until settled.
 
 <a id="s13-2"></a>
 ### 13.2 Error categories (Confirmed, M2; 675 objects)
@@ -944,7 +1223,7 @@ references, not distinct targets):
 | 0x27 imposter table | computed from landblock coordinates (§5.1) | — |
 | 0x43 script channels | `ScriptTable_ScriptChannels` in one 0x47; UNIQUEDB | 1 + 1 |
 | 0x2D, 0x0E200000, 0x0EBADA55 | UNIQUEDB labels | 3 + 1 + 1 |
-| 0x78 sets | §12.2 | |
+| 0x78 sets | §12.2; among them `Monitor_VolumePropertiesToApply` in `Entity_Monitors` structs of 0x47 (a struct member, PS2) | 383 monitor references |
 | PropertyMetaData objects | control list | 5,211 |
 | ErrorCategory objects | error control | 675 + 1 default |
 | TutorialHint objects | tutorial control | 385 |
@@ -987,6 +1266,13 @@ check that a Tessera reader must apply).
 - **MR12** (BIN): a reader of the record types of this spec rejects a hashed-table hint
   above 22 and any count larger than the bytes left. For these types this is an exception
   to `records.md` T1 (§1; §18).
+- **MR13** (0x27, I7): in the top-level colour atlas of every non-empty table, the last 4
+  texel columns and the last 4 texel rows of each used cell have alpha 0.
+- **MR14** (0x0E200000): in every rule set, the class keys are the 13 single bits 1 … 4096;
+  every `excluded_ranges` string has exactly 2 units with first ≤ last; `languages` values
+  resolve in the Languages mapper.
+- **MR15** (0x0EBADA55, TB3): the list table's keys are in non-decreasing order of
+  (hash of §10 mod the bucket count of the stored hint).
 
 ---
 
@@ -1074,32 +1360,33 @@ These are proposals for the owners of those specs; this session edits only this 
 | `records.md` | §1.6 prologue table | 0x43 and 0x58: "layout OPEN" → this spec §7 and `string-table.md` §10.3; the 0x0E compression dictionaries begin with two 16-byte identifiers (§11) |
 | `entity-descriptor.md` | ED1 | Holds for landblock descriptors only; UI scene descriptors (§4.2) lack 0x004 and 0x080 in many cases. A shared reader must not require them. |
 | `records.md` | §1.3 invariant T1 ("must not reject other hints") | Narrow T1: hints 13–22 must be accepted; a hint above 22 is rejected wherever the client's reader is known to reject it, which so far is every property set (`property-system.md` §5.3) and the imposter, name-filter and taboo tables (this spec §1, MR12). Until T1 is revised, MR12 and `property-system.md` §5.3 are per-type exceptions to it. |
-| `appearance.md` | §3.3 OPEN (0x33 compositor layout) | Answered by §3 of this spec, except the `AC_Color_*` → colour-key pairing (§3.7 OPEN) |
+| `appearance.md` | §3.3 OPEN (0x33 compositor layout) | Answered by §3 of this spec; the `AC_Color_*` → colour-key pairing is `appearance.md` §3.5 itself (§3.7, C10) |
+| `distant-landscape.md` | §4.8 "Size … Inferred" | BIN now (I5, §5.2): `value_a` × `scale` is the quad's width and height, `value_b` × `scale` the height of its lower edge above the sprite position; corners as in §5.2 |
+| `distant-landscape.md` | §4.8 `distance` OPEN; §5.6 per-sprite flag OPEN | From the sprite vertex program (fourth BIN use): the sprite's `distance` reaches the program, which fades the sprite in over 10 world units starting at `distance` × (second component of the program constant `c_DistantSpriteConfig`) − 25 from the eye, times the far-draw fade; the per-sprite flag computed in §5.6 is the horizontal **mirror** flag of §5.4 here |
+| `ui-widgets.md` | §12 OPEN (how a Viewport draws) | Partly answered: camera selection by UISceneEntity key and the scene fog override (§4.1, §4.2 here) |
+| `sound.md` | §10.3.4 | The 383 `Monitor_VolumePropertiesToApply` references name 0x78 sets of the families of §12.2 here (156 local sky, 25 ambient music, 145 volume, 56 other, 1 empty set) |
 
 ---
 
 <a id="s19"></a>
 ## 19. Open questions
 
-> **OPEN:** which `AC_Color_*` property feeds which compositor colour key (§3.7).
+> **OPEN:** script-channel queue modes per caller, the hand-over after a transition script,
+> and any use of `global_transitions` (§7.4).
 
-> **OPEN:** meaning of the UI scene trailer fields (§4.1) and how a viewport picks its
-> camera (§4.2).
+> **OPEN:** which context bit and rule-set key the name-entry code passes, the order of the
+> name checks, and the meaning of `flag_b` (§9.3).
 
-> **OPEN:** meaning of the imposter entry floats (§5.2), the content of the DXT1 atlas
-> (§5.3) and the placement of the 1/32 cell margin (§5.4).
-
-> **OPEN:** script-channel playback rules (§7.3).
-
-> **OPEN:** name-filter rule-set fields (§9) and taboo list header numbers and pattern
-> dialect (§10).
+> **OPEN:** taboo list walking order, the tokenizer and the variant without rule set, and
+> the context bits used for chat and names (§10.1).
 
 > **OPEN (gated, M8):** compression-dictionary body and field meanings (§11).
 
-> **OPEN:** referrers of the local-sky, ambient-music and volume 0x78 families outside
-> property sets (§12.2).
+> **OPEN:** whether the raw 0x78 DID matches in 0x70, 0x07, 0x01 and 0x80 records are
+> references (§12.2).
 
-> **OPEN:** percentage scale and operator semantics of property metadata (§13.1).
+> **OPEN:** percentage scale and operator semantics of property metadata; needs the
+> data-driven code or one owner observation (§13.1).
 
 ---
 
@@ -1111,3 +1398,5 @@ These are proposals for the owners of those specs; this session edits only this 
 | 2026-10-07 | First version (Review). Layouts of 0x33, 0x21, 0x27, 0x2D, 0x43, 0x0E200000, 0x0EBADA55 Confirmed (BIN + OBS) over all records; compositor composition (BIN); compression-dictionary envelope (stored form only, no BIN, gated); 0x78 family census; metadata families PropertyMetaData, ErrorCategory, TutorialHint, MovieLibrary, PropertyResponse, GameCallback, Version; WEENIECONTENT census; reference graph. |
 | 2026-10-07 | Revision after the first review (status stays Review). Re-measured over all 24 compositors (payloads re-read, byte-identical), the surface headers of the overlay options of 0x33000017, and all 7,526 script tables and 28,992 scriptlets for nodes 33/44; second BIN use under decision 0011 for the out-of-range and placement questions. (1) §3.2, §3.4, C3, MR2: 3,737 first DIDs, of which 121 are 0, exactly the colour entries with `mask_did` 0; the 3,616 non-zero values (2,977 distinct) exist in no archive. (2) §3.6.2: the off-canvas options reach row 310, not 307; the client's placement rule (clip, never reject, with its two odd cases) replaces the Tessera rule and closes the clipping OPEN (removed from §19). (3) §3.6.1, §3.6.3, new row C9: opacity and colour conversions defined for every f32 value (low 8 bits of a 32-bit truncation; colour components OR-ed unmasked; NaN skips the layer); node-33 colours are stored as bytes and always 0–1; observed opacities all 1.0. (4) §1, MR12, §18: hint rule scoped as a per-type exception to `records.md` T1, with a proposal to narrow T1. (5) OBS row: 5,954 distinct non-zero compositor DIDs (2,977 with headers, 2,977 absent). BIN row extended with the second use. No other count in §1–§3 changed (layer histogram, options, colour counts, x/y ranges, index exception, formats, masks, flags, key resolution all re-confirmed). |
 | 2026-10-07 | Second revision after the first review (status stays Review). Every count disputed by the review re-measured from scratch over all records in a separate session: 3,737 first DIDs, 121 of them 0 (all colour entries with `mask_did` 0, colour key 0x10000007 under layer key 0x10000003), 3,616 non-zero (2,977 distinct), none among the 3,838,957 directory entries of the 30 client archives; off-canvas options: 8, all in 0x33000017 layer 0x10000012, last row 310 (option 5: `y` 219, height 92) of the 256-row canvas, none past column 511, none negative or starting outside; 5,954 distinct non-zero compositor DIDs (2,977 with headers, 2,977 absent, no overlap). The other counts of §1–§3 (layer histogram, 166 layers, 1,811 options, colour counts 307/1,082/422, `x` 0–476, `y` 0–701, the `index` exception, base and overlay formats, 1,805 A8 masks of matching size, flag values, 199 node-44 and 218 node-33 instances with the stated values, 218 `AppearanceUI_CompositorFile` references) re-confirmed; no further correction needed. The BIN facts of C9 (opacity and colour conversions, the opacity skip, the placement rule, the stored-form colour scale) re-read and confirmed (BIN row, third use). Review issues 1–5 stay resolved as in the previous row. |
+| 2026-10-08 | Revision answering the OPEN callouts (status Accepted → Revised). Fourth BIN use (decision 0011) and new OBS measurements. (1) §3.7, C10: the `AC_Color_*` → colour-key pairing is referenced from `appearance.md` §3.5 (OPEN closed). (2) §4.1, U3: the UI-scene trailer is a fog override of the 3D view; fields renamed `fog_colour`, `fog_override`, `fog_start`, `fog_end` (formerly `colour`, `flag`, `value_a`, `value_b`; the last two are f32, formerly listed as u32 bit patterns). (3) §4.2, U4: camera chosen by UISceneEntity key equal to the viewport's camera value; element types created; `CameraFOV` range. (4) §5.2, I5: `value_a`/`value_b` are the sprite quad's size and lower-edge height (× sprite scale), with the corner table. (5) §5.3, I6: atlas roles (parameters 3000 and 3011) and the normal channel mapping. (6) §5.4, I7, MR13: margin at the right and bottom (BIN + OBS over 12,406 cells); mirrored sprites; I3's OPEN mark removed. (7) New §7.4 (SC3, SC4): channel arbitration, queueing, transition precedence, stop handling; narrowed OPEN. (8) §9 (NF2, NF3, MR14): every rule-set field named and explained (former names in brackets), new §9.1 character check, §9.2 name check with the vowel set, §9.3 narrowed OPEN; correction: class 16 has no range (12 of 13 classes have one). (9) §10 (TB2–TB4, MR15): header fields renamed `category`/`contexts` (formerly `a`/`b`) and explained, the list-table string hash, new §10.1 matching (PCRE2, caseless, unanchored); narrowed OPEN. (10) §12.2, §15, PS2: referrers found inside `Entity_Monitors` structs (`Monitor_VolumePropertiesToApply`) for all local-sky, ambient-music and volume sets; correction: the 19 `Physics_SurfacePropertiesToApply` references are in 0x78 sets, not 0x79, and 52 more are in 0x47; narrowed OPEN on raw matches. (11) §13.1: OPEN made precise (where the rule is not, what would settle it). (12) §16 MR13–MR15, §18 four new proposal rows, §19 rewritten. |
+| 2026-10-08 | Review of the 2026-10-08 revision (separate review session): passed; status Revised → Accepted. No content change. Record in the review log. |

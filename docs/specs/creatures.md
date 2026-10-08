@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Status** | Accepted (OPEN-closing revision of 2026-10-08, §15; narrow re-review of 2026-10-08 passed) |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author; second and third reviews by further separate sessions, none of them the author) |
-| **Review record** | Third review 2026-10-07 (separate session, not the author): **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Review record** | Third review 2026-10-07 (separate session, not the author): **passed**, Accepted. Full record moved to the review log (decision 0018). Revision of 2026-10-08: reviewed 2026-10-08 (separate session, not the author): **not passed**, changes requested (four items). Narrow re-review 2026-10-08 (separate session, not the author): **passed**, Accepted. Details in the review log. |
 | **Implements into** | A gameplay-data layer on `crates/props` and `crates/wstate` (template store, authored-subset extraction, AI and generator decoders; crate placement is the implementer's choice); `crates/world` (generator, spawn-point and patrol-path index per landblock); `crates/net` sandbox backend (spawning, §6.8); `apps/explorer` (creature card and spawn overlay, §10); `apps/dattool` (census commands) |
 | **Companion specs** | [`wstate.md`](wstate.md) (object records 0x70, bundles, link and available-property sections §6–§7); [`property-system.md`](property-system.md) (property sets, the +0x09000000 rule §6.2, enum and bitfield labels §7, DID maps §8); [`wlib.md`](wlib.md) (class library, ancestry); [`landblock.md`](landblock.md) §4.6 (links), §4.8 (weenie list), §5 (block maps); [`entity-descriptor.md`](entity-descriptor.md) §4 (static entities, instance property sets §4.5.2); [`setup.md`](setup.md) §4 (0x47 entity descriptors); [`appearance.md`](appearance.md) §7 (how NPC and creature figures are dressed); [`environment.md`](environment.md) §4 (region tables; the encounter table is decoded here, §7); [`coordinates.md`](coordinates.md) (map coordinates for overlays); [`string-table.md`](string-table.md) §9 (rendering `Name` and other StringInfo values) |
 
@@ -26,8 +26,8 @@ data files:
    appearance, AI, loot references, quest roles) and which are derived copies or values that
    are the same in every record of the class (§2–§4);
 2. the **AI records** the templates point at: action tables, the probability table, attitude
-   and classification records, colour-event tables, formations, conjunctions and puppet
-   packages (§5);
+   and classification records (with the rule by which an attitude table judges another
+   entity, §5.3.1), colour-event tables, formations, conjunctions and puppet packages (§5);
 3. the **generator chain** from a landblock's generator instance set through its links to
    spawn points and patrol paths, and through a generator profile to the templates it can
    create (§6);
@@ -55,6 +55,11 @@ How sources are marked:
 - **BIN**: read from the client executable under method M4 (decision 0011).
 - **Decision**: a Tessera choice where the data and the client say nothing; it is not a
   claim about the original.
+- **Inferred**: used only as a qualifier inside a Confirmed or BIN row (C27, C30) for one
+  named part of the fact that was not observed directly but concluded by this spec writer
+  from observed evidence (how code uses a native function, or two numberings with the same
+  values). The rest of the row keeps its mark; nothing in the spec depends on the inferred
+  part beyond what the confirmed part already gives.
 
 | Key | Source |
 |---|---|
@@ -62,6 +67,9 @@ How sources are marked:
 | LC | LotroCompanion `lotro-tools` (read for facts only): its mob, NPC, classification, action-table and generator loaders. Used for: entries with `GeneratorProfile_Weight` or `GeneratorProfile_Probability` ≤ 0 are skipped; action-table level bounds ≤ 0 mean "no bound"; the `AIActionProbability` table name; the existence of species-level loot tables. No code or names beyond interoperability identifiers taken. |
 | DS | `research/notes/data-semantics.md` §5.2 (class 1723 mob, 1724 NPC), §6.3 (link types; generators resolve through `GeneratorProfile_Profile`). |
 | BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`), analysed headless in the dirty room on 2026-10-07. **Question:** creature templates carry no level and no vitals (§4.8); which properties does the client itself read to present a creature, and with what default when the level is absent? **Why M1–M3 were not enough:** the data show only that the level is absent; what the client shows in its place is behaviour; no published source documents it; an in-game observation (M3) would show one creature at a time and could not tell a default from a server-sent value. **Read:** a search of the code for the 32-bit property IDs of §4–§6 (most matches turned out to be UI element identifiers in the same number range, not property reads, and were discarded), and one routine that fills a creature information panel from an entity's property table, with its property lookups. Nothing from network, login, launcher or anti-tamper code was read. |
+| OBS2 | User install (Steam), observed 2026-10-08, read-only, data files unchanged since 2026-10-04. Throwaway probes in the dirty-room scratch area, using the project's decoders as tools, over: the object form (0x70 bundle) of all 38,651 templates, all 4,168 generator profiles, all 124 attitude records, the one classification-filter-list record (class 977) and the WEENIECONTENT entry `ClassificationControl`; every 0x79 property set of every 0x70 record, searched for DIDs of classes 1653 and 1654; the link-type enum mapper (0x230000BE, base 0x230001A9) and mapper 0x23000112; the `gameplayactivatables` UI layout record (0x22000012, searched for two element IDs); and the bytecode of the class library (0x56000000), disassembled with the rules of `wlib-bytecode.md` (an Accepted spec): the bodies of classes 884, 974, 975 and 976, class 1658's lookup functions, the class-1196 accessors and fill function, the class-434 function that calls class 884 for the harmful-interaction check (a second caller in class 434 was located, not read), and a search of the whole code for 32-bit pushes of the property IDs named in §5.3.1, §5 and §6. |
+| BIN2 | **M4 (decision 0011), second use, 2026-10-08.** Same client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, file unchanged since 2026-10-04), headless decompiler and disassembler on a copy of the shared analysis project (deleted after use), single addresses and functions only. **Questions:** (1) which window owns the creature information panel of C9; (2) whether the executable reads `ForwardSource_Movement_SpeedMultiplier` or the property IDs of the AI action tables, attitude filter lists, colour-event tables, generator profiles, `Generator_ProfileDID` or `PatrolLink_Speed` directly; (3) where the client reads the 0x14 encounter records. **Why M1–M3 were not enough:** the data hold the panel's layout but not which code fills it; whether code reads a property is not visible in the data; no published source covers either; the running client (M3) shows the panel only when a skill opens it and shows nothing of property reads. **Read:** a byte search of the executable for those 32-bit IDs and the instructions or table entries around each of the 18 occurrences; the panel routine's caller and that caller's caller (a window method, not followed further); for (3), the cache-size setting and the DID-range registration of prefix 0x14 (the reader itself was not reached). Nothing from network, login, launcher or anti-tamper code was read. |
+| OBS3 | User install (Steam), observed 2026-10-08 (review fixes), read-only, data files unchanged since 2026-10-04. Fresh throwaway probes in the dirty-room scratch area, using the project's decoders as tools, over: every 0x79 property set of every one of the 383,332 0x70 records, searched for DIDs of classes 1653 and 1654 and counted per avatar record (references and distinct referrer records); the object form of all 4,168 generator profiles walked in parallel with their property sets, every attribute of every node compared with its property-set counterpart; all 549 filter exceptions against the species-to-genus table; all 351 stored `ClassificationFilter_Filter_Default` values; the EMAPPER entry of mapper 0x230000BE. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -74,19 +82,29 @@ How sources are marked:
 | C7 | Template property census and DID targets (§4.1–§4.7) | OBS (all records of each class) | Confirmed 2026-10-07 |
 | C8 | No level, no stat scaling, no per-template vitals in the templates; the level-range records are empty (§4.8) | OBS (every property set; 24 level-range records) | Confirmed 2026-10-07 |
 | C9 | The client's creature information panel reads name, `Advancement_Level` (1 when absent), genus, species, cached health and power maxima, examination rank, alignment, state immunities and conjunction immunity, and derives three immunity indicators from bit masks (§4.8) | BIN | BIN only |
+| C9a | That panel is the analyse-skill panel: element `AnalyzeSkillComponent` inside the top-level element `GamePlay_AnalyzeSkillPanel` of the `gameplayactivatables` layout (§4.8) | BIN2 (the panel routine's callers); OBS2 (element labels from mapper 0x230000D1; both IDs present in layout 0x22000012) | BIN (code path); Confirmed (labels, layout) |
 | C10 | Agent species, genus and alignment equal the referenced classification record's (§5.4) | OBS (36,929 of 36,929) | Confirmed 2026-10-07 |
 | C11 | Action tables, attitude, classification, colour-event, formation, conjunction and puppet records: layouts and censuses (§5) | OBS (all records of each class) | Confirmed 2026-10-07 |
 | C12 | `AIAction_Probability` codes are converted to percentages by a table reached through WEENIECONTENT (§5.2) | LC (table name); OBS (table found and decoded) | Confirmed 2026-10-07 |
 | C13 | Generator instance sets, their links and the GeneratorPoint position-set rule (§6.2–§6.4) | OBS (all landblocks) | Confirmed 2026-10-07 |
 | C14 | 0x47 `kind` equals the static-entity type of every static entity that names the record (§6.4) | OBS (3,210,410 static entities) | Confirmed 2026-10-07 |
 | C15 | Generator-profile grammar (§6.5) | OBS (all 4,168 profiles) | Confirmed 2026-10-07 |
-| C16 | Profile object-form class counts match property-set element counts (§6.6) | OBS (all 4,168) | Confirmed for five classes; rest OPEN |
+| C16 | Profile object form: the role of every bundle class, the attribute name hash of every node field, and the object tree equals the property-set tree in every profile (§6.6) | OBS (all 4,168, counts); OBS2 (all 4,168 compared node by node, 4,168 equal); OBS3 (hashes: each attribute matched its role in every node of its class, 4,168 profiles, 54,850 script objects) | Confirmed 2026-10-08 |
 | C17 | Entries whose `GeneratorProfile_Weight` or `GeneratorProfile_Probability` is 0 or less are skipped (§6.8) | LC | Reported |
-| C17a | The sandbox's choice, placement, repeat and respawn rules, including the reading of weight as a relative weight and of probability as per mille (§6.8, Decision D3). That reading is a hypothesis of this spec writer, kept under the §6.8 OPEN; it is not a fact about the original | Tessera | Decision |
+| C17a | The sandbox's choice, placement, repeat, respawn and AI-action rules, including the reading of weight as a relative weight and of probability as per mille (§6.8, Decision D3). That reading is a hypothesis of this spec writer, kept under the §6.8 OPEN; it is not a fact about the original. (D3's attitude step follows C27 and is not a hypothesis.) | Tessera | Decision |
 | C18 | Patrol links and path graph (§6.9) | OBS (all landblocks) | Confirmed 2026-10-07 |
 | C19 | Encounter table layout (§7) | OBS (5 of 5 records decoded to the last byte) | Confirmed 2026-10-07; meaning OPEN |
 | C20 | Enum mappers and their entry counts (§8) | OBS | Confirmed 2026-10-07 |
-| C21 | Tessera rules D1 (template store and its lookup, including the rule that a base is never answered from a mirror, §3.2.1, §3.2.2), D2 (instance-property list, §3.4), D4 (unscoped entries, §6.7), D5 and D6 (tool views, §10), D7 (colour-event extra event, §5.5) | Tessera | Decision |
+| C21 | Tessera rules D1 (template store and its lookup, including the rule that a base is never answered from a mirror, §3.2.1, §3.2.2), D2 (instance-property list, §3.4), D4 (unscoped entries, §6.7), D5 and D6 (tool views, §10), D7 (colour-event extra event, §5.5), D8 (classification values of a sandbox entity, §5.3.1) | Tessera | Decision |
+| C22 | Classes 1653 and 1654 are the administrator and player forms of the 69 avatar templates; each of the 138 records is named by exactly one **kind** of referrer (race-table gender entries, monster-play records or the PvP-control record), by one to seven referrer records of that kind; multiplicities per record as in §2.1 | OBS2 (every 0x79 set of every 0x70 record searched; 15 + 67 + 1 references per class, 69 of 69 records of each class reached); OBS3 (per-record counts); `player-character.md` §4 | Confirmed 2026-10-08 |
+| C23 | Reference attributes of the template root object: per class, which are non-null and what they point at (§3.1) | OBS2 (all 38,651 root objects) | Confirmed 2026-10-08 |
+| C24 | Link type 13 is the key labelled `PathMapTest` of the link-type enumeration (§3.3) | OBS2 (mapper 0x230000BE with base 0x230001A9); `wstate.md` §6 | Confirmed 2026-10-08 |
+| C25 | The executable holds no direct reference to the property IDs of `ForwardSource_Movement_SpeedMultiplier`, `AI_ActionTable_Array`, `AIActionTable_Actions`, `Attitude_AggressiveFilterList`, `Attitude_FriendlyFilterList`, `AI_ColorEventTable`, `AIColorEventTable_Events`, `AIColorEventTable_Event`, `GeneratorProfile_Profile`, `Generator_ProfileDID` or `PatrolLink_Speed`: of these 11 IDs, 7 do not occur anywhere in the file, and the 18 occurrences of the other 4 are UI element IDs: 12 in UI code (child-element lookups and handler tables) and 6 in data tables of element IDs; each of the four numbers is also a labelled key of the UI element-ID enumeration (mapper 0x230000D1) (§3.2.1, §5, §6) | BIN2; OBS2 (labels) | BIN only (Confirmed for the labels) |
+| C26 | The class library's code reads none of these properties: `AI_ActionTable_Array` and its element fields, `AIActionTable_Actions` and the `AIAction_*` fields of §5.1, `AI_ColorEventTable`, `AIColorEventTable_Events`, `AIColorEventTable_Event` and its fields, the `GeneratorProfile_*` properties present in this install (§6.5), `PatrolLink_Speed`. Every 32-bit push of one of their IDs (none for most) is a result code, a comparison or switch constant, a DID-map key or a formatting argument of an unrelated function (§5.1, §5.5, §6.8, §6.9) | OBS2 (all such pushes in the bytecode, each read in context) | Confirmed 2026-10-08 |
+| C27 | Attitude evaluation: the class library evaluates an attitude table against another entity's five classification values by the rule of §5.3.1 (aggressive list first, then friendly; per filter type one filter; `Default`; seven exception keys) | OBS2 (bytecode of classes 884, 974, 975, 976, 1658, 1196, 434) | Confirmed 2026-10-08 for the code path; the meaning of the native map and set operations it calls is Inferred (from their use and the data) |
+| C28 | Object form of attitude and filter-list records: per list a map from filter type to one filter; per filter a `Default` integer and a set of 64-bit exception keys built by the §5.3.1 key rule; it equals the property set in every list (§5.3.1) | OBS2 (all 124 attitude records and the class-977 record: 233 lists, 652 filters, 549 exceptions; no genus conflict) | Confirmed 2026-10-08 |
+| C29 | The WEENIECONTENT entry `ClassificationControl` (class 1658) lists 116 classification records and carries, in object form, a species-to-genus map that equals their `Classification_Species` and `Classification_Genus` values (§5.3.1) | OBS2 (116 of 116) | Confirmed 2026-10-08 |
+| C30 | Attitude results 1, 2 and 3 carry the labels `Neutral`, `Friendly` and `Aggressive` of mapper 0x23000112 (§5.3.1) | OBS2 (the mapper; the codes returned by class 884's code) | Confirmed for the labels; that the code uses this mapper's numbering is Inferred (same values) |
 
 ---
 
@@ -127,8 +145,8 @@ this install; the library gives the ancestry (`wlib.md`). Ten root classes occur
 | 1723 | 20,161 | 14,184,781 | 115,556,507 | 440–467 (median 443) | `Monster` (all) | Mob template |
 | 1724 | 16,605 | 9,074,632 | 85,831,261 | 391–435 (median 420) | `RealNPC` 16,599, `NPC` 6 | NPC template |
 | 794 | 1,722 | 661,188 | 1,656,210 | 40–87 (median 80) | `GameplayContainer` (all) | Container template |
-| 1653 | 69 | 246,537 | 631,757 | 804–811 | `Admin` | Player-like avatar templates (OPEN) |
-| 1654 | 69 | 244,536 | 629,760 | 801–807 | `Player` | Player-like avatar templates (OPEN) |
+| 1653 | 69 | 246,537 | 631,757 | 804–811 | `Admin` | Avatar templates, administrator form (C22) |
+| 1654 | 69 | 244,536 | 629,760 | 801–807 | `Player` | Avatar templates, player form (C22) |
 | 4026 | 16 | 12,420 | 112,324 | 411–414 | `RealNPC` | Distant-battle unit groups (`DistantBattleUnit_*` properties) |
 | 5785 | 6 | 3,294 | 55,257 | 424–434 | `RealNPC` | Neighbourhood NPCs (`NPC_Neighbor_*` properties) |
 | 1725, 3074, 3075 | 1 each | 143 each | 4,464 / 4,444 / 4,484 | 385–387 | `Referee` | Placeholder referee objects |
@@ -139,9 +157,34 @@ Ancestry (nearest first): 1723 and 1724 → 514 → 1729 → 510 → 790 → 173
 514; 1725 → 518 → 514; 3074 → 3070 → 518; 3075 → 3071 → 518. Above 1732 the chain is 695 →
 1733 → 787 → 1726 → 488 → 223 → 89 → 485 → 484.
 
-> **OPEN:** What classes 1653 and 1654 are used for. They carry `Advancement_Level` = 1, the
-> player-style vital regeneration properties and `Sex`; 69 records each, in pairs of adjacent
-> DIDs. No generator profile reaches them (§6.10).
+**Classes 1653 and 1654 (C22).** They are the avatar templates of `player-character.md` §4:
+69 pairs (administrator form 1653, player form 1654). Every one of the 138 records is named by
+exactly one **kind** of referrer (one of the three rows below), and each referring property
+pair names one record of each class. A record can be named by several referrers of its kind:
+
+| Referrer | Properties (player form / administrator form) | Records of each class |
+|---|---|---|
+| Race-table gender entry (class 860) | `RaceTable_Gender_PlayerAvatar` / `RaceTable_Gender_AdminAvatar` | 14 (15 references) |
+| Monster-play record (class 1932) | `MonsterPlay_MonsterAvatar` / `MonsterPlay_MonsterAdminAvatar` | 54 (67 references) |
+| PvP-control record (class 2708) | `PVPControl_Lobby_PlayerAvatar` / `PVPControl_Lobby_AdminAvatar` | 1 |
+
+Multiplicity per avatar record (the same in both classes; counts below are per class, then
+over all 138):
+
+| Kind | Named by 1 referrer record | by 2 | by 3 | by 7 |
+|---|---|---|---|---|
+| Race-table gender entry | 14 (one of them by two gender entries of the same class-860 record: 15 references) | 0 | 0 | 0 |
+| Monster-play record | 48 | 3 | 2 | 1 (48 + 6 + 6 + 7 = 67 references) |
+| PvP-control record | 1 | 0 | 0 | 0 |
+| **All 138 records** | **126** | **6** | **4** | **2** |
+
+So 12 of the 138 records are named by more than one referrer record, and 2 more by two
+references inside one referrer record. A reader must not assume that an avatar record has a
+unique referrer.
+
+No other property set names them, and no generator profile reaches them (§6.10). They belong to
+player characters and monster-play characters, not to creatures; `player-character.md` §4
+specifies them and how a character is built from them.
 
 <a id="s2-2"></a>
 ### 2.2 Finding templates without hard-coding (rule)
@@ -177,12 +220,20 @@ The record follows `wstate.md` §3 exactly. Contents observed in templates:
 | Available-property section | The instance-property list of §3.4 | §3.4 |
 
 In all 36,929 records with an import, the import, the DID item and the property
-`Attitude_Table` name the same DID. The root object's other reference attributes are null in
-the records inspected; a reader takes every gameplay value from the property set.
+`Attitude_Table` name the same DID. A reader takes every gameplay value from the property set.
 
-> **OPEN:** Whether any template's root object holds a non-null reference other than the
-> attitude item (a full census of the eight attributes was not run). Not needed: the
-> property set carries the attitude DID too.
+**Root-object references (C23, all 38,651 root objects).** Attributes are identified by
+their name hashes (`wlib.md` §8.2), quoted as interoperability identifiers:
+
+| Root class | Reference attributes | Non-null |
+|---|---|---|
+| 1723, 1724, 5785, 1725, 3074, 3075 | 8 | 0x021101A5 → the DID item (the attitude table) in every record; 0x04343517 → an embedded class-701 object in 13 class-1724 records; the other six null in every record |
+| 4026 | 10 | 0x021101A5 → the DID item; 0x09C27143 and 0x0B268289 → native class-17 objects; all three in all 16 records; the other seven null |
+| 794 | 3 | 0x04343517 → an embedded class-701 object in 66 records; the other two null in every record |
+| 1653, 1654 | 72, 70 | 21 (1653) and 20 (1654) attributes non-null in all 69 records each, one of them the DID item, the others embedded objects of the avatar machinery (`player-character.md` §4); the rest null in every record |
+
+The 13 + 66 records with a class-701 object are the records whose bundle holds more than
+the root object and the DID item (§3.1 table above).
 
 <a id="s3-2"></a>
 ### 3.2 The property set (0x79) and its authored subset
@@ -235,9 +286,15 @@ the base answers as if no mirror were there (Decision D1, the last step of the l
 Reason: the one template that holds both `Movement_SpeedMultiplier` and its `ForwardSource_`
 mirror shows that the two can differ, so the mirror is not a reliable copy of the base.
 
-> **OPEN:** Whether the original treats a base-less `ForwardSource_Movement_SpeedMultiplier`
-> (the three sets where it is not 1.0) as the creature's speed factor. The data cannot show
-> it; under D1 the base answers its dictionary default and the mirror keeps its own value.
+> **OPEN:** Whether the original server treats a base-less
+> `ForwardSource_Movement_SpeedMultiplier` (the three sets where it is not 1.0) as the
+> creature's speed factor. The data cannot show it, and neither the client nor its class
+> library refers to the mirror directly: the executable holds its property ID only as a UI
+> element ID (C25), and the class library's code pushes the number once, as a DID-map key,
+> never to read a property. (A generic mechanism that handles `ForwardSource_` properties by
+> name or by dictionary data would not show in that search; none was looked for.) The answer
+> most likely lies with the server, which no M1–M4 method reaches. Under D1 the base answers its dictionary default and the
+> mirror keeps its own value.
 
 <a id="s3-2-2"></a>
 #### 3.2.2 Class-constant and varying properties (Confirmed, C5)
@@ -322,9 +379,16 @@ may have at that end. Landblock instance sets that are sources of type-8 links h
 link (207,697 sources), 2 (10,289) or up to 20; the template of such a source is not in the
 data (§6.10), so the limit cannot be checked against its class.
 
-> **OPEN:** The meaning of `flag` (set only on Generator entries: limits 1 and 10 in mobs, 14
-> NPC records) and of link
-> type 13, which no landblock link uses (`wstate.md` §6).
+**Link type 13 (C24).** Code 13 is the key labelled `PathMapTest` of the link-type
+enumeration (enum mapper 0x230000BE with base mapper 0x230001A9; the label is quoted as an
+interoperability name). No landblock link uses it, so a server or tool that builds links
+from the landblocks never meets it; a byte-exact writer keeps the two type-13 entries.
+
+> **OPEN:** The meaning of `flag` (set only on Generator entries in templates: limits 1 and
+> 10 in mobs, 14 NPC records). `wstate.md` §6 finds that the offline client only stores the
+> flag and that no method of the object record reads the link section after loading, so the
+> meaning belongs to the original server or authoring tool; no M1–M4 method reaches it. Not
+> needed to read or place templates.
 
 <a id="s3-4"></a>
 ### 3.4 Instance-property list (wstate.md §7) for templates (Confirmed)
@@ -343,9 +407,11 @@ instance sets without a static entity use 523 distinct top-level PIDs; 251 of th
 by some class, and those carry 85 % of the property occurrences. Generic `Render_*`,
 `Physics_*` and `Entity_*` properties are set per instance without being listed.
 
-> **OPEN:** Whether the list is enforced anywhere (a server or editor whitelist) or only
-> advisory. Tessera treats it as advisory: instance properties are applied whether listed or
-> not (Decision D2).
+> **OPEN:** Whether the original server or authoring tool enforces the list (a whitelist of
+> per-instance properties) or treats it as advisory. The offline client does not consult it:
+> no method of the object record reads the section after loading (`wstate.md` §6 "Client",
+> §7). Tessera treats it as advisory: instance properties are applied whether listed or not
+> (Decision D2).
 
 ---
 
@@ -505,9 +571,17 @@ Bit *i* of the immunity bitfield is labelled by key *i* + 1 of mapper 0x23000050
 and vital maxima are therefore values the server sets on the instance; the templates do not
 hold them.
 
-> **OPEN:** Which window owns that panel (target information, a developer panel or the
-> examination tooltip). Not needed by the server; the explorer card (§10.1) does not depend
-> on it.
+**The window (C9a).** The panel is the **analyse-skill panel**: the routine fills a child of
+the element `AnalyzeSkillComponent` (element ID 0x10001442), which lies inside the top-level
+element `GamePlay_AnalyzeSkillPanel` (0x1000143F) of the layout under `UILAYOUT` key
+0x10000051 (`gameplayactivatables`, record 0x22000012 in this install; `ui-layout.md` §3.2,
+§9.1). A window method creates that element through the create-by-key entry of `ui-layout.md`
+§9.1 when it first needs it, finds the component, fills it by the table above and shows the
+window. Element names are quoted from the data (mapper 0x230000D1) as interoperability names.
+The fill routine and its wrapper have no other caller, so no other window
+uses this table. What makes the client call that window method was not followed (it may be
+driven by server messages, which are excluded). The explorer card (§10.1) does not depend
+on it.
 
 ---
 
@@ -538,10 +612,12 @@ structs (14,300 in all):
 
 A template's `AI_ActionTable_Array` names up to 16 tables, each with an optional level range.
 
-> **OPEN:** How a server chooses among the tables and actions (all eligible tables merged or
-> the first matching one; probability as a per-decision chance or as a weight; the role of −1
-> cooldowns; the time unit of the cooldowns and recovery, seconds being likely). The data hold the tables but no selection rule; the client does not run mob AI.
-> Decision D3 (§6.8) gives Tessera's sandbox rule.
+> **OPEN:** How the original server chooses among the tables and actions (all eligible tables
+> merged or the first matching one; probability as a per-decision chance or as a weight; the
+> role of −1 cooldowns; the time unit of the cooldowns and recovery, seconds being likely).
+> The data hold the tables but no selection rule; neither the executable (C25) nor the class
+> library's code (C26) reads the action-table properties, so the client does not run mob AI
+> and no M1–M4 method reaches the rule. Decision D3 (§6.8) gives Tessera's sandbox rule.
 
 <a id="s5-2"></a>
 ### 5.2 Probability table (Confirmed C12)
@@ -562,15 +638,129 @@ Top level: `Attitude_FriendlyFilterList` (118 records) and `Attitude_AggressiveF
 | Field | Type | Present | Meaning (labels from mapper 0x2300000F) |
 |---|---|---|---|
 | `ClassificationFilter_Filter_Type` | enum 0x2300000F | all | Which group of entities the filter selects (`MonsterPlayer`, `Monster`, `Victim`, `Guard`, `Player`, `DelvingMonster`), compared with the other entity's `Agent_ClassificationFilter` |
-| `ClassificationFilter_Filter_Default` | boolean | 278 aggressive / 72 friendly filters | Always true when present |
+| `ClassificationFilter_Filter_Default` | boolean | 278 aggressive / 72 friendly filters | Stored value true in all 350 (and in the one class-977 filter) |
 | `ClassificationFilter_FilterExceptionList` | array of `ClassificationFilter_FilterException` {optional `…_Alignment`, `…_Genus` (bitfield), `…_Species`, `…_Subspecies`} | 122 / 193 filters | 1–10 exceptions |
 
 The one record of class 977 has the same filter-list shape under `ClassificationFilter_FilterList`.
 The bundle of an attitude record holds the root object plus native containers (classes 35,
 105) and helper objects (974, 975), 1,890 items over the 124 records.
 
-> **OPEN:** The evaluation rule (does an exception remove a match or add one; how friendly and
-> aggressive lists combine; what an absent `Default` means). Decision D3 gives the sandbox rule.
+No list names the same `ClassificationFilter_Filter_Type` twice (all 233 lists: 114
+aggressive, 118 friendly, 1 in class 977). Filters by shape (C28):
+
+| List | `Default` true, no exceptions | `Default` true, exceptions | `Default` absent, exceptions | `Default` absent, no exceptions |
+|---|---|---|---|---|
+| Aggressive (365 filters) | 176 | 102 | 20 | 67 |
+| Friendly (286 filters) | 62 | 10 | 183 | 31 |
+| Class 977 (1 filter) | 1 | 0 | 0 | 0 |
+
+Exceptions (549) by the fields they hold: species only 246; alignment only 113; genus only
+112; genus and alignment 31; species and subspecies 28; genus and species 14; species and
+alignment 5. No exception holds a subspecies without a species, and none holds no field.
+
+<a id="s5-3-1"></a>
+#### 5.3.1 How an attitude table judges another entity (Confirmed C27–C30)
+
+The class library (record 0x56000000) carries the rule as script code; it was read with
+`wlib-bytecode.md`. The code calls native functions for three steps (find the filter for a
+type in a map, test whether a key set is empty, test whether it contains a key); those
+meanings are inferred from how the code uses them (C27); the map and sets they work on are
+confirmed against the data (CR17). Two entities are involved: the **judge**, whose attitude table *T* is used,
+and the **other** entity *B*, described by five values: filter type *f* (mapper 0x2300000F),
+genus *g* (the genus bitfield value, mapper 0x2300000A), species *s*, subspecies *u* and
+alignment *a*. The result is one of three codes, numbered like keys 1–3 of mapper 0x23000112:
+1 `Neutral`, 2 `Friendly`, 3 `Aggressive`.
+
+**Table.** In this order:
+
+1. If *f* is 0, the result is Neutral.
+2. If *T* has an aggressive list and that list **selects** *B* (below), the result is
+   Aggressive. The friendly list is not consulted.
+3. Otherwise, if *T* has a friendly list that selects *B*, the result is Friendly.
+4. Otherwise the result is Neutral. (A table with an empty property set is therefore Neutral
+   towards everyone.)
+
+**List.** A list selects *B* when it has a filter whose `ClassificationFilter_Filter_Type`
+equals *f* and that filter selects *B*. A list without a filter for *f* does not select *B*.
+
+**Filter.** Let *D* be the filter's `ClassificationFilter_Filter_Default`: its stored value
+when present (true in all 351 present values of this install), and **false when absent**. The filter selects *B* exactly when the following gives true:
+
+1. **Genus from species.** If *s* is not 0, look *s* up in the species-to-genus table
+   (below). If the table has no genus for *s*, the answer is *D*. If *g* is not 0 and differs
+   from the table's genus, the answer is *D*. Otherwise *g* becomes the table's genus.
+2. **No exceptions.** If the filter has no exceptions, the answer is *D*.
+3. **Exceptions.** Form the seven keys (rule below) of (genus, species, subspecies,
+   alignment) = (*g*, *s*, *u*, *a*), (*g*, *s*, *u*, 0), (*g*, *s*, 0, *a*), (*g*, *s*, 0, 0),
+   (*g*, 0, 0, *a*), (*g*, 0, 0, 0) and (0, 0, 0, *a*). If any of them equals the key of one of
+   the filter's exceptions, the answer is **not** *D*. Otherwise it is *D*.
+
+So an exception reverses the filter's default for the entities it describes: with `Default`
+true the filter selects every entity of type *f* except the excepted ones; with `Default`
+absent it selects only the excepted ones; with `Default` absent and no exceptions it selects
+no one (67 aggressive and 31 friendly filters in this install).
+
+**Key.** A key is a 64-bit unsigned value: bits 32–63 hold the genus bitfield value, bits
+20–31 the species, bits 4–19 the subspecies and bits 0–3 the alignment. If the species is
+above 4,095, the subspecies above 65,535 or the alignment above 15, the key is 0 instead (the
+library also logs an error); no stored key is 0. An exception's key is built from its
+optional `…_Genus`, `…_Species`, `…_Subspecies` and `…_Alignment` (absent = 0), after the
+same genus-from-species step: when the exception has a species, its genus is the table's
+genus for that species. In this install every exception that holds both a genus and a
+species (14) holds the species' genus, so the step changes only exceptions without a genus.
+
+**Exception species without a genus.** If an exception's species has no entry in the
+species-to-genus table, no genus can be taken from the table. This happens for **0** of the
+549 exceptions in this install (all 293 exceptions that hold a species name a species of the
+table). Such an exception can never change a result, whatever genus its key carries: an
+entity *B* whose species is the same has no table genus either, so step 1 above answers *D*
+before the exceptions are consulted, and every key formed for any other *B* holds a different
+species (another species, or 0). A reader may therefore drop such an exception, or keep it
+with its own `…_Genus` (absent = 0); both give the same results. (The argument needs the
+exception's key to be non-zero; the key rule gives 0 only for out-of-range values, and no
+exception of this install yields one, since all 549 built keys equal the stored non-zero keys,
+C28.) Which of the two the original's stored object form would hold is not known and not
+needed.
+
+**Species-to-genus table (C29).** The WEENIECONTENT DID map (`property-system.md` §8.1)
+labels one entry `ClassificationControl` (root class 1658 in this install). Its property
+`Classification_Control_List` lists classification records (class 973, §5.4; 116 of the 124).
+The table maps each listed record's `Classification_Species` to its `Classification_Genus`
+(116 entries, one species each). A reader builds it from the install and must not hard-code it.
+
+**Object form (C28).** The class library's code reads the attitude record's object form,
+which a reader of the property set does not need. Attribute name hashes are quoted as
+interoperability identifiers:
+
+| Object | Attribute | Holds |
+|---|---|---|
+| Root object (class 884) | 0x015B4D65 | Reference to the aggressive list (class 974), null without one |
+| Root object (class 884) | 0x08B3DC39 | Reference to the friendly list (class 974), null without one |
+| Class-977 root object | 0x07C90C42 | Reference to its one list (class 974) |
+| List (class 974) | 0x0D14BE23 | Reference to a native class-35 map: filter type → reference to a filter (class 975) |
+| Filter (class 975) | 0x0ABBBF54 | Integer: 1 when `…_Filter_Default` is true, 0 when it is absent |
+| Filter (class 975) | 0x04E11F23 | Reference to a native class-105 set of 64-bit exception keys (empty when the filter has none) |
+
+In every one of the 233 lists the object form equals the property set under the key rule
+above.
+
+**Where the values come from.** In the class library the judge's table is the record named
+by its `Interaction_Permission_AttitudeTable`, and *B*'s five values are its
+`Interaction_Permission_ClassificationFilter`, `…_Genus`, `…_Species`, `…_SubSpecies` and
+`…_Alignment`. The library's harmful-interaction check evaluates both directions: the
+actor's table against the target, and the target's table against the actor.
+
+**Decision D8 (Tessera sandbox).** No template holds an `Interaction_Permission_*` property,
+and no script of the class library writes one. The sandbox gives every entity the values of
+its own `Attitude_Table`, `Agent_ClassificationFilter`, `Agent_Genus`, `Agent_Species`,
+`Agent_Subspecies` and `Agent_Alignment` in their place.
+
+> **OPEN:** How the original fills an entity's `Interaction_Permission_*` values (from its own
+> `Agent_*` values and `Attitude_Table`, from a master's for pets, or otherwise). They are set
+> at run time and not by script code; D8 is Tessera's choice. Also not read: how the library's
+> harmful-interaction check combines the two directional results with its other inputs
+> (player-versus-player state, teams, duels, passivity, invulnerability). Neither is needed
+> to evaluate a table.
 
 <a id="s5-4"></a>
 ### 5.4 Classification (973, 124 records)
@@ -605,8 +795,10 @@ barks a creature says or plays when an event of that type happens.
 table, in addition to the array; it neither drops it nor lets it replace the array event of
 the same type. The explorer lists it separately, marked "top-level".
 
-> **OPEN:** Whether the original uses the top-level event, the array event of the same type,
-> or both. One record in this install; the data cannot decide.
+> **OPEN:** Whether the original server uses the top-level event, the array event of the same
+> type, or both. One record in this install; the data cannot decide, and neither the
+> executable (C25) nor the class library's code (C26) reads colour-event tables, so no M1–M4
+> method reaches the answer.
 
 <a id="s5-6"></a>
 ### 5.6 Formation (3477, 212 records)
@@ -799,23 +991,95 @@ reader keeps them if met but needs no rule for them.
 <a id="s6-6"></a>
 ### 6.6 Profile object form (0x70 bundle; Confirmed C16)
 
-A profile's object record holds the same tree as script objects. Over the 4,168 records the
-item counts by class match the property-set element counts exactly for five classes:
+A profile's object record holds the same tree as script and native objects. Over the 4,168
+records every bundle class has one role, and in **every** record the object tree equals the
+property-set tree of §6.5 node for node: targets, weights, probabilities, position sets,
+repeats, placements and per-entry properties (C16, compared over all 4,168).
 
-| Bundle class | Items | Matches |
-|---|---|---|
-| 1131 | 23,270 | entries with `GeneratorProfile_WSLEntity` |
-| 1143 | 3,352 | entries with `GeneratorProfile_ProfileDefinition` |
-| 1136 and native 17 | 10,870 each | `GeneratorProfile_OneOf` arrays |
-| 1137 | 7,962 | `GeneratorProfile_PositionSetEntry` structs |
-| native 72 (3 + 4 floats, `wstate.md` §5.4) | 92 | `GeneratorProfile_ExactPlacement` structs |
+| Bundle class | Items | Role | Property-set counterpart |
+|---|---|---|---|
+| 1132 | 4,168 | Root object; one reference to the top node | The record |
+| 1130 | 4,168 | Top node: the regeneration type (integer; 0 when the profile has no `GeneratorProfile_RegenType`) and a reference to its child list | `GeneratorProfile_Profile` and its `RegenType` element |
+| native 176 | 15,038 (4,168 + 10,870) | Child list: references to the child nodes in stored order (the `RegenType` element is not a child) | The elements of the profile array or of a `OneOf` |
+| 1136 | 10,870 | Choice node: a child list, a weight list and the choice's placement modifier | `GeneratorProfile_OneOf` |
+| native 17 | 10,870 | Weight list: one unsigned integer per child of the choice node, in child order (lengths 1–40) | The `Weight` of each `Entry` or `PositionSetEntry` in the `OneOf` |
+| 1131 | 23,270 | Entry node: the target DID (stored as an integer), probability, placement and a reference to its property set | `Entry` with `WSLEntity` |
+| 1143 | 3,352 | The same with a profile DID as target | `Entry` with `ProfileDefinition` |
+| native 166 | 23,550 (23,270 + 280) | Embedded property set: the entry's `GeneratorProfile_Properties` (non-empty in 1,540, empty otherwise); 280 of the 3,352 profile-target entries have one | `GeneratorProfile_Properties` |
+| 1137 | 7,962 | Position-set node: the position-set ID (integer) and one child (an entry, a choice or a repeat node) | `GeneratorProfile_PositionSetEntry` |
+| 1140 | 1,060 | Repeat node: minimum and maximum count (integers) and one child | `GeneratorProfile_Repeat`, **only when it is not minimum = maximum = 1** |
+| native 72 | 92 | Exact placement as a frame: X, Y, Z, then a rotation that is (1, 0, 0, 0) in all 92 (`wstate.md` §5.4) | `GeneratorProfile_ExactPlacement` (66 on entries, 26 on choices) |
 
-The root object is class 1132 (one per record) with a class-1130 item; classes 1140 (1,060),
-166 (23,550) and 176 (15,038) also occur. Tessera reads profiles from the **property set**,
-which is complete; the object form is not needed.
+Further facts:
 
-> **OPEN:** What classes 1130, 1140, 166 and 176 hold in the profile bundles. Not needed for
-> reading profiles.
+- **Repeats.** A repeat of 1 to 1 has no node: none of the 16 repeats directly in a profile's
+  `OneOf` (all 1 to 1) and none of the 900 inner repeats of 1 to 1 has one. The 8 entry-level
+  repeats wrap their entry node, and the other 1,052 inner repeats (2 to 6) wrap their choice
+  node under the position-set node: 8 + 1,052 = 1,060.
+- **Common node fields.** Every node class (1130, 1131, 1136, 1137, 1140, 1143) has a
+  reference to its parent node (null on the top node), the regeneration-type integer (0
+  on every node below the top node), a probability integer (1000 unless
+  the entry has a `GeneratorProfile_Probability`; 7 values in profile-target entries, 1000
+  in every other node), a random-placement minimum and maximum (0 and 0 unless the node
+  carries a `GeneratorProfile_RandomPlacement`; set on 8 entry nodes and 35 choice nodes), a
+  reference to an exact-placement frame (null unless placed) and a reference to an embedded
+  property set (non-null only on entry nodes). Five further fields hold the same value in
+  every node of every record (two integers 0, two floats −1.0 and one float −50.1); none
+  corresponds to a property present in this install.
+
+<a id="s6-6-1"></a>
+#### 6.6.1 Attribute name hashes of the profile classes (Confirmed C16)
+
+Attributes of a script object are identified by their name hash: a script-object body
+(`wstate.md` §5.2) holds one value per attribute in the order of the class's attribute list
+(`wlib.md` §8.4), which gives each attribute's name hash and type. The hashes below are quoted
+as interoperability identifiers. Each was matched to its role over every node of its class in all
+4,168 profiles (OBS3): scalar fields against the property-set value of the node's counterpart
+(with the stated value when the property is absent), reference fields against the item they
+resolve to.
+
+**Fields common to the six node classes** (1130, 1131, 1136, 1137, 1140, 1143; the same hash in
+each class):
+
+| Hash | Type | Field | Value |
+|---|---|---|---|
+| 0x06688D64 | reference | Parent node | Null on the top node (1130); otherwise the node whose child list or child reference names this node |
+| 0x054A92F9 | integer | Regeneration type | On the top node the `GeneratorProfile_RegenType` key, 0 when the profile has none (560 top nodes hold 0); 0 on every other node |
+| 0x04E9C549 | integer | Probability, per mille as stored | The entry's `GeneratorProfile_Probability`, 1000 when absent; 1000 on every node that is not an entry node |
+| 0x0E886945 | float | Random-placement minimum distance (world units) | `…_RandomPlacementMinDist` of the node's counterpart, 0 when it has no random placement |
+| 0x06686935 | float | Random-placement maximum distance (world units) | `…_RandomPlacementMaxDist`, 0 when none |
+| 0x0B13FE35 | reference | Exact-placement frame (native 72) | Null unless the counterpart has a `GeneratorProfile_ExactPlacement` (66 entry nodes of class 1131, 26 choice nodes) |
+| 0x045679F3 | reference | Embedded property set (native 166) | Non-null on every 1131 node (23,270) and on 280 of the 3,352 1143 nodes; null on all other nodes |
+| 0x08C1928C | integer | Constant | 0 in every node |
+| 0x006192FC | integer | Constant | 0 in every node |
+| 0x010A77F5 | float | Constant | −1.0 in every node |
+| 0x010C1F15 | float | Constant | −1.0 in every node |
+| 0x0D0DF187 | float | Constant | −50.1 (as a 32-bit float) in every node |
+
+**Fields of one class:**
+
+| Class | Hash | Type | Field |
+|---|---|---|---|
+| 1132 (root) | 0x0ACD5401 | reference | The top node (class 1130); the root has no other attribute |
+| 1130 (top) | 0x018C7B59 | reference | Child list (native 176) |
+| 1136 (choice) | 0x018C7B59 | reference | Child list (native 176) |
+| 1136 (choice) | 0x0DBFACD3 | reference | Weight list (native 17), one weight per child in child order |
+| 1131 (entry) | 0x0B788484 | integer | Target DID (`GeneratorProfile_WSLEntity`) |
+| 1143 (entry) | 0x04615C54 | integer | Target profile DID (`GeneratorProfile_ProfileDefinition`) |
+| 1137 (position set) | 0x0679EEF4 | integer | Position-set ID (`GeneratorProfile_PositionSetID`) |
+| 1137 (position set) | 0x068EDBC4 | reference | Its one child (an entry, choice or repeat node) |
+| 1140 (repeat) | 0x0FF0F883 | integer | Repeat minimum (`…_RepeatMinTimes`) |
+| 1140 (repeat) | 0x0FF08063 | integer | Repeat maximum (`…_RepeatMaxTimes`) |
+| 1140 (repeat) | 0x0D4E3D11 | reference | Its one child (an entry node or a choice node) |
+
+Where a placement is stored: an entry's own `RandomPlacement` or `ExactPlacement` sits on its
+entry node, a `OneOf`'s modifier sits on its choice node, and a repeat node's placement fields
+are 0 and its frame reference null (the placement, if any, stays on the node it wraps). The
+probability of a repeat or position-set node is 1000 even when its child entry has another
+value.
+
+Tessera reads profiles from the **property set**, which is complete; the object form is
+not needed. A tool that shows the object form can label its items with this table.
 
 <a id="s6-7"></a>
 ### 6.7 Static resolution: which templates can appear at a spawn point (algorithm)
@@ -909,14 +1173,19 @@ own sandbox rule (Decision D3, C17a), not a claim about the original.
 8. For AI (§5.1): consider every action table whose level range contains the level; an action
    is eligible when its hint conditions hold and its cooldowns have run out; pick among eligible
    actions with probability proportional to the §5.2 percentage, treating −1 as "always
-   preferred". Attitude (§5.3): an entity is hostile to another when one of its aggressive
-   filters selects the other's `Agent_ClassificationFilter` and no exception of that filter
-   matches the other's alignment, genus, species or subspecies; friendly lists are evaluated
-   the same way and win over aggressive ones.
+   preferred". Attitude: an entity's attitude towards another is its attitude table
+   evaluated against the other by the rule of §5.3.1 (aggressive list first, so an
+   aggressive match wins over a friendly one), with the classification values of Decision
+   D8; the sandbox treats the entity as hostile to the other when the result is
+   `Aggressive`. (The §5.3.1 rule is the original's, C27; only the use of the result is
+   Tessera's.)
 
-> **OPEN:** The original server's choice, placement, repeat, respawn and AI rules, including
-> the frame an exact placement is expressed in (the spawn point's or the world's axes). They
-> are not in the data and not in the client; D3 may differ from them. **Hypothesis** (this
+> **OPEN:** The original server's choice, placement, repeat, respawn and AI-action rules,
+> including the frame an exact placement is expressed in (the spawn point's or the world's
+> axes; the object form stores it as a frame with an identity rotation, §6.6, which does not
+> decide this). They are not in the data, the executable has no direct reference to
+> `GeneratorProfile_Profile` or `Generator_ProfileDID` (C25) and the class library's code holds no reader of them (C26), so
+> no M1–M4 method reaches them; D3 may differ from them. **Hypothesis** (this
 > spec writer's reading of the property names, the dictionary default of
 > `GeneratorProfile_Probability`, 1000, and the observed ranges; not confirmed by any source):
 > `Weight` is a relative weight among the choices of a `OneOf`; `Probability` is a chance in
@@ -944,11 +1213,15 @@ consumer that needs branches follows all of them. `PatrolLink_Speed` on the star
 values 0–50, 1 in most links.
 
 > **OPEN:** How a patrol chooses among several next points, and whether PatrolOnce stops at
-> the end while Patrol reverses or restarts. Not in the data.
+> the end while Patrol reverses or restarts. Not in the data and not traced in the client. An owner observation of the original (M3) could show the end
+> behaviour of one patrol of each kind.
 
 > **OPEN:** The meaning and unit of `PatrolLink_Speed`. Hypothesis of this spec writer, from
 > the label only: a speed factor for the patrolling creature, 1 meaning its normal speed. Not
-> confirmed; an implementation must not depend on it without a revision of this spec.
+> confirmed: the executable holds its property ID only as a UI element ID (C25) and the class
+> library's code does not read it (C26). An owner observation of the original (M3) on a
+> patrol whose start link carries a value other than 1 could settle it. An implementation must
+> not depend on the hypothesis without a revision of this spec.
 
 <a id="s6-10"></a>
 ### 6.10 What the spawn data can and cannot reconstruct (Confirmed)
@@ -1005,8 +1278,10 @@ all zone keys of 0x14000000. Every slot carries the same values, so the table ho
 per-zone data in this install.
 
 > **OPEN:** The meaning of the slot fields at offsets 4–20 and of the slot index. With every
-> slot identical, the data cannot decide, and the client's reader was not traced. Not needed:
-> Tessera's world and sandbox ignore the table.
+> slot identical, the data cannot decide. The client registers the DID range
+> 0x14000000–0x14FFFFFF with its record cache (BIN2), but the reader of the record was not
+> reached; a further M4 pass from that registration to the type's serializer could name the
+> fields. Not needed: Tessera's world and sandbox ignore the table.
 
 ---
 
@@ -1025,6 +1300,8 @@ Bitfield bit *i* is labelled by key *i* + 1 (`property-system.md` §7).
 | `Agent_Alignment`, `Classification_Alignment` | 0x2300000D | 6 | |
 | `Agent_Class` | 0x2300000E | 212 | Player and creature classes |
 | `Agent_ClassificationFilter`, `ClassificationFilter_Filter_Type` | 0x2300000F | 7 | |
+| Attitude results of §5.3.1 (the mapper of `GCParam_HotspotAttitude`) | 0x23000112 | keys 0–3 labelled | 1 `Neutral`, 2 `Friendly`, 3 `Aggressive` |
+| Link types (EMAPPER label `EntityLinkType`, as in `wstate.md`) | 0x230000BE → base 0x230001A9 | | Key 13 `PathMapTest` (§3.3) |
 | `Quest_MonsterDivision` | 0x23000061 | 592 | |
 | `MonsterLevel_ExaminationModStatType` | 0x23000070 | 35 | Examination rank |
 | `AI_MovementType` | 0x23000021 | 6 | |
@@ -1068,6 +1345,7 @@ Bitfield bit *i* is labelled by key *i* + 1 (`property-system.md` §7).
 | mob | `AI_ActionTable_Array` / `AI_ActionTable` | action table 534 | 50,890 |
 | action table 534 | `AIAction_Skill` | skill 827 | 15,023 |
 | WEENIECONTENT `AIActionProbability` | | probability table 1655 | 1 |
+| WEENIECONTENT `ClassificationControl` (class 1658) | `Classification_Control_List` | classification 973 | 116 |
 | mob | `AI_ColorEventTable` | colour events 539 | 1,810 |
 | colour events 539 | `AIColorEventTable_Event_SoundID` | sound 0x2A | 1,382 (array events; 1,390 with the top-level event, §5.5) |
 | mob | `Formation_Group_DataID` | formation 3477 | 272 |
@@ -1165,6 +1443,16 @@ Decision D6, per visible landblock:
   optional modifier at element 0) or `PositionSetEntry` choices only (no modifier); in the
   second case all its `PositionSetEntry` elements name one position set, and each of their
   `OneOf`s has a `Repeat` with minimum = maximum at element 0 (§6.5).
+- **CR16** For every generator profile, the object form read with the attribute hashes of
+  §6.6.1 gives the same tree as the property set under the correspondence of §6.6 (4,168 of 4,168); a class-1140 node exists for exactly the
+  repeats that are not 1 to 1 (1,060).
+- **CR17** For every attitude record and the class-977 record, each list's object form (map
+  from filter type to `Default` integer and exception-key set) equals the list built from the
+  property set with the §5.3.1 key rule (233 of 233 lists).
+- **CR18** The species-to-genus map of `ClassificationControl` equals, entry for entry, the
+  species and genus of the classification records its property set lists (116 of 116).
+- **CR19** No filter list names a filter type twice; no filter exception holds a subspecies
+  without a species, and none holds no field.
 - **CR15** Every colour-event record holds exactly 22 array events, one per key 1–22 of the
   event-type mapper; a top-level `AIColorEventTable_Event`, when present, is kept besides the
   array (§5.5, D7).
@@ -1278,29 +1566,57 @@ Total 50 bytes: 16 header bytes, a 4-byte zone key, a 5-byte label (1 length byt
 characters), a 4-byte slot count and one 21-byte slot. A 12-byte label instead gives 58
 bytes, the size of each of the four one-zone, one-slot records of the install.
 
+<a id="s12-4"></a>
+### 12.4 Attitude evaluation (§5.3.1)
+
+Synthetic values. Species-to-genus table: species 40 → genus 0x8; species 41 → genus 0x8.
+Attitude table *T*:
+
+- aggressive list: one filter, type 5, `Default` true, one exception {alignment 2};
+- friendly list: one filter, type 2, `Default` absent, one exception {species 40}.
+
+Exception keys: {alignment 2} gives 0x0000000000000002; {species 40} first takes the genus
+0x8 of species 40 and gives 0x0000000802800000 (genus 0x8 in bits 32–63, species 40 =
+0x028 in bits 20–31).
+
+| Other entity (*f*, *g*, *s*, *u*, *a*) | Aggressive list | Friendly list | Result |
+|---|---|---|---|
+| (5, 0x1, 0, 0, 1) | filter 5; no key matches, so `Default` true | not consulted | Aggressive |
+| (5, 0x1, 0, 0, 2) | filter 5; key (0, 0, 0, 2) matches, so not true | no filter for type 5 | Neutral |
+| (2, 0x8, 40, 7, 1) | no filter for type 2 | filter 2; genus 0x8 agrees with species 40; key (0x8, 40, 0, 0) matches, so not false | Friendly |
+| (2, 0x4, 40, 0, 1) | no filter for type 2 | filter 2; genus 0x4 differs from species 40's genus 0x8, so `Default` (false) | Neutral |
+| (2, 0, 41, 0, 1) | no filter for type 2 | filter 2; genus becomes 0x8; no key matches (species 41) | Neutral |
+| (0, 0x8, 40, 0, 1) | not consulted (*f* = 0) | not consulted | Neutral |
+
 ---
 
 <a id="s13"></a>
 ## 13. Open questions
 
-1. Classes 1653 and 1654 (§2.1).
-2. Link-schema `flag` and link type 13 (§3.3); a full census of the template root object's
-   reference attributes (§3.1).
-3. Whether the instance-property list is enforced (§3.4).
-4. Which client window owns the creature panel (§4.8).
-5. Action-table and action selection rules and the time unit of cooldowns (§5.1); attitude
-   evaluation (§5.3).
-6. Profile bundle classes 1130, 1140, 166, 176 (§6.6).
-7. The original server's spawn, placement, respawn and AI rules, and the frame of exact
-   placements (§6.8).
-8. Patrol branching and end behaviour, and the meaning of `PatrolLink_Speed` (§6.9).
-9. Encounter-table slot fields (§7).
+Item numbers are kept; closed items say where the answer is.
+
+1. *Closed 2026-10-08:* classes 1653 and 1654 are the avatar templates (§2.1, C22).
+2. Link-schema `flag` (§3.3; server or authoring tool only). *Closed 2026-10-08:* link type
+   13 is `PathMapTest` (§3.3, C24); the root-object reference census (§3.1, C23).
+3. Whether the original server or authoring tool enforces the instance-property list (§3.4;
+   the offline client does not consult it).
+4. *Closed 2026-10-08:* the creature panel is the analyse-skill panel (§4.8, C9a).
+5. Action-table and action selection rules and the time unit of cooldowns (§5.1; server
+   only). *Closed 2026-10-08:* attitude evaluation (§5.3.1, C27–C30). New, narrower: how the
+   original fills the `Interaction_Permission_*` values and how its harmful-interaction check
+   combines the two directional results (§5.3.1).
+6. *Closed 2026-10-08:* profile bundle classes (§6.6, C16).
+7. The original server's spawn, placement, respawn and AI-action rules, and the frame of
+   exact placements (§6.8; server only).
+8. Patrol branching and end behaviour, and the meaning of `PatrolLink_Speed` (§6.9; an owner
+   observation of the original could settle the end behaviour and the speed).
+9. Encounter-table slot fields (§7; a further M4 pass could name them; not needed).
 10. Where the templates of type-8-linked spawns come from (§6.10): not in the client data; a
     server must supply them.
-11. Which colour event the original uses when a record holds a top-level event besides its
-    array (§5.5).
+11. Which colour event the original server uses when a record holds a top-level event besides
+    its array (§5.5; server only).
 12. Whether a base-less `ForwardSource_Movement_SpeedMultiplier` acts as the creature's speed
-    factor in the original (§3.2.1).
+    factor in the original server (§3.2.1; the client does not read it).
 
 ---
 
@@ -1326,3 +1642,6 @@ bytes, the size of each of the four one-zone, one-slot records of the install.
 | 2026-10-07 | header, §1 (OBS, C1, C17, C17a, C21), §2.1, §3.1, §3.2.1, §3.2.2, §3.3, §5.5, §6.5, §6.7, §6.8, §9, §11 (CR13–CR15), §12.1–§12.3, §13 | Review fixes, every count re-measured over all records on 2026-10-07. (1) §12.3 headed 50 bytes, total explained. (2) 383,332 records with prefix 0x70, the other 11 object records are 0x76 singletons. (3) §5.5: the top-level colour event is in addition to the full array; counts are of the 19,426 array events (19,427 with it); Decision D7 and an OPEN added. (4) D1 stores every mirror whose base is absent or differs; §12.1 covers it; CR13. (5) D3 step 2 rewritten as one rule (non-matching position-set choices are removed before the draw; a leading `Repeat` repeats the whole draw; a leading placement applies to everything the `OneOf` produces; 256-object cap); §6.5 census of `OneOf` shapes; §12.2 case 2; CR14. (6) §3.3: type 13 is two entries (direction 1 then 0), terminator 0 per `wstate.md` §6. (7) C17 split into Reported (LC) and Decision (C17a); the weight and per-mille reading moved into the §6.8 OPEN as a hypothesis. Also corrected: §3.1 link section is absent in 147 + 2 records, not 163 (163 is the available-property count); §3.3 container, 4026 and 5785 schemas completed. | Spec writer (dirty room) |
 | 2026-10-07 | §3.2.1, §15 | Second pass on the review issues: every disputed count re-measured over all records with fresh probes and found as now stated (383,332 + 11 object records; 19,426 array colour events + 1 top-level, 97,130 + 8 data entries, 1,382 + 8 sounds; 1,952 `PositionSetEntry` choices in 888 `OneOf`s, all single-set; encounter records 1,687 and 4 × 58 bytes, 70 slots; D1 store rebuilds 38,651 of 38,651 sets, storing 185,059 mirrors; §3.3 schema and type-13 pair counts; all §6.5 counts, ranges and the 81-object maximum). §3.2.1: mirror totals and per-class mirror counts stated for every class. No other count in the reviewed sections changed. | Spec writer (dirty room) |
 | 2026-10-07 | §1 (C4, C21), §3.2.1, §3.2.2, §6.9, §11 (CR13), §12.1, §13 | Second-review fixes. (A) One rule for base-less mirrors: the §3.2.1 sentence letting a mirror stand for its base is replaced by the D1 lookup rule (a base the set does not hold answers absent, never from a mirror); stated in §3.2.1 and §3.2.2, covered by C21, tested by CR13 and shown in §12.1 (T3 now has a differing synthetic mirror). New facts, measured over all 185,058 base-less occurrences and all 27,546 dictionary definitions: seven of the eight base-less mirror names have no base in the dictionary, each holds a single value, the hunter base has two base-less mirrors with equal values, and only `Movement_SpeedMultiplier` has a definition (mirror 1.0 in 36,925 of 36,928 sets); new OPEN (§3.2.1, §13 item 12). (B) §6.9: the `PatrolLink_Speed` reading moved into an OPEN as a hypothesis; §13 item 8 extended. | Spec writer (dirty room) |
+| 2026-10-08 | header, Purpose, §1 (OBS2, BIN2, C9a, C16, C17a, C21–C30), §2.1, §3.1, §3.2.1, §3.3, §3.4, §4.8, §5.1, §5.3, §5.3.1 (new), §5.5, §6.6, §6.8 (D3 step 8), §6.9, §7, §8, §9, §11 (CR16–CR19), §12.4 (new), §13 | OPEN-closing revision; status Revised. **Closed:** §2.1 (classes 1653 and 1654 are the avatar templates, with their referrers); §3.1 (census of the root object's reference attributes); §4.8 (the panel is the analyse-skill panel); §5.3 (the attitude evaluation rule, read from the class library's code and confirmed against the object form of all 233 lists; new §5.3.1 with the species-to-genus table, the 64-bit exception key and Decision D8); §6.6 (role of every profile bundle class; object form equals the property set in all 4,168 profiles); §3.3 in part (link type 13 is `PathMapTest`). **Changed:** D3 step 8 now uses the §5.3.1 rule (aggressive before friendly; the earlier sandbox rule let friendly lists win). **Made precise, still OPEN:** §3.2.1, §3.3 flag, §3.4, §5.1, §5.5, §6.8, §6.9 (two), §7, and a new narrower §5.3.1 item (how the `Interaction_Permission_*` inputs are filled and how the two directions combine): each now says which method was tried and why it cannot settle the question (server-side, or a further M4 pass for §7). Second M4 use recorded as BIN2. | Spec writer (dirty room) |
+| 2026-10-08 | header, §1 (marks key: Inferred; OBS3; C16, C22), §2.1, §5.3.1 (Filter, Key), §6.6.1 (new), §8, §11 (CR16) | Fixes for the review of 2026-10-08, every fact re-measured with fresh probes over all records (OBS3). (A) §2.1 and C22: each avatar record is named by exactly one *kind* of referrer, not by exactly one referrer; new multiplicity table (126 records by one referrer record, 6 by two, 4 by three, 2 by seven; one record per class named twice inside one race-table record). (B) §8: the link-type mapper is labelled with its EMAPPER label `EntityLinkType`; the earlier label had no source in the install. (C) New §6.6.1 with the attribute name hash of every field of every profile node class, including the five constant fields, so that CR16 can be tested from the spec. (D) §5.3.1: *D* is the stored value when present (true in all 351); new rule for an exception whose species has no genus in the table (0 of 549 here; it can never change a result, so it may be dropped or kept). Minor: `Inferred` defined in the §1 marks key. Status stays Revised until a narrow re-review. | Spec writer (dirty room) |
+| 2026-10-08 | header | Narrow re-review of the fixes for review items A–D (separate session, not the author): passed; status Accepted. No content changed. | Spec reviewer |

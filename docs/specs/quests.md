@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-10-07 |
+| **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate sessions from the author; re-review by a third session that neither wrote the spec nor made the first review) |
-| **Review record** | Re-review 2026-10-07 (a session that neither wrote the spec nor made the first review): **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-08 (spec reviewer, separate session) of the 2026-10-08 revision: **passed**, Accepted; non-blocking notes in the review log. Earlier: re-review 2026-10-07 passed. Full records in the review log (decision 0018). |
 | **Implements into** | `crates/props` / `crates/formats` (typed views over the property sets of §4–§15; the map-note record of §17 and its fuzz target), `crates/wstate` (the compiled quest object of §6 and the quest-target index of §16 on top of the existing native codecs), `apps/dattool` / `apps/explorer` (quest, deed, NPC-dialogue, title, emote and quest-map views), `crates/net` sandbox backend and any later server work (§5.7, §7, §8, §9 give the data a quest engine runs on) |
 | **Companion specs** | [`property-system.md`](property-system.md) §2–§5 (dictionary, value encodings, property sets), §6.2 (the +0x09000000 rule), §7 (enum, bitfield, PID and DID display), §8 (DID maps, WEENIECONTENT). [`wstate.md`](wstate.md) §3–§8 (object-state records, bundle, native codecs incl. classes 427 and 2479 in §5.3–§5.4), §11 (areas, territories, dungeons). [`records.md`](records.md) §1.3 (TSize), §4 (StringInfo), §7 (enum mappers), §8 (DID maps). [`string-table.md`](string-table.md) §9 (resolving a StringInfo). [`sound.md`](sound.md) §4 (sound-info records, prefix 0x2A). [`coordinates.md`](coordinates.md) (positions, landblocks). |
 
@@ -55,6 +55,9 @@ reproduced as code constants. Class indices and record DIDs given below are
 | LC | LotroCompanion `lotro-tools` source (quest, deed, objective, role, requirement, reward, loot, world-event and quest-map-note loaders), read for facts only; no code, comments or identifiers were copied beyond property labels, which are interoperability identifiers. |
 | DS | `research/notes/data-semantics.md` §4.7, §5, §12 (dirty-room notes). |
 | BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, file dated 2026-10-04), analysed headless in a private copy of the shared Ghidra project on 2026-10-07 (address ranges only; nothing copied). **Questions:** (1) how the client derives the level it shows for a quest when the quest names an override property; (2) which properties of this family the executable reads directly by PID (to separate client-side behaviour from behaviour that lives in script code or on the server); (3) whether the client itself evaluates quest-requirement operators, chooses species-specific dialogue lines or computes tier rewards. **Why M1–M3 were not enough:** the data gives the three properties involved in (1) but not their precedence; (2) and (3) are properties of the code. No network, login, launcher or anti-tamper code was read. |
+| OBS2 | Observed in the same install on 2026-10-08 with new throwaway probes (dirty scratch area, read-only): the compiled permission set, flag attribute, listen lists and type-22 attributes of all 20,807 compiled quests; all 29 accomplishment directories; all 1,172 scene records; every NPC comment record; the quest-target index (all sections) against the landblock-info records of all seven `client_cell_*.dat` archives (static entities and the instance-property tables of `entity-descriptor.md` §4.5.2, string-valued properties only); every 0x79 property set of `client_gamelogic.dat` for the census of §2.1; the English string tables for word counts. |
+| WLB | **Class-library script code**, read on 2026-10-08: the bytecode chunk of record 0x56000000 (`client_gamelogic.dat`, the user's install) disassembled in the dirty room with the rules of [`wlib-bytecode.md`](wlib-bytecode.md) §2–§6. This is data of the install (method M1), not the executable. Functions are identified by owning class and virtual slot of this install (provenance rows below); behaviour is restated in words, nothing of the code is reproduced. Native functions it calls are unnamed (`wlib-bytecode.md` §7) except the two identified under BIN2. |
+| BIN2 | **M4 (decision 0011), second pass.** Same client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, file dated 2026-10-04), read on 2026-10-08 in a private copy of the shared Ghidra project (headless decompiler, deleted after use) and with a disassembler, by address range only. **Questions:** (4) what two script-machine native functions used by the bark code of §7.8 compute (one takes two integers, one takes none); (5) how the client turns a section-1 or section-3 location entry of the quest-target index (§16.3) into properties, that is, what its u32 and its byte are; (6) which property each field of a section-4 entry and each field of a filter comes from; (7) whether the executable names further properties of this family by immediate PID (same method as question 2). **Why M1–M3 were not enough:** the u32 is 0 and filter bit 0x80 is unset in every record, so the data cannot name them; the two natives are executable code; no published source covers any of this (M2); the running client does not expose it (M3). No network, login, launcher or anti-tamper code was read. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -69,24 +72,41 @@ reproduced as code constants. Class indices and record DIDs given below are
 | O2 | Event types, their characteristic fields and counts (§5.4) | OBS (field census per type); LC (meanings of several types) | Confirmed (fields, counts); meanings Reported where marked |
 | O3 | Monster selector fields and the classification index they match (§5.5, §16.3) | OBS (every selector; index tables checked against every agent) | Confirmed 2026-10-07 |
 | O4 | Event numbering: EventID, ObjectiveID, ConditionID, order (§5.7), with the compound walk of step 1.2 (every direct entry once, every entry array in order) and empty conditions numbered | OBS (all 20,807 compiled quests match the rule exactly; re-run 2026-10-07 after review) | Confirmed 2026-10-07. Derived by this spec writer. |
-| C1 | Compiled quest object: root attributes and what they index (§6.1) | OBS (all 20,807); LC (event table) | Confirmed 2026-10-07; meaning of one attribute OPEN |
+| C1 | Compiled quest object: root attributes and what they index (§6.1) | OBS (all 20,807); LC (event table); OBS2 | Confirmed 2026-10-07; attribute 0x16D4503 Confirmed 2026-10-08 (row C5) |
 | C2 | Compiled event objects: added properties, sibling lists (members per §5.2, ascending order), listen lists (§6.2) | OBS (all 82,280 events; sibling lists compared unsorted in all 20,807 quests) | Confirmed 2026-10-07. Derived by this spec writer. |
 | C3 | Effect-application objects: all fifteen attributes, the double bit pattern (§6.3) | OBS (all 958 class-700 objects of all 20,807 quests) | Confirmed 2026-10-07 |
-| R1 | Role structure, action enum, flattened `Quest_RoleArray` and its relation to the source roles (§7.1–§7.3); `Quest_ObjectiveIndex` has no dictionary default and its presence per container and action (§7.1) | LC; OBS (dictionary; all 95,886 role structs) | Confirmed 2026-10-07. The objective assignment of action-5 roles is derived by this spec writer; their run-time limits are OPEN. |
+| R1 | Role structure, action enum, flattened `Quest_RoleArray` and its relation to the source roles (§7.1–§7.3); `Quest_ObjectiveIndex` has no dictionary default and its presence per container and action (§7.1) | LC; OBS (dictionary; all 95,886 role structs) | Confirmed 2026-10-07. The objective assignment of action-5 roles is a Tessera rule; their run-time limits are OPEN. |
 | R2 | NPC-side role lists and their agreement with quest roles (§7.4) | OBS (43,406 entries) | Confirmed 2026-10-07 |
 | R3 | NPC comment, comment-list, colour-text and scene records; compiled scene native (§7.7–§7.9) | OBS (all records) | Confirmed 2026-10-07 |
-| P1 | Usage-permission struct fields used by quests; quest-requirement entries, operator and status encoding (§8) | LC; OBS | Layout and encoding Confirmed; evaluation rule Reported (LC) |
+| P1 | Usage-permission struct fields used by quests; quest-requirement entries, operator and status encoding (§8) | LC; OBS | Layout and encoding Confirmed; evaluation Confirmed 2026-10-08 (row P2) |
 | W1 | Reward tier properties, reward-level records, default reward-level table (§9.1–§9.3) | LC; OBS (160 reward records, all quests) | Layout Confirmed; choice of table when none is named Reported (LC) |
 | W2 | Quest treasure, reputation, medal, paper-item, loot-table and given-item data (§9.4–§9.7) | LC; OBS | Confirmed 2026-10-07 |
-| D1 | Deed fields, UI tabs, directories, version list (§10) | LC; OBS | Confirmed 2026-10-07; several meanings OPEN |
+| D1 | Deed fields, UI tabs, directories, version list (§10) | LC; OBS | Confirmed 2026-10-07; compiled directory index Confirmed 2026-10-08 (row D2); version-list use OPEN |
 | A1 | Quest arcs and the arc directory (§11) | LC; OBS | Confirmed 2026-10-07 |
 | T1 | Titles, emotes and the emote directory (§12) | OBS | Confirmed 2026-10-07 |
 | T2 | Factions, account modifiers, reputation control (§13) | OBS | Confirmed 2026-10-07 |
 | E1 | World events: boolean and integer kinds, condition lists, control lists (§14) | LC; OBS | Confirmed 2026-10-07 |
 | I1 | Quest item directories (§15) | OBS | Confirmed 2026-10-07 |
-| X1 | Quest-target index sections and their meaning (§16); section-4 entry census split by matched, unmatched and missing-quest objectives (§16.3) | OBS (all entries; section 4 re-measured over all 208,859 entries on 2026-10-07 for the review); LC (role as a location table) | Confirmed 2026-10-07; meaning of several fields OPEN |
+| X1 | Quest-target index sections and their meaning (§16); section-4 entry census split by matched, unmatched and missing-quest objectives (§16.3) | OBS (all entries; section 4 re-measured over all 208,859 entries on 2026-10-07 for the review); LC (role as a location table) | Confirmed 2026-10-07; remaining fields Confirmed 2026-10-08 (row X2) |
 | M1 | Quest map-note record 0x0E400000 layout (§17) | LC (outline); OBS (5,638 notes, exact) | Confirmed 2026-10-07 |
-| B1 | Properties the executable reads directly, and properties it never names (§18) | BIN | BIN only |
+| B1 | Properties the executable reads directly, and properties it never names (§18) | BIN; BIN2 (question 7) | BIN only |
+| F5 | No record outside the kinds of §2.1 carries only family properties; the two class-3982 records with emote properties (§2.1) | OBS2 (every 0x79 set of `client_gamelogic.dat`) | Confirmed 2026-10-08 |
+| C4 | Derivation of the compiled permission set: copied fields, dropped values, top-level flags, the default minimum level from `Quest_MinChallengeLevelArray`, the cases without it (§6.1, §4.2, §4.3, §9.8) | OBS2 (all 20,807; 20,805 exact) | Confirmed 2026-10-08. The rule is derived by this spec writer from the data. |
+| C5 | Root attribute 0x16D4503 = comment or failure-text roles present; the journal's list of such quests (§6.1) | OBS2 (all 20,807); WLB (quest class 1398 slot 236 read by journal class 1753 slot 99) | Confirmed 2026-10-08 |
+| C6 | Type-22 event attributes 0x511C1DB and 0x5700552; choice of 1 or 11 in the listen lists of types 19 and 29 (§6.2) | OBS2 (all 7,006 type-22 and all 429 type-19/29 events) | Confirmed 2026-10-08 |
+| O5 | Objective completion: any one condition completes the objective; counted and uncounted conditions; never-finish and failure events (§5.2) | WLB (journal class 1753 slot 19; event-progress class 1418; event classes' flag getters) | Confirmed (WLB) 2026-10-08 |
+| O6 | The landmark field of a monster selector compares with the monster's run-time `Landmark_DataID` (§5.5) | WLB (class 287 slot 151 builds the kill event's properties); OBS2 (no monster record or instance property set stores `Landmark_DataID`) | Confirmed (WLB + OBS) 2026-10-08 |
+| R4 | Composition of `Quest_RoleArray`: all source roles but 9, plus roles stored only in the flattened form (§7.3) | OBS2 (all 20,807) | Confirmed 2026-10-08 |
+| R5 | Choice of species variant lines (§7.1) | WLB (class 287 slot 29); mapper 0x2300000B labels | Confirmed (WLB) 2026-10-08 |
+| R6 | NPC comments: all passing comments collected; empty requirement slots dropped from the compiled permission set (§7.7) | WLB (classes 2252 slot 8, 2246 slot 86); OBS2 (all 859 comment records) | Confirmed 2026-10-08 |
+| R7 | Barks: candidate lines, uniform random pick, detection radius, per-player interval in seconds, display duration (§7.8) | WLB (class 279 slots 1, 4, 6; class 1897 slot 61; class 1753 slots 116–117; class 1398 slots 170, 172); BIN2 (question 4) | Confirmed (WLB + BIN) 2026-10-08 |
+| R8 | Second f32 of a scene entry = bit pattern of the video-track DID (§7.9) | OBS2 (all 7,027 entries) | Confirmed 2026-10-08 |
+| P2 | Evaluation of quest requirements: AND and OR lists, the per-entry rule by raw status and operator, bypassable and disabled quests (§8.2) | WLB (usage-plugin class 1603 slots 103 and 127; class 287 slot 48 and helpers) | Confirmed (WLB) 2026-10-08 |
+| W3 | Medal from points and next medal (§9.6) | WLB (quest-control class 1683 slots 142, 143); OBS (mapper 0x230003BB) | Confirmed (WLB) 2026-10-08 |
+| W4 | Limiter record layout; role of `Quest_MinChallengeLevelArray` (§9.8) | OBS2; WLB (class 3086) | Confirmed 2026-10-08 |
+| D2 | Compiled accomplishment-directory index: progress records of objective-1 and objective-0 events, the event-type index (§10.2) | OBS2 (all 29 directories); WLB (class 1418 is the event-progress class) | Confirmed 2026-10-08 |
+| X2 | Section-1/3 radius and entire-landblock flag; section-4 second string = instance item key; target groups = completion events; filter bit 0x80 = landmark; role-key strings and instance property sets (§16.3) | BIN2 (questions 5, 6); OBS2 (all entries, all landblock-info records) | Confirmed (BIN + OBS) 2026-10-08; bit 0x80 BIN only |
+| M2 | How the role keys of map notes relate to the role-key index (§17.2) | OBS2 (all 5,638 notes) | Confirmed 2026-10-08 |
 
 ---
 
@@ -154,8 +174,16 @@ In the class library, classes 1815 and 1887 derive from 1816, 2161 from 2147 and
 486 → 89 → 485 → 484, `wlib.md` §9). Every 0x70 record decodes exactly with `wstate.md`
 (§9 there) and every 0x79 set with `property-system.md` (zero failures in this census).
 
-> **OPEN:** Whether further kinds of the family exist that carry none of the identifying
-> properties listed here.
+**Other records with family properties (F5).** A census of every 0x79 set of
+`client_gamelogic.dat` found no further kind: outside the root classes of the table, only
+20 classes carry any property of this family at the top level, and all but one of them
+carry it next to properties of their own kind (NPC, monster, item, landmark, territory
+records and the like; §3.2, §7.4). The exception is root class 3982: 2 records whose
+property sets hold only `Emote_*` properties, including both identifying properties of the
+emote kind, but not `Emote_SourceText` or `Emote_Mounted_ScriptID`. They are the entries
+of `CosmeticEntity_TrickArray` ([`interaction.md`](interaction.md)) and are not listed in
+the emote directory (§12.2). A reader that identifies kinds by properties sees them as
+emotes; one that needs only the emotes of §12.2 takes them from the emote directory.
 
 <a id="s2-2"></a>
 ### 2.2 Discovery at run time
@@ -185,7 +213,7 @@ reader looks the label up and must not hard-code the DID.
 | `AccomplishmentControl` | 0x70008CDB | accomplishment control | Deed UI tabs, groups, acceleration settings (§10.4) |
 | `QuestEventTargetLocationControl` | 0x70019558 | quest-target index | §16 |
 | `QuestItemRegionDirectory` | 0x70015A08 | quest-item region directory | §15 |
-| `QuestCategoryLimiterControl` | 0x7002465E | limiter | A map of three `Quest_Category` values to objects (meaning OPEN, §9.8) |
+| `QuestCategoryLimiterControl` | 0x7002465E | limiter | Per-category quest limits: a map of three `Quest_Category` values to limit structs (§9.8) |
 | `EmoteDirectory` | 0x70000216 | emote directory | §12.2 |
 | `ReputationControl` | 0x7000A452 | reputation control | §13.3 |
 | `WorldEventControl` | 0x7000981F | world-event list | 1,509 world events (§14.3) |
@@ -356,7 +384,7 @@ dictionary types. Meanings marked (LC) are Reported; the others follow from the 
 |---|---|---|---|
 | `Quest_Name` | StringInfo | 20,807 | Title |
 | `Quest_Description` | StringInfo | 20,398 | Journal text |
-| `Quest_TotalWordCount` | Int | 4,616 | −22 … 3,261 (meaning OPEN; negative values occur) |
+| `Quest_TotalWordCount` | Int | 4,616 | −22 … 3,261; tracks the number of words in the quest's texts (OPEN below; negative values occur) |
 | `Quest_MonsterPlay_RecapTextSuccess` | StringInfo | 17 | Recap text for monster-play quests |
 
 **Classification and level**
@@ -425,9 +453,22 @@ objectives), `Quest_RoleArray` (all; 0 … 59 roles), `Quest_BestowalRoles` (13,
 `QuestDispenser_ActiveQuests` (12; a role list on a quest record, §7.4),
 `Quest_CompletionScriptID` (1).
 
-> **OPEN:** Whether top-level `Usage_*` properties (outside `DefaultPermissionBlobStruct`)
-> are evaluated like the same properties inside it. They occur in 959 records, mostly
-> `Usage_MinLevel` = 84 together with a struct that has its own `Usage_MinLevel`.
+**Top-level `Usage_*` properties (C4).** They occur in 959 records. They reach the compiled
+permission set of §6.1 as follows: `Usage_RequiresExpansionPack1_Legacy` and
+`Usage_RequiresExpansionPack2_Legacy` are copied into it (except in the "bare" case of §6.1
+step 5); top-level `Usage_MinLevel` (163 records, always 84) is **not** copied, the compiled
+minimum level comes from the rule of §6.1 step 6; top-level `Usage_RequiredFaction` (1
+record) is not copied; top-level `Usage_RequiredClassList` (6 records) always equals the
+list inside the struct, which is copied. A reader that evaluates permissions uses the
+compiled set (Tessera rule; the client's comment code reads compiled sets, §7.7).
+
+> **OPEN:** The exact rule behind `Quest_TotalWordCount`. Over the 4,616 records it
+> correlates with the number of words in all StringInfos of the quest's property set
+> (Pearson r = 0.93, words counted as runs of non-blank characters of the English table
+> entries), and equals that count in 916 of them; most of the weight comes from
+> `QuestDispenser_RoleSuccessText` (r = 0.89 alone). Negative values (down to −22) do not
+> fit a plain count. Neither the class library nor the executable reads the property
+> (§18), so it is authoring data with no client behaviour; nothing in Tessera depends on it.
 
 <a id="s4-3"></a>
 ### 4.3 Effective challenge level (Confirmed (BIN + OBS))
@@ -446,8 +487,14 @@ The level the client shows for a quest is computed from three properties, in thi
 `Quest_IgnoreDefaultChallengeLevel` plays no part in this computation (BIN). It is stored
 in 3,283 records; 2,243 of them also have an override property.
 
-> **OPEN:** What `Quest_IgnoreDefaultChallengeLevel` changes (LC treats it together with
-> the override property when choosing a reward table; §9.2).
+**What `Quest_IgnoreDefaultChallengeLevel` changes (C4).** It switches off the *default
+minimum level* that the compiled permission set otherwise derives from the challenge
+level (§6.1 step 6): a quest with the flag keeps only the `Usage_MinLevel` of its own
+permission struct, and only when it is greater than 1. Of the 3,283 flagged records, 2,374
+have such a value and keep it; 907 have none and get no compiled minimum level; 2 are the
+exceptions named in §6.1. Whether a
+server also uses the flag when it chooses a reward table, as LC does, belongs to the §9.2
+OPEN.
 
 ---
 
@@ -485,9 +532,8 @@ for numbering (§5.7).
 <a id="s5-2"></a>
 ### 5.2 Conditions
 
-- An objective is complete when its completion conditions are met; a failure condition
-  fails the objective (LC: the quest). The combination rule across several completion
-  conditions of one objective is not stated in the data.
+- An objective is complete when one of its conditions is met (rule below); a failure
+  condition fails the objective (LC: the quest).
 - A condition array holds any number of direct event entries (`QuestEvent_Entry`) and
   compound events (`QuestEvent_CompoundEvent`), in a stored order that matters for
   numbering (§5.7), plus the optional count and never-finish elements below. Shapes of the
@@ -524,9 +570,33 @@ for numbering (§5.7).
   required-counts attribute of §6.1 under the key ObjectiveID × 65,536 + ConditionID.
 - `Quest_Condition_NeverFinish` marks a condition that never completes by itself.
 
-> **OPEN:** The exact completion rule when an objective has several completion
-> conditions without a count (all of them, or any). 2,921 objectives have more than one
-> completion condition (2,458 two, 177 three, 286 four or more).
+**Completion rule (O5, WLB).** The client's quest journal (class-library code) decides
+whether an objective of an underway quest is complete as follows:
+
+1. If the player's progress record of the objective is marked completed, it is complete.
+2. Otherwise the objective is complete as soon as **any one** of its conditions is
+   complete. The conditions of an objective are alternatives, not a conjunction (2,921
+   objectives have more than one completion condition: 2,458 two, 177 three, 286 four or
+   more).
+3. A condition whose events carry `Quest_Condition_NeverFinish` = true or
+   `QuestEvent_IsFailureEvent` = true (the flags of the compiled event objects, §6.2) is
+   never complete. In the data both flags are uniform within a condition (the compiled
+   never-finish flag is set on every event of a flagged condition, the failure flag on
+   every entry of a failure condition), so failure conditions and never-finish conditions
+   never complete an objective.
+4. A condition **without** `Quest_CompletionConditionCount` is complete when every one of
+   its events is done.
+5. A condition **with** a count *N* (the required-counts attribute of §6.1) is complete when
+   at least *N* of its events are done. An event that is a member of a compound event
+   (§5.2) counts towards *N* only when its type (`QuestEvent_ID`) is 5, 7, 11, 16, 22 or 24;
+   other compound members are not counted. Events outside compounds always count.
+6. An event is done when the player's progress count for it has reached its
+   `QuestEvent_Number` (default 1), or when its progress record is marked completed.
+   Progress records are player state (the event-progress class of §10.2); their status
+   codes are not part of this spec.
+
+The list of types in step 5 is a small constant set of the class library (WLB), recorded
+here under decision 0012.
 
 <a id="s5-3"></a>
 ### 5.3 Event entry fields common to all types (Confirmed)
@@ -547,7 +617,17 @@ for numbering (§5.7).
 | `QuestEvent_DailyMaximumIncrements` | Int | 477 | Daily cap on increments (−1 … 500) |
 | `QuestEvent_DramaName`, `QuestEvent_WaitForDrama`, `QuestEvent_RunDramaOnAdvance`, `QuestEvent_KungFuDramaName`, `QuestEvent_TappedDramaName`, `QuestEvent_RunKungFu` (default true) | String / Bool | 4,688, 895, 1,103, 535, 91, 48 | Scripted sequences around the event (keys of server-side scripts) |
 | `QuestEvent_HideRadarIcon`, `QuestEvent_DisableEntityExamination`, `QuestEvent_CanTeleportToObjective` (default true), `QuestEvent_AllowQuickslot` (default true), `QuestEvent_IsFellowUseShared`, `QuestEvent_IsRemote`, `QuestEvent_DestroyOnQuestAdvance`, `QuestEvent_FailQuestWhenEventFails`, `QuestEvent_ShouldShowEscortVitals` (default true) | Bool | 166, 66, 3,028, 935, 428, 1,130, 341, 299, 112 | |
-| `QuestEvent_EventVolumeString` | String | 20 | (meaning OPEN) |
+| `QuestEvent_EventVolumeString` | String | 20 | 17 distinct values, presumably drama names (OPEN below) |
+
+> **OPEN:** What `QuestEvent_EventVolumeString` and the objective-level
+> `Quest_ObjectiveVolumeString` (§5.1) select. Their values look like drama names: 7 of
+> the 17 distinct event-level values and 244 of the 260 distinct objective-level values
+> equal a `Drama_Name` in the instance property sets of the landblocks
+> (`entity-descriptor.md` §4.5.2), a rate close to that of `QuestEvent_DramaName` (2,986 of
+> 3,154). The class library does not read them (one constant of equal value is a return
+> code, not a property read), and the one immediate of the event-level PID in the
+> executable is a UI element lookup (BIN2), so they are presumably server-side keys. Owner
+> observation cannot settle this; it is left for server work.
 
 <a id="s5-4"></a>
 ### 5.4 Event types (Confirmed fields and counts)
@@ -630,12 +710,24 @@ Each field is optional; a monster matches an element when it matches every field
 | `Quest_MonsterClass` | Enum (0x2300000E) | 556 | `Agent_Class` |
 | `Quest_MonsterDivision` | Enum (0x23000061) | 4,352 | the monster's own `Quest_MonsterDivision` property |
 | `Quest_MonsterRegion` | DID (territory) | 5,374 | the territory the division belongs to (`MonsterDivision_Control_DivisionToRegionMap`) |
-| `QuestEvent_LandmarkDID` | DID (landmark) | 729 | being near that landmark (meaning OPEN) |
+| `QuestEvent_LandmarkDID` | DID (landmark) | 729 | `Landmark_DataID` (a run-time property, below) |
 
 An exclusion array removes matching monsters from the inclusion set (LC).
 
-> **OPEN:** How the client or server tests `QuestEvent_LandmarkDID` inside a selector
-> (distance, or the landmark's area).
+**The landmark field (O6).** The class library has one routine that describes a creature
+to the quest system as a property set (the set its monster events, such as kills and
+corpse use, are matched against). It fills it from the creature's own properties:
+`QuestEvent_MonsterDID` = the monster's DID, `Agent_Genus`, `Agent_Species`,
+`Agent_Subspecies`, `Agent_Alignment`, `Agent_Class`, `Quest_MonsterDivision`, and
+`QuestEvent_LandmarkDID` = the value of the monster's **`Landmark_DataID`** property (plus
+level, role-key, quest-role and corpse fields). A selector's landmark field is therefore
+compared with that property, not with a distance or an area. No monster record (0 of
+20,161 records of class 1723 here) and no instance property set of the landblocks stores
+`Landmark_DataID`: it is set on the monster at run time, by the server. An offline
+implementation has no value for it, so a selector with a landmark field matches no monster
+there unless Tessera assigns one (Tessera decision, outside this spec). The event-level
+`QuestEvent_LandmarkDID` of a type-22 entry (compiled attribute 0x511C1DB, §6.2) names the
+same kind of value.
 
 <a id="s5-6"></a>
 ### 5.6 Locations (Confirmed)
@@ -708,14 +800,53 @@ identified by their name hash (`records.md` §1.5) and by content.
 | 0xD4E96F3 | reference | class 176 | Completion comments (§7.3): one object (class 3910 here) per `Quest_CompletionCommentStruct` (994) |
 | 0xFF40B92 | reference | script object (class 1602 here) | Usage permissions: one attribute holding a class-166 property set of `Usage_*` values (present in every quest, also when the 0x79 set has no `DefaultPermissionBlobStruct`). It is derived, not copied: it holds `Usage_AllowedWhileMounted` in all 20,807, `Usage_MonsterPlayerCanUse` in exactly the 638 monster-play quests, and `Usage_MinLevel` in 14,107 (the source struct has it in 4,268) |
 | 0x79DD9A3 | reference | class 17 | Always empty |
-| 0x16D4503 | int | — | 0 (15,090) or 1 (5,717) |
+| 0x16D4503 | int | — | 0 (15,090) or 1 (5,717): quest has non-advancing dialogue (below) |
 
-> **OPEN:** How the compiled permission set is derived from the source struct, the
-> top-level `Usage_*` properties and the quest's flags (for example where its extra
-> `Usage_MinLevel` values come from).
+**Compiled permission set (C4).** The class-166 set of attribute 0xFF40B92 is built from the
+source as follows. The rule reproduces the compiled set of 20,805 of the 20,807 quests
+exactly (all fields and values):
 
-> **OPEN:** The meaning of root attribute 0x16D4503. It does not coincide with any single
-> stored property (best partial matches: `Quest_NextQuest`, `Quest_Scope` = 3).
+1. `Usage_AllowedWhileMounted` = true, in every quest.
+2. `Usage_MonsterPlayerCanUse` = true when `Quest_IsMonsterPlayQuest` is true.
+3. `Usage_SessionPlayerCanUse` = true when the source struct has it (64) or
+   `Quest_IsSessionAccomplishment` is true (45).
+4. Every field of `DefaultPermissionBlobStruct` other than `Usage_MinLevel`, copied
+   unchanged, except that `Usage_MaxLevel` = −1 (no bound; 376 quests) and an empty
+   `Usage_RequiredFaction` struct (77 quests) are left out.
+5. The top-level `Usage_RequiresExpansionPack1_Legacy` and
+   `Usage_RequiresExpansionPack2_Legacy` (§4.2) are copied in, except in the **bare case**:
+   the quest has no `DefaultPermissionBlobStruct` and is an instance quest
+   (`Quest_IsInstanceQuest`), a session quest (`Quest_IsSessionQuest`) or a deed.
+6. `Usage_MinLevel`. A **default minimum level** applies when all of these hold: the record
+   is not a deed; it has no `Quest_IgnoreDefaultChallengeLevel` and no
+   `Quest_ChallengeLevelOverrideProperty`; its `Quest_Category` is not a key of
+   `QuestControl_CategoryToChallengeLevelOverrideProperty_Hash` (in `QuestControl`, §9.8);
+   and it is not in the bare case. The default minimum level is the larger of 1 and
+   *L* − *d*, where *L* is `Quest_ChallengeLevel` (0 when absent) and *d* is the
+   `Quest_DefaultLevelDifference` of the `Quest_MinChallengeLevelArray` row (in
+   `QuestControl`) whose `Quest_MinChallengeLevel` … `Quest_MaxChallengeLevel` range
+   contains *L* (rows here: 1–15 with *d* = 4, 16–160 with *d* = 5; for *L* = 0 no row
+   applies and the result is 1). When it applies it is stored, even when it is 1, and it
+   **replaces** the struct's own
+   `Usage_MinLevel` (in 640 quests the struct holds a different value above 1, which is not kept).
+   When it does not apply, the struct's `Usage_MinLevel` is copied if it is greater than 1
+   and left out otherwise (values 1, 0 and −1).
+7. Top-level `Usage_MinLevel`, `Usage_RequiredFaction` and `Usage_RequiredClassList` are
+   not copied (§4.2).
+
+The two exceptions are quests with `Quest_IgnoreDefaultChallengeLevel` and no
+`Usage_MinLevel` in a struct whose compiled set nevertheless holds the default minimum
+level of step 6 (levels 31 → 26 and 65 → 60). The compiled form is the authority for a
+reader; the rule lets a writer or a check reproduce it.
+
+**Root attribute 0x16D4503 (C5).** It is 1 exactly when `Quest_RoleArray` holds at least one
+role with action 1 (a comment line, §7.2) or at least one role with
+`QuestDispenser_RoleFailureText`, and 0 otherwise, in all 20,807 quests (4,332 quests have
+an action-1 role, 2,016 a failure text, 631 both). The one quest whose only failure text
+sits in an event entry and not in `Quest_RoleArray` has 0. The flag marks quests with lines
+that NPCs speak without advancing the quest. The client's journal keeps the player's
+underway quests whose flag is 1 in a separate list (WLB); how that list is used was not
+traced.
 
 <a id="s6-2"></a>
 ### 6.2 Event objects (Confirmed, all 82,280)
@@ -736,8 +867,10 @@ There is one script object per event entry. Its class depends only on `QuestEven
 Monster-defeat events (type 22) add two lists of **compiled selectors** (class 1402 here,
 eight integer attributes: genus, species, subspecies, alignment, class, division,
 territory DID, landmark DID; 0 = field absent): hash 0x30B9204 for inclusion (4,108
-selectors) and 0x26B9204 for exclusion (301), plus two integer attributes (0x511C1DB,
-0x5700552) holding DIDs (meaning OPEN).
+selectors) and 0x26B9204 for exclusion (301), plus two integer attributes: 0x511C1DB holds
+the entry's `QuestEvent_LandmarkDID` and 0x5700552 its `QuestEvent_MonsterDID`, each 0 when
+the entry has none (C6; all 7,006 type-22 events). The compiled selector class uses the
+same hash 0x511C1DB for its landmark field.
 
 **Listen lists.** The first element is normally the event's own type. Observed lists (all
 events):
@@ -757,8 +890,11 @@ events):
 The bracketed pair appears exactly when the drama rule of the second row holds; it was
 also checked for types 19 and 29.
 
-> **OPEN:** What decides *x* = 1 (detection) or 11 (NPC talk) in the lists of types 19 and
-> 29 (14 + 2 and 16 + 3 events have 1).
+**Choice of *x* (C6).** *x* is 11 when `Quest_RoleArray` holds an action-2 role (talk,
+§7.2) of the event's objective whose `QuestDispenser_RoleConstraint` equals the event's
+`QuestEvent_RoleConstraint` (394 events), and 1 otherwise (35 events: 16 of type 19 and 19
+of type 29). In all 35 the objective has no action-2 role at all. Holds for all 429 events
+of types 19 and 29.
 
 <a id="s6-3"></a>
 ### 6.3 Effect-application objects (Confirmed)
@@ -829,21 +965,33 @@ structs of all quests store it as follows:
 **Action-5 roles** (leave an instance) belong to the quest as a whole. 841 of the 959 are
 the flattened form of a quest-level `Quest_GlobalRoles` entry (837 quests with one, 2
 with two; same fields apart from the role name); the other 118, one per quest, have no
-stored source (part of the §7.3 OPEN). Neither form names an objective, all 959 carry
+stored source (roles stored only in the flattened form, §7.3). Neither form names an objective, all 959 carry
 `QuestDispenser_PrivateEncounterTemplate`, and 554 entries of the NPC-side lists of §7.4
 point at them. An implementer therefore assigns an action-5 role to **no objective**: it
-is kept with an absent objective and offered for the whole time the quest is held,
-whatever the current objective. This reading is derived by this spec writer from the
-storage; no source states the run-time rule.
+is kept with an absent objective.
 
 > **OPEN:** Whether a server limits an action-5 role to some objectives (for example to
 > those whose events lie inside the private encounter it leaves). The executable does not
-> name `Quest_RoleArray` (§18), so the rule is not in the client.
+> name `Quest_RoleArray` (§18), so the rule is not in the client. **Tessera rule** until
+> this is settled: an action-5 role is offered for the whole time the quest is held,
+> whatever the current objective (derived by this spec writer from the storage; no source
+> states it).
 
-> **OPEN:** How a variant line of `QuestDispenser_TextArray` is chosen (by the player's
-> species, presumably) and whether the struct's own success text is then shown at all.
-> The executable never names `QuestDispenser_Species` or the text-array property (§18),
-> so the choice is made by script code or by the server.
+**Variant lines (R5, WLB).** When the client's script needs a role's success or failure line
+for a player, it proceeds as follows:
+
+1. If the role struct has `QuestDispenser_TextArray`, it takes the **first** entry, in
+   stored order, whose `QuestDispenser_Species` matches the player's species (the
+   species of the player's character, mapper 0x2300000B). A value matches when it equals the
+   player's species, or when it is one of three group values: 118 matches species 65 and
+   117, 121 matches 73 and 120, 124 matches 81 and 125. (The mapper's labels of 118, 121
+   and 124 name each pair; the three pairs are constants of the class library, recorded
+   here under decision 0012.) From that entry it returns the entry's line of the requested
+   kind (`QuestDispenser_RoleSuccessText` or `QuestDispenser_RoleFailureText`), or **no
+   line** when the entry lacks that kind; the role's own line is not used in that case.
+2. If no entry matches, or the role has no text array, it returns the role's own
+   `QuestDispenser_RoleSuccessText` or `QuestDispenser_RoleFailureText`, or no line when
+   the role lacks it.
 
 <a id="s7-2"></a>
 ### 7.2 Role actions (Confirmed)
@@ -881,13 +1029,22 @@ which store only NPC and text) become action-6 roles of objective 0; each object
 the action of their kind; `Quest_GlobalRoles` (always action 5, with a private-encounter
 template) are included as well. Every role gets a role name.
 
-In 17,247 of the 20,807 records the multiset of (objective, success-text token) of
-`Quest_RoleArray` equals that of the source roles exactly; in 2,645 the flattened list has
-more entries, in 81 fewer, and in 834 the same number with differences.
+**Composition (R4).** Compare roles by (objective, success-text table and token), with the
+objective of a `Quest_GlobalRoles` entry taken as absent (§7.1) and that of a bestowal role
+as 0. Over all 20,807 records:
 
-> **OPEN:** The rule for the remaining 3,560 records (extra roles in the flattened list,
-> for example action-1 roles without an NPC). A reader must use `Quest_RoleArray` as the
-> authority and treat the source role arrays as authoring detail.
+- **Every source role is in the flattened list**, except one role in each of 9 records
+  (each a `Quest_Role` inside an event entry; event types 1, 7, 10, 19, 22, 29, 32).
+- The flattened list holds **extra roles** in 2,647 records (8,810 roles: action 2 3,442,
+  action 6 2,758, action 1 2,260, action 3 140, action 5 118, action 9 42, action 4 27,
+  action 7 18, action 10 5). The success-text token of none of them occurs in any source
+  role of its quest: these roles exist only in the flattened form (the 118 action-5 ones
+  are those of §7.1 without a stored source).
+- 18,151 records match exactly; no record both lacks a source role and has extras.
+
+So `Quest_RoleArray` = the roles derived from the source arrays as described above, plus
+roles authored only in the flattened form. A reader uses `Quest_RoleArray` as the
+authority and treats the source role arrays as authoring detail.
 
 **Completion comments.** `Quest_CompletionCommentArray` (761 quests, 994 structs): each
 `Quest_CompletionCommentStruct` has `QuestDispenser_NPCArray` (NPC DIDs, 1,004; and in 20
@@ -903,7 +1060,9 @@ empty).
 NPC, monster, item and class-5785 records carry `QuestDispenser_ActiveQuests` (10,829
 records; 0 … 334 entries; 43,405 `QuestDispenser_QuestRole` structs with
 `QuestDispenser_Quest` (DID) and `QuestDispenser_RoleName`). One more struct sits at the top
-level of one record.
+level of one record. The 10,829 records are of those four kinds only; four records of other
+classes (root classes 763, 798, 2651 and 2814 here) also carry the property, one with a
+single matching entry and three with empty lists.
 
 - 43,401 of these 43,406 entries name a quest whose `Quest_RoleArray` has a role with the
   same role name **and** the same `QuestDispenser_NPC`; the other 5 match neither.
@@ -946,15 +1105,24 @@ entries, 3 `Usage_RequiredRaces` entries and 4 `Usage_RequiredClassList` entries
 every scalar usage field. Unused slots hold zeros: operator 0, quest DID 0, status 0, world
 event 0, race 0, class 0 (1,287 of 1,718 AND entries, 4,153 of 4,295 OR entries).
 
-Reader rule: an entry whose operator is 0 or whose target DID is 0 is an empty slot and
-is skipped.
+**Compiled requirement slots (R6).** The comment's 0x70 record holds a compiled permission
+object (root attribute 0x5A411A2, a class-1602 object whose attribute 0x0522EAC is a
+class-166 property set), and that is what the client's comment code evaluates. It keeps
+exactly the requirement entries whose operator is not 0: 409 of the 1,718 AND entries (all
+of them with a quest and a status) and 142 of the 4,295 OR entries. The 1,287 all-zero AND
+entries, 22 AND entries with operator 0 but a quest and a status, and the 4,153 all-zero OR
+entries are dropped. Reader rule (equivalent on this data): an entry whose operator is 0 is
+an empty slot and is skipped; no entry has a non-zero operator with target DID 0.
 
 **Comment list** (kind 2247; 223 records): `NPCComment_CommentArray`, an array of
 `NPCComment_DIDComment` DIDs (907; all comment records). NPCs (404), monsters (20) and
 items (3) name one list each through `NPCComment_DIDCommentArray`.
 
-> **OPEN:** Which comment of a list is shown when several pass their requirements (first,
-> random, all).
+**Which comments are offered (R6, WLB).** For an NPC, the client's script walks the
+comment list named by the NPC's `NPCComment_DIDCommentArray` and collects **every** comment
+whose requirements pass for the player (§8.2 for quest requirements); it does not pick one.
+The NPC offers comments when the collection is not empty. How the interaction UI lays the
+collected comments out is not part of this spec.
 
 <a id="s7-8"></a>
 ### 7.8 Colour text (barks) (Confirmed)
@@ -965,11 +1133,48 @@ StringInfos) and `NPC_ReputationColorTextArray` (3 records; structs with `NPC_Co
 0x230001F3, 0 = no bound). NPCs name a list through `NPC_ColorTextFile` (384 values; 284 to
 an existing list, 100 are 0).
 
-Timing comes from `NPCColorControl` (§2.3): `Quest_ColorTextDetectionRadius` (10.0, metres),
-`NPC_TextDuration` (10.0, seconds) and `Quest_ColorTextInterval` (5; unit OPEN).
+Timing comes from `NPCColorControl` (§2.3): `Quest_ColorTextDetectionRadius` (10.0, world
+units), `NPC_TextDuration` (10.0, seconds) and `Quest_ColorTextInterval` (5, seconds).
 
-> **OPEN:** How a line is picked (random or in order) and how radius, duration and
-> interval drive it.
+**How a bark is produced (R7, WLB + BIN).**
+
+1. **Trigger.** For an NPC that barks, the client's script sets up a detection sphere on the
+   NPC whose radius is `Quest_ColorTextDetectionRadius`. A bark is attempted for a player
+   reported by that sphere.
+2. **Interval.** Each player carries the property `ColorText_LastColorTextTime`, a time in
+   whole seconds of the wall clock (the script machine's time function returns the
+   operating system's current time in seconds, BIN2). An attempt goes ahead only when the
+   current time is at least that value plus `Quest_ColorTextInterval`; after a line has
+   been spoken the property is set to the current time. The interval is therefore per
+   player, across all NPCs, in seconds.
+3. **Candidates**, collected in this order:
+   1. lines from the player's **completed quests**: for each completed quest whose
+      `Quest_CompletionCommentArray` (§7.3) has a struct naming this NPC (by DID in
+      `QuestDispenser_NPCArray`, or by a role key equal to the NPC's
+      `QuestDispenser_RoleConstraint`), the lines of those structs. Only the quests that
+      rank highest by a per-quest value read from the player's journal contribute (OPEN
+      below);
+   2. **reputation lines** of the NPC's colour-text list (`NPC_ReputationColorTextArray`):
+      an entry is a candidate when the player's tier with the NPC's faction lies within its
+      bounds, where a bound of 0 stands for the faction's lowest
+      (`NPC_ColorText_MinReputationTier`) or highest (`NPC_ColorText_MaxReputationTier`)
+      tier;
+   3. only if steps 3.1 and 3.2 found nothing: the plain lines of `NPC_ColorTextArray`.
+4. **Pick.** One candidate is chosen **at random**: the script draws an integer from 0 to
+   *n* − 1 inclusive with the script machine's random-range function, which multiplies a
+   random fraction from the client's generator by the size of the range and truncates
+   (BIN2); every candidate is equally likely when that fraction is uniform.
+5. **Show.** The NPC speaks the line: the script hands it to the client's speech display
+   together with `NPC_TextDuration` (seconds), and plays the line's `NPC_ColorText_Sound`
+   when it has one (no colour-text record of this install has one).
+
+Some conditions on the NPC's state (checked before step 3) were not traced; they only
+suppress barks.
+
+> **OPEN:** The per-quest value that ranks completed quests in step 3.1 (the quest-side
+> method reads a value from the player's journal record of the quest; it may be the
+> completion time). Owner observation could show which of several completed quests' lines
+> an NPC uses.
 
 <a id="s7-9"></a>
 ### 7.9 Scenes (Confirmed)
@@ -990,13 +1195,14 @@ The 0x70 record holds the same scene as one class-427 native (`wstate.md` §5.4,
 | entry_count | Number of keyframes |
 | entry index | Keyframe number 1 … *k* |
 | first f32 | `Keyframe_Duration`, or −1 when absent (7,026 of 7,027) |
-| second f32 | 0 except in the 1,105 entries with a video track: 8.03 … 10.51 (meaning OPEN; a length in seconds fits) |
+| second f32 | The `Keyframe_VideoTrack` DID stored as the 32 bits of this field (R8): its bit pattern equals the DID in the 1,105 entries with a video track and is 0 in the other 5,922. Read as a float the values happen to lie between 8.03 and 10.51, because 0x41… DIDs are the bit patterns of such floats. |
 | first u32 | 0 in all |
 | StringInfo | `Keyframe_Subtitle` |
 | two u32 | `Keyframe_MovieTrack` DID (or 0), then a kind: 12 with a movie track (65), 9 with a video track (1,105), 8 otherwise (5,857) |
 | bool8 | `Keyframe_ShowRandomImageFromUIL` |
 
-The video-track DID is not repeated in the native; a reader takes it from the 0x79 set.
+The video-track DID is repeated in the native only as the bit pattern of the second f32; a
+reader takes it from the 0x79 set or reinterprets those 32 bits as a u32 DID.
 
 ---
 
@@ -1026,7 +1232,7 @@ The general semantics of `Usage_*` fields belong to the usage/permission subsyst
 not specified here.
 
 <a id="s8-2"></a>
-### 8.2 Quest requirements (layout Confirmed; evaluation Reported)
+### 8.2 Quest requirements (layout Confirmed; evaluation Confirmed, WLB)
 
 A `Usage_QuestRequirement` struct has `Usage_Operator` (Enum 0x23000039), `Usage_QuestID`
 (DID) and `Usage_QuestStatus` (status code, §8.3; missing in 1 of 13,003 entries).
@@ -1034,15 +1240,42 @@ A `Usage_QuestRequirement` struct has `Usage_Operator` (Enum 0x23000039), `Usage
 Operator values: 1 ≥, 2 ≠, 3 =, 4 <, 5 ≤, 6 >, 0 undefined. Counts in quest AND lists: 1:
 1,226; 2: 2,963; 3: 8,805; 4: 2; 6: 7. In OR lists: 1: 14; 2: 7; 3: 641.
 
-Evaluation (Reported, LC): every entry of `Usage_QuestRequirements` must hold, and at least
-one entry of `Usage_QuestRequirements_OrList` must hold when that list is present; an entry
-holds when the player's status of the named quest compares to the stored status with the
-operator.
+**Lists (P2, WLB).** The usage code of the class library evaluates the two lists of a
+permission set like this: every entry of `Usage_QuestRequirements` must pass (the first
+failing entry fails the whole requirement); when `Usage_QuestRequirements_OrList` is
+present, at least one of its entries must pass, and a present list with no passing entry
+(an empty one included) fails. This agrees with LC.
 
-> **OPEN:** How a status comparison is done: numerically on the 32-bit code (so that
-> "≥ underway at objective 3" also accepts completed and failed), or by a rule that
-> knows the raw status. The executable names `Usage_QuestStatus` only in UI code and never
-> names `Usage_Operator` (§18), so the evaluation lives in script code or on the server.
+**One entry (P2, WLB).** An entry (operator *op*, quest *Q*, status code *S*) is evaluated
+for a player as follows. The comparison is **not** numeric on the 32-bit code: the code is
+split into its raw status (*S* AND 0xF0000000) and its objective number *n* (*S* AND
+0x0FFFFFFF), and the rule depends on the raw status.
+
+1. **Bypassable quests.** If *Q* is listed in the world property
+   `World_BypassableQuestArray`, the player object's `WeenieType` value (PID 294; 0 when
+   absent) has its four low bits all set, and *Q*'s own prerequisites pass for the player,
+   the entry passes. (Which weenie types have the four low bits set is not needed by this
+   rule; the mapper's own 38 entries include none.)
+2. **Disabled quests.** If *Q* is listed in the world property `World_DisabledQuestArray`,
+   the entry fails.
+3. Otherwise, by raw status:
+
+| Raw status of *S* | *op* = 2 (≠) | any other *op* |
+|---|---|---|
+| Completed (0x3) | passes when the player has **not** completed *Q* | passes when the player has completed *Q* |
+| Failed (0x2) | passes when the player has no failure record of *Q* | passes when the player has one |
+| Underway (0x1), *Q* not underway | passes | passes when the player has completed *Q* and *op* is 1 (≥) or 6 (>); or has not completed *Q* and *op* is 4 (<) or 5 (≤); fails otherwise (*op* 3 or 0) |
+| Underway (0x1), *Q* underway, *n* = 0 | fails | passes |
+| Underway (0x1), *Q* underway, *n* > 0 | passes when *c* ≠ *n* | passes when *c op n* holds (1: *c* ≥ *n*, 3: *c* = *n*, 4: *c* < *n*, 5: *c* ≤ *n*, 6: *c* > *n*; unsigned); fails for *op* 0 |
+| Abandoned (0x4), Tapped (0x5), 0 or any other | fails | fails |
+
+Here *c* is the objective the player's underway quest *Q* is at, as the player's journal
+records it. Consequences: "≥ underway at objective 3" also accepts a completed quest; "<"
+and "≤" accept a quest the player has never completed and does not hold; "≠ underway"
+accepts any quest the player does not hold.
+
+This is the rule of the class library, which the client runs. Whether a server applies
+the same rule cannot be observed offline (Tessera rule: the sandbox backend applies it).
 
 <a id="s8-3"></a>
 ### 8.3 Status codes (Confirmed)
@@ -1107,10 +1340,17 @@ The reward-level record also has `QuestReward_Accomplishment_ExpEntryList`,
 > **OPEN:** Which deed properties select the `QuestReward_Accomplishment_*` lists (deeds
 > carry `Quest_ExpTier` on only 330 records but most carry `Quest_RewardLevelDID`,
 > `Quest_TurbinePointTier` and `Quest_PositiveFaction`), and whether a deed's tiers read the
-> ordinary or the accomplishment lists.
+> ordinary or the accomplishment lists. Not in the client: the class library names no
+> `QuestReward_*` list or amount except the session-point lists, and the executable reads
+> none of them (its one immediate equal to an accomplishment-list PID is a UI element
+> identifier, BIN2). Reward amounts are computed by the server.
 
-> **OPEN:** The unit of `QuestReward_MoneyAmount` and `Quest_GoldToGive` (copper is
-> likely) and the meaning of the float `QuestReward_PaperItems` (0.1 … 0.5).
+> **OPEN:** The unit of `QuestReward_MoneyAmount` and `Quest_GoldToGive` (LC treats both
+> as copper coins: 100 copper to a silver, 1,000 silver to a gold; Reported) and the meaning
+> of the float `QuestReward_PaperItems` (0.1 … 0.5). Neither the class library nor the
+> executable reads these properties (BIN2), so the client does not settle them. Owner
+> check for the money unit: compare the coin reward the original shows for a quest with
+> the `QuestReward_MoneyAmount` of its tier and level.
 
 <a id="s9-2"></a>
 ### 9.2 Reward-level records and the default table (Confirmed layout; choice Reported)
@@ -1134,7 +1374,9 @@ Choosing the table for a quest:
    is the quest's level (§4.3), and the highest level when *L* is 0.
 
 > **OPEN:** Step 2 for quests whose level comes from an override property (a server would
-> use the player's level), and for levels above 160.
+> use the player's level), and for levels above 160. The client cannot settle it: neither
+> the class library nor the executable names `Quest_RewardLevelDID` or
+> `QuestControl_RewardLevelDIDArray` (§18, BIN2); the table is chosen by the server.
 
 <a id="s9-3"></a>
 ### 9.3 Fixed amounts (Confirmed)
@@ -1182,7 +1424,17 @@ medals 2, 3, 4 and 5 here) and `QuestControl_Points_Start_Mapping` the start sco
 `Quest_Points_Start` value (0, 400 and 1,000 here). Tracked events (§5.1) add or subtract
 `QuestEvent_Points` (−500 … 400).
 
-> **OPEN:** Medal 1 has no threshold entry (presumably the medal below 150 points).
+**Medal for a score (W3, WLB).** The quest-control code of the class library computes the
+medal for a point score *p* as follows: it searches `QuestControl_MedalThresholds`, which it
+expects in ascending order of `Quest_Points` (true here), for the last entry whose
+`Quest_Points` is less than or equal to *p*, and returns that entry's `Quest_Medal`; when
+*p* is below every threshold, or the list is missing, the medal is **1**. Medal 1 is the
+lowest of the five medals (first non-zero key of mapper 0x230003BB), so it needs no
+threshold entry: a score below 150 here earns medal 1, 150 … 399 medal 2, and so on. The
+"next medal" after medal *m* is the `Quest_Medal` of the threshold entry that follows the
+entry of *m* in stored order, and after medal 1 the medal of the first entry; there is
+none after the last entry. `QuestControl_MedalUIState_Hash` gives medals 0 and 1 the same
+UI state.
 
 <a id="s9-7"></a>
 ### 9.7 Items, loot and effects (Confirmed)
@@ -1211,8 +1463,39 @@ medals 2, 3, 4 and 5 here) and `QuestControl_Points_Start_Mapping` the start sco
 pairs), `QuestControl_LockingAutoBestowEvents`, and
 `Quest_TeleToObjective_PaperItemServiceToCategories_Array`.
 
-> **OPEN:** The units of the distances (metres are likely) and the role of
-> `Quest_MinChallengeLevelArray` and of the limiter record `QuestCategoryLimiterControl`.
+**`Quest_MinChallengeLevelArray` (W4).** Its rows give the default level difference by
+challenge-level range, from which the compiled permission set derives a quest's default
+minimum level (§6.1 step 6). `QuestControl_CategoryToChallengeLevelOverrideProperty_Hash`
+lists the categories that take their level from a player property; their quests get no
+default minimum level.
+
+**Limiter record (W4).** `QuestCategoryLimiterControl` (§2.3) has an empty property set; its
+root object (class 3087 here) holds a class-35 map (attribute 0xD3A9984) from a
+`Quest_Category` value to a class-39 property, a `QuestCategoryLimiterControl_QuestInfo_Struct`
+with these fields, and a class-25 list of the same three category keys (attribute
+0x077F473):
+
+| Field | Values here (3 categories) | Meaning |
+|---|---|---|
+| `QuestCategoryLimiterControl_MaxLimit` | 10, 15, 15 | Largest limit |
+| `QuestCategoryLimiterControl_DefaultLimit` | 10, 5, 5 | Starting limit |
+| `QuestCategoryLimiterControl_PropertyName` | a PID per category | The player property that holds the player's current limit for the category |
+| `QuestCategoryLimiterControl_ErrorType` | one enum value in all three | Message shown when the limit is reached |
+| `QuestCategoryLimiterControl_LimitOnBestowal` (2) or `QuestCategoryLimiterControl_AlertType` (1) | true; one enum value | Whether the limit applies at bestowal; alert kind |
+
+The meanings in the table follow the labels; the class library reads the fields only
+through getters of class 3087, whose callers were not traced. By those labels the record
+caps, per category, how many quests of that category a player may take, with the current
+limit held in a player property. The class library also keeps a per-player
+`QuestCategoryLimiter_ResetTime` (wall-clock seconds, §7.8) and computes the time left until
+it. What counts against a limit and when it resets are server behaviour.
+
+> **OPEN:** The units of `Quest_FellowshipShareQuestRange` (30.0) and
+> `Quest_PlayerLock_ValidateDistance` (80.0) and `Quest_PlayerLock_ValidateInterval` (600).
+> World units (a metre by convention, [`coordinates.md`](coordinates.md)) and seconds are
+> likely. The class library reads the share range only through a getter whose callers were
+> not traced; neither the class library nor the executable reads the two player-lock values
+> (BIN2), so they belong to the server.
 
 ---
 
@@ -1257,16 +1540,49 @@ LC uses the class and race directories to attach a class or race requirement to 
 deeds.
 
 The 0x70 record of a directory (class 838 here) is a compiled index with eight root
-attributes: a map from each listed DID to a list of 1 … 83 objects (class 1418 here; each
-holds the DID and its position 1 … *n* in the list, other fields 0 or null; 0x0B48813); a
-plain list and a set of all listed DIDs (0x3010353, 0x4E8A613); a map from each member of a
-set to its set (class 1860: a list of the set's DIDs; 0x163DD43); a map DID → list (138
-entries; 0x3AD9FD3); a map from small keys to objects of classes 2733, 2734, 3626, 3867,
-5608 and 5719 holding further DID lists (0x41F1613); and two empty containers.
+attributes (D2; all 29 directories):
 
-> **OPEN:** What the lists of class-1418 objects (one per deed, 1 … 83 objects) and the
-> keyed objects of attribute 0x41F1613 stand for. The object count does not equal the
-> deed's number of objectives (3,373 of 11,696) or events (3,346).
+| Hash | Container | Content |
+|---|---|---|
+| 0x0B48813 | class 35: DID → class-182 list | For each listed deed, one **event-progress record** per event with ObjectiveID 1 (§5.7): 6,455 lists, 13,083 records, 1 … 83 per deed |
+| 0x3AD9FD3 | class 35: DID → class-182 list | Likewise for the events with ObjectiveID 0 (quest-level failure and tracked conditions), for the 138 deeds that have such events |
+| 0x3010353, 0x4E8A613 | class 17 list, class 18 set | All listed DIDs |
+| 0x163DD43 | class 35: DID → class 1860 | Each member of an `Accomplishment_Set` → an object whose list (attribute 0x9110603) holds the set's DIDs |
+| 0x41F1613 | class 35: event type → object | The **event-type index** (below) |
+| 0x30FD353, 0xB1E02E3 | class 25, class 18 | Empty in all 29 |
+
+**Event-progress records.** Class 1418 here is the class the player's journal uses for the
+progress of one event (§5.2 step 6); the directory holds them in their initial state.
+Attribute 0xBCDBE54 is the deed's DID and 0xA419564 the event's EventID; the other twelve
+attributes are 0 or null in all 13,083 records of 0x0B48813 and in those of 0x3AD9FD3. In
+each list the EventIDs are exactly those of the deed's events of that ObjectiveID; they
+are stored in ascending order in 6,429 of the 6,455 lists of 0x0B48813, and in the other 26
+the highest EventID comes first.
+
+**Event-type index.** A key of 0x41F1613 is an event type *t*; the object (whose attribute
+0x1E07625 repeats *t*) indexes the directory's deeds that have an event with ObjectiveID 0
+or 1 whose listen list (§6.2) contains *t*. The key set equals the set of such types in all
+29 directories. The object's class depends on *t*:
+
+| Class here | Types | Content |
+|---|---|---|
+| 2733 | all types not below | A class-17 list (attribute 0xC001479) of the deeds; exact in all 49 objects |
+| 3626 | 32 | Map (attribute 0xC59D9F9): `QuestEvent_QuestComplete` DID → deeds; exact in all 28 |
+| 3867 | 59 | Map (0xC59D9F9): `QuestEvent_BestowedQuestID` → deeds; exact in both |
+| 5719 | 31 | Map (0x3140A33): `QuestEvent_ItemDID` of events of types 31 and 10 → deeds; exact in all 15 |
+| 5608 | 1 | Map (0x4FC8AE3): name hash (`records.md` §1.5) of the event's role key → deeds, over every event whose listen list holds 1; the role key is `QuestEvent_RoleConstraint`, or `QuestEvent_ChannelingRoleConstraint` for type-13 events; exact in all 5 |
+| 2734 | 22, 26, 56 | Maps from a value to deeds: 0x6AF9548 genus, 0x74DF068 species, 0x36B0BA8 subspecies, 0xBCF92C8 class, 0xF04FA48 monster division, 0xAEA6478 territory, 0x0AE9528 landmark DID, 0x242DE58 `QuestEvent_MonsterDID`; 0x40425D8 is null in all; a plain list 0xA0DC4E9 (used for type 26: all its deeds) |
+
+In a class-2734 object every `QuestEvent_MonsterDID` is filed under 0x242DE58 (566 of 566),
+and each monster-selector element (§5.5) is filed under at most one of its fields: 1,226 of
+the 1,253 indexed elements under exactly one (most often the species when present), 27
+under none.
+
+> **OPEN:** Which field of a monster-selector element a class-2734 index files it under
+> when the element has several (for example genus, species and division: 29 elements
+> under species, 3 under genus), and why 27 of the 1,253 indexed elements are under none of
+> their fields. Only a writer that rebuilds directory indexes needs this; a reader uses the
+> stored maps.
 
 <a id="s10-3"></a>
 ### 10.3 Version list (Confirmed)
@@ -1276,7 +1592,9 @@ entries; 0x3AD9FD3); a map from small keys to objects of classes 2733, 2734, 362
 3,400 … 4,900) and an `Accomplishment_List` (0 … 227 deeds; 939 in all).
 
 > **OPEN:** What the version entries are used for (retroactive deed grants on a content
-> update is a guess).
+> update is a guess). The client does not use them: neither the class library nor the
+> executable names `Accomplishment_Version_List`, `…_Entry` or `…_Number` (BIN2). Only
+> server documentation or behaviour could settle it.
 
 <a id="s10-4"></a>
 ### 10.4 Accomplishment control (Confirmed)
@@ -1414,7 +1732,10 @@ of a constant; 134 in quests). Quest events of type 34 carry the same three fiel
 has `WorldEvent_Control_DecayEpsilon` and `WorldEvent_Control_ScheduleEpsilon` (300 in all).
 
 > **OPEN:** The units of the epsilons and how decay and schedule are applied; whether the
-> per-instance lists scope world events to an instance.
+> per-instance lists scope world events to an instance. The client does not read the
+> epsilons (no use in the class library or, by immediate PID, in the executable; BIN2); the
+> class library reads only the decay properties of the world events themselves, through
+> getters. These are server behaviour.
 
 ---
 
@@ -1463,8 +1784,12 @@ Field layout: `wstate.md` §5.4. Meanings:
 
 1. **Section 1, base locations**: 50,115 DIDs (NPCs 16,516, monsters 17,064, items 9,750,
    landmarks 2,690, and others) → 0 … *p* positions (29,328 DIDs have none; 87,341
-   positions). Each position has a u32 that is 0 in all and a byte that is 0 (28,782) or 1
-   (58,559). Regions 1 … 6, 14 and 15 occur.
+   positions). Each position is followed by a u32 and a byte. The client turns such a
+   location into a `QuestEvent_Location` struct (§5.6; X2, BIN2): the position becomes
+   `QuestEvent_Location_Position`, the u32 is an **f32 radius**
+   (`QuestEvent_Location_Radius`; bit pattern 0, that is 0.0, in all) and the byte is the
+   **entire-landblock flag** (`QuestEvent_Location_EntireLandblock`; false 28,782, true
+   58,559). Regions 1 … 6, 14 and 15 occur.
 2. **Section 2, classification index**: seven tables, in this order, from a classification
    value to the agents that have it (checked against every agent's own properties: 33,805
    of 33,805 existing agents in tables 0 … 4, 17,265 of 17,265 monsters in table 5):
@@ -1481,15 +1806,17 @@ Field layout: `wstate.md` §5.4. Meanings:
 
    These are exactly the fields of the monster selector (§5.5).
 3. **Section 3, layered locations**: 34,083 DIDs → 395,473 positions that exist only in
-   some content layers; each carries its content-layer IDs (1 for 336,868 positions, up to
-   5; 581 with none). No position of section 1 recurs here: section 1 holds the positions
-   that need no content layer.
+   some content layers; each carries the same radius (0.0 in all) and entire-landblock
+   flag (false 276,885, true 118,588) as in section 1, then its content-layer IDs (1 for
+   336,868 positions, up to 5; 581 with none), which the client adds as
+   `QuestEvent_Location_ContentLayers` (BIN2). No position of section 1 recurs here:
+   section 1 holds the positions that need no content layer.
 4. **Section 4, objective targets**: 20,012 quest DIDs (19,841 present in the install, 171
    not present) → objective index (1 … 32; 49,521 objectives, 49,232 of them under present
    quests and 289 under missing ones) → list of target groups → entries. There are 208,859
    entries in all. An entry is a DID (0 in 32,540), a position, a radius (0 in 195,427;
    otherwise from 1 upward), a role-key string (set in 28,354), a filter list, and a second
-   string (set in 44,499).
+   string (set in 44,499), the **instance item key** (below).
 
    The counts below split all 208,859 entries; none is left out:
 
@@ -1515,20 +1842,40 @@ Field layout: `wstate.md` §5.4. Meanings:
 
      The 28,798 DID-0 entries of these objectives are counted separately and take no part
      in this comparison.
-   - **Other objectives.** The remaining 921 objectives of present quests have a different
-     number of groups: 919 fewer groups than events (for example one group for two
-     events, 556 objectives), 2 more groups than events. Their grouping is OPEN (below).
+   - **Other objectives (X2).** The remaining 921 objectives of present quests have a
+     different number of groups. In 919 of them the objective has failure conditions, and
+     the groups are exactly its **completion-condition** events: group *k* belongs to the
+     *k*-th event in EventID order among the events of its completion conditions; events of
+     failure conditions get no group. 4,049 of the 4,051 non-zero DIDs of these 919
+     objectives name a DID stored in that event. The objectives of the matched group have
+     no failure conditions, so one rule covers 49,230 of the 49,232 objectives: **target
+     groups = completion-condition events, in EventID order**. The last 2 objectives belong
+     to one quest and have more groups than events (4 for 2, 2 for 1); a reader ignores
+     groups beyond the last completion event.
    - **Role-key string.** Full census: each of the 28,282 role-key strings in entries of
      present quests equals a role key stored somewhere in that quest's property set, as
      the value of `QuestEvent_RoleConstraint`, `QuestDispenser_RoleConstraint`,
      `QuestEvent_ChannelingRoleConstraint` or `QuestEvent_Location_RoleConstraint`. The
-     other 72 belong to entries of the 171 missing quests and cannot be checked.
-   - **Second string.** Of the 44,499 set, 44,495 are in entries of present quests; 21 of
-     those equal a role key of the quest (as above), 44,474 do not. The other 4 are under
-     missing quests.
+     other 72 belong to entries of the 171 missing quests and cannot be checked. 27,504 of
+     all 28,354 also equal a `QuestDispenser_RoleConstraint` of an instance property set
+     (`entity-descriptor.md` §4.5.2) in the landblock that holds the entry's position.
+   - **Second string: instance item key (X2).** Every one of the 44,499 set second strings
+     equals the `Quest_InstanceItemKey` of an instance property set
+     (`entity-descriptor.md` §4.5.2) in the landblock that holds the entry's position
+     (34,256 such properties in the install; a key may occur more than once in one
+     landblock, 2,262 times). The client's builder of section-4 entries fills this field
+     from `Quest_InstanceItemKey` (BIN2). It names the placed instance (a container, an
+     item spot) that the entry stands for. 44,495 are in entries of present quests (21 of
+     them happen to equal a role key of the quest), 4 under missing quests.
    - A **filter** is a flag byte with one u32 per set bit, bits in ascending order: 0x01
      genus, 0x02 species, 0x04 subspecies, 0x08 alignment, 0x10 class, 0x20 monster
-     division, 0x40 territory DID (all 5,345 values are territories). Bit 0x80 is never set.
+     division, 0x40 territory DID (all 5,345 values are territories), **0x80 landmark DID**.
+     Bit 0x80 is never set in the data; the client's filter record holds eight fields filled
+     in this order from `Quest_MonsterGenus`, `Quest_MonsterSpecies`,
+     `Quest_MonsterSubspecies`, `Quest_MonsterAlignment`, `Quest_MonsterClass`,
+     `Quest_MonsterDivision`, `Quest_MonsterRegion` and `QuestEvent_LandmarkDID` (BIN2), so
+     the eighth bit carries the selector's landmark field (§5.5). The bit-to-field mapping of
+     0x80 rests on this order (BIN only).
    - Event types with entries: 1, 2, 4, 5, 7, 9, 10, 11, 13, 16, 19, 21, 22, 24, 25, 27,
      29, 31, 34 (4 of 2,943), 38, 39, 56, 57. Types 6, 14, 18, 26, 30, 32, 33, 37, 45, 58
      and 59 have none.
@@ -1537,12 +1884,11 @@ A quest map shows, for the player's current objective, the section-4 entries of 
 its events: the entry position, and for an entry with a DID, the positions of that DID in
 sections 1 and 3 (filtered by the active content layers).
 
-> **OPEN:** The meaning of the byte (0/1) on section-1 and section-3 positions, of the
-> u32 that is always 0, and of the second string of a section-4 entry (LC: a key for
-> "point done" bookkeeping). How the 921 objectives whose target groups do not match the
-> event count are grouped (919 with fewer groups than events, for example three monster
-> events with one group; 2 with more groups than events). What bit 0x80 of a filter would carry (the client reads a u32 for it, BIN per
-> `wstate.md` §5.4; the landmark field of the selector is the remaining candidate).
+The client also has a builder that adds section-4 entries at run time from structs with
+the properties `QuestEventLocation_Target`, `QuestEventLocation_LocationPosition`,
+`QuestEventLocation_Radius`, `QuestEvent_MonsterGenus_Array`,
+`QuestEventLocation_RoleConstraint` and `Quest_InstanceItemKey` (BIN2); where such structs
+come from was not traced.
 
 ---
 
@@ -1580,14 +1926,24 @@ A dungeon map shows the notes whose dungeon is the map's dungeon and whose conte
 are active; a note is relevant to the player when one of its quest roles is the current
 step of one of the player's quests (bestow roles for offers, talk roles for objectives).
 
-> **OPEN:** How a note whose info has only a role key (3,185 notes without
-> `QuestDispenser_ActiveQuests`) is tied to quests: through the role-key index of §16.1 is
-> the likely route.
+**Role keys of notes (M2).** Of the 3,185 notes whose info has only a role key, 2,453 have
+a key that the role-key index of §16.1 lists (and the listed quests that exist hold that
+key in their property sets, 2,436 of 2,453 notes); 732 have a key the index does not list:
+321 of these keys are still stored in some quest's property set, 411 in none. Of the 178
+notes with both a role key and quest roles, 120 have a key the index lists. 414 of the
+3,185 notes have a target DID that the entity index of §16.1 lists.
+
+> **OPEN:** How the original ties a note with only a role key to quests. The role-key index
+> covers 2,453 of the 3,185 such notes; for the other 732 (411 of them with a key no quest
+> stores) the rule, if any, is not in the data. The class library does not name the
+> map-note record's DID, while the executable does (one immediate, BIN2), so notes are
+> handled by native code, which was not read. An owner check of a dungeon map with such a
+> note could show whether and when it is drawn.
 
 ---
 
 <a id="s18"></a>
-## 18. Client behaviour and where it lives (BIN)
+## 18. Client behaviour and where it lives (BIN, WLB)
 
 - §4.3 is the only quest computation of this spec that was found in the executable.
 - The executable names by immediate PID, among the properties of this family: `Quest_Name`
@@ -1608,14 +1964,45 @@ step of one of the player's quests (bestow roles for offers, talk roles for obje
   `Keyframe_Subtitle`.
 - The quest-requirement loader reads both requirement lists only to collect the quest DIDs
   they mention (so that it can re-check when those quests change); the comparison itself is
-  not in the executable.
+  not in the executable but in the class library (§8.2).
+- Second pass (BIN2, same method): the executable names none of `Quest_TotalWordCount`,
+  `Accomplishment_Version_List` / `_Entry` / `_Number`, `WorldEvent_Control_DecayEpsilon`,
+  `WorldEvent_Control_ScheduleEpsilon`, `QuestReward_MoneyAmount`, `Quest_GoldToGive`,
+  `Quest_RewardLevelDID`, `QuestControl_RewardLevelDIDArray`,
+  `Quest_IgnoreDefaultChallengeLevel`, `Quest_MinChallengeLevelArray`,
+  `Quest_DefaultLevelDifference`, `Quest_FellowshipShareQuestRange`,
+  `Quest_PlayerLock_ValidateDistance`, `Quest_ColorTextInterval`,
+  `Quest_ColorTextDetectionRadius`, `NPC_TextDuration` or the
+  `QuestCategoryLimiterControl_*` struct fields. The few immediates of equal value that
+  remain for other properties of this family (for example `QuestReward_PaperItems`,
+  `QuestEvent_EventVolumeString`) are UI element identifiers, which share the number
+  range. It does name the map-note record 0x0E400000 once.
 
-Consequence for implementers: event matching, requirement evaluation, species variants and
-reward amounts are behaviour of the class library's script code or of the server. This spec
-gives the data those rules run on; the rules are OPEN where stated.
+**The class library (WLB).** Much of the client-side behaviour of this family is script
+code in the class library, which ships in the data. Read for this spec:
 
-> **OPEN:** The class library's script methods of the quest classes (`wlib.md`) were not
-> analysed. They may settle §5.2, §7.1, §8.2 and §9.2 step 2.
+| Behaviour | Section |
+|---|---|
+| Objective completion (any condition; counted and uncounted conditions) | §5.2 |
+| The property set that describes a creature to the quest system (landmark field) | §5.5 |
+| Species variant lines | §7.1 |
+| NPC comment selection | §7.7 |
+| Barks: candidates, random pick, timing | §7.8 |
+| Quest-requirement lists and the per-entry rule | §8.2 |
+| Medal for a score, next medal | §9.6 |
+| Journal list of quests with flag 0x16D4503 | §6.1 |
+
+The class library names **none** of the reward-amount properties (`QuestReward_*` lists and
+amounts other than the session-point lists, `Quest_RewardLevelDID`,
+`QuestControl_RewardLevelDIDArray`), `Quest_TotalWordCount`, the volume strings of §5.3, the
+version list of §10.3 or the epsilons of §14.3. Together with the executable result above,
+those are server behaviour or authoring data.
+
+> **OPEN:** Whether the client matches world happenings against quest events itself. The
+> compiled event classes of §5.4 have 3 to 20 own script functions each, which read their
+> type's fields (for example the world-event class reads `QuestEvent_WorldEvent_Operator`);
+> they were not read for this revision. Reading them (WLB) would show whether the client
+> evaluates events or only displays them.
 
 ---
 
@@ -1640,6 +2027,14 @@ Checked on this install (all records). A reader may warn on a violation but must
 | V12 | Every arc's quests are distinct across all arcs. |
 | V13 | NPC comment records have the fixed requirement shape of §7.7. |
 | V14 | Every scene's class-427 native has one entry per keyframe and repeats subtitle and flag (§7.9). |
+| V15 | The compiled permission set equals the result of the §6.1 rule in all quests but 2 (both with `Quest_IgnoreDefaultChallengeLevel` and an unexpected default minimum level). |
+| V16 | Root attribute 0x16D4503 is 1 exactly when `Quest_RoleArray` has an action-1 role or a role with `QuestDispenser_RoleFailureText` (§6.1). |
+| V17 | In every type-19 and type-29 event the listen list holds 11 when an action-2 role of the objective has the event's role key, and 1 otherwise (§6.2). Every type-22 event's 0x511C1DB and 0x5700552 equal its landmark and monster DIDs, 0 when absent. |
+| V18 | The second f32 of every scene entry has the bit pattern of the keyframe's `Keyframe_VideoTrack` DID, 0 without one (§7.9). |
+| V19 | In every accomplishment directory, the progress records of 0x0B48813 (0x3AD9FD3) for a deed carry exactly the EventIDs of its ObjectiveID-1 (ObjectiveID-0) events; the keys of 0x41F1613 are the listen-list types of those events (§10.2). |
+| V20 | In the quest-target index, the number of target groups of an objective equals its number of completion-condition events, in all objectives of present quests but 2 (§16.3). |
+| V21 | Every section-4 second string equals a `Quest_InstanceItemKey` of an instance property set in the landblock of the entry's position (§16.3). |
+| V22 | Every role of the source role arrays has a flattened counterpart (same objective, same success text) in `Quest_RoleArray`, except 9 event roles (§7.3). |
 
 ---
 
@@ -1724,32 +2119,53 @@ dictionary.
 
 ---
 
+<a id="s20-5"></a>
+### 20.5 A quest requirement
+
+A synthetic player holds quest Q underway at objective 2 and has completed quest R. Entries
+and results (§8.2), assuming neither quest is bypassable or disabled:
+
+| Entry (operator, quest, status) | Result | Why |
+|---|---|---|
+| (1 ≥, Q, 0x10000003) | fails | Q is underway at 2, and 2 ≥ 3 is false |
+| (5 ≤, Q, 0x10000003) | passes | 2 ≤ 3 |
+| (3 =, Q, 0x10000000) | passes | underway, objective number 0, operator not 2 |
+| (1 ≥, R, 0x10000003) | passes | R is not underway but completed, operator 1 |
+| (3 =, R, 0x10000003) | fails | R not underway, completed, operator 3 |
+| (2 ≠, R, 0x30000000) | fails | R is completed |
+| (3 =, Q, 0x40000000) | fails | raw status 0x4 always fails |
+
+A permission set whose AND list is the second entry and whose OR list holds the first and
+the fourth passes (AND entry passes; one OR entry passes).
+
+<a id="s20-6"></a>
+### 20.6 A compiled permission set
+
+A synthetic quest (not a deed, no override property, no ignore flag, category not in the
+override map) has `Quest_ChallengeLevel` 20 and a struct with `Usage_MinLevel` 30,
+`Usage_MaxLevel` −1 and one `Usage_QuestRequirements` entry; top level it has
+`Usage_RequiresExpansionPack1_Legacy` = true and `Usage_MinLevel` 84. Its compiled set
+(§6.1) is: `Usage_AllowedWhileMounted` true; the requirement entry; the expansion flag;
+`Usage_MinLevel` 15 (20 − 5; the struct's 30 and the top-level 84 are not kept). With
+`Quest_IgnoreDefaultChallengeLevel` it would hold `Usage_MinLevel` 30 instead.
+
 <a id="s21"></a>
 ## 21. Open questions (summary)
 
 | Section | Question |
 |---|---|
-| §2.1 | Further family kinds without the listed identifying properties |
-| §4.2 | Top-level `Usage_*` properties outside the permission struct |
-| §4.3 | Effect of `Quest_IgnoreDefaultChallengeLevel` |
-| §5.2 | Completion rule for several completion conditions without a count |
-| §5.5 | Landmark field of a monster selector |
-| §6.1 | Root attribute 0x16D4503; derivation of the compiled permission set |
-| §6.2 | Choice of 1 or 11 in the listen lists of types 19 and 29; DID attributes of type-22 events |
-| §7.1 | Objective limits of action-5 roles; choice of species variant lines |
-| §7.3 | Derivation of the flattened role list in 3,560 records |
-| §7.7, §7.8 | Choice among NPC comments; bark selection and timing units |
-| §7.9 | Second float of a scene entry |
-| §8.2 | Status comparison rule |
-| §9.1 | Deed reward lists; money unit; paper-item float |
-| §9.2 | Default table for override levels and levels above 160 |
-| §9.6 | Medal 1 (no threshold entry) |
-| §9.8 | Units and role of several quest-control values; category limiter |
-| §10.2, §10.3 | Compiled deed-directory objects; version list use |
-| §14.3 | World-event decay and schedule epsilons; per-instance lists |
-| §16.3 | Location byte and word; second string; unmatched objectives; filter bit 0x80 |
-| §17.2 | Notes with only a role key |
-| §18 | Script methods of the quest classes |
+| §4.2 | Exact rule behind `Quest_TotalWordCount` (authoring data; no client use) |
+| §5.3 | What the volume strings select (drama names; server-side) |
+| §7.1 | Objective limits of action-5 roles (server; Tessera rule meanwhile) |
+| §7.8 | Ranking of completed quests whose completion comments become barks |
+| §9.1 | Deed reward lists; money unit (owner check); paper-item float (server) |
+| §9.2 | Default table for override levels and levels above 160 (server) |
+| §9.8 | Units of the share range and the player-lock values |
+| §10.2 | Field choice of the selector sub-maps of the deed event-type index |
+| §10.3 | Use of the version list (server) |
+| §14.3 | World-event decay and schedule epsilons; per-instance lists (server) |
+| §17.2 | Notes with a role key the role-key index does not list (owner check) |
+| §18 | Whether the compiled event classes' script code matches events on the client |
 
 ---
 
@@ -1760,3 +2176,4 @@ dictionary.
 |---|---|
 | 2026-10-07 | First version (Review). |
 | 2026-10-07 | Repair round after review (status stays Review). (1) §5.1, §5.2, §5.7 step 1.2, §6.2, V5, §20.1: a compound event holds 1 … 6 direct entries and 0 … 2 entry arrays (composition table added; 1,012 compounds have 2 … 6 direct entries and no array, and 4 more have three direct entries and one array, together the review's 1,016); the walk takes every direct entry once and every entry array in stored order; "member of a compound" defined by that walk; sibling lists are in ascending EventID order; empty conditions still take a ConditionID; condition shapes counted; second worked example with two direct entries. (2) §7.1, §7.2, V6: `Quest_ObjectiveIndex` has no dictionary default; per-container presence table; action 5 has it absent, which must stay distinct from 0; action-5 roles are assigned to no objective (new OPEN on server-side limits). (3) §5.2: count key written in words. (4) §16.3 section 4: full split of the 208,859 entries (matched, unmatched, missing quests; DID 0 and non-zero); the earlier 189,047 counted DID-0 entries as matches and is replaced by 160,249 of 172,069 non-zero DIDs; the 11,820 others are loot monsters, landmarks, missing records and 6 talk targets, not selector agents as stated before; role-key strings are a full census (28,282 present-quest strings all match; 72 under missing quests); unmatched objectives are 919 with fewer and 2 with more groups. (5) §21: §9.6 lists medal 1 only. (6) §6.3: the two doubles are bit pattern 0xC7EFFFFFE0000000 (most negative finite 32-bit float widened), not a 64-bit minimum; all fifteen attributes of the effect-application objects tabulated; provenance row C3 added; rows O1, O4, C2, R1, X1 updated. |
+| 2026-10-08 | Revision (status Revised; Accepted text changed): OPEN closures with new probes over all records (OBS2), the class library's script code (WLB, new key) and a second M4 pass (BIN2, new key); provenance rows F5, C4–C6, O5, O6, R4–R8, P2, W3, W4, D2, X2, M2 added and C1, R1, P1, D1, X1, B1 updated. Closed: §2.1 (census: no further kind; 2 class-3982 emote-like records); §4.2 top-level `Usage_*` and §4.3 `Quest_IgnoreDefaultChallengeLevel` (both via the compiled permission set); §5.2 completion rule (any condition completes an objective; counted conditions; never-finish and failure events); §5.5 selector landmark field (the creature's run-time `Landmark_DataID`); §6.1 derivation of the compiled permission set (20,805 of 20,807 exact) and root attribute 0x16D4503 (comment or failure-text roles); §6.2 type-22 attributes and the 1/11 choice in listen lists; §7.1 species variant lines; §7.3 composition of `Quest_RoleArray` (counts re-measured with global roles keyed by absent objective, replacing the 17,247 / 2,645 / 81 / 834 split); §7.7 all passing comments collected, compiled requirement slots; §7.8 bark candidates, uniform random pick, radius, per-player interval in seconds, duration; §7.9 second scene float = video-track DID bits (the earlier statement that the DID is not repeated is corrected); §8.2 evaluation of requirement lists and entries (not numeric); §9.6 medal 1 and the medal search; §9.8 role of `Quest_MinChallengeLevelArray` and the limiter record; §10.2 compiled directory index (progress records of objective-1 and objective-0 events, event-type index); §16.3 section-1/3 radius and entire-landblock flag, second string = `Quest_InstanceItemKey`, target groups = completion events, filter bit 0x80 = landmark; §18 replaced by findings. Remaining OPENs made precise (§9.1, §9.2, §9.8 units, §10.3, §14.3, §17.2) and inline unknowns turned into callouts (§4.2, §5.3); new narrow OPENs §7.8 (quest ranking), §10.2 (selector field choice), §18 (event-class code). Review note of 2026-10-07: (a) §7.4 four further records named; (b) the action-5 offer rule labelled a Tessera rule; (c) §21 rewritten. New invariants V15–V22, worked examples §20.5–§20.6. |

@@ -1005,34 +1005,38 @@ fn sliders_and_skeleton_are_passed_through() {
 #[test]
 fn equipment_categories_are_bit_masks() {
     // `from_lookup` turns category labels into bits (key k → bit k − 1, property-system.md
-    // §7.3), as it does for slot labels; items store such masks.
+    // §7.3), as it does for slot labels; items store such masks. The keys are arbitrary
+    // and synthetic; only the labels come from the spec. One category key lies above 32 so
+    // that a mask bit above 31 is exercised.
+    const LHIP: u32 = 0x0A00_0001;
+    const RHIP: u32 = 0x0A00_0002;
+    const BACK_2H: u32 = 0x0A00_0003;
+    const BACK_2H_SWORD: u32 = 0x0A00_0004;
+    const BACK_BOW: u32 = 0x0A00_0005;
+    const BACK_SHIELD: u32 = 0x0A00_0006;
     let keys = |property: &str, label: &str| -> Option<u32> {
         let table: &[(&str, &str, u32)] = &[
-            ("Inventory_DefaultSlot", "Weapon_Primary", 17),
-            ("Inventory_DefaultSlot", "Weapon_Secondary", 18),
-            ("Item_EquipmentCategory", "1HSword", 28),
-            ("Item_EquipmentCategory", "2HSword", 3),
-            ("Item_EquipmentCategory", "2HClub", 4),
-            ("Item_EquipmentCategory", "Bow", 8),
-            ("Item_EquipmentCategory", "Shield", 17),
-            ("Item_EquipmentCategory", "MediumShield", 40),
-            ("Inventory_ParentingLocation", "Sheath_LHip", 0x1000_0001),
-            ("Inventory_ParentingLocation", "Sheath_RHip", 0x1000_0002),
-            ("Inventory_ParentingLocation", "Sheath_Back_2H", 0x1000_001E),
+            ("Inventory_DefaultSlot", "Weapon_Primary", 5),
+            ("Inventory_DefaultSlot", "Weapon_Secondary", 6),
+            ("Item_EquipmentCategory", "1HSword", 2),
+            ("Item_EquipmentCategory", "2HSword", 9),
+            ("Item_EquipmentCategory", "2HClub", 11),
+            ("Item_EquipmentCategory", "Bow", 14),
+            ("Item_EquipmentCategory", "Shield", 21),
+            ("Item_EquipmentCategory", "MediumShield", 46),
+            ("Inventory_ParentingLocation", "Sheath_LHip", LHIP),
+            ("Inventory_ParentingLocation", "Sheath_RHip", RHIP),
+            ("Inventory_ParentingLocation", "Sheath_Back_2H", BACK_2H),
             (
                 "Inventory_ParentingLocation",
                 "Sheath_Back_2H_Sword",
-                0x1000_001F,
+                BACK_2H_SWORD,
             ),
-            (
-                "Inventory_ParentingLocation",
-                "Sheath_Back_Bow",
-                0x1000_0011,
-            ),
+            ("Inventory_ParentingLocation", "Sheath_Back_Bow", BACK_BOW),
             (
                 "Inventory_ParentingLocation",
                 "Sheath_Back_Shield",
-                0x1000_0020,
+                BACK_SHIELD,
             ),
         ];
         table
@@ -1043,15 +1047,19 @@ fn equipment_categories_are_bit_masks() {
     let names = |_: &str| -> Option<u32> { None };
     let v = AssemblyVocabulary::from_lookup(&names, keys, |_| None);
     let stow = &v.stow;
-    assert_eq!(stow.primary_slot, 1 << 16);
-    assert_eq!(stow.secondary_slot, 1 << 17);
-    assert_eq!(stow.one_handed, 1 << 27);
-    assert!(stow.by_category.contains(&(0x4, 0x1000_001F)));
-    assert!(stow.by_category.contains(&(0x8, 0x1000_001E)));
-    assert!(stow.by_category.contains(&(0x80, 0x1000_0011)));
-    assert!(stow.by_category.contains(&(0x1_0000, 0x1000_0020)));
+    let primary = 1 << 4;
+    let secondary = 1 << 5;
+    let (sword_1h, sword_2h, club_2h, bow, shield, medium_shield) =
+        (1 << 1, 1 << 8, 1 << 10, 1 << 13, 1 << 20, 1u64 << 45);
+    assert_eq!(stow.primary_slot, primary);
+    assert_eq!(stow.secondary_slot, secondary);
+    assert_eq!(stow.one_handed, sword_1h);
+    assert!(stow.by_category.contains(&(sword_2h, BACK_2H_SWORD)));
+    assert!(stow.by_category.contains(&(club_2h, BACK_2H)));
+    assert!(stow.by_category.contains(&(bow, BACK_BOW)));
+    assert!(stow.by_category.contains(&(shield, BACK_SHIELD)));
     assert!(
-        stow.by_category.contains(&(1 << 39, 0x1000_0020)),
+        stow.by_category.contains(&(medium_shield, BACK_SHIELD)),
         "bits above 31 are kept"
     );
     let item = |category: u64, slot: u64| ItemVisual {
@@ -1059,38 +1067,37 @@ fn equipment_categories_are_bit_masks() {
         equipment_category: Some(category),
         ..ItemVisual::default()
     };
-    // The stored masks of the checklist's H rows.
-    let primary = 1 << 16;
     assert_eq!(
-        stow.location(&item(0x4, primary)),
-        Some(0x1000_001F),
+        stow.location(&item(sword_2h, primary)),
+        Some(BACK_2H_SWORD),
         "2HSword"
     );
     assert_eq!(
-        stow.location(&item(0x8, primary)),
-        Some(0x1000_001E),
+        stow.location(&item(club_2h, primary)),
+        Some(BACK_2H),
         "2HClub"
     );
+    assert_eq!(stow.location(&item(bow, primary)), Some(BACK_BOW), "Bow");
     assert_eq!(
-        stow.location(&item(0x80, 1 << 18)),
-        Some(0x1000_0011),
-        "Bow"
-    );
-    assert_eq!(stow.location(&item(0x1_0000, 1 << 17)), Some(0x1000_0020));
-    let sword = item(0x800_0000, primary);
-    assert_eq!(
-        stow.location(&sword),
-        Some(0x1000_0001),
-        "1HSword: left hip"
+        stow.location(&item(shield, secondary)),
+        Some(BACK_SHIELD),
+        "Shield"
     );
     assert_eq!(
-        stow.location_in(&sword, Some(1 << 17)),
-        Some(0x1000_0002),
+        stow.location(&item(medium_shield, secondary)),
+        Some(BACK_SHIELD),
+        "MediumShield (bit 45)"
+    );
+    let sword = item(sword_1h, primary);
+    assert_eq!(stow.location(&sword), Some(LHIP), "1HSword: left hip");
+    assert_eq!(
+        stow.location_in(&sword, Some(secondary)),
+        Some(RHIP),
         "1HSword in the secondary slot: right hip"
     );
     assert_eq!(stow.location(&item(0, primary)), None);
     assert_eq!(
-        stow.location(&item(0x1000, primary)),
+        stow.location(&item(1 << 30, primary)),
         None,
         "unknown: in hand"
     );

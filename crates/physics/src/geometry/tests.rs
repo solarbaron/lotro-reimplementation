@@ -462,8 +462,8 @@ fn property_set(entries: &[(u32, PropertyValue)]) -> PropertySet {
 }
 
 /// `collision.md` §9.3 item 3, C29: the SED's own `Entity_CreationType` first, then the
-/// chain; 0, 7 and 8 are refused; no value anywhere, or a found value that is not an
-/// integer or enum, counts as 0 (and a wrong-typed value ends the lookup).
+/// chain; 0, 7 and 8 are refused; no value anywhere, or a found value that is not an enum
+/// or property-ID value, counts as 0 (and a wrong-typed value ends the lookup).
 #[test]
 fn creation_type_is_the_seds_own_value_first() {
     const CT: u32 = 20;
@@ -491,10 +491,16 @@ fn creation_type_is_the_seds_own_value_first() {
     let none = effective(None, None);
     assert_eq!(none.creation_type_value(), CREATION_TYPE_INVALID);
     assert!(none.refuses_static_creation() && !none.is_server_created());
-    // Integers count; other types read as 0 and stop the lookup.
-    assert!(!effective(Some(PropertyValue::Int(5)), e(8)).refuses_static_creation());
-    assert!(!effective(Some(PropertyValue::Int(-1)), None).refuses_static_creation());
+    // Property-ID values count (C41); integers and other types read as 0 and stop the
+    // lookup (§9.3 point 1, changed 2026-10-08).
+    assert!(!effective(Some(PropertyValue::PropertyId(5)), e(8)).refuses_static_creation());
+    assert_eq!(
+        effective(Some(PropertyValue::PropertyId(9)), None).creation_type_value(),
+        9
+    );
     for wrong in [
+        PropertyValue::Int(5),
+        PropertyValue::Int(-1),
         PropertyValue::Bitfield32(3),
         PropertyValue::Int64(3),
         PropertyValue::Bool(true),
@@ -544,11 +550,12 @@ fn physics_booleans_read_only_boolean_values() {
     assert_eq!((f.no_physics, f.can_ledge_climb), (Some(false), Some(true)));
 }
 
-/// Finding: the ethereality properties (§9.1: bitfields, mapper 0x230000BA) accepted
-/// integers, 64-bit integers and enum keys as bit sets. Only bitfield values count;
-/// another type is not present and the lookup goes on along the chain.
+/// `collision.md` §9.1 "Value types" (BIN, C41, changed 2026-10-08): an ethereality value is
+/// used only when it is a Bitfield32 (type 18), as its 32 bits; any other type, the 64-bit
+/// and variable-width bitfields included, reads as no categories and ends the lookup, as
+/// in the client.
 #[test]
-fn ethereality_reads_only_bitfield_values() {
+fn ethereality_reads_only_bitfield32_values() {
     let pids = PhysicsPids {
         ethereality_type: Some(11),
         ethereal_to_type: Some(12),
@@ -561,6 +568,7 @@ fn ethereality_reads_only_bitfield_values() {
         PropertyValue::Int64(i64::from(player)),
         PropertyValue::Enum(1 << 29),
         PropertyValue::Bool(true),
+        PropertyValue::Bitfield64(ETHEREAL_PLAYER),
     ] {
         let set = property_set(&[
             (11, wrong.clone()),
@@ -570,18 +578,19 @@ fn ethereality_reads_only_bitfield_values() {
         let f = CollisionFlags::from_set(&set, &pids);
         assert_eq!(
             (f.ethereality, f.ethereal_to, f.placement_ethereal_to),
-            (None, None, None),
+            (Some(0), Some(0), Some(0)),
             "{wrong:?}"
         );
         assert!(!f.passes(ETHEREAL_PLAYER), "{wrong:?}");
-        // The chain decides.
-        let object = property_set(&[(12, PropertyValue::Bitfield64(ETHEREAL_CAMERA))]);
+        // The lookup stops there: the chain's value is not consulted.
+        let object = property_set(&[(12, PropertyValue::Bitfield32(1 << 1))]);
         let f = CollisionFlags::of_static(f, CollisionFlags::from_set(&object, &pids));
-        assert_eq!(f.ethereal_to, Some(ETHEREAL_CAMERA), "{wrong:?}");
+        assert_eq!(f.ethereal_to, Some(0), "{wrong:?}");
+        assert!(!f.passes(ETHEREAL_CAMERA), "{wrong:?}");
     }
     let right = property_set(&[
         (11, PropertyValue::Bitfield32(1)),
-        (12, PropertyValue::Bitfield64(ETHEREAL_PLAYER)),
+        (12, PropertyValue::Bitfield32(1 << 29)),
     ]);
     let f = CollisionFlags::from_set(&right, &pids);
     assert_eq!(
@@ -589,6 +598,30 @@ fn ethereality_reads_only_bitfield_values() {
         (Some(1), Some(ETHEREAL_PLAYER))
     );
     assert!(f.passes(ETHEREAL_PLAYER));
+}
+
+/// `collision.md` §8.1 steps 1–4 (BIN, C42) with Tessera's upper bound (§9.3 point 2): the
+/// physics scale is uniform, z of `Physics_AdjustableScale` × z of `Model_Scale`.
+#[test]
+fn physics_scale_is_the_product_of_the_z_components() {
+    assert_eq!(physics_scale(None, None), 1.0);
+    assert_eq!(physics_scale(Some([0.7; 3]), None), 0.7);
+    assert_eq!(physics_scale(Some([2.0; 3]), Some([1.5; 3])), 3.0);
+    // Non-uniform: z is used (x and y play no part).
+    assert_eq!(physics_scale(Some([5.0, 6.0, 0.5]), None), 0.5);
+    assert_eq!(physics_scale(Some([1.0; 3]), Some([9.0, 9.0, 2.0])), 2.0);
+    // Within 0.0002 of 1: 1 (the initial scale is kept).
+    assert_eq!(physics_scale(Some([1.0001; 3]), None), 1.0);
+    // Not finite, below 0.0002 or above Tessera's 10^4: 1.
+    assert_eq!(physics_scale(Some([1.0, 1.0, f32::NAN]), None), 1.0);
+    assert_eq!(physics_scale(Some([f32::INFINITY; 3]), None), 1.0);
+    assert_eq!(physics_scale(Some([0.0001; 3]), None), 1.0);
+    assert_eq!(physics_scale(Some([-2.0; 3]), None), 1.0);
+    assert_eq!(physics_scale(Some([200.0; 3]), Some([100.0; 3])), 1.0);
+    assert_eq!(physics_scale(Some([100.0; 3]), Some([100.0; 3])), 10_000.0);
+    // No upper limit in the client below Tessera's bound; the product may exceed each
+    // factor's own range.
+    assert_eq!(physics_scale(Some([0.01; 3]), Some([0.05; 3])), 0.01 * 0.05);
 }
 
 /// A liquid box's column span agrees with its containment test, for tilted and scaled

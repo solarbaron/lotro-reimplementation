@@ -189,27 +189,73 @@ fn switch_cross_fade_example_14_9() {
     assert_eq!(clip_weights(&anim), vec![1.0]);
 }
 
-/// `skeleton-anim.md` §6.5, §6.6 step 2 and the §15 answer (3): every clip keeps one
-/// overall weight of its own. A fade interrupted half-way stops both of its clips at 0.5;
-/// they fall linearly to 0 together while the new clip rises (no chain product: the
-/// earlier incoming clip does not keep rising underneath).
+/// `skeleton-anim.md` §14.9, second paragraph, and `script-table.md` §7.1 step 5: the
+/// Switch property changes back at 0.05 s into a 0.2 s cross-fade. The clip still fading
+/// out (at 0.75) is stopped at once; the clip that was coming in (at 0.25) becomes the
+/// outgoing one and continues from 0.25 down to 0, so the placed fade ends 0.25 × 0.2 =
+/// 0.05 s later; the first case's clip is started again and rises as the complement, from
+/// 0.75.
 #[test]
-fn interrupted_fade_uses_each_clips_own_weight() {
+fn interrupted_fade_example_14_9() {
     let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
     let mut anim = Animator::new(Arc::clone(&s));
     anim.play(0, Playback::new(z_clip(&s, 0.0), Wrap::Loop), 0.0, false)
         .unwrap();
-    anim.play(0, Playback::new(z_clip(&s, 1.0), Wrap::Loop), 1.0, false)
+    anim.play(0, Playback::new(z_clip(&s, 4.0), Wrap::Loop), 0.2, false)
         .unwrap();
-    anim.advance(0.5);
-    anim.play(0, Playback::new(z_clip(&s, 2.0), Wrap::Loop), 1.0, false)
+    anim.advance(0.05);
+    anim.play(0, Playback::new(z_clip(&s, 0.0), Wrap::Loop), 0.2, false)
         .unwrap();
-    anim.advance(0.25);
+    let close = |w: &[f32], want: &[f32]| {
+        w.len() == want.len() && w.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-5)
+    };
+    // Outgoing (z = 4) at 0.25, the restarted first case at 0.75: the old z = 0 clip that
+    // was fading out at 0.75 is gone.
     let w = clip_weights(&anim);
-    assert_eq!(w.len(), 3);
-    assert!((w[0] - 0.375).abs() < 1e-6, "{w:?}");
-    assert!((w[1] - 0.375).abs() < 1e-6, "{w:?}");
-    assert!((w[2] - 0.25).abs() < 1e-6, "{w:?}");
+    assert!(close(&w, &[0.25, 0.75]), "{w:?}");
+    let z = eval(&anim)[0].translation[2];
+    // Quantised 63/255 and 191/255 (§6.6 step 3).
+    assert!((z - 4.0 * 63.0 / 254.0).abs() < 1e-5, "{z}");
+    anim.advance(0.025);
+    let w = clip_weights(&anim);
+    assert!(close(&w, &[0.125, 0.875]), "{w:?}");
+    anim.advance(0.025);
+    assert_eq!(clip_weights(&anim), vec![1.0]);
+    assert!(eval(&anim)[0].translation[2].abs() < 1e-6);
+}
+
+/// The same rule when the new fade is longer than the old one and when the interrupted
+/// fade had several stopped clips: only the incoming clip is carried, over its weight ×
+/// the new duration.
+#[test]
+fn interrupted_fade_carries_only_the_incoming_clip() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut anim = Animator::new(Arc::clone(&s));
+    anim.add(0, Playback::new(z_clip(&s, 1.0), Wrap::Loop))
+        .unwrap();
+    anim.add(0, Playback::new(z_clip(&s, 2.0), Wrap::Loop))
+        .unwrap();
+    anim.play(0, Playback::new(z_clip(&s, 3.0), Wrap::Loop), 1.0, false)
+        .unwrap();
+    anim.advance(0.4);
+    assert_eq!(clip_weights(&anim).len(), 3);
+    anim.play(0, Playback::new(z_clip(&s, 5.0), Wrap::Loop), 2.0, false)
+        .unwrap();
+    let w = clip_weights(&anim);
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!(
+        (w[0] - 0.4).abs() < 1e-5 && (w[1] - 0.6).abs() < 1e-5,
+        "{w:?}"
+    );
+    // The carried clip reaches 0 after 0.4 × 2 = 0.8 s.
+    anim.advance(0.4);
+    let w = clip_weights(&anim);
+    assert!(
+        (w[0] - 0.2).abs() < 1e-5 && (w[1] - 0.8).abs() < 1e-5,
+        "{w:?}"
+    );
+    anim.advance(0.4);
+    assert_eq!(clip_weights(&anim), vec![1.0]);
 }
 
 /// `script-table.md` §6.2: starting a clip never stops another clip of the same layer;

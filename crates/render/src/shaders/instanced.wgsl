@@ -150,14 +150,17 @@ fn shade(in: InstOut) -> Shaded {
     if (surface_flag(SF_VERTEX_COLORS)) {
         m = m * in.color;
     }
-    out.alpha = surface_opacity(base) * m.a;
+    // Output alpha (lighting.md §5.12); for a fixed blend the opacity source alone
+    // (material.md §11.3).
+    out.alpha = select(surface_opacity(base) * m.a, out.opacity, surface_flag(SF_FACTOR_OPACITY));
     var c = base.rgb;
     if (batch_flag(BF_FRILL)) {
         // Tessera Decision (scenery.md §8.3 rule 7): the frill's base blends toward the
         // terrain colour beneath it, its tips keep their own colour.
         c = mix(c, in.terrain, batch.frill.w * (1.0 - in.fog_depth.z));
     }
-    out.fog = clamp(in.fog_depth.x, 0.0, 1.0);
+    // SF_NO_FOG is set only on unlit surfaces: the lit base pass is always fogged.
+    out.fog = select(clamp(in.fog_depth.x, 0.0, 1.0), 0.0, surface_flag(SF_NO_FOG));
     if (surface_flag(SF_UNLIT)) {
         out.unfogged = c * m.rgb;
         out.color = frame_apply_fog(out.unfogged, out.fog);
@@ -231,15 +234,23 @@ fn fs_test_blend(in: InstOut) -> @location(0) vec4<f32> {
     return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
+// Blended kinds: the surface threshold is -1 except for a fixed blend with an alpha test
+// (render.md R-D11), so only those discard.
 @fragment
 fn fs_blend(in: InstOut) -> @location(0) vec4<f32> {
     let s = shade(in);
+    if (surface_alpha_test(s.opacity)) {
+        discard;
+    }
     return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
 @fragment
 fn fs_additive(in: InstOut) -> @location(0) vec4<f32> {
     let s = shade(in);
+    if (surface_alpha_test(s.opacity)) {
+        discard;
+    }
     return vec4<f32>(frame_output(s.unfogged * (1.0 - s.fog)), clamp(s.alpha, 0.0, 1.0));
 }
 
@@ -247,6 +258,9 @@ fn fs_additive(in: InstOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_modulate(in: InstOut) -> @location(0) vec4<f32> {
     let s = shade(in);
+    if (surface_alpha_test(s.opacity)) {
+        discard;
+    }
     return vec4<f32>(frame_output(mix(s.unfogged, vec3<f32>(1.0), s.fog)), clamp(s.alpha, 0.0, 1.0));
 }
 

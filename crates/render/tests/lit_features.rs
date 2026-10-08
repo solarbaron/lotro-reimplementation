@@ -13,10 +13,10 @@ mod gpu;
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::lighting::reference::{LightSample, Texel, shade};
 use tessera_render::{
-    AlphaMode, BlendFactor, BlendOp, Camera, ColorSpace, Dye, DyeMask, Filter, FixedBlend,
-    FrameLighting, Light, LightKind, LightSelection, LitSurface, Material, MeshData, MeshDraw,
-    MeshId, OffscreenFormat, Opacity, Perspective, RenderError, Renderer, RgbaImage, SunLight,
-    SunShadow, TextureId, TextureUpload, Wrap,
+    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Camera, ColorSpace, Dye, DyeMask, Filter,
+    FixedBlend, FrameLighting, Light, LightKind, LightSelection, LitSurface, Material, MeshData,
+    MeshDraw, MeshId, OffscreenFormat, Opacity, Perspective, RenderError, Renderer, RgbaImage,
+    SunLight, SunShadow, TextureId, TextureUpload, Wrap,
 };
 
 const SIZE: u32 = 64;
@@ -621,9 +621,11 @@ fn fixed_blends_follow_the_render_state() -> Result<(), RenderError> {
             dst,
             op: BlendOp::Add,
             depth_write,
+            alpha_test: None,
         })
     };
-    // An additive pane (SRCALPHA / ONE, alpha 0.5, lit colour 1) in front of the ground.
+    // An additive pane (SRCALPHA / ONE, lit colour 1, no opacity source, so the factor
+    // reads 1 whatever M.alpha says, material.md §11.3) in front of the ground.
     let pane = |alpha| {
         MeshDraw::new(
             plane,
@@ -645,7 +647,7 @@ fn fixed_blends_follow_the_render_state() -> Result<(), RenderError> {
         LitSurface::default(),
     );
     let at_centre = |img: RgbaImage| img.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
-    for (depth_write, want) in [(true, [0.5; 3]), (false, [1.0, 0.0, 0.0])] {
+    for (depth_write, want) in [(true, [1.0; 3]), (false, [1.0, 0.0, 0.0])] {
         let img = render(
             &mut r,
             &[
@@ -704,6 +706,150 @@ fn fixed_blends_follow_the_render_state() -> Result<(), RenderError> {
     );
     let img = render(&mut r, &[(Some(l), vec![half, dst_one])])?;
     assert_pixel(at_centre(img), [0.75, 0.625, 0.5], "DESTCOLOR / ONE");
+    Ok(())
+}
+
+/// `render.md` §4.8 R-D11, `material.md` §11.2: a fixed blend with its record's alpha test
+/// discards fragments whose opacity is at most the threshold, so they write neither colour
+/// nor depth; without the test the same pane writes depth.
+#[test]
+fn fixed_blends_take_the_alpha_test() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let plane = ground(&mut r)?;
+    // Opacity 0.25 from the base alpha.
+    let quarter = texel(&mut r, [255, 255, 255, 64])?;
+    let l = ambient_only(0.5);
+    let pane = |alpha_test| {
+        MeshDraw::new(
+            plane,
+            Mat4::from_translation(Vec3::Z),
+            Material {
+                alpha: AlphaMode::Fixed(FixedBlend {
+                    src: BlendFactor::SrcAlpha,
+                    dst: BlendFactor::One,
+                    op: BlendOp::Add,
+                    depth_write: true,
+                    alpha_test,
+                }),
+                ..Material::textured(quarter)
+            },
+        )
+        .with_lit(LitSurface {
+            opacity: Opacity::BaseAlpha,
+            ..LitSurface::default()
+        })
+    };
+    let red = draw(
+        plane,
+        Material::color([1.0, 0.0, 0.0, 1.0]),
+        LitSurface::default(),
+    );
+    let at_centre = |img: RgbaImage| img.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
+    // Threshold 0.5 ≥ 0.25: discarded, the later red pass shows through.
+    let img = render(
+        &mut r,
+        &[
+            (Some(l.clone()), vec![pane(Some(AlphaThreshold(0.5)))]),
+            (Some(l.clone()), vec![red]),
+        ],
+    )?;
+    assert_pixel(
+        at_centre(img),
+        [1.0, 0.0, 0.0],
+        "discarded by the alpha test",
+    );
+    // Threshold 0.1 < 0.25, and no test: the pane is drawn and writes depth.
+    for test in [Some(AlphaThreshold(0.1)), None] {
+        let img = render(
+            &mut r,
+            &[
+                (Some(l.clone()), vec![pane(test)]),
+                (Some(l.clone()), vec![red]),
+            ],
+        )?;
+        assert_pixel(at_centre(img), [0.25; 3], &format!("kept with {test:?}"));
+    }
+    Ok(())
+}
+
+/// material.md §11.3, rule for unlit records: "opacity" in a fixed blend's factors is the
+/// §11.2 opacity source, or 1 without one; M.alpha does not enter. `Additive` keeps the
+/// output alpha (opacity × M.alpha).
+#[test]
+fn fixed_blend_factors_read_the_opacity_source() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let plane = ground(&mut r)?;
+    let l = ambient_only(0.5);
+    let half_alpha = texel(&mut r, [255, 255, 255, 128])?;
+    let quarter_alpha = texel(&mut r, [255, 255, 255, 64])?;
+    let fixed_add = AlphaMode::Fixed(FixedBlend::ADDITIVE);
+    let pane = |alpha, texture, opacity, m_alpha| {
+        MeshDraw::new(
+            plane,
+            Mat4::IDENTITY,
+            Material {
+                alpha,
+                base_color: [1.0, 1.0, 1.0, m_alpha],
+                unlit: true,
+                ..Material::textured(texture)
+            },
+        )
+        .with_lit(LitSurface {
+            opacity,
+            emissive: Some(quarter_alpha),
+            ..LitSurface::default()
+        })
+    };
+    let at_centre = |img: RgbaImage| img.pixel(SIZE / 2, SIZE / 2).unwrap_or([0; 4]);
+    let cases = [
+        // No opacity source: the factor reads 1, M.alpha 0.5 ignored.
+        (fixed_add, Opacity::One, 0.5, 1.0, "Fixed, no source"),
+        // The base alpha (0.5) is the source: M.alpha 0.25 does not scale it.
+        (
+            fixed_add,
+            Opacity::BaseAlpha,
+            0.25,
+            128.0 / 255.0,
+            "Fixed, base alpha",
+        ),
+        // The emissive alpha (0.25) is the source; it reaches the factor too.
+        (
+            fixed_add,
+            Opacity::EmissiveAlpha,
+            0.5,
+            64.0 / 255.0,
+            "Fixed, emissive alpha",
+        ),
+        // Additive: opacity × M.alpha, as Blend (a caller fades it by M.alpha).
+        (
+            AlphaMode::Additive,
+            Opacity::One,
+            0.5,
+            0.5,
+            "Additive, M.alpha",
+        ),
+        (
+            AlphaMode::Additive,
+            Opacity::BaseAlpha,
+            0.5,
+            0.5 * 128.0 / 255.0,
+            "Additive, base alpha × M.alpha",
+        ),
+    ];
+    for (alpha, opacity, m_alpha, want, what) in cases {
+        let img = render(
+            &mut r,
+            &[(
+                Some(l.clone()),
+                vec![pane(alpha, half_alpha, opacity, m_alpha)],
+            )],
+        )?;
+        assert_pixel(at_centre(img), [want; 3], what);
+    }
     Ok(())
 }
 
@@ -776,6 +922,7 @@ fn lit_only_alpha_modes_fall_back_outside_lit_passes() -> Result<(), RenderError
                     dst: BlendFactor::SrcColor,
                     op: BlendOp::Add,
                     depth_write: true,
+                    alpha_test: None,
                 })),
             )],
         )],

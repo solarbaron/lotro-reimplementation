@@ -348,10 +348,15 @@ fn crossfade_example_and_transition() {
         transition_seconds: s,
         ..DayDescription::default()
     };
+    // §11.6 step 3: the new description's time above 0.0002, else the old one's, else 8 s.
     assert_eq!(transition_seconds(Some(&with(2.0)), Some(&with(8.0))), 8.0);
     assert_eq!(transition_seconds(Some(&with(2.0)), Some(&with(0.0))), 2.0);
-    assert_eq!(transition_seconds(Some(&with(0.0)), Some(&with(0.0))), 0.0);
-    assert_eq!(transition_seconds(None, None), 0.0);
+    assert_eq!(
+        transition_seconds(Some(&with(2.0)), Some(&with(0.0001))),
+        2.0
+    );
+    assert_eq!(transition_seconds(Some(&with(0.0)), Some(&with(0.0))), 8.0);
+    assert_eq!(transition_seconds(None, None), DEFAULT_TRANSITION_SECONDS);
 }
 
 fn colour(r: u8, g: u8, b: u8, a: u8) -> Argb {
@@ -472,46 +477,64 @@ fn sky_objects_visibility_tints_and_replacements() {
         ],
         ..DayDescription::default()
     };
+    // `environment.md` §11.4 steps 3–4 (BIN-E (e), E26).
     let s = animate_sky_objects(&day, 0.25);
     assert_eq!(s.len(), 3);
-    // Object 1: visible, A = 0, B = 75; alpha blended 0 → 255 by f = 0.5; replaced.
+    // Object 1: visible, A = 0, B = 75; both keyframes have an entry, so the alpha blends
+    // 0 → 255 by f = 0.5; k_b's replacement is never used.
     assert!(s[0].visible);
     assert_eq!(s[0].angle_a, 0.0);
     assert_eq!(s[0].angle_b, 75.0);
     assert!(approx(f64::from(s[0].tint[3]), 0.5, 1e-6));
-    assert_eq!(s[0].object, Did(0x4700_0777));
-    // Object 2 spans midnight (0.8 – 0.2): hidden at 0.25, offsets blended with an absent
-    // entry (counted as 0) and its tint with untinted.
+    assert_eq!(s[0].object, Did(0x4700_0101));
+    // Object 2 spans midnight (0.8 – 0.2): not visible at 0.25, so its angles are the kept
+    // ones (0 for a new drawn object) plus kₐ's offsets; only kₐ has an entry, so the tint
+    // is not updated (a new drawn object is opaque white).
     assert!(!s[1].visible);
     assert!(animate_sky_objects(&day, 0.1)[1].visible);
     assert!(animate_sky_objects(&day, 0.9)[1].visible);
-    // The keyframe factor at 0.25 is 0.5 (keyframes at 0.0 and 0.5): the 10° offsets of
-    // kₐ blend with 0 to 5, and the tint (1, 0, 0, 0) with untinted (1, 1, 1, 1) to
-    // (1, 0.5, 0.5, 0.5).
-    let o2 = sky_object(2, 0.8, 0.2);
-    let f2 = object_progress(&o2, 0.25);
-    let base_a = object_angle(o2.angle_a_begin, o2.angle_a_end, false, f2);
-    let base_b = object_angle(o2.angle_b_begin, o2.angle_b_end, false, f2);
-    assert!(approx(
-        f64::from(s[1].angle_a),
-        f64::from(base_a) + 5.0,
-        1e-4
-    ));
-    assert!(approx(
-        f64::from(s[1].angle_b),
-        f64::from(base_b) + 5.0,
-        1e-4
-    ));
-    // Spelled out: f = 0.45 / 0.4 over the midnight span, A = −90 + 1.125 · 360 = 315.
-    assert!(approx(f64::from(s[1].angle_a), 320.0, 1e-4), "{:?}", s[1]);
-    assert!(approx(f64::from(s[1].angle_b), 80.0, 1e-4), "{:?}", s[1]);
-    for (got, want) in s[1].tint.iter().zip([1.0, 0.5, 0.5, 0.5]) {
-        assert!(approx(f64::from(*got), want, 1e-6), "{:?}", s[1].tint);
-    }
+    assert_eq!((s[1].angle_a, s[1].angle_b), (10.0, 10.0));
+    assert_eq!(s[1].tint, UNTINTED);
     assert_eq!(s[1].object, Did(0x4700_0102));
     // Object 3 (begin = end): always visible with its begin angles.
     assert!(s[2].visible);
     assert_eq!((s[2].angle_a, s[2].angle_b), (-90.0, 75.0));
+    // Kept state: while object 2 stays invisible the offsets are added at every update; a
+    // visible update recomputes the angles and adds kₐ's offsets once.
+    let mut drawn = DrawnSkyObjects::new();
+    let _ = drawn.animate(&day, 0.25);
+    let again = drawn.animate(&day, 0.25);
+    assert_eq!((again[1].angle_a, again[1].angle_b), (20.0, 20.0));
+    let o2 = sky_object(2, 0.8, 0.2);
+    let f2 = object_progress(&o2, 0.1);
+    let base_a = object_angle(o2.angle_a_begin, o2.angle_a_end, false, f2);
+    let seen = drawn.animate(&day, 0.1);
+    assert!(seen[1].visible);
+    assert!(approx(
+        f64::from(seen[1].angle_a),
+        f64::from(base_a) + 10.0,
+        1e-3
+    ));
+    // A tint set while both keyframes had an entry is kept where only one has.
+    let mut tinted = day.clone();
+    tinted.keyframes[1]
+        .object_entries
+        .push(entry(2, 255, 0.0, 0));
+    let mut drawn = DrawnSkyObjects::new();
+    let t1 = drawn.animate(&tinted, 0.25);
+    assert!(
+        approx(f64::from(t1[1].tint[3]), 0.5, 1e-6),
+        "{:?}",
+        t1[1].tint
+    );
+    let t2 = drawn.animate(&day, 0.25);
+    assert_eq!(t2[1].tint, t1[1].tint, "kept from the previous update");
+    // A replacement in kₐ's entry is drawn even while the object is not visible.
+    let mut replaced = day.clone();
+    replaced.keyframes[0].object_entries[1].replacement = Did(0x4700_0888);
+    let r = animate_sky_objects(&replaced, 0.25);
+    assert!(r[1].visible);
+    assert_eq!(r[1].object, Did(0x4700_0888));
     assert!(object_visible(&sky_object(4, 0.2, 0.4), 0.4));
     assert!(!object_visible(&sky_object(4, 0.2, 0.4), 0.41));
 }
@@ -831,9 +854,10 @@ fn library_preloads_day_descriptions() {
 }
 
 #[test]
-fn transient_day_read_failure_is_retried_and_faded_in() {
+fn transient_day_read_failure_is_retried_and_used_at_once() {
     // Preload and the first update both fail; the retry on the next light-interval tick
-    // (1 game second here) succeeds and the values cross-fade over the description's 8 s.
+    // (1 game second here) succeeds and the description is used at once: a new description
+    // under the same sky key is not cross-faded (`environment.md` E27, `lighting.md` §8.1).
     let lib = flaky_library(2);
     let mut env = Environment::new(Arc::clone(&lib));
     let f0 = env.update(0.0, Some(0x1000_0100));
@@ -847,12 +871,8 @@ fn transient_day_read_failure_is_retried_and_faded_in() {
     for _ in 0..40 {
         frame = env.update(1.0 / 60.0, Some(0x1000_0100));
     }
-    assert!(frame.crossfade < 1.0, "the late description fades in");
+    assert_eq!(frame.crossfade, 1.0, "no cross-fade under the same key");
     assert_eq!(frame.objects.len(), 1);
-    for _ in 0..(10 * 60) {
-        frame = env.update(1.0 / 60.0, Some(0x1000_0100));
-    }
-    assert_eq!(frame.crossfade, 1.0);
     let want = lib.evaluate(Some(0x1000_0100), 2, env.clock().game_seconds());
     assert!(approx(
         f64::from(frame.values.fog_far),
@@ -860,6 +880,221 @@ fn transient_day_read_failure_is_retried_and_faded_in() {
         1.0
     ));
     assert_ne!(frame.values.fog_far, 10_000.0);
+}
+
+/// `environment.md` §11.6 steps 1–6 (E27): a sky-key change cross-fades; a key change
+/// during a running cross-fade waits until it ends; an immediate update switches at once;
+/// the old sky's objects fade out while the new sky's fade in.
+#[test]
+fn sky_key_changes_cross_fade_and_wait() {
+    let lib = library();
+    let mut env = Environment::new(Arc::clone(&lib));
+    env.update(0.0, Some(0x1000_0100));
+    // To 0x1000_0200: the new description has no transition time, the old one's 8 s apply.
+    let f = env.update(0.0, Some(0x1000_0200));
+    assert_eq!((f.sky_key, f.crossfade), (Some(0x1000_0200), 0.0));
+    let f = env.update(2.0, Some(0x1000_0200));
+    assert!(approx(f64::from(f.crossfade), 0.146, 1e-3));
+    // Both skies' objects: the old one × (1 − w), the new one × w.
+    assert_eq!(f.objects.len(), 2);
+    assert!(approx(f64::from(f.objects[0].tint[3]), 1.0 - 0.146, 1e-3));
+    assert!(approx(f64::from(f.objects[1].tint[3]), 0.146, 1e-3));
+    // A further key change waits for the running cross-fade.
+    let f = env.update(1.0, Some(0x1000_0100));
+    assert_eq!(f.sky_key, Some(0x1000_0200));
+    let f = env.update(5.5, Some(0x1000_0100));
+    assert_eq!(f.crossfade, 1.0);
+    assert_eq!(f.sky_key, Some(0x1000_0200));
+    // Then it starts its own (the new description's 8 s).
+    let f = env.update(0.0, Some(0x1000_0100));
+    assert_eq!((f.sky_key, f.crossfade), (Some(0x1000_0100), 0.0));
+    // An immediate update ends it and switches at once.
+    env.mark_immediate();
+    let f = env.update(0.0, Some(0x1000_0200));
+    assert_eq!((f.sky_key, f.crossfade), (Some(0x1000_0200), 1.0));
+    assert_eq!(f.objects.len(), 1);
+}
+
+/// `environment.md` §11.6 step 4: the light direction blends as a normalised vector, the
+/// side without a sun counts as black with the other side's brightness, and the `effect`
+/// is the old state's unless it is null.
+#[test]
+fn cross_fade_blends_the_light_direction_as_a_vector() {
+    let east = Keyframe {
+        sun_heading: 90.0,
+        sun_pitch: 0.0,
+        sun_brightness: 0.5,
+        sun_colour: colour(255, 255, 255, 255),
+        ..Keyframe::default()
+    };
+    let north = Keyframe {
+        sun_heading: 0.0,
+        ..east.clone()
+    };
+    let a = SkyValues::from_keyframe(&east);
+    let b = SkyValues::from_keyframe(&north);
+    assert!(a.sun_present && b.sun_present);
+    let m = a.mix(&b, 0.5);
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    for (got, want) in m.sun_toward.iter().zip([h, h, 0.0]) {
+        assert!(approx(f64::from(*got), f64::from(want), 1e-5), "{m:?}");
+    }
+    assert!(approx(f64::from(m.sun_heading), 45.0, 1e-3));
+    // Opposite vectors: the blend is shorter than 10⁻⁶ and travels straight down.
+    let west = SkyValues::from_keyframe(&Keyframe {
+        sun_heading: 270.0,
+        ..east.clone()
+    });
+    let m = a.mix(&west, 0.5);
+    assert_eq!(m.sun_toward, [0.0, 0.0, 1.0]);
+    // A side without a sun: black colours, the other side's brightness and vector.
+    let dark = SkyValues::from_keyframe(&Keyframe {
+        sun_brightness: 0.0,
+        sun_heading: 200.0,
+        ..east.clone()
+    });
+    assert!(!dark.sun_present);
+    let m = a.mix(&dark, 0.25);
+    assert!(m.sun_present, "either side has a sun");
+    assert!(approx(f64::from(m.sun_brightness), 0.5, 1e-6));
+    assert!(approx(f64::from(m.sun_colour[0]), 0.75, 1e-6));
+    assert_eq!(m.sun_toward, a.sun_toward);
+    // Effect: the old state's unless null.
+    let storm = KeyframeEffect {
+        object: Did(0x4700_0009),
+        extra: 0,
+    };
+    let wet = SkyValues::from_keyframe(&Keyframe {
+        effect: Some(storm),
+        ..east.clone()
+    });
+    assert!(!wet.sun_present, "a keyframe effect: no sun (§11.7 step 9)");
+    assert_eq!(wet.mix(&a, 0.9).effect, Some(storm));
+    assert_eq!(a.mix(&wet, 0.1).effect, Some(storm));
+    // The weight's snaps.
+    assert_eq!(a.mix(&b, 0.0001), a);
+    assert_eq!(a.mix(&b, 0.9999), b);
+}
+
+/// `environment.md` §11.3 step 7: kₐ's effect unless it is null or the factor is within
+/// 0.0002 of 1; §11.7 step 9 on the blended values.
+#[test]
+fn effect_switches_to_kb_near_the_end_of_the_pair() {
+    let storm = KeyframeEffect {
+        object: Did(0x4700_0009),
+        extra: 3,
+    };
+    let a = Keyframe {
+        effect: Some(storm),
+        sun_brightness: 0.5,
+        sun_colour: colour(255, 255, 255, 255),
+        ..Keyframe::default()
+    };
+    let b = Keyframe {
+        effect: None,
+        ..a.clone()
+    };
+    assert_eq!(SkyValues::blend(&a, &b, 0.5).effect, Some(storm));
+    assert_eq!(SkyValues::blend(&a, &b, 0.9997).effect, Some(storm));
+    assert_eq!(SkyValues::blend(&a, &b, 0.99995).effect, None);
+    assert!(SkyValues::blend(&a, &b, 0.99995).sun_present);
+    assert_eq!(SkyValues::blend(&b, &a, 0.2).effect, Some(storm));
+    // Sun present: black within 0.0002, or a brightness below 0.0002, gives none.
+    assert!(!outdoor_sun_present(None, [0.0002, 0.0, 0.0], 1.0));
+    assert!(outdoor_sun_present(None, [0.0003, 0.0, 0.0], 1.0));
+    assert!(!outdoor_sun_present(None, [1.0; 3], 0.0001));
+    assert!(outdoor_sun_present(None, [1.0; 3], 0.0002));
+    assert!(!outdoor_sun_present(None, [1.0; 3], f32::NAN));
+    assert!(!outdoor_sun_present(Some(storm), [1.0; 3], 1.0));
+}
+
+/// `environment.md` §11.6 "Sun-change fade" (E34) and "Switching between the tracks"
+/// (E37).
+#[test]
+fn sun_change_fade_follows_e34_and_e37() {
+    let state = |sun: bool, x: f32, fog: bool| EnvState {
+        sun_present: sun,
+        sun_travel: [0.0, 0.0, -1.0],
+        sun_colour: [1.0; 3],
+        sun_brightness: 0.5,
+        sun_specular: [1.0; 3],
+        ambient_up: [x; 3],
+        ambient_down: [x; 3],
+        fog_on: fog,
+        fog_near: 0.0,
+        fog_far: 500.0,
+        fog_colour: [0.5; 3],
+        fog_extra: 0.0,
+        effect: None,
+    };
+    let outdoor = state(true, 1.0, true);
+    let indoor = state(false, 0.0, false);
+    let mut fade = SunChangeFade::new();
+    // The first update shows its state.
+    assert_eq!(fade.apply(outdoor.clone(), 0.0, false), outdoor);
+    // Going indoors changes "sun present": a 5 s fade from the outdoor state.
+    let s = fade.apply(indoor.clone(), 1.0, false);
+    assert_eq!(s, outdoor, "weight 0 at the change");
+    assert!(fade.running());
+    let s = fade.apply(indoor.clone(), 2.0, false);
+    let w = f64::from(crossfade_factor(1.0, 5.0));
+    assert!(approx(f64::from(s.ambient_up[0]), 1.0 - w, 1e-5), "{s:?}");
+    assert!(s.sun_present, "the result keeps a sun until the fade ends");
+    assert!(approx(f64::from(s.sun_colour[0]), 1.0 - w, 1e-5));
+    assert!(approx(f64::from(s.sun_brightness), 0.5, 1e-6));
+    // Fog: the side without fog counts as 999 – 1,000.
+    assert!(s.fog_on);
+    assert!(approx(
+        f64::from(s.fog_far),
+        500.0 + w * (1_000.0 - 500.0),
+        1e-2
+    ));
+    // Back out during the fade: a new fade from the state shown, over the time since the
+    // previous change (2 s, smaller than the running 5 s).
+    let shown = s.clone();
+    let s = fade.apply(outdoor.clone(), 3.0, false);
+    assert_eq!(s, shown);
+    let s = fade.apply(outdoor.clone(), 4.0, false);
+    let w2 = f64::from(crossfade_factor(1.0, 2.0));
+    assert!(approx(
+        f64::from(s.ambient_up[0]),
+        f64::from(shown.ambient_up[0]) + w2 * (1.0 - f64::from(shown.ambient_up[0])),
+        1e-4
+    ));
+    let s = fade.apply(outdoor.clone(), 5.0, false);
+    assert_eq!(s, outdoor);
+    assert!(!fade.running());
+    // No flag change (a sunless outdoor state, then indoors): shown at once.
+    let night = state(false, 0.3, true);
+    let mut fade = SunChangeFade::new();
+    fade.apply(night.clone(), 0.0, false);
+    assert_eq!(fade.apply(indoor.clone(), 0.5, false), indoor);
+    assert!(!fade.running());
+    // An immediate update switches at once and ends a running fade.
+    let mut fade = SunChangeFade::new();
+    fade.apply(outdoor.clone(), 0.0, false);
+    fade.apply(indoor.clone(), 1.0, false);
+    assert!(fade.running());
+    assert_eq!(fade.apply(indoor.clone(), 1.5, true), indoor);
+    assert!(!fade.running());
+    // A change seen on the update at which the running fade would end takes that fade's
+    // duration (the smaller one), never less than 0.0002 s.
+    let mut fade = SunChangeFade::new();
+    fade.apply(outdoor.clone(), 0.0, false);
+    fade.apply(indoor.clone(), 10.0, false);
+    let mid = fade.apply(indoor.clone(), 12.5, false);
+    assert!(approx(f64::from(mid.ambient_up[0]), 0.5, 1e-5), "{mid:?}");
+    // At 15 s the running fade reaches its end; the change seen there fades from the state
+    // shown (0.5) over min(5, 15 − 10) = 5 s.
+    fade.apply(outdoor.clone(), 15.0, false);
+    let s = fade.apply(outdoor.clone(), 17.5, false);
+    assert!(approx(f64::from(s.ambient_up[0]), 0.75, 1e-4), "{s:?}");
+    let mut fade = SunChangeFade::new();
+    fade.apply(outdoor.clone(), 0.0, false);
+    fade.apply(indoor.clone(), 1.0, false);
+    fade.apply(outdoor.clone(), 1.0, false);
+    assert!(fade.running());
+    assert_eq!(fade.apply(outdoor.clone(), 1.001, false), outdoor);
 }
 
 #[test]

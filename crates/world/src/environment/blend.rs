@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Keyframe blending (`environment.md` §11.3), the defaults without a day description
-//! (§11.3 step 8, `lighting.md` §8.1), the cross-fade between two environments
-//! (`lighting.md` §8.1, `environment.md` §11.2 step 5) and the lighting inputs derived from
-//! the blend (`lighting.md` §8.1).
+//! (§11.3 step 8, `lighting.md` §8.1), the "sun present" flag (§11.7 step 9), the sky-key
+//! cross-fade between two skies (§11.6 steps 3–4, `lighting.md` §8.1) and the lighting
+//! inputs derived from the blend (`lighting.md` §8.1).
 
 use tessera_formats::environment::{Argb, DayDescription, Keyframe, KeyframeEffect};
 
@@ -171,8 +171,50 @@ pub struct SkyValues {
     pub values_a: [f32; 6],
     /// `value_b`, clamped to [0, 1] after blending (meaning OPEN).
     pub value_b: f32,
-    /// The weather effect object: from *kₐ* when it has one, else from *k_b* (step 7).
+    /// The weather effect object (with `effect_extra`): from *kₐ* when it has one and the
+    /// factor is not within 0.0002 of 1, else from *k_b* (§11.3 step 7).
     pub effect: Option<KeyframeEffect>,
+    /// "Sun present" (§11.7 step 9) by the outdoor rule ([`outdoor_sun_present`]); after a
+    /// cross-fade, whether either side had a sun (§11.6 step 4). An indoor track never has
+    /// one: [`super::Environment::set_indoor`] clears it there.
+    pub sun_present: bool,
+}
+
+/// The tolerance of the "sun present" test and of the `effect` switch near *f* = 1
+/// (`environment.md` §11.3 step 7, §11.7 step 9).
+pub const SUN_EPSILON: f32 = 0.0002;
+
+/// "Sun present" on the outdoor track (`environment.md` §11.7 step 9): the blended `effect`
+/// is the null DID, the sun colour is not opaque black (some channel differs from
+/// (0, 0, 0, 1) by more than 0.0002; the blended colour has alpha 1, §11.3 step 4, so only
+/// R, G and B can differ) and the sun brightness is at least 0.0002 (a value that is not a
+/// number counts as below).
+#[must_use]
+pub fn outdoor_sun_present(effect: Option<KeyframeEffect>, colour: Rgb, brightness: f32) -> bool {
+    effect.is_none() && colour.iter().any(|c| c.abs() > SUN_EPSILON) && brightness >= SUN_EPSILON
+}
+
+/// The unit light-direction blend of a cross-fade (`environment.md` §11.6 step 4): the
+/// linear blend of the two unit vectors by `w`, normalised; a result shorter than 10⁻⁶
+/// becomes `fallback`.
+#[must_use]
+pub fn blend_direction(a: [f32; 3], b: [f32; 3], w: f32, fallback: [f32; 3]) -> [f32; 3] {
+    let v: [f32; 3] = std::array::from_fn(|i| (1.0 - w) * a[i] + w * b[i]);
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len.is_finite() && len >= 1.0e-6 {
+        v.map(|c| c / len)
+    } else {
+        fallback
+    }
+}
+
+/// The heading and pitch in degrees of a unit vector toward the sun (the inverse of
+/// [`toward_sun`]): heading in [0, 360).
+#[must_use]
+pub fn heading_pitch(toward: [f32; 3]) -> (f32, f32) {
+    let h = toward[0].atan2(toward[1]).to_degrees().rem_euclid(360.0);
+    let h = if h >= 360.0 { 0.0 } else { h };
+    (h, toward[2].clamp(-1.0, 1.0).asin().to_degrees())
 }
 
 impl SkyValues {
@@ -186,8 +228,7 @@ impl SkyValues {
         let travel = [1.0_f32, 0.0, -0.4];
         let len = (travel[0] * travel[0] + travel[1] * travel[1] + travel[2] * travel[2]).sqrt();
         let toward = [-travel[0] / len, -travel[1] / len, -travel[2] / len];
-        let heading = toward[0].atan2(toward[1]).to_degrees().rem_euclid(360.0);
-        let pitch = toward[2].asin().to_degrees();
+        let (heading, pitch) = heading_pitch(toward);
         Self {
             fog_near: 0.0,
             fog_far: 10_000.0,
@@ -207,6 +248,7 @@ impl SkyValues {
             values_a: [0.0; 6],
             value_b: 0.0,
             effect: None,
+            sun_present: true,
         }
     }
 
@@ -218,9 +260,15 @@ impl SkyValues {
 
     /// Blends keyframes `a` and `b` with factor `f` (`environment.md` §11.3 steps 4–7).
     /// Values that come out non-finite (hostile records) are replaced by their defaults
-    /// ([`SkyValues::sanitized`]).
+    /// ([`SkyValues::sanitized`]); "sun present" is then computed by the outdoor rule.
     #[must_use]
     pub fn blend(a: &Keyframe, b: &Keyframe, f: f32) -> Self {
+        // Step 7: kₐ's effect unless it is null or the factor is within 0.0002 of 1.
+        let effect = if a.effect.is_some() && (f - 1.0).abs() > SUN_EPSILON {
+            a.effect
+        } else {
+            b.effect
+        };
         let c = |x: Argb, y: Argb| lerp_rgb(rgb(x), rgb(y), f);
         let sun_heading = lerp_angle(a.sun_heading, b.sun_heading, f);
         let sun_pitch = lerp_angle(a.sun_pitch, b.sun_pitch, f);
@@ -242,9 +290,19 @@ impl SkyValues {
             colour_4: lerp_rgba(a.colour_4.to_rgba_f32(), b.colour_4.to_rgba_f32(), f),
             values_a: std::array::from_fn(|i| lerp(a.values_a[i], b.values_a[i], f)),
             value_b: lerp(a.value_b, b.value_b, f).clamp(0.0, 1.0),
-            effect: a.effect.or(b.effect),
+            effect,
+            sun_present: false,
         }
         .sanitized()
+        .with_outdoor_sun()
+    }
+
+    /// These values with [`SkyValues::sun_present`] set by the outdoor rule
+    /// ([`outdoor_sun_present`]).
+    #[must_use]
+    pub fn with_outdoor_sun(mut self) -> Self {
+        self.sun_present = outdoor_sun_present(self.effect, self.sun_colour, self.sun_brightness);
+        self
     }
 
     /// These values with every non-finite field replaced by the matching field of
@@ -302,34 +360,74 @@ impl SkyValues {
         }
     }
 
-    /// Linear interpolation of every value toward `to` with factor `f` (the cross-fade of
-    /// `lighting.md` §8.1). Angles take the shortest way (**Tessera Decision**: the BIN
-    /// statement is "every value linearly"; a heading crossing north would otherwise sweep
-    /// the long way round); the effect switches at *f* = ½. Non-finite results are replaced
-    /// as in [`SkyValues::sanitized`].
+    /// The sky-key cross-fade from these (old) values toward `to` (new) with weight `w`
+    /// (`environment.md` §11.6 step 4, `lighting.md` §8.1): below *w* = 0.0002 the old
+    /// values, above 0.9998 the new ones, otherwise (1 − *w*) · old + *w* · new for every
+    /// number and colour channel, except:
+    ///
+    /// - the result has a sun when either side has one; the light direction is the blend of
+    ///   the two unit vectors, normalised ([`blend_direction`]; a side without a sun uses
+    ///   the other side's vector; a result shorter than 10⁻⁶ travels straight down); a side
+    ///   without a sun counts as black for the sun and specular colours and takes the other
+    ///   side's brightness; heading and pitch follow the blended vector;
+    /// - the `effect` is the old one unless it is null, then the new one.
+    ///
+    /// Fog: both sides of a sky-key cross-fade belong to one track, which has one fog
+    /// switch and one set of interior overrides (§11.6, §11.7 step 5), so the fog values
+    /// blend linearly here; the fog rules of step 4 for a side without fog are applied to
+    /// composed states ([`super::EnvState::blend`]). Non-finite results are replaced as in
+    /// [`SkyValues::sanitized`].
     #[must_use]
-    pub fn mix(&self, to: &Self, f: f32) -> Self {
-        let sun_heading = lerp_angle(self.sun_heading, to.sun_heading, f);
-        let sun_pitch = lerp_angle(self.sun_pitch, to.sun_pitch, f);
+    pub fn mix(&self, to: &Self, w: f32) -> Self {
+        if w.is_nan() || w < CROSSFADE_EPSILON {
+            return self.clone();
+        }
+        if w > 1.0 - CROSSFADE_EPSILON {
+            return to.clone();
+        }
+        let (a, b) = (self, to);
+        let one_sided = a.sun_present != b.sun_present;
+        let sun_side = |side: &Self, other: &Self| {
+            if one_sided && !side.sun_present {
+                ([0.0; 3], [0.0; 3], other.sun_brightness)
+            } else {
+                (side.sun_colour, side.sun_specular, side.sun_brightness)
+            }
+        };
+        let (ca, sa, ba) = sun_side(a, b);
+        let (cb, sb, bb) = sun_side(b, a);
+        let va = if a.sun_present || !b.sun_present {
+            a.sun_toward
+        } else {
+            b.sun_toward
+        };
+        let vb = if b.sun_present || !a.sun_present {
+            b.sun_toward
+        } else {
+            a.sun_toward
+        };
+        let sun_toward = blend_direction(va, vb, w, [0.0, 0.0, 1.0]);
+        let (sun_heading, sun_pitch) = heading_pitch(sun_toward);
         Self {
-            fog_near: lerp(self.fog_near, to.fog_near, f),
-            fog_far: lerp(self.fog_far, to.fog_far, f),
-            fog_extra: lerp(self.fog_extra, to.fog_extra, f),
-            fog_colour: lerp_rgb(self.fog_colour, to.fog_colour, f),
-            sun_brightness: lerp(self.sun_brightness, to.sun_brightness, f),
+            fog_near: lerp(a.fog_near, b.fog_near, w),
+            fog_far: lerp(a.fog_far, b.fog_far, w),
+            fog_extra: lerp(a.fog_extra, b.fog_extra, w),
+            fog_colour: lerp_rgb(a.fog_colour, b.fog_colour, w),
+            sun_brightness: lerp(ba, bb, w),
             sun_heading,
             sun_pitch,
-            sun_toward: toward_sun(sun_heading, sun_pitch),
-            sun_colour: lerp_rgb(self.sun_colour, to.sun_colour, f),
-            sun_specular: lerp_rgb(self.sun_specular, to.sun_specular, f),
-            ambient_brightness: lerp(self.ambient_brightness, to.ambient_brightness, f),
-            ambient_colour_1: lerp_rgb(self.ambient_colour_1, to.ambient_colour_1, f),
-            ambient_colour_2: lerp_rgb(self.ambient_colour_2, to.ambient_colour_2, f),
-            colour_3: lerp_rgb(self.colour_3, to.colour_3, f),
-            colour_4: lerp_rgba(self.colour_4, to.colour_4, f),
-            values_a: std::array::from_fn(|i| lerp(self.values_a[i], to.values_a[i], f)),
-            value_b: lerp(self.value_b, to.value_b, f).clamp(0.0, 1.0),
-            effect: if f < 0.5 { self.effect } else { to.effect },
+            sun_toward,
+            sun_colour: lerp_rgb(ca, cb, w),
+            sun_specular: lerp_rgb(sa, sb, w),
+            ambient_brightness: lerp(a.ambient_brightness, b.ambient_brightness, w),
+            ambient_colour_1: lerp_rgb(a.ambient_colour_1, b.ambient_colour_1, w),
+            ambient_colour_2: lerp_rgb(a.ambient_colour_2, b.ambient_colour_2, w),
+            colour_3: lerp_rgb(a.colour_3, b.colour_3, w),
+            colour_4: lerp_rgba(a.colour_4, b.colour_4, w),
+            values_a: std::array::from_fn(|i| lerp(a.values_a[i], b.values_a[i], w)),
+            value_b: lerp(a.value_b, b.value_b, w).clamp(0.0, 1.0),
+            effect: a.effect.or(b.effect),
+            sun_present: a.sun_present || b.sun_present,
         }
         .sanitized()
     }
@@ -380,12 +478,14 @@ pub struct LightingInputs {
     pub fog_colour: Rgb,
 }
 
-/// Below this cross-fade factor the old values are used unchanged (`lighting.md` §8.1).
+/// Below this cross-fade factor the old values are used unchanged (`lighting.md` §8.1,
+/// `environment.md` §11.6 step 4).
 pub const CROSSFADE_EPSILON: f32 = 0.0002;
 
-/// The cross-fade factor of `lighting.md` §8.1 after `elapsed` seconds of a transition of
-/// `duration` seconds: ½ + ½ · sin(π · (min(*t* / *T*, 1) − ½)), snapped to 0 below 0.0002
-/// and to 1 above 0.9998. A duration that is not positive (or not finite) gives 1 at once.
+/// The cross-fade weight of `environment.md` §11.6 step 4 (`lighting.md` §8.1) after
+/// `elapsed` seconds of a transition of `duration` seconds:
+/// ½ + ½ · sin(π · (min(*t* / *T*, 1) − ½)), snapped to 0 below 0.0002 and to 1 above
+/// 0.9998. A duration that is not positive (or not finite) gives 1 at once.
 #[must_use]
 pub fn crossfade_factor(elapsed: f32, duration: f32) -> f32 {
     if !(duration.is_finite() && duration > 0.0) {
@@ -407,14 +507,19 @@ pub fn crossfade_factor(elapsed: f32, duration: f32) -> f32 {
     }
 }
 
-/// The cross-fade time when the active day description changes from `old` to `new`
-/// (`environment.md` §11.2 step 5): the new one's `transition_seconds` if positive, else
-/// the old one's; 0 (no fade) when neither is positive.
+/// The cross-fade time *T* of a sky-key change when no day description gives one
+/// (`environment.md` §11.6 step 3).
+pub const DEFAULT_TRANSITION_SECONDS: f32 = 8.0;
+
+/// The cross-fade time *T* when the sky key changes from a sky whose current day
+/// description is `old` to one whose description is `new` (`environment.md` §11.6 step 3,
+/// E27): the new description's `transition_seconds` if it exceeds 0.0002, else the old
+/// one's if that exceeds 0.0002, else [`DEFAULT_TRANSITION_SECONDS`].
 #[must_use]
 pub fn transition_seconds(old: Option<&DayDescription>, new: Option<&DayDescription>) -> f32 {
     let pos = |d: Option<&DayDescription>| {
         d.map(|d| d.transition_seconds)
-            .filter(|s| s.is_finite() && *s > 0.0)
+            .filter(|s| s.is_finite() && *s > CROSSFADE_EPSILON)
     };
-    pos(new).or(pos(old)).unwrap_or(0.0)
+    pos(new).or(pos(old)).unwrap_or(DEFAULT_TRANSITION_SECONDS)
 }

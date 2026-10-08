@@ -59,7 +59,8 @@ struct Shaded {
     // Colour in stored-value space, fog applied as for a base pass.
     color: vec3<f32>,
     // Output alpha (lighting.md §5.12): opacity x M.alpha when the base texture carries the
-    // opacity, else M.alpha (x vertex alpha where read).
+    // opacity, else M.alpha (x vertex alpha where read); for a fixed blend the opacity
+    // source alone (material.md §11.3).
     alpha: f32,
     // Opacity texel alpha for the alpha test (before vertex colours, §5.12).
     opacity: f32,
@@ -92,6 +93,11 @@ fn lit_shade(in: LitVsOut) -> Shaded {
     // Only a base-texture opacity reaches the output alpha; the opacity of slot 3020 or 3018
     // drives the alpha test alone (lighting.md §5.12, material.md §11.3).
     out.alpha = select(1.0, out.opacity, lit_source(LIT_OPACITY_SHIFT) == SOURCE_BASE) * m.a;
+    // A fixed blend's factors read the §11.2 opacity source, or 1 without one
+    // (material.md §11.3, rule for unlit records).
+    if (lit_flag(LIT_FACTOR_OPACITY)) {
+        out.alpha = out.opacity;
+    }
 
     // Albedo C after dye (§5.2 items 2-3; renderer mask convention, 1 = dyed).
     var c = base.rgb;
@@ -203,9 +209,12 @@ fn fs_lit_test_blend(in: LitVsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
+// Blended kinds: the threshold is -1 except for a fixed blend with an alpha test
+// (render.md R-D11), so only those discard.
 @fragment
 fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
+    alpha_test(s);
     return vec4<f32>(frame_output(s.color), clamp(s.alpha, 0.0, 1.0));
 }
 
@@ -213,6 +222,7 @@ fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_lit_additive(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
+    alpha_test(s);
     return vec4<f32>(frame_output(s.unfogged * (1.0 - s.fog)), clamp(s.alpha, 0.0, 1.0));
 }
 
@@ -221,5 +231,6 @@ fn fs_lit_additive(in: LitVsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_lit_modulate(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);
+    alpha_test(s);
     return vec4<f32>(frame_output(mix(s.unfogged, vec3<f32>(1.0), s.fog)), clamp(s.alpha, 0.0, 1.0));
 }

@@ -496,6 +496,51 @@ fn placement_follows_the_angles() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// material.md §11.3: a fixed blend reads the opacity source, not × M.alpha; the keyframe
+/// opacity (tint alpha) still scales a sky object (render.md §5.4 shading).
+#[test]
+fn fixed_sky_blends_read_the_opacity_source() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let model = |r: &mut Renderer<'static>, alpha| {
+        r.upload_world_model(
+            &card(100.0, 40.0),
+            &[WorldSurface {
+                unlit: true,
+                two_sided: true,
+                alpha,
+                base_color: [1.0, 0.0, 0.0, 0.5],
+                ..WorldSurface::default()
+            }],
+        )
+    };
+    let fixed = model(
+        &mut r,
+        AlphaMode::Fixed(tessera_render::FixedBlend::ADDITIVE),
+    )?;
+    let additive = model(&mut r, AlphaMode::Additive)?;
+    let red = |r: &mut Renderer<'static>, m: &WorldModel, opacity: f32| {
+        let obj = SkyObject {
+            tint: [1.0, 1.0, 1.0, opacity],
+            ..SkyObject::new(m.clone(), 0.0, 0.0)
+        };
+        Ok::<_, RenderError>(centre(r, &look(Vec3::Y), vec![obj])?[0])
+    };
+    let near = |got: u8, want: u8, what: &str| {
+        assert!(got.abs_diff(want) <= 2, "{what}: {got} vs {want}");
+    };
+    near(red(&mut r, &fixed, 1.0)?, 255, "Fixed: M.alpha ignored");
+    near(red(&mut r, &fixed, 0.5)?, 128, "Fixed: keyframe opacity");
+    near(red(&mut r, &additive, 1.0)?, 128, "Additive: × M.alpha");
+    near(
+        red(&mut r, &additive, 0.5)?,
+        64,
+        "Additive: × M.alpha × opacity",
+    );
+    Ok(())
+}
+
 #[test]
 fn sky_never_covers_geometry() -> Result<(), RenderError> {
     let Some(mut r) = gpu::headless_renderer(CLEAR) else {

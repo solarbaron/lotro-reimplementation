@@ -139,10 +139,15 @@ impl SceneryTables {
     /// As [`SceneryTables::load`]; [`SceneryError::MissingTable`] when the region has no
     /// descriptor.
     pub fn for_region(ctx: &WorldContext, region: u8) -> Result<Self, SceneryError> {
-        let info: &RegionInfo = ctx.region(region).ok_or(SceneryError::MissingTable {
-            region,
-            what: "region descriptor",
-        })?;
+        // The region as loaded: `WorldContext::region` itself calls this function for its
+        // retry.
+        let info: &RegionInfo = ctx
+            .regions()
+            .get(&region)
+            .ok_or(SceneryError::MissingTable {
+                region,
+                what: "region descriptor",
+            })?;
         let desc = info.descriptor.as_ref().ok_or(SceneryError::MissingTable {
             region,
             what: "region descriptor",
@@ -161,6 +166,7 @@ impl SceneryTables {
     ///   it shut down, a worker panicked) is left out of [`RegionSceneryTables::tables`]
     ///   and listed in [`RegionSceneryTables::retry`]. Nothing about the region is
     ///   remembered; the caller loads it again later ([`SceneryTables::for_region`]).
+    ///   [`WorldContext::load_systems`] does so on request ([`WorldContext::region`]).
     ///   `scenery.md` is silent on table reads; this follows its §7.4 step 15 Tessera
     ///   Decision for scene reads (implementer note in `scenery.md` §4.1).
     #[must_use]
@@ -186,8 +192,9 @@ impl SceneryTables {
     /// The tables of every region of the context that has them
     /// ([`SceneryTables::load_all_regions`] without the retry list). A region whose tables
     /// are missing or broken is logged and left out; so is a region whose read failed for
-    /// a reason outside the data, which is logged as retryable. Callers that live longer
-    /// than one load should use [`SceneryTables::load_all_regions`] and retry those.
+    /// a reason outside the data, which is logged as retryable but not retried. Callers
+    /// that live longer than one load should use [`SceneryTables::load_all_regions`] and
+    /// retry those, as [`WorldContext::load_systems`] does.
     #[must_use]
     pub fn for_all_regions(ctx: &WorldContext) -> BTreeMap<u8, Arc<Self>> {
         Self::load_all_regions(ctx).tables

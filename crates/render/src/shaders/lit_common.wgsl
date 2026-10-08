@@ -49,6 +49,9 @@ const LIT_SRGB_GLOSS: u32 = 4096u;
 const LIT_SRGB_EMISSIVE: u32 = 8192u;
 const LIT_SRGB_GLOW: u32 = 16384u;
 const LIT_SRGB_OPACITY: u32 = 32768u;
+// A fixed-function blend (AlphaMode::Fixed): the output alpha a blend factor reads is the
+// opacity source alone, not x M.alpha (material.md §11.3, rule for unlit records).
+const LIT_FACTOR_OPACITY: u32 = 65536u;
 
 const SOURCE_ONE: u32 = 0u;
 const SOURCE_BASE: u32 = 1u;

@@ -96,7 +96,9 @@
 //! [`WorldStreamer::update_with_velocity`] replaces the estimate and discards its
 //! positions (the estimate starts over on the next [`WorldStreamer::update`]), a given
 //! velocity that is not finite turns lookahead off for that update, and a rejected focus
-//! keeps the previous velocity (Tessera's choices, `landblock.md` §8.1 lookahead OPEN).
+//! keeps the previous velocity and the estimate's positions, given a velocity or not: the
+//! given velocity of such an update is ignored (Tessera's choices, `landblock.md` §8.1
+//! lookahead OPEN).
 //!
 //! A request must start at least one job time before its landblock reaches the near ring,
 //! and job times grow with the landblock (a large collision set: M3-b's late landblock
@@ -1246,14 +1248,16 @@ impl WorldStreamer {
         let t0 = Instant::now();
         let mut report = FrameReport::default();
         let valid = focus.is_finite() && LandblockKey::new(focus.region, 0, 0).is_ok();
-        // A rejected focus keeps the previous velocity, like the previous focus.
+        // A rejected focus keeps the previous velocity and the estimate's positions, like
+        // the previous focus, whether a velocity was given or not: the validity check
+        // comes before the given velocity.
         self.velocity = match given {
+            _ if !valid => self.velocity,
             Some(v) => {
                 self.motion.clear();
                 v.iter().all(|c| c.is_finite()).then_some(v)
             }
-            None if valid => self.motion.push(t0, focus.region, focus.xy()),
-            None => self.velocity,
+            None => self.motion.push(t0, focus.region, focus.xy()),
         };
         let focus = if valid {
             focus

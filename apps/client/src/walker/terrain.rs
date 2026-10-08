@@ -802,6 +802,21 @@ impl Slot {
         self.failed = None;
     }
 
+    /// Frees the ceiling's height-shaded mesh, built or uploaded (a ceiling that
+    /// [`Self::ceiling_out_of_scene`] leaves out). A build still running is left to finish;
+    /// it is freed in the next frame.
+    fn drop_shaded_ceiling(&mut self, renderer: &mut Renderer<'_>) {
+        match std::mem::replace(&mut self.shaded_ceiling, ShadedCeiling::None) {
+            ShadedCeiling::Ready(id, _) => {
+                renderer.destroy_mesh(id);
+            }
+            ShadedCeiling::Waiting(_) | ShadedCeiling::None => {}
+            other @ (ShadedCeiling::Pending | ShadedCeiling::Failed) => {
+                self.shaded_ceiling = other;
+            }
+        }
+    }
+
     /// Whether a full-layer terrain chunk is drawn, staged or waiting for its upload (it
     /// samples the terrain masks).
     fn uses_masks(&self) -> bool {
@@ -867,6 +882,14 @@ impl Slot {
     /// (`terrain-texturing.md` §4.9: "not added to the client's scene at all").
     fn terrain_out_of_scene(&self, frame: &TerrainFrame) -> bool {
         frame.layered && frame.lit && self.terrain_hidden()
+    }
+
+    /// Whether the ceiling is left out of the scene in `frame`: §4.9 rule 3 hides it and
+    /// the view is the normal (layered, lit) one. Nothing is kept on the GPU for it, not
+    /// even a height-shaded mesh built in another view (`terrain-texturing.md` §4.9: "not
+    /// added to the client's scene at all").
+    fn ceiling_out_of_scene(&self, frame: &TerrainFrame) -> bool {
+        frame.layered && frame.lit && self.layers.as_ref().is_some_and(|l| l.ceiling_hidden)
     }
 
     /// The ceiling's layers when it is drawn with them: it has a layer to draw and is not
@@ -1212,11 +1235,19 @@ impl TerrainLayer {
                     && c.gpu.as_ref().is_none_or(|g| g.1)
                     && (c.gpu.is_some() || c.prep.is_none())
             });
-            let shaded_done = !s.wants_shaded_ceiling(&self.frame)
-                || matches!(
+            let shaded_done = if s.ceiling_out_of_scene(&self.frame) {
+                // A build from another view still has to land and be freed.
+                matches!(
                     s.shaded_ceiling,
-                    ShadedCeiling::Ready(..) | ShadedCeiling::Failed
-                );
+                    ShadedCeiling::None | ShadedCeiling::Failed
+                )
+            } else {
+                !s.wants_shaded_ceiling(&self.frame)
+                    || matches!(
+                        s.shaded_ceiling,
+                        ShadedCeiling::Ready(..) | ShadedCeiling::Failed
+                    )
+            };
             let terrain_done = if s.terrain_out_of_scene(&self.frame) {
                 s.mesh.is_none()
             } else {
@@ -1543,11 +1574,15 @@ impl TerrainLayer {
             };
         }
 
-        // What the frame leaves out: the meshes of terrain chunks hidden by §4.9 rule 3
-        // (built in another view), and the masks of blocks back in the far band.
+        // What the frame leaves out: the meshes of terrain chunks and ceilings hidden by
+        // §4.9 rule 3 (built in another view), and the masks of blocks back in the far
+        // band.
         for slot in self.slots.values_mut() {
             if slot.terrain_out_of_scene(frame) {
                 slot.drop_terrain(renderer);
+            }
+            if slot.ceiling_out_of_scene(frame) {
+                slot.drop_shaded_ceiling(renderer);
             }
             slot.park_masks(frame, renderer);
         }
@@ -3826,7 +3861,7 @@ mod tests {
     /// Review finding (terrain.rs ceiling jobs, `signature`): a ceiling and a terrain
     /// chunk hidden by §4.9 rule 3 get no chunk, no mesh and no draw in the normal view
     /// (`terrain-texturing.md` §4.9 rule 3); with layers off both are drawn height-shaded,
-    /// and switching layers on again frees the terrain mesh.
+    /// and switching layers on again frees both meshes.
     #[test]
     fn rule_three_chunks_are_left_out_of_the_scene() {
         use tessera_formats::landblock::SurfaceChunk;
@@ -3875,11 +3910,11 @@ mod tests {
         let slot = &layer.slots[&k];
         assert!(slot.mesh.is_none(), "freed again in the normal view");
         assert!(slot.ceiling.is_none());
-        assert_eq!(
-            renderer.mesh_stats().meshes,
-            1,
-            "only the shaded ceiling stays"
+        assert!(
+            matches!(slot.shaded_ceiling, ShadedCeiling::None),
+            "the shaded ceiling is freed too"
         );
+        assert_eq!(renderer.mesh_stats().meshes, 0, "nothing stays on the GPU");
         layer.clear(&mut renderer, &mut objects);
         layer.shutdown();
     }

@@ -731,7 +731,7 @@ impl Walker {
             }
         };
         let minimap = MinimapLayer::new(Arc::clone(&set), &pool);
-        let characters = CharacterLayer::new(
+        let mut characters = CharacterLayer::new(
             config.characters,
             Arc::new(FigureContext {
                 set: Arc::clone(&set),
@@ -742,6 +742,7 @@ impl Walker {
             }),
             &pool,
         );
+        characters.set_lod_classes(ctx.systems().lod_classes.clone());
         {
             let mut s = lock(&shared);
             s.catalog = Some(Arc::clone(&catalog));
@@ -1120,6 +1121,9 @@ impl Walker {
             match placement(loc.cause, self.controls.placed(), self.flight.is_some()) {
                 Placement::Place => {
                     tracing::info!(%r, x = pos.x, y = pos.y, z = pos.z, cause = ?loc.cause, "viewer placed");
+                    // A placement is a jump: no cross-fade or sun-change fade runs across it
+                    // (`landblock.md` §4.13 Tessera Decision, `environment.md` §11.6 step 2).
+                    self.env.mark_immediate();
                     // Placed for the first time: the configured heading; later teleports
                     // keep the session's.
                     let yaw = match (self.controls.placed(), self.config.heading) {
@@ -1331,6 +1335,7 @@ impl Walker {
             self.characters.set_distances(characters::CharacterFrame {
                 g: oframe.g,
                 multiplier: oframe.settings.object_multiplier(),
+                shadow_multiplier: oframe.settings.shadow_multiplier(),
                 dt: oframe.dt,
                 camera_moved: oframe.camera_moved,
                 lod: oframe.lod,
@@ -1616,12 +1621,12 @@ impl Walker {
     }
 
     /// The indoor record's inputs at the camera position (`landblock.md` §4.13): looked up
-    /// at [`env::lookup_target`] (in a cell: the cell's property set, then its owner's
-    /// landblock info and block map; otherwise the landblock info and block map under the
+    /// at [`env::lookup_target`] (in a cell: its owner's landblock info and block map, the
+    /// cell's own set not read, L32; otherwise the landblock info and block map under the
     /// eye); re-read when that landblock changes and otherwise at most every
     /// [`INDOOR_REREAD`].
     fn indoor_inputs(&mut self, now: Instant, eye: &WorldPos) -> IndoorInputs {
-        let (key, cell) = env::lookup_target(self.camera_cell, eye);
+        let (key, _cell) = env::lookup_target(self.camera_cell, eye);
         let Some(key) = key else {
             return IndoorInputs::read(&self.indoor_pids, |_| None);
         };
@@ -1631,11 +1636,8 @@ impl Walker {
         {
             return *inputs;
         }
-        let inputs = env::indoor_inputs_at(
-            self.streamer.bundle(key).map(|b| &**b),
-            cell,
-            &self.indoor_pids,
-        );
+        let inputs =
+            env::indoor_inputs_at(self.streamer.bundle(key).map(|b| &**b), &self.indoor_pids);
         self.indoor = Some((key, now, inputs));
         inputs
     }

@@ -1012,6 +1012,54 @@ fn a_given_velocity_replaces_the_estimate_and_its_history() {
 }
 
 #[test]
+fn a_rejected_focus_ignores_a_given_velocity() {
+    // A rejected focus keeps the previous velocity and the estimate's positions, also when
+    // the update gives a velocity (module docs, "Lookahead"; `landblock.md` §8.1 OPEN,
+    // lookahead (a) continued).
+    let ctx = strip();
+    let pool = pool();
+    let mut w = WorldStreamer::new(
+        Arc::clone(&ctx),
+        &pool,
+        StreamConfig {
+            lookahead: Duration::ZERO,
+            ..config()
+        },
+    )
+    .unwrap();
+    let start = centre(10, 3);
+    let mut x = start.x;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while w.velocity().is_none() {
+        assert!(Instant::now() < deadline, "no estimate");
+        x += 2.0;
+        w.update(WorldPos::new(1, x, start.y, 0.0));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let estimate = w.velocity();
+    let samples = w.motion.samples.len();
+    assert!(samples > 0);
+    for bad in [
+        WorldPos::new(1, f64::NAN, start.y, 0.0),
+        WorldPos::new(0, x, start.y, 0.0),
+    ] {
+        let r = w.update_with_velocity(bad, [100.0, 0.0]);
+        assert!(r.focus_rejected, "{bad:?}");
+        assert_eq!(w.velocity(), estimate, "{bad:?}");
+        assert_eq!(w.motion.samples.len(), samples, "{bad:?}");
+        let r = w.update_with_velocity(bad, [f64::NAN, 0.0]);
+        assert!(r.focus_rejected, "{bad:?}");
+        assert_eq!(w.velocity(), estimate, "{bad:?}");
+    }
+    // A given velocity with a valid focus replaces it as before.
+    w.update_with_velocity(WorldPos::new(1, x, start.y, 0.0), [100.0, 0.0]);
+    assert_eq!(w.velocity(), Some([100.0, 0.0]));
+    // And a rejected focus keeps that one too.
+    w.update_with_velocity(WorldPos::new(1, f64::INFINITY, start.y, 0.0), [5.0, 5.0]);
+    assert_eq!(w.velocity(), Some([100.0, 0.0]));
+}
+
+#[test]
 fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
     // `landblock.md` §8.1, OPEN on closures: the 1/64 re-admission margin applies to a
     // whole seam closure when any member is an evicted bundle, never-loaded members
@@ -1060,6 +1108,10 @@ fn a_closure_with_an_evicted_member_needs_the_margin_as_a_whole() {
         if evicted {
             w.slots.get_mut(&k).unwrap().known_size = Some(each);
         }
+        // A job that finished and was integrated by the first update would make the
+        // running mean of real bundle sizes the never-loaded charge instead of `each`.
+        w.loaded_sizes = (0, 0);
+        assert_eq!(w.size_estimate(), each);
     };
     reset(&mut w, true);
     let mut report = FrameReport::default();

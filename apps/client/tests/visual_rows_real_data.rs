@@ -455,7 +455,7 @@ fn sky_rows_blend_their_keyframes() {
     let dict = PropertyDictionary::parse_expecting(&dict_bytes, 0x3400_0000_u32)
         .expect("property dictionary");
     let pids = IndoorPids::from_names(|n| dict.pid(n));
-    let ind = indoor_inputs_of(Some(bundle), 9, &pids);
+    let ind = indoor_inputs_of(Some(bundle), &pids);
     let byte = |v: f32| v * 255.0;
     let near_rgb = |c: [f32; 3], want: [f32; 3]| (0..3).all(|i| (byte(c[i]) - want[i]).abs() < 0.6);
     let mut fails = Vec::new();

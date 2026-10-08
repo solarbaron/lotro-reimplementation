@@ -315,7 +315,13 @@ pub(crate) fn build_hook(
                 SurfaceKind::Fixed(b) => Some(b),
                 _ => None,
             };
-            let masked = matches!(surface.kind, SurfaceKind::Mask | SurfaceKind::TestBlend);
+            // A fixed blend with an alpha test takes the testing stage too (render.md
+            // R-D11).
+            let masked = match surface.kind {
+                SurfaceKind::Mask | SurfaceKind::TestBlend => true,
+                SurfaceKind::Fixed(b) => b.alpha_test.is_some(),
+                _ => false,
+            };
             let Some((pipeline, layout)) = state.pipeline(ctx, models, fixed, masked) else {
                 continue;
             };

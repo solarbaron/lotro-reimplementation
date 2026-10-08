@@ -7,7 +7,14 @@
 //! [`CollisionFlags::of_static`] does so for a static entity, `Entity_CreationType`
 //! included (§9.3 item 3, C29: the SED's own value first, then the chain, as
 //! `entity-descriptor.md` §4.9 E24). [`EntityLookups`] does the same for
-//! `Entity_ContentLayers` and `Physics_AdjustableScale` (the paragraph after §9.3 item 3).
+//! `Entity_ContentLayers`, `Physics_AdjustableScale` and `Model_Scale` (the paragraph after
+//! §9.3 item 3); [`physics_scale`] turns the two scale vectors into the uniform physics scale
+//! of §8.1 (BIN, C42).
+//!
+//! Value types follow the client's readers (§9.1, §9.3, C41): the booleans only as a Boolean
+//! (another type counts as absent, Tessera rule confirmed there), the ethereality values only
+//! as a Bitfield32 (another type reads as no categories), the creation type only as an enum
+//! or property-ID value (another type reads as 0), the scales only as vectors.
 //!
 //! Ethereality values are bitfields over the labels of enum mapper 0x230000BA: bit *k* − 1
 //! stands for key *k* (`property-system.md` §7.3). A player character belongs to **Player**
@@ -15,8 +22,55 @@
 //! mover when its effective `Physics_EtherealToType` contains a category the mover belongs
 //! to (§9.2, Probable; the exact test is OPEN there).
 
-use tessera_formats::landblock::{MAX_SCALE, MIN_SCALE};
+use tessera_formats::landblock::MAX_SCALE;
 use tessera_formats::{Did, PropertySet, PropertyValue, Setup};
+
+/// The scale tolerance of `collision.md` §8.1 (C31, C42): a vector whose x differs from its
+/// y or z by more than this is non-uniform; a physics scale below it becomes 1; a scale
+/// within it of 1 counts as 1.
+pub const SCALE_TOLERANCE: f32 = 0.0002;
+
+/// Tessera's upper bound on the physics scale (`collision.md` §9.3 point 2, hostile input,
+/// decision 0013): a larger product becomes 1. The client has none.
+pub const MAX_PHYSICS_SCALE: f32 = MAX_SCALE;
+
+/// The uniform physics scale *s* of `collision.md` §8.1 steps 1–4 (BIN, C42) from the
+/// `Physics_AdjustableScale` and `Model_Scale` vectors found for the entity (`None`: not
+/// found or not a vector, read as (1, 1, 1)): a non-uniform vector (x differing from y or z
+/// by more than [`SCALE_TOLERANCE`]) is logged and its z used, *s* = z × z; a product that
+/// is not finite, below [`SCALE_TOLERANCE`] (logged) or above [`MAX_PHYSICS_SCALE`] (Tessera
+/// bound) becomes 1, and one within [`SCALE_TOLERANCE`] of 1 is 1 (step 4: the initial scale
+/// 1 is replaced only by a value that differs from it by more than that).
+#[must_use]
+pub fn physics_scale(adjustable: Option<[f32; 3]>, model: Option<[f32; 3]>) -> f32 {
+    let z_of = |v: Option<[f32; 3]>, name: &'static str| {
+        let [x, y, z] = v.unwrap_or([1.0; 3]);
+        if !((x - y).abs() <= SCALE_TOLERANCE && (x - z).abs() <= SCALE_TOLERANCE) {
+            tracing::debug!(
+                property = name,
+                ?v,
+                "non-uniform scale: its z is used (collision.md §8.1)"
+            );
+        }
+        z
+    };
+    let s = z_of(adjustable, "Physics_AdjustableScale") * z_of(model, "Model_Scale");
+    if !s.is_finite() || s > MAX_PHYSICS_SCALE {
+        return 1.0;
+    }
+    if s < SCALE_TOLERANCE {
+        tracing::debug!(
+            scale = s,
+            "physics scale below 0.0002: 1 is used (collision.md §8.1)"
+        );
+        return 1.0;
+    }
+    if (s - 1.0).abs() <= SCALE_TOLERANCE {
+        1.0
+    } else {
+        s
+    }
+}
 
 /// Ethereality category bit of key `key` (bit *k* − 1), or `None` for keys outside 1–64.
 #[must_use]
@@ -51,6 +105,8 @@ pub struct PhysicsPids {
     pub no_physics: Option<u32>,
     /// `Physics_AdjustableScale`.
     pub adjustable_scale: Option<u32>,
+    /// `Model_Scale` (property 0x3C3; the second factor of the physics scale, §8.1).
+    pub model_scale: Option<u32>,
     /// `Physics_EtherealityType`.
     pub ethereality_type: Option<u32>,
     /// `Physics_EtherealToType`.
@@ -77,6 +133,7 @@ impl PhysicsPids {
         Self {
             no_physics: pid_of("Physics_NoPhysics"),
             adjustable_scale: pid_of("Physics_AdjustableScale"),
+            model_scale: pid_of("Model_Scale"),
             ethereality_type: pid_of("Physics_EtherealityType"),
             ethereal_to_type: pid_of("Physics_EtherealToType"),
             placement_ethereal_to_type: pid_of("Physics_PlacementEtherealToType"),
@@ -114,10 +171,9 @@ pub struct CollisionFlags {
     /// `Physics_CanLedgeClimb`.
     pub can_ledge_climb: Option<bool>,
     /// `Entity_CreationType` as found (`None`: not found at this level or along the
-    /// chain). A found value that is not an integer or enum reads as
-    /// [`CREATION_TYPE_INVALID`] and still ends the lookup (`collision.md` §9.3 item 3,
-    /// `entity-descriptor.md` §4.9 step 1); a negative integer keeps its 32-bit pattern
-    /// (an "any other" value, class Static).
+    /// chain). A found value that is not an enum (type 8) or property-ID (type 10) value
+    /// reads as [`CREATION_TYPE_INVALID`] and still ends the lookup (`collision.md` §9.3
+    /// item 3 and point 1, C41).
     pub creation_type: Option<u32>,
 }
 
@@ -128,9 +184,9 @@ impl CollisionFlags {
         let get = |pid: Option<u32>| pid.and_then(|p| set.get(p));
         Self {
             no_physics: get(pids.no_physics).and_then(value_bool),
-            ethereality: get(pids.ethereality_type).and_then(value_bits),
-            ethereal_to: get(pids.ethereal_to_type).and_then(value_bits),
-            placement_ethereal_to: get(pids.placement_ethereal_to_type).and_then(value_bits),
+            ethereality: get(pids.ethereality_type).map(value_bits),
+            ethereal_to: get(pids.ethereal_to_type).map(value_bits),
+            placement_ethereal_to: get(pids.placement_ethereal_to_type).map(value_bits),
             always_uncontrolled_surface: get(pids.always_uncontrolled_surface).and_then(value_bool),
             surface_properties: get(pids.surface_properties_to_apply).and_then(|v| match v {
                 PropertyValue::DidRef(d) if !d.is_null() => Some(*d),
@@ -187,8 +243,8 @@ impl CollisionFlags {
 
     /// Whether the client's static-creation path refuses a landblock-info static with these
     /// flags (`collision.md` §9.3 item 3, C29): its effective `Entity_CreationType` is 0
-    /// (`Invalid`, also when no value was found or the value found is not an integer or
-    /// enum), 7 or 8. Generated objects are not filtered by it (§9.4).
+    /// (`Invalid`, also when no value was found or the value found is not an enum or
+    /// property-ID value), 7 or 8. Generated objects are not filtered by it (§9.4).
     #[must_use]
     pub fn refuses_static_creation(&self) -> bool {
         self.creation_type_value() == CREATION_TYPE_INVALID || self.is_server_created()
@@ -234,9 +290,8 @@ impl CollisionFlags {
 }
 
 /// A boolean value. A value of another type counts as not present, so the lookup goes on
-/// along the chain (Tessera Decision, recorded as an implementer OPEN in `collision.md`
-/// §9.1: the §9.1 flags are typed boolean, and §10.3 treats wrong-typed fields the same
-/// way).
+/// along the chain (`collision.md` §9.1 "Value types", C41: Tessera rule confirmed; the
+/// client reads it as false, the same result under the dictionary's types).
 fn value_bool(v: &PropertyValue) -> Option<bool> {
     match v {
         PropertyValue::Bool(b) => Some(*b),
@@ -244,32 +299,32 @@ fn value_bool(v: &PropertyValue) -> Option<bool> {
     }
 }
 
-/// A found `Entity_CreationType` value: an enum key or an integer (type 15, its 32-bit
-/// pattern); anything else counts as 0 (`collision.md` §9.3 item 3). A 64-bit integer
-/// (type 19) is not taken as "an integer" here (implementer OPEN in `collision.md` §9.3).
+/// A found `Entity_CreationType` value: an enum (type 8) or property-ID (type 10) value as
+/// stored; anything else, a 32-bit or 64-bit integer included, counts as 0 (`collision.md`
+/// §9.3 item 3 and point 1, BIN, C41).
 fn value_creation_type(v: &PropertyValue) -> u32 {
     match v {
-        PropertyValue::Enum(k) => *k,
-        #[allow(clippy::cast_sign_loss)]
-        PropertyValue::Int(i) => *i as u32,
+        PropertyValue::Enum(k) | PropertyValue::PropertyId(k) => *k,
         _ => CREATION_TYPE_INVALID,
     }
 }
 
-/// A bitfield value (types 14, 18 and 22) as its low 64 bits. The ethereality properties
-/// are typed as bitfields (§9.1); a value of another type (integer, enum, ...) counts as
-/// not present, so the lookup goes on along the chain (Tessera Decision, recorded as an
-/// implementer OPEN in `collision.md` §9.1, the same rule as for the boolean flags).
-fn value_bits(v: &PropertyValue) -> Option<u64> {
+/// An ethereality value (`collision.md` §9.1 "Value types", BIN, C41): a Bitfield32
+/// (type 18) as its 32 bits; a value of any other type, the 64-bit and variable-width
+/// bitfields included, reads as no categories and ends the lookup, as in the client.
+fn value_bits(v: &PropertyValue) -> u64 {
     match v {
-        PropertyValue::Bitfield32(b) => Some(u64::from(*b)),
-        PropertyValue::Bitfield64(b) => Some(*b),
-        PropertyValue::BitfieldAny(b) => Some(
-            b.set_bits()
-                .take_while(|&i| i < 64)
-                .fold(0u64, |acc, i| acc | (1 << i)),
-        ),
-        _ => None,
+        PropertyValue::Bitfield32(b) => u64::from(*b),
+        _ => 0,
+    }
+}
+
+/// A scale vector (type 6); a value of another type reads as (1, 1, 1) (`collision.md`
+/// §8.1 step 1, C41).
+fn value_vector(v: &PropertyValue) -> [f32; 3] {
+    match v {
+        PropertyValue::Vector3(c) => *c,
+        _ => [1.0; 3],
     }
 }
 
@@ -365,11 +420,12 @@ pub struct EntityLookups {
     /// when the value found is not an array (no list, the SED exists); `Some(Some(list))`
     /// otherwise.
     pub content_layers: Option<Option<Vec<u32>>>,
-    /// `Physics_AdjustableScale` as first found: the vector when it is one with every
-    /// component from `MIN_SCALE` to `MAX_SCALE` of `tessera-formats`, else (1, 1, 1) (a
-    /// found value still ends the lookup; Tessera Decision, implementer OPEN in
-    /// `collision.md` §9.3).
+    /// `Physics_AdjustableScale` as first found: the vector when it is one, else (1, 1, 1);
+    /// a found value of another type still ends the lookup (`collision.md` §9.3 point 2,
+    /// C41). [`EntityLookups::physics_scale`] applies the range rules of §8.1.
     pub adjustable_scale: Option<[f32; 3]>,
+    /// `Model_Scale` as first found, read like `adjustable_scale` (§8.1 step 1).
+    pub model_scale: Option<[f32; 3]>,
 }
 
 impl EntityLookups {
@@ -379,14 +435,8 @@ impl EntityLookups {
         let get = |pid: Option<u32>| pid.and_then(|p| set.get(p));
         Self {
             content_layers: get(pids.content_layers).map(layer_list_of),
-            adjustable_scale: get(pids.adjustable_scale).map(|v| match v {
-                PropertyValue::Vector3(c)
-                    if c.iter().all(|x| (MIN_SCALE..=MAX_SCALE).contains(x)) =>
-                {
-                    *c
-                }
-                _ => [1.0; 3],
-            }),
+            adjustable_scale: get(pids.adjustable_scale).map(value_vector),
+            model_scale: get(pids.model_scale).map(value_vector),
         }
     }
 
@@ -396,6 +446,7 @@ impl EntityLookups {
         Self {
             content_layers: self.content_layers.or(other.content_layers),
             adjustable_scale: self.adjustable_scale.or(other.adjustable_scale),
+            model_scale: self.model_scale.or(other.model_scale),
         }
     }
 
@@ -405,10 +456,18 @@ impl EntityLookups {
         self.content_layers.as_ref()?.as_deref()
     }
 
-    /// The effective scale, (1, 1, 1) when nothing was found (E27).
+    /// The uniform physics scale of `collision.md` §8.1 ([`physics_scale`] of the two
+    /// vectors found; 1 when nothing was found).
+    #[must_use]
+    pub fn physics_scale(&self) -> f32 {
+        physics_scale(self.adjustable_scale, self.model_scale)
+    }
+
+    /// The scale an object's shape is placed with: the physics scale on every axis
+    /// (`collision.md` §8.1, §8.3 "Scale").
     #[must_use]
     pub fn scale(&self) -> [f32; 3] {
-        self.adjustable_scale.unwrap_or([1.0; 3])
+        [self.physics_scale(); 3]
     }
 
     /// Approximate heap bytes.

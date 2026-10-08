@@ -3,17 +3,20 @@
 //!
 //! **Tessera rule** (`water.md` §7.4, Decision): a mover is in water when its feet are
 //! inside a liquid box; it swims (state 2) when the water surface lies more than its float
-//! height above its feet, otherwise it wades (state 1, or 3 on steep support). The
-//! controller adds (Decision, recorded as an OPEN note in `water.md` §7.4): a mover in water
-//! without any support swims, whatever the depth.
+//! height above its feet, otherwise it wades (state 1, or 3 on steep support); a mover in
+//! water without any support swims, whatever the depth (the client's state too, W19). The
+//! client's own state rule (`collision.md` §11.3.2, W19) gives state 1 on walkable support
+//! however deep the water; Tessera keeps its float-height test because the client's buoyancy
+//! is not known and the float line needs deep water to be a swimming state (`water.md` §7.4).
 //!
-//! Water reaches the controller through [`WaterQuery`]. `tessera-world` may implement it
-//! itself; [`LiquidWater`] implements it over any [`CollisionQuery`] from the water plane
-//! and liquid boxes the sets carry (decision 0013 "Water"), and a [`CollisionSet`] or
-//! [`CollisionView`] implements it directly with the same answers. The surface is the top
-//! of the contiguous liquid over the feet (Decision, recorded as an OPEN note in
-//! `water.md` §7.4), computed exactly from the boxes' spans over the mover's column: one
+//! Water reaches the controller through [`WaterQuery`]. [`LiquidWater`] implements it over
+//! any [`CollisionQuery`] from the water plane and liquid boxes the sets carry (decision
+//! 0013 "Water"), and a [`CollisionSet`] or [`CollisionView`] forwards to it. The surface
+//! is the top of the contiguous liquid over the feet (the Tessera Decision confirmed in
+//! `water.md` §7.4 "Water surface for the float line"), computed exactly from the boxes' spans over the mover's column: one
 //! pass over the boxes (at most [`crate::geometry::MAX_LIQUID_BOXES`] per set) and a sort.
+//! [`water_from_spans`] is the only implementation of that rule; `tessera-world`'s own
+//! water query calls it too.
 
 use crate::geometry::{
     CollisionQuery, CollisionSet, CollisionView, LiquidFlags, LiquidSpan, WaterPlane,
@@ -53,20 +56,25 @@ impl WaterQuery for NoWater {
 
 /// Liquid boxes whose spans over the mover's column are at most this far apart count as one
 /// body of liquid, and a water plane whose level lies at most this far from the top of the
-/// liquid is taken as its surface, m (Tessera Decision, implementer OPEN in `water.md`
-/// §7.4: the boxes are placed in f32, so two boxes that meet in the data may miss each
-/// other by rounding).
+/// liquid is taken as its surface, m (Tessera Decision, `water.md` §7.4: the boxes are
+/// placed in f32, so two boxes that meet in the data may miss each other by rounding).
 pub const LIQUID_JOIN_TOLERANCE: f64 = 1e-3;
 
-/// The water at `p` from the liquid spans over its column (`spans`, any order) and the water
-/// plane over it (`water.md` §7.4, Tessera rule). The point is in water when a liquid box
-/// contains it; the sample's flags are those of every box containing it. The surface is the
-/// top of the **contiguous** liquid above the feet: the spans of `Volume_IsLiquid` boxes are
-/// joined upward from the point, each span starting at most [`LIQUID_JOIN_TOLERANCE`]
-/// above the top so far, so a dry gap between stacked boxes ends the liquid. When a water
-/// plane lies over the point and its level is within the tolerance of that top (the liquid
-/// ends at the plane, `water.md` §6.3), the plane's level is the surface.
-fn surface_from_spans(
+/// The water at `p` from the liquid spans over its column (`spans`, any order; they are
+/// sorted in place) and the water plane over it (`water.md` §7.4, Tessera rule). The point
+/// is in water when a liquid box contains it; the sample's flags are those of every box
+/// containing it. The surface is the top of the **contiguous** liquid above the feet: the
+/// spans of `Volume_IsLiquid` boxes are joined upward from the point, each span starting at
+/// most [`LIQUID_JOIN_TOLERANCE`] above the top so far, so a dry gap between stacked boxes
+/// ends the liquid. When a water plane lies over the point and its level is within the
+/// tolerance of that top (the liquid ends at the plane, `water.md` §6.3), the plane's level
+/// is the surface. The surface is never below the point: a level just below the feet (at
+/// most the tolerance) gives the feet's height.
+///
+/// This is the one implementation of the rule: [`LiquidWater`] and `tessera-world`'s
+/// column query both call it with the spans of their boxes.
+#[must_use]
+pub fn water_from_spans(
     p: [f32; 3],
     plane: Option<WaterPlane>,
     spans: &mut [LiquidSpan],
@@ -90,13 +98,13 @@ fn surface_from_spans(
         }
         top = top.max(s.top);
     }
-    let surface = match plane {
-        Some(w) if w.level >= p[2] && (f64::from(w.level) - top).abs() <= LIQUID_JOIN_TOLERANCE => {
-            w.level
-        }
-        #[allow(clippy::cast_possible_truncation)]
-        _ => (top as f32).max(p[2]),
-    };
+    if let Some(w) = plane
+        && (f64::from(w.level) - top).abs() <= LIQUID_JOIN_TOLERANCE
+    {
+        top = f64::from(w.level);
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let surface = (top as f32).max(p[2]);
     surface
         .is_finite()
         .then_some(WaterSample { surface, flags })
@@ -119,7 +127,7 @@ impl<Q: CollisionQuery + ?Sized> WaterQuery for LiquidWater<'_, Q> {
         }
         let mut spans = Vec::new();
         self.0.liquid_spans(p[0], p[1], &mut spans);
-        surface_from_spans(p, self.0.water_plane_at(p[0], p[1]), &mut spans)
+        water_from_spans(p, self.0.water_plane_at(p[0], p[1]), &mut spans)
     }
 }
 
@@ -159,7 +167,7 @@ mod tests {
     #[test]
     fn a_dry_gap_ends_the_liquid() {
         let at = |spans: &[LiquidSpan]| {
-            surface_from_spans([0.0; 3], None, &mut spans.to_vec()).map(|w| w.surface)
+            water_from_spans([0.0; 3], None, &mut spans.to_vec()).map(|w| w.surface)
         };
         assert_eq!(at(&[span(-1.0, 0.6), span(0.8, 5.0)]), Some(0.6));
         assert_eq!(at(&[span(0.6, 5.0), span(-1.0, 0.4)]), Some(0.4));
@@ -184,12 +192,29 @@ mod tests {
     fn the_plane_is_the_surface_where_the_liquid_ends_there() {
         let plane = |level: f32| Some(WaterPlane::new(level, 1).expect("plane"));
         let at = |plane: Option<WaterPlane>, spans: &[LiquidSpan]| {
-            surface_from_spans([0.0, 0.0, -3.0], plane, &mut spans.to_vec()).map(|w| w.surface)
+            water_from_spans([0.0, 0.0, -3.0], plane, &mut spans.to_vec()).map(|w| w.surface)
         };
         assert_eq!(at(plane(2.0), &[span(-10.0, 2.0004)]), Some(2.0));
         // Liquid above the plane (a placed volume on the lake) or ending below it.
         assert_eq!(at(plane(2.0), &[span(-10.0, 3.0)]), Some(3.0));
         assert_eq!(at(plane(2.0), &[span(-10.0, 1.0)]), Some(1.0));
+    }
+
+    /// Finding (consistency with `tessera-world`, `water.md` §7.4): the plane's level is the
+    /// surface whenever it lies within 1 mm of the top of the liquid, also when it is just
+    /// below the feet; the surface is then the feet's height (never below the point).
+    #[test]
+    fn a_plane_just_below_the_feet_still_snaps() {
+        let plane = |level: f32| Some(WaterPlane::new(level, 1).expect("plane"));
+        let at = |plane: Option<WaterPlane>, spans: &[LiquidSpan]| {
+            water_from_spans([0.0; 3], plane, &mut spans.to_vec()).map(|w| w.surface)
+        };
+        // Top 0.0005, level 0.4 mm below the feet: the level, raised to the feet.
+        assert_eq!(at(plane(-0.0004), &[span(-1.0, 0.0005)]), Some(0.0));
+        // Level above the top, within 1 mm: the level.
+        assert_eq!(at(plane(0.0012), &[span(-1.0, 0.0005)]), Some(0.0012));
+        // Level more than 1 mm from the top: the top.
+        assert_eq!(at(plane(-0.002), &[span(-1.0, 0.0005)]), Some(0.0005));
     }
 
     /// The review's worked case on a real set and view: boxes [−1, 0.6] and [0.8, 5] over
@@ -239,6 +264,6 @@ mod tests {
         view.push_landblock(&set).expect("keyed");
         let v = view.water_at([50.0, 50.0, -10.0]).expect("in water");
         assert!((v.surface - (0.6 - 10.0)).abs() < 1e-5, "{v:?}");
-        assert_eq!(LiquidWater(&view).water_at([50.0, 50.0, -10.0]), Some(v));
+        assert!(v.flags.deep);
     }
 }

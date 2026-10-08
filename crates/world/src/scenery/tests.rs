@@ -2980,3 +2980,67 @@ fn region_table_pipeline_failures_are_reported_for_a_retry() {
             .is_some_and(|t| t.terrain_types.is_none())
     );
 }
+
+#[test]
+fn world_context_retries_region_tables_after_a_pipeline_failure() {
+    // A pipeline failure while the context loads a region's tables leaves the region
+    // without them only until a later request loads them (§4.1 implementer note); the
+    // landblocks decoded after that get scenery.
+    let mut world = testkit::SyntheticWorld::rectangle(1, 10..=10, 20..=20);
+    world.scenery = true;
+    let src = Arc::new(FailOne {
+        inner: world.build(),
+        fail: std::sync::Mutex::new(Some((0x1200_0000, true))),
+    });
+    let set = |f: Option<(u32, bool)>| *src.fail.lock().unwrap() = f;
+    let ctx =
+        crate::WorldContext::load(src.clone(), crate::BundleOptions::default()).expect("context");
+    let k = LandblockKey::new(1, 10, 20).expect("key");
+    let bundle = |ctx: &crate::WorldContext| {
+        let bs = crate::BundleSource::new(Arc::clone(ctx.source()));
+        let frame = tessera_assets::RecordSource::read_record(&bs, k.data_did().0).expect("frame");
+        crate::bundle::build_bundle(ctx, k.data_did(), &frame, &|| false).expect("bundle")
+    };
+
+    // As loaded: no tables, a pending retry, and the scene library ready for it.
+    assert!(ctx.regions()[&1].scenery.is_none());
+    assert_eq!(ctx.scenery_retry_pending().collect::<Vec<_>>(), [1]);
+    assert!(ctx.systems().scenes.is_some());
+    // Still failing: the request finds nothing and keeps the retry.
+    assert!(ctx.scenery_tables(1).is_none());
+    assert!(bundle(&ctx).scenery.is_none());
+    assert_eq!(ctx.scenery_retry_pending().collect::<Vec<_>>(), [1]);
+    // The pipeline is back: the next request loads the tables, for good.
+    set(None);
+    let b = bundle(&ctx);
+    let sc = b.scenery.as_ref().expect("scenery after the retry");
+    assert!(sc.complete);
+    assert!(!b.generated.is_empty());
+    assert!(ctx.region(1).is_some_and(|r| r.scenery.is_some()));
+    assert_eq!(ctx.scenery_retry_pending().count(), 0);
+    set(Some((0x1200_0000, true)));
+    assert!(ctx.scenery_tables(1).is_some(), "remembered once loaded");
+
+    // A data fault on the retry ends it: the region has no scenery for good.
+    let ctx =
+        crate::WorldContext::load(src.clone(), crate::BundleOptions::default()).expect("context");
+    assert_eq!(ctx.scenery_retry_pending().collect::<Vec<_>>(), [1]);
+    set(Some((0x1200_0000, false)));
+    assert!(ctx.scenery_tables(1).is_none());
+    assert_eq!(ctx.scenery_retry_pending().count(), 0);
+    set(None);
+    assert!(
+        ctx.scenery_tables(1).is_none(),
+        "a data fault is not retried"
+    );
+
+    // Without scenery generation nothing is pending.
+    set(Some((0x1200_0000, true)));
+    let off = crate::WorldContext::load(
+        src.clone(),
+        crate::BundleOptions::default().without_world_systems(),
+    )
+    .expect("context");
+    assert_eq!(off.scenery_retry_pending().count(), 0);
+    assert!(off.scenery_tables(1).is_none());
+}

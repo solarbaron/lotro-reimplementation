@@ -351,6 +351,16 @@ fn lit_inputs(
             (Some(c), true) => AlphaMode::Mask { cutoff: c },
             _ => AlphaMode::Opaque,
         },
+        // Unlit records: the record's own blend triple and depth write as a fixed-function
+        // blend, with its alpha test (`material.md` §11.3 rule for unlit records, §11.2;
+        // `walker.md` §14.5 "Unlit blend pairs"); a triple with a code the renderer cannot
+        // express keeps the source-alpha blend below.
+        BlendMode::Additive | BlendMode::Custom
+            if !f.lit
+                && let Some(b) = fixed_blend(f, threshold.filter(|_| opacity_from_base)) =>
+        {
+            AlphaMode::Fixed(b)
+        }
         BlendMode::Additive => AlphaMode::Additive,
         BlendMode::AlphaBlend | BlendMode::Custom if !translucent => AlphaMode::Opaque,
         BlendMode::AlphaBlend | BlendMode::Custom => {
@@ -377,6 +387,43 @@ fn lit_inputs(
         specular,
         gloss,
     }
+}
+
+/// The renderer's fixed blend for an unlit record's blend state (`material.md` §11.3, the
+/// D3D factor and operation codes of §7.6 as `tessera-material` names them): `None` when a
+/// code is one the material crate does not name (no such record is known; the caller keeps
+/// a source-alpha blend). `alpha_test` is the record's threshold when it tests an opacity
+/// source (§11.2).
+#[must_use]
+pub fn fixed_blend(
+    f: &tessera_material::FeatureFlags,
+    alpha_test: Option<f32>,
+) -> Option<tessera_render::FixedBlend> {
+    use tessera_material::records::{BlendFactor as M, BlendOp as O};
+    use tessera_render::{BlendFactor as R, BlendOp};
+    let factor = |m: M| match m {
+        M::Zero => Some(R::Zero),
+        M::One => Some(R::One),
+        M::SrcColor => Some(R::SrcColor),
+        M::InvSrcColor => Some(R::OneMinusSrcColor),
+        M::SrcAlpha => Some(R::SrcAlpha),
+        M::InvSrcAlpha => Some(R::OneMinusSrcAlpha),
+        M::DestAlpha => Some(R::DstAlpha),
+        M::DestColor => Some(R::DstColor),
+        M::Other(_) => None,
+    };
+    let op = match f.blend.op {
+        O::Add => BlendOp::Add,
+        O::RevSubtract => BlendOp::ReverseSubtract,
+        O::Other(_) => return None,
+    };
+    Some(tessera_render::FixedBlend {
+        src: factor(f.blend.src)?,
+        dst: factor(f.blend.dst)?,
+        op,
+        depth_write: f.blend.depth_write,
+        alpha_test: alpha_test.map(tessera_render::AlphaThreshold),
+    })
 }
 
 /// [`plan_material`] plus the material's dye (`material.md` §12): the first dye channel
@@ -785,6 +832,56 @@ mod tests {
         );
         assert_eq!(pick_dye_channel(w(1), None), Some(1));
         assert_eq!(pick_dye_channel::<u8>(None, None), None);
+    }
+
+    #[test]
+    /// `walker.md` §14.5 "Unlit blend pairs", `material.md` §11.3: an unlit record's own
+    /// blend triple and depth write become a fixed blend with its alpha test; a code the
+    /// material crate does not name keeps the source-alpha blend.
+    fn unlit_blend_triples_become_fixed_blends() {
+        use tessera_material::records::{BlendFactor as M, BlendOp as O};
+        use tessera_material::{BlendState, FeatureFlags};
+        let flags = |src, dst, op, depth_write| FeatureFlags {
+            lit: false,
+            alpha_test: None,
+            opacity_slot: None,
+            blend: BlendState {
+                mode: BlendMode::Custom,
+                src,
+                dst,
+                op,
+                depth_write,
+                opacity_slot: None,
+            },
+            two_sided: false,
+            normal_mapped: false,
+            specular: false,
+            dyeable: false,
+            dyeable_2: false,
+            emissive: false,
+            glow: false,
+            environment: false,
+            second_layer: false,
+            baked_lighting: false,
+            uv_transform: false,
+            animated: false,
+        };
+        let b = fixed_blend(&flags(M::DestColor, M::One, O::Add, true), Some(0.25)).unwrap();
+        assert_eq!(
+            (b.src, b.dst, b.op, b.depth_write),
+            (
+                tessera_render::BlendFactor::DstColor,
+                tessera_render::BlendFactor::One,
+                tessera_render::BlendOp::Add,
+                true
+            )
+        );
+        assert_eq!(b.alpha_test, Some(tessera_render::AlphaThreshold(0.25)));
+        let r = fixed_blend(&flags(M::Zero, M::SrcColor, O::RevSubtract, false), None).unwrap();
+        assert_eq!(r.op, tessera_render::BlendOp::ReverseSubtract);
+        assert_eq!(r.alpha_test, None);
+        assert!(fixed_blend(&flags(M::Other(8), M::One, O::Add, false), None).is_none());
+        assert!(fixed_blend(&flags(M::One, M::One, O::Other(2), false), None).is_none());
     }
 
     #[test]

@@ -185,7 +185,7 @@ pub use frame::{Frame, Pass, PassSpace, Quad, Rgba, screen_projection};
 pub use instanced::{
     FRILL_FADE_IN_SECONDS, FRILL_SECTOR, FRILL_SWAY_MIN, FrillParams, FrillReduction, Instance,
     InstanceBatch, MAX_INSTANCES_PER_PASS, MAX_MODEL_SURFACES, WorldModel, WorldSurface,
-    frill_distances, frill_fade_in, frill_radius_sectors, frill_reduced_count,
+    WorldSurfaceOptions, frill_distances, frill_fade_in, frill_radius_sectors, frill_reduced_count,
 };
 pub use lighting::{
     FOG_FAR_CAP, FRAME_SHADING_WGSL, FRAME_WGSL, Fog, FrameLighting, Light, LightFields, LightKind,
@@ -193,8 +193,9 @@ pub use lighting::{
     SunShadow,
 };
 pub use material::{
-    AlphaMode, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss, LightSelection, Lighting,
-    LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines, Opacity, Specular,
+    AlphaMode, AlphaThreshold, BlendFactor, BlendOp, Dye, DyeMask, FixedBlend, Gloss,
+    LightSelection, Lighting, LitSurface, Material, MeshDebug, MeshDraw, MeshShading, NormalLines,
+    Opacity, Specular,
 };
 pub use mesh::{
     Aabb, BoundingSphere, Indices, MeshData, MeshInfo, MeshLimits, PreparedMesh, Submesh,

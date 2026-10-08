@@ -695,11 +695,14 @@ struct ObjState {
     faded_at: u64,
 }
 
-/// Whether an object's fade restarts in draw frame `frame` (`walker.md` §14.5: a block not
-/// drawn in the previous frame resets its objects' fades): its fade was not updated in the
-/// frame before, because its block was culled or not reached, or because the object itself
-/// was not drawn (an outdoor object while the camera is in a cell, a generated object with
-/// `scenery` off, an object out of reach).
+/// Whether an object's fade restarts in draw frame `frame`: its fade was not updated in the
+/// frame before. The fade of every object of the walker's scene advances in every frame,
+/// drawn or not (its block out of view, after the draw cap; `walker.md` §14.5 row W-O3: the
+/// client's per-object step runs for every object of the scene before the culls), so this
+/// holds only in the first frame of an object's state (it became active) and when it
+/// re-enters the scene (an outdoor object after the camera leaves a cell, a generated object
+/// after `scenery` is switched on), the walker's counterpart of the client's first frame of
+/// a per-view state. A camera jump of more than 25 m restarts a fade too ([`DrawFade`]).
 #[must_use]
 pub fn fade_resets(faded_at: u64, frame: u64) -> bool {
     faded_at == 0 || faded_at.checked_add(1) != Some(frame)
@@ -729,21 +732,27 @@ struct BlockObjects {
 }
 
 impl BlockObjects {
-    /// Updates the smoothed distance of every object of the block that is in the scene
-    /// (active, not a generated object with `scenery` off, drawn through a cell the camera
-    /// sees) but not processed by the draw loop this frame because the block's box is out
-    /// of view. The smoothed distance follows every object of the scene each frame, drawn
-    /// or not (`mesh.md` §8.6 step 3), so an object culled while the camera travels comes
-    /// back with a current one (`walker.md` §14.5 OPEN (b); Tessera reading, the spec
-    /// writer to confirm). `local_cam` is the eye in the block's frame.
+    /// Updates the smoothed distance and the draw-distance fade of every object of the
+    /// block from index `from` on that is in the scene (active, not a generated object with
+    /// `scenery` off, drawn through a cell the camera sees) but not processed by the draw
+    /// loop this frame: because the block's box is out of view (`from` 0), or because the
+    /// draw cap stopped the frame (the objects after the one that reached the cap, and
+    /// every object of the blocks after it). Both follow every object of the scene each
+    /// frame, drawn or not, as the client's per-object step does before its culls
+    /// (`mesh.md` §8.6–§8.7; `walker.md` §14.5 row W-O3), so an object culled while the
+    /// camera travels comes back with a current distance and fade. `local_cam` is the eye in
+    /// the block's frame, `draw_frame` the frame number ([`fade_resets`]), `cap` the
+    /// distance cap.
     fn follow_distances(
         &mut self,
         key: LandblockKey,
         local_cam: Vec3,
         frame: &ObjectFrame,
         drawn: &dyn Fn(LandblockKey, u16) -> bool,
+        from: usize,
+        (draw_frame, cap): (u64, f32),
     ) {
-        for (obj, st) in self.objects.iter().zip(self.state.iter_mut()) {
+        for (obj, st) in self.objects.iter().zip(self.state.iter_mut()).skip(from) {
             if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
                 continue;
             }
@@ -752,6 +761,16 @@ impl BlockObjects {
                     local_cam.to_array(),
                     (c - Vec3::splat(r)).to_array(),
                     (c + Vec3::splat(r)).to_array(),
+                );
+                let reset = fade_resets(st.faded_at, draw_frame);
+                st.faded_at = draw_frame;
+                st.fade.update(
+                    d,
+                    object_draw_distance(&obj.lod, frame, cap),
+                    frame.dt,
+                    frame.camera_moved,
+                    reset,
+                    frame.lod,
                 );
                 st.smooth.update(d, frame.fps, false);
             }
@@ -2269,7 +2288,7 @@ impl ObjectLayer {
             _ => TexLookup::Pending,
         };
         let order = std::mem::take(&mut self.order);
-        'blocks: for &(_, key) in &order {
+        for &(_, key) in &order {
             let Some(b) = self.blocks.get_mut(&key) else {
                 continue;
             };
@@ -2284,13 +2303,21 @@ impl ObjectLayer {
                 continue;
             };
             let local_cam = camera - off;
+            // The draw cap stopped the frame: the block is not reached, but the smoothed
+            // distances of its objects still follow the camera.
+            if capped {
+                b.follow_distances(key, local_cam, &frame, drawn, 0, (draw_frame, cap));
+                continue;
+            }
             if !frustum.aabb_visible(off + lo, off + hi) {
                 culled += b.active;
-                b.follow_distances(key, local_cam, &frame, drawn);
+                b.follow_distances(key, local_cam, &frame, drawn, 0, (draw_frame, cap));
                 continue;
             }
             let block_tf = Mat4::from_translation(off);
-            for (oi, obj) in b.objects.iter().enumerate() {
+            // Index of the object whose draw reached the cap.
+            let mut capped_at = None;
+            'objects: for (oi, obj) in b.objects.iter().enumerate() {
                 let Some(st) = b.state.get_mut(oi) else { break };
                 if !st.active || (obj.generated && !frame.scenery) || !drawn(key, obj.cell) {
                     continue;
@@ -2367,7 +2394,8 @@ impl ObjectLayer {
                     for (i, plan) in level.plans.iter().enumerate() {
                         if draws >= self.config.max_draws {
                             capped = true;
-                            break 'blocks;
+                            capped_at = Some(oi);
+                            break 'objects;
                         }
                         let Some((material, lit)) =
                             surface_draw(plan, &lookup, frame.lit, opacity, casts)
@@ -2382,6 +2410,16 @@ impl ObjectLayer {
                         draws += 1;
                     }
                 }
+            }
+            if let Some(oi) = capped_at {
+                b.follow_distances(
+                    key,
+                    local_cam,
+                    &frame,
+                    drawn,
+                    oi.saturating_add(1),
+                    (draw_frame, cap),
+                );
             }
         }
         self.order = order;
@@ -2944,11 +2982,25 @@ mod tests {
             ..ObjectFrame::default()
         };
         let all = |_: LandblockKey, _: u16| true;
-        b.follow_distances(key, Vec3::new(1_101.0, 0.0, 0.0), &frame, &all);
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &all,
+            0,
+            (1, 5_000.0),
+        );
         assert_eq!(b.state[0].smooth.value(), Some(1_000.0), "first frame: d");
         assert_eq!(b.state[1].smooth.value(), None, "not in the scene");
-        for _ in 0..600 {
-            b.follow_distances(key, Vec3::new(111.0, 0.0, 0.0), &frame, &all);
+        for f in 0..600 {
+            b.follow_distances(
+                key,
+                Vec3::new(111.0, 0.0, 0.0),
+                &frame,
+                &all,
+                0,
+                (2 + f, 5_000.0),
+            );
         }
         let ds = b.state[0].smooth.value().unwrap();
         assert!(
@@ -2956,12 +3008,113 @@ mod tests {
             "followed the camera to 10 m: {ds}"
         );
         let none = |_: LandblockKey, _: u16| false;
-        b.follow_distances(key, Vec3::new(1_101.0, 0.0, 0.0), &frame, &none);
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &none,
+            0,
+            (602, 5_000.0),
+        );
         assert_eq!(
             b.state[0].smooth.value(),
             Some(ds),
             "a cell the camera does not see"
         );
+    }
+
+    /// Review finding (objects.rs, `walker.md` §14.5 OPEN (b)): when the draw cap stops
+    /// the frame at an object, the objects after it in its block still have their smoothed
+    /// distance updated; the ones before it (already processed by the draw loop) are not
+    /// updated twice.
+    #[test]
+    fn objects_after_the_draw_cap_keep_their_smoothed_distance_current() {
+        let mut blocks = one_block();
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let b = blocks.get_mut(&key).unwrap();
+        for st in &mut b.state {
+            st.active = true;
+            st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
+        }
+        let frame = ObjectFrame {
+            fps: 60.0,
+            ..ObjectFrame::default()
+        };
+        let all = |_: LandblockKey, _: u16| true;
+        // The cap was reached at object 0: only object 1 is followed here.
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &all,
+            1,
+            (1, 5_000.0),
+        );
+        assert_eq!(
+            b.state[0].smooth.value(),
+            None,
+            "processed by the draw loop"
+        );
+        assert_eq!(b.state[1].smooth.value(), Some(1_000.0), "after the cap");
+        // An index past the end is harmless.
+        b.follow_distances(
+            key,
+            Vec3::new(1_101.0, 0.0, 0.0),
+            &frame,
+            &all,
+            usize::MAX,
+            (2, 5_000.0),
+        );
+        assert_eq!(b.state[0].smooth.value(), None);
+    }
+
+    /// `walker.md` §14.5 row W-O3: the fade of an object in the scene advances in every
+    /// frame, also while its block is out of view, so it neither pauses nor restarts there;
+    /// it restarts only in an object's first frame and after a camera jump of more than
+    /// 25 m.
+    #[test]
+    fn fades_advance_for_objects_out_of_view() {
+        let mut blocks = one_block();
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let b = blocks.get_mut(&key).unwrap();
+        for st in &mut b.state {
+            st.active = true;
+            st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
+        }
+        let mut frame = ObjectFrame {
+            fps: 60.0,
+            dt: 0.1,
+            lod: true,
+            g: 2_080.0,
+            ..ObjectFrame::default()
+        };
+        let all = |_: LandblockKey, _: u16| true;
+        let cap = 50.0;
+        // First frame, within the draw distance: shown at once.
+        b.follow_distances(key, Vec3::new(110.0, 0.0, 0.0), &frame, &all, 0, (1, cap));
+        assert_eq!(b.state[0].fade.opacity(), 1.0);
+        // The camera walks away (out of reach): the fade runs on frame by frame while the
+        // block is out of view, 0.1 s / 1.5 s per frame.
+        for f in 0..5 {
+            b.follow_distances(
+                key,
+                Vec3::new(300.0, 0.0, 0.0),
+                &frame,
+                &all,
+                0,
+                (2 + f, cap),
+            );
+        }
+        let o = b.state[0].fade.opacity();
+        assert!((o - (1.0 - 5.0 * 0.1 / 1.5)).abs() < 1e-4, "{o}");
+        // A camera jump of more than 25 m restarts it.
+        frame.camera_moved = 30.0;
+        b.follow_distances(key, Vec3::new(300.0, 0.0, 0.0), &frame, &all, 0, (7, cap));
+        assert_eq!(b.state[0].fade.opacity(), 0.0);
+        // A frame without the step (the object out of the scene) restarts it on return.
+        frame.camera_moved = 0.0;
+        b.follow_distances(key, Vec3::new(110.0, 0.0, 0.0), &frame, &all, 0, (9, cap));
+        assert_eq!(b.state[0].fade.opacity(), 1.0);
     }
 
     #[test]

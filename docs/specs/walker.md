@@ -1359,6 +1359,17 @@ was inside the lake's volume boxes and the walker swam up out of its cell.
   jumped, snapped, planes, pushed_out, penetration, boundary, terrain` (terrain height
   under the feet), `contacts` (up to 8, `kind@separation`).
 
+> **OPEN (implementer, 2026-10-08):** `m4-5-visual.md` §2.2 was revised from `collision.md`
+> §11.7, and the runner now reads it so: `blocked` is checked at the **first touch** (the
+> first step with forward held after which the capsule lies within 0.01 m of a static,
+> generated or other non-terrain, non-ceiling, non-cell body, searched among all contacts,
+> not only the 8 logged), "never past P + `d`" up to that step, the end point only
+> reported; the feet's height above the terrain in `follow` and `pass`, and above P at the
+> first touch in `blocked`, may exceed the tolerance by *r* · (sec *θ* − 1), *θ* the steepest
+> terrain triangle sampled within the capsule radius *r* of the axis; below it the tolerance
+> is unchanged. The readings above ("`blocked` walks also report the first stop") predate
+> this; please restate them in the next revision of §13.6.
+
 <a id="s13-7"></a>
 ### 13.7 The soak (`m4-5-visual.md` §2.5)
 

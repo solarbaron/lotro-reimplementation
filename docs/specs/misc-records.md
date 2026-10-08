@@ -509,6 +509,15 @@ Flag words observed: 0x19A (1,867), 0x11A (761), 0x19E (159), 0x11E (151), 0x192
 0x112 (25), 0x18A (15), 0x9A (10), 0x116 (7), 0x10A (5), 0x196 (5), 0x102 (3), 0x182 (1),
 0x18E (1).
 
+> **OPEN:** the bit table and the flag-word census disagree for bit 0x010. Five of the
+> observed words (0x18A (15), 0x10A (5), 0x102 (3), 0x182 (1), 0x18E (1); 25 descriptors)
+> lack 0x010, so the word census implies 3,026 descriptors with position + rotation, not
+> 3,051. Every other row of the table matches the word census (0x004 323, 0x008 2,969,
+> 0x080 2,099, 0x100 3,041). The implementation (2026-10-07, `crates/formats` real-data
+> test) reproduces the word census exactly and counts 3,026; a clean-room code review
+> confirmed the arithmetic. Proposed correction for the spec writer: the 0x010 row should
+> read 3,026.
+
 Properties found in UI scene descriptors include `CameraFOV` (47), `CameraFarDistance`
 (19) on cameras, `LightRange`, `LightDiffuse`, `LightDiffuseIntensity`, `LightFalloff`,
 `KeyLight` on lights, and `Render_AdjustableScale`/`Physics_AdjustableScale` (1,537 each)
@@ -1155,6 +1164,23 @@ decodes and shows it generically and gives it meaning only in its own server wor
 Four monster objects also carry `PropertyResponse_*` properties; they are not part of the
 family.
 
+> **OPEN (census correction, proposed for the spec writer):** the breakdown above leaves
+> out 32 members. Measured by the implementation (2026-10-07, `crates/formats` real-data
+> test): the five characteristic arrays (first present wins) find 387 objects (237 effect
+> lists, 120 world-event lists, 21 map-property and 9 calculate-property arrays, none with
+> only a filter array). The other 32 carry no `PropertyResponseCallback_AppliedEffect_Array`
+> and none of the other arrays, only `PropertyResponseCallback_*` callback settings
+> (`_OnTrueResponseType`, `_OnFalseResponseType`, `_AIHint`, `_Drama`). Recognition rule
+> used by Tessera, by label like `Version_*` (§13.7) and `PathMap_*` (§12.2): a member is an
+> object whose set carries, at top level, any property whose label starts with
+> `PropertyResponse` (`PropertyResponse_` or `PropertyResponseCallback_`), except the two
+> referrer properties named above (`PropertyResponse_Callback`,
+> `PropertyResponse_EntityPropertyResponseMap`). That finds exactly 419. The four monster
+> objects carry only `PropertyResponse_EntityPropertyResponseMap` (a referrer) and are
+> not members. Proposed: say "six root classes: 237 effect lists, 32 callback-only
+> objects, 120 world-event lists, 21 map-property, 9 calculate-property arrays" and state
+> the rule.
+
 <a id="s13-6"></a>
 ### 13.6 Game callbacks (Confirmed, M6; 110 objects)
 
@@ -1177,6 +1203,14 @@ conversions …). Control: `VersionSystem` (0x7000021D here) with
 updates, and `Version_SingletonList` of object DIDs), `Version_AlwaysRunOnPlayers` (2 DIDs)
 and `Version_Number` (the current update). They describe server-side migrations of
 character data. Tessera shows them generically; no client behaviour depends on them.
+
+> **OPEN:** whether the 124 include the `VersionSystem` control. The §13 introduction says
+> Version has no control, this section names one. Measured by the implementation: 123
+> objects carry `Version_*` properties and lack the control-only properties
+> (`Version_VersionNumberDataList`, `Version_AlwaysRunOnPlayers`); with the control that is
+> 124. The implementation leaves the control out of the family; its real-data test pins
+> 123 members plus the control. Proposed: reword the §13 introduction or this section so
+> both agree on whether `VersionSystem` is a control and whether it is counted.
 
 ---
 
@@ -1387,6 +1421,39 @@ These are proposals for the owners of those specs; this session edits only this 
 
 > **OPEN:** percentage scale and operator semantics of property metadata; needs the
 > data-driven code or one owner observation (§13.1).
+
+> **OPEN (implementer notes, `crates/formats/src/gameplay/misc.rs`, 2026-10-07):** choices
+> made where the spec is silent; confirm or correct.
+> (1) Placement: the composition (§3.6) and the typed views of §12 and §13 (bare-set
+> families, metadata classifier and views) live in `crates/formats/src/gameplay/misc.rs`
+> next to the decoders, instead of `crates/material` and `crates/props` as "Implements
+> into" says. They are pure functions over decoded records and RGBA8 buffers and need
+> nothing from those crates; the gameplay record specs share this one `gameplay` module.
+> `crates/material` and `crates/props` can wrap them.
+> (2) §3.6.1 does not say what happens when layer 0 has no options or the base option's
+> image is not loaded (a load failure, not P1); Tessera fails composition
+> (`CompositionFailure::NoBaseImage`). For P4, when the first layer-0 option's image is
+> not loaded, the first loaded layer-0 image is the size reference.
+> (3) "Within 0.0002 of 1.0" (§3.6.2 step 3.3) is taken as inclusive (|c − 1| ≤ 0.0002).
+> (4) Images passed to composition are RGBA8 as the surface decoder gives them; an A8
+> mask's byte is read from the alpha channel; an image whose buffer does not match its
+> size counts as not loaded.
+> (5) The value types of `UI_Map_*` fields (§12.2), `AppearanceUI_CompositorLayerName`,
+> `AppearanceUI_ControlPropertyName`, `AppearanceUI_MinControlValue` (§3.7) and several
+> §13 enum fields are not given; the views accept any integer-like value as a key and any
+> numeric value as a number.
+> (6) MR2 (repeated layer keys, null DIDs) is reported by `first_unusual_field`, never
+> rejected; node 44 addresses the first layer with a repeated key.
+> (7) The `PathMap_*` volume signature (§12.2) is any property whose dictionary label
+> starts with `PathMap_`; `Version_*` (§13.7) and the property-response members (§13.5
+> OPEN) likewise.
+> (8) Fuzzing: instead of one fuzz target per prefix, one target
+> (`fuzz/fuzz_targets/formats_gameplay_misc.rs`) takes a selector byte and reaches every
+> decoder of this spec plus composition, placement and the pixel arithmetic. This is the
+> convention of all the gameplay record modules (one target per spec).
+> (9) A DXBC container (§6) may have chunk-table entries that share an offset or point
+> back into the header; the chunk list is sized from the table, so such a container is
+> accepted.
 
 ---
 

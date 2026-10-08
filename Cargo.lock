@@ -4050,6 +4050,7 @@ dependencies = [
  "tessera-settings",
  "tessera-text",
  "tessera-world",
+ "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
@@ -4063,6 +4064,7 @@ dependencies = [
  "image",
  "proptest",
  "tessera-dat",
+ "tessera-wstate",
  "thiserror 2.0.21",
  "tracing",
 ]

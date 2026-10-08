@@ -248,6 +248,24 @@ the mask read from the mapper) or the label, never the full value.
 > record whose root class descends from *I* but whose property set lacks `Item_Class` would be
 > reported as malformed; none exists.
 
+> **OPEN (implementer, 2026-10-07):** Step 1 does not say what happens when two children of
+> *P* hold the same number of references. `crates/formats/src/gameplay/items.rs`
+> (`ItemClasses::discover`) picks the lower class index and counts references whose class is
+> *P* itself for no child. Please confirm or state a rule.
+
+> **OPEN (implementer, 2026-10-07):** Rule 4 cannot separate two kinds of §2.1. The in-world
+> interactive objects (2097) carry `WeenieType` `Door` like the doors (1722), and their
+> signature ("13 exclusive labels (`BigBattle_Interactive_*` extras, activity collections)")
+> names no label present in every record; the property-modifying tokens (3924) carry `Item`
+> like the general items, and their "11 exclusive `SPM_*` / `Usage_ModPropertyUsageData_*`
+> labels" are not listed. Please name, for each of the two, labels present in every record
+> of the class and absent from the others. Until then `ItemView::kind` reads them as Door
+> and General. Engineering choice recorded here: the kind is decided by, in order, the
+> signatures that §2.1 marks "all" or "exclusive" (weapon, recipe scroll, multi-recipe
+> scroll, package, text item, door, key), then the `WeenieType` label (`Weapon`, `Clothing`,
+> `Jewelry`, `Shield`, `PackageItem`, `Letter`, `Door`, `Key`, `Waypoint`, `Milestone`; the
+> other labels give no kind), then `Item_WornAppearanceMapList`, else General.
+
 ---
 
 <a id="s3"></a>
@@ -322,6 +340,16 @@ wardrobe record DID (0x20…). For every one of the 41,881 records this map equa
 `Item_WornAppearanceMapList` of the property set (same keys, same pairs). The 205 other items
 with that list (200 weapons, 5 general items) have no such map. `appearance.md` §4 reads the
 property list; readers need not read the mirror.
+
+> **OPEN (implementer, 2026-10-07):** The sentence "The 205 other items with that list (200
+> weapons, 5 general items) have no such map" is not reproduced. Running
+> `crates/formats/tests/gameplay_items_real_data.rs` (it decodes the object-state record of
+> every item that has `Item_WornAppearanceMapList`) finds root attribute 0x0905B9D8 resolving
+> to a non-empty `refmap_u32` in all 200 weapons with the list as well, and in each of them
+> the map equals the list (keys and the two integers); only the 5 general items have none.
+> Is the sentence wrong, or does it describe something other than a non-null reference to a
+> non-empty map? Should IT12 cover the weapons too? The test asserts IT12 for every record
+> that has a mirror and reports the classes; it does not assert which classes those are.
 
 ---
 
@@ -823,6 +851,18 @@ identified by DID or class. The same 91,154 items (the equippable ones) use 0x70
 | `Usage_TargetType`, `Usage_ValidTargetTypes` | bitfield 32 | 71,389 / 15,569 | |
 | `ItemDecay_Duration` | enum (0x2300030C) | 249 | Lifetime; seconds from the decay control (§9.8) |
 
+> **OPEN (implementer, 2026-10-07):** Field labels and types missing from the requirement
+> table: the fields of a `Usage_RequiredRaceEntry` (the implementation returns the raw
+> elements); the type of `Usage_RequiredVirtueRank` (read as an int or an enum key); the
+> types of `Usage_RequiredCraftTier` and `Usage_RequiredCraftMastery` (the row says
+> "DID / enum" for three labels; both are read as enum keys); the types of `Usage_Operator`
+> and `Usage_QuestStatus` (read as enum keys, as `map-data.md` §8.4.1 gives them); the
+> `_Array` forms of the barring labels (not read). Please state them.
+>
+> **Answered in part (2026-10-08, merge):** `interaction.md` §3.7.1 gives `Usage_Operator` as
+> an enum of mapper 0x23000039 (a label has one dictionary type wherever it occurs). The other
+> labels and types asked for here remain open.
+
 Where a label's value is the same in every item that has it but differs from the dictionary
 default (the last three booleans), the **presence** of the label is the information; an
 absent label stands for whatever default the reading code supplies. The client library supplies
@@ -1036,6 +1076,20 @@ client library looks for equipped items in wear states `Damaged` (key 1) or `Bro
 tell whether any equipped item needs attention. Whether the server uses the same arithmetic is
 not in the data.
 
+> **OPEN (implementer, 2026-10-07):** The entry field labels are abbreviated ("`…_MaxStructurePointsEnum`")
+> or not given. The implementation reads `ItemWearControl_MaxStructurePointsEnum`,
+> `ItemWearControl_MaxStructurePointsValue`, `ItemWearControl_DurabilityEnum` and
+> `ItemWearControl_DurabilityValue` (all four are defined in the dictionary and reproduce
+> §9.6 on every item). The entries of the repair-cost, wear-state and skill-gate arrays are
+> read by field type (first enum field = key, first float or int field = value), because
+> their labels are not given. Please spell out every entry label and value type.
+>
+> **Answered in part (2026-10-08, merge):** the "Roles" paragraphs above give, for the
+> repair-cost array, the key `Item_Quality` and a float factor (0.0 for a missing key); for the
+> wear-state array, the key `Item_WearState` and a float factor (1.0 for a missing key); and
+> state that the client library does not read the skill-gate array. The entry field labels of
+> those three arrays remain open.
+
 <a id="s6-4"></a>
 ### 6.4 Other control records
 
@@ -1060,6 +1114,17 @@ not in the data.
 > functions; which attribute holds these two lists, and which client feature reads them, was not
 > traced. A further BIN pass on the native loader of class 1202 would settle it; nothing in this
 > spec depends on it.
+
+> **OPEN (implementer, 2026-10-07):** The entry layout of `CooldownControl_DurationMapList` and
+> `ItemDecayControl_DurationMapList` is not given (labels of the key and seconds fields, and
+> the type of the decay seconds). The implementation reads each entry struct by field type:
+> first enum field = key, first float (or int) field = seconds. This reproduces §9.8 coverage
+> on every item. Please state the labels and types.
+>
+> **Answered in part (2026-10-08, merge):** `economy.md` §11.5.3 gives the cooldown entries:
+> `CooldownControl_DurationMapListEntry` with `CooldownControl_DurationType` (an enum key) and
+> `CooldownControl_DurationValue` (float, seconds). The `ItemDecayControl_DurationMapList`
+> entry labels and the type of its seconds remain open.
 
 ---
 
@@ -1159,6 +1224,10 @@ OPEN).** Whether the server uses the same rules is not in the data.
   2239 }. Named by runic level loot tables (class 2227, 1,050), by items (136) and by the runic
   combination control. Their use in loot is specified in `economy.md` §4.9.
 
+> **OPEN (implementer, 2026-10-07):** The value types of `Runic_Tier` (§7.2) and
+> `ItemAdvancement_Mod_Weight` (§7.3) are not given. The implementation accepts an int or an
+> enum key for the tier and any numeric value for the weight. Please state them.
+
 <a id="s7-3"></a>
 ### 7.3 Legacies and advancement tables
 
@@ -1178,6 +1247,16 @@ OPEN).** Whether the server uses the same rules is not in the data.
 > library does hold legendary examination, imbued-legacy level and reforge-table functions,
 > which this spec does not specify.) The tables are fully decodable with `property-system.md`.
 > A Tessera server needs its own rule (out of scope before M8, decision 0004).
+
+> **OPEN (implementer, 2026-10-07):** The records of classes 2139, 2338, 4015 (§7.3) and 3138
+> (§7.2) are not given typed readers because their labels are abbreviated or missing:
+> the field labels and types of the `ItemAdvancement_ProgressionListArray` entries
+> ("{ → 2134, weight }") and of the `ItemAdvancement_ProgressionPullCountList` entries
+> ("{ amount, weight }"); the full labels written "`…_Tier`" and "`…_DamageType`" (2338),
+> "initial and absolute max levels", "icon", "tooltip layout" and "`…_ClassicLegacyTransform`"
+> (4015), "`…_TransmutationCategory`", "`…_Output_List`" and the output entry fields (3138).
+> They stay reachable through the generic property access. Please spell out every label and
+> its type.
 
 <a id="s7-4"></a>
 ### 7.4 Cosmetic companions (class 3698, 563 records)
@@ -1467,6 +1546,11 @@ definition uses it**; it plays no part in items on this install.
 | IT18 | Every `WeenieType` value's low 16 bits are a major type of §2.3, except at most the single `AIRemoteDetector` record. |
 | IT19 | In every set without a member list, every `Set_ActiveCount` is at most `Set_MaxActiveMembers` (§7.1). |
 
+> **OPEN (implementer, 2026-10-07):** IT13 holds only when "record" means a 0x70 record. Counted
+> over all object DIDs (0x70–0x77), the classes of 2 of the 24 targets also hold a 0x76
+> singleton record. The real-data test counts 0x70 records. Please say which count IT13 and
+> §5.10 mean.
+
 A real-data test asserts IT1–IT19 and reports counts; it never asserts the counts themselves,
 which change with client updates.
 
@@ -1629,3 +1713,4 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 | 2026-10-07 | Review fixes, every count re-measured over all records: §9.2 double-precision disagreement is 533 items (half up; 624 half to even), not 93; F12, §9.3 step 3, IT5 and §13.3 state exact equality of the single-precision DPS product (23,204 of 23,204; double precision exact in 1,115); §2.4 gives references per source (91,274 / 100,761 / 116,764 = 308,799; 308,778 under 1734, 21 barter references to carry-alls); §8.2 treasure row says it counts class 1235 only (58 more from class 2372); §9.5 counts the 60,880 checked items (60,211 inside, 669 above, 0 below) and gives the 60,916-item counts separately. Status stays Review. |
 | 2026-10-08 | Revision (status Revised). OPEN items closed from the client library's bytecode (new source BC, method M1) and a second BIN pass on natives (BIN2), every data count re-measured over all records: §2.3 `WeenieType` bit structure (F31); §3.2 the class-701 object is the compiled static effect list (F32, IT14); §5.2 level-scaling rule, crafting preview offset, scaled characters (F33, F42); §5.3 vendor rules, `Item_Disenchant_Value` (F38, F39, IT16); §5.4 `Inventory_MaxQuantity` = 0, gem uniqueness, binding target, (false, true, true) row (F38, F40); §5.5 wear subject and repair-cost progression; §5.8 how modifiers are attached, F21 narrowed to the server's spellcraft; §5.9 spellcraft −1 and level-dependent effect windows (F35, IT15); §5.11 socket lock, type and level rules, the withdrawn "500 / 499" example (F36, IT17); §6.3 repair-cost and wear-state tables, skill-gate table unused (F37); §6.4 distribution offset role, exam/merge OPEN made precise; §7.1 client set rules, OPEN narrowed to server activation (F41, IT19); §7.3 legendary OPEN made precise; §9.2 and §9.5 client library forms (F34); §14 rewritten (settled list, five remaining callouts); invariants IT14–IT19; examples 13.8–13.11; provenance keys BC and BIN2, rows F31–F44. |
 | 2026-10-08 | Review fixes (status stays Revised): §13.11 repair example now uses factors exact in binary (discount 0.75 → 135), adds the −1.0 modifier case (−135) and the 0.9 case that truncates to 161 in single precision; §6.3 states the precision of the repair cost (single-precision factors, wrapping 32-bit difference converted as unsigned, out-of-range truncation), the current > maximum case and that the negative cost of a repairer without `Repair_CostModifier` is intended behaviour; §6.3 sale value states the integer product converted to single precision; F20 says 289,349 + 12 = 289,361; F37 row widened. |
+| 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §5.10 (`Usage_Operator` type: `interaction.md` §3.7.1), §6.3 (repair-cost and wear-state keys and factors: Roles paragraphs) and §6.4 (cooldown entry labels: `economy.md` §11.5.3), each answered in part; IT13 note kept next to the IT1–IT19 sentence. No fact changed; status unchanged. |

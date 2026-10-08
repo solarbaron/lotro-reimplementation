@@ -272,6 +272,32 @@ pub enum FormatError {
     /// The operation needs a cargo feature that was not enabled.
     #[error("feature `{0}` is not enabled")]
     FeatureDisabled(&'static str),
+
+    /// A gameplay record lacks a property that its kind requires
+    /// ([`crate::gameplay::common`]). Also reported when the label is not defined in the
+    /// dictionary, so the property cannot be present.
+    #[error("{what}: required property `{label}` is absent")]
+    MissingProperty {
+        /// The record kind or structure being read.
+        what: &'static str,
+        /// Dictionary label of the property.
+        label: &'static str,
+    },
+
+    /// A gameplay property holds a value of another type than the reader expects
+    /// ([`crate::gameplay::common`]). The dictionary decides value types, so this means the
+    /// install's dictionary disagrees with the spec.
+    #[error("{what}: property `{label}` is {found:?}, expected {expected}")]
+    PropertyTypeMismatch {
+        /// The record kind or structure being read.
+        what: &'static str,
+        /// Dictionary label of the property.
+        label: &'static str,
+        /// The value kind the reader expected.
+        expected: &'static str,
+        /// The type that was found.
+        found: crate::property::PropertyType,
+    },
 }
 
 impl FormatError {

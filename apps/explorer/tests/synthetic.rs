@@ -467,3 +467,24 @@ fn clip_catalogue_survives_unreadable_records() {
     assert_eq!(cat.errors.len(), 1, "{:?}", cat.errors);
     assert!(cat.errors[0].starts_with("0x05000001"), "{:?}", cat.errors);
 }
+
+#[test]
+fn gameplay_cards_fail_cleanly_without_a_dictionary() {
+    // The synthetic install has no property dictionary: every gameplay card fails with an
+    // error (schemas unavailable, or not a gameplay record), never a panic.
+    let i = install();
+    let decoder = tessera_explorer::gameplay::GameplayDecoder::new(Arc::clone(&i.ctx));
+    let job = JobContext::detached();
+    for did in [
+        0x7000_0001,
+        0x7900_0001,
+        0x7800_0001,
+        0x1400_0001,
+        0x3900_0001,
+        0x4400_0001,
+        0x0E00_0004,
+        RGBA_SURFACE,
+    ] {
+        assert!(decoder.card(did, &job).is_err(), "{did:#010x}");
+    }
+}

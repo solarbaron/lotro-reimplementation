@@ -185,6 +185,22 @@ of `CosmeticEntity_TrickArray` ([`interaction.md`](interaction.md)) and are not 
 the emote directory (§12.2). A reader that identifies kinds by properties sees them as
 emotes; one that needs only the emotes of §12.2 takes them from the emote directory.
 
+> **OPEN:** (implementation census, 2026-10-07) The identifying properties of the emote kind
+> are not unique to it in this install: `Emote_CommandString` with `Emote_ScriptID` is
+> carried by 275 property sets, the 273 emotes (root class 1049) and 2 records of root class
+> 3982. §12.2 offers a data-driven separation (the emote directory lists exactly the 273
+> emotes; the 2 others are not listed), but it needs the directory, not the set alone. Is
+> "listed in `Emote_AvailableList`" the intended rule, or does a property of the set itself
+> separate emotes from these records? The quest-item directory whose set is empty is not
+> identified by any property (20 of 21 are); it is only reached through the region
+> directory (§15).
+>
+> **Answered in part (2026-10-08, merge):** §2.1 "Other records with family properties" (F5)
+> identifies the 2 records as root class 3982, the entries of `CosmeticEntity_TrickArray`
+> (`interaction.md`); their sets lack `Emote_SourceText` and `Emote_Mounted_ScriptID`, and a
+> reader that needs only the emotes of §12.2 takes them from the emote directory. The remark on
+> the quest-item directory with an empty set is unchanged.
+
 <a id="s2-2"></a>
 ### 2.2 Discovery at run time
 
@@ -1071,6 +1087,19 @@ single matching entry and three with empty lists.
   13, 14 almost all.
 - 6,163 quest roles name no NPC (they are bound by role key or by script).
 
+> **OPEN:** (implementation census, 2026-10-07) The counts above are those of the four
+> holder kinds named (by root class here: NPCs 1724 40,461 entries, monsters 1723 2,232,
+> items 796 633, class 5785 80; together 43,406, of which 43,401 match). Reading every
+> property set finds one more `QuestDispenser_QuestRole` entry, in the
+> `QuestDispenser_ActiveQuests` array of one record of root class 763, and it matches (role
+> name and holder as `QuestDispenser_NPC`), giving 43,407 and 43,402. What kind of record is
+> that holder, and should §7.4 (and §3.2, which lists the same four sources) include it?
+>
+> **Answered in part (2026-10-08, merge):** §7.4 now names the four records of other root
+> classes (763, 798, 2651, 2814) that carry `QuestDispenser_ActiveQuests`, one with a single
+> matching entry (the class-763 record) and three with empty lists. What kind of record class
+> 763 is, and whether §3.2 should list it, remain open.
+
 A client uses these lists to know which quests an NPC takes part in (for example to show
 an offer marker); a server uses the quest side.
 
@@ -1919,6 +1948,11 @@ Note:
 
 The role names in a note are role names of the quest's `Quest_RoleArray` (§7.3).
 
+> **OPEN:** (implementation census, 2026-10-07) 3 of the 16,124 `QuestDispenser_QuestRole`
+> structs in note infos have no `QuestDispenser_RoleName` (a quest DID only); the other
+> 16,121 name a role of a present quest's `Quest_RoleArray`. What does a note role without a
+> role name stand for (every role of the quest, or none)?
+
 <a id="s17-2"></a>
 ### 17.2 Use
 
@@ -2035,6 +2069,30 @@ Checked on this install (all records). A reader may warn on a violation but must
 | V20 | In the quest-target index, the number of target groups of an objective equals its number of completion-condition events, in all objectives of present quests but 2 (§16.3). |
 | V21 | Every section-4 second string equals a `Quest_InstanceItemKey` of an instance property set in the landblock of the entry's position (§16.3). |
 | V22 | Every role of the source role arrays has a flattened counterpart (same objective, same success text) in `Quest_RoleArray`, except 9 event roles (§7.3). |
+
+> **OPEN:** (implementer choices where the spec is silent, `crates/formats/src/gameplay/quests.rs`;
+> to be confirmed or replaced) (1) An objective without `Quest_ObjectiveIndex` makes the
+> strict §5.7 numbering of its quest fail (`MissingProperty`) rather than guessing an
+> ObjectiveID; a lenient variant leaves such an objective out of the walk (its entries take
+> no EventID, so later EventIDs shift) and reports its stored position, so that the rest of
+> the quest is still numbered. Which ObjectiveID, if any, the compiled form would give such
+> entries is not stated. (2)
+> Enum-typed fields (tiers, actions, operators, statuses) are also accepted when the
+> dictionary types them as a non-negative Int. (3) §9.2 step 2 gives no table for a level
+> below 0 or above the length of `QuestControl_RewardLevelDIDArray`, and for a null element.
+> (4) The listen list of types 19 and 29 (§6.2) is not derived (the choice of 1 or 11 is
+> OPEN). (5) The map-note decoder allocates for at most one note per 19 bytes of payload
+> (position flag byte, three DIDs, a null layers PID, an empty info set). (6) In
+> `Quest_FailureConditionArray` and `Quest_TrackedConditionsArray` only elements with the
+> PID of `Quest_FailureCondition` or `Quest_TrackedCondition` (§5.1) are conditions; any other
+> element is skipped and takes no ConditionID, as in an objective's condition array.
+>
+> **Answered in part (2026-10-08, merge):** (4) is settled by §6.2 "Choice of *x*" (C6,
+> invariant V17): *x* is 11 when an action-2 role of the event's objective has the event's
+> role key, 1 otherwise, so the listen list of types 19 and 29 can be derived. For (3), §9.2
+> now carries an OPEN for levels above 160 and override-driven levels (the server chooses the
+> table); the cases below 0 and of a null element are not addressed. (1), (2), (5) and (6)
+> remain open.
 
 ---
 
@@ -2177,3 +2235,4 @@ override map) has `Quest_ChallengeLevel` 20 and a struct with `Usage_MinLevel` 3
 | 2026-10-07 | First version (Review). |
 | 2026-10-07 | Repair round after review (status stays Review). (1) §5.1, §5.2, §5.7 step 1.2, §6.2, V5, §20.1: a compound event holds 1 … 6 direct entries and 0 … 2 entry arrays (composition table added; 1,012 compounds have 2 … 6 direct entries and no array, and 4 more have three direct entries and one array, together the review's 1,016); the walk takes every direct entry once and every entry array in stored order; "member of a compound" defined by that walk; sibling lists are in ascending EventID order; empty conditions still take a ConditionID; condition shapes counted; second worked example with two direct entries. (2) §7.1, §7.2, V6: `Quest_ObjectiveIndex` has no dictionary default; per-container presence table; action 5 has it absent, which must stay distinct from 0; action-5 roles are assigned to no objective (new OPEN on server-side limits). (3) §5.2: count key written in words. (4) §16.3 section 4: full split of the 208,859 entries (matched, unmatched, missing quests; DID 0 and non-zero); the earlier 189,047 counted DID-0 entries as matches and is replaced by 160,249 of 172,069 non-zero DIDs; the 11,820 others are loot monsters, landmarks, missing records and 6 talk targets, not selector agents as stated before; role-key strings are a full census (28,282 present-quest strings all match; 72 under missing quests); unmatched objectives are 919 with fewer and 2 with more groups. (5) §21: §9.6 lists medal 1 only. (6) §6.3: the two doubles are bit pattern 0xC7EFFFFFE0000000 (most negative finite 32-bit float widened), not a 64-bit minimum; all fifteen attributes of the effect-application objects tabulated; provenance row C3 added; rows O1, O4, C2, R1, X1 updated. |
 | 2026-10-08 | Revision (status Revised; Accepted text changed): OPEN closures with new probes over all records (OBS2), the class library's script code (WLB, new key) and a second M4 pass (BIN2, new key); provenance rows F5, C4–C6, O5, O6, R4–R8, P2, W3, W4, D2, X2, M2 added and C1, R1, P1, D1, X1, B1 updated. Closed: §2.1 (census: no further kind; 2 class-3982 emote-like records); §4.2 top-level `Usage_*` and §4.3 `Quest_IgnoreDefaultChallengeLevel` (both via the compiled permission set); §5.2 completion rule (any condition completes an objective; counted conditions; never-finish and failure events); §5.5 selector landmark field (the creature's run-time `Landmark_DataID`); §6.1 derivation of the compiled permission set (20,805 of 20,807 exact) and root attribute 0x16D4503 (comment or failure-text roles); §6.2 type-22 attributes and the 1/11 choice in listen lists; §7.1 species variant lines; §7.3 composition of `Quest_RoleArray` (counts re-measured with global roles keyed by absent objective, replacing the 17,247 / 2,645 / 81 / 834 split); §7.7 all passing comments collected, compiled requirement slots; §7.8 bark candidates, uniform random pick, radius, per-player interval in seconds, duration; §7.9 second scene float = video-track DID bits (the earlier statement that the DID is not repeated is corrected); §8.2 evaluation of requirement lists and entries (not numeric); §9.6 medal 1 and the medal search; §9.8 role of `Quest_MinChallengeLevelArray` and the limiter record; §10.2 compiled directory index (progress records of objective-1 and objective-0 events, event-type index); §16.3 section-1/3 radius and entire-landblock flag, second string = `Quest_InstanceItemKey`, target groups = completion events, filter bit 0x80 = landmark; §18 replaced by findings. Remaining OPENs made precise (§9.1, §9.2, §9.8 units, §10.3, §14.3, §17.2) and inline unknowns turned into callouts (§4.2, §5.3); new narrow OPENs §7.8 (quest ranking), §10.2 (selector field choice), §18 (event-class code). Review note of 2026-10-07: (a) §7.4 four further records named; (b) the action-5 offer rule labelled a Tessera rule; (c) §21 rewritten. New invariants V15–V22, worked examples §20.5–§20.6. |
+| 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §2.1 emote-like records (F5), §7.4 class-763 holder and §19 implementer choices (4) via §6.2 C6 and (3) via the §9.2 OPEN, each answered in part. No fact changed; status unchanged. |

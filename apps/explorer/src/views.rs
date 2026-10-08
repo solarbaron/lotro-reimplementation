@@ -135,6 +135,9 @@ pub(crate) fn central(app: &mut ExplorerApp, ui: &mut Ui) {
             },
             ViewKind::Landblock => crate::world_view::landblock_view(ui, l, cur, &mut actions),
             ViewKind::Sky => crate::world_view::sky_view(ui, l, cur, &mut actions),
+            ViewKind::Gameplay => {
+                crate::gameplay::view::gameplay_view(ui, l, cur, &checker, &mut actions);
+            }
             ViewKind::Character => match viewport.as_mut() {
                 Some(vp) => crate::anim_view::character_view(
                     ui,

@@ -169,6 +169,8 @@ pub struct CharacterStats {
     pub entities: usize,
     /// Entities with an animation component.
     pub animated: usize,
+    /// Of `animated`: entities whose animation instance has a sampled pose.
+    pub posed: usize,
     /// Characters drawn last frame.
     pub drawn: usize,
     /// Sampling jobs submitted last frame.
@@ -1317,6 +1319,11 @@ impl CharacterLayer {
         let mut s = CharacterStats {
             entities: self.store.len(),
             animated: self.store.animated().count(),
+            posed: self
+                .store
+                .animated()
+                .filter(|(_, a, _)| self.scheduler.has_pose(a.instance))
+                .count(),
             gpu_bytes: self.mesh_bytes,
             ..self.stats
         };

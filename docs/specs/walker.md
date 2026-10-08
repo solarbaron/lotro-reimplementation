@@ -187,6 +187,18 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 > longest audio update, the most audible voices, the underruns during the log and the
 > highest mixer load. The owner of this spec should fold them into the list above.
 
+> **OPEN:** (clean-room implementer, 2026-10-09; engineering choice, no client fact) the
+> `--screenshot` settle wait above is wall-clock (`--settle-timeout`), so real-data tests
+> that assert the settled state failed on a heavily loaded machine although loading was
+> still progressing. Library callers (tests) may now choose a progress wait instead
+> (`tessera_client::headless::run_with` with `SettleWait::Progress`): the settled rule is
+> unchanged (20 consecutive settled frames), but the run gives up only after a given number
+> of consecutive frames in which no loading work finished or arrived (completion and
+> outstanding-work counters of the streamer, terrain, objects, characters including
+> sampled poses, water, frills, sky and resolver), or after a frame cap; no wall-clock
+> limit applies. The command line keeps `--settle-timeout`. The owner of this spec should
+> decide whether to fold this into the list above or expose it on the command line.
+
 <a id="s8"></a>
 ## 8. Verification (2026-10-04, this install, GTX 1070 Ti, Vulkan, release build)
 

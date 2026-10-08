@@ -258,6 +258,32 @@ const MOVE_INTERVAL: Duration = Duration::from_millis(100);
 /// How often the process RSS is sampled.
 const RSS_INTERVAL: Duration = Duration::from_millis(500);
 
+/// The loading state behind [`Walker::settled`] (see [`Walker::load_progress`]): equal
+/// snapshots mean no loading work finished or arrived in between.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LoadProgress {
+    /// The viewer is placed.
+    pub placed: bool,
+    /// Streamer: completed bundle jobs, integrated bundles, failed and retried requests.
+    pub stream: [u64; 4],
+    /// Streamer, last update: landblocks loading, near-ring blocks missing, deferred.
+    pub report: [usize; 3],
+    /// Terrain: built, meshed, layered, incomplete, pending, images waiting, failed.
+    pub terrain: [usize; 7],
+    /// Objects: parts ready, pending, failed; models; textures ready, pending.
+    pub objects: [usize; 6],
+    /// Characters: entities, animated, posed; figures ready, pending, failed.
+    pub characters: [usize; 6],
+    /// Water surfaces still loading.
+    pub water_pending: usize,
+    /// Frill sectors waiting.
+    pub frills_waiting: usize,
+    /// Sky parts all on the GPU or failed.
+    pub sky_settled: bool,
+    /// Resolver lookups outstanding.
+    pub resolver_pending: usize,
+}
+
 /// Per-frame GPU upload allowance (ARCH §8: an upload budget keeps frame times stable).
 #[derive(Debug, Clone, Copy)]
 pub struct UploadBudget {
@@ -1082,6 +1108,58 @@ impl Walker {
             out.push("resolver");
         }
         out
+    }
+
+    /// A snapshot of the loading work behind [`Walker::settled`]: completion counters and
+    /// outstanding-work counts of every layer it checks. Two snapshots differ when some
+    /// loading work finished or new work arrived; per-frame draw and timing counters are
+    /// left out, so a scene that only renders gives equal snapshots. Headless runs that
+    /// wait for the settled state as long as loading progresses compare them
+    /// ([`crate::headless::SettleWait`]).
+    #[must_use]
+    pub fn load_progress(&self) -> LoadProgress {
+        let st = self.streamer.stats();
+        let t = self.terrain.stats();
+        let o = self.objects.stats();
+        let c = self.characters.stats();
+        LoadProgress {
+            placed: self.controls.placed(),
+            stream: [st.jobs, st.integrated, st.failed, st.retried],
+            report: [
+                self.last_report.loading,
+                self.last_report.near_missing,
+                self.last_report.deferred,
+            ],
+            terrain: [
+                t.built,
+                t.meshed,
+                t.layered,
+                t.incomplete,
+                t.pending,
+                t.images_waiting,
+                t.failed,
+            ],
+            objects: [
+                o.parts_ready,
+                o.parts_pending,
+                o.parts_failed,
+                o.models,
+                o.textures_ready,
+                o.textures_pending,
+            ],
+            characters: [
+                c.entities,
+                c.animated,
+                c.posed,
+                c.figures_ready,
+                c.figures_pending,
+                c.figures_failed,
+            ],
+            water_pending: self.water.stats().pending,
+            frills_waiting: self.frills.stats().waiting,
+            sky_settled: self.env.sky_settled(&self.objects),
+            resolver_pending: self.resolver.pending(),
+        }
     }
 
     /// The character layer (tests and diagnostics).

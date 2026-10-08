@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | Re-review 2026-10-07 (separate dirty-room session): **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08 (separate dirty-room session): **changes requested**; §13.11 repair example gives 161, not 162, under §6.3's single-precision arithmetic; status stays Revised. Re-review 2026-10-08 (separate dirty-room session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §2.1, §2.4, §3.3, §5.7, §6.3, §6.4, §7.2, §7.3, IT12 and IT13 changed (rows F45–F52); status Revised until a separate session reviews it. |
+| **Review record** | Re-review 2026-10-07 (separate dirty-room session): **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08 (separate dirty-room session): **changes requested**; §13.11 repair example gives 161, not 162, under §6.3's single-precision arithmetic; status stays Revised. Re-review 2026-10-08 (separate dirty-room session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §2.1, §2.4, §3.3, §5.7, §6.3, §6.4, §7.2, §7.3, IT12 and IT13 changed (rows F45–F53); status Revised until a separate session reviews it. |
 | **Implements into** | `crates/wstate` / `crates/props` (item identification and typed accessors), a future gameplay-data crate (value, DPS, armour and durability evaluation; set and legacy tables), `apps/explorer` (item card), `crates/net` sandbox backend (inventory, vendors, loot) |
 | **Companion specs** | [`wlib.md`](wlib.md) (class library, ancestor chains, §9 parent map); [`wstate.md`](wstate.md) (object-state records, §3–§8); [`property-system.md`](property-system.md) (dictionary §2, value encodings §4, property sets §5, the +0x09000000 rule §6.2, enum resolution §7, DID maps §8); [`string-table.md`](string-table.md) §9 (rendering StringInfo); [`icon-layers.md`](icon-layers.md) (item icon composition); [`appearance.md`](appearance.md) §4–§5 (worn and held visuals, the only part of items specified before this spec); [`ui-layout.md`](ui-layout.md) (tooltip layouts); [`combat-data.md`](combat-data.md) (progressions §4, `Mod_Array` §5, effects §6); [`economy.md`](economy.md) (loot §4, recipes §5, vendors and barter §6). This spec starts from decoded property sets and decoded object-state records. |
 
@@ -112,6 +112,7 @@ are in Review; section references to them are to their 2026-10-07 versions.)
 | F49 | Labels and value types of the records of classes 2134, 2139, 2338, 4015 (§7.3) and 3138 (§7.2); `Runic_Tier` enum (0x230002A0), `ItemAdvancement_Mod_Weight` int | OBS3 (all records of each class) | Confirmed 2026-10-09 |
 | F50 | Of the 24 targets of IT13, the root classes of two (1603, 1547 here) also own a 0x76 singleton record (`wstate.md` §3); IT13 and §5.10 count 0x70 records | OBS3; `wstate.md` OBS (the 11 records with prefix 0x76) | Confirmed 2026-10-09 |
 | F51 | §2.4 step 1 tie rule and the kind order of rule 4 | Decision (Tessera), not a fact about the original | Decision 2026-10-09 |
+| F53 | `InventoryControl` compiles the examination list (38 PIDs) followed by the merge list (6) into one class-17 list that the examination-tooltip builder reads, copying each listed property the object holds; the merge list alone is a second class-17 list that no class-library code reads (§6.4) | OBS3 (the object-state record 0x70000230 decoded with `tessera-wstate`, compared with its property set); BC (class 1202 getter, class 269 function 1) | Confirmed 2026-10-09 (meaning of native package 166 function 10 as a property lookup inferred from its use) |
 | F52 | Getters of `Inventory_CanBeContained`, `Item_MithrilCost` and `SpellcraftCalculator` located with their callers; the callers pass the values to natives not specified in `wlib-bytecode.md` §7, so their effect stays OPEN (§14) | BC (re-read 2026-10-09) | Confirmed (location only) 2026-10-09 |
 
 ---
@@ -1164,13 +1165,24 @@ not in the data.
 | `CosmeticPetDirectory` | 0x7004832E (4091) | Cosmetic companions (§7.4) |
 | `WardrobeControl` | 0x7001BE4C (2639) | Wardrobe (appearance family) |
 
-> **OPEN:** What `InventoryControl_ExamProperty_Array` and `…_MergeProperty_Array` are used for.
-> Neither PID occurs in the client library's bytecode, and the first BIN pass found no native
-> use of item PIDs (the hits were user-interface identifiers). The `InventoryControl` script
-> object (class 1202) holds 15 map or list attributes filled by native code, read by its getter
-> functions; which attribute holds these two lists, and which client feature reads them, was not
-> traced. A further BIN pass on the native loader of class 1202 would settle it; nothing in this
-> spec depends on it.
+**Examination and merge lists (Confirmed, F53; settles most of the former OPEN).** The
+`InventoryControl` object record (0x70000230 here) stores both lists in its compiled half: root
+attribute 0x05D1B393 is a native class-17 list of 44 PIDs, the 38 of
+`InventoryControl_ExamProperty_Array` followed by the 6 of `InventoryControl_MergeProperty_Array`,
+in stored order; root attribute 0x04154F39 is a class-17 list of the 6 merge PIDs alone. The
+client library reads the first through a getter of class 1202 (function 33 here), and its one
+caller is the function that assembles an item's examination (tooltip) data (class 269 function
+1 here, inherited by 412): it creates a set with `UI_Examination_Tooltip_DID` (and
+`UI_Examination_Tooltip_AlternateSourceIID` when there is an alternate source), then, for each PID
+of the list in order that the examined object's properties hold, appends that property to the
+set's `UI_Examination_Tooltip_ArrayHelper` array. So the examination list names the per-instance
+values an examination (tooltip) carries, and the merge PIDs are carried too. No class-library
+code reads the separate merge list.
+
+> **OPEN:** What the separate merge list (root attribute 0x04154F39) is used for, beyond
+> adding its PIDs to the examination list. No class-library function reads it; a native use
+> (stack merging is suggested by the label only) was not traced. Nothing in this spec depends on
+> it.
 
 > **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The entry layout of `CooldownControl_DurationMapList` and
 > `ItemDecayControl_DurationMapList` is not given (labels of the key and seconds fields, and
@@ -1765,7 +1777,8 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 > does not specify, so the effect is still not readable from the library alone; a BIN pass
 > on those natives would settle it.
 
-> **OPEN:** Use of `InventoryControl_ExamProperty_Array` and `…_MergeProperty_Array` (§6.4).
+> **OPEN:** Use of the separate merge list of `InventoryControl` (§6.4); the examination list is
+> settled (F53).
 
 ---
 
@@ -1797,5 +1810,5 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 | 2026-10-07 | Review fixes, every count re-measured over all records: §9.2 double-precision disagreement is 533 items (half up; 624 half to even), not 93; F12, §9.3 step 3, IT5 and §13.3 state exact equality of the single-precision DPS product (23,204 of 23,204; double precision exact in 1,115); §2.4 gives references per source (91,274 / 100,761 / 116,764 = 308,799; 308,778 under 1734, 21 barter references to carry-alls); §8.2 treasure row says it counts class 1235 only (58 more from class 2372); §9.5 counts the 60,880 checked items (60,211 inside, 669 above, 0 below) and gives the 60,916-item counts separately. Status stays Review. |
 | 2026-10-08 | Revision (status Revised). OPEN items closed from the client library's bytecode (new source BC, method M1) and a second BIN pass on natives (BIN2), every data count re-measured over all records: §2.3 `WeenieType` bit structure (F31); §3.2 the class-701 object is the compiled static effect list (F32, IT14); §5.2 level-scaling rule, crafting preview offset, scaled characters (F33, F42); §5.3 vendor rules, `Item_Disenchant_Value` (F38, F39, IT16); §5.4 `Inventory_MaxQuantity` = 0, gem uniqueness, binding target, (false, true, true) row (F38, F40); §5.5 wear subject and repair-cost progression; §5.8 how modifiers are attached, F21 narrowed to the server's spellcraft; §5.9 spellcraft −1 and level-dependent effect windows (F35, IT15); §5.11 socket lock, type and level rules, the withdrawn "500 / 499" example (F36, IT17); §6.3 repair-cost and wear-state tables, skill-gate table unused (F37); §6.4 distribution offset role, exam/merge OPEN made precise; §7.1 client set rules, OPEN narrowed to server activation (F41, IT19); §7.3 legendary OPEN made precise; §9.2 and §9.5 client library forms (F34); §14 rewritten (settled list, five remaining callouts); invariants IT14–IT19; examples 13.8–13.11; provenance keys BC and BIN2, rows F31–F44. |
 | 2026-10-08 | Review fixes (status stays Revised): §13.11 repair example now uses factors exact in binary (discount 0.75 → 135), adds the −1.0 modifier case (−135) and the 0.9 case that truncates to 161 in single precision; §6.3 states the precision of the repair cost (single-precision factors, wrapping 32-bit difference converted as unsigned, out-of-range truncation), the current > maximum case and that the negative cost of a repairer without `Repair_CostModifier` is intended behaviour; §6.3 sale value states the integer product converted to single precision; F20 says 289,349 + 12 = 289,361; F37 row widened. |
-| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 (every set of the install walked at every depth; dictionary types) and rows F45–F52. Implementer OPENs answered: §2.4 tie rule and kind order (Decision F51), §2.1 signatures of classes 1722, 2097, 3924 (F45), §3.3 and IT12 weapons carry the worn mirror (F46; the earlier sentence was wrong), §5.7 requirement types (F47), §6.3 wear-control entry labels and §6.4 decay entry labels (F48), §7.2/§7.3 labels and types of classes 2134, 2139, 2338, 4015, 3138, `Runic_Tier`, `ItemAdvancement_Mod_Weight` (F49), IT13 counts 0x70 records (F50). §14 unread-label callout: the getters and callers were located (F52), effect still OPEN. Still OPEN: F21 spellcraft, server set activation, legendary rules, the unread labels, the exam/merge arrays (all server behaviour or native code). |
+| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 (every set of the install walked at every depth; dictionary types) and rows F45–F53. Implementer OPENs answered: §2.4 tie rule and kind order (Decision F51), §2.1 signatures of classes 1722, 2097, 3924 (F45), §3.3 and IT12 weapons carry the worn mirror (F46; the earlier sentence was wrong), §5.7 requirement types (F47), §6.3 wear-control entry labels and §6.4 decay entry labels (F48), §7.2/§7.3 labels and types of classes 2134, 2139, 2338, 4015, 3138, `Runic_Tier`, `ItemAdvancement_Mod_Weight` (F49), IT13 counts 0x70 records (F50). §6.4 examination list: compiled form and its reader found (F53). §14 unread-label callout: the getters and callers were located (F52), effect still OPEN. Still OPEN: F21 spellcraft, server set activation, legendary rules, the unread labels, the separate merge list (the examination list is settled, F53; all others server behaviour or native code). |
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §5.10 (`Usage_Operator` type: `interaction.md` §3.7.1), §6.3 (repair-cost and wear-state keys and factors: Roles paragraphs) and §6.4 (cooldown entry labels: `economy.md` §11.5.3), each answered in part; IT13 note kept next to the IT1–IT19 sentence. No fact changed; status unchanged. |

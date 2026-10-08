@@ -211,6 +211,7 @@ impl Runtime {
         plugins.set_music(crate::audio::player_music::PlayerMusic::new(
             crate::audio::player_music::MusicConfig::from_args(args, &root),
         ));
+        plugins.set_startup_commands(args.commands.clone());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -306,6 +307,7 @@ impl Runtime {
     fn on_loader_event(&mut self, ev: LoaderEvent) -> Option<DecodedTexture> {
         match ev {
             LoaderEvent::NoData { reason } => {
+                self.plugins.data_unavailable();
                 self.status = DataStatus::NoData(reason);
                 self.texture_settled = true;
             }
@@ -313,6 +315,7 @@ impl Runtime {
                 if let Some(m) = self.plugins.music_mut() {
                     m.attach_data(Arc::clone(&set), &root);
                 }
+                self.plugins.attach_data(Arc::clone(&set));
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
             }

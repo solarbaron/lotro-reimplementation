@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A minimal chat overlay for the walker (M7): the last [`CHAT_LINES`] lines received,
 //! shown for [`LINE_TTL`] (all of them while typing), and a one-line input. Enter opens
-//! the input, Enter sends the line on the Say channel (`Command::Chat`), Escape cancels.
-//! M5 builds the real chat window; this is only enough to talk on a test server.
+//! the input, Enter submits the line, Escape cancels. Submitted lines go to the client's
+//! command dispatcher ([`dispatch`], decision 0020): plain text is said on the Say channel,
+//! `/play` and the other client commands run locally in every session, and an unknown
+//! command posts an error line and sends nothing. M5 builds the real chat window.
 //!
 //! Chat text is hostile: it is shown as plain text (`tessera-protocol.md` §10.5), control
 //! characters become spaces and lines are capped by the HUD rasteriser
@@ -23,9 +25,12 @@ use tessera_net::ChatChannel;
 use tessera_net::model::MAX_CHAT_LEN;
 use tessera_render::{Pass, Renderer};
 
+use super::WalkerSession;
 use super::controls::Controls;
 use super::hud::TextPanel;
+use crate::commands::{LineKind, LocalLine};
 use crate::net::ChatLine;
+use crate::plugins::CommandSink;
 
 /// Lines shown (the newest).
 pub const CHAT_LINES: usize = 8;
@@ -45,6 +50,7 @@ const GOLD: [u8; 3] = [255, 214, 120];
 const TELL: [u8; 3] = [220, 160, 255];
 const YELL: [u8; 3] = [255, 170, 140];
 const INPUT: [u8; 3] = [150, 230, 255];
+const ERROR: [u8; 3] = [255, 120, 110];
 
 /// What [`ChatOverlay::handle`] did with an input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +72,26 @@ pub(crate) fn route(chat: &mut ChatOverlay, controls: &mut Controls, event: &Raw
         Routed::Pass => controls.handle(event),
         Routed::Opened => controls.handle(&RawEvent::FocusLost),
         Routed::Consumed => {}
+    }
+}
+
+/// Feeds the lines submitted since the last call to the command dispatcher `commands`, in
+/// order, with the world `session` for channel commands, then shows the lines the client
+/// posted (command replies, player music, plugin output). A rejected line is not sent and
+/// does not stay queued (decision 0020 item 4).
+pub fn dispatch(
+    chat: &mut ChatOverlay,
+    commands: &mut dyn CommandSink,
+    session: &mut Option<&mut dyn WalkerSession>,
+    now: Instant,
+) {
+    while let Some(line) = chat.take_outgoing() {
+        commands.submit_chat(&line, crate::commands::shorten(session.as_deref_mut()), now);
+    }
+    let mut local = Vec::new();
+    commands.take_lines(&mut local);
+    for line in &local {
+        chat.push_local_line(line, now);
     }
 }
 
@@ -203,9 +229,23 @@ impl ChatOverlay {
         self.push(&line, now);
     }
 
+    /// Shows a line the client posted: type 1 `Error` lines in red, type 8 `Log` lines
+    /// as system lines.
+    pub fn push_local_line(&mut self, line: &LocalLine, now: Instant) {
+        let color = match line.kind {
+            LineKind::Error => ERROR,
+            LineKind::Log => GOLD,
+        };
+        self.push_text(line.text.clone(), color, now);
+    }
+
     /// Adds a received line (the oldest goes beyond [`CHAT_LINES`]).
     pub fn push(&mut self, line: &ChatLine, now: Instant) {
-        let (mut text, color) = format_line(line);
+        let (text, color) = format_line(line);
+        self.push_text(text, color, now);
+    }
+
+    fn push_text(&mut self, mut text: String, color: [u8; 3], now: Instant) {
         if let Some((cut, _)) = text.char_indices().nth(MAX_STORED_CHARS) {
             text.truncate(cut);
         }

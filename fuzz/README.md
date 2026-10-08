@@ -119,6 +119,7 @@ stable without libFuzzer.
 | `scriptgraph_runtime` | the script-graph runtime on decoded tables and scriptlets or on generated graphs (every control-flow kind, sounds, environments, driven pairs) under arbitrary operations and clock steps | `docs/specs/script-runtime.md` |
 | `client_audio` | the walker's world-audio inputs (`apps/client/src/audio/clock.rs` and `props.rs`, included by path): game-time decoding, area-music and monitor-volume rules, and the read-only `[Sound]` import of `tessera-settings` | `sound.md` §10.3, `environment.md` §6, `install-layout.md` §8.3 |
 | `client_player_music` | the player-music chat commands (`apps/client/src/audio/player_music/command.rs`, included by path) on arbitrary text | `abc-dialect.md` §11 |
+| `client_command_line` | the client command-line pipeline (`apps/client/src/commands/line.rs`, included by path) on arbitrary text: tokens never empty, arguments trimmed, history bounded and free of duplicates | `chat-window.md` §6.3, §7.2–§7.4, decision 0020 |
 
 ## Running
 

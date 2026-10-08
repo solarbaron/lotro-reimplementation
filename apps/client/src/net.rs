@@ -196,8 +196,8 @@ impl crate::walker::WalkerSession for World {
         World::drain_hud_chat(self, out);
     }
 
-    fn send_chat(&mut self, now: Instant, text: &str) -> bool {
-        match World::try_say(self, now, text) {
+    fn send_chat(&mut self, now: Instant, channel: &ChatChannel, text: &str) -> bool {
+        match World::try_chat(self, now, channel.clone(), text) {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!("chat not sent: {e}");
@@ -634,10 +634,25 @@ impl World {
     /// As `Session::send`: [`NetError::InvalidState`] when not in the world (connecting,
     /// failed, disconnected), [`NetError::InvalidCommand`] for text the protocol refuses.
     pub fn try_say(&mut self, now: Instant, text: &str) -> Result<(), NetError> {
+        self.try_chat(now, ChatChannel::Say, text)
+    }
+
+    /// Sends `text` on `channel` (decision 0020: the dispatcher's channel commands).
+    ///
+    /// # Errors
+    ///
+    /// As [`World::try_say`]; also [`NetError::InvalidCommand`] for the system channel or
+    /// a tell recipient the protocol refuses.
+    pub fn try_chat(
+        &mut self,
+        now: Instant,
+        channel: ChatChannel,
+        text: &str,
+    ) -> Result<(), NetError> {
         self.session.send(
             now,
             Command::Chat {
-                channel: ChatChannel::Say,
+                channel,
                 text: text.to_owned(),
             },
         )

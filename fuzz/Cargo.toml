@@ -920,3 +920,10 @@ path = "fuzz_targets/client_player_music.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "client_command_line"
+path = "fuzz_targets/client_command_line.rs"
+test = false
+doc = false
+bench = false

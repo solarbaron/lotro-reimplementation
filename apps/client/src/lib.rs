@@ -7,6 +7,8 @@
 //! - [`runtime`]: everything except presentation, shared by both.
 //! - [`data`]: background install discovery, archive statistics and the showcase texture.
 //! - [`net`], [`plugins`], [`scene`], [`input`]: subsystem glue.
+//! - [`commands`]: the one command dispatcher (decision 0020): registry, line pipeline,
+//!   client built-ins; the chat overlay, `--command` and plugins feed it.
 //! - [`walker`]: the offline world walker (ROADMAP M3, M4 characters); [`walker_host`]
 //!   wires it into the runtime, [`headless`] runs it offscreen (`--screenshot`,
 //!   `--fly-path --headless`, `--duration --headless`, and `--walk-path`, which needs no
@@ -19,6 +21,7 @@ pub mod app;
 pub mod audio;
 pub mod avatar;
 pub mod cli;
+pub mod commands;
 pub mod data;
 pub mod headless;
 pub mod input;

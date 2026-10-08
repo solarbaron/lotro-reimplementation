@@ -224,7 +224,7 @@ pub fn plan_emitters<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::props::{AreaMusic, PlaceValues};
+    use crate::audio::props::AreaMusic;
     use crate::audio::scripts::EmitterScripts;
     use tessera_formats::script_table::resolve::PropertyState;
 
@@ -238,7 +238,8 @@ mod tests {
             bundle: identity,
             area: AreaMusic::default(),
             area_did: None,
-            place: PlaceValues::default(),
+            location: Arc::default(),
+            cells: std::collections::HashMap::new(),
             emitters,
             monitors: Vec::new(),
         }
@@ -249,6 +250,7 @@ mod tests {
             id: EntityId(id),
             position: [x, 0.0, 0.0],
             rotation: [0.0, 0.0, 0.0, 1.0],
+            cell: 0,
             scripts: Arc::new(EmitterScripts {
                 tables: Vec::new(),
                 startup_scripts: Vec::new(),

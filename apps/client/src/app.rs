@@ -286,6 +286,7 @@ impl App {
                 rt.world
                     .as_mut()
                     .map(|w| w as &mut dyn crate::walker::WalkerSession),
+                &mut rt.plugins,
                 now,
                 dt,
             );

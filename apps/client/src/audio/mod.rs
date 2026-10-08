@@ -9,6 +9,7 @@
 //! | Script tables, the avatar's start-up scripts, emitters and monitors per landblock | [`scripts`] | `sound.md` §10.1, §10.3, §11 |
 //! | The graph's effect sink on the engine | [`sink`] | `sound.md` §6.5, §8, §9.2–§9.4 |
 //! | Player properties of the music graph | [`props`] | `sound.md` §10.2–§10.3 |
+//! | Indoors and outdoors: location property sources, events, per-property precedence | [`location`] | `sound.md` §10.8 |
 //! | Game clock (`World_IsNight`) | [`clock`] | `environment.md` §6, §11.1 |
 //!
 //! # Per frame ([`WorldAudio::update`])
@@ -20,8 +21,14 @@
 //!    emitters, monitors); static emitters are spawned in the graph when the viewer comes
 //!    within their reach and despawned when it leaves or the landblock unloads (§11).
 //! 4. The avatar runs `Startup` and its start-up scripts, among them
-//!    `SND_music_system_startup` (§12.4 step 1); its properties follow the place on every
-//!    change (§12.4 step 2, the Decisions of §10.3).
+//!    `SND_music_system_startup` (§12.4 step 1), after its location properties are set
+//!    from the spawn position (§10.8.6 step 8). Its properties follow the place on every
+//!    change (§12.4 step 2, the Decisions of §10.3): the location sources of §10.8.1 react
+//!    to the landblock and cell events of the **character's** position and cell (the
+//!    walker's physics cell, §10.8.6 step 1; in free flight the camera eye's cell), never to
+//!    the camera's cell in walk mode; changed values reach the graph before it advances.
+//!    Static emitters get the same sources from their own position and cell before their
+//!    start-up scripts run (§10.8.6 step 7).
 //! 5. The graph advances (§12.4 step 3), the engine updates, completions go back to the
 //!    graph (§9.2 step 12).
 //!
@@ -32,6 +39,7 @@ pub mod backend;
 pub mod blocks;
 pub mod clock;
 pub mod loader;
+pub mod location;
 pub mod player_music;
 pub mod props;
 pub mod scripts;
@@ -57,7 +65,13 @@ use self::blocks::{BlockTracker, ScanMsg, plan_emitters};
 pub use self::blocks::{DESPAWN_MARGIN, MAX_SCANS_IN_FLIGHT, MAX_SPAWNS_PER_CHECK, SPAWN_MARGIN};
 use self::clock::{GAME_TIME_DID, GameTime};
 use self::loader::SoundLoader;
-use self::props::{PlaceInputs, PlayerAudioProps, diff_writes, monitor_at, player_props};
+use self::location::{
+    EventTracker, LocPos, LocationSet, Sources, cell_contributes, cell_source, monitor_source,
+};
+use self::props::{
+    AreaMusic, PlaceInputs, PlayerAudioProps, diff_writes, monitors_containing, player_props,
+    typed_value,
+};
 use self::scripts::{AudioData, BlockScan, DataSource};
 use self::sink::{EngineSink, Entities, EntityAudio, MusicEvent, VoiceBook, prune_anchors};
 
@@ -315,6 +329,13 @@ pub struct AudioStats {
     pub max_update_ms: f64,
     /// Graph node starts so far.
     pub node_starts: u64,
+    /// The avatar's `Volume_IsOutside` (1 outside, 0 in a cell, 255 unknown; `sound.md`
+    /// §10.8.2), once set.
+    pub outside: Option<u8>,
+    /// The position the avatar's location sources last saw (`sound.md` §10.8.3).
+    pub location: Option<LocPos>,
+    /// Changes of `Volume_IsOutside` so far (after the first value).
+    pub outside_changes: u64,
 }
 
 /// When to reopen a lost audio device (decision 0019, "Device loss": the engine does not
@@ -404,6 +425,8 @@ pub fn log_report(r: &AudioReport) {
         backend = ?s.backend,
         area_music = ?s.area_music,
         area_changes = s.area_changes,
+        outside = ?s.outside,
+        outside_changes = s.outside_changes,
         underruns = e.map_or(0, |e| e.underruns),
         overloads = e.map_or(0, |e| e.overloads),
         starved_blocks = e.map_or(0, |e| e.starved_blocks),
@@ -434,6 +457,28 @@ pub struct AudioInput<'a> {
     /// walker's convention). The avatar's model faces model +Y, so heading 0 turns model
     /// +Y to world +X.
     pub player: Option<(WorldPos, f32)>,
+    /// The interior cell of the player (owner landblock and cell number; `None` outdoors):
+    /// the walking character's cell from physics (`collision.md` §5.8.1), or in free flight
+    /// the camera eye's cell lookup (`sound.md` §10.8.6 step 1). Never the camera's cell
+    /// while walking.
+    pub player_cell: Option<(LandblockKey, u16)>,
+}
+
+/// The avatar's location property sources (`sound.md` §10.8.1) and the last position they
+/// saw.
+#[derive(Debug, Clone, Default)]
+struct LocationState {
+    events: EventTracker,
+    sources: Sources,
+    /// The landblock source waits for its landblock's scan (it keeps its old set meanwhile,
+    /// so values do not drop out while the scan runs).
+    landblock_pending: bool,
+    /// The cell source waits for the owner landblock's scan for the cell's set.
+    cell_pending: bool,
+    /// The monitors containing the avatar (landblock, index in its scan).
+    monitors: Vec<(LandblockKey, usize)>,
+    /// The resolved view (§10.8.1 rule 1).
+    resolved: LocationSet,
 }
 
 /// World audio (module docs).
@@ -450,6 +495,7 @@ pub struct WorldAudio {
     avatar_live: Option<LivePosition>,
     avatar_since: f64,
     props: Option<PlayerAudioProps>,
+    location: LocationState,
     entities: Entities,
     book: VoiceBook,
     tracker: BlockTracker,
@@ -538,6 +584,7 @@ impl WorldAudio {
             avatar_live: None,
             avatar_since: 0.0,
             props: None,
+            location: LocationState::default(),
             entities: HashMap::new(),
             book: VoiceBook {
                 music_channel: Channel::MUSIC.value(),
@@ -568,6 +615,39 @@ impl WorldAudio {
     #[must_use]
     pub fn stats(&self) -> &AudioStats {
         &self.stats
+    }
+
+    /// The PIDs looked up at start-up (`None` before it finished).
+    #[must_use]
+    pub fn pids(&self) -> Option<props::AudioPids> {
+        self.data.as_ref().map(|d| d.pids)
+    }
+
+    /// The value the avatar reads for `pid` (`None` before it exists or when it has none).
+    #[must_use]
+    pub fn avatar_property(&self, pid: u32) -> Option<tessera_formats::PropertyValue> {
+        self.graph.as_ref()?.property(AVATAR, pid)
+    }
+
+    /// The scripts running on the avatar (keys).
+    #[must_use]
+    pub fn avatar_scripts(&self) -> Vec<u32> {
+        self.graph
+            .as_ref()
+            .map(|g| g.running_scripts(AVATAR))
+            .unwrap_or_default()
+    }
+
+    /// The avatar's location sources (`sound.md` §10.8.1) as last computed.
+    #[must_use]
+    pub fn location_sources(&self) -> &Sources {
+        &self.location.sources
+    }
+
+    /// The avatar's resolved location view (§10.8.1 rule 1).
+    #[must_use]
+    pub fn location_view(&self) -> &LocationSet {
+        &self.location.resolved
     }
 
     /// The music events so far.
@@ -617,9 +697,15 @@ impl WorldAudio {
                 e.mixer_load_max,
             )
         });
+        let place = match s.outside {
+            Some(1) => "outside".to_owned(),
+            Some(0) => format!("inside cell {}", s.location.map_or(0, |l| l.cell)),
+            Some(v) => format!("location unknown ({v})"),
+            None => "-".to_owned(),
+        };
         format!(
-            "Audio {backend}: Area_Music {area}; music {} ambient {}; voices {active} (+{virt} virtual); \
-             emitters {}; underruns {under}; mixer max {:.0} %",
+            "Audio {backend}: Area_Music {area}; {place}; music {} ambient {}; voices {active} \
+             (+{virt} virtual); emitters {}; underruns {under}; mixer max {:.0} %",
             s.music_voices,
             s.ambient_voices,
             s.emitters,
@@ -757,6 +843,7 @@ impl WorldAudio {
         for id in plan.despawn {
             self.despawn_emitter(id);
         }
+        let startup_key = self.data.as_ref().and_then(|d| d.startup_key);
         for (key, e) in plan.spawn {
             if self.live_emitters.len() >= MAX_LIVE_EMITTERS {
                 break;
@@ -773,19 +860,37 @@ impl WorldAudio {
                     frozen: Vec::new(),
                 },
             );
+            // `sound.md` §10.8.6 step 7: the emitter's location properties from its own
+            // position and cell, set before its start-up scripts run (static: computed once).
+            let location = self.emitter_location(key, &e);
             let init = EntityInit {
                 tables: e.scripts.tables.clone(),
-                startup_scripts: e.scripts.startup_scripts.clone(),
+                startup_scripts: Vec::new(),
                 properties: e.scripts.properties.clone(),
                 parent: None,
-                run_startup: true,
+                run_startup: false,
             };
-            match self.with_graph(|g, sink| g.spawn_entity(sink, e.id, init)) {
+            let startup: Vec<u32> = startup_key
+                .into_iter()
+                .chain(e.scripts.startup_scripts.iter().copied())
+                .collect();
+            let spawned = self.with_graph(|g, sink| {
+                g.spawn_entity(sink, e.id, init)?;
+                for (pid, v) in location {
+                    g.set_property(sink, e.id, pid, v)?;
+                }
+                for k in startup {
+                    let _ = g.start_script(sink, e.id, k);
+                }
+                Ok::<(), tessera_scriptgraph::RuntimeError>(())
+            });
+            match spawned {
                 Some(Ok(())) => {
                     self.live_emitters.insert(e.id, key);
                 }
                 Some(Err(err)) => {
                     tracing::debug!(id = e.id.0, "audio: emitter not spawned: {err}");
+                    let _ = self.with_graph(|g, sink| g.despawn(sink, e.id));
                     self.entities.remove(&e.id);
                 }
                 None => {
@@ -795,34 +900,179 @@ impl WorldAudio {
         }
     }
 
-    /// The place inputs at `p` from the scanned blocks; `None` while the player's block is
-    /// not scanned yet.
-    fn place_inputs(&self, p: &WorldPos) -> Option<PlaceInputs> {
-        let key = p.landblock()?;
-        let scan = self.tracker.blocks.get(&key)?.scan.as_ref()?;
-        let pos = [p.x, p.y, p.z];
-        let near = self
-            .tracker
+    /// The monitor volumes of the scanned landblocks within one landblock of `key`, with
+    /// their landblock and index in its scan.
+    fn monitors_near(
+        &self,
+        key: LandblockKey,
+    ) -> impl Iterator<Item = (LandblockKey, usize, &props::MonitorVolume)> {
+        self.tracker
             .blocks
             .iter()
-            .filter(|(k, _)| k.chebyshev(key).is_some_and(|d| d <= 1))
-            .filter_map(|(_, b)| b.scan.as_ref())
-            .flat_map(|s| s.monitors.iter());
-        let monitor = monitor_at(near, pos).map(|m| m.values.clone());
+            .filter(move |(k, _)| k.chebyshev(key).is_some_and(|d| d <= 1))
+            .filter_map(|(k, b)| b.scan.as_ref().map(|s| (*k, s)))
+            .flat_map(|(k, s)| s.monitors.iter().enumerate().map(move |(i, m)| (k, i, m)))
+    }
+
+    /// The typed `Volume_IsOutside` value `v`.
+    fn outside_typed(data: &AudioData, v: u8) -> tessera_formats::PropertyValue {
+        let ty = data
+            .pids
+            .volume_is_outside
+            .and_then(|p| props::declared_type(&data.dict, p));
+        typed_value(ty, u32::from(v))
+    }
+
+    /// A static emitter's resolved location properties (`sound.md` §10.8.6 step 7): its
+    /// cell (0 outside), its landblock's source and the monitors containing it.
+    fn emitter_location(&self, key: LandblockKey, e: &scripts::StaticEmitter) -> LocationSet {
+        let Some(data) = self.data.as_deref() else {
+            return LocationSet::new();
+        };
+        let loc = LocPos::in_block(key, e.cell);
+        let scan = self.tracker.blocks.get(&key).and_then(|b| b.scan.as_ref());
+        let cell_props = scan
+            .filter(|_| cell_contributes(&loc))
+            .and_then(|s| s.cells.get(&loc.cell));
+        let mut near: Vec<_> = self.monitors_near(key).collect();
+        near.sort_by_key(|(k, i, _)| (*k, *i));
+        let monitors = monitor_source(monitors_containing(
+            near.into_iter().map(|(_, _, m)| m),
+            e.position,
+        ));
+        Sources {
+            monitor: Arc::new(monitors),
+            cell: Arc::new(cell_source(
+                &loc,
+                data.pids.volume_is_outside,
+                |v| Self::outside_typed(data, v),
+                cell_props.map(|c| &**c),
+            )),
+            landblock: scan.map_or_else(Arc::default, |s| Arc::clone(&s.location)),
+            ..Sources::default()
+        }
+        .resolve()
+    }
+
+    /// Reports the avatar's position to its location sources (`sound.md` §10.8.3,
+    /// §10.8.6 steps 2–5) and re-resolves its view when a source changed; true then.
+    ///
+    /// The landblock and cell sources are rebuilt on their events. A source whose
+    /// landblock scan has not arrived yet is rebuilt again every frame until it has (the
+    /// original loads its cells synchronously; Tessera scans on the workers). The monitor
+    /// source is recomputed every frame and counts as changed only when the set of
+    /// containing monitors differs.
+    fn update_location(&mut self, loc: LocPos, pos: &WorldPos) -> bool {
+        let Some(data) = self.data.clone() else {
+            return false;
+        };
+        let ev = self.location.events.report(loc);
+        let key = loc.landblock();
+        let scan = key
+            .and_then(|k| self.tracker.blocks.get(&k))
+            .and_then(|b| b.scan.as_ref());
+        let mut changed = false;
+        if ev.landblock || self.location.landblock_pending {
+            self.location.landblock_pending = key.is_some() && scan.is_none();
+            let set = match scan {
+                Some(s) => Some(Arc::clone(&s.location)),
+                // An invalid position has no landblock: an empty set.
+                None if key.is_none() => Some(Arc::default()),
+                // Pending: keep the old set until the scan arrives.
+                None => None,
+            };
+            if let Some(set) = set
+                && set != self.location.sources.landblock
+            {
+                self.location.sources.landblock = set;
+                changed = true;
+            }
+        }
+        if ev.cell || self.location.cell_pending {
+            let inside = cell_contributes(&loc);
+            self.location.cell_pending = inside && scan.is_none();
+            let cell_props = scan.filter(|_| inside).and_then(|s| s.cells.get(&loc.cell));
+            let set = Arc::new(cell_source(
+                &loc,
+                data.pids.volume_is_outside,
+                |v| Self::outside_typed(&data, v),
+                cell_props.map(|c| &**c),
+            ));
+            if set != self.location.sources.cell {
+                self.location.sources.cell = set;
+                changed = true;
+            }
+        }
+        let p = [pos.x, pos.y, pos.z];
+        let containing: Vec<(LandblockKey, usize, &props::MonitorVolume)> = key
+            .map(|k| {
+                self.monitors_near(k)
+                    .filter(|(_, _, m)| m.contains(p))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut ids: Vec<(LandblockKey, usize)> =
+            containing.iter().map(|(k, i, _)| (*k, *i)).collect();
+        ids.sort_unstable();
+        if ids != self.location.monitors {
+            // Listing order (landblock, then index) for the tie rule of `monitor_source`.
+            let mut listed = containing;
+            listed.sort_by_key(|(k, i, _)| (*k, *i));
+            let set = Arc::new(monitor_source(
+                listed.iter().map(|(_, _, m)| (m.volume(), &*m.values)),
+            ));
+            self.location.monitors = ids;
+            if set != self.location.sources.monitor {
+                self.location.sources.monitor = set;
+                changed = true;
+            }
+        }
+        if changed || self.props.is_none() {
+            self.location.resolved = self.location.sources.resolve();
+        }
+        self.stats.location = Some(loc);
+        changed
+    }
+
+    /// The game-logic inputs at the avatar's current location: the area music, the
+    /// cell's dungeon music (§10.3.1) and the clock's night (§10.3.5).
+    fn game_inputs(&self, loc: LocPos) -> Option<PlaceInputs> {
+        let data = self.data.as_deref()?;
+        let scan = loc
+            .landblock()
+            .and_then(|k| self.tracker.blocks.get(&k))
+            .and_then(|b| b.scan.as_ref());
+        let area = scan.map_or(AreaMusic::Pending, |s| s.area);
+        // §10.3.1 Decision: the dungeon of the cell the player is in.
+        let dungeon_music = data
+            .pids
+            .dungeon_did
+            .filter(|_| loc.in_cell())
+            .and_then(|pid| self.location.resolved.get(&pid))
+            .and_then(tessera_formats::PropertyValue::as_did)
+            .filter(|d| !d.is_null())
+            .and_then(|d| data.cached_dungeon_music(d))
+            .flatten();
         let night = self.clock.and_then(|c| {
             clock::system_clock(0.0)
                 .and_then(|g| c.time_of_day(g))
                 .map(|t| c.is_night(t))
         });
         Some(PlaceInputs {
-            block: scan.place.clone(),
-            cell: None,
-            monitor,
-            area: scan.area,
-            dungeon_music: None,
+            location: LocationSet::new(),
+            area,
+            dungeon_music,
             landmark_music: None,
             night,
         })
+    }
+
+    /// The player properties for `inputs` with the resolved location view.
+    fn evaluate_props(&self, mut inputs: PlaceInputs) -> Option<PlayerAudioProps> {
+        let data = self.data.as_deref()?;
+        inputs.location = self.location.resolved.clone();
+        let previous = self.props.as_ref().and_then(|p| p.area_music);
+        Some(player_props(&data.pids, inputs, previous))
     }
 
     fn apply_props(&mut self, new: PlayerAudioProps) {
@@ -845,6 +1095,18 @@ impl WorldAudio {
                 new: new.area_music,
             });
         }
+        let old_outside = old.as_ref().and_then(|o| o.outside(&data.pids));
+        let new_outside = new.outside(&data.pids);
+        if old.is_some() && old_outside != new_outside {
+            self.stats.outside_changes += 1;
+            tracing::debug!(
+                from = ?old_outside,
+                to = ?new_outside,
+                location = ?self.stats.location,
+                "audio: Volume_IsOutside changed"
+            );
+        }
+        self.stats.outside = new_outside;
         self.with_graph(|g, sink| {
             for (pid, value) in writes {
                 let r = match value {
@@ -859,32 +1121,61 @@ impl WorldAudio {
         self.props = Some(new);
     }
 
-    fn update_player(&mut self, player: Option<(WorldPos, f32)>) {
+    /// Whether the scan of the landblock `loc` names has arrived (or `loc` has none).
+    fn location_known(&self, loc: LocPos) -> bool {
+        loc.landblock().is_none_or(|k| {
+            self.tracker
+                .blocks
+                .get(&k)
+                .is_some_and(|b| b.scan.is_some())
+        })
+    }
+
+    fn update_player(
+        &mut self,
+        player: Option<(WorldPos, f32)>,
+        cell: Option<(LandblockKey, u16)>,
+    ) {
         let Some((pos, yaw)) = player else { return };
         if let Some(live) = &self.avatar_live {
             live.set_transform(f32x3(&pos), heading_quaternion(yaw));
         }
-        let inputs = self.place_inputs(&pos);
+        let loc = LocPos::from_walker(Some(&pos), cell);
         if self.avatar_live.is_none() {
             // Start the avatar once the graph runs and the player's place is known (or
             // after a while without it).
             if self.graph.is_none()
                 || self.avatar_init.is_none()
-                || (inputs.is_none() && self.time - self.avatar_since < AVATAR_WAIT)
+                || (!self.location_known(loc) && self.time - self.avatar_since < AVATAR_WAIT)
             {
                 return;
             }
-            self.spawn_avatar(&pos, yaw, inputs.as_ref());
+            self.spawn_avatar(&pos, yaw, loc);
             return;
         }
-        if let Some(inputs) = inputs {
-            let previous = self.props.as_ref().and_then(|p| p.area_music);
-            let new = player_props(&inputs, previous);
+        let changed = self.update_location(loc, &pos);
+        let Some(inputs) = self.game_inputs(loc) else {
+            return;
+        };
+        if !changed
+            && let Some(p) = &self.props
+            && p.night == inputs.night
+            && p.area_music
+                == props::area_music(
+                    inputs.dungeon_music,
+                    inputs.landmark_music,
+                    inputs.area,
+                    p.area_music,
+                )
+        {
+            return;
+        }
+        if let Some(new) = self.evaluate_props(inputs) {
             self.apply_props(new);
         }
     }
 
-    fn spawn_avatar(&mut self, pos: &WorldPos, yaw: f32, inputs: Option<&PlaceInputs>) {
+    fn spawn_avatar(&mut self, pos: &WorldPos, yaw: f32, loc: LocPos) {
         let Some(init) = self.avatar_init.take() else {
             return;
         };
@@ -927,10 +1218,14 @@ impl WorldAudio {
             }
         }
         self.avatar_live = Some(live);
-        // Properties first, then the start-up scripts (sound.md §12.4 steps 1–2), so the
-        // music graph starts in the right case.
-        let props = player_props(&inputs.cloned().unwrap_or_default(), None);
-        self.apply_props(props);
+        // Properties first, then the start-up scripts (sound.md §12.4 steps 1–2; the
+        // location sources from the spawn position, §10.8.6 step 8), so the music graph
+        // and the `Startup` Switch on `Volume_IsOutside` start in the right case.
+        self.location = LocationState::default();
+        self.update_location(loc, pos);
+        if let Some(props) = self.game_inputs(loc).and_then(|i| self.evaluate_props(i)) {
+            self.apply_props(props);
+        }
         let started = self.with_graph(|g, sink| {
             let mut out = Vec::new();
             for k in startup {
@@ -943,6 +1238,7 @@ impl WorldAudio {
         }
         tracing::info!(
             area_music = ?self.props.as_ref().and_then(|p| p.area_music),
+            outside = ?self.stats.outside,
             "audio: avatar runs its start-up scripts"
         );
     }
@@ -993,12 +1289,28 @@ impl WorldAudio {
                 forward: f,
             });
         }
-        let focus = input.player.map(|p| p.0).or(input.eye.map(|e| e.0));
+        let player = input.player.or(input.eye.map(|e| (e.0, 0.0)));
+        // Scans follow the landblock the player's location names (a cell's owner,
+        // `sound.md` §10.8.1 rule 4), so the owner of a cell placed away from it is scanned.
+        let focus = player.map(|(p, _)| {
+            match LocPos::from_walker(Some(&p), input.player_cell).landblock() {
+                Some(k) if p.landblock() != Some(k) => {
+                    let o = k.origin();
+                    WorldPos::new(
+                        k.region(),
+                        o[0] + 0.5 * tessera_world::LANDBLOCK_SIZE,
+                        o[1] + 0.5 * tessera_world::LANDBLOCK_SIZE,
+                        p.z,
+                    )
+                }
+                _ => p,
+            }
+        });
         self.sync_blocks(input.streamer, focus.as_ref());
         if let Some(l) = listener_pos {
             self.update_emitters(l);
         }
-        self.update_player(input.player.or(input.eye.map(|e| (e.0, 0.0))));
+        self.update_player(player, input.player_cell);
         self.with_graph(|g, sink| g.advance(sink, dt));
         self.engine.update();
         self.render_offline();

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-08, after review of the editorial revision of §4.13 "Switching between the two records"; see change log). Previously Accepted 2026-10-08 (implementer-OPEN revision: BIN4, L32 corrected, L46–L48, §8.1 rules) and 2026-10-07 (interiors, visibility and ceiling normals; review corrections). |
+| **Status** | Accepted (2026-10-08, after review of the implementer-OPEN revision of §4.11 and §4.15: BIN5, L49, L47 wording; see change log). Previously Accepted 2026-10-08 (after review of the editorial revision of §4.13), 2026-10-08 (implementer-OPEN revision: BIN4, L32 corrected, L46–L48, §8.1 rules) and 2026-10-07 (interiors, visibility and ceiling normals; review corrections). |
 | **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review sessions (spec-writer agent), each a different session from the writer |
-| **Review record** | 2026-10-05 review: changes requested (addressed). 2026-10-05 re-review: changes requested (addressed). 2026-10-06 third review: changes requested (addressed). 2026-10-06 re-review: passed, Accepted. 2026-10-07 re-review of the interiors revision: changes requested. 2026-10-07 second re-review: changes requested (same corrections; addressed in the second 2026-10-07 revision, change log). 2026-10-07 third re-review (Claude review session, spec-writer agent; a different session from the writer): passed, Accepted. 2026-10-08 review of the 2026-10-08 revision (Claude review session, spec-reviewer agent; a different session from the writer): passed, Accepted. 2026-10-08 re-review of the editorial revision (Claude review session, spec-reviewer agent; a different session from the writer and from the earlier reviewers): passed, Accepted. Detailed findings are kept in the dirty-room review log. |
+| **Review record** | 2026-10-05 review: changes requested (addressed). 2026-10-05 re-review: changes requested (addressed). 2026-10-06 third review: changes requested (addressed). 2026-10-06 re-review: passed, Accepted. 2026-10-07 re-review of the interiors revision: changes requested. 2026-10-07 second re-review: changes requested (same corrections; addressed in the second 2026-10-07 revision, change log). 2026-10-07 third re-review (Claude review session, spec-writer agent; a different session from the writer): passed, Accepted. 2026-10-08 review of the 2026-10-08 revision (Claude review session, spec-reviewer agent; a different session from the writer): passed, Accepted. 2026-10-08 re-review of the editorial revision (Claude review session, spec-reviewer agent; a different session from the writer and from the earlier reviewers): passed, Accepted. 2026-10-08 review of the BIN5 revision (§4.11 moving entities, §4.15; Claude review session, spec-reviewer agent; a fresh session that wrote none of it): passed, Accepted. Detailed findings are kept in the dirty-room review log. |
 | **Implements into** | `crates/formats` (landblock data, landblock info, block-map and descriptor decoders), `crates/world` (landblock IDs, bundles, block-map resolution, minimap tiles), `crates/terrain` (height grid, triangulation, surface layers), `apps/explorer` (landblock view), `apps/client` (walker interiors and landscape drawing, §3.15, §4.11–§4.15), `fuzz/` (one target per record kind) |
 | **Companion specs** | `coordinates.md` (frames, units, map coordinates, rotations). `entity-descriptor.md` (the static entity descriptors inside landblock info; normative for their layout). `environment.md` §3 (region descriptor 0x0F, which names the block-map descriptor and the per-region tables). `records.md` §1 (VLE, TSize, Pascal string), §2.1–§2.2 (prefix and landblock DID shape, DB types), §5 (render surfaces). `property-system.md` §4–§5 (values and embedded property sets), §4.6 (Position). `mesh.md` §10 (collision tree block and its `build_byte` rule). `dat-container.md` §5.2 (directory `stamp`), routing. `wstate.md` (0x70 objects named by `Area_DID` and weenies). [`environment.md`](environment.md) §7, §11 and [`lighting.md`](lighting.md) §8.1, §10 (the indoor environment record of §4.13 feeds them). [`appearance.md`](appearance.md) §3.2 (appearance lists, §4.14). **Meaning of the parts decoded here:** [`terrain-texturing.md`](terrain-texturing.md) (surface layers, masks, quad grid, light maps), [`collision.md`](collision.md) (tree code, terrain and ceiling collision, 0x01 cell geometry, portals), [`scenery.md`](scenery.md) (coarse grid), [`water.md`](water.md) (water and fog-zone keys of the block map, water per landblock, kind 5 water). |
 
@@ -53,7 +53,7 @@ Legend:
 - **Confirmed**: decoded on the user's own install (2026-10-04, or 2026-10-05, 2026-10-06, 2026-10-07 or 2026-10-08 where
   the row says so) by throwaway probes in the dirty-room scratchpad, over **all** records of the kind
   unless a sample is stated. For a fact with a BIN source: the data agrees on every record.
-- **BIN**: rests on the disassembly of the client (tags BIN to BIN4 below, or the BIN tags of
+- **BIN**: rests on the disassembly of the client (tags BIN to BIN5 below, or the BIN tags of
   the companion specs named in the row) and has not been checked against every record.
 - **Inferred**: follows from BIN facts by reasoning, not traced directly.
 - **Probable**: supported by a statistical test on the data, but not by an exact rule.
@@ -78,6 +78,7 @@ Legend:
 | OBS3 | Observed in user install 2026-10-07 (Steam) by a throwaway read-only probe: all 390,150 landblock-data records (open flag of §3.15, chunks without layers, triangles per interior grid sample) and all 49,636 landblock-info records (cell numbers, positions without offset or orientation, neighbour `portal` against the entry position, every neighbour, list-A and list-B value against the record's cells); the portal joins of the two cells without an offset recomputed from their 0x01 geometry. |
 | BIN4 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, fourth use. The same client build (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5), read in the dirty room on 2026-10-08 with a headless decompiler session on an own read-only copy of the shared project (deleted afterwards). Nothing outside the environment update, the landblock property lookup and the landblock registry was examined (no network, login, launcher or anti-tamper code). **Questions:** (l) which landblock and which property sets the reader of the interior overrides and sky keys of §4.13 consults for a camera in a cell (the implementer OPEN of 2026-10-07); (m) what "changing from one record to the other is immediate" means: how the values that lighting and fog use change when the record in use changes. **Why M1–M3 were not enough:** the data stores the properties on cells, landblock info and block maps but not which of them the client reads; the switch is run-time behaviour; no running client is available for M3 frame captures. Output is prose facts only. |
 | OBS4 | Observed in user install 2026-10-08 (Steam) by a throwaway read-only probe: the property sets of all 104,271 cells and all 49,636 landblock-info records, counting the interior-override and sky-key properties of §4.13. |
+| BIN5 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, fifth use. The same client build (`x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5, re-checked 2026-10-08), read in the dirty room on 2026-10-08 with a headless decompiler session on an own read-only copy of the shared project (deleted afterwards). Nothing outside the scene graph's assignment of drawn objects to visibility cells and its per-frame visible-object pass was examined (no network, login, launcher or anti-tamper code). **Question:** (n) whether a moving entity (a character) is culled by the visibility cells of §4.11 like a static one, and by which cell (the implementer OPEN of 2026-10-07 in §4.15, which the 2026-10-07 text answered only as Inferred). **Why M1–M3 were not enough:** moving entities are not stored in the data, the assignment exists only at run time, and no running client is available for M3 frame captures. Output is prose facts only. |
 
 | # | Fact | Sources | Mark |
 |---|---|---|---|
@@ -130,8 +131,9 @@ Legend:
 | L44 | The open flag of a block (§3.15) and the chunks without layers: 6,867 blocks with a ceiling, 3,075 open and 3,792 not; terrain chunks without layers 299,369 (no ceiling) + 818 (open) + 3,237 (not open); ceiling chunks without layers 944 (open) + 3,568 (not open); the raw u16 test and the converted-height test agree in every block; including row and column 32 in the test would change it in 140 blocks | OBS3; `terrain-texturing.md` §4.9, T40 (BIN (r) there, re-checked by both of its 2026-10-07 reviews), T41 | Confirmed (2026-10-07; rule BIN) |
 | L45 | A grid sample's vertex normal averages 4 to 8 triangles (one per neighbouring quad, two when the quad's diagonal runs through the sample); interior terrain samples of all 390,150 records: 4 triangles at 9,201, 5 at 353,168, 6 at 374,206,540, 7 at 358,859, 8 at 6,382 (§3.14) | BIN2 (g); OBS3 | BIN (rule); census Confirmed (2026-10-07). Corrects "up to six" of the first 2026-10-07 revision. |
 | L46 | For a camera in a cell, "the position's landblock" of the §4.13 lookup is the cell's owner: the client looks the landblock up by the position's region, landblock X and Y and instance, with the cell number replaced by the landblock-level value, and without a loaded landblock reads that landblock's info and block-map records directly; the landblock under the camera's x, y plays no part (§4.13) | BIN4 (l); LI3 | BIN (was Inferred, 2026-10-07) |
-| L47 | Switching between the two environment records: both are rebuilt on every update; the values lighting and fog use cross-fade from the previously applied values to the record in use over 5 s, weight ½ + ½ sin(π (t − ½)), whenever the main-light switch of the record in use differs from that of the record applied before and the update is not forced; otherwise they take the record at once. A new change during a fade shortens the next fade to the time since the running one started (at least 0.0002 s) (§4.13). `environment.md` §11.6 (E34, E37) is normative for this rule; the main-light switch is its "sun present" (§11.7 step 9) | BIN4 (m); `environment.md` BIN-E (f), BIN-E2 (a) | BIN |
+| L47 | Switching between the two environment records: both are rebuilt on every update; the values lighting and fog use cross-fade from the previously applied values to the record in use over 5 s, weight ½ + ½ sin(π (t − ½)), whenever the main-light switch of the record in use differs from that of the record applied before and the update is not forced; otherwise they take the record at once. A new change during a fade gives the next fade the smaller of the running fade's duration and the time since the running one started, and at least 0.0002 s (§4.13; wording aligned with `environment.md` E34 on 2026-10-08). `environment.md` §11.6 (E34, E37) is normative for this rule; the main-light switch is its "sun present" (§11.7 step 9) | BIN4 (m); `environment.md` BIN-E (f), BIN-E2 (a) | BIN |
 | L48 | Cells carrying §4.13 properties in their own set: 777 cells in 17 landblock-info records hold `Environment_IndoorAmbiance` (581 where the landblock-info set has none), 775 the four `InteriorFog*` properties, 643 `InteriorUpperAmbientLight` and `InteriorLowerAmbientLight`, 66 `InteriorAmbientLight`, 299 `Environment_LocalSky`; the environment update does not read them (L32) | OBS4; BIN4 (l) | Confirmed (counts, 2026-10-08); BIN (not read) |
+| L49 | Visibility culling of drawn objects, moving ones included: the scene graph gives every drawn object its visibility cells from the cells linked to it in the scene graph (those of its own region, landblock and instance), else from the cell of its own position (the outdoor visibility cell for cell 0 or 0xFFFF, region 0 or landblock X or Y 0xFF; no visibility cell at all for cell 1); it re-does this when the object is first made visible to the visibility system and whenever a cell is linked to or unlinked from it, and keeps retrying while the result is empty; while the visibility query is active an object is drawn only when one of its visibility cells is among those the query returns; the rule makes no distinction between static and moving objects; an object whose model carries a "not culled" flag is left out of the visibility system and is not culled by it (§4.11) | BIN5 (n) | BIN; which objects carry the flag and when the client links cells to a moving object were not traced |
 
 ---
 
@@ -1071,8 +1073,33 @@ entity belongs to is OPEN (`entity-descriptor.md` §4.8). **Tessera Decision** (
 §4.15): an interior entity belongs to the cell of its landblock whose cell volume contains its
 origin, tried at the origin and 0.05 units above and below it (the containment test of
 `collision.md` §5.8.1); one that no cell contains is drawn whenever the camera is in any cell
-of its landblock. Moving entities (characters) are, by the rule above, in the visibility cell
-of the cell they stand in (Inferred; the walker does not follow this yet, §4.15).
+of its landblock.
+
+**Moving entities** (BIN5 (n), L49; answers the implementer OPEN of 2026-10-07, which the
+2026-10-07 text answered only as Inferred). The client's scene graph applies one rule to
+every drawn object and does not distinguish static from moving ones:
+
+1. The object's visibility cells are those of the cells linked to it in the scene graph
+   that share its region, landblock and instance. When no such cell is linked, it is the
+   visibility cell of the cell in the object's own position: the outdoor visibility cell
+   when that cell is 0 or 0xFFFF, or the region is 0, or landblock X or Y is 0xFF (the key
+   rule of "Within one landblock"); no visibility cell at all when that cell is 1 (cell
+   numbers of this install run from 2, L30).
+2. The client redoes step 1 when the object first enters the visibility system and
+   whenever a cell is linked to or unlinked from it; while step 1 gives no visibility cell
+   it retries on every frame.
+3. While the visibility query of the frame is active, an object is drawn only when one of
+   its visibility cells is among those the portal walk reaches.
+4. An object whose model carries a "not culled" flag is kept out of the visibility system
+   and is not culled by it.
+
+So a character standing in a cell is drawn only when the camera's portal walk reaches that
+cell's visibility cell, and a character outdoors only when it reaches the outdoor one. Which
+models carry the "not culled" flag, and when the client links cells to a moving object (for
+example from its collision with cell volumes, `collision.md` §5.8.1), were not traced.
+**Tessera Decision:** a moving entity belongs to the visibility cell of the cell its
+movement code assigns to it (`collision.md` §5.8.1; cell 0 outdoors), and no character
+model is treated as "not culled". The walker does not follow this yet (§4.15).
 
 **Each frame** the cell of the camera's position (§4.12) selects the root visibility cell. The
 library returns what is visible from the root: the objects of the root and of every visibility
@@ -1158,7 +1185,7 @@ visibility-cell keys:
 - Sky-visible set: the sky is drawn; clear: it is not. *(Inferred: indoors the sky drawn is
   that of the indoor record's sky key; OPEN.)*
 - Static and moving entities and cell meshes are not switched by the flags; the portal query
-  culls them.
+  culls them (§4.11 "Moving entities", L49).
 
 **Consequences:**
 
@@ -1261,8 +1288,9 @@ tracks there, and "main-light switch" here is "sun present" there (§11.7 step 9
 normally changes the main-light switch from on to off, so ambient, fog and the main light
 cross-fade from the outdoor values to the indoor record over 5 s; walking out fades back.
 The change is immediate only on a forced update or when the outdoor record's main light is
-already off. Stepping in and out again within a running fade shortens the second fade to
-the time the first had run. The scene flags of §4.12 do not fade. The same fade also runs
+already off. Stepping in and out again within a running fade gives the second fade the
+smaller of the first fade's duration and the time the first had run (at least 0.0002 s).
+The scene flags of §4.12 do not fade. The same fade also runs
 outdoors whenever the outdoor record's main-light switch changes between keyframes
 (`environment.md` §11.6).
 
@@ -1390,27 +1418,55 @@ Folded 2026-10-08 from the implementer's status report of 2026-10-07: the walker
 the portal polygon named by `portal`, runs the scene-flag pass of §4.12 rule 3 in full,
 leaves the interior fog end to §4.13, places the render mesh of a cell without x, y, z at
 the landblock origin and culls its avatar placeholder by the cell it stands in; the
-former OPENs on these points are closed. Remaining:
+former OPENs on these points are closed.
 
-> **OPEN (implementer, physics):** the collision cell placement (`tessera-physics`) still
-> refuses cells whose `position` has no x, y, z, so the camera cannot be found in them and
-> the portals out of them have no polygon (passed through unchanged, §4.11 Tessera rule).
-> §4.4 places them at the landblock origin with the identity orientation (L42); they should
-> be collided with there.
+**Closed 2026-10-08** (spec writer's spot check of the walker, physics and renderer code of
+the remediation round, commit 2d76d2f, against this spec): the collision cell placement puts a
+cell whose `position` has no x, y, z at the landblock origin with the identity orientation
+(L42); the renderer no longer limits the fog end it uploads to 10,000, only the keyframe end
+before the override (§4.13; the client's own upload is not limited to 10,000 either: with fog
+off it uploads an end of 20,000 in the main scene path, `lighting.md` §10, BIN-L there); the
+indoor overrides and both sky keys are read from the owner landblock's landblock-info set and
+block map only, not from the camera cell's own set (L32, L48); and the change between the two
+environment records runs the 5 s sun-change fade of §4.13 (L47). The four OPENs on these
+points are closed. Remaining:
 
 > **OPEN (implementer):** the walker draws a cell's render mesh without its appearance data
 > (the object layer has no per-instance material variants). §4.14 (Tessera Decision there)
 > applies the cell's `Appearance_InstanceList` as `appearance.md` §3.2 does for entities.
+> The client draws a private copy of the mesh with the appearance applied (L34, BIN2), so
+> the released code's choice is not the client's behaviour.
 
 > **OPEN (implementer):** characters of the character layer are drawn whatever the camera's
-> cell. By §4.11 (Inferred for moving entities) they belong to the visibility cell of the
-> cell they stand in, so from inside, a character standing outdoors is not drawn, and from
-> outside, one standing in a cell is not drawn.
+> cell. The client culls moving entities like static ones (§4.11 "Moving entities", BIN5,
+> L49; no longer Inferred): a character belongs to the visibility cell of the cell it
+> stands in, so from inside, a character standing outdoors is not drawn, and from outside,
+> one standing in a cell is not drawn. The released code's choice is therefore not the
+> client's behaviour; follow the Tessera Decision of §4.11.
 
-> **OPEN (implementer, renderer):** the renderer limits every fog end it uploads to 10,000
-> (`render.md` §4.2). §4.13 limits only the keyframe end, before the override; an
-> `InteriorFogFar` above 10,000 must reach the shader unchanged. No stored value exceeds
-> 10,000 in this install.
+> **OPEN (implementer, 2026-10-08, status of the two OPENs above; for the spec writer):**
+> (a) **Cell appearance.** The walker applies a cell's `Appearance_InstanceList` to its
+> render mesh: elements in stored order, the toggle record by the cell's own set
+> (`appearance.md` §3.3), the block by `appearance.md` §3.2.1, the groups of every chosen
+> block in one list by ascending priority with ties in application order (§4.10 rule for
+> Tessera), layered on each submesh whose surface binding key matches (`material.md` §9.3);
+> one decoded copy of the mesh per (cell geometry, look). Engineering choices to confirm:
+> parts that a chosen block offers are not drawn on a cell (a cell has no slot table; no
+> chosen block of this install's cell lists has parts: own probe of 2026-10-08 over 81,171
+> elements in 80,825 lists, every chosen block material-only and every group slot `All`);
+> only groups with slot `All` apply (the cell mesh's own slot is not read); with several
+> matching groups the shader override of the last one that has one wins. (b) **Characters.**
+> Characters of the character layer are culled by the camera's portal walk like every drawn
+> object (Tessera Decision of §4.11 "Moving entities"), tested after their draw-distance
+> fade has advanced: the user's character in walk mode on collision belongs to the mover's
+> cell (outdoors without one); a figure placed from the landblock data to the cell its
+> static instance is drawn through (§4.11 Tessera Decision on interior entities), so the
+> figure and its static instance always agree; every other character (sandbox and remote
+> characters, which no collision-based movement code moves) to the cell the containment
+> lookup of `collision.md` §5.8.1 finds at its feet raised by 0.05 units, outdoors when none.
+> Engineering choice to confirm: that lookup for characters without movement code. Both
+> OPENs above, and the matching departures of `walker.md` §14.12 (e), (g) and §14.13, can
+> be closed.
 
 > **OPEN (implementer):** the landblock-info decoder (`crates/formats`) still reads the last
 > six bytes of the fixed neighbour-entry part as three u16 values, which equals §4.4's layout
@@ -1419,15 +1475,6 @@ former OPENs on these points are closed. Remaining:
 > back-reference" test is the sign of that i32. The decoder's field names for the
 > block-pair records, cell groups and links (§4.2, §4.3, §4.6) also still predate the
 > 2026-10-06 renaming.
-
-> **OPEN (implementer, 2026-10-08):** §4.13 now states that the indoor overrides and both
-> sky keys are **not** read from the camera cell's own property set (L32 corrected). Code
-> that reads the cell's set first must drop that step; it changes the indoor record in the
-> 17 landblock-info records whose cells carry these properties (L48).
-
-> **OPEN (implementer, 2026-10-08):** §4.13 "Switching between the two records" replaces
-> the immediate switch: lighting and fog cross-fade over 5 s whenever the main-light switch
-> of the record in use changes, unless the update is forced.
 
 ---
 
@@ -2019,11 +2066,15 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
     Remaining from 2026-10-08: which callers force an environment update (§4.13 Tessera
     Decision), and whether another part of the client reads the cells' own §4.13
     properties (L48).
+    *(Answered 2026-10-08, BIN5: moving entities are culled by visibility cell like static
+    ones, L49.)* Remaining from BIN5: which models carry the "not culled" flag, and when the
+    client links cells to a moving object (§4.11).
 11. Ceilings and terrain (§3.14): the graphics-setting condition under which light maps are
     bound; whether the shaders renormalise the vertex normal.
-12. Implementation differences of the released walker (§4.15): five carried implementer
-    OPENs (physics cell placement, cell appearance, character culling, renderer fog limit,
-    decoder neighbour layout) and two from 2026-10-08 (cell set not read, record switch).
+12. Implementation differences of the released walker (§4.15): three implementer OPENs
+    remain (cell appearance, character culling, decoder neighbour layout); physics cell
+    placement, the renderer fog limit, the cell set and the record switch were closed on
+    2026-10-08 by the code of the remediation round.
 13. Streaming (§8.1): every implementer OPEN of 2026-10-07 is answered by the labelled
     Tessera rules B1–D1; only the original's draw distances remain (R1 OPEN), and whether
     the client recomputes edge normals when a neighbour arrives (N1).
@@ -2042,3 +2093,4 @@ entities in landblocks without cells lie within 25 cm of the §3.11 surface.
 | 2026-10-07 | Second 2026-10-07 revision (spec writer; incident 0018 follow-up: every client fact the released walker code relies on is now in the body; M1 and M4 under decision 0011, tags BIN3 and OBS3). Header: long review records moved to the dirty-room review log, short records kept; status Revised, ready for re-review. §1: tags BIN3, OBS3; rows L38–L45. **Review corrections:** §3.14, a sample averages four to eight triangles, not "up to six" (L45, census); §4.13, the main light is off when the intensity is **below** 0.0002 (strict), the colour test inclusive; §4.12, the outdoor branch only for region ≠ 0, landblock X and Y ≠ 0xFF and cell 0, any other position (cell 0xFFFF included) looked up as a cell, both flags clear when none is found (L40); §4.11 key paragraph, region 0 or landblock X or Y 0xFF give the outdoor key; §4.2 and §4.6, a block-pair DID need not name an existing record (0x8025474E). **New facts:** §3.15 (new) the block's open flag and chunks without layers (pointer to `terrain-texturing.md` §4.9, census L44, invariant HM8); §3.13 row; §4.4 cell numbers unique, `portal` selects the polygon, the two cells without an offset lie at the landblock origin with the identity orientation (answers the former OPEN; the advice to skip them is withdrawn); §4.10 LI9, LI10; §4.11 visibility stays in one landblock (L38), a portal is dropped when the neighbour has no visibility cell (L39), the walker's portal-walk rules and interior-entity attachment recorded as Tessera Decisions; §4.12 the visiting rule (bit 0 then bit 4, one level of PVS, 0xFFFF skipped), frills and the whole landscape pass switched by outdoor-visible (L41), no outdoor object drawn from inside; camera-cell Decision stated precisely; §4.13 the fog-end limit precedes the override; the implementer OPEN on the lookup landblock answered in part (owner landblock, Inferred); §4.14 Tessera Decisions for indoor point lights and cell-mesh detail; §4.15 (new) the walker's Tessera rules and seven implementer OPENs where the released code differs; §8 step 7 and §8.1 (world parts, stage-time diagnostics); §11 items 5, 10, 12. No layout changed. |
 | 2026-10-08 | Revision answering the implementer OPENs of 2026-10-07 (spec writer; M4 under decision 0011, tag BIN4; M1, tag OBS4). Status Accepted → Revised. §1: tags BIN4, OBS4; L32 **corrected** (the cell's own property set is not part of the indoor lookup); new rows L46–L48. **§4.13:** the property lookup traced: the landblock named by the position's region, X, Y and instance (the owner for a camera in a cell; the implementer OPEN is answered, no longer Inferred), first a set attached to the loaded landblock at creation, then landblock info, then block map; the cell's set is not read although 777 cells carry such properties; new subsection "Switching between the two records" (anchor `s4-13-1`): "immediate" is replaced by the client's rule, a 5 s sine-eased cross-fade of the applied values whenever the main-light switch of the record in use changes and the update is not forced, with the blend rules; Tessera Decision for forced updates; Row Y5 note. **§4.12:** the consequence bullet on "immediate" corrected (flags switch at once, environment values fade). **§4.15:** the implementer's 2026-10-07 status report folded in; four Tessera rules added to the table (record switch, outdoor flag order, PVS building, portal bound); closed OPENs removed; five remaining and two new implementer OPENs. **§8 step 5 and §8.1:** restated as labelled Tessera rules B1–B4, F1–F5, R1–R5, N1, W1–W2, A1–A7, D1, answering the thirteen implementer OPENs of 2026-10-07 (budget 1 GiB; failure handling confirmed; an absent properties record is not a problem; missing neighbours are the consumer's case; collision sets always carry water and building collision loads the water tables; lookahead, residency charge, re-admission margin, overshoot and defaults confirmed). §11 items 10, 12, 13. No layout changed. |
 | 2026-10-08 | Editorial revision after the review that accepted the 2026-10-08 revision (its non-blocking note on §4.13; spec writer). **§4.13 "Switching between the two records":** `environment.md` §11.6 ("Sun-change fade", "Switching between the tracks") is cited as normative and steps 1–5 and the blend list are reduced to a summary of it; the main-light switch is "sun present" of `environment.md` §11.7 step 9, including its `effect` test; the two values called untraced are `effect` and `effect_extra`; an end whose fog is off also has `fog_extra` 0; the stale note "`environment.md` §11.2 should adopt this" is removed. **Main directional light bullet:** the further keyframe condition is the `effect` test. **L47:** cites `environment.md` §11.6. No rule, layout or section number changed. |
+| 2026-10-08 | Revision answering the implementer OPENs of 2026-10-07/08 in §4.15 (spec writer; M4 under decision 0011, tag BIN5). Status Accepted → Revised. §1: legend names BIN5; new BIN5 row; new **L49**; **L47** wording aligned with `environment.md` E34 (a change during a fade gives the next fade the smaller of the running fade's duration and the time since it started; the third re-review's non-blocking note), and the matching sentence of §4.13 "What this means for the walker's interiors". **§4.11:** new paragraph "Moving entities" (BIN5 (n)): the scene graph assigns visibility cells to every drawn object by one rule, static and moving alike (cells linked to it, else the cell of its own position; outdoor key for cell 0 or 0xFFFF; none for cell 1; redone on entry and on link changes; drawn only when one of its visibility cells is reached; objects whose model carries a "not culled" flag are exempt); replaces the Inferred sentence; Tessera Decision for which cell a moving entity belongs to. **§4.12:** bullet cites L49. **§4.15:** the OPENs on physics cell placement, the renderer fog limit (with the client fact from `lighting.md` §10 that its own upload is not limited to 10,000), the cell set and the record switch are closed (spot check of the remediation code, commit 2d76d2f); the cell-appearance and character OPENs state that the released choices are not the client's behaviour (L34, L49). **§11** items 10 and 12. No layout changed; no section renumbered. |

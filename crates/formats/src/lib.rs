@@ -70,6 +70,7 @@
 //! | [`water`] | water (0x16) and fog-zone (0x17) tables: [`WaterTable`], [`FogZoneTable`] | `water.md` §4–§5 |
 //! | [`collision`] | quantised collision trees ([`TreeCode`]), collision meshes (0x66, [`CollisionMesh`]), cell geometry (0x01, [`CellGeometry`]) | `collision.md` §3–§5 |
 //! | [`environment`] | sky description (0x15), day descriptions (0x1A), game time (0x35), LOD classes (0x32), camera states (0x08): [`SkyDescription`], [`DayDescription`], [`GameTime`], [`LodClassTable`], [`CameraState`] | `environment.md` §5, §6, §9.1; `walker.md` §11.5 |
+//! | [`gameplay`] | gameplay record families (items, combat, creatures, quests, economy, map data, particles, misc records) and their shared helpers ([`gameplay::common`]) | `items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `particles.md`, `misc-records.md` |
 //! | [`landblock`] | landblock data with terrain and ceiling trees, info (cells, static entities, links), block maps and their descriptors (0x18), landblock properties with light maps, region descriptors (0x0F) and their eight table slots | `landblock.md`, `entity-descriptor.md`, `coordinates.md`, `environment.md` §3 |
 
 mod any;
@@ -83,6 +84,7 @@ pub mod did_map;
 pub mod enum_mapper;
 pub mod environment;
 mod error;
+pub mod gameplay;
 pub mod item;
 pub mod landblock;
 pub mod property;

@@ -728,3 +728,84 @@ path = "fuzz_targets/client_interiors.rs"
 test = false
 doc = false
 bench = false
+
+# --- Gameplay records: shared helpers (crates/formats/src/gameplay/common.rs; wstate.md §3.1, wlib.md §9, property-system.md §6.2) ---
+
+[[bin]]
+name = "formats_gameplay_common"
+path = "fuzz_targets/formats_gameplay_common.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: particle systems (crates/formats/src/gameplay/particles.rs; particles.md §4, §6.1) ---
+
+[[bin]]
+name = "formats_gameplay_particles"
+path = "fuzz_targets/formats_gameplay_particles.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: economy tables (crates/formats/src/gameplay/economy.rs; economy.md §4–§10) ---
+
+[[bin]]
+name = "formats_gameplay_economy"
+path = "fuzz_targets/formats_gameplay_economy.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: map data (crates/formats/src/gameplay/map.rs; map-data.md §3–§5) ---
+
+[[bin]]
+name = "formats_gameplay_map"
+path = "fuzz_targets/formats_gameplay_map.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: miscellaneous small records (crates/formats/src/gameplay/misc.rs; misc-records.md §3–§7, §9–§11) ---
+
+[[bin]]
+name = "formats_gameplay_misc"
+path = "fuzz_targets/formats_gameplay_misc.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: quests, deeds and dialogue (crates/formats/src/gameplay/quests.rs; quests.md §4–§17) ---
+
+[[bin]]
+name = "formats_gameplay_quests"
+path = "fuzz_targets/formats_gameplay_quests.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: combat data (crates/formats/src/gameplay/combat.rs; combat-data.md §2–§10) ---
+
+[[bin]]
+name = "formats_gameplay_combat"
+path = "fuzz_targets/formats_gameplay_combat.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: creatures, AI, spawning, encounter table (crates/formats/src/gameplay/creatures.rs; creatures.md §2–§7) ---
+
+[[bin]]
+name = "formats_gameplay_creatures"
+path = "fuzz_targets/formats_gameplay_creatures.rs"
+test = false
+doc = false
+bench = false
+
+# --- Gameplay records: items (crates/formats/src/gameplay/items.rs; items.md §2–§9) ---
+
+[[bin]]
+name = "formats_gameplay_items"
+path = "fuzz_targets/formats_gameplay_items.rs"
+test = false
+doc = false
+bench = false

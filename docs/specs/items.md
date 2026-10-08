@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision of 2026-10-08: OPEN items closed from the client library and BIN; review fixes 2026-10-08) |
-| **Last updated** | 2026-10-08 |
+| **Status** | Revised (OPEN sweep of 2026-10-09, §16 last row; waiting for review). Previously Accepted (revision of 2026-10-08: OPEN items closed from the client library and BIN; review fixes 2026-10-08) |
+| **Last updated** | 2026-10-09 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | Re-review 2026-10-07 (separate dirty-room session): **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08 (separate dirty-room session): **changes requested**; §13.11 repair example gives 161, not 162, under §6.3's single-precision arithmetic; status stays Revised. Re-review 2026-10-08 (separate dirty-room session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). |
+| **Review record** | Re-review 2026-10-07 (separate dirty-room session): **passed**, Accepted. Revision of 2026-10-08: reviewed 2026-10-08 (separate dirty-room session): **changes requested**; §13.11 repair example gives 161, not 162, under §6.3's single-precision arithmetic; status stays Revised. Re-review 2026-10-08 (separate dirty-room session, not the author): **passed**, Accepted. Full records in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §2.1, §2.4, §3.3, §5.7, §6.3, §6.4, §7.2, §7.3, IT12 and IT13 changed (rows F45–F52); status Revised until a separate session reviews it. |
 | **Implements into** | `crates/wstate` / `crates/props` (item identification and typed accessors), a future gameplay-data crate (value, DPS, armour and durability evaluation; set and legacy tables), `apps/explorer` (item card), `crates/net` sandbox backend (inventory, vendors, loot) |
 | **Companion specs** | [`wlib.md`](wlib.md) (class library, ancestor chains, §9 parent map); [`wstate.md`](wstate.md) (object-state records, §3–§8); [`property-system.md`](property-system.md) (dictionary §2, value encodings §4, property sets §5, the +0x09000000 rule §6.2, enum resolution §7, DID maps §8); [`string-table.md`](string-table.md) §9 (rendering StringInfo); [`icon-layers.md`](icon-layers.md) (item icon composition); [`appearance.md`](appearance.md) §4–§5 (worn and held visuals, the only part of items specified before this spec); [`ui-layout.md`](ui-layout.md) (tooltip layouts); [`combat-data.md`](combat-data.md) (progressions §4, `Mod_Array` §5, effects §6); [`economy.md`](economy.md) (loot §4, recipes §5, vendors and barter §6). This spec starts from decoded property sets and decoded object-state records. |
 
@@ -57,6 +57,7 @@ are in Review; section references to them are to their 2026-10-07 versions.)
 | BIN | **M4 (decision 0011).** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, file version read 2026-10-07), analysed headless in Ghidra on 2026-10-07 from a private copy of the shared project. **Question:** does the client's native code apply the value, DPS, damage, armour or set rules of §9 itself (so that they are client behaviour and not only relations in the data), and does it read item properties by PID? **Method:** a search of all instructions for immediate operands equal to 38 item-related PIDs, a search of the string data for property names, and decompilation of the functions that use the hits. **Why M1–M3 were not enough:** the data shows that stored values agree with the tables (§9), but not who computes them; no published source says; the running client does not show it. **Result:** no immediate operand equals the PIDs of `Item_Value`, `Item_ValueLookupTable`, `Combat_DamageVariance`, `Combat_Damage`, `Item_Armor_Value`, `Item_Armor_Value_Lookup_Table`, `Item_BaseActionDuration`, `LinearInterpolatingProgression_Array`, `Set_ActiveCount` or `Set_MemberList`, and no property name occurs as a string. The other PIDs do occur, but every decompiled use treats the number as a UI-element identifier, which shares the 0x1000xxxx number space. So BIN does **not** settle the question; the rules of §9 are stated as data relations, and who applies them stays OPEN (§14). Nothing from network, login, launcher or anti-tamper code was read. (Superseded for the client side by BC below: the formulas live in the client library's bytecode, not in native code.) |
 | BC | The client library's bytecode (record 0x56000000, chunk type 1, `wlib.md` §4.1), read on 2026-10-08 in the dirty room with a throwaway disassembler that follows [`wlib-bytecode.md`](wlib-bytecode.md) (Accepted). This is data in the user's install (method M1). Bodies read, by class: the level-scaling functions (class 1228 and its subclass 3215); the item base functions of class 791 (value, armour, level offset, getters); the weapon functions of class 256 that it calls; the static item effect functions (class 1046); the set classes 1817, 1824, 1827–1829, 1833, 1837, 4006; the socket classes 3952, 3977, 3978, 4214–4216; the wear classes 1208, 369 and the wear control 1672; the binding class 2779; the vendor functions of class 462; the disenchant examination class 4158; the indestructible examination class 1068; the player level-scaling class 3697 and the scaled-level helpers of class 3802; the craft preview function of class 263; the inventory control class 1202. Plus a search of the whole code block for 32-bit literals equal to item PIDs. A literal equal to a PID is not always a property read: validation functions return 32-bit error codes that can coincide with PIDs (for example the literals equal to `ItemWearControl_SkillGateValue` and `ItemWearControl_DurabilityArray` are such return codes); every hit used here was classified by reading its body. Facts from this source describe what the **client's** library computes; the server-side library is not in the archives (`combat-data.md` §13.1). |
 | BIN2 | **M4 (decision 0011), second pass.** Same build and executable, 2026-10-08, a private copy of the shared Ghidra project opened headless without analysis, decompiling only registered native functions called by the BC bodies (located with the native-registration pairing of `wlib-bytecode.md`'s BIN row). **Question:** what these natives do: the property inquiries by PID (integer, boolean, float) used by the script accessors, in particular whether an absent property yields the dictionary default; the random-number function; the object test used by the level-scaling code; the ordered container used to average set member levels; the integer clamp. **Why M1–M3 were not enough:** the bytecode passes values to natives by function ID only; their behaviour is in the executable alone; no published source describes them; no running client is available to this session. **Results:** package 169 functions 30, 31 and 33 look the PID up in the object's own property table (after an override table that is empty unless a debug flag is set) and return "not found" otherwise, leaving the caller's default in place; no dictionary-default step was found. Package 174 function 2 returns low + *r* × (high − low) for its two float arguments, *r* from the client's uniform generator (equal arguments return that value). Package 214 function 41 returns bit 0x20000000 of the object's flag word (the same bit selects between the two lookup paths of the inquiry functions). Package 1974 is a binary min-heap of (unsigned 32-bit key, value) pairs: function 2 inserts, 3 reads the smallest key and its value, 4 removes it, 1 tests for empty. Package 2574 function 2 clamps its third argument to [second, first] (signed 32-bit). The integer minimum and maximum (package 122 functions 24, 25) and the `Advancement_Level` / `Apparent_Level` readers (package 3703 functions 1, 2) are as `combat-data.md`'s BIN row (b4) records them. Nothing from network, login, launcher or anti-tamper code was read. |
+| OBS3 | Observed in the user's install on 2026-10-09 (OPEN sweep, spec writer). The install's archives are unchanged since 2026-10-04 (file times), so a dump of **every** 0x70 record with its 0x79 property set and of all 0x78 sets, made on 2026-10-07 with the repository's own decoders, stands for the install; it was walked at every nesting depth (struct fields, array elements, arrays inside arrays), and the property dictionary (0x34000000) was read for types, mappers and defaults. Every count marked OBS3 covers all records of the kind named. |
 
 | # | Fact | Source(s) | Mark |
 |---|---|---|---|
@@ -104,6 +105,14 @@ are in Review; section references to them are to their 2026-10-07 versions.)
 | F42 | `Item_LevelScaling_OnLevelForPlayersBelowLevel` in the client's scaled-level function (§5.2) | BC (classes 3697, 3802); BIN2 (clamp); BIN (`combat-data.md` b4: level readers, minimum) | Confirmed (bytecode + BIN) 2026-10-08 |
 | F43 | Absent properties: each script read site supplies its own default; 1,045 of 1,104 constant-default sites use the dictionary default; the native lookup does not substitute it (§14) | BC (all accessor call sites); BIN2 | Confirmed (bytecode + BIN) 2026-10-08 |
 | F44 | `WeenieType` is not read by the client library; `Item_ImplementType` is compared with the mapper's `Instrument` value; `ExternalAppearanceID`, `Item_MaterialType`, `UI_Examination_Tooltip_Compare_Type`, `Inventory_UseOnAcquire`, `Inventory_QuestItem`, `Quest_IsQuestToken`, `Effect_IsEnchantable`, `Set_LevelRequired`, `Set_MinActiveMembers`, the `Combat_*Stance` labels, the `Item_PILI_*` labels and the legacy roll tables are not read by it (§5, §7.1, §7.3) | BC (literal search, bodies 278/2, 1953/49) | Confirmed (bytecode, absence) 2026-10-08 |
+| F45 | Doors (1722) and interactive objects (2097) share `WeenieType` `Door`; eight labels present in all 254 doors and in none of the 167 interactive objects separate them; one class-2097 record has `WeenieType` `Item` and no label that general items lack; the 11 `SPM_*` / `Usage_ModPropertyUsageData_*` / `Usage_PropertyCondition_Array` labels are in both class-3924 records and in no other item (§2.1, §2.4) | OBS3 (all 151,230 items) | Confirmed 2026-10-09 |
+| F46 | The 200 weapons with `Item_WornAppearanceMapList` carry the same object-state worn map as class 795 (root attribute 0x0905B9D8 non-null in all 200; equal to the list); the 5 general items with the list have none (§3.3) | OBS3 (object-state root of all 42,086 items that have the list); implementation census 2026-10-07 (map equality, all 200) | Confirmed 2026-10-09 |
+| F47 | Value types of the requirement labels of §5.7: `Usage_RequiredRaceEntry` bare enum (0x2300000B); `Usage_RequiredTrait_Struct` fields; `Usage_RequiredVirtueRank` int; craft tier and mastery enums (0x23000063); quest-requirement struct fields and types; the two barring `_Array` forms | OBS3 (dictionary; every occurrence at any depth) | Confirmed 2026-10-09 |
+| F48 | Entry labels and value types of the five wear-control arrays (§6.3) and of `ItemDecayControl_DurationMapList` (§6.4) | OBS3 | Confirmed 2026-10-09 |
+| F49 | Labels and value types of the records of classes 2134, 2139, 2338, 4015 (§7.3) and 3138 (§7.2); `Runic_Tier` enum (0x230002A0), `ItemAdvancement_Mod_Weight` int | OBS3 (all records of each class) | Confirmed 2026-10-09 |
+| F50 | Of the 24 targets of IT13, the root classes of two (1603, 1547 here) also own a 0x76 singleton record (`wstate.md` §3); IT13 and §5.10 count 0x70 records | OBS3; `wstate.md` OBS (the 11 records with prefix 0x76) | Confirmed 2026-10-09 |
+| F51 | §2.4 step 1 tie rule and the kind order of rule 4 | Decision (Tessera), not a fact about the original | Decision 2026-10-09 |
+| F52 | Getters of `Inventory_CanBeContained`, `Item_MithrilCost` and `SpellcraftCalculator` located with their callers; the callers pass the values to natives not specified in `wlib-bytecode.md` §7, so their effect stays OPEN (§14) | BC (re-read 2026-10-09) | Confirmed (location only) 2026-10-09 |
 
 ---
 
@@ -147,13 +156,13 @@ of records, the others (and 1734 itself) have none: 791, 793, 800, 811, 812, 813
 | 2814 | 3,634 | direct | PackageItem 3,634 | 22 | 120 | `PackageItem_TrophyListTemplate` (all, exclusive) and 18 other `PackageItem_*` / web-store labels | Packages (items with contents) |
 | 797 | 2,902 | 813 → 1735 | Shield 2,902 | 1 | 119 | `Item_Class` = the shield key in all | Shields |
 | 798 | 301 | 814 → 1736 | Letter 301 | 3 | 74 | `TextItem_Title`, `TextItem_PrefabContentList` (all, exclusive) | Readable text items |
-| 1722 | 254 | 793 | Door 254 | 1 | 68 | `Usage_PlayersCanOpen`, `Usage_PlayersCanClose` (exclusive) | In-world doors |
+| 1722 | 254 | 793 | Door 254 | 1 | 68 | `Usage_PlayersCanOpen`, `Usage_PlayersCanClose` (exclusive, 13 and 15 records); `CSM_ActionHandler`, `MapNote_Enabled`, `MapNote_Linkable`, `Physics_CollisionReports`, `Physics_EtherealToType`, `Physics_EtherealityType`, `Physics_NoPathmaps`, `Physics_PlacementEtherealToType` (all 254; none in class 2097, F45) | In-world doors |
 | 815 | 228 | direct | Waypoint 228 | 1 | 78 | 13 exclusive labels (travel destination, layer lists, tracking) | In-world travel points |
-| 2097 | 167 | direct | Door 166; Item 1 | 2 | 94 | 13 exclusive labels (`BigBattle_Interactive_*` extras, activity collections) | In-world interactive objects |
+| 2097 | 167 | direct | Door 166; Item 1 | 2 | 94 | No label is present in every record and exclusive. 13 labels occur only here, in 58 of the records between them (`BigBattle_Interactive_Aim_Horizontal_Max`, `…_Aim_Horizontal_Min`, `…_Built`, `…_Burning`, `…_Crank_Max`, `…_Disable_Mod`, `…_Disarm_Mod`, `…_MaxRange`, `…_Upgrade_Damage_Modifier`, `DistantBattleUnit_Activator_Spawn_Transfer_Properties`, `Missile_InitialOffset`, `MultiUsage_ActivityCollection`, `State@Entity.m_iCount`). The 166 `Door` records lack all eight door labels of row 1722 (F45) | In-world interactive objects |
 | 3663 | 71 | 796 | Item 71 | 1 | 73 | A usage effect whose data list carries `Effect_Crafting_RecipeList` | Multi-recipe scrolls |
 | 803 | 40 | direct | Key 40 | 1 | 79 | `Key_CanBePlacedOnKeyRing` (exclusive) | Keys |
 | 804 | 18 | direct | Milestone 18 | 1 | 55 | `Milestone_*`, `Travel_TravelFlags` (exclusive) | In-world milestones |
-| 3924 | 2 | 796 | Item 2 | 1 | 82 | 11 exclusive `SPM_*` / `Usage_ModPropertyUsageData_*` labels | Property-modifying tokens |
+| 3924 | 2 | 796 | Item 2 | 1 | 82 | `SPM_Max_Error`, `SPM_Min_Error`, `SPM_PropertyMod`, `SPM_SKU`, `SPM_Target`, `SPM_Target_Max`, `SPM_Target_Min`, `Usage_ModPropertyUsageData_MaxValues`, `Usage_ModPropertyUsageData_MinValues`, `Usage_ModPropertyUsageData_ModProperties`, `Usage_PropertyCondition_Array` (all 11 in both records and in no other item, F45) | Property-modifying tokens |
 
 `WeenieType` labels come from enum mapper 0x230000C9 (EMAPPER label `WeenieType`, §11). Four
 kinds (1722, 815, 2097, 804) are fixtures placed in the world: they have `Item_Class` =
@@ -235,25 +244,50 @@ the mask read from the mapper) or the label, never the full value.
      58 from class 2372). No reference is null or names a missing record;
    - let *I* be the child of *P* whose subtree holds the most of those references. Here
      *I* = 1734 with 308,778 (all vendor and treasure references and 100,740 barter
-     references); the other 21 are barter references that name carry-alls (4178);
+     references); the other 21 are barter references that name carry-alls (4178).
+     A reference whose root class is *P* itself counts for no child (none occurs: class 801
+     has no records). **Decision (Tessera, F51):** if two or more children share the largest
+     count (not observed), take the one whose subtree holds the record named by the
+     WEENIECONTENT label `BankFillItem`; if none of them does, take the lowest class index,
+     and log the tie;
    - a reader may instead use 1734 and 801 as fast hints after checking that the record named
      by the WEENIECONTENT label `BankFillItem` (0x70000EF3 here, class 799) descends from 1734.
 2. A record is an **item** if its root class is *I* or descends from *I*.
 3. A record is **item-like** (treated as an item by inventory code) if its root class descends
    from *P*. This adds the carry-alls of §2.2.
 4. The **kind** is the root class. Code that needs a kind uses the signatures of §2.1 or the
-   `WeenieType` label, never the class index alone.
+   `WeenieType` label, never the class index alone. **Decision (Tessera, F51)**, the order in
+   which a reader without class indices decides the kind of an item from its property set:
+   1. the signatures marked "all" and "exclusive" in §2.1: weapon (799), recipe scroll (805),
+      multi-recipe scroll (3663), package (2814), text item (798), property-modifying token
+      (3924: any of its 11 labels), key (803);
+   2. `WeenieType` `Door`: an in-world door (1722) when the set has `CSM_ActionHandler` (or any
+      of the other seven door labels of §2.1), otherwise an in-world interactive object (2097);
+   3. the `WeenieType` label: `Weapon`, `Clothing`, `Jewelry`, `Shield`, `PackageItem`,
+      `Letter`, `Key`, `Waypoint`, `Milestone` give the matching kind; other labels give none;
+   4. `Item_WornAppearanceMapList` present: worn apparel;
+   5. otherwise a general item (796).
+   With this order 151,224 of the 151,230 item records of this install get their root class as
+   kind (OBS3, every item). The six others: the class-2097 record with `WeenieType` `Item`
+   (0x7001B1C1 here) holds no label that the general items lack and reads as a general item
+   (F45), and the 5 general items with `Item_WornAppearanceMapList` (§3.3) read as worn
+   apparel. A reader that needs the exact kind reads the root class with the class discovery
+   of step 1 and `wlib.md` §9.
 
 > **Decision (Tessera):** the explorer and the sandbox server classify items by rule 2–3. A
 > record whose root class descends from *I* but whose property set lacks `Item_Class` would be
 > reported as malformed; none exists.
 
-> **OPEN (implementer, 2026-10-07):** Step 1 does not say what happens when two children of
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** Step 1 does not say what happens when two children of
 > *P* hold the same number of references. `crates/formats/src/gameplay/items.rs`
 > (`ItemClasses::discover`) picks the lower class index and counts references whose class is
 > *P* itself for no child. Please confirm or state a rule.
+>
+> *Answer:* step 1 now states the rule (Decision F51): references of class *P* count for no
+> child; a tie goes to the child that holds `BankFillItem`, else to the lowest index. No tie
+> occurs in this install.
 
-> **OPEN (implementer, 2026-10-07):** Rule 4 cannot separate two kinds of §2.1. The in-world
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** Rule 4 cannot separate two kinds of §2.1. The in-world
 > interactive objects (2097) carry `WeenieType` `Door` like the doors (1722), and their
 > signature ("13 exclusive labels (`BigBattle_Interactive_*` extras, activity collections)")
 > names no label present in every record; the property-modifying tokens (3924) carry `Item`
@@ -265,6 +299,12 @@ the mask read from the mapper) or the label, never the full value.
 > scroll, package, text item, door, key), then the `WeenieType` label (`Weapon`, `Clothing`,
 > `Jewelry`, `Shield`, `PackageItem`, `Letter`, `Door`, `Key`, `Waypoint`, `Milestone`; the
 > other labels give no kind), then `Item_WornAppearanceMapList`, else General.
+>
+> *Answer:* §2.1 rows 1722, 2097 and 3924 now list the labels (F45). Class 3924: 11 labels in
+> both records and in no other item. Class 2097 has no label in every record; it is separated
+> from the doors by absence: eight labels are in all 254 doors and in none of the 167
+> interactive objects. Rule 4 now gives the order (Decision F51, the implementer's order with
+> the token and door steps added) and the six records it cannot place.
 
 ---
 
@@ -337,11 +377,13 @@ In all 41,881 records of class 795, root attribute 0x0905B9D8 references a `refm
 (class 35). Its keys are **species key | sex key** (for example 23 | 0x1000 = 4,119) and each
 value is an object of class 2065 with two integers: the `Item_AppearanceKey` value and the
 wardrobe record DID (0x20…). For every one of the 41,881 records this map equals the
-`Item_WornAppearanceMapList` of the property set (same keys, same pairs). The 205 other items
-with that list (200 weapons, 5 general items) have no such map. `appearance.md` §4 reads the
+`Item_WornAppearanceMapList` of the property set (same keys, same pairs). The 200 weapons
+that have the list carry the same mirror, equal to their list in all 200 (F46; corrects the
+earlier text, which said they had none); the 5 general items with the list have no mirror
+(the attribute is absent or null). `appearance.md` §4 reads the
 property list; readers need not read the mirror.
 
-> **OPEN (implementer, 2026-10-07):** The sentence "The 205 other items with that list (200
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The sentence "The 205 other items with that list (200
 > weapons, 5 general items) have no such map" is not reproduced. Running
 > `crates/formats/tests/gameplay_items_real_data.rs` (it decodes the object-state record of
 > every item that has `Item_WornAppearanceMapList`) finds root attribute 0x0905B9D8 resolving
@@ -350,6 +392,10 @@ property list; readers need not read the mirror.
 > Is the sentence wrong, or does it describe something other than a non-null reference to a
 > non-empty map? Should IT12 cover the weapons too? The test asserts IT12 for every record
 > that has a mirror and reports the classes; it does not assert which classes those are.
+>
+> *Answer:* the sentence was wrong; the implementation's census is right (F46). The paragraph
+> above is corrected and IT12 now covers every item whose object state holds the map (the
+> 41,881 apparel records and the 200 weapons).
 
 ---
 
@@ -833,13 +879,14 @@ identified by DID or class. The same 91,154 items (the equippable ones) use 0x70
 | Label | Type | Items | Notes |
 |---|---|---|---|
 | `Usage_RequiredClassList` | array of `Usage_ClassType` (enum 0x2300000E) | 20,000 | 41 distinct lists |
-| `Usage_RequiredRaces` | array of `Usage_RequiredRaceEntry` | 322 | |
+| `Usage_RequiredRaces` | array of `Usage_RequiredRaceEntry`, each a bare enum of mapper 0x2300000B (no fields) | 322 | 3,373 entries over all 1,390 holders of any class (1,029 of the arrays inside `DefaultPermissionBlobStruct`) |
 | `Usage_RequiredFaction` | struct (`Usage_RequiredFaction_DataID` → class 1889, `Usage_RequiredFaction_Tier`) | 4,569 | |
-| `Usage_RequiredTrait`, `Usage_RequiredTrait_Array` (struct `Usage_RequiredTrait` + `Usage_RequiredVirtueRank`) | DID / array | 2,577 / 1,024 | |
-| `Usage_BarringTrait`, `Usage_BarringSkill`, `Usage_BarringCraftRecipe`, `Usage_BarringEmote` (and `_Array` forms) | DID | 1,647 / 1,261 / 6,055 / 96 | Barring condition (label) |
+| `Usage_RequiredTrait`, `Usage_RequiredTrait_Array` | DID / array of `Usage_RequiredTrait_Struct` | 2,577 / 1,024 | Each struct holds `Usage_RequiredTrait` (DID) and `Usage_RequiredVirtueRank` (int, dictionary default −1) in all 1,098 structs; the dictionary also allows `Usage_RequiredVirtueRankMax` (int), which no struct carries |
+| `Usage_BarringTrait`, `Usage_BarringSkill`, `Usage_BarringCraftRecipe`, `Usage_BarringEmote` | DID | 1,647 / 1,261 / 6,055 / 96 | Barring condition (label) |
+| `Usage_BarringTrait_Array`, `Usage_BarringSkill_Array` | array of bare `Usage_BarringTrait` / `Usage_BarringSkill` DIDs | 252 / 383 (378 general items, 5 packages) | 280 and 788 elements. The dictionary has no `_Array` form of the other two barring labels |
 | `Usage_MinGloryRank` | int | 1,084 | |
-| `Usage_RequiredCraftProfession` (→ class 1023), `Usage_RequiredCraftTier`, `Usage_RequiredCraftMastery` | DID / enum | 6,152 / 6,126 / 149 | |
-| `Usage_QuestRequirements` | array of (`Usage_Operator`, `Usage_QuestID`, `Usage_QuestStatus`) | 397 | |
+| `Usage_RequiredCraftProfession` (→ class 1023), `Usage_RequiredCraftTier`, `Usage_RequiredCraftMastery` | DID / enum (mapper 0x23000063) / enum (mapper 0x23000063) | 6,152 / 6,126 / 149 | |
+| `Usage_QuestRequirements` | array of `Usage_QuestRequirement` structs: `Usage_Operator` (enum, mapper 0x23000039), `Usage_QuestID` (DID), `Usage_QuestStatus` (enum, mapper 0x23000017) | 397 | 16,232 structs in all holders; one lacks `Usage_QuestStatus` and two lack `Usage_Operator` (the dictionary default applies, §14) |
 | `Usage_RestrictedEffect`, `Usage_RequiredEffect` | DID → effect | 5,522 / 236 | |
 | `Usage_CooldownDuration` | enum (0x2300006D) | 7,229 | 46 keys; seconds from the cooldown control (§9.8) |
 | `Usage_CooldownChannel` | enum (0x2300006C) | 5,432 | Shared-cooldown group (187 keys used) |
@@ -851,7 +898,7 @@ identified by DID or class. The same 91,154 items (the equippable ones) use 0x70
 | `Usage_TargetType`, `Usage_ValidTargetTypes` | bitfield 32 | 71,389 / 15,569 | |
 | `ItemDecay_Duration` | enum (0x2300030C) | 249 | Lifetime; seconds from the decay control (§9.8) |
 
-> **OPEN (implementer, 2026-10-07):** Field labels and types missing from the requirement
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** Field labels and types missing from the requirement
 > table: the fields of a `Usage_RequiredRaceEntry` (the implementation returns the raw
 > elements); the type of `Usage_RequiredVirtueRank` (read as an int or an enum key); the
 > types of `Usage_RequiredCraftTier` and `Usage_RequiredCraftMastery` (the row says
@@ -862,6 +909,11 @@ identified by DID or class. The same 91,154 items (the equippable ones) use 0x70
 > **Answered in part (2026-10-08, merge):** `interaction.md` §3.7.1 gives `Usage_Operator` as
 > an enum of mapper 0x23000039 (a label has one dictionary type wherever it occurs). The other
 > labels and types asked for here remain open.
+>
+> *Answer (2026-10-09, F47):* the table above now gives every type: race entries are bare
+> enums, the virtue rank is an int, craft tier and mastery are enums of mapper 0x23000063,
+> the quest-requirement struct is spelled out, and the two `_Array` barring forms are arrays
+> of bare DIDs.
 
 Where a label's value is the same in every item that has it but differs from the dictionary
 default (the last three booleans), the **presence** of the label is the information; an
@@ -1019,13 +1071,15 @@ widgets (`ItemAdvancement_AdvanceableWidget_DPSLUT`, class 4024).
   one per speed key 1–6. All 144 entries are (1.0, −0.1) on this install.
 - **Wear control** (label `ItemWearControl`, 0x70000224 here, class 1672):
 
-| Label | Entries | Entry fields |
+| Label | Entries | Entry struct: key field (enum, mapper) and value field (type) |
 |---|---|---|
-| `ItemWearControl_MaxStructurePointsArray` | 50 | `…_MaxStructurePointsEnum` (key of 0x230000F9), `…_MaxStructurePointsValue` (int) |
-| `ItemWearControl_DurabilityArray` | 7 | `…_DurabilityEnum` (key of 0x230000FA), `…_DurabilityValue` (float) |
-| `ItemWearControl_RepairCostQualityModArray` | 5 | quality key, float factor |
-| `ItemWearControl_ItemWearStateValueModArray` | 4 | wear-state key (0x230000FB), float factor (1.0 for the key every item has) |
-| `ItemWearControl_SkillGateArray` | 5 | key, float |
+| `ItemWearControl_MaxStructurePointsArray` | 50 | `ItemWearControl_MaxStructurePointsEntry`: `ItemWearControl_MaxStructurePointsEnum` (0x230000F9, the mapper of `Item_MaxStructurePointsEnum`), `ItemWearControl_MaxStructurePointsValue` (int) |
+| `ItemWearControl_DurabilityArray` | 7 | `ItemWearControl_DurabilityEntry`: `ItemWearControl_DurabilityEnum` (0x230000FA, the mapper of `Item_DurabilityEnum`), `ItemWearControl_DurabilityValue` (float) |
+| `ItemWearControl_RepairCostQualityModArray` | 5 | `ItemWearControl_RepairCostQualityModEntry`: `ItemWearControl_RepairCostQualityModEnum` (0x23000067, the mapper of `Item_Quality`), `ItemWearControl_RepairCostQualityModValue` (float factor) |
+| `ItemWearControl_ItemWearStateValueModArray` | 4 | `ItemWearControl_ItemWearStateValueModEntry`: `ItemWearControl_ItemWearState` (0x230000FB, the mapper of `Item_WearState`), `ItemWearControl_ItemWearStateValueMod` (float factor; 1.0 for the key every item has) |
+| `ItemWearControl_SkillGateArray` | 5 | `ItemWearControl_SkillGateEntry`: `ItemWearControl_SkillGateEnum` (0x230000FD), `ItemWearControl_SkillGateValue` (float) |
+
+Every entry of the five arrays holds exactly its two fields (OBS3, F48).
 
 **Roles (Confirmed, client library, F37; settles the former OPEN).** The wear control's
 script object holds its tables as maps; the client library reads two of them, recognisable by
@@ -1076,7 +1130,7 @@ client library looks for equipped items in wear states `Damaged` (key 1) or `Bro
 tell whether any equipped item needs attention. Whether the server uses the same arithmetic is
 not in the data.
 
-> **OPEN (implementer, 2026-10-07):** The entry field labels are abbreviated ("`…_MaxStructurePointsEnum`")
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The entry field labels are abbreviated ("`…_MaxStructurePointsEnum`")
 > or not given. The implementation reads `ItemWearControl_MaxStructurePointsEnum`,
 > `ItemWearControl_MaxStructurePointsValue`, `ItemWearControl_DurabilityEnum` and
 > `ItemWearControl_DurabilityValue` (all four are defined in the dictionary and reproduce
@@ -1089,6 +1143,9 @@ not in the data.
 > wear-state array, the key `Item_WearState` and a float factor (1.0 for a missing key); and
 > state that the client library does not read the skill-gate array. The entry field labels of
 > those three arrays remain open.
+>
+> *Answer (2026-10-09, F48):* the wear-control table above spells out every entry struct, key
+> field (with its mapper) and value field (with its type).
 
 <a id="s6-4"></a>
 ### 6.4 Other control records
@@ -1097,7 +1154,7 @@ not in the data.
 |---|---|---|
 | `InventoryControl` | 0x70000230 (1202) | Slot counts and limits; `InventoryControl_DistributionToLevelOffsetList` (15 entries: distribution key → level offset, all 0 here; added to `Item_Level` for the armour lookup and the window of level-dependent effects, §9.5, §5.9); `…_DefaultEquipperEffectList` (13 equipment categories → effect lists) and `…_DefaultTargetEffectList` (9 categories); `…_EquipmentCategoryCachedSlotList` (3 slots → a cached-category property); `…_SlotToPaperdollLocation_MappingList`; `…_ExamProperty_Array` (38 property IDs: the per-instance properties of an item, for example `Inventory_BoundToID`, `Item_CurStructurePoints`); `…_MergeProperty_Array` (6 property IDs including `Item_Value` and `Item_Level`); `InventoryControl_SmartSortInfo_Array` (8 entries: a sort type and a list of property IDs) |
 | `CooldownControl` | 0x70000264 (1664) | `CooldownControl_DurationMapList`: 63 entries (cooldown key → seconds, float) |
-| `ItemDecayControl` | 0x70021EB3 (2809) | `ItemDecayControl_DurationMapList`: 20 entries (decay key → seconds) |
+| `ItemDecayControl` | 0x70021EB3 (2809) | `ItemDecayControl_DurationMapList`: 20 `ItemDecayControl_DurationMapListEntry` structs, each `ItemDecayControl_DurationType` (enum, mapper 0x2300030C, the mapper of `ItemDecay_Duration`; 20 distinct keys) and `ItemDecayControl_DurationValue` (float, seconds; dictionary default 0.0) (F48) |
 | `ItemMungingControl` | 0x70000252 (1671) | Dye colour and pattern lookup lists (`appearance.md` §4.9) |
 | `ItemSocketControl` | 0x70040DEE (4005) | Socket images per type, level-up cost property per socket type, essence overlays by level |
 | `ItemAdvancementControl` | 0x7000EAA6 (2152) | 42 game-wide legendary settings (§7.3) |
@@ -1115,7 +1172,7 @@ not in the data.
 > traced. A further BIN pass on the native loader of class 1202 would settle it; nothing in this
 > spec depends on it.
 
-> **OPEN (implementer, 2026-10-07):** The entry layout of `CooldownControl_DurationMapList` and
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The entry layout of `CooldownControl_DurationMapList` and
 > `ItemDecayControl_DurationMapList` is not given (labels of the key and seconds fields, and
 > the type of the decay seconds). The implementation reads each entry struct by field type:
 > first enum field = key, first float (or int) field = seconds. This reproduces §9.8 coverage
@@ -1125,6 +1182,9 @@ not in the data.
 > `CooldownControl_DurationMapListEntry` with `CooldownControl_DurationType` (an enum key) and
 > `CooldownControl_DurationValue` (float, seconds). The `ItemDecayControl_DurationMapList`
 > entry labels and the type of its seconds remain open.
+>
+> *Answer (2026-10-09, F48):* the `ItemDecayControl` row of the table above gives the entry
+> struct: an enum key `ItemDecayControl_DurationType` and a float `ItemDecayControl_DurationValue`.
 
 ---
 
@@ -1210,33 +1270,43 @@ OPEN).** Whether the server uses the same rules is not in the data.
 ### 7.2 Relics and transmutation
 
 - **Relics** (class 2219, 706 records): `Runic_Name`, `Runic_Type` (bitfield, 6 values),
-  `Runic_Level`, `Runic_Tier`, `Runic_RequiredItemLevel` (423), `Relic_ValidContainerSlots`,
+  `Runic_Level`, `Runic_Tier` (enum, mapper 0x230002A0; 31 distinct keys over the 706 relics),
+  `Runic_RequiredItemLevel` (423), `Relic_ValidContainerSlots`,
   `Mod_Array` (all), `Runic_Deconstruction_Value` and `…_TrophyListTemplate`, icons and usage
   labels. They carry icon layers and `Usage_*` labels like items but are not in the item
   subtree. Reached from items (`ItemAdvancement_RunicToCreate` 391, `Item_PILI_Runic_Type1–4`
   181 each), from runic lists (469), runic treasure groups (class 2239, 450) and transmutation
   outputs (343).
-- **Transmutation recipes** (class 3138, 506 records): `Relic_Transmutation_Recipe_RelicCurrencyCost`,
-  `…_TransmutationCategory`, `…_Output_List` (outputs: a relic or an item, with a weight).
-  Listed by `RelicTransmutationDirectory`.
+- **Transmutation recipes** (class 3138, 506 records; F49): `Relic_Transmutation_Recipe_RelicCurrencyCost`
+  (int, 1–58,500, all), `Relic_Transmutation_Recipe_TransmutationCategory` (enum, mapper
+  0x23000322, all), `Relic_Transmutation_Recipe_Output_List` (all; an array of
+  `Relic_Transmutation_Recipe_Output` structs, 602 in all, each `Relic_Transmutation_Recipe_Output_Relic`
+  (DID: a relic or an item) and `Relic_Transmutation_Recipe_Output_Weight` (int, 1 in all
+  602)), `Relic_Transmutation_Recipe_Can_Produce_Items` (bool, true in the 259 that have it),
+  and in 12 recipes `Relic_Transmutation_Recipe_Output_Icon_Override` (DID → 0x41),
+  `…_Output_Title_Override` and `…_Output_Tooltip_Override` (StringInfo). Listed by
+  `RelicTransmutationDirectory`.
 - **Runic lists** (class 2229, 169 records): one property, `RunicList_Array` of
   { `RunicList_DropFrequency`: enum, `RunicList_RunicOrTreasureGroup`: DID → relic or class
   2239 }. Named by runic level loot tables (class 2227, 1,050), by items (136) and by the runic
   combination control. Their use in loot is specified in `economy.md` §4.9.
 
-> **OPEN (implementer, 2026-10-07):** The value types of `Runic_Tier` (§7.2) and
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The value types of `Runic_Tier` (§7.2) and
 > `ItemAdvancement_Mod_Weight` (§7.3) are not given. The implementation accepts an int or an
 > enum key for the tier and any numeric value for the weight. Please state them.
+>
+> *Answer (F49):* `Runic_Tier` is an enum of mapper 0x230002A0 (§7.2);
+> `ItemAdvancement_Mod_Weight` is an int, dictionary default 0, observed 1–65 (§7.3).
 
 <a id="s7-3"></a>
 ### 7.3 Legacies and advancement tables
 
 | Class | Records | Content | Named by |
 |---|---|---|---|
-| 2134 | 359 | `ItemAdvancement_Effect_Array`: { `ItemAdvancement_Effect` (→ effect 734), `ItemAdvancement_Mod_Weight` } | 2139 (1,519) |
-| 2139 | 224 | `ItemAdvancement_ProgressionListArray` { → 2134, weight } and `ItemAdvancement_ProgressionPullCountList` { amount, weight } (4 entries in all) | items (6,399 via the three override labels), reforge tables (class 2204, 350) |
-| 2338 | 421 | Legendary titles: `Name`, `ItemAdvancement_IATitle_Category`, `…_Tier`, `ItemAdvancement_Title_SlayerGenusType`, `…_DamageType`; an effect list in 344 and a `Mod_Array` in 105 | items (421 + 181) |
-| 4015 | 329 | Imbued legacies: `ItemAdvancement_ImbuedLegacy_Effect` (→ effect), initial and absolute max levels (46 and 83 in all), icon, tooltip layout, `…_ClassicLegacyTransform` (struct) | `Item_PILI_Legacy_Entry_List` (1,267), the advancement control (333) |
+| 2134 | 359 | `ItemAdvancement_Effect_Array`: 3,279 `ItemAdvancement_Effect_Entry` structs { `ItemAdvancement_Effect` (DID → effect 734), `ItemAdvancement_Mod_Weight` (int, 1–65) } | 2139 (1,519) |
+| 2139 | 224 | `ItemAdvancement_ProgressionListArray`: 1,519 `ItemAdvancement_ProgressionList_Entry` structs { `ItemAdvancement_ProgressionList` (DID → 2134), `ItemAdvancement_ProgressionList_Weight` (int, 0–50) }; `ItemAdvancement_ProgressionPullCountList`: 4 `ItemAdvancement_ProgressionPullCount_Entry` structs per record (896 in all) { `ItemAdvancement_ProgressionPullCount_Amount` (int, 1–4), `ItemAdvancement_ProgressionPullCount_Weight` (int, 0–100) } | items (6,399 via the three override labels), reforge tables (class 2204, 350) |
+| 2338 | 421 | Legendary titles: `Name` (StringInfo), `ItemAdvancement_IATitle_Category` (enum, mapper 0x230002C3), `ItemAdvancement_IATitle_Tier` (enum, mapper 0x230002A6; keys 1–3), `ItemAdvancement_Title_SlayerGenusType` (32-bit bitfield, mapper 0x2300000A; 0 in 255 records), `ItemAdvancement_Title_DamageType` (enum, mapper 0x23000028), all in every record; `EffectGenerator_RunicEffectList` (an array of `EffectGenerator_EffectStruct`, §5.9) in 344 and a `Mod_Array` in 105 | items (421 + 181) |
+| 4015 | 329 | Imbued legacies, all fields in every record: `ItemAdvancement_ImbuedLegacy_Effect` (DID → effect), `ItemAdvancement_AdvanceableWidget_InitialMaxLevel` (int; 46 in all) and `…_AbsoluteMaxLevel` (int; 83 in all), `ItemAdvancement_AdvanceableWidget_Icon` and `…_SmallIcon` (DID → 0x41), `ItemAdvancement_AdvanceableWidget_Category` (enum, mapper 0x230003EB), `UI_Examination_Tooltip_0Click_Element` and `…_0Click_Layout` (tooltip layout, `ui-layout.md`), `ItemAdvancement_ImbuedLegacy_ClassicLegacyTransform` (struct of `ItemAdvancement_ImbuedLegacy_TierTransform_Array`, an array of `ItemAdvancement_AdvanceableWidget_UnlockedLevels` ints 0–5, 2,303 in all, and `ItemAdvancement_LegacyTypeName_Array`, an array of `ItemAdvancement_PropertyName` PIDs, 338 in all). The same widget labels occur in 17 records of classes 4024, 4025 and 4048 | `Item_PILI_Legacy_Entry_List` (1,267), the advancement control (333) |
 | 2152 | 1 | The advancement control (label `ItemAdvancementControl`): 42 settings, including level tables, reforge levels, legacy name lists, relic and XP currencies (items) | WEENIECONTENT |
 
 > **OPEN:** The legendary rules: how legacies are rolled from the class-2139 / class-2134 tables
@@ -1248,7 +1318,7 @@ OPEN).** Whether the server uses the same rules is not in the data.
 > which this spec does not specify.) The tables are fully decodable with `property-system.md`.
 > A Tessera server needs its own rule (out of scope before M8, decision 0004).
 
-> **OPEN (implementer, 2026-10-07):** The records of classes 2139, 2338, 4015 (§7.3) and 3138
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** The records of classes 2139, 2338, 4015 (§7.3) and 3138
 > (§7.2) are not given typed readers because their labels are abbreviated or missing:
 > the field labels and types of the `ItemAdvancement_ProgressionListArray` entries
 > ("{ → 2134, weight }") and of the `ItemAdvancement_ProgressionPullCountList` entries
@@ -1257,6 +1327,9 @@ OPEN).** Whether the server uses the same rules is not in the data.
 > (4015), "`…_TransmutationCategory`", "`…_Output_List`" and the output entry fields (3138).
 > They stay reachable through the generic property access. Please spell out every label and
 > its type.
+>
+> *Answer (F49):* the §7.3 table and the §7.2 transmutation paragraph now spell out every
+> label, its value type and, for enums, the mapper.
 
 <a id="s7-4"></a>
 ### 7.4 Cosmetic companions (class 3698, 563 records)
@@ -1537,8 +1610,8 @@ definition uses it**; it plays no part in items on this install.
 | IT9 | Every `Mod_Entry` has `Mod_Modified` and `Mod_Op`, and has `Mod_Progression` or a field whose PID equals `Mod_Modified`. |
 | IT10 | `Item_Socket_Array` entries have exactly the two fields of §5.11 and one socket-type bit. |
 | IT11 | `Set_ActiveCount` values within a set are strictly ascending; no item appears in two `Set_MemberList`s; every member of a class-1824 set is an item. |
-| IT12 | For class-795 records, the object-state worn map equals `Item_WornAppearanceMapList` (§3.3). |
-| IT13 | The targets of `Usage_Permission`, `Usage_TakePermission` and `CSM_ActionHandler` are each the only record of their root class, and their property sets hold at most six properties. |
+| IT12 | For every item whose object state holds the worn map (root attribute 0x0905B9D8 non-null: here all class-795 records and the 200 weapons with the list), the map equals `Item_WornAppearanceMapList` (§3.3). |
+| IT13 | The targets of `Usage_Permission`, `Usage_TakePermission` and `CSM_ActionHandler` are each the only 0x70 record of their root class, and their property sets hold at most six properties. A 0x76 singleton record of the same class (`wstate.md` §3; classes 1603 and 1547 here) is not counted (F50). |
 | IT14 | In every item's object state, every class-700 element's effect DID is an effect of the item's own `EffectGenerator_*` lists without floor or ceiling, the `PropertyModEffect` effect, or a default effect of the item's equipment category; every own unranged effect has an element; items with `Mod_Array` have exactly one `PropertyModEffect` element, with spellcraft −1 (§3.2). |
 | IT15 | No effect struct with a floor or ceiling other than −1 has an element in the item's compiled list (§5.9). |
 | IT16 | `Item_Disenchant_Value` > 0 exactly when `Item_Disenchant_Component_Result` is set (§5.3). |
@@ -1546,10 +1619,14 @@ definition uses it**; it plays no part in items on this install.
 | IT18 | Every `WeenieType` value's low 16 bits are a major type of §2.3, except at most the single `AIRemoteDetector` record. |
 | IT19 | In every set without a member list, every `Set_ActiveCount` is at most `Set_MaxActiveMembers` (§7.1). |
 
-> **OPEN (implementer, 2026-10-07):** IT13 holds only when "record" means a 0x70 record. Counted
+> **Answered (2026-10-09; was OPEN, implementer 2026-10-07):** IT13 holds only when "record" means a 0x70 record. Counted
 > over all object DIDs (0x70–0x77), the classes of 2 of the 24 targets also hold a 0x76
 > singleton record. The real-data test counts 0x70 records. Please say which count IT13 and
 > §5.10 mean.
+>
+> *Answer (F50):* 0x70 records. IT13 now says so; the two classes are 1603 (the target
+> labelled `UsagePermission_Default`) and 1547 (`TakePermission_CantTake`), whose 0x76
+> singletons have no property set. §5.10's "only record of their root class" means the same.
 
 A real-data test asserts IT1–IT19 and reports counts; it never asserts the counts themselves,
 which change with client updates.
@@ -1679,7 +1756,14 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 > labels (F44). Labels it reads without the effect being traced here:
 > `Inventory_CanBeContained` (container functions of classes 368/2804, 1534, 1541),
 > `Item_MithrilCost` (a getter of class 3649), `SpellcraftCalculator` (classes 3177, 1494). A
-> further reading of those bodies (method M1) settles the second group.
+> further reading of those bodies (method M1) settles the second group. **Tried (2026-10-09,
+> F52):** the reads are getters (`Inventory_CanBeContained`: one body shared by classes
+> 368/2804, default false; `Item_MithrilCost`: classes 3649/3650, default 0;
+> `SpellcraftCalculator`: classes 3175/3177/3197 and the ranked-trait function of the class-1494
+> family). Their callers (classes 2804, 1534, 1541; 3704 and the class-3937 family; 1062 and
+> the 1494 family) pass the results to native functions whose behaviour `wlib-bytecode.md` §7
+> does not specify, so the effect is still not readable from the library alone; a BIN pass
+> on those natives would settle it.
 
 > **OPEN:** Use of `InventoryControl_ExamProperty_Array` and `…_MergeProperty_Array` (§6.4).
 
@@ -1713,4 +1797,5 @@ quantity 1, value 1, factor 0.5 → 0.5 truncates to 0 → **1**.
 | 2026-10-07 | Review fixes, every count re-measured over all records: §9.2 double-precision disagreement is 533 items (half up; 624 half to even), not 93; F12, §9.3 step 3, IT5 and §13.3 state exact equality of the single-precision DPS product (23,204 of 23,204; double precision exact in 1,115); §2.4 gives references per source (91,274 / 100,761 / 116,764 = 308,799; 308,778 under 1734, 21 barter references to carry-alls); §8.2 treasure row says it counts class 1235 only (58 more from class 2372); §9.5 counts the 60,880 checked items (60,211 inside, 669 above, 0 below) and gives the 60,916-item counts separately. Status stays Review. |
 | 2026-10-08 | Revision (status Revised). OPEN items closed from the client library's bytecode (new source BC, method M1) and a second BIN pass on natives (BIN2), every data count re-measured over all records: §2.3 `WeenieType` bit structure (F31); §3.2 the class-701 object is the compiled static effect list (F32, IT14); §5.2 level-scaling rule, crafting preview offset, scaled characters (F33, F42); §5.3 vendor rules, `Item_Disenchant_Value` (F38, F39, IT16); §5.4 `Inventory_MaxQuantity` = 0, gem uniqueness, binding target, (false, true, true) row (F38, F40); §5.5 wear subject and repair-cost progression; §5.8 how modifiers are attached, F21 narrowed to the server's spellcraft; §5.9 spellcraft −1 and level-dependent effect windows (F35, IT15); §5.11 socket lock, type and level rules, the withdrawn "500 / 499" example (F36, IT17); §6.3 repair-cost and wear-state tables, skill-gate table unused (F37); §6.4 distribution offset role, exam/merge OPEN made precise; §7.1 client set rules, OPEN narrowed to server activation (F41, IT19); §7.3 legendary OPEN made precise; §9.2 and §9.5 client library forms (F34); §14 rewritten (settled list, five remaining callouts); invariants IT14–IT19; examples 13.8–13.11; provenance keys BC and BIN2, rows F31–F44. |
 | 2026-10-08 | Review fixes (status stays Revised): §13.11 repair example now uses factors exact in binary (discount 0.75 → 135), adds the −1.0 modifier case (−135) and the 0.9 case that truncates to 161 in single precision; §6.3 states the precision of the repair cost (single-precision factors, wrapping 32-bit difference converted as unsigned, out-of-range truncation), the current > maximum case and that the negative cost of a repairer without `Repair_CostModifier` is intended behaviour; §6.3 sale value states the integer product converted to single precision; F20 says 289,349 + 12 = 289,361; F37 row widened. |
+| 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 (every set of the install walked at every depth; dictionary types) and rows F45–F52. Implementer OPENs answered: §2.4 tie rule and kind order (Decision F51), §2.1 signatures of classes 1722, 2097, 3924 (F45), §3.3 and IT12 weapons carry the worn mirror (F46; the earlier sentence was wrong), §5.7 requirement types (F47), §6.3 wear-control entry labels and §6.4 decay entry labels (F48), §7.2/§7.3 labels and types of classes 2134, 2139, 2338, 4015, 3138, `Runic_Tier`, `ItemAdvancement_Mod_Weight` (F49), IT13 counts 0x70 records (F50). §14 unread-label callout: the getters and callers were located (F52), effect still OPEN. Still OPEN: F21 spellcraft, server set activation, legendary rules, the unread labels, the exam/merge arrays (all server behaviour or native code). |
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §5.10 (`Usage_Operator` type: `interaction.md` §3.7.1), §6.3 (repair-cost and wear-state keys and factors: Roles paragraphs) and §6.4 (cooldown entry labels: `economy.md` §11.5.3), each answered in part; IT13 note kept next to the IT1–IT19 sentence. No fact changed; status unchanged. |

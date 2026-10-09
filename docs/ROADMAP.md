@@ -75,6 +75,7 @@ like "ARCH §8" refer to it.
 | **M5** | UI layouts and skins, Lua plugins | T1 | `ui`, `plugins` |
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
+| **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | T1 | `gamedata`; grows `net` (scenario feed), `ui`, `plugins`, `wvm`, `client` |
 | **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
 | **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
 
@@ -86,13 +87,13 @@ M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it sta
 after full parity with the original client and compatibility with the server (M8), or, if
 the M8 gate fails, after client parity with Tessera's own server.
 
-**Proposed, not yet accepted:** a gameplay-parity track, milestones P0–P9 between M7 and M9
-([decision 0024](decisions/0024-parity-track.md)): characters and inventory, combat, loot and
-vendors (the first playable loop), quests, social, map and travel, progression and crafting,
-client-side game code and a parity audit. Its client half reads the user's install for every
-backend; Tessera's server would run Tessera's own original rules and content, which needs a
-change to LEGAL.md §11.1 rule 5 decided in P0. Until the owner accepts it, the plan and
-the table above stay as they are; if accepted, M9 starts only after P9 and M8 (or its fallback).
+**Parity track (P-track), accepted 2026-10-09:** milestones P0–P8 between M7 and M9
+([decision 0024](decisions/0024-parity-track.md), [section](#p-track)). The owner chose the
+client half only: gameplay presentation from the user's install (creation screen,
+inventory, target frames, cast bars, quest log, vendors, social panels, maps, progression
+panels, client-run game code), driven by a scenario feed in the sandbox and, if the M8 gate
+passes, by M8 Phase 2. Tessera's own server keeps M7's scope; LEGAL.md §11.1 rule 5 is
+unchanged. M9 starts only after P8 and M8 (or its fallback).
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
@@ -1267,6 +1268,19 @@ offline world explorer, a data-file toolkit, and a client for the project's own 
 
 **Exit criteria (Phase 1):** G1–G5 each recorded in `docs/decisions/` with an outcome, and
 a go/no-go decision accepted by the project owner.
+
+---
+
+<a id="p-track"></a>
+## P-track: gameplay parity, client half (P0–P8)
+
+**Plan.** [Decision 0024](decisions/0024-parity-track.md) (accepted by the owner on
+2026-10-09) holds the milestones, their specs and exit criteria: P0 foundations (scenario
+feed, `tessera-gamedata`), P1 characters, inventory and equipment, P2 targeting, skills and
+combat presentation, P3 NPC windows, P4 social panels, P5 map, travel, mounts and
+instances, P6 progression and crafting panels, P7 client-run game code, P8 parity audit.
+Only the client half is built; the game's own rules are not run, offline included (T3).
+Each milestone gets its own section here when it starts.
 
 ---
 
